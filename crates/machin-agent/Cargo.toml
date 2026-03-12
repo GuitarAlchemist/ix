@@ -1,0 +1,30 @@
+[package]
+name = "machin-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP server exposing machin ML algorithms as Claude Code tools"
+
+[[bin]]
+name = "machin-mcp"
+path = "src/main.rs"
+
+[dependencies]
+machin-math = { workspace = true }
+machin-optimize = { workspace = true }
+machin-supervised = { workspace = true }
+machin-unsupervised = { workspace = true }
+machin-graph = { workspace = true }
+machin-search = { workspace = true }
+machin-chaos = { workspace = true }
+machin-game = { workspace = true }
+machin-adversarial = { workspace = true }
+machin-probabilistic = { workspace = true }
+machin-signal = { workspace = true }
+machin-cache = { workspace = true }
+machin-pipeline = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ndarray = { workspace = true }
+rand = { workspace = true }
