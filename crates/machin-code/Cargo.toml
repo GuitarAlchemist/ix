@@ -1,0 +1,41 @@
+[package]
+name = "machin-code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ML on source code: tree-sitter parsing + feature extraction for any language"
+
+[dependencies]
+machin-math = { workspace = true }
+ndarray = { workspace = true }
+thiserror = { workspace = true }
+tree-sitter = { workspace = true }
+
+# Graph integration (optional)
+machin-graph = { workspace = true, optional = true }
+
+# Language grammars — opt-in via features
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+tree-sitter-c-sharp = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+
+[features]
+default = ["lang-rust"]
+graph = ["dep:machin-graph"]
+lang-rust = ["dep:tree-sitter-rust"]
+lang-python = ["dep:tree-sitter-python"]
+lang-javascript = ["dep:tree-sitter-javascript"]
+lang-java = ["dep:tree-sitter-java"]
+lang-csharp = ["dep:tree-sitter-c-sharp"]
+lang-cpp = ["dep:tree-sitter-cpp"]
+lang-go = ["dep:tree-sitter-go"]
+lang-typescript = ["dep:tree-sitter-typescript"]
+all-languages = [
+    "lang-rust", "lang-python", "lang-javascript", "lang-java",
+    "lang-csharp", "lang-cpp", "lang-go", "lang-typescript",
+]
