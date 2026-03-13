@@ -5,27 +5,14 @@ use crate::parse::CodeTree;
 /// Maximum named nodes for dense adjacency matrix (1K nodes = 8MB).
 const MAX_DENSE_NAMED_NODES: usize = 1_000;
 
-/// Extract a node-kind histogram from a parsed code tree.
+/// Walk all nodes in pre-order using a TreeCursor (iterative, zero-allocation traversal).
 ///
-/// Uses `kind_id()` array indexing for O(N) performance with excellent
-/// cache locality (~1.2KB for a typical grammar vocabulary of 200-300 kinds).
-///
-/// The histogram has one entry per node kind in the grammar. Use
-/// `histogram_vocabulary()` to get the mapping from index to kind name.
-///
-/// Both named and anonymous nodes are counted. ERROR and MISSING nodes
-/// from partial parses get their own histogram entries.
-pub fn histogram(tree: &CodeTree) -> Array1<f64> {
-    let vocab = tree.language().node_kind_count();
-    let mut counts = vec![0u32; vocab];
+/// Calls `visit` for every node in the tree. This is the single traversal
+/// primitive — all extraction functions build on it.
+fn walk_preorder(tree: &CodeTree, mut visit: impl FnMut(tree_sitter::Node)) {
     let mut cursor = tree.tree().walk();
-
     loop {
-        let node = cursor.node();
-        let id = node.kind_id() as usize;
-        if id < counts.len() {
-            counts[id] += 1;
-        }
+        visit(cursor.node());
         if cursor.goto_first_child() {
             continue;
         }
@@ -34,10 +21,29 @@ pub fn histogram(tree: &CodeTree) -> Array1<f64> {
                 break;
             }
             if !cursor.goto_parent() {
-                return Array1::from_vec(counts.into_iter().map(|c| c as f64).collect());
+                return;
             }
         }
     }
+}
+
+/// Extract a node-kind histogram from a parsed code tree.
+///
+/// Uses `kind_id()` array indexing for O(N) performance with excellent
+/// cache locality (~1.2KB for a typical grammar vocabulary of 200-300 kinds).
+///
+/// Both named and anonymous nodes are counted. ERROR and MISSING nodes
+/// from partial parses get their own histogram entries.
+pub fn histogram(tree: &CodeTree) -> Array1<f64> {
+    let vocab = tree.language().node_kind_count();
+    let mut counts = vec![0u32; vocab];
+    walk_preorder(tree, |node| {
+        let id = node.kind_id() as usize;
+        if id < counts.len() {
+            counts[id] += 1;
+        }
+    });
+    Array1::from_vec(counts.into_iter().map(|c| c as f64).collect())
 }
 
 /// Extract a histogram counting only named nodes (grammar symbols, not punctuation).
@@ -47,28 +53,15 @@ pub fn histogram(tree: &CodeTree) -> Array1<f64> {
 pub fn histogram_named(tree: &CodeTree) -> Array1<f64> {
     let vocab = tree.language().node_kind_count();
     let mut counts = vec![0u32; vocab];
-    let mut cursor = tree.tree().walk();
-
-    loop {
-        let node = cursor.node();
+    walk_preorder(tree, |node| {
         if node.is_named() {
             let id = node.kind_id() as usize;
             if id < counts.len() {
                 counts[id] += 1;
             }
         }
-        if cursor.goto_first_child() {
-            continue;
-        }
-        loop {
-            if cursor.goto_next_sibling() {
-                break;
-            }
-            if !cursor.goto_parent() {
-                return Array1::from_vec(counts.into_iter().map(|c| c as f64).collect());
-            }
-        }
-    }
+    });
+    Array1::from_vec(counts.into_iter().map(|c| c as f64).collect())
 }
 
 /// Get the vocabulary mapping: histogram index -> node kind name.
@@ -77,6 +70,10 @@ pub fn histogram_named(tree: &CodeTree) -> Array1<f64> {
 /// to the node kind with `kind_id == i`.
 pub fn histogram_vocabulary(tree: &CodeTree) -> Vec<String> {
     let vocab = tree.language().node_kind_count();
+    assert!(
+        vocab <= u16::MAX as usize + 1,
+        "grammar vocabulary ({vocab}) exceeds u16 range"
+    );
     (0..vocab)
         .map(|id| {
             tree.language()
@@ -90,24 +87,12 @@ pub fn histogram_vocabulary(tree: &CodeTree) -> Vec<String> {
 /// Count total named nodes in the tree.
 pub fn named_node_count(tree: &CodeTree) -> usize {
     let mut count = 0usize;
-    let mut cursor = tree.tree().walk();
-
-    loop {
-        if cursor.node().is_named() {
+    walk_preorder(tree, |node| {
+        if node.is_named() {
             count += 1;
         }
-        if cursor.goto_first_child() {
-            continue;
-        }
-        loop {
-            if cursor.goto_next_sibling() {
-                break;
-            }
-            if !cursor.goto_parent() {
-                return count;
-            }
-        }
-    }
+    });
+    count
 }
 
 /// Extract a dense adjacency matrix for named nodes only.
@@ -117,40 +102,21 @@ pub fn named_node_count(tree: &CodeTree) -> usize {
 ///
 /// # Errors
 /// Returns `CodeError::TreeTooLarge` if the tree has more than 1,000 named nodes.
-/// Use `adjacency_graph()` (with the `graph` feature) for larger trees.
 pub fn adjacency(tree: &CodeTree) -> Result<Array2<f64>, CodeError> {
-    // First pass: count named nodes and assign indices
-    let n = named_node_count(tree);
+    // Single pass: collect named node IDs (merges old pass 1 + pass 2)
+    let mut node_ids: Vec<usize> = Vec::new();
+    walk_preorder(tree, |node| {
+        if node.is_named() {
+            node_ids.push(node.id());
+        }
+    });
+
+    let n = node_ids.len();
     if n > MAX_DENSE_NAMED_NODES {
         return Err(CodeError::TreeTooLarge(n, MAX_DENSE_NAMED_NODES));
     }
     if n == 0 {
         return Ok(Array2::zeros((0, 0)));
-    }
-
-    // Second pass: build index map (node_id -> index)
-    let mut node_ids: Vec<usize> = Vec::with_capacity(n);
-    let mut cursor = tree.tree().walk();
-
-    loop {
-        let node = cursor.node();
-        if node.is_named() {
-            node_ids.push(node.id());
-        }
-        if cursor.goto_first_child() {
-            continue;
-        }
-        loop {
-            if cursor.goto_next_sibling() {
-                break;
-            }
-            if !cursor.goto_parent() {
-                break;
-            }
-        }
-        if node_ids.len() >= n {
-            break;
-        }
     }
 
     // Build id-to-index lookup
@@ -160,46 +126,43 @@ pub fn adjacency(tree: &CodeTree) -> Result<Array2<f64>, CodeError> {
         .map(|(idx, &id)| (id, idx))
         .collect();
 
-    // Third pass: fill adjacency matrix
+    // Fill adjacency matrix (iterative — no recursion, no stack overflow)
     let mut matrix = Array2::<f64>::zeros((n, n));
     let mut cursor = tree.tree().walk();
-    fill_adjacency(&mut cursor, &id_to_index, &mut matrix);
+    let mut parent_stack: Vec<Option<usize>> = Vec::new();
 
-    Ok(matrix)
-}
+    loop {
+        let node = cursor.node();
+        let node_idx = if node.is_named() {
+            id_to_index.get(&node.id()).copied()
+        } else {
+            None
+        };
 
-fn fill_adjacency(
-    cursor: &mut tree_sitter::TreeCursor,
-    id_to_index: &std::collections::HashMap<usize, usize>,
-    matrix: &mut Array2<f64>,
-) {
-    let parent = cursor.node();
-    let parent_named = parent.is_named();
-    let parent_idx = if parent_named {
-        id_to_index.get(&parent.id()).copied()
-    } else {
-        None
-    };
-
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            // If both parent and child are named, add an edge
-            if let Some(pi) = parent_idx {
-                if child.is_named() {
-                    if let Some(&ci) = id_to_index.get(&child.id()) {
-                        matrix[[pi, ci]] = 1.0;
-                    }
-                }
-            }
-            // Recurse — but we need to find the nearest named ancestor for unnamed parents
-            fill_adjacency(cursor, id_to_index, matrix);
-
-            if !cursor.goto_next_sibling() {
-                break;
+        // Add edge from nearest named ancestor to this named node
+        if let Some(ci) = node_idx {
+            if let Some(&Some(pi)) = parent_stack.last() {
+                matrix[[pi, ci]] = 1.0;
             }
         }
-        cursor.goto_parent();
+
+        if cursor.goto_first_child() {
+            // Push the nearest named ancestor index for children
+            let named_ancestor = node_idx.or_else(|| {
+                parent_stack.last().copied().flatten()
+            });
+            parent_stack.push(named_ancestor);
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            parent_stack.pop();
+            if !cursor.goto_parent() {
+                return Ok(matrix);
+            }
+        }
     }
 }
 
@@ -209,114 +172,12 @@ fn fill_adjacency(
 /// matching the row/column ordering of `adjacency()`.
 pub fn adjacency_labels(tree: &CodeTree) -> Vec<String> {
     let mut labels = Vec::new();
-    let mut cursor = tree.tree().walk();
-
-    loop {
-        let node = cursor.node();
+    walk_preorder(tree, |node| {
         if node.is_named() {
             labels.push(node.kind().to_string());
         }
-        if cursor.goto_first_child() {
-            continue;
-        }
-        loop {
-            if cursor.goto_next_sibling() {
-                break;
-            }
-            if !cursor.goto_parent() {
-                return labels;
-            }
-        }
-    }
-}
-
-/// Extract a sparse adjacency graph for named nodes (any size tree).
-///
-/// Requires the `graph` feature flag. Returns a `machin_graph::Graph`
-/// with directed edges from parent to child, weighted 1.0.
-#[cfg(feature = "graph")]
-pub fn adjacency_graph(tree: &CodeTree) -> machin_graph::Graph {
-    use std::collections::HashMap;
-
-    let mut node_ids: Vec<usize> = Vec::new();
-    let mut cursor = tree.tree().walk();
-
-    // Collect named node IDs in pre-order
-    loop {
-        if cursor.node().is_named() {
-            node_ids.push(cursor.node().id());
-        }
-        if cursor.goto_first_child() {
-            continue;
-        }
-        loop {
-            if cursor.goto_next_sibling() {
-                break;
-            }
-            if !cursor.goto_parent() {
-                break;
-            }
-        }
-        // Check if we've traversed the whole tree
-        if cursor.node().id() == tree.tree().root_node().id()
-            && !cursor.goto_first_child()
-        {
-            break;
-        }
-    }
-
-    let id_to_index: HashMap<usize, usize> = node_ids
-        .iter()
-        .enumerate()
-        .map(|(idx, &id)| (id, idx))
-        .collect();
-
-    let n = node_ids.len();
-    let mut adjacency: HashMap<usize, Vec<(usize, f64)>> = HashMap::new();
-    for i in 0..n {
-        adjacency.insert(i, Vec::new());
-    }
-
-    // Walk again to build edges
-    let mut cursor = tree.tree().walk();
-    build_graph_edges(&mut cursor, &id_to_index, &mut adjacency);
-
-    machin_graph::Graph {
-        adjacency,
-        node_count: n,
-    }
-}
-
-#[cfg(feature = "graph")]
-fn build_graph_edges(
-    cursor: &mut tree_sitter::TreeCursor,
-    id_to_index: &std::collections::HashMap<usize, usize>,
-    adjacency: &mut std::collections::HashMap<usize, Vec<(usize, f64)>>,
-) {
-    let parent = cursor.node();
-    let parent_idx = if parent.is_named() {
-        id_to_index.get(&parent.id()).copied()
-    } else {
-        None
-    };
-
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if let Some(pi) = parent_idx {
-                if child.is_named() {
-                    if let Some(&ci) = id_to_index.get(&child.id()) {
-                        adjacency.entry(pi).or_default().push((ci, 1.0));
-                    }
-                }
-            }
-            build_graph_edges(cursor, id_to_index, adjacency);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-        cursor.goto_parent();
-    }
+    });
+    labels
 }
 
 #[cfg(test)]
@@ -438,5 +299,18 @@ mod tests {
         // Different code should produce different histograms
         let diff = (&hist_fn - &hist_struct).mapv(|x| x.abs()).sum();
         assert!(diff > 0.0, "different snippets should have different histograms");
+    }
+
+    #[test]
+    fn test_adjacency_parent_child_edges() {
+        // Verify specific parent-child edges in the adjacency matrix
+        let tree = parse_rust("fn main() {}");
+        let matrix = adjacency(&tree).unwrap();
+        let labels = adjacency_labels(&tree);
+
+        // source_file (idx 0) should be parent of function_item
+        let func_idx = labels.iter().position(|l| l == "function_item").unwrap();
+        assert!((matrix[[0, func_idx]] - 1.0).abs() < 1e-10,
+            "source_file should be parent of function_item");
     }
 }

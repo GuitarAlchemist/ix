@@ -11,8 +11,11 @@ pub enum CodeError {
     #[error("empty input: source code is empty or whitespace-only")]
     EmptyInput,
 
-    #[error("tree too large: {0} named nodes exceeds limit of {1} for dense adjacency (use adjacency_graph instead)")]
+    #[error("tree too large: {0} named nodes exceeds dense adjacency limit of {1}")]
     TreeTooLarge(usize, usize),
+
+    #[error("file too large: {0} bytes exceeds limit of {1} bytes")]
+    FileTooLarge(u64, u64),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

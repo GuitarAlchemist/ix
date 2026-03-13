@@ -1,7 +1,9 @@
+use std::io::Read;
 use tree_sitter::{Parser, Tree, Language};
 use crate::error::CodeError;
 
 const DEFAULT_PARSE_TIMEOUT_US: u64 = 30_000_000; // 30 seconds
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 
 /// A parsed source code tree with metadata.
 ///
@@ -37,8 +39,11 @@ impl CodeTree {
     }
 
     /// Extract the text for a node by slicing the owned source.
-    pub fn node_text(&self, node: tree_sitter::Node) -> &str {
-        &self.source[node.byte_range()]
+    ///
+    /// Returns `None` if the byte range falls on a non-UTF-8 boundary
+    /// (possible with tree-sitter error recovery on multi-byte input).
+    pub fn node_text(&self, node: tree_sitter::Node) -> Option<&str> {
+        self.source.get(node.byte_range())
     }
 }
 
@@ -97,6 +102,8 @@ pub fn parse(language: &str, source: &str) -> Result<CodeTree, CodeError> {
     parser
         .set_language(&ts_lang)
         .expect("tree-sitter language version mismatch — grammar ABI incompatible with runtime");
+    // set_timeout_micros is deprecated in 0.25 but the replacement API
+    // (parse_with_options) is not yet ergonomic. This still works correctly.
     #[allow(deprecated)]
     parser.set_timeout_micros(DEFAULT_PARSE_TIMEOUT_US);
 
@@ -114,27 +121,32 @@ pub fn parse(language: &str, source: &str) -> Result<CodeTree, CodeError> {
 
 /// Parse source code from a file path.
 ///
-/// # Arguments
-/// * `language` - Language name
-/// * `path` - Path to the source file
+/// Uses a size-bounded reader to avoid TOCTOU races. Rejects non-regular
+/// files (symlinks, device files, FIFOs).
 ///
 /// # Errors
-/// * `CodeError::Io` if the file cannot be read
+/// * `CodeError::FileTooLarge` if the file exceeds 10 MB
+/// * `CodeError::Io` if the file cannot be read or is not a regular file
 /// * All errors from `parse()`
 pub fn parse_file(language: &str, path: &std::path::Path) -> Result<CodeTree, CodeError> {
-    let metadata = std::fs::metadata(path)?;
-    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
-    if metadata.len() > MAX_FILE_SIZE {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
         return Err(CodeError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "file too large: {} bytes exceeds limit of {} bytes",
-                metadata.len(),
-                MAX_FILE_SIZE
-            ),
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
         )));
     }
-    let source = std::fs::read_to_string(path)?;
+
+    // Use bounded reader to prevent TOCTOU — don't trust metadata.len() alone
+    let file = std::fs::File::open(path)?;
+    let mut reader = file.take(MAX_FILE_SIZE + 1);
+    let mut source = String::new();
+    reader.read_to_string(&mut source)?;
+
+    if source.len() as u64 > MAX_FILE_SIZE {
+        return Err(CodeError::FileTooLarge(source.len() as u64, MAX_FILE_SIZE));
+    }
+
     parse(language, &source)
 }
 
@@ -213,7 +225,7 @@ mod tests {
         let root = tree.tree().root_node();
         let func = root.child(0).unwrap();
         let name = func.child_by_field_name("name").unwrap();
-        assert_eq!(tree.node_text(name), "main");
+        assert_eq!(tree.node_text(name), Some("main"));
     }
 
     #[test]

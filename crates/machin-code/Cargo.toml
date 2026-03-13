@@ -6,13 +6,9 @@ license.workspace = true
 description = "ML on source code: tree-sitter parsing + feature extraction for any language"
 
 [dependencies]
-machin-math = { workspace = true }
 ndarray = { workspace = true }
 thiserror = { workspace = true }
 tree-sitter = { workspace = true }
-
-# Graph integration (optional)
-machin-graph = { workspace = true, optional = true }
 
 # Language grammars — opt-in via features
 tree-sitter-rust = { workspace = true, optional = true }
@@ -26,7 +22,6 @@ tree-sitter-typescript = { workspace = true, optional = true }
 
 [features]
 default = ["lang-rust"]
-graph = ["dep:machin-graph"]
 lang-rust = ["dep:tree-sitter-rust"]
 lang-python = ["dep:tree-sitter-python"]
 lang-javascript = ["dep:tree-sitter-javascript"]
