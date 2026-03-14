@@ -3,6 +3,10 @@ name = "ix-sedenion"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "science"]
+keywords = ["machine-learning", "math", "algorithms"]
 description = "Hypercomplex algebras: sedenions, octonions, Cayley-Dickson construction, BSP trees"
 
 [dependencies]

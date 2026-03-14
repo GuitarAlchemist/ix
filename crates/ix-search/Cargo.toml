@@ -3,6 +3,10 @@ name = "ix-search"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "science"]
+keywords = ["machine-learning", "math", "algorithms"]
 description = "Search algorithms: Q*, A*, MCTS, minimax, heuristic and data structure search"
 
 [dependencies]

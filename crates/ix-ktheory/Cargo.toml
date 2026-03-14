@@ -3,6 +3,10 @@ name = "ix-ktheory"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "science"]
+keywords = ["machine-learning", "math", "algorithms"]
 description = "Algebraic K-theory: K0/K1 from graphs, Mayer-Vietoris consistency"
 
 [dependencies]

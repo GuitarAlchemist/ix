@@ -3,6 +3,10 @@ name = "ix-game"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "science"]
+keywords = ["machine-learning", "math", "algorithms"]
 description = "Game theory: Nash equilibria, Shapley value, mechanism design, evolutionary game theory"
 
 [dependencies]

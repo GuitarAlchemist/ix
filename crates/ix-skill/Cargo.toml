@@ -3,6 +3,10 @@ name = "ix-skill"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "science"]
+keywords = ["machine-learning", "math", "algorithms"]
 description = "Claude Code skill CLI interface for ix ML algorithms"
 
 [[bin]]
@@ -22,6 +26,7 @@ ix-grammar = { workspace = true }
 ix-graph = { workspace = true }
 ix-probabilistic = { workspace = true }
 ix-io = { workspace = true }
+ndarray = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

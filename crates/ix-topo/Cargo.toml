@@ -3,6 +3,10 @@ name = "ix-topo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "science"]
+keywords = ["machine-learning", "math", "algorithms"]
 description = "Topological data analysis: simplicial complexes, persistent homology"
 
 [dependencies]

@@ -1,11 +1,11 @@
-//! machin - Claude Code ML skill CLI.
+//! ix - Claude Code ML skill CLI.
 //!
-//! Exposes machin algorithms as CLI commands for use as Claude Code skills.
+//! Exposes ix algorithms as CLI commands for use as Claude Code skills.
 
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "machin", version, about = "ML algorithms for Claude Code skills")]
+#[command(name = "ix", version, about = "ML algorithms for Claude Code skills")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -133,21 +133,162 @@ fn main() {
             run_optimize(&algo, &function, dim, max_iter);
         }
         Commands::Train { model, data } => {
-            println!("Training {} model", model);
-            if let Some(path) = data {
-                println!("  Data: {}", path);
-            }
-            println!("  (TODO: implement data loading)");
+            run_train(&model, data.as_deref());
         }
         Commands::Cluster { algo, k } => {
-            println!("Clustering with {} (k={})", algo, k);
-            println!("  (TODO: implement data loading)");
+            run_cluster(&algo, k);
         }
         Commands::Grammar { command } => {
             run_grammar(command);
         }
         Commands::List => {
             print_algorithms();
+        }
+    }
+}
+
+fn run_train(model: &str, data: Option<&str>) {
+    use ndarray::array;
+
+    // Demo data if no file provided
+    let (x, y) = if let Some(path) = data {
+        let content = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("Failed to read {}: {}", path, e); return; }
+        };
+        // Simple CSV: last column is target
+        let rows: Vec<Vec<f64>> = content.lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+            .filter_map(|l| l.split(',').map(|v| v.trim().parse::<f64>().ok()).collect::<Option<Vec<_>>>())
+            .collect();
+        if rows.is_empty() { eprintln!("No valid data rows"); return; }
+        let ncols = rows[0].len();
+        if ncols < 2 { eprintln!("Need at least 2 columns"); return; }
+        let x_data: Vec<f64> = rows.iter().flat_map(|r| &r[..ncols-1]).copied().collect();
+        let y_data: Vec<f64> = rows.iter().map(|r| r[ncols-1]).collect();
+        let n = rows.len();
+        (ndarray::Array2::from_shape_vec((n, ncols-1), x_data).unwrap(),
+         ndarray::Array1::from_vec(y_data))
+    } else {
+        println!("  No data file — using demo dataset");
+        let x = array![[1.0, 2.0], [2.0, 3.0], [3.0, 5.0], [4.0, 7.0], [5.0, 9.0]];
+        let y = ndarray::Array1::from_vec(vec![3.0, 5.0, 8.0, 11.0, 14.0]);
+        (x, y)
+    };
+
+    match model {
+        "linear" => {
+            use ix_supervised::linear_regression::LinearRegression;
+            use ix_supervised::traits::Regressor;
+            let mut lr = LinearRegression::new();
+            lr.fit(&x, &y);
+            let pred = lr.predict(&x);
+            println!("  Linear Regression trained on {} samples", x.nrows());
+            println!("  Predictions: {:?}", pred.to_vec());
+        }
+        "logistic" => {
+            use ix_supervised::logistic_regression::LogisticRegression;
+            use ix_supervised::traits::Classifier;
+            let mean_y = y.mean().unwrap_or(0.0);
+            let labels = y.mapv(|v| if v > mean_y { 1usize } else { 0 });
+            let mut lg = LogisticRegression::new();
+            lg.fit(&x, &labels);
+            let pred = lg.predict(&x);
+            println!("  Logistic Regression trained on {} samples", x.nrows());
+            println!("  Predictions: {:?}", pred.to_vec());
+        }
+        "knn" => {
+            use ix_supervised::knn::KNN;
+            use ix_supervised::traits::Classifier;
+            let mean_y = y.mean().unwrap_or(0.0);
+            let labels = y.mapv(|v| if v > mean_y { 1usize } else { 0 });
+            let mut knn = KNN::new(3);
+            knn.fit(&x, &labels);
+            let pred = knn.predict(&x);
+            println!("  KNN (k=3) trained on {} samples", x.nrows());
+            println!("  Predictions: {:?}", pred.to_vec());
+        }
+        "naive-bayes" => {
+            use ix_supervised::naive_bayes::GaussianNaiveBayes;
+            use ix_supervised::traits::Classifier;
+            let mean_y = y.mean().unwrap_or(0.0);
+            let labels = y.mapv(|v| if v > mean_y { 1usize } else { 0 });
+            let mut nb = GaussianNaiveBayes::new();
+            nb.fit(&x, &labels);
+            let pred = nb.predict(&x);
+            println!("  Gaussian Naive Bayes trained on {} samples", x.nrows());
+            println!("  Predictions: {:?}", pred.to_vec());
+        }
+        "decision-tree" => {
+            use ix_supervised::decision_tree::DecisionTree;
+            use ix_supervised::traits::Classifier;
+            let mean_y = y.mean().unwrap_or(0.0);
+            let labels = y.mapv(|v| if v > mean_y { 1usize } else { 0 });
+            let mut dt = DecisionTree::new(5);
+            dt.fit(&x, &labels);
+            let pred = dt.predict(&x);
+            println!("  Decision Tree trained on {} samples", x.nrows());
+            println!("  Predictions: {:?}", pred.to_vec());
+        }
+        "svm" => {
+            use ix_supervised::svm::LinearSVM;
+            use ix_supervised::traits::Classifier;
+            let mean_y = y.mean().unwrap_or(0.0);
+            let labels = y.mapv(|v| if v > mean_y { 1usize } else { 0 });
+            let mut svm = LinearSVM::new(1.0);
+            svm.fit(&x, &labels);
+            let pred = svm.predict(&x);
+            println!("  Linear SVM trained on {} samples", x.nrows());
+            println!("  Predictions: {:?}", pred.to_vec());
+        }
+        _ => {
+            eprintln!("Unknown model: {}. Use: linear, logistic, knn, naive-bayes, decision-tree, svm", model);
+        }
+    }
+}
+
+fn run_cluster(algo: &str, k: usize) {
+    use ndarray::array;
+    use ix_unsupervised::traits::Clusterer;
+
+    // Demo data
+    let x = array![
+        [0.0, 0.0], [0.5, 0.5], [1.0, 0.0],
+        [10.0, 10.0], [10.5, 10.5], [11.0, 10.0],
+        [5.0, 20.0], [5.5, 20.5], [6.0, 20.0]
+    ];
+
+    match algo {
+        "kmeans" => {
+            let mut km = ix_unsupervised::kmeans::KMeans::new(k);
+            let labels = km.fit_predict(&x);
+            println!("  K-Means (k={}) on {} samples", k, x.nrows());
+            println!("  Labels: {:?}", labels.to_vec());
+        }
+        "dbscan" => {
+            let mut db = ix_unsupervised::dbscan::DBSCAN::new(2.0, 2);
+            let labels = db.fit_predict(&x);
+            println!("  DBSCAN (eps=2.0, min_pts=2) on {} samples", x.nrows());
+            println!("  Labels: {:?}", labels.to_vec());
+        }
+        "pca" => {
+            use ix_unsupervised::traits::DimensionReducer;
+            let mut pca = ix_unsupervised::pca::PCA::new(1);
+            let reduced = pca.fit_transform(&x);
+            println!("  PCA (1 component) on {} samples", x.nrows());
+            println!("  Reduced shape: ({}, {})", reduced.nrows(), reduced.ncols());
+            for i in 0..reduced.nrows() {
+                println!("    [{:.4}]", reduced[[i, 0]]);
+            }
+        }
+        "gmm" => {
+            let mut gmm = ix_unsupervised::gmm::GMM::new(k);
+            let labels = gmm.fit_predict(&x);
+            println!("  GMM (k={}) on {} samples", k, x.nrows());
+            println!("  Labels: {:?}", labels.to_vec());
+        }
+        _ => {
+            eprintln!("Unknown algorithm: {}. Use: kmeans, dbscan, pca, gmm", algo);
         }
     }
 }
@@ -333,7 +474,7 @@ fn print_result(name: &str, result: &ix_optimize::traits::OptimizeResult) {
 }
 
 fn print_algorithms() {
-    println!("machin - ML algorithms for Claude Code skills\n");
+    println!("ix - ML algorithms for Claude Code skills\n");
     println!("OPTIMIZATION:");
     println!("  sgd            - Stochastic Gradient Descent");
     println!("  adam           - Adam optimizer");
@@ -347,13 +488,14 @@ fn print_algorithms() {
     println!("  logistic       - Logistic Regression");
     println!("  knn            - k-Nearest Neighbors");
     println!("  naive-bayes    - Gaussian Naive Bayes");
-    println!("  decision-tree  - Decision Tree (CART) [TODO]");
-    println!("  svm            - Linear SVM [TODO]");
+    println!("  decision-tree  - Decision Tree (CART)");
+    println!("  svm            - Linear SVM");
     println!();
     println!("UNSUPERVISED LEARNING:");
     println!("  kmeans         - K-Means clustering");
-    println!("  dbscan         - DBSCAN [TODO]");
-    println!("  pca            - PCA [TODO]");
+    println!("  dbscan         - DBSCAN density clustering");
+    println!("  pca            - Principal Component Analysis");
+    println!("  gmm            - Gaussian Mixture Model");
     println!();
     println!("NEURAL NETWORKS:");
     println!("  dense          - Dense layer + backprop");

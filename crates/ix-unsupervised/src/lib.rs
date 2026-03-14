@@ -6,5 +6,5 @@ pub mod traits;
 pub mod kmeans;
 pub mod dbscan;
 pub mod pca;
-
-// TODO: tsne, gmm
+pub mod tsne;
+pub mod gmm;
