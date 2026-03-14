@@ -124,7 +124,7 @@ fn peano_digit_to_xy(digit: u32, level: u32) -> (u32, u32) {
 
     let (bx, by) = base[digit as usize % 9];
 
-    if level.is_multiple_of(2) {
+    if level % 2 == 0 {
         (bx, by)
     } else {
         (2 - bx, 2 - by)

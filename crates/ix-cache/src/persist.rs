@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_save_and_load_snapshot() {
         let cache = Cache::new(CacheConfig::default());
-        cache.set("name", &"MachinDeOuf".to_string());
+        cache.set("name", &"ix".to_string());
         cache.set("version", &42i64);
         cache.set("tags", &vec!["rust", "ml", "gpu"]);
 
@@ -156,7 +156,7 @@ mod tests {
         let loaded = load_snapshot(&cache2, &tmp).unwrap();
         assert_eq!(loaded, 3);
 
-        assert_eq!(cache2.get::<String>("name"), Some("MachinDeOuf".to_string()));
+        assert_eq!(cache2.get::<String>("name"), Some("ix".to_string()));
         assert_eq!(cache2.get::<i64>("version"), Some(42));
 
         // Cleanup

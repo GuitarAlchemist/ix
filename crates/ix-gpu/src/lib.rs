@@ -11,4 +11,5 @@ pub mod quaternion;
 pub mod distance;
 pub mod sedenion;
 pub mod knn;
+pub mod bsp_knn;
 pub mod rips;

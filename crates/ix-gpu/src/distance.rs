@@ -61,7 +61,7 @@ fn pairwise_distance(
 ///
 /// Returns flat row-major N×N distance matrix.
 pub fn pairwise_distance_gpu(ctx: &GpuContext, points: &[f32], dim: usize) -> Vec<f32> {
-    assert!(points.len().is_multiple_of(dim), "Points length must be multiple of dim");
+    assert!(points.len() % dim == 0, "Points length must be multiple of dim");
     let n = points.len() / dim;
 
     let buf_points = ctx.create_buffer_init("points", points);
@@ -114,7 +114,7 @@ pub fn pairwise_distance_gpu(ctx: &GpuContext, points: &[f32], dim: usize) -> Ve
 
 /// CPU fallback: compute N×N pairwise Euclidean distance matrix.
 pub fn pairwise_distance_cpu(points: &[f32], dim: usize) -> Vec<f32> {
-    assert!(points.len().is_multiple_of(dim), "Points length must be multiple of dim");
+    assert!(points.len() % dim == 0, "Points length must be multiple of dim");
     let n = points.len() / dim;
     let mut dist = vec![0.0f32; n * n];
 

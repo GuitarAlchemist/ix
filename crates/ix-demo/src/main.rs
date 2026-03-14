@@ -1,4 +1,4 @@
-//! MachinDeOuf Interactive Demo
+//! ix Interactive Demo
 //!
 //! A tabbed egui application showcasing ML/math algorithms from
 //! every crate in the workspace.
@@ -11,13 +11,13 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
-            .with_title("MachinDeOuf — ML Algorithm Explorer"),
+            .with_title("ix — ML Algorithm Explorer"),
         ..Default::default()
     };
     eframe::run_native(
-        "MachinDeOuf Demo",
+        "ix Demo",
         options,
-        Box::new(|_cc| Ok(Box::new(MachinApp::default()))),
+        Box::new(|_cc| Ok(Box::new(IxApp::default()))),
     )
 }
 
@@ -74,7 +74,7 @@ impl Tab {
     }
 }
 
-struct MachinApp {
+struct IxApp {
     active_tab: Tab,
     stats_demo: demos::stats::StatsDemo,
     regression_demo: demos::regression::RegressionDemo,
@@ -99,7 +99,7 @@ struct MachinApp {
     category_demo: demos::category::CategoryDemo,
 }
 
-impl Default for MachinApp {
+impl Default for IxApp {
     fn default() -> Self {
         Self {
             active_tab: Tab::Stats,
@@ -128,11 +128,11 @@ impl Default for MachinApp {
     }
 }
 
-impl eframe::App for MachinApp {
+impl eframe::App for IxApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.heading("MachinDeOuf");
+                ui.heading("ix");
                 ui.separator();
                 // Core Math
                 ui.label(egui::RichText::new("Math").strong().small());

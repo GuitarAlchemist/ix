@@ -577,9 +577,9 @@ mod tests {
     #[test]
     fn test_basic_get_set() {
         let cache = Cache::default_cache();
-        cache.set("name", &"MachinDeOuf".to_string());
+        cache.set("name", &"ix".to_string());
         let val: Option<String> = cache.get("name");
-        assert_eq!(val, Some("MachinDeOuf".to_string()));
+        assert_eq!(val, Some("ix".to_string()));
     }
 
     #[test]

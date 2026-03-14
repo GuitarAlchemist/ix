@@ -299,10 +299,10 @@ mod tests {
             .unwrap();
 
         let mut inputs = HashMap::new();
-        inputs.insert("name".to_string(), Value::from("MachinDeOuf"));
+        inputs.insert("name".to_string(), Value::from("ix"));
 
         let result = execute(&pipeline, &inputs, &NoCache).unwrap();
         let output = result.output("greet").unwrap().as_str().unwrap();
-        assert_eq!(output, "Hello, MachinDeOuf!");
+        assert_eq!(output, "Hello, ix!");
     }
 }

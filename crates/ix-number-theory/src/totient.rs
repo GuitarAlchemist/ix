@@ -10,8 +10,8 @@ pub fn euler_totient(n: u64) -> u64 {
     let mut m = n;
     let mut p = 2u64;
     while p * p <= m {
-        if m.is_multiple_of(p) {
-            while m.is_multiple_of(p) {
+        if m % p == 0 {
+            while m % p == 0 {
                 m /= p;
             }
             result -= result / p;
@@ -54,9 +54,9 @@ pub fn mobius(n: u64) -> i8 {
     let mut count = 0i8;
     let mut p = 2u64;
     while p * p <= m {
-        if m.is_multiple_of(p) {
+        if m % p == 0 {
             m /= p;
-            if m.is_multiple_of(p) {
+            if m % p == 0 {
                 return 0; // squared factor
             }
             count += 1;
@@ -85,9 +85,9 @@ pub fn divisor_count(n: u64) -> u64 {
     let mut m = n;
     let mut p = 2u64;
     while p * p <= m {
-        if m.is_multiple_of(p) {
+        if m % p == 0 {
             let mut exp = 0u64;
-            while m.is_multiple_of(p) {
+            while m % p == 0 {
                 m /= p;
                 exp += 1;
             }
@@ -113,10 +113,10 @@ pub fn divisor_sum(n: u64) -> u64 {
     let mut m = n;
     let mut p = 2u64;
     while p * p <= m {
-        if m.is_multiple_of(p) {
+        if m % p == 0 {
             let mut sum = 1u64;
             let mut power = 1u64;
-            while m.is_multiple_of(p) {
+            while m % p == 0 {
                 m /= p;
                 power *= p;
                 sum += power;

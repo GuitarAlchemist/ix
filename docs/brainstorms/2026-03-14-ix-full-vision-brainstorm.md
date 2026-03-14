@@ -1,6 +1,6 @@
 ---
 date: 2026-03-14
-topic: machineouf-full-vision
+topic: ix-full-vision
 ---
 
 # ix Full Vision: Algorithms + Demo + MCP + Infrastructure

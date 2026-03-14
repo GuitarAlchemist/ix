@@ -7,7 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 categories = ["algorithms", "mathematics", "science"]
 keywords = ["machine-learning", "math", "algorithms"]
-description = "Interactive demo UI for MachinDeOuf ML algorithms"
+description = "Interactive demo UI for ix ML algorithms"
 
 [[bin]]
 name = "ix-demo"

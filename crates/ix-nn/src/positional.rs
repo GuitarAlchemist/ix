@@ -43,7 +43,7 @@ pub fn sinusoidal_encoding(max_len: usize, d_model: usize) -> Array2<f64> {
 pub fn rope_rotate(x: &Array2<f64>, base: f64) -> Array2<f64> {
     let seq_len = x.nrows();
     let d = x.ncols();
-    assert!(d.is_multiple_of(2), "RoPE requires even dimension");
+    assert!(d % 2 == 0, "RoPE requires even dimension");
 
     let mut result = x.clone();
     let half = d / 2;

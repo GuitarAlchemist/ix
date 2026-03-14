@@ -141,7 +141,7 @@ impl<N> Dag<N> {
         self.order.iter()
             .filter(|id| {
                 self.reverse.get(id.as_str())
-                    .is_none_or(|preds| preds.is_empty())
+                    .map_or(true, |preds| preds.is_empty())
             })
             .collect()
     }
@@ -151,7 +151,7 @@ impl<N> Dag<N> {
         self.order.iter()
             .filter(|id| {
                 self.edges.get(id.as_str())
-                    .is_none_or(|succs| succs.is_empty())
+                    .map_or(true, |succs| succs.is_empty())
             })
             .collect()
     }

@@ -100,7 +100,7 @@ pub fn is_prime(n: u64) -> bool {
     if n < 4 {
         return true;
     }
-    if n.is_multiple_of(2) || n.is_multiple_of(3) {
+    if n % 2 == 0 || n % 3 == 0 {
         return false;
     }
     if n < 1_000_000 {
@@ -112,7 +112,7 @@ pub fn is_prime(n: u64) -> bool {
 fn trial_division(n: u64) -> bool {
     let mut i = 5u64;
     while i * i <= n {
-        if n.is_multiple_of(i) || n.is_multiple_of(i + 2) {
+        if n % i == 0 || n % (i + 2) == 0 {
             return false;
         }
         i += 6;
@@ -127,7 +127,7 @@ fn miller_rabin(n: u64) -> bool {
     // Write n-1 as 2^r * d
     let mut d = n - 1;
     let mut r = 0u32;
-    while d.is_multiple_of(2) {
+    while d % 2 == 0 {
         d /= 2;
         r += 1;
     }
@@ -242,7 +242,7 @@ pub fn prime_factors(n: u64) -> Vec<(u64, u32)> {
 
     // Check factor 2
     let mut count = 0u32;
-    while remaining.is_multiple_of(2) {
+    while remaining % 2 == 0 {
         count += 1;
         remaining /= 2;
     }
@@ -254,7 +254,7 @@ pub fn prime_factors(n: u64) -> Vec<(u64, u32)> {
     let mut i = 3u64;
     while i * i <= remaining {
         let mut count = 0u32;
-        while remaining.is_multiple_of(i) {
+        while remaining % i == 0 {
             count += 1;
             remaining /= i;
         }

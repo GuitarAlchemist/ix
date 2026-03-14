@@ -8,12 +8,12 @@ pub fn is_prime_trial(n: u64) -> bool {
     if n < 4 {
         return true;
     }
-    if n.is_multiple_of(2) || n.is_multiple_of(3) {
+    if n % 2 == 0 || n % 3 == 0 {
         return false;
     }
     let mut i = 5u64;
     while i * i <= n {
-        if n.is_multiple_of(i) || n.is_multiple_of(i + 2) {
+        if n % i == 0 || n % (i + 2) == 0 {
             return false;
         }
         i += 6;
@@ -33,14 +33,14 @@ pub fn is_prime_miller_rabin(n: u64, _rounds: usize) -> bool {
     if n < 4 {
         return true;
     }
-    if n.is_multiple_of(2) {
+    if n % 2 == 0 {
         return false;
     }
 
     // Write n-1 as 2^r * d
     let mut d = n - 1;
     let mut r = 0u32;
-    while d.is_multiple_of(2) {
+    while d % 2 == 0 {
         d /= 2;
         r += 1;
     }
@@ -76,7 +76,7 @@ pub fn is_prime_fermat(n: u64, rounds: usize) -> bool {
     if n < 4 {
         return true;
     }
-    if n.is_multiple_of(2) {
+    if n % 2 == 0 {
         return false;
     }
     for i in 0..rounds {

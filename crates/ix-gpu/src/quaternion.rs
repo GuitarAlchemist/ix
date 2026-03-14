@@ -78,7 +78,7 @@ fn batch_rotate(
 ///
 /// Returns flat array of rotated points, same layout.
 pub fn batch_quaternion_rotate_gpu(ctx: &GpuContext, points: &[f32], quat: &[f32; 4]) -> Vec<f32> {
-    assert!(points.len().is_multiple_of(3), "Points must be triples (x,y,z)");
+    assert!(points.len() % 3 == 0, "Points must be triples (x,y,z)");
     let n = points.len();
 
     let buf_points = ctx.create_buffer_init("points", points);
@@ -123,7 +123,7 @@ pub fn batch_quaternion_rotate_gpu(ctx: &GpuContext, points: &[f32], quat: &[f32
 /// Uses the optimized formula: p' = p + 2w(q×p) + 2(q×(q×p))
 /// where q = (qx, qy, qz) is the vector part.
 pub fn batch_quaternion_rotate_cpu(points: &[f32], quat: &[f32; 4]) -> Vec<f32> {
-    assert!(points.len().is_multiple_of(3), "Points must be triples (x,y,z)");
+    assert!(points.len() % 3 == 0, "Points must be triples (x,y,z)");
 
     let [qw, qx, qy, qz] = *quat;
     let mut out = vec![0.0f32; points.len()];

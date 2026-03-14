@@ -211,7 +211,7 @@ impl DimensionReducer for TSNE {
                     let mult: f64 = 4.0 * (p[[i, j]] - q_ij) * q_unnorm[[i, j]];
                     for d in 0..self.n_components {
                         let delta: f64 = mult * (y[[i, d]] - y[[j, d]]);
-                        grad[[i, d]] = grad[[i, d]] + delta;
+                        grad[[i, d]] += delta;
                     }
                 }
             }
@@ -229,7 +229,7 @@ impl DimensionReducer for TSNE {
 
                     let update: f64 =
                         current_momentum * prev_update[[i, d]] - self.learning_rate * gains[[i, d]] * grad[[i, d]];
-                    y[[i, d]] = y[[i, d]] + update;
+                    y[[i, d]] += update;
                     prev_update[[i, d]] = update;
                 }
             }
@@ -238,7 +238,7 @@ impl DimensionReducer for TSNE {
             let mean = y.mean_axis(ndarray::Axis(0)).unwrap();
             for i in 0..n {
                 for d in 0..self.n_components {
-                    y[[i, d]] = y[[i, d]] - mean[d];
+                    y[[i, d]] -= mean[d];
                 }
             }
         }

@@ -16,7 +16,7 @@ impl Sequential {
     }
 
     /// Add a layer to the network.
-    pub fn add(mut self, layer: Box<dyn Layer>) -> Self {
+    pub fn push(mut self, layer: Box<dyn Layer>) -> Self {
         self.layers.push(layer);
         self
     }
@@ -98,8 +98,8 @@ mod tests {
     #[test]
     fn test_sequential_forward_shape() {
         let mut net = Sequential::new()
-            .add(Box::new(Dense::new(3, 4)))
-            .add(Box::new(Dense::new(4, 2)));
+            .push(Box::new(Dense::new(3, 4)))
+            .push(Box::new(Dense::new(4, 2)));
 
         let input = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
         let output = net.forward(&input);
@@ -109,8 +109,8 @@ mod tests {
     #[test]
     fn test_sequential_train_loss_decreases() {
         let mut net = Sequential::new()
-            .add(Box::new(Dense::new(2, 4)))
-            .add(Box::new(Dense::new(4, 1)));
+            .push(Box::new(Dense::new(2, 4)))
+            .push(Box::new(Dense::new(4, 1)));
 
         // Simple regression: y ≈ x1 + x2
         let input = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]];
@@ -125,8 +125,8 @@ mod tests {
     #[test]
     fn test_sequential_len() {
         let net = Sequential::new()
-            .add(Box::new(Dense::new(3, 4)))
-            .add(Box::new(Dense::new(4, 2)));
+            .push(Box::new(Dense::new(3, 4)))
+            .push(Box::new(Dense::new(4, 2)));
         assert_eq!(net.len(), 2);
         assert!(!net.is_empty());
     }

@@ -116,8 +116,8 @@ pub fn batch_knn_gpu(
     dim: usize,
     k: usize,
 ) -> (Vec<u32>, Vec<f32>) {
-    assert!(refs.len().is_multiple_of(dim));
-    assert!(queries.len().is_multiple_of(dim));
+    assert!(refs.len() % dim == 0);
+    assert!(queries.len() % dim == 0);
 
     let num_refs = refs.len() / dim;
     let num_queries = queries.len() / dim;
@@ -218,8 +218,8 @@ pub fn batch_knn_cpu(
     dim: usize,
     k: usize,
 ) -> (Vec<u32>, Vec<f32>) {
-    assert!(refs.len().is_multiple_of(dim));
-    assert!(queries.len().is_multiple_of(dim));
+    assert!(refs.len() % dim == 0);
+    assert!(queries.len() % dim == 0);
 
     let num_refs = refs.len() / dim;
     let num_queries = queries.len() / dim;
