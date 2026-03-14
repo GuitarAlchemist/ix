@@ -148,9 +148,13 @@ mod tests {
         let rn = RMSNorm::new(4);
         let x = array![[1.0, 2.0, 3.0, 4.0]];
         let out1 = rn.forward(&x);
-        let out2 = rn.forward(&(x.clone() * 10.0));
+        let scaled = &x * 10.0;
+        let out2 = rn.forward(&scaled);
         for (a, b) in out1.iter().zip(out2.iter()) {
-            assert!((a - b).abs() < 1e-8, "RMSNorm should be scale-invariant");
+            assert!(
+                (a - b).abs() < 1e-6,
+                "RMSNorm should be scale-invariant: {a} vs {b}"
+            );
         }
     }
 

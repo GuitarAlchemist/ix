@@ -79,3 +79,7 @@ machin-ktheory = { path = "crates/machin-ktheory", version = "0.1.0" }
 machin-topo = { path = "crates/machin-topo", version = "0.1.0" }
 machin-category = { path = "crates/machin-category", version = "0.1.0" }
 parking_lot = "0.12"
+
+# Testing & benchmarking
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }

@@ -1,8 +1,10 @@
 # MachinDeOuf
 
+[![CI](https://github.com/anthropics/MachinDeOuf/actions/workflows/ci.yml/badge.svg)](https://github.com/anthropics/MachinDeOuf/actions/workflows/ci.yml)
+
 A Rust workspace of composable ML/math algorithms, designed to be exposed as **Claude Code skills** via an MCP server and CLI.
 
-22 crates. Pure Rust. No external ML frameworks.
+27 crates. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -64,6 +66,15 @@ cargo run -p machin-agent
 |-------|-------------|
 | **machin-adversarial** | FGSM, PGD, C&W attacks, adversarial training, poisoning detection, differential privacy, robustness evaluation |
 
+### Advanced Math
+| Crate | Description |
+|-------|-------------|
+| **machin-dynamics** | Inverse kinematics chains, Lie groups/algebras (SO(3), SE(3)), neural ODEs |
+| **machin-topo** | Persistent homology, simplicial complexes, Betti numbers, topological data analysis |
+| **machin-ktheory** | Graph K-theory, Grothendieck K0/K1, Mayer-Vietoris sequences |
+| **machin-category** | Functors, natural transformations, monads, category theory primitives |
+| **machin-grammar** | Formal grammars: context-free grammars, Earley parser, CYK, Chomsky normal form |
+
 ### Infrastructure
 | Crate | Description |
 |-------|-------------|
@@ -78,6 +89,7 @@ cargo run -p machin-agent
 |-------|-------------|
 | **machin-agent** | MCP server exposing all algorithms as Claude Code tools via JSON-RPC over stdio |
 | **machin-skill** | CLI binary (`machin`) for direct command-line access to all algorithms |
+| **machin-demo** | egui desktop app with 16 interactive demo tabs (stats, regression, clustering, neural nets, chaos, GPU, transformer, etc.) |
 
 ## Claude Code Integration
 
@@ -175,8 +187,14 @@ MachinDeOuf/
     ├── machin-cache/          # Embedded cache
     ├── machin-pipeline/       # DAG executor
     ├── machin-io/             # Data I/O
+    ├── machin-dynamics/       # IK, Lie groups, neural ODEs
+    ├── machin-topo/           # Persistent homology
+    ├── machin-ktheory/        # Graph K-theory
+    ├── machin-category/       # Category theory
+    ├── machin-grammar/        # Formal grammars
     ├── machin-agent/          # MCP server
-    └── machin-skill/          # CLI binary
+    ├── machin-skill/          # CLI binary
+    └── machin-demo/           # egui demo app
 ```
 
 ## Key Dependencies
@@ -189,6 +207,25 @@ MachinDeOuf/
 - **thiserror** 2 — Error types
 - **clap** 4 — CLI parsing
 
+## Testing
+
+```bash
+# Unit + integration tests
+cargo test --workspace
+
+# Clippy (zero warnings policy)
+cargo clippy --workspace -- -D warnings
+
+# Property-based tests (proptest)
+cargo test --workspace -- --include-ignored
+
+# Benchmarks (criterion)
+cargo bench -p machin-math
+```
+
+- **proptest** for math invariants (commutativity, associativity, norm preservation)
+- **criterion** for performance-critical paths (FFT, matrix ops, GPU kernels)
+
 ## Conventions
 
 - Pure Rust (except WGPU for GPU compute)
@@ -196,6 +233,7 @@ MachinDeOuf/
 - Builder pattern for algorithm configuration
 - Seeded RNG for reproducibility
 - Each crate defines domain traits (`Regressor`, `Classifier`, `Clusterer`, `Optimizer`, etc.)
+- MSRV: Rust 1.80+ (due to wgpu 28)
 
 ## License
 
