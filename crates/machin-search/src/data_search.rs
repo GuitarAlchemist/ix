@@ -81,11 +81,11 @@ pub fn jump_search(data: &[f64], target: f64) -> Option<usize> {
     }
 
     // Linear search within block
-    for i in prev..n.min(curr + 1) {
-        if (data[i] - target).abs() < 1e-10 {
+    for (i, &val) in data.iter().enumerate().take(n.min(curr + 1)).skip(prev) {
+        if (val - target).abs() < 1e-10 {
             return Some(i);
         }
-        if data[i] > target {
+        if val > target {
             return None;
         }
     }

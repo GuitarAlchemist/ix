@@ -22,6 +22,12 @@ pub struct LruPolicy {
     free_slots: Vec<usize>,
 }
 
+impl Default for LruPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LruPolicy {
     pub fn new() -> Self {
         Self {

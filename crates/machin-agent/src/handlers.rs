@@ -142,6 +142,7 @@ pub fn optimize(params: Value) -> Result<Value, String> {
         return Err("dimensions must be >= 1".into());
     }
 
+    #[allow(clippy::type_complexity)]
     let objective: machin_optimize::traits::ClosureObjective<Box<dyn Fn(&Array1<f64>) -> f64>> =
         match func_name {
             "sphere" => machin_optimize::traits::ClosureObjective {
@@ -513,7 +514,7 @@ pub fn bloom_filter(params: Value) -> Result<Value, String> {
                 "bit_size": bf.bit_size(),
             }))
         }
-        "create" | _ => {
+        _ => {
             Ok(json!({
                 "created": true,
                 "items_count": items.len(),

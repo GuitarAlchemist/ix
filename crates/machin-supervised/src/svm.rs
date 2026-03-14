@@ -44,6 +44,7 @@ impl LinearSVM {
 }
 
 impl Classifier for LinearSVM {
+    #[allow(clippy::needless_range_loop)]
     fn fit(&mut self, x: &Array2<f64>, y: &Array1<usize>) {
         let (n, p) = x.dim();
         let mut w = Array1::zeros(p);

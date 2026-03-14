@@ -227,7 +227,7 @@ impl BimatrixGame {
         }
         let p = (b[[1, 1]] - b[[1, 0]]) / denom_p;
 
-        if p >= 0.0 && p <= 1.0 && q >= 0.0 && q <= 1.0 {
+        if (0.0..=1.0).contains(&p) && (0.0..=1.0).contains(&q) {
             Some(StrategyProfile {
                 player_a: Array1::from_vec(vec![p, 1.0 - p]),
                 player_b: Array1::from_vec(vec![q, 1.0 - q]),

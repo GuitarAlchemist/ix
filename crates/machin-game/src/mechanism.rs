@@ -47,6 +47,7 @@ impl VcgMechanism {
     }
 
     /// Run the VCG mechanism.
+    #[allow(clippy::needless_range_loop)]
     pub fn run(&self) -> VcgResult {
         let n = self.players.len();
         let k = self.num_outcomes;

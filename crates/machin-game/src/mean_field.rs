@@ -12,6 +12,7 @@ use ndarray::Array1;
 pub struct MeanFieldGame {
     pub num_actions: usize,
     /// Payoff function: takes (action, population_distribution) -> payoff
+    #[allow(clippy::type_complexity)]
     payoff_fn: Box<dyn Fn(usize, &Array1<f64>) -> f64>,
 }
 

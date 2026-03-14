@@ -41,9 +41,9 @@ pub fn save_snapshot(cache: &Cache, path: &Path) -> io::Result<usize> {
     for key in &keys {
         // Read the raw entry data by getting the JSON bytes
         // We use get::<serde_json::Value> to preserve the original type
-        if let Some(val) = cache.get::<serde_json::Value>(&key) {
+        if let Some(val) = cache.get::<serde_json::Value>(key) {
             let data = serde_json::to_vec(&val).unwrap_or_default();
-            let ttl_ms = cache.ttl(&key).map(|d| d.as_millis() as u64);
+            let ttl_ms = cache.ttl(key).map(|d| d.as_millis() as u64);
 
             entries.push(SnapshotEntry {
                 key: key.clone(),
@@ -69,7 +69,7 @@ pub fn save_snapshot(cache: &Cache, path: &Path) -> io::Result<usize> {
     let file = fs::File::create(path)?;
     let writer = BufWriter::new(file);
     serde_json::to_writer(writer, &snapshot)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
 
     Ok(num)
 }
@@ -97,7 +97,7 @@ pub fn load_snapshot(cache: &Cache, path: &Path) -> io::Result<usize> {
         let val: serde_json::Value = serde_json::from_slice(&entry.data)
             .unwrap_or(serde_json::Value::Null);
 
-        let ttl = entry.ttl_ms.map(|ms| Duration::from_millis(ms));
+        let ttl = entry.ttl_ms.map(Duration::from_millis);
         cache.set_with_ttl(&entry.key, &val, ttl);
         loaded += 1;
     }

@@ -78,7 +78,7 @@ impl DifferentialEvolution {
         let mut pop: Vec<Array1<f64>> = (0..np)
             .map(|_| Array1::from_iter((0..dim).map(|_| rng.random_range(lo..hi))))
             .collect();
-        let mut fitness: Vec<f64> = pop.iter().map(|x| fitness_fn(x)).collect();
+        let mut fitness: Vec<f64> = pop.iter().map(fitness_fn).collect();
 
         let mut fitness_history = Vec::with_capacity(self.generations);
 

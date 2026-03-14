@@ -39,8 +39,15 @@ impl Subscription {
 
 /// Pub/Sub system — manages channels and subscribers.
 pub struct PubSub {
+    #[allow(clippy::type_complexity)]
     channels: RwLock<HashMap<String, Vec<(u64, mpsc::Sender<Message>)>>>,
     next_id: RwLock<u64>,
+}
+
+impl Default for PubSub {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PubSub {
@@ -61,7 +68,7 @@ impl PubSub {
         let mut channels = self.channels.write();
         channels
             .entry(channel.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((id, tx));
 
         Subscription { receiver: rx, id }

@@ -37,6 +37,7 @@ impl EbnfGrammar {
     /// assert_eq!(g.start, "S");
     /// assert_eq!(g.alternatives("S").len(), 2);
     /// ```
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(input: &str) -> Result<Self, String> {
         let mut productions: HashMap<String, Vec<Vec<String>>> = HashMap::new();
         let mut start: Option<String> = None;

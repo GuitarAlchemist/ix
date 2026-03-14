@@ -137,7 +137,7 @@ pub fn spectral_signature_defense(
         let dim = features.ncols();
         let mut mean = Array1::<f64>::zeros(dim);
         for &i in &class_indices {
-            mean = mean + &features.row(i).to_owned();
+            mean += &features.row(i).to_owned();
         }
         mean /= class_n as f64;
 
@@ -154,7 +154,7 @@ pub fn spectral_signature_defense(
             let mut new_v = Array1::<f64>::zeros(dim);
             for row in &centered {
                 let proj = row.dot(&v);
-                new_v = new_v + &(row * proj);
+                new_v += &(row * proj);
             }
             let norm = new_v.mapv(|x| x * x).sum().sqrt().max(1e-12);
             v = new_v / norm;

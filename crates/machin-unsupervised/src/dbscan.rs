@@ -94,10 +94,10 @@ impl Clusterer for DBSCAN {
                 if q_neighbors.len() >= self.min_points {
                     // q is a core point; add its neighbors to the seed set
                     for &neighbor in &q_neighbors {
-                        if labels[neighbor] == UNDEFINED || labels[neighbor] == NOISE {
-                            if !seed_set.contains(&neighbor) {
-                                seed_set.push(neighbor);
-                            }
+                        if (labels[neighbor] == UNDEFINED || labels[neighbor] == NOISE)
+                            && !seed_set.contains(&neighbor)
+                        {
+                            seed_set.push(neighbor);
                         }
                     }
                 }

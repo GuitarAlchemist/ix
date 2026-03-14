@@ -93,11 +93,11 @@ impl Clusterer for KMeans {
                 }
             }
 
-            for c in 0..self.k {
-                if counts[c] > 0 {
+            for (c, &count) in counts.iter().enumerate().take(self.k) {
+                if count > 0 {
                     new_centroids
                         .row_mut(c)
-                        .mapv_inplace(|v| v / counts[c] as f64);
+                        .mapv_inplace(|v| v / count as f64);
                 }
             }
 

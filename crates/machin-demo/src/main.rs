@@ -37,6 +37,7 @@ enum Tab {
     GameTheory,
     Probabilistic,
     GpuKernels,
+    Transformer,
 }
 
 impl Tab {
@@ -55,6 +56,7 @@ impl Tab {
         Tab::GameTheory,
         Tab::Probabilistic,
         Tab::GpuKernels,
+        Tab::Transformer,
     ];
 
     fn label(self) -> &'static str {
@@ -73,6 +75,7 @@ impl Tab {
             Tab::GameTheory => "Game Theory",
             Tab::Probabilistic => "Probabilistic",
             Tab::GpuKernels => "GPU Kernels",
+            Tab::Transformer => "Transformer",
         }
     }
 }
@@ -93,6 +96,7 @@ struct MachinApp {
     game_demo: demos::game_theory::GameTheoryDemo,
     prob_demo: demos::probabilistic::ProbabilisticDemo,
     gpu_demo: demos::gpu_kernels::GpuKernelsDemo,
+    transformer_demo: demos::transformer::TransformerDemo,
 }
 
 impl Default for MachinApp {
@@ -113,6 +117,7 @@ impl Default for MachinApp {
             game_demo: demos::game_theory::GameTheoryDemo::default(),
             prob_demo: demos::probabilistic::ProbabilisticDemo::default(),
             gpu_demo: demos::gpu_kernels::GpuKernelsDemo::default(),
+            transformer_demo: demos::transformer::TransformerDemo::default(),
         }
     }
 }
@@ -146,6 +151,7 @@ impl eframe::App for MachinApp {
                     Tab::GameTheory => self.game_demo.ui(ui),
                     Tab::Probabilistic => self.prob_demo.ui(ui),
                     Tab::GpuKernels => self.gpu_demo.ui(ui),
+                    Tab::Transformer => self.transformer_demo.ui(ui),
                 }
             });
         });

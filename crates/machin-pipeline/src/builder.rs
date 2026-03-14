@@ -139,7 +139,7 @@ impl PipelineBuilder {
 
         let mut auto = Vec::new();
         for (id, node) in &self.nodes {
-            for (_, (source, _)) in &node.input_map {
+            for (source, _) in node.input_map.values() {
                 if node_ids.contains(source) {
                     let edge = (source.clone(), id.clone());
                     if !self.edges.contains(&edge) {

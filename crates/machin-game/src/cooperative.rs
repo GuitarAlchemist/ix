@@ -46,6 +46,7 @@ impl CooperativeGame {
     ///
     /// phi_i = sum over S not containing i:
     ///   |S|!(n-|S|-1)! / n! * [v(S ∪ {i}) - v(S)]
+    #[allow(clippy::needless_range_loop)]
     pub fn shapley_value(&self) -> Vec<f64> {
         let n = self.num_players;
         let n_fact = factorial(n);
@@ -124,6 +125,7 @@ impl CooperativeGame {
     /// Compute the Banzhaf power index.
     ///
     /// Measures voting power: how often a player is a swing voter.
+    #[allow(clippy::needless_range_loop)]
     pub fn banzhaf_index(&self) -> Vec<f64> {
         let n = self.num_players;
         let mut power = vec![0.0; n];

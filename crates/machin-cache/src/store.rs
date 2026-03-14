@@ -197,7 +197,7 @@ impl Cache {
         shard.entries.insert(key.to_string(), entry);
 
         // Notify pub/sub
-        self.pubsub.publish(&format!("__keyevent__:set"), key);
+        self.pubsub.publish("__keyevent__:set", key);
     }
 
     /// Set a raw string value (Redis-compatible convenience).
@@ -211,7 +211,7 @@ impl Cache {
         let mut shard = self.shards[idx].write();
 
         // Check expiration first
-        let expired = shard.entries.get(key).map_or(false, |e| e.is_expired());
+        let expired = shard.entries.get(key).is_some_and(|e| e.is_expired());
         if expired {
             shard.entries.remove(key);
             shard.lru.remove(key);
@@ -243,7 +243,7 @@ impl Cache {
     pub fn contains(&self, key: &str) -> bool {
         let idx = self.shard_index(key);
         let shard = self.shards[idx].read();
-        shard.entries.get(key).map_or(false, |e| !e.is_expired())
+        shard.entries.get(key).is_some_and(|e| !e.is_expired())
     }
 
     /// Delete a key. Returns true if it existed.
@@ -254,7 +254,7 @@ impl Cache {
         let removed = shard.entries.remove(key).is_some();
 
         if removed {
-            self.pubsub.publish(&format!("__keyevent__:del"), key);
+            self.pubsub.publish("__keyevent__:del", key);
         }
 
         removed

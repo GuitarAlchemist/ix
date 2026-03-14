@@ -12,3 +12,4 @@ pub mod search;
 pub mod game_theory;
 pub mod probabilistic;
 pub mod gpu_kernels;
+pub mod transformer;

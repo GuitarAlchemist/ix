@@ -38,8 +38,8 @@ pub fn dct2_normalized(x: &[f64]) -> Vec<f64> {
     let n = x.len() as f64;
     let mut result = dct2(x);
     result[0] *= (1.0 / n).sqrt();
-    for k in 1..result.len() {
-        result[k] *= (2.0 / n).sqrt();
+    for val in result.iter_mut().skip(1) {
+        *val *= (2.0 / n).sqrt();
     }
     result
 }

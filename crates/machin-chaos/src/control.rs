@@ -13,6 +13,7 @@
 /// `x0`: initial state.
 /// `steps`: number of iterations.
 /// `control_start`: step at which to begin control.
+#[allow(clippy::too_many_arguments)]
 pub fn ogy_control<F>(
     map: F,
     target: f64,

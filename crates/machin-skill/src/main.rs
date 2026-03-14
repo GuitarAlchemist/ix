@@ -241,6 +241,7 @@ fn run_optimize(algo: &str, function: &str, dim: usize, max_iter: usize) {
     use machin_optimize::traits::ClosureObjective;
     use machin_math::ndarray::Array1;
 
+    #[allow(clippy::type_complexity)]
     let obj: ClosureObjective<Box<dyn Fn(&Array1<f64>) -> f64>> = match function {
         "sphere" => ClosureObjective {
             f: Box::new(|x: &Array1<f64>| x.mapv(|v| v * v).sum()),
