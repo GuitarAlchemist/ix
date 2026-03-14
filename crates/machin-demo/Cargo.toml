@@ -1,0 +1,34 @@
+[package]
+name = "machin-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Interactive demo UI for MachinDeOuf ML algorithms"
+
+[[bin]]
+name = "machin-demo"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.31"
+egui_plot = "0.31"
+ndarray = { workspace = true }
+rand = { workspace = true }
+rand_distr = { workspace = true }
+
+# Internal crates
+machin-math = { workspace = true }
+machin-optimize = { workspace = true }
+machin-supervised = { workspace = true }
+machin-unsupervised = { workspace = true }
+machin-nn = { workspace = true }
+machin-rl = { workspace = true }
+machin-evolution = { workspace = true }
+machin-signal = { workspace = true }
+machin-chaos = { workspace = true }
+machin-dynamics = { workspace = true }
+machin-graph = { workspace = true }
+machin-gpu = { workspace = true }
+machin-probabilistic = { workspace = true }
+machin-search = { workspace = true }
+machin-game = { workspace = true }

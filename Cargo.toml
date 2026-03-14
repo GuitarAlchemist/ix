@@ -27,6 +27,7 @@ members = [
     "crates/machin-topo",
     "crates/machin-category",
     "crates/machin-skill",
+    "crates/machin-demo",
 ]
 
 [workspace.package]

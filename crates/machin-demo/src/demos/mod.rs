@@ -1,0 +1,14 @@
+pub mod stats;
+pub mod regression;
+pub mod clustering;
+pub mod neural_net;
+pub mod optimization;
+pub mod chaos;
+pub mod signal;
+pub mod ik_chain;
+pub mod evolution;
+pub mod reinforcement;
+pub mod search;
+pub mod game_theory;
+pub mod probabilistic;
+pub mod gpu_kernels;
