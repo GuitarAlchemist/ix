@@ -10,3 +10,5 @@ pub mod fractal;
 pub mod embedding;
 pub mod poincare_map;
 pub mod control;
+pub mod takagi;
+pub mod de_rham;
