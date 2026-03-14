@@ -1,0 +1,10 @@
+[package]
+name = "machin-topo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Topological data analysis: simplicial complexes, persistent homology"
+
+[dependencies]
+ndarray = { workspace = true }
+thiserror = { workspace = true }

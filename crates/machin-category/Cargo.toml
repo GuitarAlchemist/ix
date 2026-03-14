@@ -1,0 +1,9 @@
+[package]
+name = "machin-category"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Category theory primitives: categories, functors, natural transformations"
+
+[dependencies]
+ndarray = { workspace = true }

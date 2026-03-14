@@ -24,6 +24,8 @@ members = [
     "crates/machin-agent",
     "crates/machin-dynamics",
     "crates/machin-ktheory",
+    "crates/machin-topo",
+    "crates/machin-category",
     "crates/machin-skill",
 ]
 
@@ -73,4 +75,6 @@ machin-grammar = { path = "crates/machin-grammar", version = "0.1.0" }
 machin-agent = { path = "crates/machin-agent", version = "0.1.0" }
 machin-dynamics = { path = "crates/machin-dynamics", version = "0.1.0" }
 machin-ktheory = { path = "crates/machin-ktheory", version = "0.1.0" }
+machin-topo = { path = "crates/machin-topo", version = "0.1.0" }
+machin-category = { path = "crates/machin-category", version = "0.1.0" }
 parking_lot = "0.12"

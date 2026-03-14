@@ -4,4 +4,5 @@
 //! Lie groups/algebras for rigid body transformations.
 
 pub mod lie;
+pub mod neural_ode;
 pub mod error;
