@@ -14,6 +14,8 @@ pub mod quaternion;
 pub mod dual_quaternion;
 pub mod plucker;
 pub mod primes;
+pub mod sedenion;
+pub mod bsp;
 pub mod error;
 
 pub use ndarray;
