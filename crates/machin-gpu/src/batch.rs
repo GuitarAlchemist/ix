@@ -214,4 +214,115 @@ mod tests {
         assert_eq!(results[0][0].0, 0); // Query [1,0] most similar to corpus [1,0]
         assert_eq!(results[1][0].0, 1); // Query [0,1] most similar to corpus [0,1]
     }
+
+    #[test]
+    fn test_similarity_matrix_empty() {
+        let matrix = similarity_matrix_cpu(&[]);
+        assert!(matrix.is_empty());
+    }
+
+    #[test]
+    fn test_similarity_matrix_single_vector() {
+        let vectors = vec![vec![1.0, 2.0, 3.0]];
+        let matrix = similarity_matrix_cpu(&vectors);
+        assert_eq!(matrix.len(), 1);
+        assert!((matrix[0][0] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_similarity_matrix_symmetry() {
+        let vectors = vec![
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![1.0, 1.0],
+        ];
+        let matrix = similarity_matrix_cpu(&vectors);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((matrix[i][j] - matrix[j][i]).abs() < 1e-10,
+                    "similarity matrix should be symmetric");
+            }
+        }
+    }
+
+    #[test]
+    fn test_similarity_matrix_diagonal_is_one() {
+        let vectors = vec![
+            vec![1.0, 2.0, 3.0],
+            vec![4.0, 5.0, 6.0],
+            vec![-1.0, 0.0, 1.0],
+        ];
+        let matrix = similarity_matrix_cpu(&vectors);
+        for i in 0..3 {
+            assert!((matrix[i][i] - 1.0).abs() < 1e-5,
+                "diagonal should be 1.0 (self-similarity)");
+        }
+    }
+
+    #[test]
+    fn test_top_k_all() {
+        let query = vec![1.0, 0.0];
+        let corpus = vec![
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+        ];
+        let results = top_k_similar(None, &query, &corpus, 10);
+        assert_eq!(results.len(), 2); // truncated to corpus size
+    }
+
+    #[test]
+    fn test_top_k_ordering() {
+        let query = vec![1.0, 0.0, 0.0];
+        let corpus = vec![
+            vec![0.0, 1.0, 0.0],   // orthogonal (sim ≈ 0)
+            vec![1.0, 0.1, 0.0],   // very similar
+            vec![-1.0, 0.0, 0.0],  // opposite (sim ≈ -1)
+            vec![0.9, 0.3, 0.0],   // similar
+        ];
+        let results = top_k_similar(None, &query, &corpus, 4);
+        // Should be sorted descending by similarity
+        for i in 0..results.len() - 1 {
+            assert!(results[i].1 >= results[i + 1].1,
+                "results should be sorted descending by similarity");
+        }
+    }
+
+    #[test]
+    fn test_batch_top_k_empty_queries() {
+        let corpus = vec![vec![1.0, 0.0]];
+        let results = batch_top_k(None, &[], &corpus, 1);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_batch_top_k_empty_corpus() {
+        let queries = vec![vec![1.0, 0.0]];
+        let results = batch_top_k(None, &queries, &[], 1);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_empty());
+    }
+
+    #[test]
+    fn test_batch_top_k_multiple_k() {
+        let queries = vec![vec![1.0, 0.0]];
+        let corpus = vec![
+            vec![1.0, 0.0],
+            vec![0.9, 0.1],
+            vec![0.0, 1.0],
+        ];
+        let results = batch_top_k(None, &queries, &corpus, 2);
+        assert_eq!(results[0].len(), 2);
+        assert_eq!(results[0][0].0, 0); // most similar
+    }
+
+    #[test]
+    fn test_similarity_matrix_with_context_none() {
+        let vectors = vec![
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+        ];
+        let matrix = similarity_matrix(None, &vectors);
+        assert!((matrix[0][1]).abs() < 1e-5); // orthogonal
+        assert!((matrix[0][0] - 1.0).abs() < 1e-5); // self
+    }
 }

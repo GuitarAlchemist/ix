@@ -149,7 +149,7 @@ pub fn cosine_similarity_gpu(ctx: &GpuContext, a: &[f32], b: &[f32]) -> f32 {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         // Dispatch enough workgroups to cover the data
-        let workgroups = ((a.len() as u32) + 255) / 256;
+        let workgroups = (a.len() as u32).div_ceil(256);
         pass.dispatch_workgroups(workgroups.min(1), 1, 1); // Single workgroup for reduction
     }
 
@@ -258,6 +258,63 @@ mod tests {
         let b = vec![-1.0, -2.0, -3.0];
         let sim = cosine_similarity_cpu(&a, &b);
         assert!((sim - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_cpu_cosine_parallel() {
+        let a = vec![3.0, 4.0, 0.0];
+        let b = vec![6.0, 8.0, 0.0]; // same direction, different magnitude
+        let sim = cosine_similarity_cpu(&a, &b);
+        assert!((sim - 1.0).abs() < 1e-5, "parallel vectors should have similarity 1.0");
+    }
+
+    #[test]
+    fn test_cpu_cosine_zero_vector() {
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 2.0, 3.0];
+        let sim = cosine_similarity_cpu(&a, &b);
+        assert_eq!(sim, 0.0, "zero vector should give similarity 0");
+    }
+
+    #[test]
+    fn test_cpu_cosine_single_element() {
+        let sim = cosine_similarity_cpu(&[5.0], &[3.0]);
+        assert!((sim - 1.0).abs() < 1e-5);
+        let sim_neg = cosine_similarity_cpu(&[5.0], &[-3.0]);
+        assert!((sim_neg - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_cpu_cosine_symmetry() {
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, -1.0, 2.0];
+        let sim_ab = cosine_similarity_cpu(&a, &b);
+        let sim_ba = cosine_similarity_cpu(&b, &a);
+        assert!((sim_ab - sim_ba).abs() < 1e-10, "cosine similarity should be symmetric");
+    }
+
+    #[test]
+    fn test_cpu_euclidean_distance_zero() {
+        let a = vec![1.0, 2.0, 3.0];
+        let d = euclidean_distance_cpu(&a, &a);
+        assert!(d < 1e-10);
+    }
+
+    #[test]
+    fn test_cpu_euclidean_distance_known() {
+        let a = vec![0.0, 0.0];
+        let b = vec![3.0, 4.0];
+        let d = euclidean_distance_cpu(&a, &b);
+        assert!((d - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_cpu_euclidean_distance_symmetry() {
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 6.0, 8.0];
+        let d_ab = euclidean_distance_cpu(&a, &b);
+        let d_ba = euclidean_distance_cpu(&b, &a);
+        assert!((d_ab - d_ba).abs() < 1e-10);
     }
 
     // GPU tests require actual GPU hardware — run with `cargo test --features gpu_tests`

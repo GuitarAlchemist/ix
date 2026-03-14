@@ -104,8 +104,8 @@ pub fn matmul_gpu(ctx: &GpuContext, a: &[f32], b: &[f32], m: usize, k: usize, n:
         });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
-        let wg_x = (m as u32 + 15) / 16;
-        let wg_y = (n as u32 + 15) / 16;
+        let wg_x = (m as u32).div_ceil(16);
+        let wg_y = (n as u32).div_ceil(16);
         pass.dispatch_workgroups(wg_x, wg_y, 1);
     }
 
@@ -162,5 +162,61 @@ mod tests {
         let b = vec![1.0, 1.0, 1.0];
         let c = matmul_cpu(&a, &b, 2, 3, 1);
         assert_eq!(c, vec![6.0, 15.0]);
+    }
+
+    #[test]
+    fn test_cpu_matmul_zero_matrix() {
+        let a = vec![0.0; 4];
+        let b = vec![1.0, 2.0, 3.0, 4.0];
+        let c = matmul_cpu(&a, &b, 2, 2, 2);
+        assert!(c.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn test_cpu_matmul_1x1() {
+        let c = matmul_cpu(&[3.0], &[4.0], 1, 1, 1);
+        assert_eq!(c, vec![12.0]);
+    }
+
+    #[test]
+    fn test_cpu_matmul_row_times_col() {
+        // 1×3 × 3×1 = 1×1 (dot product)
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 5.0, 6.0];
+        let c = matmul_cpu(&a, &b, 1, 3, 1);
+        assert_eq!(c, vec![32.0]); // 4+10+18
+    }
+
+    #[test]
+    fn test_cpu_matmul_col_times_row() {
+        // 3×1 × 1×3 = 3×3 (outer product)
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 5.0, 6.0];
+        let c = matmul_cpu(&a, &b, 3, 1, 3);
+        assert_eq!(c, vec![4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 12.0, 15.0, 18.0]);
+    }
+
+    #[test]
+    fn test_cpu_matmul_associativity() {
+        // (A × B) × C == A × (B × C)
+        let a = vec![1.0, 2.0, 3.0, 4.0];
+        let b = vec![5.0, 6.0, 7.0, 8.0];
+        let c = vec![1.0, 0.0, 0.0, 1.0];
+        let ab = matmul_cpu(&a, &b, 2, 2, 2);
+        let ab_c = matmul_cpu(&ab, &c, 2, 2, 2);
+        let bc = matmul_cpu(&b, &c, 2, 2, 2);
+        let a_bc = matmul_cpu(&a, &bc, 2, 2, 2);
+        for (x, y) in ab_c.iter().zip(a_bc.iter()) {
+            assert!((x - y).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_cpu_matmul_larger() {
+        // 3×3 identity × 3×2 = 3×2 unchanged
+        let eye = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let b = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let c = matmul_cpu(&eye, &b, 3, 3, 2);
+        assert_eq!(c, b);
     }
 }

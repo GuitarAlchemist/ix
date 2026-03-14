@@ -5,4 +5,5 @@
 
 pub mod lie;
 pub mod neural_ode;
+pub mod ik;
 pub mod error;

@@ -7,3 +7,8 @@ pub mod context;
 pub mod similarity;
 pub mod matmul;
 pub mod batch;
+pub mod quaternion;
+pub mod distance;
+pub mod sedenion;
+pub mod knn;
+pub mod rips;
