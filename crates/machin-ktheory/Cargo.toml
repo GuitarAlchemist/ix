@@ -1,0 +1,10 @@
+[package]
+name = "machin-ktheory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Algebraic K-theory: K0/K1 from graphs, Mayer-Vietoris consistency"
+
+[dependencies]
+ndarray = { workspace = true }
+thiserror = { workspace = true }

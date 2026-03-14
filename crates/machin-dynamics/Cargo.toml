@@ -1,0 +1,11 @@
+[package]
+name = "machin-dynamics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Continuous dynamics: Lie groups/algebras, Neural ODEs"
+
+[dependencies]
+ndarray = { workspace = true }
+machin-math = { workspace = true }
+thiserror = { workspace = true }
