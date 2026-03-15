@@ -38,6 +38,7 @@ ix-fractal = { workspace = true }
 ix-sedenion = { workspace = true }
 ix-topo = { workspace = true }
 ix-category = { workspace = true }
+ix-governance = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

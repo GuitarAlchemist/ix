@@ -1,0 +1,3 @@
+[submodule "governance/demerzel"]
+	path = governance/demerzel
+	url = https://github.com/GuitarAlchemist/Demerzel.git

@@ -1540,3 +1540,313 @@ pub fn cache_op(params: Value) -> Result<Value, String> {
         _ => Err(format!("Unknown cache operation: {}", operation)),
     }
 }
+
+// ── governance helpers ─────────────────────────────────────
+
+fn governance_dir() -> std::path::PathBuf {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(manifest).join("../../governance/demerzel")
+}
+
+fn workspace_root() -> std::path::PathBuf {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(manifest).join("../..")
+}
+
+// ── ix_governance_check ────────────────────────────────────
+
+pub fn governance_check(params: Value) -> Result<Value, String> {
+    let action = parse_str(&params, "action")?;
+    let _context = params.get("context").and_then(|v| v.as_str()).unwrap_or("");
+
+    let constitution_path = governance_dir().join("constitutions/default.constitution.md");
+    let constitution = ix_governance::Constitution::load(&constitution_path)
+        .map_err(|e| format!("Failed to load constitution: {}", e))?;
+
+    let result = constitution.check_action(action);
+
+    Ok(json!({
+        "compliant": result.compliant,
+        "relevant_articles": result.relevant_articles.iter().map(|a| json!({
+            "number": a.number,
+            "name": a.name,
+            "relevance": a.relevance,
+        })).collect::<Vec<_>>(),
+        "warnings": result.warnings,
+        "constitution_version": constitution.version,
+        "total_articles": constitution.articles.len(),
+    }))
+}
+
+// ── ix_governance_persona ──────────────────────────────────
+
+pub fn governance_persona(params: Value) -> Result<Value, String> {
+    let name = parse_str(&params, "persona")?;
+
+    let personas_dir = governance_dir().join("personas");
+    let persona = ix_governance::Persona::load_by_name(&personas_dir, name)
+        .map_err(|e| format!("Failed to load persona '{}': {}", name, e))?;
+
+    let mut result = json!({
+        "name": persona.name,
+        "version": persona.version,
+        "description": persona.description,
+        "role": persona.role,
+        "domain": persona.domain,
+        "capabilities": persona.capabilities,
+        "constraints": persona.constraints,
+        "voice": {
+            "tone": persona.voice.tone,
+            "verbosity": persona.voice.verbosity,
+            "style": persona.voice.style,
+        },
+    });
+
+    if let Some(patterns) = &persona.interaction_patterns {
+        result["interaction_patterns"] = json!({
+            "with_humans": patterns.with_humans,
+            "with_agents": patterns.with_agents,
+        });
+    }
+
+    if let Some(prov) = &persona.provenance {
+        result["provenance"] = json!({
+            "source": prov.source,
+            "extraction_date": prov.extraction_date,
+            "archetype": prov.archetype,
+        });
+    }
+
+    Ok(result)
+}
+
+// ── ix_governance_belief ───────────────────────────────────
+
+pub fn governance_belief(params: Value) -> Result<Value, String> {
+    let operation = parse_str(&params, "operation")?;
+    let proposition = parse_str(&params, "proposition")?;
+
+    fn parse_truth_value(s: &str) -> Result<ix_governance::TruthValue, String> {
+        match s {
+            "T" => Ok(ix_governance::TruthValue::True),
+            "F" => Ok(ix_governance::TruthValue::False),
+            "U" => Ok(ix_governance::TruthValue::Unknown),
+            "C" => Ok(ix_governance::TruthValue::Contradictory),
+            _ => Err(format!("Invalid truth value '{}': use T, F, U, or C", s)),
+        }
+    }
+
+    let tv_str = params.get("truth_value").and_then(|v| v.as_str()).unwrap_or("U");
+    let tv = parse_truth_value(tv_str)?;
+    let confidence = params.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+
+    let supporting: Vec<String> = params
+        .get("supporting")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let contradicting: Vec<String> = params
+        .get("contradicting")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    match operation {
+        "create" | "update" => {
+            let mut belief = ix_governance::BeliefState::new(proposition, tv, confidence);
+            for claim in &supporting {
+                belief.add_supporting(ix_governance::EvidenceItem {
+                    source: "user".to_string(),
+                    claim: claim.clone(),
+                });
+            }
+            for claim in &contradicting {
+                belief.add_contradicting(ix_governance::EvidenceItem {
+                    source: "user".to_string(),
+                    claim: claim.clone(),
+                });
+            }
+
+            Ok(json!({
+                "proposition": belief.proposition,
+                "truth_value": format!("{}", belief.truth_value),
+                "confidence": belief.confidence,
+                "supporting_count": belief.supporting.len(),
+                "contradicting_count": belief.contradicting.len(),
+                "resolved_action": format!("{:?}", belief.resolve()),
+            }))
+        }
+        "resolve" => {
+            let belief = ix_governance::BeliefState::new(proposition, tv, confidence);
+            let action = belief.resolve();
+            Ok(json!({
+                "proposition": belief.proposition,
+                "truth_value": format!("{}", belief.truth_value),
+                "resolved_action": format!("{:?}", action),
+                "explanation": match action {
+                    ix_governance::ResolvedAction::Proceed => "Belief is verified — safe to proceed",
+                    ix_governance::ResolvedAction::DoNotProceed => "Belief is refuted — do not proceed",
+                    ix_governance::ResolvedAction::GatherEvidence => "Insufficient evidence — gather more before deciding",
+                    ix_governance::ResolvedAction::Escalate => "Contradictory evidence — escalate to human",
+                },
+            }))
+        }
+        _ => Err(format!("Unknown belief operation: {}. Use 'create', 'update', or 'resolve'", operation)),
+    }
+}
+
+// ── ix_governance_policy ───────────────────────────────────
+
+pub fn governance_policy(params: Value) -> Result<Value, String> {
+    let policy_name = parse_str(&params, "policy")?;
+    let query = params.get("query").and_then(|v| v.as_str());
+
+    let policies_dir = governance_dir().join("policies");
+
+    let filename = match policy_name {
+        "alignment" => "alignment-policy.yaml",
+        "rollback" => "rollback-policy.yaml",
+        "self-modification" => "self-modification-policy.yaml",
+        _ => return Err(format!("Unknown policy: {}. Use 'alignment', 'rollback', or 'self-modification'", policy_name)),
+    };
+
+    let path = policies_dir.join(filename);
+
+    // For alignment, use strongly-typed parsing
+    if policy_name == "alignment" {
+        let ap = ix_governance::AlignmentPolicy::load(&path)
+            .map_err(|e| format!("Failed to load alignment policy: {}", e))?;
+
+        return match query {
+            Some("thresholds") => Ok(json!({
+                "policy": "alignment",
+                "thresholds": {
+                    "proceed_autonomously": ap.confidence_thresholds.proceed_autonomously,
+                    "proceed_with_note": ap.confidence_thresholds.proceed_with_note,
+                    "ask_for_confirmation": ap.confidence_thresholds.ask_for_confirmation,
+                    "escalate_to_human": ap.confidence_thresholds.escalate_to_human,
+                },
+            })),
+            Some("triggers") => Ok(json!({
+                "policy": "alignment",
+                "escalation_triggers": ap.escalation_triggers,
+            })),
+            _ => Ok(json!({
+                "policy": "alignment",
+                "name": ap.name,
+                "version": ap.version,
+                "description": ap.description,
+                "thresholds": {
+                    "proceed_autonomously": ap.confidence_thresholds.proceed_autonomously,
+                    "proceed_with_note": ap.confidence_thresholds.proceed_with_note,
+                    "ask_for_confirmation": ap.confidence_thresholds.ask_for_confirmation,
+                    "escalate_to_human": ap.confidence_thresholds.escalate_to_human,
+                },
+                "escalation_triggers": ap.escalation_triggers,
+            })),
+        };
+    }
+
+    // For other policies, use generic parsing
+    let policy = ix_governance::Policy::load(&path)
+        .map_err(|e| format!("Failed to load policy '{}': {}", policy_name, e))?;
+
+    match query {
+        Some("thresholds") | Some("triggers") | Some("allowed") => {
+            // Return the extra fields which contain policy-specific data
+            Ok(json!({
+                "policy": policy_name,
+                "name": policy.name,
+                "version": policy.version,
+                "query": query,
+                "data": policy.extra,
+            }))
+        }
+        _ => Ok(json!({
+            "policy": policy_name,
+            "name": policy.name,
+            "version": policy.version,
+            "description": policy.description,
+            "data": policy.extra,
+        })),
+    }
+}
+
+// ── ix_federation_discover ─────────────────────────────────
+
+pub fn federation_discover(params: Value) -> Result<Value, String> {
+    let domain_filter = params.get("domain").and_then(|v| v.as_str());
+    let query_filter = params.get("query").and_then(|v| v.as_str());
+
+    let registry_path = workspace_root().join("governance/capability-registry.json");
+    let content = std::fs::read_to_string(&registry_path)
+        .map_err(|e| format!("Failed to read capability registry: {}", e))?;
+    let registry: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse capability registry: {}", e))?;
+
+    let repos = registry.get("repos").and_then(|v| v.as_object())
+        .ok_or_else(|| "Invalid registry: missing 'repos'".to_string())?;
+
+    let mut results = Vec::new();
+
+    for (repo_name, repo_info) in repos {
+        let description = repo_info.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        let domains: Vec<&str> = repo_info.get("domains")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        // Filter by domain
+        if let Some(d) = domain_filter {
+            if !domains.iter().any(|dom| dom.contains(d)) {
+                continue;
+            }
+        }
+
+        let tools = repo_info.get("tools").and_then(|v| v.as_object());
+
+        // Filter by query (search in tool names)
+        let mut matching_tools: Value = json!(tools);
+        if let Some(q) = query_filter {
+            let q_lower = q.to_lowercase();
+            if let Some(tool_map) = tools {
+                let filtered: serde_json::Map<String, Value> = tool_map.iter()
+                    .filter(|(cat, tools_arr)| {
+                        cat.contains(&q_lower) || tools_arr.as_array()
+                            .map(|arr| arr.iter().any(|t| {
+                                t.as_str().map(|s| s.to_lowercase().contains(&q_lower)).unwrap_or(false)
+                            }))
+                            .unwrap_or(false)
+                    })
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                if filtered.is_empty() {
+                    continue;
+                }
+                matching_tools = Value::Object(filtered);
+            }
+        }
+
+        results.push(json!({
+            "repo": repo_name,
+            "description": description,
+            "domains": domains,
+            "tools": matching_tools,
+        }));
+    }
+
+    let mut response = json!({
+        "results": results,
+        "total_repos": results.len(),
+    });
+
+    // Include roadblock resolution strategies if present
+    if domain_filter.is_none() && query_filter.is_none() {
+        if let Some(strategies) = registry.get("roadblock_resolution") {
+            response["roadblock_resolution"] = strategies.clone();
+        }
+    }
+
+    Ok(response)
+}

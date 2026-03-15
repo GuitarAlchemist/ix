@@ -902,5 +902,125 @@ impl ToolRegistry {
             }),
             handler: handlers::cache_op,
         });
+
+        // ── Governance & federation tools ─────────────────────────────
+
+        self.tools.push(Tool {
+            name: "ix_governance_check",
+            description: "Check a proposed action against the Demerzel constitution for compliance",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "The proposed action to check for compliance"
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context for the action"
+                    }
+                },
+                "required": ["action"]
+            }),
+            handler: handlers::governance_check,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_governance_persona",
+            description: "Load a Demerzel persona by name — returns capabilities, constraints, voice, interaction patterns",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "persona": {
+                        "type": "string",
+                        "enum": ["default", "kaizen-optimizer", "reflective-architect", "skeptical-auditor", "system-integrator"],
+                        "description": "Persona name to load"
+                    }
+                },
+                "required": ["persona"]
+            }),
+            handler: handlers::governance_persona,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_governance_belief",
+            description: "Manage beliefs with tetravalent logic (True/False/Unknown/Contradictory)",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["create", "update", "resolve"],
+                        "description": "Belief operation"
+                    },
+                    "proposition": {
+                        "type": "string",
+                        "description": "The proposition to evaluate"
+                    },
+                    "truth_value": {
+                        "type": "string",
+                        "enum": ["T", "F", "U", "C"],
+                        "description": "Initial truth value (True/False/Unknown/Contradictory)"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "Confidence level 0.0–1.0"
+                    },
+                    "supporting": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Supporting evidence claims"
+                    },
+                    "contradicting": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Contradicting evidence claims"
+                    }
+                },
+                "required": ["operation", "proposition"]
+            }),
+            handler: handlers::governance_belief,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_governance_policy",
+            description: "Query Demerzel governance policies — alignment thresholds, rollback triggers, self-modification rules",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "policy": {
+                        "type": "string",
+                        "enum": ["alignment", "rollback", "self-modification"],
+                        "description": "Policy to query"
+                    },
+                    "query": {
+                        "type": "string",
+                        "enum": ["thresholds", "triggers", "allowed"],
+                        "description": "What aspect of the policy to query"
+                    }
+                },
+                "required": ["policy"]
+            }),
+            handler: handlers::governance_policy,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_federation_discover",
+            description: "Discover capabilities across the GuitarAlchemist ecosystem (ix, tars, ga)",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Filter by domain (e.g. 'math', 'grammar', 'music-theory')"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Free-text search across tool names and descriptions"
+                    }
+                }
+            }),
+            handler: handlers::federation_discover,
+        });
     }
 }

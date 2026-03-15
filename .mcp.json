@@ -7,6 +7,14 @@
     "ix": {
       "command": "cargo",
       "args": ["run", "--release", "-p", "ix-agent"]
+    },
+    "tars": {
+      "command": "dotnet",
+      "args": ["run", "--project", "C:/Users/spare/source/repos/tars/v2/src/Tars.Interface.Cli/Tars.Interface.Cli.fsproj", "--", "mcp", "server"]
+    },
+    "ga": {
+      "command": "dotnet",
+      "args": ["run", "--project", "C:/Users/spare/source/repos/ga/GaMcpServer/GaMcpServer.csproj", "--no-build", "--"]
     }
   }
 }

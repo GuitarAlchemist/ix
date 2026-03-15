@@ -32,6 +32,7 @@ members = [
     "crates/ix-number-theory",
     "crates/ix-skill",
     "crates/ix-demo",
+    "crates/ix-governance",
 ]
 
 [workspace.package]
@@ -88,6 +89,8 @@ ix-rotation = { path = "crates/ix-rotation", version = "0.1.0" }
 ix-sedenion = { path = "crates/ix-sedenion", version = "0.1.0" }
 ix-fractal = { path = "crates/ix-fractal", version = "0.1.0" }
 ix-number-theory = { path = "crates/ix-number-theory", version = "0.1.0" }
+ix-governance = { path = "crates/ix-governance", version = "0.1.0" }
+serde_yaml = "0.9"
 parking_lot = "0.12"
 
 # Testing & benchmarking
