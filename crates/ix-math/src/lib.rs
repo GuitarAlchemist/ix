@@ -17,5 +17,6 @@ pub mod primes;
 pub mod sedenion;
 pub mod bsp;
 pub mod error;
+pub mod preprocessing;
 
 pub use ndarray;

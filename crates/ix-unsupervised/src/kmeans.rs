@@ -4,9 +4,19 @@ use ndarray::{Array1, Array2};
 use rand::Rng;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use serde::{Deserialize, Serialize};
 
 use crate::traits::Clusterer;
 use ix_math::distance::euclidean_squared;
+
+/// Serializable state for a fitted [`KMeans`] model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KMeansState {
+    /// Centroid coordinates: `k` rows, each a feature vector.
+    pub centroids: Vec<Vec<f64>>,
+    /// Number of clusters.
+    pub k: usize,
+}
 
 /// K-Means clustering.
 pub struct KMeans {
@@ -29,6 +39,35 @@ impl KMeans {
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
+    }
+
+    /// Save the trained model state. Returns `None` if the model has not been fitted.
+    pub fn save_state(&self) -> Option<KMeansState> {
+        self.centroids.as_ref().map(|c| {
+            let rows = c.nrows();
+            let centroids = (0..rows)
+                .map(|r| c.row(r).to_vec())
+                .collect();
+            KMeansState {
+                centroids,
+                k: self.k,
+            }
+        })
+    }
+
+    /// Reconstruct a fitted model from a previously saved state.
+    pub fn load_state(state: &KMeansState) -> Self {
+        let k = state.k;
+        let cols = state.centroids.first().map_or(0, |r| r.len());
+        let flat: Vec<f64> = state.centroids.iter().flat_map(|r| r.iter().copied()).collect();
+        let centroids = Array2::from_shape_vec((k, cols), flat)
+            .expect("KMeansState centroids dimensions mismatch");
+        Self {
+            k,
+            max_iterations: 300,
+            seed: 42,
+            centroids: Some(centroids),
+        }
     }
 
     /// K-Means++ initialization.
@@ -167,5 +206,33 @@ mod tests {
         assert_eq!(labels[3], labels[4]);
         assert_eq!(labels[4], labels[5]);
         assert_ne!(labels[0], labels[3]);
+    }
+
+    #[test]
+    fn test_kmeans_save_load_roundtrip() {
+        let x = array![
+            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0],
+            [10.0, 10.0], [10.5, 10.5], [11.0, 10.0]
+        ];
+
+        let mut km = KMeans::new(2).with_seed(42);
+        km.fit(&x);
+        let orig_labels = km.predict(&x);
+
+        let state = km.save_state().expect("fitted model should produce state");
+
+        // Roundtrip through JSON
+        let json = serde_json::to_string(&state).unwrap();
+        let restored_state: KMeansState = serde_json::from_str(&json).unwrap();
+        let restored = KMeans::load_state(&restored_state);
+
+        let rest_labels = restored.predict(&x);
+        assert_eq!(orig_labels, rest_labels, "predictions must match after roundtrip");
+    }
+
+    #[test]
+    fn test_kmeans_save_state_unfitted() {
+        let km = KMeans::new(3);
+        assert!(km.save_state().is_none(), "unfitted model should return None");
     }
 }

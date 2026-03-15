@@ -4,6 +4,7 @@
 //! Reads requests from stdin, writes responses to stdout, logs to stderr.
 
 mod handlers;
+mod ml_pipeline;
 mod tools;
 
 use serde::{Deserialize, Serialize};

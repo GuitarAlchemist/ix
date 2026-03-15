@@ -5,8 +5,22 @@
 //! to extract multiple principal components.
 
 use ndarray::{Array1, Array2, Axis};
+use serde::{Deserialize, Serialize};
 
 use crate::traits::DimensionReducer;
+
+/// Serializable state for a fitted [`PCA`] model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcaState {
+    /// Principal components, each inner Vec is one component (length = n_features).
+    pub components: Vec<Vec<f64>>,
+    /// Explained variance for each component.
+    pub explained_variance: Vec<f64>,
+    /// Column means of the training data.
+    pub mean: Vec<f64>,
+    /// Number of components.
+    pub n_components: usize,
+}
 
 /// PCA via power iteration eigendecomposition of the covariance matrix.
 pub struct PCA {
@@ -44,6 +58,41 @@ impl PCA {
     /// Get the principal components matrix (n_components x n_features).
     pub fn components(&self) -> Option<&Array2<f64>> {
         self.components.as_ref()
+    }
+
+    /// Save the trained model state. Returns `None` if the model has not been fitted.
+    pub fn save_state(&self) -> Option<PcaState> {
+        let comps = self.components.as_ref()?;
+        let ev = self.explained_variance.as_ref()?;
+        let mean = self.mean.as_ref()?;
+
+        let components = (0..comps.nrows())
+            .map(|r| comps.row(r).to_vec())
+            .collect();
+
+        Some(PcaState {
+            components,
+            explained_variance: ev.to_vec(),
+            mean: mean.to_vec(),
+            n_components: self.n_components,
+        })
+    }
+
+    /// Reconstruct a fitted model from a previously saved state.
+    pub fn load_state(state: &PcaState) -> Self {
+        let n_components = state.n_components;
+        let n_features = state.mean.len();
+
+        let flat: Vec<f64> = state.components.iter().flat_map(|r| r.iter().copied()).collect();
+        let components = Array2::from_shape_vec((n_components, n_features), flat)
+            .expect("PcaState components dimensions mismatch");
+
+        Self {
+            n_components,
+            components: Some(components),
+            explained_variance: Some(Array1::from_vec(state.explained_variance.clone())),
+            mean: Some(Array1::from_vec(state.mean.clone())),
+        }
     }
 }
 
@@ -188,6 +237,47 @@ mod tests {
         // The first PC should capture nearly all variance since data is on a line
         let ev_ratio = pca.explained_variance_ratio().unwrap();
         assert!(ev_ratio[0] > 0.99, "First PC should explain >99% variance, got {}", ev_ratio[0]);
+    }
+
+    #[test]
+    fn test_pca_save_load_roundtrip() {
+        let x = array![
+            [1.0, 0.5, 0.2],
+            [2.0, 1.1, 0.3],
+            [3.0, 1.4, 0.8],
+            [4.0, 2.1, 1.0],
+            [5.0, 2.5, 1.5],
+            [1.5, 0.8, 0.1],
+            [3.5, 1.8, 0.9],
+        ];
+
+        let mut pca = PCA::new(2);
+        pca.fit(&x);
+        let orig_transformed = pca.transform(&x);
+
+        let state = pca.save_state().expect("fitted PCA should produce state");
+
+        // Roundtrip through JSON
+        let json = serde_json::to_string(&state).unwrap();
+        let restored_state: PcaState = serde_json::from_str(&json).unwrap();
+        let restored = PCA::load_state(&restored_state);
+
+        let rest_transformed = restored.transform(&x);
+        assert_eq!(orig_transformed.dim(), rest_transformed.dim());
+        for i in 0..orig_transformed.nrows() {
+            for j in 0..orig_transformed.ncols() {
+                assert!(
+                    (orig_transformed[[i, j]] - rest_transformed[[i, j]]).abs() < 1e-12,
+                    "transform results must match after roundtrip"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_pca_save_state_unfitted() {
+        let pca = PCA::new(2);
+        assert!(pca.save_state().is_none(), "unfitted PCA should return None");
     }
 
     #[test]

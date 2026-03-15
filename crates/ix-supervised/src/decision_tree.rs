@@ -4,6 +4,8 @@
 //! max_depth and min_samples_split.
 
 use ndarray::{Array1, Array2};
+use serde::{Deserialize, Serialize};
+
 use crate::traits::Classifier;
 
 /// A node in the decision tree.
@@ -44,6 +46,90 @@ impl DecisionTree {
     pub fn with_min_samples_split(mut self, min_samples: usize) -> Self {
         self.min_samples_split = min_samples;
         self
+    }
+
+    /// Save the trained tree state. Returns `None` if the model has not been fitted.
+    pub fn save_state(&self) -> Option<DecisionTreeState> {
+        self.root.as_ref().map(|root| {
+            let mut nodes = Vec::new();
+            flatten_node(root, &mut nodes);
+            DecisionTreeState {
+                nodes,
+                max_depth: self.max_depth,
+                min_samples_split: self.min_samples_split,
+                n_classes: self.n_classes,
+            }
+        })
+    }
+
+    /// Reconstruct a fitted tree from a previously saved state.
+    pub fn load_state(state: &DecisionTreeState) -> Self {
+        let root = unflatten_node(&state.nodes, 0).map(|(node, _)| node);
+        Self {
+            max_depth: state.max_depth,
+            min_samples_split: state.min_samples_split,
+            root,
+            n_classes: state.n_classes,
+        }
+    }
+}
+
+/// Serializable state for a fitted [`DecisionTree`] model.
+///
+/// The recursive tree is flattened into a pre-order array of [`FlatNode`]
+/// entries for safe (de)serialization without unbounded recursion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionTreeState {
+    pub nodes: Vec<FlatNode>,
+    pub max_depth: usize,
+    pub min_samples_split: usize,
+    pub n_classes: usize,
+}
+
+/// A single node in the flattened tree representation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FlatNode {
+    /// Split node: feature index and threshold. Children follow in pre-order
+    /// (left subtree immediately after, right subtree after the left subtree).
+    Split { feature: usize, threshold: f64 },
+    /// Leaf node with predicted class and class distribution.
+    Leaf { class: usize, class_counts: Vec<f64> },
+}
+
+/// Flatten a `Node` tree into a pre-order `Vec<FlatNode>`.
+fn flatten_node(node: &Node, out: &mut Vec<FlatNode>) {
+    match node {
+        Node::Split { feature, threshold, left, right } => {
+            out.push(FlatNode::Split { feature: *feature, threshold: *threshold });
+            flatten_node(left, out);
+            flatten_node(right, out);
+        }
+        Node::Leaf { class, class_counts } => {
+            out.push(FlatNode::Leaf { class: *class, class_counts: class_counts.clone() });
+        }
+    }
+}
+
+/// Reconstruct a `Node` tree from a pre-order `Vec<FlatNode>`, starting at `idx`.
+/// Returns the node and the next unconsumed index.
+fn unflatten_node(nodes: &[FlatNode], idx: usize) -> Option<(Node, usize)> {
+    if idx >= nodes.len() {
+        return None;
+    }
+    match &nodes[idx] {
+        FlatNode::Leaf { class, class_counts } => {
+            Some((Node::Leaf { class: *class, class_counts: class_counts.clone() }, idx + 1))
+        }
+        FlatNode::Split { feature, threshold } => {
+            let (left, next) = unflatten_node(nodes, idx + 1)?;
+            let (right, next) = unflatten_node(nodes, next)?;
+            Some((Node::Split {
+                feature: *feature,
+                threshold: *threshold,
+                left: Box::new(left),
+                right: Box::new(right),
+            }, next))
+        }
     }
 }
 
@@ -319,6 +405,39 @@ mod tests {
         // Maximally impure binary
         let g = gini_impurity(&[0, 1], 2);
         assert!((g - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_decision_tree_save_load_roundtrip() {
+        let x = array![
+            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0], [0.2, 0.3],
+            [3.0, 3.0], [3.5, 3.5], [4.0, 3.0], [3.2, 3.3]
+        ];
+        let y = array![0, 0, 0, 0, 1, 1, 1, 1];
+
+        let mut tree = DecisionTree::new(5);
+        tree.fit(&x, &y);
+
+        let state = tree.save_state().expect("fitted tree should produce state");
+
+        // Roundtrip through JSON
+        let json = serde_json::to_string(&state).unwrap();
+        let restored_state: DecisionTreeState = serde_json::from_str(&json).unwrap();
+        let restored = DecisionTree::load_state(&restored_state);
+
+        let orig_pred = tree.predict(&x);
+        let rest_pred = restored.predict(&x);
+        assert_eq!(orig_pred, rest_pred, "predictions must match after roundtrip");
+
+        let orig_proba = tree.predict_proba(&x);
+        let rest_proba = restored.predict_proba(&x);
+        assert_eq!(orig_proba, rest_proba, "probabilities must match after roundtrip");
+    }
+
+    #[test]
+    fn test_decision_tree_save_state_unfitted() {
+        let tree = DecisionTree::new(5);
+        assert!(tree.save_state().is_none(), "unfitted tree should return None");
     }
 
     #[test]

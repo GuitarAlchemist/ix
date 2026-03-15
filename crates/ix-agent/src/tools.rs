@@ -1037,5 +1037,99 @@ impl ToolRegistry {
             }),
             handler: handlers::trace_ingest,
         });
+
+        self.tools.push(Tool {
+            name: "ix_ml_pipeline",
+            description: "End-to-end ML pipeline: load data, preprocess, train a model, evaluate metrics, and optionally persist. Supports classification (KNN, decision tree, random forest), regression (linear), and clustering (K-Means). Set task/model to 'auto' for automatic selection.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "object",
+                        "description": "Data source configuration",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["csv", "json", "inline"],
+                                "description": "Source type"
+                            },
+                            "path": {
+                                "type": "string",
+                                "description": "File path (for csv/json)"
+                            },
+                            "data": {
+                                "type": "array",
+                                "items": { "type": "array", "items": { "type": "number" } },
+                                "description": "Inline data as array of rows (for type=inline)"
+                            },
+                            "has_header": {
+                                "type": "boolean",
+                                "description": "Whether CSV has a header row (default: true)"
+                            },
+                            "target_column": {
+                                "description": "Target column: integer index or string name. Omit for unsupervised tasks."
+                            }
+                        },
+                        "required": ["type"]
+                    },
+                    "task": {
+                        "type": "string",
+                        "enum": ["classify", "regress", "cluster", "auto"],
+                        "description": "ML task (default: auto)"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name: knn, decision_tree, random_forest, linear_regression, kmeans, or 'auto'"
+                    },
+                    "model_params": {
+                        "type": "object",
+                        "description": "Model hyperparameters (e.g. {\"k\": 5} for KNN, {\"max_depth\": 10} for decision tree)"
+                    },
+                    "preprocess": {
+                        "type": "object",
+                        "properties": {
+                            "normalize": { "type": "boolean", "description": "Z-score normalize features (default: false)" },
+                            "drop_nan": { "type": "boolean", "description": "Drop rows with NaN (default: true)" },
+                            "pca_components": { "type": "integer", "description": "Reduce to N principal components" }
+                        }
+                    },
+                    "split": {
+                        "type": "object",
+                        "properties": {
+                            "test_ratio": { "type": "number", "description": "Fraction for test set (default: 0.2)" },
+                            "seed": { "type": "integer", "description": "Random seed (default: 42)" }
+                        }
+                    },
+                    "persist": { "type": "boolean", "description": "Save trained model to cache (default: false)" },
+                    "persist_key": { "type": "string", "description": "Cache key for persisted model" },
+                    "return_predictions": { "type": "boolean", "description": "Include predictions in response (default: false)" },
+                    "max_rows": { "type": "integer", "description": "Max rows allowed (default: 50000)" },
+                    "max_features": { "type": "integer", "description": "Max feature columns allowed (default: 500)" }
+                },
+                "required": ["source"]
+            }),
+            handler: handlers::ml_pipeline,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_ml_predict",
+            description: "Run predictions using a previously persisted ML model. Provide the persist_key from a prior ix_ml_pipeline call and new data rows.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "persist_key": {
+                        "type": "string",
+                        "description": "The persist_key used when the model was saved"
+                    },
+                    "data": {
+                        "type": "array",
+                        "items": { "type": "array", "items": { "type": "number" } },
+                        "description": "New data rows (each row is a feature vector)"
+                    }
+                },
+                "required": ["persist_key", "data"]
+            }),
+            handler: handlers::ml_predict,
+        });
     }
 }

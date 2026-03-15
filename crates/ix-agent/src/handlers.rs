@@ -1912,3 +1912,19 @@ pub fn trace_ingest(params: Value) -> Result<Value, String> {
         "csv_preview": csv_rows.iter().take(6).collect::<Vec<_>>(),
     }))
 }
+
+// ── ix_ml_pipeline ────────────────────────────────────────────
+
+pub fn ml_pipeline(params: Value) -> Result<Value, String> {
+    let config: crate::ml_pipeline::PipelineConfig = serde_json::from_value(params)
+        .map_err(|e| format!("Invalid pipeline config: {}", e))?;
+    crate::ml_pipeline::run_pipeline(config)
+}
+
+// ── ix_ml_predict ─────────────────────────────────────────────
+
+pub fn ml_predict(params: Value) -> Result<Value, String> {
+    let key = parse_str(&params, "persist_key")?;
+    let data = parse_f64_matrix(&params, "data")?;
+    crate::ml_pipeline::run_predict(key, &data)
+}
