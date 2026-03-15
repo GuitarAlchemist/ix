@@ -1779,7 +1779,7 @@ pub fn federation_discover(params: Value) -> Result<Value, String> {
     let domain_filter = params.get("domain").and_then(|v| v.as_str());
     let query_filter = params.get("query").and_then(|v| v.as_str());
 
-    let registry_path = workspace_root().join("governance/capability-registry.json");
+    let registry_path = workspace_root().join("governance/demerzel/schemas/capability-registry.json");
     let content = std::fs::read_to_string(&registry_path)
         .map_err(|e| format!("Failed to read capability registry: {}", e))?;
     let registry: Value = serde_json::from_str(&content)
