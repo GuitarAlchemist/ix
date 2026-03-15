@@ -1,11 +1,11 @@
 ---
 name: ix-benchmark
-description: Benchmark and compare machin algorithm performance
+description: Benchmark and compare ix algorithm performance
 ---
 
 # Benchmark
 
-Profile and compare algorithm performance across the machin workspace.
+Profile and compare algorithm performance across the ix workspace.
 
 ## When to Use
 When the user wants to know which algorithm is fastest, measure scaling behavior, or compare approaches.
