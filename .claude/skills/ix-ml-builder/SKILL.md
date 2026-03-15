@@ -51,8 +51,18 @@ Article 4 (Proportionality) — don't use complex models when simple ones suffic
 | 100-10k | < 20 | DecisionTree / KMeans | Good interpretability |
 | 100-10k | 20+ | PCA → then model | Reduce dimensions first |
 | 10k+ | Any | RandomForest / GMM | Enough data for complexity |
+| 10k+ | Sequence data | **Transformer** | Attention captures long-range patterns |
 
 **Override:** User can always specify `model` explicitly to bypass the heuristic.
+
+### Transformer Model
+For sequence or high-dimensional data, use `"model": "transformer"` with params:
+```json
+"model_params": { "d_model": 64, "n_heads": 4, "n_layers": 2, "d_ff": 128, "epochs": 50, "learning_rate": 0.001 }
+```
+- Full end-to-end backprop through attention, LayerNorm, FFN
+- GPU-accelerated attention via WGPU (auto-fallback to CPU)
+- `seq_len`: auto-detected from features (n_features / d_model) or specify explicitly
 
 ## Pipeline JSON Schema
 
@@ -66,7 +76,7 @@ Article 4 (Proportionality) — don't use complex models when simple ones suffic
     "target_column": "label_or_index"
   },
   "task": "classify|regress|cluster|reduce|auto",
-  "model": "linear_regression|logistic_regression|decision_tree|knn|naive_bayes|svm|random_forest|kmeans|dbscan|pca|tsne|gmm|auto",
+  "model": "linear_regression|logistic_regression|decision_tree|knn|naive_bayes|svm|random_forest|transformer|kmeans|dbscan|pca|tsne|gmm|auto",
   "model_params": { "k": 5, "max_depth": 10 },
   "preprocess": {
     "normalize": false,

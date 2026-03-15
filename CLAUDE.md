@@ -15,7 +15,7 @@ Rust workspace (32 crates) implementing foundational ML/math algorithms and AI g
 - `crates/ix-ensemble` - Random forest, boosting
 
 ### Deep Learning, RL & Evolution
-- `crates/ix-nn` - Neural network layers, loss functions, backprop, Sequential network
+- `crates/ix-nn` - Trainable transformers (full backprop, GPU attention), dense layers, Sequential, loss functions
 - `crates/ix-rl` - Bandits (epsilon-greedy, UCB1, Thompson), Q-learning, GridWorld
 - `crates/ix-evolution` - Genetic algorithms, differential evolution
 
