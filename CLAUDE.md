@@ -1,7 +1,7 @@
-# ix - ML Algorithms for Claude Code Skills
+# ix - ML Algorithms + Governance for Claude Code Skills
 
 ## Project Overview
-Rust workspace (27 crates) implementing foundational ML/math algorithms as composable crates, exposed as Claude Code skills via MCP server (`ix-agent`) and CLI (`ix-skill`).
+Rust workspace (32 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed as Claude Code skills via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
 
 ## Architecture
 
@@ -11,12 +11,12 @@ Rust workspace (27 crates) implementing foundational ML/math algorithms as compo
 
 ### Supervised & Unsupervised Learning
 - `crates/ix-supervised` - Regression, classification, metrics
-- `crates/ix-unsupervised` - Clustering (K-Means, DBSCAN), PCA
-- `crates/ix-ensemble` - Random forest, boosting (stub)
+- `crates/ix-unsupervised` - Clustering (K-Means, DBSCAN), PCA, t-SNE, GMM
+- `crates/ix-ensemble` - Random forest, boosting
 
 ### Deep Learning, RL & Evolution
-- `crates/ix-nn` - Neural network layers, loss functions, backprop
-- `crates/ix-rl` - Bandits (epsilon-greedy, UCB1, Thompson), Q-learning
+- `crates/ix-nn` - Neural network layers, loss functions, backprop, Sequential network
+- `crates/ix-rl` - Bandits (epsilon-greedy, UCB1, Thompson), Q-learning, GridWorld
 - `crates/ix-evolution` - Genetic algorithms, differential evolution
 
 ### Search, Graphs & Game Theory
@@ -35,18 +35,34 @@ Rust workspace (27 crates) implementing foundational ML/math algorithms as compo
 - `crates/ix-ktheory` - Graph K-theory, Mayer-Vietoris sequences
 - `crates/ix-category` - Functors, natural transformations, monads
 - `crates/ix-grammar` - Formal grammars: CFG, Earley parser, CYK, Chomsky normal form
+- `crates/ix-rotation` - Quaternions, SLERP, Euler angles, rotation matrices
+- `crates/ix-sedenion` - Hypercomplex algebra: sedenions, octonions, Cayley-Dickson
+- `crates/ix-fractal` - Takagi curves, IFS, L-systems, space-filling curves
+- `crates/ix-number-theory` - Prime sieving, primality tests, modular arithmetic, elliptic curves
 
 ### Probabilistic & Infrastructure
 - `crates/ix-probabilistic` - Bloom filters, Count-Min sketch, HyperLogLog, Cuckoo filter
-- `crates/ix-io` - Data I/O: CSV, JSON, file watcher, named pipes, TCP, HTTP, WebSocket
-- `crates/ix-gpu` - GPU compute via WGPU: cosine similarity, matrix multiply, batch vector search, quaternions, sedenions
+- `crates/ix-io` - Data I/O: CSV, JSON, file watcher, named pipes, TCP, HTTP, WebSocket, trace bridge
+- `crates/ix-gpu` - GPU compute via WGPU: cosine similarity, matrix multiply, batch vector search, BSP kNN
 - `crates/ix-cache` - Embedded Redis-like cache: concurrent sharded store, TTL, LRU, pub/sub, RESP server
 - `crates/ix-pipeline` - DAG pipeline executor: skill orchestration, parallel branches, memoized data flow
 
+### Governance
+- `crates/ix-governance` - Demerzel governance: tetravalent logic (T/F/U/C), constitution parser, persona loader, policy engine
+- `governance/demerzel` - Git submodule: 12 personas, 11-article constitution, 3 policies, behavioral tests
+
 ### Integration
-- `crates/ix-agent` - MCP server exposing algorithms as Claude Code tools via JSON-RPC over stdio
-- `crates/ix-skill` - CLI binary (`machin`) for direct command-line access
-- `crates/ix-demo` - egui desktop app with 16 interactive demo tabs
+- `crates/ix-agent` - MCP server: 36 tools via JSON-RPC over stdio (algorithms + governance + federation)
+- `crates/ix-skill` - CLI binary for direct command-line access
+- `crates/ix-demo` - egui desktop app with 22+ interactive demo tabs
+
+## MCP Federation
+Three MCP servers registered in `.mcp.json`:
+- **ix** (Rust): 36 tools — math, ML, governance, federation
+- **tars** (F#): grammar weighting, pattern promotion, metacognition
+- **ga** (C#): music theory, chord analysis, trace export
+
+Capability registry at `governance/demerzel/schemas/capability-registry.json`.
 
 ## Build
 ```bash
@@ -58,9 +74,10 @@ cargo doc --workspace --no-deps
 
 ## Testing
 - **Unit tests**: `#[test]` for every public function
-- **Property tests**: `proptest` for math invariants (commutativity, norm preservation, rotation orthogonality)
-- **Benchmarks**: `criterion` for performance-critical paths (FFT, matrix ops, GPU kernels)
+- **Property tests**: `proptest` for math invariants
+- **Benchmarks**: `criterion` for performance-critical paths
 - **Doc tests**: All `///` examples must compile and run
+- **Behavioral tests**: Demerzel thought experiments in `governance/demerzel/tests/`
 - **CI**: GitHub Actions on stable + nightly Rust, Linux + Windows
 
 ## Key Dependencies
@@ -70,6 +87,7 @@ cargo doc --workspace --no-deps
 - `clap` 4 - CLI parsing
 - `wgpu` 28 - Cross-platform GPU compute (Vulkan/DX12/Metal)
 - `tokio` 1 - Async runtime (I/O crate)
+- `serde_yaml` 0.9 - Governance artifact parsing
 - `proptest` 1 - Property-based testing
 - `criterion` 0.5 - Benchmarking
 
@@ -82,3 +100,5 @@ Rust 1.80+ (due to wgpu 28)
 - Each crate defines traits (Regressor, Classifier, Clusterer, Optimizer, etc.)
 - Builder pattern for algorithm configuration
 - Seeded RNG for reproducibility
+- Governance: all agent actions subject to Demerzel constitution (11 articles)
+- Federation: cross-repo tool calls via MCP protocol

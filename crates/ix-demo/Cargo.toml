@@ -42,3 +42,4 @@ ix-fractal = { workspace = true }
 ix-number-theory = { workspace = true }
 ix-topo = { workspace = true }
 ix-category = { workspace = true }
+ix-governance = { workspace = true }

@@ -44,6 +44,7 @@ enum Tab {
     Sedenion,
     Topology,
     Category,
+    Governance,
 }
 
 impl Tab {
@@ -70,6 +71,7 @@ impl Tab {
             Tab::Sedenion => "Sedenions",
             Tab::Topology => "Topology",
             Tab::Category => "Category",
+            Tab::Governance => "Governance",
         }
     }
 }
@@ -97,6 +99,7 @@ struct IxApp {
     sedenion_demo: demos::sedenion::SedenionDemo,
     topology_demo: demos::topology::TopologyDemo,
     category_demo: demos::category::CategoryDemo,
+    governance_demo: demos::governance::GovernanceDemo,
 }
 
 impl Default for IxApp {
@@ -124,6 +127,7 @@ impl Default for IxApp {
             sedenion_demo: demos::sedenion::SedenionDemo::default(),
             topology_demo: demos::topology::TopologyDemo::default(),
             category_demo: demos::category::CategoryDemo::default(),
+            governance_demo: demos::governance::GovernanceDemo::default(),
         }
     }
 }
@@ -154,7 +158,7 @@ impl eframe::App for IxApp {
                 ui.separator();
                 // Infrastructure & Systems
                 ui.label(egui::RichText::new("Systems").strong().small());
-                for tab in [Tab::Chaos, Tab::Signal, Tab::IKChain, Tab::Search, Tab::GameTheory, Tab::Probabilistic, Tab::GpuKernels] {
+                for tab in [Tab::Chaos, Tab::Signal, Tab::IKChain, Tab::Search, Tab::GameTheory, Tab::Probabilistic, Tab::GpuKernels, Tab::Governance] {
                     ui.selectable_value(&mut self.active_tab, tab, tab.label());
                 }
             });
@@ -184,6 +188,7 @@ impl eframe::App for IxApp {
                     Tab::Sedenion => self.sedenion_demo.ui(ui),
                     Tab::Topology => self.topology_demo.ui(ui),
                     Tab::Category => self.category_demo.ui(ui),
+                    Tab::Governance => self.governance_demo.ui(ui),
                 }
             });
         });
