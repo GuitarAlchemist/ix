@@ -1850,3 +1850,51 @@ pub fn federation_discover(params: Value) -> Result<Value, String> {
 
     Ok(response)
 }
+
+// ── Trace ingest ─────────────────────────────────────────────────
+
+/// Ingest GA traces from a directory and return statistics.
+///
+/// Params (all optional):
+/// - `dir`: path to trace directory (default: `~/.ga/traces/`)
+pub fn trace_ingest(params: Value) -> Result<Value, String> {
+    use ix_io::trace_bridge;
+    use std::path::PathBuf;
+
+    let dir = params
+        .get("dir")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_else(trace_bridge::default_trace_dir);
+
+    if !dir.exists() {
+        return Ok(json!({
+            "error": format!("Trace directory does not exist: {}", dir.display()),
+            "hint": "Create ~/.ga/traces/ and place JSON trace files there, or pass a 'dir' parameter."
+        }));
+    }
+
+    let traces = trace_bridge::load_traces(&dir).map_err(|e| format!("Failed to load traces: {e}"))?;
+
+    if traces.is_empty() {
+        return Ok(json!({
+            "total_traces": 0,
+            "message": "No valid trace files found in directory."
+        }));
+    }
+
+    let stats = trace_bridge::compute_stats(&traces);
+    let csv_rows = trace_bridge::traces_to_csv_rows(&traces);
+
+    Ok(json!({
+        "total_traces": stats.total_traces,
+        "success_count": stats.success_count,
+        "failure_count": stats.failure_count,
+        "avg_duration_ms": stats.avg_duration_ms,
+        "p50_duration_ms": stats.p50_duration_ms,
+        "p95_duration_ms": stats.p95_duration_ms,
+        "event_type_counts": stats.event_type_counts,
+        "csv_row_count": csv_rows.len() - 1,
+        "csv_preview": csv_rows.iter().take(6).collect::<Vec<_>>(),
+    }))
+}

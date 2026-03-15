@@ -19,3 +19,4 @@ pub mod fractal;
 pub mod sedenion;
 pub mod topology;
 pub mod category;
+pub mod governance;

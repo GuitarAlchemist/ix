@@ -1022,5 +1022,20 @@ impl ToolRegistry {
             }),
             handler: handlers::federation_discover,
         });
+
+        self.tools.push(Tool {
+            name: "ix_trace_ingest",
+            description: "Ingest GA trace files from a directory and compute statistics (counts, durations, percentiles, event breakdowns)",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "dir": {
+                        "type": "string",
+                        "description": "Path to trace directory (default: ~/.ga/traces/)"
+                    }
+                }
+            }),
+            handler: handlers::trace_ingest,
+        });
     }
 }

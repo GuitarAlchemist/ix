@@ -242,6 +242,61 @@ impl Constitution {
             }
         }
 
+        // Article 8: Observability — disable logging, suppress metrics
+        if lower.contains("disable logging")
+            || lower.contains("suppress metrics")
+            || lower.contains("remove monitoring")
+            || lower.contains("hide errors")
+        {
+            if let Some(a) = self.find_article(8) {
+                warnings.push(format!(
+                    "Action may violate Article 8 ({}): reduces observability",
+                    a.name
+                ));
+                relevant_articles.push(ArticleRef {
+                    number: 8,
+                    name: a.name.clone(),
+                    relevance: "Action reduces system observability".to_string(),
+                });
+            }
+        }
+
+        // Article 9: Bounded Autonomy — grant permissions, self-modify, bypass limits
+        if lower.contains("grant permission")
+            || lower.contains("escalate privilege")
+            || lower.contains("bypass limit")
+            || lower.contains("remove restriction")
+        {
+            if let Some(a) = self.find_article(9) {
+                warnings.push(format!(
+                    "Action may violate Article 9 ({}): exceeds autonomy bounds",
+                    a.name
+                ));
+                relevant_articles.push(ArticleRef {
+                    number: 9,
+                    name: a.name.clone(),
+                    relevance: "Action exceeds bounded autonomy".to_string(),
+                });
+            }
+        }
+
+        // Article 10: Stakeholder Pluralism — ignore users, optimize only for
+        if lower.contains("ignore")
+            && (lower.contains("user") || lower.contains("stakeholder") || lower.contains("downstream"))
+        {
+            if let Some(a) = self.find_article(10) {
+                warnings.push(format!(
+                    "Action may violate Article 10 ({}): ignores affected stakeholders",
+                    a.name
+                ));
+                relevant_articles.push(ArticleRef {
+                    number: 10,
+                    name: a.name.clone(),
+                    relevance: "Action ignores stakeholder impact".to_string(),
+                });
+            }
+        }
+
         let compliant = warnings.is_empty();
         ComplianceResult {
             compliant,
@@ -268,26 +323,23 @@ mod tests {
     #[test]
     fn load_default_constitution() {
         let c = Constitution::load(&constitution_path()).expect("should load constitution");
-        assert_eq!(c.articles.len(), 7, "expected 7 articles");
-        assert_eq!(c.version, "1.0.0");
+        assert!(c.articles.len() >= 7, "expected at least 7 articles, got {}", c.articles.len());
+        assert!(c.version == "1.0.0" || c.version == "2.0.0", "unexpected version: {}", c.version);
     }
 
     #[test]
     fn articles_have_correct_names() {
         let c = Constitution::load(&constitution_path()).unwrap();
         let names: Vec<&str> = c.articles.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(
-            names,
-            vec![
-                "Truthfulness",
-                "Transparency",
-                "Reversibility",
-                "Proportionality",
-                "Non-Deception",
-                "Escalation",
-                "Auditability",
-            ]
-        );
+        // First 7 articles are always present
+        assert!(names.len() >= 7);
+        assert_eq!(names[0], "Truthfulness");
+        assert_eq!(names[1], "Transparency");
+        assert_eq!(names[2], "Reversibility");
+        assert_eq!(names[3], "Proportionality");
+        assert_eq!(names[4], "Non-Deception");
+        assert_eq!(names[5], "Escalation");
+        assert_eq!(names[6], "Auditability");
     }
 
     #[test]

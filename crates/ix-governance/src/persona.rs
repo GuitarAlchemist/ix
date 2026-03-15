@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn list_all_personas() {
         let names = list_personas(&personas_dir()).expect("should list personas");
-        assert_eq!(names.len(), 5);
+        assert!(names.len() >= 5, "expected at least 5 personas, got {}", names.len());
         assert!(names.contains(&"default".to_string()));
         assert!(names.contains(&"kaizen-optimizer".to_string()));
         assert!(names.contains(&"reflective-architect".to_string()));

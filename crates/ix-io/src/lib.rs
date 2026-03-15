@@ -20,3 +20,4 @@ pub mod tcp;
 pub mod http;
 pub mod websocket;
 pub mod error;
+pub mod trace_bridge;
