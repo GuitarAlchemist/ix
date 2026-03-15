@@ -581,6 +581,22 @@ fn run_classification(
             // RandomForest doesn't have save_state; store null
             (preds, json!(null), json!({ "n_trees": n_trees, "max_depth": max_depth }))
         }
+        "transformer" => {
+            use ix_nn::classifier::{TransformerClassifier, TransformerConfig};
+            use ix_supervised::traits::Classifier;
+            let d_model = model_params.as_ref().and_then(|p| p.get("d_model")).and_then(|v| v.as_u64()).unwrap_or(32) as usize;
+            let n_heads = model_params.as_ref().and_then(|p| p.get("n_heads")).and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+            let n_layers = model_params.as_ref().and_then(|p| p.get("n_layers")).and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+            let d_ff = model_params.as_ref().and_then(|p| p.get("d_ff")).and_then(|v| v.as_u64()).unwrap_or(128) as usize;
+            let epochs = model_params.as_ref().and_then(|p| p.get("epochs")).and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let lr = model_params.as_ref().and_then(|p| p.get("learning_rate")).and_then(|v| v.as_f64()).unwrap_or(0.001);
+            let seq_len = model_params.as_ref().and_then(|p| p.get("seq_len")).and_then(|v| v.as_u64()).map(|v| v as usize);
+            let config = TransformerConfig { d_model, n_heads, n_layers, d_ff, seq_len, epochs, learning_rate: lr, seed: split.seed };
+            let mut model = TransformerClassifier::new(config);
+            model.fit(&split_result.x_train, &y_train_usize);
+            let preds = model.predict(&split_result.x_test);
+            (preds, json!(null), json!({ "d_model": d_model, "n_heads": n_heads, "n_layers": n_layers, "d_ff": d_ff, "epochs": epochs }))
+        }
         other => return Err(format!("Unknown classification model: '{}'", other)),
     };
 
@@ -645,6 +661,18 @@ fn run_regression(
             let preds = model.predict(&split_result.x_test);
             let state = model.save_state().map(|s| json!(s)).unwrap_or(json!(null));
             (preds, state)
+        }
+        "transformer" => {
+            use ix_nn::classifier::{TransformerRegressor, TransformerConfig};
+            use ix_supervised::traits::Regressor;
+            let config = TransformerConfig {
+                d_model: 32, n_heads: 4, n_layers: 2, d_ff: 128,
+                seq_len: None, epochs: 50, learning_rate: 0.001, seed: split.seed,
+            };
+            let mut model = TransformerRegressor::new(config);
+            model.fit(&split_result.x_train, &split_result.y_train);
+            let preds = model.predict(&split_result.x_test);
+            (preds, json!(null))
         }
         other => return Err(format!("Unknown regression model: '{}'", other)),
     };
