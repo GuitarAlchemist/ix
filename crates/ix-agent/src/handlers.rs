@@ -1543,14 +1543,28 @@ pub fn cache_op(params: Value) -> Result<Value, String> {
 
 // ── governance helpers ─────────────────────────────────────
 
-fn governance_dir() -> std::path::PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(manifest).join("../../governance/demerzel")
+fn workspace_root() -> std::path::PathBuf {
+    // Try CARGO_MANIFEST_DIR (available during `cargo run`)
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        return std::path::PathBuf::from(manifest).join("../..");
+    }
+    // Try IX_ROOT env var (for standalone binary)
+    if let Ok(root) = std::env::var("IX_ROOT") {
+        return std::path::PathBuf::from(root);
+    }
+    // Try to find workspace root by looking for Cargo.toml with [workspace]
+    let mut dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    for _ in 0..5 {
+        if dir.join("Cargo.toml").exists() && dir.join("governance").exists() {
+            return dir;
+        }
+        if !dir.pop() { break; }
+    }
+    std::path::PathBuf::from(".")
 }
 
-fn workspace_root() -> std::path::PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(manifest).join("../..")
+fn governance_dir() -> std::path::PathBuf {
+    workspace_root().join("governance/demerzel")
 }
 
 // ── ix_governance_check ────────────────────────────────────

@@ -1,27 +1,53 @@
 #!/bin/bash
-# Governance check hook — warns on potentially irreversible or disproportionate actions
-# References Demerzel Constitution Articles 3 (Reversibility) and 4 (Proportionality)
+# Demerzel Governance Enforcement Hook
+#
+# BLOCK (exit 1): Catastrophic/irreversible operations that should never proceed without explicit override
+# WARN (stderr): Risky operations that need human attention but aren't automatically blocked
+#
+# References: Demerzel Constitution v2.0.0
 
 TOOL_NAME="${CLAUDE_TOOL_NAME:-}"
 COMMAND="${CLAUDE_BASH_COMMAND:-}"
 
-# Article 3: Reversibility — warn on destructive commands
 if [[ "$TOOL_NAME" == "Bash" ]]; then
-    if [[ "$COMMAND" =~ (rm\ -rf|git\ reset\ --hard|git\ push\ --force|drop\ database|DROP\ TABLE|git\ clean\ -fd) ]]; then
-        echo "[demerzel] WARN: Article 3 (Reversibility) — destructive command detected. Confirm before proceeding." >&2
+
+    # ── BLOCK: Catastrophic operations (Article 3: Reversibility) ──────────
+    if [[ "$COMMAND" =~ rm\ -rf\ / ]] || [[ "$COMMAND" =~ rm\ -rf\ \* ]]; then
+        echo "[demerzel] BLOCKED: Article 3 (Reversibility) — recursive delete of root or wildcard is catastrophic." >&2
+        exit 1
+    fi
+    if [[ "$COMMAND" =~ git\ push\ --force.*(main|master) ]] || [[ "$COMMAND" =~ git\ push\ -f.*(main|master) ]]; then
+        echo "[demerzel] BLOCKED: Article 3 (Reversibility) — force push to main/master destroys shared history." >&2
+        exit 1
+    fi
+    if [[ "$COMMAND" =~ DROP\ DATABASE ]] || [[ "$COMMAND" =~ drop\ database ]]; then
+        echo "[demerzel] BLOCKED: Article 3 (Reversibility) — DROP DATABASE is irreversible." >&2
+        exit 1
+    fi
+    if [[ "$COMMAND" =~ chmod\ 777\ / ]]; then
+        echo "[demerzel] BLOCKED: Article 9 (Bounded Autonomy) — chmod 777 on root is unsafe." >&2
+        exit 1
     fi
 
-    # Article 9: Bounded Autonomy — warn on permission escalation
+    # ── WARN: Risky operations ─────────────────────────────────────────────
+    if [[ "$COMMAND" =~ (rm\ -rf|git\ reset\ --hard|git\ clean\ -fd) ]]; then
+        echo "[demerzel] WARN: Article 3 (Reversibility) — destructive command detected. Confirm before proceeding." >&2
+    fi
+    if [[ "$COMMAND" =~ (git\ push\ --force|git\ push\ -f) ]]; then
+        echo "[demerzel] WARN: Article 3 (Reversibility) — force push detected. Verify target branch." >&2
+    fi
     if [[ "$COMMAND" =~ (chmod\ 777|sudo|chown\ root|--no-verify) ]]; then
         echo "[demerzel] WARN: Article 9 (Bounded Autonomy) — permission escalation detected." >&2
     fi
+    if [[ "$COMMAND" =~ (DROP\ TABLE|TRUNCATE|DELETE\ FROM.*WHERE\ 1) ]]; then
+        echo "[demerzel] WARN: Article 3 (Reversibility) — destructive SQL detected." >&2
+    fi
 fi
 
-# Article 4: Proportionality — warn on overly broad file operations
+# Article 4: Proportionality — warn on sensitive file writes
 if [[ "$TOOL_NAME" == "Write" ]]; then
     FILE_PATH="${CLAUDE_FILE_PATH:-}"
-    # Warn if overwriting config files that affect the whole system
-    if [[ "$FILE_PATH" =~ (/etc/|\.env$|credentials|secret) ]]; then
-        echo "[demerzel] WARN: Article 4 (Proportionality) — writing to sensitive system file." >&2
+    if [[ "$FILE_PATH" =~ (/etc/|\.env$|credentials|secret|\.pem$|\.key$) ]]; then
+        echo "[demerzel] WARN: Article 4 (Proportionality) — writing to sensitive file." >&2
     fi
 fi
