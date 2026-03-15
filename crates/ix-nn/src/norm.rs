@@ -1,6 +1,6 @@
 //! Normalization layers: LayerNorm, RMSNorm.
 
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, Axis};
 
 /// Layer Normalization (Ba et al. 2016).
 ///
@@ -9,6 +9,12 @@ pub struct LayerNorm {
     pub gamma: Array1<f64>,
     pub beta: Array1<f64>,
     pub eps: f64,
+    /// Cached input from `forward_cache` for backward pass.
+    input_cache: Option<Array2<f64>>,
+    /// Cached normalized values (xhat) from `forward_cache`.
+    normalized_cache: Option<Array2<f64>>,
+    /// Cached per-row standard deviations from `forward_cache`.
+    std_cache: Option<Array1<f64>>,
 }
 
 impl LayerNorm {
@@ -18,6 +24,9 @@ impl LayerNorm {
             gamma: Array1::ones(d),
             beta: Array1::zeros(d),
             eps: 1e-5,
+            input_cache: None,
+            normalized_cache: None,
+            std_cache: None,
         }
     }
 
@@ -33,6 +42,75 @@ impl LayerNorm {
             }
         }
         result
+    }
+
+    /// Forward pass that caches activations for backward.
+    ///
+    /// Same output as `forward`, but stores input, normalized values, and
+    /// per-row standard deviations so that `backward` can compute gradients.
+    pub fn forward_cache(&mut self, x: &Array2<f64>) -> Array2<f64> {
+        let nrows = x.nrows();
+        let ncols = x.ncols();
+        let mut normalized = Array2::zeros(x.raw_dim());
+        let mut result = Array2::zeros(x.raw_dim());
+        let mut stds = Array1::zeros(nrows);
+
+        for (i, row) in x.rows().into_iter().enumerate() {
+            let mean = row.mean().unwrap();
+            let var = row.mapv(|v| (v - mean).powi(2)).mean().unwrap();
+            let std = (var + self.eps).sqrt();
+            stds[i] = std;
+            for j in 0..ncols {
+                let xhat = (row[j] - mean) / std;
+                normalized[[i, j]] = xhat;
+                result[[i, j]] = xhat * self.gamma[j] + self.beta[j];
+            }
+        }
+
+        self.input_cache = Some(x.clone());
+        self.normalized_cache = Some(normalized);
+        self.std_cache = Some(stds);
+        result
+    }
+
+    /// Backward pass: computes gradient w.r.t. input and updates gamma/beta.
+    ///
+    /// `grad_output` has the same shape as the forward output `(rows, features)`.
+    /// Returns gradient w.r.t. the input `x`.
+    pub fn backward(&mut self, grad_output: &Array2<f64>, learning_rate: f64) -> Array2<f64> {
+        let xhat = self.normalized_cache.as_ref().expect("forward_cache() not called");
+        let stds = self.std_cache.as_ref().expect("forward_cache() not called");
+
+        let n = grad_output.ncols() as f64;
+
+        // grad_gamma = sum over rows of (grad_output * xhat)
+        let grad_gamma = (grad_output * xhat).sum_axis(Axis(0));
+        // grad_beta = sum over rows of grad_output
+        let grad_beta = grad_output.sum_axis(Axis(0));
+
+        // grad_xhat = grad_output * gamma (broadcast gamma across rows)
+        let grad_xhat = grad_output * &self.gamma;
+
+        // grad_input for each row:
+        // (1/N) * (1/std) * (N * grad_xhat - sum(grad_xhat) - xhat * sum(grad_xhat * xhat))
+        let mut grad_input = Array2::zeros(grad_output.raw_dim());
+        for i in 0..grad_output.nrows() {
+            let gx_row = grad_xhat.row(i);
+            let xh_row = xhat.row(i);
+            let sum_gx: f64 = gx_row.sum();
+            let sum_gx_xh: f64 = (&gx_row * &xh_row).sum();
+            let inv_std = 1.0 / stds[i];
+            for j in 0..grad_output.ncols() {
+                grad_input[[i, j]] = inv_std / n
+                    * (n * gx_row[j] - sum_gx - xh_row[j] * sum_gx_xh);
+            }
+        }
+
+        // Update parameters
+        self.gamma = &self.gamma - &(learning_rate * &grad_gamma);
+        self.beta = &self.beta - &(learning_rate * &grad_beta);
+
+        grad_input
     }
 }
 
@@ -165,5 +243,92 @@ mod tests {
         let out = rn.forward(&x);
         let rms = (out.row(0).mapv(|v| v * v).mean().unwrap()).sqrt();
         assert!((rms - 1.0).abs() < 1e-3, "output RMS should be ~1");
+    }
+
+    // --- Backward pass tests ---
+
+    #[test]
+    fn test_layer_norm_forward_cache_matches_forward() {
+        let ln_ref = LayerNorm::new(4);
+        let mut ln_cache = LayerNorm::new(4);
+        let x = array![[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]];
+        let out1 = ln_ref.forward(&x);
+        let out2 = ln_cache.forward_cache(&x);
+        for (a, b) in out1.iter().zip(out2.iter()) {
+            assert!((a - b).abs() < 1e-12, "forward_cache should match forward");
+        }
+    }
+
+    #[test]
+    fn test_layer_norm_backward_shape() {
+        let mut ln = LayerNorm::new(4);
+        let x = array![[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]];
+        let _out = ln.forward_cache(&x);
+        let grad_out = Array2::ones((2, 4));
+        let grad_in = ln.backward(&grad_out, 0.01);
+        assert_eq!(grad_in.shape(), &[2, 4]);
+    }
+
+    #[test]
+    fn test_layer_norm_backward_weights_update() {
+        let mut ln = LayerNorm::new(4);
+        let gamma_before = ln.gamma.clone();
+        let beta_before = ln.beta.clone();
+        let x = array![[1.0, 2.0, 3.0, 4.0]];
+        let _out = ln.forward_cache(&x);
+        let grad_out = array![[1.0, 0.5, -0.5, -1.0]];
+        let _grad_in = ln.backward(&grad_out, 0.1);
+        // Gamma and beta should have changed
+        assert!(
+            (&ln.gamma - &gamma_before).mapv(|v| v.abs()).sum() > 1e-10,
+            "gamma should be updated"
+        );
+        assert!(
+            (&ln.beta - &beta_before).mapv(|v| v.abs()).sum() > 1e-10,
+            "beta should be updated"
+        );
+    }
+
+    #[test]
+    fn test_layer_norm_backward_numerical_gradient() {
+        // Numerical gradient check for LayerNorm backward
+        let eps = 1e-5;
+        let x = array![[1.0, 2.0, 3.0, 4.0], [0.5, 1.5, 2.5, 3.5]];
+        let grad_out = array![[1.0, 0.5, -0.3, 0.8], [0.2, -0.4, 0.6, -0.1]];
+
+        // Analytical gradient
+        let mut ln = LayerNorm::new(4);
+        let _out = ln.forward_cache(&x);
+        let analytical = ln.backward(&grad_out, 0.0); // lr=0 so weights don't change
+
+        // Numerical gradient: perturb each input element
+        let ln_ref = LayerNorm::new(4);
+        let mut numerical = Array2::zeros(x.raw_dim());
+        for i in 0..x.nrows() {
+            for j in 0..x.ncols() {
+                let mut x_plus = x.clone();
+                let mut x_minus = x.clone();
+                x_plus[[i, j]] += eps;
+                x_minus[[i, j]] -= eps;
+                let out_plus = ln_ref.forward(&x_plus);
+                let out_minus = ln_ref.forward(&x_minus);
+                // Loss = sum(grad_out * output), so dL/dx[i,j] = sum(grad_out * d_output/dx[i,j])
+                let diff = &out_plus - &out_minus;
+                numerical[[i, j]] = (&grad_out * &diff).sum() / (2.0 * eps);
+            }
+        }
+
+        for i in 0..x.nrows() {
+            for j in 0..x.ncols() {
+                let a = analytical[[i, j]];
+                let n = numerical[[i, j]];
+                let denom = a.abs().max(n.abs()).max(1e-8);
+                let rel_err = (a - n).abs() / denom;
+                assert!(
+                    rel_err < 1e-4,
+                    "LayerNorm grad mismatch at [{i},{j}]: analytical={a}, numerical={n}, rel_err={rel_err}"
+                );
+            }
+        }
     }
 }

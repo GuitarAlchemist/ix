@@ -11,3 +11,4 @@ pub mod attention;
 pub mod positional;
 pub mod norm;
 pub mod transformer;
+pub mod classifier;
