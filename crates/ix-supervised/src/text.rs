@@ -245,9 +245,28 @@ impl TfidfVectorizer {
     }
 
     /// Learn vocabulary + IDF weights and transform documents.
+    ///
+    /// More efficient than calling `fit()` then `transform()` separately,
+    /// as it reuses the count matrix from fitting to compute TF-IDF directly.
     pub fn fit_transform(&mut self, docs: &[&str]) -> Array2<f64> {
-        self.fit(docs);
-        self.transform(docs)
+        let n_docs = docs.len() as f64;
+        self.count_vectorizer.fit(docs);
+
+        // Build count matrix once, reuse for both IDF and TF-IDF
+        let count_matrix = self.count_vectorizer.transform(docs);
+        let vocab_size = self.count_vectorizer.vocab_size();
+
+        // Compute IDF from the count matrix
+        self.idf = Vec::with_capacity(vocab_size);
+        for j in 0..vocab_size {
+            let df: f64 = (0..docs.len())
+                .filter(|&i| count_matrix[[i, j]] > 0.0)
+                .count() as f64;
+            self.idf.push(((1.0 + n_docs) / (1.0 + df)).ln() + 1.0);
+        }
+
+        // Apply TF-IDF directly to the count matrix (no second transform call)
+        self.apply_tfidf(&count_matrix)
     }
 
     /// Learn vocabulary and IDF weights from documents.
@@ -255,7 +274,6 @@ impl TfidfVectorizer {
         let n_docs = docs.len() as f64;
         self.count_vectorizer.fit(docs);
 
-        // Compute IDF: log(N / df) + 1
         let count_matrix = self.count_vectorizer.transform(docs);
         let vocab_size = self.count_vectorizer.vocab_size();
         self.idf = Vec::with_capacity(vocab_size);
@@ -264,7 +282,6 @@ impl TfidfVectorizer {
             let df: f64 = (0..docs.len())
                 .filter(|&i| count_matrix[[i, j]] > 0.0)
                 .count() as f64;
-            // Smoothed IDF: log((1 + N) / (1 + df)) + 1
             self.idf.push(((1.0 + n_docs) / (1.0 + df)).ln() + 1.0);
         }
     }
@@ -272,12 +289,16 @@ impl TfidfVectorizer {
     /// Transform documents using learned vocabulary and IDF weights.
     pub fn transform(&self, docs: &[&str]) -> Array2<f64> {
         let count_matrix = self.count_vectorizer.transform(docs);
-        let n_docs = docs.len();
-        let vocab_size = self.count_vectorizer.vocab_size();
+        self.apply_tfidf(&count_matrix)
+    }
+
+    /// Apply TF-IDF weighting to a pre-computed count matrix.
+    fn apply_tfidf(&self, count_matrix: &Array2<f64>) -> Array2<f64> {
+        let n_docs = count_matrix.nrows();
+        let vocab_size = count_matrix.ncols();
         let mut result = Array2::zeros((n_docs, vocab_size));
 
         for i in 0..n_docs {
-            // TF: normalize by document length
             let doc_total: f64 = count_matrix.row(i).sum();
             if doc_total < 1e-12 {
                 continue;
@@ -287,7 +308,6 @@ impl TfidfVectorizer {
                 result[[i, j]] = tf * self.idf[j];
             }
 
-            // L2 normalize the row
             if self.normalize {
                 let norm: f64 = result.row(i).mapv(|v| v * v).sum().sqrt();
                 if norm > 1e-12 {

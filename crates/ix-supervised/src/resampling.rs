@@ -182,13 +182,9 @@ impl Smote {
         let total = n + n_synthetic;
 
         let mut result_x = Array2::zeros((total, p));
-        // Copy original
-        for i in 0..n {
-            for j in 0..p {
-                result_x[[i, j]] = x[[i, j]];
-            }
-        }
-        // Copy synthetic
+        // Bulk copy original data
+        result_x.slice_mut(ndarray::s![0..n, ..]).assign(x);
+        // Copy synthetic samples
         for (si, row) in synthetic_x.iter().enumerate() {
             for (j, &val) in row.iter().enumerate() {
                 result_x[[n + si, j]] = val;
@@ -308,10 +304,10 @@ fn find_knn_within_class(
         let mut dists: Vec<(usize, f64)> = class_indices.iter()
             .filter(|&&j| j != i)
             .map(|&j| {
-                let dist: f64 = x.row(i).iter().zip(x.row(j).iter())
+                // Squared Euclidean distance (preserves ordering, avoids sqrt)
+            let dist: f64 = x.row(i).iter().zip(x.row(j).iter())
                     .map(|(a, b)| (a - b).powi(2))
-                    .sum::<f64>()
-                    .sqrt();
+                    .sum::<f64>();
                 (j, dist)
             })
             .collect();

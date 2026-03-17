@@ -116,6 +116,7 @@ impl RegressionStump {
         let mut best_right_val = overall_mean;
 
         let mut indices: Vec<usize> = (0..n).collect();
+        let total_sum: f64 = residuals.sum();
 
         for feat in 0..p {
             indices.sort_by(|&a, &b| x[[a, feat]].partial_cmp(&x[[b, feat]]).unwrap());
@@ -123,7 +124,6 @@ impl RegressionStump {
             // Running sums for incremental MSE computation
             let mut left_sum = 0.0;
             let mut left_count = 0usize;
-            let total_sum: f64 = residuals.sum();
 
             for split_pos in 0..n - 1 {
                 let idx = indices[split_pos];
@@ -277,12 +277,17 @@ impl EnsembleClassifier for GradientBoostedClassifier {
         self.trees.clear();
 
         for _round in 0..self.n_estimators {
-            // Compute probabilities via softmax
+            // Compute probabilities via inline softmax (avoids per-row Vec alloc)
             let mut proba = Array2::zeros((n, self.n_classes));
             for i in 0..n {
-                let p = softmax_row(&scores.row(i));
+                let max_s = scores.row(i).iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let mut sum = 0.0;
                 for c in 0..self.n_classes {
-                    proba[[i, c]] = p[c];
+                    proba[[i, c]] = (scores[[i, c]] - max_s).exp();
+                    sum += proba[[i, c]];
+                }
+                for c in 0..self.n_classes {
+                    proba[[i, c]] /= sum;
                 }
             }
 
