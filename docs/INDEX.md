@@ -50,10 +50,13 @@ With the foundations in place, learn the workhorse algorithms.
 | 10 | [Logistic Regression](supervised-learning/logistic-regression.md) | Binary classification — spam vs. not spam |
 | 11 | [Decision Trees](supervised-learning/decision-trees.md) | If-then rules learned from data — loan approval |
 | 12 | [Random Forest](supervised-learning/random-forest.md) | Many trees vote together — fraud detection |
-| 13 | [KNN](supervised-learning/knn.md) | Classify by nearest neighbors — recommendation systems |
-| 14 | [Naive Bayes](supervised-learning/naive-bayes.md) | Fast probabilistic classification — sentiment analysis |
-| 15 | [SVM](supervised-learning/svm.md) | Maximum margin classification — image boundaries |
-| 16 | [Evaluation Metrics](supervised-learning/evaluation-metrics.md) | Accuracy, precision, recall, F1, ROC — measuring model quality |
+| 13 | [Gradient Boosting](supervised-learning/gradient-boosting.md) | Sequential error correction — the tabular data champion |
+| 14 | [KNN](supervised-learning/knn.md) | Classify by nearest neighbors — recommendation systems |
+| 15 | [Naive Bayes](supervised-learning/naive-bayes.md) | Fast probabilistic classification — sentiment analysis |
+| 16 | [SVM](supervised-learning/svm.md) | Maximum margin classification — image boundaries |
+| 17 | [Evaluation Metrics](supervised-learning/evaluation-metrics.md) | Confusion matrix, precision, recall, F1, ROC/AUC, log loss |
+| 18 | [Cross-Validation](supervised-learning/cross-validation.md) | K-Fold, Stratified K-Fold — reliable model evaluation |
+| 19 | [Resampling & SMOTE](supervised-learning/resampling-smote.md) | Handling imbalanced data — synthetic oversampling, undersampling |
 
 ### Unsupervised Learning — Discovering Structure
 
@@ -181,6 +184,9 @@ These guides combine multiple algorithms to solve real problems.
 
 | Use Case | Algorithms Combined |
 |----------|-------------------|
+| [Credit Card Fraud (SMOTE + Boosting)](use-cases/credit-card-fraud.md) | SMOTE + Gradient Boosting + Confusion Matrix + ROC/AUC |
+| [Customer Churn Prediction](use-cases/customer-churn.md) | Logistic Regression + Cross-Validation + ROC/AUC |
+| [Spam Classifier (TF-IDF)](use-cases/spam-classifier.md) | TF-IDF + Naive Bayes + Cross-Validation + Confusion Matrix |
 | [Fraud Detection](use-cases/fraud-detection.md) | Random Forest + PCA + Evaluation Metrics |
 | [Recommendation Engine](use-cases/recommendation-engine.md) | KNN + Cosine Similarity + GPU Search |
 | [Anomaly Detection](use-cases/anomaly-detection.md) | DBSCAN + Bloom Filter + Kalman |
@@ -189,6 +195,12 @@ These guides combine multiple algorithms to solve real problems.
 | [Robust ML Pipeline](use-cases/robust-ml-pipeline.md) | Pipeline + Adversarial + Differential Privacy |
 | [Guitar Alchemist](use-cases/guitar-alchemist.md) | MCTS + GA + Wavelets + Viterbi + GPU Similarity |
 | [GIS & Spatial Analysis](use-cases/gis-spatial-analysis.md) | Kalman + DBSCAN + A* + FFT + HMM/Viterbi |
+
+---
+
+## Version française
+
+Tutoriels disponibles en français : [docs/fr/INDEX.md](fr/INDEX.md)
 
 ---
 

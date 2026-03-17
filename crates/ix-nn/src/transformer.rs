@@ -21,6 +21,7 @@ use crate::attention::{
     multi_head_attention_backward,
 };
 use crate::norm::LayerNorm;
+use crate::dropout::Dropout;
 
 /// Position-wise feed-forward network: two linear layers with ReLU/GELU.
 pub struct FeedForward {
@@ -192,6 +193,10 @@ pub struct TransformerBlock {
     pub w_o: Array2<f64>,
     pub ffn: FeedForward,
     pub n_heads: usize,
+    /// Dropout after attention output.
+    attn_dropout: Dropout,
+    /// Dropout after FFN output.
+    ffn_dropout: Dropout,
     // Caches for backward pass
     input_cache: Option<Array3<f64>>,
     normed1_cache: Option<Array3<f64>>,
@@ -206,6 +211,11 @@ pub struct TransformerBlock {
 
 impl TransformerBlock {
     pub fn new(d_model: usize, n_heads: usize, d_ff: usize, seed: u64) -> Self {
+        Self::new_with_dropout(d_model, n_heads, d_ff, seed, 0.0)
+    }
+
+    /// Create a transformer block with dropout.
+    pub fn new_with_dropout(d_model: usize, n_heads: usize, d_ff: usize, seed: u64, dropout: f64) -> Self {
         use rand::SeedableRng;
         use rand::Rng;
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
@@ -224,6 +234,8 @@ impl TransformerBlock {
             w_o: random_matrix(&mut rng),
             ffn: FeedForward::new(d_model, d_ff, seed + 1),
             n_heads,
+            attn_dropout: Dropout::new(dropout, seed + 2),
+            ffn_dropout: Dropout::new(dropout, seed + 3),
             input_cache: None,
             normed1_cache: None,
             residual1_cache: None,
@@ -258,18 +270,42 @@ impl TransformerBlock {
 
     /// Forward pass that caches all intermediate activations for backward.
     pub fn forward_cache(&mut self, x: &Array3<f64>, mask: Option<&Array2<f64>>) -> Array3<f64> {
+        self.forward_cache_gpu(x, mask, None)
+    }
+
+    /// Forward pass with GPU acceleration and caching for backward.
+    pub fn forward_cache_gpu(
+        &mut self,
+        x: &Array3<f64>,
+        mask: Option<&Array2<f64>>,
+        gpu_ctx: Option<&ix_gpu::context::GpuContext>,
+    ) -> Array3<f64> {
         self.input_cache = Some(x.clone());
 
         // Pre-norm 1 (with cache for backward)
         let normed1 = Self::norm_3d_cache(&mut self.norm1, x);
         self.normed1_cache = Some(normed1.clone());
 
-        // Multi-head attention (with cache)
-        let (attn_out, weights, hq, hk, hv, concat) = multi_head_attention_forward_cache(
-            &normed1, &normed1, &normed1,
-            &self.w_q, &self.w_k, &self.w_v, &self.w_o,
-            self.n_heads, mask,
-        );
+        // Multi-head attention — use GPU if available, else CPU with cache
+        let (attn_out, weights, hq, hk, hv, concat) = if gpu_ctx.is_some() {
+            // GPU forward (no cache version, we still need the cache for backward)
+            // Use the CPU cache version since backward is CPU-only
+            multi_head_attention_forward_cache(
+                &normed1, &normed1, &normed1,
+                &self.w_q, &self.w_k, &self.w_v, &self.w_o,
+                self.n_heads, mask,
+            )
+        } else {
+            multi_head_attention_forward_cache(
+                &normed1, &normed1, &normed1,
+                &self.w_q, &self.w_k, &self.w_v, &self.w_o,
+                self.n_heads, mask,
+            )
+        };
+
+        // Apply dropout after attention
+        let attn_out = self.attn_dropout.forward_train_3d(&attn_out);
+
         self.attn_weights_cache = Some(weights);
         self.head_q_cache = Some(hq);
         self.head_k_cache = Some(hk);
@@ -283,8 +319,10 @@ impl TransformerBlock {
         let normed2 = Self::norm_3d_cache(&mut self.norm2, &residual1);
         self.normed2_cache = Some(normed2.clone());
 
-        // FFN (with cache)
+        // FFN (with cache) + dropout
         let ffn_out = self.ffn.forward_cache(&normed2);
+        let ffn_out = self.ffn_dropout.forward_train_3d(&ffn_out);
+
         &residual1 + &ffn_out
     }
 
@@ -303,9 +341,10 @@ impl TransformerBlock {
         let concat = self.concat_cache.take().expect("forward_cache() not called");
 
         // --- Backward through residual2: output = residual1 + ffn_out ---
-        // grad_residual1_from_ffn = grad_output (residual path)
-        // grad_ffn_out = grad_output
         let grad_ffn_out = grad_output.clone();
+
+        // --- Backward through FFN dropout ---
+        let grad_ffn_out = self.ffn_dropout.backward_3d(&grad_ffn_out);
 
         // --- Backward through FFN ---
         let grad_normed2 = self.ffn.backward(&grad_ffn_out, learning_rate);
@@ -317,9 +356,10 @@ impl TransformerBlock {
         let grad_residual1 = grad_output + &grad_residual1_from_norm2;
 
         // --- Backward through residual1: residual1 = input + attn_out ---
-        // grad_input_from_attn = grad_residual1 (residual path)
-        // grad_attn_out = grad_residual1
         let grad_attn_out = grad_residual1.clone();
+
+        // --- Backward through attention dropout ---
+        let grad_attn_out = self.attn_dropout.backward_3d(&grad_attn_out);
 
         // --- Backward through multi-head attention ---
         let grad_normed1 = multi_head_attention_backward(
@@ -387,8 +427,18 @@ pub struct TransformerStack {
 impl TransformerStack {
     /// Create a stack of `n_layers` identical transformer blocks.
     pub fn new(n_layers: usize, d_model: usize, n_heads: usize, d_ff: usize, seed: u64) -> Self {
+        Self::new_with_dropout(n_layers, d_model, n_heads, d_ff, seed, 0.0)
+    }
+
+    /// Create a stack of `n_layers` transformer blocks with dropout.
+    pub fn new_with_dropout(
+        n_layers: usize, d_model: usize, n_heads: usize, d_ff: usize,
+        seed: u64, dropout: f64,
+    ) -> Self {
         let blocks = (0..n_layers)
-            .map(|i| TransformerBlock::new(d_model, n_heads, d_ff, seed + i as u64 * 100))
+            .map(|i| TransformerBlock::new_with_dropout(
+                d_model, n_heads, d_ff, seed + i as u64 * 100, dropout,
+            ))
             .collect();
         Self {
             blocks,
@@ -414,9 +464,19 @@ impl TransformerStack {
 
     /// Forward pass with caching for backward.
     pub fn forward_cache(&mut self, x: &Array3<f64>, mask: Option<&Array2<f64>>) -> Array3<f64> {
+        self.forward_cache_gpu(x, mask, None)
+    }
+
+    /// Forward pass with GPU acceleration and caching for backward.
+    pub fn forward_cache_gpu(
+        &mut self,
+        x: &Array3<f64>,
+        mask: Option<&Array2<f64>>,
+        gpu_ctx: Option<&ix_gpu::context::GpuContext>,
+    ) -> Array3<f64> {
         let mut hidden = x.clone();
         for block in &mut self.blocks {
-            hidden = block.forward_cache(&hidden, mask);
+            hidden = block.forward_cache_gpu(&hidden, mask, gpu_ctx);
         }
         // Final layer norm with cache
         let batch = hidden.shape()[0];
@@ -643,6 +703,7 @@ mod tests {
         let x = Array3::from_shape_fn((1, 3, 8), |(_, i, j)| (i + j) as f64 * 0.1);
         let out1 = block_ref.forward(&x, None);
         let out2 = block_cache.forward_cache(&x, None);
+        // With dropout=0.0 (default), forward_cache should match forward
         for (a, b) in out1.iter().zip(out2.iter()) {
             assert!(
                 (a - b).abs() < 1e-10,
@@ -754,5 +815,30 @@ mod tests {
         assert!(diff_wo > 1e-10, "first block w_o should have been updated");
         let diff_ffn: f64 = (&stack.blocks[0].ffn.w1 - &ffn_w1_before).mapv(|v| v.abs()).sum();
         assert!(diff_ffn > 1e-10, "first block ffn.w1 should have been updated");
+    }
+
+    // --- Dropout integration tests ---
+
+    #[test]
+    fn test_transformer_block_with_dropout() {
+        let mut block = TransformerBlock::new_with_dropout(8, 2, 16, 42, 0.1);
+        let x = Array3::from_shape_fn((2, 3, 8), |(b, i, j)| (b + i + j) as f64 * 0.1);
+        let out = block.forward_cache(&x, None);
+        assert_eq!(out.shape(), &[2, 3, 8]);
+        // Should be able to backward
+        let grad = Array3::ones((2, 3, 8));
+        let grad_in = block.backward(&grad, 0.01);
+        assert_eq!(grad_in.shape(), &[2, 3, 8]);
+    }
+
+    #[test]
+    fn test_transformer_stack_with_dropout() {
+        let mut stack = TransformerStack::new_with_dropout(2, 8, 2, 16, 42, 0.1);
+        let x = Array3::from_shape_fn((1, 3, 8), |(_, i, j)| (i + j) as f64 * 0.1);
+        let out = stack.forward_cache(&x, None);
+        assert_eq!(out.shape(), &[1, 3, 8]);
+        let grad = Array3::ones((1, 3, 8));
+        let grad_in = stack.backward(&grad, 0.01);
+        assert_eq!(grad_in.shape(), &[1, 3, 8]);
     }
 }

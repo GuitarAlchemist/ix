@@ -33,6 +33,7 @@ members = [
     "crates/ix-skill",
     "crates/ix-demo",
     "crates/ix-governance",
+    "crates/ix-code",
 ]
 
 [workspace.package]
@@ -90,6 +91,7 @@ ix-sedenion = { path = "crates/ix-sedenion", version = "0.1.0" }
 ix-fractal = { path = "crates/ix-fractal", version = "0.1.0" }
 ix-number-theory = { path = "crates/ix-number-theory", version = "0.1.0" }
 ix-governance = { path = "crates/ix-governance", version = "0.1.0" }
+ix-code = { path = "crates/ix-code", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

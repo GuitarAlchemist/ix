@@ -1174,6 +1174,43 @@ pub fn random_forest(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_gradient_boosting ──────────────────────────────────
+
+pub fn gradient_boosting(params: Value) -> Result<Value, String> {
+    use ix_ensemble::gradient_boosting::GradientBoostedClassifier;
+    use ix_ensemble::traits::EnsembleClassifier;
+
+    let x_train_rows = parse_f64_matrix(&params, "x_train")?;
+    let y_train_raw: Vec<usize> = params.get("y_train")
+        .and_then(|v| v.as_array())
+        .ok_or("Missing 'y_train'")?
+        .iter()
+        .map(|v| v.as_u64().ok_or("Non-integer in y_train").map(|n| n as usize))
+        .collect::<Result<Vec<_>, _>>()?;
+    let x_test_rows = parse_f64_matrix(&params, "x_test")?;
+
+    let x_train = vecs_to_array2(&x_train_rows)?;
+    let y_train = Array1::from_vec(y_train_raw);
+    let x_test = vecs_to_array2(&x_test_rows)?;
+
+    let n_estimators = params.get("n_estimators").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let learning_rate = params.get("learning_rate").and_then(|v| v.as_f64()).unwrap_or(0.1);
+
+    let mut gbc = GradientBoostedClassifier::new(n_estimators, learning_rate);
+    gbc.fit(&x_train, &y_train);
+    let predictions = gbc.predict(&x_test);
+    let probas = gbc.predict_proba(&x_test);
+    let proba_rows: Vec<Vec<f64>> = (0..probas.nrows())
+        .map(|i| probas.row(i).to_vec()).collect();
+
+    Ok(json!({
+        "predictions": predictions.to_vec(),
+        "probabilities": proba_rows,
+        "n_estimators": n_estimators,
+        "learning_rate": learning_rate,
+    }))
+}
+
 // ── ix_supervised ──────────────────────────────────────────
 
 pub fn supervised(params: Value) -> Result<Value, String> {
@@ -1293,6 +1330,88 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                 }
                 _ => Err(format!("Unknown metric_type: {metric_type}. Use 'mse' or 'accuracy'")),
             }
+        }
+        "confusion_matrix" => {
+            let y_true_raw = parse_f64_array(&params, "y_true")?;
+            let y_pred_raw = parse_f64_array(&params, "y_pred")?;
+            let yt: Array1<usize> = Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
+            let yp: Array1<usize> = Array1::from_vec(y_pred_raw.iter().map(|v| *v as usize).collect());
+            let n_classes = params.get("n_classes").and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or_else(|| *yt.iter().chain(yp.iter()).max().unwrap() + 1);
+
+            let cm = metrics::ConfusionMatrix::from_labels(&yt, &yp, n_classes);
+            let (prec, rec, f1, support) = cm.classification_report();
+            let matrix: Vec<Vec<usize>> = (0..n_classes)
+                .map(|r| (0..n_classes).map(|c| cm.matrix()[[r, c]]).collect())
+                .collect();
+
+            Ok(json!({
+                "confusion_matrix": matrix,
+                "accuracy": cm.accuracy(),
+                "per_class": {
+                    "precision": prec,
+                    "recall": rec,
+                    "f1": f1,
+                    "support": support
+                },
+                "display": cm.display()
+            }))
+        }
+        "roc_auc" => {
+            let y_true_raw = parse_f64_array(&params, "y_true")?;
+            let y_scores_raw = parse_f64_array(&params, "y_scores")?;
+            let yt: Array1<usize> = Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
+            let ys = Array1::from_vec(y_scores_raw);
+
+            let (fpr, tpr, thresholds) = metrics::roc_curve(&yt, &ys);
+            let auc = metrics::roc_auc(&fpr, &tpr);
+
+            Ok(json!({
+                "auc": auc,
+                "fpr": fpr,
+                "tpr": tpr,
+                "thresholds": thresholds
+            }))
+        }
+        "cross_validate" => {
+            use ix_supervised::validation::cross_val_score;
+
+            let x = parse_f64_matrix_to_ndarray(&params, "x_train")?;
+            let y_raw = parse_f64_array(&params, "y_train")?;
+            let y: Array1<usize> = Array1::from_vec(y_raw.iter().map(|v| *v as usize).collect());
+            let k = params.get("k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
+            let model = params.get("model").and_then(|v| v.as_str()).unwrap_or("decision_tree");
+
+            let scores = match model {
+                "knn" => {
+                    let knn_k = params.get("knn_k").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+                    cross_val_score(&x, &y, || KNN::new(knn_k), k, seed)
+                }
+                "decision_tree" => {
+                    let max_depth = params.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                    cross_val_score(&x, &y, || DecisionTree::new(max_depth), k, seed)
+                }
+                "naive_bayes" => {
+                    cross_val_score(&x, &y, GaussianNaiveBayes::new, k, seed)
+                }
+                "logistic_regression" => {
+                    cross_val_score(&x, &y, LogisticRegression::new, k, seed)
+                }
+                _ => return Err(format!("Unknown model for cross_validate: {model}. Use knn, decision_tree, naive_bayes, or logistic_regression")),
+            };
+
+            let mean = scores.iter().sum::<f64>() / scores.len() as f64;
+            let std = (scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / scores.len() as f64).sqrt();
+
+            Ok(json!({
+                "fold_scores": scores,
+                "mean_accuracy": mean,
+                "std_accuracy": std,
+                "k_folds": k,
+                "model": model
+            }))
         }
         _ => Err(format!("Unknown supervised operation: {operation}")),
     }
@@ -1927,4 +2046,261 @@ pub fn ml_predict(params: Value) -> Result<Value, String> {
     let key = parse_str(&params, "persist_key")?;
     let data = parse_f64_matrix(&params, "data")?;
     crate::ml_pipeline::run_predict(key, &data)
+}
+
+// ── ix_code_analyze ─────────────────────────────────────────────────
+
+pub fn code_analyze(params: Value) -> Result<Value, String> {
+    use ix_code::analyze::{Language, analyze_source, analyze_file};
+    use std::path::Path;
+
+    // Option 1: analyze a file by path
+    if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
+        let path = Path::new(path_str);
+        let metrics = analyze_file(path)
+            .ok_or_else(|| format!("Could not analyze file: {} (unsupported language or read error)", path_str))?;
+        return Ok(serde_json::to_value(&metrics).unwrap());
+    }
+
+    // Option 2: analyze source code string
+    let source = params.get("source").and_then(|v| v.as_str())
+        .ok_or_else(|| "Either 'source' or 'path' is required".to_string())?;
+    let lang_str = params.get("language").and_then(|v| v.as_str())
+        .ok_or_else(|| "'language' is required when using 'source'".to_string())?;
+
+    let lang = Language::from_extension(lang_str)
+        .or(match lang_str {
+            "rust" => Some(Language::Rust),
+            "python" => Some(Language::Python),
+            "javascript" => Some(Language::JavaScript),
+            "typescript" => Some(Language::TypeScript),
+            "cpp" | "c" => Some(Language::Cpp),
+            "java" => Some(Language::Java),
+            "go" => Some(Language::Go),
+            "csharp" => Some(Language::CSharp),
+            "fsharp" => Some(Language::FSharp),
+            _ => None,
+        })
+        .ok_or_else(|| format!("Unsupported language: {}", lang_str))?;
+
+    let path = Path::new(match lang {
+        Language::Rust => "input.rs",
+        Language::Python => "input.py",
+        Language::JavaScript => "input.js",
+        Language::TypeScript => "input.ts",
+        Language::Cpp => "input.cpp",
+        Language::Java => "input.java",
+        Language::Go => "input.go",
+        Language::CSharp => "input.cs",
+        Language::FSharp => "input.fs",
+    });
+
+    let metrics = analyze_source(source, lang, path);
+
+    // Add feature vector info
+    let mut result = serde_json::to_value(&metrics).unwrap();
+    result["feature_names"] = json!(ix_code::metrics::CodeMetrics::feature_names());
+    result["file_features"] = json!(metrics.file_scope.to_features().to_vec());
+    if !metrics.functions.is_empty() {
+        let fn_features: Vec<Vec<f64>> = metrics.functions.iter()
+            .map(|f| f.to_features().to_vec())
+            .collect();
+        result["function_features"] = json!(fn_features);
+    }
+
+    Ok(result)
+}
+
+// ── ix_tars_bridge ──────────────────────────────────────────────────
+
+pub fn tars_bridge(params: Value) -> Result<Value, String> {
+    let action = parse_str(&params, "action")?;
+
+    match action {
+        "prepare_traces" => {
+            use ix_io::trace_bridge;
+            use std::path::PathBuf;
+
+            let dir = params.get("trace_dir")
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(trace_bridge::default_trace_dir);
+
+            if !dir.exists() {
+                return Ok(json!({
+                    "error": "Trace directory not found",
+                    "dir": dir.display().to_string(),
+                    "hint": "Create ~/.ga/traces/ and place trace JSON files there"
+                }));
+            }
+
+            let traces = trace_bridge::load_traces(&dir)
+                .map_err(|e| format!("Failed to load traces: {e}"))?;
+            let stats = trace_bridge::compute_stats(&traces);
+
+            Ok(json!({
+                "action": "prepare_traces",
+                "tars_tool": "ingest_ga_traces",
+                "payload": {
+                    "Count": stats.total_traces,
+                    "MinOccurrences": params.get("min_frequency").and_then(|v| v.as_i64()).unwrap_or(3)
+                },
+                "stats": {
+                    "total_traces": stats.total_traces,
+                    "success_count": stats.success_count,
+                    "failure_count": stats.failure_count,
+                    "avg_duration_ms": stats.avg_duration_ms,
+                    "p95_duration_ms": stats.p95_duration_ms,
+                    "event_types": stats.event_type_counts
+                },
+                "instruction": "Call TARS tool 'ingest_ga_traces' with the payload above to trigger pattern promotion"
+            }))
+        }
+        "prepare_patterns" => {
+            Ok(json!({
+                "action": "prepare_patterns",
+                "description": "Prepare pattern data for TARS promotion pipeline",
+                "workflow": [
+                    {"step": 1, "ix_tool": "ix_grammar_weights", "description": "Get current grammar rules with Bayesian weights"},
+                    {"step": 2, "ix_tool": "ix_trace_ingest", "description": "Analyze traces to find recurring tool-call sequences"},
+                    {"step": 3, "tars_tool": "run_promotion_pipeline", "description": "Run 7-step promotion (Inspect→Extract→Classify→Propose→Validate→Persist→Govern)"},
+                    {"step": 4, "tars_tool": "promotion_index", "description": "View ranked promotion results"}
+                ],
+                "min_frequency": params.get("min_frequency").and_then(|v| v.as_i64()).unwrap_or(3),
+                "instruction": "First call ix_grammar_weights to get current state, then call TARS run_promotion_pipeline"
+            }))
+        }
+        "export_grammar" => {
+            Ok(json!({
+                "action": "export_grammar",
+                "description": "Export ix grammar state for TARS synchronization",
+                "workflow": [
+                    {"step": 1, "ix_tool": "ix_grammar_weights", "description": "Get current Bayesian-weighted rules from ix"},
+                    {"step": 2, "tars_tool": "grammar_weights", "description": "View current TARS grammar weights"},
+                    {"step": 3, "tars_tool": "grammar_update", "description": "Update TARS rules with ix weights (per-rule: PatternId + Success)"}
+                ],
+                "tars_grammar_tools": ["grammar_weights", "grammar_update", "grammar_evolve", "grammar_search"],
+                "instruction": "Call ix_grammar_weights first, then sync to TARS via grammar_update for each rule"
+            }))
+        }
+        _ => Err(format!("Unknown tars_bridge action: {}. Use: prepare_traces, prepare_patterns, export_grammar", action)),
+    }
+}
+
+// ── ix_ga_bridge ────────────────────────────────────────────────────
+
+pub fn ga_bridge(params: Value) -> Result<Value, String> {
+    let action = parse_str(&params, "action")?;
+
+    match action {
+        "chord_features" => {
+            let chords = params.get("chords")
+                .and_then(|v| v.as_array())
+                .ok_or("'chords' array required for chord_features")?;
+
+            Ok(json!({
+                "action": "chord_features",
+                "description": "Convert GA chord data to ML feature vectors",
+                "workflow": [
+                    {"step": 1, "tool": "GaParseChord", "description": "Parse each chord symbol to get intervals, root, quality"},
+                    {"step": 2, "tool": "GaChordIntervals", "description": "Get interval names (P1, m3, P5, m7)"},
+                    {"step": 3, "tool": "GaChordToSet", "description": "Get pitch-class set, ICV, prime form for atonal features"},
+                    {"step": 4, "tool": "ix_stats", "description": "Compute statistics on interval vectors"},
+                    {"step": 5, "tool": "ix_kmeans", "description": "Cluster chords by interval/ICV similarity"}
+                ],
+                "feature_encoding": {
+                    "interval_vector": "12-bit binary pitch class presence (e.g. C=1,Db=0,D=0,Eb=1,E=0,...)",
+                    "icv": "6-element interval class vector from GaChordToSet",
+                    "quality_onehot": "One-hot: major=0, minor=1, dim=2, aug=3, dom7=4, maj7=5, min7=6",
+                    "root_chromatic": "Root note as chromatic index 0-11 (C=0, C#=1, ..., B=11)"
+                },
+                "chords_to_analyze": chords,
+                "ga_tools_needed": ["GaParseChord", "GaChordIntervals", "GaChordToSet"],
+                "ix_tools_needed": ["ix_stats", "ix_kmeans", "ix_ml_pipeline"]
+            }))
+        }
+        "progression_features" => {
+            let progression = params.get("progression")
+                .and_then(|v| v.as_str())
+                .unwrap_or("C Am F G");
+
+            Ok(json!({
+                "action": "progression_features",
+                "description": "Convert chord progression to ML feature matrix",
+                "workflow": [
+                    {"step": 1, "tool": "GaAnalyzeProgression", "description": "Detect key, annotate with Roman numerals"},
+                    {"step": 2, "tool": "GaCommonTones", "description": "Compute common tones between adjacent chords (voice-leading cost)"},
+                    {"step": 3, "tool": "GaChordSubstitutions", "description": "Find possible substitutions for style analysis"},
+                    {"step": 4, "tool": "ix_ml_pipeline", "description": "Train classifier on progression features (style detection)"}
+                ],
+                "feature_encoding": {
+                    "roman_numerals": "Sequence of Roman numeral degrees as integers (I=1, ii=2, ...)",
+                    "common_tone_count": "Number of common tones between adjacent chords",
+                    "root_motion": "Chromatic interval between successive roots",
+                    "harmonic_tension": "Sum of tritone intervals in progression"
+                },
+                "progression": progression,
+                "ga_tools_needed": ["GaAnalyzeProgression", "GaCommonTones", "GaChordSubstitutions"],
+                "ix_tools_needed": ["ix_stats", "ix_ml_pipeline"]
+            }))
+        }
+        "scale_features" => {
+            Ok(json!({
+                "action": "scale_features",
+                "description": "Convert scale data to ML feature vectors",
+                "workflow": [
+                    {"step": 1, "tool": "GetAvailableScales", "description": "List all scales with binary IDs"},
+                    {"step": 2, "tool": "GaScaleById", "description": "Get scale details by 12-bit pitch-class bitmask"},
+                    {"step": 3, "tool": "ix_distance", "description": "Compute Hamming distance between scale bitmasks"},
+                    {"step": 4, "tool": "ix_kmeans", "description": "Cluster scales by pitch-class similarity"}
+                ],
+                "feature_encoding": {
+                    "pitch_class_set": "12-bit binary vector (1=note present, 0=absent)",
+                    "interval_pattern": "Sequence of semitone intervals between scale degrees",
+                    "cardinality": "Number of notes in the scale (5=pentatonic, 7=diatonic, etc.)"
+                },
+                "ga_tools_needed": ["GetAvailableScales", "GaScaleById", "GetScaleDegrees"],
+                "ix_tools_needed": ["ix_distance", "ix_kmeans", "ix_ml_pipeline"]
+            }))
+        }
+        "workflow_guide" => {
+            Ok(json!({
+                "action": "workflow_guide",
+                "description": "Complete guide to GA→ix federation workflows",
+                "workflows": {
+                    "chord_clustering": {
+                        "description": "Cluster chords by timbral/harmonic similarity",
+                        "steps": "GaParseChord → GaChordToSet → ix_kmeans",
+                        "use_case": "Find harmonically similar chord substitutions"
+                    },
+                    "style_classification": {
+                        "description": "Classify chord progressions by musical style",
+                        "steps": "GaAnalyzeProgression → ix_ml_pipeline (classify)",
+                        "use_case": "Detect jazz vs pop vs classical progressions"
+                    },
+                    "scale_recommendation": {
+                        "description": "Recommend scales for improvisation over a progression",
+                        "steps": "GaAnalyzeProgression → GaArpeggioSuggestions → ix_supervised",
+                        "use_case": "Suggest optimal scales for each chord in a progression"
+                    },
+                    "harmonic_complexity_analysis": {
+                        "description": "Quantify harmonic complexity of a piece",
+                        "steps": "GaChordToSet → ix_stats → ix_chaos_lyapunov",
+                        "use_case": "Measure harmonic unpredictability and compare pieces"
+                    },
+                    "voice_leading_optimization": {
+                        "description": "Find optimal voice-leading paths between chords",
+                        "steps": "GaCommonTones → ix_search (A*) → ix_optimize",
+                        "use_case": "Minimize voice-leading distance in chord progressions"
+                    },
+                    "trace_feedback_loop": {
+                        "description": "Self-improving loop across GA→ix→TARS",
+                        "steps": "GA traces → ix_trace_ingest → ix_tars_bridge → TARS promotion",
+                        "use_case": "Learn from past tool-call patterns to improve future suggestions"
+                    }
+                }
+            }))
+        }
+        _ => Err(format!("Unknown ga_bridge action: {}. Use: chord_features, progression_features, scale_features, workflow_guide", action)),
+    }
 }

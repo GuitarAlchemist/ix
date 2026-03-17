@@ -4,11 +4,44 @@
 //! the Classifier/Regressor traits from ix-supervised.
 
 use ndarray::{Array1, Array2, Array3, Axis, s};
+use rand::SeedableRng;
 use serde::{Serialize, Deserialize};
 
 use crate::transformer::TransformerStack;
 use crate::positional::sinusoidal_encoding;
 use ix_supervised::traits::{Classifier, Regressor};
+
+/// Learning rate schedule.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum LrSchedule {
+    /// Constant learning rate (no scheduling).
+    #[default]
+    Constant,
+    /// Linear warmup for `warmup_steps` steps, then cosine decay to `min_lr`.
+    WarmupCosine {
+        warmup_steps: usize,
+        min_lr: f64,
+    },
+}
+
+/// Compute effective learning rate for a given step.
+fn scheduled_lr(base_lr: f64, schedule: &LrSchedule, step: usize, total_steps: usize) -> f64 {
+    match schedule {
+        LrSchedule::Constant => base_lr,
+        LrSchedule::WarmupCosine { warmup_steps, min_lr } => {
+            if step < *warmup_steps {
+                // Linear warmup: 0 → base_lr
+                base_lr * (step + 1) as f64 / *warmup_steps as f64
+            } else {
+                // Cosine decay: base_lr → min_lr
+                let decay_steps = total_steps.saturating_sub(*warmup_steps).max(1);
+                let progress = (step - warmup_steps) as f64 / decay_steps as f64;
+                let cosine = (1.0 + (std::f64::consts::PI * progress).cos()) / 2.0;
+                min_lr + (base_lr - min_lr) * cosine
+            }
+        }
+    }
+}
 
 /// Configuration for a transformer model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +62,14 @@ pub struct TransformerConfig {
     pub learning_rate: f64,
     /// Random seed for reproducibility.
     pub seed: u64,
+    /// Dropout probability (0.0 = no dropout). Applied after attention and FFN.
+    pub dropout: f64,
+    /// Mini-batch size. If None or >= n_samples, uses full-batch.
+    pub batch_size: Option<usize>,
+    /// Learning rate schedule.
+    pub lr_schedule: LrSchedule,
+    /// Whether to use GPU-accelerated attention when available.
+    pub use_gpu: bool,
 }
 
 impl Default for TransformerConfig {
@@ -42,13 +83,17 @@ impl Default for TransformerConfig {
             epochs: 50,
             learning_rate: 0.001,
             seed: 42,
+            dropout: 0.0,
+            batch_size: None,
+            lr_schedule: LrSchedule::Constant,
+            use_gpu: false,
         }
     }
 }
 
 /// A transformer-based classifier.
 ///
-/// Architecture: reshape → positional encoding → transformer stack → mean pool → dense → softmax
+/// Architecture: reshape -> positional encoding -> transformer stack -> mean pool -> dense -> softmax
 pub struct TransformerClassifier {
     config: TransformerConfig,
     stack: Option<TransformerStack>,
@@ -110,7 +155,7 @@ impl TransformerClassifier {
             .expect("reshape failed")
     }
 
-    /// Mean pooling over sequence dimension: (batch, seq, d_model) → (batch, d_model).
+    /// Mean pooling over sequence dimension: (batch, seq, d_model) -> (batch, d_model).
     fn mean_pool(x: &Array3<f64>) -> Array2<f64> {
         x.mean_axis(Axis(1)).expect("mean pool failed")
     }
@@ -152,10 +197,11 @@ impl Classifier for TransformerClassifier {
 
         let d_model = self.config.d_model;
         let seed = self.config.seed;
+        let dropout_p = self.config.dropout;
 
         // Initialize transformer stack
-        self.stack = Some(TransformerStack::new(
-            self.config.n_layers, d_model, self.config.n_heads, self.config.d_ff, seed,
+        self.stack = Some(TransformerStack::new_with_dropout(
+            self.config.n_layers, d_model, self.config.n_heads, self.config.d_ff, seed, dropout_p,
         ));
 
         // Initialize classification head
@@ -173,78 +219,122 @@ impl Classifier for TransformerClassifier {
             }
         }
 
+        // Resolve batch size
+        let batch_size = self.config.batch_size
+            .map(|bs| bs.min(n_samples).max(1))
+            .unwrap_or(n_samples);
+
+        // Total training steps for LR scheduling
+        let steps_per_epoch = n_samples.div_ceil(batch_size);
+        let total_steps = self.config.epochs * steps_per_epoch;
+
+        // Try GPU context if requested
+        let gpu_ctx = if self.config.use_gpu {
+            crate::attention::try_gpu()
+        } else {
+            None
+        };
+
         // Training loop
         self.training_losses.clear();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed + 777);
+        let mut global_step = 0usize;
 
         for _epoch in 0..self.config.epochs {
-            // Forward: reshape → add pos encoding → transformer → pool → head → softmax
-            let x3d = self.reshape_input(x);
+            // Shuffle indices for mini-batch
+            let mut indices: Vec<usize> = (0..n_samples).collect();
+            shuffle(&mut indices, &mut rng);
 
-            // Add positional encoding (broadcast over batch)
-            let pos = self.pos_encoding.as_ref().unwrap();
-            let mut encoded = x3d;
-            for mut sample in encoded.outer_iter_mut() {
-                sample += pos;
-            }
+            let mut epoch_loss = 0.0;
+            let mut epoch_count = 0;
 
-            // Transformer forward (with cache for backward)
-            let stack = self.stack.as_mut().unwrap();
-            let transformed = stack.forward_cache(&encoded, None);
+            for batch_start in (0..n_samples).step_by(batch_size) {
+                let batch_end = (batch_start + batch_size).min(n_samples);
+                let batch_idx = &indices[batch_start..batch_end];
+                let bs = batch_idx.len();
 
-            // Mean pool → (batch, d_model)
-            let pooled = Self::mean_pool(&transformed);
+                // Extract mini-batch
+                let x_batch = select_rows(x, batch_idx);
+                let target_batch = select_rows(&target_onehot, batch_idx);
 
-            // Classification head: pooled @ W + b
-            let hw = self.head_weights.as_ref().unwrap();
-            let hb = self.head_bias.as_ref().unwrap();
-            let logits = pooled.dot(hw) + hb;
+                // Compute LR for this step
+                let lr = scheduled_lr(
+                    self.config.learning_rate,
+                    &self.config.lr_schedule,
+                    global_step,
+                    total_steps,
+                );
 
-            // Softmax
-            let probs = Self::softmax_2d(&logits);
+                // Forward: reshape -> add pos encoding -> transformer -> pool -> head -> softmax
+                let x3d = self.reshape_input(&x_batch);
+                let pos = self.pos_encoding.as_ref().unwrap();
+                let mut encoded = x3d;
+                for mut sample in encoded.outer_iter_mut() {
+                    sample += pos;
+                }
 
-            // Cross-entropy loss
-            let eps = 1e-12;
-            let loss: f64 = -(0..n_samples)
-                .map(|i| {
-                    (0..self.n_classes)
-                        .map(|c| target_onehot[[i, c]] * (probs[[i, c]] + eps).ln())
-                        .sum::<f64>()
-                })
-                .sum::<f64>() / n_samples as f64;
+                // Transformer forward (with cache for backward)
+                let stack = self.stack.as_mut().unwrap();
+                let transformed = stack.forward_cache_gpu(&encoded, None, gpu_ctx.as_ref());
 
-            self.training_losses.push(loss);
+                // Mean pool -> (batch, d_model)
+                let pooled = Self::mean_pool(&transformed);
 
-            // Backward: gradient of cross-entropy + softmax = probs - targets
-            let grad_logits = (&probs - &target_onehot) / n_samples as f64;
+                // Classification head: pooled @ W + b
+                let hw = self.head_weights.as_ref().unwrap();
+                let hb = self.head_bias.as_ref().unwrap();
+                let logits = pooled.dot(hw) + hb;
 
-            // Head backward
-            let grad_hw = pooled.t().dot(&grad_logits);
-            let grad_hb = grad_logits.sum_axis(Axis(0));
-            let grad_pooled = grad_logits.dot(&hw.t());
+                // Softmax
+                let probs = Self::softmax_2d(&logits);
 
-            // Update head weights
-            let lr = self.config.learning_rate;
-            let hw_mut = self.head_weights.as_mut().unwrap();
-            *hw_mut = &*hw_mut - &(&grad_hw * lr);
-            let hb_mut = self.head_bias.as_mut().unwrap();
-            *hb_mut = &*hb_mut - &(&grad_hb * lr);
+                // Cross-entropy loss
+                let eps = 1e-12;
+                let loss: f64 = -(0..bs)
+                    .map(|i| {
+                        (0..self.n_classes)
+                            .map(|c| target_batch[[i, c]] * (probs[[i, c]] + eps).ln())
+                            .sum::<f64>()
+                    })
+                    .sum::<f64>() / bs as f64;
 
-            // Backprop through mean pool: distribute gradient equally across sequence positions
-            let seq_len = self.seq_len;
-            let d_model = self.config.d_model;
-            let mut grad_transformed = Array3::zeros((n_samples, seq_len, d_model));
-            for i in 0..n_samples {
-                for s in 0..seq_len {
-                    for d in 0..d_model {
-                        grad_transformed[[i, s, d]] = grad_pooled[[i, d]] / seq_len as f64;
+                epoch_loss += loss * bs as f64;
+                epoch_count += bs;
+
+                // Backward: gradient of cross-entropy + softmax = probs - targets
+                let grad_logits = (&probs - &target_batch) / bs as f64;
+
+                // Head backward
+                let grad_hw = pooled.t().dot(&grad_logits);
+                let grad_hb = grad_logits.sum_axis(Axis(0));
+                let grad_pooled = grad_logits.dot(&hw.t());
+
+                // Update head weights
+                let hw_mut = self.head_weights.as_mut().unwrap();
+                *hw_mut = &*hw_mut - &(&grad_hw * lr);
+                let hb_mut = self.head_bias.as_mut().unwrap();
+                *hb_mut = &*hb_mut - &(&grad_hb * lr);
+
+                // Backprop through mean pool: distribute gradient equally across sequence positions
+                let seq_len = self.seq_len;
+                let d_model = self.config.d_model;
+                let mut grad_transformed = Array3::zeros((bs, seq_len, d_model));
+                for i in 0..bs {
+                    for s in 0..seq_len {
+                        for d in 0..d_model {
+                            grad_transformed[[i, s, d]] = grad_pooled[[i, d]] / seq_len as f64;
+                        }
                     }
                 }
+
+                // Full transformer stack backward
+                let stack = self.stack.as_mut().unwrap();
+                stack.backward(&grad_transformed, lr);
+
+                global_step += 1;
             }
 
-            // Full transformer stack backward — trains all attention, FFN, and norm weights
-            let stack = self.stack.as_mut().unwrap();
-            stack.backward(&grad_transformed, lr);
-            //   stack.backward(&grad_pooled_3d, lr);
+            self.training_losses.push(epoch_loss / epoch_count as f64);
         }
     }
 
@@ -281,7 +371,7 @@ impl Classifier for TransformerClassifier {
 
 /// A transformer-based regressor.
 ///
-/// Architecture: reshape → positional encoding → transformer stack → mean pool → dense → output
+/// Architecture: reshape -> positional encoding -> transformer stack -> mean pool -> dense -> output
 pub struct TransformerRegressor {
     config: TransformerConfig,
     stack: Option<TransformerStack>,
@@ -352,64 +442,108 @@ impl Regressor for TransformerRegressor {
 
         let d_model = self.config.d_model;
         let seed = self.config.seed;
+        let dropout_p = self.config.dropout;
 
-        self.stack = Some(TransformerStack::new(
-            self.config.n_layers, d_model, self.config.n_heads, self.config.d_ff, seed,
+        self.stack = Some(TransformerStack::new_with_dropout(
+            self.config.n_layers, d_model, self.config.n_heads, self.config.d_ff, seed, dropout_p,
         ));
         self.head_weights = Some(Self::xavier_init(d_model, 1, seed + 999));
         self.head_bias = Some(0.0);
         self.pos_encoding = Some(sinusoidal_encoding(self.seq_len, d_model));
 
         let target = y.clone().into_shape_with_order((n_samples, 1)).unwrap();
+
+        // Resolve batch size
+        let batch_size = self.config.batch_size
+            .map(|bs| bs.min(n_samples).max(1))
+            .unwrap_or(n_samples);
+
+        let steps_per_epoch = n_samples.div_ceil(batch_size);
+        let total_steps = self.config.epochs * steps_per_epoch;
+
+        let gpu_ctx = if self.config.use_gpu {
+            crate::attention::try_gpu()
+        } else {
+            None
+        };
+
         self.training_losses.clear();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed + 777);
+        let mut global_step = 0usize;
 
         for _epoch in 0..self.config.epochs {
-            let x3d = self.reshape_input(x);
-            let pos = self.pos_encoding.as_ref().unwrap();
-            let mut encoded = x3d;
-            for mut sample in encoded.outer_iter_mut() {
-                sample += pos;
-            }
+            let mut indices: Vec<usize> = (0..n_samples).collect();
+            shuffle(&mut indices, &mut rng);
 
-            let stack = self.stack.as_mut().unwrap();
-            let transformed = stack.forward_cache(&encoded, None);
-            let pooled = Self::mean_pool(&transformed);
+            let mut epoch_loss = 0.0;
+            let mut epoch_count = 0;
 
-            let hw = self.head_weights.as_ref().unwrap();
-            let bias = self.head_bias.unwrap();
-            let predictions = pooled.dot(hw) + bias;
+            for batch_start in (0..n_samples).step_by(batch_size) {
+                let batch_end = (batch_start + batch_size).min(n_samples);
+                let batch_idx = &indices[batch_start..batch_end];
+                let bs = batch_idx.len();
 
-            // MSE loss
-            let diff = &predictions - &target;
-            let loss = diff.mapv(|v| v * v).mean().unwrap();
-            self.training_losses.push(loss);
+                let x_batch = select_rows(x, batch_idx);
+                let target_batch = select_rows(&target, batch_idx);
 
-            // MSE gradient: 2 * (pred - target) / n
-            let grad_pred = &diff * (2.0 / n_samples as f64);
+                let lr = scheduled_lr(
+                    self.config.learning_rate,
+                    &self.config.lr_schedule,
+                    global_step,
+                    total_steps,
+                );
 
-            // Head backward
-            let grad_hw = pooled.t().dot(&grad_pred);
-            let grad_hb: f64 = grad_pred.sum();
-            let grad_pooled = grad_pred.dot(&hw.t());
+                let x3d = self.reshape_input(&x_batch);
+                let pos = self.pos_encoding.as_ref().unwrap();
+                let mut encoded = x3d;
+                for mut sample in encoded.outer_iter_mut() {
+                    sample += pos;
+                }
 
-            let lr = self.config.learning_rate;
-            let hw_mut = self.head_weights.as_mut().unwrap();
-            *hw_mut = &*hw_mut - &(&grad_hw * lr);
-            *self.head_bias.as_mut().unwrap() -= lr * grad_hb;
+                let stack = self.stack.as_mut().unwrap();
+                let transformed = stack.forward_cache_gpu(&encoded, None, gpu_ctx.as_ref());
+                let pooled = Self::mean_pool(&transformed);
 
-            // Backprop through mean pool → transformer stack
-            let seq_len = self.seq_len;
-            let d_model = self.config.d_model;
-            let mut grad_transformed = Array3::zeros((n_samples, seq_len, d_model));
-            for i in 0..n_samples {
-                for s in 0..seq_len {
-                    for d in 0..d_model {
-                        grad_transformed[[i, s, d]] = grad_pooled[[i, d]] / seq_len as f64;
+                let hw = self.head_weights.as_ref().unwrap();
+                let bias = self.head_bias.unwrap();
+                let predictions = pooled.dot(hw) + bias;
+
+                // MSE loss
+                let diff = &predictions - &target_batch;
+                let loss = diff.mapv(|v| v * v).mean().unwrap();
+                epoch_loss += loss * bs as f64;
+                epoch_count += bs;
+
+                // MSE gradient: 2 * (pred - target) / n
+                let grad_pred = &diff * (2.0 / bs as f64);
+
+                // Head backward
+                let grad_hw = pooled.t().dot(&grad_pred);
+                let grad_hb: f64 = grad_pred.sum();
+                let grad_pooled = grad_pred.dot(&hw.t());
+
+                let hw_mut = self.head_weights.as_mut().unwrap();
+                *hw_mut = &*hw_mut - &(&grad_hw * lr);
+                *self.head_bias.as_mut().unwrap() -= lr * grad_hb;
+
+                // Backprop through mean pool -> transformer stack
+                let seq_len = self.seq_len;
+                let d_model = self.config.d_model;
+                let mut grad_transformed = Array3::zeros((bs, seq_len, d_model));
+                for i in 0..bs {
+                    for s in 0..seq_len {
+                        for d in 0..d_model {
+                            grad_transformed[[i, s, d]] = grad_pooled[[i, d]] / seq_len as f64;
+                        }
                     }
                 }
+                let stack = self.stack.as_mut().unwrap();
+                stack.backward(&grad_transformed, lr);
+
+                global_step += 1;
             }
-            let stack = self.stack.as_mut().unwrap();
-            stack.backward(&grad_transformed, lr);
+
+            self.training_losses.push(epoch_loss / epoch_count as f64);
         }
     }
 
@@ -431,6 +565,26 @@ impl Regressor for TransformerRegressor {
 
         predictions.column(0).to_owned()
     }
+}
+
+/// Fisher-Yates shuffle.
+fn shuffle(indices: &mut [usize], rng: &mut rand::rngs::StdRng) {
+    use rand::Rng;
+    let n = indices.len();
+    for i in (1..n).rev() {
+        let j = rng.random_range(0..=i);
+        indices.swap(i, j);
+    }
+}
+
+/// Extract rows by index from a 2D array.
+fn select_rows(x: &Array2<f64>, indices: &[usize]) -> Array2<f64> {
+    let ncols = x.ncols();
+    let mut result = Array2::zeros((indices.len(), ncols));
+    for (out_i, &src_i) in indices.iter().enumerate() {
+        result.row_mut(out_i).assign(&x.row(src_i));
+    }
+    result
 }
 
 /// Serializable state for a TransformerClassifier.
@@ -468,6 +622,7 @@ mod tests {
             epochs: 10,
             learning_rate: 0.01,
             seed: 42,
+            ..Default::default()
         };
 
         let x = Array2::from_shape_fn((20, 8), |(i, j)| {
@@ -495,6 +650,7 @@ mod tests {
         let config = TransformerConfig {
             d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
             seq_len: Some(2), epochs: 5, learning_rate: 0.01, seed: 42,
+            ..Default::default()
         };
         let x = Array2::from_shape_fn((10, 8), |(i, j)| (i * j) as f64 * 0.01);
         let y = Array1::from_vec(vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
@@ -514,6 +670,7 @@ mod tests {
         let config = TransformerConfig {
             d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
             seq_len: Some(2), epochs: 20, learning_rate: 0.01, seed: 42,
+            ..Default::default()
         };
         let x = Array2::from_shape_fn((20, 8), |(i, j)| i as f64 * 0.1 + j as f64 * 0.01);
         let y = Array1::from_vec((0..20).map(|i| i as f64 * 0.5).collect());
@@ -531,6 +688,7 @@ mod tests {
         let config = TransformerConfig {
             d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
             seq_len: Some(1), epochs: 30, learning_rate: 0.001, seed: 42,
+            ..Default::default()
         };
         let x = Array2::from_shape_fn((10, 4), |(i, j)| (i + j) as f64);
         let y = Array1::from_vec((0..10).map(|i| i as f64 * 2.0).collect());
@@ -549,10 +707,169 @@ mod tests {
         let config = TransformerConfig {
             d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
             seq_len: None, epochs: 1, learning_rate: 0.01, seed: 42,
+            ..Default::default()
         };
 
         let model = TransformerClassifier::new(config);
         assert_eq!(model.resolve_seq_len(12), 3);  // 12 / 4 = 3
         assert_eq!(model.resolve_seq_len(7), 7);   // not divisible, use n_features
+    }
+
+    // --- New tests for mini-batch, dropout, LR schedule, GPU ---
+
+    #[test]
+    fn test_mini_batch_training() {
+        let config = TransformerConfig {
+            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
+            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            batch_size: Some(5),
+            ..Default::default()
+        };
+        let x = Array2::from_shape_fn((20, 8), |(i, j)| {
+            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+        });
+        let y = Array1::from_vec(
+            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+        );
+
+        let mut model = TransformerClassifier::new(config);
+        model.fit(&x, &y);
+
+        assert!(!model.losses().is_empty());
+        let preds = model.predict(&x);
+        assert_eq!(preds.len(), 20);
+    }
+
+    #[test]
+    fn test_dropout_training() {
+        let config = TransformerConfig {
+            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
+            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            dropout: 0.1,
+            ..Default::default()
+        };
+        let x = Array2::from_shape_fn((20, 8), |(i, j)| {
+            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+        });
+        let y = Array1::from_vec(
+            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+        );
+
+        let mut model = TransformerClassifier::new(config);
+        model.fit(&x, &y);
+
+        assert!(!model.losses().is_empty());
+        let preds = model.predict(&x);
+        assert_eq!(preds.len(), 20);
+    }
+
+    #[test]
+    fn test_warmup_cosine_schedule() {
+        let config = TransformerConfig {
+            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
+            seq_len: Some(2), epochs: 20, learning_rate: 0.01, seed: 42,
+            lr_schedule: LrSchedule::WarmupCosine { warmup_steps: 5, min_lr: 0.0001 },
+            ..Default::default()
+        };
+        let x = Array2::from_shape_fn((20, 8), |(i, j)| {
+            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+        });
+        let y = Array1::from_vec(
+            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+        );
+
+        let mut model = TransformerClassifier::new(config);
+        model.fit(&x, &y);
+        assert!(!model.losses().is_empty());
+    }
+
+    #[test]
+    fn test_scheduled_lr_warmup() {
+        // During warmup, LR should increase linearly
+        let schedule = LrSchedule::WarmupCosine { warmup_steps: 10, min_lr: 0.0 };
+        let lr0 = scheduled_lr(0.1, &schedule, 0, 100);
+        let lr5 = scheduled_lr(0.1, &schedule, 4, 100);
+        let lr9 = scheduled_lr(0.1, &schedule, 9, 100);
+        assert!(lr0 < lr5, "LR should increase during warmup: {lr0} < {lr5}");
+        assert!(lr5 < lr9, "LR should increase during warmup: {lr5} < {lr9}");
+        assert!((lr9 - 0.1).abs() < 1e-10, "LR at end of warmup should equal base_lr");
+    }
+
+    #[test]
+    fn test_scheduled_lr_cosine_decay() {
+        let schedule = LrSchedule::WarmupCosine { warmup_steps: 0, min_lr: 0.0 };
+        let lr_start = scheduled_lr(0.1, &schedule, 0, 100);
+        let lr_mid = scheduled_lr(0.1, &schedule, 50, 100);
+        let lr_end = scheduled_lr(0.1, &schedule, 99, 100);
+        assert!(lr_start > lr_mid, "LR should decay: {lr_start} > {lr_mid}");
+        assert!(lr_mid > lr_end, "LR should decay: {lr_mid} > {lr_end}");
+    }
+
+    #[test]
+    fn test_scheduled_lr_constant() {
+        let schedule = LrSchedule::Constant;
+        assert_eq!(scheduled_lr(0.1, &schedule, 0, 100), 0.1);
+        assert_eq!(scheduled_lr(0.1, &schedule, 50, 100), 0.1);
+        assert_eq!(scheduled_lr(0.1, &schedule, 99, 100), 0.1);
+    }
+
+    #[test]
+    fn test_gpu_training_fallback() {
+        // With use_gpu=true but no GPU available, should fall back to CPU
+        let config = TransformerConfig {
+            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
+            seq_len: Some(2), epochs: 5, learning_rate: 0.01, seed: 42,
+            use_gpu: true,
+            ..Default::default()
+        };
+        let x = Array2::from_shape_fn((10, 8), |(i, j)| (i + j) as f64 * 0.1);
+        let y = Array1::from_vec(vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
+
+        let mut model = TransformerClassifier::new(config);
+        model.fit(&x, &y);
+        assert!(!model.losses().is_empty());
+    }
+
+    #[test]
+    fn test_mini_batch_regressor() {
+        let config = TransformerConfig {
+            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
+            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            batch_size: Some(4),
+            ..Default::default()
+        };
+        let x = Array2::from_shape_fn((20, 8), |(i, j)| i as f64 * 0.1 + j as f64 * 0.01);
+        let y = Array1::from_vec((0..20).map(|i| i as f64 * 0.5).collect());
+
+        let mut model = TransformerRegressor::new(config);
+        model.fit(&x, &y);
+        assert!(!model.losses().is_empty());
+        let preds = model.predict(&x);
+        assert_eq!(preds.len(), 20);
+    }
+
+    #[test]
+    fn test_all_features_combined() {
+        // Mini-batch + dropout + warmup cosine + gpu fallback
+        let config = TransformerConfig {
+            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
+            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            dropout: 0.1,
+            batch_size: Some(5),
+            lr_schedule: LrSchedule::WarmupCosine { warmup_steps: 3, min_lr: 0.0001 },
+            use_gpu: true,
+        };
+        let x = Array2::from_shape_fn((20, 8), |(i, j)| {
+            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+        });
+        let y = Array1::from_vec(
+            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+        );
+
+        let mut model = TransformerClassifier::new(config);
+        model.fit(&x, &y);
+        assert!(!model.losses().is_empty());
+        let preds = model.predict(&x);
+        assert_eq!(preds.len(), 20);
     }
 }

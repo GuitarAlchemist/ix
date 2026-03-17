@@ -1,0 +1,15 @@
+[package]
+name = "ix-code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools", "algorithms"]
+keywords = ["code-analysis", "metrics", "complexity", "machine-learning"]
+description = "Lightweight code analysis: complexity, Halstead, SLOC metrics for ML pipelines"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ndarray = { workspace = true }

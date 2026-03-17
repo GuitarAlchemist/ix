@@ -1,21 +1,21 @@
-# Use Case: GIS & Spatial Analysis
+# Cas pratique : SIG et analyse spatiale
 
-> Combining Kalman filters, DBSCAN, A*, FFT, and HMMs for GPS tracking, spatial clustering, route optimization, and terrain analysis.
+> Combinaison de filtres de Kalman, DBSCAN, A*, FFT et HMM pour le suivi GPS, le regroupement spatial, l'optimisation d'itinéraires et l'analyse de terrain.
 
-## The Scenario
+## Le scénario
 
-You're building a logistics platform that manages a fleet of 500 delivery vehicles. You need to:
+Vous développez une plateforme logistique qui gère une flotte de 500 véhicules de livraison. Vous devez :
 
-1. **Smooth GPS tracks** — raw GPS jumps around; you need clean trajectories (Kalman filter)
-2. **Find delivery hotspots** — cluster stop locations to identify warehouses and frequent destinations (DBSCAN)
-3. **Optimize routes** — find shortest paths through the road network (A*)
-4. **Analyze terrain** — detect periodic patterns in elevation data for road quality assessment (FFT)
-5. **Snap GPS to roads** — match noisy GPS points to the most likely road segments (HMM/Viterbi)
-6. **Detect anomalies** — identify unusual vehicle behavior patterns (Lyapunov exponents + Bloom filters)
+1. **Lisser les traces GPS** — le GPS brut « saute » ; il faut des trajectoires propres (filtre de Kalman)
+2. **Trouver les points chauds de livraison** — regrouper les lieux d'arrêt pour identifier les entrepôts et les destinations fréquentes (DBSCAN)
+3. **Optimiser les itinéraires** — trouver les chemins les plus courts dans le réseau routier (A*)
+4. **Analyser le terrain** — détecter les motifs périodiques dans les données d'altitude pour évaluer la qualité de la chaussée (FFT)
+5. **Accrocher le GPS aux routes** — faire correspondre les points GPS bruités aux segments de route les plus probables (HMM/Viterbi)
+6. **Détecter les anomalies** — identifier les comportements inhabituels des véhicules (exposants de Lyapunov + filtres de Bloom)
 
-## Step 1: GPS Track Smoothing with Kalman Filter
+## Étape 1 : Lissage des traces GPS avec le filtre de Kalman
 
-Raw GPS readings scatter ±10 meters due to atmospheric interference, multipath reflection, and sensor noise. The Kalman filter fuses noisy position readings with a motion model to produce smooth, accurate tracks.
+Les mesures GPS brutes sont dispersées à ±10 mètres en raison des interférences atmosphériques, des réflexions multitrajets et du bruit des capteurs. Le filtre de Kalman fusionne les mesures de position bruitées avec un modèle de mouvement pour produire des trajectoires lisses et précises.
 
 ```rust
 use ix_signal::kalman::KalmanFilter;
@@ -69,11 +69,11 @@ for (i, state) in smoothed.iter().enumerate() {
 }
 ```
 
-> See [Signal: Kalman Filter](../signal-processing/kalman-filter.md) for the full Kalman filter doc.
+> Voir [Signal : Filtre de Kalman](../signal-processing/kalman-filter.md) pour la documentation complète du filtre de Kalman.
 
-## Step 2: Spatial Clustering with DBSCAN
+## Étape 2 : Regroupement spatial avec DBSCAN
 
-Find delivery hotspots — areas where vehicles frequently stop. DBSCAN is perfect because hotspots have irregular shapes (they follow buildings, loading docks, intersections) and you need to identify noise (one-off stops).
+Trouver les points chauds de livraison — les zones où les véhicules s'arrêtent fréquemment. DBSCAN est idéal car les points chauds ont des formes irrégulières (ils suivent les bâtiments, les quais de chargement, les intersections) et il faut identifier le bruit (arrêts ponctuels).
 
 ```rust
 use ix_unsupervised::{DBSCAN, Clusterer};
@@ -114,11 +114,11 @@ for cluster_id in 1..=n_clusters {
 }
 ```
 
-> See [Unsupervised: DBSCAN](../unsupervised-learning/dbscan.md) for the full DBSCAN doc.
+> Voir [Apprentissage non supervisé : DBSCAN](../unsupervised-learning/dbscan.md) pour la documentation complète de DBSCAN.
 
-## Step 3: Route Optimization with A*
+## Étape 3 : Optimisation d'itinéraire avec A*
 
-Find the shortest path between delivery stops on a road network. A* uses a heuristic (straight-line distance) to focus the search toward the goal.
+Trouver le chemin le plus court entre les arrêts de livraison sur un réseau routier. A* utilise une heuristique (distance à vol d'oiseau) pour concentrer la recherche en direction de l'objectif.
 
 ```rust
 use ix_search::astar::{SearchState, astar, SearchResult};
@@ -164,11 +164,11 @@ if let Some(result) = astar(&start, &heuristic) {
 }
 ```
 
-> See [Search: A*](../search-and-graphs/astar-search.md) for the full A* doc.
+> Voir [Recherche : A*](../search-and-graphs/astar-search.md) pour la documentation complète de A*.
 
-## Step 4: Terrain Analysis with FFT
+## Étape 4 : Analyse de terrain avec FFT
 
-Analyze road elevation profiles to detect periodic patterns — potholes at regular intervals, speed bumps, or road surface quality.
+Analyser les profils d'altitude des routes pour détecter des motifs périodiques — nids-de-poule à intervalles réguliers, dos-d'âne ou qualité du revêtement routier.
 
 ```rust
 use ix_signal::fft::{rfft, magnitude_spectrum, frequency_bins};
@@ -197,11 +197,11 @@ for (freq, mag) in peaks.iter().take(5) {
 // Wavelength ~5m → speed bumps; ~0.5m → rough surface; ~50m → gentle hills
 ```
 
-> See [Signal: FFT](../signal-processing/fft-intuition.md) for the full FFT doc.
+> Voir [Signal : FFT](../signal-processing/fft-intuition.md) pour la documentation complète de la FFT.
 
-## Step 5: Map Matching with HMM/Viterbi
+## Étape 5 : Calage cartographique avec HMM/Viterbi
 
-Snap noisy GPS points to the most likely road segments. Hidden states = road segments, observations = GPS zones, transitions = road connectivity.
+Accrocher les points GPS bruités aux segments de route les plus probables. Les états cachés sont les segments de route, les observations sont les zones GPS, et les transitions représentent la connectivité du réseau routier.
 
 ```rust
 use ix_graph::hmm::HiddenMarkovModel;
@@ -227,11 +227,11 @@ println!("Road segments: {:?}", road_segments);
 println!("Confidence: {:.2}", log_prob);
 ```
 
-> See [Sequence: Viterbi](../sequence-models/viterbi-algorithm.md) for the full Viterbi doc.
+> Voir [Séquences : Viterbi](../sequence-models/viterbi-algorithm.md) pour la documentation complète de l'algorithme de Viterbi.
 
-## Step 6: Anomaly Detection with Bloom Filters
+## Étape 6 : Détection d'anomalies avec les filtres de Bloom
 
-Track which route patterns are "normal" using a Bloom filter. When a vehicle's route hash isn't in the filter, flag it for review.
+Suivre les schémas d'itinéraires « normaux » à l'aide d'un filtre de Bloom. Lorsque le hachage de l'itinéraire d'un véhicule n'est pas dans le filtre, le signaler pour examen.
 
 ```rust
 use ix_probabilistic::BloomFilter;
@@ -251,27 +251,27 @@ if !normal_routes.contains(&current_route_hash) {
 }
 ```
 
-> See [Probabilistic: Bloom Filters](../probabilistic-structures/bloom-filters.md) for the full doc.
+> Voir [Structures probabilistes : Filtres de Bloom](../probabilistic-structures/bloom-filters.md) pour la documentation complète.
 
 ---
 
-## Life & Safety: PSAP / First Responder Applications
+## Sécurité des personnes : Applications PSAP / Premiers intervenants
 
-The same spatial algorithms apply to public safety — where latency and accuracy are life-or-death.
+Les mêmes algorithmes spatiaux s'appliquent à la sécurité publique — où la latence et la précision sont une question de vie ou de mort.
 
-### Scenario: Next-Generation 911 (NG911) Dispatch
+### Scénario : Système d'appels d'urgence de nouvelle génération (NG911)
 
-A Public Safety Answering Point (PSAP) receives thousands of emergency calls daily. Each call carries location data (GPS from cell phones, ALI from landlines), but the data is noisy, incomplete, and sometimes wrong. Dispatchers need to:
+Un PSAP (Public Safety Answering Point — centre de réception des appels d'urgence) reçoit des milliers d'appels d'urgence chaque jour. Chaque appel contient des données de localisation (GPS des téléphones portables, ALI pour les lignes fixes), mais ces données sont bruitées, incomplètes, et parfois erronées. Les opérateurs doivent :
 
-1. **Locate the caller accurately** — cell GPS can be off by 50-300m indoors
-2. **Find the nearest available unit** — ambulance, fire, police
-3. **Route the unit optimally** — shortest *time*, not shortest distance
-4. **Predict incident density** — pre-position units in high-risk zones
-5. **Detect call patterns** — distinguish prank calls, detect mass casualty events
+1. **Localiser l'appelant avec précision** — le GPS des téléphones peut être décalé de 50 à 300 m en intérieur
+2. **Trouver l'unité disponible la plus proche** — ambulance, pompiers, police
+3. **Acheminer l'unité de manière optimale** — en temps de trajet le plus court, et non en distance la plus courte
+4. **Prédire la densité des incidents** — prépositonner les unités dans les zones à haut risque
+5. **Détecter les schémas d'appels** — distinguer les canulars, détecter les incidents de masse
 
-### Emergency Caller Location (Kalman + Map Matching)
+### Localisation de l'appelant d'urgence (Kalman + Calage cartographique)
 
-Cell phones report GPS coordinates, but indoors or in urban canyons, accuracy degrades to 100m+. Fuse multiple location sources (GPS, cell tower triangulation, Wi-Fi) with a Kalman filter, then snap to the nearest building with HMM/Viterbi.
+Les téléphones portables transmettent des coordonnées GPS, mais en intérieur ou dans les « canyons urbains », la précision se dégrade à plus de 100 m. On fusionne plusieurs sources de localisation (GPS, triangulation par antennes-relais, Wi-Fi) avec un filtre de Kalman, puis on accroche le résultat au bâtiment le plus proche avec HMM/Viterbi.
 
 ```rust
 use ix_signal::kalman::KalmanFilter;
@@ -319,9 +319,9 @@ println!("Best estimate: ({:.4}, {:.4})", best_location[0], best_location[2]);
 // Fused location is more accurate than any single reading
 ```
 
-### Nearest Unit Dispatch (A* with Time-Based Cost)
+### Envoi de l'unité la plus proche (A* avec coût temporel)
 
-Find the closest available ambulance — not by straight-line distance, but by *estimated travel time* considering road speeds, traffic, and one-way streets.
+Trouver l'ambulance disponible la plus proche — non pas en distance à vol d'oiseau, mais en *temps de trajet estimé* tenant compte de la vitesse des routes, du trafic et des sens uniques.
 
 ```rust
 use ix_search::astar::{SearchState, astar};
@@ -367,9 +367,9 @@ let heuristic = |node: &Intersection| -> f64 {
 };
 ```
 
-### Incident Hotspot Prediction (DBSCAN + Gradient Boosting)
+### Prédiction des points chauds d'incidents (DBSCAN + Gradient Boosting)
 
-Pre-position ambulances by predicting where incidents will cluster. Use DBSCAN on historical incidents to find hotspots, then train a classifier to predict which zones will be active at a given time.
+Prépositonner les ambulances en prédisant où les incidents vont se concentrer. Utiliser DBSCAN sur les incidents historiques pour trouver les points chauds, puis entraîner un classifieur pour prédire quelles zones seront actives à un moment donné.
 
 ```rust
 use ix_unsupervised::{DBSCAN, Clusterer};
@@ -419,9 +419,9 @@ println!("Incident risk: {:.0}%", risk[[0, 1]] * 100.0);
 // → High risk → pre-position an ambulance near the bar district
 ```
 
-### Mass Casualty Event Detection (Anomaly via Call Clustering)
+### Détection d'incidents de masse (Anomalie par regroupement d'appels)
 
-When multiple 911 calls arrive from the same area within minutes, detect the spatial-temporal cluster as a potential mass casualty incident (MCI) requiring multi-unit response.
+Lorsque plusieurs appels d'urgence arrivent de la même zone en quelques minutes, détecter le regroupement spatio-temporel comme un potentiel incident de masse nécessitant une réponse multi-unités.
 
 ```rust
 use ix_unsupervised::{DBSCAN, Clusterer};
@@ -453,9 +453,9 @@ if n_clusters > 0 {
 }
 ```
 
-### Response Time Analysis (Cross-Validation + Metrics)
+### Analyse des temps de réponse (Validation croisée + Métriques)
 
-Evaluate dispatch model performance: are we meeting the NFPA 1710 standard (first unit on scene within 4 minutes for 90% of calls)?
+Évaluer la performance du modèle de régulation : respectons-nous la norme NFPA 1710 (première unité sur les lieux en 4 minutes pour 90 % des appels) ?
 
 ```rust
 use ndarray::{array, Array2};
@@ -500,33 +500,33 @@ println!("Recall (missed): {:.2} — % of misses we can predict",
     recall(&y, &preds, 0));
 ```
 
-### PSAP Use Cases Summary
+### Résumé des cas d'usage PSAP
 
-| Use Case | Algorithms | Standard |
-|----------|-----------|----------|
-| Caller location fusion | Kalman filter + HMM/Viterbi | FCC E911 Z-axis accuracy |
-| Nearest unit dispatch | A* with time-cost | NFPA 1710 (4 min first unit) |
-| Incident hotspot prediction | DBSCAN + Gradient Boosting | Proactive deployment |
-| Mass casualty detection | DBSCAN (space-time) | NIMS/ICS MCI protocols |
-| Response time analysis | Decision Tree + Cross-validation | NFPA 1710 compliance |
-| Prank/repeat caller filtering | Bloom filter (seen callers) | PSAP workload reduction |
-| Ambulance pre-positioning | K-Means zone partitioning | Covering location models |
+| Cas d'usage | Algorithmes | Norme / Référence |
+|-------------|------------|-------------------|
+| Fusion de la localisation de l'appelant | Filtre de Kalman + HMM/Viterbi | FCC E911 — précision sur l'axe Z |
+| Envoi de l'unité la plus proche | A* avec coût temporel | NFPA 1710 (première unité en 4 min) |
+| Prédiction des points chauds d'incidents | DBSCAN + Gradient Boosting | Déploiement proactif |
+| Détection d'incidents de masse | DBSCAN (spatio-temporel) | Protocoles NIMS/ICS pour incidents de masse |
+| Analyse des temps de réponse | Arbre de décision + Validation croisée | Conformité NFPA 1710 |
+| Filtrage des canulars / appelants récurrents | Filtre de Bloom (appelants déjà vus) | Réduction de la charge du PSAP |
+| Prépositionnement des ambulances | Partitionnement par K-Means | Modèles de couverture territoriale |
 
 ---
 
-## Algorithms Used
+## Algorithmes utilisés
 
-| Algorithm | Doc | Role in GIS |
-|-----------|-----|-------------|
-| Kalman Filter | [Signal: Kalman](../signal-processing/kalman-filter.md) | GPS track smoothing |
-| DBSCAN | [Unsupervised: DBSCAN](../unsupervised-learning/dbscan.md) | Spatial clustering / hotspots |
-| A* Search | [Search: A*](../search-and-graphs/astar-search.md) | Route optimization |
-| FFT | [Signal: FFT](../signal-processing/fft-intuition.md) | Terrain frequency analysis |
-| HMM/Viterbi | [Sequence: Viterbi](../sequence-models/viterbi-algorithm.md) | GPS-to-road map matching |
-| Bloom Filter | [Probabilistic: Bloom](../probabilistic-structures/bloom-filters.md) | Route anomaly detection |
-| K-Means | [Unsupervised: K-Means](../unsupervised-learning/kmeans.md) | Zone partitioning |
-| Markov Chains | [Sequence: Markov](../sequence-models/markov-chains.md) | Traffic flow modeling |
-| Lyapunov Exponents | [Chaos: Lyapunov](../chaos-theory/lyapunov-exponents.md) | Traffic chaos detection |
-| Gradient Boosting | [Supervised: Gradient Boosting](../supervised-learning/gradient-boosting.md) | Incident risk prediction |
-| Decision Tree + CV | [Supervised: Cross-Validation](../supervised-learning/cross-validation.md) | Response time compliance |
-| Confusion Matrix | [Supervised: Metrics](../supervised-learning/evaluation-metrics.md) | Dispatch model evaluation |
+| Algorithme | Documentation | Rôle en SIG |
+|------------|--------------|-------------|
+| Filtre de Kalman | [Signal : Kalman](../signal-processing/kalman-filter.md) | Lissage des traces GPS |
+| DBSCAN | [Apprentissage non supervisé : DBSCAN](../unsupervised-learning/dbscan.md) | Regroupement spatial / points chauds |
+| Recherche A* | [Recherche : A*](../search-and-graphs/astar-search.md) | Optimisation d'itinéraires |
+| FFT | [Signal : FFT](../signal-processing/fft-intuition.md) | Analyse fréquentielle du terrain |
+| HMM/Viterbi | [Séquences : Viterbi](../sequence-models/viterbi-algorithm.md) | Calage cartographique GPS-route |
+| Filtre de Bloom | [Structures probabilistes : Bloom](../probabilistic-structures/bloom-filters.md) | Détection d'anomalies d'itinéraires |
+| K-Means | [Apprentissage non supervisé : K-Means](../unsupervised-learning/kmeans.md) | Partitionnement de zones |
+| Chaînes de Markov | [Séquences : Markov](../sequence-models/markov-chains.md) | Modélisation du flux de trafic |
+| Exposants de Lyapunov | [Chaos : Lyapunov](../chaos-theory/lyapunov-exponents.md) | Détection du chaos dans le trafic |
+| Gradient Boosting | [Apprentissage supervisé : Gradient Boosting](../supervised-learning/gradient-boosting.md) | Prédiction du risque d'incidents |
+| Arbre de décision + VC | [Apprentissage supervisé : Validation croisée](../supervised-learning/cross-validation.md) | Conformité des temps de réponse |
+| Matrice de confusion | [Apprentissage supervisé : Métriques](../supervised-learning/evaluation-metrics.md) | Évaluation du modèle de régulation |
