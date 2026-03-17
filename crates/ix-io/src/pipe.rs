@@ -39,6 +39,7 @@ impl PipeConfig {
 #[cfg(unix)]
 pub fn write_to_pipe(config: &PipeConfig, data: &[u8]) -> Result<(), IoError> {
     use std::io::Write;
+    use std::path::Path;
 
     let path = config.path();
     let pipe_path = Path::new(&path);
