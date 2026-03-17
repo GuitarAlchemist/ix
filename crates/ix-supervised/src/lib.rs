@@ -11,3 +11,6 @@ pub mod knn;
 pub mod naive_bayes;
 pub mod decision_tree;
 pub mod svm;
+pub mod validation;
+pub mod resampling;
+pub mod text;

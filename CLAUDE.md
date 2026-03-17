@@ -10,12 +10,12 @@ Rust workspace (32 crates) implementing foundational ML/math algorithms and AI g
 - `crates/ix-optimize` - Optimization: SGD, Adam, simulated annealing, PSO
 
 ### Supervised & Unsupervised Learning
-- `crates/ix-supervised` - Regression, classification, metrics
+- `crates/ix-supervised` - Regression, classification, metrics (confusion matrix, ROC/AUC, log loss), cross-validation (KFold, StratifiedKFold), resampling (SMOTE, random undersampling), text vectorization (TF-IDF, CountVectorizer)
 - `crates/ix-unsupervised` - Clustering (K-Means, DBSCAN), PCA, t-SNE, GMM
-- `crates/ix-ensemble` - Random forest, boosting
+- `crates/ix-ensemble` - Random forest, gradient boosting (GradientBoostedClassifier)
 
 ### Deep Learning, RL & Evolution
-- `crates/ix-nn` - Trainable transformers (full backprop, GPU attention), dense layers, Sequential, loss functions
+- `crates/ix-nn` - Trainable transformers (full backprop, GPU attention), dense layers, Sequential, loss functions, normalization (LayerNorm, RMSNorm, BatchNorm)
 - `crates/ix-rl` - Bandits (epsilon-greedy, UCB1, Thompson), Q-learning, GridWorld
 - `crates/ix-evolution` - Genetic algorithms, differential evolution
 
@@ -52,13 +52,13 @@ Rust workspace (32 crates) implementing foundational ML/math algorithms and AI g
 - `governance/demerzel` - Git submodule: 12 personas, 11-article constitution, 3 policies, behavioral tests
 
 ### Integration
-- `crates/ix-agent` - MCP server: 36 tools via JSON-RPC over stdio (algorithms + governance + federation)
+- `crates/ix-agent` - MCP server: 37 tools via JSON-RPC over stdio (algorithms + governance + federation)
 - `crates/ix-skill` - CLI binary for direct command-line access
 - `crates/ix-demo` - egui desktop app with 22+ interactive demo tabs
 
 ## MCP Federation
 Three MCP servers registered in `.mcp.json`:
-- **ix** (Rust): 36 tools — math, ML, governance, federation
+- **ix** (Rust): 37 tools — math, ML, governance, federation
 - **tars** (F#): grammar weighting, pattern promotion, metacognition
 - **ga** (C#): music theory, chord analysis, trace export
 

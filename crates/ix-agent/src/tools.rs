@@ -757,15 +757,45 @@ impl ToolRegistry {
         });
 
         self.tools.push(Tool {
+            name: "ix_gradient_boosting",
+            description: "Gradient boosted trees classifier: train on data and predict class labels with probability estimates. Supports binary and multiclass classification.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "x_train": {
+                        "type": "array",
+                        "items": { "type": "array", "items": { "type": "number" } },
+                        "description": "Training feature matrix"
+                    },
+                    "y_train": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Training labels (class indices)"
+                    },
+                    "x_test": {
+                        "type": "array",
+                        "items": { "type": "array", "items": { "type": "number" } },
+                        "description": "Test feature matrix to predict"
+                    },
+                    "n_estimators": { "type": "integer", "description": "Number of boosting rounds (default 50)", "minimum": 1 },
+                    "learning_rate": { "type": "number", "description": "Step size shrinkage (default 0.1)", "minimum": 0.001 },
+                    "max_depth": { "type": "integer", "description": "Max weak learner depth (default 3)", "minimum": 1 }
+                },
+                "required": ["x_train", "y_train", "x_test"]
+            }),
+            handler: handlers::gradient_boosting,
+        });
+
+        self.tools.push(Tool {
             name: "ix_supervised",
-            description: "Supervised learning: train and predict with linear/logistic regression, SVM, KNN, naive Bayes, decision tree. Also compute classification/regression metrics.",
+            description: "Supervised learning: train and predict with linear/logistic regression, SVM, KNN, naive Bayes, decision tree. Compute metrics (accuracy, confusion matrix, ROC/AUC, log loss). Cross-validate models with k-fold.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "operation": {
                         "type": "string",
-                        "enum": ["linear_regression", "logistic_regression", "svm", "knn", "naive_bayes", "decision_tree", "metrics"],
-                        "description": "Algorithm or 'metrics' for evaluation"
+                        "enum": ["linear_regression", "logistic_regression", "svm", "knn", "naive_bayes", "decision_tree", "metrics", "cross_validate", "confusion_matrix", "roc_auc"],
+                        "description": "Algorithm, 'metrics' for evaluation, 'cross_validate' for k-fold CV, 'confusion_matrix' for confusion matrix, 'roc_auc' for ROC/AUC"
                     },
                     "x_train": {
                         "type": "array",
@@ -782,12 +812,16 @@ impl ToolRegistry {
                         "items": { "type": "array", "items": { "type": "number" } },
                         "description": "Test features matrix"
                     },
-                    "k": { "type": "integer", "description": "K for KNN (default 3)" },
+                    "k": { "type": "integer", "description": "K for KNN (default 3), or number of CV folds (default 5)" },
                     "c": { "type": "number", "description": "Regularization for SVM (default 1.0)" },
                     "max_depth": { "type": "integer", "description": "Max depth for decision tree (default 5)" },
-                    "y_true": { "type": "array", "items": { "type": "number" }, "description": "True labels (for metrics)" },
-                    "y_pred": { "type": "array", "items": { "type": "number" }, "description": "Predicted labels (for metrics)" },
-                    "metric_type": { "type": "string", "enum": ["mse", "accuracy"], "description": "Metric type: 'mse' for regression, 'accuracy' for classification" }
+                    "y_true": { "type": "array", "items": { "type": "number" }, "description": "True labels (for metrics/confusion_matrix)" },
+                    "y_pred": { "type": "array", "items": { "type": "number" }, "description": "Predicted labels (for metrics/confusion_matrix)" },
+                    "y_scores": { "type": "array", "items": { "type": "number" }, "description": "Predicted probabilities for positive class (for roc_auc)" },
+                    "metric_type": { "type": "string", "enum": ["mse", "accuracy"], "description": "Metric type: 'mse' for regression, 'accuracy' for classification" },
+                    "model": { "type": "string", "enum": ["knn", "decision_tree", "naive_bayes", "logistic_regression"], "description": "Model for cross_validate (default 'decision_tree')" },
+                    "n_classes": { "type": "integer", "description": "Number of classes (for confusion_matrix, auto-detected if omitted)" },
+                    "seed": { "type": "integer", "description": "Random seed for cross-validation (default 42)" }
                 },
                 "required": ["operation"]
             }),
@@ -1130,6 +1164,87 @@ impl ToolRegistry {
                 "required": ["persist_key", "data"]
             }),
             handler: handlers::ml_predict,
+        });
+
+        // ── ix_code_analyze ─────────────────────────────────────
+
+        self.tools.push(Tool {
+            name: "ix_code_analyze",
+            description: "Analyze source code for complexity metrics (cyclomatic, cognitive, Halstead, SLOC, maintainability index). Supports Rust, Python, JS, TS, C/C++, Java, Go, C#, F#. Returns file-level and per-function metrics with ML-ready feature vectors.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Source code string to analyze"
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["rust", "python", "javascript", "typescript", "cpp", "java", "go", "csharp", "fsharp"],
+                        "description": "Programming language"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File path to analyze (alternative to source+language). Language auto-detected from extension."
+                    }
+                }
+            }),
+            handler: handlers::code_analyze,
+        });
+
+        // ── ix_tars_bridge ──────────────────────────────────────
+
+        self.tools.push(Tool {
+            name: "ix_tars_bridge",
+            description: "Cross-repo bridge to TARS. Prepares ix analysis results (trace stats, pattern data, grammar weights) in the format TARS expects for ingestion. Returns structured payload ready for TARS tools (ingest_ga_traces, run_promotion_pipeline).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["prepare_traces", "prepare_patterns", "export_grammar"],
+                        "description": "Bridge action: prepare_traces (format trace stats for TARS), prepare_patterns (format discovered patterns for promotion), export_grammar (export current grammar weights)"
+                    },
+                    "trace_dir": {
+                        "type": "string",
+                        "description": "Trace directory (default: ~/.ga/traces/)"
+                    },
+                    "min_frequency": {
+                        "type": "integer",
+                        "description": "Minimum pattern frequency for promotion (default: 3)"
+                    }
+                },
+                "required": ["action"]
+            }),
+            handler: handlers::tars_bridge,
+        });
+
+        // ── ix_ga_bridge ────────────────────────────────────────
+
+        self.tools.push(Tool {
+            name: "ix_ga_bridge",
+            description: "Cross-repo bridge to GA. Converts GA music theory data into ML-ready feature matrices for ix pipelines. Provides data format specifications and example workflows for GA→ix analysis chains.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["chord_features", "progression_features", "scale_features", "workflow_guide"],
+                        "description": "Bridge action: chord_features (chord→interval vector), progression_features (progression→feature matrix), scale_features (scale→binary pitch class set), workflow_guide (show GA→ix workflow examples)"
+                    },
+                    "chords": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Chord symbols to convert (e.g. ['Cmaj7', 'Am7', 'Dm7', 'G7'])"
+                    },
+                    "progression": {
+                        "type": "string",
+                        "description": "Chord progression string (e.g. 'C Am F G')"
+                    }
+                },
+                "required": ["action"]
+            }),
+            handler: handlers::ga_bridge,
         });
     }
 }

@@ -50,7 +50,7 @@ Article 4 (Proportionality) — don't use complex models when simple ones suffic
 | < 100 rows | Any | LinearRegression / KNN | Small data → simple model |
 | 100-10k | < 20 | DecisionTree / KMeans | Good interpretability |
 | 100-10k | 20+ | PCA → then model | Reduce dimensions first |
-| 10k+ | Any | RandomForest / GMM | Enough data for complexity |
+| 10k+ | Any | RandomForest / GradientBoosting / GMM | Enough data for complexity |
 | 10k+ | Sequence data | **Transformer** | Attention captures long-range patterns |
 
 **Override:** User can always specify `model` explicitly to bypass the heuristic.

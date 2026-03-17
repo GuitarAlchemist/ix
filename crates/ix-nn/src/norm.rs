@@ -143,6 +143,167 @@ impl RMSNorm {
     }
 }
 
+/// Batch Normalization (Ioffe & Szegedy 2015).
+///
+/// Normalizes each feature across the batch: `(x - batch_mean) / sqrt(batch_var + eps) * gamma + beta`.
+/// Maintains running statistics for inference mode.
+///
+/// Unlike LayerNorm which normalizes across features per sample, BatchNorm
+/// normalizes across the batch per feature. This makes it sensitive to batch
+/// size but very effective for stabilizing training in feed-forward networks.
+///
+/// # Example
+///
+/// ```
+/// use ndarray::array;
+/// use ix_nn::norm::BatchNorm;
+///
+/// let mut bn = BatchNorm::new(3);
+///
+/// // Training mode: normalizes using batch statistics
+/// let x = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
+/// let out = bn.forward_train(&x);
+///
+/// // Each column (feature) should have mean ≈ 0
+/// for col in 0..3 {
+///     let col_mean: f64 = (0..3).map(|r| out[[r, col]]).sum::<f64>() / 3.0;
+///     assert!(col_mean.abs() < 1e-10, "column {} mean should be ~0", col);
+/// }
+///
+/// // Inference mode: uses running statistics
+/// let single = array![[2.0, 3.0, 4.0]];
+/// let out_inf = bn.forward_inference(&single);
+/// assert_eq!(out_inf.shape(), &[1, 3]);
+/// ```
+pub struct BatchNorm {
+    /// Learnable scale parameter per feature.
+    pub gamma: Array1<f64>,
+    /// Learnable shift parameter per feature.
+    pub beta: Array1<f64>,
+    /// Small constant for numerical stability.
+    pub eps: f64,
+    /// Momentum for running statistics (default 0.1).
+    pub momentum: f64,
+    /// Running mean for inference.
+    pub running_mean: Array1<f64>,
+    /// Running variance for inference.
+    pub running_var: Array1<f64>,
+    /// Cached normalized values for backward pass.
+    normalized_cache: Option<Array2<f64>>,
+    /// Cached batch standard deviations for backward pass.
+    std_cache: Option<Array1<f64>>,
+}
+
+impl BatchNorm {
+    /// Create a new BatchNorm layer for `d` features.
+    pub fn new(d: usize) -> Self {
+        Self {
+            gamma: Array1::ones(d),
+            beta: Array1::zeros(d),
+            eps: 1e-5,
+            momentum: 0.1,
+            running_mean: Array1::zeros(d),
+            running_var: Array1::ones(d),
+            normalized_cache: None,
+            std_cache: None,
+        }
+    }
+
+    /// Forward pass in training mode.
+    ///
+    /// Uses batch statistics and updates running statistics.
+    pub fn forward_train(&mut self, x: &Array2<f64>) -> Array2<f64> {
+        let d = x.ncols();
+
+        // Compute batch mean and variance per feature (column)
+        let batch_mean = x.mean_axis(Axis(0)).unwrap();
+        let batch_var = {
+            let centered = x - &batch_mean;
+            centered.mapv(|v| v * v).mean_axis(Axis(0)).unwrap()
+        };
+
+        // Update running statistics
+        let m = self.momentum;
+        for j in 0..d {
+            self.running_mean[j] = (1.0 - m) * self.running_mean[j] + m * batch_mean[j];
+            self.running_var[j] = (1.0 - m) * self.running_var[j] + m * batch_var[j];
+        }
+
+        // Normalize
+        let std: Array1<f64> = batch_var.mapv(|v| (v + self.eps).sqrt());
+        let mut normalized = Array2::zeros(x.raw_dim());
+        let mut result = Array2::zeros(x.raw_dim());
+
+        for i in 0..x.nrows() {
+            for j in 0..d {
+                let xhat = (x[[i, j]] - batch_mean[j]) / std[j];
+                normalized[[i, j]] = xhat;
+                result[[i, j]] = xhat * self.gamma[j] + self.beta[j];
+            }
+        }
+
+        self.normalized_cache = Some(normalized);
+        self.std_cache = Some(std);
+        result
+    }
+
+    /// Forward pass in inference mode.
+    ///
+    /// Uses running statistics (no batch dependency).
+    pub fn forward_inference(&self, x: &Array2<f64>) -> Array2<f64> {
+        let d = x.ncols();
+        let mut result = Array2::zeros(x.raw_dim());
+
+        for i in 0..x.nrows() {
+            for j in 0..d {
+                let xhat = (x[[i, j]] - self.running_mean[j])
+                    / (self.running_var[j] + self.eps).sqrt();
+                result[[i, j]] = xhat * self.gamma[j] + self.beta[j];
+            }
+        }
+
+        result
+    }
+
+    /// Backward pass: computes gradient w.r.t. input and updates gamma/beta.
+    ///
+    /// Returns gradient w.r.t. the input `x`.
+    pub fn backward(&mut self, grad_output: &Array2<f64>, learning_rate: f64) -> Array2<f64> {
+        let xhat = self.normalized_cache.as_ref().expect("forward_train() not called");
+        let std = self.std_cache.as_ref().expect("forward_train() not called");
+        let n = grad_output.nrows() as f64;
+        let d = grad_output.ncols();
+
+        // Gradients for gamma and beta
+        let grad_gamma = (grad_output * xhat).sum_axis(Axis(0));
+        let grad_beta = grad_output.sum_axis(Axis(0));
+
+        // Gradient w.r.t. normalized input
+        let grad_xhat = grad_output * &self.gamma;
+
+        // Gradient w.r.t. input (BatchNorm gradient formula)
+        let mut grad_input = Array2::zeros(grad_output.raw_dim());
+        for j in 0..d {
+            let inv_std = 1.0 / std[j];
+            let sum_gx: f64 = (0..grad_output.nrows()).map(|i| grad_xhat[[i, j]]).sum();
+            let sum_gx_xh: f64 = (0..grad_output.nrows())
+                .map(|i| grad_xhat[[i, j]] * xhat[[i, j]])
+                .sum();
+
+            for i in 0..grad_output.nrows() {
+                grad_input[[i, j]] = inv_std / n
+                    * (n * grad_xhat[[i, j]] - sum_gx - xhat[[i, j]] * sum_gx_xh);
+            }
+        }
+
+        // Update parameters
+        self.gamma = &self.gamma - &(learning_rate * &grad_gamma);
+        self.beta = &self.beta - &(learning_rate * &grad_beta);
+
+        grad_input
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,7 +406,81 @@ mod tests {
         assert!((rms - 1.0).abs() < 1e-3, "output RMS should be ~1");
     }
 
-    // --- Backward pass tests ---
+    // --- BatchNorm tests ---
+
+    #[test]
+    fn test_batch_norm_zero_mean_columns() {
+        let mut bn = BatchNorm::new(3);
+        let x = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
+        let out = bn.forward_train(&x);
+        // Each column should have mean ≈ 0
+        for j in 0..3 {
+            let col_mean: f64 = (0..3).map(|i| out[[i, j]]).sum::<f64>() / 3.0;
+            assert!(col_mean.abs() < 1e-10, "col {} mean should be ~0, got {}", j, col_mean);
+        }
+    }
+
+    #[test]
+    fn test_batch_norm_unit_variance_columns() {
+        let mut bn = BatchNorm::new(3);
+        let x = array![[1.0, 10.0, 100.0], [4.0, 40.0, 400.0], [7.0, 70.0, 700.0]];
+        let out = bn.forward_train(&x);
+        // Each column should have variance ≈ 1
+        for j in 0..3 {
+            let col_var: f64 = (0..3).map(|i| out[[i, j]].powi(2)).sum::<f64>() / 3.0;
+            assert!((col_var - 1.0).abs() < 0.01, "col {} var should be ~1, got {}", j, col_var);
+        }
+    }
+
+    #[test]
+    fn test_batch_norm_running_stats_update() {
+        let mut bn = BatchNorm::new(2);
+        let x = array![[1.0, 2.0], [3.0, 4.0]];
+        let _out = bn.forward_train(&x);
+        // Running mean should no longer be all zeros
+        assert!(bn.running_mean.iter().any(|&v| v.abs() > 1e-10), "running mean should be updated");
+    }
+
+    #[test]
+    fn test_batch_norm_inference_mode() {
+        let mut bn = BatchNorm::new(2);
+        // Train to build running stats
+        let x = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+        let _out = bn.forward_train(&x);
+
+        // Inference on a single sample should work
+        let single = array![[2.0, 3.0]];
+        let out_inf = bn.forward_inference(&single);
+        assert_eq!(out_inf.shape(), &[1, 2]);
+        // Should produce finite values
+        assert!(out_inf.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_batch_norm_backward_shape() {
+        let mut bn = BatchNorm::new(4);
+        let x = array![[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]];
+        let _out = bn.forward_train(&x);
+        let grad_out = Array2::ones((2, 4));
+        let grad_in = bn.backward(&grad_out, 0.01);
+        assert_eq!(grad_in.shape(), &[2, 4]);
+    }
+
+    #[test]
+    fn test_batch_norm_backward_updates_params() {
+        let mut bn = BatchNorm::new(3);
+        let gamma_before = bn.gamma.clone();
+        let x = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
+        let _out = bn.forward_train(&x);
+        let grad_out = array![[1.0, 0.5, -0.5], [-0.5, 1.0, 0.0], [0.2, -0.3, 0.8]];
+        let _grad_in = bn.backward(&grad_out, 0.1);
+        assert!(
+            (&bn.gamma - &gamma_before).mapv(|v| v.abs()).sum() > 1e-10,
+            "gamma should be updated after backward"
+        );
+    }
+
+    // --- LayerNorm backward pass tests ---
 
     #[test]
     fn test_layer_norm_forward_cache_matches_forward() {
