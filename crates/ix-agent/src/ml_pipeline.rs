@@ -591,7 +591,7 @@ fn run_classification(
             let epochs = model_params.as_ref().and_then(|p| p.get("epochs")).and_then(|v| v.as_u64()).unwrap_or(50) as usize;
             let lr = model_params.as_ref().and_then(|p| p.get("learning_rate")).and_then(|v| v.as_f64()).unwrap_or(0.001);
             let seq_len = model_params.as_ref().and_then(|p| p.get("seq_len")).and_then(|v| v.as_u64()).map(|v| v as usize);
-            let config = TransformerConfig { d_model, n_heads, n_layers, d_ff, seq_len, epochs, learning_rate: lr, seed: split.seed };
+            let config = TransformerConfig { d_model, n_heads, n_layers, d_ff, seq_len, epochs, learning_rate: lr, seed: split.seed, ..Default::default() };
             let mut model = TransformerClassifier::new(config);
             model.fit(&split_result.x_train, &y_train_usize);
             let preds = model.predict(&split_result.x_test);
@@ -668,6 +668,7 @@ fn run_regression(
             let config = TransformerConfig {
                 d_model: 32, n_heads: 4, n_layers: 2, d_ff: 128,
                 seq_len: None, epochs: 50, learning_rate: 0.001, seed: split.seed,
+                ..Default::default()
             };
             let mut model = TransformerRegressor::new(config);
             model.fit(&split_result.x_train, &split_result.y_train);

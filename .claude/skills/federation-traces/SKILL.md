@@ -5,15 +5,39 @@ description: Ingest GA trace artifacts, analyze with ix stats, feed results to T
 
 # Federation Trace Pipeline
 
-Cross-repo trace pipeline: GA exports → ix analyzes → TARS promotes patterns.
+Cross-repo trace pipeline: GA exports, ix analyzes, TARS promotes patterns.
 
 ## When to Use
 When trace data from GA needs statistical analysis before being fed into TARS's pattern promotion pipeline.
 
 ## Pipeline
-1. **Export**: GA `ga_export_traces` writes trace JSON to `~/.ga/traces/`
-2. **Analyze**: ix `ix_trace_ingest` loads traces, computes stats (latency, event distribution, anomaly detection)
-3. **Promote**: TARS `tars_trace_ingest` receives analyzed traces for pattern promotion
+
+### Step 1: Prepare traces from GA
+**Tool**: `ix_tars_bridge` with action=prepare_traces
+- Loads traces from `~/.ga/traces/`
+- Computes stats (latency, event distribution, anomalies)
+- Returns payload formatted for TARS ingestion
+
+### Step 2: Analyze traces
+**Tool**: `ix_trace_ingest`
+- Loads trace directory, computes detailed stats
+- Mean/median/p95 latency per event type
+- Success/failure rates
+- Event frequency distribution
+
+### Step 3: Ingest into TARS
+**Tool**: TARS `ingest_ga_traces`
+- Input: `{"Count": N, "MinOccurrences": 3}`
+- Runs pattern discovery on trace artifacts
+- Promotes recurring patterns up the staircase
+
+### Step 4: View promotion results
+**Tool**: TARS `promotion_index`
+- Returns ranked patterns sorted by level, score, weight
+
+### Step 5: Export insights
+**Tool**: TARS `export_insights`
+- Writes `~/.tars/insights/latest.json` with pattern scores, gaps, recommendations
 
 ## Trace Format (GA)
 ```json
@@ -28,5 +52,4 @@ When trace data from GA needs statistical analysis before being fed into TARS's 
 ## Analysis Output (ix)
 - Mean/median/p95 latency per event type
 - Event frequency distribution
-- Anomaly detection via DBSCAN clustering
 - Success/failure correlation analysis
