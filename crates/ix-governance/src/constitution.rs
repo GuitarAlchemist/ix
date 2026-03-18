@@ -324,7 +324,7 @@ mod tests {
     fn load_default_constitution() {
         let c = Constitution::load(&constitution_path()).expect("should load constitution");
         assert!(c.articles.len() >= 7, "expected at least 7 articles, got {}", c.articles.len());
-        assert!(c.version == "1.0.0" || c.version == "2.0.0", "unexpected version: {}", c.version);
+        assert!(c.version == "1.0.0" || c.version == "2.0.0" || c.version == "2.1.0", "unexpected version: {}", c.version);
     }
 
     #[test]

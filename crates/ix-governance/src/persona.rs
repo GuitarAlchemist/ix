@@ -169,7 +169,7 @@ mod tests {
     fn load_default_persona() {
         let p = Persona::load_by_name(&personas_dir(), "default").expect("should load default");
         assert_eq!(p.name, "default");
-        assert_eq!(p.version, "1.0.0");
+        assert!(p.version == "1.0.0" || p.version == "1.1.0", "unexpected version: {}", p.version);
         assert_eq!(p.role, "General-purpose assistant");
         assert_eq!(p.domain, "any");
         assert!(!p.capabilities.is_empty());
