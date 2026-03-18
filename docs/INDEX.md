@@ -79,6 +79,7 @@ These require comfort with the Level 2 material.
 | # | Topic | What You'll Learn |
 |---|-------|-------------------|
 | 20 | [Perceptron to MLP](neural-networks/perceptron-to-mlp.md) | From a single neuron to deep networks — digit recognition |
+| 20b | [Transformers](neural-networks/transformers.md) | Self-attention, multi-head attention, positional encoding — sequence modeling |
 | 21 | [Backpropagation](neural-networks/backpropagation.md) | How networks learn — the chain rule made intuitive |
 | 22 | [Loss Functions](neural-networks/loss-functions.md) | MSE vs. cross-entropy — choosing the right objective |
 
@@ -131,6 +132,7 @@ These require comfort with the Level 2 material.
 | 40 | [Wavelets](signal-processing/wavelets.md) | Time-frequency analysis — image compression, seismic data |
 | 41 | [Kalman Filter](signal-processing/kalman-filter.md) | Optimal state estimation — GPS smoothing, drone tracking |
 | 42 | [Digital Filters](signal-processing/digital-filters.md) | FIR/IIR filters — noise removal, EQ design |
+| 43 | [Time Series](signal-processing/time-series.md) | Rolling stats, lag features, temporal splits, EWMA — PSAP response time monitoring |
 
 ### Probabilistic Data Structures
 

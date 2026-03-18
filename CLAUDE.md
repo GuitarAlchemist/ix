@@ -25,7 +25,7 @@ Rust workspace (32 crates) implementing foundational ML/math algorithms and AI g
 - `crates/ix-game` - Game theory: Nash equilibria, Shapley value, auctions, evolutionary, mean field
 
 ### Signal, Chaos & Adversarial
-- `crates/ix-signal` - Signal processing: FFT, wavelets, filters, Kalman, spectral analysis
+- `crates/ix-signal` - Signal processing: FFT, wavelets, filters, Kalman, spectral analysis, time series (rolling stats, lag features, temporal split, EWMA)
 - `crates/ix-chaos` - Chaos theory: Lyapunov exponents, bifurcation, attractors, fractals, embedding
 - `crates/ix-adversarial` - Adversarial ML: evasion (FGSM, PGD, C&W), defense, poisoning detection, privacy
 

@@ -25,3 +25,4 @@ pub mod kalman;
 pub mod sampling;
 pub mod window;
 pub mod convolution;
+pub mod timeseries;

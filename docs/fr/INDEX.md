@@ -56,6 +56,20 @@ Cette section contient des traductions françaises des tutoriels ix. Le code Rus
 
 ---
 
+## Réseaux de neurones
+
+| # | Sujet | Ce que vous apprendrez |
+|---|-------|----------------------|
+| 1 | [Transformers](reseaux-neurones/transformers.md) | Auto-attention, attention multi-têtes, encodage positionnel — modélisation de séquences |
+
+## Traitement du signal
+
+| # | Sujet | Ce que vous apprendrez |
+|---|-------|----------------------|
+| 1 | [Séries temporelles](traitement-signal/series-temporelles.md) | Statistiques glissantes, variables retardées, découpage temporel, EWMA — suivi des temps de réponse PSAP |
+
+---
+
 ## Cas pratiques
 
 Projets de bout en bout combinant plusieurs algorithmes.
