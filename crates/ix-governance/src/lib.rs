@@ -7,12 +7,17 @@
 
 pub mod constitution;
 pub mod error;
+pub mod feedback;
 pub mod persona;
 pub mod policy;
 pub mod tetravalent;
 
 pub use constitution::{Article, ArticleRef, ComplianceResult, Constitution};
 pub use error::{GovernanceError, Result};
+pub use feedback::{
+    AnomalyDetector, BeliefFile, ConfidenceCalibrator, MlFeedbackRecommendation,
+    StalenessPredictor, StateReader,
+};
 pub use persona::{list_personas, Persona, Voice};
 pub use policy::{AlignmentPolicy, EscalationLevel, Policy};
 pub use tetravalent::{BeliefState, EvidenceItem, ResolvedAction, TruthValue};
