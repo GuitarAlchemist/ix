@@ -15,6 +15,7 @@ pub mod tetravalent;
 pub mod karnaugh;
 pub mod research_anomaly;
 pub mod violation_pattern;
+pub mod weight_evolution;
 
 pub use constitution::{Article, ArticleRef, ComplianceResult, Constitution};
 pub use error::{GovernanceError, Result};
@@ -28,3 +29,4 @@ pub use remediation_optimizer::{RemediationOptimizer, RemediationPlan};
 pub use research_anomaly::{AnomalyCluster, AnomalyClusterer, ParadigmAssessment, ResearchAnomaly};
 pub use tetravalent::{BeliefState, EvidenceItem, ResolvedAction, TruthValue};
 pub use violation_pattern::{ViolationPatternAnalyzer, ViolationPatternReport};
+pub use weight_evolution::{ResearchOutcome, TransferOpportunity, WeightEvolver, WeightRecommendation};
