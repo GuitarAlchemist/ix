@@ -13,6 +13,7 @@ pub mod policy;
 pub mod remediation_optimizer;
 pub mod tetravalent;
 pub mod karnaugh;
+pub mod research_anomaly;
 pub mod violation_pattern;
 
 pub use constitution::{Article, ArticleRef, ComplianceResult, Constitution};
@@ -24,5 +25,6 @@ pub use feedback::{
 pub use persona::{list_personas, Persona, Voice};
 pub use policy::{AlignmentPolicy, EscalationLevel, Policy};
 pub use remediation_optimizer::{RemediationOptimizer, RemediationPlan};
+pub use research_anomaly::{AnomalyCluster, AnomalyClusterer, ParadigmAssessment, ResearchAnomaly};
 pub use tetravalent::{BeliefState, EvidenceItem, ResolvedAction, TruthValue};
 pub use violation_pattern::{ViolationPatternAnalyzer, ViolationPatternReport};
