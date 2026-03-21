@@ -15,6 +15,7 @@ mod serde_helpers {
         m.serialize(s)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn de_ctx_map<'de, D: Deserializer<'de>>(
         d: D,
     ) -> Result<HashMap<Vec<usize>, HashMap<usize, f64>>, D::Error> {
@@ -104,7 +105,7 @@ impl MarkovTensor {
     }
 
     pub fn context_count(&self, context: &[usize]) -> f64 {
-        self.context_totals.get(&context.to_vec()).copied().unwrap_or(0.0)
+        self.context_totals.get(context).copied().unwrap_or(0.0)
     }
 
     pub fn merge(&mut self, other: &MarkovTensor) {

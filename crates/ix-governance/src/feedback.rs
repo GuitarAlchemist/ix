@@ -231,13 +231,17 @@ impl StateReader {
             {
                 let contents =
                     std::fs::read_to_string(&path).map_err(crate::GovernanceError::IoError)?;
-                let item: T = serde_json::from_str(&contents).map_err(|e| {
-                    crate::GovernanceError::ParseError(format!(
-                        "parsing {}: {e}",
-                        path.display()
-                    ))
-                })?;
-                results.push(item);
+                match serde_json::from_str::<T>(&contents) {
+                    Ok(item) => results.push(item),
+                    Err(e) => {
+                        // Skip files that don't conform to the expected schema.
+                        // Evolution files may use a different format during transitions.
+                        eprintln!(
+                            "governance: skipping {}: {e}",
+                            path.display()
+                        );
+                    }
+                }
             }
         }
         Ok(results)

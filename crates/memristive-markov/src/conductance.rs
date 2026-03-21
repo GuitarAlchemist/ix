@@ -10,6 +10,7 @@ fn serialize_conductances<S: Serializer>(
     string_map.serialize(serializer)
 }
 
+#[allow(clippy::type_complexity)]
 fn deserialize_conductances<'de, D: Deserializer<'de>>(
     deserializer: D
 ) -> std::result::Result<HashMap<(Vec<usize>, usize), f64>, D::Error> {
