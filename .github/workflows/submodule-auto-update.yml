@@ -3,9 +3,9 @@ name: Auto-Update Demerzel Submodule
 on:
   repository_dispatch:
     types: [demerzel-updated]
-  # Fallback: daily check in case dispatch was missed
+  # Fallback: check every 6 hours in case dispatch was missed
   schedule:
-    - cron: '0 6 * * *'  # 6 AM UTC daily
+    - cron: '0 */6 * * *'  # Every 6 hours UTC
 
 permissions:
   contents: write
