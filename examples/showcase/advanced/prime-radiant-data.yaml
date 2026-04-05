@@ -1,0 +1,99 @@
+version: "1"
+
+# ── Prime Radiant data pre-computation pipeline ───────────────────────────
+#
+# Generates the JSON payload that Prime Radiant's Three.js scene consumes:
+# node sizes (PageRank), visual clusters (K-Means), topology features
+# (persistent homology), and a governance audit of the computed layout.
+#
+# Run this on a schedule (every N minutes) to keep the visualization
+# fresh. Output is a single JSON blob Prime Radiant fetches at mount.
+#
+# This is the Path B (pre-processor) integration pattern. For live
+# WebSocket streaming, see Path A: have the React client call
+# ix-mcp::tools/call directly per node.
+#
+# Graph shape is a 6-node sample (2 constitutions + 2 policies + 2 personas)
+# — swap the `edges` with your real governance graph extracted from
+# `governance/demerzel/` at scan-time.
+#
+# Execution graph (3 parallel analyses → governance review):
+#
+#   ┌─────────────────┐  ┌────────────────┐  ┌──────────────┐
+#   │  node_sizes     │  │ visual_clusters│  │  topology    │
+#   │(graph.pagerank) │  │    (kmeans)    │  │(topo.persist)│
+#   └────────┬────────┘  └────────┬───────┘  └──────┬───────┘
+#            └───────────────────┴──────────────────┘
+#                                │
+#                                ▼
+#                     ┌──────────────────────┐
+#                     │  layout_audit        │
+#                     │ (governance.check)   │
+#                     └──────────────────────┘
+
+stages:
+
+  # PageRank computes node importance from the governance graph's edge
+  # topology. Constitutions (well-connected hubs) will naturally score
+  # highest → drives Prime Radiant's node scale (belief viz-node-002:
+  # "constitution nodes 4x size + 2x brightness").
+  node_sizes:
+    skill: graph
+    args:
+      operation: pagerank
+      n_nodes: 6
+      edges:
+        # Graph: 2 constitutions (0,1) → 2 policies (2,3) → 2 personas (4,5)
+        - [0, 2, 1.0]
+        - [0, 3, 1.0]
+        - [1, 2, 1.0]
+        - [1, 3, 1.0]
+        - [2, 4, 1.0]
+        - [2, 5, 1.0]
+        - [3, 4, 1.0]
+        - [3, 5, 1.0]
+      directed: true
+      damping: 0.85
+      iterations: 100
+
+  # K-Means on node feature vectors — each row is one node encoded as
+  # (type_id, outgoing_edge_count, depth_from_root). Cluster assignment
+  # drives the node-halo color tint for visual grouping.
+  visual_clusters:
+    skill: kmeans
+    args:
+      data:
+        - [0, 2, 0]   # constitution A: type=0, outdeg=2, depth=0
+        - [0, 2, 0]   # constitution B
+        - [1, 2, 1]   # policy A: type=1, outdeg=2, depth=1
+        - [1, 2, 1]   # policy B
+        - [2, 0, 2]   # persona A: type=2, outdeg=0, depth=2
+        - [2, 0, 2]   # persona B
+      k: 3
+      max_iter: 50
+
+  # Persistent homology detects topological gaps — β₁=0 means the
+  # graph is simply connected (good). A non-zero β₁ would indicate
+  # a policy that doesn't reach any constitution (red flag).
+  topology:
+    skill: topo
+    args:
+      operation: betti_at_radius
+      points:
+        - [0.0, 0.0]
+        - [1.0, 0.0]
+        - [0.0, 1.0]
+        - [1.0, 1.0]
+        - [0.5, 2.0]
+        - [1.5, 2.0]
+      max_dim: 1
+      radius: 1.5
+
+  # Governance leaf: audit the computed layout before Prime Radiant
+  # publishes it. Article 2 (Transparency) applies — the viz must
+  # faithfully represent the underlying governance state.
+  layout_audit:
+    skill: governance.check
+    args:
+      action: "publish 3D governance graph layout: PageRank sizes + K-Means clusters + Betti topology"
+    deps: [node_sizes, visual_clusters, topology]

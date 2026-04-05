@@ -14,3 +14,4 @@
 pub mod batch1;
 pub mod batch2;
 pub mod batch3;
+pub mod prime_radiant;
