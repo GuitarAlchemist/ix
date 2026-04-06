@@ -1,10 +1,30 @@
 //! Prime Radiant data-generation skills — scan the governance submodule
 //! and emit the node+edge graph that the 3D visualization consumes.
+//!
+//! ## Refresh mechanism
+//!
+//! The `governance.graph` tool performs a full scan on every call (stateless,
+//! safe to call repeatedly).  For efficient polling, callers should use
+//! `governance.graph.rescan` instead:
+//!
+//! 1. Call `governance.graph.rescan` with `last_scan_epoch = 0` to get an
+//!    initial graph.  The response includes `scanned_at` (Unix seconds).
+//! 2. Every ~60 s, call again with `last_scan_epoch` set to the previous
+//!    `scanned_at` value.
+//! 3. If no artifact has changed since `last_scan_epoch`, the response
+//!    contains `{"changed": false, "scanned_at": <now>}` — cheap, no graph
+//!    payload.
+//! 4. If any file mtime is newer, `{"changed": true, "scanned_at": <now>,
+//!    "graph": {...}}` is returned and the caller re-renders.
+//!
+//! This avoids a persistent background thread or OS file-watcher while still
+//! giving callers live updates within one poll interval.
 
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn governance_root() -> std::path::PathBuf {
     if let Ok(root) = std::env::var("IX_ROOT") {
@@ -183,6 +203,149 @@ pub fn governance_graph(params: Value) -> Result<Value, String> {
         "nodes": all_nodes,
         "edges": edges,
         "root": root.display().to_string(),
+        // Freshness metadata — used by governance.graph.rescan to detect
+        // whether a re-render is needed without re-fetching the full graph.
+        "scanned_at": now_epoch(),
+        "newest_artifact_epoch": newest_mtime(&root),
+    }))
+}
+
+/// Return current Unix epoch seconds (falls back to 0 on error).
+fn now_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Walk the governance root (two levels deep, matching `walkdir_flat`) and
+/// return the newest mtime as Unix seconds.  Returns 0 if nothing is readable.
+fn newest_mtime(root: &Path) -> u64 {
+    let mut max: u64 = 0;
+
+    // Helper to update max from a single path's metadata.
+    let mut check = |p: &Path| {
+        if let Ok(meta) = std::fs::metadata(p) {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(dur) = modified.duration_since(UNIX_EPOCH) {
+                    let secs = dur.as_secs();
+                    if secs > max {
+                        max = secs;
+                    }
+                }
+            }
+        }
+    };
+
+    if let Ok(top) = std::fs::read_dir(root) {
+        for entry in top.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                check(&p);
+            } else if p.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&p) {
+                    for s in sub.flatten() {
+                        let sp = s.path();
+                        if sp.is_file() {
+                            check(&sp);
+                        } else if sp.is_dir() {
+                            // One extra level for tests/behavioral/{subdir}/
+                            if let Ok(sub2) = std::fs::read_dir(&sp) {
+                                for s2 in sub2.flatten() {
+                                    if s2.path().is_file() {
+                                        check(&s2.path());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    max
+}
+
+fn governance_rescan_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "root": {
+                "type": "string",
+                "description": "Override governance directory (default: auto-detect)"
+            },
+            "last_scan_epoch": {
+                "type": "integer",
+                "description": "Unix timestamp (seconds) of the previous scan. Pass 0 for the initial call."
+            }
+        },
+        "required": ["last_scan_epoch"]
+    })
+}
+
+/// Poll-based governance graph refresh — returns the full graph only when
+/// Demerzel artifacts have changed since `last_scan_epoch`.
+///
+/// Callers should invoke this every ~60 s, passing the `scanned_at` value
+/// from the previous response as `last_scan_epoch`.  When `changed` is false
+/// the payload is tiny (~50 bytes); when true the full graph is included.
+///
+/// ## Typical polling loop (pseudo-code)
+/// ```text
+/// let last = 0;
+/// loop {
+///     let r = governance.graph.rescan({ last_scan_epoch: last });
+///     last = r.scanned_at;
+///     if r.changed { render(r.graph); }
+///     sleep(60s);
+/// }
+/// ```
+#[ix_skill(
+    domain = "governance",
+    name = "governance.graph.rescan",
+    governance = "safety,deterministic",
+    schema_fn = "crate::skills::prime_radiant::governance_rescan_schema"
+)]
+pub fn governance_graph_rescan(params: Value) -> Result<Value, String> {
+    let root = params
+        .get("root")
+        .and_then(|v| v.as_str())
+        .map(|s| Path::new(s).to_path_buf())
+        .unwrap_or_else(governance_root);
+
+    if !root.is_dir() {
+        return Err(format!(
+            "governance directory not found: {}",
+            root.display()
+        ));
+    }
+
+    let last_scan_epoch = params
+        .get("last_scan_epoch")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let scanned_at = now_epoch();
+    let newest = newest_mtime(&root);
+
+    // No changes since last scan — return lightweight response.
+    if newest <= last_scan_epoch && last_scan_epoch > 0 {
+        return Ok(json!({
+            "changed": false,
+            "scanned_at": scanned_at,
+            "newest_artifact_epoch": newest,
+        }));
+    }
+
+    // Changes detected (or initial call) — run full scan and return graph.
+    let graph = governance_graph(json!({ "root": root.display().to_string() }))?;
+
+    Ok(json!({
+        "changed": true,
+        "scanned_at": scanned_at,
+        "newest_artifact_epoch": newest,
+        "graph": graph,
     }))
 }
 
