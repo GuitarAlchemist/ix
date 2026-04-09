@@ -135,7 +135,7 @@ impl DemoScenario for SprintOracle {
                 } else {
                     "Markov chain: ticket state transitions.".into()
                 },
-                interpret: Some(|output: &Value| {
+                interpret: Some(|_output: &Value| {
                     "The Review state has a 25% probability of bouncing back to InProgress. \
                      That means 1 in 4 tickets goes through the review cycle twice. This is \
                      the hidden bottleneck: the team thinks review is fast, but the bounce-back \

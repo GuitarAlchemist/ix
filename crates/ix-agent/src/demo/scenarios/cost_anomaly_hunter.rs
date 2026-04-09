@@ -171,7 +171,7 @@ impl DemoScenario for CostAnomalyHunter {
                 } else {
                     "Bloom filter watchlist check.".into()
                 },
-                interpret: Some(|output: &Value| {
+                interpret: Some(|_output: &Value| {
                     "Bloom filter confirms: the auto-scaler instance is on the watchlist. \
                      Action: cap the auto-scaler max instances, set a billing alarm, \
                      and schedule a FinOps review."

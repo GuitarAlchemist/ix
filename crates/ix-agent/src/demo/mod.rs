@@ -46,12 +46,15 @@ pub trait DemoScenario: Send + Sync {
     fn steps(&self, seed: u64, verbosity: u8) -> Vec<DemoStep>;
 }
 
+/// A glue function that transforms one step's output into the next step's input.
+pub type GlueFn = Box<dyn Fn(&Value) -> Result<Value, String> + Send + Sync>;
+
 /// How a step gets its input JSON.
 pub enum StepInput {
     /// Static JSON blob (first step or no dependency).
     Static(Value),
     /// Transform previous step's output into this step's input.
-    Glue(Box<dyn Fn(&Value) -> Result<Value, String> + Send + Sync>),
+    Glue(GlueFn),
 }
 
 /// One step in a demo scenario.

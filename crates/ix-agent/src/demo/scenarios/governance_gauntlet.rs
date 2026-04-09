@@ -121,7 +121,7 @@ impl DemoScenario for GovernanceGauntlet {
                 } else {
                     "Self-modification policy query.".into()
                 },
-                interpret: Some(|output: &Value| {
+                interpret: Some(|_output: &Value| {
                     "Hard stops: agents can never modify constitutional articles, disable \
                      audit logging, or remove safety checks. These are not configurable."
                         .into()
