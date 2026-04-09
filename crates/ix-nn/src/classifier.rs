@@ -587,25 +587,6 @@ fn select_rows(x: &Array2<f64>, indices: &[usize]) -> Array2<f64> {
     result
 }
 
-/// Serializable state for a TransformerClassifier.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransformerClassifierState {
-    pub config: TransformerConfig,
-    pub head_weights: Vec<Vec<f64>>,
-    pub head_bias: Vec<f64>,
-    pub n_classes: usize,
-    pub seq_len: usize,
-}
-
-/// Serializable state for a TransformerRegressor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransformerRegressorState {
-    pub config: TransformerConfig,
-    pub head_weights: Vec<f64>,
-    pub head_bias: f64,
-    pub seq_len: usize,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,6 +37,11 @@ use rand::SeedableRng;
 use crate::metrics::accuracy;
 use crate::traits::Classifier;
 
+/// A scoring function that evaluates predictions against ground truth.
+///
+/// Takes `(y_true, y_pred)` and returns a scalar score (higher = better).
+pub type Scorer = fn(&Array1<usize>, &Array1<usize>) -> f64;
+
 /// K-Fold cross-validation splitter.
 ///
 /// Divides the dataset into `k` consecutive folds. Each fold is used
@@ -200,7 +205,9 @@ impl StratifiedKFold {
 ///
 /// Trains the classifier on the training fold and evaluates on the test fold
 /// for each of `k` splits. The `make_model` closure creates a fresh model
-/// for each fold.
+/// for each fold. Uses accuracy as the scoring metric.
+///
+/// For custom scoring functions, use [`cross_val_score_with`].
 ///
 /// # Example
 ///
@@ -236,6 +243,62 @@ where
     C: Classifier,
     F: Fn() -> C,
 {
+    cross_val_score_with(x, y, make_model, k, seed, accuracy)
+}
+
+/// Cross-validate a classifier with a custom scoring function.
+///
+/// Like [`cross_val_score`], but accepts a `scorer` function that takes
+/// `(y_true, y_pred)` and returns a scalar score.
+///
+/// # Example
+///
+/// ```
+/// use ndarray::{array, Array1, Array2};
+/// use ix_supervised::validation::cross_val_score_with;
+/// use ix_supervised::knn::KNN;
+///
+/// // Custom scorer: macro F1 (simplified — counts per-class F1 and averages)
+/// fn macro_f1(y_true: &Array1<usize>, y_pred: &Array1<usize>) -> f64 {
+///     let classes: Vec<usize> = {
+///         let mut c: Vec<usize> = y_true.iter().copied().collect();
+///         c.sort(); c.dedup(); c
+///     };
+///     let f1s: Vec<f64> = classes.iter().map(|&c| {
+///         let tp = y_true.iter().zip(y_pred.iter()).filter(|(&t, &p)| t == c && p == c).count() as f64;
+///         let fp = y_pred.iter().zip(y_true.iter()).filter(|(&p, &t)| p == c && t != c).count() as f64;
+///         let r#fn = y_true.iter().zip(y_pred.iter()).filter(|(&t, &p)| t == c && p != c).count() as f64;
+///         if tp == 0.0 { 0.0 } else { 2.0 * tp / (2.0 * tp + fp + r#fn) }
+///     }).collect();
+///     f1s.iter().sum::<f64>() / f1s.len() as f64
+/// }
+///
+/// let x = Array2::from_shape_vec((8, 2), vec![
+///     0.0, 0.0,  0.5, 0.5,  1.0, 0.0,  0.3, 0.2,
+///     5.0, 5.0,  5.5, 5.5,  6.0, 5.0,  5.3, 5.2,
+/// ]).unwrap();
+/// let y = array![0, 0, 0, 0, 1, 1, 1, 1];
+///
+/// let scores = cross_val_score_with(
+///     &x, &y,
+///     || KNN::new(3),
+///     4, 42,
+///     macro_f1,
+/// );
+/// assert_eq!(scores.len(), 4);
+/// ```
+pub fn cross_val_score_with<C, F>(
+    x: &Array2<f64>,
+    y: &Array1<usize>,
+    make_model: F,
+    k: usize,
+    seed: u64,
+    scorer: Scorer,
+) -> Vec<f64>
+where
+    C: Classifier,
+    F: Fn() -> C,
+{
     let skf = StratifiedKFold::new(k).with_seed(seed);
     let folds = skf.split(y);
 
@@ -248,7 +311,7 @@ where
         let mut model = make_model();
         model.fit(&x_train, &y_train);
         let preds = model.predict(&x_test);
-        accuracy(&y_test, &preds)
+        scorer(&y_test, &preds)
     }).collect()
 }
 
@@ -369,5 +432,48 @@ mod tests {
         for &s in &scores {
             assert!(s >= 0.5, "Each fold should be better than random, got {}", s);
         }
+    }
+
+    #[test]
+    fn test_cross_val_score_with_custom_scorer() {
+        use crate::knn::KNN;
+
+        // Custom scorer: always returns 0.42 regardless of predictions
+        fn constant_scorer(_y_true: &Array1<usize>, _y_pred: &Array1<usize>) -> f64 {
+            0.42
+        }
+
+        let x = Array2::from_shape_vec((8, 2), vec![
+            0.0, 0.0,  0.5, 0.5,  1.0, 0.0,  0.3, 0.2,
+            5.0, 5.0,  5.5, 5.5,  6.0, 5.0,  5.3, 5.2,
+        ]).unwrap();
+        let y = array![0, 0, 0, 0, 1, 1, 1, 1];
+
+        let scores = cross_val_score_with(
+            &x, &y,
+            || KNN::new(3),
+            4, 42,
+            constant_scorer,
+        );
+        assert_eq!(scores.len(), 4);
+        for &s in &scores {
+            assert!((s - 0.42).abs() < 1e-12, "custom scorer should return 0.42, got {}", s);
+        }
+    }
+
+    #[test]
+    fn test_cross_val_score_with_accuracy_matches_default() {
+        use crate::knn::KNN;
+        use crate::metrics::accuracy;
+
+        let x = Array2::from_shape_vec((8, 2), vec![
+            0.0, 0.0,  0.5, 0.5,  1.0, 0.0,  0.3, 0.2,
+            5.0, 5.0,  5.5, 5.5,  6.0, 5.0,  5.3, 5.2,
+        ]).unwrap();
+        let y = array![0, 0, 0, 0, 1, 1, 1, 1];
+
+        let default_scores = cross_val_score(&x, &y, || KNN::new(1), 2, 42);
+        let explicit_scores = cross_val_score_with(&x, &y, || KNN::new(1), 2, 42, accuracy);
+        assert_eq!(default_scores, explicit_scores);
     }
 }

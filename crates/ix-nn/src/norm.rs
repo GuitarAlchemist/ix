@@ -1,6 +1,21 @@
-//! Normalization layers: LayerNorm, RMSNorm.
+//! Normalization layers: LayerNorm, RMSNorm, BatchNorm.
 
 use ndarray::{Array1, Array2, Axis};
+
+/// Common interface for normalization layers.
+///
+/// Both `LayerNorm` and `BatchNorm` implement this trait, providing a unified
+/// API for forward passes, forward-with-cache, and backward passes.
+pub trait Normalize {
+    /// Forward pass (inference-safe, no cache).
+    fn forward(&self, x: &Array2<f64>) -> Array2<f64>;
+
+    /// Forward pass that caches activations for backward.
+    fn forward_cache(&mut self, x: &Array2<f64>) -> Array2<f64>;
+
+    /// Backward pass: returns gradient w.r.t. input and updates parameters.
+    fn backward(&mut self, grad_output: &Array2<f64>, learning_rate: f64) -> Array2<f64>;
+}
 
 /// Layer Normalization (Ba et al. 2016).
 ///
@@ -114,6 +129,20 @@ impl LayerNorm {
     }
 }
 
+impl Normalize for LayerNorm {
+    fn forward(&self, x: &Array2<f64>) -> Array2<f64> {
+        self.forward(x)
+    }
+
+    fn forward_cache(&mut self, x: &Array2<f64>) -> Array2<f64> {
+        self.forward_cache(x)
+    }
+
+    fn backward(&mut self, grad_output: &Array2<f64>, learning_rate: f64) -> Array2<f64> {
+        self.backward(grad_output, learning_rate)
+    }
+}
+
 /// RMSNorm (Zhang & Sennrich 2019).
 ///
 /// Simplified layer norm without centering: `x / sqrt(mean(x²) + eps) * gamma`.
@@ -209,6 +238,22 @@ impl BatchNorm {
         }
     }
 
+    /// Forward pass (inference mode, no cache).
+    ///
+    /// Uses running statistics — safe for single samples and eval.
+    /// Equivalent to `forward_inference`.
+    pub fn forward(&self, x: &Array2<f64>) -> Array2<f64> {
+        self.forward_inference(x)
+    }
+
+    /// Forward pass that caches activations for backward (training mode).
+    ///
+    /// Uses batch statistics, updates running statistics, and caches for backward.
+    /// Equivalent to `forward_train`.
+    pub fn forward_cache(&mut self, x: &Array2<f64>) -> Array2<f64> {
+        self.forward_train(x)
+    }
+
     /// Forward pass in training mode.
     ///
     /// Uses batch statistics and updates running statistics.
@@ -301,6 +346,20 @@ impl BatchNorm {
         self.beta = &self.beta - &(learning_rate * &grad_beta);
 
         grad_input
+    }
+}
+
+impl Normalize for BatchNorm {
+    fn forward(&self, x: &Array2<f64>) -> Array2<f64> {
+        self.forward(x)
+    }
+
+    fn forward_cache(&mut self, x: &Array2<f64>) -> Array2<f64> {
+        self.forward_cache(x)
+    }
+
+    fn backward(&mut self, grad_output: &Array2<f64>, learning_rate: f64) -> Array2<f64> {
+        self.backward(grad_output, learning_rate)
     }
 }
 
@@ -564,6 +623,61 @@ mod tests {
                     "LayerNorm grad mismatch at [{i},{j}]: analytical={a}, numerical={n}, rel_err={rel_err}"
                 );
             }
+        }
+    }
+
+    // --- Normalize trait tests ---
+
+    #[test]
+    fn test_normalize_trait_layer_norm() {
+        let mut norm: Box<dyn Normalize> = Box::new(LayerNorm::new(4));
+        let x = array![[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]];
+        let out = norm.forward(&x);
+        assert_eq!(out.shape(), &[2, 4]);
+        let out2 = norm.forward_cache(&x);
+        assert_eq!(out2.shape(), &[2, 4]);
+        let grad = Array2::ones((2, 4));
+        let grad_in = norm.backward(&grad, 0.01);
+        assert_eq!(grad_in.shape(), &[2, 4]);
+    }
+
+    #[test]
+    fn test_normalize_trait_batch_norm() {
+        let mut norm: Box<dyn Normalize> = Box::new(BatchNorm::new(3));
+        let x = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
+        // forward uses inference (running stats are zeros/ones initially)
+        let out = norm.forward(&x);
+        assert_eq!(out.shape(), &[3, 3]);
+        // forward_cache uses training mode
+        let out2 = norm.forward_cache(&x);
+        assert_eq!(out2.shape(), &[3, 3]);
+        let grad = Array2::ones((3, 3));
+        let grad_in = norm.backward(&grad, 0.01);
+        assert_eq!(grad_in.shape(), &[3, 3]);
+    }
+
+    #[test]
+    fn test_batch_norm_forward_matches_inference() {
+        let mut bn = BatchNorm::new(2);
+        let x = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+        let _ = bn.forward_train(&x); // build running stats
+        let single = array![[2.0, 3.0]];
+        let out1 = bn.forward(&single);
+        let out2 = bn.forward_inference(&single);
+        for (a, b) in out1.iter().zip(out2.iter()) {
+            assert!((a - b).abs() < 1e-12, "forward() should match forward_inference()");
+        }
+    }
+
+    #[test]
+    fn test_batch_norm_forward_cache_matches_train() {
+        let mut bn1 = BatchNorm::new(3);
+        let mut bn2 = BatchNorm::new(3);
+        let x = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let out1 = bn1.forward_cache(&x);
+        let out2 = bn2.forward_train(&x);
+        for (a, b) in out1.iter().zip(out2.iter()) {
+            assert!((a - b).abs() < 1e-12, "forward_cache() should match forward_train()");
         }
     }
 }

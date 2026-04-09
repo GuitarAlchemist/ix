@@ -286,22 +286,13 @@ impl TransformerBlock {
         let normed1 = Self::norm_3d_cache(&mut self.norm1, x);
         self.normed1_cache = Some(normed1.clone());
 
-        // Multi-head attention — use GPU if available, else CPU with cache
-        let (attn_out, weights, hq, hk, hv, concat) = if gpu_ctx.is_some() {
-            // GPU forward (no cache version, we still need the cache for backward)
-            // Use the CPU cache version since backward is CPU-only
-            multi_head_attention_forward_cache(
-                &normed1, &normed1, &normed1,
-                &self.w_q, &self.w_k, &self.w_v, &self.w_o,
-                self.n_heads, mask,
-            )
-        } else {
-            multi_head_attention_forward_cache(
-                &normed1, &normed1, &normed1,
-                &self.w_q, &self.w_k, &self.w_v, &self.w_o,
-                self.n_heads, mask,
-            )
-        };
+        // Multi-head attention with cache for backward pass
+        let _ = gpu_ctx; // GPU forward path not yet differentiated; kept for API stability
+        let (attn_out, weights, hq, hk, hv, concat) = multi_head_attention_forward_cache(
+            &normed1, &normed1, &normed1,
+            &self.w_q, &self.w_k, &self.w_v, &self.w_o,
+            self.n_heads, mask,
+        );
 
         // Apply dropout after attention
         let attn_out = self.attn_dropout.forward_train_3d(&attn_out);
