@@ -273,8 +273,15 @@ mod tests {
         let first_id = all[0].id;
         let r1 = ix_demo(json!({"action": "run", "scenario": first_id, "seed": 42})).unwrap();
         let r2 = ix_demo(json!({"action": "run", "scenario": first_id, "seed": 42})).unwrap();
-        // Same seed → same outputs
-        assert_eq!(r1["steps"], r2["steps"]);
+        // Same seed → same outputs (compare output values, not timing)
+        let steps1 = r1["steps"].as_array().unwrap();
+        let steps2 = r2["steps"].as_array().unwrap();
+        assert_eq!(steps1.len(), steps2.len());
+        for (s1, s2) in steps1.iter().zip(steps2.iter()) {
+            assert_eq!(s1["output"], s2["output"]);
+            assert_eq!(s1["tool"], s2["tool"]);
+            assert_eq!(s1["label"], s2["label"]);
+        }
     }
 
     #[test]
