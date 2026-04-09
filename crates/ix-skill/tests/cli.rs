@@ -25,9 +25,9 @@ fn list_skills_returns_all_entries() {
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     let count = value["count"].as_u64().expect("count is number");
-    // 43 = batch1 (6) + batch2 (28) + batch3 (9) — full MCP tool coverage.
+    // 45 = batch1 (6) + batch2 (28) + batch3 (9) + prime_radiant (2).
     // If this drifts, update the assertion alongside the batch changes.
-    assert_eq!(count, 43, "expected 43 registry skills, got {count}");
+    assert_eq!(count, 45, "expected 45 registry skills, got {count}");
 }
 
 #[test]
@@ -159,7 +159,7 @@ fn list_skills_with_domain_filter() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
-    assert_eq!(value["count"].as_u64(), Some(4)); // 4 governance skills migrated
+    assert_eq!(value["count"].as_u64(), Some(6)); // 4 governance + 2 governance.graph skills
 }
 
 #[test]
