@@ -131,7 +131,7 @@ fn code_analyze_schema() -> Value {
         "type": "object",
         "properties": {
             "source": {"type": "string"},
-            "language": {"type": "string", "enum": ["rust", "python", "javascript", "typescript", "cpp", "java", "go", "csharp", "fsharp"]},
+            "language": {"type": "string", "enum": ["rust", "python", "javascript", "typescript", "cpp", "java", "go", "csharp", "fsharp", "php", "ruby"]},
             "path": {"type": "string"}
         }
     })

@@ -65,6 +65,12 @@ tokio-tungstenite = "0.26"
 futures-util = "0.3"
 bytes = "1"
 
+# Code Observatory deps (optional, behind ix-code feature gates)
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+git2 = "0.20"
+tempfile = "3"
+
 # Internal crates
 ix-math = { path = "crates/ix-math", version = "0.1.0" }
 ix-optimize = { path = "crates/ix-optimize", version = "0.1.0" }

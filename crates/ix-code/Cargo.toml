@@ -13,3 +13,40 @@ description = "Lightweight code analysis: complexity, Halstead, SLOC metrics for
 serde = { workspace = true }
 serde_json = { workspace = true }
 ndarray = { workspace = true }
+
+# Optional deps for Layer 2 (semantic)
+tree-sitter = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+streaming-iterator = { version = "0.1", optional = true }
+
+# Optional deps for Layer 3 (trajectory)
+git2 = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+
+# Optional deps for Layer 4 (topology)
+ix-topo = { workspace = true, optional = true }
+
+# Optional deps for Layer 5 (gates)
+ix-governance = { workspace = true, optional = true }
+ix-types = { workspace = true, optional = true }
+
+# Optional deps for Layer 6 (advanced) + Layer 7 (physics)
+ix-math = { workspace = true, optional = true }
+ix-ktheory = { workspace = true, optional = true }
+ix-signal = { workspace = true, optional = true }
+ix-fractal = { workspace = true, optional = true }
+ix-chaos = { workspace = true, optional = true }
+ix-graph = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[features]
+default = []
+semantic = ["dep:tree-sitter", "dep:tree-sitter-rust", "dep:streaming-iterator"]
+trajectory = ["dep:git2", "dep:ix-signal", "dep:thiserror"]
+topology = ["dep:ix-topo"]
+gates = ["dep:ix-governance", "dep:ix-types"]
+advanced = ["dep:ix-math", "dep:ix-ktheory", "dep:ix-signal", "dep:ix-fractal"]
+physics = ["dep:ix-chaos", "dep:ix-signal", "dep:ix-graph"]
+full = ["semantic", "trajectory", "topology", "gates", "advanced", "physics"]

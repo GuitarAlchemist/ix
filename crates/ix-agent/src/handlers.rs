@@ -2079,6 +2079,8 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
             "go" => Some(Language::Go),
             "csharp" => Some(Language::CSharp),
             "fsharp" => Some(Language::FSharp),
+            "php" => Some(Language::Php),
+            "ruby" => Some(Language::Ruby),
             _ => None,
         })
         .ok_or_else(|| format!("Unsupported language: {}", lang_str))?;
@@ -2093,6 +2095,8 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
         Language::Go => "input.go",
         Language::CSharp => "input.cs",
         Language::FSharp => "input.fs",
+        Language::Php => "input.php",
+        Language::Ruby => "input.rb",
     });
 
     let metrics = analyze_source(source, lang, path);

@@ -20,6 +20,8 @@ pub enum Language {
     Go,
     CSharp,
     FSharp,
+    Php,
+    Ruby,
 }
 
 impl Language {
@@ -35,6 +37,8 @@ impl Language {
             "go" => Some(Language::Go),
             "cs" => Some(Language::CSharp),
             "fs" | "fsx" => Some(Language::FSharp),
+            "php" => Some(Language::Php),
+            "rb" | "rake" | "gemspec" => Some(Language::Ruby),
             _ => None,
         }
     }
@@ -58,6 +62,8 @@ impl Language {
             Language::Go => "Go",
             Language::CSharp => "C#",
             Language::FSharp => "F#",
+            Language::Php => "PHP",
+            Language::Ruby => "Ruby",
         }
     }
 
@@ -78,6 +84,10 @@ impl Language {
                 &["if", "else if", "while", "for", "foreach", "switch", "case", "catch", "&&", "||", "?", "??"],
             Language::FSharp =>
                 &["if", "elif", "match", "while", "for", "&&", "||", "|>"],
+            Language::Php =>
+                &["if", "elseif", "while", "for", "foreach", "switch", "case", "catch", "&&", "||", "?", "??"],
+            Language::Ruby =>
+                &["if", "elsif", "unless", "while", "until", "for", "case", "when", "rescue", "&&", "||"],
         }
     }
 
@@ -92,20 +102,22 @@ impl Language {
                 &["if", "while", "for", "switch", "try", "class"],
             Language::Go => &["if", "for", "switch", "select", "func"],
             Language::FSharp => &["if", "match", "while", "for", "let", "module"],
+            Language::Php => &["if", "while", "for", "foreach", "function", "class", "try", "switch"],
+            Language::Ruby => &["if", "unless", "while", "until", "for", "def", "class", "module", "begin", "case"],
         }
     }
 
     /// Line comment prefix.
     fn line_comment(&self) -> &str {
         match self {
-            Language::Python | Language::FSharp => "#",
+            Language::Python | Language::FSharp | Language::Ruby => "#",
             _ => "//",
         }
     }
 
     /// Whether the language uses `/* */` block comments.
     fn has_block_comments(&self) -> bool {
-        !matches!(self, Language::Python)
+        !matches!(self, Language::Python | Language::Ruby)
     }
 
     /// Operators for Halstead analysis.
@@ -182,6 +194,18 @@ fn analyze_code(source: &str, lang: Language, name: &str) -> CodeMetrics {
         // Python docstrings (simplified)
         if matches!(lang, Language::Python) && (trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''")) {
             cloc += 1;
+            continue;
+        }
+
+        // Ruby =begin/=end block comments
+        if matches!(lang, Language::Ruby) && trimmed.starts_with("=begin") {
+            cloc += 1;
+            in_block_comment = true;
+            continue;
+        }
+        if matches!(lang, Language::Ruby) && in_block_comment && trimmed.starts_with("=end") {
+            cloc += 1;
+            in_block_comment = false;
             continue;
         }
 
@@ -292,6 +316,8 @@ fn extract_functions(source: &str, lang: Language) -> Vec<CodeMetrics> {
         Language::Go => "func ",
         Language::Java | Language::CSharp | Language::Cpp => "", // harder to detect, skip
         Language::FSharp => "let ",
+        Language::Php => "function ",
+        Language::Ruby => "def ",
     };
 
     if fn_keyword.is_empty() {
@@ -332,6 +358,8 @@ fn extract_fn_name(line: &str, lang: Language) -> String {
         Language::JavaScript | Language::TypeScript => "function ",
         Language::Go => "func ",
         Language::FSharp => "let ",
+        Language::Php => "function ",
+        Language::Ruby => "def ",
         _ => return String::new(),
     };
 
@@ -379,6 +407,29 @@ fn find_fn_end(lines: &[&str], start: usize, lang: Language) -> usize {
                 let indent = line.len() - line.trim_start().len();
                 if indent <= base_indent {
                     return (i - 1).max(start);
+                }
+            }
+            lines.len() - 1
+        }
+        Language::Ruby => {
+            // Ruby uses def/end blocks: track nesting of block-opening keywords
+            let openers = ["def", "class", "module", "do", "if", "unless", "while", "until", "for", "case", "begin"];
+            let mut depth = 0i32;
+            for (i, line) in lines.iter().enumerate().skip(start) {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') || trimmed.is_empty() {
+                    continue;
+                }
+                for opener in &openers {
+                    if contains_keyword(trimmed, opener) {
+                        depth += 1;
+                    }
+                }
+                if contains_keyword(trimmed, "end") {
+                    depth -= 1;
+                }
+                if i > start && depth <= 0 {
+                    return i;
                 }
             }
             lines.len() - 1
@@ -536,7 +587,6 @@ fn tokenize_operands(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_language_from_extension() {
@@ -708,6 +758,72 @@ fn simple() -> i32 {
         let c1 = estimate_cognitive(simple, Language::Rust);
         let c2 = estimate_cognitive(nested, Language::Rust);
         assert!(c2 > c1, "nested code should have higher cognitive complexity: {c1} vs {c2}");
+    }
+
+    #[test]
+    fn test_php_analysis() {
+        let source = r#"
+<?php
+function fibonacci($n) {
+    if ($n <= 0) {
+        return 0;
+    } elseif ($n == 1) {
+        return 1;
+    } else {
+        return fibonacci($n - 1) + fibonacci($n - 2);
+    }
+}
+
+function add($a, $b) {
+    return $a + $b;
+}
+"#;
+        let path = Path::new("test.php");
+        let result = analyze_source(source, Language::Php, path);
+        assert_eq!(result.language, "PHP");
+        assert!(result.functions.len() >= 2, "should find 2 functions, got {}", result.functions.len());
+
+        let fib = result.functions.iter().find(|f| f.name == "fibonacci");
+        assert!(fib.is_some(), "should find fibonacci function");
+        let fib = fib.unwrap();
+        assert!(fib.cyclomatic >= 3.0, "fibonacci CC should be >= 3, got {}", fib.cyclomatic);
+        assert!((fib.n_args - 1.0).abs() < 0.01, "fibonacci should have 1 arg, got {}", fib.n_args);
+    }
+
+    #[test]
+    fn test_ruby_analysis() {
+        let source = r#"
+def fibonacci(n)
+  if n <= 0
+    return 0
+  elsif n == 1
+    return 1
+  else
+    return fibonacci(n - 1) + fibonacci(n - 2)
+  end
+end
+
+def add(a, b)
+  a + b
+end
+"#;
+        let path = Path::new("test.rb");
+        let result = analyze_source(source, Language::Ruby, path);
+        assert_eq!(result.language, "Ruby");
+        assert!(result.functions.len() >= 2, "should find 2 functions, got {}", result.functions.len());
+
+        let fib = result.functions.iter().find(|f| f.name == "fibonacci");
+        assert!(fib.is_some(), "should find fibonacci function");
+        let fib = fib.unwrap();
+        assert!(fib.cyclomatic >= 3.0, "fibonacci CC should be >= 3, got {}", fib.cyclomatic);
+    }
+
+    #[test]
+    fn test_language_from_extension_php_ruby() {
+        assert_eq!(Language::from_extension("php"), Some(Language::Php));
+        assert_eq!(Language::from_extension("rb"), Some(Language::Ruby));
+        assert_eq!(Language::from_extension("rake"), Some(Language::Ruby));
+        assert_eq!(Language::from_extension("gemspec"), Some(Language::Ruby));
     }
 
     #[test]
