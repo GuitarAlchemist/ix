@@ -8,6 +8,7 @@ pub mod stats;
 pub mod distance;
 pub mod geometric_space;
 pub mod svd;
+pub mod eigen;
 pub mod activation;
 pub mod calculus;
 pub mod random;
