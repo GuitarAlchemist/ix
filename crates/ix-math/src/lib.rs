@@ -6,6 +6,7 @@
 pub mod linalg;
 pub mod stats;
 pub mod distance;
+pub mod geometric_space;
 pub mod activation;
 pub mod calculus;
 pub mod random;
