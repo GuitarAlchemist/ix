@@ -103,6 +103,35 @@ Rust 1.80+ (due to wgpu 28)
 - Governance: all agent actions subject to Demerzel constitution (11 articles)
 - Federation: cross-repo tool calls via MCP protocol
 
+## Graph Theory Coverage
+
+IX ships a deep, cross-crate graph theory stack. **Before adding a new graph
+algorithm, new graph crate, or pulling in `petgraph`/`daggy`/`graph-rs`:**
+check this list first. The primitives you need are almost certainly already
+here.
+
+Full landing page: [`docs/guides/graph-theory-in-ix.md`](docs/guides/graph-theory-in-ix.md).
+
+| Module | What it provides | Use when |
+|---|---|---|
+| `crates/ix-graph` | Generic graphs, Markov chains, HMM/Viterbi, state spaces, agent routing | You need generic graph data structures, probabilistic transition models, or state-space search |
+| `crates/ix-pipeline::dag::Dag<N>` | Generic cycle-checked DAG with topological sort | You need an acyclic DAG substrate — cycle detection is enforced on every edge insertion |
+| `crates/ix-search` | A*, Q*, MCTS, minimax, alpha-beta, BFS/DFS, adversarial search | You need shortest-path, optimal play, tree search, or goal-directed traversal |
+| `crates/ix-topo` | Persistent homology, simplicial complexes, Betti numbers | You need topological invariants of a graph (connected components, cycles, cavities) |
+| `crates/ix-ktheory` | Algebraic K-theory over graphs, Mayer-Vietoris sequences, Grothendieck K₀/K₁ | You need algebraic invariants for classification/equivalence of graph structures |
+| `crates/ix-code::semantic` | Tree-sitter call graph extraction + rich `CalleeHint` variants | You need static call graphs from Rust source |
+| `crates/ix-code::topology` | Persistent homology applied to call graphs | You need structural summaries of codebases (code shape, cycles, islands) |
+| `crates/ix-code::advanced` | Hyperbolic embeddings, BSP spatial search, spectral methods over graphs | You need embeddings of large graphs or spectral clustering |
+| `crates/ix-code::physics` | Laplacian spectrum of call graphs (via `ix-math::eigen`) | You need spectral graph theory — eigenvalues, community detection, connectivity |
+| `crates/ix-context` *(WIP)* | Walker over AST + call + import + git-trajectory DAG | You need agent-facing context retrieval by graph walks |
+
+**Rules:**
+1. **Never add `petgraph`, `daggy`, `graph-rs`, or similar as a new dependency** without explicitly documenting why IX's existing primitives are insufficient. Default answer: they aren't.
+2. **For cycle-checked DAGs, use `ix-pipeline::dag::Dag<N>`.** It is generic over node data, enforces acyclicity on every edge insertion, and has topological sort built in.
+3. **For shortest paths, use `ix-search::astar` or `ix-search::uninformed`** (BFS/DFS). Do not hand-roll a BFS.
+4. **For topological analysis of graph structure, use `ix-topo`.** Persistent homology is already shipped.
+5. **For any new graph-shaped primitive, consult [`docs/guides/graph-theory-in-ix.md`](docs/guides/graph-theory-in-ix.md) first** to confirm it doesn't already live somewhere in the stack.
+6. **`ix-code::semantic::CallGraph` is per-file.** Cross-file/project-wide call graphs are the job of `ix-context` (in progress). Do not try to bolt cross-file resolution into `ix-code`.
 
 <!-- BEGIN DEMERZEL GOVERNANCE -->
 # Demerzel Governance Integration
