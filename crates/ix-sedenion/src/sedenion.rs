@@ -166,12 +166,23 @@ impl Sedenion {
 
     /// Sedenion logarithm via scalar+vector decomposition.
     ///
-    /// For `s = a + v` with norm `r = |s|` and vector-part norm `|v|`,
-    /// `log(s) = log(r) + (v/|v|) * atan2(|v|, a)`. This is the inverse of
-    /// `exp` for sedenions with small vector-part norm. Returns a sedenion
-    /// whose components are NaN/Inf if `self` is zero.
+    /// For `s = a + v` with norm `r = |s|` and vector-part norm `|v|`:
     ///
-    /// Ported from TARS v1's `HyperComplexGeometricDSL::SedenionOps::log`.
+    /// ```text
+    ///   log(s) = log(r) + (v / |v|) * atan2(|v|, a)
+    /// ```
+    ///
+    /// This is the inverse of `exp` for sedenions with small vector-part
+    /// norm. For zero-vector sedenions with a positive real part
+    /// (`s = a, a > 0`) the result reduces to the real log. For zero-vector
+    /// sedenions with a *negative* real part (`s = -|a|`), the principal
+    /// log needs an angle of `pi` along an imaginary direction — we use
+    /// `e_1` (the first imaginary basis element) by convention, matching
+    /// the quaternion/complex-number definition. Returns NaN/Inf for
+    /// `s = 0` since `log(0)` is undefined.
+    ///
+    /// Ported from TARS v1's `HyperComplexGeometricDSL::SedenionOps::log`,
+    /// with the negative-real-axis case fixed after the 2026-04-09 review.
     pub fn log(&self) -> Sedenion {
         let scalar = self.components[0];
         let vec_norm_sq: f64 = self.components[1..].iter().map(|x| x * x).sum();
@@ -182,12 +193,22 @@ impl Sedenion {
         out[0] = norm.ln();
 
         if vec_norm >= 1e-12 {
+            // General case: log has a well-defined vector direction.
             let angle = vec_norm.atan2(scalar);
             let factor = angle / vec_norm;
             for (i, slot) in out.iter_mut().enumerate().skip(1) {
                 *slot = factor * self.components[i];
             }
+        } else if scalar < 0.0 {
+            // Negative-real-axis case: principal log needs angle pi along
+            // some unit imaginary direction. Choose e_1 by convention so
+            // that `exp(log(-1)) == -1` as expected, matching the complex
+            // principal value Log(-1) = i*pi.
+            out[1] = std::f64::consts::PI;
         }
+        // Positive-real case with vec_norm ≈ 0: out already has log(|s|)
+        // in the scalar slot and zeros elsewhere, which is correct.
+
         Sedenion::new(out)
     }
 }
@@ -382,6 +403,33 @@ mod tests {
         let l = one.log();
         for i in 0..16 {
             assert!(l.components[i].abs() < EPS);
+        }
+    }
+
+    #[test]
+    fn test_log_of_negative_one_has_pi() {
+        // exp(log(-1)) should equal -1, matching the complex principal
+        // value Log(-1) = i*pi. The fix puts the pi angle on e_1.
+        let mut comps = [0.0; 16];
+        comps[0] = -1.0;
+        let neg_one = Sedenion::new(comps);
+        let l = neg_one.log();
+        // Real part of log: ln|-1| = 0
+        assert!(l.components[0].abs() < EPS);
+        // Imaginary part: pi on e_1
+        assert!((l.components[1] - std::f64::consts::PI).abs() < 1e-10);
+        for i in 2..16 {
+            assert!(l.components[i].abs() < EPS);
+        }
+        // Round trip: exp(log(-1)) == -1
+        let back = l.exp();
+        assert!(
+            (back.components[0] - (-1.0)).abs() < 1e-10,
+            "exp(log(-1)) scalar = {}, expected -1",
+            back.components[0]
+        );
+        for i in 1..16 {
+            assert!(back.components[i].abs() < 1e-10);
         }
     }
 

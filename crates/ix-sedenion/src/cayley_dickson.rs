@@ -174,9 +174,9 @@ mod tests {
         let sb = Sedenion::new(b_arr);
         let specific = Sedenion::mul(&sa, &sb);
 
-        for i in 0..16 {
-            assert!((generic[i] - specific.components[i]).abs() < EPS,
-                "mismatch at {}: generic={}, specific={}", i, generic[i], specific.components[i]);
+        for (i, &g) in generic.iter().enumerate().take(16) {
+            assert!((g - specific.components[i]).abs() < EPS,
+                "mismatch at {}: generic={}, specific={}", i, g, specific.components[i]);
         }
     }
 
@@ -215,9 +215,9 @@ mod tests {
             let sq = double_multiply(&e, &e);
             assert!((sq[0] - (-1.0)).abs() < EPS,
                 "32-ion e_{}^2 real part: {}", idx, sq[0]);
-            for c in 1..32 {
-                assert!(sq[c].abs() < EPS,
-                    "32-ion e_{}^2 imag part {}: {}", idx, c, sq[c]);
+            for (c, &v) in sq.iter().enumerate().take(32).skip(1) {
+                assert!(v.abs() < EPS,
+                    "32-ion e_{}^2 imag part {}: {}", idx, c, v);
             }
         }
     }
