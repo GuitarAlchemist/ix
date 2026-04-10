@@ -55,8 +55,9 @@ The pattern is unmistakable. Every article converges on the same short list.
 | **6** | **Trace flywheel wiring** | Connect `ix-agent` tool invocations to the already-existing `self-improve-loop` skill: emit traces on every session → `ix_trace_ingest` → analysis → `ix-grammar` evolution → harness-change proposals. Uses `ga_bridge` + `tars_bridge` infrastructure already in place. | LangChain Trace Analyzer, OpenAI eval-first | modify `ix-agent` + wire existing federation | 0.5 day | Ship sixth (cheap, high leverage) |
 | **A** | **Hexavalent migration** | Retire `ix-governance::TruthValue` (4-valued). Migrate karnaugh / remediation_optimizer / violation_pattern / weight_evolution to `ix_types::Hexavalent` (6-valued). Rename `tetravalent.rs` module → `logic.rs`. Remove `Tetravalent` skill redirect. | Two-truth-types inconsistency discovered this session; user's hexavalent feedback memory | in-place edits in `ix-governance` | 1 day | Ship between #2 and #3 to unblock #3 cleanly |
 | **B** | **Ambiguous call metadata fix** | `ix-code::semantic::CallEdge.callee` is a bare `String`. Needs to preserve the full scoped path seen at the call site for the Context DAG resolver. | Codex brainstorm finding | small edit in `crates/ix-code/src/semantic.rs` | <0.5 day | Ship **before** #1 as a prerequisite |
+| **7** | **`ix-agent` advanced MCP upgrade** | Adopt three MCP features from the EpicWeb advanced-mcp-features workshop: **long-running tasks** (progress streaming + cancellation for slow operations — transformer training, persistent homology on large graphs, iterative adversarial attacks), **changes / server-initiated notifications** (wired to `ix-cache::pubsub` for cross-session state sync and to `ix-session` Discovery events), **elicitation** (structured user input at pipeline boundaries — parameter collection, target column specification, ambiguity resolution). **Explicitly NOT adopting sampling for pipeline routing** — see "Not doing" section for why. | EpicWeb advanced-mcp-features workshop (exercises 02, 04, 05), LangChain progress/eval patterns | in-place upgrades in `ix-agent` + new module `ix-agent::mcp_advanced` | 2 days | Ship after #4 (ix-session) so notifications can carry session events |
 
-**Total:** roughly 10–13 days of focused work to build the whole system. Individual ships are all 0.5–3 days — so this is compoundable across many sessions, not a single heroic push.
+**Total:** roughly 12–15 days of focused work to build the whole system. Individual ships are all 0.5–3 days — so this is compoundable across many sessions, not a single heroic push.
 
 ---
 
@@ -245,6 +246,87 @@ This closes the loop: **every session trains the next session's harness**. LangC
 
 Cost is the smallest of all the primitives (~0.5 day) because everything it needs is already built.
 
+### 7. `ix-agent` advanced MCP upgrade
+
+The EpicWeb *advanced-mcp-features* workshop catalogues five MCP capabilities beyond basic tool calls: advanced tools (01), elicitation (02), sampling (03), long-running tasks (04), and changes/notifications (05). **Three of the five are worth adopting, one is deferred, and one is explicitly rejected for architectural reasons.**
+
+**Why this primitive exists:** `ix-agent` today implements a strict request-response MCP surface — a client invokes a tool, the server computes, returns, done. This is fine for pure-math tools (`ix_fft`, `ix_kmeans`, `ix_linear_regression`) but actively harmful for three classes of operation:
+
+1. **Long training loops** — `ix_transformer_train`, `ix_nn_forward` with gradient updates, `ix_ml_pipeline` over deep DAGs. Current behavior: block until done, return or timeout. Client has no progress signal, no cancellation path.
+2. **Expensive topological/spectral computations** — `ix_topo`'s persistent homology on graphs approaching `MAX_NODES`, `ix-code::physics`'s Laplacian spectrum on large call graphs. Seconds to minutes of wall-clock time with no feedback.
+3. **Iterative adversarial attacks** — `ix_adversarial_fgsm`/PGD with many steps. Same opacity problem.
+
+Adopt three features:
+
+**A. Long-running tasks (exercise 04)**
+
+Progress streaming + cancellation tokens for the operations above. Concretely:
+
+```rust
+pub enum TaskProgress {
+    Started { estimated_duration: Option<Duration> },
+    Step { current: usize, total: usize, message: String },
+    PartialResult { data: serde_json::Value },
+    Completed { result: serde_json::Value },
+    Failed { error: String },
+    Cancelled,
+}
+
+pub trait LongRunningTool {
+    fn execute(&self, params: Value, progress: ProgressSink, cancel: CancellationToken) -> Result<Value>;
+}
+```
+
+Integration: `ix-agent`'s tool dispatcher learns to recognize long-running tools and route them through the MCP long-running-task protocol instead of the synchronous request-response path. `ProgressSink` publishes to the client via MCP progress notifications. `CancellationToken` is checked at natural break points inside each tool implementation (between epochs, between filtration steps, between attack iterations).
+
+Which IX tools upgrade to `LongRunningTool`:
+- `ix_transformer_train` (natural break: epoch boundary)
+- `ix_ml_pipeline` when executing a multi-stage DAG (natural break: DAG node completion)
+- `ix_topo` persistent homology with `n > 100` (natural break: filtration scale)
+- `ix-code::physics` Laplacian spectrum on large graphs (natural break: eigenvalue convergence)
+- `ix_adversarial_fgsm` / `pgd` / `cw` (natural break: attack iteration)
+- `ix_evolution` genetic algorithm (natural break: generation)
+
+**B. Changes / server-initiated notifications (exercise 05)**
+
+Server pushes state-change events to the client without waiting for a request. Two concrete IX uses:
+
+1. **`ix-cache::pubsub` bridge.** IX already has a sharded cache with pub/sub. Today the pub/sub is internal — subscribers are other crates in the same process. With MCP change notifications, `ix-cache` invalidation events flow to the client, which can surface "the Context DAG bundle you saw 2 minutes ago has been invalidated because `crates/ix-math/src/eigen.rs` changed." Prevents the client from acting on stale context.
+2. **`ix-session` Discovery events.** Primitive #4 proposes an append-only event log. Certain event kinds (`Discovery`, `Escalation`) should flow out to the client as notifications. This is the "discovery blackboard" idea from the Citadel reflection made concrete: parallel agents emit Discovery events, others subscribe, Claude sees them mid-session.
+
+**C. Elicitation (exercise 02)**
+
+Structured user input requests from the server. Today if `ix_ml_pipeline` needs to know the target column, it either fails or guesses. With elicitation, the server can pause and ask:
+
+```rust
+pub struct ElicitationRequest {
+    pub prompt: String,
+    pub schema: ElicitationSchema,   // e.g., enum of choices, or free-text with validation
+    pub timeout: Duration,
+}
+
+pub enum ElicitationSchema {
+    Choice { options: Vec<String> },
+    Text { pattern: Option<String> },
+    Number { min: Option<f64>, max: Option<f64> },
+    Boolean,
+}
+```
+
+Use cases: pipeline parameter collection ("which column is the target?"), distance metric selection ("`Euclidean`, `Manhattan`, or `Cosine`?"), ambiguity resolution when the `ix-context` resolver hits an `Ambiguous(candidates)` edge and the user needs to disambiguate.
+
+This is *deterministic* — it does not require LLM inference, it routes through the client to the user. Complements the `PreCompletionChecklist` middleware from primitive #2.
+
+**D. Advanced tools (exercise 01)** — defer until the workshop content is read
+
+Not enough known about exercise 01 to commit. Likely covers typed schemas, tool composition, resource URIs. Read it before deciding whether to adopt.
+
+**E. Sampling (exercise 03)** — **explicitly NOT adopting** for pipeline routing
+
+The whole strategic thesis of this meta-doc is that IX provides *deterministic* structure below the LLM. Sampling-for-routing would invert that layering by putting LLM inference inside `ix-agent`'s control loop. See the "Not doing" section for the full argument. **Sampling may be used at narrow boundaries** (pipeline-spec compilation from natural language, post-hoc result summarization, governance narrative generation) — these are outside the control plane. Runtime pipeline routing is never sampling.
+
+**Ship ordering:** after #4 (`ix-session`), because change notifications should carry session events. Before #6 (trace flywheel), because the trace emission benefits from progress-streaming infrastructure. Roughly 2 days: ~1 day for long-running tasks (most of the work — wiring the progress sink and cancellation tokens into existing tool implementations), ~0.5 day for notifications, ~0.5 day for elicitation.
+
 ### A. Hexavalent migration
 
 Discovery this session: two truth types coexist in the workspace.
@@ -330,6 +412,11 @@ Half a day of work, including tests. Ship this before `ix-context` and Codex's t
    └────────┬────────┘                                    │
             │                                             │
    ┌────────┴────────┐                                    │
+   │ 7. MCP upgrade  │  (2d)  ──── long-running + notify  │
+   │   ix-agent ++   │              + elicitation          │
+   └────────┬────────┘                                    │
+            │                                             │
+   ┌────────┴────────┐                                    │
    │ 5. Fuzzy logic  │  (2-3d) ──── closes Demerzel gap   │
    │    ix-fuzzy     │                                    │
    └────────┬────────┘                                    │
@@ -340,13 +427,13 @@ Half a day of work, including tests. Ship this before `ix-context` and Codex's t
    └─────────────────┘                                    │
 ```
 
-**Total: ~10-13 days of focused work. Individual ships: 0.5-3 days each.** Safe to stop after any step — nothing later is a hard dependency of anything earlier except #3 depending on A and 1.
+**Total: ~12-15 days of focused work. Individual ships: 0.5-3 days each.** Safe to stop after any step — nothing later is a hard dependency of anything earlier except #3 depending on A and 1, and #7 depending on #4 for session-event notifications.
 
 ---
 
 ## What this buys IX
 
-Taken together, the six primitives + migrations make IX something new in the ecosystem: **a structural, deterministic, hexavalent oracle that agent harnesses can consume as a backend**. Not a competing harness, not a framework — a *backend* for any harness that wants to:
+Taken together, the seven primitives + migrations make IX something new in the ecosystem: **a structural, deterministic, hexavalent oracle that agent harnesses can consume as a backend**. Not a competing harness, not a framework — a *backend* for any harness that wants to:
 
 - Pre-load context from code structure rather than guessing via embeddings (→ Context DAG)
 - Hook every tool call with deterministic pre/post policies (→ Middleware)
@@ -354,6 +441,7 @@ Taken together, the six primitives + migrations make IX something new in the eco
 - Treat session history as an append-only event log (→ Session)
 - Reason about uncertainty continuously and discretely (→ Fuzzy + Hexavalent)
 - Learn from its own traces (→ Flywheel)
+- Stream progress, cancel long operations, and elicit structured input without blocking the client (→ MCP upgrade)
 
 This reframes IX from "Rust ML library + governance artifacts" to "structural oracle for the agent era." The math primitives shipped over the last months stop looking random and start looking like *the bottom of a stack that didn't exist yet*.
 
@@ -387,6 +475,7 @@ Ideas surfaced in the brainstorm that are deliberately *not* on the roadmap:
 - **Feature-flag shadow walks** (Gemini) — requires cfg evaluation
 - **Cloud-hosted IX** — this is local tooling by design, not a service
 - **ix-agent as fully stateless with wake(sessionId)** — Managed Agents pattern, but overkill for a local MCP server
+- **MCP sampling for ML pipeline routing** (EpicWeb advanced-mcp-features, exercise 03) — **explicitly rejected**. See primitive #7 for the full analysis. Short version: sampling-for-routing inverts the layering this entire meta-doc argues for. It puts LLM inference *inside* `ix-agent`'s control plane, which would make pipeline execution non-deterministic, non-replayable, and un-auditable by Demerzel's `skeptical-auditor`. The Context DAG's governance-instrument framing requires every walk to be bit-exact reproducible — a sampling-routed pipeline produces outputs no one can replay. LangChain's Terminal Bench result (+13.7 pp from deterministic middleware alone, no LLM-in-loop) is direct empirical evidence that the deterministic direction is right. Sampling has narrow valid uses at the *boundaries* — natural-language → PipelineSpec compilation, post-hoc result summarization, governance narrative generation — but none of those are runtime routing. **If this rejection turns out to be wrong, the entire meta-doc is wrong, and IX's future is as a thin wrapper around MCP sampling rather than a structural oracle.** That fork should be made consciously, not by accident.
 
 ---
 
@@ -400,6 +489,7 @@ Ideas surfaced in the brainstorm that are deliberately *not* on the roadmap:
 6. https://github.com/SethGammon/Citadel
 7. https://www.reddit.com/r/ClaudeAI/comments/1s3wt3n/rag_is_a_trap_for_claude_code_i_built_a_dagbased/ *(fetch blocked — argument inferred from title + context)*
 8. https://platform.claude.com/cookbook/
+9. https://github.com/epicweb-dev/advanced-mcp-features *(EpicWeb workshop: advanced tools, elicitation, sampling, long-running tasks, changes/notifications — surfaced primitive #7)*
 
 Plus the user-pasted 6-valued and fuzzy logic reference material that surfaced the `ix-fuzzy` gap.
 
