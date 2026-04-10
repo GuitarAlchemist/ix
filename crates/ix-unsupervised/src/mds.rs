@@ -38,6 +38,7 @@
 
 use ndarray::{Array1, Array2};
 
+use ix_math::eigen::symmetric_eigen;
 use ix_math::error::MathError;
 
 /// Compute a classical MDS embedding from a pairwise distance matrix.
@@ -89,97 +90,20 @@ pub fn classical_mds(distances: &Array2<f64>, k: usize) -> Result<Array2<f64>, M
         }
     }
 
-    // Full symmetric eigendecomposition via cyclic Jacobi rotations.
-    // Handles repeated eigenvalues correctly — unlike power iteration + deflation.
-    let (eigenvalues, eigenvectors) = jacobi_symmetric_eigendecomp(&b);
-
-    // Sort eigenpairs by eigenvalue descending and keep the top k.
-    let mut idx: Vec<usize> = (0..n).collect();
-    idx.sort_by(|&a, &b| {
-        eigenvalues[b]
-            .partial_cmp(&eigenvalues[a])
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // Full symmetric eigendecomposition via ix-math::eigen — returns pairs
+    // already sorted in descending order, so we just take the top k.
+    let (eigenvalues, eigenvectors) = symmetric_eigen(&b)?;
 
     let mut embedding = Array2::<f64>::zeros((n, k));
     for r in 0..k {
-        let col = idx[r];
-        let lambda = eigenvalues[col].max(0.0);
+        let lambda = eigenvalues[r].max(0.0);
         let scale = lambda.sqrt();
         for i in 0..n {
-            embedding[[i, r]] = eigenvectors[[i, col]] * scale;
+            embedding[[i, r]] = eigenvectors[[i, r]] * scale;
         }
     }
 
     Ok(embedding)
-}
-
-/// Full eigendecomposition of a real symmetric matrix via cyclic Jacobi
-/// rotations. Returns (eigenvalues, eigenvectors) where eigenvectors are
-/// columns of the returned matrix. Eigenvalues are unsorted.
-fn jacobi_symmetric_eigendecomp(input: &Array2<f64>) -> (Array1<f64>, Array2<f64>) {
-    let n = input.nrows();
-    let mut a = input.clone();
-    let mut v = Array2::<f64>::eye(n);
-
-    let max_sweeps = 100;
-    let tol = 1e-12;
-
-    for _ in 0..max_sweeps {
-        let mut off_sum = 0.0;
-        for p in 0..n {
-            for q in (p + 1)..n {
-                off_sum += a[[p, q]] * a[[p, q]];
-            }
-        }
-        if off_sum.sqrt() < tol {
-            break;
-        }
-
-        for p in 0..n {
-            for q in (p + 1)..n {
-                let apq = a[[p, q]];
-                if apq.abs() < 1e-15 {
-                    continue;
-                }
-                let app = a[[p, p]];
-                let aqq = a[[q, q]];
-                let theta = (aqq - app) / (2.0 * apq);
-                let t = if theta >= 0.0 {
-                    1.0 / (theta + (1.0 + theta * theta).sqrt())
-                } else {
-                    1.0 / (theta - (1.0 + theta * theta).sqrt())
-                };
-                let c = 1.0 / (1.0 + t * t).sqrt();
-                let s = t * c;
-
-                a[[p, p]] = app - t * apq;
-                a[[q, q]] = aqq + t * apq;
-                a[[p, q]] = 0.0;
-                a[[q, p]] = 0.0;
-
-                for i in 0..n {
-                    if i != p && i != q {
-                        let aip = a[[i, p]];
-                        let aiq = a[[i, q]];
-                        a[[i, p]] = c * aip - s * aiq;
-                        a[[p, i]] = a[[i, p]];
-                        a[[i, q]] = s * aip + c * aiq;
-                        a[[q, i]] = a[[i, q]];
-                    }
-                }
-                for i in 0..n {
-                    let vip = v[[i, p]];
-                    let viq = v[[i, q]];
-                    v[[i, p]] = c * vip - s * viq;
-                    v[[i, q]] = s * vip + c * viq;
-                }
-            }
-        }
-    }
-
-    let eigenvalues = Array1::from_shape_fn(n, |i| a[[i, i]]);
-    (eigenvalues, v)
 }
 
 /// Build a pairwise distance matrix from a set of row-vectors, using

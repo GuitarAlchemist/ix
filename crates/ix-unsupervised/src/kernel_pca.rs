@@ -44,6 +44,7 @@
 
 use ndarray::{Array1, Array2};
 
+use ix_math::eigen::symmetric_eigen;
 use ix_math::error::MathError;
 
 /// Kernel function variants. Extend this enum to add new kernels; the
@@ -129,41 +130,30 @@ impl KernelPca {
             }
         }
 
-        // Eigendecompose the centered kernel matrix.
-        let (eigenvalues, eigenvectors) = jacobi_symmetric_eigendecomp(&k_c);
-
-        // Sort eigenpairs by eigenvalue descending.
-        let mut idx: Vec<usize> = (0..n).collect();
-        idx.sort_by(|&a, &b| {
-            eigenvalues[b]
-                .partial_cmp(&eigenvalues[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Eigendecompose the centered kernel matrix via ix-math::eigen.
+        // The returned eigenpairs are already sorted in descending order.
+        let (eigenvalues, eigenvectors) = symmetric_eigen(&k_c)?;
 
         // Take top-k alphas and lambdas.
         let mut alphas = Array2::<f64>::zeros((n, self.n_components));
         let mut lambdas = Array1::<f64>::zeros(self.n_components);
         for r in 0..self.n_components {
-            let col = idx[r];
-            let lambda = eigenvalues[col].max(0.0);
+            let lambda = eigenvalues[r].max(0.0);
             lambdas[r] = lambda;
             // Normalize alphas so that lambda * alpha.alpha = 1 (standard Kernel PCA convention)
             let norm = if lambda > 1e-12 { lambda.sqrt() } else { 1.0 };
             for i in 0..n {
-                alphas[[i, r]] = eigenvectors[[i, col]] / norm;
+                alphas[[i, r]] = eigenvectors[[i, r]] / norm;
             }
         }
 
-        // Project training data: X_projected = K_c * alpha
-        // Equivalently, entry (i, r) = sum_j K_c[i,j] * alpha[j,r], but we
-        // already have the eigenvectors of K_c so a simpler form is:
-        // X_projected[i, r] = sqrt(lambda_r) * eigenvector[i, col]
+        // Project training data. The closed form is
+        // X_projected[i, r] = sqrt(lambda_r) * eigenvector[i, r]
         let mut projected = Array2::<f64>::zeros((n, self.n_components));
         for r in 0..self.n_components {
-            let col = idx[r];
             let scale = lambdas[r].sqrt();
             for i in 0..n {
-                projected[[i, r]] = eigenvectors[[i, col]] * scale;
+                projected[[i, r]] = eigenvectors[[i, r]] * scale;
             }
         }
 
@@ -237,73 +227,6 @@ fn compute_kernel(kernel: &Kernel, a: &ndarray::ArrayView1<f64>, b: &ndarray::Ar
             (-gamma * sq).exp()
         }
     }
-}
-
-/// Full eigendecomposition of a real symmetric matrix via cyclic Jacobi.
-/// Duplicated here to keep kernel_pca self-contained.
-fn jacobi_symmetric_eigendecomp(input: &Array2<f64>) -> (Array1<f64>, Array2<f64>) {
-    let n = input.nrows();
-    let mut a = input.clone();
-    let mut v = Array2::<f64>::eye(n);
-
-    let max_sweeps = 100;
-    let tol = 1e-12;
-
-    for _ in 0..max_sweeps {
-        let mut off_sum = 0.0;
-        for p in 0..n {
-            for q in (p + 1)..n {
-                off_sum += a[[p, q]] * a[[p, q]];
-            }
-        }
-        if off_sum.sqrt() < tol {
-            break;
-        }
-
-        for p in 0..n {
-            for q in (p + 1)..n {
-                let apq = a[[p, q]];
-                if apq.abs() < 1e-15 {
-                    continue;
-                }
-                let app = a[[p, p]];
-                let aqq = a[[q, q]];
-                let theta = (aqq - app) / (2.0 * apq);
-                let t = if theta >= 0.0 {
-                    1.0 / (theta + (1.0 + theta * theta).sqrt())
-                } else {
-                    1.0 / (theta - (1.0 + theta * theta).sqrt())
-                };
-                let c = 1.0 / (1.0 + t * t).sqrt();
-                let s = t * c;
-
-                a[[p, p]] = app - t * apq;
-                a[[q, q]] = aqq + t * apq;
-                a[[p, q]] = 0.0;
-                a[[q, p]] = 0.0;
-
-                for i in 0..n {
-                    if i != p && i != q {
-                        let aip = a[[i, p]];
-                        let aiq = a[[i, q]];
-                        a[[i, p]] = c * aip - s * aiq;
-                        a[[p, i]] = a[[i, p]];
-                        a[[i, q]] = s * aip + c * aiq;
-                        a[[q, i]] = a[[i, q]];
-                    }
-                }
-                for i in 0..n {
-                    let vip = v[[i, p]];
-                    let viq = v[[i, q]];
-                    v[[i, p]] = c * vip - s * viq;
-                    v[[i, q]] = s * vip + c * viq;
-                }
-            }
-        }
-    }
-
-    let eigenvalues = Array1::from_shape_fn(n, |i| a[[i, i]]);
-    (eigenvalues, v)
 }
 
 #[cfg(test)]
