@@ -157,31 +157,63 @@ fn parse_rust(source: &str) -> Option<(Tree, ())> {
     Some((tree, ()))
 }
 
+/// Iterative pre-order walk over the entire tree rooted at `root`.
+///
+/// All tree-walkers in this module use a `TreeCursor` instead of native
+/// recursion because tree-sitter can produce very deep syntax trees —
+/// machine-generated code with 10,000+ nested blocks will blow the Rust
+/// stack long before it runs out of memory. The iterative walker uses
+/// heap storage proportional to tree *depth* only.
+#[cfg(feature = "semantic")]
+fn walk_preorder<F>(root: Node, mut visit: F)
+where
+    F: FnMut(Node),
+{
+    let mut cursor = root.walk();
+    // Standard cursor-based pre-order traversal: visit, descend, then
+    // backtrack to the next sibling. Depth tracking is maintained by the
+    // cursor itself via goto_parent on backtrack.
+    visit(cursor.node());
+    loop {
+        if cursor.goto_first_child() {
+            visit(cursor.node());
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                visit(cursor.node());
+                break;
+            }
+            if !cursor.goto_parent() {
+                return;
+            }
+        }
+    }
+}
+
 #[cfg(feature = "semantic")]
 fn count_nodes(node: Node) -> usize {
-    let mut count = 1;
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        count += count_nodes(child);
-    }
+    let mut count = 0;
+    walk_preorder(node, |_| count += 1);
     count
 }
 
 #[cfg(feature = "semantic")]
 fn count_error_nodes(node: Node) -> usize {
     let mut count = 0;
-    if node.is_error() || node.is_missing() {
-        count += 1;
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        count += count_error_nodes(child);
-    }
+    walk_preorder(node, |n| {
+        if n.is_error() || n.is_missing() {
+            count += 1;
+        }
+    });
     count
 }
 
 /// Walks the tree and returns `(max_depth, mean_depth)` over block-bearing
 /// nodes (functions, blocks, loops, conditionals, matches).
+///
+/// Iterative implementation using a `TreeCursor` with an explicit stack of
+/// per-level block depths, safe on arbitrarily deep trees.
 #[cfg(feature = "semantic")]
 fn nesting_stats(root: Node) -> (usize, f64) {
     const BLOCK_KINDS: &[&str] = &[
@@ -198,41 +230,70 @@ fn nesting_stats(root: Node) -> (usize, f64) {
         BLOCK_KINDS.contains(&kind)
     }
 
-    fn walk(node: Node, depth: usize, acc: &mut (usize, usize, usize)) {
-        let next_depth = if is_block(node.kind()) {
-            acc.0 = acc.0.max(depth + 1);
-            acc.1 += depth + 1;
-            acc.2 += 1;
-            depth + 1
-        } else {
-            depth
-        };
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            walk(child, next_depth, acc);
+    let mut cursor = root.walk();
+    // Parallel stack of "block depth at this cursor position". Push on
+    // descent, pop on parent. The current depth is always stack.last().
+    let mut depth_stack: Vec<usize> = Vec::with_capacity(64);
+    let root_depth = if is_block(cursor.node().kind()) { 1 } else { 0 };
+    depth_stack.push(root_depth);
+
+    let mut max_depth = root_depth;
+    let mut depth_sum = root_depth;
+    let mut block_count = if root_depth > 0 { 1 } else { 0 };
+
+    loop {
+        if cursor.goto_first_child() {
+            let parent_depth = *depth_stack.last().unwrap();
+            let child_depth = if is_block(cursor.node().kind()) {
+                parent_depth + 1
+            } else {
+                parent_depth
+            };
+            depth_stack.push(child_depth);
+            if is_block(cursor.node().kind()) {
+                max_depth = max_depth.max(child_depth);
+                depth_sum += child_depth;
+                block_count += 1;
+            }
+            continue;
+        }
+        loop {
+            depth_stack.pop();
+            if cursor.goto_next_sibling() {
+                let parent_depth = *depth_stack.last().unwrap();
+                let sib_depth = if is_block(cursor.node().kind()) {
+                    parent_depth + 1
+                } else {
+                    parent_depth
+                };
+                depth_stack.push(sib_depth);
+                if is_block(cursor.node().kind()) {
+                    max_depth = max_depth.max(sib_depth);
+                    depth_sum += sib_depth;
+                    block_count += 1;
+                }
+                break;
+            }
+            if !cursor.goto_parent() {
+                let mean = if block_count == 0 {
+                    0.0
+                } else {
+                    depth_sum as f64 / block_count as f64
+                };
+                return (max_depth, mean);
+            }
         }
     }
-
-    let mut acc = (0usize, 0usize, 0usize);
-    walk(root, 0, &mut acc);
-    let mean = if acc.2 == 0 {
-        0.0
-    } else {
-        acc.1 as f64 / acc.2 as f64
-    };
-    (acc.0, mean)
 }
 
 #[cfg(feature = "semantic")]
 fn count_kind(root: Node, kinds: &[&str]) -> usize {
     let mut count = 0;
-    if kinds.contains(&root.kind()) {
-        count += 1;
-    }
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        count += count_kind(child, kinds);
-    }
+    walk_preorder(root, |n| {
+        if kinds.contains(&n.kind()) {
+            count += 1;
+        }
+    });
     count
 }
 
@@ -445,5 +506,35 @@ fn deep() {
         let m = extract_semantic_metrics("");
         // Empty source still parses successfully to an empty source_file.
         assert!(m.parse_quality >= 0.0);
+    }
+
+    #[test]
+    fn test_deep_nesting_does_not_stack_overflow() {
+        // Build a file with 200 nested `if true {}` blocks. The previous
+        // recursive walker would consume ~200 Rust stack frames per
+        // traversal (one per function call per child), which on Windows
+        // with the default 1 MB thread stack and debug-build frame sizes
+        // approached the crash threshold. The iterative walker uses only
+        // heap allocation proportional to tree *depth*, so this should be
+        // comfortable.
+        //
+        // (tree-sitter's own C parser has its own recursion limit that
+        // kicks in around 500-1000 levels depending on platform, so we
+        // stay well under it to isolate the walker behavior.)
+        let mut src = String::from("fn deep() {\n");
+        for _ in 0..200 {
+            src.push_str("  if true {\n");
+        }
+        src.push_str("    let _ = 1;\n");
+        for _ in 0..200 {
+            src.push_str("  }\n");
+        }
+        src.push_str("}\n");
+
+        // Should not panic or stack-overflow.
+        let m = extract_semantic_metrics(&src);
+        assert!(m.ast_node_count > 0);
+        // Deep nesting should be visible in the max depth.
+        assert!(m.nesting_depth_max > 10);
     }
 }
