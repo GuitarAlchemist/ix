@@ -450,17 +450,23 @@ pub fn compute_laplacian_spectrum(n: usize, edges: &[(usize, usize)]) -> Laplaci
         lap[[v, v]] += 1.0;
     }
 
-    // Full symmetric eigendecomposition via cyclic Jacobi rotations. For
-    // Observatory-sized graphs (n up to a few hundred) this is fast and
-    // numerically stable, and avoids pulling in an external LAPACK binding.
-    let (eig_all, vec_all) = jacobi_eigen(&lap);
+    // Full symmetric eigendecomposition via ix-math::eigen. Results come
+    // back sorted in *descending* order, but the Laplacian analysis wants
+    // the smallest eigenvalues (lambda_1 = 0, lambda_2 = algebraic
+    // connectivity), so reverse into ascending order.
+    let (eig_desc, vec_desc) =
+        ix_math::eigen::symmetric_eigen(&lap).expect("square Laplacian");
+    let total = eig_desc.len();
+    let indexed: Vec<(f64, Vec<f64>)> = (0..total)
+        .rev()
+        .map(|k| {
+            let val = eig_desc[k].max(0.0);
+            let eigvec: Vec<f64> = (0..n).map(|i| vec_desc[[i, k]]).collect();
+            (val, eigvec)
+        })
+        .collect();
 
-    // Sort ascending by eigenvalue. `vec_all` is indexed [i][j] = j-th
-    // coordinate of the i-th eigenvector.
-    let mut indexed: Vec<(f64, Vec<f64>)> = eig_all.into_iter().zip(vec_all).collect();
-    indexed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    let eigenvalues_all: Vec<f64> = indexed.iter().map(|(e, _)| e.max(0.0)).collect();
+    let eigenvalues_all: Vec<f64> = indexed.iter().map(|(e, _)| *e).collect();
 
     let zero_tol = 1e-6;
     let n_components = eigenvalues_all
@@ -489,90 +495,6 @@ pub fn compute_laplacian_spectrum(n: usize, edges: &[(usize, usize)]) -> Laplaci
         n_connected_components: n_components,
         fiedler_vector,
     }
-}
-
-/// Cyclic Jacobi eigendecomposition of a symmetric matrix.
-///
-/// Returns `(eigenvalues, eigenvectors)` where `eigenvectors[i]` is the i-th
-/// eigenvector (as a plain `Vec<f64>`) and `eigenvalues[i]` its eigenvalue.
-#[allow(clippy::needless_range_loop)]
-fn jacobi_eigen(matrix: &ndarray::Array2<f64>) -> (Vec<f64>, Vec<Vec<f64>>) {
-    let n = matrix.nrows();
-    let mut a: Vec<Vec<f64>> = (0..n)
-        .map(|i| (0..n).map(|j| matrix[[i, j]]).collect())
-        .collect();
-    // V accumulates the rotations; column j of V is the j-th eigenvector.
-    let mut v = vec![vec![0.0f64; n]; n];
-    for i in 0..n {
-        v[i][i] = 1.0;
-    }
-
-    let max_sweeps = 100;
-    let tol = 1e-12;
-
-    for _sweep in 0..max_sweeps {
-        // Measure off-diagonal magnitude.
-        let mut off = 0.0f64;
-        for p in 0..n {
-            for q in (p + 1)..n {
-                off += a[p][q] * a[p][q];
-            }
-        }
-        if off.sqrt() < tol {
-            break;
-        }
-
-        for p in 0..n {
-            for q in (p + 1)..n {
-                let apq = a[p][q];
-                if apq.abs() < 1e-14 {
-                    continue;
-                }
-                let app = a[p][p];
-                let aqq = a[q][q];
-                let theta = (aqq - app) / (2.0 * apq);
-                let t = if theta >= 0.0 {
-                    1.0 / (theta + (1.0 + theta * theta).sqrt())
-                } else {
-                    1.0 / (theta - (1.0 + theta * theta).sqrt())
-                };
-                let c = 1.0 / (1.0 + t * t).sqrt();
-                let s = t * c;
-
-                // Update rows/columns p and q.
-                a[p][p] = app - t * apq;
-                a[q][q] = aqq + t * apq;
-                a[p][q] = 0.0;
-                a[q][p] = 0.0;
-
-                for i in 0..n {
-                    if i != p && i != q {
-                        let aip = a[i][p];
-                        let aiq = a[i][q];
-                        a[i][p] = c * aip - s * aiq;
-                        a[p][i] = a[i][p];
-                        a[i][q] = s * aip + c * aiq;
-                        a[q][i] = a[i][q];
-                    }
-                }
-
-                // Update the accumulated rotations.
-                for i in 0..n {
-                    let vip = v[i][p];
-                    let viq = v[i][q];
-                    v[i][p] = c * vip - s * viq;
-                    v[i][q] = s * vip + c * viq;
-                }
-            }
-        }
-    }
-
-    let eigenvalues: Vec<f64> = (0..n).map(|i| a[i][i]).collect();
-    // Extract eigenvectors as rows (column j of V -> j-th eigenvector).
-    let eigenvectors: Vec<Vec<f64>> = (0..n)
-        .map(|j| (0..n).map(|i| v[i][j]).collect())
-        .collect();
-    (eigenvalues, eigenvectors)
 }
 
 // ---------------------------------------------------------------------------
