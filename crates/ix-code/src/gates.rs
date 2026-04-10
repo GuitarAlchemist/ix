@@ -141,6 +141,25 @@ pub fn compute_risk_delta(before: &CodeMetrics, after: &CodeMetrics) -> RiskDelt
     let mut signals = Vec::new();
 
     for (name, b, a) in pairs {
+        // NaN / infinity guard: if either side of the comparison is not
+        // finite, the metric provides no signal. Record a zeroed delta
+        // with a warning-tagged signal and skip the composite contribution.
+        if !b.is_finite() || !a.is_finite() {
+            metric_deltas.push(MetricDelta {
+                name: name.to_string(),
+                before: b,
+                after: a,
+                delta: 0.0,
+                normalized_delta: 0.0,
+            });
+            signals.push(Signal {
+                name: "non_finite_metric".to_string(),
+                severity: 0.0,
+                description: format!("{name} has non-finite value (NaN or Inf)"),
+            });
+            continue;
+        }
+
         let delta = a - b;
         let denom = b.abs().max(1.0);
         let normalized = delta / denom;
@@ -223,6 +242,13 @@ pub fn compute_risk_delta(before: &CodeMetrics, after: &CodeMetrics) -> RiskDelt
 /// conflict between signals (e.g. high complexity paired with high test
 /// coverage) and request it explicitly via [`verdict_with_contradiction`].
 pub fn verdict_from_delta(composite: f64, confidence: f64) -> Hexavalent {
+    // NaN / non-finite guard: a verdict computed from garbage inputs is
+    // itself garbage. Return Unknown so downstream policy escalates for
+    // human review instead of silently treating the input as "safe" or
+    // "unsafe" (the old behavior collapsed NaN comparisons to False).
+    if !composite.is_finite() || !confidence.is_finite() {
+        return Hexavalent::Unknown;
+    }
     if confidence < 0.3 {
         return Hexavalent::Unknown;
     }
@@ -330,6 +356,43 @@ mod tests {
     #[test]
     fn test_verdict_probable_small_positive() {
         assert_eq!(verdict_from_delta(0.05, 0.9), Hexavalent::Probable);
+    }
+
+    #[test]
+    fn test_verdict_unknown_on_nan_composite() {
+        // NaN inputs must never collapse to True or False — that would hide
+        // data-quality errors inside a plausible-looking verdict.
+        assert_eq!(verdict_from_delta(f64::NAN, 0.9), Hexavalent::Unknown);
+        assert_eq!(verdict_from_delta(0.1, f64::NAN), Hexavalent::Unknown);
+        assert_eq!(
+            verdict_from_delta(f64::INFINITY, 0.9),
+            Hexavalent::Unknown
+        );
+        assert_eq!(
+            verdict_from_delta(0.1, f64::NEG_INFINITY),
+            Hexavalent::Unknown
+        );
+    }
+
+    #[test]
+    fn test_risk_delta_skips_non_finite_metrics() {
+        // If any metric is NaN, compute_risk_delta should emit a
+        // non_finite_metric signal and still produce a finite composite.
+        let before = baseline();
+        let mut after = baseline();
+        after.cyclomatic = f64::NAN;
+        let report = compute_risk_delta(&before, &after);
+        assert!(
+            report.composite_risk_delta.is_finite(),
+            "composite must remain finite, got {}",
+            report.composite_risk_delta
+        );
+        assert!(
+            report.signals.iter().any(|s| s.name == "non_finite_metric"),
+            "expected non_finite_metric signal"
+        );
+        // Verdict should not be False (which would be silent corruption)
+        assert_ne!(report.verdict, Hexavalent::False);
     }
 
     #[test]
