@@ -46,6 +46,7 @@ members = [
     "crates/ix-session",
     "crates/ix-fuzzy",
     "crates/ix-memory",
+    "crates/ix-harness-tars",
 ]
 
 [workspace.package]

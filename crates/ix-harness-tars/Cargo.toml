@@ -1,0 +1,24 @@
+[package]
+name = "ix-harness-tars"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["command-line-utilities", "science"]
+keywords = ["governance", "harness", "tars", "observation", "demerzel"]
+description = "Harness adapter: tars ComprehensiveDiagnostics → HexObservation JSONL for the Path C cross-repo substrate"
+
+[[bin]]
+name = "ix-harness-tars"
+path = "src/main.rs"
+
+[dependencies]
+ix-agent-core = { workspace = true }
+ix-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
