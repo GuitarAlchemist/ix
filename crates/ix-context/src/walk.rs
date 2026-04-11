@@ -21,7 +21,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use ix_code::semantic::CalleeHint;
 use ix_types::Hexavalent;
 use serde::{Deserialize, Serialize};
 
