@@ -1,0 +1,17 @@
+[package]
+name = "ix-approval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools", "algorithms"]
+keywords = ["approval", "middleware", "blast-radius", "tier", "governance"]
+description = "Deterministic blast-radius approval policy for ix-agent — primitive #3 of the harness primitives roadmap"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ix-agent-core = { workspace = true }
+ix-types = { workspace = true }
