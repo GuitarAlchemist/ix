@@ -40,6 +40,7 @@ members = [
     "crates/ix-registry",
     "crates/ix-skill-macros",
     "crates/ix-context",
+    "crates/ix-loop-detect",
 ]
 
 [workspace.package]
@@ -108,6 +109,7 @@ ix-types = { path = "crates/ix-types", version = "0.1.0" }
 ix-registry = { path = "crates/ix-registry", version = "0.1.0" }
 ix-skill-macros = { path = "crates/ix-skill-macros", version = "0.1.0" }
 ix-context = { path = "crates/ix-context", version = "0.1.0" }
+ix-loop-detect = { path = "crates/ix-loop-detect", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

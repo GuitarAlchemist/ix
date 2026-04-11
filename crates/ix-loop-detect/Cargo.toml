@@ -1,0 +1,17 @@
+[package]
+name = "ix-loop-detect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools", "algorithms"]
+keywords = ["middleware", "loop-detection", "circuit-breaker", "agent-safety"]
+description = "Sliding-window loop detector for agent tool calls — first primitive of the ix-middleware stack"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -112,6 +112,43 @@ fn parity_expected_count() {
 }
 
 #[test]
+fn loop_detector_trips_on_repeated_dispatch() {
+    // Reach into the shared detector, clear it, then spam a known-good
+    // registry-backed tool 11 times through the dispatcher. The 11th call
+    // must return a circuit-breaker error containing "circuit breaker
+    // tripped" rather than an actual skill result.
+    //
+    // Uses `ix_stats` (batch1) with a tiny data array so each legitimate
+    // call is cheap. The detector's default is 10 calls / 5 min — the
+    // 11th call exceeds threshold.
+    use ix_agent::registry_bridge;
+    let detector = registry_bridge::shared_loop_detector();
+    detector.clear_key("ix_stats");
+
+    let params = serde_json::json!({ "data": [1.0, 2.0, 3.0] });
+    for _ in 0..10 {
+        let result = registry_bridge::dispatch("ix_stats", params.clone());
+        assert!(result.is_ok(), "first 10 calls should succeed: {result:?}");
+    }
+    // 11th call trips the circuit breaker.
+    let tripped = registry_bridge::dispatch("ix_stats", params.clone());
+    match tripped {
+        Err(msg) => {
+            assert!(
+                msg.contains("circuit breaker tripped"),
+                "expected circuit-breaker error, got: {msg}"
+            );
+            assert!(msg.contains("ix_stats"));
+            assert!(msg.contains("threshold"));
+        }
+        Ok(value) => panic!("11th call should have been blocked, got: {value}"),
+    }
+
+    // Cleanup so other tests in the same binary are not affected.
+    detector.clear_key("ix_stats");
+}
+
+#[test]
 fn parity_batch1_tools_are_registry_backed() {
     // Sanity: the 6 tools migrated in Week 2 batch 1 should now be sourced
     // from the capability registry, not from the manual handler list.

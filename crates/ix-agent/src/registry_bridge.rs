@@ -15,9 +15,33 @@
 //! but the MCP schema returned to clients is the original hand-written one.
 
 use crate::tools::Tool;
+use ix_loop_detect::{LoopDetector, LoopVerdict};
 use ix_registry::SkillDescriptor;
 use ix_types::Value as IxValue;
 use serde_json::Value as JsonValue;
+use std::sync::OnceLock;
+
+/// Process-wide loop detector for MCP tool dispatch.
+///
+/// Every registry-backed dispatch records the MCP tool name here before
+/// invoking the skill. If the same tool is called more than the configured
+/// threshold within the sliding window, the dispatch returns a structured
+/// error instead of calling the tool — giving a runaway agent a hard
+/// circuit-break signal.
+///
+/// The detector uses the brainstorm's default configuration
+/// (10 calls / 5 minutes per tool) and is lazily initialized.
+fn loop_detector() -> &'static LoopDetector {
+    static DETECTOR: OnceLock<LoopDetector> = OnceLock::new();
+    DETECTOR.get_or_init(LoopDetector::with_defaults)
+}
+
+/// Expose a handle to the shared detector so the `ix-mcp` binary (or tests)
+/// can reset state between sessions. Normal skill callers should not touch
+/// the detector directly — `dispatch` manages it.
+pub fn shared_loop_detector() -> &'static LoopDetector {
+    loop_detector()
+}
 
 /// Translate a dotted registry name into the MCP tool name convention.
 ///
@@ -28,7 +52,30 @@ pub fn mcp_name(skill_name: &str) -> String {
 
 /// Dispatch a registered skill by MCP name. Wraps the JSON blob into a
 /// single-element `[IxValue::Json]` slice, invokes the registry, and unwraps.
+///
+/// Runs through the process-wide [`LoopDetector`] before dispatching. If
+/// the same `mcp_tool_name` has been called more than 10 times in the last
+/// 5 minutes, returns a circuit-breaker error without invoking the skill.
+/// The error message is structured so a runaway agent sees a clear halt
+/// signal and can escalate rather than burn more tokens on the loop.
 pub fn dispatch(mcp_tool_name: &str, params: JsonValue) -> Result<JsonValue, String> {
+    // Circuit breaker — record this call and check the verdict before doing
+    // any work. See `loop_detector()` for configuration.
+    let verdict = loop_detector().record(mcp_tool_name);
+    if let LoopVerdict::TooManyEdits {
+        count,
+        window,
+        threshold,
+    } = verdict
+    {
+        return Err(format!(
+            "ix_loop_detect: circuit breaker tripped on tool '{mcp_tool_name}' — \
+             {count} calls in the last {window:?} exceeds threshold {threshold}. \
+             The agent should stop calling this tool and reconsider its approach. \
+             This is a governance-instrument safety check, not a transient error."
+        ));
+    }
+
     // Undo the `ix_` prefix + underscore replacement to find the dotted name.
     let skill_name = mcp_to_skill_name(mcp_tool_name)
         .ok_or_else(|| format!("not a registry-backed tool: {mcp_tool_name}"))?;
