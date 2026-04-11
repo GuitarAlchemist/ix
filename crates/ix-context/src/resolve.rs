@@ -107,14 +107,18 @@ impl<'a> CallSiteResolver<'a> {
             }
         }
 
-        // 3. Same module (different files in the same crate::module_path)
-        let same_module_hits: Vec<String> = self
+        // 3. Same module (different files in the same crate::module_path).
+        // Collect into a Vec then sort — HashMap iteration is not stable
+        // across processes, and Ambiguous candidate order must be
+        // deterministic for replay identity.
+        let mut same_module_hits: Vec<String> = self
             .index
             .files
             .iter()
             .filter(|(_, fi)| fi.crate_name == caller_crate && fi.module_path == caller_module)
             .filter_map(|(_, fi)| fi.free_fns.get(name).map(|def| def.to_fn_id(name)))
             .collect();
+        same_module_hits.sort();
         match same_module_hits.len() {
             0 => {}
             1 => {
@@ -137,8 +141,9 @@ impl<'a> CallSiteResolver<'a> {
             };
         }
 
-        // 5. Trait methods matching this bare name
-        let trait_hits: Vec<String> = self
+        // 5. Trait methods matching this bare name. Sort for stable
+        // Ambiguous candidate order.
+        let mut trait_hits: Vec<String> = self
             .index
             .find_trait_methods_by_name(name)
             .into_iter()
@@ -151,6 +156,7 @@ impl<'a> CallSiteResolver<'a> {
                 _ => None,
             })
             .collect();
+        trait_hits.sort();
 
         match trait_hits.len() {
             0 => {}
@@ -166,8 +172,8 @@ impl<'a> CallSiteResolver<'a> {
             }
         }
 
-        // 6. Inherent methods matching this bare name
-        let inherent_hits: Vec<String> = self
+        // 6. Inherent methods matching this bare name. Sorted for stability.
+        let mut inherent_hits: Vec<String> = self
             .index
             .symbols
             .iter()
@@ -178,6 +184,7 @@ impl<'a> CallSiteResolver<'a> {
                 _ => None,
             })
             .collect();
+        inherent_hits.sort();
 
         match inherent_hits.len() {
             0 => {}
@@ -269,7 +276,8 @@ impl<'a> CallSiteResolver<'a> {
         }
 
         // Collect all trait methods with this name across the workspace.
-        let trait_hits: Vec<String> = self
+        // Sorted for stable Ambiguous candidate order across processes.
+        let mut trait_hits: Vec<String> = self
             .index
             .find_trait_methods_by_name(method)
             .into_iter()
@@ -282,6 +290,7 @@ impl<'a> CallSiteResolver<'a> {
                 _ => None,
             })
             .collect();
+        trait_hits.sort();
 
         match trait_hits.len() {
             0 => {}
@@ -297,8 +306,8 @@ impl<'a> CallSiteResolver<'a> {
             }
         }
 
-        // Fall back to inherent methods matching by name.
-        let inherent_hits: Vec<String> = self
+        // Fall back to inherent methods matching by name. Sorted.
+        let mut inherent_hits: Vec<String> = self
             .index
             .symbols
             .iter()
@@ -309,6 +318,7 @@ impl<'a> CallSiteResolver<'a> {
                 _ => None,
             })
             .collect();
+        inherent_hits.sort();
 
         match inherent_hits.len() {
             0 => ResolvedOrAmbiguous::Unresolved {

@@ -41,6 +41,15 @@ use crate::walk::WalkStrategy;
 /// hits in replay scenarios. The governance-instrument contract requires
 /// that cached results be bit-exact replayable, so being conservative about
 /// cache keys is the right default.
+///
+/// # Why strategy parameters AND budget bounds are both in the key
+///
+/// Both affect the output bundle. `CallersTransitive { max_depth: 3 }`
+/// produces a strict subset of `{ max_depth: 5 }` — serving the deeper
+/// walk from the shallower cache would return an incomplete bundle and
+/// break the replayability contract. Budget bounds are the same story:
+/// a walk with `max_nodes: 1000` served from a `max_nodes: 100` cache
+/// hit would return a truncated bundle masquerading as complete.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CacheKey {
     /// Git HEAD SHA of the workspace at the time the bundle was produced.
@@ -53,6 +62,16 @@ pub struct CacheKey {
     pub manifest_hash: u64,
     /// The strategy name (e.g. `"callers_transitive"`).
     pub strategy: String,
+    /// Strategy parameters serialized into the key so different
+    /// `max_depth` or `min_commits_shared` values don't false-hit.
+    /// `0` for strategies where the field doesn't apply.
+    pub strategy_max_depth: u8,
+    pub strategy_min_commits_shared: u32,
+    /// Budget bounds that affect the bundle's completeness. A walk with
+    /// higher bounds cannot safely reuse a bundle produced with lower
+    /// bounds (the lower-bound walk might have been truncated).
+    pub budget_max_nodes: usize,
+    pub budget_max_edges: usize,
     /// The stable root ID the walk started from.
     pub root: String,
     /// Workspace-relative path of the root's file. Used for targeted
@@ -67,14 +86,20 @@ impl CacheKey {
         file_hash: u64,
         manifest_hash: u64,
         strategy: WalkStrategy,
+        budget: &crate::walk::WalkBudget,
         root: impl Into<String>,
         root_file: impl Into<String>,
     ) -> Self {
+        let (max_depth, min_commits_shared) = strategy_params(strategy);
         Self {
             git_head_sha: git_head_sha.into(),
             file_hash,
             manifest_hash,
             strategy: strategy_name(strategy),
+            strategy_max_depth: max_depth,
+            strategy_min_commits_shared: min_commits_shared,
+            budget_max_nodes: budget.max_nodes,
+            budget_max_edges: budget.max_edges,
             root: root.into(),
             root_file: root_file.into(),
         }
@@ -87,6 +112,15 @@ fn strategy_name(strategy: WalkStrategy) -> String {
         WalkStrategy::CalleesTransitive { .. } => "callees_transitive".to_string(),
         WalkStrategy::ModuleSiblings => "module_siblings".to_string(),
         WalkStrategy::GitCochange { .. } => "git_cochange".to_string(),
+    }
+}
+
+fn strategy_params(strategy: WalkStrategy) -> (u8, u32) {
+    match strategy {
+        WalkStrategy::CallersTransitive { max_depth }
+        | WalkStrategy::CalleesTransitive { max_depth } => (max_depth, 0),
+        WalkStrategy::ModuleSiblings => (0, 0),
+        WalkStrategy::GitCochange { min_commits_shared } => (0, min_commits_shared),
     }
 }
 
@@ -249,6 +283,7 @@ mod tests {
             fh,
             0x1234,
             WalkStrategy::ModuleSiblings,
+            &crate::walk::WalkBudget::default_generous(),
             root,
             file,
         )
@@ -296,10 +331,64 @@ mod tests {
             0,
             0,
             WalkStrategy::GitCochange { min_commits_shared: 2 },
+            &crate::walk::WalkBudget::default_generous(),
             "fn:foo",
             "a.rs",
         );
         assert_eq!(k2.strategy, "git_cochange");
+        assert_eq!(k2.strategy_min_commits_shared, 2);
+    }
+
+    #[test]
+    fn cache_key_distinguishes_max_depth() {
+        // Two CallersTransitive walks with different max_depth must
+        // produce different cache keys — otherwise a shallow cache hit
+        // serves an incomplete bundle to a deeper walk.
+        let budget = crate::walk::WalkBudget::default_generous();
+        let k3 = CacheKey::new(
+            "sha",
+            0,
+            0,
+            WalkStrategy::CallersTransitive { max_depth: 3 },
+            &budget,
+            "fn:foo",
+            "a.rs",
+        );
+        let k5 = CacheKey::new(
+            "sha",
+            0,
+            0,
+            WalkStrategy::CallersTransitive { max_depth: 5 },
+            &budget,
+            "fn:foo",
+            "a.rs",
+        );
+        assert_ne!(k3, k5);
+        assert_eq!(k3.strategy_max_depth, 3);
+        assert_eq!(k5.strategy_max_depth, 5);
+    }
+
+    #[test]
+    fn cache_key_distinguishes_budget_bounds() {
+        // A walk with max_nodes=1000 cannot safely reuse a cached bundle
+        // produced with max_nodes=100 — the cached bundle may be
+        // silently truncated.
+        let strategy = WalkStrategy::ModuleSiblings;
+        let budget_small = crate::walk::WalkBudget {
+            max_nodes: 100,
+            max_edges: 500,
+            timeout: std::time::Duration::from_secs(10),
+        };
+        let budget_large = crate::walk::WalkBudget {
+            max_nodes: 1000,
+            max_edges: 5000,
+            timeout: std::time::Duration::from_secs(10),
+        };
+        let ks = CacheKey::new("sha", 0, 0, strategy, &budget_small, "fn:foo", "a.rs");
+        let kl = CacheKey::new("sha", 0, 0, strategy, &budget_large, "fn:foo", "a.rs");
+        assert_ne!(ks, kl);
+        assert_eq!(ks.budget_max_nodes, 100);
+        assert_eq!(kl.budget_max_nodes, 1000);
     }
 
     // ── ContextCache basic operations ──────────────────────────────────
@@ -394,6 +483,7 @@ mod tests {
             v1_hash,
             0,
             WalkStrategy::ModuleSiblings,
+            &crate::walk::WalkBudget::default_generous(),
             "fn:target",
             "target.rs",
         );

@@ -99,14 +99,16 @@ impl Default for BudgetParams {
     }
 }
 
+// Align MCP defaults with WalkBudget::default_generous so library
+// callers and MCP callers get identical behavior out of the box.
 fn default_max_nodes() -> usize {
-    256
-}
-fn default_max_edges() -> usize {
     1024
 }
+fn default_max_edges() -> usize {
+    4096
+}
 fn default_timeout_ms() -> u64 {
-    10_000
+    30_000
 }
 
 impl From<BudgetParams> for WalkBudget {
@@ -247,8 +249,10 @@ pub fn gamma() { beta(); }
         assert_eq!(req.strategy, "callers");
         assert_eq!(req.strategy_params.max_depth, 3);
         assert_eq!(req.strategy_params.min_commits_shared, 2);
-        assert_eq!(req.budget.max_nodes, 256);
-        assert_eq!(req.budget.timeout_ms, 10_000);
+        // Defaults now match WalkBudget::default_generous.
+        assert_eq!(req.budget.max_nodes, 1024);
+        assert_eq!(req.budget.max_edges, 4096);
+        assert_eq!(req.budget.timeout_ms, 30_000);
     }
 
     #[test]

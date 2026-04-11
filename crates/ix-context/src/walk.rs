@@ -396,11 +396,22 @@ impl<'a> Walker<'a> {
         start: Instant,
         bundle: &mut ContextBundle,
     ) {
-        for (path, fi) in &self.index.files {
+        // Sort file entries for deterministic iteration — the replay
+        // contract requires that two walks over the same ProjectIndex
+        // produce bit-identical bundles, and HashMap iteration order is
+        // only stable within a single process.
+        let mut file_entries: Vec<(&String, &crate::index::FileIndex)> =
+            self.index.files.iter().collect();
+        file_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (path, fi) in file_entries {
             if fi.crate_name != root_def.crate_name || fi.module_path != root_def.module_path {
                 continue;
             }
-            for (name, def) in &fi.free_fns {
+            let mut fn_entries: Vec<(&String, &DefSite)> = fi.free_fns.iter().collect();
+            fn_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+            for (name, def) in fn_entries {
                 if self.budget_exceeded(&budget, start, bundle) {
                     return;
                 }
@@ -540,7 +551,13 @@ impl<'a> Walker<'a> {
         }
 
         // Emit edges for co-changed files that cleared the threshold.
-        for (other_file, count) in cochange_counts {
+        // Sort by file path for deterministic iteration order (HashMap
+        // order is only stable within one process — the replay contract
+        // requires cross-process stability).
+        let mut cochange_entries: Vec<(String, u32)> = cochange_counts.into_iter().collect();
+        cochange_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (other_file, count) in cochange_entries {
             if count < min_commits_shared {
                 continue;
             }
@@ -600,7 +617,14 @@ impl<'a> Walker<'a> {
         let mut out: HashMap<String, Vec<(String, DefSite, String, String, usize)>> =
             HashMap::new();
 
-        for (file_path, file_index) in &self.index.files {
+        // Sort file entries for deterministic reverse-adjacency construction.
+        // HashMap iteration is per-process stable but not cross-process
+        // stable, and the replay contract demands the latter.
+        let mut file_entries: Vec<(&String, &crate::index::FileIndex)> =
+            self.index.files.iter().collect();
+        file_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (file_path, file_index) in file_entries {
             for edge in &file_index.call_graph.edges {
                 // Filter by bare callee name — cheaper than running the
                 // resolver on every edge in the workspace.
@@ -724,8 +748,15 @@ fn function_node_from_def(
 /// Returns `(def, bare_name, qualified_path)`. Returns `None` if the ID
 /// does not match any symbol. O(workspace_size) — acceptable for MVP
 /// walks which are budget-bounded.
+///
+/// Scans in sorted key order for deterministic resolution — when the
+/// same fn_id could match more than one symbol (unlikely given how
+/// fn_id encodes file+span, but defensive), we want the first match
+/// to be stable across process invocations.
 fn lookup_def_by_fn_id(index: &ProjectIndex, id: &str) -> Option<(DefSite, String, String)> {
-    for (key, def) in &index.symbols {
+    let mut entries: Vec<(&SymbolKey, &DefSite)> = index.symbols.iter().collect();
+    entries.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
+    for (key, def) in entries {
         let candidate_name = match key {
             SymbolKey::FreeFn(path) => path.rsplit("::").next().unwrap_or(path).to_string(),
             SymbolKey::InherentMethod { method, .. } => method.clone(),

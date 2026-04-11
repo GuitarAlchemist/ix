@@ -307,6 +307,20 @@ fn walk_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), IndexError> 
         if path.is_dir() {
             walk_recursive(&path, out)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            // Skip build.rs when it sits directly next to a Cargo.toml —
+            // it's a Cargo build script, not a source module. Indexing
+            // it as a module `build` would produce bogus symbol table
+            // entries. A build.rs nested deeper (e.g., inside src/) is
+            // unusual but still indexed.
+            if name == "build.rs" {
+                let parent_is_crate_root = path
+                    .parent()
+                    .map(|p| p.join("Cargo.toml").exists())
+                    .unwrap_or(false);
+                if parent_is_crate_root {
+                    continue;
+                }
+            }
             out.push(path);
         }
     }
