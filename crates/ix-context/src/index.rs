@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ix_code::semantic::{extract_call_graph, CallGraph};
 use serde::{Deserialize, Serialize};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser, Query, QueryCursor};
@@ -123,6 +124,10 @@ pub struct FileIndex {
     /// Plain imports `use crate::eigen::jacobi;` yield the final segment
     /// `jacobi -> ["crate", "eigen", "jacobi"]`.
     pub use_aliases: HashMap<String, Vec<String>>,
+    /// Per-file call graph extracted via [`ix_code::semantic::extract_call_graph`].
+    /// Used by the walker for caller/callee traversal — forward edges only.
+    /// Reverse edges are computed lazily at walk time by scanning all files.
+    pub call_graph: CallGraph,
 }
 
 /// Workspace-wide symbol table — the primary artifact of pass 1.
@@ -458,6 +463,7 @@ fn parse_file(
         inherent_methods: HashMap::new(),
         trait_methods: HashMap::new(),
         use_aliases: HashMap::new(),
+        call_graph: extract_call_graph(source).unwrap_or_default(),
     };
 
     // Query 1: free function definitions at module scope.
