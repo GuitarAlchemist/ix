@@ -15,12 +15,13 @@
 //! but the MCP schema returned to clients is the original hand-written one.
 
 use crate::tools::Tool;
+use ix_agent_core::event::BlockCode;
 use ix_agent_core::{
     ActionError, ActionOutcome, ActionResult, AgentAction, AgentHandler, EventSink,
     MiddlewareChain, ReadContext, VecEventSink, WriteContext,
 };
 use ix_approval::ApprovalMiddleware;
-use ix_loop_detect::{LoopDetectMiddleware, LoopDetector, LoopVerdict};
+use ix_loop_detect::{LoopDetectMiddleware, LoopDetector};
 use ix_registry::SkillDescriptor;
 use ix_session::SessionLog;
 use ix_types::Value as IxValue;
@@ -244,58 +245,44 @@ pub fn mcp_name(skill_name: &str) -> String {
     format!("ix_{}", skill_name.replace('.', "_"))
 }
 
-/// Dispatch a registered skill by MCP name. Wraps the JSON blob into a
-/// single-element `[IxValue::Json]` slice, invokes the registry, and unwraps.
+/// Dispatch a registered skill by MCP name — legacy JSON-in/JSON-out
+/// entry point. Internally routes through [`dispatch_action`] so the
+/// full middleware chain (loop detection + approval, plus any future
+/// middlewares) fires uniformly across both entry points.
 ///
-/// Runs through the process-wide [`LoopDetector`] before dispatching. If
-/// the same `mcp_tool_name` has been called more than 10 times in the last
-/// 5 minutes, returns a circuit-breaker error without invoking the skill.
-/// The error message is structured so a runaway agent sees a clear halt
-/// signal and can escalate rather than burn more tokens on the loop.
+/// Error shape is preserved so existing callers (MCP JSON-RPC
+/// handlers, tests that match on the circuit-breaker string) keep
+/// working. Specifically, a `Blocked(LoopDetected)` verdict is
+/// translated back into the historical
+/// `"ix_loop_detect: circuit breaker tripped on tool '…'"` string
+/// that runaway-agent detectors downstream still match against.
 pub fn dispatch(mcp_tool_name: &str, params: JsonValue) -> Result<JsonValue, String> {
-    // Synthesize an AgentAction::InvokeTool for the loop detector. We
-    // deliberately use target_hint=None here — the dispatcher sees only
-    // the raw params blob and cannot parse per-tool target semantics.
-    // Downstream consumers that want finer-grained loop keying should
-    // construct actions with target_hint populated and use the new
-    // action-shaped API directly.
+    let cx = ReadContext::synthetic_for_legacy();
     let action = AgentAction::InvokeTool {
         tool_name: mcp_tool_name.to_string(),
-        params: params.clone(),
+        params,
         ordinal: 0,
         target_hint: None,
     };
 
-    // Circuit breaker — record this call and check the verdict before
-    // doing any work. See `loop_detector()` for configuration.
-    let verdict = loop_detector().record(&action);
-    if let LoopVerdict::TooManyEdits {
-        count,
-        window,
-        threshold,
-    } = verdict
-    {
-        return Err(format!(
-            "ix_loop_detect: circuit breaker tripped on tool '{mcp_tool_name}' — \
-             {count} calls in the last {window:?} exceeds threshold {threshold}. \
+    match dispatch_action(&cx, action) {
+        Ok(outcome) => Ok(outcome.value),
+        Err(ActionError::Blocked {
+            code: BlockCode::LoopDetected,
+            reason,
+            ..
+        }) => Err(format!(
+            "ix_loop_detect: circuit breaker tripped on tool '{mcp_tool_name}' — {reason}. \
              The agent should stop calling this tool and reconsider its approach. \
              This is a governance-instrument safety check, not a transient error."
-        ));
-    }
-
-    // Undo the `ix_` prefix + underscore replacement to find the dotted name.
-    let skill_name = mcp_to_skill_name(mcp_tool_name)
-        .ok_or_else(|| format!("not a registry-backed tool: {mcp_tool_name}"))?;
-    let descriptor = ix_registry::by_name(&skill_name)
-        .ok_or_else(|| format!("skill not in registry: {skill_name}"))?;
-
-    let args = [IxValue::Json(params)];
-    let out = (descriptor.fn_ptr)(&args).map_err(|e| e.to_string())?;
-    match out {
-        IxValue::Json(j) => Ok(j),
-        // If a skill ever returns a non-Json value from the composite-handler
-        // path, surface it losslessly through serde.
-        other => serde_json::to_value(other).map_err(|e| e.to_string()),
+        )),
+        Err(ActionError::Blocked {
+            code, reason, blocker,
+        }) => Err(format!(
+            "{blocker}: action blocked ({code:?}) — {reason}"
+        )),
+        Err(ActionError::Exec(e)) => Err(e),
+        Err(ActionError::InvalidResult(e)) => Err(e),
     }
 }
 
