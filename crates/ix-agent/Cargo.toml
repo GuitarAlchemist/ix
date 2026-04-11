@@ -44,6 +44,7 @@ ix-code = { workspace = true }
 ix-context = { workspace = true }
 ix-loop-detect = { workspace = true }
 ix-agent-core = { workspace = true }
+ix-approval = { workspace = true }
 ix-types = { workspace = true }
 ix-registry = { workspace = true }
 ix-skill-macros = { workspace = true }

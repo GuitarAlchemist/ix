@@ -15,12 +15,16 @@
 //! but the MCP schema returned to clients is the original hand-written one.
 
 use crate::tools::Tool;
-use ix_agent_core::AgentAction;
+use ix_agent_core::{
+    ActionError, ActionOutcome, ActionResult, AgentAction, AgentHandler, MiddlewareChain,
+    ReadContext, VecEventSink, WriteContext,
+};
+use ix_approval::ApprovalMiddleware;
 use ix_loop_detect::{LoopDetector, LoopVerdict};
 use ix_registry::SkillDescriptor;
 use ix_types::Value as IxValue;
 use serde_json::Value as JsonValue;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Process-wide loop detector for MCP tool dispatch.
 ///
@@ -42,6 +46,114 @@ fn loop_detector() -> &'static LoopDetector {
 /// the detector directly — `dispatch` manages it.
 pub fn shared_loop_detector() -> &'static LoopDetector {
     loop_detector()
+}
+
+// ---------------------------------------------------------------------------
+// Middleware chain — the new dispatch_action path
+// ---------------------------------------------------------------------------
+
+/// Process-wide middleware chain used by [`dispatch_action`]. Lazy-
+/// initialized with a default chain containing
+/// [`ApprovalMiddleware`] with its default config.
+///
+/// The chain is wrapped in a `Mutex` so tests can push additional
+/// middlewares or replace the chain entirely. Production callers
+/// should treat it as read-only.
+fn middleware_chain() -> &'static Mutex<MiddlewareChain> {
+    static CHAIN: OnceLock<Mutex<MiddlewareChain>> = OnceLock::new();
+    CHAIN.get_or_init(|| {
+        let mut chain = MiddlewareChain::new();
+        chain.push(Box::new(ApprovalMiddleware::with_defaults()));
+        Mutex::new(chain)
+    })
+}
+
+/// Expose a handle to the shared middleware chain so tests can push
+/// additional middlewares or reset the chain between cases. Production
+/// callers should not mutate the chain at runtime.
+pub fn shared_middleware_chain() -> &'static Mutex<MiddlewareChain> {
+    middleware_chain()
+}
+
+/// Terminal handler that looks up the tool by name in the registry at
+/// run time. Acts as the "rightmost" node of the middleware chain in
+/// [`dispatch_action`] — after every middleware has returned Continue,
+/// this handler performs the actual registry lookup + skill invocation.
+///
+/// Unlike [`ix_agent_core::LegacyAdapter`], which wraps a single
+/// known function pointer, this handler defers the lookup to invocation
+/// time because the dispatcher only knows the tool name, not the
+/// specific `fn_ptr`.
+struct RegistryLookupHandler;
+
+impl AgentHandler for RegistryLookupHandler {
+    fn run(&self, _cx: &ReadContext, action: &AgentAction) -> ActionResult {
+        match action {
+            AgentAction::InvokeTool {
+                tool_name, params, ..
+            } => {
+                let mcp_name = tool_name.as_str();
+                let skill_name = mcp_to_skill_name(mcp_name)
+                    .ok_or_else(|| ActionError::Exec(format!(
+                        "not a registry-backed tool: {mcp_name}"
+                    )))?;
+                let descriptor = ix_registry::by_name(&skill_name)
+                    .ok_or_else(|| ActionError::Exec(format!(
+                        "skill not in registry: {skill_name}"
+                    )))?;
+
+                let args = [IxValue::Json(params.clone())];
+                let out = (descriptor.fn_ptr)(&args)
+                    .map_err(|e| ActionError::Exec(e.to_string()))?;
+                match out {
+                    IxValue::Json(j) => Ok(ActionOutcome::value_only(j)),
+                    other => {
+                        let value = serde_json::to_value(other)
+                            .map_err(|e| ActionError::InvalidResult(e.to_string()))?;
+                        Ok(ActionOutcome::value_only(value))
+                    }
+                }
+            }
+            _ => Err(ActionError::Exec(
+                "RegistryLookupHandler only supports InvokeTool actions".into(),
+            )),
+        }
+    }
+}
+
+/// New action-shaped dispatch path that runs the full middleware chain
+/// before looking up and invoking the terminal handler.
+///
+/// This is additive relative to [`dispatch`] — the legacy path stays
+/// unchanged for the 48 existing tool callers. Consumers that want
+/// the full governance-instrument contract (middleware verdicts,
+/// session event emission, action-level typing) call this function
+/// instead.
+///
+/// Returns the handler's output value on success, or an `ActionError`
+/// on any failure from the middleware chain or the handler.
+pub fn dispatch_action(cx: &ReadContext, action: AgentAction) -> ActionResult {
+    let mut sink = VecEventSink::default();
+    let chain_guard = middleware_chain()
+        .lock()
+        .expect("middleware chain mutex poisoned");
+
+    let result = {
+        let mut wc = WriteContext {
+            read: cx,
+            sink: &mut sink,
+        };
+        chain_guard.dispatch(&mut wc, action, &RegistryLookupHandler)
+    };
+
+    // Drop the chain lock before returning. Events emitted during
+    // dispatch are currently discarded — ix-session (primitive #4)
+    // will replace VecEventSink with a JSONL-backed sink and
+    // preserve them.
+    drop(chain_guard);
+    drop(sink);
+
+    result
 }
 
 /// Translate a dotted registry name into the MCP tool name convention.

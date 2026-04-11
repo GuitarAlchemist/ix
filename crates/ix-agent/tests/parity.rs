@@ -112,6 +112,66 @@ fn parity_expected_count() {
 }
 
 #[test]
+fn dispatch_action_runs_approval_middleware_on_known_tool() {
+    // Path E integration test: dispatch_action runs the full
+    // middleware chain (currently just ApprovalMiddleware with
+    // defaults) before invoking the terminal RegistryLookupHandler.
+    //
+    // Uses `ix_stats` which is classified as ActionKind::Read by
+    // ix-approval — should auto-approve and reach the handler.
+    use ix_agent::registry_bridge;
+    use ix_agent_core::{AgentAction, ReadContext};
+
+    let cx = ReadContext::synthetic_for_legacy();
+    let action = AgentAction::InvokeTool {
+        tool_name: "ix_stats".to_string(),
+        params: serde_json::json!({ "data": [1.0, 2.0, 3.0, 4.0, 5.0] }),
+        ordinal: 0,
+        target_hint: None,
+    };
+
+    let outcome = registry_bridge::dispatch_action(&cx, action)
+        .expect("ix_stats should be Tier 1 Read and auto-approve");
+
+    // The handler's value should be the stats summary — assert the
+    // JSON is an object (exact structure is ix_stats' business).
+    assert!(
+        outcome.value.is_object(),
+        "ix_stats should return a JSON object, got {:?}",
+        outcome.value
+    );
+}
+
+#[test]
+fn dispatch_action_blocks_unknown_tool_via_approval() {
+    // Unknown tools classify as ActionKind::Unknown and get promoted
+    // to Tier 3 by ApprovalMiddleware. dispatch_action should return
+    // an ActionError::Blocked with BlockCode::ApprovalRequired —
+    // proving the full middleware chain fires on the new path.
+    use ix_agent::registry_bridge;
+    use ix_agent_core::{ActionError, AgentAction, ReadContext};
+    use ix_agent_core::event::BlockCode;
+
+    let cx = ReadContext::synthetic_for_legacy();
+    let action = AgentAction::InvokeTool {
+        tool_name: "totally_fake_tool_xyz".to_string(),
+        params: serde_json::json!({}),
+        ordinal: 0,
+        target_hint: None,
+    };
+
+    match registry_bridge::dispatch_action(&cx, action) {
+        Err(ActionError::Blocked { code, blocker, .. }) => {
+            assert_eq!(code, BlockCode::ApprovalRequired);
+            assert_eq!(blocker, "ix_approval");
+        }
+        other => panic!(
+            "expected Blocked(ApprovalRequired) from approval middleware, got {other:?}"
+        ),
+    }
+}
+
+#[test]
 fn loop_detector_trips_on_repeated_dispatch() {
     // Reach into the shared detector, clear it, then spam a known-good
     // registry-backed tool 11 times through the dispatcher. The 11th call
