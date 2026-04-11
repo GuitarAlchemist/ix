@@ -13,3 +13,4 @@ pub mod registry_bridge;
 pub mod server_context;
 pub mod skills;
 pub mod tools;
+pub mod triage;
