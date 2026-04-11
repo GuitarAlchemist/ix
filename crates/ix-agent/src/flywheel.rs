@@ -115,6 +115,28 @@ pub fn session_event_to_trace_event(event: &SessionEvent) -> TraceEvent {
                 "evidence": evidence,
             }),
         ),
+        SessionEvent::ObservationAdded {
+            ordinal,
+            source,
+            diagnosis_id,
+            round,
+            claim_key,
+            variant,
+            weight,
+            evidence,
+        } => (
+            "observation_added",
+            json!({
+                "ordinal": ordinal,
+                "source": source,
+                "diagnosis_id": diagnosis_id,
+                "round": round,
+                "claim_key": claim_key,
+                "variant": variant,
+                "weight": weight,
+                "evidence": evidence,
+            }),
+        ),
     };
 
     TraceEvent {

@@ -2936,6 +2936,16 @@ fn summarize_events(events: &[&ix_agent_core::SessionEvent]) -> String {
                 proposition,
                 ..
             } => format!("#{ordinal} belief changed: {proposition}"),
+            SessionEvent::ObservationAdded {
+                ordinal,
+                source,
+                claim_key,
+                variant,
+                weight,
+                ..
+            } => format!(
+                "#{ordinal} observation from {source}: {claim_key} = {variant:?} (w={weight:.2})"
+            ),
         };
         let _ = writeln!(out, "{i:>3}. {line}");
     }

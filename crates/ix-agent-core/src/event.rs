@@ -188,6 +188,54 @@ pub enum SessionEvent {
         /// Evidence payload.
         evidence: JsonValue,
     },
+
+    /// A hexavalent observation added by a named source. Used by the
+    /// Path C cross-repo coordination substrate: multiple sources
+    /// (tars, ix, demerzel-merge) independently contribute
+    /// observations about the same claim, forming a G-Set CRDT whose
+    /// merge is defined by `demerzel/logic/hex-merge.md`.
+    ///
+    /// Dedup key across sources: `(source, diagnosis_id, round,
+    /// ordinal)`.
+    ///
+    /// **Schema authority.** The canonical JSON Schema for this
+    /// variant lives in Demerzel at
+    /// `demerzel/schemas/session-event.schema.json`. This Rust type
+    /// is an implementation of that schema; changes to the field
+    /// shape must go through a Demerzel governance PR.
+    ObservationAdded {
+        /// Log ordinal within the host SessionLog. Preserved so this
+        /// variant integrates with the existing ordinal discipline.
+        ordinal: u64,
+        /// Emitting agent. Canonical values: `"tars"`, `"ix"`,
+        /// `"demerzel-merge"`. Pattern: kebab-case alphanumeric.
+        source: String,
+        /// Content hash of the originating diagnosis. For tars
+        /// fragments: `sha256(fragment_jsonl)`. For ix traces: hash
+        /// of the relevant trace span.
+        diagnosis_id: String,
+        /// Remediation round number. Used by the staleness budget
+        /// (default K=5 rounds) from `hex-merge.md`.
+        round: u32,
+        /// What this observation is ABOUT.
+        ///
+        /// Grammar: `action_key "::" aspect` where
+        /// - `action_key = tool_name [":" target_hint]`
+        /// - `aspect ∈ {valuable, safe, reversible, timely,
+        ///              reproducible, meta_conflict}`
+        ///
+        /// `meta_conflict` is reserved for the merge function; agents
+        /// must not emit it directly.
+        claim_key: String,
+        /// Hexavalent value the source is asserting on this claim.
+        variant: Hexavalent,
+        /// Confidence weight in `(0.0, 1.0]`. Observations with
+        /// weight 0 are meaningless and must not be emitted.
+        weight: f64,
+        /// Optional short human-readable justification. Not used by
+        /// the merge function; kept for audit and replay.
+        evidence: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -333,5 +381,72 @@ mod tests {
         let json = serde_json::to_string(&e).unwrap();
         let back: SessionEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, e);
+    }
+
+    // ── SessionEvent::ObservationAdded — Path C Phase 1 ──────────────
+
+    #[test]
+    fn session_event_observation_added_round_trip() {
+        let e = SessionEvent::ObservationAdded {
+            ordinal: 42,
+            source: "tars".into(),
+            diagnosis_id: "a4f7c2b18d9e5f7".into(),
+            round: 3,
+            claim_key: "ix_cache_prune::valuable".into(),
+            variant: Hexavalent::Probable,
+            weight: 0.85,
+            evidence: Some("disk usage 92% — pruning likely helpful".into()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(
+            json.contains(r#""kind":"observation_added""#),
+            "expected snake_case tag, got: {json}"
+        );
+        let back: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, e);
+    }
+
+    #[test]
+    fn session_event_observation_added_without_evidence_round_trip() {
+        // evidence is Option<String>, should round-trip as null/missing
+        let e = SessionEvent::ObservationAdded {
+            ordinal: 0,
+            source: "ix".into(),
+            diagnosis_id: "seed".into(),
+            round: 0,
+            claim_key: "ix_stats::valuable".into(),
+            variant: Hexavalent::True,
+            weight: 1.0,
+            evidence: None,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, e);
+    }
+
+    #[test]
+    fn session_event_observation_added_preserves_source_string() {
+        // Ensures we don't accidentally constrain `source` to a closed
+        // enum — the schema allows any kebab-case identifier so new
+        // agents can participate without a Demerzel PR.
+        let e = SessionEvent::ObservationAdded {
+            ordinal: 1,
+            source: "demerzel-merge".into(),
+            diagnosis_id: "xyz".into(),
+            round: 5,
+            claim_key: "restart_gpu::meta_conflict".into(),
+            variant: Hexavalent::Contradictory,
+            weight: 0.9,
+            evidence: Some("cross-aspect: tars:valuable:T vs ix:safe:F".into()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: SessionEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            SessionEvent::ObservationAdded { source, variant, .. } => {
+                assert_eq!(source, "demerzel-merge");
+                assert_eq!(variant, Hexavalent::Contradictory);
+            }
+            other => panic!("expected ObservationAdded, got {other:?}"),
+        }
     }
 }
