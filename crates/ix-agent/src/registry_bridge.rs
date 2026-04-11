@@ -141,8 +141,14 @@ pub fn clear_session_log() {
 
 /// Snapshot the currently installed log (if any) as a cloned [`Arc`].
 /// Used internally by [`dispatch_action`] to release the slot mutex
-/// before running the handler.
-fn current_session_log() -> Option<Arc<SessionLog>> {
+/// before running the handler, and publicly by tools (e.g.
+/// `ix_triage_session`) that need to *read* the session history of
+/// the current run to make decisions.
+///
+/// Cloning the `Arc` is cheap and releases the slot mutex immediately,
+/// so callers can iterate `events()` on the returned handle without
+/// blocking concurrent dispatches.
+pub fn current_session_log() -> Option<Arc<SessionLog>> {
     session_log_slot()
         .lock()
         .expect("session log mutex poisoned")
