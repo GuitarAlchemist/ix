@@ -117,6 +117,55 @@ fn rendering_invariants() -> Vec<RenderingInvariant> {
             }),
         },
 
+        // Invariant: the sun's PointLight must have sufficient
+        // range to light all moons. The existing PointLight at
+        // line ~784 uses `distance: 80 * scale` which with
+        // scale=0.15 is only 12 scene units. With the default
+        // decay=2 (inverse square), the moon at ~7.7 units gets
+        // ~1% of the light intensity. That's why there's no
+        // visible dark face — the lit side is barely brighter
+        // than the dark side.
+        RenderingInvariant {
+            proposition: "render:solar_system:sun_light_reaches_moons".into(),
+            description: "Sun PointLight must have infinite range (distance=0) and reduced decay so moons are visibly lit".into(),
+            check: Box::new(|source: &str| {
+                // Look for a PointLight with a non-zero distance
+                // limit. A well-configured sun PointLight should
+                // have distance=0 (infinite range).
+                let has_pointlight_with_limit = source.lines().any(|line| {
+                    line.contains("PointLight") && line.contains("80 * scale")
+                });
+
+                if has_pointlight_with_limit {
+                    Err(InvariantViolation {
+                        issue: "Sun PointLight has distance limit (80 * scale ≈ 12 units) with inverse-square decay — moons at 7+ units receive <2% intensity".into(),
+                        detail: "The PointLight at the sun uses `new THREE.PointLight(0xffffff, 4.0, 80 * scale)`. \
+                                 With scale=0.15, max distance=12. Three.js default decay=2 (inverse square). \
+                                 At the moon's orbital distance (~7.7 units), effective intensity is ~0.06 — \
+                                 barely distinguishable from the ambient light. The dark face exists \
+                                 mathematically but is invisible to the eye. \
+                                 Fix: set distance=0 (infinite range) and decay=1 (linear) so moons \
+                                 at any orbital distance receive visible directional lighting.".into(),
+                        proposed_fix: ProposedFix {
+                            description: "Change PointLight distance to 0 (infinite range) and add \
+                                          decay=1 (linear falloff instead of inverse-square). Planets \
+                                          are close enough that linear falloff still looks natural; \
+                                          moons are far enough that inverse-square makes them invisible.".into(),
+                            search_text: "  const sunLight = new THREE.PointLight(0xffffff, 4.0, 80 * scale);".into(),
+                            replace_text: "  // distance=0: infinite range so ALL moons receive sunlight.\n  \
+                                           // decay=1: linear falloff (not inverse-square) so distant\n  \
+                                           // moons still have a visible terminator. Planets are close\n  \
+                                           // enough that linear vs quadratic is imperceptible.\n  \
+                                           // Discovered by ix harness rendering-invariant auditor.\n  \
+                                           const sunLight = new THREE.PointLight(0xffffff, 4.0, 0, 1);".into(),
+                        },
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+        },
+
         // Invariant: the solar system scene should have a
         // DirectionalLight that tracks the sun so that
         // MeshLambertMaterial-based moons receive day/night
