@@ -3144,3 +3144,237 @@ fn hexavalent_label(h: &ix_types::Hexavalent) -> &'static str {
         ix_types::Hexavalent::Contradictory => "C",
     }
 }
+
+// ── ix_render_audit ──────────────────────────────────────────────
+//
+// MCP tool that navigates the GA Prime Radiant to a target body,
+// captures a screenshot via the GA API (SignalR → browser), and
+// uses MCP sampling (sampling/createMessage with image content)
+// to ask the client LLM to analyze the rendering for correctness.
+//
+// This is the "QA agent" the v3 ocean spec calls for: the harness
+// looks at what the Prime Radiant is showing, forms beliefs about
+// rendering quality, and emits structured observations.
+//
+// Wire:
+//   ix MCP client → ix_render_audit (this tool)
+//     → HTTP GET ga-api/navigate-and-capture
+//       → SignalR → browser → screenshot
+//     → sampling/createMessage { image + text prompt }
+//       → client LLM (Claude vision) → structured analysis
+//     → returns observations as JSON
+
+/// Back-compat stub for the rendering audit tool. Must be routed
+/// through the context-aware path.
+pub fn render_audit(_params: Value) -> Result<Value, String> {
+    Err(
+        "ix_render_audit must be dispatched via ServerContext \
+         (bidirectional JSON-RPC for MCP sampling). This codepath should \
+         be intercepted by ToolRegistry::call_with_ctx."
+            .into(),
+    )
+}
+
+/// Context-aware implementation of `ix_render_audit`.
+///
+/// 1. Calls the GA API `POST /api/governance/navigate-and-capture`
+///    to navigate the Prime Radiant and capture a screenshot.
+/// 2. Sends the screenshot to the client LLM via MCP sampling
+///    (`sampling/createMessage` with image content) alongside
+///    a structured prompt asking for rendering observations.
+/// 3. Returns the LLM's analysis as structured JSON.
+pub fn render_audit_with_ctx(
+    params: Value,
+    ctx: &crate::server_context::ServerContext,
+) -> Result<Value, String> {
+    let target = params
+        .get("target")
+        .and_then(|v| v.as_str())
+        .unwrap_or("earth");
+    let wait_ms = params
+        .get("wait_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2000);
+    let ga_api_url = params
+        .get("ga_api_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("http://localhost:5001");
+
+    // ── 1. Navigate + Capture via GA API ─────────────────────────
+    let url = format!(
+        "{}/api/governance/navigate-and-capture",
+        ga_api_url.trim_end_matches('/')
+    );
+
+    let body = json!({
+        "target": target,
+        "waitMs": wait_ms,
+    });
+
+    let client = std::sync::OnceLock::<reqwest::blocking::Client>::new();
+    let http = client.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .danger_accept_invalid_certs(true) // dev localhost
+            .build()
+            .expect("build HTTP client")
+    });
+
+    let response = http
+        .post(&url)
+        .json(&body)
+        .send()
+        .map_err(|e| format!("GA API request failed: {e}. Is the GA server running?"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().unwrap_or_default();
+        return Err(format!(
+            "GA API returned {status}: {text}. Is a Prime Radiant client connected?"
+        ));
+    }
+
+    // Response is a PNG image
+    let image_bytes = response
+        .bytes()
+        .map_err(|e| format!("read response body: {e}"))?;
+    let image_base64 = base64_encode(&image_bytes);
+
+    // ── 2. Ask Claude to analyze via MCP sampling ────────────────
+    let system_prompt = format!(
+        "You are a rendering QA agent for the Prime Radiant 3D solar system viewer. \
+         You are analyzing a screenshot of '{target}' captured from a live Prime Radiant instance. \
+         Your job is to identify rendering issues — shading errors, missing effects, \
+         visual artifacts, incorrect lighting, missing dark faces, distorted geometry, \
+         or any other visual problem. \
+         \
+         Respond with a JSON object (no markdown fencing) containing: \
+         {{ \
+           \"target\": \"{target}\", \
+           \"quality\": <number 0-100>, \
+           \"issues\": [{{ \"id\": \"...\", \"severity\": \"critical|major|minor\", \"description\": \"...\" }}], \
+           \"observations\": [{{ \"claim_key\": \"render:...\", \"variant\": \"T|P|U|D|F|C\", \"reason\": \"...\" }}] \
+         }}"
+    );
+
+    let user_prompt = format!(
+        "Analyze this screenshot of '{target}' from the Prime Radiant solar system viewer. \
+         Check for: \
+         1. Does the body have correct day/night shading (lit side facing the sun, dark side away)? \
+         2. Is the body's shape correct (no visible distortion, bloating, or puffiness)? \
+         3. Are textures sharp enough for the zoom level? \
+         4. Is the atmosphere (if applicable) rendering correctly? \
+         5. Are there any visible artifacts, Z-order issues, or shader errors? \
+         \
+         Return your analysis as a JSON object."
+    );
+
+    let analysis = ctx
+        .sample_with_image(
+            &user_prompt,
+            &image_base64,
+            "image/png",
+            &system_prompt,
+            2000,
+        )
+        .map_err(|e| format!("MCP sampling failed: {e}"))?;
+
+    // ── 3. Parse and return ──────────────────────────────────────
+    // Try to parse as JSON; if the LLM returned markdown-fenced
+    // JSON, strip the fences first.
+    let clean = analysis
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    let parsed: Value = serde_json::from_str(clean).unwrap_or_else(|_| {
+        // Fallback: wrap the raw text as a best-effort response
+        json!({
+            "target": target,
+            "quality": 0,
+            "issues": [],
+            "raw_response": analysis,
+            "parse_error": "LLM response was not valid JSON"
+        })
+    });
+
+    Ok(json!({
+        "target": target,
+        "screenshot_size_bytes": image_bytes.len(),
+        "analysis": parsed,
+    }))
+}
+
+/// Simple base64 encoder (no external dep for this one function).
+fn base64_encode(data: &[u8]) -> String {
+    use std::io::Write as _;
+    let mut buf = Vec::with_capacity(data.len() * 4 / 3 + 4);
+    {
+        let mut encoder = base64_writer(&mut buf);
+        encoder.write_all(data).expect("base64 encode");
+    }
+    String::from_utf8(buf).expect("base64 is valid UTF-8")
+}
+
+/// Minimal base64 encoder writer using the standard alphabet.
+fn base64_writer(output: &mut Vec<u8>) -> impl std::io::Write + '_ {
+    struct B64Writer<'a> {
+        out: &'a mut Vec<u8>,
+        buf: [u8; 3],
+        pos: usize,
+    }
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    impl<'a> std::io::Write for B64Writer<'a> {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            for &b in data {
+                self.buf[self.pos] = b;
+                self.pos += 1;
+                if self.pos == 3 {
+                    let n = ((self.buf[0] as u32) << 16)
+                        | ((self.buf[1] as u32) << 8)
+                        | (self.buf[2] as u32);
+                    self.out.push(ALPHA[((n >> 18) & 0x3F) as usize]);
+                    self.out.push(ALPHA[((n >> 12) & 0x3F) as usize]);
+                    self.out.push(ALPHA[((n >> 6) & 0x3F) as usize]);
+                    self.out.push(ALPHA[(n & 0x3F) as usize]);
+                    self.pos = 0;
+                }
+            }
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            match self.pos {
+                1 => {
+                    let n = (self.buf[0] as u32) << 16;
+                    self.out.push(ALPHA[((n >> 18) & 0x3F) as usize]);
+                    self.out.push(ALPHA[((n >> 12) & 0x3F) as usize]);
+                    self.out.push(b'=');
+                    self.out.push(b'=');
+                    self.pos = 0;
+                }
+                2 => {
+                    let n = ((self.buf[0] as u32) << 16) | ((self.buf[1] as u32) << 8);
+                    self.out.push(ALPHA[((n >> 18) & 0x3F) as usize]);
+                    self.out.push(ALPHA[((n >> 12) & 0x3F) as usize]);
+                    self.out.push(ALPHA[((n >> 6) & 0x3F) as usize]);
+                    self.out.push(b'=');
+                    self.pos = 0;
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+    }
+    impl<'a> Drop for B64Writer<'a> {
+        fn drop(&mut self) {
+            let _ = std::io::Write::flush(self);
+        }
+    }
+    B64Writer {
+        out: output,
+        buf: [0; 3],
+        pos: 0,
+    }
+}

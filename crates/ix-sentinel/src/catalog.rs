@@ -76,5 +76,33 @@ fn default_catalog() -> Vec<CatalogEntry> {
                 .to_string(),
             confidence: 'P',
         },
+        // Rendering audit — runs the autonomous rendering invariant
+        // checker that discovers and fixes rendering issues in the
+        // GA Prime Radiant via static code analysis. The test also
+        // applies fixes and verifies them.
+        CatalogEntry {
+            pattern: "render:".to_string(),
+            command: "cargo test -p ix-agent --test autonomous_render_audit -- --nocapture"
+                .to_string(),
+            description: "Run the autonomous rendering-invariant auditor against the GA \
+                          Prime Radiant codebase. Discovers rendering bugs via code \
+                          analysis, generates and applies fixes, verifies corrections."
+                .to_string(),
+            confidence: 'P',
+        },
+        // Visual QA via MCP sampling — navigates to a target body,
+        // captures a screenshot via GA API + SignalR, and sends it
+        // to the client LLM for analysis. Requires a running GA
+        // API server + a connected Prime Radiant browser instance.
+        CatalogEntry {
+            pattern: "visual_qa:".to_string(),
+            command: "echo 'Visual QA requires MCP context — invoke ix_render_audit tool directly'"
+                .to_string(),
+            description: "Visual QA via MCP sampling. Cannot be run as a shell command — \
+                          must be invoked as the ix_render_audit MCP tool so the sampling \
+                          channel to the client LLM is available."
+                .to_string(),
+            confidence: 'P',
+        },
     ]
 }

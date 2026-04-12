@@ -202,4 +202,114 @@ impl ServerContext {
 
         Ok(text)
     }
+
+    /// Issue a `sampling/createMessage` request with both text AND
+    /// an image. The MCP sampling spec supports multimodal content
+    /// arrays — this method sends a `[{type: image}, {type: text}]`
+    /// pair so the client (Claude) can analyze a screenshot alongside
+    /// a text prompt.
+    ///
+    /// Primary consumer: the Sentinel's rendering-audit adapter,
+    /// which captures a Prime Radiant screenshot via the GA API and
+    /// asks Claude to analyze it for rendering correctness.
+    ///
+    /// Per the MCP sampling spec:
+    /// <https://modelcontextprotocol.info/docs/concepts/sampling/>
+    ///
+    /// ```json
+    /// { "messages": [{
+    ///     "role": "user",
+    ///     "content": [
+    ///       { "type": "image", "data": "base64...", "mimeType": "image/png" },
+    ///       { "type": "text", "text": "What do you see?" }
+    ///     ]
+    /// }] }
+    /// ```
+    pub fn sample_with_image(
+        &self,
+        user_text: &str,
+        image_base64: &str,
+        mime_type: &str,
+        system_prompt: &str,
+        max_tokens: u32,
+    ) -> Result<String, String> {
+        let id = self.next_id();
+        let (tx, rx) = mpsc::channel::<Value>();
+
+        {
+            let mut map = self.inner.pending.lock().unwrap();
+            map.insert(id, tx);
+        }
+
+        let envelope = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "sampling/createMessage",
+            "params": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "data": image_base64,
+                                "mimeType": mime_type,
+                            },
+                            {
+                                "type": "text",
+                                "text": user_text,
+                            }
+                        ]
+                    }
+                ],
+                "maxTokens": max_tokens,
+                "systemPrompt": system_prompt,
+            }
+        });
+
+        self.write_value(&envelope);
+
+        let result = match rx.recv_timeout(SAMPLING_TIMEOUT) {
+            Ok(v) => v,
+            Err(RecvTimeoutError::Timeout) => {
+                let mut map = self.inner.pending.lock().unwrap();
+                map.remove(&id);
+                return Err(format!(
+                    "sampling/createMessage (with image) timed out after {:?}",
+                    SAMPLING_TIMEOUT
+                ));
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err("sampling/createMessage channel disconnected".into());
+            }
+        };
+
+        if let Some(err) = result.get("error") {
+            return Err(format!("sampling/createMessage error: {}", err));
+        }
+
+        // Same response extraction as text-only `sample`.
+        let text = result
+            .get("result")
+            .and_then(|r| r.get("content"))
+            .and_then(|c| {
+                if let Some(arr) = c.as_array() {
+                    let mut out = String::new();
+                    for part in arr {
+                        if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+                            if !out.is_empty() {
+                                out.push('\n');
+                            }
+                            out.push_str(t);
+                        }
+                    }
+                    if out.is_empty() { None } else { Some(out) }
+                } else {
+                    c.get("text").and_then(|v| v.as_str()).map(str::to_string)
+                }
+            })
+            .ok_or_else(|| format!("sampling response missing text content: {}", result))?;
+
+        Ok(text)
+    }
 }
