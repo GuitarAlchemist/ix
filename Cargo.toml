@@ -52,6 +52,7 @@ members = [
     "crates/ix-harness-clippy",
     "crates/ix-harness-github-actions",
     "crates/ix-harness-ga",
+    "crates/ix-sentinel",
 ]
 
 [workspace.package]
