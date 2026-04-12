@@ -62,6 +62,58 @@ struct ProposedFix {
 /// Build the set of rendering invariants the harness checks.
 fn rendering_invariants() -> Vec<RenderingInvariant> {
     vec![
+        // Invariant: Earth's Moon orbit must fit inside the
+        // Earth-Venus gap. The Moon's `distance: 1.2` in MoonDef
+        // times scale gives an orbital radius of 0.18 scene units,
+        // but the Earth-Venus gap is only 0.147. The orbit visibly
+        // crosses Venus's path, which is physically nonsensical.
+        RenderingInvariant {
+            proposition: "render:solar_system:moon_orbit_within_earth_venus_gap".into(),
+            description: "Moon orbital radius must not exceed the Earth-Venus orbital gap".into(),
+            check: Box::new(|source: &str| {
+                // Find the Moon's distance value in its MoonDef.
+                // Pattern: `name: 'moon', ... distance: X.X`
+                let moon_distance = source
+                    .lines()
+                    .find(|l| l.contains("name: 'moon'") && l.contains("distance:"))
+                    .and_then(|l| {
+                        let after = l.split("distance:").nth(1)?;
+                        let num_str = after.trim().trim_start_matches(' ');
+                        num_str.split(|c: char| !c.is_ascii_digit() && c != '.').next()?.parse::<f64>().ok()
+                    });
+
+                if let Some(d) = moon_distance {
+                    if d > 0.8 {
+                        return Err(InvariantViolation {
+                            issue: format!(
+                                "Moon orbital distance {d} is too large — orbit crosses Venus's path"
+                            ),
+                            detail: format!(
+                                "Moon MoonDef has distance: {d}. With scale≈0.15, orbital radius = {:.3} scene \
+                                 units. Earth is at ~0.975 from sun, Venus at ~0.828. Gap = 0.147. \
+                                 Moon orbit radius {:.3} > gap, so the orbit visibly crosses Venus. \
+                                 Real Moon is ~60 Earth-radii away, but the orrery compresses distances. \
+                                 Reducing to 0.5 keeps the moon visible while staying inside the gap.",
+                                d * 0.15,
+                                d * 0.15
+                            ),
+                            proposed_fix: ProposedFix {
+                                description: "Reduce Moon orbital distance from 1.2 to 0.5 so the \
+                                              orbit stays well inside the Earth-Venus gap.".into(),
+                                search_text: format!(
+                                    "name: 'moon', radius: keplerRadius(3_474) * 2.5, distance: {d}"
+                                ),
+                                replace_text: format!(
+                                    "name: 'moon', radius: keplerRadius(3_474) * 2.5, distance: 0.5"
+                                ),
+                            },
+                        });
+                    }
+                }
+                Ok(())
+            }),
+        },
+
         // Invariant: moon navigation zoom distance should be
         // close enough to fill a meaningful portion of the viewport.
         // The current `r * 4` formula treats all bodies the same,
