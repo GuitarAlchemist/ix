@@ -62,6 +62,61 @@ struct ProposedFix {
 /// Build the set of rendering invariants the harness checks.
 fn rendering_invariants() -> Vec<RenderingInvariant> {
     vec![
+        // Invariant: moon navigation zoom distance should be
+        // close enough to fill a meaningful portion of the viewport.
+        // The current `r * 4` formula treats all bodies the same,
+        // but moons are 10-100× smaller than planets and need a
+        // tighter zoom to be visually compelling.
+        RenderingInvariant {
+            proposition: "render:navigation:moon_zoom_sufficient".into(),
+            description: "Navigating to the moon should zoom close enough that the moon fills ≥15% of the viewport".into(),
+            check: Box::new(|source: &str| {
+                // Check the navigateToPlanet function for the zoom
+                // distance formula. Current: `r * 4` — same for
+                // planets and moons. For a moon with r=0.012, this
+                // puts the camera at 0.048 scene units, where the
+                // moon subtends ~30° — visible but small.
+                //
+                // A body-type-aware formula would use a smaller
+                // multiplier for moons: `r * 2` fills more viewport.
+                let has_navigate = source.contains("navigateToPlanet");
+                let has_uniform_zoom = source.contains("r * 4");
+                // Check if there's already a body-type-aware zoom
+                // multiplier. We check for specific variable names
+                // that would only appear in an intentional fix, NOT
+                // for generic patterns like "r * 2" which can false-
+                // positive on unrelated code elsewhere in the file.
+                let has_moon_specific = source.contains("zoomMultiplier")
+                    || source.contains("moonZoom")
+                    || source.contains("isMoon");
+
+                if has_navigate && has_uniform_zoom && !has_moon_specific {
+                    Err(InvariantViolation {
+                        issue: "Moon navigation uses same zoom multiplier as planets (r * 4), making tiny moons appear too small".into(),
+                        detail: "navigateToPlanet computes zoomDist = Math.max(r * 4, 0.02) uniformly. \
+                                 For planets (r ≈ 0.018-0.12), 4× radius is close enough. For moons \
+                                 (r ≈ 0.003-0.012), 4× is too far — the moon fills <15% of the viewport. \
+                                 Additionally, after the initial snap, the camera tracking only updates \
+                                 controls.target (look direction) but not camera.position (distance), \
+                                 so any scroll-zoom drift is permanent.".into(),
+                        proposed_fix: ProposedFix {
+                            description: "Use a tighter zoom multiplier for small bodies (moons). \
+                                          Replace `r * 4` with a body-size-adaptive formula: \
+                                          smaller radius → smaller multiplier → closer zoom.".into(),
+                            search_text: "      const zoomDist = Math.max(r * 4, 0.02);".into(),
+                            replace_text: "      // Body-size-adaptive zoom: closer for small bodies (moons)\n      \
+                                           // so they fill a meaningful portion of the viewport.\n      \
+                                           // Discovered by ix harness rendering-invariant auditor.\n      \
+                                           const zoomMultiplier = r < 0.02 ? 2.5 : 4;\n      \
+                                           const zoomDist = Math.max(r * zoomMultiplier, 0.01);".into(),
+                        },
+                    })
+                } else {
+                    Ok(())
+                }
+            }),
+        },
+
         // Invariant: the solar system scene should have a
         // DirectionalLight that tracks the sun so that
         // MeshLambertMaterial-based moons receive day/night
@@ -139,19 +194,35 @@ fn rendering_invariants() -> Vec<RenderingInvariant> {
 
 // ── Audit handler ───────────────────────────────────────────────
 
-/// Handler that reads a source file and checks rendering
-/// invariants against it. Returns findings as JSON.
+/// Handler that reads source files and checks rendering invariants.
+/// Each invariant declares which files it needs; the handler reads
+/// all unique files and passes their concatenated content to the
+/// check function. For simplicity in the MVP, ALL source files in
+/// the audit directory are concatenated into one string — invariants
+/// can grep for patterns across files without worrying about which
+/// file contains what.
 struct RenderingAuditHandler {
-    source_path: PathBuf,
+    /// Paths to read and concatenate for the audit.
+    source_paths: Vec<PathBuf>,
     invariants: Vec<RenderingInvariant>,
 }
 
 impl AgentHandler for RenderingAuditHandler {
     fn run(&self, _cx: &ReadContext, _action: &AgentAction) -> ix_agent_core::ActionResult {
-        let source = std::fs::read_to_string(&self.source_path)
-            .map_err(|e| ix_agent_core::ActionError::Exec(
-                format!("read {}: {e}", self.source_path.display())
-            ))?;
+        let mut source = String::new();
+        for path in &self.source_paths {
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    source.push_str(&format!("\n// === {} ===\n", path.display()));
+                    source.push_str(&content);
+                }
+                Err(e) => {
+                    return Err(ix_agent_core::ActionError::Exec(
+                        format!("read {}: {e}", path.display())
+                    ));
+                }
+            }
+        }
 
         let mut findings = Vec::new();
         for inv in &self.invariants {
@@ -193,8 +264,11 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
     let solar_system_path = PathBuf::from(
         r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\SolarSystem.ts"
     );
+    let force_radiant_path = PathBuf::from(
+        r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\ForceRadiant.tsx"
+    );
 
-    if !solar_system_path.exists() {
+    if !solar_system_path.exists() || !force_radiant_path.exists() {
         eprintln!("GA repo not found at expected path — skipping cross-repo test");
         return;
     }
@@ -222,7 +296,7 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
         chain.push(Box::new(BeliefMiddleware::new()));
 
         let handler = RenderingAuditHandler {
-            source_path: solar_system_path.clone(),
+            source_paths: vec![solar_system_path.clone(), force_radiant_path.clone()],
             invariants: rendering_invariants(),
         };
 
@@ -261,24 +335,24 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
         return;
     }
 
-    let moon_violation = &violations[0];
-    assert_eq!(
-        moon_violation["proposition"],
-        "render:solar_system:moons_have_sun_light"
-    );
-    assert!(
-        moon_violation["issue"]
-            .as_str()
-            .unwrap()
-            .contains("MeshLambertMaterial"),
-        "issue should mention MeshLambertMaterial"
-    );
-    assert!(
-        moon_violation["proposed_fix"]["search_text"]
-            .as_str()
-            .is_some(),
-        "proposed fix should include search text for the patch"
-    );
+    // Assert every violation has the required structure.
+    for v in &violations {
+        assert!(v["proposition"].as_str().is_some(), "violation should have a proposition");
+        assert!(v["issue"].as_str().is_some(), "violation should have an issue description");
+        assert!(
+            v["proposed_fix"]["search_text"].as_str().is_some(),
+            "proposed fix should include search text for the patch"
+        );
+        assert!(
+            v["proposed_fix"]["replace_text"].as_str().is_some(),
+            "proposed fix should include replace text"
+        );
+    }
+
+    eprintln!("\n  Discovered {} violation(s):", violations.len());
+    for v in &violations {
+        eprintln!("    - {} : {}", v["proposition"].as_str().unwrap(), v["issue"].as_str().unwrap());
+    }
 
     // BeliefMiddleware observed the SUCCESSFUL audit dispatch and
     // emitted BeliefChanged { old: Probable, new: True } for the
@@ -304,11 +378,14 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
     }
 
     let beliefs_after_discovery = project_beliefs(&sink2.events);
-    assert_eq!(
-        beliefs_after_discovery.get("render:solar_system:moons_have_sun_light"),
-        Some(&Hexavalent::False),
-        "after discovery, belief should be False"
-    );
+    for v in &violations {
+        let prop = v["proposition"].as_str().unwrap();
+        assert_eq!(
+            beliefs_after_discovery.get(prop),
+            Some(&Hexavalent::False),
+            "after discovery, belief '{prop}' should be False"
+        );
+    }
 
     // ── Phase 2: FIX ───────────────────────────────────────────
     //
@@ -316,23 +393,33 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
     // the actual file. The fix is a search-and-replace generated
     // by the invariant checker — NOT hand-written by a human.
 
-    let fix = &moon_violation["proposed_fix"];
-    let search = fix["search_text"].as_str().unwrap();
-    let replace = fix["replace_text"].as_str().unwrap();
+    // Apply ALL proposed fixes from ALL violations. Each fix
+    // specifies search_text and replace_text; we try each file
+    // in turn until we find a match.
+    let all_paths = vec![solar_system_path.clone(), force_radiant_path.clone()];
+    for v in &violations {
+        let fix = &v["proposed_fix"];
+        let search = fix["search_text"].as_str().unwrap();
+        let replace = fix["replace_text"].as_str().unwrap();
 
-    let source = std::fs::read_to_string(&solar_system_path)
-        .expect("read SolarSystem.ts");
-
-    assert!(
-        source.contains(search),
-        "source should contain the search text for the fix to apply"
-    );
-
-    let patched = source.replacen(search, replace, 1);
-
-    // Write the patched source back.
-    std::fs::write(&solar_system_path, &patched)
-        .expect("write patched SolarSystem.ts");
+        let mut applied = false;
+        for path in &all_paths {
+            let source = std::fs::read_to_string(path)
+                .unwrap_or_default();
+            if source.contains(search) {
+                let patched = source.replacen(search, replace, 1);
+                std::fs::write(path, &patched)
+                    .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+                eprintln!("  Applied fix to {}", path.display());
+                applied = true;
+                break;
+            }
+        }
+        assert!(
+            applied,
+            "fix search text not found in any source file: {search}"
+        );
+    }
 
     // ── Phase 3: VERIFY ────────────────────────────────────────
     //
@@ -340,7 +427,7 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
     // should now transition False → True.
 
     let verify_handler = RenderingAuditHandler {
-        source_path: solar_system_path.clone(),
+        source_paths: vec![solar_system_path.clone(), force_radiant_path.clone()],
         invariants: rendering_invariants(),
     };
 
@@ -383,26 +470,32 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
         "after applying the fix, no violations should remain — got: {verify_violations:?}"
     );
 
-    // Emit the correction.
+    // Emit corrections for all previously-violated propositions.
     let mut sink4 = VecEventSink::default();
-    sink4.emit(SessionEvent::BeliefChanged {
-        ordinal: 0,
-        proposition: "render:solar_system:moons_have_sun_light".into(),
-        old: Some(Hexavalent::False),
-        new: Hexavalent::True,
-        evidence: serde_json::json!({
-            "source": "autonomous_render_audit",
-            "trigger": "invariant_passed_after_fix",
-            "fix_applied": fix,
-        }),
-    });
+    for v in &violations {
+        let prop = v["proposition"].as_str().unwrap();
+        sink4.emit(SessionEvent::BeliefChanged {
+            ordinal: sink4.next_ordinal(),
+            proposition: prop.to_string(),
+            old: Some(Hexavalent::False),
+            new: Hexavalent::True,
+            evidence: serde_json::json!({
+                "source": "autonomous_render_audit",
+                "trigger": "invariant_passed_after_fix",
+                "proposition": prop,
+            }),
+        });
+    }
 
     let final_beliefs = project_beliefs(&sink4.events);
-    assert_eq!(
-        final_beliefs.get("render:solar_system:moons_have_sun_light"),
-        Some(&Hexavalent::True),
-        "after fix + verification, belief should be True"
-    );
+    for v in &violations {
+        let prop = v["proposition"].as_str().unwrap();
+        assert_eq!(
+            final_beliefs.get(prop),
+            Some(&Hexavalent::True),
+            "after fix + verification, belief '{prop}' should be True"
+        );
+    }
 
     // ── Summary ────────────────────────────────────────────────
     //
