@@ -196,12 +196,12 @@ mod tests {
         // Skip first 100 transient points
         for &[x, y] in &points[100..] {
             assert!(
-                x >= -0.01 && x <= 1.01,
+                (-0.01..=1.01).contains(&x),
                 "x={} out of bounds",
                 x
             );
             assert!(
-                y >= -0.01 && y <= 0.87,
+                (-0.01..=0.87).contains(&y),
                 "y={} out of bounds",
                 y
             );
@@ -217,12 +217,12 @@ mod tests {
         // Fern should be roughly in [-3, 3] x [0, 10]
         for &[x, y] in &points[100..] {
             assert!(
-                x >= -3.0 && x <= 3.0,
+                (-3.0..=3.0).contains(&x),
                 "fern x={} out of bounds",
                 x
             );
             assert!(
-                y >= -0.5 && y <= 11.0,
+                (-0.5..=11.0).contains(&y),
                 "fern y={} out of bounds",
                 y
             );
@@ -266,12 +266,12 @@ mod tests {
         // Koch curve should stay roughly bounded
         for &[x, y] in &points[100..] {
             assert!(
-                x >= -0.5 && x <= 1.5,
+                (-0.5..=1.5).contains(&x),
                 "koch x={} out of bounds",
                 x
             );
             assert!(
-                y >= -0.5 && y <= 1.0,
+                (-0.5..=1.0).contains(&y),
                 "koch y={} out of bounds",
                 y
             );

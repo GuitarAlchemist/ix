@@ -428,7 +428,7 @@ mod tests {
         let vocab = tfidf.vocabulary();
         // "friends" appears only in doc 2 → high IDF
         // "the" appears in docs 0 and 1 → lower IDF
-        if let (Some(&the_idx), Some(&friends_idx)) = (vocab.get("the"), vocab.get("friends")) {
+        if let (Some(&_the_idx), Some(&friends_idx)) = (vocab.get("the"), vocab.get("friends")) {
             assert!(matrix[[2, friends_idx]] > 0.0);
             // "the" doesn't appear in doc 2 at all, so this is trivially true
             // Better test: in doc 0, "sat" (appears in 2 docs) vs "mat" (appears in 1)

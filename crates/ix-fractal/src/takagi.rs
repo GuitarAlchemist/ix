@@ -142,7 +142,7 @@ mod tests {
         for i in 0..100 {
             let t = i as f64 / 99.0;
             let v = takagi(t, 20);
-            assert!(v >= 0.0 && v <= 2.0 / 3.0 + TOL);
+            assert!((0.0..=2.0 / 3.0 + TOL).contains(&v));
         }
     }
 

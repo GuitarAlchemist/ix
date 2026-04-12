@@ -194,12 +194,12 @@ mod tests {
         let curve = hilbert_curve(3);
         for &[x, y] in &curve {
             assert!(
-                x >= -0.01 && x <= 1.01,
+                (-0.01..=1.01).contains(&x),
                 "hilbert x={} out of [0,1]",
                 x
             );
             assert!(
-                y >= -0.01 && y <= 1.01,
+                (-0.01..=1.01).contains(&y),
                 "hilbert y={} out of [0,1]",
                 y
             );
@@ -262,12 +262,12 @@ mod tests {
         let curve = peano_curve(2);
         for &[x, y] in &curve {
             assert!(
-                x >= -0.01 && x <= 1.01,
+                (-0.01..=1.01).contains(&x),
                 "peano x={} out of [0,1]",
                 x
             );
             assert!(
-                y >= -0.01 && y <= 1.01,
+                (-0.01..=1.01).contains(&y),
                 "peano y={} out of [0,1]",
                 y
             );

@@ -157,7 +157,7 @@ mod tests {
     fn test_congestion_equilibrium() {
         // 3 routes, base payoffs [10, 8, 6], congestion cost 5
         // Equilibrium: players spread out to equalize payoffs
-        let base = vec![10.0, 8.0, 6.0];
+        let base = [10.0, 8.0, 6.0];
         let payoff_fn = move |a: usize, dist: &Array1<f64>| -> f64 {
             base[a] - 5.0 * dist[a]
         };

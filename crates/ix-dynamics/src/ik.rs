@@ -724,7 +724,7 @@ mod tests {
         let result = chain.solve_ccd(&target, &[0.0, 0.0], 100, 1e-3);
         if let Ok(params) = &result {
             for (i, &p) in params.iter().enumerate() {
-                assert!(p >= -FRAC_PI_4 - TOL && p <= FRAC_PI_4 + TOL,
+                assert!((-FRAC_PI_4 - TOL..=FRAC_PI_4 + TOL).contains(&p),
                     "joint {} exceeds limits: {}", i, p);
             }
         }

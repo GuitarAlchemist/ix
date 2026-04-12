@@ -21,7 +21,6 @@ use ix_agent_core::{
     AgentAction, BeliefMiddleware, ReadContext, VecEventSink, WriteContext,
     project_beliefs, tool_proposition,
 };
-use ix_agent_core::event::BlockCode;
 use ix_session::SessionLog;
 use ix_types::Hexavalent;
 use tempfile::tempdir;

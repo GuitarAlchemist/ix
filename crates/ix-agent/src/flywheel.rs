@@ -296,8 +296,7 @@ mod tests {
 
     #[test]
     fn maps_each_session_event_variant() {
-        let variants = vec![
-            SessionEvent::ActionProposed {
+        let variants = [SessionEvent::ActionProposed {
                 ordinal: 0,
                 action: invoke("t"),
             },
@@ -326,8 +325,7 @@ mod tests {
             SessionEvent::ActionFailed {
                 ordinal: 5,
                 error: ix_agent_core::ActionError::Exec("boom".into()),
-            },
-        ];
+            }];
         let mapped: Vec<TraceEvent> = variants.iter().map(session_event_to_trace_event).collect();
         assert_eq!(mapped[0].event_type, "action_proposed");
         assert_eq!(mapped[1].event_type, "action_blocked");
