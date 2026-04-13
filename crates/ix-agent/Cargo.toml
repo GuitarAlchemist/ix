@@ -28,6 +28,7 @@ ix-probabilistic = { workspace = true }
 ix-signal = { workspace = true }
 ix-cache = { workspace = true }
 ix-pipeline = { workspace = true }
+ix-autograd = { workspace = true }
 ix-nn = { workspace = true }
 ix-rl = { workspace = true }
 ix-evolution = { workspace = true }

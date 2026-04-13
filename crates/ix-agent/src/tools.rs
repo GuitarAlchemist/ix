@@ -1138,6 +1138,28 @@ impl ToolRegistry {
         });
 
         self.tools.push(Tool {
+            name: "ix_autograd_run",
+            description: "R7 Week 2: run a differentiable tool (LinearRegressionTool, StatsVarianceTool) end-to-end, returning forward outputs AND per-input gradients in a single MCP call. Inputs are nested f64 arrays; shape is inferred from nesting depth. Used for pipeline-level gradient descent where the caller maintains an Adam/SGD loop outside the MCP boundary.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "tool": {
+                        "type": "string",
+                        "enum": ["linear_regression", "stats_variance"],
+                        "description": "Name of the differentiable tool to run"
+                    },
+                    "inputs": {
+                        "type": "object",
+                        "description": "Map of input name → nested f64 array (1-D, 2-D, or scalar). For linear_regression: x, w, b, y. For stats_variance: x.",
+                        "additionalProperties": true
+                    }
+                },
+                "required": ["tool", "inputs"]
+            }),
+            handler: handlers::autograd_run,
+        });
+
+        self.tools.push(Tool {
             name: "ix_pipeline_run",
             description: "Execute a DAG pipeline end-to-end: topologically sorts steps, dispatches each step's tool with substituted upstream references, and returns per-step results + durations. Replaces hand-chaining of MCP calls. Reference upstream outputs in step arguments via the string `\"$step_id.field\"`. Handled by ToolRegistry::call_with_ctx; this entry exists only for tools/list discovery.",
             input_schema: json!({

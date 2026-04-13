@@ -1587,6 +1587,174 @@ pub fn pipeline_run_placeholder(_params: Value) -> Result<Value, String> {
     )
 }
 
+// ── ix_autograd_run ────────────────────────────────────────
+
+/// R7 Week 2: run a differentiable tool via MCP and return forward
+/// outputs + per-input gradients in a single call.
+///
+/// Supported tool names:
+/// - `"linear_regression"` — requires `x`, `w`, `b`, `y` in inputs
+/// - `"stats_variance"` — requires `x` in inputs
+///
+/// Input arrays are nested f64 arrays; the shape is inferred from
+/// the nesting depth. Scalars use a 1-element 1-D array.
+///
+/// Returns:
+/// ```json
+/// {
+///   "tool": "linear_regression",
+///   "forward": { "y_hat": [[...]], "loss": 0.123 },
+///   "gradients": { "x": [[...]], "w": [[...]], "b": [[...]] }
+/// }
+/// ```
+pub fn autograd_run(params: Value) -> Result<Value, String> {
+    use ix_autograd::prelude::*;
+    use ix_autograd::tools::{linear_regression::LinearRegressionTool, stats_variance::StatsVarianceTool};
+
+    let tool_name = params
+        .get("tool")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "ix_autograd_run: missing 'tool'".to_string())?;
+
+    let inputs_json = params
+        .get("inputs")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "ix_autograd_run: missing 'inputs' object".to_string())?;
+
+    // Parse each input into an ArrayD<f64> via generic helpers.
+    let mut in_map = ValueMap::new();
+    for (key, val) in inputs_json {
+        let array = parse_array_d(val)
+            .map_err(|e| format!("ix_autograd_run: input '{key}': {e}"))?;
+        in_map.insert(key.clone(), Tensor::from_array_with_grad(array));
+    }
+
+    let mut ctx = DiffContext::new(ExecutionMode::Train);
+
+    let (forward_map, grad_map) = match tool_name {
+        "linear_regression" => {
+            let tool = LinearRegressionTool;
+            let fwd = tool
+                .forward(&mut ctx, &in_map)
+                .map_err(|e| format!("linear_regression forward: {e}"))?;
+            let dummy = ValueMap::new();
+            let grads = tool
+                .backward(&mut ctx, &dummy)
+                .map_err(|e| format!("linear_regression backward: {e}"))?;
+            (fwd, grads)
+        }
+        "stats_variance" => {
+            let tool = StatsVarianceTool;
+            let fwd = tool
+                .forward(&mut ctx, &in_map)
+                .map_err(|e| format!("stats_variance forward: {e}"))?;
+            let dummy = ValueMap::new();
+            let grads = tool
+                .backward(&mut ctx, &dummy)
+                .map_err(|e| format!("stats_variance backward: {e}"))?;
+            (fwd, grads)
+        }
+        other => {
+            return Err(format!(
+                "ix_autograd_run: unknown tool '{other}'. Supported: \
+                 linear_regression, stats_variance"
+            ))
+        }
+    };
+
+    let forward_serialized = serialize_value_map(&forward_map);
+    let grads_serialized = serialize_value_map(&grad_map);
+
+    Ok(json!({
+        "tool": tool_name,
+        "forward": forward_serialized,
+        "gradients": grads_serialized,
+    }))
+}
+
+/// Parse an arbitrary nested JSON array (or scalar) into a dynamic
+/// `ndarray::ArrayD<f64>`. The shape is inferred from the nesting.
+fn parse_array_d(v: &Value) -> Result<ndarray::ArrayD<f64>, String> {
+    use ndarray::{Array, IxDyn};
+    match v {
+        Value::Number(n) => {
+            let x = n.as_f64().ok_or("non-f64 number")?;
+            Ok(Array::from_elem(IxDyn(&[]), x))
+        }
+        Value::Array(a) => {
+            if a.is_empty() {
+                return Ok(Array::from_shape_vec(IxDyn(&[0]), vec![]).unwrap());
+            }
+            let first_child_is_array = matches!(a[0], Value::Array(_));
+            if !first_child_is_array {
+                let values: Vec<f64> = a
+                    .iter()
+                    .map(|x| x.as_f64().ok_or_else(|| "non-f64 element".to_string()))
+                    .collect::<Result<_, _>>()?;
+                Array::from_shape_vec(IxDyn(&[values.len()]), values)
+                    .map_err(|e: ndarray::ShapeError| e.to_string())
+            } else {
+                let rows = a.len();
+                let first_row = a[0].as_array().ok_or("first row not array")?;
+                let cols = first_row.len();
+                let mut flat: Vec<f64> = Vec::with_capacity(rows * cols);
+                for (i, row) in a.iter().enumerate() {
+                    let row_arr = row
+                        .as_array()
+                        .ok_or_else(|| format!("row {i} not array"))?;
+                    if row_arr.len() != cols {
+                        return Err(format!(
+                            "row {i} has {} cols, expected {cols}",
+                            row_arr.len()
+                        ));
+                    }
+                    for x in row_arr {
+                        flat.push(x.as_f64().ok_or_else(|| {
+                            format!("row {i} contains non-f64 element")
+                        })?);
+                    }
+                }
+                Array::from_shape_vec(IxDyn(&[rows, cols]), flat)
+                    .map_err(|e: ndarray::ShapeError| e.to_string())
+            }
+        }
+        _ => Err("expected array or number".into()),
+    }
+}
+
+/// Turn a `ValueMap` of tensors into a serde_json::Value object.
+fn serialize_value_map(map: &ix_autograd::tool::ValueMap) -> Value {
+    let mut out = serde_json::Map::new();
+    for (k, tensor) in map {
+        let arr = tensor.as_f64();
+        let shape = arr.shape().to_vec();
+        if shape.is_empty() {
+            // rank-0 scalar
+            out.insert(k.clone(), json!(arr.iter().next().copied().unwrap_or(0.0)));
+        } else if shape.len() == 1 {
+            let v: Vec<f64> = arr.iter().copied().collect();
+            out.insert(k.clone(), json!(v));
+        } else if shape.len() == 2 {
+            let rows = shape[0];
+            let cols = shape[1];
+            let mut rows_out: Vec<Vec<f64>> = Vec::with_capacity(rows);
+            let data: Vec<f64> = arr.iter().copied().collect();
+            for r in 0..rows {
+                rows_out.push(data[r * cols..(r + 1) * cols].to_vec());
+            }
+            out.insert(k.clone(), json!(rows_out));
+        } else {
+            // Higher-rank: flatten + emit shape.
+            let flat: Vec<f64> = arr.iter().copied().collect();
+            out.insert(
+                k.clone(),
+                json!({ "shape": shape, "data": flat }),
+            );
+        }
+    }
+    Value::Object(out)
+}
+
 // ── ix_pipeline_exec ───────────────────────────────────────
 
 pub fn pipeline_exec(params: Value) -> Result<Value, String> {
