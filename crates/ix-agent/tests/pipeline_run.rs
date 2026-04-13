@@ -117,6 +117,129 @@ fn pipeline_run_listed_in_tools() {
     assert!(found, "ix_pipeline_run should appear in tools/list");
 }
 
+// ---------------------------------------------------------------------------
+// R2 Phase 1 — content-addressed caching
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cache_miss_then_hit_on_replay() {
+    // Two sequential runs of the same single-step pipeline with an
+    // `asset_name`. First run populates the cache; second run hits it.
+    let reg = ToolRegistry::new();
+    let ctx = make_ctx();
+
+    let args = json!({
+        "steps": [
+            {
+                "id": "s1",
+                "tool": "ix_stats",
+                "arguments": { "data": [7.0, 8.0, 9.0, 10.0] },
+                "asset_name": "r2_cache_test_unique_name_1"
+            }
+        ]
+    });
+
+    let run1 = reg
+        .call_with_ctx("ix_pipeline_run", args.clone(), &ctx)
+        .expect("ok");
+    let hits1 = run1
+        .get("cache_hits")
+        .and_then(|v| v.as_array())
+        .expect("cache_hits");
+    assert!(hits1.is_empty(), "first run should miss cache");
+
+    let run2 = reg
+        .call_with_ctx("ix_pipeline_run", args, &ctx)
+        .expect("ok");
+    let hits2 = run2
+        .get("cache_hits")
+        .and_then(|v| v.as_array())
+        .expect("cache_hits");
+    assert_eq!(hits2.len(), 1, "second run should hit cache on s1");
+    assert_eq!(hits2[0], "s1");
+
+    // Results should be identical (semantically; check mean value).
+    let m1 = extract_mean(run1.get("results").unwrap().get("s1").unwrap()).expect("mean1");
+    let m2 = extract_mean(run2.get("results").unwrap().get("s1").unwrap()).expect("mean2");
+    assert!((m1 - m2).abs() < 1e-12, "cached result should equal fresh result");
+    assert!((m1 - 8.5).abs() < 1e-12);
+}
+
+#[test]
+fn cache_invalidates_on_argument_change() {
+    // Same asset_name but different arguments must produce different
+    // cache keys and therefore different results.
+    let reg = ToolRegistry::new();
+    let ctx = make_ctx();
+
+    let args_a = json!({
+        "steps": [{
+            "id": "s1", "tool": "ix_stats",
+            "arguments": { "data": [1.0, 2.0, 3.0] },
+            "asset_name": "r2_invalidation_test"
+        }]
+    });
+    let args_b = json!({
+        "steps": [{
+            "id": "s1", "tool": "ix_stats",
+            "arguments": { "data": [100.0, 200.0, 300.0] },
+            "asset_name": "r2_invalidation_test"
+        }]
+    });
+
+    let run_a = reg
+        .call_with_ctx("ix_pipeline_run", args_a, &ctx)
+        .expect("ok");
+    let run_b = reg
+        .call_with_ctx("ix_pipeline_run", args_b, &ctx)
+        .expect("ok");
+
+    // Both should be cache misses (different keys because args differ)
+    // on first encounter.
+    let hits_b = run_b
+        .get("cache_hits")
+        .and_then(|v| v.as_array())
+        .expect("cache_hits");
+    assert!(hits_b.is_empty(), "changed args should miss cache");
+
+    let mean_a = extract_mean(run_a.get("results").unwrap().get("s1").unwrap()).expect("a");
+    let mean_b = extract_mean(run_b.get("results").unwrap().get("s1").unwrap()).expect("b");
+    assert!((mean_a - 2.0).abs() < 1e-12);
+    assert!((mean_b - 200.0).abs() < 1e-12);
+}
+
+#[test]
+fn steps_without_asset_name_never_cache() {
+    // A step without `asset_name` must never populate or hit the cache.
+    // Its entry in cache_keys should be null.
+    let reg = ToolRegistry::new();
+    let ctx = make_ctx();
+    let args = json!({
+        "steps": [{
+            "id": "s1", "tool": "ix_stats",
+            "arguments": { "data": [11.0, 22.0] }
+        }]
+    });
+
+    let run = reg
+        .call_with_ctx("ix_pipeline_run", args, &ctx)
+        .expect("ok");
+    let hits = run
+        .get("cache_hits")
+        .and_then(|v| v.as_array())
+        .expect("cache_hits");
+    assert!(hits.is_empty(), "step without asset_name cannot hit cache");
+
+    let cache_keys = run
+        .get("cache_keys")
+        .and_then(|v| v.as_object())
+        .expect("cache_keys");
+    assert!(
+        cache_keys.get("s1").map(|v| v.is_null()).unwrap_or(false),
+        "s1 cache_key should be null when asset_name is absent"
+    );
+}
+
 #[test]
 fn pipeline_run_placeholder_handler_errors() {
     // Calling the placeholder directly (bypassing call_with_ctx) should

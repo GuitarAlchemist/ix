@@ -7,8 +7,9 @@ use ix_cache::{Cache, CacheConfig};
 
 use std::sync::OnceLock;
 
-/// Global cache instance shared across tool calls.
-fn global_cache() -> &'static Cache {
+/// Global cache instance shared across tool calls. Also used by
+/// `ToolRegistry::run_pipeline` for R2 content-addressed step caching.
+pub(crate) fn global_cache() -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
     CACHE.get_or_init(|| Cache::new(CacheConfig::default()))
 }

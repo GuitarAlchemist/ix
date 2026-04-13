@@ -133,31 +133,45 @@ impl ToolRegistry {
     }
 
     /// Execute a pipeline spec by topologically sorting steps and
-    /// calling each step's tool via [`Self::call`]. This is the R1
-    /// deliverable per `ix-roadmap-plan-v1.md` §4.1 — it turns what
-    /// was previously 13 separate hand-chained MCP calls into a
-    /// single submission.
+    /// calling each step's tool via [`Self::call`].
+    ///
+    /// - **R1** (`ix-roadmap-plan-v1.md` §4.1): turns 13 hand-chained
+    ///   MCP calls into a single submission with `$step_id.field`
+    ///   cross-step argument references.
+    /// - **R2 Phase 1** (§4.2): content-addressed cache hits when a
+    ///   step declares an `asset_name`. The cache key is
+    ///   `blake3(asset_name || tool || canonical_json(resolved_args))`,
+    ///   so replaying the same pipeline skips every tool invocation
+    ///   whose inputs are unchanged.
     ///
     /// Input format:
     /// ```json
     /// {
     ///   "steps": [
-    ///     { "id": "s1", "tool": "ix_stats", "arguments": {...}, "depends_on": [] },
-    ///     { "id": "s2", "tool": "ix_fft",   "arguments": {...}, "depends_on": ["s1"] }
+    ///     {
+    ///       "id": "s1",
+    ///       "tool": "ix_stats",
+    ///       "arguments": {"data": [1, 2, 3]},
+    ///       "asset_name": "stats_of_my_data"
+    ///     },
+    ///     {
+    ///       "id": "s2",
+    ///       "tool": "ix_fft",
+    ///       "arguments": {"signal": "$s1.values"},
+    ///       "depends_on": ["s1"]
+    ///     }
     ///   ]
     /// }
     /// ```
     ///
-    /// Arguments may contain references to upstream outputs via the
-    /// string syntax `"$step_id.field"` — the pipeline runner
-    /// substitutes these before dispatching each tool.
-    ///
     /// Output:
     /// ```json
     /// {
-    ///   "results": { "s1": {...}, "s2": {...} },
-    ///   "execution_order": ["s1", "s2"],
-    ///   "durations_ms": { "s1": 12, "s2": 3 }
+    ///   "results":          { "s1": {...}, "s2": {...} },
+    ///   "execution_order":  ["s1", "s2"],
+    ///   "durations_ms":     { "s1": 12, "s2": 3 },
+    ///   "cache_hits":       ["s1"],
+    ///   "cache_keys":       { "s1": "blake3:abc...", "s2": null }
     /// }
     /// ```
     fn run_pipeline(&self, args: Value) -> Result<Value, String> {
@@ -170,8 +184,8 @@ impl ToolRegistry {
             .and_then(|v| v.as_array())
             .ok_or_else(|| "ix_pipeline_run: missing 'steps' array".to_string())?;
 
-        // First pass: build a Dag<(tool, arguments)> and validate.
-        let mut dag: Dag<(String, Value)> = Dag::new();
+        // First pass: build a Dag<(tool, arguments, asset_name)> and validate.
+        let mut dag: Dag<(String, Value, Option<String>)> = Dag::new();
         for step in steps {
             let id = step
                 .get("id")
@@ -182,7 +196,11 @@ impl ToolRegistry {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| format!("ix_pipeline_run: step '{id}' missing 'tool'"))?;
             let arguments = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            dag.add_node(id, (tool.to_string(), arguments))
+            let asset_name = step
+                .get("asset_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            dag.add_node(id, (tool.to_string(), arguments, asset_name))
                 .map_err(|e| format!("ix_pipeline_run: step '{id}': {e}"))?;
         }
         for step in steps {
@@ -200,29 +218,66 @@ impl ToolRegistry {
 
         // Second pass: topological sort, then execute each step.
         // topological_sort() borrows &dag, so clone the order to a
-        // Vec<String> before we mutate results (which would be a
-        // double-borrow of dag's node store).
+        // Vec<String> before we mutate results.
         let order: Vec<String> = dag.topological_sort().into_iter().cloned().collect();
         let mut results: HashMap<String, Value> = HashMap::new();
         let mut durations: HashMap<String, u128> = HashMap::new();
+        let mut cache_hits: Vec<String> = Vec::new();
+        let mut cache_keys: HashMap<String, Value> = HashMap::new();
+
+        let cache = crate::handlers::global_cache();
 
         for id in &order {
-            let (tool, raw_args) = dag
+            let (tool, raw_args, asset_name) = dag
                 .get(id)
                 .ok_or_else(|| format!("ix_pipeline_run: missing node '{id}'"))?
                 .clone();
 
-            // Substitute any "$step_id.field" references in arguments
-            // with upstream results.
+            // Substitute any "$step_id.field" references with upstream results.
             let resolved = substitute_refs(&raw_args, &results).map_err(|e| {
                 format!("ix_pipeline_run: step '{id}' arg substitution: {e}")
             })?;
+
+            // Derive cache key if the step declared an asset_name.
+            let cache_key: Option<String> = asset_name.as_ref().map(|name| {
+                // Canonical JSON via serde_json::to_string: maps are
+                // emitted in insertion order which is not deterministic
+                // across runs. For R2 Phase 1 we accept this — the
+                // LLM-submitted pipelines use fixed key order, and a
+                // full canonicalization is a Phase 2 item.
+                let canon = format!(
+                    "asset={name}||tool={tool}||args={}",
+                    serde_json::to_string(&resolved).unwrap_or_default()
+                );
+                let hash = blake3::hash(canon.as_bytes());
+                format!("ix_pipeline_run:{}", hash.to_hex())
+            });
+
+            // Try cache lookup before dispatching the tool.
+            if let Some(key) = &cache_key {
+                if let Some(cached) = cache.get::<Value>(key) {
+                    results.insert(id.clone(), cached);
+                    durations.insert(id.clone(), 0);
+                    cache_hits.push(id.clone());
+                    cache_keys.insert(id.clone(), json!(key));
+                    continue;
+                }
+            }
 
             let start = Instant::now();
             let result = self.call(&tool, resolved).map_err(|e| {
                 format!("ix_pipeline_run: step '{id}' (tool '{tool}') failed: {e}")
             })?;
             let elapsed = start.elapsed().as_millis();
+
+            // Store in cache on miss (only when asset_name was declared).
+            if let Some(key) = &cache_key {
+                cache.set(key, &result);
+                cache_keys.insert(id.clone(), json!(key));
+            } else {
+                cache_keys.insert(id.clone(), Value::Null);
+            }
+
             results.insert(id.clone(), result);
             durations.insert(id.clone(), elapsed);
         }
@@ -231,6 +286,8 @@ impl ToolRegistry {
             "results": results,
             "execution_order": order,
             "durations_ms": durations,
+            "cache_hits": cache_hits,
+            "cache_keys": cache_keys,
         }))
     }
 
