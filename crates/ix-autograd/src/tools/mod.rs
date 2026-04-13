@@ -6,3 +6,4 @@
 //! CATIA bracket chain.
 
 pub mod linear_regression;
+pub mod stats_variance;

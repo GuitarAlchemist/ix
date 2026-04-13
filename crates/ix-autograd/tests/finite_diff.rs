@@ -734,3 +734,201 @@ fn verify_linear_regression_mse_backward() {
     )
     .expect("linear regression MSE verifier");
 }
+
+// ---------------------------------------------------------------------------
+// Day 4 — broadcast edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_add_scalar_to_matrix() {
+    // a: [2, 3], b: scalar [1, 1] — loss = sum(a + b)
+    // Expected: grad_a = ones[2,3], grad_b = scalar 6.0
+    let a = array_2x3_a();
+    let b = Array::from_shape_vec(IxDyn(&[1, 1]), vec![0.5]).expect("scalar shape");
+
+    let mut ctx = DiffContext::new(ExecutionMode::Train);
+    let a_h = ops::input(&mut ctx, Tensor::from_array_with_grad(a.clone()));
+    let b_h = ops::input(&mut ctx, Tensor::from_array_with_grad(b.clone()));
+    let z = ops::add(&mut ctx, a_h, b_h).expect("add");
+    let loss = ops::sum(&mut ctx, z).expect("sum");
+    let seed = Array::from_elem(IxDyn(&[]), 1.0);
+    let grads = ctx.backward(loss, seed).expect("backward");
+
+    let grad_a = grads[&a_h].clone();
+    let grad_b = grads[&b_h].clone();
+    assert_eq!(grad_a.shape(), &[2, 3]);
+    assert_eq!(grad_b.shape(), &[1, 1]);
+    // grad_b should sum the entire upstream grad (6 elements of 1.0)
+    assert!((grad_b[[0, 0]] - 6.0).abs() < 1e-12, "grad_b = {}", grad_b[[0, 0]]);
+
+    let mut analytical = HashMap::new();
+    analytical.insert("a".into(), grad_a);
+    analytical.insert("b".into(), grad_b);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".into(), a);
+    inputs.insert("b".into(), b);
+
+    verify_gradient(
+        "add_scalar_to_matrix",
+        |ins| (ins.get("a").expect("a") + ins.get("b").expect("b")).sum(),
+        inputs,
+        analytical,
+        1e-6,
+        1e-5,
+    )
+    .expect("add_scalar_to_matrix verifier");
+}
+
+#[test]
+fn verify_mul_with_row_vector_broadcast() {
+    // a: [2, 3], b: [1, 3] — loss = sum(a * b)
+    // Tests broadcast on the inner axis (different from add_with_broadcast
+    // which tests the same case for add). This catches mul-specific
+    // broadcast bugs.
+    let a = array_2x3_a();
+    let b = array_1x3();
+
+    let mut ctx = DiffContext::new(ExecutionMode::Train);
+    let a_h = ops::input(&mut ctx, Tensor::from_array_with_grad(a.clone()));
+    let b_h = ops::input(&mut ctx, Tensor::from_array_with_grad(b.clone()));
+    let z = ops::mul(&mut ctx, a_h, b_h).expect("mul");
+    let loss = ops::sum(&mut ctx, z).expect("sum");
+    let seed = Array::from_elem(IxDyn(&[]), 1.0);
+    let grads = ctx.backward(loss, seed).expect("backward");
+
+    let grad_a = grads[&a_h].clone();
+    let grad_b = grads[&b_h].clone();
+    assert_eq!(grad_a.shape(), &[2, 3]);
+    assert_eq!(grad_b.shape(), &[1, 3]);
+
+    let mut analytical = HashMap::new();
+    analytical.insert("a".into(), grad_a);
+    analytical.insert("b".into(), grad_b);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".into(), a);
+    inputs.insert("b".into(), b);
+
+    verify_gradient(
+        "mul_row_broadcast",
+        |ins| (ins.get("a").expect("a") * ins.get("b").expect("b")).sum(),
+        inputs,
+        analytical,
+        1e-6,
+        1e-5,
+    )
+    .expect("mul_row_broadcast verifier");
+}
+
+#[test]
+fn verify_sub_with_broadcast() {
+    // a: [2, 3], b: [1, 3] — loss = sum(a - b)
+    // Tests sub-specific broadcast (the unbroadcast(neg) path).
+    let a = array_2x3_a();
+    let b = array_1x3();
+
+    let mut ctx = DiffContext::new(ExecutionMode::Train);
+    let a_h = ops::input(&mut ctx, Tensor::from_array_with_grad(a.clone()));
+    let b_h = ops::input(&mut ctx, Tensor::from_array_with_grad(b.clone()));
+    let z = ops::sub(&mut ctx, a_h, b_h).expect("sub");
+    let loss = ops::sum(&mut ctx, z).expect("sum");
+    let seed = Array::from_elem(IxDyn(&[]), 1.0);
+    let grads = ctx.backward(loss, seed).expect("backward");
+
+    let grad_b = grads[&b_h].clone();
+    // Sum over the broadcast axis: 2 rows of [-1, -1, -1] each = [-2, -2, -2]
+    assert_eq!(grad_b.shape(), &[1, 3]);
+    for &v in grad_b.iter() {
+        assert!((v + 2.0).abs() < 1e-12, "grad_b row should be -2, got {v}");
+    }
+
+    let mut analytical = HashMap::new();
+    analytical.insert("a".into(), grads[&a_h].clone());
+    analytical.insert("b".into(), grad_b);
+    let mut inputs = HashMap::new();
+    inputs.insert("a".into(), a);
+    inputs.insert("b".into(), b);
+
+    verify_gradient(
+        "sub_broadcast",
+        |ins| (ins.get("a").expect("a") - ins.get("b").expect("b")).sum(),
+        inputs,
+        analytical,
+        1e-6,
+        1e-5,
+    )
+    .expect("sub_broadcast verifier");
+}
+
+#[test]
+fn matmul_rejects_non_2d_with_clear_error() {
+    // Day 3 added UnsupportedRank for matmul. Verify the error message
+    // is specific enough to be useful.
+    let a = Array::from_shape_vec(IxDyn(&[3]), vec![1.0, 2.0, 3.0]).expect("1d");
+    let b = Array::from_shape_vec(IxDyn(&[3, 2]), vec![1.0; 6]).expect("2d");
+
+    let mut ctx = DiffContext::new(ExecutionMode::Train);
+    let a_h = ops::input(&mut ctx, Tensor::from_array_with_grad(a));
+    let b_h = ops::input(&mut ctx, Tensor::from_array_with_grad(b));
+    let result = ops::matmul(&mut ctx, a_h, b_h);
+
+    match result {
+        Err(ix_autograd::AutogradError::UnsupportedRank {
+            op,
+            supported,
+            actual,
+        }) => {
+            assert_eq!(op, "matmul");
+            assert_eq!(supported, vec![2]);
+            assert_eq!(actual, 1);
+        }
+        other => panic!("expected UnsupportedRank, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Day 4 — second wrapped tool (StatsVarianceTool) end-to-end test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_stats_variance_tool_backward() {
+    // The StatsVarianceTool is the second wrapped DifferentiableTool.
+    // It computes loss = variance(x) and its backward must match the
+    // sum+div_scalar+mul+sub composition on the tape.
+    use ix_autograd::tools::stats_variance::StatsVarianceTool;
+
+    let x = array_2x3_a();
+    let mut ctx = DiffContext::new(ExecutionMode::Train);
+    let tool = StatsVarianceTool;
+    let mut in_map = ValueMap::new();
+    in_map.insert("x".into(), Tensor::from_array_with_grad(x.clone()));
+
+    let out = tool.forward(&mut ctx, &in_map).expect("forward");
+    assert!(out.contains_key("variance"));
+
+    let dummy = ValueMap::new();
+    let grads_out = tool.backward(&mut ctx, &dummy).expect("backward");
+
+    let mut analytical = HashMap::new();
+    analytical.insert(
+        "x".into(),
+        grads_out.get("x").expect("x grad").as_f64().clone(),
+    );
+
+    let mut inputs = HashMap::new();
+    inputs.insert("x".into(), x);
+
+    verify_gradient(
+        "stats_variance",
+        |ins| {
+            let xp = ins.get("x").expect("x");
+            let n = xp.len() as f64;
+            let mean = xp.iter().copied().sum::<f64>() / n;
+            xp.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n
+        },
+        inputs,
+        analytical,
+        1e-6,
+        1e-4,
+    )
+    .expect("stats_variance verifier");
+}
