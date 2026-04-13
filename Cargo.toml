@@ -54,6 +54,7 @@ members = [
     "crates/ix-harness-ga",
     "crates/ix-sentinel",
     "crates/ix-autograd",
+    "crates/ix-registry-check",
 ]
 
 [workspace.package]
