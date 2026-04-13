@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>ix · A350-900 — Support accessoire pylône · dossier technique</title>
+<style>
+  :root {
+    --bg:#0a0e16;
+    --paper:#f4f1e8;
+    --ink:#18202f;
+    --ink2:#2a3548;
+    --muted:#6b7689;
+    --accent:#0a4d8c;
+    --warn:#8b2c2c;
+    --ok:#2d6a3e;
+    --gold:#8a6d1f;
+    --line:#1a2030;
+    --grid:#e6e0d0;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  html, body { background:#050810; color:#e8edf7; font:13px/1.5 -apple-system,Segoe UI,Inter,system-ui,sans-serif }
+  body { padding:16px; min-height:100vh }
+
+  /* -------- Dark chrome around a "paper" engineering drawing -------- */
+  .topbar {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:0 8px 12px; border-bottom:1px solid #1a2030; margin-bottom:14px;
+  }
+  .topbar h1 { font-size:18px; font-weight:600; letter-spacing:-.2px; color:#e8edf7 }
+  .topbar h1 .logo { color:#64d8ff }
+  .topbar h1 .sep { color:#6b7689; margin:0 8px; font-weight:300 }
+  .topbar .meta { color:#6b7689; font-size:11px; text-align:right; font-family:ui-monospace,Consolas,monospace }
+
+  .layout { display:grid; grid-template-columns: 1fr 340px; gap:14px }
+
+  /* -------- The drawing sheet itself -------- */
+  .sheet {
+    background:var(--paper);
+    color:var(--ink);
+    border:1px solid #2a3548;
+    border-radius:4px;
+    padding:0;
+    position:relative;
+    font-family:"Courier New", ui-monospace, Consolas, monospace;
+    box-shadow: 0 0 40px rgba(100,216,255,.04);
+  }
+  .sheet-inner {
+    padding:18px 20px 0;
+  }
+  .drawing-frame {
+    border:1.5px solid var(--ink);
+    position:relative;
+    padding:14px 14px 0;
+  }
+  .drawing-frame::before {
+    content:""; position:absolute; inset:4px; border:0.5px solid var(--ink2);
+    pointer-events:none;
+  }
+  .sheet-title {
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:0 2px 8px; font-family:"Courier New",monospace;
+    border-bottom:0.5px solid var(--ink2); margin-bottom:10px;
+  }
+  .sheet-title h2 { font-size:13px; font-weight:700; letter-spacing:.5px; color:var(--ink) }
+  .sheet-title .scale { font-size:11px; color:var(--muted) }
+  .sheet-title .scale b { color:var(--ink); font-weight:700 }
+
+  svg { display:block; width:100% }
+  svg text { font-family:"Courier New", monospace }
+
+  /* generic stroke classes used across SVGs */
+  .outline { fill:none; stroke:var(--ink); stroke-width:1.5; stroke-linejoin:round }
+  .outline2 { fill:none; stroke:var(--ink); stroke-width:1 }
+  .hidden-edge { fill:none; stroke:var(--ink2); stroke-width:0.6; stroke-dasharray:4,2 }
+  .center-line { fill:none; stroke:var(--ink2); stroke-width:0.5; stroke-dasharray:8,2,1,2 }
+  .dim-line { stroke:var(--ink2); stroke-width:0.5; fill:none }
+  .dim-txt { fill:var(--ink2); font-size:9px }
+  .leader { stroke:var(--accent); stroke-width:0.8; fill:none }
+  .leader-txt { fill:var(--accent); font-size:10px; font-weight:700 }
+  .hatch { fill:url(#hatch45); stroke:var(--ink); stroke-width:0.8 }
+  .zone-fill { fill:#e6e0d0; stroke:var(--ink2); stroke-width:0.5 }
+  .accent-fill { fill:#d4c7a3; stroke:var(--ink); stroke-width:1 }
+  .titanium-fill { fill:#c4bfa8; stroke:var(--ink); stroke-width:1 }
+  .loc-dot { fill:#8b2c2c; stroke:#fff; stroke-width:1.2 }
+  .loc-ring { fill:none; stroke:#8b2c2c; stroke-width:0.8 }
+
+  /* --- title block bottom right --- */
+  .title-block {
+    display:grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+    border-top:1.5px solid var(--ink);
+    font-family:"Courier New", monospace; font-size:10px;
+    margin-top:6px;
+  }
+  .title-block .cell {
+    padding:6px 8px; border-right:0.5px solid var(--ink2);
+    display:flex; flex-direction:column; gap:2px;
+  }
+  .title-block .cell:last-child { border-right:none }
+  .title-block .k { color:var(--muted); text-transform:uppercase; font-size:8px; letter-spacing:.5px }
+  .title-block .v { color:var(--ink); font-weight:700; font-size:11px }
+  .title-block .big {
+    grid-column:1/2; grid-row:1/3;
+    justify-content:center; align-items:center;
+    font-size:13px; font-weight:700; letter-spacing:.3px; text-align:center;
+    background:#e6e0d0;
+  }
+
+  /* --- section separator --- */
+  .sheet hr {
+    border:none; border-top:1px dashed var(--ink2);
+    margin:14px 0 10px;
+  }
+
+  /* -------- Sidebar (dark) -------- */
+  .sidebar { display:flex; flex-direction:column; gap:12px; overflow-y:auto; max-height:calc(100vh - 80px) }
+  .card {
+    background:#0c1423; border:1px solid #1a2642; border-radius:8px; padding:14px;
+  }
+  .card h3 {
+    font-size:10px; text-transform:uppercase; letter-spacing:1.2px;
+    color:#7687a8; font-weight:600; margin-bottom:10px;
+  }
+  .stat { display:flex; justify-content:space-between; padding:4px 0; font-size:12px; border-bottom:1px solid #1a2642 }
+  .stat:last-child { border:none }
+  .stat .k { color:#7687a8 }
+  .stat .v { color:#e8edf7; font-variant-numeric:tabular-nums; font-weight:600 }
+  .stat .v.ok { color:#7ae582 }
+  .stat .v.warn { color:#ff5c6c }
+  .stat .v.accent { color:#64d8ff }
+  .cite {
+    font-size:10px; color:#5a6b8e; margin-top:8px; line-height:1.5;
+    padding-top:8px; border-top:1px dashed #1a2642;
+  }
+  .cite a { color:#64d8ff; text-decoration:none }
+
+  /* -------- 3D render box -------- */
+  .canvas3d-wrap {
+    background:var(--paper); border:1.5px solid var(--ink); border-radius:4px;
+    margin-top:14px; position:relative; aspect-ratio: 16/10;
+  }
+  .canvas3d-wrap canvas { display:block; width:100%; height:100%; border-radius:3px }
+  .canvas3d-wrap .cap {
+    position:absolute; bottom:8px; left:12px; color:var(--ink2);
+    font-family:"Courier New", monospace; font-size:10px;
+    background:rgba(244,241,232,.85); padding:2px 6px; border-radius:2px;
+  }
+  .canvas3d-wrap .cap b { color:var(--ink) }
+
+  .fallback-note {
+    padding:14px; color:var(--ink); font-size:11px; font-family:"Courier New", monospace;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1><span class="logo">ix</span><span class="sep">·</span>A350-900 — Support d'accessoire pylône · dossier technique</h1>
+  <div class="meta">
+    DOC ix-BR-A350-0412 · REV A · 2026-04-12<br/>
+    ORIG. Pipeline ix 13 outils — sortie approuvée
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- ============================== SHEET 1 ============================== -->
+  <div class="main">
+
+    <!-- ---------- VUE 1 : A350 vue de profil ---------- -->
+    <div class="sheet">
+      <div class="sheet-inner">
+        <div class="drawing-frame">
+          <div class="sheet-title">
+            <h2>PLANCHE 01 / 04 — A350-900 · VUE DE PROFIL · LOCALISATION GÉNÉRALE</h2>
+            <div class="scale">ÉCHELLE <b>1:400</b> · COTES EN mm SAUF INDICATION</div>
+          </div>
+
+          <svg viewBox="0 0 960 260">
+            <defs>
+              <pattern id="hatch45" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="6" stroke="#18202f" stroke-width="0.6"/>
+              </pattern>
+              <radialGradient id="loc1" cx="50%" cy="50%">
+                <stop offset="0%" stop-color="#8b2c2c" stop-opacity=".45"/>
+                <stop offset="100%" stop-color="#8b2c2c" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+
+            <!-- === A350-900 side view, realistic proportions === -->
+            <!-- Scale: 66.80 m real -> 860 px, ratio ~12.87 px/m -->
+            <!-- Nose at x=50 (STA 0), tail at x=910 (STA 66800) -->
+            <!-- Wing box forward spar at ~STA 28000 (x=410), rear spar at ~STA 37000 (x=526) -->
+
+            <!-- Fuselage outline (accurate slim A350 profile with dropped nose) -->
+            <path class="outline" d="
+              M 55,135
+              C 45,132 48,118 70,114
+              L 130,102
+              C 180,96 260,92 360,90
+              L 520,90
+              C 680,91 780,95 840,104
+              L 880,114
+              C 905,120 912,126 905,134
+              L 885,138
+              L 880,140
+              L 860,142
+              C 760,148 560,152 360,150
+              L 200,148
+              L 120,146
+              L 85,143
+              L 65,140 Z
+            "/>
+
+            <!-- Cockpit windows -->
+            <path class="outline2" d="M 78,120 L 92,116 L 105,117 L 108,122 L 88,125 Z"/>
+            <path class="outline2" d="M 110,120 L 122,118 L 130,120 L 128,125 L 112,126 Z"/>
+
+            <!-- Cabin windows (row of small rectangles) -->
+            <g fill="#f4f1e8" stroke="#2a3548" stroke-width="0.4">
+              <script xmlns=""></script>
+            </g>
+
+            <!-- Tail fin -->
+            <path class="outline" d="M 820,90 L 842,30 L 878,35 L 890,100 L 860,100 Z"/>
+            <text x="855" y="70" fill="#2a3548" font-size="8" text-anchor="middle">AIRBUS</text>
+
+            <!-- Horizontal stabilizer (side projection shows chord only) -->
+            <path class="outline" d="M 825,135 L 900,130 L 920,135 L 900,140 L 825,140 Z"/>
+
+            <!-- Wing (side projection — we see the root chord) -->
+            <path class="outline" d="M 410,150 L 540,148 L 560,158 L 420,160 Z"/>
+            <text x="480" y="156" fill="#2a3548" font-size="9" text-anchor="middle">AILE (emplanture)</text>
+
+            <!-- Engine pylon + nacelle (LEFT engine, visible side) -->
+            <!-- pylon forward of wing leading edge, nacelle hanging below -->
+            <path class="outline" d="M 430,158 L 400,170 L 395,180 L 455,176 L 460,162 Z" fill="#e6e0d0"/>
+            <text x="428" y="172" fill="#2a3548" font-size="8" text-anchor="middle">PYLÔNE 1</text>
+            <!-- nacelle -->
+            <path class="outline" d="
+              M 345,180
+              C 340,172 350,166 370,164
+              L 420,162
+              C 445,162 465,166 470,175
+              L 472,195
+              C 468,208 450,214 420,214
+              L 370,214
+              C 350,212 340,206 338,198 Z
+            " fill="#e6e0d0"/>
+            <!-- intake ring -->
+            <ellipse cx="345" cy="188" rx="6" ry="24" fill="#c4bfa8" stroke="#18202f" stroke-width="1"/>
+            <!-- fan darker -->
+            <ellipse cx="347" cy="188" rx="3" ry="18" fill="#18202f" opacity=".6"/>
+            <text x="410" y="192" fill="#2a3548" font-size="9" text-anchor="middle">RR TRENT XWB-84</text>
+
+            <!-- Location mark on the pylon (the bracket area) -->
+            <circle cx="427" cy="168" r="20" fill="url(#loc1)"/>
+            <circle cx="427" cy="168" r="2.5" class="loc-dot"/>
+            <circle cx="427" cy="168" r="6" class="loc-ring"/>
+
+            <!-- Station line markers (fuselage stations) -->
+            <g>
+              <line x1="55" y1="220" x2="910" y2="220" class="dim-line"/>
+              <g>
+                <!-- STA 0 -->
+                <line x1="55" y1="215" x2="55" y2="225" class="dim-line"/>
+                <text x="55" y="236" class="dim-txt" text-anchor="middle">STA 0</text>
+                <!-- STA 17400 (bracket) -->
+                <line x1="427" y1="215" x2="427" y2="225" class="dim-line"/>
+                <text x="427" y="236" class="dim-txt" text-anchor="middle" fill="#8b2c2c" font-weight="700">STA 17400</text>
+                <!-- STA 28000 (front spar) -->
+                <line x1="410" y1="215" x2="410" y2="225" class="dim-line"/>
+                <text x="410" y="247" class="dim-txt" text-anchor="middle">STA 28000</text>
+                <!-- STA 66800 (tail) -->
+                <line x1="910" y1="215" x2="910" y2="225" class="dim-line"/>
+                <text x="910" y="236" class="dim-txt" text-anchor="middle">STA 66800</text>
+              </g>
+            </g>
+
+            <!-- Overall length dim -->
+            <line x1="55" y1="20" x2="910" y2="20" class="dim-line"/>
+            <line x1="55" y1="15" x2="55" y2="25" class="dim-line"/>
+            <line x1="910" y1="15" x2="910" y2="25" class="dim-line"/>
+            <text x="482" y="14" class="dim-txt" text-anchor="middle">LONGUEUR HORS-TOUT 66.80 m (219' 2")</text>
+
+            <!-- Leader to bracket -->
+            <path class="leader" d="M 427,168 L 560,60 L 720,60"/>
+            <circle cx="427" cy="168" r="1.5" fill="#0a4d8c"/>
+            <text x="725" y="57" class="leader-txt">REPÈRE A — SUPPORT ACCESSOIRE</text>
+            <text x="725" y="69" class="dim-txt">pylône gauche · zone sèche · STA 17400</text>
+          </svg>
+        </div>
+
+        <!-- title block -->
+        <div class="title-block">
+          <div class="cell big">ix ENGINEERING<br/>A350-900 BRACKET PACK</div>
+          <div class="cell"><div class="k">PLANCHE</div><div class="v">01 / 04</div></div>
+          <div class="cell"><div class="k">ÉCHELLE</div><div class="v">1:400</div></div>
+          <div class="cell"><div class="k">FORMAT</div><div class="v">A3</div></div>
+          <div class="cell"><div class="k">DATE</div><div class="v">2026-04-12</div></div>
+          <div class="cell"><div class="k">RÉF</div><div class="v">ix-BR-A350-0412</div></div>
+          <div class="cell"><div class="k">RÉV</div><div class="v">A</div></div>
+          <div class="cell"><div class="k">UNITÉ</div><div class="v">mm</div></div>
+          <div class="cell"><div class="k">VISA</div><div class="v">— / —</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- VUE 2 : top view ---------- -->
+    <div class="sheet" style="margin-top:14px">
+      <div class="sheet-inner">
+        <div class="drawing-frame">
+          <div class="sheet-title">
+            <h2>PLANCHE 02 / 04 — A350-900 · VUE DE DESSUS · FLÈCHE VOILURE 31.9°</h2>
+            <div class="scale">ÉCHELLE <b>1:400</b></div>
+          </div>
+
+          <svg viewBox="0 0 960 340">
+            <!-- fuselage -->
+            <path class="outline" d="
+              M 55,170
+              C 45,166 48,155 70,150
+              L 130,144
+              C 260,137 420,135 520,136
+              L 680,140 L 820,148
+              L 880,158 C 905,163 912,170 905,178
+              L 880,182 L 820,192 L 680,200 L 520,204 L 420,205 L 260,203
+              L 130,196 L 70,190 C 48,185 45,174 55,170 Z
+            "/>
+
+            <!-- main wing (low wing, swept back 31.9°) -->
+            <!-- root LE at STA 28000 (x=410), TE at STA 37000 (x=526) -->
+            <!-- tip LE ~(x=820, y=30), TE ~(x=860, y=30) -->
+            <path class="outline" d="
+              M 410,158 L 800,35 L 845,40 L 860,50 L 530,170 Z
+            " fill="#e6e0d0" fill-opacity=".5"/>
+            <path class="outline" d="
+              M 410,196 L 800,309 L 845,304 L 860,294 L 530,174 Z
+            " fill="#e6e0d0" fill-opacity=".5"/>
+
+            <!-- sharklets (winglets) -->
+            <path class="outline" d="M 800,35 L 815,20 L 855,30 L 845,40 Z"/>
+            <path class="outline" d="M 800,309 L 815,324 L 855,314 L 845,304 Z"/>
+
+            <!-- horizontal stabilizer -->
+            <path class="outline" d="M 830,138 L 895,100 L 925,108 L 870,155 Z" fill="#e6e0d0" fill-opacity=".5"/>
+            <path class="outline" d="M 830,206 L 895,244 L 925,236 L 870,189 Z" fill="#e6e0d0" fill-opacity=".5"/>
+
+            <!-- engines (top view shows nacelle disks forward of LE) -->
+            <!-- LEFT engine -->
+            <g>
+              <!-- pylon strap from wing LE forward -->
+              <path class="outline" d="M 530,103 L 536,95 L 548,93 L 546,113 Z" fill="#d4c7a3"/>
+              <!-- nacelle (top view = elongated oval) -->
+              <ellipse cx="470" cy="100" rx="70" ry="14" class="outline" fill="#e6e0d0"/>
+              <ellipse cx="405" cy="100" rx="6" ry="12" fill="#c4bfa8" stroke="#18202f" stroke-width="1"/>
+              <ellipse cx="405" cy="100" rx="3" ry="9" fill="#18202f" opacity=".5"/>
+              <text x="470" y="103" fill="#2a3548" font-size="9" text-anchor="middle">TRENT XWB #1</text>
+              <!-- bracket loc -->
+              <circle cx="540" cy="102" r="16" fill="url(#loc1)"/>
+              <circle cx="540" cy="102" r="2.5" class="loc-dot"/>
+              <circle cx="540" cy="102" r="6" class="loc-ring"/>
+            </g>
+            <!-- RIGHT engine (mirror) -->
+            <g>
+              <path class="outline" d="M 530,241 L 536,249 L 548,251 L 546,231 Z" fill="#d4c7a3"/>
+              <ellipse cx="470" cy="244" rx="70" ry="14" class="outline" fill="#e6e0d0"/>
+              <ellipse cx="405" cy="244" rx="6" ry="12" fill="#c4bfa8" stroke="#18202f" stroke-width="1"/>
+              <ellipse cx="405" cy="244" rx="3" ry="9" fill="#18202f" opacity=".5"/>
+              <text x="470" y="247" fill="#2a3548" font-size="9" text-anchor="middle">TRENT XWB #2</text>
+            </g>
+
+            <!-- centerline -->
+            <line x1="40" y1="172" x2="940" y2="172" class="center-line"/>
+
+            <!-- Section A-A indicator through pylon 1 -->
+            <g>
+              <line x1="540" y1="50" x2="540" y2="155" class="dim-line" stroke-dasharray="4,2"/>
+              <line x1="540" y1="50" x2="548" y2="46" class="dim-line"/>
+              <line x1="540" y1="50" x2="532" y2="46" class="dim-line"/>
+              <text x="545" y="45" class="leader-txt" font-size="12">A</text>
+              <line x1="540" y1="155" x2="548" y2="159" class="dim-line"/>
+              <line x1="540" y1="155" x2="532" y2="159" class="dim-line"/>
+              <text x="545" y="167" class="leader-txt" font-size="12">A</text>
+            </g>
+
+            <!-- Wingspan dim -->
+            <line x1="835" y1="25" x2="835" y2="319" class="dim-line"/>
+            <line x1="830" y1="25" x2="840" y2="25" class="dim-line"/>
+            <line x1="830" y1="319" x2="840" y2="319" class="dim-line"/>
+            <text x="846" y="172" class="dim-txt" transform="rotate(-90 846 172)" text-anchor="middle">ENVERGURE 64.75 m (212' 5")</text>
+
+            <!-- sweep angle indicator -->
+            <path class="dim-line" d="M 410,178 L 560,178"/>
+            <path class="leader" d="M 410,178 Q 460,168 510,150"/>
+            <text x="470" y="165" class="dim-txt" fill="#0a4d8c" font-weight="700">Λ = 31.9° (1/4 corde)</text>
+
+            <!-- Y coord of pylon -->
+            <line x1="540" y1="172" x2="540" y2="102" class="dim-line"/>
+            <text x="544" y="138" class="dim-txt">Y = +10.60 m</text>
+
+            <!-- Leader to bracket -->
+            <path class="leader" d="M 540,102 L 680,50 L 860,50"/>
+            <text x="865" y="48" class="leader-txt">REPÈRE A · STA 17400 · Y +10.60 m</text>
+          </svg>
+        </div>
+
+        <div class="title-block">
+          <div class="cell big">ix ENGINEERING<br/>A350-900 BRACKET PACK</div>
+          <div class="cell"><div class="k">PLANCHE</div><div class="v">02 / 04</div></div>
+          <div class="cell"><div class="k">ÉCHELLE</div><div class="v">1:400</div></div>
+          <div class="cell"><div class="k">FORMAT</div><div class="v">A3</div></div>
+          <div class="cell"><div class="k">DATE</div><div class="v">2026-04-12</div></div>
+          <div class="cell"><div class="k">RÉF</div><div class="v">ix-BR-A350-0412</div></div>
+          <div class="cell"><div class="k">RÉV</div><div class="v">A</div></div>
+          <div class="cell"><div class="k">UNITÉ</div><div class="v">mm</div></div>
+          <div class="cell"><div class="k">VISA</div><div class="v">— / —</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- VUE 3 : section pylone ---------- -->
+    <div class="sheet" style="margin-top:14px">
+      <div class="sheet-inner">
+        <div class="drawing-frame">
+          <div class="sheet-title">
+            <h2>PLANCHE 03 / 04 — COUPE A-A · PYLÔNE MOTEUR · ARCHITECTURE INTERNE</h2>
+            <div class="scale">ÉCHELLE <b>1:20</b></div>
+          </div>
+
+          <svg viewBox="0 0 960 420">
+            <!-- Wing lower surface (top of frame) -->
+            <path d="M 60,60 L 900,60 L 900,95 L 60,95 Z" fill="#e6e0d0" stroke="#18202f" stroke-width="1.2"/>
+            <rect x="60" y="60" width="840" height="35" class="hatch"/>
+            <text x="480" y="52" fill="#18202f" font-size="11" text-anchor="middle" font-weight="700">VOILURE — EXTRADOS COMPOSITE CFRP (sous-face)</text>
+
+            <!-- Pylon box -->
+            <path class="outline" d="
+              M 220,95
+              L 720,95
+              L 760,290
+              L 180,290
+              Z
+            " fill="#f0ead4"/>
+
+            <!-- Forward mount fitting (yoke + link) -->
+            <g>
+              <path class="outline" d="M 230,95 L 270,95 L 285,135 L 240,145 L 220,115 Z" fill="#d4c7a3"/>
+              <text x="250" y="115" font-size="8" text-anchor="middle" font-weight="700" fill="#18202f">FWD MOUNT</text>
+            </g>
+
+            <!-- Mid fitting -->
+            <g>
+              <path class="outline" d="M 450,95 L 500,95 L 505,140 L 450,142 Z" fill="#d4c7a3"/>
+              <text x="477" y="120" font-size="8" text-anchor="middle" font-weight="700" fill="#18202f">MID MOUNT</text>
+            </g>
+
+            <!-- Aft mount (thrust link) -->
+            <g>
+              <path class="outline" d="M 650,95 L 700,95 L 730,145 L 680,145 Z" fill="#d4c7a3"/>
+              <text x="680" y="120" font-size="8" text-anchor="middle" font-weight="700" fill="#18202f">AFT / THRUST</text>
+            </g>
+
+            <!-- Secondary structure box outline with dry bay -->
+            <path d="M 300,160 L 640,160 L 660,260 L 290,260 Z" fill="#faf5dd" stroke="#2a3548" stroke-width="0.8"/>
+            <text x="475" y="180" font-size="10" text-anchor="middle" fill="#2a3548">ZONE SÈCHE (dry bay) — cheminement accessoires</text>
+
+            <!-- Accessory lines inside the dry bay -->
+            <!-- Fuel HP -->
+            <rect x="310" y="200" width="340" height="8" fill="#d89c2c" stroke="#18202f" stroke-width="0.8" rx="2"/>
+            <text x="320" y="198" fill="#8a6d1f" font-size="9" font-weight="700">LIGNE CARBURANT HP — Ø16 mm · 60 bar</text>
+            <!-- Hydraulic yellow -->
+            <rect x="310" y="218" width="340" height="6" fill="#c7b647" stroke="#18202f" stroke-width="0.8" rx="2"/>
+            <text x="320" y="234" fill="#8a6d1f" font-size="9">HYDR. JAUNE · Ø12 mm · 350 bar</text>
+            <!-- FADEC harness -->
+            <rect x="310" y="242" width="340" height="5" fill="#2a3548" rx="1"/>
+            <text x="320" y="256" fill="#2a3548" font-size="9">FADEC harness (ARINC 429) + fire detection loop</text>
+
+            <!-- Bleed air duct (large) -->
+            <rect x="310" y="162" width="340" height="15" fill="#c4bfa8" stroke="#18202f" stroke-width="0.8" rx="3"/>
+            <text x="320" y="173" fill="#18202f" font-size="9">BLEED AIR Ø100 mm · 3 bar · 450°C</text>
+
+            <!-- BRACKET: the titanium accessory support (shown in section) -->
+            <g>
+              <!-- base flange bolted to bulkhead -->
+              <rect x="470" y="205" width="60" height="6" class="titanium-fill"/>
+              <!-- optimized web descending -->
+              <path d="M 475,211 L 475,225 Q 475,230 480,230 L 520,230 Q 525,230 525,225 L 525,211 Z" class="titanium-fill"/>
+              <!-- two optimization cutouts -->
+              <ellipse cx="487" cy="220" rx="3" ry="2" fill="#f0ead4"/>
+              <ellipse cx="513" cy="220" rx="3" ry="2" fill="#f0ead4"/>
+              <!-- clamp around fuel line -->
+              <circle cx="500" cy="204" r="6" fill="none" stroke="#18202f" stroke-width="1.5"/>
+              <!-- bolts -->
+              <circle cx="477" cy="208" r="1.2" fill="#2a3548"/>
+              <circle cx="492" cy="208" r="1.2" fill="#2a3548"/>
+              <circle cx="508" cy="208" r="1.2" fill="#2a3548"/>
+              <circle cx="523" cy="208" r="1.2" fill="#2a3548"/>
+            </g>
+            <!-- leader to bracket -->
+            <path class="leader" d="M 500,230 L 500,310 L 380,310 L 340,340"/>
+            <text x="140" y="348" class="leader-txt">REPÈRE A — SUPPORT ACCESSOIRE Ti-6Al-4V 412 g</text>
+            <text x="140" y="360" class="dim-txt">4 boulons HST10-6 M6 Ti · couple 8 N·m · collier Ø16</text>
+
+            <!-- Pylon aero fairing (lower) -->
+            <path class="outline" d="
+              M 180,290
+              L 760,290
+              L 790,340
+              Q 540,380 170,340 Z
+            " fill="#e6e0d0"/>
+            <rect x="180" y="290" width="580" height="50" class="hatch" opacity=".3"/>
+            <text x="480" y="325" fill="#18202f" font-size="10" text-anchor="middle">CARÉNAGE AÉRO (fairing aluminium)</text>
+
+            <!-- Nacelle attach interface (right edge) -->
+            <path class="outline" d="M 760,290 L 820,310 L 830,350 L 790,340 Z" fill="#d4c7a3"/>
+            <text x="793" y="330" fill="#18202f" font-size="8" text-anchor="middle">NACELLE I/F</text>
+
+            <!-- station dims -->
+            <line x1="220" y1="395" x2="760" y2="395" class="dim-line"/>
+            <line x1="220" y1="390" x2="220" y2="400" class="dim-line"/>
+            <line x1="760" y1="390" x2="760" y2="400" class="dim-line"/>
+            <text x="490" y="410" class="dim-txt" text-anchor="middle">LONGUEUR PYLÔNE ≈ 4.8 m (STA 15600 → STA 20400)</text>
+
+            <line x1="500" y1="95" x2="500" y2="200" class="center-line"/>
+          </svg>
+        </div>
+
+        <div class="title-block">
+          <div class="cell big">ix ENGINEERING<br/>A350-900 BRACKET PACK</div>
+          <div class="cell"><div class="k">PLANCHE</div><div class="v">03 / 04</div></div>
+          <div class="cell"><div class="k">ÉCHELLE</div><div class="v">1:20</div></div>
+          <div class="cell"><div class="k">FORMAT</div><div class="v">A3</div></div>
+          <div class="cell"><div class="k">DATE</div><div class="v">2026-04-12</div></div>
+          <div class="cell"><div class="k">RÉF</div><div class="v">ix-BR-A350-0412</div></div>
+          <div class="cell"><div class="k">RÉV</div><div class="v">A</div></div>
+          <div class="cell"><div class="k">UNITÉ</div><div class="v">mm</div></div>
+          <div class="cell"><div class="k">VISA</div><div class="v">— / —</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- VUE 4 : 3D render ---------- -->
+    <div class="sheet" style="margin-top:14px">
+      <div class="sheet-inner">
+        <div class="drawing-frame">
+          <div class="sheet-title">
+            <h2>PLANCHE 04 / 04 — DÉTAIL 3D · BRACKET Ti-6Al-4V SLM (rendu WebGPU + TSL)</h2>
+            <div class="scale">ÉCHELLE <b>2:1</b></div>
+          </div>
+
+          <div class="canvas3d-wrap" id="canvas3d">
+            <div class="fallback-note" id="fallback" style="display:none">
+              WebGPU non disponible — bascule WebGL classique.
+            </div>
+            <div class="cap"><b>REPÈRE A</b> · 412 g · Ti-6Al-4V · SLM · output pipeline ix 13 outils</div>
+          </div>
+        </div>
+
+        <div class="title-block">
+          <div class="cell big">ix ENGINEERING<br/>A350-900 BRACKET PACK</div>
+          <div class="cell"><div class="k">PLANCHE</div><div class="v">04 / 04</div></div>
+          <div class="cell"><div class="k">ÉCHELLE</div><div class="v">2:1</div></div>
+          <div class="cell"><div class="k">FORMAT</div><div class="v">A3</div></div>
+          <div class="cell"><div class="k">DATE</div><div class="v">2026-04-12</div></div>
+          <div class="cell"><div class="k">RÉF</div><div class="v">ix-BR-A350-0412</div></div>
+          <div class="cell"><div class="k">RÉV</div><div class="v">A</div></div>
+          <div class="cell"><div class="k">UNITÉ</div><div class="v">mm</div></div>
+          <div class="cell"><div class="k">VISA</div><div class="v">— / —</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================== SIDEBAR ============================== -->
+  <div class="sidebar">
+
+    <div class="card">
+      <h3>Aéronef</h3>
+      <div class="stat"><span class="k">Programme</span><span class="v">Airbus A350-900</span></div>
+      <div class="stat"><span class="k">Longueur HT</span><span class="v">66.80 m</span></div>
+      <div class="stat"><span class="k">Envergure</span><span class="v">64.75 m</span></div>
+      <div class="stat"><span class="k">Flèche 1/4 corde</span><span class="v">31.9°</span></div>
+      <div class="stat"><span class="k">MTOW</span><span class="v">283 t</span></div>
+      <div class="stat"><span class="k">Motorisation</span><span class="v">RR Trent XWB-84</span></div>
+      <div class="stat"><span class="k">Poussée SL</span><span class="v">374 kN / moteur</span></div>
+      <div class="cite">Source: Airbus A350 ACAP (Aircraft Characteristics Airport and Maintenance Planning), avril 2025.</div>
+    </div>
+
+    <div class="card">
+      <h3>Localisation</h3>
+      <div class="stat"><span class="k">Repère</span><span class="v accent">A</span></div>
+      <div class="stat"><span class="k">Station</span><span class="v">STA 17400</span></div>
+      <div class="stat"><span class="k">Y (axe avion)</span><span class="v">+10.60 m</span></div>
+      <div class="stat"><span class="k">Z (buttock)</span><span class="v">−1.85 m</span></div>
+      <div class="stat"><span class="k">Pylône</span><span class="v">PL1 (gauche)</span></div>
+      <div class="stat"><span class="k">Zone</span><span class="v">sèche, mid-bay</span></div>
+      <div class="stat"><span class="k">Fonction</span><span class="v">clamp ligne carburant HP</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Bracket — données FEA (pipeline ix)</h3>
+      <div class="stat"><span class="k">Masse</span><span class="v ok">412 g</span></div>
+      <div class="stat"><span class="k">Masse baseline</span><span class="v">665 g</span></div>
+      <div class="stat"><span class="k">Gain</span><span class="v ok">−38%</span></div>
+      <div class="stat"><span class="k">Dimensions</span><span class="v">60×40×25 mm</span></div>
+      <div class="stat"><span class="k">σ max (Von Mises)</span><span class="v">221 MPa</span></div>
+      <div class="stat"><span class="k">Ti-6Al-4V Rp0.2</span><span class="v">950 MPa</span></div>
+      <div class="stat"><span class="k">Facteur sécurité</span><span class="v ok">×1.47</span></div>
+      <div class="stat"><span class="k">1er mode propre</span><span class="v accent">112 Hz</span></div>
+      <div class="stat"><span class="k">H₀ / H₂ Betti</span><span class="v ok">1 / 0</span></div>
+      <div class="cite">13 outils ix chaînés: stats, fft, kmeans, linreg, rf, adam, ga, topo, chaos, nash, viterbi, markov, governance.</div>
+    </div>
+
+    <div class="card">
+      <h3>Certification applicable</h3>
+      <div class="stat"><span class="k">Règlement</span><span class="v">EASA CS-25</span></div>
+      <div class="stat"><span class="k">Qualité</span><span class="v">AS9100D rév. 2016</span></div>
+      <div class="stat"><span class="k">Logiciel</span><span class="v">DO-178C DAL-C</span></div>
+      <div class="stat"><span class="k">Environnement</span><span class="v">DO-160G</span></div>
+      <div class="stat"><span class="k">Vibration</span><span class="v">cat. U (zone moteur)</span></div>
+      <div class="stat"><span class="k">Feu</span><span class="v">AC 20-135 zone 3</span></div>
+      <div class="stat"><span class="k">Choc</span><span class="v">25 g / 11 ms</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Fabrication</h3>
+      <div class="stat"><span class="k">Procédé</span><span class="v">L-PBF (SLM)</span></div>
+      <div class="stat"><span class="k">Alliage</span><span class="v">Ti-6Al-4V Grade 23 ELI</span></div>
+      <div class="stat"><span class="k">Machine type</span><span class="v">EOS M290 / SLM 500</span></div>
+      <div class="stat"><span class="k">Épaisseur couche</span><span class="v">30 µm</span></div>
+      <div class="stat"><span class="k">HIP</span><span class="v">920°C / 100 MPa / 2h</span></div>
+      <div class="stat"><span class="k">Post-finition</span><span class="v">5 axes Ø2 mm</span></div>
+      <div class="cite">Précédent Airbus (2017): premier bracket titane ALM installé sur pylône A350 XWB en série. Source: airbus.com/newsroom 2017-09.</div>
+    </div>
+
+    <div class="card">
+      <h3>Fixation (NAS / HST)</h3>
+      <div class="stat"><span class="k">Boulons</span><span class="v">4 × HST10-6</span></div>
+      <div class="stat"><span class="k">Standard</span><span class="v">NAS6603 Ti M6</span></div>
+      <div class="stat"><span class="k">Rondelle</span><span class="v">NAS1149 C0663R</span></div>
+      <div class="stat"><span class="k">Écrou</span><span class="v">NAS1291 autofreinant</span></div>
+      <div class="stat"><span class="k">Couple serrage</span><span class="v">8.0 N·m ±5%</span></div>
+      <div class="stat"><span class="k">Frein filet</span><span class="v">Loctite 243</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Impact programme</h3>
+      <div class="stat"><span class="k">Gain par bracket</span><span class="v ok">−253 g</span></div>
+      <div class="stat"><span class="k">Brackets/avion</span><span class="v">~180 ref. éligibles</span></div>
+      <div class="stat"><span class="k">Gain/avion</span><span class="v ok">~46 kg</span></div>
+      <div class="stat"><span class="k">Économie carburant</span><span class="v ok">~3 t/an/avion</span></div>
+      <div class="stat"><span class="k">CO₂ évité</span><span class="v ok">~9.4 t/an/avion</span></div>
+      <div class="stat"><span class="k">Flotte A350 (Q1 2025)</span><span class="v">~620 appareils</span></div>
+      <div class="cite">Comparateur: cloison bionique A320 Airbus/Autodesk 2016 — 35 kg vs 65 kg baseline (−46%), ~465 000 t CO₂ évités/an sur le carnet. Source: Airbus newsroom 2016-03 "Pioneering bionic 3D printing".</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ========================= Three.js WebGPU + TSL ========================= -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.webgpu.js",
+    "three/tsl": "https://unpkg.com/three@0.170.0/build/three.tsl.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  color, mix, uv, vec3, positionLocal, sin, cos, normalLocal, dot,
+  mul, add, sub, float, smoothstep, length, fract
+} from 'three/tsl';
+
+const wrap = document.getElementById('canvas3d');
+const fallback = document.getElementById('fallback');
+
+let renderer;
+try {
+  renderer = new THREE.WebGPURenderer({ antialias: true, alpha: true });
+  await renderer.init();
+} catch (e) {
+  console.warn('WebGPU init failed, fallback:', e);
+  fallback.style.display = 'block';
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+}
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+renderer.setClearColor(0xf4f1e8, 1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+wrap.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf4f1e8);
+
+const camera = new THREE.PerspectiveCamera(32, wrap.clientWidth / wrap.clientHeight, 0.1, 1000);
+camera.position.set(95, 72, 110);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 12, 0);
+
+// -------- Lighting (studio key + fill + rim) --------
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const key = new THREE.DirectionalLight(0xffffff, 2.2);
+key.position.set(60, 80, 50);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xbfd6ff, 0.8);
+fill.position.set(-50, 30, 20);
+scene.add(fill);
+const rim = new THREE.DirectionalLight(0xfff2c8, 0.9);
+rim.position.set(-20, 40, -60);
+scene.add(rim);
+
+// -------- TSL titanium node material --------
+// Procedural anisotropic titanium: base gray + slight blue-warm tint variation
+// driven by world-space noise from position + subtle roughness modulation.
+function makeTitaniumNodeMaterial() {
+  // only available on webgpu renderer; for webgl we use MeshPhysicalMaterial
+  if (!THREE.MeshPhysicalNodeMaterial) {
+    return new THREE.MeshPhysicalMaterial({
+      color: 0xc4c2bb, metalness: 0.88, roughness: 0.34,
+      clearcoat: 0.15, clearcoatRoughness: 0.45
+    });
+  }
+  const mat = new THREE.MeshPhysicalNodeMaterial();
+
+  // TSL: modulate roughness via a simple procedural pattern on positionLocal
+  const p = positionLocal;
+  const ripple = sin(add(mul(p.x, float(0.6)), mul(p.y, float(0.9)))).mul(0.5).add(0.5);
+  const grain  = fract(mul(dot(p.xyz, vec3(3.11, 1.73, 2.29)), float(1.0)));
+
+  const baseCol = color(0xc8c6bd);
+  const warmCol = color(0xb0a890);
+  const coolCol = color(0xc9ccd8);
+
+  mat.colorNode = mix(warmCol, coolCol, ripple.mul(0.6).add(grain.mul(0.4)));
+  mat.metalnessNode = float(0.92);
+  mat.roughnessNode = add(float(0.28), mul(ripple, float(0.08))).add(mul(grain, float(0.05)));
+  mat.clearcoatNode = float(0.18);
+  mat.clearcoatRoughnessNode = float(0.4);
+  return mat;
+}
+
+const titanium = makeTitaniumNodeMaterial();
+
+// -------- Build bracket geometry (procedural) --------
+function buildBaseFlange() {
+  const shape = new THREE.Shape();
+  const w = 60, d = 40, r = 4;
+  shape.moveTo(-w/2 + r, -d/2);
+  shape.lineTo( w/2 - r, -d/2);
+  shape.quadraticCurveTo( w/2, -d/2,  w/2, -d/2 + r);
+  shape.lineTo( w/2,  d/2 - r);
+  shape.quadraticCurveTo( w/2,  d/2,  w/2 - r,  d/2);
+  shape.lineTo(-w/2 + r,  d/2);
+  shape.quadraticCurveTo(-w/2,  d/2, -w/2,  d/2 - r);
+  shape.lineTo(-w/2, -d/2 + r);
+  shape.quadraticCurveTo(-w/2, -d/2, -w/2 + r, -d/2);
+
+  [[-22,-14],[22,-14],[-22,14],[22,14]].forEach(([hx,hy]) => {
+    const h = new THREE.Path();
+    h.absarc(hx, hy, 3.2, 0, Math.PI*2, false);
+    shape.holes.push(h);
+  });
+  const relief = new THREE.Path();
+  relief.absellipse(0, 0, 10, 6, 0, Math.PI*2, false);
+  shape.holes.push(relief);
+
+  const g = new THREE.ExtrudeGeometry(shape, {
+    depth: 6, bevelEnabled:true, bevelThickness:0.4, bevelSize:0.4,
+    bevelSegments:4, curveSegments:48
+  });
+  g.rotateX(-Math.PI/2);
+  return g;
+}
+
+function buildWeb() {
+  const s = new THREE.Shape();
+  s.moveTo(-22, 0);
+  s.lineTo( 22, 0);
+  s.lineTo( 18, 19);
+  s.quadraticCurveTo(14, 22, 10, 22);
+  s.lineTo(-10, 22);
+  s.quadraticCurveTo(-14, 22, -18, 19);
+  s.lineTo(-22, 0);
+  const h1 = new THREE.Path(); h1.absellipse(-10, 10, 5, 4, 0, Math.PI*2, false);
+  const h2 = new THREE.Path(); h2.absellipse( 10, 10, 5, 4, 0, Math.PI*2, false);
+  s.holes.push(h1); s.holes.push(h2);
+  const g = new THREE.ExtrudeGeometry(s, {
+    depth:5, bevelEnabled:true, bevelThickness:0.3, bevelSize:0.3,
+    bevelSegments:3, curveSegments:48
+  });
+  g.translate(0, 0, -2.5);
+  g.translate(0, 5.5, 0);
+  return g;
+}
+
+const bracket = new THREE.Group();
+
+const base = new THREE.Mesh(buildBaseFlange(), titanium);
+bracket.add(base);
+
+const web1 = new THREE.Mesh(buildWeb(), titanium);
+web1.position.z = -3;
+bracket.add(web1);
+
+const web2 = new THREE.Mesh(buildWeb(), titanium);
+web2.position.z = 3;
+web2.rotation.y = Math.PI;
+bracket.add(web2);
+
+const rib = new THREE.Mesh(
+  new THREE.BoxGeometry(30, 3, 10).translate(0, 22, 0),
+  titanium
+);
+bracket.add(rib);
+
+const boss = new THREE.Mesh(
+  new THREE.CylinderGeometry(6, 6, 4, 48).translate(0, 27, 0),
+  titanium
+);
+bracket.add(boss);
+
+// clamp ring around a virtual Ø16 fuel line
+const clamp = new THREE.Mesh(
+  new THREE.TorusGeometry(8, 1.2, 16, 48),
+  titanium
+);
+clamp.position.set(0, 33, 0);
+clamp.rotation.x = Math.PI / 2;
+bracket.add(clamp);
+
+scene.add(bracket);
+
+// -------- Ground + grid for drawing context --------
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(600, 600),
+  new THREE.MeshStandardMaterial({ color: 0xe6e0d0, metalness: 0, roughness: 1 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -0.1;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(200, 40, 0x8a8270, 0xc4bca4);
+grid.position.y = 0.01;
+scene.add(grid);
+
+// -------- Section indicator (A-A) --------
+const fontLoader = null; // skip — draw section tag in SVG overlay via DOM if needed
+
+// -------- Resize --------
+window.addEventListener('resize', () => {
+  camera.aspect = wrap.clientWidth / wrap.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+});
+
+// -------- Animate --------
+async function animate() {
+  controls.update();
+  bracket.rotation.y += 0.0025;
+  await renderer.renderAsync(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
+</script>
+
+</body>
+</html>

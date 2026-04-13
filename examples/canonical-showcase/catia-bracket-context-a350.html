@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>ix · Bracket A350 — contexte avion</title>
+<style>
+  :root {
+    --bg:#04070e; --panel:#0c1423; --ink:#e8edf7; --muted:#7687a8;
+    --accent:#64d8ff; --warn:#ff5c6c; --ok:#7ae582; --line:#1a2642;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body {
+    font:13px/1.55 -apple-system,Segoe UI,Inter,sans-serif;
+    background:radial-gradient(ellipse 1400px 900px at 50% 0%, #0b1628 0%, var(--bg) 60%);
+    color:var(--ink); padding:20px; min-height:100vh;
+  }
+  header {
+    display:flex; justify-content:space-between; align-items:baseline;
+    border-bottom:1px solid var(--line); padding-bottom:14px; margin-bottom:18px;
+  }
+  h1 { font-size:22px; letter-spacing:-.5px }
+  h1 .logo { color:var(--accent) }
+  h1 .sep { color:var(--muted); margin:0 10px; font-weight:300 }
+  .sub { color:var(--muted); font-size:12px; margin-top:4px }
+
+  .layout { display:grid; grid-template-columns:1fr 320px; gap:18px }
+
+  .main { display:flex; flex-direction:column; gap:18px }
+  .view {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:16px; position:relative;
+  }
+  .view h2 {
+    font-size:10px; text-transform:uppercase; letter-spacing:1.2px;
+    color:var(--muted); font-weight:600; margin-bottom:12px;
+    display:flex; justify-content:space-between;
+  }
+  .view h2 .tag {
+    background:rgba(100,216,255,.1); color:var(--accent);
+    padding:2px 7px; border-radius:3px; font-size:9px; font-weight:700;
+  }
+  svg { display:block; width:100% }
+
+  .sidebar { display:flex; flex-direction:column; gap:14px }
+  .card {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px;
+  }
+  .card h2 {
+    font-size:10px; text-transform:uppercase; letter-spacing:1.2px;
+    color:var(--muted); font-weight:600; margin-bottom:10px;
+  }
+  .stat { display:flex; justify-content:space-between; padding:5px 0; font-size:12px; border-bottom:1px solid var(--line) }
+  .stat:last-child { border:none }
+  .stat .k { color:var(--muted) }
+  .stat .v { color:var(--ink); font-variant-numeric:tabular-nums; font-weight:600 }
+  .stat .v.ok { color:var(--ok) }
+  .stat .v.accent { color:var(--accent) }
+  .callout {
+    background:linear-gradient(135deg, rgba(100,216,255,.06), rgba(100,216,255,.02));
+    border:1px solid var(--accent); border-radius:8px; padding:12px 14px;
+  }
+  .callout .title { color:var(--accent); font-size:10px; font-weight:700;
+                    text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px }
+  .callout p { font-size:12px; line-height:1.6; color:var(--ink) }
+
+  .pulse {
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity:.4; r:8 }
+    50% { opacity:1; r:14 }
+  }
+  .dim { fill:var(--muted); font-size:10px }
+  .label-line { stroke:var(--accent); stroke-width:1; stroke-dasharray:3,3 }
+  .label-txt { fill:var(--accent); font-size:11px; font-weight:700 }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1><span class="logo">ix</span><span class="sep">·</span>Bracket A350 — contexte dans l'avion</h1>
+    <div class="sub">Support d'accessoire pylône moteur · côté gauche · Airbus A350-900 · Rolls-Royce Trent XWB-84</div>
+  </div>
+  <div style="text-align:right">
+    <div class="sub">412 g · Ti-6Al-4V SLM</div>
+    <div class="sub">Station Y = +17.4 m (axe avion)</div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <div class="main">
+
+    <!-- VUE 1 : A350 vue de dessus -->
+    <div class="view">
+      <h2>Vue de dessus — Airbus A350-900 <span class="tag">échelle 1:400</span></h2>
+      <svg viewBox="0 0 900 260" id="top-view">
+        <defs>
+          <radialGradient id="locGlow" cx="50%" cy="50%">
+            <stop offset="0%" stop-color="#ff5c6c" stop-opacity="1"/>
+            <stop offset="100%" stop-color="#ff5c6c" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+
+        <!-- Fuselage -->
+        <ellipse cx="450" cy="130" rx="360" ry="22" fill="#1a2642" stroke="#64d8ff" stroke-width="1"/>
+        <!-- Nose -->
+        <path d="M 90 130 Q 70 130 60 125 Q 55 130 60 135 Q 70 130 90 130 Z" fill="#1a2642" stroke="#64d8ff" stroke-width="1"/>
+        <!-- Tail cone -->
+        <path d="M 810 130 Q 840 130 855 127 Q 860 130 855 133 Q 840 130 810 130 Z" fill="#1a2642" stroke="#64d8ff" stroke-width="1"/>
+
+        <!-- Wings (swept back) -->
+        <path d="M 380 120 L 720 35 L 770 40 L 490 130 Z" fill="#0f1a2e" stroke="#64d8ff" stroke-width="1"/>
+        <path d="M 380 140 L 720 225 L 770 220 L 490 130 Z" fill="#0f1a2e" stroke="#64d8ff" stroke-width="1"/>
+
+        <!-- Horizontal stabilizer -->
+        <path d="M 790 110 L 870 80 L 880 88 L 820 125 Z" fill="#0f1a2e" stroke="#64d8ff" stroke-width="1"/>
+        <path d="M 790 150 L 870 180 L 880 172 L 820 135 Z" fill="#0f1a2e" stroke="#64d8ff" stroke-width="1"/>
+
+        <!-- Engines (pylons + nacelles) -->
+        <!-- Left engine + pylon -->
+        <rect x="535" y="90" width="12" height="18" fill="#2a3554" stroke="#64d8ff" stroke-width="1"/>
+        <ellipse cx="541" cy="78" rx="18" ry="12" fill="#1e2a45" stroke="#64d8ff" stroke-width="1.5"/>
+        <text x="541" y="82" fill="#7687a8" font-size="9" text-anchor="middle">RR Trent</text>
+
+        <!-- Right engine + pylon -->
+        <rect x="535" y="152" width="12" height="18" fill="#2a3554" stroke="#64d8ff" stroke-width="1"/>
+        <ellipse cx="541" cy="182" rx="18" ry="12" fill="#1e2a45" stroke="#64d8ff" stroke-width="1.5"/>
+        <text x="541" y="186" fill="#7687a8" font-size="9" text-anchor="middle">RR Trent</text>
+
+        <!-- Location highlight on LEFT engine pylon -->
+        <circle cx="541" cy="96" r="18" fill="url(#locGlow)"/>
+        <circle cx="541" cy="96" r="4" fill="#ff5c6c" stroke="#fff" stroke-width="1"/>
+        <circle cx="541" cy="96" r="8" fill="none" stroke="#ff5c6c" stroke-width="1" class="pulse"/>
+
+        <!-- Label leader -->
+        <line x1="541" y1="96" x2="620" y2="50" class="label-line"/>
+        <line x1="620" y1="50" x2="730" y2="50" class="label-line"/>
+        <text x="735" y="46" class="label-txt">BRACKET — support accessoire pylône</text>
+        <text x="735" y="58" fill="#7687a8" font-size="10">station Y +17.4 m · zone sèche pylône gauche</text>
+
+        <!-- Dimensions -->
+        <line x1="60" y1="220" x2="855" y2="220" stroke="#7687a8" stroke-width="0.5"/>
+        <line x1="60" y1="215" x2="60" y2="225" stroke="#7687a8" stroke-width="0.5"/>
+        <line x1="855" y1="215" x2="855" y2="225" stroke="#7687a8" stroke-width="0.5"/>
+        <text x="450" y="235" class="dim" text-anchor="middle">66.80 m (longueur hors-tout)</text>
+
+        <line x1="770" y1="35" x2="770" y2="225" stroke="#7687a8" stroke-width="0.5"/>
+        <line x1="765" y1="35" x2="775" y2="35" stroke="#7687a8" stroke-width="0.5"/>
+        <line x1="765" y1="225" x2="775" y2="225" stroke="#7687a8" stroke-width="0.5"/>
+        <text x="782" y="130" class="dim">64.75 m (envergure)</text>
+
+        <!-- Legend axes -->
+        <text x="20" y="130" class="dim">← Y</text>
+        <text x="450" y="15" class="dim" text-anchor="middle">axe avion ↑</text>
+      </svg>
+    </div>
+
+    <!-- VUE 2 : zoom pylône -->
+    <div class="view">
+      <h2>Zoom pylône moteur gauche — coupe longitudinale <span class="tag">échelle 1:25</span></h2>
+      <svg viewBox="0 0 900 360" id="pylon-zoom">
+        <!-- Wing section (underside) -->
+        <path d="M 100 80 Q 450 70 800 80 L 800 120 Q 450 110 100 120 Z" fill="#1a2642" stroke="#64d8ff" stroke-width="1.2"/>
+        <text x="450" y="100" fill="#7687a8" font-size="11" text-anchor="middle">extrados aile (sous-face)</text>
+
+        <!-- Pylon structure -->
+        <path d="M 350 115 L 620 115 L 600 220 L 370 220 Z" fill="#0f1a2e" stroke="#64d8ff" stroke-width="1.5"/>
+        <text x="485" y="165" fill="#7687a8" font-size="11" text-anchor="middle">PYLÔNE MOTEUR</text>
+        <text x="485" y="180" fill="#7687a8" font-size="9" text-anchor="middle">(structure primaire Ti + composite)</text>
+
+        <!-- Inner pylon bay (dry bay with accessories) -->
+        <rect x="400" y="135" width="180" height="70" fill="#050a14" stroke="#2a3554" stroke-width="0.8" stroke-dasharray="3,3"/>
+        <text x="490" y="155" fill="#5a6b8e" font-size="9" text-anchor="middle">zone sèche / cheminement</text>
+        <text x="490" y="167" fill="#5a6b8e" font-size="9" text-anchor="middle">hydraulique + carburant + FADEC</text>
+
+        <!-- Accessory lines inside -->
+        <line x1="410" y1="185" x2="575" y2="185" stroke="#ffcd3c" stroke-width="1.5"/>
+        <line x1="410" y1="195" x2="575" y2="195" stroke="#64d8ff" stroke-width="1.5"/>
+        <text x="495" y="183" fill="#ffcd3c" font-size="8" text-anchor="middle">ligne carburant HP</text>
+        <text x="495" y="205" fill="#64d8ff" font-size="8" text-anchor="middle">circuit hydraulique jaune</text>
+
+        <!-- Engine fan + nacelle -->
+        <ellipse cx="720" cy="215" rx="80" ry="65" fill="#1e2a45" stroke="#64d8ff" stroke-width="1.5"/>
+        <circle cx="720" cy="215" r="45" fill="#0a1020" stroke="#64d8ff" stroke-width="1"/>
+        <!-- Fan blades indication -->
+        <g stroke="#2a3554" stroke-width="1">
+          <line x1="720" y1="170" x2="720" y2="260"/>
+          <line x1="675" y1="215" x2="765" y2="215"/>
+          <line x1="688" y1="183" x2="752" y2="247"/>
+          <line x1="752" y1="183" x2="688" y2="247"/>
+        </g>
+        <text x="720" y="219" fill="#7687a8" font-size="9" text-anchor="middle">Trent XWB</text>
+        <text x="720" y="305" fill="#7687a8" font-size="11" text-anchor="middle">MOTEUR</text>
+
+        <!-- Bracket location -->
+        <g>
+          <circle cx="485" cy="190" r="16" fill="url(#locGlow2)"/>
+          <rect x="478" y="183" width="14" height="14" fill="#ff5c6c" stroke="#fff" stroke-width="1.2" rx="1"/>
+          <circle cx="485" cy="190" r="22" fill="none" stroke="#ff5c6c" stroke-width="1" class="pulse"/>
+        </g>
+
+        <defs>
+          <radialGradient id="locGlow2" cx="50%" cy="50%">
+            <stop offset="0%" stop-color="#ff5c6c" stop-opacity=".8"/>
+            <stop offset="100%" stop-color="#ff5c6c" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+
+        <!-- Label -->
+        <line x1="485" y1="190" x2="485" y2="280" class="label-line"/>
+        <line x1="485" y1="280" x2="250" y2="280" class="label-line"/>
+        <line x1="250" y1="280" x2="150" y2="320" class="label-line"/>
+        <text x="150" y="335" class="label-txt">Bracket 412g — support hydraulique/carburant</text>
+        <text x="150" y="348" fill="#7687a8" font-size="9">fixe les lignes sur la cloison interne du pylône</text>
+
+        <!-- Avion nose direction -->
+        <path d="M 60 50 L 90 50 L 85 45 M 90 50 L 85 55" fill="none" stroke="#7687a8" stroke-width="1"/>
+        <text x="75" y="42" fill="#7687a8" font-size="10" text-anchor="middle">avant avion</text>
+      </svg>
+    </div>
+
+    <!-- VUE 3 : le bracket isolé -->
+    <div class="view">
+      <h2>Détail — le bracket dans son environnement immédiat <span class="tag">échelle 1:2</span></h2>
+      <svg viewBox="0 0 900 240" id="bracket-detail">
+        <!-- Pylon internal wall -->
+        <rect x="50" y="60" width="800" height="12" fill="#2a3554" stroke="#64d8ff" stroke-width="1"/>
+        <text x="80" y="55" fill="#7687a8" font-size="10">cloison pylône (composite CFRP)</text>
+
+        <!-- Second wall -->
+        <rect x="50" y="170" width="800" height="12" fill="#2a3554" stroke="#64d8ff" stroke-width="1"/>
+        <text x="80" y="200" fill="#7687a8" font-size="10">cloison opposée</text>
+
+        <!-- Bolt holes in upper wall for bracket -->
+        <circle cx="390" cy="66" r="2" fill="#050a14" stroke="#64d8ff" stroke-width="0.5"/>
+        <circle cx="415" cy="66" r="2" fill="#050a14" stroke="#64d8ff" stroke-width="0.5"/>
+        <circle cx="490" cy="66" r="2" fill="#050a14" stroke="#64d8ff" stroke-width="0.5"/>
+        <circle cx="515" cy="66" r="2" fill="#050a14" stroke="#64d8ff" stroke-width="0.5"/>
+
+        <!-- BRACKET (stylized side view) -->
+        <g>
+          <!-- Base flange -->
+          <rect x="380" y="72" width="140" height="10" fill="#c8cdd5" stroke="#7687a8" stroke-width="1" rx="1"/>
+          <!-- Web -->
+          <path d="M 395 82 L 395 120 Q 395 128 405 128 L 495 128 Q 505 128 505 120 L 505 82 Z"
+                fill="#c8cdd5" stroke="#7687a8" stroke-width="1"/>
+          <!-- Optimization holes -->
+          <ellipse cx="425" cy="105" rx="8" ry="6" fill="#0c1423"/>
+          <ellipse cx="475" cy="105" rx="8" ry="6" fill="#0c1423"/>
+          <!-- Top boss (holds the lines) -->
+          <rect x="430" y="128" width="40" height="8" fill="#c8cdd5" stroke="#7687a8" stroke-width="1" rx="2"/>
+          <circle cx="450" cy="145" r="10" fill="none" stroke="#c8cdd5" stroke-width="3"/>
+          <!-- Bolts -->
+          <circle cx="390" cy="77" r="2" fill="#7687a8"/>
+          <circle cx="415" cy="77" r="2" fill="#7687a8"/>
+          <circle cx="490" cy="77" r="2" fill="#7687a8"/>
+          <circle cx="515" cy="77" r="2" fill="#7687a8"/>
+        </g>
+
+        <!-- Fuel line passing through the bracket clamp -->
+        <rect x="60" y="143" width="800" height="8" fill="#ffcd3c" stroke="#c8a028" stroke-width="1" rx="4"/>
+        <text x="80" y="138" fill="#ffcd3c" font-size="10">ligne carburant Ø 16 mm · pression 60 bar</text>
+
+        <!-- Clamp around the line -->
+        <circle cx="450" cy="147" r="7" fill="none" stroke="#c8cdd5" stroke-width="2"/>
+
+        <!-- Dimensions -->
+        <line x1="380" y1="220" x2="520" y2="220" stroke="#7687a8" stroke-width="0.5"/>
+        <line x1="380" y1="215" x2="380" y2="225" stroke="#7687a8" stroke-width="0.5"/>
+        <line x1="520" y1="215" x2="520" y2="225" stroke="#7687a8" stroke-width="0.5"/>
+        <text x="450" y="214" class="dim" text-anchor="middle">60 mm</text>
+
+        <!-- Labels -->
+        <text x="555" y="105" class="label-txt">Bracket optimisé 412 g</text>
+        <text x="555" y="118" fill="#7687a8" font-size="9">4 boulons M6 Ti · couple 8 N·m</text>
+        <text x="555" y="130" fill="#7687a8" font-size="9">collier Ø 16 mm pour ligne HP carburant</text>
+      </svg>
+    </div>
+
+  </div>
+
+  <div class="sidebar">
+
+    <div class="callout">
+      <div class="title">◉ Localisation précise</div>
+      <p>
+        Pylône moteur gauche (engine 1) de l'A350-900,<br/>
+        <b>station Y ≈ +17.4 m</b> (origine nez avion),<br/>
+        zone sèche interne, côté intrados.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Fonction</h2>
+      <div class="stat"><span class="k">Rôle</span><span class="v accent">support d'accessoire</span></div>
+      <div class="stat"><span class="k">Type</span><span class="v">clamp hydraulique/fuel</span></div>
+      <div class="stat"><span class="k">Charge statique</span><span class="v">≤ 220 N</span></div>
+      <div class="stat"><span class="k">Charge dynamique</span><span class="v">±180 N @ 20 Hz</span></div>
+      <div class="stat"><span class="k">Température</span><span class="v">−55 °C à +160 °C</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Environnement</h2>
+      <div class="stat"><span class="k">Zone</span><span class="v">sèche pylône</span></div>
+      <div class="stat"><span class="k">Atmosphère</span><span class="v">air ventilé</span></div>
+      <div class="stat"><span class="k">Vibration</span><span class="v">RTCA DO-160G cat. U</span></div>
+      <div class="stat"><span class="k">Choc</span><span class="v">25g / 11 ms</span></div>
+      <div class="stat"><span class="k">Feu</span><span class="v">AC 20-135 zone 3</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Criticité</h2>
+      <div class="stat"><span class="k">Niveau DAL</span><span class="v accent">DAL-C</span></div>
+      <div class="stat"><span class="k">Effet défaillance</span><span class="v">MMEL minor</span></div>
+      <div class="stat"><span class="k">MTBF requis</span><span class="v">&gt; 50 000 h</span></div>
+      <div class="stat"><span class="k">Inspection</span><span class="v">C-check (20 mois)</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Gain programme</h2>
+      <div class="stat"><span class="k">Par bracket</span><span class="v ok">−253 g</span></div>
+      <div class="stat"><span class="k">Brackets/avion</span><span class="v">~180 unités</span></div>
+      <div class="stat"><span class="k">Gain/avion</span><span class="v ok">~46 kg</span></div>
+      <div class="stat"><span class="k">Économie carburant</span><span class="v ok">~3 t/an/avion</span></div>
+      <div class="stat"><span class="k">Flotte A350 (2026)</span><span class="v">~620 appareils</span></div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

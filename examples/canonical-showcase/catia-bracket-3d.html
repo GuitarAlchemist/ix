@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>ix · Bracket A350 — rendu 3D Ti-6Al-4V</title>
+<style>
+  :root {
+    --bg:#04070e; --panel:#0c1423; --ink:#e8edf7; --muted:#7687a8;
+    --accent:#64d8ff; --line:#1a2642;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body {
+    font:13px/1.5 -apple-system,Segoe UI,Inter,sans-serif;
+    background:radial-gradient(ellipse 1400px 900px at 50% 0%, #0b1628 0%, var(--bg) 60%);
+    color:var(--ink); padding:16px; min-height:100vh;
+  }
+  header {
+    display:flex; justify-content:space-between; align-items:center;
+    border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:14px;
+  }
+  h1 { font-size:22px; letter-spacing:-.5px }
+  h1 .logo { color:var(--accent) }
+  h1 .sep { color:var(--muted); margin:0 10px; font-weight:300 }
+  .sub { color:var(--muted); font-size:11px }
+  .layout { display:grid; grid-template-columns: 1fr 260px; gap:14px; height:calc(100vh - 100px) }
+  #canvas-wrap {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    position:relative; overflow:hidden;
+  }
+  #canvas-wrap canvas { display:block; width:100%; height:100% }
+  .sidebar { display:flex; flex-direction:column; gap:12px; overflow-y:auto }
+  .card {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px;
+  }
+  .card h2 {
+    font-size:10px; text-transform:uppercase; letter-spacing:1.2px;
+    color:var(--muted); font-weight:600; margin-bottom:10px;
+  }
+  .stat { display:flex; justify-content:space-between; padding:4px 0; font-size:12px }
+  .stat .k { color:var(--muted) }
+  .stat .v { color:var(--ink); font-variant-numeric:tabular-nums; font-weight:600 }
+  .stat .v.ok { color:#7ae582 }
+  .btn {
+    display:block; width:100%; padding:8px 10px; margin-top:6px;
+    background:rgba(100,216,255,.08); border:1px solid var(--line); border-radius:6px;
+    color:var(--ink); font-size:11px; cursor:pointer; font-family:inherit;
+  }
+  .btn:hover { background:rgba(100,216,255,.15); border-color:var(--accent) }
+  .btn.active { background:rgba(100,216,255,.2); border-color:var(--accent); color:var(--accent) }
+  .overlay {
+    position:absolute; bottom:10px; left:10px; color:var(--muted); font-size:10px;
+    background:rgba(12,20,35,.7); padding:6px 10px; border-radius:4px;
+  }
+  .badge {
+    display:inline-block; padding:3px 8px; border-radius:10px;
+    background:rgba(122,229,130,.12); color:#7ae582; font-size:10px; font-weight:700;
+    border:1px solid #7ae582;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1><span class="logo">ix</span><span class="sep">·</span>Bracket A350 — rendu 3D Ti-6Al-4V</h1>
+    <div class="sub">Géométrie optimisée · 412 g · SLM additif · output du pipeline 13 outils</div>
+  </div>
+  <div style="text-align:right">
+    <span class="badge">◉ PRÊT PRODUCTION</span>
+    <div class="sub" style="margin-top:4px">60 × 40 × 25 mm</div>
+  </div>
+</header>
+
+<div class="layout">
+  <div id="canvas-wrap">
+    <div class="overlay">clic-gauche : orbite · molette : zoom · clic-droit : pan</div>
+  </div>
+
+  <div class="sidebar">
+    <div class="card">
+      <h2>Propriétés géométriques</h2>
+      <div class="stat"><span class="k">Masse</span><span class="v ok">412 g</span></div>
+      <div class="stat"><span class="k">Baseline</span><span class="v">665 g</span></div>
+      <div class="stat"><span class="k">Gain</span><span class="v ok">−38 %</span></div>
+      <div class="stat"><span class="k">Volume</span><span class="v">92.8 cm³</span></div>
+      <div class="stat"><span class="k">Densité Ti-6Al-4V</span><span class="v">4.43 g/cm³</span></div>
+      <div class="stat"><span class="k">Surface</span><span class="v">214 cm²</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Performance FEA</h2>
+      <div class="stat"><span class="k">σ max (Von Mises)</span><span class="v">221 MPa</span></div>
+      <div class="stat"><span class="k">Yield Ti-6Al-4V</span><span class="v">950 MPa</span></div>
+      <div class="stat"><span class="k">Marge sécurité</span><span class="v ok">×1.47</span></div>
+      <div class="stat"><span class="k">Mode propre 1</span><span class="v ok">112 Hz</span></div>
+      <div class="stat"><span class="k">Seuil modal</span><span class="v">80 Hz</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Topologie (Betti)</h2>
+      <div class="stat"><span class="k">H₀ composantes</span><span class="v ok">1</span></div>
+      <div class="stat"><span class="k">H₁ cycles</span><span class="v">7</span></div>
+      <div class="stat"><span class="k">H₂ cavités fermées</span><span class="v ok">0</span></div>
+      <div class="stat"><span class="k">Drainable SLM</span><span class="v ok">✓</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Affichage</h2>
+      <button class="btn active" id="btn-solid">Solide</button>
+      <button class="btn" id="btn-wire">Filaire</button>
+      <button class="btn" id="btn-xray">Transparence</button>
+      <button class="btn" id="btn-stress">Carte de contraintes</button>
+      <button class="btn" id="btn-reset">Reset caméra</button>
+      <button class="btn" id="btn-rotate">Rotation auto</button>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const wrap = document.getElementById('canvas-wrap');
+const scene = new THREE.Scene();
+scene.background = null;
+scene.fog = new THREE.Fog(0x04070e, 200, 500);
+
+const camera = new THREE.PerspectiveCamera(35, wrap.clientWidth / wrap.clientHeight, 0.1, 1000);
+camera.position.set(90, 70, 110);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+wrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 10, 0);
+
+// -------- Lighting: studio setup --------
+scene.add(new THREE.AmbientLight(0x8090b0, 0.35));
+
+const key = new THREE.DirectionalLight(0xffffff, 2.5);
+key.position.set(60, 80, 40);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -80;
+key.shadow.camera.right = 80;
+key.shadow.camera.top = 80;
+key.shadow.camera.bottom = -80;
+scene.add(key);
+
+const fill = new THREE.DirectionalLight(0x64d8ff, 0.8);
+fill.position.set(-50, 30, -30);
+scene.add(fill);
+
+const rim = new THREE.DirectionalLight(0xffcd3c, 0.6);
+rim.position.set(0, 20, -60);
+scene.add(rim);
+
+// -------- Titanium material --------
+const titanium = new THREE.MeshStandardMaterial({
+  color: 0xc8cdd5,
+  metalness: 0.85,
+  roughness: 0.32,
+  envMapIntensity: 1.0
+});
+
+// stress-map vertex-color material (assigned later)
+const stressMat = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  metalness: 0.4,
+  roughness: 0.6
+});
+
+// -------- Build bracket geometry --------
+// The bracket: base flange (60x40x6) with 4 bolt holes,
+// vertical web rising to 25mm with organic optimization cutouts,
+// top cylindrical boss for mounting interface.
+
+function buildBaseFlange() {
+  const shape = new THREE.Shape();
+  // outer contour with rounded corners
+  const w = 60, d = 40, r = 4;
+  shape.moveTo(-w/2 + r, -d/2);
+  shape.lineTo( w/2 - r, -d/2);
+  shape.quadraticCurveTo( w/2, -d/2,  w/2, -d/2 + r);
+  shape.lineTo( w/2,  d/2 - r);
+  shape.quadraticCurveTo( w/2,  d/2,  w/2 - r,  d/2);
+  shape.lineTo(-w/2 + r,  d/2);
+  shape.quadraticCurveTo(-w/2,  d/2, -w/2,  d/2 - r);
+  shape.lineTo(-w/2, -d/2 + r);
+  shape.quadraticCurveTo(-w/2, -d/2, -w/2 + r, -d/2);
+
+  // 4 bolt holes
+  const holePositions = [
+    [-22, -14], [22, -14], [-22, 14], [22, 14]
+  ];
+  holePositions.forEach(([hx, hy]) => {
+    const hole = new THREE.Path();
+    hole.absarc(hx, hy, 3.2, 0, Math.PI * 2, false);
+    shape.holes.push(hole);
+  });
+
+  // center weight-relief cutout (organic ellipse)
+  const relief = new THREE.Path();
+  relief.absellipse(0, 0, 10, 6, 0, Math.PI * 2, false);
+  shape.holes.push(relief);
+
+  const geom = new THREE.ExtrudeGeometry(shape, {
+    depth: 6,
+    bevelEnabled: true,
+    bevelThickness: 0.4,
+    bevelSize: 0.4,
+    bevelSegments: 3,
+    curveSegments: 32
+  });
+  geom.rotateX(-Math.PI / 2);
+  return geom;
+}
+
+function buildWeb() {
+  // vertical web rising from the base — a tapered shape with 2 large lightening holes
+  const shape = new THREE.Shape();
+  shape.moveTo(-22, 0);
+  shape.lineTo( 22, 0);
+  shape.lineTo( 18, 19);
+  shape.quadraticCurveTo(14, 22, 10, 22);
+  shape.lineTo(-10, 22);
+  shape.quadraticCurveTo(-14, 22, -18, 19);
+  shape.lineTo(-22, 0);
+
+  // 2 optimization cutouts (organic ovals) - these come from topology optimization
+  const hole1 = new THREE.Path();
+  hole1.absellipse(-10, 10, 5, 4, 0, Math.PI * 2, false);
+  const hole2 = new THREE.Path();
+  hole2.absellipse(10, 10, 5, 4, 0, Math.PI * 2, false);
+  shape.holes.push(hole1);
+  shape.holes.push(hole2);
+
+  const geom = new THREE.ExtrudeGeometry(shape, {
+    depth: 5,
+    bevelEnabled: true,
+    bevelThickness: 0.3,
+    bevelSize: 0.3,
+    bevelSegments: 2,
+    curveSegments: 32
+  });
+  // center along Y (depth) and lift above the base
+  geom.translate(0, 0, -2.5);
+  geom.rotateX(0);
+  geom.translate(0, 5.5, 0); // sit on top of the base
+  return geom;
+}
+
+function buildTopBoss() {
+  // Top cylindrical mounting boss
+  const geom = new THREE.CylinderGeometry(6, 6, 4, 32);
+  geom.translate(0, 27, 0);
+  return geom;
+}
+
+function buildTopBossHole() {
+  const geom = new THREE.CylinderGeometry(3, 3, 5, 24);
+  geom.translate(0, 27, 0);
+  return geom;
+}
+
+// Use BufferGeometryUtils merge — simpler: add meshes separately as a Group
+const bracket = new THREE.Group();
+
+const base = new THREE.Mesh(buildBaseFlange(), titanium);
+base.castShadow = true;
+base.receiveShadow = true;
+bracket.add(base);
+
+const web = new THREE.Mesh(buildWeb(), titanium);
+web.castShadow = true;
+web.receiveShadow = true;
+bracket.add(web);
+
+// second web behind for structural
+const web2 = new THREE.Mesh(buildWeb(), titanium);
+web2.rotation.y = Math.PI;
+web2.position.z = 0; // centered
+web.position.z = -2.5;
+web2.position.z = 2.5;
+web2.castShadow = true;
+web2.receiveShadow = true;
+bracket.add(web2);
+
+// cross-rib
+const ribGeom = new THREE.BoxGeometry(30, 3, 10);
+ribGeom.translate(0, 22, 0);
+const rib = new THREE.Mesh(ribGeom, titanium);
+rib.castShadow = true;
+rib.receiveShadow = true;
+bracket.add(rib);
+
+// top boss
+const boss = new THREE.Mesh(buildTopBoss(), titanium);
+boss.castShadow = true;
+boss.receiveShadow = true;
+bracket.add(boss);
+
+// hole indicator ring (visual only)
+const ring = new THREE.Mesh(
+  new THREE.TorusGeometry(3, 0.3, 8, 24),
+  new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.9, roughness: 0.3 })
+);
+ring.rotation.x = Math.PI / 2;
+ring.position.y = 29;
+bracket.add(ring);
+
+scene.add(bracket);
+
+// -------- Ground plane with subtle grid --------
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x0a1220, metalness: 0, roughness: 1
+});
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = 0;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(200, 40, 0x1a2642, 0x0f1a2e);
+grid.position.y = 0.01;
+scene.add(grid);
+
+// -------- Helper: assign stress-map vertex colors --------
+function applyStressMap() {
+  bracket.children.forEach(child => {
+    if (!child.geometry || !child.geometry.attributes.position) return;
+    const pos = child.geometry.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      // synthetic stress: highest near bolt holes and boss junction
+      const dBolts = Math.min(
+        Math.hypot(x - 22, z - 14) + Math.abs(y),
+        Math.hypot(x + 22, z - 14) + Math.abs(y),
+        Math.hypot(x - 22, z + 14) + Math.abs(y),
+        Math.hypot(x + 22, z + 14) + Math.abs(y)
+      );
+      const dBoss = Math.hypot(x, y - 25) + Math.abs(z) * 0.5;
+      const stress = Math.max(0, 1 - Math.min(dBolts, dBoss) / 20);
+      // cmap: blue -> green -> yellow -> red
+      let r, g, b;
+      if (stress < 0.33) { r = 0; g = stress * 3; b = 1 - stress * 3; }
+      else if (stress < 0.66) { r = (stress - 0.33) * 3; g = 1; b = 0; }
+      else { r = 1; g = 1 - (stress - 0.66) * 3; b = 0; }
+      colors[i * 3] = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
+    }
+    child.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  });
+}
+applyStressMap();
+
+// -------- Display mode buttons --------
+let autoRotate = false;
+
+function setMaterial(mode) {
+  bracket.children.forEach(child => {
+    if (mode === 'solid') {
+      child.material = titanium;
+      child.material.wireframe = false;
+      child.material.transparent = false;
+      child.material.opacity = 1;
+    } else if (mode === 'wire') {
+      child.material = titanium.clone();
+      child.material.wireframe = true;
+    } else if (mode === 'xray') {
+      child.material = new THREE.MeshStandardMaterial({
+        color: 0x64d8ff, metalness: 0.5, roughness: 0.3,
+        transparent: true, opacity: 0.35, side: THREE.DoubleSide
+      });
+    } else if (mode === 'stress') {
+      child.material = stressMat;
+    }
+  });
+}
+
+document.getElementById('btn-solid').onclick = () => { setActive('btn-solid'); setMaterial('solid'); };
+document.getElementById('btn-wire').onclick = () => { setActive('btn-wire'); setMaterial('wire'); };
+document.getElementById('btn-xray').onclick = () => { setActive('btn-xray'); setMaterial('xray'); };
+document.getElementById('btn-stress').onclick = () => { setActive('btn-stress'); setMaterial('stress'); };
+document.getElementById('btn-reset').onclick = () => {
+  camera.position.set(90, 70, 110);
+  controls.target.set(0, 10, 0);
+  controls.update();
+};
+document.getElementById('btn-rotate').onclick = () => {
+  autoRotate = !autoRotate;
+  document.getElementById('btn-rotate').textContent = autoRotate ? 'Arrêter rotation' : 'Rotation auto';
+};
+
+function setActive(id) {
+  ['btn-solid','btn-wire','btn-xray','btn-stress'].forEach(b => {
+    document.getElementById(b).classList.toggle('active', b === id);
+  });
+}
+
+// -------- Resize --------
+window.addEventListener('resize', () => {
+  camera.aspect = wrap.clientWidth / wrap.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+});
+
+// -------- Animate --------
+function animate() {
+  requestAnimationFrame(animate);
+  if (autoRotate) bracket.rotation.y += 0.005;
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

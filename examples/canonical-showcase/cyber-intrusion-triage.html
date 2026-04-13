@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>ix · Triage Autonome d'Intrusion Cyber</title>
+<style>
+  :root {
+    --bg:#05080f; --panel:#0f1626; --ink:#e6ecff; --muted:#7a8aa8;
+    --accent:#64ffda; --warn:#ff5c6c; --ok:#7ae582; --info:#ffb347;
+    --line:#1e2a47; --glow:0 0 20px rgba(100,255,218,.15);
+  }
+  * { box-sizing:border-box }
+  body {
+    margin:0; font:13px/1.5 -apple-system,Segoe UI,Inter,sans-serif;
+    background:radial-gradient(ellipse at top, #0c1526 0%, var(--bg) 60%);
+    color:var(--ink); padding:24px; min-height:100vh;
+  }
+  header {
+    display:flex; justify-content:space-between; align-items:center;
+    border-bottom:1px solid var(--line); padding-bottom:16px; margin-bottom:24px;
+  }
+  h1 { margin:0; font-size:24px; letter-spacing:-.5px; font-weight:700 }
+  h1 .logo { color:var(--accent); text-shadow:var(--glow) }
+  h1 .sep { color:var(--muted); margin:0 10px; font-weight:300 }
+  .sub { color:var(--muted); font-size:12px; margin-top:4px }
+  .badge {
+    display:inline-block; padding:4px 10px; border-radius:20px;
+    background:rgba(255,92,108,.1); color:var(--warn); border:1px solid var(--warn);
+    font-size:11px; font-weight:600; letter-spacing:.5px; text-transform:uppercase;
+    animation:pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow:0 0 0 0 rgba(255,92,108,.5) }
+    50% { box-shadow:0 0 0 6px rgba(255,92,108,0) }
+  }
+  .pipeline-bar {
+    display:flex; align-items:center; gap:6px; margin-bottom:24px;
+    padding:12px 16px; background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; overflow-x:auto;
+  }
+  .tool {
+    display:flex; align-items:center; gap:6px; padding:6px 12px;
+    background:rgba(100,255,218,.08); border:1px solid var(--line);
+    border-radius:6px; font-size:11px; color:var(--ink); white-space:nowrap;
+  }
+  .tool .n { color:var(--accent); font-weight:700 }
+  .tool .check { color:var(--ok) }
+  .arrow { color:var(--muted) }
+
+  .grid {
+    display:grid; gap:16px;
+    grid-template-columns:repeat(12, 1fr);
+  }
+  .panel {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:16px; position:relative; overflow:hidden;
+  }
+  .panel.span-4 { grid-column:span 4 }
+  .panel.span-6 { grid-column:span 6 }
+  .panel.span-8 { grid-column:span 8 }
+  .panel.span-12 { grid-column:span 12 }
+  .panel h2 {
+    margin:0 0 12px; font-size:11px; text-transform:uppercase;
+    letter-spacing:1.2px; color:var(--muted); font-weight:600;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .panel h2 .tag {
+    background:rgba(100,255,218,.1); color:var(--accent); padding:2px 8px;
+    border-radius:4px; font-size:9px; font-weight:700;
+  }
+  .big { font-size:28px; font-weight:700; letter-spacing:-1px }
+  .big.warn { color:var(--warn) }
+  .big.ok { color:var(--ok) }
+  .big.info { color:var(--info) }
+  .big.accent { color:var(--accent) }
+  .sub-metric { color:var(--muted); font-size:11px; margin-top:4px }
+  svg { display:block; width:100%; overflow:visible }
+  table { width:100%; border-collapse:collapse; font-size:12px }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line) }
+  th { color:var(--muted); font-weight:500; font-size:10px; text-transform:uppercase }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px }
+  .chip {
+    display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px;
+    font-weight:600; letter-spacing:.3px;
+  }
+  .chip.normal { background:rgba(122,229,130,.15); color:var(--ok) }
+  .chip.recon  { background:rgba(255,179,71,.15); color:var(--info) }
+  .chip.lateral{ background:rgba(255,119,71,.15); color:#ff7747 }
+  .chip.exfil  { background:rgba(255,92,108,.15); color:var(--warn) }
+  .verdict {
+    grid-column:span 12;
+    background:linear-gradient(135deg,#0f1f3a 0%, #050a14 100%);
+    border:1px solid var(--accent); border-radius:12px; padding:24px;
+    box-shadow:var(--glow); margin-top:12px;
+  }
+  .verdict-head {
+    display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;
+  }
+  .verdict h2 { color:var(--accent); margin:0; font-size:14px; text-transform:uppercase; letter-spacing:1.5px }
+  .verdict .ok-stamp {
+    color:var(--ok); font-weight:700; font-size:13px;
+    border:1px solid var(--ok); padding:4px 10px; border-radius:4px;
+  }
+  .verdict p { margin:0 0 12px; color:var(--ink); font-size:13px; line-height:1.7 }
+  .verdict .actions { display:flex; gap:10px; flex-wrap:wrap }
+  .verdict .action {
+    background:rgba(100,255,218,.08); border:1px solid var(--accent);
+    border-radius:6px; padding:8px 12px; font-size:12px; color:var(--ink);
+  }
+  .verdict .action b { color:var(--accent) }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1><span class="logo">ix</span><span class="sep">·</span>Triage Autonome d'Intrusion Cyber</h1>
+    <div class="sub">Analyse de 256 paquets chiffrés · pipeline 12 outils · seed=7</div>
+  </div>
+  <div style="text-align:right">
+    <div class="badge">◉ INTRUSION CONFIRMÉE</div>
+    <div class="sub" style="margin-top:6px">confiance 94% · λ=0.533</div>
+  </div>
+</header>
+
+<div class="pipeline-bar">
+  <div class="tool"><span class="n">1</span> ix_stats <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">2</span> ix_fft <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">3</span> ix_chaos <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">4</span> ix_bloom <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">5</span> ix_kmeans <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">6</span> ix_viterbi <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">7</span> ix_markov <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">8</span> ix_linreg <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">9</span> ix_rf <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">10</span> ix_topo <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">11</span> ix_nash <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">12</span> ix_bandit <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">13</span> ix_gov <span class="check">✓</span></div>
+</div>
+
+<div class="grid">
+
+  <div class="panel span-4">
+    <h2>① Statistiques <span class="tag">ix_stats</span></h2>
+    <div class="big">1083 <span style="font-size:14px;color:var(--muted)">octets</span></div>
+    <div class="sub-metric">σ=406 · min=58 · max=1969 · n=256</div>
+  </div>
+
+  <div class="panel span-4">
+    <h2>③ Chaos / Lyapunov <span class="tag">ix_chaos</span></h2>
+    <div class="big warn">λ = +0.533</div>
+    <div class="sub-metric">Dynamique chaotique déterministe → comportement algorithmique (bot)</div>
+  </div>
+
+  <div class="panel span-4">
+    <h2>④ Réputation IP <span class="tag">ix_bloom</span></h2>
+    <div class="big warn">MATCH</div>
+    <div class="sub-metric mono">185.220.101.45 ∈ liste noire (FP=0.6%)</div>
+  </div>
+
+  <div class="panel span-8">
+    <h2>② Analyse spectrale FFT <span class="tag">ix_fft</span></h2>
+    <svg viewBox="0 0 800 200" id="fft"></svg>
+    <div class="sub-metric">Pic dominant à <b style="color:var(--accent)">période = 16 paquets</b> → balise C2 périodique cachée dans le flux HTTPS</div>
+  </div>
+
+  <div class="panel span-4">
+    <h2>⑦ Distribution stationnaire <span class="tag">ix_markov</span></h2>
+    <svg viewBox="0 0 300 160" id="markov"></svg>
+  </div>
+
+  <div class="panel span-12">
+    <h2>⑥ Décodage HMM Viterbi — séquence d'états cachés de l'attaquant <span class="tag">ix_viterbi</span></h2>
+    <svg viewBox="0 0 1100 90" id="viterbi"></svg>
+    <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
+      <span class="chip normal">Normal</span>
+      <span class="chip recon">Reconnaissance</span>
+      <span class="chip lateral">Mouvement latéral</span>
+      <span class="chip exfil">Exfiltration</span>
+      <span class="sub-metric" style="margin-left:auto">log P = -49.55 · 56 observations</span>
+    </div>
+  </div>
+
+  <div class="panel span-6">
+    <h2>⑤ Clustering k-means k=3 <span class="tag">ix_kmeans</span></h2>
+    <svg viewBox="0 0 500 220" id="kmeans"></svg>
+    <div class="sub-metric">3 clusters séparés : HTTPS légitime (1242), balise C2 (567), rafale DDoS (63)</div>
+  </div>
+
+  <div class="panel span-6">
+    <h2>⑩ Signature topologique — courbe de Betti <span class="tag">ix_topo</span></h2>
+    <svg viewBox="0 0 500 220" id="topo"></svg>
+    <div class="sub-metric">H₀ démarre à 5 composantes → converge vers 1 : topologie en 3 amas cohérente avec kmeans</div>
+  </div>
+
+  <div class="panel span-4">
+    <h2>⑧ Régression / tendance <span class="tag">ix_linreg</span></h2>
+    <div class="big info">+2.15 o/p</div>
+    <div class="sub-metric">Dérive linéaire subtile sur la fenêtre, cohérente avec accumulation C2</div>
+  </div>
+
+  <div class="panel span-4">
+    <h2>⑨ Classification RF <span class="tag">ix_random_forest</span></h2>
+    <table>
+      <tr><th>Paquet</th><th>Classe</th><th>P</th></tr>
+      <tr><td class="mono">1180</td><td><span class="chip normal">HTTPS</span></td><td>1.00</td></tr>
+      <tr><td class="mono">541</td><td><span class="chip exfil">C2</span></td><td>0.95</td></tr>
+      <tr><td class="mono">62</td><td><span class="chip lateral">DDoS</span></td><td>1.00</td></tr>
+    </table>
+  </div>
+
+  <div class="panel span-4">
+    <h2>⑪ Équilibre de Nash <span class="tag">ix_game_nash</span></h2>
+    <div class="big accent">50 / 50</div>
+    <div class="sub-metric">Stratégie défenseur optimale mixte : <b>Isoler 50%</b> · <b>Monitorer 50%</b> → paiement -1.0</div>
+  </div>
+
+  <div class="panel span-8">
+    <h2>⑫ Bandit Thompson — allocation de stratégies <span class="tag">ix_bandit</span></h2>
+    <svg viewBox="0 0 800 160" id="bandit"></svg>
+    <div class="sub-metric">500 rounds · bras optimal = <b style="color:var(--ok)">Isolation+Dump</b> (148 tirages, μ̂=0.625) · récompense moyenne 0.591</div>
+  </div>
+
+  <div class="panel span-4">
+    <h2>⑬ Gouvernance Demerzel <span class="tag">ix_gov</span></h2>
+    <div class="big ok">✓ CONFORME</div>
+    <div class="sub-metric">11 articles vérifiés · 0 violation · constitution v2.1.0</div>
+  </div>
+
+</div>
+
+<div class="verdict">
+  <div class="verdict-head">
+    <h2>⚡ Verdict & Plan de Réponse Autonome</h2>
+    <div class="ok-stamp">APPROUVÉ PAR DEMERZEL</div>
+  </div>
+  <p>
+    Treize outils ix chaînés ont reconstitué, sans intervention humaine, une intrusion dissimulée dans du trafic chiffré :
+    <b>FFT</b> a exposé une balise C2 périodique (16 paquets), <b>Lyapunov</b> a confirmé sa nature algorithmique (λ>0),
+    <b>Bloom</b> a identifié l'IP comme nœud de sortie Tor malveillant, <b>Viterbi</b> a décodé les 4 phases
+    (normal → reconnaissance → mouvement latéral → exfiltration), <b>k-means/Random Forest/topologie</b> ont trianglé
+    la classification, <b>Nash</b> a calculé la stratégie mixte optimale, <b>Thompson sampling</b> a sélectionné l'action
+    de plus grande espérance, et <b>Demerzel</b> a validé la conformité constitutionnelle.
+  </p>
+  <p style="color:var(--muted)">
+    Un analyste humain mettrait plusieurs heures à corréler traces spectrales, séquences d'états cachés, invariants topologiques
+    et théorie des jeux. Le pipeline ix complet s'est exécuté en quelques centaines de millisecondes.
+  </p>
+  <div class="actions">
+    <div class="action">① <b>Isoler</b> l'hôte 10.0.4.88 du réseau</div>
+    <div class="action">② <b>Bloquer</b> 185.220.101.45 en bordure</div>
+    <div class="action">③ <b>Capturer</b> un dump mémoire forensique</div>
+    <div class="action">④ <b>Notifier</b> SOC + ouvrir ticket CSIRT</div>
+    <div class="action">⑤ <b>Surveiller</b> 50% du trafic résiduel (Nash)</div>
+  </div>
+</div>
+
+<script>
+// ② FFT spectrum
+(function(){
+  const mags = [148702,3359,527,3270,1682,4580,3850,2115,6745,4548,3124,1396,785,1319,1523,1763,5367,3372,1691,2673,4362,2507,2662,2043,2442,3348,4505,2232,674,1555,3504,2247,7551];
+  const svg=document.getElementById('fft'); const W=800,H=200,pad={l:40,r:10,t:10,b:30};
+  const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+  const skipDC=mags.slice(1); const max=Math.max(...skipDC);
+  const bw=iw/skipDC.length-2;
+  let out='';
+  skipDC.forEach((m,i)=>{
+    const k=i+1; const period=Math.round(128/k);
+    const bx=pad.l+i*(iw/skipDC.length); const bh=(m/max)*ih;
+    const hl=(k===8); // bin 8 = period 16
+    out+=`<rect x="${bx}" y="${pad.t+ih-bh}" width="${bw}" height="${bh}" fill="${hl?'#ff5c6c':'#2a3354'}" rx="2"/>`;
+    if(hl) out+=`<text x="${bx+bw/2}" y="${pad.t+ih-bh-6}" fill="#ff5c6c" font-size="11" text-anchor="middle" font-weight="700">T=16 ← C2</text>`;
+  });
+  // x axis ticks
+  [1,4,8,16,32].forEach(k=>{
+    const i=k-1;
+    const bx=pad.l+i*(iw/skipDC.length)+bw/2;
+    out+=`<text x="${bx}" y="${H-10}" fill="#7a8aa8" font-size="10" text-anchor="middle">k=${k}</text>`;
+  });
+  svg.innerHTML=out;
+})();
+
+// ⑥ Viterbi path
+(function(){
+  const path=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,0,0,0,0,0,0,0,0];
+  const colors=['#7ae582','#ffb347','#ff7747','#ff5c6c'];
+  const svg=document.getElementById('viterbi'); const W=1100,H=90,pad={l:10,r:10,t:15,b:15};
+  const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+  const bw=iw/path.length;
+  let out='';
+  path.forEach((s,i)=>{
+    out+=`<rect x="${pad.l+i*bw}" y="${pad.t}" width="${bw-1}" height="${ih}" fill="${colors[s]}" opacity=".85"/>`;
+  });
+  // ticks
+  [0,14,31,47,55].forEach(i=>{
+    out+=`<text x="${pad.l+i*bw+bw/2}" y="${H-2}" fill="#7a8aa8" font-size="9" text-anchor="middle">t${i}</text>`;
+  });
+  svg.innerHTML=out;
+})();
+
+// ⑦ Markov stationary
+(function(){
+  const dist=[0.522,0.184,0.168,0.125];
+  const labels=['Normal','Recon','Latéral','Exfil'];
+  const colors=['#7ae582','#ffb347','#ff7747','#ff5c6c'];
+  const svg=document.getElementById('markov'); const W=300,H=160,pad={l:60,r:10,t:10,b:20};
+  const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+  const bh=ih/dist.length-4;
+  let out='';
+  dist.forEach((d,i)=>{
+    const by=pad.t+i*(ih/dist.length);
+    const bw=d*iw;
+    out+=`<rect x="${pad.l}" y="${by}" width="${bw}" height="${bh}" fill="${colors[i]}" rx="2"/>`;
+    out+=`<text x="${pad.l-6}" y="${by+bh/2+4}" fill="#e6ecff" font-size="11" text-anchor="end">${labels[i]}</text>`;
+    out+=`<text x="${pad.l+bw+6}" y="${by+bh/2+4}" fill="#7a8aa8" font-size="10">${(d*100).toFixed(0)}%</text>`;
+  });
+  svg.innerHTML=out;
+})();
+
+// ⑤ kmeans scatter
+(function(){
+  const pts=[[1128,1,1],[1343,1,1],[540,0,0],[1270,1,1],[1311,1,1],[540,0,0],[727,1,1],[951,1,1],[540,0,0],[1345,1,1],[1020,1,1],[540,0,0],[1014,1,1],[1680,1,1],[540,0,0],[1026,1,1],[992,1,1],[540,0,0],[66,2,2],[57,2,2],[60,2,2],[58,2,2],[66,2,2],[70,2,2],[63,2,2],[69,2,2],[61,2,2],[65,2,2],[69,2,2],[61,2,2],[1485,1,1],[1232,1,1],[1234,1,1],[1598,1,1]];
+  const colors=['#ffb347','#7ae582','#ff5c6c'];
+  const svg=document.getElementById('kmeans'); const W=500,H=220,pad={l:40,r:10,t:10,b:30};
+  const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+  const xmax=2000;
+  let out='';
+  // axes
+  out+=`<line x1="${pad.l}" y1="${H-pad.b}" x2="${W-pad.r}" y2="${H-pad.b}" stroke="#2a3354"/>`;
+  out+=`<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H-pad.b}" stroke="#2a3354"/>`;
+  [0,500,1000,1500,2000].forEach(v=>{
+    const x=pad.l+(v/xmax)*iw;
+    out+=`<text x="${x}" y="${H-10}" fill="#7a8aa8" font-size="10" text-anchor="middle">${v}</text>`;
+  });
+  pts.forEach(p=>{
+    const x=pad.l+(p[0]/xmax)*iw;
+    const y=pad.t+ih-((p[1]+1)/3)*ih + (Math.random()-0.5)*20;
+    out+=`<circle cx="${x}" cy="${y}" r="5" fill="${colors[p[2]]}" opacity=".85"/>`;
+  });
+  // centroids
+  [[567,0,0],[1242,1,1],[63,2,2]].forEach(c=>{
+    const x=pad.l+(c[0]/xmax)*iw;
+    const y=pad.t+ih-((c[1]+1)/3)*ih;
+    out+=`<circle cx="${x}" cy="${y}" r="10" fill="none" stroke="${colors[c[2]]}" stroke-width="2"/>`;
+    out+=`<circle cx="${x}" cy="${y}" r="2" fill="${colors[c[2]]}"/>`;
+  });
+  svg.innerHTML=out;
+})();
+
+// ⑩ Betti curve
+(function(){
+  const betti0=[5,4,4,1,1,1,1,1,1,1];
+  const betti1=[15,21,23,54,61,76,100,100,112,136];
+  const svg=document.getElementById('topo'); const W=500,H=220,pad={l:40,r:10,t:10,b:30};
+  const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+  const xmax=betti0.length-1;
+  // Use log scale for b1 since it grows large
+  const b1max=Math.max(...betti1);
+  let out='';
+  // grid
+  [0,0.25,0.5,0.75,1].forEach(f=>{
+    const y=pad.t+ih*f;
+    out+=`<line x1="${pad.l}" y1="${y}" x2="${W-pad.r}" y2="${y}" stroke="#2a3354" stroke-dasharray="2,4"/>`;
+  });
+  // H0 (normalized /5)
+  let p0='';
+  betti0.forEach((b,i)=>{
+    const x=pad.l+(i/xmax)*iw;
+    const y=pad.t+ih-(b/5)*ih;
+    p0+=(i?'L':'M')+x+','+y;
+  });
+  out+=`<path d="${p0}" fill="none" stroke="#64ffda" stroke-width="2.5"/>`;
+  betti0.forEach((b,i)=>{
+    const x=pad.l+(i/xmax)*iw;
+    const y=pad.t+ih-(b/5)*ih;
+    out+=`<circle cx="${x}" cy="${y}" r="3" fill="#64ffda"/>`;
+  });
+  // H1 (normalized /b1max)
+  let p1='';
+  betti1.forEach((b,i)=>{
+    const x=pad.l+(i/xmax)*iw;
+    const y=pad.t+ih-(b/b1max)*ih;
+    p1+=(i?'L':'M')+x+','+y;
+  });
+  out+=`<path d="${p1}" fill="none" stroke="#ffb347" stroke-width="2" stroke-dasharray="4,3"/>`;
+  // legend
+  out+=`<text x="${W-15}" y="30" fill="#64ffda" font-size="11" text-anchor="end">H₀ (composantes)</text>`;
+  out+=`<text x="${W-15}" y="45" fill="#ffb347" font-size="11" text-anchor="end">H₁ (cycles)</text>`;
+  out+=`<text x="${pad.l}" y="${H-10}" fill="#7a8aa8" font-size="10">r=0</text>`;
+  out+=`<text x="${W-pad.r}" y="${H-10}" fill="#7a8aa8" font-size="10" text-anchor="end">r=1936</text>`;
+  svg.innerHTML=out;
+})();
+
+// ⑫ Bandit arm pulls
+(function(){
+  const pulls=[46,148,188,118];
+  const means=[0.406,0.625,0.590,0.620];
+  const labels=['Ignorer','Isoler+Dump','Monitorer','Quarantaine'];
+  const colors=['#7a8aa8','#7ae582','#ffb347','#64ffda'];
+  const svg=document.getElementById('bandit'); const W=800,H=160,pad={l:100,r:60,t:10,b:20};
+  const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+  const pmax=Math.max(...pulls);
+  const bh=ih/pulls.length-8;
+  let out='';
+  pulls.forEach((p,i)=>{
+    const by=pad.t+i*(ih/pulls.length);
+    const bw=(p/pmax)*iw;
+    out+=`<rect x="${pad.l}" y="${by}" width="${bw}" height="${bh}" fill="${colors[i]}" rx="3" opacity=".85"/>`;
+    out+=`<text x="${pad.l-10}" y="${by+bh/2+4}" fill="#e6ecff" font-size="11" text-anchor="end">${labels[i]}</text>`;
+    out+=`<text x="${pad.l+bw+8}" y="${by+bh/2+4}" fill="#7a8aa8" font-size="10">${p} tirages · μ̂=${means[i].toFixed(3)}</text>`;
+  });
+  svg.innerHTML=out;
+})();
+</script>
+</body>
+</html>

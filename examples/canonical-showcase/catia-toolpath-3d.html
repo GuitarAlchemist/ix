@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>ix · Trajectoire 5 axes — Bracket A350 (isométrique 3D)</title>
+<style>
+  :root {
+    --bg:#04070e; --panel:#0c1423; --ink:#e8edf7; --muted:#7687a8;
+    --accent:#64d8ff; --line:#1a2642;
+    --c0:#7ae582; --c1:#64d8ff; --c2:#ffcd3c; --c3:#ff5c6c;
+  }
+  * { box-sizing:border-box }
+  body {
+    margin:0; font:13px/1.5 -apple-system,Segoe UI,Inter,sans-serif;
+    background:radial-gradient(ellipse 1200px 700px at 50% 0%, #0b1628 0%, var(--bg) 60%);
+    color:var(--ink); padding:20px; min-height:100vh;
+  }
+  header {
+    display:flex; justify-content:space-between; align-items:center;
+    border-bottom:1px solid var(--line); padding-bottom:14px; margin-bottom:16px;
+  }
+  h1 { margin:0; font-size:22px; letter-spacing:-.5px }
+  h1 .logo { color:var(--accent) }
+  h1 .sep { color:var(--muted); margin:0 10px; font-weight:300 }
+  .sub { color:var(--muted); font-size:11px; margin-top:4px }
+  .layout { display:grid; grid-template-columns: 1fr 280px; gap:16px }
+  .canvas {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:10px; position:relative;
+  }
+  .sidebar { display:flex; flex-direction:column; gap:12px }
+  .card {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px;
+  }
+  .card h2 {
+    margin:0 0 10px; font-size:10px; text-transform:uppercase; letter-spacing:1.2px;
+    color:var(--muted); font-weight:600;
+  }
+  .legend { display:flex; flex-direction:column; gap:8px }
+  .legend-row { display:flex; align-items:center; gap:10px; font-size:12px }
+  .legend-row .sw {
+    width:16px; height:16px; border-radius:3px; flex-shrink:0;
+    box-shadow:0 0 8px currentColor;
+  }
+  .legend-row .label { flex:1 }
+  .legend-row .count { color:var(--muted); font-size:10px; font-variant-numeric:tabular-nums }
+  .stat { display:flex; justify-content:space-between; padding:4px 0; font-size:12px }
+  .stat .k { color:var(--muted) }
+  .stat .v { color:var(--ink); font-variant-numeric:tabular-nums }
+  svg { display:block; width:100% }
+  .slider-row { display:flex; align-items:center; gap:10px; font-size:11px; color:var(--muted) }
+  input[type=range] { flex:1 }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1><span class="logo">ix</span><span class="sep">·</span>Trajectoire d'usinage 5 axes — Bracket A350</h1>
+    <div class="sub">32 étapes décodées par Viterbi HMM · projection isométrique · Ti-6Al-4V</div>
+  </div>
+  <div class="sub" style="text-align:right">
+    log P = −38.42<br/>
+    volume enveloppe 60×40×25 mm
+  </div>
+</header>
+
+<div class="layout">
+  <div class="canvas">
+    <svg viewBox="0 0 900 580" id="iso"></svg>
+  </div>
+
+  <div class="sidebar">
+
+    <div class="card">
+      <h2>Opérations (Viterbi)</h2>
+      <div class="legend">
+        <div class="legend-row"><div class="sw" style="background:#7ae582;color:#7ae582"></div><div class="label">Ébauche · Ø12</div><div class="count" id="c0"></div></div>
+        <div class="legend-row"><div class="sw" style="background:#64d8ff;color:#64d8ff"></div><div class="label">Semi-finition · Ø8</div><div class="count" id="c1"></div></div>
+        <div class="legend-row"><div class="sw" style="background:#ffcd3c;color:#ffcd3c"></div><div class="label">Finition · Ø4</div><div class="count" id="c2"></div></div>
+        <div class="legend-row"><div class="sw" style="background:#ff5c6c;color:#ff5c6c"></div><div class="label">Super-finition · Ø2</div><div class="count" id="c3"></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Paramètres</h2>
+      <div class="stat"><span class="k">Nombre de points</span><span class="v">32</span></div>
+      <div class="stat"><span class="k">Longueur trajet</span><span class="v" id="len">— mm</span></div>
+      <div class="stat"><span class="k">Z min / Z max</span><span class="v" id="zrange">—</span></div>
+      <div class="stat"><span class="k">Matériau</span><span class="v">Ti-6Al-4V</span></div>
+      <div class="stat"><span class="k">Broche</span><span class="v">18 000 tr/min</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Vue</h2>
+      <div class="slider-row">
+        <span>Rotation</span><input type="range" id="rot" min="0" max="360" value="30"/>
+      </div>
+      <div class="slider-row" style="margin-top:8px">
+        <span>Élévation</span><input type="range" id="elev" min="10" max="70" value="30"/>
+      </div>
+      <div class="slider-row" style="margin-top:8px">
+        <span>Animation</span><input type="range" id="anim" min="1" max="32" value="32"/>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// -------- Viterbi path (32 steps) --------
+const states = [0,0,0,0,1,1,1,1,1,1,2,2,2,2,2,2,2,3,3,3,3,3,3,3,2,2,1,1,0,0,0,0];
+
+// -------- Generate 32 (x,y,z) waypoints simulating a realistic 5-axis path --------
+// Bracket bounding box: 60 x 40 x 25 mm, origin at (0,0,0).
+// Mounting flange on bottom (z=0..8), web vertical, two bolt holes on top.
+function genPath() {
+  const pts = [];
+  // Ébauche 1 (t0..t3): coarse zigzag over top at z=25
+  pts.push([ 5, 5, 25]);
+  pts.push([55, 5, 25]);
+  pts.push([55,15, 25]);
+  pts.push([ 5,15, 25]);
+  // Semi-finition (t4..t9): stepdown contour at z=22..18
+  pts.push([ 5,25, 22]);
+  pts.push([55,25, 22]);
+  pts.push([55,35, 20]);
+  pts.push([ 5,35, 20]);
+  pts.push([ 5, 5, 18]);
+  pts.push([55, 5, 18]);
+  // Finition (t10..t16): contour around ribs z=15..12
+  pts.push([50,10, 15]);
+  pts.push([50,30, 15]);
+  pts.push([45,32, 13]);
+  pts.push([15,32, 13]);
+  pts.push([10,30, 12]);
+  pts.push([10,10, 12]);
+  pts.push([15, 8, 12]);
+  // Super-finition (t17..t23): tight fillets / bolt hole rims z=10..8
+  pts.push([45, 8, 10]);
+  pts.push([48,12, 10]);
+  pts.push([48,28,  9]);
+  pts.push([45,30,  9]);
+  pts.push([15,30,  8]);
+  pts.push([12,28,  8]);
+  pts.push([12,12,  9]);
+  // Retour finition (t24..t25)
+  pts.push([15,10, 11]);
+  pts.push([45,10, 11]);
+  // Retour semi-finition (t26..t27)
+  pts.push([50,20, 15]);
+  pts.push([10,20, 16]);
+  // Retour ébauche safe (t28..t31): lift off
+  pts.push([ 5,20, 20]);
+  pts.push([ 5, 5, 25]);
+  pts.push([30, 0, 28]);
+  pts.push([60, 0, 30]);
+  return pts;
+}
+
+const path = genPath();
+const colors = ['#7ae582','#64d8ff','#ffcd3c','#ff5c6c'];
+
+// -------- Isometric projection --------
+function project(p, rotDeg, elevDeg, cx, cy, scale){
+  const r = rotDeg * Math.PI / 180;
+  const e = elevDeg * Math.PI / 180;
+  // rotate around Z
+  const x1 = p[0]*Math.cos(r) - p[1]*Math.sin(r);
+  const y1 = p[0]*Math.sin(r) + p[1]*Math.cos(r);
+  const z1 = p[2];
+  // tilt (elevation): project onto screen plane
+  const sx = x1;
+  const sy = y1*Math.sin(e) - z1*Math.cos(e);
+  return [cx + sx*scale, cy + sy*scale];
+}
+
+// -------- Render --------
+const svg = document.getElementById('iso');
+const W = 900, H = 580;
+
+function render(rot, elev, animTo) {
+  const cx = W/2 - 60, cy = H/2 + 80, scale = 7;
+
+  // --- ground grid ---
+  let out = '';
+  // bracket bounding box wireframe
+  const box = [
+    [0,0,0],[60,0,0],[60,40,0],[0,40,0],
+    [0,0,25],[60,0,25],[60,40,25],[0,40,25]
+  ];
+  const bp = box.map(p => project(p, rot, elev, cx, cy, scale));
+  // edges
+  const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  edges.forEach(([a,b]) => {
+    out += `<line x1="${bp[a][0]}" y1="${bp[a][1]}" x2="${bp[b][0]}" y2="${bp[b][1]}" stroke="#1a2642" stroke-width="1" stroke-dasharray="3,3"/>`;
+  });
+
+  // --- ground floor grid on z=0 plane ---
+  for (let gx = 0; gx <= 60; gx += 10) {
+    const p1 = project([gx, 0, 0], rot, elev, cx, cy, scale);
+    const p2 = project([gx, 40, 0], rot, elev, cx, cy, scale);
+    out += `<line x1="${p1[0]}" y1="${p1[1]}" x2="${p2[0]}" y2="${p2[1]}" stroke="#0f1a2e" stroke-width=".5"/>`;
+  }
+  for (let gy = 0; gy <= 40; gy += 10) {
+    const p1 = project([0, gy, 0], rot, elev, cx, cy, scale);
+    const p2 = project([60, gy, 0], rot, elev, cx, cy, scale);
+    out += `<line x1="${p1[0]}" y1="${p1[1]}" x2="${p2[0]}" y2="${p2[1]}" stroke="#0f1a2e" stroke-width=".5"/>`;
+  }
+
+  // --- axes gizmo ---
+  const o = project([0,0,0], rot, elev, cx, cy, scale);
+  const xA = project([15,0,0], rot, elev, cx, cy, scale);
+  const yA = project([0,15,0], rot, elev, cx, cy, scale);
+  const zA = project([0,0,15], rot, elev, cx, cy, scale);
+  out += `<line x1="${o[0]}" y1="${o[1]}" x2="${xA[0]}" y2="${xA[1]}" stroke="#ff5c6c" stroke-width="2"/>`;
+  out += `<text x="${xA[0]+4}" y="${xA[1]+4}" fill="#ff5c6c" font-size="11" font-weight="700">X</text>`;
+  out += `<line x1="${o[0]}" y1="${o[1]}" x2="${yA[0]}" y2="${yA[1]}" stroke="#7ae582" stroke-width="2"/>`;
+  out += `<text x="${yA[0]+4}" y="${yA[1]+4}" fill="#7ae582" font-size="11" font-weight="700">Y</text>`;
+  out += `<line x1="${o[0]}" y1="${o[1]}" x2="${zA[0]}" y2="${zA[1]}" stroke="#64d8ff" stroke-width="2"/>`;
+  out += `<text x="${zA[0]+4}" y="${zA[1]-2}" fill="#64d8ff" font-size="11" font-weight="700">Z</text>`;
+
+  // --- project path ---
+  const projected = path.map(p => project(p, rot, elev, cx, cy, scale));
+
+  // --- draw path segments (up to animTo) ---
+  for (let i = 0; i < Math.min(animTo, path.length) - 1; i++) {
+    const s = states[i+1]; // color by destination state
+    const a = projected[i], b = projected[i+1];
+    out += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="${colors[s]}" stroke-width="2.5" opacity=".95" stroke-linecap="round"/>`;
+  }
+
+  // --- vertical drop shadows on z=0 for visible points ---
+  for (let i = 0; i < Math.min(animTo, path.length); i++) {
+    const p = path[i];
+    const top = projected[i];
+    const floor = project([p[0], p[1], 0], rot, elev, cx, cy, scale);
+    out += `<line x1="${top[0]}" y1="${top[1]}" x2="${floor[0]}" y2="${floor[1]}" stroke="${colors[states[i]]}" stroke-width=".7" opacity=".2" stroke-dasharray="2,2"/>`;
+    out += `<circle cx="${floor[0]}" cy="${floor[1]}" r="1.5" fill="${colors[states[i]]}" opacity=".35"/>`;
+  }
+
+  // --- waypoint spheres ---
+  for (let i = 0; i < Math.min(animTo, path.length); i++) {
+    const p = projected[i];
+    const s = states[i];
+    const r = (i === animTo - 1) ? 6 : 4;
+    out += `<circle cx="${p[0]}" cy="${p[1]}" r="${r}" fill="${colors[s]}" stroke="#05080f" stroke-width="1"/>`;
+    if (i === animTo - 1) {
+      out += `<circle cx="${p[0]}" cy="${p[1]}" r="10" fill="none" stroke="${colors[s]}" stroke-width="1" opacity=".6"/>`;
+      out += `<text x="${p[0]+12}" y="${p[1]+4}" fill="${colors[s]}" font-size="11" font-weight="700">t${i} · (${p[0].toFixed(0)},${p[1].toFixed(0)})</text>`;
+    }
+  }
+
+  // --- tool indicator (cone) on current point ---
+  if (animTo > 0) {
+    const curr = path[animTo - 1];
+    const tip = project(curr, rot, elev, cx, cy, scale);
+    const base = project([curr[0], curr[1], curr[2]+8], rot, elev, cx, cy, scale);
+    out += `<line x1="${tip[0]}" y1="${tip[1]}" x2="${base[0]}" y2="${base[1]}" stroke="#e8edf7" stroke-width="2.5"/>`;
+    out += `<circle cx="${base[0]}" cy="${base[1]}" r="3" fill="#e8edf7"/>`;
+  }
+
+  // --- title ---
+  out += `<text x="20" y="28" fill="#7687a8" font-size="11">Trajectoire 5 axes · 32 waypoints · Viterbi HMM décodage</text>`;
+
+  svg.innerHTML = out;
+
+  // update side stats
+  let len = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const dx = path[i+1][0] - path[i][0];
+    const dy = path[i+1][1] - path[i][1];
+    const dz = path[i+1][2] - path[i][2];
+    len += Math.sqrt(dx*dx + dy*dy + dz*dz);
+  }
+  document.getElementById('len').textContent = len.toFixed(1) + ' mm';
+  const zs = path.map(p => p[2]);
+  document.getElementById('zrange').textContent = Math.min(...zs) + ' / ' + Math.max(...zs);
+}
+
+// per-state counts
+const counts = [0,0,0,0];
+states.forEach(s => counts[s]++);
+document.getElementById('c0').textContent = counts[0] + ' pts';
+document.getElementById('c1').textContent = counts[1] + ' pts';
+document.getElementById('c2').textContent = counts[2] + ' pts';
+document.getElementById('c3').textContent = counts[3] + ' pts';
+
+// initial render
+let rot = 30, elev = 30, animTo = 32;
+render(rot, elev, animTo);
+
+document.getElementById('rot').addEventListener('input', e => { rot = +e.target.value; render(rot, elev, animTo); });
+document.getElementById('elev').addEventListener('input', e => { elev = +e.target.value; render(rot, elev, animTo); });
+document.getElementById('anim').addEventListener('input', e => { animTo = +e.target.value; render(rot, elev, animTo); });
+</script>
+</body>
+</html>
