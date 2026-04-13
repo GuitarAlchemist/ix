@@ -21,12 +21,13 @@ pub mod ops;
 pub mod tape;
 pub mod tensor;
 pub mod tool;
+pub mod tools;
 
 pub mod prelude {
     pub use crate::mode::ExecutionMode;
     pub use crate::tape::{DiffContext, Tape, TensorHandle};
     pub use crate::tensor::{Tensor, TensorData};
-    pub use crate::tool::DifferentiableTool;
+    pub use crate::tool::{DifferentiableTool, ValueMap};
 }
 
 #[derive(Debug, thiserror::Error)]
