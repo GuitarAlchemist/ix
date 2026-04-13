@@ -15,6 +15,13 @@ use std::collections::HashMap;
 /// Named bag of tensors flowing between tools.
 pub type ValueMap = HashMap<String, Tensor>;
 
+/// The core interface every differentiable IX MCP tool implements.
+///
+/// A tool is a pair of functions (`forward`, `backward`) plus a
+/// `name`. `forward` runs during the normal pipeline execution and
+/// (when the execution mode requires a tape) records nodes on
+/// `ctx.tape`. `backward` runs during a gradient-requiring reverse
+/// walk and returns gradients keyed by input name.
 pub trait DifferentiableTool: Send + Sync {
     /// The name under which this tool is registered in `ix-agent`.
     fn name(&self) -> &'static str;

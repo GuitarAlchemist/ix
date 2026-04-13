@@ -8,16 +8,27 @@ use crate::tensor::Tensor;
 use std::any::Any;
 use std::collections::HashMap;
 
-/// Opaque index into the tape.
+/// Opaque index into the tape. Returned by every op; consumed by
+/// subsequent ops and by [`DiffContext::backward`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TensorHandle(pub usize);
+pub struct TensorHandle(
+    /// Underlying tape index. Public so that external backends can
+    /// construct handles; prefer using the opaque interface.
+    pub usize,
+);
 
 /// A single node on the Wengert tape.
 #[derive(Debug)]
 pub struct TapeNode {
+    /// Op name (`"input"`, `"add"`, `"mul"`, `"sum"`, ...). Used by
+    /// the reverse walker to dispatch to the right backward function.
     pub op: &'static str,
+    /// Handles of the upstream operands. Empty for input leaves.
     pub inputs: Vec<TensorHandle>,
+    /// The forward-computed value of this node.
     pub value: Tensor,
+    /// Gradient accumulated during the reverse walk. `None` until
+    /// `backward` touches this node.
     pub grad: Option<Tensor>,
     /// Tool-specific saved state used by `backward`. JSON for now so
     /// tools can record whatever they need without coupling to this crate.
@@ -32,28 +43,36 @@ pub struct Tape {
 }
 
 impl Tape {
+    /// Construct an empty tape.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Push a node onto the tape and return its handle.
     pub fn push(&mut self, node: TapeNode) -> TensorHandle {
         let id = self.nodes.len();
         self.nodes.push(node);
         TensorHandle(id)
     }
 
+    /// Read-only access to a node by handle.
     pub fn get(&self, handle: TensorHandle) -> Option<&TapeNode> {
         self.nodes.get(handle.0)
     }
 
+    /// Mutable access to a node by handle — used by the reverse
+    /// walker to store accumulated gradients on the node's `grad`
+    /// field.
     pub fn get_mut(&mut self, handle: TensorHandle) -> Option<&mut TapeNode> {
         self.nodes.get_mut(handle.0)
     }
 
+    /// Number of nodes on the tape.
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
+    /// Whether the tape is empty.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -69,7 +88,9 @@ impl Tape {
 /// type parameter on `set_tool_state` / `get_tool_state` ensures the
 /// read side recovers the same type the write side stored.
 pub struct DiffContext {
+    /// The append-only tape built during the forward pass.
     pub tape: Tape,
+    /// Current execution mode.
     pub mode: ExecutionMode,
     tool_state: HashMap<String, Box<dyn Any + Send + Sync>>,
 }
@@ -85,6 +106,7 @@ impl std::fmt::Debug for DiffContext {
 }
 
 impl DiffContext {
+    /// Construct a fresh context with an empty tape in the given mode.
     pub fn new(mode: ExecutionMode) -> Self {
         Self {
             tape: Tape::new(),

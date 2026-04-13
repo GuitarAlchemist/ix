@@ -26,17 +26,27 @@ use crate::tensor::Tensor;
 use crate::tool::{DifferentiableTool, ValueMap};
 use crate::{AutogradError, Result};
 
+/// Linear regression with mean-squared-error loss as a
+/// `DifferentiableTool`. See the module docs for the exact forward
+/// graph.
 pub struct LinearRegressionTool;
 
 /// Typed tool state stored in `DiffContext` between forward and backward.
 /// Replaces the Day 2 `serde_json::Value` bag.
 #[derive(Debug, Clone, Copy)]
 pub struct LinregState {
+    /// Leaf handle for the design matrix `x`.
     pub x: TensorHandle,
+    /// Leaf handle for the weight vector `w`.
     pub w: TensorHandle,
+    /// Leaf handle for the scalar bias `b`.
     pub b: TensorHandle,
+    /// Leaf handle for the observed target `y` (not a trainable
+    /// parameter).
     pub y: TensorHandle,
+    /// Node handle for the prediction `y_hat = x @ w + b`.
     pub y_hat: TensorHandle,
+    /// Node handle for the scalar MSE loss.
     pub loss: TensorHandle,
 }
 

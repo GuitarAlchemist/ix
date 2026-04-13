@@ -33,6 +33,21 @@ See `ix-roadmap-plan-v1.md` for the roadmap that turns this ad-hoc collection in
 | [r7-autograd-codex-review.md](r7-autograd-codex-review.md) | Codex + Claude code-first review of R7, merged 5-day schedule | ~2 200 |
 | [ix-roadmap-plan-v1.md](ix-roadmap-plan-v1.md) | Consolidated R1-R9 + showcase roadmap with dependency graph, phasing, week-by-week plan, risk register, definition of done gates | ~6 000 |
 
+## Phase 1 deliverables (R7 Week 1)
+
+The first phase of the R7 Autograd-IX work shipped Days 1-3 of Week 1 plus the full validation pass described in `ix-roadmap-plan-v1.md` §5. Phase 1 artifacts:
+
+| File | Purpose |
+|---|---|
+| [ix-roadmap-plan-v1.md](ix-roadmap-plan-v1.md) | Consolidated R1-R9 + canonical showcase roadmap with dependency graph, phasing, risk register, definition-of-done gates |
+| [r7-autograd-codex-review.md](r7-autograd-codex-review.md) | Initial Codex + Claude code-first review that locked in the build-scratch-over-ndarray decision, the `ExecutionMode` enum, and the Hermitian-mirror FFT fix |
+| [r7-day2-review.md](r7-day2-review.md) | Four-provider Day 2 multi-LLM review (Codex + Gemini + Mistral Large + Claude) that reordered Day 3 to put cleanup before new ops |
+| [r7-phase1-benchmarks.txt](r7-phase1-benchmarks.txt) | `cargo bench` output for 6 benchmarks: add/mul/matmul/variance primitives + full linreg MSE + full Adam step |
+| [r7-phase1-security.txt](r7-phase1-security.txt) | `cargo audit` results: ix-autograd dep cone is CLEAN (0 advisories); 1 workspace-level vulnerability + 4 warnings triaged and deferred |
+| [r7-phase1-retrospective.md](r7-phase1-retrospective.md) | Week 1 actual vs planned, go/no-go verdict (PASS, 242× speedup), what went better/worse, Phase 2 readiness, Day 4/5 TODO list |
+
+**Phase 1 verdict:** PASS. R7 Week 1 go/no-go criterion met (gradient Adam converges 242× faster than evolutionary baseline, 15/15 finite-diff tests pass at 1e-5 tolerance). Proceed to Day 4 hardening and Day 5 FFT-behind-feature-flag.
+
 ## How to reproduce the demos
 
 **Today (manual tool chaining):** each demo was produced by orchestrating `ix_pipeline` (and other MCP tools) through Claude Code. To reproduce, open the demo's `.html` source, read the tool call sequence embedded in the comments, and replay each call with the recorded inputs.
