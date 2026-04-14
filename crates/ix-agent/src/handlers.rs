@@ -1975,49 +1975,11 @@ fn epoch_days_to_ymd(days: i64) -> String {
 /// }
 /// ```
 pub fn code_catalog(params: Value) -> Result<Value, String> {
-    use ix_code::catalog::{all, by_category, by_language, by_technique, counts, ToolCategory};
-
-    // Start from the full catalog and apply each optional filter in
-    // turn. Each filter is a case-insensitive AND against the others.
-    let mut matched: Vec<_> = all().to_vec();
-
-    if let Some(lang) = params.get("language").and_then(|v| v.as_str()) {
-        let filtered = by_language(lang);
-        matched.retain(|t| filtered.iter().any(|f| f.name == t.name));
-    }
-
-    if let Some(cat_str) = params.get("category").and_then(|v| v.as_str()) {
-        let cat = ToolCategory::parse(cat_str).ok_or_else(|| {
-            format!(
-                "ix_code_catalog: unknown category '{cat_str}' — expected one of: \
-                 static_analysis, formal_verification, safety_memory, \
-                 statistical_analysis, documentation, numeric_library, ml_framework"
-            )
-        })?;
-        let filtered = by_category(cat);
-        matched.retain(|t| filtered.iter().any(|f| f.name == t.name));
-    }
-
-    if let Some(tech) = params.get("technique").and_then(|v| v.as_str()) {
-        let filtered = by_technique(tech);
-        matched.retain(|t| filtered.iter().any(|f| f.name == t.name));
-    }
-
-    let c = counts();
-    Ok(json!({
-        "counts": {
-            "total": c.total,
-            "static_analysis": c.static_analysis,
-            "formal_verification": c.formal_verification,
-            "safety_memory": c.safety_memory,
-            "statistical_analysis": c.statistical_analysis,
-            "documentation": c.documentation,
-            "numeric_library": c.numeric_library,
-            "ml_framework": c.ml_framework,
-        },
-        "matched": matched.len(),
-        "tools": matched,
-    }))
+    use ix_catalog_core::Catalog;
+    use ix_code::catalog::CodeAnalysisCatalog;
+    // Delegate to the shared Catalog trait impl. Every ix catalog
+    // (code, grammar, rfc, ...) dispatches through this same shape.
+    CodeAnalysisCatalog.query(params)
 }
 
 // ── ix_cargo_deps ──────────────────────────────────────────

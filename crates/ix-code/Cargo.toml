@@ -13,6 +13,7 @@ description = "Lightweight code analysis: complexity, Halstead, SLOC metrics for
 serde = { workspace = true }
 serde_json = { workspace = true }
 ndarray = { workspace = true }
+ix-catalog-core = { workspace = true }
 
 # Optional deps for Layer 2 (semantic)
 tree-sitter = { workspace = true, optional = true }

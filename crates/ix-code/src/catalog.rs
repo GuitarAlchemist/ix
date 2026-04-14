@@ -30,7 +30,9 @@
 //! The data is a `&'static [CodeAnalysisTool]`, so queries are just
 //! iterator filters with zero allocation for the tool slice itself.
 
+use ix_catalog_core::{normalize_snake_case, string_contains_ci, Catalog};
 use serde::Serialize;
+use serde_json::{json, Value};
 
 /// Broad category a tool belongs to. The six categories cover
 /// disjoint concerns — a tool with multiple roles gets its primary
@@ -95,10 +97,7 @@ impl ToolCategory {
     /// Parse a snake_case or lowercase hyphen form. Rejects anything
     /// not in the enum.
     pub fn parse(s: &str) -> Option<Self> {
-        let normalised: String = s
-            .chars()
-            .map(|c| if c == '-' { '_' } else { c.to_ascii_lowercase() })
-            .collect();
+        let normalised = normalize_snake_case(s);
         match normalised.as_str() {
             "static_analysis" | "static" => Some(Self::StaticAnalysis),
             "formal_verification" | "formal" | "verification" => {
@@ -689,6 +688,92 @@ pub struct CatalogCounts {
     pub documentation: usize,
     pub numeric_library: usize,
     pub ml_framework: usize,
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Catalog trait implementation — the uniform façade every ix
+// catalog shares via ix-catalog-core. Keeps the free functions
+// above (all/by_language/by_category/by_technique/counts) as the
+// canonical API for Rust callers while giving the MCP dispatcher a
+// single `query` entry point.
+// ──────────────────────────────────────────────────────────────────
+
+/// Zero-sized handle used to dispatch the code-analysis catalog
+/// through the [`Catalog`] trait. The actual data lives in
+/// [`CATALOG`]; this struct exists only so the MCP layer can hold
+/// `&dyn Catalog` references uniformly.
+pub struct CodeAnalysisCatalog;
+
+impl Catalog for CodeAnalysisCatalog {
+    fn name(&self) -> &'static str {
+        "code_analysis"
+    }
+
+    fn scope(&self) -> &'static str {
+        "External mathematical tools for analysing programming-language \
+         repositories: static analysers, formal verifiers, safety/memory \
+         checkers, statistical + behavioural analysis, documentation \
+         generators, numeric libraries, and ML frameworks. Does NOT \
+         include ix's own code-analysis primitives for their own sake \
+         (those live in other crates); the catalog exists so agents can \
+         route to the right specialist rather than over-stretching \
+         ix_code_analyze."
+    }
+
+    fn entry_count(&self) -> usize {
+        CATALOG.len()
+    }
+
+    fn counts(&self) -> Value {
+        let c = counts();
+        json!({
+            "total": c.total,
+            "static_analysis": c.static_analysis,
+            "formal_verification": c.formal_verification,
+            "safety_memory": c.safety_memory,
+            "statistical_analysis": c.statistical_analysis,
+            "documentation": c.documentation,
+            "numeric_library": c.numeric_library,
+            "ml_framework": c.ml_framework,
+        })
+    }
+
+    fn query(&self, filter: Value) -> Result<Value, String> {
+        // Start from the full catalog and apply each optional filter
+        // in turn. Each filter is case-insensitive where plausible.
+        let mut matched: Vec<CodeAnalysisTool> = all().to_vec();
+
+        if let Some(lang) = filter.get("language").and_then(|v| v.as_str()) {
+            let filtered = by_language(lang);
+            matched.retain(|t| filtered.iter().any(|f| f.name == t.name));
+        }
+
+        if let Some(cat_str) = filter.get("category").and_then(|v| v.as_str()) {
+            let cat = ToolCategory::parse(cat_str).ok_or_else(|| {
+                format!(
+                    "ix_code_catalog: unknown category '{cat_str}' — expected one of: \
+                     static_analysis, formal_verification, safety_memory, \
+                     statistical_analysis, documentation, numeric_library, ml_framework"
+                )
+            })?;
+            let filtered = by_category(cat);
+            matched.retain(|t| filtered.iter().any(|f| f.name == t.name));
+        }
+
+        if let Some(tech) = filter.get("technique").and_then(|v| v.as_str()) {
+            matched.retain(|t| string_contains_ci(t.technique, tech));
+        }
+
+        Ok(json!({
+            "counts": self.counts(),
+            "matched": matched.len(),
+            "entries": matched,
+            // Back-compat alias — the pre-refactor handler returned a
+            // `tools` array. Keep emitting it so existing smoke tests
+            // and any client that already references it do not break.
+            "tools": matched,
+        }))
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────
