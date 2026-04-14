@@ -2,9 +2,11 @@
 
 [![CI](https://github.com/GuitarAlchemist/ix/actions/workflows/ci.yml/badge.svg)](https://github.com/GuitarAlchemist/ix/actions/workflows/ci.yml)
 
+> **Read this first:** [`docs/MANUAL.md`](docs/MANUAL.md) — the canonical user manual. Install, tool inventory, pipeline format, governance integration, extension guide, troubleshooting. Start there.
+
 A Rust workspace of composable ML/math algorithms and AI governance, designed to be exposed as **Claude Code skills** via an MCP server and CLI. Part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem (ix + [tars](https://github.com/GuitarAlchemist/tars) + [ga](https://github.com/GuitarAlchemist/ga) + [Demerzel](https://github.com/GuitarAlchemist/Demerzel)).
 
-32 crates. 37 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+54 crates. 57 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -93,7 +95,7 @@ cargo run -p ix-agent
 
 ### MCP Tool Annotations
 
-The 37 MCP tools exposed by `ix-agent` are categorized:
+The 57 MCP tools exposed by `ix-agent` are categorized (see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-57-mcp-tools--by-category) for the full inventory):
 
 | Category | Tools | Readiness |
 |----------|-------|-----------|
@@ -181,7 +183,7 @@ The 37 MCP tools exposed by `ix-agent` are categorized:
 ### Integration
 | Crate | Description |
 |-------|-------------|
-| **ix-agent** | MCP server: 37 tools via JSON-RPC over stdio (algorithms + governance + federation) |
+| **ix-agent** | MCP server: 57 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
 | **ix-skill** | CLI binary for direct command-line access to all algorithms |
 | **ix-demo** | egui desktop app with 22+ interactive demo tabs including governance explorer |
 
