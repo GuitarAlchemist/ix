@@ -634,7 +634,27 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.extend(registry_tools);
     }
 
+    /// Top-level tool registration. Delegates to two sub-methods
+    /// grouping the ~56 MCP tools by rough stability / layer — this
+    /// exists purely to bound the single-function complexity. Prior
+    /// to the split this function was 1,534 SLOC with cyclomatic 108
+    /// (the worst function in the workspace per the adversarial
+    /// refactor oracle's measurement of `ix-agent/src/tools.rs`).
+    /// Each sub-method still has ~25 pushes but they're now bounded.
+    /// Subsequent sessions may split further as the catalog / tool
+    /// surface grows.
     fn register_all(&mut self) {
+        self.register_all_core();
+        self.register_all_advanced();
+        self.register_all_governance_and_session();
+        // Merge registry-sourced skills. Registry wins on name collision.
+        self.merge_registry_tools();
+    }
+
+    /// First half of the tool registrations: core math, optimisation,
+    /// classical ML, signal + chaos, search + game theory, probabilistic
+    /// data structures, grammar, advanced math.
+    fn register_all_core(&mut self) {
         self.tools.push(Tool {
             name: "ix_stats",
             description: "Compute statistics (mean, std, min, max, median) on a list of numbers.",
@@ -1369,7 +1389,13 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::gradient_boosting,
         });
+    }
 
+    /// Second half of the tool registrations: supervised learning,
+    /// graph, probabilistic sketches, autograd, pipeline orchestration,
+    /// catalogs, source adapters, governance, federation bridges, and
+    /// session / triage / demo utilities.
+    fn register_all_advanced(&mut self) {
         self.tools.push(Tool {
             name: "ix_supervised",
             description: "Supervised learning: train and predict with linear/logistic regression, SVM, KNN, naive Bayes, decision tree. Compute metrics (accuracy, confusion matrix, ROC/AUC, log loss). Cross-validate models with k-fold.",
@@ -1759,7 +1785,13 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::cache_op,
         });
+    }
 
+    /// Third section: governance, federation bridges, and
+    /// session / telemetry / explainer utilities. Split out of
+    /// register_all_advanced to keep per-function cyclomatic
+    /// complexity bounded.
+    fn register_all_governance_and_session(&mut self) {
         // ── Governance & federation tools ─────────────────────────────
 
         self.tools.push(Tool {
@@ -2164,8 +2196,5 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::triage_session,
         });
-
-        // Merge registry-sourced skills. Registry wins on name collision.
-        self.merge_registry_tools();
     }
 }
