@@ -297,6 +297,81 @@ impl Constitution {
             }
         }
 
+        // ── Structural-change advisory articles (12, 13, 14) ────────────
+        //
+        // These populate `relevant_articles` *without* adding to
+        // `warnings` — a refactor isn't inherently non-compliant, but
+        // the governance verdict should cite the articles that apply
+        // so auditors can confirm the impact disclosure, incremental
+        // preference, and blast-radius scrutiny were considered. This
+        // closes the gap the adversarial refactor oracle surfaced:
+        // previously, every "ship refactor plan" action came back with
+        // an empty relevant_articles list because no existing pattern
+        // matched structural-change vocabulary.
+
+        // Article 12: Structural Impact Disclosure
+        let is_refactor = lower.contains("refactor")
+            || lower.contains("decompose")
+            || lower.contains("restructure")
+            || lower.contains("reorganize")
+            || lower.contains("split ")
+            || lower.contains("extract crate")
+            || lower.contains("extract module");
+        if is_refactor {
+            if let Some(a) = self.find_article(12) {
+                relevant_articles.push(ArticleRef {
+                    number: 12,
+                    name: a.name.clone(),
+                    relevance:
+                        "Refactor actions must disclose structural impact: affected subsystems, \
+                         downstream consumers, and API-boundary crossings."
+                            .to_string(),
+                });
+            }
+        }
+
+        // Article 13: Incremental Change Preference
+        let is_big_change = is_refactor
+            && (lower.contains("rewrite")
+                || lower.contains("atomic")
+                || lower.contains("big bang")
+                || lower.contains("full")
+                || lower.contains("complete rewrite")
+                || lower.contains("overhaul"));
+        if is_big_change {
+            if let Some(a) = self.find_article(13) {
+                relevant_articles.push(ArticleRef {
+                    number: 13,
+                    name: a.name.clone(),
+                    relevance:
+                        "Large atomic refactors should justify why the incremental path is infeasible."
+                            .to_string(),
+                });
+            }
+        }
+
+        // Article 14: Coupling and Blast Radius
+        let touches_coupling = lower.contains("cross-crate")
+            || lower.contains("cross crate")
+            || lower.contains("dependency graph")
+            || lower.contains("blast radius")
+            || lower.contains("coupling")
+            || lower.contains("foundation crate")
+            || lower.contains("leaf crate")
+            || lower.contains("pagerank");
+        if is_refactor || touches_coupling {
+            if let Some(a) = self.find_article(14) {
+                relevant_articles.push(ArticleRef {
+                    number: 14,
+                    name: a.name.clone(),
+                    relevance:
+                        "Structural change must flag blast radius; changes to foundation crates \
+                         require explicit human review."
+                            .to_string(),
+                });
+            }
+        }
+
         let compliant = warnings.is_empty();
         ComplianceResult {
             compliant,
@@ -324,7 +399,14 @@ mod tests {
     fn load_default_constitution() {
         let c = Constitution::load(&constitution_path()).expect("should load constitution");
         assert!(c.articles.len() >= 7, "expected at least 7 articles, got {}", c.articles.len());
-        assert!(c.version == "1.0.0" || c.version == "2.0.0" || c.version == "2.1.0", "unexpected version: {}", c.version);
+        // Accept any 1.x or 2.x version — the constitution is append-only
+        // within a major so the test should track growth without pinning
+        // a specific patch release.
+        assert!(
+            c.version.starts_with("1.") || c.version.starts_with("2."),
+            "unexpected version: {}",
+            c.version
+        );
     }
 
     #[test]
@@ -380,6 +462,57 @@ mod tests {
             .relevant_articles
             .iter()
             .any(|a| a.number == 1));
+    }
+
+    #[test]
+    fn refactor_action_is_compliant_but_cites_article_12_and_14() {
+        let c = Constitution::load(&constitution_path()).unwrap();
+        let result = c.check_action("ship the refactor plan to decompose ix-agent into four smaller crates");
+        // The action is a legitimate refactor, not a violation — compliant
+        // stays true, but the relevant articles list must now cite the
+        // structural-change articles introduced in constitution 2.2.0.
+        assert!(result.compliant, "refactor plans are not inherently non-compliant");
+        let numbers: Vec<u8> = result.relevant_articles.iter().map(|a| a.number).collect();
+        assert!(
+            numbers.contains(&12),
+            "expected Article 12 (Structural Impact Disclosure) to be cited for a refactor action; got {:?}",
+            numbers
+        );
+        assert!(
+            numbers.contains(&14),
+            "expected Article 14 (Coupling and Blast Radius) to be cited for a refactor action; got {:?}",
+            numbers
+        );
+    }
+
+    #[test]
+    fn big_atomic_rewrite_cites_article_13() {
+        let c = Constitution::load(&constitution_path()).unwrap();
+        let result = c.check_action("do a full rewrite of the grammar subsystem as an atomic refactor");
+        let numbers: Vec<u8> = result.relevant_articles.iter().map(|a| a.number).collect();
+        assert!(
+            numbers.contains(&13),
+            "expected Article 13 (Incremental Change Preference) to be cited for big atomic rewrites; got {:?}",
+            numbers
+        );
+    }
+
+    #[test]
+    fn blast_radius_keyword_alone_cites_article_14() {
+        let c = Constitution::load(&constitution_path()).unwrap();
+        let result = c.check_action("reduce blast radius by moving the foundation crate logic");
+        let numbers: Vec<u8> = result.relevant_articles.iter().map(|a| a.number).collect();
+        assert!(numbers.contains(&14));
+    }
+
+    #[test]
+    fn routine_action_cites_no_structural_articles() {
+        let c = Constitution::load(&constitution_path()).unwrap();
+        let result = c.check_action("add a new unit test for the parser");
+        let numbers: Vec<u8> = result.relevant_articles.iter().map(|a| a.number).collect();
+        assert!(!numbers.contains(&12));
+        assert!(!numbers.contains(&13));
+        assert!(!numbers.contains(&14));
     }
 
     #[test]
