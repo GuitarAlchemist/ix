@@ -1420,6 +1420,53 @@ pub fn supervised(params: Value) -> Result<Value, String> {
 
 // ── ix_graph_ops ───────────────────────────────────────────
 
+/// Parse a node index out of a JSON value, describing *why* the value
+/// is unacceptable when it is. `field` names the slot the value occupies
+/// (`"from"`, `"to"`, `"source"`, etc.) and `ctx` is a short label used
+/// in the error (e.g. `"edge[3]"`).
+///
+/// The previous implementation just returned `"Invalid 'from'"` on any
+/// failure, which could mean anything from "missing" to "wrong type" to
+/// "negative float". This version names the exact problem and echoes
+/// the offending value so the caller can see why the parse failed.
+fn parse_node_index(value: Option<&Value>, field: &str, ctx: &str) -> Result<usize, String> {
+    let v = value.ok_or_else(|| format!("ix_graph {ctx}: missing '{field}' (node index)"))?;
+    // Integer-valued JSON numbers pass through cleanly.
+    if let Some(u) = v.as_u64() {
+        return Ok(u as usize);
+    }
+    // A negative integer is always a mistake — node ids are unsigned.
+    if let Some(i) = v.as_i64() {
+        return Err(format!(
+            "ix_graph {ctx}: '{field}' must be a non-negative integer node index, got {i}"
+        ));
+    }
+    // Floats might be an honest mistake (e.g. 1.0 that round-trips
+    // through a typed array). Accept integral floats and report
+    // fractional ones specifically.
+    if let Some(f) = v.as_f64() {
+        if f.is_finite() && f >= 0.0 && f.fract() == 0.0 {
+            return Ok(f as usize);
+        }
+        return Err(format!(
+            "ix_graph {ctx}: '{field}' must be an integer node index, got float {f}"
+        ));
+    }
+    // Any other JSON kind (string, bool, null, object, array) is
+    // definitely wrong — name the kind.
+    let kind = match v {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+        Value::Number(_) => "number",
+    };
+    Err(format!(
+        "ix_graph {ctx}: '{field}' must be an integer node index, got {kind} ({v})"
+    ))
+}
+
 pub fn graph_ops(params: Value) -> Result<Value, String> {
     use ix_graph::graph::Graph;
 
@@ -1428,17 +1475,43 @@ pub fn graph_ops(params: Value) -> Result<Value, String> {
     match operation {
         "dijkstra" | "shortest_path" | "pagerank" | "bfs" | "dfs" | "topological_sort" => {
             // Build graph from edges
-            let edges = params.get("edges").and_then(|v| v.as_array())
-                .ok_or_else(|| "Missing 'edges' array".to_string())?;
-            let n = params.get("n_nodes").and_then(|v| v.as_u64())
-                .ok_or_else(|| "Missing 'n_nodes'".to_string())? as usize;
+            let edges = params
+                .get("edges")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "ix_graph: missing 'edges' array".to_string())?;
+            let n = params
+                .get("n_nodes")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "ix_graph: missing 'n_nodes' (positive integer)".to_string())?
+                as usize;
             let directed = params.get("directed").and_then(|v| v.as_bool()).unwrap_or(true);
 
             let mut g = Graph::with_nodes(n);
-            for e in edges {
-                let arr = e.as_array().ok_or("Each edge must be [from, to, weight]")?;
-                let from = arr.first().and_then(|v| v.as_u64()).ok_or("Invalid 'from'")? as usize;
-                let to = arr.get(1).and_then(|v| v.as_u64()).ok_or("Invalid 'to'")? as usize;
+            for (i, e) in edges.iter().enumerate() {
+                let ctx = format!("edge[{i}]");
+                let arr = e.as_array().ok_or_else(|| {
+                    format!(
+                        "ix_graph {ctx}: must be a [from, to, weight] array, got {e}"
+                    )
+                })?;
+                if arr.len() < 2 {
+                    return Err(format!(
+                        "ix_graph {ctx}: must have at least [from, to], got {} elements",
+                        arr.len()
+                    ));
+                }
+                let from = parse_node_index(arr.first(), "from", &ctx)?;
+                let to = parse_node_index(arr.get(1), "to", &ctx)?;
+                if from >= n {
+                    return Err(format!(
+                        "ix_graph {ctx}: 'from' = {from} is out of range for n_nodes = {n}"
+                    ));
+                }
+                if to >= n {
+                    return Err(format!(
+                        "ix_graph {ctx}: 'to' = {to} is out of range for n_nodes = {n}"
+                    ));
+                }
                 let w = arr.get(2).and_then(|v| v.as_f64()).unwrap_or(1.0);
                 if directed {
                     g.add_edge(from, to, w);
@@ -1449,19 +1522,19 @@ pub fn graph_ops(params: Value) -> Result<Value, String> {
 
             match operation {
                 "dijkstra" => {
-                    let source = params.get("source").and_then(|v| v.as_u64())
-                        .ok_or("Missing 'source'")? as usize;
+                    let source = parse_node_index(params.get("source"), "source", "dijkstra")?;
                     let (dists, _preds) = g.dijkstra(source);
-                    let dist_map: serde_json::Map<String, Value> = dists.iter()
+                    let dist_map: serde_json::Map<String, Value> = dists
+                        .iter()
                         .map(|(k, v)| (k.to_string(), json!(*v)))
                         .collect();
                     Ok(json!({ "distances": dist_map, "source": source }))
                 }
                 "shortest_path" => {
-                    let source = params.get("source").and_then(|v| v.as_u64())
-                        .ok_or("Missing 'source'")? as usize;
-                    let target = params.get("target").and_then(|v| v.as_u64())
-                        .ok_or("Missing 'target'")? as usize;
+                    let source =
+                        parse_node_index(params.get("source"), "source", "shortest_path")?;
+                    let target =
+                        parse_node_index(params.get("target"), "target", "shortest_path")?;
                     match g.shortest_path(source, target) {
                         Some(path) => Ok(json!({ "path": path, "found": true })),
                         None => Ok(json!({ "path": [], "found": false })),
@@ -1469,38 +1542,39 @@ pub fn graph_ops(params: Value) -> Result<Value, String> {
                 }
                 "pagerank" => {
                     let damping = params.get("damping").and_then(|v| v.as_f64()).unwrap_or(0.85);
-                    let iters = params.get("iterations").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+                    let iters = params
+                        .get("iterations")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(100) as usize;
                     let ranks = g.pagerank(damping, iters);
-                    let rank_map: serde_json::Map<String, Value> = ranks.iter()
+                    let rank_map: serde_json::Map<String, Value> = ranks
+                        .iter()
                         .map(|(k, v)| (k.to_string(), json!(*v)))
                         .collect();
                     Ok(json!({ "pagerank": rank_map, "damping": damping, "iterations": iters }))
                 }
                 "bfs" => {
-                    let source = params.get("source").and_then(|v| v.as_u64())
-                        .ok_or("Missing 'source'")? as usize;
+                    let source = parse_node_index(params.get("source"), "source", "bfs")?;
                     let dists = g.bfs(source);
-                    let dist_map: serde_json::Map<String, Value> = dists.iter()
+                    let dist_map: serde_json::Map<String, Value> = dists
+                        .iter()
                         .map(|(k, v)| (k.to_string(), json!(*v)))
                         .collect();
                     Ok(json!({ "distances": dist_map, "source": source }))
                 }
                 "dfs" => {
-                    let source = params.get("source").and_then(|v| v.as_u64())
-                        .ok_or("Missing 'source'")? as usize;
+                    let source = parse_node_index(params.get("source"), "source", "dfs")?;
                     let order = g.dfs(source);
                     Ok(json!({ "visit_order": order, "source": source }))
                 }
-                "topological_sort" => {
-                    match g.topological_sort() {
-                        Some(order) => Ok(json!({ "order": order, "is_dag": true })),
-                        None => Ok(json!({ "order": [], "is_dag": false })),
-                    }
-                }
+                "topological_sort" => match g.topological_sort() {
+                    Some(order) => Ok(json!({ "order": order, "is_dag": true })),
+                    None => Ok(json!({ "order": [], "is_dag": false })),
+                },
                 _ => unreachable!(),
             }
         }
-        _ => Err(format!("Unknown graph operation: {operation}")),
+        _ => Err(format!("ix_graph: unknown operation '{operation}' (expected one of: dijkstra, shortest_path, pagerank, bfs, dfs, topological_sort)")),
     }
 }
 
