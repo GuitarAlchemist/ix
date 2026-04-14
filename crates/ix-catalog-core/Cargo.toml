@@ -1,0 +1,13 @@
+[package]
+name = "ix-catalog-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Shared Catalog trait and helpers for ix's queryable catalogs (code analysis tools, grammars, RFCs, etc.)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
