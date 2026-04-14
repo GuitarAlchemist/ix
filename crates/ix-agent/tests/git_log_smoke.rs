@@ -7,10 +7,30 @@
 //! between `commits` and `sum(series)`.
 
 use ix_agent::tools::ToolRegistry;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+fn workspace_root() -> String {
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.pop(); // crates/
+    p.pop(); // workspace root
+    p.display().to_string()
+}
+
+/// Inject `repo_root = <workspace_root>` into the args. `cargo test`
+/// runs with CWD = crates/ix-agent, so without the override git would
+/// try to resolve `crates/ix-agent` as a subdirectory of the current
+/// crate. Injecting the workspace root makes every smoke test run
+/// against the real repo.
+fn with_repo_root(mut args: Value) -> Value {
+    if let Some(obj) = args.as_object_mut() {
+        obj.insert("repo_root".into(), json!(workspace_root()));
+    }
+    args
+}
 
 fn run_git_log(args: serde_json::Value) -> Result<serde_json::Value, String> {
-    ToolRegistry::new().call("ix_git_log", args)
+    ToolRegistry::new().call("ix_git_log", with_repo_root(args))
 }
 
 #[test]

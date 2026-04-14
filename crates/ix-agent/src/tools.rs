@@ -53,10 +53,24 @@ fn substitute_refs(
                 .ok_or_else(|| format!("reference '{s}': step '{step_id}' has no result yet"))?
                 .clone();
             for key in parts {
-                current = current
-                    .get(key)
-                    .ok_or_else(|| format!("reference '{s}': missing field '{key}'"))?
-                    .clone();
+                // Numeric keys index into arrays when the current
+                // value is an array. This is the minimal extension
+                // needed to let pipeline specs say `$s.features.0`
+                // for "the first row of the features matrix" (see
+                // FINDINGS §5.C on substitution weakness). Non-numeric
+                // keys always walk the object, as before.
+                current = match (&current, key.parse::<usize>()) {
+                    (Value::Array(arr), Ok(idx)) => arr.get(idx).cloned().ok_or_else(|| {
+                        format!(
+                            "reference '{s}': index {idx} out of bounds for array of length {}",
+                            arr.len()
+                        )
+                    })?,
+                    _ => current
+                        .get(key)
+                        .ok_or_else(|| format!("reference '{s}': missing field '{key}'"))?
+                        .clone(),
+                };
             }
             Ok(current)
         }
@@ -1559,6 +1573,10 @@ Example 2 — "cluster crates by complexity then classify":
                         "type": "string",
                         "enum": ["day", "week"],
                         "description": "Bucket size for the output time series. Default 'day'."
+                    },
+                    "repo_root": {
+                        "type": "string",
+                        "description": "Optional absolute path to a git repository root. When provided, git runs as if invoked from that directory via `git -C <root>`. Use this when the MCP server's CWD is not the repo root."
                     }
                 },
                 "required": ["path"]

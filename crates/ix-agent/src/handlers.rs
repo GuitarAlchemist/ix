@@ -1746,11 +1746,23 @@ pub fn git_log(params: Value) -> Result<Value, String> {
         ));
     }
 
+    // Optional `repo_root` override — when provided, git runs as if
+    // invoked from that directory via `git -C <root>`. This is the
+    // only way to reliably resolve repo-relative paths when the MCP
+    // handler's CWD is not the repo root (e.g. during `cargo test`
+    // where CWD is the crate directory). Paths are still
+    // whitelist-validated as repo-internal.
+    let repo_root = params.get("repo_root").and_then(|v| v.as_str());
+
     // Build the argument list. Every arg is a fixed literal or a
     // validated value; there is no string concatenation of untrusted
     // input into a single argument.
     let since_arg = format!("--since={since_days} days ago");
-    let output = Command::new("git")
+    let mut cmd = Command::new("git");
+    if let Some(root) = repo_root {
+        cmd.arg("-C").arg(root);
+    }
+    let output = cmd
         .arg("log")
         .arg(&since_arg)
         .arg("--format=%ad")
@@ -1780,7 +1792,7 @@ pub fn git_log(params: Value) -> Result<Value, String> {
     // Bucket the commits into a dense per-day or per-week series.
     let (n_buckets, bucket_size_days) = match bucket {
         "day" => (since_days as usize, 1usize),
-        "week" => ((since_days as usize + 6) / 7, 7usize),
+        "week" => (usize::div_ceil(since_days as usize, 7), 7usize),
         _ => unreachable!(),
     };
 
@@ -1852,7 +1864,7 @@ fn is_safe_git_path(path: &str) -> bool {
         }
     }
     // Reject any `..` segment.
-    for segment in path.split(|c| c == '/' || c == '\\') {
+    for segment in path.split(['/', '\\']) {
         if segment == ".." {
             return false;
         }
@@ -1886,7 +1898,7 @@ fn ymd_to_epoch_days(s: &str) -> Option<i64> {
     // (epoch day 0 ≡ rata die 719162).
     let year = if m <= 2 { y - 1 } else { y };
     let era = if year >= 0 { year / 400 } else { (year - 399) / 400 };
-    let yoe = (year - era * 400) as i64; // [0, 399]
+    let yoe = year - era * 400; // [0, 399]
     let month_adj = if m > 2 { m - 3 } else { m + 9 };
     let doy = (153 * month_adj + 2) / 5 + d - 1; // [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
@@ -1898,7 +1910,7 @@ fn ymd_to_epoch_days(s: &str) -> Option<i64> {
 fn epoch_days_to_ymd(days: i64) -> String {
     let z = days + 719468;
     let era = if z >= 0 { z / 146097 } else { (z - 146096) / 146097 };
-    let doe = (z - era * 146097) as i64; // [0, 146096]
+    let doe = z - era * 146097; // [0, 146096]
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
@@ -2026,11 +2038,50 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         }));
     }
 
+    // Denormalized projections for downstream tools. Pipeline
+    // argument substitution (`$step.field`) can only resolve a
+    // single field, so we pre-project the nodes array into flat
+    // vectors and a feature matrix. This lets `ix_stats` / `ix_fft`
+    // / `ix_kmeans` / `ix_random_forest` / `ix_topo` consume the
+    // output directly by string-referencing these fields.
+    let sloc_vec: Vec<f64> = nodes
+        .iter()
+        .map(|n| n["sloc"].as_u64().unwrap_or(0) as f64)
+        .collect();
+    let file_count_vec: Vec<f64> = nodes
+        .iter()
+        .map(|n| n["file_count"].as_u64().unwrap_or(0) as f64)
+        .collect();
+    let dep_count_vec: Vec<f64> = nodes
+        .iter()
+        .map(|n| n["dep_count"].as_u64().unwrap_or(0) as f64)
+        .collect();
+    let features_matrix: Vec<Vec<f64>> = nodes
+        .iter()
+        .map(|n| {
+            vec![
+                n["sloc"].as_u64().unwrap_or(0) as f64,
+                n["file_count"].as_u64().unwrap_or(0) as f64,
+                n["dep_count"].as_u64().unwrap_or(0) as f64,
+            ]
+        })
+        .collect();
+    let names_vec: Vec<String> = nodes
+        .iter()
+        .map(|n| n["name"].as_str().unwrap_or("").to_string())
+        .collect();
+
     Ok(json!({
         "workspace_root": workspace_root.display().to_string(),
         "n_nodes": n_nodes,
         "nodes": nodes,
         "edges": edges,
+        // Denormalized flat projections for downstream tools.
+        "names": names_vec,
+        "sloc": sloc_vec,
+        "file_counts": file_count_vec,
+        "dep_counts": dep_count_vec,
+        "features": features_matrix,
     }))
 }
 

@@ -118,6 +118,59 @@ fn output_is_directly_consumable_by_ix_graph() {
 }
 
 #[test]
+fn denormalized_projections_align_with_nodes() {
+    let result = run_cargo_deps();
+    let n_nodes = result["n_nodes"].as_u64().unwrap() as usize;
+
+    let sloc = result["sloc"].as_array().expect("sloc vector");
+    let file_counts = result["file_counts"].as_array().expect("file_counts vector");
+    let dep_counts = result["dep_counts"].as_array().expect("dep_counts vector");
+    let names = result["names"].as_array().expect("names vector");
+    let features = result["features"].as_array().expect("features matrix");
+
+    assert_eq!(sloc.len(), n_nodes);
+    assert_eq!(file_counts.len(), n_nodes);
+    assert_eq!(dep_counts.len(), n_nodes);
+    assert_eq!(names.len(), n_nodes);
+    assert_eq!(features.len(), n_nodes);
+
+    // Each feature row must be a 3-column matrix (sloc, file_count, dep_count).
+    for row in features {
+        let r = row.as_array().unwrap();
+        assert_eq!(r.len(), 3);
+    }
+
+    // Projections must align with the nodes array element-wise.
+    let nodes = result["nodes"].as_array().unwrap();
+    for (i, node) in nodes.iter().enumerate() {
+        assert_eq!(sloc[i].as_f64().unwrap(), node["sloc"].as_u64().unwrap() as f64);
+        assert_eq!(
+            file_counts[i].as_f64().unwrap(),
+            node["file_count"].as_u64().unwrap() as f64
+        );
+        assert_eq!(
+            dep_counts[i].as_f64().unwrap(),
+            node["dep_count"].as_u64().unwrap() as f64
+        );
+        assert_eq!(names[i].as_str().unwrap(), node["name"].as_str().unwrap());
+    }
+}
+
+#[test]
+fn sloc_vector_feeds_ix_stats_directly() {
+    // End-to-end shape test: cargo_deps output must flow into ix_stats
+    // without manual extraction. This is the path the live oracle uses.
+    let cargo = run_cargo_deps();
+    let sloc = cargo["sloc"].clone();
+    let reg = ToolRegistry::new();
+    let stats = reg
+        .call("ix_stats", json!({ "data": sloc }))
+        .expect("stats");
+    assert!(stats["mean"].as_f64().unwrap() > 0.0);
+    assert!(stats["max"].as_f64().unwrap() >= stats["mean"].as_f64().unwrap());
+}
+
+#[test]
 fn output_feeds_ix_graph_pagerank() {
     let result = run_cargo_deps();
     let reg = ToolRegistry::new();

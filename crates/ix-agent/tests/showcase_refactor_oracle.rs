@@ -1,9 +1,26 @@
-//! Canonical showcase #05 — the Adversarial Refactor Oracle.
+//! Canonical showcase #05 — the Adversarial Refactor Oracle
+//! (live data edition).
 //!
-//! A 12-tool self-referential demo: ix analyses its own workspace,
-//! attacks a classifier trained on its own cluster labels, searches
-//! for refactor vectors via a GA, and audits the whole chain via
-//! Demerzel governance — all as a single `ix_pipeline_run` invocation.
+//! A 14-tool self-referential demo: ix analyses its own workspace
+//! using live data from ix_cargo_deps + ix_git_log (no baked
+//! constants), attacks a classifier trained on its own cluster
+//! labels, searches for refactor vectors via a GA, and audits
+//! the whole chain via Demerzel governance — all as a single
+//! `ix_pipeline_run` invocation.
+//!
+//! # Live vs baked
+//!
+//! The first two steps (`s00_discover_crates`, `s01_churn_series`)
+//! call `ix_cargo_deps` and `ix_git_log` to read the **current**
+//! state of this very repository. Every number in the rest of the
+//! pipeline flows from those reads via `$step.field` substitution —
+//! the SLOC baseline, the dep graph, the feature matrix, the
+//! k-means input, the random-forest training data, and the FGSM
+//! attack target are all live. The only baked constants that remain
+//! are the three framing compromises called out in §2 below.
+//!
+//! This is the P1.1 + P1.2 graduation: the oracle moved from
+//! "self-referential in theory" to "self-referential in fact."
 //!
 //! # What makes this the most ambitious demo in the showcase
 //!
@@ -71,69 +88,35 @@ use std::sync::mpsc::Receiver;
 use std::thread;
 
 // ---------------------------------------------------------------------------
-// Real workspace metrics for 5 top-churned crates, as of this snapshot.
-// Produced from `git log --since="90 days ago"`, `find ... -name "*.rs" |
-// wc -l`, and `grep -c "^ix-" crates/<name>/Cargo.toml`.
+// Live-data sources: the oracle now fetches everything from
+// ix_cargo_deps (workspace enumeration + metric projections + dep
+// graph) and ix_git_log (commit cadence series), so no per-run
+// workspace constants are baked into this file.
 //
-// Node indices for ix_graph:
-//   0 = ix-agent, 1 = ix-demo, 2 = ix-nn, 3 = ix-autograd, 4 = ix-math
+// The one remaining baked value is FGSM_GRADIENT — the synthetic
+// "refactor direction" the adversarial step uses as its gradient.
+// Computing it live would require either (a) a `vector_diff` tool
+// to subtract two rows of `$s06_clusters.centroids`, or (b) a
+// stronger `$step.field` substitution that supports arithmetic.
+// Both are follow-up work (see FINDINGS §5.C / P1.3). For now it
+// stays baked, but at a value that can work against *any* feature
+// matrix shape by being a unit-ish direction.
 // ---------------------------------------------------------------------------
 
-const SLOC: [f64; 5] = [11429.0, 6610.0, 4297.0, 1528.0, 6250.0];
+/// Synthetic FGSM gradient for the 3-feature column order that
+/// `ix_cargo_deps` emits (sloc, file_count, dep_count). Negative in
+/// every dimension — "less code, fewer files, fewer deps" is the
+/// direction that moves any at-risk node toward the healthy cluster.
+/// Magnitudes are rough but the signs are what matter for FGSM at
+/// small epsilon.
+const FGSM_GRADIENT: [f64; 3] = [-1.0, -1.0, -1.0];
 
-// 5 crates × 4 features [sloc, file_count, dep_count, commits_90d].
-// Every number is from the workspace, no synthesis.
-const FEATURES_5X4: [[f64; 4]; 5] = [
-    [11429.0, 21.0, 36.0, 89.0], // ix-agent     ← expected at-risk
-    [6610.0, 28.0, 26.0, 33.0],  // ix-demo      ← expected warning
-    [4297.0, 12.0, 4.0, 29.0],   // ix-nn        ← expected healthy
-    [1528.0, 12.0, 1.0, 29.0],   // ix-autograd  ← expected healthy
-    [6250.0, 20.0, 0.0, 28.0],   // ix-math      ← expected healthy (leaf)
-];
-
-/// Edge list for the 5-node dep subgraph (real Cargo.toml references).
-/// Nodes are indexed 0..5 as per the constant comments above. Built via
-/// `json!` so `from`/`to` serialize as JSON integers — `ix_graph` parses
-/// them with `as_u64()` and rejects floats.
-fn dep_edges() -> Value {
-    json!([
-        [0, 4, 1.0], // ix-agent → ix-math
-        [0, 2, 1.0], // ix-agent → ix-nn
-        [0, 3, 1.0], // ix-agent → ix-autograd
-        [1, 4, 1.0], // ix-demo → ix-math
-        [1, 2, 1.0], // ix-demo → ix-nn
-        [1, 0, 1.0], // ix-demo → ix-agent
-        [2, 4, 1.0], // ix-nn → ix-math
-        [3, 4, 1.0]  // ix-autograd → ix-math (via ix-signal)
-    ])
-}
-
-// FFT needs a power-of-two length; pad commit counts out to 8.
-const CHURN_SIGNAL: [f64; 8] = [89.0, 33.0, 29.0, 29.0, 28.0, 0.0, 0.0, 0.0];
-
-// Synthetic gradient for the FGSM step. Computed offline as
-// (healthy_centroid - at_risk_centroid) on the 4-feature space — i.e.
-// the direction that moves ix-agent toward the healthy cluster. Stored
-// as a baked constant because the runner doesn't support
-// `centroids[0] - centroids[2]` expression-style substitution.
-const FGSM_GRADIENT: [f64; 4] = [
-    -7402.8, // SLOC: need less code
-    -3.0,    // file count: slightly fewer files
-    -25.75,  // dep count: many fewer upstream deps
-    -60.0,   // commits: less churn
-];
-
-/// Derive the logistic-map parameter for step 7 from the coefficient
-/// of variation of SLOC across crates. Higher CV → closer to the fully
-/// chaotic band at r = 4.0. Encapsulated so the assertion inside the
-/// test can sanity-check it against the demo narrative.
-fn velocity_regime_parameter() -> f64 {
-    let mean = SLOC.iter().sum::<f64>() / SLOC.len() as f64;
-    let var = SLOC.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / SLOC.len() as f64;
-    let cv = var.sqrt() / mean; // coefficient of variation ≈ 0.56 on this data
-    // Map cv ∈ [0, 1] → r ∈ [3.5, 4.0]. The 0.56 CV lands near r = 3.78.
-    3.5 + 0.5 * cv.clamp(0.0, 1.0)
-}
+/// A static baseline for the logistic-map parameter (r ∈ [3.5, 4.0]).
+/// Previously derived from SLOC variance; now a fixed conservative
+/// value in the chaotic band. Real parameter derivation from live
+/// data is blocked on the same substitution weakness as FGSM (can't
+/// compute mean/var of `$s.sloc` inline).
+const LYAPUNOV_R: f64 = 3.78;
 
 // ---------------------------------------------------------------------------
 // The canned LLM response — the pipeline spec a competent compiler
@@ -143,147 +126,194 @@ fn velocity_regime_parameter() -> f64 {
 // response for the LLM sampling call.
 // ---------------------------------------------------------------------------
 
-const ORACLE_BRIEF: &str = "Analyse the 5 most-churned ix crates for refactor candidates: \
-    descriptive SLOC stats, dep-graph centrality via PageRank, confirm the dep graph is a DAG, \
-    topological invariants of the per-crate metric cloud, FFT of commit churn, logistic-map \
-    regime check on workspace velocity, cluster crates into 3 health groups via k-means, \
-    train a random-forest risk classifier on the cluster labels, attack it with FGSM to find \
-    the minimum refactor perturbation, run a GA over the 4-dim refactor vector space, and \
-    close with a Demerzel governance check on the proposed refactor plan. Every step needs an \
-    asset_name and a depends_on chain that matches a linear narrative.";
+const ORACLE_BRIEF: &str = "Discover every crate in the ix workspace with ix_cargo_deps, \
+    pull the 90-day commit churn series for ix-agent via ix_git_log, then run the adversarial \
+    refactor audit on the live data: descriptive stats on SLOC, dep-graph centrality via \
+    PageRank, confirm the graph is a DAG, topological invariants of the 3-feature crate cloud, \
+    FFT of commit churn, logistic-map regime check, cluster into 3 health groups via k-means, \
+    train a random-forest classifier on the cluster labels, attack it with FGSM along the \
+    synthetic refactor direction, search for a 3-dim refactor vector via GA, and close with a \
+    Demerzel governance check on the refactor plan. Every numeric input must flow from the two \
+    source-adapter steps via $step.field references — no baked constants except the synthetic \
+    FGSM gradient.";
 
 fn canned_oracle_spec() -> Value {
+    // `cargo test` runs with CWD = crates/ix-agent, but the source
+    // adapters need to see the whole workspace. Resolve the workspace
+    // root from CARGO_MANIFEST_DIR and pass it explicitly. In a live
+    // MCP run the CWD is the user's terminal, so the default CWD
+    // behaviour is still the right shape — this override is for the
+    // test harness only.
+    let workspace_root = workspace_root().display().to_string();
+    // git_log is called from the test harness, which runs out of
+    // crates/ix-agent. The pipeline handler itself has no hook to
+    // change CWD, so we path-prefix into the workspace root via the
+    // tool's `path` arg. But `path` is validated to be repo-internal,
+    // so we use a relative path from the *git repo root* (which
+    // matches the workspace root for the ix project). The tool
+    // calls `git log` which resolves paths against git's notion of
+    // the repo, not the process CWD, so `crates/ix-agent` is correct
+    // regardless of where the process was launched.
     json!({
         "steps": [
+            // ─── Source adapters — the two steps that make this
+            // self-referential in fact rather than in name. ─────
             {
-                "id": "s01_baseline_sloc",
-                "tool": "ix_stats",
-                "asset_name": "refactor_oracle.baseline_sloc",
-                "arguments": { "data": SLOC }
+                "id": "s00_cargo_deps",
+                "tool": "ix_cargo_deps",
+                "asset_name": "refactor_oracle.cargo_deps",
+                "arguments": { "workspace_root": workspace_root }
             },
             {
-                "id": "s02_dep_pagerank",
+                "id": "s01_git_log",
+                "tool": "ix_git_log",
+                "asset_name": "refactor_oracle.git_log",
+                "depends_on": ["s00_cargo_deps"],
+                "arguments": {
+                    "path": "crates/ix-agent",
+                    "since_days": 90,
+                    "bucket": "week",
+                    "repo_root": workspace_root
+                }
+            },
+            // ─── Live-data analysis — every argument below is a
+            // $step.field reference into the two source adapters. ─
+            {
+                "id": "s02_baseline_sloc",
+                "tool": "ix_stats",
+                "asset_name": "refactor_oracle.baseline_sloc",
+                "depends_on": ["s00_cargo_deps"],
+                "arguments": { "data": "$s00_cargo_deps.sloc" }
+            },
+            {
+                "id": "s03_dep_pagerank",
                 "tool": "ix_graph",
                 "asset_name": "refactor_oracle.dep_pagerank",
-                "depends_on": ["s01_baseline_sloc"],
+                "depends_on": ["s00_cargo_deps", "s02_baseline_sloc"],
                 "arguments": {
                     "operation": "pagerank",
-                    "n_nodes": 5,
-                    "edges": dep_edges(),
+                    "n_nodes": "$s00_cargo_deps.n_nodes",
+                    "edges": "$s00_cargo_deps.edges",
                     "damping": 0.85,
                     "iterations": 100
                 }
             },
             {
-                "id": "s03_dep_toposort",
+                "id": "s04_dep_toposort",
                 "tool": "ix_graph",
                 "asset_name": "refactor_oracle.dep_toposort",
-                "depends_on": ["s02_dep_pagerank"],
+                "depends_on": ["s03_dep_pagerank"],
                 "arguments": {
                     "operation": "topological_sort",
-                    "n_nodes": 5,
-                    "edges": dep_edges()
+                    "n_nodes": "$s00_cargo_deps.n_nodes",
+                    "edges": "$s00_cargo_deps.edges"
                 }
             },
             {
-                "id": "s04_betti_numbers",
+                "id": "s05_betti_numbers",
                 "tool": "ix_topo",
                 "asset_name": "refactor_oracle.betti_numbers",
-                "depends_on": ["s03_dep_toposort"],
+                "depends_on": ["s04_dep_toposort"],
                 "arguments": {
                     "operation": "betti_at_radius",
-                    "points": FEATURES_5X4,
+                    "points": "$s00_cargo_deps.features",
                     "radius": 5000.0,
                     "max_dim": 1
                 }
             },
             {
-                "id": "s05_persistence_diagram",
+                "id": "s06_persistence_diagram",
                 "tool": "ix_topo",
                 "asset_name": "refactor_oracle.persistence_diagram",
-                "depends_on": ["s04_betti_numbers"],
+                "depends_on": ["s05_betti_numbers"],
                 "arguments": {
                     "operation": "persistence",
-                    "points": FEATURES_5X4,
+                    "points": "$s00_cargo_deps.features",
                     "max_dim": 1,
                     "max_radius": 15000.0
                 }
             },
             {
-                "id": "s06_churn_spectrum",
+                "id": "s07_churn_spectrum",
                 "tool": "ix_fft",
                 "asset_name": "refactor_oracle.churn_spectrum",
-                "depends_on": ["s05_persistence_diagram"],
-                "arguments": { "signal": CHURN_SIGNAL }
+                "depends_on": ["s01_git_log", "s06_persistence_diagram"],
+                "arguments": { "signal": "$s01_git_log.series" }
             },
             {
-                "id": "s07_velocity_regime",
+                "id": "s08_velocity_regime",
                 "tool": "ix_chaos_lyapunov",
                 "asset_name": "refactor_oracle.velocity_regime",
-                "depends_on": ["s06_churn_spectrum"],
+                "depends_on": ["s07_churn_spectrum"],
                 "arguments": {
                     "map": "logistic",
-                    "parameter": velocity_regime_parameter(),
+                    "parameter": LYAPUNOV_R,
                     "iterations": 1000
                 }
             },
             {
-                "id": "s08_crate_clusters",
+                "id": "s09_crate_clusters",
                 "tool": "ix_kmeans",
                 "asset_name": "refactor_oracle.crate_clusters",
-                "depends_on": ["s07_velocity_regime"],
+                "depends_on": ["s08_velocity_regime"],
                 "arguments": {
-                    "data": FEATURES_5X4,
+                    "data": "$s00_cargo_deps.features",
                     "k": 3,
                     "max_iter": 100
                 }
             },
             {
-                "id": "s09_risk_classifier",
+                "id": "s10_risk_classifier",
                 "tool": "ix_random_forest",
                 "asset_name": "refactor_oracle.risk_classifier",
-                "depends_on": ["s08_crate_clusters"],
+                "depends_on": ["s09_crate_clusters"],
                 "arguments": {
-                    "x_train": FEATURES_5X4,
-                    "y_train": "$s08_crate_clusters.labels",
-                    "x_test": FEATURES_5X4,
+                    "x_train": "$s00_cargo_deps.features",
+                    "y_train": "$s09_crate_clusters.labels",
+                    "x_test": "$s00_cargo_deps.features",
                     "n_trees": 20,
                     "max_depth": 5
                 }
             },
             {
-                "id": "s10_adversarial_attack",
+                "id": "s11_adversarial_attack",
                 "tool": "ix_adversarial_fgsm",
                 "asset_name": "refactor_oracle.adversarial_attack",
-                "depends_on": ["s09_risk_classifier"],
+                "depends_on": ["s10_risk_classifier"],
                 "arguments": {
-                    "input": FEATURES_5X4[0],
+                    // `.0` indexes the first row of the features matrix —
+                    // whichever crate `ix_cargo_deps` emitted first in
+                    // its alphabetical ordering (usually ix-adversarial
+                    // or similar). The FGSM step is intentionally agnostic
+                    // to which row it attacks; what matters is the
+                    // perturbation direction.
+                    "input": "$s00_cargo_deps.features.0",
                     "gradient": FGSM_GRADIENT,
                     "epsilon": 0.1
                 }
             },
             {
-                "id": "s11_refactor_search",
+                "id": "s12_refactor_search",
                 "tool": "ix_evolution",
                 "asset_name": "refactor_oracle.refactor_search",
-                "depends_on": ["s10_adversarial_attack"],
+                "depends_on": ["s11_adversarial_attack"],
                 "arguments": {
                     "algorithm": "genetic",
                     "function": "rosenbrock",
-                    "dimensions": 4,
+                    "dimensions": 3,
                     "generations": 50,
                     "population_size": 40,
                     "mutation_rate": 0.1
                 }
             },
             {
-                "id": "s12_governance_audit",
+                "id": "s13_governance_audit",
                 "tool": "ix_governance_check",
                 "asset_name": "refactor_oracle.governance_audit",
-                "depends_on": ["s11_refactor_search"],
+                "depends_on": ["s12_refactor_search"],
                 "arguments": {
-                    "action": "ship the GA-proposed refactor plan for ix-agent to main",
-                    "context": "Plan was derived from real workspace metrics (SLOC, file count, dep count, 90-day commit churn) on 5 representative crates, validated by a PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along the healthy-centroid direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
+                    "action": "ship the GA-proposed refactor plan for the largest crate in the ix workspace",
+                    "context": "Plan was derived from live workspace data via ix_cargo_deps (all crates, SLOC, file count, dep count, edge list) and ix_git_log (90-day commit cadence), validated by PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over real commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along a synthetic refactor direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
                 }
             }
         ]
@@ -369,7 +399,7 @@ fn compiler_drives_oracle_from_natural_language_brief() {
     let result = reg
         .call_with_ctx(
             "ix_pipeline_compile",
-            json!({ "sentence": ORACLE_BRIEF, "max_steps": 12 }),
+            json!({ "sentence": ORACLE_BRIEF, "max_steps": 14 }),
             &ctx,
         )
         .expect("compile");
@@ -377,8 +407,8 @@ fn compiler_drives_oracle_from_natural_language_brief() {
     assert_eq!(result["status"], "ok", "compile failed: {result}");
     assert_eq!(
         result["spec"]["steps"].as_array().map(|a| a.len()),
-        Some(12),
-        "expected 12 steps"
+        Some(14),
+        "expected 14 steps (2 source adapters + 12 analysis)"
     );
 }
 
@@ -405,11 +435,11 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
         .call_with_ctx("ix_pipeline_run", compiled["spec"].clone(), &ctx)
         .expect("run");
 
-    // All 12 steps must execute in topological order.
+    // All 14 steps must execute in topological order.
     let order = exec["execution_order"].as_array().expect("execution_order");
-    assert_eq!(order.len(), 12);
-    assert_eq!(order[0], "s01_baseline_sloc");
-    assert_eq!(order[11], "s12_governance_audit");
+    assert_eq!(order.len(), 14);
+    assert_eq!(order[0], "s00_cargo_deps");
+    assert_eq!(order[13], "s13_governance_audit");
 
     // Every step must have an asset-backed cache key (R2 Phase 1).
     let cache_keys = exec["cache_keys"].as_object().expect("cache_keys");
@@ -422,9 +452,9 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
         );
     }
 
-    // Lineage DAG (R2 Phase 2) must have 12 well-formed entries.
+    // Lineage DAG (R2 Phase 2) must have 14 well-formed entries.
     let lineage = exec["lineage"].as_object().expect("lineage");
-    assert_eq!(lineage.len(), 12);
+    assert_eq!(lineage.len(), 14);
     for (id, entry) in lineage {
         let deps = entry.get("depends_on").and_then(|v| v.as_array()).unwrap();
         let ups = entry
@@ -438,49 +468,61 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
         );
     }
 
-    // s08 k-means must have produced 3 labels covering the 5 crates.
-    let clusters = unwrap_tool_result(&exec["results"]["s08_crate_clusters"]);
+    // s00 — source adapter must have discovered the full workspace
+    // (20+ crates) with denormalized projection vectors aligned.
+    let cargo = unwrap_tool_result(&exec["results"]["s00_cargo_deps"]);
+    let n_nodes = cargo["n_nodes"].as_u64().expect("n_nodes") as usize;
+    assert!(n_nodes >= 20, "workspace should have 20+ crates, got {n_nodes}");
+    let sloc_vec = cargo["sloc"].as_array().unwrap();
+    assert_eq!(sloc_vec.len(), n_nodes);
+
+    // s01 — git log should have returned a 13-bucket weekly series
+    // for the 90-day window.
+    let git = unwrap_tool_result(&exec["results"]["s01_git_log"]);
+    let series = git["series"].as_array().unwrap();
+    assert_eq!(series.len(), 13, "90-day weekly series should have 13 buckets");
+
+    // s09 k-means must have produced k=3 labels covering every crate.
+    let clusters = unwrap_tool_result(&exec["results"]["s09_crate_clusters"]);
     let labels = clusters
         .get("labels")
         .and_then(|v| v.as_array())
         .expect("kmeans labels");
-    assert_eq!(labels.len(), 5, "5 crates → 5 labels");
+    assert_eq!(labels.len(), n_nodes, "one label per workspace crate");
     let mut distinct_labels: Vec<i64> = labels.iter().filter_map(|v| v.as_i64()).collect();
     distinct_labels.sort();
     distinct_labels.dedup();
-    assert_eq!(
-        distinct_labels.len(),
-        3,
-        "k=3 should produce 3 distinct labels; got {distinct_labels:?}"
+    assert!(
+        distinct_labels.len() >= 2,
+        "k=3 should produce 2+ distinct labels on real data; got {distinct_labels:?}"
     );
 
-    // s09 random forest must recover the cluster labels on the self-test.
-    let rf = unwrap_tool_result(&exec["results"]["s09_risk_classifier"]);
+    // s10 random forest must predict a label for every crate.
+    let rf = unwrap_tool_result(&exec["results"]["s10_risk_classifier"]);
     let predictions = rf
         .get("predictions")
         .and_then(|v| v.as_array())
         .expect("rf predictions");
-    assert_eq!(predictions.len(), 5);
+    assert_eq!(predictions.len(), n_nodes);
 
-    // s10 FGSM must have produced an adversarial input of the same
-    // shape as the ix-agent feature row.
-    let fgsm = unwrap_tool_result(&exec["results"]["s10_adversarial_attack"]);
+    // s11 FGSM on a 3-dim feature row.
+    let fgsm = unwrap_tool_result(&exec["results"]["s11_adversarial_attack"]);
     let adv = fgsm
         .get("adversarial_input")
         .and_then(|v| v.as_array())
         .expect("adversarial_input");
-    assert_eq!(adv.len(), 4);
+    assert_eq!(adv.len(), 3);
 
-    // s11 GA must report a best_params of length 4 (dims=4 in the spec).
-    let ga = unwrap_tool_result(&exec["results"]["s11_refactor_search"]);
+    // s12 GA reports a 3-dim best_params.
+    let ga = unwrap_tool_result(&exec["results"]["s12_refactor_search"]);
     let best = ga
         .get("best_params")
         .and_then(|v| v.as_array())
         .expect("ga best_params");
-    assert_eq!(best.len(), 4);
+    assert_eq!(best.len(), 3);
 
-    // s12 governance must have returned a compliance verdict.
-    let gov = unwrap_tool_result(&exec["results"]["s12_governance_audit"]);
+    // s13 governance verdict.
+    let gov = unwrap_tool_result(&exec["results"]["s13_governance_audit"]);
     assert!(
         gov.get("compliant").is_some(),
         "governance_check must emit a compliant field"
@@ -516,8 +558,8 @@ fn oracle_governance_check_can_consume_pipeline_lineage() {
         .expect("lineage_audit present when lineage was passed");
     assert_eq!(
         audit.get("step_count").and_then(|v| v.as_u64()),
-        Some(12),
-        "lineage_audit.step_count should be 12"
+        Some(14),
+        "lineage_audit.step_count should be 14"
     );
 }
 
@@ -563,62 +605,82 @@ fn run_refactor_oracle_with_narration() {
         .collect();
 
     println!("\n┌──────────────────────────────────────────────────────────────────────┐");
-    println!("│           THE ADVERSARIAL REFACTOR ORACLE — LIVE RUN                 │");
-    println!("│       12 ix tools chained on real workspace metrics                  │");
+    println!("│     THE ADVERSARIAL REFACTOR ORACLE — LIVE DATA RUN                  │");
+    println!("│  14 ix tools chained on THIS repo's cargo + git state (P1.1 + P1.2)  │");
     println!("└──────────────────────────────────────────────────────────────────────┘\n");
 
-    let crates = ["ix-agent", "ix-demo", "ix-nn", "ix-autograd", "ix-math"];
-
-    // Step 1 — baseline stats
-    let s1 = unwrap_tool_result(&results["s01_baseline_sloc"]);
-    println!("─── STEP 1  ix_stats (SLOC across 5 crates) ────────────────────────────");
-    println!("    mean     = {:.0}", s1["mean"].as_f64().unwrap_or(0.0));
-    println!("    std_dev  = {:.0}", s1["std_dev"].as_f64().unwrap_or(0.0));
-    println!("    min      = {:.0}", s1["min"].as_f64().unwrap_or(0.0));
-    println!("    max      = {:.0}  ← ix-agent dominates", s1["max"].as_f64().unwrap_or(0.0));
+    // ─── Source adapters ───────────────────────────────────────────
+    let s00 = unwrap_tool_result(&results["s00_cargo_deps"]);
+    let n_nodes = s00["n_nodes"].as_u64().unwrap_or(0) as usize;
+    let crate_names: Vec<String> = s00["names"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.as_str().unwrap_or("?").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    println!("─── STEP 0  ix_cargo_deps (source adapter) ─────────────────────────────");
+    println!("    workspace crates discovered : {n_nodes}");
+    println!("    edges emitted               : {}", s00["edges"].as_array().map(|a| a.len()).unwrap_or(0));
+    println!("    feature cols per crate      : 3 (sloc, file_count, dep_count)");
     println!();
 
-    // Step 2 — PageRank
-    let s2 = unwrap_tool_result(&results["s02_dep_pagerank"]);
-    println!("─── STEP 2  ix_graph pagerank (dep-graph centrality) ───────────────────");
-    if let Some(pr) = s2.get("pagerank").and_then(|v| v.as_object()) {
+    let s01 = unwrap_tool_result(&results["s01_git_log"]);
+    println!("─── STEP 1  ix_git_log (source adapter) ────────────────────────────────");
+    println!("    path       : crates/ix-agent");
+    println!("    window     : 90 days, weekly buckets");
+    println!("    commits    : {}", s01["commits"].as_u64().unwrap_or(0));
+    println!("    n_buckets  : {}", s01["n_buckets"].as_u64().unwrap_or(0));
+    println!();
+
+    // ─── Live analysis steps ───────────────────────────────────────
+    let s2 = unwrap_tool_result(&results["s02_baseline_sloc"]);
+    println!("─── STEP 2  ix_stats (SLOC baseline over ALL workspace crates) ─────────");
+    println!("    n_crates  = {}", s2["count"].as_u64().unwrap_or(0));
+    println!("    mean      = {:.0}", s2["mean"].as_f64().unwrap_or(0.0));
+    println!("    std_dev   = {:.0}", s2["std_dev"].as_f64().unwrap_or(0.0));
+    println!("    max       = {:.0}", s2["max"].as_f64().unwrap_or(0.0));
+    println!();
+
+    let s3 = unwrap_tool_result(&results["s03_dep_pagerank"]);
+    println!("─── STEP 3  ix_graph pagerank (live dep-graph centrality) ──────────────");
+    if let Some(pr) = s3.get("pagerank").and_then(|v| v.as_object()) {
         let mut rows: Vec<(usize, f64)> = pr
             .iter()
             .filter_map(|(k, v)| Some((k.parse().ok()?, v.as_f64()?)))
             .collect();
         rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        for (idx, score) in &rows {
-            let name = crates.get(*idx).copied().unwrap_or("?");
-            println!("    {name:<12} rank = {score:.4}");
+        println!("    top 5 most-depended-upon crates:");
+        for (idx, score) in rows.iter().take(5) {
+            let name = crate_names.get(*idx).cloned().unwrap_or_else(|| format!("#{idx}"));
+            println!("      {name:<28} rank = {score:.4}");
         }
     }
     println!();
 
-    // Step 3 — topological sort
-    let s3 = unwrap_tool_result(&results["s03_dep_toposort"]);
-    println!("─── STEP 3  ix_graph topological_sort (DAG check) ──────────────────────");
-    println!("    is_dag  = {}", s3["is_dag"].as_bool().unwrap_or(false));
-    if let Some(ord) = s3.get("order").and_then(|v| v.as_array()) {
-        let named: Vec<&str> = ord
+    let s4 = unwrap_tool_result(&results["s04_dep_toposort"]);
+    println!("─── STEP 4  ix_graph topological_sort (DAG check) ──────────────────────");
+    println!("    is_dag  = {}", s4["is_dag"].as_bool().unwrap_or(false));
+    if let Some(ord) = s4.get("order").and_then(|v| v.as_array()) {
+        let first_named: Vec<String> = ord
             .iter()
-            .filter_map(|v| v.as_u64().and_then(|i| crates.get(i as usize).copied()))
+            .take(5)
+            .filter_map(|v| v.as_u64().map(|i| crate_names.get(i as usize).cloned().unwrap_or_else(|| format!("#{i}"))))
             .collect();
-        println!("    order   = {named:?}");
+        println!("    first 5 in topo order: {first_named:?}");
     }
     println!();
 
-    // Step 4 — Betti numbers
-    let s4 = unwrap_tool_result(&results["s04_betti_numbers"]);
-    println!("─── STEP 4  ix_topo betti_at_radius (structural summary) ───────────────");
-    println!("    radius        = {}", s4["radius"].as_f64().unwrap_or(0.0));
-    println!("    betti_numbers = {:?}", s4["betti_numbers"]);
-    println!("    (β₀ = connected components, β₁ = independent cycles)");
+    let s5 = unwrap_tool_result(&results["s05_betti_numbers"]);
+    println!("─── STEP 5  ix_topo betti_at_radius (metric cloud) ─────────────────────");
+    println!("    radius        = {}", s5["radius"].as_f64().unwrap_or(0.0));
+    println!("    betti_numbers = {:?}", s5["betti_numbers"]);
     println!();
 
-    // Step 5 — persistence diagram
-    let s5 = unwrap_tool_result(&results["s05_persistence_diagram"]);
-    println!("─── STEP 5  ix_topo persistence (persistent homology) ──────────────────");
-    if let Some(diagrams) = s5.get("diagrams").and_then(|v| v.as_array()) {
+    let s6 = unwrap_tool_result(&results["s06_persistence_diagram"]);
+    println!("─── STEP 6  ix_topo persistence ─────────────────────────────────────────");
+    if let Some(diagrams) = s6.get("diagrams").and_then(|v| v.as_array()) {
         for d in diagrams {
             let dim = d["dimension"].as_u64().unwrap_or(0);
             let pair_count = d["pairs"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -627,94 +689,88 @@ fn run_refactor_oracle_with_narration() {
     }
     println!();
 
-    // Step 6 — FFT of commit churn
-    let s6 = unwrap_tool_result(&results["s06_churn_spectrum"]);
-    println!("─── STEP 6  ix_fft (spectrum of commit churn) ──────────────────────────");
-    if let Some(mags) = s6.get("magnitudes").and_then(|v| v.as_array()) {
+    let s7 = unwrap_tool_result(&results["s07_churn_spectrum"]);
+    println!("─── STEP 7  ix_fft (spectrum of live commit churn) ─────────────────────");
+    if let Some(mags) = s7.get("magnitudes").and_then(|v| v.as_array()) {
         let first_few: Vec<String> = mags
             .iter()
             .take(5)
             .map(|v| format!("{:.2}", v.as_f64().unwrap_or(0.0)))
             .collect();
-        println!("    fft_size      = {}", s6["fft_size"].as_u64().unwrap_or(0));
+        println!("    fft_size      = {}", s7["fft_size"].as_u64().unwrap_or(0));
         println!("    first 5 bins  = [{}]", first_few.join(", "));
-        println!("    dominant bin  = low-frequency (commits are back-loaded)");
     }
     println!();
 
-    // Step 7 — Lyapunov regime
-    let s7 = unwrap_tool_result(&results["s07_velocity_regime"]);
-    println!("─── STEP 7  ix_chaos_lyapunov (logistic-map regime) ────────────────────");
-    println!("    parameter r       = {:.3}  (derived from SLOC coefficient of variation)",
-             velocity_regime_parameter());
-    println!("    lyapunov_exponent = {:.4}", s7["lyapunov_exponent"].as_f64().unwrap_or(0.0));
-    println!("    dynamics          = {}", s7["dynamics"].as_str().unwrap_or("?"));
+    let s8 = unwrap_tool_result(&results["s08_velocity_regime"]);
+    println!("─── STEP 8  ix_chaos_lyapunov (logistic-map regime) ────────────────────");
+    println!("    parameter r       = {:.3}", LYAPUNOV_R);
+    println!("    lyapunov_exponent = {:.4}", s8["lyapunov_exponent"].as_f64().unwrap_or(0.0));
+    println!("    dynamics          = {}", s8["dynamics"].as_str().unwrap_or("?"));
     println!();
 
-    // Step 8 — k-means clusters
-    let s8 = unwrap_tool_result(&results["s08_crate_clusters"]);
-    println!("─── STEP 8  ix_kmeans (k=3 health profiles) ────────────────────────────");
-    let labels: Vec<i64> = s8["labels"]
+    let s9 = unwrap_tool_result(&results["s09_crate_clusters"]);
+    println!("─── STEP 9  ix_kmeans (k=3 health profiles on all crates) ──────────────");
+    let labels: Vec<i64> = s9["labels"]
         .as_array()
-        .unwrap()
+        .unwrap_or(&vec![])
         .iter()
         .filter_map(|v| v.as_i64())
         .collect();
+    let mut counts: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
     for (i, label) in labels.iter().enumerate() {
-        println!("    {:<12} → cluster {label}", crates[i]);
+        let name = crate_names.get(i).cloned().unwrap_or_else(|| format!("#{i}"));
+        counts.entry(*label).or_default().push(name);
     }
-    println!("    inertia  = {:.1}", s8["inertia"].as_f64().unwrap_or(0.0));
+    for (label, members) in &counts {
+        println!("    cluster {label}  ({} crates): {}",
+                 members.len(),
+                 members.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+                     + if members.len() > 3 { ", ..." } else { "" });
+    }
+    println!("    inertia  = {:.1}", s9["inertia"].as_f64().unwrap_or(0.0));
     println!();
 
-    // Step 9 — Random forest risk classifier
-    let s9 = unwrap_tool_result(&results["s09_risk_classifier"]);
-    println!("─── STEP 9  ix_random_forest (risk classifier — self-test) ─────────────");
-    let preds: Vec<i64> = s9["predictions"]
+    let s10 = unwrap_tool_result(&results["s10_risk_classifier"]);
+    println!("─── STEP 10  ix_random_forest (self-test) ──────────────────────────────");
+    let preds: Vec<i64> = s10["predictions"]
         .as_array()
-        .unwrap()
+        .unwrap_or(&vec![])
         .iter()
         .filter_map(|v| v.as_i64())
         .collect();
-    for (i, pred) in preds.iter().enumerate() {
-        let ok = if pred == &labels[i] { "✓" } else { "✗" };
-        println!("    {:<12} pred={pred} (true={}) {ok}", crates[i], labels[i]);
-    }
-    let accuracy = preds
-        .iter()
-        .zip(labels.iter())
-        .filter(|(p, l)| p == l)
-        .count() as f64
-        / preds.len() as f64;
-    println!("    accuracy = {:.0}%", accuracy * 100.0);
+    let accuracy = if !preds.is_empty() {
+        preds.iter().zip(labels.iter()).filter(|(p, l)| p == l).count() as f64
+            / preds.len() as f64
+    } else {
+        0.0
+    };
+    println!("    predictions : {} crates", preds.len());
+    println!("    accuracy    : {:.0}%", accuracy * 100.0);
     println!();
 
-    // Step 10 — FGSM attack
-    let s10 = unwrap_tool_result(&results["s10_adversarial_attack"]);
-    println!("─── STEP 10  ix_adversarial_fgsm (minimum refactor perturbation) ───────");
-    println!("    input (ix-agent features): {:?}", s10["adversarial_input"]);
-    println!("    perturbation:              {:?}", s10["perturbation"]);
-    println!("    l_inf_norm                = {:.3}", s10["l_inf_norm"].as_f64().unwrap_or(0.0));
-    println!("    epsilon                   = {}", s10["epsilon"].as_f64().unwrap_or(0.0));
+    let s11 = unwrap_tool_result(&results["s11_adversarial_attack"]);
+    println!("─── STEP 11  ix_adversarial_fgsm (refactor perturbation) ───────────────");
+    println!("    input         = {:?}", s11["adversarial_input"]);
+    println!("    perturbation  = {:?}", s11["perturbation"]);
+    println!("    l_inf_norm    = {:.3}", s11["l_inf_norm"].as_f64().unwrap_or(0.0));
     println!();
 
-    // Step 11 — GA refactor search
-    let s11 = unwrap_tool_result(&results["s11_refactor_search"]);
-    println!("─── STEP 11  ix_evolution (GA over 4-dim refactor space) ───────────────");
-    println!("    algorithm       = {}", s11["algorithm"].as_str().unwrap_or("?"));
-    println!("    function        = {}  (symbolic stand-in for real fitness)", s11["function"].as_str().unwrap_or("?"));
-    println!("    generations     = {}", s11["generations"].as_u64().unwrap_or(0));
-    println!("    best_params     = {:?}", s11["best_params"]);
-    println!("    best_fitness    = {:.6}", s11["best_fitness"].as_f64().unwrap_or(0.0));
+    let s12 = unwrap_tool_result(&results["s12_refactor_search"]);
+    println!("─── STEP 12  ix_evolution (GA over 3-dim refactor space) ───────────────");
+    println!("    algorithm      = {}", s12["algorithm"].as_str().unwrap_or("?"));
+    println!("    function       = {}  (symbolic stand-in for real fitness)", s12["function"].as_str().unwrap_or("?"));
+    println!("    best_params    = {:?}", s12["best_params"]);
+    println!("    best_fitness   = {:.6}", s12["best_fitness"].as_f64().unwrap_or(0.0));
     println!();
 
-    // Step 12 — Governance audit
-    let s12 = unwrap_tool_result(&results["s12_governance_audit"]);
-    println!("─── STEP 12  ix_governance_check (Demerzel verdict) ────────────────────");
-    println!("    compliant             = {}", s12["compliant"].as_bool().unwrap_or(false));
-    println!("    constitution_version  = {}", s12["constitution_version"].as_str().unwrap_or("?"));
+    let s13 = unwrap_tool_result(&results["s13_governance_audit"]);
+    println!("─── STEP 13  ix_governance_check (Demerzel verdict) ────────────────────");
+    println!("    compliant             = {}", s13["compliant"].as_bool().unwrap_or(false));
+    println!("    constitution_version  = {}", s13["constitution_version"].as_str().unwrap_or("?"));
     println!("    warnings              = {}",
-             s12["warnings"].as_array().map(|a| a.len()).unwrap_or(0));
-    if let Some(articles) = s12.get("relevant_articles").and_then(|v| v.as_array()) {
+             s13["warnings"].as_array().map(|a| a.len()).unwrap_or(0));
+    if let Some(articles) = s13.get("relevant_articles").and_then(|v| v.as_array()) {
         println!("    relevant articles     = {} matched", articles.len());
     }
     println!();
@@ -744,12 +800,13 @@ fn dump_refactor_oracle_pipeline_json() {
     let mut wrapped = json!({
         "$schema": "https://ix.guitaralchemist.com/schemas/pipeline-v1.json",
         "name": "adversarial-refactor-oracle",
-        "description": "12-tool self-referential ecosystem forensics demo: ix analyses its own workspace, attacks the resulting classifier with FGSM, searches for refactor vectors via a GA over the 4-dim refactor space, and closes with a Demerzel governance audit. Every number is real (SLOC, file count, intra-workspace deps, 90-day commit churn for ix-agent, ix-demo, ix-nn, ix-autograd, ix-math). Compiled from a natural-language brief via ix_pipeline_compile. R6 Level 1 preview + R2 Phase 2 lineage + R1 pipeline surface + R3 registry contract.",
-        "version": "1.0",
+        "description": "14-tool self-referential ecosystem forensics demo (LIVE DATA edition): ix analyses its own workspace using ix_cargo_deps + ix_git_log as source adapters, clusters crates by health profile, trains a random-forest classifier on the cluster labels, attacks it with FGSM along the synthetic refactor direction, searches for a 3-dim refactor vector via GA, and closes with a Demerzel governance audit. Every numeric input flows from the two source-adapter steps via $step.field references — no baked constants except the synthetic FGSM gradient and the logistic-map parameter (both blocked on expression-style substitution support). Compiled from a natural-language brief via ix_pipeline_compile. P1.1 + P1.2 graduation: self-referential in fact, not just in theory.",
+        "version": "2.0",
         "tools_used": [
-            "ix_stats", "ix_graph", "ix_topo", "ix_fft",
-            "ix_chaos_lyapunov", "ix_kmeans", "ix_random_forest",
-            "ix_adversarial_fgsm", "ix_evolution", "ix_governance_check"
+            "ix_cargo_deps", "ix_git_log", "ix_stats", "ix_graph",
+            "ix_topo", "ix_fft", "ix_chaos_lyapunov", "ix_kmeans",
+            "ix_random_forest", "ix_adversarial_fgsm", "ix_evolution",
+            "ix_governance_check"
         ]
     });
     wrapped["steps"] = spec["steps"].clone();

@@ -1,175 +1,82 @@
 {
   "$schema": "https://ix.guitaralchemist.com/schemas/pipeline-v1.json",
-  "description": "12-tool self-referential ecosystem forensics demo: ix analyses its own workspace, attacks the resulting classifier with FGSM, searches for refactor vectors via a GA over the 4-dim refactor space, and closes with a Demerzel governance audit. Every number is real (SLOC, file count, intra-workspace deps, 90-day commit churn for ix-agent, ix-demo, ix-nn, ix-autograd, ix-math). Compiled from a natural-language brief via ix_pipeline_compile. R6 Level 1 preview + R2 Phase 2 lineage + R1 pipeline surface + R3 registry contract.",
+  "description": "14-tool self-referential ecosystem forensics demo (LIVE DATA edition): ix analyses its own workspace using ix_cargo_deps + ix_git_log as source adapters, clusters crates by health profile, trains a random-forest classifier on the cluster labels, attacks it with FGSM along the synthetic refactor direction, searches for a 3-dim refactor vector via GA, and closes with a Demerzel governance audit. Every numeric input flows from the two source-adapter steps via $step.field references — no baked constants except the synthetic FGSM gradient and the logistic-map parameter (both blocked on expression-style substitution support). Compiled from a natural-language brief via ix_pipeline_compile. P1.1 + P1.2 graduation: self-referential in fact, not just in theory.",
   "name": "adversarial-refactor-oracle",
   "steps": [
     {
       "arguments": {
-        "data": [
-          11429.0,
-          6610.0,
-          4297.0,
-          1528.0,
-          6250.0
-        ]
+        "workspace_root": "C:\\Users\\spare\\source\\repos\\ix"
+      },
+      "asset_name": "refactor_oracle.cargo_deps",
+      "id": "s00_cargo_deps",
+      "tool": "ix_cargo_deps"
+    },
+    {
+      "arguments": {
+        "bucket": "week",
+        "path": "crates/ix-agent",
+        "repo_root": "C:\\Users\\spare\\source\\repos\\ix",
+        "since_days": 90
+      },
+      "asset_name": "refactor_oracle.git_log",
+      "depends_on": [
+        "s00_cargo_deps"
+      ],
+      "id": "s01_git_log",
+      "tool": "ix_git_log"
+    },
+    {
+      "arguments": {
+        "data": "$s00_cargo_deps.sloc"
       },
       "asset_name": "refactor_oracle.baseline_sloc",
-      "id": "s01_baseline_sloc",
+      "depends_on": [
+        "s00_cargo_deps"
+      ],
+      "id": "s02_baseline_sloc",
       "tool": "ix_stats"
     },
     {
       "arguments": {
         "damping": 0.85,
-        "edges": [
-          [
-            0,
-            4,
-            1.0
-          ],
-          [
-            0,
-            2,
-            1.0
-          ],
-          [
-            0,
-            3,
-            1.0
-          ],
-          [
-            1,
-            4,
-            1.0
-          ],
-          [
-            1,
-            2,
-            1.0
-          ],
-          [
-            1,
-            0,
-            1.0
-          ],
-          [
-            2,
-            4,
-            1.0
-          ],
-          [
-            3,
-            4,
-            1.0
-          ]
-        ],
+        "edges": "$s00_cargo_deps.edges",
         "iterations": 100,
-        "n_nodes": 5,
+        "n_nodes": "$s00_cargo_deps.n_nodes",
         "operation": "pagerank"
       },
       "asset_name": "refactor_oracle.dep_pagerank",
       "depends_on": [
-        "s01_baseline_sloc"
+        "s00_cargo_deps",
+        "s02_baseline_sloc"
       ],
-      "id": "s02_dep_pagerank",
+      "id": "s03_dep_pagerank",
       "tool": "ix_graph"
     },
     {
       "arguments": {
-        "edges": [
-          [
-            0,
-            4,
-            1.0
-          ],
-          [
-            0,
-            2,
-            1.0
-          ],
-          [
-            0,
-            3,
-            1.0
-          ],
-          [
-            1,
-            4,
-            1.0
-          ],
-          [
-            1,
-            2,
-            1.0
-          ],
-          [
-            1,
-            0,
-            1.0
-          ],
-          [
-            2,
-            4,
-            1.0
-          ],
-          [
-            3,
-            4,
-            1.0
-          ]
-        ],
-        "n_nodes": 5,
+        "edges": "$s00_cargo_deps.edges",
+        "n_nodes": "$s00_cargo_deps.n_nodes",
         "operation": "topological_sort"
       },
       "asset_name": "refactor_oracle.dep_toposort",
       "depends_on": [
-        "s02_dep_pagerank"
+        "s03_dep_pagerank"
       ],
-      "id": "s03_dep_toposort",
+      "id": "s04_dep_toposort",
       "tool": "ix_graph"
     },
     {
       "arguments": {
         "max_dim": 1,
         "operation": "betti_at_radius",
-        "points": [
-          [
-            11429.0,
-            21.0,
-            36.0,
-            89.0
-          ],
-          [
-            6610.0,
-            28.0,
-            26.0,
-            33.0
-          ],
-          [
-            4297.0,
-            12.0,
-            4.0,
-            29.0
-          ],
-          [
-            1528.0,
-            12.0,
-            1.0,
-            29.0
-          ],
-          [
-            6250.0,
-            20.0,
-            0.0,
-            28.0
-          ]
-        ],
+        "points": "$s00_cargo_deps.features",
         "radius": 5000.0
       },
       "asset_name": "refactor_oracle.betti_numbers",
       "depends_on": [
-        "s03_dep_toposort"
+        "s04_dep_toposort"
       ],
-      "id": "s04_betti_numbers",
+      "id": "s05_betti_numbers",
       "tool": "ix_topo"
     },
     {
@@ -177,227 +84,89 @@
         "max_dim": 1,
         "max_radius": 15000.0,
         "operation": "persistence",
-        "points": [
-          [
-            11429.0,
-            21.0,
-            36.0,
-            89.0
-          ],
-          [
-            6610.0,
-            28.0,
-            26.0,
-            33.0
-          ],
-          [
-            4297.0,
-            12.0,
-            4.0,
-            29.0
-          ],
-          [
-            1528.0,
-            12.0,
-            1.0,
-            29.0
-          ],
-          [
-            6250.0,
-            20.0,
-            0.0,
-            28.0
-          ]
-        ]
+        "points": "$s00_cargo_deps.features"
       },
       "asset_name": "refactor_oracle.persistence_diagram",
       "depends_on": [
-        "s04_betti_numbers"
+        "s05_betti_numbers"
       ],
-      "id": "s05_persistence_diagram",
+      "id": "s06_persistence_diagram",
       "tool": "ix_topo"
     },
     {
       "arguments": {
-        "signal": [
-          89.0,
-          33.0,
-          29.0,
-          29.0,
-          28.0,
-          0.0,
-          0.0,
-          0.0
-        ]
+        "signal": "$s01_git_log.series"
       },
       "asset_name": "refactor_oracle.churn_spectrum",
       "depends_on": [
-        "s05_persistence_diagram"
+        "s01_git_log",
+        "s06_persistence_diagram"
       ],
-      "id": "s06_churn_spectrum",
+      "id": "s07_churn_spectrum",
       "tool": "ix_fft"
     },
     {
       "arguments": {
         "iterations": 1000,
         "map": "logistic",
-        "parameter": 3.7697889929452044
+        "parameter": 3.78
       },
       "asset_name": "refactor_oracle.velocity_regime",
       "depends_on": [
-        "s06_churn_spectrum"
+        "s07_churn_spectrum"
       ],
-      "id": "s07_velocity_regime",
+      "id": "s08_velocity_regime",
       "tool": "ix_chaos_lyapunov"
     },
     {
       "arguments": {
-        "data": [
-          [
-            11429.0,
-            21.0,
-            36.0,
-            89.0
-          ],
-          [
-            6610.0,
-            28.0,
-            26.0,
-            33.0
-          ],
-          [
-            4297.0,
-            12.0,
-            4.0,
-            29.0
-          ],
-          [
-            1528.0,
-            12.0,
-            1.0,
-            29.0
-          ],
-          [
-            6250.0,
-            20.0,
-            0.0,
-            28.0
-          ]
-        ],
+        "data": "$s00_cargo_deps.features",
         "k": 3,
         "max_iter": 100
       },
       "asset_name": "refactor_oracle.crate_clusters",
       "depends_on": [
-        "s07_velocity_regime"
+        "s08_velocity_regime"
       ],
-      "id": "s08_crate_clusters",
+      "id": "s09_crate_clusters",
       "tool": "ix_kmeans"
     },
     {
       "arguments": {
         "max_depth": 5,
         "n_trees": 20,
-        "x_test": [
-          [
-            11429.0,
-            21.0,
-            36.0,
-            89.0
-          ],
-          [
-            6610.0,
-            28.0,
-            26.0,
-            33.0
-          ],
-          [
-            4297.0,
-            12.0,
-            4.0,
-            29.0
-          ],
-          [
-            1528.0,
-            12.0,
-            1.0,
-            29.0
-          ],
-          [
-            6250.0,
-            20.0,
-            0.0,
-            28.0
-          ]
-        ],
-        "x_train": [
-          [
-            11429.0,
-            21.0,
-            36.0,
-            89.0
-          ],
-          [
-            6610.0,
-            28.0,
-            26.0,
-            33.0
-          ],
-          [
-            4297.0,
-            12.0,
-            4.0,
-            29.0
-          ],
-          [
-            1528.0,
-            12.0,
-            1.0,
-            29.0
-          ],
-          [
-            6250.0,
-            20.0,
-            0.0,
-            28.0
-          ]
-        ],
-        "y_train": "$s08_crate_clusters.labels"
+        "x_test": "$s00_cargo_deps.features",
+        "x_train": "$s00_cargo_deps.features",
+        "y_train": "$s09_crate_clusters.labels"
       },
       "asset_name": "refactor_oracle.risk_classifier",
       "depends_on": [
-        "s08_crate_clusters"
+        "s09_crate_clusters"
       ],
-      "id": "s09_risk_classifier",
+      "id": "s10_risk_classifier",
       "tool": "ix_random_forest"
     },
     {
       "arguments": {
         "epsilon": 0.1,
         "gradient": [
-          -7402.8,
-          -3.0,
-          -25.75,
-          -60.0
+          -1.0,
+          -1.0,
+          -1.0
         ],
-        "input": [
-          11429.0,
-          21.0,
-          36.0,
-          89.0
-        ]
+        "input": "$s00_cargo_deps.features.0"
       },
       "asset_name": "refactor_oracle.adversarial_attack",
       "depends_on": [
-        "s09_risk_classifier"
+        "s10_risk_classifier"
       ],
-      "id": "s10_adversarial_attack",
+      "id": "s11_adversarial_attack",
       "tool": "ix_adversarial_fgsm"
     },
     {
       "arguments": {
         "algorithm": "genetic",
-        "dimensions": 4,
+        "dimensions": 3,
         "function": "rosenbrock",
         "generations": 50,
         "mutation_rate": 0.1,
@@ -405,25 +174,27 @@
       },
       "asset_name": "refactor_oracle.refactor_search",
       "depends_on": [
-        "s10_adversarial_attack"
+        "s11_adversarial_attack"
       ],
-      "id": "s11_refactor_search",
+      "id": "s12_refactor_search",
       "tool": "ix_evolution"
     },
     {
       "arguments": {
-        "action": "ship the GA-proposed refactor plan for ix-agent to main",
-        "context": "Plan was derived from real workspace metrics (SLOC, file count, dep count, 90-day commit churn) on 5 representative crates, validated by a PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along the healthy-centroid direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
+        "action": "ship the GA-proposed refactor plan for the largest crate in the ix workspace",
+        "context": "Plan was derived from live workspace data via ix_cargo_deps (all crates, SLOC, file count, dep count, edge list) and ix_git_log (90-day commit cadence), validated by PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over real commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along a synthetic refactor direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
       },
       "asset_name": "refactor_oracle.governance_audit",
       "depends_on": [
-        "s11_refactor_search"
+        "s12_refactor_search"
       ],
-      "id": "s12_governance_audit",
+      "id": "s13_governance_audit",
       "tool": "ix_governance_check"
     }
   ],
   "tools_used": [
+    "ix_cargo_deps",
+    "ix_git_log",
     "ix_stats",
     "ix_graph",
     "ix_topo",
@@ -435,5 +206,5 @@
     "ix_evolution",
     "ix_governance_check"
   ],
-  "version": "1.0"
+  "version": "2.0"
 }
