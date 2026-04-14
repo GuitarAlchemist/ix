@@ -1587,6 +1587,21 @@ pub fn pipeline_run_placeholder(_params: Value) -> Result<Value, String> {
     )
 }
 
+/// Placeholder handler for `ix_pipeline_compile`. The real execution
+/// lives in `ToolRegistry::compile_pipeline` because the compiler
+/// needs access to the registry (for the prompt's tool summary and
+/// for post-generation validation) and the ServerContext (for MCP
+/// sampling). `ToolRegistry::call_with_ctx` intercepts
+/// `ix_pipeline_compile` before this handler ever runs.
+pub fn pipeline_compile_placeholder(_params: Value) -> Result<Value, String> {
+    Err(
+        "ix_pipeline_compile must be invoked via the top-level MCP dispatcher, \
+         which routes it to ToolRegistry::compile_pipeline. It cannot be called \
+         directly as a handler function."
+            .to_string(),
+    )
+}
+
 // ── ix_pipeline_list ───────────────────────────────────────
 
 /// R1 companion to `ix_pipeline_run`: discover `pipeline.json` specs

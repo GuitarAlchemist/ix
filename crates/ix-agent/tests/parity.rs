@@ -1,18 +1,23 @@
-//! 51-tool parity test — protects the MCP surface during the manual→registry
-//! migration.
+//! 55-tool parity test — protects the MCP surface during the manual→registry
+//! migration and any subsequent additions.
 //!
 //! Every tool name in `EXPECTED` must remain reachable through
 //! `ToolRegistry::list()` regardless of whether it's sourced manually or via
 //! the capability registry. The test fails if any historical tool vanishes
-//! during migration.
+//! or if a new tool is added without updating this allowlist — an
+//! intentional rate-limiter so every surface change is reviewed.
 
 use ix_agent::tools::ToolRegistry;
 use std::collections::HashSet;
 
-/// The 51 MCP tools exposed by ix-agent (48 registry + ix_demo,
-/// ix_explain_algorithm, and ix_triage_session, all three manual).
+/// The 55 MCP tools exposed by ix-agent. The first 48 are registry-backed,
+/// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
+/// ServerContext-routed surface), plus the 4 pipeline tools added during
+/// the R1/R2/R7-Week-2/NL-compiler work: ix_pipeline_run, ix_pipeline_list,
+/// ix_autograd_run, ix_pipeline_compile.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
+    "ix_autograd_run",
     "ix_bandit",
     "ix_bloom_filter",
     "ix_cache",
@@ -51,6 +56,9 @@ const EXPECTED: &[&str] = &[
     "ix_number_theory",
     "ix_optimize",
     "ix_pipeline",
+    "ix_pipeline_compile",
+    "ix_pipeline_list",
+    "ix_pipeline_run",
     "ix_random_forest",
     "ix_rotation",
     "ix_search",
@@ -82,7 +90,7 @@ fn exposed_names() -> HashSet<String> {
 }
 
 #[test]
-fn parity_all_51_tools_reachable() {
+fn parity_all_55_tools_reachable() {
     let exposed = exposed_names();
     let missing: Vec<&&str> = EXPECTED.iter().filter(|n| !exposed.contains(**n)).collect();
     assert!(
@@ -109,11 +117,13 @@ fn parity_all_51_tools_reachable() {
 #[test]
 fn parity_expected_count() {
     // Sanity: 48 registry tools + ix_demo + ix_explain_algorithm +
-    // ix_triage_session = 51. The three manual tools are the ones
-    // that either predate the registry migration or need ServerContext
-    // routing for MCP sampling.
-    // If this drifts, update both EXPECTED and this assertion in the same commit.
-    assert_eq!(EXPECTED.len(), 51);
+    // ix_triage_session + ix_pipeline_run + ix_pipeline_list +
+    // ix_autograd_run + ix_pipeline_compile = 55. The seven manual
+    // tools either predate the registry migration or need
+    // ServerContext routing for MCP sampling / DAG orchestration.
+    // If this drifts, update both EXPECTED and this assertion in the
+    // same commit.
+    assert_eq!(EXPECTED.len(), 55);
 }
 
 #[test]

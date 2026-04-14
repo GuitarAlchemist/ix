@@ -6,6 +6,32 @@ use std::collections::HashMap;
 use crate::handlers;
 use crate::registry_bridge;
 
+/// Strip a ```json ... ``` (or plain ``` ... ```) markdown code fence
+/// from an LLM response. The LLM is told not to emit fences, but in
+/// practice it sometimes does anyway — this helper keeps the compiler
+/// robust without punishing the first invalid response.
+///
+/// Only strips if the input starts with a triple backtick; otherwise
+/// returns the original string unchanged. Trailing text after the
+/// closing fence (e.g. "Here you go!") is preserved outside the fence
+/// and not returned — the parser only sees the content between fences.
+fn strip_markdown_fence(s: &str) -> &str {
+    let trimmed = s.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed;
+    }
+    // Drop the opening fence line (```json, ```, etc.)
+    let after_open = match trimmed.find('\n') {
+        Some(i) => &trimmed[i + 1..],
+        None => return trimmed,
+    };
+    // Drop the closing fence and anything after it.
+    match after_open.rfind("```") {
+        Some(i) => after_open[..i].trim(),
+        None => after_open.trim(),
+    }
+}
+
 /// Walk a JSON value and replace any string of the form
 /// `"$step_id.field.subfield"` with the corresponding value from
 /// `upstream_results`. A bare `"$step_id"` replaces with the full
@@ -128,6 +154,7 @@ impl ToolRegistry {
             "ix_explain_algorithm" => handlers::explain_algorithm_with_ctx(arguments, ctx),
             "ix_triage_session" => handlers::triage_session_with_ctx(arguments, ctx),
             "ix_pipeline_run" => self.run_pipeline(arguments),
+            "ix_pipeline_compile" => self.compile_pipeline(arguments, ctx),
             _ => self.call(name, arguments),
         }
     }
@@ -335,6 +362,249 @@ impl ToolRegistry {
             "cache_keys": cache_keys,
             "lineage": lineage,
         }))
+    }
+
+    /// Compile a natural-language sentence into a `pipeline.json` DAG via
+    /// MCP sampling. The handler builds a system + user prompt containing a
+    /// trimmed registry summary (tool name + description) and two worked
+    /// examples, asks the client's LLM to emit a JSON pipeline spec,
+    /// strips any markdown fencing, validates the spec against the
+    /// registry, and returns both the spec and the validation report.
+    ///
+    /// Input format:
+    /// ```json
+    /// {
+    ///   "sentence": "analyse 5 ix crates for refactor candidates",
+    ///   "max_steps": 12,
+    ///   "context": { "note": "optional free-form hints" }
+    /// }
+    /// ```
+    ///
+    /// Output:
+    /// ```json
+    /// {
+    ///   "status": "ok" | "invalid" | "parse_error",
+    ///   "sentence": "...",
+    ///   "spec": { "steps": [...] },
+    ///   "validation": { "errors": [...], "warnings": [...] },
+    ///   "raw_llm_response": "the unparsed LLM output (for debugging)"
+    /// }
+    /// ```
+    ///
+    /// A `status: "ok"` result is guaranteed to parse as JSON, have a
+    /// `steps` array, reference only registered tools, and contain no
+    /// dependency cycles. Callers can pass `spec` directly to
+    /// `ix_pipeline_run`.
+    fn compile_pipeline(
+        &self,
+        args: Value,
+        ctx: &crate::server_context::ServerContext,
+    ) -> Result<Value, String> {
+        let sentence = args
+            .get("sentence")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "ix_pipeline_compile: missing 'sentence' (string)".to_string())?;
+        let max_steps = args
+            .get("max_steps")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(12) as usize;
+        let context_hint = args
+            .get("context")
+            .map(|v| serde_json::to_string(v).unwrap_or_default())
+            .unwrap_or_default();
+
+        // Build a compact registry summary: one line per tool.
+        // Limit to 80 tools to keep the prompt within a few KB.
+        let mut registry_summary = String::new();
+        for tool in self.tools.iter().take(80) {
+            registry_summary.push_str(&format!("- {}: {}\n", tool.name, tool.description));
+        }
+
+        let examples = r#"Example 1 — "baseline stats on AWS cost data":
+{
+  "steps": [
+    {
+      "id": "baseline",
+      "tool": "ix_stats",
+      "asset_name": "cost.baseline",
+      "arguments": { "data": [994.24, 993.08, 995.55] }
+    }
+  ]
+}
+
+Example 2 — "cluster crates by complexity then classify":
+{
+  "steps": [
+    {
+      "id": "s01_baseline",
+      "tool": "ix_stats",
+      "asset_name": "demo.baseline",
+      "arguments": { "data": [10.0, 12.0, 9.0, 50.0, 11.0] }
+    },
+    {
+      "id": "s02_clusters",
+      "tool": "ix_kmeans",
+      "asset_name": "demo.clusters",
+      "depends_on": ["s01_baseline"],
+      "arguments": {
+        "data": [[10.0], [12.0], [9.0], [50.0], [11.0]],
+        "k": 2,
+        "max_iter": 100
+      }
+    }
+  ]
+}
+"#;
+
+        let system_prompt = "You are the ix pipeline compiler. Given a natural-language \
+            sentence and the ix tool registry, emit a JSON pipeline spec of the form \
+            {\"steps\": [...]} that satisfies the request. \
+            RULES: \
+            (1) Use only tool names from the supplied registry. Do not invent names. \
+            (2) Every step must have a unique 'id' (snake_case, prefixed 's01_', 's02_' ...) and a 'tool' name. \
+            (3) Set 'asset_name' on every step using the pattern '<demo>.<slug>' so the runner can cache results. \
+            (4) Use 'depends_on': [\"prev_id\"] for ordered steps. The DAG must be acyclic. \
+            (5) Arguments must match the tool's expected schema; when in doubt, use conservative constants (e.g. small arrays, k=2, max_iter=100). \
+            (6) Output ONLY the JSON pipeline spec. No prose, no markdown fences, no preamble. \
+            (7) Keep it short and coherent — one sensible chain is better than 12 random tools.";
+
+        let user_text = format!(
+            "Request: {sentence}\n\n\
+             Max steps: {max_steps}\n\n\
+             Context hints: {context_hint}\n\n\
+             {examples}\n\n\
+             Available tools (name: description):\n{registry_summary}\n\n\
+             Emit ONLY the pipeline JSON now, matching the {{\"steps\": [...]}} shape."
+        );
+
+        // Ask the client's LLM to compile the sentence.
+        let raw = ctx.sample(&user_text, system_prompt, 4096)?;
+
+        // Strip any ```json ... ``` markdown fence the LLM may have added.
+        let cleaned = strip_markdown_fence(&raw);
+
+        // Parse as JSON.
+        let spec: Value = match serde_json::from_str(cleaned) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(json!({
+                    "status": "parse_error",
+                    "sentence": sentence,
+                    "spec": Value::Null,
+                    "validation": {
+                        "errors": [format!("LLM response was not valid JSON: {e}")],
+                        "warnings": [],
+                    },
+                    "raw_llm_response": raw,
+                }));
+            }
+        };
+
+        // Validate against the registry.
+        let (errors, warnings) = self.validate_pipeline_spec(&spec);
+        let status = if errors.is_empty() { "ok" } else { "invalid" };
+
+        Ok(json!({
+            "status": status,
+            "sentence": sentence,
+            "spec": spec,
+            "validation": {
+                "errors": errors,
+                "warnings": warnings,
+            },
+            "raw_llm_response": raw,
+        }))
+    }
+
+    /// Shape-check a pipeline spec against the tool registry. Returns
+    /// `(errors, warnings)`. An empty errors list means the spec is safe
+    /// to pass to [`Self::run_pipeline`].
+    ///
+    /// Checks performed:
+    /// - `steps` is a non-empty JSON array
+    /// - every step has string `id` and string `tool`
+    /// - step ids are unique
+    /// - every `tool` name exists in `self.tools`
+    /// - `depends_on` references resolve to earlier step ids
+    /// - the DAG has no cycles (uses `ix_pipeline::dag::Dag`)
+    /// - missing `asset_name` is a warning, not an error
+    pub fn validate_pipeline_spec(&self, spec: &Value) -> (Vec<String>, Vec<String>) {
+        use ix_pipeline::dag::Dag;
+        use std::collections::HashSet;
+
+        let mut errors: Vec<String> = Vec::new();
+        let mut warnings: Vec<String> = Vec::new();
+
+        let Some(steps) = spec.get("steps").and_then(|v| v.as_array()) else {
+            errors.push("missing 'steps' array".to_string());
+            return (errors, warnings);
+        };
+        if steps.is_empty() {
+            errors.push("'steps' array is empty".to_string());
+            return (errors, warnings);
+        }
+
+        let known_tools: HashSet<&str> = self.tools.iter().map(|t| t.name).collect();
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        let mut dag: Dag<()> = Dag::new();
+
+        // First pass: per-step structural checks and DAG node population.
+        for (i, step) in steps.iter().enumerate() {
+            let id = match step.get("id").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => {
+                    errors.push(format!("step[{i}]: missing 'id' string"));
+                    continue;
+                }
+            };
+            if !seen_ids.insert(id.to_string()) {
+                errors.push(format!("step[{i}]: duplicate id '{id}'"));
+                continue;
+            }
+            match step.get("tool").and_then(|v| v.as_str()) {
+                Some(name) => {
+                    if !known_tools.contains(name) {
+                        errors.push(format!("step '{id}': unknown tool '{name}'"));
+                    }
+                }
+                None => {
+                    errors.push(format!("step '{id}': missing 'tool' string"));
+                }
+            }
+            if step.get("asset_name").is_none() {
+                warnings.push(format!(
+                    "step '{id}': no 'asset_name' — results will not be cached"
+                ));
+            }
+            let _ = dag.add_node(id, ());
+        }
+
+        // Second pass: edges, cycle detection.
+        for step in steps {
+            let Some(id) = step.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(deps) = step.get("depends_on").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for dep in deps {
+                let Some(dep_id) = dep.as_str() else {
+                    errors.push(format!("step '{id}': non-string entry in depends_on"));
+                    continue;
+                };
+                if !seen_ids.contains(dep_id) {
+                    errors.push(format!(
+                        "step '{id}': depends_on references unknown step '{dep_id}'"
+                    ));
+                    continue;
+                }
+                if let Err(e) = dag.add_edge(dep_id, id) {
+                    errors.push(format!("step '{id}': edge {dep_id} -> {id}: {e}"));
+                }
+            }
+        }
+
+        (errors, warnings)
     }
 
     /// Merge registry-sourced skills into the tool list, with registry
@@ -1229,6 +1499,31 @@ impl ToolRegistry {
                 "required": ["steps"]
             }),
             handler: handlers::pipeline_run_placeholder,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_pipeline_compile",
+            description: "Compile a natural-language sentence into a pipeline.json DAG via MCP sampling. The handler asks the client's LLM to emit a JSON {steps: [...]} spec using only registered ix tools, then validates the result against the registry (unknown tools, duplicate ids, unresolved depends_on, cycles). Returns status 'ok' when the spec is safe to pass directly to ix_pipeline_run. Handled by ToolRegistry::call_with_ctx; this entry exists only for tools/list discovery.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sentence": {
+                        "type": "string",
+                        "description": "Natural-language description of the analysis you want to run"
+                    },
+                    "max_steps": {
+                        "type": "integer",
+                        "description": "Upper bound on the number of steps the compiler is allowed to emit. Default 12."
+                    },
+                    "context": {
+                        "type": "object",
+                        "description": "Optional free-form context hints (data bindings, preferred tools, etc.) forwarded to the LLM prompt",
+                        "additionalProperties": true
+                    }
+                },
+                "required": ["sentence"]
+            }),
+            handler: handlers::pipeline_compile_placeholder,
         });
 
         self.tools.push(Tool {
