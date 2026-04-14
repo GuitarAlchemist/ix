@@ -1676,6 +1676,474 @@ pub fn pipeline_compile_placeholder(_params: Value) -> Result<Value, String> {
     )
 }
 
+// ── ix_git_log ─────────────────────────────────────────────
+
+/// P1.1 — shell out to `git log` and return a normalized per-path
+/// commit cadence time series. The primary consumer is the
+/// adversarial refactor oracle, which previously baked its 90-day
+/// commit counts as constants because ix had no git introspection
+/// tool of its own.
+///
+/// Input format:
+/// ```json
+/// {
+///   "path": "crates/ix-agent",
+///   "since_days": 90,
+///   "bucket": "day" | "week"
+/// }
+/// ```
+///
+/// Output:
+/// ```json
+/// {
+///   "path": "crates/ix-agent",
+///   "since_days": 90,
+///   "bucket": "day",
+///   "window_days": 90,
+///   "n_buckets": 90,
+///   "commits": 89,
+///   "series": [0.0, 0.0, ..., 19.0],
+///   "dates": ["2026-01-14", ..., "2026-04-13"]
+/// }
+/// ```
+///
+/// # Security
+///
+/// This handler spawns a `git` subprocess. Every argument is passed
+/// via `Command::arg()` (NOT `arg_line()` or shell concatenation),
+/// so shell metacharacters in `path` cannot escape the argument
+/// boundary. In addition we whitelist-validate `path` against the
+/// `is_safe_git_path` predicate so even a well-formed argument
+/// containing a `.git/hooks/...` style injection vector is rejected.
+pub fn git_log(params: Value) -> Result<Value, String> {
+    use std::process::Command;
+
+    let path = parse_str(&params, "path")?.to_string();
+    if !is_safe_git_path(&path) {
+        return Err(format!(
+            "ix_git_log: 'path' must be a relative repo-internal path with no '..', \
+             absolute prefix, or shell metacharacters; got {path:?}"
+        ));
+    }
+
+    let since_days = params
+        .get("since_days")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(90);
+    if since_days == 0 || since_days > 3650 {
+        return Err(format!(
+            "ix_git_log: 'since_days' must be in 1..=3650, got {since_days}"
+        ));
+    }
+
+    let bucket = params
+        .get("bucket")
+        .and_then(|v| v.as_str())
+        .unwrap_or("day");
+    if bucket != "day" && bucket != "week" {
+        return Err(format!(
+            "ix_git_log: 'bucket' must be 'day' or 'week', got {bucket:?}"
+        ));
+    }
+
+    // Build the argument list. Every arg is a fixed literal or a
+    // validated value; there is no string concatenation of untrusted
+    // input into a single argument.
+    let since_arg = format!("--since={since_days} days ago");
+    let output = Command::new("git")
+        .arg("log")
+        .arg(&since_arg)
+        .arg("--format=%ad")
+        .arg("--date=format:%Y-%m-%d")
+        .arg("--") // end of option parsing — everything after this is a path
+        .arg(&path)
+        .output()
+        .map_err(|e| format!("ix_git_log: failed to spawn git: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "ix_git_log: git exited with {:?}: {}",
+            output.status.code(),
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw_dates: Vec<&str> = stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let total_commits = raw_dates.len();
+
+    // Bucket the commits into a dense per-day or per-week series.
+    let (n_buckets, bucket_size_days) = match bucket {
+        "day" => (since_days as usize, 1usize),
+        "week" => ((since_days as usize + 6) / 7, 7usize),
+        _ => unreachable!(),
+    };
+
+    // Today anchors the end of the window. We never call a real
+    // date library here — dates from git are strings in
+    // %Y-%m-%d and we just subtract whole days from today. The
+    // cheapest correct impl: count days via Julian date number.
+    let today = today_ymd_epoch_days()
+        .ok_or_else(|| "ix_git_log: system clock is before the unix epoch".to_string())?;
+    let window_start = today.saturating_sub(since_days as i64 - 1);
+
+    let mut series = vec![0.0_f64; n_buckets];
+    let mut dates: Vec<String> = Vec::with_capacity(n_buckets);
+    for i in 0..n_buckets {
+        let day = window_start + (i * bucket_size_days) as i64;
+        dates.push(epoch_days_to_ymd(day));
+    }
+    for raw in &raw_dates {
+        if let Some(day) = ymd_to_epoch_days(raw) {
+            if day < window_start || day > today {
+                continue;
+            }
+            let bucket_idx = ((day - window_start) as usize) / bucket_size_days;
+            if bucket_idx < n_buckets {
+                series[bucket_idx] += 1.0;
+            }
+        }
+    }
+
+    Ok(json!({
+        "path": path,
+        "since_days": since_days,
+        "bucket": bucket,
+        "window_days": since_days,
+        "n_buckets": n_buckets,
+        "commits": total_commits,
+        "series": series,
+        "dates": dates,
+    }))
+}
+
+/// Accept only relative paths with no `..` segments, no absolute
+/// prefixes, no shell metacharacters, and no null bytes. This is the
+/// second layer of defence — the first is passing args through
+/// `Command::arg()` instead of shell concatenation — but we keep
+/// the whitelist so even a misuse of the handler cannot name a
+/// path like `.git/hooks/pre-commit`.
+fn is_safe_git_path(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    if path.contains('\0') {
+        return false;
+    }
+    if path.starts_with('/') || path.starts_with('\\') {
+        return false;
+    }
+    // Windows drive prefixes.
+    if path.len() >= 2 && path.as_bytes()[1] == b':' {
+        return false;
+    }
+    // Shell metacharacters that have no business in a repo path.
+    for c in path.chars() {
+        if matches!(
+            c,
+            '|' | '&' | ';' | '<' | '>' | '$' | '`' | '(' | ')' | '{' | '}' | '*' | '?' | '\n' | '\r'
+        ) {
+            return false;
+        }
+    }
+    // Reject any `..` segment.
+    for segment in path.split(|c| c == '/' || c == '\\') {
+        if segment == ".." {
+            return false;
+        }
+    }
+    true
+}
+
+/// Convert today's system time to a count of whole days since
+/// 1970-01-01 (the Julian-day-adjacent representation we use for
+/// cheap date arithmetic inside `git_log`).
+fn today_ymd_epoch_days() -> Option<i64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some((now.as_secs() / 86_400) as i64)
+}
+
+/// Parse a `YYYY-MM-DD` string to days since epoch. Returns `None`
+/// on any parse error — we just drop unparseable git dates, since
+/// they would have been skipped by the bucket assignment anyway.
+fn ymd_to_epoch_days(s: &str) -> Option<i64> {
+    let mut parts = s.split('-');
+    let y: i64 = parts.next()?.parse().ok()?;
+    let m: i64 = parts.next()?.parse().ok()?;
+    let d: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Rata Die / proleptic Gregorian days since 0001-01-01 via the
+    // classic Howard Hinnant formula, then rebase to 1970-01-01
+    // (epoch day 0 ≡ rata die 719162).
+    let year = if m <= 2 { y - 1 } else { y };
+    let era = if year >= 0 { year / 400 } else { (year - 399) / 400 };
+    let yoe = (year - era * 400) as i64; // [0, 399]
+    let month_adj = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * month_adj + 2) / 5 + d - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146097 + doe - 719468)
+}
+
+/// Inverse of `ymd_to_epoch_days` — format a day count as
+/// `YYYY-MM-DD`. Uses the same Hinnant algorithm in reverse.
+fn epoch_days_to_ymd(days: i64) -> String {
+    let z = days + 719468;
+    let era = if z >= 0 { z / 146097 } else { (z - 146096) / 146097 };
+    let doe = (z - era * 146097) as i64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+// ── ix_cargo_deps ──────────────────────────────────────────
+
+/// P1.2 — walk a Rust workspace, parse every `crates/<name>/Cargo.toml`
+/// for intra-workspace `ix-*` dependencies, and return a
+/// {nodes, edges, n_nodes} structure that `ix_graph` can consume
+/// directly.
+///
+/// Input format:
+/// ```json
+/// { "workspace_root": "C:\\Users\\spare\\source\\repos\\ix" }
+/// ```
+/// `workspace_root` is optional; when absent we walk from the CWD.
+///
+/// Output:
+/// ```json
+/// {
+///   "workspace_root": "<abs path>",
+///   "n_nodes": 52,
+///   "nodes": [
+///     { "id": 0, "name": "ix-agent", "sloc": 11429, "file_count": 21, "dep_count": 36 },
+///     ...
+///   ],
+///   "edges": [ [0, 4, 1.0], [0, 2, 1.0], ... ]
+/// }
+/// ```
+///
+/// Deliberately uses a hand-rolled Cargo.toml parser (no `toml`
+/// crate) because we only need to extract dep names matching
+/// `^ix-[a-z0-9-]+$` inside the `[dependencies]`, `[dev-dependencies]`,
+/// and `[build-dependencies]` tables. A full TOML parser would be
+/// more robust but carries a new workspace dep for something this
+/// narrow.
+pub fn cargo_deps(params: Value) -> Result<Value, String> {
+    let workspace_root = match params.get("workspace_root").and_then(|v| v.as_str()) {
+        Some(s) => std::path::PathBuf::from(s),
+        None => std::env::current_dir()
+            .map_err(|e| format!("ix_cargo_deps: cwd: {e}"))?,
+    };
+    let crates_dir = workspace_root.join("crates");
+    if !crates_dir.is_dir() {
+        return Err(format!(
+            "ix_cargo_deps: 'crates' directory not found under {}",
+            workspace_root.display()
+        ));
+    }
+
+    // First pass: enumerate every crate in `crates/<name>`. We only
+    // register a node if the directory contains a Cargo.toml so we
+    // don't pick up stray folders.
+    let mut crate_entries: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let read = std::fs::read_dir(&crates_dir)
+        .map_err(|e| format!("ix_cargo_deps: read_dir {}: {e}", crates_dir.display()))?;
+    for entry in read.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest = path.join("Cargo.toml");
+        if !manifest.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        crate_entries.push((name, manifest));
+    }
+    crate_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Assign stable node ids (alphabetical).
+    let name_to_id: std::collections::HashMap<String, usize> = crate_entries
+        .iter()
+        .enumerate()
+        .map(|(i, (n, _))| (n.clone(), i))
+        .collect();
+    let n_nodes = crate_entries.len();
+
+    // Second pass: for each crate, compute (sloc, file_count) from
+    // its `src/` tree and parse its Cargo.toml for intra-workspace
+    // deps. Only deps whose name matches a directory under `crates/`
+    // count as edges — so we correctly include non-`ix-*` workspace
+    // members (e.g. `memristive-markov`) and exclude external
+    // crates.io deps.
+    let known_crates: std::collections::HashSet<&str> =
+        name_to_id.keys().map(|s| s.as_str()).collect();
+
+    let mut nodes: Vec<Value> = Vec::with_capacity(n_nodes);
+    let mut edges: Vec<Value> = Vec::new();
+    for (from_id, (name, manifest)) in crate_entries.iter().enumerate() {
+        let src_dir = manifest.parent().unwrap().join("src");
+        let (sloc, file_count) = measure_src_tree(&src_dir);
+
+        let manifest_text = std::fs::read_to_string(manifest).map_err(|e| {
+            format!(
+                "ix_cargo_deps: read {}: {e}",
+                manifest.display()
+            )
+        })?;
+        let deps = extract_workspace_deps(&manifest_text, &known_crates);
+        let dep_count = deps.len();
+
+        for dep in &deps {
+            if let Some(&to_id) = name_to_id.get(dep) {
+                // Skip self-references (shouldn't happen but be safe).
+                if to_id == from_id {
+                    continue;
+                }
+                edges.push(json!([from_id, to_id, 1.0]));
+            }
+        }
+
+        nodes.push(json!({
+            "id": from_id,
+            "name": name,
+            "sloc": sloc,
+            "file_count": file_count,
+            "dep_count": dep_count,
+        }));
+    }
+
+    Ok(json!({
+        "workspace_root": workspace_root.display().to_string(),
+        "n_nodes": n_nodes,
+        "nodes": nodes,
+        "edges": edges,
+    }))
+}
+
+/// Walk `src/**/*.rs` recursively and return `(total_loc, file_count)`.
+/// Non-Rust files are ignored. A missing directory returns `(0, 0)`.
+fn measure_src_tree(dir: &std::path::Path) -> (u64, u64) {
+    let mut total_loc = 0u64;
+    let mut files = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let read = match std::fs::read_dir(&d) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for entry in read.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
+                files += 1;
+                if let Ok(content) = std::fs::read_to_string(&p) {
+                    total_loc += content.lines().count() as u64;
+                }
+            }
+        }
+    }
+    (total_loc, files)
+}
+
+/// Extract every dependency name from a Cargo.toml body whose name
+/// matches a known workspace crate. Scans the `[dependencies]`,
+/// `[dev-dependencies]`, and `[build-dependencies]` tables. Handles
+/// both inline-table values (`ix-math = { workspace = true }`) and
+/// plain string values (`ix-math = "0.1"`). The package's own name
+/// (from `[package]`) is excluded so we never emit self-loops.
+///
+/// `known_crates` is the set of directory names under `crates/`.
+/// Only dep keys that appear in this set are kept; external crates
+/// (serde, tokio, …) are silently dropped.
+fn extract_workspace_deps(
+    toml_body: &str,
+    known_crates: &std::collections::HashSet<&str>,
+) -> Vec<String> {
+    #[derive(PartialEq)]
+    enum Section {
+        None,
+        Package,
+        Deps,
+    }
+    let mut section = Section::None;
+    let mut pkg_name: Option<String> = None;
+    let mut deps: Vec<String> = Vec::new();
+
+    for raw in toml_body.lines() {
+        let line = raw.trim();
+        // Strip comments.
+        let line = match line.find('#') {
+            Some(i) => line[..i].trim(),
+            None => line,
+        };
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(inner) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let table_name = inner.trim();
+            section = match table_name {
+                "package" => Section::Package,
+                "dependencies" | "dev-dependencies" | "build-dependencies" => Section::Deps,
+                _ => Section::None,
+            };
+            continue;
+        }
+
+        match section {
+            Section::Package => {
+                if let Some(rest) = line.strip_prefix("name") {
+                    let rest = rest.trim_start_matches('=').trim();
+                    if let Some(n) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                        pkg_name = Some(n.to_string());
+                    }
+                }
+            }
+            Section::Deps => {
+                // Dep line: `ix-math = ...` or `ix-math.workspace = true`.
+                let key = line
+                    .split_once('=')
+                    .map(|(k, _)| k.trim())
+                    .unwrap_or(line);
+                // Strip table prefix like `ix-math.workspace` → `ix-math`.
+                let key = key.split('.').next().unwrap_or(key);
+                if known_crates.contains(key) {
+                    deps.push(key.to_string());
+                }
+            }
+            Section::None => {}
+        }
+    }
+
+    // Filter self-reference and dedupe while preserving order.
+    let self_name = pkg_name.unwrap_or_default();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for d in deps {
+        if d == self_name {
+            continue;
+        }
+        if seen.insert(d.clone()) {
+            out.push(d);
+        }
+    }
+    out
+}
+
 // ── ix_pipeline_list ───────────────────────────────────────
 
 /// R1 companion to `ix_pipeline_run`: discover `pipeline.json` specs

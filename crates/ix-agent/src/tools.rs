@@ -1527,6 +1527,46 @@ Example 2 — "cluster crates by complexity then classify":
         });
 
         self.tools.push(Tool {
+            name: "ix_cargo_deps",
+            description: "P1.2 — walk a Rust workspace, parse every crates/<name>/Cargo.toml for intra-workspace ix-* dependencies, and emit a {nodes, edges, n_nodes} structure that ix_graph can consume directly. Each node records {id, name, sloc, file_count, dep_count}. Edges are [from_id, to_id, 1.0] triples. Default workspace_root is the process CWD.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workspace_root": {
+                        "type": "string",
+                        "description": "Absolute or relative path to the workspace root (the directory containing 'crates/'). Defaults to the process CWD."
+                    }
+                }
+            }),
+            handler: handlers::cargo_deps,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_git_log",
+            description: "P1.1 — shell out to `git log` on a repo-internal path and return a normalized commit cadence time series. Buckets commits into per-day or per-week dense arrays so downstream tools (ix_fft, ix_stats, ix_chaos_lyapunov) can consume the output directly. Every argument is passed through Command::arg(), not shell concatenation, and 'path' is whitelist-validated to reject '..', absolute prefixes, and shell metacharacters.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative repo-internal path to scope the git log to (e.g. 'crates/ix-agent'). Must not contain '..', absolute prefixes, or shell metacharacters."
+                    },
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Window size in days ending today. Default 90. Must be in 1..=3650."
+                    },
+                    "bucket": {
+                        "type": "string",
+                        "enum": ["day", "week"],
+                        "description": "Bucket size for the output time series. Default 'day'."
+                    }
+                },
+                "required": ["path"]
+            }),
+            handler: handlers::git_log,
+        });
+
+        self.tools.push(Tool {
             name: "ix_pipeline_list",
             description: "Discover canonical-showcase pipeline.json specs under a directory (default 'examples/canonical-showcase'). Returns metadata for each spec — name, description, step count, and the list of tools it uses. Companion to ix_pipeline_run for pipeline browsing.",
             input_schema: json!({

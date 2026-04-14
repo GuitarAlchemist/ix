@@ -1,4 +1,4 @@
-//! 55-tool parity test — protects the MCP surface during the manual→registry
+//! 57-tool parity test — protects the MCP surface during the manual→registry
 //! migration and any subsequent additions.
 //!
 //! Every tool name in `EXPECTED` must remain reachable through
@@ -10,17 +10,19 @@
 use ix_agent::tools::ToolRegistry;
 use std::collections::HashSet;
 
-/// The 55 MCP tools exposed by ix-agent. The first 48 are registry-backed,
+/// The 56 MCP tools exposed by ix-agent. The first 48 are registry-backed,
 /// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
 /// ServerContext-routed surface), plus the 4 pipeline tools added during
 /// the R1/R2/R7-Week-2/NL-compiler work: ix_pipeline_run, ix_pipeline_list,
-/// ix_autograd_run, ix_pipeline_compile.
+/// ix_autograd_run, ix_pipeline_compile, plus the P1.1/P1.2 source
+/// adapters ix_git_log + ix_cargo_deps.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_autograd_run",
     "ix_bandit",
     "ix_bloom_filter",
     "ix_cache",
+    "ix_cargo_deps",
     "ix_category",
     "ix_chaos_lyapunov",
     "ix_code_analyze",
@@ -35,6 +37,7 @@ const EXPECTED: &[&str] = &[
     "ix_fuzzy_eval",
     "ix_ga_bridge",
     "ix_game_nash",
+    "ix_git_log",
     "ix_governance_belief",
     "ix_governance_check",
     "ix_governance_graph",
@@ -90,7 +93,7 @@ fn exposed_names() -> HashSet<String> {
 }
 
 #[test]
-fn parity_all_55_tools_reachable() {
+fn parity_all_57_tools_reachable() {
     let exposed = exposed_names();
     let missing: Vec<&&str> = EXPECTED.iter().filter(|n| !exposed.contains(**n)).collect();
     assert!(
@@ -118,12 +121,11 @@ fn parity_all_55_tools_reachable() {
 fn parity_expected_count() {
     // Sanity: 48 registry tools + ix_demo + ix_explain_algorithm +
     // ix_triage_session + ix_pipeline_run + ix_pipeline_list +
-    // ix_autograd_run + ix_pipeline_compile = 55. The seven manual
-    // tools either predate the registry migration or need
-    // ServerContext routing for MCP sampling / DAG orchestration.
+    // ix_autograd_run + ix_pipeline_compile + ix_git_log +
+    // ix_cargo_deps = 57.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 55);
+    assert_eq!(EXPECTED.len(), 57);
 }
 
 #[test]
