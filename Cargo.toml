@@ -56,6 +56,7 @@ members = [
     "crates/ix-autograd",
     "crates/ix-registry-check",
     "crates/ix-catalog-core",
+    "crates/ix-net",
 ]
 
 [workspace.package]
@@ -129,6 +130,7 @@ ix-agent-core = { path = "crates/ix-agent-core", version = "0.1.0" }
 ix-autograd = { path = "crates/ix-autograd", version = "0.1.0" }
 ix-approval = { path = "crates/ix-approval", version = "0.1.0" }
 ix-catalog-core = { path = "crates/ix-catalog-core", version = "0.1.0" }
+ix-net = { path = "crates/ix-net", version = "0.1.0" }
 ix-session = { path = "crates/ix-session", version = "0.1.0" }
 ix-memory = { path = "crates/ix-memory", version = "0.1.0" }
 ix-fuzzy = { path = "crates/ix-fuzzy", version = "0.1.0" }
