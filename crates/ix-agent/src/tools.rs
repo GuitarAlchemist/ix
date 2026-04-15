@@ -1834,12 +1834,19 @@ Example 2 — "cluster crates by complexity then classify":
     }
 
     /// Third section: governance, federation bridges, and
-    /// session / telemetry / explainer utilities. Split out of
-    /// register_all_advanced to keep per-function cyclomatic
-    /// complexity bounded.
+    /// session / telemetry / explainer utilities. Dispatches to four
+    /// sub-methods (P0.1 round 3) to keep per-function complexity
+    /// bounded.
     fn register_all_governance_and_session(&mut self) {
-        // ── Governance & federation tools ─────────────────────────────
+        self.register_governance();
+        self.register_federation_discovery();
+        self.register_ml_and_code();
+        self.register_bridges_and_session();
+    }
 
+    /// Governance sub-group 1: the four Demerzel governance primitives
+    /// (compliance check, persona loader, belief query, policy).
+    fn register_governance(&mut self) {
         self.tools.push(Tool {
             name: "ix_governance_check",
             description: "Check a proposed action against the Demerzel constitution for compliance. Optionally accepts a 'lineage' object emitted by ix_pipeline_run to record upstream provenance alongside the verdict (R2 Phase 2 audit trail).",
@@ -1943,7 +1950,10 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::governance_policy,
         });
+    }
 
+    /// Governance sub-group 2: federation discovery and trace ingest.
+    fn register_federation_discovery(&mut self) {
         self.tools.push(Tool {
             name: "ix_federation_discover",
             description: "Discover capabilities across the GuitarAlchemist ecosystem (ix, tars, ga)",
@@ -1977,7 +1987,11 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::trace_ingest,
         });
+    }
 
+    /// Governance sub-group 3: higher-level ML (ml_pipeline, ml_predict)
+    /// and source code analysis.
+    fn register_ml_and_code(&mut self) {
         self.tools.push(Tool {
             name: "ix_ml_pipeline",
             description: "End-to-end ML pipeline: load data, preprocess, train a model, evaluate metrics, and optionally persist. Supports classification (KNN, decision tree, random forest), regression (linear), and clustering (K-Means). Set task/model to 'auto' for automatic selection.",
@@ -2097,9 +2111,11 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::code_analyze,
         });
+    }
 
-        // ── ix_tars_bridge ──────────────────────────────────────
-
+    /// Governance sub-group 4: cross-repo bridges (TARS, GA) plus the
+    /// session-facing utilities (demo, explain, triage).
+    fn register_bridges_and_session(&mut self) {
         self.tools.push(Tool {
             name: "ix_tars_bridge",
             description: "Cross-repo bridge to TARS. Prepares ix analysis results (trace stats, pattern data, grammar weights) in the format TARS expects for ingestion. Returns structured payload ready for TARS tools (ingest_ga_traces, run_promotion_pipeline).",
