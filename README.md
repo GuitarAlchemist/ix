@@ -6,7 +6,7 @@
 
 A Rust workspace of composable ML/math algorithms and AI governance, designed to be exposed as **Claude Code skills** via an MCP server and CLI. Part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem (ix + [tars](https://github.com/GuitarAlchemist/tars) + [ga](https://github.com/GuitarAlchemist/ga) + [Demerzel](https://github.com/GuitarAlchemist/Demerzel)).
 
-54 crates. 61 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+56 crates. 61 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -60,7 +60,9 @@ cargo run -p ix-agent
 | ix-io | Beta | I/O utilities (CSV, JSON, TCP, WebSocket) |
 | ix-probabilistic | Beta | Bloom, HLL, Count-Min — well-defined algorithms |
 | ix-game | Beta | Nash, Shapley, auctions — solid math, newer API |
-| ix-grammar | Beta | Earley, CYK parsers — formal but API evolving |
+| ix-grammar | Beta | Earley, CYK parsers, EBNF/ABNF parsers, ~30-entry grammar catalog |
+| ix-catalog-core | Beta | Shared `Catalog` trait substrate used by ix-code, ix-grammar, ix-net catalogs |
+| ix-net | Beta | Curated catalog of ~70 IETF RFCs with obsolescence-graph queries |
 | ix-rl | Beta | Bandits, Q-learning — actively used in demos |
 
 ### Experimental Crates
@@ -198,6 +200,8 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-61-mcp-tools--by-category) for t
 | **ix-pipeline** | DAG executor with topological sort, parallel branch execution, memoization, critical path analysis |
 | **ix-probabilistic** | Bloom filter, Count-Min sketch, HyperLogLog, Cuckoo filter |
 | **ix-io** | CSV, JSON, file watcher, named pipes, TCP, HTTP, WebSocket, trace bridge |
+| **ix-catalog-core** | Shared `Catalog` trait + helpers — substrate for ix-code / ix-grammar / ix-net catalogs, exposed via `ix_catalog_list` meta-tool |
+| **ix-net** | Curated IETF RFC catalog (~70 entries) with obsolescence graph, queryable by number / topic / status via `ix_rfc_catalog` |
 
 ### Governance
 | Crate | Description |
@@ -207,7 +211,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-61-mcp-tools--by-category) for t
 ### Integration
 | Crate | Description |
 |-------|-------------|
-| **ix-agent** | MCP server: 57 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
+| **ix-agent** | MCP server: 61 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
 | **ix-skill** | CLI binary for direct command-line access to all algorithms |
 | **ix-demo** | egui desktop app with 22+ interactive demo tabs including governance explorer |
 
@@ -301,7 +305,7 @@ Topics: linear algebra, optimization, supervised/unsupervised learning, neural n
 
 ## Architecture
 
-ix is a Rust workspace of **54 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
+ix is a Rust workspace of **56 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
 
 ```
 ix/
@@ -317,7 +321,7 @@ ix/
 │   └── canonical-showcase/# 5 reproducible demo pipelines + roadmap + findings
 ├── governance/
 │   └── demerzel/          # Git submodule: constitution + personas + policies
-└── crates/                # 54 crates — see maturity tables above
+└── crates/                # 56 crates — see maturity tables above
 ```
 
 For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-61-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.
