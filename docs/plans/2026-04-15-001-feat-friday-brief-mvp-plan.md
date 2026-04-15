@@ -201,3 +201,54 @@ Each node emits `notifications/progress` so claude-mem ToolUse hooks see the ful
 - Strategy review: octopus strategy-analyst + ai-engineer + ux-researcher + business-analyst, 2026-04-14/15 (in-conversation)
 - Related plan: `docs/plans/2026-04-14-001-feat-r4-meta-mcp-gateway-plan.md` (R4 progress notifications would unblock claude-mem's view into `ix_pipeline` recursion)
 - Octopus integration memory: `~/.claude/projects/.../memory/project_octopus_integration.md`
+
+## Phase 1 shipped
+
+Landed on branch `worktree-agent-a8ac5719` (see final commit for the SHA
+at merge time):
+
+- **`crates/ix-sanitize`** — new crate. Baseline injection regex set,
+  `Sanitizer::sanitize` with stripped-count tracking, CDATA-safe
+  `wrap_envelope`, hexavalent `verdict_gate` (T/P -> Allow, F/D ->
+  RefuseConfidential, U/C/other -> RefuseUnknown). 6 unit tests.
+- **`crates/ix-friday-brief`** — new crate (library + binary). Builds
+  the 12-node pipeline via `ix_pipeline::builder::PipelineBuilder` (not
+  the JSON DAG from the plan sketch — the real API is Rust code).
+  Hard-coded 12-episode fixture anchored at 2026-04-06. Writes
+  `state/briefs/{date}-friday-brief.md` and
+  `state/snapshots/{date}-friday-brief.snapshot.json` (tagged
+  `trust: "inferred"`). Smoke test redirects state via
+  `IX_FRIDAY_BRIEF_STATE_DIR` and asserts both artifacts + the full
+  12-node trace in declared order.
+- **`.claude/skills/friday-brief/SKILL.md`** — natural-language skill
+  doc: when to use, pre-flight (all stubbed in MVP), invocation,
+  output locations, known limitations, guardrail notes.
+- **`.mcp.friday-brief.example.json`** — skeleton entries for the two
+  NotebookLM MCPs with `REPLACE_WITH_SHA` placeholders and an
+  explanatory `_comment`. Intentionally NOT merged into `.mcp.json`
+  (would break MCP startup).
+- **`docs/runbooks/friday-brief-vendoring.md`** — draft runbook for
+  creating the sacrificial Workspace identity, cloning + pinning the
+  two NotebookLM MCPs, sandbox profile directory setup, egress
+  firewall allowlist, and five-step validation. Marked `DRAFT — phase
+  2, not production.`
+
+Remaining phase-2 TODOs (not in this branch):
+
+- Real NotebookLM MCPs: clone, pin SHAs, merge example JSON into
+  `.mcp.json` after vendoring runbook has actually been executed.
+- `tier_gate` probe: replace the stub with a real Chrome-profile-based
+  Workspace tier detection.
+- `upload` / `audio` / `scrape` nodes: wire to the pinned MCP tools
+  (`add_source`, `trigger_audio_overview`, blob scraper).
+- Replace `complexity`/`topology`/`chaos` stubs with real calls to
+  `ix_code_analyze`, `ix_topo`, `ix_chaos_lyapunov` from inside the
+  pipeline compute closures.
+- Replace fixed `T` verdict with a real `ix_governance_check` call that
+  consumes the combined structural outputs.
+- Replace fake 3-LLM dissent with a real Octopus orchestrator call.
+- Slack/email delivery of the compiled brief + audio blob.
+- Federation hook to TARS/GA enrichment (grammar patterns, music
+  theory, etc.).
+- `IX_PIPELINE_TRACE=1` progress-notification wiring (depends on R4).
+- MCP tool form of the binary (`mcp__ix__ix_friday_brief` or similar).
