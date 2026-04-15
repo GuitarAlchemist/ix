@@ -1,0 +1,16 @@
+[package]
+name = "ix-sanitize"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["text-processing"]
+keywords = ["sanitizer", "injection", "governance", "ix"]
+description = "Injection regex stripper + source envelope wrapper + Confidential/Unknown verdict gate for ix governance pipelines"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
