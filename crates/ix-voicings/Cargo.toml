@@ -1,0 +1,21 @@
+[package]
+name = "ix-voicings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["command-line-utilities", "science"]
+keywords = ["voicings", "guitar", "music-theory", "pipeline", "ix"]
+description = "Voicings study pipeline: enumerate + featurize chord voicings from the GA FretboardVoicingsCLI"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+ndarray = { workspace = true }
+
+[[bin]]
+name = "ix-voicings"
+path = "src/main.rs"

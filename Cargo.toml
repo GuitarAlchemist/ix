@@ -59,6 +59,7 @@ members = [
     "crates/ix-net",
     "crates/ix-sanitize",
     "crates/ix-friday-brief",
+    "crates/ix-voicings",
 ]
 
 [workspace.package]
