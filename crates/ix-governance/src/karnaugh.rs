@@ -114,7 +114,7 @@ impl KarnaughMap {
         assert!((1..=4).contains(&n_vars), "Karnaugh maps support 1-4 variables");
         assert_eq!(var_names.len(), n_vars, "Must provide one name per variable");
 
-        let n_cells = 4usize.pow(n_vars as u32);
+        let n_cells = 6usize.pow(n_vars as u32);
         Self {
             n_vars,
             var_names: var_names.into_iter().map(|s| s.to_string()).collect(),
@@ -141,7 +141,7 @@ impl KarnaughMap {
     /// Find all variable assignments that produce the target value.
     pub fn cells_matching(&self, target: TruthValue) -> Vec<Vec<TruthValue>> {
 
-        let n_cells = 4usize.pow(self.n_vars as u32);
+        let n_cells = 6usize.pow(self.n_vars as u32);
         let mut results = Vec::new();
 
         for idx in 0..n_cells {
@@ -243,7 +243,7 @@ impl KarnaughMap {
     /// Generate the full truth table as a string.
     pub fn truth_table(&self) -> String {
 
-        let n_cells = 4usize.pow(self.n_vars as u32);
+        let n_cells = 6usize.pow(self.n_vars as u32);
         let mut lines = Vec::new();
 
         // Header
@@ -266,7 +266,7 @@ impl KarnaughMap {
         assert_eq!(values.len(), self.n_vars);
         let mut idx = 0;
         for &v in values {
-            idx = idx * 4 + Self::value_to_int(v);
+            idx = idx * 6 + Self::value_to_int(v);
         }
         idx
     }
@@ -274,8 +274,8 @@ impl KarnaughMap {
     fn decode(&self, mut idx: usize) -> Vec<TruthValue> {
         let mut values = vec![TruthValue::True; self.n_vars];
         for i in (0..self.n_vars).rev() {
-            values[i] = Self::int_to_value(idx % 4);
-            idx /= 4;
+            values[i] = Self::int_to_value(idx % 6);
+            idx /= 6;
         }
         values
     }
@@ -283,17 +283,21 @@ impl KarnaughMap {
     fn value_to_int(v: TruthValue) -> usize {
         match v {
             TruthValue::True => 0,
-            TruthValue::False => 1,
+            TruthValue::Probable => 1,
             TruthValue::Unknown => 2,
-            TruthValue::Contradictory => 3,
+            TruthValue::Disputed => 3,
+            TruthValue::False => 4,
+            TruthValue::Contradictory => 5,
         }
     }
 
     fn int_to_value(i: usize) -> TruthValue {
         match i {
             0 => TruthValue::True,
-            1 => TruthValue::False,
+            1 => TruthValue::Probable,
             2 => TruthValue::Unknown,
+            3 => TruthValue::Disputed,
+            4 => TruthValue::False,
             _ => TruthValue::Contradictory,
         }
     }
@@ -459,7 +463,8 @@ mod tests {
         kmap.set(&[Contradictory], True);
 
         let matches = kmap.cells_matching(True);
-        assert_eq!(matches.len(), 2); // True and Contradictory
+        // True and Contradictory are set to True; Probable and Disputed default to Unknown
+        assert_eq!(matches.len(), 2);
     }
 
     #[test]
@@ -471,17 +476,20 @@ mod tests {
         kmap.set(&[False, False], False);
 
         let true_cells = kmap.cells_matching(True);
+        // Only (T,T) and (F,T) are set to True; all other cells default to Unknown
         assert_eq!(true_cells.len(), 2);
     }
 
     #[test]
     fn test_prime_implicants_simple() {
-        // If B=T → output T regardless of A (a "don't care" on A)
+        // If B=T -> output T regardless of A (a "don't care" on A)
         let mut kmap = KarnaughMap::new(2, vec!["A", "B"]);
         for &a in &TruthValue::all() {
             kmap.set(&[a, True], True);
+            kmap.set(&[a, Probable], False);
             kmap.set(&[a, False], False);
             kmap.set(&[a, Unknown], False);
+            kmap.set(&[a, Disputed], False);
             kmap.set(&[a, Contradictory], False);
         }
 
@@ -491,12 +499,12 @@ mod tests {
         let best = &implicants[0];
         assert_eq!(best.constraints[0], None, "A should be don't-care");
         assert_eq!(best.constraints[1], Some(True), "B should be fixed to T");
-        assert_eq!(best.coverage, 4); // covers all 4 values of A
+        assert_eq!(best.coverage, 6); // covers all 6 values of A
     }
 
     #[test]
     fn test_prime_implicants_all_true() {
-        // All cells are True → one implicant with all don't-cares
+        // All cells are True -> one implicant with all don't-cares
         let mut kmap = KarnaughMap::new(2, vec!["A", "B"]);
         for &a in &TruthValue::all() {
             for &b in &TruthValue::all() {
@@ -507,7 +515,7 @@ mod tests {
         let implicants = kmap.prime_implicants(True);
         assert!(!implicants.is_empty());
         let best = &implicants[0];
-        assert_eq!(best.coverage, 16);
+        assert_eq!(best.coverage, 36); // 6 x 6 = 36 cells
         assert!(best.constraints.iter().all(|c| c.is_none()));
     }
 

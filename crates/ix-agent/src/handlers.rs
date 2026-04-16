@@ -2814,10 +2814,12 @@ pub fn governance_belief(params: Value) -> Result<Value, String> {
     fn parse_truth_value(s: &str) -> Result<ix_governance::TruthValue, String> {
         match s {
             "T" => Ok(ix_governance::TruthValue::True),
-            "F" => Ok(ix_governance::TruthValue::False),
+            "P" => Ok(ix_governance::TruthValue::Probable),
             "U" => Ok(ix_governance::TruthValue::Unknown),
+            "D" => Ok(ix_governance::TruthValue::Disputed),
+            "F" => Ok(ix_governance::TruthValue::False),
             "C" => Ok(ix_governance::TruthValue::Contradictory),
-            _ => Err(format!("Invalid truth value '{}': use T, F, U, or C", s)),
+            _ => Err(format!("Invalid truth value '{}': use T, P, U, D, F, or C", s)),
         }
     }
 
@@ -2871,7 +2873,9 @@ pub fn governance_belief(params: Value) -> Result<Value, String> {
                 "resolved_action": format!("{:?}", action),
                 "explanation": match action {
                     ix_governance::ResolvedAction::Proceed => "Belief is verified — safe to proceed",
+                    ix_governance::ResolvedAction::ProceedWithCaveat => "Evidence leans true — proceed with caveat",
                     ix_governance::ResolvedAction::DoNotProceed => "Belief is refuted — do not proceed",
+                    ix_governance::ResolvedAction::LikelyDoNotProceed => "Evidence conflicts — likely do not proceed",
                     ix_governance::ResolvedAction::GatherEvidence => "Insufficient evidence — gather more before deciding",
                     ix_governance::ResolvedAction::Escalate => "Contradictory evidence — escalate to human",
                 },

@@ -19,8 +19,10 @@ mod truth_value_serde {
     {
         let s = match value {
             TruthValue::True => "T",
-            TruthValue::False => "F",
+            TruthValue::Probable => "P",
             TruthValue::Unknown => "U",
+            TruthValue::Disputed => "D",
+            TruthValue::False => "F",
             TruthValue::Contradictory => "C",
         };
         serializer.serialize_str(s)
@@ -33,8 +35,10 @@ mod truth_value_serde {
         let s = String::deserialize(deserializer)?;
         match s.as_str() {
             "T" => Ok(TruthValue::True),
-            "F" => Ok(TruthValue::False),
+            "P" => Ok(TruthValue::Probable),
             "U" => Ok(TruthValue::Unknown),
+            "D" => Ok(TruthValue::Disputed),
+            "F" => Ok(TruthValue::False),
             "C" => Ok(TruthValue::Contradictory),
             other => Err(serde::de::Error::custom(format!(
                 "invalid truth value: {other}"
