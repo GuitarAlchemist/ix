@@ -102,7 +102,7 @@ pub struct ToolDescriptor {
 // ---------------------------------------------------------------------------
 
 /// Default read-response timeout.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A running MCP child process that communicates via stdio JSON-RPC.
 pub struct McpChild {
@@ -219,7 +219,18 @@ impl McpChild {
             if trimmed.is_empty() {
                 continue;
             }
-            let resp: JsonRpcResponse = serde_json::from_str(trimmed)?;
+            // Skip non-JSON lines (build output, warnings, etc.)
+            if !trimmed.starts_with('{') {
+                eprintln!("[mcp-bridge/{}] skip: {}", self.label, trimmed);
+                continue;
+            }
+            let resp: JsonRpcResponse = match serde_json::from_str(trimmed) {
+                Ok(r) => r,
+                Err(_) => {
+                    eprintln!("[mcp-bridge/{}] skip non-json: {}", self.label, &trimmed[..trimmed.len().min(120)]);
+                    continue;
+                }
+            };
             // Skip notifications (messages without an id).
             if resp.id.is_some() {
                 return Ok(resp);

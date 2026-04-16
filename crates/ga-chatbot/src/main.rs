@@ -51,14 +51,14 @@ enum Commands {
         /// Executable for the GA MCP server.
         #[arg(long, default_value = "dotnet")]
         ga_command: String,
-        /// Arguments for the GA MCP server.
-        #[arg(long)]
+        /// Arguments for the GA MCP server (comma-separated, e.g. "run,--project,GaMcpServer").
+        #[arg(long, value_delimiter = ',')]
         ga_args: Vec<String>,
         /// Executable for the IX MCP server.
         #[arg(long, default_value = "cargo")]
         ix_command: String,
-        /// Arguments for the IX MCP server.
-        #[arg(long)]
+        /// Arguments for the IX MCP server (comma-separated, e.g. "run,-p,ix-agent").
+        #[arg(long, value_delimiter = ',')]
         ix_args: Vec<String>,
     },
     /// Run the deterministic QA pipeline on the adversarial corpus.
@@ -856,6 +856,11 @@ const LIVE_SYSTEM_PROMPT: &str = r#"You are a music theory assistant with access
 fn mcp_tools_to_openai(tools: &[ga_chatbot::mcp_bridge::ToolDescriptor]) -> serde_json::Value {
     let funcs: Vec<serde_json::Value> = tools
         .iter()
+        .filter(|t| {
+            // Skip tools with invalid schemas (arrays missing "items" sub-schema)
+            let schema_str = t.input_schema.to_string();
+            !schema_str.contains(r#""type":"array"}"#)
+        })
         .map(|t| {
             serde_json::json!({
                 "type": "function",
@@ -1038,8 +1043,13 @@ fn serve_http_live(port: u16, config: &McpBridgeConfig) {
         }
     };
 
-    let tool_count = bridge.merged_tools().len();
-    let openai_tools = mcp_tools_to_openai(&bridge.merged_tools());
+    let mut all_tools = bridge.merged_tools();
+    // OpenAI function calling limit is 128 tools
+    if all_tools.len() > 128 {
+        all_tools.truncate(128);
+    }
+    let tool_count = all_tools.len();
+    let openai_tools = mcp_tools_to_openai(&all_tools);
     eprintln!(
         "[ga-chatbot-live] Bridge ready — {} tools available",
         tool_count
