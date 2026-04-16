@@ -46,10 +46,18 @@ pub fn compute_prompt_shapley(findings: &[QaResult]) -> Vec<PromptShapleyScore> 
         n
     );
 
-    // Pre-compute which prompts fail (F or D aggregate verdict).
+    // Pre-compute which prompts fail (F or D verdict).
+    // Check deterministic_verdict first (single-judge mode), then aggregate.
     let fails: Vec<bool> = findings
         .iter()
-        .map(|r| matches!(r.aggregate, 'F' | 'D'))
+        .map(|r| {
+            let det = r
+                .deterministic_verdict
+                .map(|v| matches!(v, 'F' | 'D'))
+                .unwrap_or(false);
+            let agg = matches!(r.aggregate, 'F' | 'D');
+            det || agg
+        })
         .collect();
 
     // Build the cooperative game.
@@ -81,6 +89,7 @@ pub fn compute_prompt_shapley(findings: &[QaResult]) -> Vec<PromptShapleyScore> 
                 shapley_value: shapley[i],
                 category,
                 failure_rate: if fails[i] { 1.0 } else { 0.0 },
+                // Note: fails[i] checks both deterministic_verdict and aggregate
             }
         })
         .collect();
