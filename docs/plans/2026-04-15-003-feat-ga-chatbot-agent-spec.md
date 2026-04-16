@@ -485,3 +485,31 @@ Add 1 day contingency if kill criterion 3 (hexavalent migration breaking existin
 - `crates/ix-game/src/cooperative.rs` — `CooperativeGame::shapley_value()` implementation
 - `crates/ix-governance/src/tetravalent.rs` — current 4-value `TruthValue` enum to be extended
 - `governance/demerzel/constitutions/default.constitution.md` — Articles 1-7 binding the chatbot
+
+---
+
+## Phase 3 shipped
+
+**Date:** 2026-04-14
+
+### Shapley prompt attribution (`crates/ga-chatbot/src/shapley.rs`)
+
+- `compute_prompt_shapley(findings: &[QaResult]) -> Vec<PromptShapleyScore>` using `ix_game::cooperative::CooperativeGame` with bitmask coalitions for exact Shapley computation.
+- Characteristic function `v(S)` = count of F/D verdicts in coalition S.
+- Capped at 20 players (exact Shapley is O(2^n)); larger corpora must sample first.
+- `--shapley` flag on `ga-chatbot qa` subcommand: computes attribution after QA, appends `shapley_summary` JSON to findings output, prints top-5 and bottom-5 prompts.
+- 5 tests: `shapley_single_failing_prompt_gets_max_value`, `shapley_all_fail_equally`, `shapley_redundant_prompt_gets_low_value`, `shapley_empty_returns_empty`, `shapley_values_sum_to_grand_coalition`.
+- **Deviation from spec:** None. `ix_game::cooperative::CooperativeGame::shapley_value()` fits perfectly -- used directly without manual formula implementation.
+
+### Topology drift detector (`crates/ga-chatbot/src/qa.rs`)
+
+- `check_topology_claim(prompt_id, response, transitions) -> Option<Finding>` verifies relational claims ("close", "similar", "related", "neighboring", "connected") between voicing pairs against transition cost data.
+- `load_transitions(path) -> HashMap<(String, String), f64>` loads `{instrument}-transitions.json`.
+- Default cost threshold: 6.0. Claims exceeding threshold or with no path produce Finding with verdict D.
+- Regex-based lazy detection: only activates when response contains relational keywords AND 2+ voicing IDs.
+- Wired into `run_deterministic_checks_with_topology` between Layer 1 (corpus lookup) and Layer 2 (confidence). Original `run_deterministic_checks` preserved as backward-compatible wrapper.
+- 5 tests: `topology_catches_unconnected_claim`, `topology_passes_connected_pair`, `topology_skips_when_no_relational_claim`, `topology_catches_no_path`, `topology_with_deterministic_checks`.
+
+### Test summary
+
+27 tests total (Phase 1: 7, Phase 2: 10, Phase 3: 10), all passing. `cargo clippy -p ga-chatbot --tests -- -D warnings` clean.

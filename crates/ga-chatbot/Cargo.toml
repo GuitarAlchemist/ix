@@ -12,6 +12,7 @@ description = "Domain-specific voicing chatbot MCP server with deterministic QA 
 [dependencies]
 ix-sanitize = { workspace = true }
 ix-game = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
