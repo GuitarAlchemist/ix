@@ -282,14 +282,48 @@ fn check_14_plr_involutions(x: PcSet) -> bool {
         && ix_bracelet::r(rx) == Some(bx)
 }
 
+/// Catalog invariant #15: PLR composites match the named Slide and Nebenverwandt
+/// operators — `S == L∘P∘R` and `N == R∘L∘P`. Fires on consonant triads, where all
+/// five operators are defined. True by construction in `ix-bracelet`, so this
+/// instrument wires the catalog row to "tested" without adding discriminating
+/// power over #14 (a known strict duplicate).
+fn check_15_plr_composites(x: PcSet) -> bool {
+    let bx = ix_bracelet::PcSet::new(x.0);
+    let (Some(rx), Some(px)) = (ix_bracelet::r(bx), ix_bracelet::p(bx)) else {
+        return false;
+    };
+    let (Some(prx), Some(lpx)) = (ix_bracelet::p(rx), ix_bracelet::l(px)) else {
+        return false;
+    };
+    let (Some(lprx), Some(rlpx)) = (ix_bracelet::l(prx), ix_bracelet::r(lpx)) else {
+        return false;
+    };
+    ix_bracelet::s(bx) == Some(lprx) && ix_bracelet::n(bx) == Some(rlpx)
+}
+
+/// Catalog invariant #21: Triad templates have exactly 3 distinct pitch classes
+/// after octave reduction. At the PC-set level this reduces to `|x| == 3`.
+fn check_21_triad_cardinality(x: PcSet) -> bool {
+    x.cardinality() == 3
+}
+
+/// Catalog invariant #22: Seventh-chord templates have exactly 4 distinct pitch
+/// classes after octave reduction. At the PC-set level this reduces to `|x| == 4`.
+fn check_22_seventh_cardinality(x: PcSet) -> bool {
+    x.cardinality() == 4
+}
+
 fn checks() -> Vec<Check> {
     vec![
         Check { id: 14, holds: check_14_plr_involutions },
+        Check { id: 15, holds: check_15_plr_composites },
         Check { id: 16, holds: check_16_t12_identity },
         Check { id: 17, holds: check_17_double_inversion },
         Check { id: 18, holds: check_18_rotate_by_cardinality },
         Check { id: 19, holds: check_19_prime_form_self_representative },
         Check { id: 20, holds: check_20_icv_inversion_invariant },
+        Check { id: 21, holds: check_21_triad_cardinality },
+        Check { id: 22, holds: check_22_seventh_cardinality },
         Check { id: 24, holds: check_24_icv_shape },
     ]
 }
@@ -471,5 +505,31 @@ mod tests {
         assert!(!check_14_plr_involutions(PcSet::from_pcs([0, 4, 8]))); // augmented
         assert!(!check_14_plr_involutions(PcSet::from_pcs([0, 3, 6, 9]))); // dim7
         assert!(!check_14_plr_involutions(PcSet::new(0))); // empty
+    }
+
+    #[test]
+    fn plr_composites_fire_on_consonant_triads_only() {
+        for root in 0..12u8 {
+            let maj = PcSet::from_pcs([root, root + 4, root + 7]);
+            let min = PcSet::from_pcs([root, root + 3, root + 7]);
+            assert!(check_15_plr_composites(maj), "maj at root {root}");
+            assert!(check_15_plr_composites(min), "min at root {root}");
+        }
+        assert!(!check_15_plr_composites(PcSet::from_pcs([0, 4, 8]))); // augmented
+        assert!(!check_15_plr_composites(PcSet::from_pcs([0, 3, 6, 9]))); // dim7
+        assert!(!check_15_plr_composites(PcSet::new(0))); // empty
+    }
+
+    #[test]
+    fn cardinality_checks_discriminate_triads_and_sevenths() {
+        assert!(check_21_triad_cardinality(PcSet::from_pcs([0, 4, 7])));
+        assert!(check_21_triad_cardinality(PcSet::from_pcs([0, 4, 8]))); // augmented: 3 PCs
+        assert!(!check_21_triad_cardinality(PcSet::from_pcs([0, 6]))); // dyad
+        assert!(!check_21_triad_cardinality(PcSet::from_pcs([0, 4, 7, 10]))); // dom7
+
+        assert!(check_22_seventh_cardinality(PcSet::from_pcs([0, 4, 7, 10])));
+        assert!(check_22_seventh_cardinality(PcSet::from_pcs([0, 3, 6, 9]))); // dim7
+        assert!(!check_22_seventh_cardinality(PcSet::from_pcs([0, 4, 7])));
+        assert!(!check_22_seventh_cardinality(PcSet::new(0)));
     }
 }
