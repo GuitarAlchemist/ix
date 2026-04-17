@@ -41,7 +41,10 @@ const NUM_INSTRUMENTS: usize = 3;
 
 /// The canonical string whose CRC32 defines the expected schema hash.
 /// This encodes the partition layout so readers can detect format drift.
-const SCHEMA_SEED: &str = "optk-v3:guitar,bass,ukulele:228dim:f32le";
+/// MUST match GA's `OptickIndexWriter.PartitionLayout` byte-for-byte.
+const SCHEMA_SEED: &str = "IDENTITY:0-5,STRUCTURE:6-29,MORPHOLOGY:30-53,CONTEXT:54-65,\
+SYMBOLIC:66-77,EXTENSIONS:78-95,SPECTRAL:96-108,MODAL:109-148,\
+HIERARCHY:149-163,ATONAL_MODAL:164-227";
 
 // ---------------------------------------------------------------------------
 // Errors
