@@ -61,6 +61,7 @@ members = [
     "crates/ix-friday-brief",
     "crates/ix-voicings",
     "crates/ix-optick",
+    "crates/ix-embedding-diagnostics",
     "crates/ga-chatbot",
 ]
 
@@ -93,6 +94,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # Code Observatory deps (optional, behind ix-code feature gates)
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
+tree-sitter-c-sharp = "0.23.1"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-fsharp = "0.2.2"
 git2 = "0.20"
 tempfile = "3"
 
@@ -143,6 +147,8 @@ ix-memory = { path = "crates/ix-memory", version = "0.1.0" }
 ix-fuzzy = { path = "crates/ix-fuzzy", version = "0.1.0" }
 ix-sanitize = { path = "crates/ix-sanitize", version = "0.1.0" }
 ix-friday-brief = { path = "crates/ix-friday-brief", version = "0.1.0" }
+ix-optick = { path = "crates/ix-optick", version = "0.1.0" }
+ix-embedding-diagnostics = { path = "crates/ix-embedding-diagnostics", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

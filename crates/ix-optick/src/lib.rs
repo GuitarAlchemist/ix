@@ -232,6 +232,64 @@ impl OptickIndex {
         &self.header
     }
 
+    /// Access the raw vector data as a flat `&[f32]` slice of length
+    /// `count * dimension`. Vector `i` is at `[i * dim .. (i + 1) * dim]`.
+    ///
+    /// Vectors are pre-scaled (partition weights applied) and L2-normalized
+    /// at write time. Useful for offline analysis (clustering, classification,
+    /// topological diagnostics) without going through brute-force search.
+    pub fn vectors(&self) -> &[f32] {
+        let dim = self.header.dimension as usize;
+        let vectors_start = self.header.vectors_offset as usize;
+        let vectors_end = vectors_start + (self.header.count as usize) * dim * 4;
+        let vectors_bytes = &self.mmap[vectors_start..vectors_end];
+        bytemuck::cast_slice(vectors_bytes)
+    }
+
+    /// Return a read-only view over a single voicing's vector.
+    pub fn vector(&self, voicing_index: usize) -> Option<&[f32]> {
+        let count = self.header.count as usize;
+        if voicing_index >= count {
+            return None;
+        }
+        let dim = self.header.dimension as usize;
+        let all = self.vectors();
+        Some(&all[voicing_index * dim..(voicing_index + 1) * dim])
+    }
+
+    /// Public metadata accessor — reads and deserializes the msgpack record
+    /// for a single voicing using the v4 O(1) offset table.
+    pub fn metadata(&self, voicing_index: usize) -> Result<VoicingMetadata, OptickError> {
+        self.read_metadata(voicing_index)
+    }
+
+    /// Return the instrument label for a given global voicing index by looking
+    /// it up in the instrument slices (no msgpack decode).
+    ///
+    /// Voicings are contiguous per instrument in the v4 layout.
+    pub fn instrument_of(&self, voicing_index: usize) -> Option<&'static str> {
+        let dim = self.header.dimension as usize;
+        let vec_bytes_per = (dim as u64) * 4;
+        let vectors_offset = self.header.vectors_offset;
+        for (i, slice) in self.header.instrument_slices.iter().enumerate() {
+            if slice.count == 0 {
+                continue;
+            }
+            let rel_bytes = slice.byte_offset.saturating_sub(vectors_offset);
+            let start = (rel_bytes / vec_bytes_per) as usize;
+            let end = start + slice.count as usize;
+            if voicing_index >= start && voicing_index < end {
+                return Some(match i {
+                    0 => "guitar",
+                    1 => "bass",
+                    2 => "ukulele",
+                    _ => return None,
+                });
+            }
+        }
+        None
+    }
+
     /// Brute-force cosine search (dot product on pre-normalized vectors).
     ///
     /// - `query`: a 112-dimensional f32 vector (will be L2-normalized internally).

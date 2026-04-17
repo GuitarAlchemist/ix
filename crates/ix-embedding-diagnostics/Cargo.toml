@@ -1,0 +1,28 @@
+[package]
+name = "ix-embedding-diagnostics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["command-line-utilities", "science"]
+keywords = ["diagnostics", "embedding", "voicings", "optick", "baseline"]
+description = "Baseline diagnostics for OPTIC-K voicing embeddings — leak detection, retrieval consistency, clustering, topology"
+
+[dependencies]
+ix-optick = { workspace = true }
+ix-supervised = { workspace = true }
+ix-ensemble = { workspace = true }
+ix-unsupervised = { workspace = true }
+ix-topo = { workspace = true }
+ndarray = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+
+[[bin]]
+name = "baseline-diagnostics"
+path = "src/main.rs"
