@@ -1,0 +1,23 @@
+[package]
+name = "ix-invariant-coverage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["command-line-utilities", "science"]
+keywords = ["invariants", "coverage", "redundancy", "quality", "diagnostics"]
+description = "Measures invariant-catalog optimality: parses a markdown catalog of claimed ecosystem invariants, ingests firing data from external test suites, and reports rank (discriminating power), redundancy pairs, orphan invariants, and coverage gaps."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+
+[[bin]]
+name = "ix-invariant-coverage"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
