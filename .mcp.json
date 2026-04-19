@@ -9,12 +9,16 @@
       "args": []
     },
     "tars": {
-      "command": "C:/Users/spare/source/repos/tars/v2/src/Tars.Interface.Cli/bin/Debug/net10.0/Tars.Interface.Cli.exe",
+      "command": "C:/Users/spare/source/repos/tars/v2/src/Tars.Interface.Cli/bin/Release/net10.0/Tars.Interface.Cli.exe",
       "args": ["mcp", "server"]
     },
     "ga": {
       "command": "dotnet",
       "args": ["run", "--project", "C:/Users/spare/source/repos/ga/GaMcpServer/GaMcpServer.csproj", "--no-build", "--"]
+    },
+    "notebooklm": {
+      "command": "npx",
+      "args": ["notebooklm-mcp@latest"]
     }
   }
 }
