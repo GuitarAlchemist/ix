@@ -2,8 +2,26 @@
 date: 2026-04-19
 reversibility: one-way-door
 revisit-trigger: voice-leading queries reach >5% of chatbot volume, or corpus storage approaches 1.5M pairs ceiling
-status: design — NOT YET IMPLEMENTED
+status: runtime MVP shipped 2026-04-19 (ga_voice_leading_pair in GaMcpServer/Tools/CompositionTools.cs); full v5 index pending volume trigger
 ---
+
+# Runtime MVP (shipped 2026-04-19)
+
+A lightweight runtime pair-optimizer ships ahead of the full v5 index: `ga_voice_leading_pair(from_chord, to_chord, limit)` retrieves K candidates for each chord via the existing v1.8 index, enumerates pairs, and ranks by greedy ascending-pitch voice-leading distance. O(K²) per query with K ≤ 50; no corpus rebuild.
+
+Trade-offs versus the v5 schema below:
+- ✅ ships today, two-way-door
+- ✅ zero storage cost
+- ✅ same pipeline as `ga_search_voicings` (candidate quality inherited)
+- ❌ distance is greedy-sorted, not Hungarian-optimal
+- ❌ per-query latency ~50 ms at K=15 vs ~5 ms for a precomputed index lookup
+- ❌ no "smoothest pair in the corpus" — bounded by candidate-set quality
+
+Revisit the v5 index when telemetry shows voice-leading queries > 5% of volume OR users regularly request K > 30 candidates (the runtime cost grows quadratically).
+
+---
+
+# Original v5 design — below
 
 # Voice-leading pairs — schema design for OPTK v5
 
