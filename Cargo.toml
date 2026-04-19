@@ -61,6 +61,7 @@ members = [
     "crates/ix-friday-brief",
     "crates/ix-voicings",
     "crates/ix-optick",
+    "crates/ix-optick-invariants",
     "crates/ix-embedding-diagnostics",
     "crates/ix-quality-trend",
     "crates/ix-invariant-coverage",
