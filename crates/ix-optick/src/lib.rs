@@ -48,9 +48,13 @@ const NUM_INSTRUMENTS: usize = 3;
 
 /// The canonical string whose CRC32 defines the expected schema hash.
 /// V4 drops info-only partitions and uses dense (compact) indexing.
-/// MUST match GA's `OptickIndexWriter.PartitionLayout` byte-for-byte.
+/// The `-pp` suffix (per-partition normalization) distinguishes v4-pp from
+/// the original v4: partition layout is identical, but each partition slice
+/// is L2-normalized independently before sqrt-weight scaling. This closes
+/// cross-instrument STRUCTURE leaks that failed invariants #25/#28/#32.
+/// MUST match GA's `EmbeddingSchema.BuildCompactLayoutV4` byte-for-byte.
 const SCHEMA_SEED: &str =
-    "optk-v4:STRUCTURE:0-23,MORPHOLOGY:24-47,CONTEXT:48-59,\
+    "optk-v4-pp:STRUCTURE:0-23,MORPHOLOGY:24-47,CONTEXT:48-59,\
 SYMBOLIC:60-71,MODAL:72-111";
 
 // ---------------------------------------------------------------------------
