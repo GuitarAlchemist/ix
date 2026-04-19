@@ -43,19 +43,26 @@ use thiserror::Error;
 const MAGIC: &[u8; 4] = b"OPTK";
 const SUPPORTED_VERSION: u32 = 4;
 const ENDIAN_MARKER: u16 = 0xFEFF;
-const DIMENSION: u32 = 112;
+// v4-pp-r (schema v1.8): 124 compact dims = STRUCTURE(24) + MORPHOLOGY(24) +
+// CONTEXT(12) + SYMBOLIC(12) + MODAL(40) + ROOT(12). ROOT is the new similarity
+// partition added to carry root-pitch-class identity so STRUCTURE can stay
+// T-invariant per the schema's O+P+T+I claim.
+const DIMENSION: u32 = 124;
 const NUM_INSTRUMENTS: usize = 3;
 
 /// The canonical string whose CRC32 defines the expected schema hash.
 /// V4 drops info-only partitions and uses dense (compact) indexing.
-/// The `-pp` suffix (per-partition normalization) distinguishes v4-pp from
-/// the original v4: partition layout is identical, but each partition slice
-/// is L2-normalized independently before sqrt-weight scaling. This closes
-/// cross-instrument STRUCTURE leaks that failed invariants #25/#28/#32.
+/// - `-pp` suffix: per-partition L2 normalization (v4-pp, shipped 2026-04-18).
+/// - `-pp-r` suffix: adds the ROOT similarity partition (v4-pp-r, v1.8, shipped
+///   2026-04-19). ROOT (12 dims, weight 0.05) carries root-pitch-class identity
+///   outside STRUCTURE, which the STRUCTURE root-boost previously leaked.
+///   With root-boost removed, STRUCTURE is genuinely O+P+T+I-invariant per the
+///   schema's set-class-identity claim, and invariant #25 passes for nearly all
+///   same-PC-set cross-instrument voicings.
 /// MUST match GA's `EmbeddingSchema.BuildCompactLayoutV4` byte-for-byte.
 const SCHEMA_SEED: &str =
-    "optk-v4-pp:STRUCTURE:0-23,MORPHOLOGY:24-47,CONTEXT:48-59,\
-SYMBOLIC:60-71,MODAL:72-111";
+    "optk-v4-pp-r:STRUCTURE:0-23,MORPHOLOGY:24-47,CONTEXT:48-59,\
+SYMBOLIC:60-71,MODAL:72-111,ROOT:112-123";
 
 // ---------------------------------------------------------------------------
 // Errors

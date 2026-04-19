@@ -62,9 +62,10 @@ use serde::Serialize;
 //   CONTEXT    48..60
 //   SYMBOLIC   60..72
 //   MODAL      72..112
+//   ROOT       112..124   (v1.8 — schema v4-pp-r, 2026-04-19)
 // -----------------------------------------------------------------------------
 
-const DIM: usize = 112;
+const DIM: usize = 124;
 
 #[derive(Clone, Copy)]
 struct Partition {
@@ -76,11 +77,12 @@ struct Partition {
 }
 
 const PARTITIONS: &[Partition] = &[
-    Partition { name: "STRUCTURE",  start: 0,  end: 24,  expected_leak: "likely_leak" },
-    Partition { name: "MORPHOLOGY", start: 24, end: 48,  expected_leak: "by_design"   },
-    Partition { name: "CONTEXT",    start: 48, end: 60,  expected_leak: "possible"    },
-    Partition { name: "SYMBOLIC",   start: 60, end: 72,  expected_leak: "likely_leak" },
-    Partition { name: "MODAL",      start: 72, end: 112, expected_leak: "possible"    },
+    Partition { name: "STRUCTURE",  start: 0,   end: 24,  expected_leak: "likely_leak" },
+    Partition { name: "MORPHOLOGY", start: 24,  end: 48,  expected_leak: "by_design"   },
+    Partition { name: "CONTEXT",    start: 48,  end: 60,  expected_leak: "possible"    },
+    Partition { name: "SYMBOLIC",   start: 60,  end: 72,  expected_leak: "likely_leak" },
+    Partition { name: "MODAL",      start: 72,  end: 112, expected_leak: "possible"    },
+    Partition { name: "ROOT",       start: 112, end: 124, expected_leak: "by_design"   },
 ];
 
 // -----------------------------------------------------------------------------
@@ -634,7 +636,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let count = index.count();
     let dims = index.dimension();
     eprintln!("      count={count} dims={dims}");
-    assert_eq!(dims as usize, DIM, "expected 112-dim v4 index");
+    assert_eq!(dims as usize, DIM, "expected {DIM}-dim v4-pp-r index");
 
     std::fs::create_dir_all(&cli.out_dir)?;
 
