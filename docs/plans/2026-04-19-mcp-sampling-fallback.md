@@ -2,7 +2,7 @@
 date: 2026-04-19
 reversibility: two-way-door
 revisit-trigger: vocabulary-miss rate in chatbot telemetry exceeds 10%
-status: design — NOT YET IMPLEMENTED
+status: implemented 2026-04-19 — ga/GaMcpServer/Tools/VoicingSearchTool.cs
 ---
 
 # MCP sampling fallback for `GaSearchVoicings`
