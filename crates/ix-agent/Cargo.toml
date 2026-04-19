@@ -41,7 +41,7 @@ ix-topo = { workspace = true }
 ix-category = { workspace = true }
 ix-governance = { workspace = true }
 ix-io = { workspace = true }
-ix-code = { workspace = true }
+ix-code = { workspace = true, features = ["semantic"] }
 ix-catalog-core = { workspace = true }
 ix-net = { workspace = true }
 ix-context = { workspace = true }

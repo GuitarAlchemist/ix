@@ -18,6 +18,9 @@ ix-catalog-core = { workspace = true }
 # Optional deps for Layer 2 (semantic)
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-c-sharp = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-fsharp = { workspace = true, optional = true }
 streaming-iterator = { version = "0.1", optional = true }
 
 # Optional deps for Layer 3 (trajectory)
@@ -44,7 +47,7 @@ tempfile = { workspace = true }
 
 [features]
 default = []
-semantic = ["dep:tree-sitter", "dep:tree-sitter-rust", "dep:streaming-iterator"]
+semantic = ["dep:tree-sitter", "dep:tree-sitter-rust", "dep:tree-sitter-c-sharp", "dep:tree-sitter-typescript", "dep:tree-sitter-fsharp", "dep:streaming-iterator"]
 trajectory = ["dep:git2", "dep:ix-signal", "dep:thiserror"]
 topology = ["dep:ix-topo"]
 gates = ["dep:ix-governance", "dep:ix-types"]

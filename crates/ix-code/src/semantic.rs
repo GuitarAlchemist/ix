@@ -605,6 +605,284 @@ fn walk_scoped(node: Node, bytes: &[u8], out: &mut Vec<String>) {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-language public API
+// ---------------------------------------------------------------------------
+
+/// Per-language block-construct node kinds used by [`nesting_stats`].
+#[cfg(feature = "semantic")]
+fn block_kinds_for(lang: &crate::analyze::Language) -> &'static [&'static str] {
+    use crate::analyze::Language;
+    match lang {
+        Language::Rust => &[
+            "block", "if_expression", "match_expression", "while_expression",
+            "for_expression", "loop_expression", "function_item",
+        ],
+        Language::CSharp => &[
+            "block", "if_statement", "while_statement", "for_statement",
+            "foreach_statement", "switch_statement", "try_statement",
+            "method_declaration", "constructor_declaration",
+        ],
+        Language::TypeScript | Language::JavaScript => &[
+            "statement_block", "if_statement", "while_statement", "for_statement",
+            "switch_statement", "try_statement", "function_declaration",
+            "method_definition", "arrow_function",
+        ],
+        Language::FSharp => &[
+            "function_definition", "if_expression", "match_expression",
+            "for_expression", "while_expression", "do_expression",
+            "computation_expression",
+        ],
+        _ => &["block"],
+    }
+}
+
+/// Safety-concern node kinds per language (mapped to `SemanticMetrics::unsafe_blocks`).
+#[cfg(feature = "semantic")]
+fn safety_kinds_for(lang: &crate::analyze::Language) -> &'static [&'static str] {
+    use crate::analyze::Language;
+    match lang {
+        Language::Rust => &["unsafe_block"],
+        Language::CSharp => &["unsafe_statement"],
+        // TypeScript/F# safety counts are lexical — handled separately.
+        _ => &[],
+    }
+}
+
+/// Parse `source` with the tree-sitter grammar for `lang`.
+/// Returns `None` for languages without a bundled grammar.
+#[cfg(feature = "semantic")]
+fn parse_for_language(
+    source: &str,
+    lang: &crate::analyze::Language,
+) -> Option<(tree_sitter::Tree, tree_sitter::Language)> {
+    use crate::analyze::Language;
+    let mut parser = tree_sitter::Parser::new();
+    let ts_lang: tree_sitter::Language = match lang {
+        Language::Rust => tree_sitter_rust::LANGUAGE.into(),
+        Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        Language::TypeScript | Language::JavaScript => {
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+        }
+        Language::FSharp => tree_sitter_fsharp::LANGUAGE_FSHARP.into(),
+        _ => return None,
+    };
+    parser.set_language(&ts_lang).ok()?;
+    let tree = parser.parse(source, None)?;
+    Some((tree, ts_lang))
+}
+
+/// Count lexical safety markers for languages where the AST doesn't capture them.
+#[cfg(feature = "semantic")]
+fn lexical_safety_count(source: &str, lang: &crate::analyze::Language) -> usize {
+    use crate::analyze::Language;
+    match lang {
+        Language::TypeScript | Language::JavaScript => {
+            source.matches("@ts-ignore").count()
+                + source.matches("@ts-expect-error").count()
+                + source.matches(": any").count()
+                + source.matches("<any>").count()
+        }
+        Language::FSharp => source.matches("mutable ").count(),
+        _ => 0,
+    }
+}
+
+/// Extract [`SemanticMetrics`] for any supported language.
+///
+/// Dispatches to the existing Rust extractor for [`Language::Rust`] and uses
+/// a generic tree-sitter pipeline for C#, TypeScript/JavaScript, and F#.
+/// Languages without a bundled grammar (Python, Java, Go, …) return a
+/// default-initialised value with `parse_quality = 0.0`.
+#[cfg(feature = "semantic")]
+pub fn extract_semantic_metrics_for(
+    source: &str,
+    language: crate::analyze::Language,
+) -> SemanticMetrics {
+    use crate::analyze::Language;
+
+    // Rust has a dedicated extractor with richer type-annotation logic.
+    if language == Language::Rust {
+        return extract_semantic_metrics(source);
+    }
+
+    let Some((tree, _ts_lang)) = parse_for_language(source, &language) else {
+        return SemanticMetrics { parse_quality: 0.0, ..Default::default() };
+    };
+
+    let root = tree.root_node();
+    let ast_node_count = count_nodes(root);
+    let error_nodes = count_error_nodes(root);
+    let parse_quality = if ast_node_count == 0 {
+        0.0
+    } else {
+        1.0 - (error_nodes as f64 / ast_node_count as f64).min(1.0)
+    };
+
+    // Nesting depth using language-appropriate block kinds.
+    // We temporarily override the block-kind set via the generic walker.
+    let block_kinds = block_kinds_for(&language);
+    let (nesting_depth_max, nesting_depth_mean) = nesting_stats_generic(root, block_kinds);
+
+    // Safety concerns: AST-level + lexical fallback.
+    let unsafe_blocks = count_kind(root, safety_kinds_for(&language))
+        + lexical_safety_count(source, &language);
+
+    // Error-handling density reuses lexical heuristics adapted per language.
+    let error_handling_density =
+        generic_error_handling_count(source, &language) as f64 * 100.0
+            / ast_node_count.max(1) as f64;
+
+    // Type annotation ratio: unsupported for non-Rust (returns 1.0 = "fully typed").
+    let type_annotation_ratio = 1.0;
+
+    SemanticMetrics {
+        parse_quality,
+        ast_node_count,
+        nesting_depth_max,
+        nesting_depth_mean,
+        error_handling_density,
+        unsafe_blocks,
+        type_annotation_ratio,
+        call_graph: CallGraph::default(),
+    }
+}
+
+/// Generic nesting-depth walker parameterised over a caller-supplied `block_kinds` slice.
+#[cfg(feature = "semantic")]
+fn nesting_stats_generic(root: tree_sitter::Node, block_kinds: &[&str]) -> (usize, f64) {
+    let is_block = |kind: &str| block_kinds.contains(&kind);
+
+    let mut cursor = root.walk();
+    let mut depth_stack: Vec<usize> = Vec::with_capacity(64);
+    let root_depth = if is_block(cursor.node().kind()) { 1 } else { 0 };
+    depth_stack.push(root_depth);
+
+    let mut max_depth = root_depth;
+    let mut depth_sum = root_depth;
+    let mut block_count = if root_depth > 0 { 1 } else { 0 };
+
+    loop {
+        if cursor.goto_first_child() {
+            let parent_depth = *depth_stack.last().unwrap();
+            let child_depth = if is_block(cursor.node().kind()) { parent_depth + 1 } else { parent_depth };
+            depth_stack.push(child_depth);
+            if is_block(cursor.node().kind()) {
+                max_depth = max_depth.max(child_depth);
+                depth_sum += child_depth;
+                block_count += 1;
+            }
+            continue;
+        }
+        loop {
+            depth_stack.pop();
+            if cursor.goto_next_sibling() {
+                let parent_depth = *depth_stack.last().unwrap();
+                let sib_depth = if is_block(cursor.node().kind()) { parent_depth + 1 } else { parent_depth };
+                depth_stack.push(sib_depth);
+                if is_block(cursor.node().kind()) {
+                    max_depth = max_depth.max(sib_depth);
+                    depth_sum += sib_depth;
+                    block_count += 1;
+                }
+                break;
+            }
+            if !cursor.goto_parent() {
+                let mean = if block_count == 0 { 0.0 } else { depth_sum as f64 / block_count as f64 };
+                return (max_depth, mean);
+            }
+        }
+    }
+}
+
+/// Language-aware error-handling density (lexical).
+#[cfg(feature = "semantic")]
+fn generic_error_handling_count(source: &str, lang: &crate::analyze::Language) -> usize {
+    use crate::analyze::Language;
+    match lang {
+        Language::CSharp => {
+            source.matches("catch").count()
+                + source.matches("throw").count()
+                + source.matches("try {").count()
+        }
+        Language::TypeScript | Language::JavaScript => {
+            source.matches("catch").count()
+                + source.matches("throw ").count()
+                + source.matches(".catch(").count()
+                + source.matches("Promise.reject").count()
+        }
+        Language::FSharp => {
+            source.matches("with").count()
+                + source.matches("raise ").count()
+                + source.matches("failwith").count()
+                + source.matches("Result.").count()
+        }
+        _ => 0,
+    }
+}
+
+/// Run an arbitrary tree-sitter S-expression query against `source` and return
+/// all captured node texts with their positions.
+///
+/// Returns `Err` if the language is unsupported or the query string is invalid.
+#[cfg(feature = "semantic")]
+pub fn run_ast_query(
+    source: &str,
+    language: crate::analyze::Language,
+    query_str: &str,
+) -> Result<Vec<AstMatch>, String> {
+    use streaming_iterator::StreamingIterator;
+
+    let (tree, ts_lang) = parse_for_language(source, &language)
+        .ok_or_else(|| format!("No tree-sitter grammar available for {:?}", language))?;
+
+    let query = tree_sitter::Query::new(&ts_lang, query_str)
+        .map_err(|e| format!("Invalid tree-sitter query: {e}"))?;
+
+    let capture_names: Vec<String> = query.capture_names().iter().map(|s| s.to_string()).collect();
+
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let root = tree.root_node();
+    let source_bytes = source.as_bytes();
+
+    let mut matches = cursor.matches(&query, root, source_bytes);
+    let mut results = Vec::new();
+
+    while let Some(m) = matches.next() {
+        for cap in m.captures {
+            let node = cap.node;
+            let capture_name = capture_names
+                .get(cap.index as usize)
+                .cloned()
+                .unwrap_or_else(|| cap.index.to_string());
+            let text = node.utf8_text(source_bytes).unwrap_or("").to_string();
+            results.push(AstMatch {
+                capture: capture_name,
+                text,
+                start_line: node.start_position().row + 1,
+                end_line: node.end_position().row + 1,
+                start_col: node.start_position().column,
+            });
+        }
+    }
+    Ok(results)
+}
+
+/// A single match returned by [`run_ast_query`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AstMatch {
+    /// Name of the tree-sitter capture (e.g. `"function.name"`).
+    pub capture: String,
+    /// UTF-8 text of the matched node.
+    pub text: String,
+    /// 1-based start line.
+    pub start_line: usize,
+    /// 1-based end line.
+    pub end_line: usize,
+    /// 0-based start column.
+    pub start_col: usize,
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

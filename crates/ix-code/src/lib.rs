@@ -20,6 +20,7 @@
 pub mod analyze;
 pub mod catalog;
 pub mod metrics;
+pub mod smells;
 
 #[cfg(feature = "semantic")]
 pub mod semantic;

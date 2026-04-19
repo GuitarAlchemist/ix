@@ -4497,3 +4497,167 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         "results": hits,
     }))
 }
+
+// ── ix_ast_query ──────────────────────────────────────────────────────────
+
+/// Run an arbitrary tree-sitter S-expression query against source code.
+pub fn ast_query(params: Value) -> Result<Value, String> {
+    use ix_code::analyze::Language;
+    use ix_code::semantic::run_ast_query;
+    use std::path::Path;
+
+    let query_str = params
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("'query' (tree-sitter S-expression) is required")?;
+
+    // Resolve source and language
+    let (source, lang) = if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
+        let path = Path::new(path_str);
+        let src = std::fs::read_to_string(path)
+            .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
+        let lang = Language::from_extension(
+            path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+        )
+        .ok_or_else(|| format!("Cannot detect language from extension of '{}'", path_str))?;
+        (src, lang)
+    } else {
+        let src = params
+            .get("source")
+            .and_then(|v| v.as_str())
+            .ok_or("Either 'source' or 'path' is required")?
+            .to_string();
+        let lang_str = params
+            .get("language")
+            .and_then(|v| v.as_str())
+            .ok_or("'language' is required when using 'source'")?;
+        let lang = parse_language(lang_str)?;
+        (src, lang)
+    };
+
+    let matches = run_ast_query(&source, lang, query_str)?;
+    Ok(json!({
+        "language": format!("{:?}", lang),
+        "query": query_str,
+        "match_count": matches.len(),
+        "matches": serde_json::to_value(&matches).unwrap_or(json!([])),
+    }))
+}
+
+// ── ix_code_smells ────────────────────────────────────────────────────────
+
+/// Detect code smells in source code, a file, or a directory tree.
+pub fn code_smells(params: Value) -> Result<Value, String> {
+    use ix_code::analyze::Language;
+    use ix_code::smells::detect_smells;
+    use std::path::Path;
+
+    // ── Directory scan ────────────────────────────────────────────────────
+    if let Some(dir_str) = params.get("dir").and_then(|v| v.as_str()) {
+        let max_kb = params
+            .get("max_file_kb")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(256) as usize;
+        let dir = Path::new(dir_str);
+        if !dir.is_dir() {
+            return Err(format!("'{}' is not a directory", dir_str));
+        }
+        let mut file_results: Vec<Value> = Vec::new();
+        scan_dir_for_smells(dir, max_kb, &mut file_results);
+        return Ok(json!({
+            "dir": dir_str,
+            "files_scanned": file_results.len(),
+            "results": file_results,
+        }));
+    }
+
+    // ── Single file ───────────────────────────────────────────────────────
+    if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
+        let path = Path::new(path_str);
+        let src = std::fs::read_to_string(path)
+            .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
+        let lang = Language::from_extension(
+            path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+        )
+        .ok_or_else(|| format!("Cannot detect language from '{}'", path_str))?;
+        let smells = detect_smells(&src, lang);
+        return Ok(json!({
+            "path": path_str,
+            "language": format!("{:?}", lang),
+            "smell_count": smells.len(),
+            "smells": serde_json::to_value(&smells).unwrap_or(json!([])),
+        }));
+    }
+
+    // ── Inline source ─────────────────────────────────────────────────────
+    let src = params
+        .get("source")
+        .and_then(|v| v.as_str())
+        .ok_or("One of 'source', 'path', or 'dir' is required")?;
+    let lang_str = params
+        .get("language")
+        .and_then(|v| v.as_str())
+        .ok_or("'language' is required when using 'source'")?;
+    let lang = parse_language(lang_str)?;
+    let smells = detect_smells(src, lang);
+    Ok(json!({
+        "language": lang_str,
+        "smell_count": smells.len(),
+        "smells": serde_json::to_value(&smells).unwrap_or(json!([])),
+    }))
+}
+
+/// Walk a directory recursively and collect smell results per file.
+fn scan_dir_for_smells(dir: &std::path::Path, max_kb: usize, out: &mut Vec<Value>) {
+    use ix_code::analyze::Language;
+    use ix_code::smells::detect_smells;
+
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            // Skip hidden dirs and common build artefacts.
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with('.') || matches!(name, "target" | "node_modules" | "dist" | "bin" | "obj") {
+                continue;
+            }
+            scan_dir_for_smells(&path, max_kb, out);
+        } else if path.is_file() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let Some(lang) = Language::from_extension(ext) else { continue };
+            // Skip files over the size limit.
+            if let Ok(meta) = path.metadata() {
+                if meta.len() > (max_kb * 1024) as u64 { continue; }
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            let smells = detect_smells(&src, lang);
+            if !smells.is_empty() {
+                out.push(json!({
+                    "path": path.to_string_lossy(),
+                    "language": format!("{:?}", lang),
+                    "smell_count": smells.len(),
+                    "smells": serde_json::to_value(&smells).unwrap_or(json!([])),
+                }));
+            }
+        }
+    }
+}
+
+/// Parse a language name string into a [`Language`].
+fn parse_language(s: &str) -> Result<ix_code::analyze::Language, String> {
+    use ix_code::analyze::Language;
+    match s {
+        "rust" => Ok(Language::Rust),
+        "python" => Ok(Language::Python),
+        "javascript" | "js" => Ok(Language::JavaScript),
+        "typescript" | "ts" => Ok(Language::TypeScript),
+        "cpp" | "c" | "c++" => Ok(Language::Cpp),
+        "java" => Ok(Language::Java),
+        "go" => Ok(Language::Go),
+        "csharp" | "c#" | "cs" => Ok(Language::CSharp),
+        "fsharp" | "f#" | "fs" => Ok(Language::FSharp),
+        "php" => Ok(Language::Php),
+        "ruby" | "rb" => Ok(Language::Ruby),
+        _ => Err(format!("Unsupported language: '{s}'")),
+    }
+}

@@ -2317,5 +2317,80 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::triage_session,
         });
+
+        // ── ix_ast_query ─────────────────────────────────────────────────
+        self.tools.push(Tool {
+            name: "ix_ast_query",
+            description: "Run an arbitrary tree-sitter S-expression query against source code \
+                          or a file. Supports Rust, C#, TypeScript/JavaScript, and F#. Returns \
+                          all captured node texts with 1-based line numbers. Use this to find \
+                          method declarations, detect patterns, or extract any syntactic construct \
+                          by writing a tree-sitter query (e.g. \"(function_item name: (identifier) \
+                          @fn.name)\").",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Tree-sitter S-expression query string, e.g. \
+                                       \"(function_item name: (identifier) @fn.name)\""
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Source code to query (alternative to 'path')"
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["rust", "csharp", "typescript", "javascript", "fsharp"],
+                        "description": "Language (required when using 'source')"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File path to query; language auto-detected from extension"
+                    }
+                },
+                "required": ["query"]
+            }),
+            handler: handlers::ast_query,
+        });
+
+        // ── ix_code_smells ───────────────────────────────────────────────
+        self.tools.push(Tool {
+            name: "ix_code_smells",
+            description: "Detect code smells in source code, a single file, or a directory \
+                          tree (recursive). Combines lexical checks (TODO/FIXME, magic numbers, \
+                          long lines, language-specific patterns) with AST-based checks (deep \
+                          nesting, excessive unsafe/any usage). Supports Rust, C#, TypeScript, \
+                          JavaScript, F#, and 6 more languages for lexical checks.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Inline source code to analyse"
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["rust", "python", "javascript", "typescript", "cpp", "java",
+                                 "go", "csharp", "fsharp", "php", "ruby"],
+                        "description": "Language (required with 'source')"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Path to a single source file"
+                    },
+                    "dir": {
+                        "type": "string",
+                        "description": "Path to a directory; scans all recognised source files recursively"
+                    },
+                    "max_file_kb": {
+                        "type": "integer",
+                        "default": 256,
+                        "description": "Skip files larger than this many kilobytes (dir mode only)"
+                    }
+                }
+            }),
+            handler: handlers::code_smells,
+        });
     }
 }
