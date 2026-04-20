@@ -16,3 +16,6 @@ state/voicings/*-features.json
 
 # Adversarial QA: regenerable from CI
 state/adversarial/findings.jsonl
+
+# TARS knowledge graph logs — rebuilt from claims ingest
+state/graph/
