@@ -162,4 +162,130 @@ mod tests {
         assert!(fixtures.contains_key("does voicing guitar_v042"));
         assert!(fixtures.contains_key("show me voicing guitar_v000"));
     }
+
+    /// Every adversarial-corpus prompt that is not `expected_check == "llm"`
+    /// must have a stub fixture that matches it under the same `starts_with`
+    /// rule used by [`ask_stub`]. Without this, a newly added prompt silently
+    /// falls back to the default refusal — the exact rot mode that reduced
+    /// the regression gauge to "stubs only match 1 prompt."
+    #[test]
+    fn every_graded_prompt_has_fixture_coverage() {
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root from crate manifest");
+        let fixtures_path = workspace.join("tests/adversarial/fixtures/stub-responses.jsonl");
+        let corpus_dir = workspace.join("tests/adversarial/corpus");
+
+        let fixtures = load_fixtures(&fixtures_path);
+        assert!(
+            !fixtures.is_empty(),
+            "no fixtures loaded from {:?}",
+            fixtures_path
+        );
+        let prefixes: Vec<String> = fixtures.keys().cloned().collect();
+
+        let mut uncovered: Vec<String> = Vec::new();
+
+        for entry in std::fs::read_dir(&corpus_dir).expect("corpus dir") {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "jsonl") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).unwrap();
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let v: serde_json::Value = serde_json::from_str(line)
+                    .unwrap_or_else(|e| panic!("bad JSON in {:?}: {}", path, e));
+                let id = v["id"].as_str().unwrap_or("?");
+                let prompt = v["prompt"].as_str().unwrap_or("");
+                let expected_check = v["expected_check"].as_str().unwrap_or("");
+                if expected_check == "llm" {
+                    continue;
+                }
+                let prompt_lower = prompt.to_lowercase();
+                let covered = prefixes.iter().any(|p| prompt_lower.starts_with(p));
+                if !covered {
+                    uncovered.push(format!("{} -- {:?}", id, prompt));
+                }
+            }
+        }
+
+        assert!(
+            uncovered.is_empty(),
+            "uncovered deterministic-graded prompts (add stubs to stub-responses.jsonl):\n  {}",
+            uncovered.join("\n  ")
+        );
+    }
+
+    /// For every corpus prompt that declares `expected_patterns`, the
+    /// sanitizer's `matched_patterns` must be a superset. Weakening a pattern
+    /// (e.g. tightening `imperative_override` so it no longer matches
+    /// "ignore previous") would leave the verdict-only gauge green because
+    /// Layer 2's confidence check still fires F — but the Layer 0 coverage
+    /// silently dropped. Superset semantics allow strengthening: a new pattern
+    /// that catches an additional prompt is fine.
+    #[test]
+    fn sanitizer_patterns_meet_expectations() {
+        use ix_sanitize::Sanitizer;
+        use std::collections::HashSet;
+
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root from crate manifest");
+        let corpus_dir = workspace.join("tests/adversarial/corpus");
+
+        let sanitizer = Sanitizer::new();
+        let mut failures: Vec<String> = Vec::new();
+        let mut checked = 0;
+
+        for entry in std::fs::read_dir(&corpus_dir).expect("corpus dir") {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "jsonl") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).unwrap();
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let v: serde_json::Value = serde_json::from_str(line)
+                    .unwrap_or_else(|e| panic!("bad JSON in {:?}: {}", path, e));
+                let Some(expected) = v.get("expected_patterns").and_then(|p| p.as_array()) else {
+                    continue;
+                };
+                let id = v["id"].as_str().unwrap_or("?");
+                let prompt = v["prompt"].as_str().unwrap_or("");
+                let expected: HashSet<String> = expected
+                    .iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect();
+
+                let sanitized = sanitizer.sanitize(prompt);
+                let actual: HashSet<String> = sanitized.matched_patterns.iter().cloned().collect();
+
+                let missing: Vec<_> = expected.difference(&actual).cloned().collect();
+                if !missing.is_empty() {
+                    failures.push(format!(
+                        "{}: missing patterns {:?} (actual: {:?})",
+                        id, missing, actual
+                    ));
+                }
+                checked += 1;
+            }
+        }
+
+        assert!(checked > 0, "no corpus entries declared expected_patterns");
+        assert!(
+            failures.is_empty(),
+            "sanitizer coverage regressed for {} prompt(s):\n  {}",
+            failures.len(),
+            failures.join("\n  ")
+        );
+    }
 }

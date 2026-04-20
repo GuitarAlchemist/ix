@@ -92,12 +92,9 @@ enum Commands {
 #[derive(serde::Deserialize)]
 struct CorpusEntry {
     id: String,
-    #[allow(dead_code)]
     category: String,
     prompt: String,
-    #[allow(dead_code)]
     expected_check: String,
-    #[allow(dead_code)]
     expected_verdict: String,
 }
 
@@ -202,6 +199,14 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
     let mut fail_count = 0;
     let mut pass_count = 0;
 
+    // Regression-gauge tallies: compare actual deterministic verdict to the
+    // expected_verdict declared in each corpus entry. Prompts tagged
+    // expected_check="llm" are deferred (not graded here).
+    let mut match_count = 0;
+    let mut mismatch_count = 0;
+    let mut deferred_count = 0;
+    let mut mismatches: Vec<(String, String, char, String)> = Vec::new();
+
     for entry in &prompts {
         let req = ChatbotRequest {
             question: entry.prompt.clone(),
@@ -212,6 +217,18 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
 
         // Determine worst verdict from deterministic checks
         let det_verdict = worst_verdict(&findings);
+
+        // Gauge: actual vs expected. Deferred when the corpus labels this
+        // prompt as requiring an LLM judge.
+        let expected = entry.expected_verdict.chars().next().unwrap_or('?');
+        if entry.expected_check == "llm" {
+            deferred_count += 1;
+        } else if det_verdict == expected {
+            match_count += 1;
+        } else {
+            mismatch_count += 1;
+            mismatches.push((entry.id.clone(), entry.category.clone(), det_verdict, entry.expected_verdict.clone()));
+        }
 
         // Create a single "deterministic" judge verdict for aggregation
         let judge_verdict = JudgeVerdict {
@@ -275,6 +292,63 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
     println!("Fail (F/D):    {}", fail_count);
     println!("Output:        {:?}", output_path);
     println!();
+
+    // Regression gauge: actual deterministic verdict vs corpus-declared
+    // expected_verdict. "Deferred" = expected_check="llm" (not graded here).
+    let graded = match_count + mismatch_count;
+    let match_pct = if graded > 0 {
+        100.0 * match_count as f64 / graded as f64
+    } else {
+        0.0
+    };
+    println!("=== Regression Gauge (deterministic-graded) ===");
+    println!("Graded:        {} ({} match, {} mismatch)", graded, match_count, mismatch_count);
+    println!("Match rate:    {:.1}%", match_pct);
+    println!("Deferred(LLM): {}", deferred_count);
+    if !mismatches.is_empty() {
+        println!();
+        println!("Regression candidates (actual != expected):");
+        for (id, category, actual, expected) in &mismatches {
+            println!("  {:<20} [{}] actual={} expected={}", id, category, actual, expected);
+        }
+    }
+    println!();
+
+    // Emit a machine-readable gauge summary alongside findings.jsonl so CI
+    // and dashboards can consume the structured metrics without re-parsing.
+    let summary_path = output_path.with_file_name("summary.json");
+    let mut verdict_counts: HashMap<char, usize> = HashMap::new();
+    for r in &results {
+        if let Some(v) = r.deterministic_verdict {
+            *verdict_counts.entry(v).or_insert(0) += 1;
+        }
+    }
+    let summary = serde_json::json!({
+        "total": total,
+        "graded": graded,
+        "match": match_count,
+        "mismatch": mismatch_count,
+        "deferred_llm": deferred_count,
+        "match_rate": if graded > 0 { match_count as f64 / graded as f64 } else { 0.0 },
+        "verdict_counts": {
+            "T": verdict_counts.get(&'T').copied().unwrap_or(0),
+            "P": verdict_counts.get(&'P').copied().unwrap_or(0),
+            "U": verdict_counts.get(&'U').copied().unwrap_or(0),
+            "C": verdict_counts.get(&'C').copied().unwrap_or(0),
+            "D": verdict_counts.get(&'D').copied().unwrap_or(0),
+            "F": verdict_counts.get(&'F').copied().unwrap_or(0),
+        },
+        "mismatches": mismatches.iter().map(|(id, category, actual, expected)| serde_json::json!({
+            "id": id,
+            "category": category,
+            "actual": actual.to_string(),
+            "expected": expected,
+        })).collect::<Vec<_>>(),
+        "pipeline_version": "phase2-deterministic-only",
+    });
+    if let Ok(f) = std::fs::File::create(&summary_path) {
+        serde_json::to_writer_pretty(f, &summary).ok();
+    }
 
     // Print worst-scoring prompts
     let failures: Vec<_> = results
@@ -352,7 +426,12 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
         println!();
     }
 
-    if fail_count > 0 { 1 } else { 0 }
+    // Exit code reflects the regression gauge: a mismatch (actual verdict
+    // != expected_verdict on a graded prompt) is a real regression. Raw F/D
+    // counts are noisy because many adversarial prompts are expected to
+    // fail (injection, hallucination) and LLM-deferred prompts have no
+    // deterministic ground truth.
+    if mismatch_count > 0 { 1 } else { 0 }
 }
 
 /// Benchmark the chatbot across multiple LLM models.
@@ -589,18 +668,18 @@ const TOOLS: &str = r#"[
 fn parse_chord_pitch_classes(query: &str) -> Option<Vec<u8>> {
     let q = query.trim().to_lowercase();
     // Extract root note
-    let (root_pc, rest) = if q.starts_with("c#") || q.starts_with("db") { (1, &q[2..]) }
-        else if q.starts_with("d#") || q.starts_with("eb") { (3, &q[2..]) }
-        else if q.starts_with("f#") || q.starts_with("gb") { (6, &q[2..]) }
-        else if q.starts_with("g#") || q.starts_with("ab") { (8, &q[2..]) }
-        else if q.starts_with("a#") || q.starts_with("bb") { (10, &q[2..]) }
-        else if q.starts_with('c') { (0, &q[1..]) }
-        else if q.starts_with('d') { (2, &q[1..]) }
-        else if q.starts_with('e') { (4, &q[1..]) }
-        else if q.starts_with('f') { (5, &q[1..]) }
-        else if q.starts_with('g') { (7, &q[1..]) }
-        else if q.starts_with('a') { (9, &q[1..]) }
-        else if q.starts_with('b') { (11, &q[1..]) }
+    let (root_pc, rest) = if let Some(r) = q.strip_prefix("c#").or_else(|| q.strip_prefix("db")) { (1, r) }
+        else if let Some(r) = q.strip_prefix("d#").or_else(|| q.strip_prefix("eb")) { (3, r) }
+        else if let Some(r) = q.strip_prefix("f#").or_else(|| q.strip_prefix("gb")) { (6, r) }
+        else if let Some(r) = q.strip_prefix("g#").or_else(|| q.strip_prefix("ab")) { (8, r) }
+        else if let Some(r) = q.strip_prefix("a#").or_else(|| q.strip_prefix("bb")) { (10, r) }
+        else if let Some(r) = q.strip_prefix('c') { (0, r) }
+        else if let Some(r) = q.strip_prefix('d') { (2, r) }
+        else if let Some(r) = q.strip_prefix('e') { (4, r) }
+        else if let Some(r) = q.strip_prefix('f') { (5, r) }
+        else if let Some(r) = q.strip_prefix('g') { (7, r) }
+        else if let Some(r) = q.strip_prefix('a') { (9, r) }
+        else if let Some(r) = q.strip_prefix('b') { (11, r) }
         else { return None; };
 
     // Parse quality → interval set (semitones from root)
@@ -669,7 +748,7 @@ fn execute_tool(name: &str, args: &serde_json::Value) -> String {
                     if query_lower.is_empty() { return true; }
                     if query_lower.contains("open") && min_fret <= 1 && fret_span <= 3 { return true; }
                     if query_lower.contains("barre") && min_fret >= 2 { return true; }
-                    if query_lower.contains("drop") && fret_span >= 2 && fret_span <= 4 { return true; }
+                    if query_lower.contains("drop") && (2..=4).contains(&fret_span) { return true; }
                     diagram.to_lowercase().contains(&query_lower)
                 })
                 .take(15)
@@ -1198,7 +1277,7 @@ fn serve_http_live(port: u16, config: &McpBridgeConfig) {
 /// - GET /api/chatbot/examples
 /// - POST /api/chatbot/chat (non-streaming, returns full JSON)
 /// - POST /api/chatbot/chat/stream (SSE, single data event)
-fn serve_http(port: u16, fixtures: &HashMap<String, ga_chatbot::ChatbotResponse>) {
+fn serve_http(port: u16, _fixtures: &HashMap<String, ga_chatbot::ChatbotResponse>) {
     use std::net::TcpListener;
 
     let addr = format!("0.0.0.0:{}", port);

@@ -17,7 +17,7 @@ on:
 
 jobs:
   deterministic:
-    name: Deterministic QA (Layers 0-2)
+    name: Deterministic QA (Layers 0-2) + Regression Gauge
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +45,11 @@ jobs:
         run: mkdir -p /tmp/adversarial-results
 
       - name: Run deterministic QA harness
+        # Exit code reflects the regression gauge: non-zero only when at least
+        # one prompt's actual verdict differs from its declared expected_verdict.
+        # Raw F/D counts are noisy because many adversarial prompts are expected
+        # to fail (injection, hallucination) and LLM-deferred prompts have no
+        # deterministic ground truth.
         run: |
           cargo run -p ga-chatbot -- qa \
             --corpus tests/adversarial/corpus/ \
@@ -52,88 +57,43 @@ jobs:
             --corpus-dir state/voicings/ \
             --output /tmp/adversarial-results/det-results.jsonl
 
+      - name: Report regression gauge summary
+        if: always()
+        run: |
+          SUMMARY="/tmp/adversarial-results/summary.json"
+          if [ ! -f "$SUMMARY" ]; then
+            echo "::warning::Gauge summary not found (harness likely crashed before emit)"
+            exit 0
+          fi
+
+          echo "=== Regression Gauge Summary ==="
+          cat "$SUMMARY"
+          echo ""
+
+          MATCH=$(jq -r .match "$SUMMARY")
+          MISMATCH=$(jq -r .mismatch "$SUMMARY")
+          GRADED=$(jq -r .graded "$SUMMARY")
+          DEFERRED=$(jq -r .deferred_llm "$SUMMARY")
+          RATE=$(jq -r '.match_rate * 100 | floor' "$SUMMARY")
+
+          echo "::notice::Gauge: ${MATCH}/${GRADED} match (${RATE}%), ${MISMATCH} regression candidates, ${DEFERRED} deferred to LLM judge"
+
+          if [ "$MISMATCH" -gt 0 ]; then
+            echo "::error::$MISMATCH prompt(s) have actual != expected verdict — regression detected"
+            jq -r '.mismatches[] | "  \(.id) [\(.category)] actual=\(.actual) expected=\(.expected)"' "$SUMMARY"
+          fi
+
       - name: Upload deterministic results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deterministic-results
-          path: /tmp/adversarial-results/det-results.jsonl
+          name: adversarial-qa-results
+          path: /tmp/adversarial-results/
           retention-days: 30
-
-  aggregate:
-    name: Aggregate verdicts
-    runs-on: ubuntu-latest
-    needs: deterministic
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download deterministic results
-        uses: actions/download-artifact@v4
-        with:
-          name: deterministic-results
-          path: /tmp/adversarial-results
 
       - name: LLM judge panel not yet wired
         run: |
-          echo "::notice::LLM judge panel not yet wired -- deterministic-only results. Octopus dispatch will be added in Phase 3."
-
-      - name: Aggregate and check verdicts
-        run: |
-          RESULTS="/tmp/adversarial-results/det-results.jsonl"
-
-          if [ ! -f "$RESULTS" ]; then
-            echo "::error::Deterministic results file not found"
-            exit 1
-          fi
-
-          TOTAL=$(wc -l < "$RESULTS")
-          F_COUNT=$(grep -c '"deterministic_verdict":"F"' "$RESULTS" || true)
-          D_COUNT=$(grep -c '"deterministic_verdict":"D"' "$RESULTS" || true)
-          U_COUNT=$(grep -c '"deterministic_verdict":"U"' "$RESULTS" || true)
-          C_COUNT=$(grep -c '"deterministic_verdict":"C"' "$RESULTS" || true)
-
-          echo "=== Adversarial QA Aggregate Summary ==="
-          echo "Total prompts:  $TOTAL"
-          echo "F (False):      $F_COUNT"
-          echo "D (Disputed):   $D_COUNT"
-          echo "U (Unknown):    $U_COUNT"
-          echo "C (Contradict): $C_COUNT"
-
-          # Write summary JSON
-          cat > /tmp/adversarial-results/summary.json <<ENDJSON
-          {
-            "total": $TOTAL,
-            "f_count": $F_COUNT,
-            "d_count": $D_COUNT,
-            "u_count": $U_COUNT,
-            "c_count": $C_COUNT,
-            "llm_judges_wired": false,
-            "pipeline_version": "phase2-deterministic-only"
-          }
-          ENDJSON
-
-          echo ""
-          echo "Summary JSON:"
-          cat /tmp/adversarial-results/summary.json
-
-          # Fail if any F/D/U/C verdicts
-          FAIL_TOTAL=$((F_COUNT + D_COUNT + U_COUNT + C_COUNT))
-          if [ "$FAIL_TOTAL" -gt 0 ]; then
-            echo ""
-            echo "::error::$FAIL_TOTAL prompt(s) with F/D/U/C verdicts -- QA failed"
-            exit 1
-          fi
-
-          echo ""
-          echo "All prompts passed deterministic checks."
-
-      - name: Upload summary
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: adversarial-qa-summary
-          path: /tmp/adversarial-results/summary.json
-          retention-days: 30
+          echo "::notice::LLM judge panel not yet wired — deterministic-only gauge. Octopus dispatch will be added in Phase 3."
 
   unit-tests:
     name: Unit tests (ga-chatbot)
