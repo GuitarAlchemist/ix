@@ -37,6 +37,8 @@ use thiserror::Error;
 use ix_unsupervised::kmeans::KMeans;
 use ix_unsupervised::traits::Clusterer;
 
+pub mod viz_precompute;
+
 /// Supported instrument presets. Must match the GA CLI's `--tuning` flag
 /// values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

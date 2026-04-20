@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use ix_voicings::{
     build_pipeline, cluster, enumerate, featurize, progressions, render_book,
-    run_manifest, topology, transitions, Instrument, VoicingsError,
+    run_manifest, topology, transitions, viz_precompute, Instrument, VoicingsError,
 };
 
 #[derive(Parser, Debug)]
@@ -38,6 +38,10 @@ enum Commands {
     PhaseB,
     /// Run the full pipeline via PipelineBuilder (Phase B DAG only).
     Pipeline,
+    /// Run Phase C: precompute the Harmonic Nebula viz inputs from Phase B
+    /// artifacts. Writes `state/viz/{cluster-layout,voicing-layout,neighbors,manifest}.json`.
+    /// See `ga/docs/plans/2026-04-20-optick-corpus-viz-plan.md`.
+    VizPrecompute,
 }
 
 fn main() -> ExitCode {
@@ -92,6 +96,21 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("ix-voicings render_book failed: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        Some(Commands::VizPrecompute) => {
+            match viz_precompute::run_viz_precompute(&instruments) {
+                Ok(manifest) => {
+                    eprintln!(
+                        "ix-voicings viz-precompute: {} clusters, {} voicings across {:?}",
+                        manifest.cluster_count, manifest.voicing_count, manifest.instruments
+                    );
+                    eprintln!("Output: {}", viz_precompute::viz_root().display());
+                }
+                Err(e) => {
+                    eprintln!("ix-voicings viz-precompute failed: {e}");
                     return ExitCode::from(1);
                 }
             }
