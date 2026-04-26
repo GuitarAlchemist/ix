@@ -31,12 +31,20 @@ pub fn convolve_fft(a: &[f64], b: &[f64]) -> Vec<f64> {
     let fc: Vec<Complex> = fa.iter().zip(fb.iter()).map(|(&a, &b)| a * b).collect();
 
     let result = fft::ifft(&fc);
-    result.iter().take(a.len() + b.len() - 1).map(|c| c.re).collect()
+    result
+        .iter()
+        .take(a.len() + b.len() - 1)
+        .map(|c| c.re)
+        .collect()
 }
 
 /// Circular convolution of two equal-length signals.
 pub fn circular_convolve(a: &[f64], b: &[f64]) -> Vec<f64> {
-    assert_eq!(a.len(), b.len(), "Circular convolution requires equal lengths");
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "Circular convolution requires equal lengths"
+    );
     let n = a.len();
     let mut result = vec![0.0; n];
     for i in 0..n {

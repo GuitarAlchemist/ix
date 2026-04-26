@@ -31,7 +31,9 @@ impl FirFilter {
             })
             .collect();
 
-        Self { coefficients: coeffs }
+        Self {
+            coefficients: coeffs,
+        }
     }
 
     /// Design a high-pass FIR filter (spectral inversion of lowpass).
@@ -74,7 +76,9 @@ impl FirFilter {
             .map(|(h, l)| h - l)
             .collect();
 
-        Self { coefficients: bp_coeffs }
+        Self {
+            coefficients: bp_coeffs,
+        }
     }
 
     /// Apply the FIR filter to a signal.
@@ -189,10 +193,8 @@ mod tests {
         let filtered = bw.apply(&high);
 
         // After transient, high freq should be attenuated
-        let late_power: f64 = filtered[100..].iter().map(|x| x * x).sum::<f64>()
-            / (n - 100) as f64;
-        let input_power: f64 = high[100..].iter().map(|x| x * x).sum::<f64>()
-            / (n - 100) as f64;
+        let late_power: f64 = filtered[100..].iter().map(|x| x * x).sum::<f64>() / (n - 100) as f64;
+        let input_power: f64 = high[100..].iter().map(|x| x * x).sum::<f64>() / (n - 100) as f64;
         assert!(late_power < input_power * 0.1, "Should attenuate high freq");
     }
 }

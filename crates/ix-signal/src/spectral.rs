@@ -30,12 +30,7 @@ pub fn stft(
 }
 
 /// Spectrogram: magnitude of STFT (dB scale optional).
-pub fn spectrogram(
-    signal: &[f64],
-    window_size: usize,
-    hop_size: usize,
-    db: bool,
-) -> Vec<Vec<f64>> {
+pub fn spectrogram(signal: &[f64], window_size: usize, hop_size: usize, db: bool) -> Vec<Vec<f64>> {
     let win = window::hanning(window_size);
     let frames = stft(signal, window_size, hop_size, &win);
 
@@ -129,13 +124,19 @@ mod tests {
         let (freqs, psd) = welch_psd(&signal, 512, 256, fs);
 
         // Find peak frequency
-        let peak_idx = psd.iter()
+        let peak_idx = psd
+            .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .unwrap()
             .0;
 
         let peak_freq = freqs[peak_idx];
-        assert!((peak_freq - f0).abs() < 5.0, "Peak at {} Hz, expected ~{}", peak_freq, f0);
+        assert!(
+            (peak_freq - f0).abs() < 5.0,
+            "Peak at {} Hz, expected ~{}",
+            peak_freq,
+            f0
+        );
     }
 }

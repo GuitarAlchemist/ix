@@ -54,8 +54,11 @@ impl KalmanFilter {
         }
 
         // P = F * P * F^T + Q
-        self.covariance =
-            self.transition.dot(&self.covariance).dot(&self.transition.t()) + &self.process_noise;
+        self.covariance = self
+            .transition
+            .dot(&self.covariance)
+            .dot(&self.transition.t())
+            + &self.process_noise;
     }
 
     /// Update step: incorporate a measurement.
@@ -94,20 +97,13 @@ impl KalmanFilter {
 
     /// Process a sequence of measurements. Returns filtered states.
     pub fn filter(&mut self, measurements: &[Array1<f64>]) -> Vec<Array1<f64>> {
-        measurements
-            .iter()
-            .map(|z| self.step(z, None))
-            .collect()
+        measurements.iter().map(|z| self.step(z, None)).collect()
     }
 }
 
 /// Convenience: create a 1D constant-velocity Kalman filter.
 /// State = [position, velocity], observation = [position].
-pub fn constant_velocity_1d(
-    process_noise: f64,
-    measurement_noise: f64,
-    dt: f64,
-) -> KalmanFilter {
+pub fn constant_velocity_1d(process_noise: f64, measurement_noise: f64, dt: f64) -> KalmanFilter {
     let mut kf = KalmanFilter::new(2, 1);
 
     // State transition: [x, v] -> [x + v*dt, v]
@@ -145,16 +141,27 @@ mod tests {
         kf.state = array![0.0]; // Start at 0
 
         let measurements: Vec<Array1<f64>> = vec![
-            array![5.2], array![4.8], array![5.1], array![4.9],
-            array![5.0], array![5.3], array![4.7], array![5.1],
-            array![4.9], array![5.0],
+            array![5.2],
+            array![4.8],
+            array![5.1],
+            array![4.9],
+            array![5.0],
+            array![5.3],
+            array![4.7],
+            array![5.1],
+            array![4.9],
+            array![5.0],
         ];
 
         let states = kf.filter(&measurements);
 
         // After 10 measurements, should converge near 5.0
         let last = states.last().unwrap()[0];
-        assert!((last - 5.0).abs() < 0.5, "Should converge to ~5.0, got {}", last);
+        assert!(
+            (last - 5.0).abs() < 0.5,
+            "Should converge to ~5.0, got {}",
+            last
+        );
     }
 
     #[test]
@@ -173,6 +180,10 @@ mod tests {
 
         // Check velocity estimate converges near 2.0
         let last_vel = states.last().unwrap()[1];
-        assert!((last_vel - 2.0).abs() < 1.0, "Velocity should be ~2.0, got {}", last_vel);
+        assert!(
+            (last_vel - 2.0).abs() < 1.0,
+            "Velocity should be ~2.0, got {}",
+            last_vel
+        );
     }
 }

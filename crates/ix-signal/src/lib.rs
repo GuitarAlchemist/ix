@@ -15,14 +15,14 @@
 //! - **window**: Window functions (Hamming, Hanning, Blackman, Kaiser)
 //! - **convolution**: Linear and circular convolution
 
-pub mod fft;
-pub mod dct;
-pub mod wavelet;
-pub mod filter;
-pub mod spectral;
+pub mod convolution;
 pub mod correlation;
+pub mod dct;
+pub mod fft;
+pub mod filter;
 pub mod kalman;
 pub mod sampling;
-pub mod window;
-pub mod convolution;
+pub mod spectral;
 pub mod timeseries;
+pub mod wavelet;
+pub mod window;

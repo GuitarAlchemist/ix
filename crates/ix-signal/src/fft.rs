@@ -34,21 +34,30 @@ impl Complex {
     }
 
     pub fn conjugate(&self) -> Self {
-        Self { re: self.re, im: -self.im }
+        Self {
+            re: self.re,
+            im: -self.im,
+        }
     }
 }
 
 impl std::ops::Add for Complex {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-        Self { re: self.re + rhs.re, im: self.im + rhs.im }
+        Self {
+            re: self.re + rhs.re,
+            im: self.im + rhs.im,
+        }
     }
 }
 
 impl std::ops::Sub for Complex {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
-        Self { re: self.re - rhs.re, im: self.im - rhs.im }
+        Self {
+            re: self.re - rhs.re,
+            im: self.im - rhs.im,
+        }
     }
 }
 
@@ -65,7 +74,10 @@ impl std::ops::Mul for Complex {
 impl std::ops::Mul<f64> for Complex {
     type Output = Self;
     fn mul(self, rhs: f64) -> Self {
-        Self { re: self.re * rhs, im: self.im * rhs }
+        Self {
+            re: self.re * rhs,
+            im: self.im * rhs,
+        }
     }
 }
 
@@ -188,8 +200,8 @@ mod tests {
         let signal: Vec<Complex> = vec![Complex::from_real(1.0); 8];
         let spectrum = fft(&signal);
         assert!((spectrum[0].magnitude() - 8.0).abs() < 1e-10);
-        for i in 1..8 {
-            assert!(spectrum[i].magnitude() < 1e-10);
+        for value in spectrum.iter().take(8).skip(1) {
+            assert!(value.magnitude() < 1e-10);
         }
     }
 

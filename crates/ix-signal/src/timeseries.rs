@@ -33,6 +33,208 @@
 
 use ndarray::{Array1, Array2};
 
+/// Streaming drift state for online monitoring.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriftState {
+    Stable,
+    Warning,
+    Drift,
+}
+
+/// Configuration for the Drift Detection Method (DDM).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DdmConfig {
+    /// Minimum number of observations before warning/drift states can trigger.
+    pub min_samples: usize,
+    /// Warning threshold multiplier.
+    pub warning_level: f64,
+    /// Drift threshold multiplier.
+    pub drift_level: f64,
+}
+
+impl Default for DdmConfig {
+    fn default() -> Self {
+        Self {
+            min_samples: 30,
+            warning_level: 2.0,
+            drift_level: 3.0,
+        }
+    }
+}
+
+/// Snapshot of DDM detector state after processing one sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DdmSnapshot {
+    pub samples: usize,
+    pub error_rate: f64,
+    pub std_dev: f64,
+    pub min_error_rate: f64,
+    pub min_std_dev: f64,
+    pub state: DriftState,
+}
+
+/// Online Drift Detection Method (DDM) detector.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DdmDetector {
+    config: DdmConfig,
+    samples: usize,
+    errors: usize,
+    min_error_rate: f64,
+    min_std_dev: f64,
+}
+
+impl DdmDetector {
+    pub fn new(config: DdmConfig) -> Self {
+        Self {
+            config,
+            samples: 0,
+            errors: 0,
+            min_error_rate: f64::INFINITY,
+            min_std_dev: f64::INFINITY,
+        }
+    }
+
+    pub fn update(&mut self, is_error: bool) -> DdmSnapshot {
+        self.samples += 1;
+        self.errors += usize::from(is_error);
+
+        let samples = self.samples as f64;
+        let error_rate = self.errors as f64 / samples;
+        let std_dev = (error_rate * (1.0 - error_rate) / samples).sqrt();
+
+        if self.samples >= self.config.min_samples
+            && error_rate + std_dev < self.min_error_rate + self.min_std_dev
+        {
+            self.min_error_rate = error_rate;
+            self.min_std_dev = std_dev;
+        }
+
+        let state = if self.samples < self.config.min_samples
+            || !self.min_error_rate.is_finite()
+            || !self.min_std_dev.is_finite()
+        {
+            DriftState::Stable
+        } else {
+            let current = error_rate + std_dev;
+            let baseline = self.min_error_rate + self.min_std_dev;
+
+            if current > baseline + self.config.drift_level * self.min_std_dev {
+                DriftState::Drift
+            } else if current > baseline + self.config.warning_level * self.min_std_dev {
+                DriftState::Warning
+            } else {
+                DriftState::Stable
+            }
+        };
+
+        DdmSnapshot {
+            samples: self.samples,
+            error_rate,
+            std_dev,
+            min_error_rate: self.min_error_rate,
+            min_std_dev: self.min_std_dev,
+            state,
+        }
+    }
+}
+
+/// Run DDM over a sequence of boolean error indicators.
+pub fn ddm_detect(errors: &[bool], config: DdmConfig) -> Vec<DdmSnapshot> {
+    let mut detector = DdmDetector::new(config);
+    errors
+        .iter()
+        .map(|&is_error| detector.update(is_error))
+        .collect()
+}
+
+/// Configuration for the Page-Hinkley mean shift detector.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageHinkleyConfig {
+    /// Minimum number of observations before drift can trigger.
+    pub min_samples: usize,
+    /// Small tolerance subtracted from each centered sample.
+    pub delta: f64,
+    /// Drift threshold on cumulative deviation.
+    pub lambda: f64,
+    /// Update weight for the running mean. Use 1.0 for standard averaging.
+    pub alpha: f64,
+}
+
+impl Default for PageHinkleyConfig {
+    fn default() -> Self {
+        Self {
+            min_samples: 30,
+            delta: 0.005,
+            lambda: 50.0,
+            alpha: 1.0,
+        }
+    }
+}
+
+/// Snapshot of Page-Hinkley state after processing one sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageHinkleySnapshot {
+    pub samples: usize,
+    pub mean: f64,
+    pub cumulative_sum: f64,
+    pub min_cumulative_sum: f64,
+    pub state: DriftState,
+}
+
+/// Online Page-Hinkley detector for abrupt mean shifts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageHinkleyDetector {
+    config: PageHinkleyConfig,
+    samples: usize,
+    mean: f64,
+    cumulative_sum: f64,
+    min_cumulative_sum: f64,
+}
+
+impl PageHinkleyDetector {
+    pub fn new(config: PageHinkleyConfig) -> Self {
+        Self {
+            config,
+            samples: 0,
+            mean: 0.0,
+            cumulative_sum: 0.0,
+            min_cumulative_sum: 0.0,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) -> PageHinkleySnapshot {
+        self.samples += 1;
+
+        let weight = (self.config.alpha / self.samples as f64).clamp(0.0, 1.0);
+        self.mean += weight * (value - self.mean);
+
+        self.cumulative_sum += value - self.mean - self.config.delta;
+        self.min_cumulative_sum = self.min_cumulative_sum.min(self.cumulative_sum);
+
+        let state = if self.samples >= self.config.min_samples
+            && self.cumulative_sum - self.min_cumulative_sum > self.config.lambda
+        {
+            DriftState::Drift
+        } else {
+            DriftState::Stable
+        };
+
+        PageHinkleySnapshot {
+            samples: self.samples,
+            mean: self.mean,
+            cumulative_sum: self.cumulative_sum,
+            min_cumulative_sum: self.min_cumulative_sum,
+            state,
+        }
+    }
+}
+
+/// Run Page-Hinkley over a sequence of scalar observations.
+pub fn page_hinkley_detect(data: &[f64], config: PageHinkleyConfig) -> Vec<PageHinkleySnapshot> {
+    let mut detector = PageHinkleyDetector::new(config);
+    data.iter().map(|&value| detector.update(value)).collect()
+}
+
 /// Compute rolling (moving) mean with a given window size.
 ///
 /// Returns a Vec of the same length as `data`. The first `window - 1`
@@ -192,7 +394,13 @@ pub fn difference(data: &[f64], order: usize) -> Vec<f64> {
 /// ```
 pub fn pct_change(data: &[f64]) -> Vec<f64> {
     data.windows(2)
-        .map(|w| if w[0].abs() > 1e-15 { (w[1] - w[0]) / w[0] } else { 0.0 })
+        .map(|w| {
+            if w[0].abs() > 1e-15 {
+                (w[1] - w[0]) / w[0]
+            } else {
+                0.0
+            }
+        })
         .collect()
 }
 
@@ -286,7 +494,10 @@ pub fn lag_features_with_stats(data: &[f64], n_lags: usize) -> (Array2<f64>, Arr
 /// assert_eq!(test[0], 80);
 /// ```
 pub fn temporal_split(n: usize, train_ratio: f64) -> (Vec<usize>, Vec<usize>) {
-    assert!(train_ratio > 0.0 && train_ratio < 1.0, "train_ratio must be in (0, 1)");
+    assert!(
+        train_ratio > 0.0 && train_ratio < 1.0,
+        "train_ratio must be in (0, 1)"
+    );
     let split = (n as f64 * train_ratio).floor() as usize;
     let train: Vec<usize> = (0..split).collect();
     let test: Vec<usize> = (split..n).collect();
@@ -474,5 +685,64 @@ mod tests {
         let data = vec![1.0, 5.0, 3.0];
         let result = ewma(&data, 1.0);
         assert_eq!(result, data);
+    }
+
+    #[test]
+    fn test_ddm_stays_stable_on_low_error_stream() {
+        let errors = vec![false; 80];
+        let snapshots = ddm_detect(&errors, DdmConfig::default());
+        assert_eq!(snapshots.len(), errors.len());
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| snapshot.state == DriftState::Stable));
+    }
+
+    #[test]
+    fn test_ddm_detects_error_rate_jump() {
+        let mut errors = vec![false; 60];
+        errors.extend(vec![true; 40]);
+        let snapshots = ddm_detect(&errors, DdmConfig::default());
+        assert!(snapshots
+            .iter()
+            .skip(60)
+            .any(|snapshot| snapshot.state != DriftState::Stable));
+        assert!(snapshots
+            .iter()
+            .any(|snapshot| snapshot.state == DriftState::Drift));
+    }
+
+    #[test]
+    fn test_page_hinkley_stays_stable_on_constant_series() {
+        let data = vec![1.0; 120];
+        let snapshots = page_hinkley_detect(
+            &data,
+            PageHinkleyConfig {
+                min_samples: 20,
+                delta: 0.01,
+                lambda: 5.0,
+                alpha: 1.0,
+            },
+        );
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| snapshot.state == DriftState::Stable));
+    }
+
+    #[test]
+    fn test_page_hinkley_detects_mean_shift() {
+        let mut data = vec![1.0; 80];
+        data.extend(vec![4.0; 40]);
+        let snapshots = page_hinkley_detect(
+            &data,
+            PageHinkleyConfig {
+                min_samples: 20,
+                delta: 0.05,
+                lambda: 10.0,
+                alpha: 1.0,
+            },
+        );
+        assert!(snapshots
+            .iter()
+            .any(|snapshot| snapshot.state == DriftState::Drift));
     }
 }

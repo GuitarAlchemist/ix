@@ -117,9 +117,16 @@ mod tests {
 
         let denoised = wavelet_denoise(&noisy, 3, 0.5);
 
-        assert_eq!(denoised.len(), noisy.len(), "Output length should match input");
+        assert_eq!(
+            denoised.len(),
+            noisy.len(),
+            "Output length should match input"
+        );
         // Denoising should change the signal (not be identity)
-        let changed = noisy.iter().zip(denoised.iter()).any(|(n, d)| (n - d).abs() > 1e-10);
+        let changed = noisy
+            .iter()
+            .zip(denoised.iter())
+            .any(|(n, d)| (n - d).abs() > 1e-10);
         assert!(changed, "Denoising should modify the signal");
     }
 }

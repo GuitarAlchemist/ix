@@ -30,6 +30,10 @@ linear regression, random forest, neural network — into a time series task.
 **EWMA** (Exponentially Weighted Moving Average) gives more weight to recent
 observations, reacting faster to changes than a simple rolling mean.
 
+**Drift detectors** go one step further: instead of smoothing the signal, they
+track whether the data-generating process itself has shifted. This is useful for
+monitoring model error rates, service latency, and sensor baselines.
+
 ## Rolling Statistics
 
 ### rolling_mean / rolling_std
@@ -86,6 +90,54 @@ let smooth = ewma(&response_times, 0.3);
 // alpha=0.8: reactive, good for anomaly detection
 let reactive = ewma(&response_times, 0.8);
 ```
+
+## Drift Detection
+
+### DDM — Drift Detection Method
+
+DDM works on a stream of binary outcomes, usually "correct vs error" for a model
+or rule system. It tracks the running error rate and raises a warning or drift
+state when performance degrades beyond its historical baseline.
+
+```rust
+use ix_signal::timeseries::{ddm_detect, DdmConfig, DriftState};
+
+let mut errors = vec![false; 60];
+errors.extend(vec![true; 40]); // sudden degradation
+
+let snapshots = ddm_detect(&errors, DdmConfig::default());
+assert!(snapshots.iter().any(|s| s.state == DriftState::Warning));
+assert!(snapshots.iter().any(|s| s.state == DriftState::Drift));
+```
+
+Use DDM when you already have a supervised signal such as classification error,
+SLA breach/not-breach, or reviewer reject/accept.
+
+### Page-Hinkley — Mean Shift Detection
+
+Page-Hinkley watches a numeric stream directly. It is a good fit for latency,
+queue depth, throughput, temperature, and any metric where you care about a
+persistent mean shift rather than isolated spikes.
+
+```rust
+use ix_signal::timeseries::{page_hinkley_detect, DriftState, PageHinkleyConfig};
+
+let mut response_times = vec![120.0; 80];
+response_times.extend(vec![180.0; 40]); // new slower regime
+
+let snapshots = page_hinkley_detect(
+    &response_times,
+    PageHinkleyConfig {
+        min_samples: 20,
+        delta: 0.05,
+        lambda: 10.0,
+        alpha: 1.0,
+    },
+);
+assert!(snapshots.iter().any(|s| s.state == DriftState::Drift));
+```
+
+Use Page-Hinkley when you want low-state online monitoring of numeric metrics.
 
 ## Feature Engineering
 
@@ -238,6 +290,8 @@ for (hour, &avg) in trend.iter().enumerate() {
 | `rolling_std` | Volatility measurement, anomaly detection |
 | `rolling_min` / `rolling_max` | Range tracking, support/resistance, sensor bounds |
 | `ewma` | Adaptive smoothing, real-time monitoring, alerting |
+| `ddm_detect` | Drift on error-rate streams, classifier/service quality monitoring |
+| `page_hinkley_detect` | Drift on numeric streams, latency/load/regime shift detection |
 | `expanding_mean` | Cumulative performance metrics, running averages |
 | `lag_features` | Convert time series to supervised ML problem |
 | `lag_features_with_stats` | Richer ML features with built-in trend/volatility |
