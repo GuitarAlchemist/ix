@@ -20,7 +20,9 @@ pub mod prime_form;
 pub use action::Action;
 pub use dihedral::{DihedralElement, Group};
 pub use forte::{all_forte_numbers, forte_number, ForteNumber};
-pub use grothendieck::{find_nearby, grothendieck_delta, icv, Delta, Icv};
+pub use grothendieck::{
+    find_nearby, find_shortest_path, grothendieck_delta, icv, Delta, Icv,
+};
 pub use neo_riemannian::{classify_triad, h, l, n, p, r, s, TriadKind};
 pub use orbit::{all_prime_forms, orbit, orbit_unique};
 pub use pc_set::PcSet;

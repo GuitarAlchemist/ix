@@ -11,6 +11,7 @@ description = "Dihedral group D12 operator algebra for 12-bit pitch-class sets: 
 
 [dependencies]
 thiserror = { workspace = true }
+ix-search = { workspace = true }
 
 [lib]
 path = "src/lib.rs"

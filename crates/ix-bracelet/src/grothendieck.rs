@@ -174,6 +174,90 @@ pub fn find_nearby(source: PcSet, max_l1: u32) -> Vec<(PcSet, Delta, u32)> {
     out
 }
 
+/// Search-state node for the harmonic-path A* — pairs the current PC-set with
+/// the (constant) target so the state implements the goal predicate locally.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PathNode {
+    current: PcSet,
+    target: PcSet,
+}
+
+impl ix_search::astar::SearchState for PathNode {
+    type Action = PcSet;
+
+    fn successors(&self) -> Vec<(PcSet, Self, f64)> {
+        let card = self.current.cardinality();
+        find_nearby(self.current, FIND_NEARBY_RADIUS_PER_STEP)
+            .into_iter()
+            .filter(|(s, _, _)| s.cardinality() == card && *s != self.current)
+            .map(|(s, _, _)| {
+                (
+                    s,
+                    PathNode {
+                        current: s,
+                        target: self.target,
+                    },
+                    1.0,
+                )
+            })
+            .collect()
+    }
+
+    fn is_goal(&self) -> bool {
+        self.current == self.target
+    }
+}
+
+/// Per-step ICV-L1 expansion radius for `find_shortest_path`. Mirrors GA's
+/// `FindShortestPath` (radius=2): "connects closely related diatonic
+/// collections (e.g., C major → G major) that typically differ by one
+/// accidental yet may exceed radius=1 under the ICV L1 metric".
+const FIND_NEARBY_RADIUS_PER_STEP: u32 = 2;
+
+/// A* shortest harmonic path between two PC-sets of equal cardinality.
+///
+/// Drop-in replacement for GA's BFS `FindShortestPath`. Uses
+/// `ix_search::astar::astar` with the admissible heuristic
+/// `L1(δ(current, target)) / 2.0` — admissible because each step expands by
+/// `find_nearby(_, 2)`, so a single step can drop the L1-to-target by at most
+/// `2 * 2 = 4`... wait, actually each step can change ICV L1 by at most
+/// `2 * FIND_NEARBY_RADIUS_PER_STEP = 4` in the worst case (the step itself
+/// has L1 ≤ 2, and triangle inequality gives `|L1(after)−L1(before)| ≤ 2`).
+/// So `L1/2.0` is the right admissible scaling.
+///
+/// Returns the full path including `source` and `target`. Returns an empty
+/// `Vec` if no path exists or if the optimal path exceeds `max_steps` edges
+/// (matching GA's `path.Count >= maxSteps + 1` cutoff).
+pub fn find_shortest_path(source: PcSet, target: PcSet, max_steps: usize) -> Vec<PcSet> {
+    if source.cardinality() != target.cardinality() {
+        return Vec::new();
+    }
+    if source == target {
+        return vec![source];
+    }
+
+    let initial = PathNode {
+        current: source,
+        target,
+    };
+    let heuristic = move |node: &PathNode| -> f64 {
+        // Each step has L1 ≤ 2 (find_nearby radius), so L1/2 lower-bounds steps.
+        grothendieck_delta(node.current, node.target).l1_norm() as f64 / 2.0
+    };
+
+    let result = match ix_search::astar::astar(initial, heuristic) {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+
+    // GA's BFS cutoff: `path.Count >= maxSteps + 1` halts expansion.
+    // Equivalent post-filter: drop paths with more than max_steps edges.
+    if result.path.len() > max_steps + 1 {
+        return Vec::new();
+    }
+    result.path.into_iter().map(|n| n.current).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,5 +424,57 @@ mod tests {
         let src = pcset(&[0, 4, 7]);
         let near = find_nearby(src, 132);
         assert_eq!(near.len(), 4096);
+    }
+
+    #[test]
+    fn shortest_path_source_equals_target_is_singleton() {
+        let s = pcset(&[0, 4, 7]);
+        assert_eq!(find_shortest_path(s, s, 5), vec![s]);
+    }
+
+    #[test]
+    fn shortest_path_different_cardinalities_is_empty() {
+        // Triad → seventh chord — find_shortest_path only spans equal-cardinality
+        // sets (matches GA's `Where(s => s.Cardinality == current.Cardinality)`).
+        let triad = pcset(&[0, 4, 7]);
+        let seventh = pcset(&[0, 4, 7, 11]);
+        assert!(find_shortest_path(triad, seventh, 5).is_empty());
+    }
+
+    #[test]
+    fn shortest_path_major_to_minor_triad_one_step() {
+        // C major triad {0,4,7} → C minor triad {0,3,7} share orbit (both Forte 3-11)
+        // so they reach each other inside one find_nearby(_, 2) expansion.
+        let c_maj = pcset(&[0, 4, 7]);
+        let c_min = pcset(&[0, 3, 7]);
+        let path = find_shortest_path(c_maj, c_min, 5);
+        assert!(!path.is_empty(), "expected path C maj → C min");
+        assert_eq!(path.first(), Some(&c_maj));
+        assert_eq!(path.last(), Some(&c_min));
+        assert!(
+            path.len() <= 2,
+            "expected ≤1 hop (path={:?}, len={})",
+            path,
+            path.len()
+        );
+    }
+
+    #[test]
+    fn shortest_path_returns_empty_when_max_steps_too_small() {
+        // Major triad → augmented triad needs ≥1 step, but max_steps=0 forbids any
+        // hop beyond the source itself.
+        let c_maj = pcset(&[0, 4, 7]);
+        let c_aug = pcset(&[0, 4, 8]);
+        assert!(find_shortest_path(c_maj, c_aug, 0).is_empty());
+    }
+
+    #[test]
+    fn shortest_path_endpoints_match_source_and_target() {
+        let c_maj_scale = pcset(&[0, 2, 4, 5, 7, 9, 11]);
+        let g_maj_scale = pcset(&[0, 2, 4, 6, 7, 9, 11]); // C major + F♯ instead of F
+        let path = find_shortest_path(c_maj_scale, g_maj_scale, 8);
+        assert!(!path.is_empty(), "expected a path between adjacent diatonic scales");
+        assert_eq!(*path.first().unwrap(), c_maj_scale);
+        assert_eq!(*path.last().unwrap(), g_maj_scale);
     }
 }
