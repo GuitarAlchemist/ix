@@ -58,7 +58,6 @@ members = [
     "crates/ix-catalog-core",
     "crates/ix-net",
     "crates/ix-sanitize",
-    "crates/ix-friday-brief",
     "crates/ix-voicings",
     "crates/ix-optick",
     "crates/ix-optick-invariants",
@@ -150,7 +149,6 @@ ix-session = { path = "crates/ix-session", version = "0.1.0" }
 ix-memory = { path = "crates/ix-memory", version = "0.1.0" }
 ix-fuzzy = { path = "crates/ix-fuzzy", version = "0.1.0" }
 ix-sanitize = { path = "crates/ix-sanitize", version = "0.1.0" }
-ix-friday-brief = { path = "crates/ix-friday-brief", version = "0.1.0" }
 ix-optick = { path = "crates/ix-optick", version = "0.1.0" }
 ix-embedding-diagnostics = { path = "crates/ix-embedding-diagnostics", version = "0.1.0" }
 ix-quality-trend = { path = "crates/ix-quality-trend", version = "0.1.0" }
