@@ -4977,3 +4977,119 @@ fn parse_language(s: &str) -> Result<ix_code::analyze::Language, String> {
         _ => Err(format!("Unsupported language: '{s}'")),
     }
 }
+
+// ── ix_grothendieck_* (PC-set algebra) ────────────────────────────────────
+//
+// Mirrors GA's `IGrothendieckService` over MCP so agents can compute ICVs,
+// signed ℤ⁶ deltas, neighborhood searches, and shortest harmonic paths
+// without going through the C# service. Backed by `ix-bracelet::grothendieck`.
+
+/// Parse a JSON field as an array of pitch classes (0..=11). Values outside
+/// 0..=11 are reduced mod 12. Returns the resulting `PcSet` plus the
+/// canonicalized PC list (sorted, deduped) for round-tripping in responses.
+fn parse_pc_set(params: &Value, field: &str) -> Result<ix_bracelet::PcSet, String> {
+    let arr = params
+        .get(field)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("Missing or invalid field '{field}' (expected array of pitch classes)"))?;
+    let mut pcs: Vec<u8> = Vec::with_capacity(arr.len());
+    for v in arr {
+        let n = v
+            .as_i64()
+            .ok_or_else(|| format!("Non-integer in '{field}'"))?;
+        // Allow any integer; modular reduction happens inside PcSet::from_pcs.
+        // Reject only obviously bogus inputs (NaN-like via as_i64 returning None already).
+        let pc = (n.rem_euclid(12)) as u8;
+        pcs.push(pc);
+    }
+    Ok(ix_bracelet::PcSet::from_pcs(pcs))
+}
+
+fn pc_set_to_array(s: ix_bracelet::PcSet) -> Vec<u8> {
+    s.iter_pcs().collect()
+}
+
+/// `ix_grothendieck_delta` — compute the signed Grothendieck ICV delta between
+/// two PC-sets. Returns the 6-component delta plus L1/L2 norms.
+pub fn grothendieck_delta(params: Value) -> Result<Value, String> {
+    let source = parse_pc_set(&params, "source")?;
+    let target = parse_pc_set(&params, "target")?;
+    let delta = ix_bracelet::grothendieck_delta(source, target);
+    let src_icv = ix_bracelet::icv(source);
+    let tgt_icv = ix_bracelet::icv(target);
+    Ok(json!({
+        "source": pc_set_to_array(source),
+        "target": pc_set_to_array(target),
+        "source_icv": src_icv.data,
+        "target_icv": tgt_icv.data,
+        "delta": delta.data,
+        "l1_norm": delta.l1_norm(),
+        "l2_norm": delta.l2_norm(),
+        "is_zero": delta.is_zero(),
+    }))
+}
+
+/// `ix_grothendieck_nearby` — find PC-sets within an L1 distance budget of the
+/// source ICV. Orbit-aware (~18× faster than brute-force scan over 4096
+/// subsets).
+pub fn grothendieck_nearby(params: Value) -> Result<Value, String> {
+    let source = parse_pc_set(&params, "source")?;
+    let max_l1 = params
+        .get("max_l1")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| "Missing or invalid field 'max_l1' (expected non-negative integer)".to_string())?
+        as u32;
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
+
+    let mut results = ix_bracelet::find_nearby(source, max_l1);
+    // Sort by ascending cost so callers see closest neighbors first.
+    results.sort_by_key(|(_, _, cost)| *cost);
+    if let Some(n) = limit {
+        results.truncate(n);
+    }
+
+    let entries: Vec<Value> = results
+        .into_iter()
+        .map(|(set, delta, cost)| {
+            json!({
+                "set": pc_set_to_array(set),
+                "delta": delta.data,
+                "cost": cost,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "source": pc_set_to_array(source),
+        "max_l1": max_l1,
+        "count": entries.len(),
+        "results": entries,
+    }))
+}
+
+/// `ix_grothendieck_path` — A* shortest harmonic path between two PC-sets of
+/// equal cardinality. Drop-in replacement for GA's BFS `FindShortestPath`.
+pub fn grothendieck_path(params: Value) -> Result<Value, String> {
+    let source = parse_pc_set(&params, "source")?;
+    let target = parse_pc_set(&params, "target")?;
+    let max_steps = params
+        .get("max_steps")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(5);
+
+    let path = ix_bracelet::find_shortest_path(source, target, max_steps);
+    let steps = if path.is_empty() { 0 } else { path.len() - 1 };
+
+    Ok(json!({
+        "source": pc_set_to_array(source),
+        "target": pc_set_to_array(target),
+        "max_steps": max_steps,
+        "found": !path.is_empty(),
+        "steps": steps,
+        "path": path.into_iter().map(pc_set_to_array).collect::<Vec<_>>(),
+    }))
+}

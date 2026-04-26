@@ -2383,5 +2383,82 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::code_smells,
         });
+
+        self.tools.push(Tool {
+            name: "ix_grothendieck_delta",
+            description: "Compute the signed Grothendieck ICV delta between two pitch-class sets (target − source in ℤ⁶). Returns the 6-component delta, L1/L2 norms, and both source/target ICVs. PC-sets are arrays of pitch classes 0..11 (values reduced mod 12).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Source PC-set as an array of pitch classes (0..11)"
+                    },
+                    "target": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Target PC-set as an array of pitch classes (0..11)"
+                    }
+                },
+                "required": ["source", "target"]
+            }),
+            handler: handlers::grothendieck_delta,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_grothendieck_nearby",
+            description: "Find pitch-class sets within an L1 Grothendieck-distance budget of the source ICV. Orbit-aware — uses the 224 D₁₂ prime-form representatives for ~18× fewer ICV computations than a brute-force 4096-set scan. Results are sorted by ascending cost.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Source PC-set as an array of pitch classes (0..11)"
+                    },
+                    "max_l1": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Maximum L1 norm of the ICV delta (0 returns the source orbit only)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional cap on the number of returned (set, delta, cost) triples after sorting by cost"
+                    }
+                },
+                "required": ["source", "max_l1"]
+            }),
+            handler: handlers::grothendieck_nearby,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_grothendieck_path",
+            description: "Find the shortest harmonic path between two PC-sets of equal cardinality using A* (admissible heuristic L1(δ)/2). Drop-in replacement for GA's BFS FindShortestPath: same path output, fewer nodes expanded. Returns an empty path when no route exists within max_steps.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Source PC-set as an array of pitch classes (0..11)"
+                    },
+                    "target": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Target PC-set as an array of pitch classes (0..11). Must have the same cardinality as source."
+                    },
+                    "max_steps": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 5,
+                        "description": "Maximum number of edges in the path (matches GA's path.Count >= maxSteps + 1 cutoff)"
+                    }
+                },
+                "required": ["source", "target"]
+            }),
+            handler: handlers::grothendieck_path,
+        });
     }
 }

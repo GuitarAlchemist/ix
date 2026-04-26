@@ -10,12 +10,13 @@
 use ix_agent::tools::ToolRegistry;
 use std::collections::HashSet;
 
-/// The 56 MCP tools exposed by ix-agent. The first 48 are registry-backed,
+/// The 67 MCP tools exposed by ix-agent. The first 48 are registry-backed,
 /// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
 /// ServerContext-routed surface), plus the 4 pipeline tools added during
 /// the R1/R2/R7-Week-2/NL-compiler work: ix_pipeline_run, ix_pipeline_list,
 /// ix_autograd_run, ix_pipeline_compile, plus the P1.1/P1.2 source
-/// adapters ix_git_log + ix_cargo_deps.
+/// adapters ix_git_log + ix_cargo_deps, plus the 3 ix_grothendieck_*
+/// PC-set algebra tools backed by ix-bracelet.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_ast_query",
@@ -54,6 +55,9 @@ const EXPECTED: &[&str] = &[
     "ix_grammar_search",
     "ix_grammar_weights",
     "ix_graph",
+    "ix_grothendieck_delta",
+    "ix_grothendieck_nearby",
+    "ix_grothendieck_path",
     "ix_hyperloglog",
     "ix_kmeans",
     "ix_linear_regression",
@@ -126,10 +130,11 @@ fn parity_expected_count() {
     // ix_autograd_run + ix_pipeline_compile + ix_git_log +
     // ix_cargo_deps + ix_code_catalog + ix_catalog_list +
     // ix_grammar_catalog + ix_rfc_catalog + ix_ast_query +
-    // ix_optick_search + ix_code_smells = 64.
+    // ix_optick_search + ix_code_smells +
+    // ix_grothendieck_delta + ix_grothendieck_nearby + ix_grothendieck_path = 67.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 64);
+    assert_eq!(EXPECTED.len(), 67);
 }
 
 #[test]

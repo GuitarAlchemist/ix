@@ -6,7 +6,7 @@
 
 A Rust workspace of composable ML/math algorithms and AI governance, designed to be exposed as **Claude Code skills** via an MCP server and CLI. Part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem (ix + [tars](https://github.com/GuitarAlchemist/tars) + [ga](https://github.com/GuitarAlchemist/ga) + [Demerzel](https://github.com/GuitarAlchemist/Demerzel)).
 
-64 crates. 64 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+64 crates. 67 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -54,7 +54,7 @@ cargo run -p ix-agent
 |-------|------|-------|
 | ix-nn | Beta | Transformers, backprop — complex but actively developed |
 | ix-pipeline | Beta | DAG executor — critical infrastructure, API stabilizing |
-| ix-agent | Beta | MCP server (64 tools) — production-facing integration point |
+| ix-agent | Beta | MCP server (67 tools) — production-facing integration point |
 | ix-governance | Beta | Demerzel governance bridge — consumed by ga/tars |
 | ix-cache | Beta | Embedded Redis-like cache — stable patterns |
 | ix-io | Beta | I/O utilities (CSV, JSON, TCP, WebSocket) |
@@ -120,7 +120,7 @@ The 16 crates below were added during the agent-harness and pipeline work. They 
 
 ### MCP Tool Surface
 
-`ix-agent` exposes **64 MCP tools** covering core math, supervised / unsupervised ML, neural networks + autograd, signal + chaos, graph + topology, adversarial + evolution, game theory, probabilistic data structures, grammar, governance, federation, source adapters (`ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog`, `ix_ast_query`, `ix_code_smells`), OPTIC-K voicing search, and pipeline orchestration (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_pipeline_list`).
+`ix-agent` exposes **67 MCP tools** covering core math, supervised / unsupervised ML, neural networks + autograd, signal + chaos, graph + topology, adversarial + evolution, game theory, probabilistic data structures, grammar, governance, federation, source adapters (`ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog`, `ix_ast_query`, `ix_code_smells`), OPTIC-K voicing search, and pipeline orchestration (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_pipeline_list`).
 
 See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for the full categorized inventory and [`crates/ix-agent/src/tools.rs`](crates/ix-agent/src/tools.rs) for the authoritative schemas.
 
@@ -211,7 +211,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 ### Integration
 | Crate | Description |
 |-------|-------------|
-| **ix-agent** | MCP server: 64 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
+| **ix-agent** | MCP server: 67 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
 | **ix-skill** | CLI binary for direct command-line access to all algorithms |
 | **ix-demo** | egui desktop app with 22+ interactive demo tabs including governance explorer |
 

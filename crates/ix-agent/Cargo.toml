@@ -50,6 +50,7 @@ ix-agent-core = { workspace = true }
 ix-approval = { workspace = true }
 ix-session = { workspace = true }
 ix-fuzzy = { workspace = true }
+ix-bracelet = { workspace = true }
 ix-optick = { path = "../ix-optick" }
 ix-types = { workspace = true }
 ix-registry = { workspace = true }
