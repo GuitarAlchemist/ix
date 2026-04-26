@@ -7,17 +7,33 @@ origin: docs/brainstorms/2026-04-26-ix-autoresearch-brainstorm.md
 reversibility: |
   - two-way-door: kernel internals, target adapter perturbation policies, decision strategy
   - one-way-door: state directory layout (state/autoresearch/{runs,milestones}/), JSONL
-    `ExperimentEntry` schema (versioned via `schema_version`), `run_experiment` public
-    signature, MCP `ix_autoresearch_run` input_schema, GA-side `--weights-config` JSON
-    contract, `Strategy` enum variants exposed to MCP
-deepened: 2026-04-26 (research notes folded into Trait, Phases, Risks, Sources)
+    `LogEvent` schema (versioned via `schema_version`), `run_experiment` public signature,
+    MCP `ix_autoresearch_run` input_schema, GA-side `--weights-config` JSON contract,
+    `Strategy` enum variants exposed to MCP, `Experiment::cache_salt()` semantics
+    (default `Some("v1")` is forever; renaming to `"v2"` invalidates all caches),
+    `RunId` UUIDv7 format (consumers cache the time-sortable property),
+    capability-registry domain assignment (`ix_federation_discover` indexes by domain)
+deepened: 2026-04-26 (research notes folded into Trait, Phases, Risks, Sources, plus
+  Security Considerations and Governance Integration sections from second-pass review)
 ---
 
 # ix-autoresearch — Karpathy-style edit-eval-iterate kernel + 3 targets
 
 ## Enhancement Summary (deepened 2026-04-26)
 
-Seven parallel research agents reviewed this plan after the initial `/ce:plan` pass. Their findings are folded into the relevant sections below; the highlights:
+Seven parallel research agents reviewed this plan after the initial `/ce:plan` pass; a *second-pass* technical review then added security, governance, and spec-flow findings. Both rounds are folded into the relevant sections below; highlights from each:
+
+### Second-pass findings (security + governance + spec-flow)
+
+- **Security Considerations** (new top-level section) — slug regex `^[a-z0-9][a-z0-9-]{0,63}$`, run-id UUID validation + path canonicalization, `Command::env_clear()` + allowlist on every shell-out, MCP iteration cap (10k), `eval_inputs_hash` is content-hash-only, `Iteration.error` is typed-enum-string-only, milestone overwrite policy (`--force` required for slug collision), promote sanitization pass against secret-leak patterns, GA-side validation contract for `--weights-config` JSON.
+- **Governance Integration** (new top-level section) — `autoresearch-driver.persona.yaml` (invariant #34); hexavalent observation emission per accept/reject + on milestone promote; belief-state writes for milestone propositions (e.g. "STRUCTURE leak < 5%"); audit-trail reconciliation with the governance graph; capability-registry domain change `governance → experiment` with `domains[]` array updated; Galactic Protocol contract directive for the GA-side schema; rollback story (`revert --apply`, prior-config snapshot, consecutive-promotion cap, eval-on-held-out-corpus before promote).
+- **Phase 1 acceptance bumps** — 10 new acceptance items: slug regex rejection, promote sanitization, milestone overwrite distinction, SIGINT propagation, first-run dir bootstrap, `list` empty state, MCP iteration cap, persona behavioral tests, observation emission, SA temperature logging.
+- **Phase 3 acceptance bumps** — `cli_smoke.rs` end-to-end test, MCP-level integration test, promote↔list reflection.
+- **Phase 5 acceptance bumps** — simplex tolerance reconciled (1e-9 post-renormalize), cache-hit observation, `eval_inputs_hash` content-hash determinism across machines.
+- **Phase 7 acceptance bumps** — IX-side `optick_live_smoke.rs`, cross-repo CI parity check on the schema file.
+- **3 additional one-way doors** flagged in frontmatter `reversibility:` — `cache_salt` semantics, `RunId` UUIDv7 format, capability-registry domain.
+
+### First-pass findings (architecture + correctness + performance)
 
 ### Corrections
 
@@ -589,6 +605,19 @@ Dependencies below).
 - (g) **Hard-kill cascade abort**: mock `evaluate` that always blocks past `hard_timeout`; after 3 consecutive kills, run aborts with `RunComplete.consecutive_kills_at_abort = Some(3)`.
 - (h) **Cache salt**: mock with `cache_salt = None` exercises `evaluate` on every iter (cache disabled); mock with `cache_salt = Some("v1")` hits the cache on duplicate configs.
 
+##### Phase 1 acceptance — second-pass additions (security + governance + flow gaps)
+
+- (i) **Slug regex rejection**: `promote <run-id> --note "../../etc"` fails at clap parse with a clear error citing the regex `^[a-z0-9][a-z0-9-]{0,63}$`. Same for `--note "."`, `--note "-leading-hyphen"`, `--note "spaces inside"`. (Mitigates SEV-HIGH path traversal.)
+- (j) **Promote sanitization**: feed a deliberately-poisoned JSONL with `Iteration.error: "auth: Bearer sk-ant-..."` (test-only) into `promote` and assert it aborts with `PromoteSanitizationFailed` rather than staging the poisoned content for git.
+- (k) **Milestone overwrite distinction**: idempotency test #5 splits into two — *same source run-id* (idempotent no-op, OK) versus *different source run-id, same slug* (errors `MilestoneSlugCollision`, requires `--force`).
+- (l) **SIGINT propagation**: spawn the CLI as a subprocess running `--target grammar --iterations 1000` (Target C, fast); after 100 ms send SIGINT (Windows: `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)`). Assert: (1) the JSONL log ends with a graceful `RunComplete` event; (2) any active `Child` (Target B/A only — for C this is a no-op) has been killed; (3) exit code is 130 (Unix convention) or `STATUS_CONTROL_C_EXIT` (Windows).
+- (m) **First-run dir bootstrap**: starting with no `state/autoresearch/` at all, `ix-autoresearch run --target grammar --iterations 5` creates the directory tree with friendly errors on permission failure (test by chmod-ing the `state/` parent).
+- (n) **`list` empty state**: `ix-autoresearch list` with zero prior runs prints `"no runs yet — try: ix-autoresearch run --target grammar"` to stderr and exits 0.
+- (o) **MCP iteration cap**: invoking `ix_autoresearch_run` with `iterations: 100_000` returns a JSON-RPC error `"iterations exceeds MCP cap of 10000; use the CLI for larger runs"`. CLI accepts the same value without complaint.
+- (p) **Persona behavioral tests**: the three behavioral tests declared in `autoresearch-driver.persona.yaml` exist and pass under `cargo test --workspace -- --include-ignored persona_behavioral`.
+- (q) **Observation emission**: a 10-iter run produces ≥ 10 observations in `ix_fuzzy::observations` (one per accept/reject) plus 1 on milestone promote. Assert via test fixture that captures the observation stream.
+- (r) **SA temperature resume** (alternative: explicit non-resume): the `Iteration.strategy_state` field carries `{ "temperature": f64 }` for SA runs, OR plan documents "v1 SA does not resume; restart at T₀; resume is v1.5" — pick one and pin it. Phase 1 ships the *log-it-but-don't-resume* compromise: temperature is logged for forensics, but resume restarts at T₀; Phase 1.5 adds resume.
+
 #### Phase 2: Target C end-to-end
 
 - Implement `targets/grammar.rs` per schema above.
@@ -610,6 +639,12 @@ Dependencies below).
 - Wire `ix-autoresearch` as a `dependency` of `ix-agent` (workspace dep).
 
 **Acceptance**: `cargo run -p ix-autoresearch -- run --target grammar --iterations 50 --strategy sa` produces a JSONL log under `state/autoresearch/runs/<id>/log.jsonl`. MCP path returns matching JSON. Parity test passes at count = 68.
+
+**Phase 3 acceptance — second-pass additions**:
+
+- **`tests/cli_smoke.rs`**: `Command::cargo_bin("ix-autoresearch").args(["run", "--target", "grammar", "--iterations", "5"])`, assert log file exists at `state/autoresearch/runs/<id>/log.jsonl` with 5 `Iteration` events bracketed by `RunStart` and `RunComplete`. Closes the spec-flow gap: previously CLI → kernel → JSONL was unverified end-to-end.
+- **MCP-level integration test** (in `parity.rs` neighborhood or new `tests/mcp_smoke.rs`): invoke `autoresearch_run` via the registered handler with `{ target: "grammar", iterations: 3, strategy: "greedy" }`, assert response shape contains `outcome.run_id`, `outcome.iterations: 3`, and `outcome.log_path` resolves to a real file.
+- **Promote ↔ list reflection**: after `promote <run-id> --note smoke`, `list` reports the milestone alongside the source run with a `promoted_to: "<slug>"` field on the run entry.
 
 #### Phase 4: Target B end-to-end + ga-chatbot threshold flag
 
@@ -638,6 +673,12 @@ Dependencies below).
 
 The plan's earlier single 140s figure conflated the two; reflect this in Phase 7's overnight-budget arithmetic (50 iters × 50s = ~40 min on CI-reduced, ~2.5 h on live).
 
+**Phase 5 acceptance — second-pass additions**:
+
+- **Simplex tolerance reconciled**: AC asserts `|sum(weights) - 1.0| < 1e-9` *after* renormalization (not raw post-floor). The Dirichlet floor `ε = 1e-3` introduces rounding error larger than 1e-6; the renormalize step fixes it to ~1e-15 in practice.
+- **Cache-hit observation**: under deterministic synthetic-score mock, the second iteration with an identical config (e.g. via Greedy that rejects + re-perturbs to the same point) produces a `cache_hit: true` flag in the JSONL. Closes the spec-flow gap on cache exercise.
+- **`eval_inputs_hash` content-hash determinism**: assert that the same fixture corpus on two different machines (different absolute paths) produces the same `eval_inputs_hash` value. Phase 5 mock includes this as `tests/targets.rs::optick_eval_inputs_hash_is_machine_independent`.
+
 #### Phase 6: GA-side `--weights-config` companion PR
 
 - **Out-of-tree work** in the GA repo. Adds a `--weights-config <path>` flag to `FretboardVoicingsCLI` that reads the JSON schema from Phase 5's `targets/optick.rs` and overrides `EmbeddingSchema.PartitionWeights` at index-rebuild time.
@@ -652,7 +693,12 @@ The plan's earlier single 140s figure conflated the two; reflect this in Phase 7
 - If it moves favorably, run `ix-autoresearch promote <run-id> --note "first-overnight-tune"` to commit the milestone.
 - Add an `optick_live.rs` integration test that runs 5 iters against the CI-reduced index (longer-running, gated behind `optick-live` feature flag, run only in nightly CI).
 
-**Acceptance**: An overnight run produces a milestone snapshot with a real metric improvement. The autoresearch story is shippable.
+**Acceptance**: An overnight run produces a milestone snapshot with `structure_leak_pct` baseline → final delta ≥ 1.0 percentage point (aligned with Success Metrics). Held-out-corpus eval before promote (per Governance Integration → Rollback) confirms the improvement isn't training-set overfit. The autoresearch story is shippable.
+
+**Phase 7 acceptance — second-pass additions**:
+
+- **IX-side integration test** (gated `optick-live`): `tests/optick_live_smoke.rs` runs 5 iters against the CI-reduced index, confirms the GA `--weights-config` JSON contract is honored end-to-end (config written → GA reads → diagnostics JSON parsed → score landed in JSONL).
+- **Cross-repo CI parity check**: a CI workflow on either repo asserts `docs/contracts/optick-weights-config.schema.json` is byte-identical between IX and GA worktrees. Drift triggers a build break.
 
 ## Alternative Approaches Considered
 
@@ -728,6 +774,170 @@ No third surface; no parallel implementations. Deviation from this is a code-rev
 5. **Promote-to-milestone idempotency** (`milestone_promote.rs`). Scenario: `promote_run` twice with same `--note` is idempotent (no duplicate dir, second call no-ops).
 6. **Target C improves grammar parse rate** (`grammar_e2e.rs`). Scenario: 100 SA iters from a hand-degraded baseline; assert `final_reward >= baseline_reward + 0.05`.
 7. **Target A mock pipeline correctness** (`optick_mocked.rs`). Scenario: 30 iters with mock rebuild; assert (a) all configs satisfy the simplex constraint within 1e-6, (b) every accepted iter has higher reward than the previous best.
+
+## Security Considerations
+
+(Added in second-pass review by `security-sentinel`. Findings span subprocess execution, CLI input validation, MCP handler, state directory access, JSONL log content, and cross-repo trust boundary.)
+
+### Input validation
+
+- **Slug regex** for `promote --note <slug>` (mitigates SEV-HIGH path traversal): `^[a-z0-9][a-z0-9-]{0,63}$` enforced at clap parse time via `#[arg(value_parser = slug_validator)]`. Reject dots, slashes, backslashes, leading hyphens. Phase 1 acceptance test #i (new) covers a traversal-rejection case.
+- **Run-id validation** for `promote/revert <run-id>`: parse as `uuid::Uuid::parse_str` and reject non-v7. Canonicalize the resolved path (`fs::canonicalize`) and assert it stays under `state/autoresearch/runs/`. Same canonicalization applied to *every* path the CLI accepts as input.
+- **MCP numeric ranges**: declare `input_schema` with `iterations: { type: "integer", minimum: 1, maximum: 10_000 }`, `seed: { type: "integer", minimum: 0, maximum: u64::MAX as f64 }`, `soft_seconds / hard_seconds: { type: "number", minimum: 0.001, maximum: 86400 }`. Validate via the `jsonschema` crate before serde-deserializing into Rust types. CLI binary keeps a higher iteration cap (1M) for explicit local use.
+- **MCP iteration cap = 10k** (mitigates SEV-MEDIUM resource exhaustion): a sub-second-eval target × 1M iters writes a multi-GB JSONL across days. The MCP handler is callable from agents without per-call auth in the ecosystem norm; the cap is the safety net.
+
+### Subprocess execution
+
+- **`Command::env_clear()` + allowlist** on every shell-out: `["PATH", "SystemRoot", "USERPROFILE", "RUST_BACKTRACE", "TEMP", "TMP"]` only. Prevents inheriting `RUSTC_WRAPPER`, `RUST_LOG`-style verbosity, or judge-panel API tokens that could later land in JSONL via stderr capture.
+- **`Command::current_dir(workspace_root)`** explicit on every invocation. Never inherit cwd.
+- **Argument hygiene**: always `Command::arg(value)` (one string per call), never `Command::args(&[concatenated])`. Avoids any concatenated-shell-string risk even though we don't invoke a shell on Windows.
+- **Temp config files** for shell-out targets written under `state/autoresearch/runs/<run-id>/` via `tempfile::NamedTempFile::new_in(run_dir)`, not `/tmp` or `%TEMP%`. Prevents symlink-swap attacks on shared boxes.
+- **`tasklist` invocation** for the GaApi running-check: `Command::new("tasklist")` directly with `["/FI", "IMAGENAME eq GaApi.exe"]` args, not via `cmd /c`. Assert exit code rather than parsing stdout.
+
+### State directory access
+
+- **Run-dir creation** uses `fs::create_dir` (fails if exists), not `create_dir_all` for the leaf — defense-in-depth against UUIDv7 pre-creation attacks.
+- **Milestone overwrite policy** (mitigates SEV-MEDIUM silent data loss): `promote run-A --note X` then `promote run-B --note X` *errors* unless `--force` is passed. Phase 1 acceptance now distinguishes the *same-source idempotency* test from the *different-source overwrite-rejection* test.
+- **Concurrent `promote` lock**: file lock on `state/autoresearch/.promote.lock` for the duration of promote (`fs2::FileExt::lock_exclusive`).
+- **Volume atomicity assertion**: `MoveFileEx` is not atomic across volumes. CLI checks at startup that `state/autoresearch/` and the IX checkout are on the same volume (Windows: `GetVolumePathNameW`; Unix: same dev id from `metadata().dev()`); fail with a clear error if not.
+
+### JSONL log content (sanitization)
+
+- **`eval_inputs_hash` is a content hash, not a path hash** (mitigates SEV-MEDIUM path leak). Documented as a `// IMPORTANT:` invariant on every target's eval impl. Phase 5 acceptance asserts the field is deterministic across two machines with different paths.
+- **`Iteration.error` is a typed-enum-string only**, never raw stderr capture. The error type is a closed enum (`SubprocessFailedExitCode { code: i32 }`, `JsonParseFailed`, `MissingExpectedFile { path: String (relative-to-run-dir only) }`, etc.); rendering uses `Display::fmt`, which never surfaces user-controlled stderr bytes.
+- **`git_sha` validation**: `git rev-parse HEAD` output must match `^[0-9a-f]{40}$` before logging. On mismatch (including stderr leak from `not a git repository`), log `git_sha: None` with sibling `git_sha_reason: "not a git checkout" | "git not on PATH" | "malformed sha"`.
+- **Promote sanitization pass** (mitigates SEV-MEDIUM `git add` of unsanitized JSONL): before staging, scan every string field of every log entry against a redaction-pattern list (`sk-ant-`, `Bearer `, absolute Windows paths starting with drive letter, absolute Unix paths under `/home/` or `/Users/`); any match aborts the promote with a diagnostic. Phase 1 acceptance test #j (new) covers a deliberately-poisoned JSONL.
+
+### Cross-repo trust (Phase 6 GA contract)
+
+- **GA-side validation contract** (mitigates SEV-MEDIUM): GA's `--weights-config` parser validates *every* numeric field — sum-to-1 within 1e-6, all weights in [0, 1], no `NaN`/`Inf`/negative — and rejects on violation. JSON schema co-located in `docs/contracts/optick-weights-config.schema.json` and referenced by both repos.
+- **TOCTOU window**: IX writes to `tempfile::NamedTempFile`, passes the path to GA's CLI, GA reads. Document this as a single-process-trust boundary; if a malicious local actor has write access to `state/autoresearch/<run>/`, they already control the input set.
+
+### Capability-registry hygiene
+
+- **Schema validation of new entry**: `cargo test --workspace` round-trips the registry through a typed Rust struct (`CapabilityRegistry::deserialize`) so a typo like `domain: "govenance"` fails at test time, not at federation time.
+- **Tool description content**: registry validates `description` against a printable-ASCII + common-punctuation regex; NFKC-normalize and reject Unicode bidi-control characters.
+
+## Governance Integration
+
+(Added in second-pass review by `governance-auditor`. Findings: 8 governance touchpoints, verdict "modify before merge". Plan's belief value before this section: **D** (Doubtful) — substrate exists but persona, observation logging, belief writes, rollback, and Galactic Protocol directive were absent.)
+
+### Persona definition (invariant #34)
+
+A new persona file ships in Phase 1:
+
+```yaml
+# governance/demerzel/personas/autoresearch-driver.persona.yaml
+name: autoresearch-driver
+goal_directedness: task-scoped
+estimator_pairing: skeptical-auditor
+affordances:
+  - perturb_config           # numeric perturbation of target config
+  - evaluate_subprocess      # shell out to ga-chatbot / FretboardVoicingsCLI
+  - write_jsonl              # append-only run log
+  - promote_milestone        # copy run to milestones/, stage git
+constraints:
+  - no_network_access        # all evaluation is local
+  - no_destructive_subprocess # no `rm`, `git reset --hard`, etc.
+  - bounded_iterations       # MCP cap 10k, CLI cap 1M
+  - bounded_wall_clock       # opt-in hard_timeout per iter
+  - no_writes_outside_state_autoresearch
+behavioral_test:
+  - tests/behavioral/autoresearch_driver_respects_iteration_cap.test
+  - tests/behavioral/autoresearch_driver_aborts_on_3_consecutive_kills.test
+  - tests/behavioral/autoresearch_driver_redacts_secrets_before_promote.test
+```
+
+### Hexavalent observation logging
+
+The kernel emits observations into `ix-fuzzy::observations` for every accept/reject decision. Without this, the loop is invisible to the governance graph (constitution Articles 7+8).
+
+```rust
+// in run_experiment, after Strategy::decide:
+ix_fuzzy::observations::emit(Observation {
+    value: if accepted { Hexavalent::True } else { Hexavalent::False },
+    claim: "perturbation_improves_reward",
+    evidence: serde_json::json!({
+        "iteration": iter,
+        "reward_delta": candidate_reward - prev_reward,
+        "config_hash": config_hash,
+    }),
+    confidence: 0.9,  // numeric eval is high-confidence
+});
+
+// on milestone promotion:
+ix_fuzzy::observations::emit(Observation {
+    value: if eval_on_held_out_passes { Hexavalent::Probable } else { Hexavalent::Disputed },
+    claim: "milestone_promotion_safe",
+    evidence: ...,
+});
+```
+
+(Workspace uses **hexavalent** T/P/U/D/F/C, not tetravalent T/F/U/C — per memory `feedback_hexavalent_logic.md`.)
+
+### Belief-state writes
+
+Each milestone promotion also writes a propositional belief:
+
+```json
+// state/beliefs/2026-04-26-optick-leak-bound.belief.json
+{
+  "schema_version": 1,
+  "claim": "OPTIC-K STRUCTURE leak < 5% under config <hash>",
+  "value": "Probable",          // T | P | U | D | F | C
+  "confidence": 0.85,
+  "provenance": {
+    "run_id": "<uuid-v7>",
+    "milestone": "<slug>",
+    "eval_inputs_hash": "<blake3>"
+  },
+  "tetravalent_valid": true     // backward-compat shim per invariant #35
+}
+```
+
+### Audit-trail reconciliation
+
+`state/autoresearch/{runs,milestones}/` is a per-run substrate; the *governance graph* is the cross-cutting audit substrate. Reconcile by emitting on `RunComplete`:
+
+1. A graph node `governance.graph::add_node({ kind: "autoresearch_run", run_id, target, accepted, best_reward })`.
+2. An edge to the prior config the run perturbed from (`derives_from` relation).
+3. The belief write above (if accepted produced a milestone).
+
+This makes runs first-class in the governance graph alongside personas, beliefs, and policies.
+
+### Capability-registry domain change
+
+Move `ix_autoresearch_run` from domain `governance` to a new `experiment` domain in `governance/demerzel/schemas/capability-registry.json`. Add `experiment` to the top-level `domains[]` array in the same edit. Rationale: existing `governance` cluster (`ix_governance_check/persona/belief/policy`) is *evaluators*; autoresearch is an *optimizer of subsystems*. Sibling domain candidates considered: `optimization` (rejected — collides with the existing `ix_optimize` tool's home), `research` (acceptable but `experiment` matches the actual function more precisely).
+
+### Galactic Protocol directive for GA-side schema
+
+Phase 6 deliverable expanded: a Galactic Protocol directive at `governance/demerzel/contracts/2026-04-26-optick-weights-config.contract.md` declaring the schema contract bidirectionally:
+
+- IX writes JSON matching the schema.
+- GA reads and validates.
+- Both repos register `optick-weights-config` as a tracked contract; cross-repo CI enforces schema parity.
+- Capability-registry attestation: `ga`'s `FretboardVoicingsCLI` tool entry references the contract slug.
+
+Without this, the GA-side schema drifts silently; with it, schema changes require a bilateral version bump.
+
+### Rollback story (revert + safety caps)
+
+Phase 1 expanded scope:
+
+- **`promote` writes `milestones/<slug>/.previous.json`** — the prior config snapshot, so `revert --apply <slug>` can restore it.
+- **`revert --apply <slug>`** (new verb): writes the prior config back to the appropriate place (e.g., GA's EmbeddingSchema for Target A; ga-chatbot fixtures for Target B), and emits an observation:
+  ```rust
+  emit(Observation { value: Hexavalent::True, claim: "revert_applied", evidence: { from: <slug>, to: <previous_hash> }});
+  ```
+- **Hard cap on consecutive promotions without human ack** (constitution Article 9, bounded autonomy): default 3. After 3 sequential `promote` calls without a human-supplied `--ack <reason>`, the CLI requires interactive confirmation.
+- **Eval-on-held-out-corpus before promote**: `promote` runs one final eval on a **held-out** corpus (not the training corpus) and rejects if the score regresses by > 1pp. Held-out corpus path declared per-target.
+
+### Updated belief assessment
+
+After applying the additions in this section, the plan's compliance proposition should re-evaluate as:
+
+- Proposition: "Plan as written satisfies Demerzel governance hygiene"
+- New value: **P** (Probable) — substrate present and reconciled with governance graph; belief writes contracted; rollback story specified; Galactic directive in scope. Remaining gap: behavioral tests for the persona aren't written until Phase 1 lands them.
 
 ## Acceptance Criteria
 
@@ -946,6 +1156,18 @@ The accepted simplifications are already in the layout/trait sections above. The
 - `clap` derive — https://docs.rs/clap/latest/clap/_derive/_tutorial/index.html , https://docs.rs/clap/latest/clap/trait.Subcommand.html . Multi-verb subcommand template.
 - Cargo's `JobObject` impl — https://doc.rust-lang.org/nightly/nightly-rustc/src/cargo/util/job.rs.html (~80 LOC reference for v1.5 grandchild-leak fix).
 - Microsoft Learn, *Win32 Job Objects* — https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects . `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for tree-kill semantics.
+
+#### Second-pass review references (Security + Governance + Spec-flow)
+
+- `crates/ix-fuzzy/src/observations.rs` — hexavalent observation emit API (Governance Integration §Hexavalent observation logging).
+- `governance/demerzel/personas/skeptical-auditor.persona.yaml` — sibling persona; the `autoresearch-driver.persona.yaml` from Phase 1 mirrors its `estimator_pairing` shape.
+- `governance/demerzel/schemas/capability-registry.json` — domain registry; Phase 3 + Governance Integration add `experiment` to `domains[]`.
+- `governance/demerzel/contracts/` — destination for the new `2026-04-26-optick-weights-config.contract.md` Galactic directive.
+- `state/beliefs/` — destination for milestone-promote belief writes (per `feedback_hexavalent_logic.md`, hexavalent T/P/U/D/F/C; the JSON shape's `tetravalent_valid: true` field is a backward-compat shim per invariant #35).
+- `feedback_hexavalent_logic.md` (memory) — workspace uses 6-valued logic; distinguish from invariant #35's "tetravalent-valid" backward-compat constraint.
+- `crates/fs2` (or `flock` on Unix, `LockFileEx` on Windows) — file lock primitives for the concurrent-promote guard (Security §State directory access).
+- `tempfile = "3"` (already in workspace) — `NamedTempFile::new_in` for run-scoped temp config files (Security §Subprocess execution).
+- `jsonschema = "0.18"` — JSON Schema validation for MCP `input_schema` (Security §Input validation).
 
 ### Related PRs
 
