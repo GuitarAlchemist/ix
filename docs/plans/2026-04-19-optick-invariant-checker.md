@@ -2,7 +2,7 @@
 date: 2026-04-19
 reversibility: two-way-door
 revisit-trigger: new invariants added to catalog, or baseline-diagnostics leak-test numbers regress without explanation
-status: design — NOT YET IMPLEMENTED
+status: shipped — Phase 1 (#25) in `23c3588`; Phase 2 (#32) in 2026-04-26. Both invariants PASS 100% on the full 313k-voicing v1.8 corpus (793/793 multi-instrument PC-sets for #25; 2509/2509 PC-sets for #32). Catalog still records #32 as FAIL(29.4%) from pre-v4-pp-r baseline — refresh catalog status when next quality snapshot lands.
 ---
 
 # OPTK invariant checker — reads the real corpus, not synthetic exemplars
