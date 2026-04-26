@@ -136,7 +136,13 @@ fn has_fact_contradiction(verdicts: &[JudgeVerdict]) -> bool {
 mod tests {
     use super::*;
 
-    fn judge(name: &str, verdict: char, grounded: bool, accurate: bool, safe: bool) -> JudgeVerdict {
+    fn judge(
+        name: &str,
+        verdict: char,
+        grounded: bool,
+        accurate: bool,
+        safe: bool,
+    ) -> JudgeVerdict {
         JudgeVerdict {
             judge: name.to_string(),
             verdict,
@@ -228,17 +234,13 @@ mod tests {
     #[test]
     fn single_deterministic_verdict_true() {
         // When used with deterministic-only (single "judge"), a T verdict passes
-        let verdicts = vec![
-            judge("deterministic", 'T', true, true, true),
-        ];
+        let verdicts = vec![judge("deterministic", 'T', true, true, true)];
         assert_eq!(aggregate_verdicts(&verdicts), 'T');
     }
 
     #[test]
     fn single_deterministic_verdict_false() {
-        let verdicts = vec![
-            judge("deterministic", 'F', true, true, true),
-        ];
+        let verdicts = vec![judge("deterministic", 'F', true, true, true)];
         // Single F is not 2+ F, so no majority -> U
         // This is correct: a single failing judge is inconclusive
         assert_eq!(aggregate_verdicts(&verdicts), 'U');

@@ -48,7 +48,11 @@ impl Combiner {
             Combiner::Bayesian => {
                 let num = a * b;
                 let den = num + (1.0 - a) * (1.0 - b);
-                if den == 0.0 { 0.0 } else { num / den }
+                if den == 0.0 {
+                    0.0
+                } else {
+                    num / den
+                }
             }
             Combiner::Custom(f) => f(a, b),
         };

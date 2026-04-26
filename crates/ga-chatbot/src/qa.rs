@@ -86,14 +86,15 @@ pub fn load_transitions(path: &Path) -> HashMap<(String, String), f64> {
 }
 
 /// Voicing ID pattern: `{instrument}_v{digits}`.
-static VOICING_ID_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\b([a-z]+_v\d{3,})\b").unwrap()
-});
+static VOICING_ID_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\b([a-z]+_v\d{3,})\b").unwrap());
 
 /// Relational claim pattern: words indicating two voicings are related.
 static RELATIONAL_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)\b(?:close|similar|related|neighbor(?:ing)?|connected|smooth|nearby|adjacent)\b")
-        .unwrap()
+    regex::Regex::new(
+        r"(?i)\b(?:close|similar|related|neighbor(?:ing)?|connected|smooth|nearby|adjacent)\b",
+    )
+    .unwrap()
 });
 
 /// Default cost threshold for "related" claims.
@@ -298,7 +299,12 @@ mod tests {
             }],
         };
 
-        let findings = run_deterministic_checks("test-001", "Show me voicing guitar_v999", &response, &corpus_ids);
+        let findings = run_deterministic_checks(
+            "test-001",
+            "Show me voicing guitar_v999",
+            &response,
+            &corpus_ids,
+        );
 
         let layer1_findings: Vec<_> = findings.iter().filter(|f| f.layer == 1).collect();
         assert!(!layer1_findings.is_empty());
@@ -319,7 +325,12 @@ mod tests {
             }],
         };
 
-        let findings = run_deterministic_checks("test-002", "Show me voicing guitar_v042", &response, &corpus_ids);
+        let findings = run_deterministic_checks(
+            "test-002",
+            "Show me voicing guitar_v042",
+            &response,
+            &corpus_ids,
+        );
 
         let layer1_findings: Vec<_> = findings.iter().filter(|f| f.layer == 1).collect();
         assert!(!layer1_findings.is_empty());
@@ -401,23 +412,11 @@ mod tests {
     fn sample_transitions() -> HashMap<(String, String), f64> {
         let mut t = HashMap::new();
         // Low cost = connected
-        t.insert(
-            ("guitar_v000".to_string(), "guitar_v001".to_string()),
-            2.5,
-        );
-        t.insert(
-            ("guitar_v001".to_string(), "guitar_v000".to_string()),
-            2.5,
-        );
+        t.insert(("guitar_v000".to_string(), "guitar_v001".to_string()), 2.5);
+        t.insert(("guitar_v001".to_string(), "guitar_v000".to_string()), 2.5);
         // High cost = far apart
-        t.insert(
-            ("guitar_v000".to_string(), "guitar_v042".to_string()),
-            12.0,
-        );
-        t.insert(
-            ("guitar_v042".to_string(), "guitar_v000".to_string()),
-            12.0,
-        );
+        t.insert(("guitar_v000".to_string(), "guitar_v042".to_string()), 12.0);
+        t.insert(("guitar_v042".to_string(), "guitar_v000".to_string()), 12.0);
         t
     }
 
@@ -427,8 +426,7 @@ mod tests {
         // but transitions show cost 12.0 (> threshold 6.0).
         let transitions = sample_transitions();
         let response = ChatbotResponse {
-            answer: "guitar_v000 and guitar_v042 are close voicings on the fretboard."
-                .to_string(),
+            answer: "guitar_v000 and guitar_v042 are close voicings on the fretboard.".to_string(),
             voicing_ids: vec!["guitar_v000".to_string(), "guitar_v042".to_string()],
             confidence: 0.9,
             sources: vec![],
@@ -470,7 +468,10 @@ mod tests {
         };
 
         let finding = check_topology_claim("topo-003", &response, &transitions);
-        assert!(finding.is_none(), "No relational claim should produce no finding");
+        assert!(
+            finding.is_none(),
+            "No relational claim should produce no finding"
+        );
     }
 
     #[test]

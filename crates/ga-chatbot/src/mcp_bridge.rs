@@ -227,7 +227,11 @@ impl McpChild {
             let resp: JsonRpcResponse = match serde_json::from_str(trimmed) {
                 Ok(r) => r,
                 Err(_) => {
-                    eprintln!("[mcp-bridge/{}] skip non-json: {}", self.label, &trimmed[..trimmed.len().min(120)]);
+                    eprintln!(
+                        "[mcp-bridge/{}] skip non-json: {}",
+                        self.label,
+                        &trimmed[..trimmed.len().min(120)]
+                    );
                     continue;
                 }
             };
@@ -257,10 +261,7 @@ impl McpChild {
     pub fn list_tools(&mut self) -> Result<Vec<ToolDescriptor>> {
         let result = self.call("tools/list", serde_json::json!({}))?;
         // result.tools is the array
-        let tools_val = result
-            .get("tools")
-            .cloned()
-            .unwrap_or(Value::Array(vec![]));
+        let tools_val = result.get("tools").cloned().unwrap_or(Value::Array(vec![]));
         let tools: Vec<ToolDescriptor> = serde_json::from_value(tools_val)?;
         Ok(tools)
     }

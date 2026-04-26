@@ -66,10 +66,7 @@ where
     }
 }
 
-fn union_keys<T: Ord + Clone>(
-    a: &FuzzyDistribution<T>,
-    b: &FuzzyDistribution<T>,
-) -> BTreeSet<T> {
+fn union_keys<T: Ord + Clone>(a: &FuzzyDistribution<T>, b: &FuzzyDistribution<T>) -> BTreeSet<T> {
     let mut keys: BTreeSet<T> = BTreeSet::new();
     keys.extend(a.memberships().keys().cloned());
     keys.extend(b.memberships().keys().cloned());

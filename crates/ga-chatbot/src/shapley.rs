@@ -129,7 +129,10 @@ mod tests {
 
         let scores = compute_prompt_shapley(&results);
 
-        let failing = scores.iter().find(|s| s.prompt_id == "injection-001").unwrap();
+        let failing = scores
+            .iter()
+            .find(|s| s.prompt_id == "injection-001")
+            .unwrap();
         assert!(
             (failing.shapley_value - 1.0).abs() < 1e-8,
             "Single failing prompt should have Shapley = 1.0, got {}",
@@ -193,8 +196,14 @@ mod tests {
 
         let scores = compute_prompt_shapley(&results);
 
-        let fail1 = scores.iter().find(|s| s.prompt_id == "injection-001").unwrap();
-        let fail2 = scores.iter().find(|s| s.prompt_id == "injection-002").unwrap();
+        let fail1 = scores
+            .iter()
+            .find(|s| s.prompt_id == "injection-001")
+            .unwrap();
+        let fail2 = scores
+            .iter()
+            .find(|s| s.prompt_id == "injection-002")
+            .unwrap();
 
         // Both contribute equally (each is a unique failure).
         assert!(

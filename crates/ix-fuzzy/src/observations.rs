@@ -242,9 +242,7 @@ pub fn merge(
     // load-bearing for the CRDT correctness properties.
     let mut by_key: BTreeMap<(String, String, u32, u32), HexObservation> = BTreeMap::new();
     for obs in observations {
-        by_key
-            .entry(obs.dedup_key())
-            .or_insert_with(|| obs.clone());
+        by_key.entry(obs.dedup_key()).or_insert_with(|| obs.clone());
     }
 
     // ── Step 2: staleness filter ──────────────────────────────────
@@ -317,10 +315,16 @@ pub fn merge(
     }
 
     for (action, obs_list) in &by_action {
-        let positives: Vec<&HexObservation> =
-            obs_list.iter().filter(|o| o.is_positive()).copied().collect();
-        let negatives: Vec<&HexObservation> =
-            obs_list.iter().filter(|o| o.is_negative()).copied().collect();
+        let positives: Vec<&HexObservation> = obs_list
+            .iter()
+            .filter(|o| o.is_positive())
+            .copied()
+            .collect();
+        let negatives: Vec<&HexObservation> = obs_list
+            .iter()
+            .filter(|o| o.is_negative())
+            .copied()
+            .collect();
 
         for pos in &positives {
             for neg in &negatives {
@@ -351,8 +355,7 @@ pub fn merge(
                     weight: pos.weight.min(neg.weight),
                     evidence: Some(format!(
                         "cross-aspect: {}:{}:{:?} vs {}:{}:{:?}",
-                        pos.source, pos_aspect, pos.variant,
-                        neg.source, neg_aspect, neg.variant
+                        pos.source, pos_aspect, pos.variant, neg.source, neg_aspect, neg.variant
                     )),
                 });
             }
@@ -369,8 +372,7 @@ pub fn merge(
     // have the SAME content-derived dedup key as the newly-
     // synthesized ones. We must collapse them together, not count
     // them twice. That's done below when we build `all`.
-    let mut synth_by_key: BTreeMap<(String, String, u32, u32), HexObservation> =
-        BTreeMap::new();
+    let mut synth_by_key: BTreeMap<(String, String, u32, u32), HexObservation> = BTreeMap::new();
     for s in synthesized {
         synth_by_key.entry(s.dedup_key()).or_insert(s);
     }
@@ -384,8 +386,7 @@ pub fn merge(
     // content-derived key so carried-over contradictions don't get
     // counted twice. This is the other half of the associativity
     // fix.
-    let mut all_by_key: BTreeMap<(String, String, u32, u32), HexObservation> =
-        BTreeMap::new();
+    let mut all_by_key: BTreeMap<(String, String, u32, u32), HexObservation> = BTreeMap::new();
     for obs in deduped.iter().chain(synthesized.iter()) {
         all_by_key
             .entry(obs.dedup_key())
@@ -542,13 +543,35 @@ mod tests {
 
     #[test]
     fn proof_commutativity() {
-        let a = vec![
-            obs("tars", "dx1", 0, 0, "ix_stats::valuable", Hexavalent::True, 0.8),
-            obs("ix", "dx1", 0, 1, "ix_stats::valuable", Hexavalent::Probable, 0.6),
+        let a = [
+            obs(
+                "tars",
+                "dx1",
+                0,
+                0,
+                "ix_stats::valuable",
+                Hexavalent::True,
+                0.8,
+            ),
+            obs(
+                "ix",
+                "dx1",
+                0,
+                1,
+                "ix_stats::valuable",
+                Hexavalent::Probable,
+                0.6,
+            ),
         ];
-        let b = vec![
-            obs("tars", "dx2", 0, 0, "ix_fft::valuable", Hexavalent::Doubtful, 0.7),
-        ];
+        let b = [obs(
+            "tars",
+            "dx2",
+            0,
+            0,
+            "ix_fft::valuable",
+            Hexavalent::Doubtful,
+            0.7,
+        )];
 
         let ab: Vec<HexObservation> = a.iter().cloned().chain(b.iter().cloned()).collect();
         let ba: Vec<HexObservation> = b.iter().cloned().chain(a.iter().cloned()).collect();
@@ -559,7 +582,8 @@ mod tests {
         assert!(
             states_equal(&s_ab, &s_ba),
             "commutativity violated:\n  A then B: {:#?}\n  B then A: {:#?}",
-            s_ab.observations, s_ba.observations
+            s_ab.observations,
+            s_ba.observations
         );
     }
 
@@ -569,9 +593,9 @@ mod tests {
 
     #[test]
     fn proof_associativity() {
-        let a = vec![obs("tars", "d", 0, 0, "k::valuable", Hexavalent::True, 1.0)];
-        let b = vec![obs("ix", "d", 0, 1, "k::valuable", Hexavalent::False, 1.0)];
-        let c = vec![obs("tars", "d", 0, 2, "k::safe", Hexavalent::Probable, 0.5)];
+        let a = [obs("tars", "d", 0, 0, "k::valuable", Hexavalent::True, 1.0)];
+        let b = [obs("ix", "d", 0, 1, "k::valuable", Hexavalent::False, 1.0)];
+        let c = [obs("tars", "d", 0, 2, "k::safe", Hexavalent::Probable, 0.5)];
 
         // merge(merge(A, B), C)
         let ab_all: Vec<HexObservation> = a.iter().cloned().chain(b.iter().cloned()).collect();
@@ -579,15 +603,22 @@ mod tests {
         // Take ab_state's observations (includes synthesized) and merge
         // them with C. This tests whether merging twice produces the
         // same result as merging once.
-        let ab_then_c: Vec<HexObservation> =
-            ab_state.observations.iter().cloned().chain(c.iter().cloned()).collect();
+        let ab_then_c: Vec<HexObservation> = ab_state
+            .observations
+            .iter()
+            .cloned()
+            .chain(c.iter().cloned())
+            .collect();
         let left_assoc = merge_all(&ab_then_c).unwrap();
 
         // merge(A, merge(B, C))
         let bc_all: Vec<HexObservation> = b.iter().cloned().chain(c.iter().cloned()).collect();
         let bc_state = merge_all(&bc_all).unwrap();
-        let a_then_bc: Vec<HexObservation> =
-            a.iter().cloned().chain(bc_state.observations.iter().cloned()).collect();
+        let a_then_bc: Vec<HexObservation> = a
+            .iter()
+            .cloned()
+            .chain(bc_state.observations.iter().cloned())
+            .collect();
         let right_assoc = merge_all(&a_then_bc).unwrap();
 
         assert!(
@@ -627,9 +658,15 @@ mod tests {
             obs("tars", "d1", 0, 0, "k::valuable", Hexavalent::True, 0.8),
             obs("ix", "d1", 0, 1, "k::valuable", Hexavalent::Probable, 0.6),
         ];
-        let b = vec![
-            obs("tars", "d2", 0, 0, "k::safe", Hexavalent::Doubtful, 0.5),
-        ];
+        let b = vec![obs(
+            "tars",
+            "d2",
+            0,
+            0,
+            "k::safe",
+            Hexavalent::Doubtful,
+            0.5,
+        )];
         let ab: Vec<HexObservation> = a.iter().cloned().chain(b.iter().cloned()).collect();
 
         let sa = merge_all(&a).unwrap();
@@ -639,12 +676,14 @@ mod tests {
         assert!(
             sab.observations.len() >= sa.observations.len(),
             "monotonicity violated: |merge(A∪B)|={} < |merge(A)|={}",
-            sab.observations.len(), sa.observations.len()
+            sab.observations.len(),
+            sa.observations.len()
         );
         assert!(
             sab.observations.len() >= sb.observations.len(),
             "monotonicity violated: |merge(A∪B)|={} < |merge(B)|={}",
-            sab.observations.len(), sb.observations.len()
+            sab.observations.len(),
+            sb.observations.len()
         );
     }
 
@@ -697,8 +736,7 @@ mod tests {
         assert_eq!(ab.contradictions.len(), 1);
         assert_eq!(ba.contradictions.len(), 1);
         assert_eq!(
-            ab.contradictions[0].weight,
-            ba.contradictions[0].weight,
+            ab.contradictions[0].weight, ba.contradictions[0].weight,
             "Belnap symmetry violated"
         );
         assert!((ab.contradictions[0].weight - 1.0).abs() < 1e-9);
@@ -733,8 +771,18 @@ mod tests {
 
         // Unknown preserves
         for v in [True, Probable, Unknown, Doubtful, False, Contradictory] {
-            assert_eq!(belnap_weight(Unknown, v), None, "U + {:?} should not synthesize", v);
-            assert_eq!(belnap_weight(v, Unknown), None, "{:?} + U should not synthesize", v);
+            assert_eq!(
+                belnap_weight(Unknown, v),
+                None,
+                "U + {:?} should not synthesize",
+                v
+            );
+            assert_eq!(
+                belnap_weight(v, Unknown),
+                None,
+                "{:?} + U should not synthesize",
+                v
+            );
         }
 
         // Contradictory is terminal
@@ -753,8 +801,24 @@ mod tests {
     fn tars_ix_agreement_produces_no_contradiction() {
         // tars says T, ix says P — both positive, no synthesis.
         let obs_list = vec![
-            obs("tars", "d", 0, 0, "ix_stats::valuable", Hexavalent::True, 0.9),
-            obs("ix", "d", 0, 1, "ix_stats::valuable", Hexavalent::Probable, 0.7),
+            obs(
+                "tars",
+                "d",
+                0,
+                0,
+                "ix_stats::valuable",
+                Hexavalent::True,
+                0.9,
+            ),
+            obs(
+                "ix",
+                "d",
+                0,
+                1,
+                "ix_stats::valuable",
+                Hexavalent::Probable,
+                0.7,
+            ),
         ];
         let state = merge_all(&obs_list).unwrap();
         assert_eq!(state.contradictions.len(), 0);
@@ -766,8 +830,24 @@ mod tests {
         // tars says T (verified helpful), ix trace says F (refuted).
         // Should synthesize C with full weight.
         let obs_list = vec![
-            obs("tars", "d", 0, 0, "ix_git_gc::valuable", Hexavalent::True, 1.0),
-            obs("ix", "d", 0, 1, "ix_git_gc::valuable", Hexavalent::False, 1.0),
+            obs(
+                "tars",
+                "d",
+                0,
+                0,
+                "ix_git_gc::valuable",
+                Hexavalent::True,
+                1.0,
+            ),
+            obs(
+                "ix",
+                "d",
+                0,
+                1,
+                "ix_git_gc::valuable",
+                Hexavalent::False,
+                1.0,
+            ),
         ];
         let state = merge_all(&obs_list).unwrap();
         assert_eq!(state.contradictions.len(), 1);
@@ -786,7 +866,15 @@ mod tests {
         // Different claim_keys → no direct contradiction, but SAME
         // action_key → meta_conflict should fire.
         let obs_list = vec![
-            obs("tars", "d", 0, 0, "restart_gpu::valuable", Hexavalent::True, 0.9),
+            obs(
+                "tars",
+                "d",
+                0,
+                0,
+                "restart_gpu::valuable",
+                Hexavalent::True,
+                0.9,
+            ),
             obs("ix", "d", 0, 1, "restart_gpu::safe", Hexavalent::False, 1.0),
         ];
         let state = merge_all(&obs_list).unwrap();
@@ -812,8 +900,24 @@ mod tests {
         // self-inconsistent, not a cross-source conflict. The
         // meta-conflict rule explicitly skips same-source pairs.
         let obs_list = vec![
-            obs("tars", "d", 0, 0, "restart_gpu::valuable", Hexavalent::True, 0.9),
-            obs("tars", "d", 0, 1, "restart_gpu::safe", Hexavalent::False, 1.0),
+            obs(
+                "tars",
+                "d",
+                0,
+                0,
+                "restart_gpu::valuable",
+                Hexavalent::True,
+                0.9,
+            ),
+            obs(
+                "tars",
+                "d",
+                0,
+                1,
+                "restart_gpu::safe",
+                Hexavalent::False,
+                1.0,
+            ),
         ];
         let state = merge_all(&obs_list).unwrap();
         assert_eq!(state.contradictions.len(), 0);
@@ -888,9 +992,13 @@ mod tests {
         // full test path becomes the action_key and the trailing
         // aspect parses cleanly.
         let o2 = obs(
-            "s", "d", 0, 0,
+            "s",
+            "d",
+            0,
+            0,
             "test:ix_math::eigen::jacobi::valuable",
-            Hexavalent::True, 1.0,
+            Hexavalent::True,
+            1.0,
         );
         let (action, aspect) = o2.action_and_aspect();
         assert_eq!(action, "test:ix_math::eigen::jacobi");
@@ -903,9 +1011,13 @@ mod tests {
         // with multiple `::` must parse so the aspect is always the
         // final segment.
         let o = obs(
-            "cargo", "d", 0, 0,
+            "cargo",
+            "d",
+            0,
+            0,
             "test:foo::bar::baz::qux::timely",
-            Hexavalent::Doubtful, 0.6,
+            Hexavalent::Doubtful,
+            0.6,
         );
         let (action, aspect) = o.action_and_aspect();
         assert_eq!(action, "test:foo::bar::baz::qux");

@@ -87,7 +87,10 @@ pub fn load_fixtures(path: &Path) -> HashMap<String, ChatbotResponse> {
 ///
 /// Looks up `req.question` by fuzzy prefix match against the fixture map.
 /// If no match is found, returns a refusal with confidence 0.0.
-pub fn ask_stub(req: &ChatbotRequest, fixtures: &HashMap<String, ChatbotResponse>) -> ChatbotResponse {
+pub fn ask_stub(
+    req: &ChatbotRequest,
+    fixtures: &HashMap<String, ChatbotResponse>,
+) -> ChatbotResponse {
     let question_lower = req.question.to_lowercase();
 
     // Try fuzzy prefix match: find the longest fixture prefix that matches

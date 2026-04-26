@@ -28,7 +28,10 @@ enum Commands {
         #[arg(long)]
         http: Option<u16>,
         /// Path to stub fixtures JSONL file.
-        #[arg(long, default_value = "tests/adversarial/fixtures/stub-responses.jsonl")]
+        #[arg(
+            long,
+            default_value = "tests/adversarial/fixtures/stub-responses.jsonl"
+        )]
         fixtures: PathBuf,
     },
     /// Single-shot ask mode for testing.
@@ -40,7 +43,10 @@ enum Commands {
         #[arg(long, default_value = "guitar")]
         instrument: String,
         /// Path to stub fixtures JSONL file.
-        #[arg(long, default_value = "tests/adversarial/fixtures/stub-responses.jsonl")]
+        #[arg(
+            long,
+            default_value = "tests/adversarial/fixtures/stub-responses.jsonl"
+        )]
         fixtures: PathBuf,
     },
     /// Start the live HTTP server backed by real GA + IX MCP tools.
@@ -102,7 +108,11 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve { stub: _, http, fixtures } => {
+        Commands::Serve {
+            stub: _,
+            http,
+            fixtures,
+        } => {
             let fixture_map = load_fixtures(&fixtures);
             if let Some(port) = http {
                 serve_http(port, &fixture_map);
@@ -166,7 +176,13 @@ fn main() {
 /// Run the deterministic QA pipeline over all adversarial prompts.
 ///
 /// Returns 0 if no F/D verdicts, 1 otherwise.
-fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus_dir: &std::path::Path, output_path: &std::path::Path, shapley: bool) -> i32 {
+fn run_qa(
+    corpus_path: &std::path::Path,
+    fixtures_path: &std::path::Path,
+    corpus_dir: &std::path::Path,
+    output_path: &std::path::Path,
+    shapley: bool,
+) -> i32 {
     // Load fixtures for stub responses
     let fixture_map = load_fixtures(fixtures_path);
 
@@ -176,7 +192,9 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "json")
-                && path.file_name().is_some_and(|n| n.to_string_lossy().contains("-corpus"))
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().contains("-corpus"))
             {
                 let ids = load_corpus_ids(&path);
                 all_corpus_ids.extend(ids);
@@ -213,7 +231,8 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
             instrument: Some(Instrument::Guitar),
         };
         let response = ask_stub(&req, &fixture_map);
-        let findings = run_deterministic_checks(&entry.id, &entry.prompt, &response, &all_corpus_ids);
+        let findings =
+            run_deterministic_checks(&entry.id, &entry.prompt, &response, &all_corpus_ids);
 
         // Determine worst verdict from deterministic checks
         let det_verdict = worst_verdict(&findings);
@@ -227,7 +246,12 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
             match_count += 1;
         } else {
             mismatch_count += 1;
-            mismatches.push((entry.id.clone(), entry.category.clone(), det_verdict, entry.expected_verdict.clone()));
+            mismatches.push((
+                entry.id.clone(),
+                entry.category.clone(),
+                det_verdict,
+                entry.expected_verdict.clone(),
+            ));
         }
 
         // Create a single "deterministic" judge verdict for aggregation
@@ -249,7 +273,8 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
                 .collect(),
         };
 
-        let aggregate = ga_chatbot::aggregate::aggregate_verdicts(std::slice::from_ref(&judge_verdict));
+        let aggregate =
+            ga_chatbot::aggregate::aggregate_verdicts(std::slice::from_ref(&judge_verdict));
 
         let result = QaResult {
             prompt_id: entry.id.clone(),
@@ -302,14 +327,20 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
         0.0
     };
     println!("=== Regression Gauge (deterministic-graded) ===");
-    println!("Graded:        {} ({} match, {} mismatch)", graded, match_count, mismatch_count);
+    println!(
+        "Graded:        {} ({} match, {} mismatch)",
+        graded, match_count, mismatch_count
+    );
     println!("Match rate:    {:.1}%", match_pct);
     println!("Deferred(LLM): {}", deferred_count);
     if !mismatches.is_empty() {
         println!();
         println!("Regression candidates (actual != expected):");
         for (id, category, actual, expected) in &mismatches {
-            println!("  {:<20} [{}] actual={} expected={}", id, category, actual, expected);
+            println!(
+                "  {:<20} [{}] actual={} expected={}",
+                id, category, actual, expected
+            );
         }
     }
     println!();
@@ -417,7 +448,14 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
         let bottom_n = scores.len().min(5);
         println!();
         println!("Bottom-{} least diagnostic (pruning candidates):", bottom_n);
-        for s in scores.iter().rev().take(bottom_n).collect::<Vec<_>>().into_iter().rev() {
+        for s in scores
+            .iter()
+            .rev()
+            .take(bottom_n)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
             println!(
                 "  {:<25} Shapley={:.4}  category={}  fail_rate={:.1}",
                 s.prompt_id, s.shapley_value, s.category, s.failure_rate
@@ -431,7 +469,11 @@ fn run_qa(corpus_path: &std::path::Path, fixtures_path: &std::path::Path, corpus
     // counts are noisy because many adversarial prompts are expected to
     // fail (injection, hallucination) and LLM-deferred prompts have no
     // deterministic ground truth.
-    if mismatch_count > 0 { 1 } else { 0 }
+    if mismatch_count > 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Benchmark the chatbot across multiple LLM models.
@@ -449,7 +491,9 @@ fn run_benchmark(
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "json")
-                && path.file_name().is_some_and(|n| n.to_string_lossy().contains("-corpus"))
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().contains("-corpus"))
             {
                 let ids = load_corpus_ids(&path);
                 all_corpus_ids.extend(ids);
@@ -498,11 +542,16 @@ fn run_benchmark(
                 sources: vec![],
             };
 
-            let findings = run_deterministic_checks(&entry.id, &entry.prompt, &response, &all_corpus_ids);
+            let findings =
+                run_deterministic_checks(&entry.id, &entry.prompt, &response, &all_corpus_ids);
             let verdict = worst_verdict(&findings);
 
             let passed = !matches!(verdict, 'F' | 'D');
-            if passed { pass += 1; } else { fail += 1; }
+            if passed {
+                pass += 1;
+            } else {
+                fail += 1;
+            }
 
             all_results.push(serde_json::json!({
                 "model": model_name,
@@ -513,7 +562,11 @@ fn run_benchmark(
             }));
 
             eprint!("  {} [{}] {}ms ", entry.id, verdict, elapsed);
-            if passed { eprintln!("PASS"); } else { eprintln!("FAIL"); }
+            if passed {
+                eprintln!("PASS");
+            } else {
+                eprintln!("FAIL");
+            }
         }
 
         let total = pass + fail;
@@ -522,8 +575,16 @@ fn run_benchmark(
             total,
             pass,
             fail,
-            pass_rate: if total > 0 { pass as f64 / total as f64 } else { 0.0 },
-            avg_response_ms: if total > 0 { (total_ms / total as u128) as u64 } else { 0 },
+            pass_rate: if total > 0 {
+                pass as f64 / total as f64
+            } else {
+                0.0
+            },
+            avg_response_ms: if total > 0 {
+                (total_ms / total as u128) as u64
+            } else {
+                0
+            },
         });
     }
 
@@ -546,7 +607,12 @@ fn run_benchmark(
     for s in &scores {
         println!(
             "║ {:<24} ║ {:>5} ║ {:>4} ║ {:>4} ║ {:>7.1}% ║ {:>6}ms ║",
-            s.model, s.total, s.pass, s.fail, s.pass_rate * 100.0, s.avg_response_ms
+            s.model,
+            s.total,
+            s.pass,
+            s.fail,
+            s.pass_rate * 100.0,
+            s.avg_response_ms
         );
     }
     println!("╚══════════════════════════╩═══════╩══════╩══════╩══════════╩═════════╝");
@@ -668,44 +734,59 @@ const TOOLS: &str = r#"[
 fn parse_chord_pitch_classes(query: &str) -> Option<Vec<u8>> {
     let q = query.trim().to_lowercase();
     // Extract root note
-    let (root_pc, rest) = if let Some(r) = q.strip_prefix("c#").or_else(|| q.strip_prefix("db")) { (1, r) }
-        else if let Some(r) = q.strip_prefix("d#").or_else(|| q.strip_prefix("eb")) { (3, r) }
-        else if let Some(r) = q.strip_prefix("f#").or_else(|| q.strip_prefix("gb")) { (6, r) }
-        else if let Some(r) = q.strip_prefix("g#").or_else(|| q.strip_prefix("ab")) { (8, r) }
-        else if let Some(r) = q.strip_prefix("a#").or_else(|| q.strip_prefix("bb")) { (10, r) }
-        else if let Some(r) = q.strip_prefix('c') { (0, r) }
-        else if let Some(r) = q.strip_prefix('d') { (2, r) }
-        else if let Some(r) = q.strip_prefix('e') { (4, r) }
-        else if let Some(r) = q.strip_prefix('f') { (5, r) }
-        else if let Some(r) = q.strip_prefix('g') { (7, r) }
-        else if let Some(r) = q.strip_prefix('a') { (9, r) }
-        else if let Some(r) = q.strip_prefix('b') { (11, r) }
-        else { return None; };
+    let (root_pc, rest) = if let Some(r) = q.strip_prefix("c#").or_else(|| q.strip_prefix("db")) {
+        (1, r)
+    } else if let Some(r) = q.strip_prefix("d#").or_else(|| q.strip_prefix("eb")) {
+        (3, r)
+    } else if let Some(r) = q.strip_prefix("f#").or_else(|| q.strip_prefix("gb")) {
+        (6, r)
+    } else if let Some(r) = q.strip_prefix("g#").or_else(|| q.strip_prefix("ab")) {
+        (8, r)
+    } else if let Some(r) = q.strip_prefix("a#").or_else(|| q.strip_prefix("bb")) {
+        (10, r)
+    } else if let Some(r) = q.strip_prefix('c') {
+        (0, r)
+    } else if let Some(r) = q.strip_prefix('d') {
+        (2, r)
+    } else if let Some(r) = q.strip_prefix('e') {
+        (4, r)
+    } else if let Some(r) = q.strip_prefix('f') {
+        (5, r)
+    } else if let Some(r) = q.strip_prefix('g') {
+        (7, r)
+    } else if let Some(r) = q.strip_prefix('a') {
+        (9, r)
+    } else if let Some(r) = q.strip_prefix('b') {
+        (11, r)
+    } else {
+        return None;
+    };
 
     // Parse quality → interval set (semitones from root)
-    let intervals: Vec<u8> = if rest.contains("maj7") || rest.contains("major7") || rest.contains("Δ") {
-        vec![0, 4, 7, 11] // maj7
-    } else if rest.contains("m7b5") || rest.contains("min7b5") || rest.contains("ø") {
-        vec![0, 3, 6, 10] // half-dim
-    } else if rest.contains("dim7") || rest.contains("°7") {
-        vec![0, 3, 6, 9] // dim7
-    } else if rest.contains("m7") || rest.contains("min7") || rest.contains("-7") {
-        vec![0, 3, 7, 10] // min7
-    } else if rest.contains("7") {
-        vec![0, 4, 7, 10] // dom7
-    } else if rest.contains("m") || rest.contains("min") || rest.contains("-") {
-        vec![0, 3, 7] // minor
-    } else if rest.contains("aug") || rest.contains("+") {
-        vec![0, 4, 8] // aug
-    } else if rest.contains("dim") || rest.contains("°") {
-        vec![0, 3, 6] // dim
-    } else if rest.contains("sus4") {
-        vec![0, 5, 7]
-    } else if rest.contains("sus2") {
-        vec![0, 2, 7]
-    } else {
-        vec![0, 4, 7] // major
-    };
+    let intervals: Vec<u8> =
+        if rest.contains("maj7") || rest.contains("major7") || rest.contains("Δ") {
+            vec![0, 4, 7, 11] // maj7
+        } else if rest.contains("m7b5") || rest.contains("min7b5") || rest.contains("ø") {
+            vec![0, 3, 6, 10] // half-dim
+        } else if rest.contains("dim7") || rest.contains("°7") {
+            vec![0, 3, 6, 9] // dim7
+        } else if rest.contains("m7") || rest.contains("min7") || rest.contains("-7") {
+            vec![0, 3, 7, 10] // min7
+        } else if rest.contains("7") {
+            vec![0, 4, 7, 10] // dom7
+        } else if rest.contains("m") || rest.contains("min") || rest.contains("-") {
+            vec![0, 3, 7] // minor
+        } else if rest.contains("aug") || rest.contains("+") {
+            vec![0, 4, 8] // aug
+        } else if rest.contains("dim") || rest.contains("°") {
+            vec![0, 3, 6] // dim
+        } else if rest.contains("sus4") {
+            vec![0, 5, 7]
+        } else if rest.contains("sus2") {
+            vec![0, 2, 7]
+        } else {
+            vec![0, 4, 7] // major
+        };
 
     Some(intervals.iter().map(|i| (root_pc + i) % 12).collect())
 }
@@ -713,20 +794,25 @@ fn parse_chord_pitch_classes(query: &str) -> Option<Vec<u8>> {
 fn execute_tool(name: &str, args: &serde_json::Value) -> String {
     match name {
         "search_voicings" => {
-            let instrument = args.get("instrument").and_then(|i| i.as_str()).unwrap_or("guitar");
+            let instrument = args
+                .get("instrument")
+                .and_then(|i| i.as_str())
+                .unwrap_or("guitar");
             let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
             let corpus_path = format!("state/voicings/{}-corpus.json", instrument);
             let content = match std::fs::read_to_string(&corpus_path) {
                 Ok(c) => c,
                 Err(_) => return format!("Corpus not found at {}", corpus_path),
             };
-            let voicings: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap_or_default();
+            let voicings: Vec<serde_json::Value> =
+                serde_json::from_str(&content).unwrap_or_default();
             let query_lower = query.to_lowercase();
 
             // Try pitch-class matching first
             let target_pcs = parse_chord_pitch_classes(&query_lower);
 
-            let matches: Vec<_> = voicings.iter()
+            let matches: Vec<_> = voicings
+                .iter()
                 .filter(|v| {
                     let midi_notes = v.get("midiNotes").and_then(|m| m.as_array());
                     let diagram = v.get("diagram").and_then(|d| d.as_str()).unwrap_or("");
@@ -735,7 +821,8 @@ fn execute_tool(name: &str, args: &serde_json::Value) -> String {
 
                     // Pitch-class match: voicing must contain ALL target pitch classes
                     if let (Some(ref target), Some(midi)) = (&target_pcs, &midi_notes) {
-                        let voicing_pcs: std::collections::HashSet<u8> = midi.iter()
+                        let voicing_pcs: std::collections::HashSet<u8> = midi
+                            .iter()
                             .filter_map(|n| n.as_i64())
                             .map(|n| (n % 12) as u8)
                             .collect();
@@ -745,10 +832,18 @@ fn execute_tool(name: &str, args: &serde_json::Value) -> String {
                     }
 
                     // Fallback: keyword matching
-                    if query_lower.is_empty() { return true; }
-                    if query_lower.contains("open") && min_fret <= 1 && fret_span <= 3 { return true; }
-                    if query_lower.contains("barre") && min_fret >= 2 { return true; }
-                    if query_lower.contains("drop") && (2..=4).contains(&fret_span) { return true; }
+                    if query_lower.is_empty() {
+                        return true;
+                    }
+                    if query_lower.contains("open") && min_fret <= 1 && fret_span <= 3 {
+                        return true;
+                    }
+                    if query_lower.contains("barre") && min_fret >= 2 {
+                        return true;
+                    }
+                    if query_lower.contains("drop") && (2..=4).contains(&fret_span) {
+                        return true;
+                    }
                     diagram.to_lowercase().contains(&query_lower)
                 })
                 .take(15)
@@ -769,7 +864,10 @@ fn execute_tool(name: &str, args: &serde_json::Value) -> String {
             serde_json::to_string_pretty(&result).unwrap_or_default()
         }
         "get_instrument_info" => {
-            let instrument = args.get("instrument").and_then(|i| i.as_str()).unwrap_or("guitar");
+            let instrument = args
+                .get("instrument")
+                .and_then(|i| i.as_str())
+                .unwrap_or("guitar");
             let info = match instrument {
                 "guitar" => serde_json::json!({
                     "instrument": "guitar", "strings": 6, "tuning": "EADGBE",
@@ -793,24 +891,40 @@ fn execute_tool(name: &str, args: &serde_json::Value) -> String {
             serde_json::to_string_pretty(&info).unwrap_or_default()
         }
         "verify_voicing" => {
-            let instrument = args.get("instrument").and_then(|i| i.as_str()).unwrap_or("guitar");
+            let instrument = args
+                .get("instrument")
+                .and_then(|i| i.as_str())
+                .unwrap_or("guitar");
             let frets_str = args.get("frets").and_then(|f| f.as_str()).unwrap_or("");
             let frets: Vec<&str> = frets_str.split('-').collect();
             let expected_strings = match instrument {
-                "guitar" => 6, "bass" => 4, "ukulele" => 4, _ => 0,
+                "guitar" => 6,
+                "bass" => 4,
+                "ukulele" => 4,
+                _ => 0,
             };
             let mut issues = Vec::new();
             if frets.len() != expected_strings {
-                issues.push(format!("{} has {} strings but voicing has {} positions", instrument, expected_strings, frets.len()));
+                issues.push(format!(
+                    "{} has {} strings but voicing has {} positions",
+                    instrument,
+                    expected_strings,
+                    frets.len()
+                ));
             }
-            let played_frets: Vec<i32> = frets.iter()
+            let played_frets: Vec<i32> = frets
+                .iter()
                 .filter(|f| **f != "x" && **f != "X")
                 .filter_map(|f| f.parse().ok())
                 .collect();
-            if let (Some(&min), Some(&max)) = (played_frets.iter().min(), played_frets.iter().max()) {
+            if let (Some(&min), Some(&max)) = (played_frets.iter().min(), played_frets.iter().max())
+            {
                 let span = max - min;
                 if span > 5 {
-                    issues.push(format!("Fret span {} is likely unplayable (max comfortable span is ~4-5 frets)", span));
+                    issues.push(format!(
+                        "Fret span {} is likely unplayable (max comfortable span is ~4-5 frets)",
+                        span
+                    ));
                 }
             }
             if played_frets.iter().any(|&f| f > 24) {
@@ -828,9 +942,7 @@ fn execute_tool(name: &str, args: &serde_json::Value) -> String {
 }
 
 fn call_llm(question: &str, history: &[serde_json::Value]) -> String {
-    let mut messages = vec![
-        serde_json::json!({"role": "system", "content": SYSTEM_PROMPT}),
-    ];
+    let mut messages = vec![serde_json::json!({"role": "system", "content": SYSTEM_PROMPT})];
     for msg in history {
         if let (Some(role), Some(content)) = (
             msg.get("role").and_then(|r| r.as_str()),
@@ -841,7 +953,12 @@ fn call_llm(question: &str, history: &[serde_json::Value]) -> String {
             }
         }
     }
-    if messages.len() <= 1 || messages.last().and_then(|m| m.get("role").and_then(|r| r.as_str())) != Some("user") {
+    if messages.len() <= 1
+        || messages
+            .last()
+            .and_then(|m| m.get("role").and_then(|r| r.as_str()))
+            != Some("user")
+    {
         messages.push(serde_json::json!({"role": "user", "content": question}));
     }
 
@@ -858,7 +975,8 @@ fn call_llm(question: &str, history: &[serde_json::Value]) -> String {
 
         // Tool-use loop: up to 5 rounds
         for _ in 0..5 {
-            let model = std::env::var("GA_CHATBOT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+            let model =
+                std::env::var("GA_CHATBOT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
             let body = serde_json::json!({
                 "model": model,
                 "messages": messages,
@@ -881,7 +999,10 @@ fn call_llm(question: &str, history: &[serde_json::Value]) -> String {
 
             if json.get("error").is_some() {
                 eprintln!("[ga-chatbot] API error: {}", json);
-                return json["error"]["message"].as_str().unwrap_or("API error").to_string();
+                return json["error"]["message"]
+                    .as_str()
+                    .unwrap_or("API error")
+                    .to_string();
             }
 
             let choice = &json["choices"][0]["message"];
@@ -902,7 +1023,10 @@ fn call_llm(question: &str, history: &[serde_json::Value]) -> String {
 
                         eprintln!("[ga-chatbot] Tool call: {}({})", tool_name, tool_args);
                         let result = execute_tool(tool_name, &tool_args);
-                        eprintln!("[ga-chatbot] Tool result: {}...", &result[..result.len().min(200)]);
+                        eprintln!(
+                            "[ga-chatbot] Tool result: {}...",
+                            &result[..result.len().min(200)]
+                        );
 
                         messages.push(serde_json::json!({
                             "role": "tool",
@@ -915,7 +1039,8 @@ fn call_llm(question: &str, history: &[serde_json::Value]) -> String {
             }
 
             // Final text response
-            return choice.get("content")
+            return choice
+                .get("content")
                 .and_then(|c| c.as_str())
                 .unwrap_or("No response.")
                 .to_string();
@@ -967,9 +1092,7 @@ fn call_llm_live(
     bridge: &Arc<Mutex<McpBridge>>,
     openai_tools: &serde_json::Value,
 ) -> String {
-    let mut messages = vec![
-        serde_json::json!({"role": "system", "content": LIVE_SYSTEM_PROMPT}),
-    ];
+    let mut messages = vec![serde_json::json!({"role": "system", "content": LIVE_SYSTEM_PROMPT})];
     for msg in history {
         if let (Some(role), Some(content)) = (
             msg.get("role").and_then(|r| r.as_str()),
@@ -1030,9 +1153,7 @@ fn call_llm_live(
             }
 
             let choice = &json["choices"][0]["message"];
-            let finish_reason = json["choices"][0]["finish_reason"]
-                .as_str()
-                .unwrap_or("");
+            let finish_reason = json["choices"][0]["finish_reason"].as_str().unwrap_or("");
 
             if finish_reason == "tool_calls" {
                 if let Some(tool_calls) = choice.get("tool_calls").and_then(|t| t.as_array()) {
@@ -1060,9 +1181,7 @@ fn call_llm_live(
                                     val.get("content")
                                         .and_then(|c| c.as_array())
                                         .and_then(|arr| arr.first())
-                                        .and_then(|item| {
-                                            item.get("text").and_then(|t| t.as_str())
-                                        })
+                                        .and_then(|item| item.get("text").and_then(|t| t.as_str()))
                                         .map(|s| s.to_string())
                                         .unwrap_or_else(|| val.to_string())
                                 }
@@ -1141,10 +1260,7 @@ fn serve_http_live(port: u16, config: &McpBridgeConfig) {
         eprintln!("Failed to bind to {}: {}", addr, e);
         std::process::exit(1);
     });
-    eprintln!(
-        "[ga-chatbot-live] HTTP server listening on http://{}",
-        addr
-    );
+    eprintln!("[ga-chatbot-live] HTTP server listening on http://{}", addr);
 
     for stream in listener.incoming() {
         let mut stream = match stream {
@@ -1240,9 +1356,9 @@ fn serve_http_live(port: u16, config: &McpBridgeConfig) {
                             .and_then(|m| m.as_str().map(String::from))
                     })
                     .or_else(|| {
-                        user_messages
-                            .last()
-                            .and_then(|m| m.get("content").and_then(|c| c.as_str().map(String::from)))
+                        user_messages.last().and_then(|m| {
+                            m.get("content").and_then(|c| c.as_str().map(String::from))
+                        })
                     })
                     .unwrap_or_else(|| "Hello".to_string());
 
@@ -1328,21 +1444,33 @@ fn serve_http(port: u16, _fixtures: &HashMap<String, ga_chatbot::ChatbotResponse
                 ("200 OK", "application/json", examples.to_string())
             }
             ("POST", p) if p.starts_with("/api/chatbot/chat") => {
-                let body_start = request_str.find("\r\n\r\n").map(|i| i + 4)
+                let body_start = request_str
+                    .find("\r\n\r\n")
+                    .map(|i| i + 4)
                     .or_else(|| request_str.find("\n\n").map(|i| i + 2))
                     .unwrap_or(n);
                 let json_body = &request_str[body_start..];
                 let parsed = serde_json::from_str::<serde_json::Value>(json_body).ok();
 
-                let user_messages = parsed.as_ref()
+                let user_messages = parsed
+                    .as_ref()
                     .and_then(|v| v.get("messages"))
                     .and_then(|m| m.as_array())
                     .cloned()
                     .unwrap_or_default();
 
-                let question = parsed.as_ref()
-                    .and_then(|v| v.get("message").or(v.get("question")).and_then(|m| m.as_str().map(String::from)))
-                    .or_else(|| user_messages.last().and_then(|m| m.get("content").and_then(|c| c.as_str().map(String::from))))
+                let question = parsed
+                    .as_ref()
+                    .and_then(|v| {
+                        v.get("message")
+                            .or(v.get("question"))
+                            .and_then(|m| m.as_str().map(String::from))
+                    })
+                    .or_else(|| {
+                        user_messages.last().and_then(|m| {
+                            m.get("content").and_then(|c| c.as_str().map(String::from))
+                        })
+                    })
                     .unwrap_or_else(|| "Hello".to_string());
 
                 let answer = call_llm(&question, &user_messages);
@@ -1353,12 +1481,8 @@ fn serve_http(port: u16, _fixtures: &HashMap<String, ga_chatbot::ChatbotResponse
                 });
                 ("200 OK", "application/json", json_resp.to_string())
             }
-            ("OPTIONS", _) => {
-                ("200 OK", "text/plain", String::new())
-            }
-            _ => {
-                ("404 Not Found", "text/plain", "Not found".to_string())
-            }
+            ("OPTIONS", _) => ("200 OK", "text/plain", String::new()),
+            _ => ("404 Not Found", "text/plain", "Not found".to_string()),
         };
 
         let response = format!(
@@ -1407,11 +1531,11 @@ fn serve_jsonrpc(fixtures: &HashMap<String, ga_chatbot::ChatbotResponse>) {
             }
         };
 
-        let id = request.get("id").cloned().unwrap_or(serde_json::Value::Null);
-        let method = request
-            .get("method")
-            .and_then(|m| m.as_str())
-            .unwrap_or("");
+        let id = request
+            .get("id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
 
         let response = match method {
             "ga_chatbot_ask" => {
