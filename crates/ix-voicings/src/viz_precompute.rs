@@ -39,11 +39,15 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{state_root, ClusterArtifacts, Instrument, TransitionArtifacts, VoicingRow, VoicingsError};
+use crate::{
+    state_root, ClusterArtifacts, Instrument, TransitionArtifacts, VoicingRow, VoicingsError,
+};
 
 /// Current output schema version. Bump on any struct shape change so
-/// renderer and precompute can detect drift.
-pub const VIZ_SCHEMA_VERSION: u32 = 1;
+/// renderer and precompute can detect drift. v3 added `real_voicing_count`
+/// to [`ClusterLayout`] for LOD — the scene renders procedural density
+/// scaled to the real corpus count rather than fetching all 688k voicings.
+pub const VIZ_SCHEMA_VERSION: u32 = 3;
 
 /// Number of transition neighbors emitted per voicing for the
 /// selection-triggered "harmonic wind" effect.
@@ -63,11 +67,62 @@ pub struct ClusterLayout {
     pub local_cluster_id: usize,
     /// 3D world position for the cluster centroid (meters, arbitrary scale).
     pub position: [f32; 3],
-    /// Number of voicings assigned to this cluster.
+    /// Number of voicings assigned to this cluster in the sample used to
+    /// compute k-means centroids (Phase B). Used for per-cluster rarity
+    /// normalization when Phase 3 drills into individual voicings.
     pub voicing_count: usize,
+    /// Real per-cluster voicing count drawn from the full corpus
+    /// (`{instrument}-corpus.json`), partitioned by the same k-means
+    /// assignments. The renderer uses this to scale procedural density
+    /// particles so the visual matches corpus reality (~668k guitar
+    /// voicings) without fetching all of them. Equal to `voicing_count`
+    /// when sample == full corpus.
+    pub real_voicing_count: usize,
+    /// Musician-friendly short label derived from cluster-voicing stats
+    /// (e.g. `"Open triads"`, `"Wide four-note shapes"`). Used in the UI
+    /// in place of `"guitar-C0"`.
+    #[serde(default)]
+    pub display_label: String,
+    /// Disambiguating subtitle — numeric stats that break ties when two
+    /// clusters compute the same coarse label (e.g. `"median 4 notes ·
+    /// frets 5-8 · span 3"`).
+    #[serde(default)]
+    pub subtitle: String,
+    /// Per-chord-family voicing counts within this cluster, length 7,
+    /// indexed by [`chord_family`] constants (0=major .. 6=other).
+    /// Lets the icicle add a chord-family level under each cluster and
+    /// lets the nebula position particles in family sub-regions.
+    #[serde(default)]
+    pub family_counts: [usize; 7],
     /// Index into the instrument's corpus of the representative voicing
     /// (closest to the cluster centroid in feature space).
     pub representative_voicing_idx: usize,
+}
+
+/// Pick a musician-readable label from per-cluster aggregate stats.
+/// Vocabulary is deliberately small (~12 combinations) so users build
+/// intuition for what each bucket means.
+fn label_from_stats(median_notes: u32, mean_min_fret: f32, mean_span: f32) -> String {
+    let notes = match median_notes {
+        0..=1 => "voicings",
+        2 => "dyads",
+        3 => "triads",
+        4 => "four-note shapes",
+        _ => "extended shapes",
+    };
+    // Wide span overrides position — musicians notice spread first.
+    let position = if mean_span >= 5.0 {
+        "Wide"
+    } else if mean_min_fret <= 1.0 {
+        "Open"
+    } else if mean_min_fret <= 4.0 {
+        "Low-fret"
+    } else if mean_min_fret <= 8.0 {
+        "Mid-neck"
+    } else {
+        "Upper-register"
+    };
+    format!("{position} {notes}")
 }
 
 /// One voicing's world position + packed attrs for instanced rendering.
@@ -98,6 +153,69 @@ pub mod chord_family {
     pub const SUSPENDED: u8 = 4;
     pub const ALTERED: u8 = 5;
     pub const OTHER: u8 = 6;
+}
+
+/// Human-readable label per chord-family id; parallel to the UI palette.
+pub const CHORD_FAMILY_LABELS: [&str; 7] = [
+    "Major",
+    "Minor",
+    "Dominant",
+    "Diminished",
+    "Suspended",
+    "Altered",
+    "Other",
+];
+
+/// Sharp-spelled pitch-class name lookup table (C=0 … B=11).
+pub const PC_NAMES_SHARP: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+
+/// Compact per-voicing detail for the Harmonic Nebula selection panel.
+/// Field names kept short so the serialized JSON stays small — this
+/// file is lazy-fetched by the renderer on first smartie click and
+/// cached for the session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VoicingDetail {
+    /// Matches `VoicingLayout::global_id`.
+    pub g: String,
+    /// Per-string fret tokens (`"x"` for muted, else fret number).
+    pub f: Vec<String>,
+    /// MIDI notes, sorted low→high.
+    pub m: Vec<i32>,
+    /// Heuristic chord name, e.g. "C Major", "G Dominant".
+    pub n: String,
+    /// Pitch-class set (sorted unique).
+    pub p: Vec<u8>,
+    /// String count (4 = bass/ukulele, 6 = guitar).
+    pub s: u32,
+    /// Instrument tag — redundant with global_id prefix but saves a split.
+    pub i: String,
+}
+
+/// Pitch-class set from MIDI notes: sorted, deduped.
+fn pitch_class_set(midi: &[i32]) -> Vec<u8> {
+    let mut pcs: Vec<u8> = midi.iter().map(|m| m.rem_euclid(12) as u8).collect();
+    pcs.sort_unstable();
+    pcs.dedup();
+    pcs
+}
+
+/// Heuristic chord name: lowest MIDI → root, family from classifier.
+/// Good enough for the detail panel; full chord ID lives in ga's
+/// CanonicalChordRecognizer.
+fn heuristic_chord_name(row: &VoicingRow) -> String {
+    if row.midi_notes.is_empty() {
+        return String::from("(muted)");
+    }
+    let lowest = *row.midi_notes.iter().min().unwrap_or(&0);
+    let root = lowest.rem_euclid(12) as usize;
+    let fam = classify_chord_family(row) as usize;
+    format!(
+        "{} {}",
+        PC_NAMES_SHARP[root.min(11)],
+        CHORD_FAMILY_LABELS[fam.min(6)],
+    )
 }
 
 /// Top-K transition neighbors for one voicing. Powers the
@@ -151,15 +269,26 @@ pub fn run_viz_precompute(instruments: &[Instrument]) -> Result<VizManifest, Voi
     let mut clusters: Vec<ClusterLayout> = Vec::new();
     let mut voicings: Vec<VoicingLayout> = Vec::new();
     let mut neighbors: Vec<NeighborList> = Vec::new();
+    let mut details: Vec<VoicingDetail> = Vec::new();
 
     for &inst in instruments {
-        load_and_layout_instrument(inst, &mut clusters, &mut voicings, &mut neighbors)?;
+        load_and_layout_instrument(
+            inst,
+            &mut clusters,
+            &mut voicings,
+            &mut neighbors,
+            &mut details,
+        )?;
     }
 
     // Place cluster centroids on a golden-spiral sphere for deterministic,
     // visually balanced placeholder layout. Phase 1.5 swaps this for
     // classical MDS on the cross-instrument transition-cost graph.
-    let radius = 10.0_f32;
+    // Enough radius for 15 per-cluster spheres (each up to ~5.5 units
+    // radius after the family sub-region spread) to sit with airspace
+    // between them. Previous 10/22 caused guitar clusters to overlap
+    // once the cloud radius widened to hold 7 family sub-sectors.
+    let radius = 34.0_f32;
     let cluster_total = clusters.len();
     for (i, c) in clusters.iter_mut().enumerate() {
         c.position = golden_spiral_point(i, cluster_total, radius);
@@ -200,6 +329,33 @@ pub fn run_viz_precompute(instruments: &[Instrument]) -> Result<VizManifest, Voi
         out_dir.join("neighbors.json"),
         serde_json::to_vec_pretty(&neighbors)?,
     )?;
+    // Downsample details per cluster to ~DETAIL_SAMPLE_CAP entries so the
+    // payload stays small enough to lazy-load on first smartie click.
+    // Stride-based sampling keeps deterministic global_ids aligned with
+    // what the renderer is likely to show. Full 688k details would be
+    // ~87MB; sampled file lands around 3MB.
+    const DETAIL_SAMPLE_CAP: usize = 1800;
+    let mut per_cluster: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, v) in voicings.iter().enumerate() {
+        per_cluster
+            .entry(v.cluster_id.clone())
+            .or_default()
+            .push(idx);
+    }
+    let mut sampled_details: Vec<VoicingDetail> = Vec::new();
+    for (_cid, indices) in per_cluster.iter() {
+        let step = (indices.len() / DETAIL_SAMPLE_CAP).max(1);
+        for (i, &det_idx) in indices.iter().enumerate() {
+            if i % step == 0 {
+                sampled_details.push(details[det_idx].clone());
+            }
+        }
+    }
+    // Compact (non-pretty) emit — short keys + dense entries.
+    std::fs::write(
+        out_dir.join("voicing-details.json"),
+        serde_json::to_vec(&sampled_details)?,
+    )?;
 
     let manifest = VizManifest {
         version: VIZ_SCHEMA_VERSION,
@@ -224,6 +380,7 @@ fn load_and_layout_instrument(
     clusters: &mut Vec<ClusterLayout>,
     voicings: &mut Vec<VoicingLayout>,
     neighbors: &mut Vec<NeighborList>,
+    details: &mut Vec<VoicingDetail>,
 ) -> Result<(), VoicingsError> {
     let inst_name = inst.as_str();
 
@@ -262,14 +419,117 @@ fn load_and_layout_instrument(
         }
     }
 
+    // Load full-corpus size so we can emit real_voicing_count even when
+    // Phase B was run on a sampled subset. Split evenly across clusters
+    // in proportion to the sample assignments — the visual density the
+    // renderer computes from real_voicing_count will match corpus reality
+    // while the cluster centroids stay anchored to the sampled k-means.
+    let full_corpus_path = state_root()
+        .join("voicings")
+        .join(format!("{}-corpus.json", inst_name));
+    let full_corpus_bytes = std::fs::read(&full_corpus_path).unwrap_or_default();
+    let full_corpus: Vec<VoicingRow> =
+        serde_json::from_slice(&full_corpus_bytes).unwrap_or_default();
+    let full_total = full_corpus.len().max(corpus.len());
+    let sample_total: usize = counts.iter().sum::<usize>().max(1);
+
     // Emit cluster entries. Position is placeholder; filled in by caller.
     for (local_id, &count) in counts.iter().enumerate() {
+        // Scale the sampled cluster count up to full-corpus counts while
+        // preserving proportionality. Rounding errors are absorbed into
+        // the last cluster so the per-instrument sum matches `full_total`.
+        let real_count = if local_id + 1 == counts.len() {
+            full_total.saturating_sub(
+                counts
+                    .iter()
+                    .take(local_id)
+                    .map(|&c| c * full_total / sample_total)
+                    .sum::<usize>(),
+            )
+        } else {
+            count * full_total / sample_total
+        };
+
+        // Aggregate per-cluster stats over the sampled corpus to pick a
+        // musician-readable label (median note count, mean min fret,
+        // mean span). Uses played-note count (midi_notes.len()) rather
+        // than string count so muted strings don't inflate the number.
+        let cluster_rows: Vec<&VoicingRow> = corpus
+            .iter()
+            .zip(cluster_art.assignments.iter())
+            .filter_map(|(row, &a)| if a == local_id { Some(row) } else { None })
+            .collect();
+        let (display_label, subtitle) = if cluster_rows.is_empty() {
+            (format!("C{local_id}"), String::new())
+        } else {
+            let mut note_counts: Vec<u32> = cluster_rows
+                .iter()
+                .map(|r| r.midi_notes.len() as u32)
+                .collect();
+            note_counts.sort_unstable();
+            let median_notes = note_counts[note_counts.len() / 2];
+            let mean_min_fret = cluster_rows
+                .iter()
+                .map(|r| r.min_fret.max(0) as f32)
+                .sum::<f32>()
+                / cluster_rows.len() as f32;
+            let mean_span = cluster_rows
+                .iter()
+                .map(|r| r.fret_span.max(0) as f32)
+                .sum::<f32>()
+                / cluster_rows.len() as f32;
+            let fret_lo = cluster_rows
+                .iter()
+                .map(|r| r.min_fret.max(0))
+                .min()
+                .unwrap_or(0);
+            let fret_hi = cluster_rows
+                .iter()
+                .map(|r| r.max_fret.max(0))
+                .max()
+                .unwrap_or(0);
+            (
+                label_from_stats(median_notes, mean_min_fret, mean_span),
+                format!(
+                    "median {median_notes} notes · frets {fret_lo}-{fret_hi} · span {:.0}",
+                    mean_span
+                ),
+            )
+        };
+
+        // Count chord families within this cluster (from the sample;
+        // scaled up for real_voicing_count via the same ratio so the
+        // sum matches real_voicing_count).
+        let mut family_counts_sample = [0usize; 7];
+        for row in &cluster_rows {
+            let fid = classify_chord_family(row) as usize;
+            if fid < family_counts_sample.len() {
+                family_counts_sample[fid] += 1;
+            }
+        }
+        let sample_size = cluster_rows.len().max(1);
+        let mut family_counts = [0usize; 7];
+        let mut running = 0usize;
+        for (i, &fc) in family_counts_sample.iter().enumerate() {
+            let scaled = if i + 1 == family_counts_sample.len() {
+                real_count.saturating_sub(running)
+            } else {
+                fc * real_count / sample_size
+            };
+            family_counts[i] = scaled;
+            running += scaled;
+        }
+
         clusters.push(ClusterLayout {
             id: format!("{inst_name}-C{local_id}"),
             instrument: inst_name.to_string(),
             local_cluster_id: local_id,
             position: [0.0, 0.0, 0.0],
             voicing_count: count,
+            real_voicing_count: real_count,
+            display_label,
+            subtitle,
+            family_counts,
             representative_voicing_idx: cluster_art
                 .representative_voicing_per_cluster
                 .get(local_id)
@@ -278,7 +538,8 @@ fn load_and_layout_instrument(
         });
     }
 
-    // Emit voicing entries. Position is placeholder; filled in by caller.
+    // Emit voicing entries + matching detail entries. Same iteration so
+    // details[i].g == voicings[i].global_id is guaranteed.
     let n = corpus.len();
     for (idx, row) in corpus.iter().enumerate() {
         let local_cluster = cluster_art
@@ -290,12 +551,21 @@ fn load_and_layout_instrument(
         let global_id = format!("{inst_name}_v{idx:04}");
         let cluster_id = format!("{inst_name}-C{local_cluster}");
         voicings.push(VoicingLayout {
-            global_id,
+            global_id: global_id.clone(),
             cluster_id,
             position: [0.0, 0.0, 0.0],
             chord_family_id: classify_chord_family(row),
             rarity_rank: (idx as f32) / (n.max(1) as f32),
             instrument: inst_name.to_string(),
+        });
+        details.push(VoicingDetail {
+            g: global_id,
+            f: row.frets.clone(),
+            m: row.midi_notes.clone(),
+            n: heuristic_chord_name(row),
+            p: pitch_class_set(&row.midi_notes),
+            s: row.string_count,
+            i: inst_name.to_string(),
         });
     }
 
@@ -318,14 +588,92 @@ fn load_and_layout_instrument(
     Ok(())
 }
 
-/// Chord family classification. Returns [`chord_family::OTHER`] for now —
-/// [`VoicingRow`] does not carry chord identity, and wiring it from
-/// ga's `ChordIdentification` into this pipeline is Phase 1.5 work.
+/// Classify a voicing into a chord family by interval-template match
+/// over its MIDI-derived pitch-class set. Tries each PC as a candidate
+/// root; the most specific template that fits wins.
 ///
-/// The renderer consumes `chord_family_id` from [`VoicingLayout`], so
-/// the contract is stable; Phase 1.5 just swaps this stub for the real
-/// classifier without changing call sites.
-fn classify_chord_family(_row: &VoicingRow) -> u8 {
+/// This is a heuristic, not a full chord recognizer — it covers the
+/// seven families the [`chord_family`] palette maps to (major, minor,
+/// dominant, diminished, suspended, altered, other). For the full
+/// `ChordIdentification` pipeline see ga's `CanonicalChordRecognizer`.
+fn classify_chord_family(row: &VoicingRow) -> u8 {
+    let mut pcs: Vec<u8> = row
+        .midi_notes
+        .iter()
+        .map(|&n| n.rem_euclid(12) as u8)
+        .collect();
+    pcs.sort_unstable();
+    pcs.dedup();
+
+    // Dyads and unisons don't carry enough information for a confident
+    // family call; fall through to OTHER.
+    if pcs.len() < 3 {
+        return chord_family::OTHER;
+    }
+
+    // Precompute the interval set relative to every candidate root.
+    let sets: Vec<std::collections::BTreeSet<u8>> = pcs
+        .iter()
+        .map(|&root| {
+            pcs.iter()
+                .map(|&pc| (pc + 12 - root) % 12)
+                .collect::<std::collections::BTreeSet<u8>>()
+        })
+        .collect();
+
+    // Pass 1: dominant base (0,4,10). Checked across all roots first so
+    // altered dominants win over coincidental symmetric-dim interpretations
+    // of the same pitch-class set.
+    for set in &sets {
+        let has = |i: u8| set.contains(&i);
+        if has(0) && has(4) && has(10) {
+            let altered = has(1) || has(3) || (has(6) && !has(5)) || (has(8) && !has(7));
+            return if altered {
+                chord_family::ALTERED
+            } else {
+                chord_family::DOMINANT
+            };
+        }
+    }
+
+    // Pass 2: remaining 4-note templates. Specific matches beat 3-note
+    // fallbacks even when a different root would yield a triad.
+    for set in &sets {
+        let has = |i: u8| set.contains(&i);
+        if has(0) && has(4) && has(11) {
+            return chord_family::MAJOR;
+        }
+        if has(0) && has(3) && has(7) && (has(10) || has(11)) {
+            return chord_family::MINOR;
+        }
+        if has(0) && has(3) && has(6) && has(10) {
+            return chord_family::DIMINISHED;
+        }
+        if has(0) && has(3) && has(6) && has(9) {
+            return chord_family::DIMINISHED;
+        }
+    }
+
+    // Pass 3: 3-note fallbacks.
+    for set in &sets {
+        let has = |i: u8| set.contains(&i);
+        if has(0) && has(4) && has(8) && !has(7) {
+            return chord_family::ALTERED;
+        }
+        if has(0) && has(7) && (has(5) || has(2)) && !has(3) && !has(4) {
+            return chord_family::SUSPENDED;
+        }
+        if has(0) && has(4) && has(7) {
+            return chord_family::MAJOR;
+        }
+        if has(0) && has(3) && has(7) {
+            return chord_family::MINOR;
+        }
+        if has(0) && has(3) && has(6) {
+            return chord_family::DIMINISHED;
+        }
+    }
+
     chord_family::OTHER
 }
 
@@ -425,6 +773,10 @@ mod tests {
             local_cluster_id: 0,
             position: [1.0, 2.0, 3.0],
             voicing_count: 42,
+            real_voicing_count: 133425,
+            display_label: "Open triads".into(),
+            subtitle: "median 3 notes · frets 0-4 · span 2".into(),
+            family_counts: [42, 21, 14, 3, 5, 2, 133338],
             representative_voicing_idx: 7,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -501,21 +853,98 @@ mod tests {
         assert_ne!(o1, o2);
     }
 
-    #[test]
-    fn chord_family_classifier_is_stubbed_to_other() {
-        // Phase 1: classifier returns OTHER uniformly. Phase 1.5 will
-        // swap in real ChordIdentification-driven classification.
-        let row = VoicingRow {
+    fn row_with_midi(notes: Vec<i32>) -> VoicingRow {
+        VoicingRow {
             instrument: "guitar".into(),
             string_count: 6,
-            diagram: "x-3-2-0-1-0".into(),
-            frets: vec!["x".into(), "3".into(), "2".into(), "0".into(), "1".into(), "0".into()],
-            midi_notes: vec![60, 64, 67, 72],
+            diagram: String::new(),
+            frets: Vec::new(),
+            midi_notes: notes,
             min_fret: 0,
-            max_fret: 3,
-            fret_span: 3,
-        };
-        assert_eq!(classify_chord_family(&row), chord_family::OTHER);
+            max_fret: 0,
+            fret_span: 0,
+        }
+    }
+
+    #[test]
+    fn classifier_major_triad() {
+        // C-E-G
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![60, 64, 67])),
+            chord_family::MAJOR
+        );
+    }
+
+    #[test]
+    fn classifier_minor_triad() {
+        // A-C-E
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![57, 60, 64])),
+            chord_family::MINOR
+        );
+    }
+
+    #[test]
+    fn classifier_dominant_seventh() {
+        // G-B-D-F
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![55, 59, 62, 65])),
+            chord_family::DOMINANT
+        );
+    }
+
+    #[test]
+    fn classifier_major_seventh() {
+        // C-E-G-B
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![60, 64, 67, 71])),
+            chord_family::MAJOR
+        );
+    }
+
+    #[test]
+    fn classifier_half_diminished() {
+        // B-D-F-A (Bm7b5)
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![59, 62, 65, 69])),
+            chord_family::DIMINISHED
+        );
+    }
+
+    #[test]
+    fn classifier_sus4() {
+        // C-F-G
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![60, 65, 67])),
+            chord_family::SUSPENDED
+        );
+    }
+
+    #[test]
+    fn classifier_altered_dominant() {
+        // G-B-D-F-Ab (G7b9)
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![55, 59, 62, 65, 68])),
+            chord_family::ALTERED
+        );
+    }
+
+    #[test]
+    fn classifier_augmented() {
+        // C-E-G# (C+)
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![60, 64, 68])),
+            chord_family::ALTERED
+        );
+    }
+
+    #[test]
+    fn classifier_dyad_is_other() {
+        // C-G only: not enough info
+        assert_eq!(
+            classify_chord_family(&row_with_midi(vec![60, 67])),
+            chord_family::OTHER
+        );
     }
 
     #[test]

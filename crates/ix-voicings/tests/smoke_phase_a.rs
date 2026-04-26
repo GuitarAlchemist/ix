@@ -54,7 +54,10 @@ fn smoke_phase_a_guitar_50() {
     // Raw JSONL must have the same number of lines as the corpus array.
     let raw = fs::read_to_string(&enum_out.raw_jsonl).unwrap();
     let raw_lines = raw.lines().filter(|l| !l.trim().is_empty()).count();
-    assert_eq!(raw_lines, enum_out.voicing_count, "raw/corpus row count mismatch");
+    assert_eq!(
+        raw_lines, enum_out.voicing_count,
+        "raw/corpus row count mismatch"
+    );
 
     let feat_out = featurize(Instrument::Guitar).expect("featurize guitar should succeed");
     assert!(feat_out.features_path.exists(), "features file missing");

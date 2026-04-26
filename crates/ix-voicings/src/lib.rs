@@ -39,6 +39,18 @@ use ix_unsupervised::traits::Clusterer;
 
 pub mod viz_precompute;
 
+/// Deserialize an integer field that may arrive as JSON `null`, mapping
+/// null to -1 (the sentinel already used for muted strings). Keeps the
+/// downstream arithmetic code simple at the cost of tolerating slightly
+/// sloppy FretboardVoicingsCLI output on all-muted or otherwise degenerate
+/// voicings.
+fn null_as_neg_one_i32<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<i32>::deserialize(deserializer)?.unwrap_or(-1))
+}
+
 /// Supported instrument presets. Must match the GA CLI's `--tuning` flag
 /// values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,11 +97,11 @@ pub struct VoicingRow {
     pub frets: Vec<String>,
     #[serde(rename = "midiNotes")]
     pub midi_notes: Vec<i32>,
-    #[serde(rename = "minFret")]
+    #[serde(rename = "minFret", deserialize_with = "null_as_neg_one_i32")]
     pub min_fret: i32,
-    #[serde(rename = "maxFret")]
+    #[serde(rename = "maxFret", deserialize_with = "null_as_neg_one_i32")]
     pub max_fret: i32,
-    #[serde(rename = "fretSpan")]
+    #[serde(rename = "fretSpan", deserialize_with = "null_as_neg_one_i32")]
     pub fret_span: i32,
 }
 
@@ -163,19 +175,19 @@ pub enum VoicingsError {
 /// the corpus without waiting on GA's full analysis pass (which doesn't
 /// run in `--export` mode).
 pub const QUALITY_VOCAB: &[&str] = &[
-    "dyad",       // 2 distinct pitch classes
-    "maj",        // major triad (0,4,7)
-    "min",        // minor triad (0,3,7)
-    "dim",        // diminished (0,3,6)
-    "aug",        // augmented (0,4,8)
-    "sus",        // sus2 / sus4 triad (0,2,7) / (0,5,7)
-    "maj7",       // (0,4,7,11)
-    "dom7",       // (0,4,7,10)
-    "min7",       // (0,3,7,10)
-    "min7b5",     // (0,3,6,10)
-    "dim7",       // (0,3,6,9)
-    "other4",     // 4 distinct pitch classes, none of the above
-    "other",      // fallback
+    "dyad",   // 2 distinct pitch classes
+    "maj",    // major triad (0,4,7)
+    "min",    // minor triad (0,3,7)
+    "dim",    // diminished (0,3,6)
+    "aug",    // augmented (0,4,8)
+    "sus",    // sus2 / sus4 triad (0,2,7) / (0,5,7)
+    "maj7",   // (0,4,7,11)
+    "dom7",   // (0,4,7,10)
+    "min7",   // (0,3,7,10)
+    "min7b5", // (0,3,6,10)
+    "dim7",   // (0,3,6,9)
+    "other4", // 4 distinct pitch classes, none of the above
+    "other",  // fallback
 ];
 
 /// Column schema for the feature matrix.
@@ -285,9 +297,7 @@ pub fn enumerate(
 
     let cli = ga_cli_path();
     let mut cmd = Command::new(&cli);
-    cmd.arg("--export")
-        .arg("--tuning")
-        .arg(instrument.as_str());
+    cmd.arg("--export").arg("--tuning").arg(instrument.as_str());
     if let Some(max) = export_max {
         cmd.arg("--export-max").arg(max.to_string());
     }
@@ -488,10 +498,7 @@ fn classify_quality(midi: &[i32]) -> &'static str {
         return "other";
     }
     let lowest = *midi.iter().min().unwrap();
-    let mut classes: Vec<i32> = midi
-        .iter()
-        .map(|n| (*n - lowest).rem_euclid(12))
-        .collect();
+    let mut classes: Vec<i32> = midi.iter().map(|n| (*n - lowest).rem_euclid(12)).collect();
     classes.sort_unstable();
     classes.dedup();
 
@@ -542,10 +549,7 @@ fn zscore_numeric_columns(matrix: &mut [Vec<f64>]) -> HashMap<String, Normalizat
                 centered
             };
         }
-        norms.insert(
-            (*col_name).to_string(),
-            Normalization { mean, stddev },
-        );
+        norms.insert((*col_name).to_string(), Normalization { mean, stddev });
     }
     norms
 }
@@ -575,7 +579,9 @@ pub fn run_manifest(
 
 /// Load the feature matrix from disk for an instrument. Returns the
 /// `FeatureMatrix` struct and the data as an `ndarray::Array2<f64>`.
-pub fn load_features(instrument: Instrument) -> Result<(FeatureMatrix, Array2<f64>), VoicingsError> {
+pub fn load_features(
+    instrument: Instrument,
+) -> Result<(FeatureMatrix, Array2<f64>), VoicingsError> {
     let state = state_root();
     let path = state
         .join("voicings")
@@ -586,12 +592,10 @@ pub fn load_features(instrument: Instrument) -> Result<(FeatureMatrix, Array2<f6
     let p = fm.columns.len();
     let flat: Vec<f64> = fm.rows.iter().flat_map(|r| r.iter().copied()).collect();
     let flat_len = flat.len();
-    let arr = Array2::from_shape_vec((n, p), flat).map_err(|_| {
-        VoicingsError::ShapeMismatch {
-            row: 0,
-            expected: n * p,
-            got: flat_len,
-        }
+    let arr = Array2::from_shape_vec((n, p), flat).map_err(|_| VoicingsError::ShapeMismatch {
+        row: 0,
+        expected: n * p,
+        got: flat_len,
     })?;
     Ok((fm, arr))
 }
@@ -625,7 +629,11 @@ pub fn silhouette_score(data: &Array2<f64>, labels: &[usize]) -> f64 {
                 entry.1 += 1;
             }
         }
-        let a = if a_count > 0 { a_sum / a_count as f64 } else { 0.0 };
+        let a = if a_count > 0 {
+            a_sum / a_count as f64
+        } else {
+            0.0
+        };
         let b = cluster_sums
             .values()
             .map(|(s, c)| s / *c as f64)
@@ -682,14 +690,9 @@ pub fn cluster(instrument: Instrument) -> Result<ClusterArtifacts, VoicingsError
         let labels_vec: Vec<usize> = labels.iter().copied().collect();
         let sil = silhouette_score(&data, &labels_vec);
 
-        let centroids = km
-            .centroids
-            .as_ref()
-            .unwrap();
+        let centroids = km.centroids.as_ref().unwrap();
 
-        let centroid_vecs: Vec<Vec<f64>> = (0..k)
-            .map(|c| centroids.row(c).to_vec())
-            .collect();
+        let centroid_vecs: Vec<Vec<f64>> = (0..k).map(|c| centroids.row(c).to_vec()).collect();
 
         // Representative = voicing closest to centroid (Euclidean)
         let representatives: Vec<usize> = (0..k)
@@ -732,9 +735,9 @@ pub fn cluster(instrument: Instrument) -> Result<ClusterArtifacts, VoicingsError
         }
     }
 
-    let artifacts = best.ok_or_else(|| VoicingsError::Pipeline(
-        "clustering failed: corpus too small for any k candidate".into(),
-    ))?;
+    let artifacts = best.ok_or_else(|| {
+        VoicingsError::Pipeline("clustering failed: corpus too small for any k candidate".into())
+    })?;
     let out_path = state_root()
         .join("voicings")
         .join(format!("{}-clusters.json", instrument.as_str()));
@@ -769,7 +772,9 @@ pub fn topology(instrument: Instrument) -> Result<TopologyArtifacts, VoicingsErr
     } else {
         // Deterministic subsample: every n/sample_limit-th point
         let step = n / sample_limit;
-        (0..sample_limit).map(|i| points[i * step].clone()).collect()
+        (0..sample_limit)
+            .map(|i| points[i * step].clone())
+            .collect()
     };
 
     let mut max_dist = 0.0f64;
@@ -791,8 +796,7 @@ pub fn topology(instrument: Instrument) -> Result<TopologyArtifacts, VoicingsErr
     // connected component trivially. Clamp to something reasonable.
     let radius = (max_dist * 0.5).max(0.1);
 
-    let diagrams =
-        ix_topo::pointcloud::persistence_from_points(&sample, 1, radius);
+    let diagrams = ix_topo::pointcloud::persistence_from_points(&sample, 1, radius);
 
     let betti_0 = diagrams
         .first()
@@ -817,7 +821,12 @@ pub fn topology(instrument: Instrument) -> Result<TopologyArtifacts, VoicingsErr
     // Collect all finite persistence pairs
     let persistence_pairs: Vec<(f64, f64)> = diagrams
         .iter()
-        .flat_map(|d| d.pairs.iter().filter(|(_, death)| death.is_finite()).copied())
+        .flat_map(|d| {
+            d.pairs
+                .iter()
+                .filter(|(_, death)| death.is_finite())
+                .copied()
+        })
         .collect();
 
     let artifacts = TopologyArtifacts {
@@ -841,8 +850,16 @@ pub fn topology(instrument: Instrument) -> Result<TopologyArtifacts, VoicingsErr
 /// - +2 penalty for each muted-to-played or played-to-muted change
 /// - +1 penalty if barre status differs
 pub fn movement_cost(a: &VoicingRow, b: &VoicingRow) -> f64 {
-    let a_frets: Vec<i32> = a.frets.iter().map(|s| s.parse::<i32>().unwrap_or(-1)).collect();
-    let b_frets: Vec<i32> = b.frets.iter().map(|s| s.parse::<i32>().unwrap_or(-1)).collect();
+    let a_frets: Vec<i32> = a
+        .frets
+        .iter()
+        .map(|s| s.parse::<i32>().unwrap_or(-1))
+        .collect();
+    let b_frets: Vec<i32> = b
+        .frets
+        .iter()
+        .map(|s| s.parse::<i32>().unwrap_or(-1))
+        .collect();
 
     let max_strings = a_frets.len().max(b_frets.len());
     let mut cost = 0.0;
@@ -853,7 +870,7 @@ pub fn movement_cost(a: &VoicingRow, b: &VoicingRow) -> f64 {
         match (fa >= 0, fb >= 0) {
             (true, true) => cost += (fa - fb).unsigned_abs() as f64,
             (true, false) | (false, true) => cost += 2.0, // mute toggle penalty
-            (false, false) => {} // both muted, no cost
+            (false, false) => {}                          // both muted, no cost
         }
     }
 
@@ -927,7 +944,9 @@ pub fn transitions(instrument: Instrument) -> Result<TransitionArtifacts, Voicin
             if reps[i] >= corpus.len() || reps[j] >= corpus.len() {
                 return Err(VoicingsError::Pipeline(format!(
                     "representative index out of bounds: reps[{i}]={}, reps[{j}]={}, corpus len={}",
-                    reps[i], reps[j], corpus.len()
+                    reps[i],
+                    reps[j],
+                    corpus.len()
                 )));
             }
             let cost = movement_cost(&corpus[reps[i]], &corpus[reps[j]]);
@@ -1011,8 +1030,7 @@ pub fn progressions(instrument: Instrument) -> Result<ProgressionArtifacts, Voic
 
     // Load the grammar file
     let grammar_path = find_grammar_file()?;
-    let grammar_text = std::fs::read_to_string(&grammar_path)
-        .map_err(VoicingsError::Io)?;
+    let grammar_text = std::fs::read_to_string(&grammar_path).map_err(VoicingsError::Io)?;
 
     let grammar = ix_grammar::constrained::EbnfGrammar::from_str(&grammar_text)
         .map_err(VoicingsError::ProgressionParse)?;
@@ -1300,10 +1318,15 @@ pub fn render_book(instruments: &[Instrument]) -> Result<PathBuf, VoicingsError>
         ));
 
         if !ta.persistence_pairs.is_empty() {
-            topo_chapter.push_str("| Birth | Death | Persistence |\n|-------|-------|-------------|\n");
+            topo_chapter
+                .push_str("| Birth | Death | Persistence |\n|-------|-------|-------------|\n");
             // Show top 10 by persistence
             let mut pairs = ta.persistence_pairs.clone();
-            pairs.sort_by(|a, b| (b.1 - b.0).partial_cmp(&(a.1 - a.0)).unwrap_or(std::cmp::Ordering::Equal));
+            pairs.sort_by(|a, b| {
+                (b.1 - b.0)
+                    .partial_cmp(&(a.1 - a.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             for (birth, death) in pairs.iter().take(10) {
                 topo_chapter.push_str(&format!(
                     "| {:.4} | {:.4} | {:.4} |\n",
@@ -1319,7 +1342,9 @@ pub fn render_book(instruments: &[Instrument]) -> Result<PathBuf, VoicingsError>
         book.push_str(&topo_chapter);
     } else {
         book.push_str("## Chapter 3: Topology of the Voicing Space\n\n");
-        book.push_str("*Dropped: degenerate topology (every point its own component) or no data.*\n\n");
+        book.push_str(
+            "*Dropped: degenerate topology (every point its own component) or no data.*\n\n",
+        );
     }
 
     // Chapter 4: Shortest physical paths between representatives
@@ -1444,14 +1469,20 @@ pub fn render_book(instruments: &[Instrument]) -> Result<PathBuf, VoicingsError>
             }
             let bytes = std::fs::read(&path).ok()?;
             let ca: ClusterArtifacts = serde_json::from_slice(&bytes).ok()?;
-            if ca.k > 1 { Some((inst, ca)) } else { None }
+            if ca.k > 1 {
+                Some((inst, ca))
+            } else {
+                None
+            }
         })
         .collect();
     if cluster_data.len() >= 2 {
         book.push_str("## Chapter 6: Cross-Instrument Comparison\n\n");
         book.push_str("*Multiple instruments available for comparison.*\n\n");
         // Summary table
-        book.push_str("| Instrument | Clusters | Silhouette |\n|------------|----------|------------|\n");
+        book.push_str(
+            "| Instrument | Clusters | Silhouette |\n|------------|----------|------------|\n",
+        );
         for (inst, ca) in &cluster_data {
             book.push_str(&format!(
                 "| {} | {} | {:.4} |\n",
@@ -1476,12 +1507,16 @@ pub fn render_book(instruments: &[Instrument]) -> Result<PathBuf, VoicingsError>
                     Deferred to a future phase.\n\n");
     book.push_str("3. **Parameter sweeps**: Only k=5 and k=3 were tried for K-Means. A proper \
                     elbow/gap-statistic sweep over k=2..10 would improve cluster quality assessment.\n\n");
-    book.push_str("4. **Sample size**: The guitar corpus used for this study contains 50 voicings \
+    book.push_str(
+        "4. **Sample size**: The guitar corpus used for this study contains 50 voicings \
                     (export-max cap). A full enumeration produces 100k+ voicings. Results may not \
-                    generalize to the full corpus.\n\n");
-    book.push_str("5. **Topology subsampling**: For point clouds > 50 points, the topology node \
+                    generalize to the full corpus.\n\n",
+    );
+    book.push_str(
+        "5. **Topology subsampling**: For point clouds > 50 points, the topology node \
                     subsamples to 50 points before computing Vietoris-Rips. This loses detail in \
-                    the persistence diagram.\n\n");
+                    the persistence diagram.\n\n",
+    );
     book.push_str("6. **Grammar recognition**: `ix-grammar` provides MCTS-based generative derivation, \
                     not classical Earley/CYK chart parsing. Parse counts reflect direct expansion matching, \
                     not ambiguity-aware recognition.\n\n");
@@ -1509,7 +1544,9 @@ pub fn render_book(instruments: &[Instrument]) -> Result<PathBuf, VoicingsError>
 ///
 /// The DAG is: enumerate -> featurize -> [cluster | topology | transitions -> progressions] -> render_book
 /// Note: transitions depends on cluster; progressions depends on transitions.
-pub fn build_pipeline(instrument: Instrument) -> ix_pipeline::dag::Dag<ix_pipeline::executor::PipelineNode> {
+pub fn build_pipeline(
+    instrument: Instrument,
+) -> ix_pipeline::dag::Dag<ix_pipeline::executor::PipelineNode> {
     use ix_pipeline::builder::PipelineBuilder;
 
     let inst = instrument;
@@ -1527,51 +1564,51 @@ pub fn build_pipeline(instrument: Instrument) -> ix_pipeline::dag::Dag<ix_pipeli
             Ok(json!({"instrument": inst.as_str(), "status": "features_loaded"}))
         })
         .node("cluster", move |b| {
-            b.input("features", "featurize")
-                .compute(move |_inputs| {
-                    let ca = cluster(inst2)
-                        .map_err(|e| ix_pipeline::executor::PipelineError::ComputeError(e.to_string()))?;
-                    Ok(json!({
-                        "k": ca.k,
-                        "silhouette": ca.silhouette,
-                        "status": "ok"
-                    }))
-                })
+            b.input("features", "featurize").compute(move |_inputs| {
+                let ca = cluster(inst2).map_err(|e| {
+                    ix_pipeline::executor::PipelineError::ComputeError(e.to_string())
+                })?;
+                Ok(json!({
+                    "k": ca.k,
+                    "silhouette": ca.silhouette,
+                    "status": "ok"
+                }))
+            })
         })
         .node("topology", move |b| {
-            b.input("features", "featurize")
-                .compute(move |_inputs| {
-                    let ta = topology(inst3)
-                        .map_err(|e| ix_pipeline::executor::PipelineError::ComputeError(e.to_string()))?;
-                    Ok(json!({
-                        "betti_0": ta.betti_0,
-                        "betti_1": ta.betti_1,
-                        "status": "ok"
-                    }))
-                })
+            b.input("features", "featurize").compute(move |_inputs| {
+                let ta = topology(inst3).map_err(|e| {
+                    ix_pipeline::executor::PipelineError::ComputeError(e.to_string())
+                })?;
+                Ok(json!({
+                    "betti_0": ta.betti_0,
+                    "betti_1": ta.betti_1,
+                    "status": "ok"
+                }))
+            })
         })
         .node("transitions", move |b| {
-            b.input("clusters", "cluster")
-                .compute(move |_inputs| {
-                    let ta = transitions(inst4)
-                        .map_err(|e| ix_pipeline::executor::PipelineError::ComputeError(e.to_string()))?;
-                    Ok(json!({
-                        "edge_count": ta.edges.len(),
-                        "path_count": ta.shortest_paths.len(),
-                        "status": "ok"
-                    }))
-                })
+            b.input("clusters", "cluster").compute(move |_inputs| {
+                let ta = transitions(inst4).map_err(|e| {
+                    ix_pipeline::executor::PipelineError::ComputeError(e.to_string())
+                })?;
+                Ok(json!({
+                    "edge_count": ta.edges.len(),
+                    "path_count": ta.shortest_paths.len(),
+                    "status": "ok"
+                }))
+            })
         })
         .node("progressions", move |b| {
-            b.input("trans", "transitions")
-                .compute(move |_inputs| {
-                    let pa = progressions(inst5)
-                        .map_err(|e| ix_pipeline::executor::PipelineError::ComputeError(e.to_string()))?;
-                    Ok(json!({
-                        "parse_counts": pa.parse_counts,
-                        "status": "ok"
-                    }))
-                })
+            b.input("trans", "transitions").compute(move |_inputs| {
+                let pa = progressions(inst5).map_err(|e| {
+                    ix_pipeline::executor::PipelineError::ComputeError(e.to_string())
+                })?;
+                Ok(json!({
+                    "parse_counts": pa.parse_counts,
+                    "status": "ok"
+                }))
+            })
         })
         .build()
         .expect("voicings pipeline DAG should be acyclic")
@@ -1661,7 +1698,10 @@ mod tests {
             .position(|c| *c == "fret_span")
             .unwrap();
         let sum: f64 = matrix.iter().map(|r| r[col_idx]).sum();
-        assert!(sum.abs() < 1e-9, "z-scored column should sum to ~0, got {sum}");
+        assert!(
+            sum.abs() < 1e-9,
+            "z-scored column should sum to ~0, got {sum}"
+        );
         assert!(norms.contains_key("fret_span"));
     }
 
@@ -1672,7 +1712,14 @@ mod tests {
             instrument: "guitar".into(),
             string_count: 6,
             diagram: "0-0-0-2-3-x".into(),
-            frets: vec!["0".into(), "0".into(), "0".into(), "2".into(), "3".into(), "x".into()],
+            frets: vec![
+                "0".into(),
+                "0".into(),
+                "0".into(),
+                "2".into(),
+                "3".into(),
+                "x".into(),
+            ],
             midi_notes: vec![64, 59, 55, 52, 48, 40],
             min_fret: 0,
             max_fret: 3,
@@ -1693,7 +1740,10 @@ mod tests {
         // Shift fret 0 -> 2 on first string
         b.frets[0] = "2".into();
         let cost = movement_cost(&a, &b);
-        assert!(cost >= 2.0, "cost should include fret delta of 2, got {cost}");
+        assert!(
+            cost >= 2.0,
+            "cost should include fret delta of 2, got {cost}"
+        );
     }
 
     #[test]
@@ -1703,7 +1753,10 @@ mod tests {
         b.frets[5] = "1".into(); // now played
         let cost = movement_cost(&a, &b);
         // Should include a 2.0 penalty for muted->played
-        assert!(cost >= 2.0, "cost should include mute toggle penalty, got {cost}");
+        assert!(
+            cost >= 2.0,
+            "cost should include mute toggle penalty, got {cost}"
+        );
     }
 
     #[test]
@@ -1712,14 +1765,16 @@ mod tests {
         let data = Array2::from_shape_vec(
             (6, 2),
             vec![
-                0.0, 0.0, 0.1, 0.0, 0.0, 0.1,
-                10.0, 10.0, 10.1, 10.0, 10.0, 10.1,
+                0.0, 0.0, 0.1, 0.0, 0.0, 0.1, 10.0, 10.0, 10.1, 10.0, 10.0, 10.1,
             ],
         )
         .unwrap();
         let labels = vec![0, 0, 0, 1, 1, 1];
         let sil = silhouette_score(&data, &labels);
-        assert!(sil > 0.5, "Well-separated clusters should have high silhouette, got {sil}");
+        assert!(
+            sil > 0.5,
+            "Well-separated clusters should have high silhouette, got {sil}"
+        );
     }
 
     #[test]

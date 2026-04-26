@@ -9,12 +9,16 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use ix_voicings::{
-    build_pipeline, cluster, enumerate, featurize, progressions, render_book,
-    run_manifest, topology, transitions, viz_precompute, Instrument, VoicingsError,
+    build_pipeline, cluster, enumerate, featurize, progressions, render_book, run_manifest,
+    topology, transitions, viz_precompute, Instrument, VoicingsError,
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "ix-voicings", version, about = "Voicings study pipeline (Phase A + B)")]
+#[command(
+    name = "ix-voicings",
+    version,
+    about = "Voicings study pipeline (Phase A + B)"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -73,7 +77,10 @@ fn main() -> ExitCode {
                 match run_phase_a(instrument, cli.export_max) {
                     Ok(()) => {}
                     Err(e) => {
-                        eprintln!("ix-voicings phase-a failed for {}: {e}", instrument.as_str());
+                        eprintln!(
+                            "ix-voicings phase-a failed for {}: {e}",
+                            instrument.as_str()
+                        );
                         return ExitCode::from(1);
                     }
                 }
@@ -84,7 +91,10 @@ fn main() -> ExitCode {
                 match run_phase_b(instrument) {
                     Ok(()) => {}
                     Err(e) => {
-                        eprintln!("ix-voicings phase-b failed for {}: {e}", instrument.as_str());
+                        eprintln!(
+                            "ix-voicings phase-b failed for {}: {e}",
+                            instrument.as_str()
+                        );
                         return ExitCode::from(1);
                     }
                 }
@@ -100,26 +110,25 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Some(Commands::VizPrecompute) => {
-            match viz_precompute::run_viz_precompute(&instruments) {
-                Ok(manifest) => {
-                    eprintln!(
-                        "ix-voicings viz-precompute: {} clusters, {} voicings across {:?}",
-                        manifest.cluster_count, manifest.voicing_count, manifest.instruments
-                    );
-                    eprintln!("Output: {}", viz_precompute::viz_root().display());
-                }
-                Err(e) => {
-                    eprintln!("ix-voicings viz-precompute failed: {e}");
-                    return ExitCode::from(1);
-                }
+        Some(Commands::VizPrecompute) => match viz_precompute::run_viz_precompute(&instruments) {
+            Ok(manifest) => {
+                eprintln!(
+                    "ix-voicings viz-precompute: {} clusters, {} voicings across {:?}",
+                    manifest.cluster_count, manifest.voicing_count, manifest.instruments
+                );
+                eprintln!("Output: {}", viz_precompute::viz_root().display());
             }
-        }
+            Err(e) => {
+                eprintln!("ix-voicings viz-precompute failed: {e}");
+                return ExitCode::from(1);
+            }
+        },
         Some(Commands::Pipeline) => {
             for &instrument in &instruments {
                 let dag = build_pipeline(instrument);
                 let inputs = HashMap::new();
-                match ix_pipeline::executor::execute(&dag, &inputs, &ix_pipeline::executor::NoCache) {
+                match ix_pipeline::executor::execute(&dag, &inputs, &ix_pipeline::executor::NoCache)
+                {
                     Ok(result) => {
                         eprintln!(
                             "Pipeline for {} completed in {:?}",
@@ -153,10 +162,7 @@ fn run_phase_a(instrument: Instrument, export_max: Option<usize>) -> Result<(), 
 fn run_phase_b(instrument: Instrument) -> Result<(), VoicingsError> {
     eprintln!("[{}] Running cluster...", instrument.as_str());
     match cluster(instrument) {
-        Ok(ca) => eprintln!(
-            "  cluster: k={}, silhouette={:.4}",
-            ca.k, ca.silhouette
-        ),
+        Ok(ca) => eprintln!("  cluster: k={}, silhouette={:.4}", ca.k, ca.silhouette),
         Err(e) => eprintln!("  cluster FAILED: {e}"),
     }
 
