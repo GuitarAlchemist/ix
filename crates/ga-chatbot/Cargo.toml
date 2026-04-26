@@ -23,6 +23,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+ix-bracelet = { workspace = true }
 
 [[bin]]
 name = "ga-chatbot"

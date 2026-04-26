@@ -1,0 +1,6 @@
+{"id": "algebra-001", "category": "algebra", "prompt": "Are C major and C minor triads in the same set class?", "expected_check": "deterministic", "expected_verdict": "T"}
+{"id": "algebra-002", "category": "algebra", "prompt": "What is the interval-class vector of the C major scale?", "expected_check": "deterministic", "expected_verdict": "T"}
+{"id": "algebra-003", "category": "algebra", "prompt": "Are C major and C natural minor scales harmonically equivalent in interval content?", "expected_check": "deterministic", "expected_verdict": "T"}
+{"id": "algebra-004", "category": "algebra", "prompt": "Is Db7 a valid substitution for G7?", "expected_check": "deterministic", "expected_verdict": "T"}
+{"id": "algebra-005", "category": "algebra", "prompt": "Are Forte 4-Z15 and 4-Z29 equivalent set classes?", "expected_check": "deterministic", "expected_verdict": "F"}
+{"id": "algebra-006", "category": "algebra", "prompt": "What is the harmonic distance between C augmented and C diminished triads?", "expected_check": "deterministic", "expected_verdict": "T"}
