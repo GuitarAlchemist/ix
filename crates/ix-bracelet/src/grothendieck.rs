@@ -174,6 +174,50 @@ pub fn find_nearby(source: PcSet, max_l1: u32) -> Vec<(PcSet, Delta, u32)> {
     out
 }
 
+/// Pairs of D₁₂ orbit representatives that share an interval-class vector but
+/// belong to **different** orbits — the classical "Z-relation" of set theory.
+///
+/// Z-related sets are interesting precisely because the ICV does *not*
+/// distinguish them: any embedding that compresses voicings down to ICV-only
+/// would collapse Z-pairs into the same point even though they are distinct
+/// set classes. Phase-3 OPTIC-K invariant checks use this list to verify
+/// STRUCTURE doesn't accidentally degenerate to ICV: voicings drawn from
+/// Z-related orbit reps MUST have STRUCTURE cosine strictly less than 1.0.
+///
+/// Returns each pair as `(rep_a, rep_b)` with `rep_a.raw() < rep_b.raw()` for
+/// stable iteration. Counts: in 12-TET, Z-related set classes appear at
+/// cardinalities 4 (one pair), 5 (three pairs), 6 (the "all-Z hexachords",
+/// 15 pairs), 7 (three pairs, complements of 5), and 8 (one pair, complement
+/// of 4). Total: 23 unordered pairs.
+pub fn z_related_pairs() -> Vec<(PcSet, PcSet)> {
+    use std::collections::BTreeMap;
+    let primes = all_prime_forms();
+    // Key by (cardinality, ICV) so the empty set's all-zero ICV doesn't
+    // collide with a singleton's all-zero ICV — Z-relation requires equal
+    // cardinality by definition.
+    let mut by_card_icv: BTreeMap<(u32, [u32; 6]), Vec<PcSet>> = BTreeMap::new();
+    for &p in primes {
+        by_card_icv
+            .entry((p.cardinality(), icv(p).data))
+            .or_default()
+            .push(p);
+    }
+    let mut pairs = Vec::new();
+    for sets in by_card_icv.values() {
+        if sets.len() < 2 {
+            continue;
+        }
+        // Stable ordering: sets are already in `all_prime_forms()` order
+        // (sorted by raw mask), so emit (i, j) with i < j.
+        for i in 0..sets.len() {
+            for j in (i + 1)..sets.len() {
+                pairs.push((sets[i], sets[j]));
+            }
+        }
+    }
+    pairs
+}
+
 /// Search-state node for the harmonic-path A* — pairs the current PC-set with
 /// the (constant) target so the state implements the goal predicate locally.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -466,6 +510,73 @@ mod tests {
         let c_maj = pcset(&[0, 4, 7]);
         let c_aug = pcset(&[0, 4, 8]);
         assert!(find_shortest_path(c_maj, c_aug, 0).is_empty());
+    }
+
+    #[test]
+    fn z_related_pairs_have_identical_icvs() {
+        // Definitional check: every pair returned must share an ICV.
+        let pairs = z_related_pairs();
+        assert!(!pairs.is_empty(), "12-TET has known Z-pairs at cardinalities 4-8");
+        for (a, b) in &pairs {
+            assert_eq!(
+                icv(*a),
+                icv(*b),
+                "Z-pair {a} ↔ {b} disagrees on ICV (would not be Z-related)"
+            );
+            assert_ne!(a, b, "Z-pair must consist of distinct orbit reps");
+        }
+    }
+
+    #[test]
+    fn z_related_pairs_belong_to_different_orbits() {
+        // Z-pairs are by definition different orbits — same ICV, different
+        // bracelet prime form. (Same orbit ⇒ same prime form ⇒ same listed rep,
+        // so this collapses to "the pair members differ" but worth pinning.)
+        use crate::prime_form::bracelet_prime_form;
+        for (a, b) in z_related_pairs() {
+            assert_ne!(
+                bracelet_prime_form(a),
+                bracelet_prime_form(b),
+                "Z-pair {a} ↔ {b} share a bracelet prime form — they are the same orbit"
+            );
+        }
+    }
+
+    #[test]
+    fn z_related_pairs_count_matches_12tet_literature() {
+        // Standard music-theory result: 12-TET has exactly 23 unordered Z-pairs
+        // distributed across cardinalities 4 (1), 5 (3), 6 (15 — the all-Z
+        // hexachords), 7 (3, complements of card-5), 8 (1, complement of card-4).
+        // If this count drifts, either the all_prime_forms enumeration changed
+        // (224 → other) or a Z-pair was lost/gained.
+        let pairs = z_related_pairs();
+        assert_eq!(
+            pairs.len(),
+            23,
+            "Expected 23 Z-pairs in 12-TET; got {}",
+            pairs.len()
+        );
+    }
+
+    #[test]
+    fn z_related_pairs_include_canonical_4_z15_4_z29() {
+        // The smallest Z-pair: 4-Z15 = {0,1,4,6} and 4-Z29 = {0,1,3,7}.
+        // Both have ICV [1,1,1,1,1,1] (all-interval tetrachords).
+        let pairs = z_related_pairs();
+        let z15 = PcSet::from_pcs([0u8, 1, 4, 6]);
+        let z29 = PcSet::from_pcs([0u8, 1, 3, 7]);
+        let z15_pf = crate::prime_form::bracelet_prime_form(z15);
+        let z29_pf = crate::prime_form::bracelet_prime_form(z29);
+
+        let found = pairs
+            .iter()
+            .any(|(a, b)| (*a == z15_pf && *b == z29_pf) || (*a == z29_pf && *b == z15_pf));
+        assert!(
+            found,
+            "expected canonical 4-Z15/4-Z29 pair in z_related_pairs()"
+        );
+        assert_eq!(icv(z15).data, [1, 1, 1, 1, 1, 1]);
+        assert_eq!(icv(z29).data, [1, 1, 1, 1, 1, 1]);
     }
 
     #[test]

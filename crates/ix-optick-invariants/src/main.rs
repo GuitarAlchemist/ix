@@ -14,6 +14,14 @@
 //! are pairwise cosine-similar to 1.0. STRUCTURE is computed from the PC-set
 //! bitmask alone, so this is required by construction; failures indicate
 //! octave/position information has leaked into STRUCTURE.
+//!
+//! **Phase 3** — invariant #36 (Z-pair STRUCTURE separation). Z-related set
+//! classes share an interval-class vector but live in different D₁₂ orbits
+//! (e.g. Forte 4-Z15 ↔ 4-Z29, both with ICV [1,1,1,1,1,1]). If STRUCTURE
+//! merely re-encoded ICV, Z-pairs would have cosine 1.0 — collapsing two
+//! distinct set classes into one point. So for every Z-pair represented in
+//! the corpus, STRUCTURE cosine MUST be strictly less than 1.0. This check
+//! catches the failure mode "STRUCTURE accidentally degenerated to ICV".
 
 use clap::Parser;
 use ix_invariant_coverage::coverage::{Exemplar, Firings};
@@ -61,13 +69,13 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    eprintln!("[1/4] Opening OPTIC-K index: {}", args.index.display());
+    eprintln!("[1/5] Opening OPTIC-K index: {}", args.index.display());
     let index = OptickIndex::open(&args.index)?;
     let count = index.count() as usize;
     eprintln!("      loaded {} voicings, dim={}", count, index.dimension());
 
     // ── Single pass: build both groupings simultaneously ──────────────────────
-    eprintln!("[2/4] Grouping voicings by pitch-class set...");
+    eprintln!("[2/5] Grouping voicings by pitch-class set...");
     // For #25: pc_set → instrument → representative voicing index.
     let mut by_pcs_inst: BTreeMap<u16, BTreeMap<String, usize>> = BTreeMap::new();
     // For #32: pc_set → all voicing indices (any instrument, any octave realization).
@@ -92,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fired: BTreeMap<u32, BTreeSet<String>> = BTreeMap::new();
 
     // ── Invariant #25: cross-instrument STRUCTURE equality ────────────────────
-    eprintln!("[3/4] Testing invariant #25 (cross-instrument STRUCTURE equality)...");
+    eprintln!("[3/5] Testing invariant #25 (cross-instrument STRUCTURE equality)...");
     let (ex25, fired25, viol25) = check_invariant_25(&index, &by_pcs_inst, args.tolerance);
     let tested25 = ex25.len();
     let passed25 = fired25.len();
@@ -107,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fired.insert(25u32, fired25);
 
     // ── Invariant #32: same PC-set across octaves, cosine ≈ 1.0 ──────────────
-    eprintln!("[4/4] Testing invariant #32 (same PC-set across octaves, cosine ≈ 1.0)...");
+    eprintln!("[4/5] Testing invariant #32 (same PC-set across octaves, cosine ≈ 1.0)...");
     let (ex32, fired32, viol32) = check_invariant_32(&index, &by_pcs_all, args.cosine_tolerance);
     let tested32 = ex32.len();
     let passed32 = fired32.len();
@@ -120,6 +128,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_violations("#32", &viol32);
     all_exemplars.extend(ex32);
     fired.insert(32u32, fired32);
+
+    // ── Invariant #36: Z-pair STRUCTURE separation ────────────────────────────
+    eprintln!("[5/5] Testing invariant #36 (Z-pair STRUCTURE separation, cosine < 1)...");
+    let (ex36, fired36, viol36) =
+        check_invariant_36_z_pair_separation(&index, &by_pcs_all, args.cosine_tolerance);
+    let tested36 = ex36.len();
+    let passed36 = fired36.len();
+    eprintln!(
+        "      invariant #36: {}/{} corpus-represented Z-pairs PASS, {} FAIL",
+        passed36,
+        tested36,
+        tested36 - passed36
+    );
+    print_violations("#36", &viol36);
+    all_exemplars.extend(ex36);
+    fired.insert(36u32, fired36);
 
     // ── Emit firings.json ─────────────────────────────────────────────────────
     let firings = Firings {
@@ -141,11 +165,97 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Exit non-zero if any invariant failed — lets CI gate on regressions.
-    let any_failed = (tested25 - passed25) > 0 || (tested32 - passed32) > 0;
+    let any_failed = (tested25 - passed25) > 0
+        || (tested32 - passed32) > 0
+        || (tested36 - passed36) > 0;
     if any_failed {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Invariant #36: every Z-related orbit pair represented in the corpus must
+/// have STRUCTURE cosine STRICTLY LESS than 1.0. Z-pairs share an ICV; if
+/// STRUCTURE merely re-encoded ICV they would have cosine == 1.0 and the
+/// embedding would silently merge two distinct Forte classes. This check
+/// catches that failure mode.
+///
+/// For each Z-pair `(rep_a, rep_b)` from `ix_bracelet::z_related_pairs`, we
+/// expand each rep to its full D₁₂ orbit and look up any voicing whose
+/// PC-set is in either side. If both sides are corpus-represented, we pick
+/// one voicing per side and check `cosine(STRUCTURE_a, STRUCTURE_b)` is
+/// at most `1.0 - cosine_tolerance`.
+fn check_invariant_36_z_pair_separation(
+    index: &OptickIndex,
+    by_pcs_all: &BTreeMap<u16, Vec<usize>>,
+    cosine_tolerance: f32,
+) -> (Vec<Exemplar>, BTreeSet<String>, Vec<String>) {
+    let mut exemplars = Vec::new();
+    let mut fired = BTreeSet::new();
+    let mut violations = Vec::new();
+
+    for (rep_a, rep_b) in ix_bracelet::z_related_pairs() {
+        // Expand each rep to its full D₁₂ orbit and find any corpus voicing
+        // landing on it. Pick the first voicing index found for each side.
+        let voicing_a = ix_bracelet::orbit_unique(rep_a)
+            .into_iter()
+            .find_map(|s| by_pcs_all.get(&s.raw()).and_then(|vs| vs.first().copied()));
+        let voicing_b = ix_bracelet::orbit_unique(rep_b)
+            .into_iter()
+            .find_map(|s| by_pcs_all.get(&s.raw()).and_then(|vs| vs.first().copied()));
+
+        let exemplar_id = format!(
+            "z-pair-0x{:03X}-0x{:03X}",
+            rep_a.raw(),
+            rep_b.raw()
+        );
+        let card = rep_a.cardinality();
+        let description = format!(
+            "Z-pair card={} {{ {} }} ↔ {{ {} }}",
+            card,
+            pcs_string(rep_a),
+            pcs_string(rep_b)
+        );
+
+        let (vidx_a, vidx_b) = match (voicing_a, voicing_b) {
+            (Some(a), Some(b)) => (a, b),
+            // If either side isn't represented in the corpus, skip — the test
+            // is vacuous (no two voicings to compare). Don't add an exemplar
+            // for a vacuous case so the pass/fail rate is meaningful.
+            _ => continue,
+        };
+
+        exemplars.push(Exemplar {
+            id: exemplar_id.clone(),
+            description: description.clone(),
+            kind: "embedding-invariant".to_string(),
+        });
+
+        let Some(vec_a) = index.vector(vidx_a) else { continue };
+        let Some(vec_b) = index.vector(vidx_b) else { continue };
+        let slice_a = &vec_a[STRUCTURE_OFFSET..STRUCTURE_OFFSET + STRUCTURE_DIM];
+        let slice_b = &vec_b[STRUCTURE_OFFSET..STRUCTURE_OFFSET + STRUCTURE_DIM];
+        let cos = cosine(slice_a, slice_b);
+
+        // PASS iff cos is meaningfully less than 1.0 (i.e. STRUCTURE
+        // distinguishes the two orbits). Use the same cosine_tolerance as #32
+        // — anything within tolerance of 1.0 is treated as "STRUCTURE
+        // collapsed to ICV", which is the failure we want to catch.
+        if cos <= 1.0 - cosine_tolerance {
+            fired.insert(exemplar_id);
+        } else if violations.len() < 5 {
+            violations.push(format!("  {} — cos={:.6}", description, cos));
+        }
+    }
+
+    (exemplars, fired, violations)
+}
+
+fn pcs_string(set: ix_bracelet::PcSet) -> String {
+    set.iter_pcs()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Invariant #25: voicings with identical PC-set across instruments must have
