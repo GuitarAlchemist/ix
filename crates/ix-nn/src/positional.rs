@@ -70,8 +70,8 @@ pub fn rope_rotate(x: &Array2<f64>, base: f64) -> Array2<f64> {
 /// Returns `(max_len, d_model)` matrix initialized with small random values.
 /// In a real model, these would be trained via backprop.
 pub fn learned_embedding(max_len: usize, d_model: usize, seed: u64) -> Array2<f64> {
-    use rand::SeedableRng;
     use rand::Rng;
+    use rand::SeedableRng;
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let std = (1.0 / d_model as f64).sqrt();
     Array2::from_shape_fn((max_len, d_model), |_| rng.random_range(-std..std))
@@ -123,7 +123,7 @@ mod tests {
     fn test_sinusoidal_bounded() {
         let pe = sinusoidal_encoding(100, 32);
         for &v in pe.iter() {
-            assert!(v >= -1.0 && v <= 1.0, "PE values must be in [-1, 1]");
+            assert!((-1.0..=1.0).contains(&v), "PE values must be in [-1, 1]");
         }
     }
 
@@ -145,7 +145,10 @@ mod tests {
         for pos in 0..4 {
             let orig_norm: f64 = x.row(pos).iter().map(|v| v * v).sum::<f64>().sqrt();
             let rot_norm: f64 = rotated.row(pos).iter().map(|v| v * v).sum::<f64>().sqrt();
-            assert!((orig_norm - rot_norm).abs() < 1e-10, "RoPE should preserve norm");
+            assert!(
+                (orig_norm - rot_norm).abs() < 1e-10,
+                "RoPE should preserve norm"
+            );
         }
     }
 

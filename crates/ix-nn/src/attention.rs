@@ -18,7 +18,7 @@
 //! assert_eq!(weights.shape(), &[1, 4, 4]);
 //! ```
 
-use ndarray::{Array2, Array3, s};
+use ndarray::{s, Array2, Array3};
 
 /// Softmax along the last axis of a 2D array.
 pub fn softmax_2d(x: &Array2<f64>) -> Array2<f64> {
@@ -39,9 +39,7 @@ pub fn softmax_2d(x: &Array2<f64>) -> Array2<f64> {
 /// Returns a `seq_len × seq_len` matrix where `mask[i][j] = -1e9` if `j > i`,
 /// else `0.0`. Add this to attention scores before softmax.
 pub fn causal_mask(seq_len: usize) -> Array2<f64> {
-    Array2::from_shape_fn((seq_len, seq_len), |(i, j)| {
-        if j > i { -1e9 } else { 0.0 }
-    })
+    Array2::from_shape_fn((seq_len, seq_len), |(i, j)| if j > i { -1e9 } else { 0.0 })
 }
 
 /// Scaled dot-product attention.
@@ -333,13 +331,22 @@ pub fn multi_head_attention_forward_cache(
     let mut concat = Array3::zeros((batch, seq_len, d_model));
     for (h, head_out) in head_outputs.iter().enumerate() {
         let start = h * d_k;
-        concat.slice_mut(s![.., .., start..start + d_k]).assign(head_out);
+        concat
+            .slice_mut(s![.., .., start..start + d_k])
+            .assign(head_out);
     }
 
     // Output projection
     let output = matmul_3d_2d(&concat, w_o);
 
-    (output, head_weights, all_head_q, all_head_k, all_head_v, concat)
+    (
+        output,
+        head_weights,
+        all_head_q,
+        all_head_k,
+        all_head_v,
+        concat,
+    )
 }
 
 /// Multi-head attention.
@@ -395,7 +402,9 @@ pub fn multi_head_attention(
     let mut concat = Array3::zeros((batch, seq_len, d_model));
     for (h, head_out) in head_outputs.iter().enumerate() {
         let start = h * d_k;
-        concat.slice_mut(s![.., .., start..start + d_k]).assign(head_out);
+        concat
+            .slice_mut(s![.., .., start..start + d_k])
+            .assign(head_out);
     }
 
     // Output projection
@@ -558,7 +567,9 @@ pub fn multi_head_attention_gpu(
     let mut concat = Array3::zeros((batch, seq_len, d_model));
     for (h, head_out) in head_outputs.iter().enumerate() {
         let start = h * d_k;
-        concat.slice_mut(s![.., .., start..start + d_k]).assign(head_out);
+        concat
+            .slice_mut(s![.., .., start..start + d_k])
+            .assign(head_out);
     }
 
     // Output projection via GPU matmul
@@ -726,9 +737,8 @@ mod tests {
         let w_v = w_q.clone();
         let w_o = w_q.clone();
 
-        let (out, head_weights) = multi_head_attention(
-            &q, &k, &v, &w_q, &w_k, &w_v, &w_o, n_heads, None,
-        );
+        let (out, head_weights) =
+            multi_head_attention(&q, &k, &v, &w_q, &w_k, &w_v, &w_o, n_heads, None);
         assert_eq!(out.shape(), &[1, 4, d_model]);
         assert_eq!(head_weights.len(), n_heads);
         assert_eq!(head_weights[0].shape(), &[1, 4, 4]);
@@ -743,9 +753,7 @@ mod tests {
         let v = Array3::ones((1, 3, d));
         let eye = Array2::from_diag(&ndarray::Array1::ones(d));
 
-        let (mh_out, _) = multi_head_attention(
-            &q, &k, &v, &eye, &eye, &eye, &eye, 1, None,
-        );
+        let (mh_out, _) = multi_head_attention(&q, &k, &v, &eye, &eye, &eye, &eye, 1, None);
         let (sh_out, _) = scaled_dot_product_attention(&q, &k, &v, None);
 
         for (a, b) in mh_out.iter().zip(sh_out.iter()) {
@@ -762,9 +770,7 @@ mod tests {
         let eye = Array2::from_diag(&ndarray::Array1::ones(d));
         let mask = causal_mask(3);
 
-        let (out, _) = multi_head_attention(
-            &q, &k, &v, &eye, &eye, &eye, &eye, 2, Some(&mask),
-        );
+        let (out, _) = multi_head_attention(&q, &k, &v, &eye, &eye, &eye, &eye, 2, Some(&mask));
         assert_eq!(out.shape(), &[1, 3, d]);
     }
 
@@ -883,16 +889,13 @@ mod tests {
         let mut w_v = w_q.clone();
         let mut w_o = w_q.clone();
 
-        let (_, weights, hq, hk, hv, concat) = multi_head_attention_forward_cache(
-            &q, &k, &v, &w_q, &w_k, &w_v, &w_o, n_heads, None,
-        );
+        let (_, weights, hq, hk, hv, concat) =
+            multi_head_attention_forward_cache(&q, &k, &v, &w_q, &w_k, &w_v, &w_o, n_heads, None);
 
         let grad_out = Array3::ones((1, 3, d_model));
         let grad_input = multi_head_attention_backward(
-            &grad_out, &q, &k, &v,
-            &mut w_q, &mut w_k, &mut w_v, &mut w_o,
-            &weights, &hq, &hk, &hv, &concat,
-            n_heads, 0.01,
+            &grad_out, &q, &k, &v, &mut w_q, &mut w_k, &mut w_v, &mut w_o, &weights, &hq, &hk, &hv,
+            &concat, n_heads, 0.01,
         );
         assert_eq!(grad_input.shape(), &[1, 3, d_model]);
     }
@@ -908,18 +911,15 @@ mod tests {
         let mut w_o = w_q.clone();
         let w_q_before = w_q.clone();
 
-        let (_, weights, hq, hk, hv, concat) = multi_head_attention_forward_cache(
-            &q, &q, &q, &w_q, &w_k, &w_v, &w_o, n_heads, None,
-        );
+        let (_, weights, hq, hk, hv, concat) =
+            multi_head_attention_forward_cache(&q, &q, &q, &w_q, &w_k, &w_v, &w_o, n_heads, None);
 
         let grad_out = Array3::from_shape_fn((1, 3, d_model), |(_, i, j)| {
             (i as f64 - 1.0) * (j as f64 - 1.5)
         });
         let _grad_input = multi_head_attention_backward(
-            &grad_out, &q, &q, &q,
-            &mut w_q, &mut w_k, &mut w_v, &mut w_o,
-            &weights, &hq, &hk, &hv, &concat,
-            n_heads, 0.1,
+            &grad_out, &q, &q, &q, &mut w_q, &mut w_k, &mut w_v, &mut w_o, &weights, &hq, &hk, &hv,
+            &concat, n_heads, 0.1,
         );
 
         let diff: f64 = (&w_q - &w_q_before).mapv(|v| v.abs()).sum();
@@ -942,7 +942,10 @@ mod tests {
             assert!((a - b).abs() < 1e-15, "fallback should be identical to CPU");
         }
         for (a, b) in cpu_w.iter().zip(gpu_w.iter()) {
-            assert!((a - b).abs() < 1e-15, "fallback weights should be identical to CPU");
+            assert!(
+                (a - b).abs() < 1e-15,
+                "fallback weights should be identical to CPU"
+            );
         }
     }
 
@@ -984,10 +987,16 @@ mod tests {
             scaled_dot_product_attention_gpu(&q, &k, &v, Some(&mask), ctx.as_ref());
 
         for (a, b) in cpu_out.iter().zip(gpu_out.iter()) {
-            assert!((a - b).abs() < 1e-5, "masked output mismatch: cpu={a}, gpu={b}");
+            assert!(
+                (a - b).abs() < 1e-5,
+                "masked output mismatch: cpu={a}, gpu={b}"
+            );
         }
         for (a, b) in cpu_w.iter().zip(gpu_w.iter()) {
-            assert!((a - b).abs() < 1e-5, "masked weights mismatch: cpu={a}, gpu={b}");
+            assert!(
+                (a - b).abs() < 1e-5,
+                "masked weights mismatch: cpu={a}, gpu={b}"
+            );
         }
     }
 
@@ -1008,8 +1017,7 @@ mod tests {
                 });
 
                 let (cpu_out, _) = scaled_dot_product_attention(&q, &k, &v, None);
-                let (gpu_out, _) =
-                    scaled_dot_product_attention_gpu(&q, &k, &v, None, ctx.as_ref());
+                let (gpu_out, _) = scaled_dot_product_attention_gpu(&q, &k, &v, None, ctx.as_ref());
 
                 for (a, b) in cpu_out.iter().zip(gpu_out.iter()) {
                     assert!(
@@ -1030,12 +1038,9 @@ mod tests {
         let v = Array3::ones((1, 4, d_model));
         let eye = Array2::from_diag(&ndarray::Array1::ones(d_model));
 
-        let (cpu_out, _) = multi_head_attention(
-            &q, &k, &v, &eye, &eye, &eye, &eye, n_heads, None,
-        );
-        let (gpu_out, _) = multi_head_attention_gpu(
-            &q, &k, &v, &eye, &eye, &eye, &eye, n_heads, None, None,
-        );
+        let (cpu_out, _) = multi_head_attention(&q, &k, &v, &eye, &eye, &eye, &eye, n_heads, None);
+        let (gpu_out, _) =
+            multi_head_attention_gpu(&q, &k, &v, &eye, &eye, &eye, &eye, n_heads, None, None);
 
         for (a, b) in cpu_out.iter().zip(gpu_out.iter()) {
             assert!((a - b).abs() < 1e-15, "fallback mismatch");
@@ -1052,11 +1057,18 @@ mod tests {
         let v = Array3::ones((1, 4, d_model));
         let eye = Array2::from_diag(&ndarray::Array1::ones(d_model));
 
-        let (cpu_out, _) = multi_head_attention(
-            &q, &k, &v, &eye, &eye, &eye, &eye, n_heads, None,
-        );
+        let (cpu_out, _) = multi_head_attention(&q, &k, &v, &eye, &eye, &eye, &eye, n_heads, None);
         let (gpu_out, _) = multi_head_attention_gpu(
-            &q, &k, &v, &eye, &eye, &eye, &eye, n_heads, None, ctx.as_ref(),
+            &q,
+            &k,
+            &v,
+            &eye,
+            &eye,
+            &eye,
+            &eye,
+            n_heads,
+            None,
+            ctx.as_ref(),
         );
 
         for (a, b) in cpu_out.iter().zip(gpu_out.iter()) {
@@ -1078,11 +1090,19 @@ mod tests {
         let eye = Array2::from_diag(&ndarray::Array1::ones(d_model));
         let mask = causal_mask(3);
 
-        let (cpu_out, _) = multi_head_attention(
-            &q, &k, &v, &eye, &eye, &eye, &eye, n_heads, Some(&mask),
-        );
+        let (cpu_out, _) =
+            multi_head_attention(&q, &k, &v, &eye, &eye, &eye, &eye, n_heads, Some(&mask));
         let (gpu_out, _) = multi_head_attention_gpu(
-            &q, &k, &v, &eye, &eye, &eye, &eye, n_heads, Some(&mask), ctx.as_ref(),
+            &q,
+            &k,
+            &v,
+            &eye,
+            &eye,
+            &eye,
+            &eye,
+            n_heads,
+            Some(&mask),
+            ctx.as_ref(),
         );
 
         for (a, b) in cpu_out.iter().zip(gpu_out.iter()) {

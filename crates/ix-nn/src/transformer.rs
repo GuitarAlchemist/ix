@@ -15,13 +15,12 @@
 //! assert_eq!(out.shape(), &[1, 4, d_model]);
 //! ```
 
-use ndarray::{Array1, Array2, Array3, Axis, s};
 use crate::attention::{
-    multi_head_attention, multi_head_attention_forward_cache,
-    multi_head_attention_backward,
+    multi_head_attention, multi_head_attention_backward, multi_head_attention_forward_cache,
 };
-use crate::norm::LayerNorm;
 use crate::dropout::Dropout;
+use crate::norm::LayerNorm;
+use ndarray::{s, Array1, Array2, Array3, Axis};
 
 /// Position-wise feed-forward network: two linear layers with ReLU/GELU.
 pub struct FeedForward {
@@ -38,8 +37,8 @@ pub struct FeedForward {
 impl FeedForward {
     /// Create FFN: `d_model -> d_ff -> d_model` with Xavier init.
     pub fn new(d_model: usize, d_ff: usize, seed: u64) -> Self {
-        use rand::SeedableRng;
         use rand::Rng;
+        use rand::SeedableRng;
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
         let std1 = (2.0 / (d_model + d_ff) as f64).sqrt();
@@ -102,8 +101,16 @@ impl FeedForward {
     /// `grad_output` has shape `(batch, seq, d_model)`.
     /// Returns gradient w.r.t. the input.
     pub fn backward(&mut self, grad_output: &Array3<f64>, learning_rate: f64) -> Array3<f64> {
-        let input = self.input_cache.as_ref().expect("forward_cache() not called").clone();
-        let hidden_pre = self.hidden_cache.as_ref().expect("forward_cache() not called").clone();
+        let input = self
+            .input_cache
+            .as_ref()
+            .expect("forward_cache() not called")
+            .clone();
+        let hidden_pre = self
+            .hidden_cache
+            .as_ref()
+            .expect("forward_cache() not called")
+            .clone();
 
         let batch = input.shape()[0];
         let seq = input.shape()[1];
@@ -215,9 +222,15 @@ impl TransformerBlock {
     }
 
     /// Create a transformer block with dropout.
-    pub fn new_with_dropout(d_model: usize, n_heads: usize, d_ff: usize, seed: u64, dropout: f64) -> Self {
-        use rand::SeedableRng;
+    pub fn new_with_dropout(
+        d_model: usize,
+        n_heads: usize,
+        d_ff: usize,
+        seed: u64,
+        dropout: f64,
+    ) -> Self {
         use rand::Rng;
+        use rand::SeedableRng;
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let std = (1.0 / d_model as f64).sqrt();
 
@@ -256,9 +269,15 @@ impl TransformerBlock {
         // Pre-norm + multi-head attention + residual
         let normed1 = self.norm_3d(&self.norm1, x);
         let (attn_out, _) = multi_head_attention(
-            &normed1, &normed1, &normed1,
-            &self.w_q, &self.w_k, &self.w_v, &self.w_o,
-            self.n_heads, mask,
+            &normed1,
+            &normed1,
+            &normed1,
+            &self.w_q,
+            &self.w_k,
+            &self.w_v,
+            &self.w_o,
+            self.n_heads,
+            mask,
         );
         let residual1 = x + &attn_out;
 
@@ -289,9 +308,15 @@ impl TransformerBlock {
         // Multi-head attention with cache for backward pass
         let _ = gpu_ctx; // GPU forward path not yet differentiated; kept for API stability
         let (attn_out, weights, hq, hk, hv, concat) = multi_head_attention_forward_cache(
-            &normed1, &normed1, &normed1,
-            &self.w_q, &self.w_k, &self.w_v, &self.w_o,
-            self.n_heads, mask,
+            &normed1,
+            &normed1,
+            &normed1,
+            &self.w_q,
+            &self.w_k,
+            &self.w_v,
+            &self.w_o,
+            self.n_heads,
+            mask,
         );
 
         // Apply dropout after attention
@@ -322,14 +347,41 @@ impl TransformerBlock {
     /// `grad_output` has shape `(batch, seq_len, d_model)`.
     /// Returns gradient w.r.t. the block input.
     pub fn backward(&mut self, grad_output: &Array3<f64>, learning_rate: f64) -> Array3<f64> {
-        let input = self.input_cache.as_ref().expect("forward_cache() not called").clone();
-        let normed1 = self.normed1_cache.as_ref().expect("forward_cache() not called").clone();
-        let residual1 = self.residual1_cache.as_ref().expect("forward_cache() not called").clone();
-        let attn_weights = self.attn_weights_cache.take().expect("forward_cache() not called");
-        let head_q = self.head_q_cache.take().expect("forward_cache() not called");
-        let head_k = self.head_k_cache.take().expect("forward_cache() not called");
-        let head_v = self.head_v_cache.take().expect("forward_cache() not called");
-        let concat = self.concat_cache.take().expect("forward_cache() not called");
+        let input = self
+            .input_cache
+            .as_ref()
+            .expect("forward_cache() not called")
+            .clone();
+        let normed1 = self
+            .normed1_cache
+            .as_ref()
+            .expect("forward_cache() not called")
+            .clone();
+        let residual1 = self
+            .residual1_cache
+            .as_ref()
+            .expect("forward_cache() not called")
+            .clone();
+        let attn_weights = self
+            .attn_weights_cache
+            .take()
+            .expect("forward_cache() not called");
+        let head_q = self
+            .head_q_cache
+            .take()
+            .expect("forward_cache() not called");
+        let head_k = self
+            .head_k_cache
+            .take()
+            .expect("forward_cache() not called");
+        let head_v = self
+            .head_v_cache
+            .take()
+            .expect("forward_cache() not called");
+        let concat = self
+            .concat_cache
+            .take()
+            .expect("forward_cache() not called");
 
         // --- Backward through residual2: output = residual1 + ffn_out ---
         let grad_ffn_out = grad_output.clone();
@@ -341,7 +393,8 @@ impl TransformerBlock {
         let grad_normed2 = self.ffn.backward(&grad_ffn_out, learning_rate);
 
         // --- Backward through norm2 ---
-        let grad_residual1_from_norm2 = Self::norm_3d_backward(&mut self.norm2, &grad_normed2, learning_rate);
+        let grad_residual1_from_norm2 =
+            Self::norm_3d_backward(&mut self.norm2, &grad_normed2, learning_rate);
 
         // Total gradient on residual1 = skip connection + norm2 path
         let grad_residual1 = grad_output + &grad_residual1_from_norm2;
@@ -355,14 +408,25 @@ impl TransformerBlock {
         // --- Backward through multi-head attention ---
         let grad_normed1 = multi_head_attention_backward(
             &grad_attn_out,
-            &normed1, &normed1, &normed1,
-            &mut self.w_q, &mut self.w_k, &mut self.w_v, &mut self.w_o,
-            &attn_weights, &head_q, &head_k, &head_v, &concat,
-            self.n_heads, learning_rate,
+            &normed1,
+            &normed1,
+            &normed1,
+            &mut self.w_q,
+            &mut self.w_k,
+            &mut self.w_v,
+            &mut self.w_o,
+            &attn_weights,
+            &head_q,
+            &head_k,
+            &head_v,
+            &concat,
+            self.n_heads,
+            learning_rate,
         );
 
         // --- Backward through norm1 ---
-        let grad_input_from_norm1 = Self::norm_3d_backward(&mut self.norm1, &grad_normed1, learning_rate);
+        let grad_input_from_norm1 =
+            Self::norm_3d_backward(&mut self.norm1, &grad_normed1, learning_rate);
 
         // Total gradient on input = skip connection + norm1 path
         let grad_input = &grad_residual1 + &grad_input_from_norm1;
@@ -399,13 +463,22 @@ impl TransformerBlock {
     }
 
     /// Backward through norm_3d: reshape to 2D, call LayerNorm backward, reshape back.
-    fn norm_3d_backward(norm: &mut LayerNorm, grad: &Array3<f64>, learning_rate: f64) -> Array3<f64> {
+    fn norm_3d_backward(
+        norm: &mut LayerNorm,
+        grad: &Array3<f64>,
+        learning_rate: f64,
+    ) -> Array3<f64> {
         let batch = grad.shape()[0];
         let seq = grad.shape()[1];
         let d = grad.shape()[2];
-        let grad_flat = grad.clone().into_shape_with_order((batch * seq, d)).unwrap();
+        let grad_flat = grad
+            .clone()
+            .into_shape_with_order((batch * seq, d))
+            .unwrap();
         let grad_input_flat = norm.backward(&grad_flat, learning_rate);
-        grad_input_flat.into_shape_with_order((batch, seq, d)).unwrap()
+        grad_input_flat
+            .into_shape_with_order((batch, seq, d))
+            .unwrap()
     }
 }
 
@@ -423,13 +496,23 @@ impl TransformerStack {
 
     /// Create a stack of `n_layers` transformer blocks with dropout.
     pub fn new_with_dropout(
-        n_layers: usize, d_model: usize, n_heads: usize, d_ff: usize,
-        seed: u64, dropout: f64,
+        n_layers: usize,
+        d_model: usize,
+        n_heads: usize,
+        d_ff: usize,
+        seed: u64,
+        dropout: f64,
     ) -> Self {
         let blocks = (0..n_layers)
-            .map(|i| TransformerBlock::new_with_dropout(
-                d_model, n_heads, d_ff, seed + i as u64 * 100, dropout,
-            ))
+            .map(|i| {
+                TransformerBlock::new_with_dropout(
+                    d_model,
+                    n_heads,
+                    d_ff,
+                    seed + i as u64 * 100,
+                    dropout,
+                )
+            })
             .collect();
         Self {
             blocks,
@@ -487,9 +570,14 @@ impl TransformerStack {
         let batch = grad_output.shape()[0];
         let seq = grad_output.shape()[1];
         let d = grad_output.shape()[2];
-        let grad_flat = grad_output.clone().into_shape_with_order((batch * seq, d)).unwrap();
+        let grad_flat = grad_output
+            .clone()
+            .into_shape_with_order((batch * seq, d))
+            .unwrap();
         let grad_after_norm = self.final_norm.backward(&grad_flat, learning_rate);
-        let mut grad = grad_after_norm.into_shape_with_order((batch, seq, d)).unwrap();
+        let mut grad = grad_after_norm
+            .into_shape_with_order((batch, seq, d))
+            .unwrap();
 
         // Backward through blocks in reverse
         for block in self.blocks.iter_mut().rev() {
@@ -607,9 +695,8 @@ mod tests {
         let w2_before = ffn.w2.clone();
         let x = Array3::from_shape_fn((1, 3, 4), |(_, i, j)| (i + j) as f64 * 0.2);
         let _out = ffn.forward_cache(&x);
-        let grad_out = Array3::from_shape_fn((1, 3, 4), |(_, i, j)| {
-            (i as f64 - 1.0) * (j as f64 - 1.5)
-        });
+        let grad_out =
+            Array3::from_shape_fn((1, 3, 4), |(_, i, j)| (i as f64 - 1.0) * (j as f64 - 1.5));
         let _grad_in = ffn.backward(&grad_out, 0.1);
         let diff_w1: f64 = (&ffn.w1 - &w1_before).mapv(|v| v.abs()).sum();
         let diff_w2: f64 = (&ffn.w2 - &w2_before).mapv(|v| v.abs()).sum();
@@ -729,10 +816,16 @@ mod tests {
         let _grad_in = block.backward(&grad_out, 0.1);
         // Check output projection weights changed (most directly affected)
         let diff_wo: f64 = (&block.w_o - &w_o_before).mapv(|v| v.abs()).sum();
-        assert!(diff_wo > 1e-10, "w_o should have been updated after backward");
+        assert!(
+            diff_wo > 1e-10,
+            "w_o should have been updated after backward"
+        );
         // Check FFN weights changed
         let diff_ffn: f64 = (&block.ffn.w1 - &ffn_w1_before).mapv(|v| v.abs()).sum();
-        assert!(diff_ffn > 1e-10, "ffn.w1 should have been updated after backward");
+        assert!(
+            diff_ffn > 1e-10,
+            "ffn.w1 should have been updated after backward"
+        );
     }
 
     #[test]
@@ -804,8 +897,13 @@ mod tests {
         let _grad_in = stack.backward(&grad_out, 0.1);
         let diff_wo: f64 = (&stack.blocks[0].w_o - &wo_before).mapv(|v| v.abs()).sum();
         assert!(diff_wo > 1e-10, "first block w_o should have been updated");
-        let diff_ffn: f64 = (&stack.blocks[0].ffn.w1 - &ffn_w1_before).mapv(|v| v.abs()).sum();
-        assert!(diff_ffn > 1e-10, "first block ffn.w1 should have been updated");
+        let diff_ffn: f64 = (&stack.blocks[0].ffn.w1 - &ffn_w1_before)
+            .mapv(|v| v.abs())
+            .sum();
+        assert!(
+            diff_ffn > 1e-10,
+            "first block ffn.w1 should have been updated"
+        );
     }
 
     // --- Dropout integration tests ---

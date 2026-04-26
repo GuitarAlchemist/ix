@@ -5,8 +5,8 @@
 //! During inference, acts as identity.
 
 use ndarray::{Array2, Array3};
-use rand::SeedableRng;
 use rand::Rng;
+use rand::SeedableRng;
 
 /// Dropout layer with inverted scaling.
 ///
@@ -52,7 +52,11 @@ impl Dropout {
         }
         let scale = 1.0 / (1.0 - self.p);
         let mask = Array2::from_shape_fn(x.raw_dim(), |_| {
-            if self.rng.random::<f64>() >= self.p { scale } else { 0.0 }
+            if self.rng.random::<f64>() >= self.p {
+                scale
+            } else {
+                0.0
+            }
         });
         let result = x * &mask;
         self.mask_2d = Some(mask);
@@ -68,7 +72,11 @@ impl Dropout {
         }
         let scale = 1.0 / (1.0 - self.p);
         let mask = Array3::from_shape_fn(x.raw_dim(), |_| {
-            if self.rng.random::<f64>() >= self.p { scale } else { 0.0 }
+            if self.rng.random::<f64>() >= self.p {
+                scale
+            } else {
+                0.0
+            }
         });
         let result = x * &mask;
         self.mask_3d = Some(mask);
@@ -129,7 +137,10 @@ mod tests {
         let n_zeros = out.iter().filter(|&&v| v == 0.0).count();
         // Expect roughly 50% zeros, allow wide margin
         assert!(n_zeros > 3000, "expected many zeros, got {n_zeros}");
-        assert!(n_zeros < 7000, "expected some non-zeros, got {n_zeros} zeros");
+        assert!(
+            n_zeros < 7000,
+            "expected some non-zeros, got {n_zeros} zeros"
+        );
     }
 
     #[test]
@@ -165,7 +176,10 @@ mod tests {
             if *o == 0.0 {
                 assert_eq!(*g, 0.0, "gradient should be zero where output was zero");
             } else {
-                assert!(*g > 0.0, "gradient should be non-zero where output was non-zero");
+                assert!(
+                    *g > 0.0,
+                    "gradient should be non-zero where output was non-zero"
+                );
             }
         }
     }

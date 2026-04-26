@@ -2,8 +2,8 @@
 //!
 //! Composes layers into a trainable network with forward and backward passes.
 
-use ndarray::Array2;
 use crate::layer::Layer;
+use ndarray::Array2;
 
 /// Sequential network — a stack of layers executed in order.
 pub struct Sequential {
@@ -92,7 +92,7 @@ impl Default for Sequential {
 mod tests {
     use super::*;
     use crate::layer::Dense;
-    use crate::loss::{mse_loss, mse_gradient};
+    use crate::loss::{mse_gradient, mse_loss};
     use ndarray::array;
 
     #[test]
@@ -118,8 +118,12 @@ mod tests {
 
         let losses = net.fit(&input, &target, 200, 0.01, mse_loss, mse_gradient);
 
-        assert!(losses.last().unwrap() < losses.first().unwrap(),
-            "loss should decrease: first={}, last={}", losses[0], losses.last().unwrap());
+        assert!(
+            losses.last().unwrap() < losses.first().unwrap(),
+            "loss should decrease: first={}, last={}",
+            losses[0],
+            losses.last().unwrap()
+        );
     }
 
     #[test]

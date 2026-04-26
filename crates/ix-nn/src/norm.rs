@@ -93,7 +93,10 @@ impl LayerNorm {
     /// `grad_output` has the same shape as the forward output `(rows, features)`.
     /// Returns gradient w.r.t. the input `x`.
     pub fn backward(&mut self, grad_output: &Array2<f64>, learning_rate: f64) -> Array2<f64> {
-        let xhat = self.normalized_cache.as_ref().expect("forward_cache() not called");
+        let xhat = self
+            .normalized_cache
+            .as_ref()
+            .expect("forward_cache() not called");
         let stds = self.std_cache.as_ref().expect("forward_cache() not called");
 
         let n = grad_output.ncols() as f64;
@@ -116,8 +119,7 @@ impl LayerNorm {
             let sum_gx_xh: f64 = (&gx_row * &xh_row).sum();
             let inv_std = 1.0 / stds[i];
             for j in 0..grad_output.ncols() {
-                grad_input[[i, j]] = inv_std / n
-                    * (n * gx_row[j] - sum_gx - xh_row[j] * sum_gx_xh);
+                grad_input[[i, j]] = inv_std / n * (n * gx_row[j] - sum_gx - xh_row[j] * sum_gx_xh);
             }
         }
 
@@ -301,8 +303,8 @@ impl BatchNorm {
 
         for i in 0..x.nrows() {
             for j in 0..d {
-                let xhat = (x[[i, j]] - self.running_mean[j])
-                    / (self.running_var[j] + self.eps).sqrt();
+                let xhat =
+                    (x[[i, j]] - self.running_mean[j]) / (self.running_var[j] + self.eps).sqrt();
                 result[[i, j]] = xhat * self.gamma[j] + self.beta[j];
             }
         }
@@ -314,7 +316,10 @@ impl BatchNorm {
     ///
     /// Returns gradient w.r.t. the input `x`.
     pub fn backward(&mut self, grad_output: &Array2<f64>, learning_rate: f64) -> Array2<f64> {
-        let xhat = self.normalized_cache.as_ref().expect("forward_train() not called");
+        let xhat = self
+            .normalized_cache
+            .as_ref()
+            .expect("forward_train() not called");
         let std = self.std_cache.as_ref().expect("forward_train() not called");
         let n = grad_output.nrows() as f64;
         let d = grad_output.ncols();
@@ -336,8 +341,8 @@ impl BatchNorm {
                 .sum();
 
             for i in 0..grad_output.nrows() {
-                grad_input[[i, j]] = inv_std / n
-                    * (n * grad_xhat[[i, j]] - sum_gx - xhat[[i, j]] * sum_gx_xh);
+                grad_input[[i, j]] =
+                    inv_std / n * (n * grad_xhat[[i, j]] - sum_gx - xhat[[i, j]] * sum_gx_xh);
             }
         }
 
@@ -375,7 +380,10 @@ mod tests {
         let out = ln.forward(&x);
         // Each row should have mean ≈ 0 (with gamma=1, beta=0)
         for row in out.rows() {
-            assert!(row.mean().unwrap().abs() < 1e-10, "normalized mean should be ~0");
+            assert!(
+                row.mean().unwrap().abs() < 1e-10,
+                "normalized mean should be ~0"
+            );
         }
     }
 
@@ -475,7 +483,12 @@ mod tests {
         // Each column should have mean ≈ 0
         for j in 0..3 {
             let col_mean: f64 = (0..3).map(|i| out[[i, j]]).sum::<f64>() / 3.0;
-            assert!(col_mean.abs() < 1e-10, "col {} mean should be ~0, got {}", j, col_mean);
+            assert!(
+                col_mean.abs() < 1e-10,
+                "col {} mean should be ~0, got {}",
+                j,
+                col_mean
+            );
         }
     }
 
@@ -487,7 +500,12 @@ mod tests {
         // Each column should have variance ≈ 1
         for j in 0..3 {
             let col_var: f64 = (0..3).map(|i| out[[i, j]].powi(2)).sum::<f64>() / 3.0;
-            assert!((col_var - 1.0).abs() < 0.01, "col {} var should be ~1, got {}", j, col_var);
+            assert!(
+                (col_var - 1.0).abs() < 0.01,
+                "col {} var should be ~1, got {}",
+                j,
+                col_var
+            );
         }
     }
 
@@ -497,7 +515,10 @@ mod tests {
         let x = array![[1.0, 2.0], [3.0, 4.0]];
         let _out = bn.forward_train(&x);
         // Running mean should no longer be all zeros
-        assert!(bn.running_mean.iter().any(|&v| v.abs() > 1e-10), "running mean should be updated");
+        assert!(
+            bn.running_mean.iter().any(|&v| v.abs() > 1e-10),
+            "running mean should be updated"
+        );
     }
 
     #[test]
@@ -665,7 +686,10 @@ mod tests {
         let out1 = bn.forward(&single);
         let out2 = bn.forward_inference(&single);
         for (a, b) in out1.iter().zip(out2.iter()) {
-            assert!((a - b).abs() < 1e-12, "forward() should match forward_inference()");
+            assert!(
+                (a - b).abs() < 1e-12,
+                "forward() should match forward_inference()"
+            );
         }
     }
 
@@ -677,7 +701,10 @@ mod tests {
         let out1 = bn1.forward_cache(&x);
         let out2 = bn2.forward_train(&x);
         for (a, b) in out1.iter().zip(out2.iter()) {
-            assert!((a - b).abs() < 1e-12, "forward_cache() should match forward_train()");
+            assert!(
+                (a - b).abs() < 1e-12,
+                "forward_cache() should match forward_train()"
+            );
         }
     }
 }

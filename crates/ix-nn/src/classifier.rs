@@ -3,12 +3,12 @@
 //! Wraps TransformerStack + Dense head into a model implementing
 //! the Classifier/Regressor traits from ix-supervised.
 
-use ndarray::{Array1, Array2, Array3, Axis, s};
+use ndarray::{s, Array1, Array2, Array3, Axis};
 use rand::SeedableRng;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use crate::transformer::TransformerStack;
 use crate::positional::sinusoidal_encoding;
+use crate::transformer::TransformerStack;
 use ix_supervised::traits::{Classifier, Regressor};
 
 /// Learning rate schedule.
@@ -18,17 +18,17 @@ pub enum LrSchedule {
     #[default]
     Constant,
     /// Linear warmup for `warmup_steps` steps, then cosine decay to `min_lr`.
-    WarmupCosine {
-        warmup_steps: usize,
-        min_lr: f64,
-    },
+    WarmupCosine { warmup_steps: usize, min_lr: f64 },
 }
 
 /// Compute effective learning rate for a given step.
 fn scheduled_lr(base_lr: f64, schedule: &LrSchedule, step: usize, total_steps: usize) -> f64 {
     match schedule {
         LrSchedule::Constant => base_lr,
-        LrSchedule::WarmupCosine { warmup_steps, min_lr } => {
+        LrSchedule::WarmupCosine {
+            warmup_steps,
+            min_lr,
+        } => {
             if step < *warmup_steps {
                 // Linear warmup: 0 → base_lr
                 base_lr * (step + 1) as f64 / *warmup_steps as f64
@@ -97,9 +97,9 @@ impl Default for TransformerConfig {
 pub struct TransformerClassifier {
     config: TransformerConfig,
     stack: Option<TransformerStack>,
-    head_weights: Option<Array2<f64>>,  // (d_model, n_classes)
-    head_bias: Option<Array1<f64>>,     // (n_classes,)
-    pos_encoding: Option<Array2<f64>>,  // (max_seq_len, d_model)
+    head_weights: Option<Array2<f64>>, // (d_model, n_classes)
+    head_bias: Option<Array1<f64>>,    // (n_classes,)
+    pos_encoding: Option<Array2<f64>>, // (max_seq_len, d_model)
     n_classes: usize,
     seq_len: usize,
     training_losses: Vec<f64>,
@@ -149,9 +149,12 @@ impl TransformerClassifier {
         let needed = seq_len * d_model;
         let mut padded = Array2::zeros((n, needed));
         let copy_cols = n_features.min(needed);
-        padded.slice_mut(s![.., ..copy_cols]).assign(&x.slice(s![.., ..copy_cols]));
+        padded
+            .slice_mut(s![.., ..copy_cols])
+            .assign(&x.slice(s![.., ..copy_cols]));
 
-        padded.into_shape_with_order((n, seq_len, d_model))
+        padded
+            .into_shape_with_order((n, seq_len, d_model))
             .expect("reshape failed")
     }
 
@@ -201,7 +204,12 @@ impl Classifier for TransformerClassifier {
 
         // Initialize transformer stack
         self.stack = Some(TransformerStack::new_with_dropout(
-            self.config.n_layers, d_model, self.config.n_heads, self.config.d_ff, seed, dropout_p,
+            self.config.n_layers,
+            d_model,
+            self.config.n_heads,
+            self.config.d_ff,
+            seed,
+            dropout_p,
         ));
 
         // Initialize classification head
@@ -220,7 +228,9 @@ impl Classifier for TransformerClassifier {
         }
 
         // Resolve batch size
-        let batch_size = self.config.batch_size
+        let batch_size = self
+            .config
+            .batch_size
             .map(|bs| bs.min(n_samples).max(1))
             .unwrap_or(n_samples);
 
@@ -296,7 +306,8 @@ impl Classifier for TransformerClassifier {
                             .map(|c| target_batch[[i, c]] * (probs[[i, c]] + eps).ln())
                             .sum::<f64>()
                     })
-                    .sum::<f64>() / bs as f64;
+                    .sum::<f64>()
+                    / bs as f64;
 
                 epoch_loss += loss * bs as f64;
                 epoch_count += bs;
@@ -342,7 +353,9 @@ impl Classifier for TransformerClassifier {
         let probs = self.predict_proba(x);
         let mut preds = Array1::zeros(x.nrows());
         for (i, row) in probs.rows().into_iter().enumerate() {
-            let (max_idx, _) = row.iter().enumerate()
+            let (max_idx, _) = row
+                .iter()
+                .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
                 .unwrap();
             preds[i] = max_idx;
@@ -375,7 +388,7 @@ impl Classifier for TransformerClassifier {
 pub struct TransformerRegressor {
     config: TransformerConfig,
     stack: Option<TransformerStack>,
-    head_weights: Option<Array2<f64>>,  // (d_model, 1)
+    head_weights: Option<Array2<f64>>, // (d_model, 1)
     head_bias: Option<f64>,
     pos_encoding: Option<Array2<f64>>,
     seq_len: usize,
@@ -415,8 +428,11 @@ impl TransformerRegressor {
         let needed = self.seq_len * self.config.d_model;
         let mut padded = Array2::zeros((n, needed));
         let copy_cols = n_features.min(needed);
-        padded.slice_mut(s![.., ..copy_cols]).assign(&x.slice(s![.., ..copy_cols]));
-        padded.into_shape_with_order((n, self.seq_len, self.config.d_model))
+        padded
+            .slice_mut(s![.., ..copy_cols])
+            .assign(&x.slice(s![.., ..copy_cols]));
+        padded
+            .into_shape_with_order((n, self.seq_len, self.config.d_model))
             .expect("reshape failed")
     }
 
@@ -445,7 +461,12 @@ impl Regressor for TransformerRegressor {
         let dropout_p = self.config.dropout;
 
         self.stack = Some(TransformerStack::new_with_dropout(
-            self.config.n_layers, d_model, self.config.n_heads, self.config.d_ff, seed, dropout_p,
+            self.config.n_layers,
+            d_model,
+            self.config.n_heads,
+            self.config.d_ff,
+            seed,
+            dropout_p,
         ));
         self.head_weights = Some(Self::xavier_init(d_model, 1, seed + 999));
         self.head_bias = Some(0.0);
@@ -454,7 +475,9 @@ impl Regressor for TransformerRegressor {
         let target = y.clone().into_shape_with_order((n_samples, 1)).unwrap();
 
         // Resolve batch size
-        let batch_size = self.config.batch_size
+        let batch_size = self
+            .config
+            .batch_size
             .map(|bs| bs.min(n_samples).max(1))
             .unwrap_or(n_samples);
 
@@ -590,7 +613,6 @@ fn select_rows(x: &Array2<f64>, indices: &[usize]) -> Array2<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::array;
 
     #[test]
     fn test_classifier_fit_predict() {
@@ -607,10 +629,17 @@ mod tests {
         };
 
         let x = Array2::from_shape_fn((20, 8), |(i, j)| {
-            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+            if i < 10 {
+                (j as f64) * 0.1
+            } else {
+                (j as f64) * -0.1
+            }
         });
         let y = Array1::from_vec(
-            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+            (0..10)
+                .map(|_| 0usize)
+                .chain((0..10).map(|_| 1usize))
+                .collect(),
         );
 
         let mut model = TransformerClassifier::new(config);
@@ -629,8 +658,14 @@ mod tests {
     #[test]
     fn test_classifier_predict_proba_sums_to_one() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 5, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 5,
+            learning_rate: 0.01,
+            seed: 42,
             ..Default::default()
         };
         let x = Array2::from_shape_fn((10, 8), |(i, j)| (i * j) as f64 * 0.01);
@@ -642,15 +677,25 @@ mod tests {
         let probs = model.predict_proba(&x);
         for row in probs.rows() {
             let sum: f64 = row.iter().sum();
-            assert!((sum - 1.0).abs() < 1e-6, "probs should sum to 1, got {}", sum);
+            assert!(
+                (sum - 1.0).abs() < 1e-6,
+                "probs should sum to 1, got {}",
+                sum
+            );
         }
     }
 
     #[test]
     fn test_regressor_fit_predict() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 20, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 20,
+            learning_rate: 0.01,
+            seed: 42,
             ..Default::default()
         };
         let x = Array2::from_shape_fn((20, 8), |(i, j)| i as f64 * 0.1 + j as f64 * 0.01);
@@ -667,8 +712,14 @@ mod tests {
     #[test]
     fn test_regressor_loss_decreases() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(1), epochs: 30, learning_rate: 0.001, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(1),
+            epochs: 30,
+            learning_rate: 0.001,
+            seed: 42,
             ..Default::default()
         };
         let x = Array2::from_shape_fn((10, 4), |(i, j)| (i + j) as f64);
@@ -686,14 +737,20 @@ mod tests {
     #[test]
     fn test_auto_seq_len() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: None, epochs: 1, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: None,
+            epochs: 1,
+            learning_rate: 0.01,
+            seed: 42,
             ..Default::default()
         };
 
         let model = TransformerClassifier::new(config);
-        assert_eq!(model.resolve_seq_len(12), 3);  // 12 / 4 = 3
-        assert_eq!(model.resolve_seq_len(7), 7);   // not divisible, use n_features
+        assert_eq!(model.resolve_seq_len(12), 3); // 12 / 4 = 3
+        assert_eq!(model.resolve_seq_len(7), 7); // not divisible, use n_features
     }
 
     // --- New tests for mini-batch, dropout, LR schedule, GPU ---
@@ -701,16 +758,29 @@ mod tests {
     #[test]
     fn test_mini_batch_training() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 10,
+            learning_rate: 0.01,
+            seed: 42,
             batch_size: Some(5),
             ..Default::default()
         };
         let x = Array2::from_shape_fn((20, 8), |(i, j)| {
-            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+            if i < 10 {
+                (j as f64) * 0.1
+            } else {
+                (j as f64) * -0.1
+            }
         });
         let y = Array1::from_vec(
-            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+            (0..10)
+                .map(|_| 0usize)
+                .chain((0..10).map(|_| 1usize))
+                .collect(),
         );
 
         let mut model = TransformerClassifier::new(config);
@@ -724,16 +794,29 @@ mod tests {
     #[test]
     fn test_dropout_training() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 10,
+            learning_rate: 0.01,
+            seed: 42,
             dropout: 0.1,
             ..Default::default()
         };
         let x = Array2::from_shape_fn((20, 8), |(i, j)| {
-            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+            if i < 10 {
+                (j as f64) * 0.1
+            } else {
+                (j as f64) * -0.1
+            }
         });
         let y = Array1::from_vec(
-            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+            (0..10)
+                .map(|_| 0usize)
+                .chain((0..10).map(|_| 1usize))
+                .collect(),
         );
 
         let mut model = TransformerClassifier::new(config);
@@ -747,16 +830,32 @@ mod tests {
     #[test]
     fn test_warmup_cosine_schedule() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 20, learning_rate: 0.01, seed: 42,
-            lr_schedule: LrSchedule::WarmupCosine { warmup_steps: 5, min_lr: 0.0001 },
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 20,
+            learning_rate: 0.01,
+            seed: 42,
+            lr_schedule: LrSchedule::WarmupCosine {
+                warmup_steps: 5,
+                min_lr: 0.0001,
+            },
             ..Default::default()
         };
         let x = Array2::from_shape_fn((20, 8), |(i, j)| {
-            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+            if i < 10 {
+                (j as f64) * 0.1
+            } else {
+                (j as f64) * -0.1
+            }
         });
         let y = Array1::from_vec(
-            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+            (0..10)
+                .map(|_| 0usize)
+                .chain((0..10).map(|_| 1usize))
+                .collect(),
         );
 
         let mut model = TransformerClassifier::new(config);
@@ -767,18 +866,27 @@ mod tests {
     #[test]
     fn test_scheduled_lr_warmup() {
         // During warmup, LR should increase linearly
-        let schedule = LrSchedule::WarmupCosine { warmup_steps: 10, min_lr: 0.0 };
+        let schedule = LrSchedule::WarmupCosine {
+            warmup_steps: 10,
+            min_lr: 0.0,
+        };
         let lr0 = scheduled_lr(0.1, &schedule, 0, 100);
         let lr5 = scheduled_lr(0.1, &schedule, 4, 100);
         let lr9 = scheduled_lr(0.1, &schedule, 9, 100);
         assert!(lr0 < lr5, "LR should increase during warmup: {lr0} < {lr5}");
         assert!(lr5 < lr9, "LR should increase during warmup: {lr5} < {lr9}");
-        assert!((lr9 - 0.1).abs() < 1e-10, "LR at end of warmup should equal base_lr");
+        assert!(
+            (lr9 - 0.1).abs() < 1e-10,
+            "LR at end of warmup should equal base_lr"
+        );
     }
 
     #[test]
     fn test_scheduled_lr_cosine_decay() {
-        let schedule = LrSchedule::WarmupCosine { warmup_steps: 0, min_lr: 0.0 };
+        let schedule = LrSchedule::WarmupCosine {
+            warmup_steps: 0,
+            min_lr: 0.0,
+        };
         let lr_start = scheduled_lr(0.1, &schedule, 0, 100);
         let lr_mid = scheduled_lr(0.1, &schedule, 50, 100);
         let lr_end = scheduled_lr(0.1, &schedule, 99, 100);
@@ -798,8 +906,14 @@ mod tests {
     fn test_gpu_training_fallback() {
         // With use_gpu=true but no GPU available, should fall back to CPU
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 5, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 5,
+            learning_rate: 0.01,
+            seed: 42,
             use_gpu: true,
             ..Default::default()
         };
@@ -814,8 +928,14 @@ mod tests {
     #[test]
     fn test_mini_batch_regressor() {
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 10,
+            learning_rate: 0.01,
+            seed: 42,
             batch_size: Some(4),
             ..Default::default()
         };
@@ -833,18 +953,34 @@ mod tests {
     fn test_all_features_combined() {
         // Mini-batch + dropout + warmup cosine + gpu fallback
         let config = TransformerConfig {
-            d_model: 4, n_heads: 2, n_layers: 1, d_ff: 8,
-            seq_len: Some(2), epochs: 10, learning_rate: 0.01, seed: 42,
+            d_model: 4,
+            n_heads: 2,
+            n_layers: 1,
+            d_ff: 8,
+            seq_len: Some(2),
+            epochs: 10,
+            learning_rate: 0.01,
+            seed: 42,
             dropout: 0.1,
             batch_size: Some(5),
-            lr_schedule: LrSchedule::WarmupCosine { warmup_steps: 3, min_lr: 0.0001 },
+            lr_schedule: LrSchedule::WarmupCosine {
+                warmup_steps: 3,
+                min_lr: 0.0001,
+            },
             use_gpu: true,
         };
         let x = Array2::from_shape_fn((20, 8), |(i, j)| {
-            if i < 10 { (j as f64) * 0.1 } else { (j as f64) * -0.1 }
+            if i < 10 {
+                (j as f64) * 0.1
+            } else {
+                (j as f64) * -0.1
+            }
         });
         let y = Array1::from_vec(
-            (0..10).map(|_| 0usize).chain((0..10).map(|_| 1usize)).collect()
+            (0..10)
+                .map(|_| 0usize)
+                .chain((0..10).map(|_| 1usize))
+                .collect(),
         );
 
         let mut model = TransformerClassifier::new(config);
