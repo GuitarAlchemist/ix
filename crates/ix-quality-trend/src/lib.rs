@@ -23,8 +23,12 @@ pub mod report;
 pub mod snapshot;
 pub mod trend;
 
+pub use report::{
+    build_health_artifact, is_key_metric_name, QualityAlert, QualityHealthArtifact,
+    QualityHealthStatus, QualityTrendSummary,
+};
 pub use snapshot::{
     ChatbotQaSnapshot, DatedSnapshot, EmbeddingsSnapshot, SnapshotCategory, SnapshotSet,
     VoicingAnalysisSnapshot,
 };
-pub use trend::{MetricSeries, MetricTrend, RegressionFlag, TrendDirection};
+pub use trend::{DriftFlag, MetricSeries, MetricTrend, RegressionFlag, TrendDirection};

@@ -1,0 +1,201 @@
+name: GA Nightly Quality
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ga-nightly-quality.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/ga-chatbot/**'
+      - 'crates/ix-embedding-diagnostics/**'
+      - 'crates/ix-optick/**'
+      - 'crates/ix-quality-trend/**'
+      - 'crates/ix-signal/**'
+      - 'state/voicings/**'
+      - 'tests/adversarial/**'
+  schedule:
+    # 05:15 UTC daily. GitHub-hosted, so it does not depend on a local machine
+    # staying awake. The same workflow also acts as a PR smoke test for the
+    # end-to-end quality-report path.
+    - cron: "15 5 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  GA_QUALITY_SNAPSHOTS_DIR: state/quality-snapshots
+  GA_QUALITY_OUT_DIR: state/quality
+  GA_QUALITY_TMP_DIR: /tmp/ga-quality
+
+jobs:
+  quality-report:
+    name: Build GA Quality Report
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run deterministic chatbot QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${GA_QUALITY_TMP_DIR}"
+          if cargo run -p ga-chatbot -- qa \
+            --corpus tests/adversarial/corpus \
+            --fixtures tests/adversarial/fixtures/stub-responses.jsonl \
+            --corpus-dir state/voicings \
+            --output "${GA_QUALITY_TMP_DIR}/chatbot-findings.jsonl"; then
+            echo "Deterministic QA completed without graded mismatches."
+          else
+            echo "::warning::Deterministic QA reported graded mismatches. Continuing so nightly quality artifacts are still produced."
+          fi
+
+      - name: Build CI-safe OPTIC-K index
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -p ix-quality-trend --bin ix-quality-trend-build-ci-index -- \
+            --state-dir state/voicings \
+            --out "${GA_QUALITY_TMP_DIR}/ci-reduced.optk"
+
+      - name: Run embedding diagnostics on CI index
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%F)"
+          OUT_DIR="${GA_QUALITY_TMP_DIR}/embedding-diagnostics"
+          mkdir -p "${OUT_DIR}"
+          cargo run -p ix-embedding-diagnostics --bin baseline-diagnostics -- \
+            --index "${GA_QUALITY_TMP_DIR}/ci-reduced.optk" \
+            --out-dir "${OUT_DIR}" \
+            --class-samples-per-instrument 300 \
+            --retrieval-queries 10 \
+            --kmeans-k 8 \
+            --kmeans-iter 5 \
+            --cluster-sample 2000 \
+            --topo-sample 100
+          test -f "${OUT_DIR}/embedding-diagnostics-${DATE}.json"
+
+      - name: Bootstrap CI snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%F)"
+          cargo run -p ix-quality-trend --bin ix-quality-trend-bootstrap -- \
+            --state-dir state/voicings \
+            --qa-results "${GA_QUALITY_TMP_DIR}/chatbot-findings.jsonl" \
+            --embeddings-report "${GA_QUALITY_TMP_DIR}/embedding-diagnostics/embedding-diagnostics-${DATE}.json" \
+            --out-dir "${GA_QUALITY_SNAPSHOTS_DIR}"
+
+      - name: Validate snapshot inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          SNAP_ROOT="${GA_QUALITY_SNAPSHOTS_DIR}"
+          echo "Expected snapshots root: ${SNAP_ROOT}"
+
+          missing=0
+          for subdir in embeddings voicing-analysis chatbot-qa; do
+            dir="${SNAP_ROOT}/${subdir}"
+            if [[ ! -d "${dir}" ]]; then
+              echo "::error::Missing snapshot category directory '${dir}'."
+              missing=1
+              continue
+            fi
+
+            count=$(find "${dir}" -maxdepth 1 -type f -regextype posix-extended -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}\.json' | wc -l)
+            if [[ "${count}" -eq 0 ]]; then
+              echo "::error::No dated snapshots found in '${dir}'. Expected files like YYYY-MM-DD.json."
+              missing=1
+            else
+              echo "${subdir}: ${count} dated snapshot(s)"
+            fi
+          done
+
+          if [[ "${missing}" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Build GA quality artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "${GA_QUALITY_OUT_DIR}"
+          DATE="$(date -u +%F)"
+
+          cargo run -p ix-quality-trend --bin ix-quality-trend -- \
+            --snapshots-dir "${GA_QUALITY_SNAPSHOTS_DIR}" \
+            --out "${GA_QUALITY_OUT_DIR}/quality-trend-${DATE}.md" \
+            --out-json "${GA_QUALITY_OUT_DIR}/quality-health-${DATE}.json"
+
+      - name: Publish workflow summary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DATE="$(date -u +%F)"
+          ARTIFACT="${GA_QUALITY_OUT_DIR}/quality-health-${DATE}.json"
+
+          if [[ ! -f "${ARTIFACT}" ]]; then
+            echo "::error::Expected health artifact '${ARTIFACT}' was not produced."
+            exit 1
+          fi
+
+          STATUS=$(jq -r '.status' "${ARTIFACT}")
+          REGRESSIONS=$(jq -r '.regressions' "${ARTIFACT}")
+          DRIFTS=$(jq -r '.drifts' "${ARTIFACT}")
+
+          {
+            echo "## GA Nightly Quality"
+            echo
+            echo "- Status: \`${STATUS}\`"
+            echo "- Regressions: \`${REGRESSIONS}\`"
+            echo "- Drifts: \`${DRIFTS}\`"
+            echo "- Artifact: \`${ARTIFACT}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload GA quality artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ga-quality-report
+          path: |
+            state/quality/*.md
+            state/quality/*.json
+          retention-days: 30
+
+      - name: Enforce critical health gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DATE="$(date -u +%F)"
+          ARTIFACT="${GA_QUALITY_OUT_DIR}/quality-health-${DATE}.json"
+
+          if [[ ! -f "${ARTIFACT}" ]]; then
+            echo "::error::Expected health artifact '${ARTIFACT}' was not produced."
+            exit 1
+          fi
+
+          STATUS=$(jq -r '.status' "${ARTIFACT}")
+
+          case "${STATUS}" in
+            healthy|warning)
+              echo "GA quality gate passed with status '${STATUS}'."
+              ;;
+            critical)
+              echo "::error::GA quality gate failed: status is 'critical'. See uploaded artifacts for details."
+              exit 1
+              ;;
+            *)
+              echo "::error::GA quality gate failed: unrecognized status '${STATUS}'."
+              exit 1
+              ;;
+          esac

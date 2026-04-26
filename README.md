@@ -6,7 +6,7 @@
 
 A Rust workspace of composable ML/math algorithms and AI governance, designed to be exposed as **Claude Code skills** via an MCP server and CLI. Part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem (ix + [tars](https://github.com/GuitarAlchemist/tars) + [ga](https://github.com/GuitarAlchemist/ga) + [Demerzel](https://github.com/GuitarAlchemist/Demerzel)).
 
-56 crates. 61 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+64 crates. 64 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -54,7 +54,7 @@ cargo run -p ix-agent
 |-------|------|-------|
 | ix-nn | Beta | Transformers, backprop — complex but actively developed |
 | ix-pipeline | Beta | DAG executor — critical infrastructure, API stabilizing |
-| ix-agent | Beta | MCP server (61 tools) — production-facing integration point |
+| ix-agent | Beta | MCP server (64 tools) — production-facing integration point |
 | ix-governance | Beta | Demerzel governance bridge — consumed by ga/tars |
 | ix-cache | Beta | Embedded Redis-like cache — stable patterns |
 | ix-io | Beta | I/O utilities (CSV, JSON, TCP, WebSocket) |
@@ -120,9 +120,9 @@ The 16 crates below were added during the agent-harness and pipeline work. They 
 
 ### MCP Tool Surface
 
-`ix-agent` exposes **61 MCP tools** covering core math, supervised / unsupervised ML, neural networks + autograd, signal + chaos, graph + topology, adversarial + evolution, game theory, probabilistic data structures, grammar, governance, federation, source adapters (`ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog`), and pipeline orchestration (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_pipeline_list`).
+`ix-agent` exposes **64 MCP tools** covering core math, supervised / unsupervised ML, neural networks + autograd, signal + chaos, graph + topology, adversarial + evolution, game theory, probabilistic data structures, grammar, governance, federation, source adapters (`ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog`, `ix_ast_query`, `ix_code_smells`), OPTIC-K voicing search, and pipeline orchestration (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_pipeline_list`).
 
-See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-61-mcp-tools--by-category) for the full categorized inventory and [`crates/ix-agent/src/tools.rs`](crates/ix-agent/src/tools.rs) for the authoritative schemas.
+See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for the full categorized inventory and [`crates/ix-agent/src/tools.rs`](crates/ix-agent/src/tools.rs) for the authoritative schemas.
 
 ### Pipelines, compiler, and canonical showcases
 
@@ -211,7 +211,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-61-mcp-tools--by-category) for t
 ### Integration
 | Crate | Description |
 |-------|-------------|
-| **ix-agent** | MCP server: 61 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
+| **ix-agent** | MCP server: 64 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
 | **ix-skill** | CLI binary for direct command-line access to all algorithms |
 | **ix-demo** | egui desktop app with 22+ interactive demo tabs including governance explorer |
 
@@ -305,7 +305,7 @@ Topics: linear algebra, optimization, supervised/unsupervised learning, neural n
 
 ## Architecture
 
-ix is a Rust workspace of **56 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
+ix is a Rust workspace of **64 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
 
 ```
 ix/
@@ -321,10 +321,10 @@ ix/
 │   └── canonical-showcase/# 5 reproducible demo pipelines + roadmap + findings
 ├── governance/
 │   └── demerzel/          # Git submodule: constitution + personas + policies
-└── crates/                # 56 crates — see maturity tables above
+└── crates/                # 64 crates — see maturity tables above
 ```
 
-For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-61-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.
+For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.
 
 ## Key Dependencies
 

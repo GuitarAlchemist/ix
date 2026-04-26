@@ -1,0 +1,38 @@
+{
+  "CardinalityDistribution": {
+    "1": 381,
+    "2": 14749,
+    "3": 98488,
+    "4": 252429,
+    "5": 248088,
+    "6": 74216
+  },
+  "Corpus": {
+    "Bass": 12614,
+    "Guitar": 667125,
+    "Total": 688351,
+    "Ukulele": 8612
+  },
+  "CrossInstrumentConsistency": {
+    "Consistent": 781,
+    "Pct": 98.48675914249684,
+    "SharedSets": 793
+  },
+  "InvariantFailures": {
+    "IntervalSpreadInvariant": 0,
+    "MidiNotesMismatch": 0,
+    "NegativePhysicalLayout": 0,
+    "NullPitchClassSet": 0
+  },
+  "Performance": {
+    "RuntimeSeconds": null,
+    "VoicingsPerSec": null
+  },
+  "Timestamp": "2026-04-24T00:00:00Z",
+  "_seeded_baseline": {
+    "seeded_date": "2026-04-24",
+    "seeded_on": "2026-04-25",
+    "source_date": "2026-04-25",
+    "source_file": "2026-04-25.json"
+  }
+}

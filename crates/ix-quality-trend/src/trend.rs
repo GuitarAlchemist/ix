@@ -14,9 +14,11 @@
 //! encodes this so the report can render a coherent arrow/checkmark.
 
 use chrono::NaiveDate;
+use ix_signal::timeseries::{page_hinkley_detect, DriftState, PageHinkleyConfig};
+use serde::{Deserialize, Serialize};
 
 /// Whether a metric is better when the value goes up, down, or neither.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrendDirection {
     HigherIsBetter,
     LowerIsBetter,
@@ -135,7 +137,7 @@ pub fn sparkline(points: &[Point]) -> String {
 }
 
 /// Computed trend for one metric: headline values, deltas, and regression flag.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricTrend {
     pub name: String,
     pub unit: String,
@@ -149,15 +151,24 @@ pub struct MetricTrend {
     pub delta_vs_7d_pct: Option<f64>,
     pub sparkline: String,
     pub regression: Option<RegressionFlag>,
+    pub drift: Option<DriftFlag>,
     pub n_points: usize,
 }
 
 /// Indicator that a metric has moved in the "wrong" direction by more than the
 /// configured threshold vs the 7-day average.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegressionFlag {
     pub metric: String,
     pub delta_pct: f64,
+    pub description: String,
+}
+
+/// Indicator that a metric has shifted into a worse regime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriftFlag {
+    pub metric: String,
+    pub since: NaiveDate,
     pub description: String,
 }
 
@@ -191,7 +202,11 @@ pub fn compute_trend(series: &MetricSeries, regression_threshold_pct: f64) -> Me
     } else {
         delta_vs_previous_pct
     };
-    let comparison_label = if use_7d { "7-day average" } else { "previous snapshot" };
+    let comparison_label = if use_7d {
+        "7-day average"
+    } else {
+        "previous snapshot"
+    };
     let regression = regression_flag(
         &series.name,
         series.direction,
@@ -199,6 +214,7 @@ pub fn compute_trend(series: &MetricSeries, regression_threshold_pct: f64) -> Me
         comparison_label,
         regression_threshold_pct,
     );
+    let drift = drift_flag(series);
 
     MetricTrend {
         name: series.name.clone(),
@@ -213,6 +229,7 @@ pub fn compute_trend(series: &MetricSeries, regression_threshold_pct: f64) -> Me
         delta_vs_7d_pct,
         sparkline: sparkline(&series.points),
         regression,
+        drift,
         n_points: series.points.len(),
     }
 }
@@ -251,11 +268,69 @@ fn regression_flag(
     })
 }
 
+fn drift_flag(series: &MetricSeries) -> Option<DriftFlag> {
+    if series.points.len() < 5 {
+        return None;
+    }
+
+    let oriented: Vec<f64> = match series.direction {
+        TrendDirection::HigherIsBetter => series.points.iter().map(|p| -p.value).collect(),
+        TrendDirection::LowerIsBetter => series.points.iter().map(|p| p.value).collect(),
+        TrendDirection::Neutral => return None,
+    };
+
+    let baseline_len = oriented.len().min(7);
+    let baseline = &oriented[..baseline_len];
+    let baseline_mean = baseline.iter().sum::<f64>() / baseline.len() as f64;
+    let baseline_var = baseline
+        .iter()
+        .map(|value| (value - baseline_mean).powi(2))
+        .sum::<f64>()
+        / baseline.len() as f64;
+    let baseline_scale = baseline_var.sqrt().max(baseline_mean.abs() * 0.01).max(1.0);
+    let normalized: Vec<f64> = oriented
+        .iter()
+        .map(|value| (value - baseline_mean) / baseline_scale)
+        .collect();
+
+    let snapshots = page_hinkley_detect(
+        &normalized,
+        PageHinkleyConfig {
+            min_samples: 5,
+            delta: 0.01,
+            lambda: 5.0,
+            alpha: 1.0,
+        },
+    );
+    let first_drift_index = snapshots
+        .iter()
+        .position(|snapshot| snapshot.state == DriftState::Drift)?;
+
+    let bad_direction = match series.direction {
+        TrendDirection::HigherIsBetter => "downward",
+        TrendDirection::LowerIsBetter => "upward",
+        TrendDirection::Neutral => unreachable!(),
+    };
+    let since = series.points[first_drift_index].date;
+
+    Some(DriftFlag {
+        metric: series.name.clone(),
+        since,
+        description: format!(
+            "{} shifted {} into a worse regime around {}",
+            series.name, bad_direction, since
+        ),
+    })
+}
+
 impl MetricTrend {
     /// Short human-readable marker: ✓ (improving), ⚠ (regression), → (flat).
     pub fn marker(&self) -> &'static str {
         if self.regression.is_some() {
             return "⚠";
+        }
+        if self.drift.is_some() {
+            return "Δ";
         }
         // Use whichever delta is available — prefer 7d when we have real
         // window history, fall back to day-over-day otherwise.
@@ -316,10 +391,7 @@ mod tests {
     fn sparkline_renders_blocks() {
         let mut s = MetricSeries::new("m", "", TrendDirection::Neutral);
         for (i, v) in [1.0, 2.0, 3.0, 4.0, 5.0].iter().enumerate() {
-            s.push(
-                NaiveDate::from_ymd_opt(2026, 4, 10 + i as u32).unwrap(),
-                *v,
-            );
+            s.push(NaiveDate::from_ymd_opt(2026, 4, 10 + i as u32).unwrap(), *v);
         }
         let sp = sparkline(&s.points);
         assert_eq!(sp.chars().count(), 5);
@@ -341,7 +413,11 @@ mod tests {
             "day-over-day regression should flag even with only 2 points"
         );
         assert!(
-            t.regression.as_ref().unwrap().description.contains("previous snapshot"),
+            t.regression
+                .as_ref()
+                .unwrap()
+                .description
+                .contains("previous snapshot"),
             "young-series regression should cite the previous-snapshot comparison"
         );
     }
@@ -353,5 +429,34 @@ mod tests {
         assert!(t.latest.is_none());
         assert!(t.avg_7d.is_none());
         assert!(t.regression.is_none());
+        assert!(t.drift.is_none());
+    }
+
+    #[test]
+    fn drift_flags_worse_regime_for_higher_is_better_metric() {
+        let mut s = MetricSeries::new("pass_rate", "%", TrendDirection::HigherIsBetter);
+        for day in 1..=6 {
+            s.push(d(&format!("2026-04-{day:02}")), 95.0);
+        }
+        for day in 7..=12 {
+            s.push(d(&format!("2026-04-{day:02}")), 70.0);
+        }
+
+        let t = compute_trend(&s, 5.0);
+        let drift = t.drift.expect("expected drift flag");
+        assert!(drift.since >= d("2026-04-07"));
+        assert!(drift.since <= d("2026-04-12"));
+        assert!(drift.description.contains("worse regime"));
+    }
+
+    #[test]
+    fn drift_ignores_neutral_metrics() {
+        let mut s = MetricSeries::new("corpus", "", TrendDirection::Neutral);
+        for day in 1..=10 {
+            s.push(d(&format!("2026-04-{day:02}")), day as f64);
+        }
+
+        let t = compute_trend(&s, 5.0);
+        assert!(t.drift.is_none());
     }
 }

@@ -1,0 +1,10 @@
+{
+  "generated_on": "2026-04-25",
+  "regression_threshold_pct": 5.0,
+  "status": "healthy",
+  "total_metrics": 25,
+  "regressions": 0,
+  "drifts": 0,
+  "key_metric_alerts": [],
+  "all_alerts": []
+}

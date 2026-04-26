@@ -2,6 +2,7 @@
 name = "ix-quality-trend"
 version.workspace = true
 edition.workspace = true
+default-run = "ix-quality-trend"
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
@@ -15,7 +16,22 @@ serde_json = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+ix-signal = { workspace = true }
+ix-optick = { workspace = true }
+rmp-serde = "1"
 
 [[bin]]
 name = "ix-quality-trend"
 path = "src/main.rs"
+
+[[bin]]
+name = "ix-quality-trend-bootstrap"
+path = "src/bin/bootstrap.rs"
+
+[[bin]]
+name = "ix-quality-trend-build-ci-index"
+path = "src/bin/build_ci_index.rs"
+
+[[bin]]
+name = "ix-quality-trend-seed-history"
+path = "src/bin/seed_history.rs"

@@ -1,0 +1,193 @@
+{
+  "_seeded_baseline": {
+    "seeded_date": "2026-04-13",
+    "seeded_on": "2026-04-25",
+    "source_date": "2026-04-25",
+    "source_file": "2026-04-25.json"
+  },
+  "cluster_baseline": {
+    "file": "target/ga-quality/embedding-diagnostics\\embedding-clusters-k8.json",
+    "iterations_ran": 5,
+    "k": 8,
+    "n_voicings": 2000,
+    "sampled_from": 688351
+  },
+  "corpus": {
+    "count": 688351,
+    "dims": 124,
+    "file": "target/ga-quality/ci-reduced.optk",
+    "instruments": {
+      "bass": 12614,
+      "guitar": 667125,
+      "ukulele": 8612
+    }
+  },
+  "leak_detection": {
+    "baseline_random": 0.3333333333333333,
+    "by_partition": [
+      {
+        "accuracy_mean": 0.6111111111111112,
+        "accuracy_std": 0.04112612338515944,
+        "dims": 24,
+        "end": 24,
+        "leak_confirmed": true,
+        "leak_hypothesis": "likely_leak",
+        "partition": "STRUCTURE",
+        "per_fold": [
+          0.6777777777777778,
+          0.5833333333333334,
+          0.6222222222222222,
+          0.5555555555555556,
+          0.6166666666666667
+        ],
+        "start": 0
+      },
+      {
+        "accuracy_mean": 0.6655555555555555,
+        "accuracy_std": 0.028196838978776697,
+        "dims": 24,
+        "end": 48,
+        "leak_confirmed": false,
+        "leak_hypothesis": "by_design",
+        "partition": "MORPHOLOGY",
+        "per_fold": [
+          0.6777777777777778,
+          0.6166666666666667,
+          0.7,
+          0.6555555555555556,
+          0.6777777777777778
+        ],
+        "start": 24
+      },
+      {
+        "accuracy_mean": 0.6133333333333333,
+        "accuracy_std": 0.028458329944146005,
+        "dims": 12,
+        "end": 60,
+        "leak_confirmed": true,
+        "leak_hypothesis": "possible",
+        "partition": "CONTEXT",
+        "per_fold": [
+          0.6166666666666667,
+          0.5722222222222222,
+          0.6277777777777778,
+          0.5944444444444444,
+          0.6555555555555556
+        ],
+        "start": 48
+      },
+      {
+        "accuracy_mean": 0.6288888888888888,
+        "accuracy_std": 0.0209054308024742,
+        "dims": 12,
+        "end": 72,
+        "leak_confirmed": true,
+        "leak_hypothesis": "likely_leak",
+        "partition": "SYMBOLIC",
+        "per_fold": [
+          0.6611111111111111,
+          0.6111111111111112,
+          0.6444444444444445,
+          0.6222222222222222,
+          0.6055555555555555
+        ],
+        "start": 60
+      },
+      {
+        "accuracy_mean": 0.7611111111111111,
+        "accuracy_std": 0.0164804410824348,
+        "dims": 40,
+        "end": 112,
+        "leak_confirmed": true,
+        "leak_hypothesis": "possible",
+        "partition": "MODAL",
+        "per_fold": [
+          0.7555555555555555,
+          0.7444444444444445,
+          0.7833333333333333,
+          0.7444444444444445,
+          0.7777777777777778
+        ],
+        "start": 72
+      },
+      {
+        "accuracy_mean": 0.6222222222222222,
+        "accuracy_std": 0.023306863292670017,
+        "dims": 12,
+        "end": 124,
+        "leak_confirmed": true,
+        "leak_hypothesis": "by_design",
+        "partition": "ROOT",
+        "per_fold": [
+          0.6277777777777778,
+          0.5833333333333334,
+          0.65,
+          0.6111111111111112,
+          0.6388888888888888
+        ],
+        "start": 112
+      }
+    ],
+    "classifier": "RandomForest(n_trees=30, max_depth=10)",
+    "full_classifier_accuracy": 0.7277777777777779,
+    "n_folds": 5,
+    "per_class": {
+      "bass": 300,
+      "guitar": 300,
+      "ukulele": 300
+    },
+    "sample_size": 900
+  },
+  "notes": [
+    "LogisticRegression in ix-supervised is binary-only; RandomForest used instead for 3-class",
+    "ix-topo has no native Adjusted Rand Index; post-refactor comparison will add one",
+    "Rips complex is O(n²) in edges — topology sampled at 1000 points per instrument",
+    "Leak confirmed criterion: mean accuracy > 0.40 on balanced 3-class problem (baseline=0.333)"
+  ],
+  "retrieval_consistency": {
+    "avg_pc_set_match_pct": 1.0,
+    "note": "A STRUCTURE-only query should return voicings sharing the query's pitch-class set. A low match rate indicates the STRUCTURE partition is not cleanly encoding PC-set.",
+    "per_query_match_pct": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "queries_tested": 10,
+    "top_k": 10
+  },
+  "runtime_seconds": 22.278778,
+  "seed": 42,
+  "timestamp": "2026-04-13T00:00:00Z",
+  "tool": "ix-embedding-diagnostics 0.1.0",
+  "topology": {
+    "bass": {
+      "avg_pairwise_distance": 1.2014049929089916,
+      "beta_0": 95,
+      "beta_1": 0,
+      "filtration_radius": 0.48056199716359665,
+      "sample_size": 100
+    },
+    "cross_instrument_match": "beta0_range=4, beta1_range=0 (larger = more instrument-specific topology)",
+    "guitar": {
+      "avg_pairwise_distance": 1.3056442888822424,
+      "beta_0": 98,
+      "beta_1": 0,
+      "filtration_radius": 0.522257715552897,
+      "sample_size": 100
+    },
+    "ukulele": {
+      "avg_pairwise_distance": 1.2141322356683228,
+      "beta_0": 94,
+      "beta_1": 0,
+      "filtration_radius": 0.4856528942673291,
+      "sample_size": 100
+    }
+  }
+}

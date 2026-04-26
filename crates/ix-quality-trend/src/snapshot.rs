@@ -380,10 +380,7 @@ mod tests {
         assert_eq!(s.partition_accuracy("STRUCTURE"), Some(0.56));
         assert_eq!(s.partition_accuracy("morphology"), Some(0.79));
         assert_eq!(s.partition_accuracy("CONTEXT"), None);
-        assert_eq!(
-            s.retrieval_consistency.unwrap().match_pct(),
-            Some(0.866)
-        );
+        assert_eq!(s.retrieval_consistency.unwrap().match_pct(), Some(0.866));
     }
 
     #[test]

@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use ix_quality_trend::snapshot::load_all;
 use ix_quality_trend::report;
+use ix_quality_trend::snapshot::load_all;
 
 /// Aggregate quality snapshots and emit a trend report.
 #[derive(Debug, Parser)]
@@ -23,6 +23,10 @@ struct Cli {
     /// Destination markdown file (directory will be created if needed).
     #[arg(long)]
     out: PathBuf,
+
+    /// Optional machine-readable health artifact JSON path.
+    #[arg(long)]
+    out_json: Option<PathBuf>,
 
     /// Optional explicit baseline date (informational; the report always uses
     /// the most recent snapshot as the comparison anchor).
@@ -60,6 +64,8 @@ fn main() -> ExitCode {
         }
     };
 
+    let summary = report::summarize(&set, cli.regression_threshold_pct);
+    let artifact = report::build_health_artifact(&summary, cli.regression_threshold_pct);
     let md = report::render(&set, &cli.snapshots_dir, cli.regression_threshold_pct);
 
     if let Some(parent) = cli.out.parent() {
@@ -76,9 +82,35 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
+    if let Some(out_json) = &cli.out_json {
+        if let Some(parent) = out_json.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("ix-quality-trend: cannot create {parent:?}: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        let json = match serde_json::to_vec_pretty(&artifact) {
+            Ok(json) => json,
+            Err(e) => {
+                eprintln!("ix-quality-trend: cannot serialize health artifact: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        if let Err(e) = std::fs::write(out_json, json) {
+            eprintln!("ix-quality-trend: cannot write {:?}: {e}", out_json);
+            return ExitCode::from(1);
+        }
+    }
+
     eprintln!(
-        "ix-quality-trend: wrote {} ({} embeddings / {} voicing / {} chatbot snapshots)",
+        "ix-quality-trend: wrote {}{} ({} embeddings / {} voicing / {} chatbot snapshots)",
         cli.out.display(),
+        cli.out_json
+            .as_ref()
+            .map(|p| format!(", {}", p.display()))
+            .unwrap_or_default(),
         set.embeddings.len(),
         set.voicing.len(),
         set.chatbot.len()

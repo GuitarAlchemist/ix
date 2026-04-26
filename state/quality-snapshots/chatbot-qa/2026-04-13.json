@@ -1,0 +1,39 @@
+{
+  "_seeded_baseline": {
+    "seeded_date": "2026-04-13",
+    "seeded_on": "2026-04-25",
+    "source_date": "2026-04-25",
+    "source_file": "2026-04-25.json"
+  },
+  "avg_response_ms": null,
+  "by_category": {
+    "cross": {
+      "pass_pct": 20.0,
+      "total": 5
+    },
+    "enharmonic": {
+      "pass_pct": 100.0,
+      "total": 5
+    },
+    "grad": {
+      "pass_pct": 8.0,
+      "total": 50
+    },
+    "grounding": {
+      "pass_pct": 83.33333333333334,
+      "total": 6
+    },
+    "hallucination": {
+      "pass_pct": 0.0,
+      "total": 5
+    },
+    "injection": {
+      "pass_pct": 0.0,
+      "total": 6
+    }
+  },
+  "mode": "deterministic-fixture-ci",
+  "pass_pct": 19.480519480519483,
+  "timestamp": "2026-04-13T00:00:00Z",
+  "total_prompts": 77
+}

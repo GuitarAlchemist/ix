@@ -8,7 +8,7 @@ This manual is the single page that tells you what ix is, how to run it, and whi
 
 ## 1. What ix is — one-paragraph answer
 
-**ix** is a Rust workspace of composable ML, math, and governance primitives exposed as **MCP tools** for agent consumption. It ships 54 crates and 61 MCP tools behind a single `ix-agent` server, plus a CLI (`ix-skill`), a DAG pipeline runner (`ix_pipeline_run`), a natural-language pipeline compiler (`ix_pipeline_compile`), and integration with the Demerzel governance framework. It is part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem alongside [tars](https://github.com/GuitarAlchemist/tars) (F# cognition) and [ga](https://github.com/GuitarAlchemist/ga) (C# music theory). ix is used by LLM agents as a callable toolbox for stats, clustering, classification, optimization, signal processing, topology, adversarial ML, and cross-repo analysis — all subject to constitutional governance.
+**ix** is a Rust workspace of composable ML, math, and governance primitives exposed as **MCP tools** for agent consumption. It ships 64 crates and 64 MCP tools behind a single `ix-agent` server, plus a CLI (`ix-skill`), a DAG pipeline runner (`ix_pipeline_run`), a natural-language pipeline compiler (`ix_pipeline_compile`), and integration with the Demerzel governance framework. It is part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem alongside [tars](https://github.com/GuitarAlchemist/tars) (F# cognition) and [ga](https://github.com/GuitarAlchemist/ga) (C# music theory). ix is used by LLM agents as a callable toolbox for stats, clustering, classification, optimization, signal processing, topology, adversarial ML, and cross-repo analysis — all subject to constitutional governance.
 
 ---
 
@@ -108,7 +108,7 @@ This runs `ix` against `ix`'s own source tree (via `ix_cargo_deps` + `ix_git_log
 
 ---
 
-## 4. The 61 MCP tools — by category
+## 4. The 64 MCP tools — by category
 
 Full schemas live in [`crates/ix-agent/src/tools.rs`](../crates/ix-agent/src/tools.rs). The table below is a navigation aid, not a reference. Every tool accepts JSON input and returns JSON output via `ToolRegistry::call` or `ToolRegistry::call_with_ctx`.
 
@@ -125,9 +125,9 @@ Full schemas live in [`crates/ix-agent/src/tools.rs`](../crates/ix-agent/src/too
 | **Game theory** | `ix_game_nash` | [`ix-game`](../crates/ix-game) |
 | **Advanced math** | `ix_category`, `ix_rotation`, `ix_sedenion`, `ix_fractal`, `ix_number_theory` | respective crates |
 | **Probabilistic structures** | `ix_bloom_filter`, `ix_hyperloglog` | [`ix-probabilistic`](../crates/ix-probabilistic) |
-| **Cache & optimization** | `ix_cache`, `ix_optimize` | [`ix-cache`](../crates/ix-cache), [`ix-optimize`](../crates/ix-optimize) |
+| **Cache, optimization & search indexes** | `ix_cache`, `ix_optimize`, `ix_optick_search` | [`ix-cache`](../crates/ix-cache), [`ix-optimize`](../crates/ix-optimize), [`ix-optick`](../crates/ix-optick) |
 | **Grammar** | `ix_grammar_evolve`, `ix_grammar_search`, `ix_grammar_weights` | [`ix-grammar`](../crates/ix-grammar) |
-| **Source adapters (P1)** | `ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog` | [`ix-agent/src/handlers.rs`](../crates/ix-agent/src/handlers.rs), [code-analysis tools guide](guides/code-analysis-tools.md) |
+| **Source adapters (P1)** | `ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog`, `ix_ast_query`, `ix_code_smells` | [`ix-agent/src/handlers.rs`](../crates/ix-agent/src/handlers.rs), [code-analysis tools guide](guides/code-analysis-tools.md) |
 | **Catalogs (queryable indexes)** | `ix_catalog_list`, `ix_code_catalog`, `ix_grammar_catalog`, `ix_rfc_catalog` | [`ix-catalog-core`](../crates/ix-catalog-core), [grammar catalog guide](guides/grammar-catalog.md), [rfc catalog guide](guides/rfc-catalog.md) |
 | **Pipeline orchestration** | `ix_pipeline_run`, `ix_pipeline_compile`, `ix_pipeline_list`, `ix_pipeline` | [`ix-agent/src/tools.rs`](../crates/ix-agent/src/tools.rs), [`ix-pipeline`](../crates/ix-pipeline) |
 | **Governance** | `ix_governance_check`, `ix_governance_persona`, `ix_governance_policy`, `ix_governance_belief`, `ix_governance_graph` | [`ix-governance`](../crates/ix-governance), [`governance/demerzel`](../governance/demerzel) |
@@ -368,7 +368,7 @@ Current state, in dependency order:
 - **R7 Week 1** (ix-autograd scaffold, primitive ops, finite-diff verifier, linreg + variance tools) — **shipped**, gate passed at 242× speedup.
 - **R7 Week 2** (`ix_autograd_run` MCP tool, `StatsMeanTool`, `MseLossTool`) — **shipped**.
 - **NL compiler** (`ix_pipeline_compile`) — **shipped**. Validator + fake-client tests green.
-- **P0/P1 from the refactor oracle FINDINGS** — **shipped**: ix_graph error messages fixed, registry allowlist populated, `ix_git_log` + `ix_cargo_deps` source adapters built, refactor oracle graduated from baked constants to live data on 54 crates.
+- **P0/P1 from the refactor oracle FINDINGS** — **shipped**: ix_graph error messages fixed, registry allowlist populated, `ix_git_log` + `ix_cargo_deps` source adapters built, refactor oracle graduated from baked constants to live workspace data.
 - **R4** (meta-MCP gateway) — planned, Phase 3.
 - **R5** (Arrow IPC side-channel for oversized outputs) — planned, Phase 3.
 - **R6** (adversarial pipelines, Levels 1–3) — Level 1 preview shipped in the refactor oracle; Levels 2–3 planned.
