@@ -28,7 +28,9 @@ pub struct InteractionPatterns {
 /// Deserialize a list where each element can be either a plain string or a
 /// single-entry YAML mapping (which happens when the string contains an
 /// unquoted colon). Maps are flattened to `"key: value"` strings.
-fn deserialize_string_or_map_vec<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+fn deserialize_string_or_map_vec<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -161,15 +163,18 @@ mod tests {
     use std::path::PathBuf;
 
     fn personas_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../governance/demerzel/personas")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../governance/demerzel/personas")
     }
 
     #[test]
     fn load_default_persona() {
         let p = Persona::load_by_name(&personas_dir(), "default").expect("should load default");
         assert_eq!(p.name, "default");
-        assert!(p.version == "1.0.0" || p.version == "1.1.0", "unexpected version: {}", p.version);
+        assert!(
+            p.version == "1.0.0" || p.version == "1.1.0",
+            "unexpected version: {}",
+            p.version
+        );
         assert_eq!(p.role, "General-purpose assistant");
         assert_eq!(p.domain, "any");
         assert!(!p.capabilities.is_empty());
@@ -179,7 +184,13 @@ mod tests {
 
     #[test]
     fn load_all_personas() {
-        let names = ["default", "kaizen-optimizer", "reflective-architect", "skeptical-auditor", "system-integrator"];
+        let names = [
+            "default",
+            "kaizen-optimizer",
+            "reflective-architect",
+            "skeptical-auditor",
+            "system-integrator",
+        ];
         for name in &names {
             let p = Persona::load_by_name(&personas_dir(), name);
             assert!(p.is_ok(), "failed to load persona: {}: {:?}", name, p.err());
@@ -195,7 +206,11 @@ mod tests {
     #[test]
     fn list_all_personas() {
         let names = list_personas(&personas_dir()).expect("should list personas");
-        assert!(names.len() >= 5, "expected at least 5 personas, got {}", names.len());
+        assert!(
+            names.len() >= 5,
+            "expected at least 5 personas, got {}",
+            names.len()
+        );
         assert!(names.contains(&"default".to_string()));
         assert!(names.contains(&"kaizen-optimizer".to_string()));
         assert!(names.contains(&"reflective-architect".to_string()));
@@ -214,7 +229,9 @@ mod tests {
     #[test]
     fn persona_has_interaction_patterns() {
         let p = Persona::load_by_name(&personas_dir(), "default").unwrap();
-        let patterns = p.interaction_patterns.expect("default should have interaction_patterns");
+        let patterns = p
+            .interaction_patterns
+            .expect("default should have interaction_patterns");
         assert!(!patterns.with_humans.is_empty());
         assert!(!patterns.with_agents.is_empty());
     }

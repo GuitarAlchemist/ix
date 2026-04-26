@@ -92,10 +92,8 @@ impl PipelineEditor {
             }
             if ui.button("Validate").clicked() {
                 self.validate();
-                self.last_action = format!(
-                    "validation: {} warning(s)",
-                    self.validation_warnings.len()
-                );
+                self.last_action =
+                    format!("validation: {} warning(s)", self.validation_warnings.len());
             }
             ui.separator();
             if ui.button("Save JSON").clicked() {
@@ -232,9 +230,7 @@ impl PipelineEditor {
                                         .small(),
                                 );
                                 ui.label(
-                                    egui::RichText::new(short_value(output))
-                                        .monospace()
-                                        .small(),
+                                    egui::RichText::new(short_value(output)).monospace().small(),
                                 );
                             });
                         }
@@ -267,9 +263,7 @@ impl PipelineEditor {
                             let short = short_value(value);
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    egui::RichText::new(format!("  {title}"))
-                                        .strong()
-                                        .small(),
+                                    egui::RichText::new(format!("  {title}")).strong().small(),
                                 );
                                 ui.label(egui::RichText::new(short).monospace().small());
                             });
@@ -294,11 +288,8 @@ impl PipelineEditor {
     /// Snarl wires. Returns `None` if the graph has a cycle (editor should
     /// be cycle-free by construction, but we defend against invariant breaks).
     fn topo_order(&self) -> Option<Vec<NodeId>> {
-        let mut in_degree: HashMap<NodeId, usize> = self
-            .snarl
-            .node_ids()
-            .map(|(id, _)| (id, 0usize))
-            .collect();
+        let mut in_degree: HashMap<NodeId, usize> =
+            self.snarl.node_ids().map(|(id, _)| (id, 0usize)).collect();
         let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
         for (out_pin, in_pin) in self.snarl.wires() {
             *in_degree.entry(in_pin.node).or_insert(0) += 1;
@@ -645,13 +636,9 @@ enum StepOutcome {
     Failed(String),
 }
 
-fn execute_node_with_inputs(
-    node: &IxNode,
-    upstream: &HashMap<String, Value>,
-) -> StepOutcome {
+fn execute_node_with_inputs(node: &IxNode, upstream: &HashMap<String, Value>) -> StepOutcome {
     match node {
         // ─── Sources that produce output inline (no registry call) ───
-
         IxNode::Constant { value } => StepOutcome::Skipped(json!({ "value": *value })),
         IxNode::CsvRead { path } => StepOutcome::Skipped(json!({
             "path": path,
@@ -668,7 +655,6 @@ fn execute_node_with_inputs(
         })),
 
         // ─── Transforms that currently pass-through upstream ───
-
         IxNode::Normalize { method } => {
             let data = upstream_dataset(upstream);
             StepOutcome::Skipped(json!({
@@ -678,7 +664,6 @@ fn execute_node_with_inputs(
         }
 
         // ─── Sinks / leaf nodes ───
-
         IxNode::CsvWrite { path } => {
             let data = upstream.get("data").cloned().unwrap_or(Value::Null);
             StepOutcome::Skipped(json!({ "wrote": path, "data": data }))
@@ -689,7 +674,6 @@ fn execute_node_with_inputs(
         }
 
         // ─── Registry-backed computations ───
-
         IxNode::KMeans { k, max_iter, seed } => {
             let data = upstream_dataset(upstream);
             let args = json!({
@@ -1017,10 +1001,7 @@ mod tests {
         // Write a minimal ix.yaml to a temp file, call run_yaml(), verify
         // the editor's yaml_run field holds a populated result.
         let mut dir = std::env::temp_dir();
-        dir.push(format!(
-            "ix-editor-runyaml-test-{}",
-            std::process::id()
-        ));
+        dir.push(format!("ix-editor-runyaml-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let ix_yaml = dir.join("ix.yaml");
@@ -1116,10 +1097,7 @@ stages:
     #[test]
     fn run_yaml_reports_lower_error_on_unknown_skill() {
         let mut dir = std::env::temp_dir();
-        dir.push(format!(
-            "ix-editor-bad-skill-test-{}",
-            std::process::id()
-        ));
+        dir.push(format!("ix-editor-bad-skill-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let ix_yaml = dir.join("ix.yaml");

@@ -9,7 +9,8 @@ use serde_json::Value;
 use crate::dag::{Dag, NodeId};
 
 /// A compute function that takes named inputs and produces a JSON output.
-pub type ComputeFn = Box<dyn Fn(&HashMap<String, Value>) -> Result<Value, PipelineError> + Send + Sync>;
+pub type ComputeFn =
+    Box<dyn Fn(&HashMap<String, Value>) -> Result<Value, PipelineError> + Send + Sync>;
 
 /// A pipeline node: wraps a compute function with metadata.
 pub struct PipelineNode {
@@ -57,11 +58,14 @@ impl PipelineResult {
     /// Get the final outputs (leaf nodes).
     pub fn final_outputs(&self) -> HashMap<&NodeId, &Value> {
         // Find nodes that aren't inputs to any other node
-        let _all_inputs: std::collections::HashSet<&str> = self.node_results.values()
+        let _all_inputs: std::collections::HashSet<&str> = self
+            .node_results
+            .values()
             .flat_map(|_| std::iter::empty::<&str>()) // Can't easily determine without the DAG
             .collect();
 
-        self.node_results.iter()
+        self.node_results
+            .iter()
             .map(|(id, r)| (id, &r.output))
             .collect()
     }
@@ -102,7 +106,9 @@ pub trait PipelineCache: Send + Sync {
 pub struct NoCache;
 
 impl PipelineCache for NoCache {
-    fn get(&self, _key: &str) -> Option<Value> { None }
+    fn get(&self, _key: &str) -> Option<Value> {
+        None
+    }
     fn set(&self, _key: &str, _value: &Value) {}
 }
 
@@ -145,59 +151,69 @@ pub fn execute(
             let node = dag.get(id).unwrap();
 
             let result = execute_node(id, node, &outputs, cache)?;
-            if result.cache_hit { cache_hits += 1; }
+            if result.cache_hit {
+                cache_hits += 1;
+            }
 
-            outputs.lock().unwrap().insert(id.clone(), result.output.clone());
+            outputs
+                .lock()
+                .unwrap()
+                .insert(id.clone(), result.output.clone());
             node_results.insert(id.clone(), result);
         } else {
             // Multiple nodes — run in parallel
-            let handles: Vec<_> = level.iter().map(|&id| {
-                let id = id.clone();
-                let outputs = Arc::clone(&outputs);
-                let node = dag.get(&id).unwrap();
+            let handles: Vec<_> = level
+                .iter()
+                .map(|&id| {
+                    let id = id.clone();
+                    let outputs = Arc::clone(&outputs);
+                    let node = dag.get(&id).unwrap();
 
-                // Gather inputs before spawning
-                let node_inputs = gather_inputs(&id, node, &outputs)?;
-                let cache_key = make_cache_key(&id, &node_inputs);
-                let cacheable = node.cacheable;
+                    // Gather inputs before spawning
+                    let node_inputs = gather_inputs(&id, node, &outputs)?;
+                    let cache_key = make_cache_key(&id, &node_inputs);
+                    let cacheable = node.cacheable;
 
-                // Check cache
-                if cacheable {
-                    if let Some(cached) = cache.get(&cache_key) {
-                        let result = NodeResult {
-                            node_id: id.clone(),
-                            output: cached.clone(),
-                            duration: Duration::ZERO,
-                            cache_hit: true,
-                        };
-                        outputs.lock().unwrap().insert(id.clone(), cached);
-                        return Ok((id, result));
+                    // Check cache
+                    if cacheable {
+                        if let Some(cached) = cache.get(&cache_key) {
+                            let result = NodeResult {
+                                node_id: id.clone(),
+                                output: cached.clone(),
+                                duration: Duration::ZERO,
+                                cache_hit: true,
+                            };
+                            outputs.lock().unwrap().insert(id.clone(), cached);
+                            return Ok((id, result));
+                        }
                     }
-                }
 
-                // Build a closure that doesn't borrow `node`
-                // We need to run compute in the current thread context since ComputeFn isn't Send
-                let node_start = Instant::now();
-                let output = (node.compute)(&node_inputs)
-                    .map_err(|e| PipelineError::NodeFailed(id.clone(), e.to_string()))?;
+                    // Build a closure that doesn't borrow `node`
+                    // We need to run compute in the current thread context since ComputeFn isn't Send
+                    let node_start = Instant::now();
+                    let output = (node.compute)(&node_inputs)
+                        .map_err(|e| PipelineError::NodeFailed(id.clone(), e.to_string()))?;
 
-                if cacheable {
-                    cache.set(&cache_key, &output);
-                }
+                    if cacheable {
+                        cache.set(&cache_key, &output);
+                    }
 
-                let result = NodeResult {
-                    node_id: id.clone(),
-                    output: output.clone(),
-                    duration: node_start.elapsed(),
-                    cache_hit: false,
-                };
+                    let result = NodeResult {
+                        node_id: id.clone(),
+                        output: output.clone(),
+                        duration: node_start.elapsed(),
+                        cache_hit: false,
+                    };
 
-                outputs.lock().unwrap().insert(id.clone(), output);
-                Ok((id, result))
-            }).collect::<Result<Vec<_>, PipelineError>>()?;
+                    outputs.lock().unwrap().insert(id.clone(), output);
+                    Ok((id, result))
+                })
+                .collect::<Result<Vec<_>, PipelineError>>()?;
 
             for (id, result) in handles {
-                if result.cache_hit { cache_hits += 1; }
+                if result.cache_hit {
+                    cache_hits += 1;
+                }
                 node_results.insert(id, result);
             }
         }
@@ -262,7 +278,8 @@ fn gather_inputs(
 
     for (input_name, (source_id, output_key)) in &node.input_map {
         // Try direct source node output
-        let source_output = out.get(source_id)
+        let source_output = out
+            .get(source_id)
             .or_else(|| out.get(&format!("__input__:{}", source_id)));
 
         match source_output {
@@ -314,18 +331,14 @@ mod tests {
 
     fn make_adder(amount: f64) -> ComputeFn {
         Box::new(move |inputs: &HashMap<String, Value>| {
-            let x = inputs.get("x")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+            let x = inputs.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
             Ok(Value::from(x + amount))
         })
     }
 
     fn make_multiplier(factor: f64) -> ComputeFn {
         Box::new(move |inputs: &HashMap<String, Value>| {
-            let x = inputs.get("x")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+            let x = inputs.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
             Ok(Value::from(x * factor))
         })
     }
@@ -343,21 +356,29 @@ mod tests {
         // input(10) → add(5) → multiply(2) = 30
         let mut dag: Dag<PipelineNode> = Dag::new();
 
-        dag.add_node("add", PipelineNode {
-            name: "Add 5".into(),
-            compute: make_adder(5.0),
-            input_map: [("x".into(), ("value".into(), "*".into()))].into(),
-            cost: 1.0,
-            cacheable: false,
-        }).unwrap();
+        dag.add_node(
+            "add",
+            PipelineNode {
+                name: "Add 5".into(),
+                compute: make_adder(5.0),
+                input_map: [("x".into(), ("value".into(), "*".into()))].into(),
+                cost: 1.0,
+                cacheable: false,
+            },
+        )
+        .unwrap();
 
-        dag.add_node("mul", PipelineNode {
-            name: "Multiply by 2".into(),
-            compute: make_multiplier(2.0),
-            input_map: [("x".into(), ("add".into(), "*".into()))].into(),
-            cost: 1.0,
-            cacheable: false,
-        }).unwrap();
+        dag.add_node(
+            "mul",
+            PipelineNode {
+                name: "Multiply by 2".into(),
+                compute: make_multiplier(2.0),
+                input_map: [("x".into(), ("add".into(), "*".into()))].into(),
+                cost: 1.0,
+                cacheable: false,
+            },
+        )
+        .unwrap();
 
         dag.add_edge("add", "mul").unwrap();
 
@@ -379,32 +400,45 @@ mod tests {
         //        combine(+)  = 15 + 30 = 45
         let mut dag: Dag<PipelineNode> = Dag::new();
 
-        dag.add_node("add", PipelineNode {
-            name: "Add 5".into(),
-            compute: make_adder(5.0),
-            input_map: [("x".into(), ("value".into(), "*".into()))].into(),
-            cost: 1.0,
-            cacheable: false,
-        }).unwrap();
+        dag.add_node(
+            "add",
+            PipelineNode {
+                name: "Add 5".into(),
+                compute: make_adder(5.0),
+                input_map: [("x".into(), ("value".into(), "*".into()))].into(),
+                cost: 1.0,
+                cacheable: false,
+            },
+        )
+        .unwrap();
 
-        dag.add_node("mul", PipelineNode {
-            name: "Multiply by 3".into(),
-            compute: make_multiplier(3.0),
-            input_map: [("x".into(), ("value".into(), "*".into()))].into(),
-            cost: 1.0,
-            cacheable: false,
-        }).unwrap();
+        dag.add_node(
+            "mul",
+            PipelineNode {
+                name: "Multiply by 3".into(),
+                compute: make_multiplier(3.0),
+                input_map: [("x".into(), ("value".into(), "*".into()))].into(),
+                cost: 1.0,
+                cacheable: false,
+            },
+        )
+        .unwrap();
 
-        dag.add_node("combine", PipelineNode {
-            name: "Combine".into(),
-            compute: make_combiner(),
-            input_map: [
-                ("a".into(), ("add".into(), "*".into())),
-                ("b".into(), ("mul".into(), "*".into())),
-            ].into(),
-            cost: 1.0,
-            cacheable: false,
-        }).unwrap();
+        dag.add_node(
+            "combine",
+            PipelineNode {
+                name: "Combine".into(),
+                compute: make_combiner(),
+                input_map: [
+                    ("a".into(), ("add".into(), "*".into())),
+                    ("b".into(), ("mul".into(), "*".into())),
+                ]
+                .into(),
+                cost: 1.0,
+                cacheable: false,
+            },
+        )
+        .unwrap();
 
         dag.add_edge("add", "combine").unwrap();
         dag.add_edge("mul", "combine").unwrap();
@@ -436,7 +470,10 @@ mod tests {
                 self.store.lock().unwrap().get(key).cloned()
             }
             fn set(&self, key: &str, value: &Value) {
-                self.store.lock().unwrap().insert(key.to_string(), value.clone());
+                self.store
+                    .lock()
+                    .unwrap()
+                    .insert(key.to_string(), value.clone());
             }
         }
 
@@ -444,19 +481,25 @@ mod tests {
         let cc = Arc::clone(&call_count);
 
         let mut dag: Dag<PipelineNode> = Dag::new();
-        dag.add_node("expensive", PipelineNode {
-            name: "Expensive op".into(),
-            compute: Box::new(move |inputs: &HashMap<String, Value>| {
-                cc.fetch_add(1, Ordering::SeqCst);
-                let x = inputs.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                Ok(Value::from(x * 2.0))
-            }),
-            input_map: [("x".into(), ("value".into(), "*".into()))].into(),
-            cost: 10.0,
-            cacheable: true,
-        }).unwrap();
+        dag.add_node(
+            "expensive",
+            PipelineNode {
+                name: "Expensive op".into(),
+                compute: Box::new(move |inputs: &HashMap<String, Value>| {
+                    cc.fetch_add(1, Ordering::SeqCst);
+                    let x = inputs.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    Ok(Value::from(x * 2.0))
+                }),
+                input_map: [("x".into(), ("value".into(), "*".into()))].into(),
+                cost: 10.0,
+                cacheable: true,
+            },
+        )
+        .unwrap();
 
-        let cache = TestCache { store: Mutex::new(HashMap::new()) };
+        let cache = TestCache {
+            store: Mutex::new(HashMap::new()),
+        };
         let mut inputs = HashMap::new();
         inputs.insert("value".to_string(), Value::from(5.0));
 

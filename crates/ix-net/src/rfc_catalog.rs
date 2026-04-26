@@ -994,7 +994,11 @@ pub fn by_topic(topic: &str) -> Vec<RfcEntry> {
 
 /// Filter by publication status.
 pub fn by_status(status: RfcStatus) -> Vec<RfcEntry> {
-    CATALOG.iter().filter(|e| e.status == status).cloned().collect()
+    CATALOG
+        .iter()
+        .filter(|e| e.status == status)
+        .cloned()
+        .collect()
 }
 
 /// Non-obsoleted entries matching a topic. Use this when you want
@@ -1155,10 +1159,7 @@ impl Catalog for RfcCatalog {
         }
 
         // Optional: obsolescence_chain=N returns just the chain.
-        if let Some(n) = filter
-            .get("obsolescence_chain")
-            .and_then(|v| v.as_u64())
-        {
+        if let Some(n) = filter.get("obsolescence_chain").and_then(|v| v.as_u64()) {
             let chain = obsolescence_chain(n as u32);
             return Ok(json!({
                 "counts": self.counts(),
@@ -1283,10 +1284,7 @@ mod tests {
     fn obsolescence_chain_for_2616_reaches_9110() {
         let chain = obsolescence_chain(2616);
         let numbers: Vec<u32> = chain.iter().map(|e| e.number).collect();
-        assert!(
-            numbers.contains(&2616),
-            "chain must include the seed entry"
-        );
+        assert!(numbers.contains(&2616), "chain must include the seed entry");
         assert!(
             numbers.contains(&9110),
             "chain from 2616 must reach 9110 via 7230-7235; got {:?}",
@@ -1298,26 +1296,41 @@ mod tests {
     fn obsolescence_chain_for_9293_includes_793() {
         let chain = obsolescence_chain(9293);
         let numbers: Vec<u32> = chain.iter().map(|e| e.number).collect();
-        assert!(numbers.contains(&793), "9293 obsoletes 793; got {:?}", numbers);
+        assert!(
+            numbers.contains(&793),
+            "9293 obsoletes 793; got {:?}",
+            numbers
+        );
         assert!(numbers.contains(&9293));
     }
 
     #[test]
     fn topic_queries_work() {
         let tls = by_topic("tls");
-        assert!(tls.len() >= 2, "tls topic should hit 8446 + 5246 at minimum");
+        assert!(
+            tls.len() >= 2,
+            "tls topic should hit 8446 + 5246 at minimum"
+        );
 
         let dns = by_topic("dns");
-        assert!(dns.len() >= 4, "dns topic should hit 1034, 1035, 4033, 8484 at minimum");
+        assert!(
+            dns.len() >= 4,
+            "dns topic should hit 1034, 1035, 4033, 8484 at minimum"
+        );
 
         let json = by_topic("json");
-        assert!(json.iter().any(|e| e.number == 8259), "json topic must include 8259");
+        assert!(
+            json.iter().any(|e| e.number == 8259),
+            "json topic must include 8259"
+        );
     }
 
     #[test]
     fn status_filter_is_exclusive() {
         let std_rfcs = by_status(RfcStatus::InternetStandard);
-        assert!(std_rfcs.iter().all(|e| e.status == RfcStatus::InternetStandard));
+        assert!(std_rfcs
+            .iter()
+            .all(|e| e.status == RfcStatus::InternetStandard));
         assert!(std_rfcs.iter().any(|e| e.number == 791));
     }
 

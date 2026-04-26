@@ -76,10 +76,7 @@ fn removing_a_tool_is_breaking() {
 fn removing_a_category_is_breaking() {
     let old_ix = repo(
         "ix",
-        &[
-            ("core-math", &["ix_stats"]),
-            ("signal", &["ix_fft"]),
-        ],
+        &[("core-math", &["ix_stats"]), ("signal", &["ix_fft"])],
     );
     let new_ix = repo("ix", &[("core-math", &["ix_stats"])]);
     let old = reg("2.0.0", &[("ix", old_ix)]);
@@ -146,11 +143,14 @@ fn compare_handles_the_real_capability_registry() {
         .join("schemas")
         .join("capability-registry.json");
     if !path.exists() {
-        eprintln!("skipping: governance submodule not checked out at {}", path.display());
+        eprintln!(
+            "skipping: governance submodule not checked out at {}",
+            path.display()
+        );
         return;
     }
-    let reg = ix_registry_check::load(&path)
-        .unwrap_or_else(|e| panic!("loading real registry: {e}"));
+    let reg =
+        ix_registry_check::load(&path).unwrap_or_else(|e| panic!("loading real registry: {e}"));
     let findings = compare(&reg, &reg);
     assert!(
         findings.is_empty(),

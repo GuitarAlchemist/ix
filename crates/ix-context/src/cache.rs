@@ -330,7 +330,9 @@ mod tests {
             "sha",
             0,
             0,
-            WalkStrategy::GitCochange { min_commits_shared: 2 },
+            WalkStrategy::GitCochange {
+                min_commits_shared: 2,
+            },
             &crate::walk::WalkBudget::default_generous(),
             "fn:foo",
             "a.rs",

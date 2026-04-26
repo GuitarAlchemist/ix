@@ -92,13 +92,7 @@ mod tests {
         let types = [Scalar, Vector, Matrix, Dataset, Model, Belief, Text];
         for (i, a) in types.iter().enumerate() {
             for b in &types[i + 1..] {
-                assert_ne!(
-                    a.color(),
-                    b.color(),
-                    "{:?} and {:?} share a color",
-                    a,
-                    b
-                );
+                assert_ne!(a.color(), b.color(), "{:?} and {:?} share a color", a, b);
             }
         }
     }

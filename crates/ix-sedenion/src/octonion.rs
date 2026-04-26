@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub, Mul, Neg};
+use std::ops::{Add, Mul, Neg, Sub};
 
 /// An octonion: 8-dimensional hypercomplex number built via Cayley-Dickson
 /// construction from quaternion pairs.
@@ -10,10 +10,10 @@ pub struct Octonion {
 /// Quaternion multiplication helper: (a0 + a1*i + a2*j + a3*k) * (b0 + b1*i + b2*j + b3*k)
 fn quat_mul(a: &[f64], b: &[f64]) -> [f64; 4] {
     [
-        a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
-        a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
-        a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
-        a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0],
+        a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+        a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+        a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+        a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
     ]
 }
 
@@ -24,12 +24,12 @@ fn quat_conj(a: &[f64]) -> [f64; 4] {
 
 /// Quaternion addition
 fn quat_add(a: &[f64; 4], b: &[f64; 4]) -> [f64; 4] {
-    [a[0]+b[0], a[1]+b[1], a[2]+b[2], a[3]+b[3]]
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]]
 }
 
 /// Quaternion subtraction
 fn quat_sub(a: &[f64; 4], b: &[f64; 4]) -> [f64; 4] {
-    [a[0]-b[0], a[1]-b[1], a[2]-b[2], a[3]-b[3]]
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]]
 }
 
 impl Octonion {
@@ -40,7 +40,9 @@ impl Octonion {
 
     /// The zero octonion.
     pub fn zero() -> Self {
-        Self { components: [0.0; 8] }
+        Self {
+            components: [0.0; 8],
+        }
     }
 
     /// The multiplicative identity (1, 0, 0, ..., 0).
@@ -175,7 +177,9 @@ mod tests {
     const EPS: f64 = 1e-10;
 
     fn approx_eq(a: &Octonion, b: &Octonion) -> bool {
-        a.components.iter().zip(b.components.iter())
+        a.components
+            .iter()
+            .zip(b.components.iter())
             .all(|(x, y)| (x - y).abs() < EPS)
     }
 
@@ -194,8 +198,11 @@ mod tests {
         for i in 1..8 {
             let ei = Octonion::basis(i);
             let sq = Octonion::mul(&ei, &ei);
-            assert!(approx_eq(&sq, &neg_one),
-                "e_{i}^2 should be -1, got {:?}", sq.components);
+            assert!(
+                approx_eq(&sq, &neg_one),
+                "e_{i}^2 should be -1, got {:?}",
+                sq.components
+            );
         }
     }
 
@@ -207,8 +214,12 @@ mod tests {
         let ns = o.norm_squared();
         assert!((product.components[0] - ns).abs() < EPS);
         for i in 1..8 {
-            assert!(product.components[i].abs() < EPS,
-                "imaginary part {} should be 0, got {}", i, product.components[i]);
+            assert!(
+                product.components[i].abs() < EPS,
+                "imaginary part {} should be 0, got {}",
+                i,
+                product.components[i]
+            );
         }
     }
 
@@ -222,9 +233,12 @@ mod tests {
         let lhs = Octonion::mul(&e1e2, &e4);
         let e2e4 = Octonion::mul(&e2, &e4);
         let rhs = Octonion::mul(&e1, &e2e4);
-        assert!(!approx_eq(&lhs, &rhs),
+        assert!(
+            !approx_eq(&lhs, &rhs),
             "Octonions should NOT be associative!\nlhs={:?}\nrhs={:?}",
-            lhs.components, rhs.components);
+            lhs.components,
+            rhs.components
+        );
     }
 
     #[test]
@@ -236,14 +250,22 @@ mod tests {
         let lhs = Octonion::mul(&x, &xy);
         let xx = Octonion::mul(&x, &x);
         let rhs = Octonion::mul(&xx, &y);
-        assert!(approx_eq(&lhs, &rhs),
-            "Left alternative law failed:\nlhs={:?}\nrhs={:?}", lhs.components, rhs.components);
+        assert!(
+            approx_eq(&lhs, &rhs),
+            "Left alternative law failed:\nlhs={:?}\nrhs={:?}",
+            lhs.components,
+            rhs.components
+        );
 
         let yx = Octonion::mul(&y, &x);
         let lhs2 = Octonion::mul(&yx, &x);
         let rhs2 = Octonion::mul(&y, &xx);
-        assert!(approx_eq(&lhs2, &rhs2),
-            "Right alternative law failed:\nlhs={:?}\nrhs={:?}", lhs2.components, rhs2.components);
+        assert!(
+            approx_eq(&lhs2, &rhs2),
+            "Right alternative law failed:\nlhs={:?}\nrhs={:?}",
+            lhs2.components,
+            rhs2.components
+        );
     }
 
     #[test]
@@ -251,8 +273,11 @@ mod tests {
         let o = Octonion::new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let inv = o.inverse();
         let product = Octonion::mul(&o, &inv);
-        assert!(approx_eq(&product, &Octonion::one()),
-            "o * o^-1 should be 1, got {:?}", product.components);
+        assert!(
+            approx_eq(&product, &Octonion::one()),
+            "o * o^-1 should be 1, got {:?}",
+            product.components
+        );
     }
 
     #[test]

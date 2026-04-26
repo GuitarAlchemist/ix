@@ -152,10 +152,7 @@ pub fn session_event_to_trace_event(event: &SessionEvent) -> TraceEvent {
 /// surfaced via [`SessionLog::reload_errors`] on the next reopen.
 /// The supplied `trace_id` is used verbatim; if `None`, the log's
 /// filename stem is used.
-pub fn session_to_trace(
-    log: &SessionLog,
-    trace_id: Option<String>,
-) -> Result<Trace, SessionError> {
+pub fn session_to_trace(log: &SessionLog, trace_id: Option<String>) -> Result<Trace, SessionError> {
     let trace_id = trace_id.unwrap_or_else(|| {
         log.path()
             .file_stem()
@@ -296,7 +293,8 @@ mod tests {
 
     #[test]
     fn maps_each_session_event_variant() {
-        let variants = [SessionEvent::ActionProposed {
+        let variants = [
+            SessionEvent::ActionProposed {
                 ordinal: 0,
                 action: invoke("t"),
             },
@@ -325,7 +323,8 @@ mod tests {
             SessionEvent::ActionFailed {
                 ordinal: 5,
                 error: ix_agent_core::ActionError::Exec("boom".into()),
-            }];
+            },
+        ];
         let mapped: Vec<TraceEvent> = variants.iter().map(session_event_to_trace_event).collect();
         assert_eq!(mapped[0].event_type, "action_proposed");
         assert_eq!(mapped[1].event_type, "action_blocked");

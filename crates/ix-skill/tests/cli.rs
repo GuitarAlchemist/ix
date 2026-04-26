@@ -57,8 +57,7 @@ fn describe_skill_shows_schema() {
 
 #[test]
 fn describe_skill_unknown_fails() {
-    ix()
-        .args(["describe", "skill", "does.not.exist"])
+    ix().args(["describe", "skill", "does.not.exist"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("skill not found"));
@@ -97,8 +96,7 @@ fn run_number_theory_gcd_via_input_flag() {
 
 #[test]
 fn run_unknown_skill_fails() {
-    ix()
-        .args(["run", "does.not.exist"])
+    ix().args(["run", "does.not.exist"])
         .write_stdin("{}")
         .assert()
         .failure()
@@ -154,7 +152,12 @@ fn check_action_benign_is_true() {
 fn list_skills_with_domain_filter() {
     let out = ix()
         .args([
-            "--format", "json", "list", "skills", "--domain", "governance",
+            "--format",
+            "json",
+            "list",
+            "skills",
+            "--domain",
+            "governance",
         ])
         .assert()
         .success();
@@ -165,8 +168,7 @@ fn list_skills_with_domain_filter() {
 
 #[test]
 fn serve_verb_reports_stub() {
-    ix()
-        .args(["serve", "repl"])
+    ix().args(["serve", "repl"])
         .assert()
         .code(2) // UNKNOWN exit code for stubs
         .stderr(predicate::str::contains("coming"));

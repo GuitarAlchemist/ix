@@ -8,7 +8,9 @@ use ix_invariant_coverage::producer::produce_firings;
 
 #[derive(Parser, Debug)]
 #[command(name = "ix-invariant-produce")]
-#[command(about = "Runs the built-in invariant checkers against an exemplar corpus and writes firings.json for ix-invariant-coverage to ingest.")]
+#[command(
+    about = "Runs the built-in invariant checkers against an exemplar corpus and writes firings.json for ix-invariant-coverage to ingest."
+)]
 struct Args {
     /// Output path for the firings JSON. Writes to stdout if omitted.
     #[arg(long)]

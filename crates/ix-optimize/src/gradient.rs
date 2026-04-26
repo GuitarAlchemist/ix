@@ -2,8 +2,8 @@
 
 use ndarray::Array1;
 
-use crate::traits::{ObjectiveFunction, OptimizeResult, Optimizer};
 use crate::convergence::ConvergenceCriteria;
+use crate::traits::{ObjectiveFunction, OptimizeResult, Optimizer};
 
 /// Stochastic Gradient Descent.
 pub struct SGD {
@@ -107,7 +107,8 @@ impl Optimizer for Adam {
         let m_hat = &m / (1.0 - self.beta1.powf(t));
         let v_hat = &v / (1.0 - self.beta2.powf(t));
 
-        let new_params = params - &(self.learning_rate * &m_hat / &(v_hat.mapv(f64::sqrt) + self.epsilon));
+        let new_params =
+            params - &(self.learning_rate * &m_hat / &(v_hat.mapv(f64::sqrt) + self.epsilon));
 
         self.m = Some(m);
         self.v = Some(v);

@@ -15,3 +15,4 @@ serde_json = { workspace = true }
 serde_yaml = "0.9"
 thiserror = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+ix-quality-trend = { workspace = true }

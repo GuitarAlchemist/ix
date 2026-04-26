@@ -163,7 +163,8 @@ impl<'a> Walker<'a> {
         };
 
         // Seed the bundle with the root node.
-        let root_node = function_node_from_def(&root_def, &root_name, qualified, Hexavalent::Unknown);
+        let root_node =
+            function_node_from_def(&root_def, &root_name, qualified, Hexavalent::Unknown);
         bundle.nodes.push(root_node);
         bundle.walk_trace.push(WalkStep {
             step: 1,
@@ -174,16 +175,39 @@ impl<'a> Walker<'a> {
         // Dispatch.
         match strategy {
             WalkStrategy::CallersTransitive { max_depth } => {
-                self.walk_callers(&root_id, &root_def, &root_name, max_depth, budget, start, &mut bundle);
+                self.walk_callers(
+                    &root_id,
+                    &root_def,
+                    &root_name,
+                    max_depth,
+                    budget,
+                    start,
+                    &mut bundle,
+                );
             }
             WalkStrategy::CalleesTransitive { max_depth } => {
-                self.walk_callees(&root_id, &root_def, &root_name, max_depth, budget, start, &mut bundle);
+                self.walk_callees(
+                    &root_id,
+                    &root_def,
+                    &root_name,
+                    max_depth,
+                    budget,
+                    start,
+                    &mut bundle,
+                );
             }
             WalkStrategy::ModuleSiblings => {
                 self.walk_siblings(&root_id, &root_def, &root_name, budget, start, &mut bundle);
             }
             WalkStrategy::GitCochange { min_commits_shared } => {
-                self.walk_cochange(&root_id, &root_def, min_commits_shared, budget, start, &mut bundle);
+                self.walk_cochange(
+                    &root_id,
+                    &root_def,
+                    min_commits_shared,
+                    budget,
+                    start,
+                    &mut bundle,
+                );
             }
         }
 
@@ -516,10 +540,7 @@ impl<'a> Walker<'a> {
                 continue;
             };
             let parent_tree = if commit.parent_count() > 0 {
-                commit
-                    .parent(0)
-                    .ok()
-                    .and_then(|p| p.tree().ok())
+                commit.parent(0).ok().and_then(|p| p.tree().ok())
             } else {
                 None
             };
@@ -530,7 +551,8 @@ impl<'a> Walker<'a> {
             let mut touched: HashSet<String> = HashSet::new();
             let _ = diff.foreach(
                 &mut |delta, _| {
-                    if let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                    if let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path())
+                    {
                         if let Some(p) = path.to_str() {
                             touched.insert(p.replace('\\', "/"));
                         }
@@ -834,10 +856,17 @@ pub fn consumer() {
         );
         assert!(!bundle.truncated);
         // Root + consumer
-        assert!(bundle.nodes.len() >= 2, "expected >= 2 nodes, got {}: {:#?}", bundle.nodes.len(), bundle.nodes);
+        assert!(
+            bundle.nodes.len() >= 2,
+            "expected >= 2 nodes, got {}: {:#?}",
+            bundle.nodes.len(),
+            bundle.nodes
+        );
         // At least one edge into jacobi
         assert!(
-            bundle.edges.iter().any(|e| matches!(&e.to, ResolvedOrAmbiguous::Resolved { id } if id.contains("jacobi"))),
+            bundle.edges.iter().any(
+                |e| matches!(&e.to, ResolvedOrAmbiguous::Resolved { id } if id.contains("jacobi"))
+            ),
             "no edge into jacobi, edges: {:#?}",
             bundle.edges
         );
@@ -896,7 +925,9 @@ pub fn caller() { helper(); }
         );
         assert!(!bundle.truncated);
         assert!(
-            bundle.edges.iter().any(|e| matches!(&e.to, ResolvedOrAmbiguous::Resolved { id } if id.contains("helper"))),
+            bundle.edges.iter().any(
+                |e| matches!(&e.to, ResolvedOrAmbiguous::Resolved { id } if id.contains("helper"))
+            ),
             "no edge caller -> helper, edges: {:#?}",
             bundle.edges
         );
@@ -929,21 +960,15 @@ pub fn gamma() {}
             WalkBudget::default_generous(),
         );
         // Should have root + beta + gamma, alpha itself skipped from sibling output.
-        let has_beta = bundle
-            .nodes
-            .iter()
-            .any(|n| n.meta().label == "beta");
-        let has_gamma = bundle
-            .nodes
-            .iter()
-            .any(|n| n.meta().label == "gamma");
+        let has_beta = bundle.nodes.iter().any(|n| n.meta().label == "beta");
+        let has_gamma = bundle.nodes.iter().any(|n| n.meta().label == "gamma");
         assert!(has_beta, "beta sibling missing: {:#?}", bundle.nodes);
         assert!(has_gamma, "gamma sibling missing: {:#?}", bundle.nodes);
         // Sibling edges carry the right provenance
-        assert!(bundle.edges.iter().all(|e| matches!(
-            &e.provenance,
-            EdgeProvenance::Sibling { .. }
-        )));
+        assert!(bundle
+            .edges
+            .iter()
+            .all(|e| matches!(&e.provenance, EdgeProvenance::Sibling { .. })));
     }
 
     // ── Budget enforcement ─────────────────────────────────────────────
@@ -974,11 +999,7 @@ pub fn epsilon() {}
             max_edges: 10,
             timeout: Duration::from_secs(10),
         };
-        let bundle = walker.walk_from_free_fn(
-            "mini::alpha",
-            WalkStrategy::ModuleSiblings,
-            budget,
-        );
+        let bundle = walker.walk_from_free_fn("mini::alpha", WalkStrategy::ModuleSiblings, budget);
         assert!(bundle.truncated, "expected truncated bundle");
         // Trace should contain a Truncated step
         assert!(bundle
@@ -1011,10 +1032,9 @@ pub fn epsilon() {}
         );
         // No edges, but a trace step explaining why
         assert!(bundle.edges.is_empty());
-        assert!(bundle
-            .walk_trace
-            .iter()
-            .any(|s| matches!(&s.action, WalkAction::BudgetSkip { reason } if reason.contains("git2"))));
+        assert!(bundle.walk_trace.iter().any(
+            |s| matches!(&s.action, WalkAction::BudgetSkip { reason } if reason.contains("git2"))
+        ));
     }
 
     #[test]
@@ -1038,7 +1058,9 @@ pub fn epsilon() {}
         // Programmatic commit 1: initial add of everything.
         let mut sig = git2::Signature::now("test", "test@test").expect("sig");
         let mut idx_git = repo.index().expect("index");
-        idx_git.add_all(["."].iter(), git2::IndexAddOption::DEFAULT, None).expect("add_all");
+        idx_git
+            .add_all(["."].iter(), git2::IndexAddOption::DEFAULT, None)
+            .expect("add_all");
         idx_git.write().expect("write index");
         let tree_id = idx_git.write_tree().expect("write_tree");
         let tree = repo.find_tree(tree_id).expect("find_tree");
@@ -1047,12 +1069,21 @@ pub fn epsilon() {}
             .expect("commit");
 
         // Commit 2: modify both files together.
-        fs::write(root.join("crates/mini/src/lib.rs"), "pub fn target() { let _ = 1; }\n")
-            .unwrap();
-        fs::write(root.join("crates/mini/src/other.rs"), "pub fn other() { let _ = 2; }\n").unwrap();
+        fs::write(
+            root.join("crates/mini/src/lib.rs"),
+            "pub fn target() { let _ = 1; }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("crates/mini/src/other.rs"),
+            "pub fn other() { let _ = 2; }\n",
+        )
+        .unwrap();
         sig = git2::Signature::now("test", "test@test").expect("sig");
         let mut idx_git = repo.index().expect("index");
-        idx_git.add_all(["."].iter(), git2::IndexAddOption::DEFAULT, None).expect("add_all");
+        idx_git
+            .add_all(["."].iter(), git2::IndexAddOption::DEFAULT, None)
+            .expect("add_all");
         idx_git.write().expect("write index");
         let tree_id = idx_git.write_tree().expect("write_tree");
         let tree = repo.find_tree(tree_id).expect("find_tree");
@@ -1064,7 +1095,9 @@ pub fn epsilon() {}
         let walker = Walker::new(&idx);
         let bundle = walker.walk_from_free_fn(
             "mini::target",
-            WalkStrategy::GitCochange { min_commits_shared: 1 },
+            WalkStrategy::GitCochange {
+                min_commits_shared: 1,
+            },
             WalkBudget::default_generous(),
         );
 

@@ -202,8 +202,7 @@ impl KernelPca {
         let mut k_test_c = Array2::<f64>::zeros((m, n));
         for i in 0..m {
             for j in 0..n {
-                k_test_c[[i, j]] =
-                    k_test[[i, j]] - test_row_means[i] - row_means[j] + grand_mean;
+                k_test_c[[i, j]] = k_test[[i, j]] - test_row_means[i] - row_means[j] + grand_mean;
             }
         }
 
@@ -212,12 +211,18 @@ impl KernelPca {
     }
 }
 
-fn compute_kernel(kernel: &Kernel, a: &ndarray::ArrayView1<f64>, b: &ndarray::ArrayView1<f64>) -> f64 {
+fn compute_kernel(
+    kernel: &Kernel,
+    a: &ndarray::ArrayView1<f64>,
+    b: &ndarray::ArrayView1<f64>,
+) -> f64 {
     match kernel {
         Kernel::Linear => a.dot(b),
-        Kernel::Polynomial { degree, gamma, coef0 } => {
-            (gamma * a.dot(b) + coef0).powf(*degree)
-        }
+        Kernel::Polynomial {
+            degree,
+            gamma,
+            coef0,
+        } => (gamma * a.dot(b) + coef0).powf(*degree),
         Kernel::Rbf { gamma } => {
             let mut sq = 0.0;
             for (x, y) in a.iter().zip(b.iter()) {
@@ -239,13 +244,7 @@ mod tests {
         // With a linear kernel, Kernel PCA is equivalent (up to sign/rotation)
         // to standard PCA. We verify that the top component captures the
         // dominant variance direction.
-        let x = array![
-            [1.0, 1.0],
-            [2.0, 2.0],
-            [3.0, 3.0],
-            [4.0, 4.0],
-            [5.0, 5.0],
-        ];
+        let x = array![[1.0, 1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0], [5.0, 5.0],];
         let mut kpca = KernelPca::new(1, Kernel::Linear);
         let projected = kpca.fit_transform(&x).unwrap();
         assert_eq!(projected.ncols(), 1);
@@ -281,12 +280,7 @@ mod tests {
         // The two rings are both centered at the origin, so their centroids
         // in the projection will be near zero. Instead, verify the first
         // component explains meaningful variance (non-trivial projection).
-        let var_c1: f64 = projected
-            .column(0)
-            .iter()
-            .map(|v| v * v)
-            .sum::<f64>()
-            / 8.0;
+        let var_c1: f64 = projected.column(0).iter().map(|v| v * v).sum::<f64>() / 8.0;
         assert!(
             var_c1 > 1e-4,
             "first component should have non-trivial variance, got {}",
@@ -296,12 +290,7 @@ mod tests {
 
     #[test]
     fn test_polynomial_kernel() {
-        let x = array![
-            [1.0, 0.0],
-            [0.0, 1.0],
-            [-1.0, 0.0],
-            [0.0, -1.0],
-        ];
+        let x = array![[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0],];
         let mut kpca = KernelPca::new(
             2,
             Kernel::Polynomial {
@@ -317,12 +306,7 @@ mod tests {
 
     #[test]
     fn test_transform_out_of_sample() {
-        let x_train = array![
-            [1.0, 0.0],
-            [-1.0, 0.0],
-            [0.0, 1.0],
-            [0.0, -1.0],
-        ];
+        let x_train = array![[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0],];
         let mut kpca = KernelPca::new(2, Kernel::Rbf { gamma: 0.5 });
         kpca.fit_transform(&x_train).unwrap();
         let x_test = array![[0.5, 0.5], [0.0, 0.0]];

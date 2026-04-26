@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 
 pub struct GameTheoryDemo {
     rounds: usize,
@@ -36,14 +36,30 @@ impl GameTheoryDemo {
 
         if !self.history.is_empty() {
             Plot::new("game_plot").height(350.0).show(ui, |plot_ui| {
-                let p1: PlotPoints = self.history.iter().enumerate()
-                    .map(|(i, h)| [i as f64, h[0]]).collect();
-                let p2: PlotPoints = self.history.iter().enumerate()
-                    .map(|(i, h)| [i as f64, h[1]]).collect();
-                plot_ui.line(Line::new(p1).name("Tit-for-Tat (cumulative)").width(2.0)
-                    .color(egui::Color32::from_rgb(100, 200, 100)));
-                plot_ui.line(Line::new(p2).name("Always Defect (cumulative)").width(2.0)
-                    .color(egui::Color32::from_rgb(200, 100, 100)));
+                let p1: PlotPoints = self
+                    .history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| [i as f64, h[0]])
+                    .collect();
+                let p2: PlotPoints = self
+                    .history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| [i as f64, h[1]])
+                    .collect();
+                plot_ui.line(
+                    Line::new(p1)
+                        .name("Tit-for-Tat (cumulative)")
+                        .width(2.0)
+                        .color(egui::Color32::from_rgb(100, 200, 100)),
+                );
+                plot_ui.line(
+                    Line::new(p2)
+                        .name("Always Defect (cumulative)")
+                        .width(2.0)
+                        .color(egui::Color32::from_rgb(200, 100, 100)),
+                );
             });
         }
     }
@@ -68,7 +84,7 @@ impl GameTheoryDemo {
 
         for _ in 0..self.rounds {
             let p1_action = last_p2; // Tit-for-tat: copy opponent's last move
-            let p2_action = false;   // Always defect
+            let p2_action = false; // Always defect
 
             let (r1, r2) = payoff(p1_action, p2_action);
             cum1 += r1;
@@ -79,7 +95,11 @@ impl GameTheoryDemo {
 
         self.p1_score = cum1;
         self.p2_score = cum2;
-        self.status = format!("Tit-for-Tat: {:.0} | Always Defect: {:.0} | {} wins",
-            cum1, cum2, if cum1 > cum2 { "TfT" } else { "AD" });
+        self.status = format!(
+            "Tit-for-Tat: {:.0} | Always Defect: {:.0} | {} wins",
+            cum1,
+            cum2,
+            if cum1 > cum2 { "TfT" } else { "AD" }
+        );
     }
 }

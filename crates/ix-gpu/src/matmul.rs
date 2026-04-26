@@ -2,8 +2,8 @@
 //!
 //! Uses WGSL compute shaders for general matrix multiply (GEMM).
 
-use wgpu::*;
 use crate::context::GpuContext;
+use wgpu::*;
 
 /// WGSL shader for matrix multiplication: C = A × B.
 ///
@@ -57,7 +57,14 @@ struct MatmulParams {
 /// `a`: M×K matrix in row-major order.
 /// `b`: K×N matrix in row-major order.
 /// Returns M×N result matrix.
-pub fn matmul_gpu(ctx: &GpuContext, a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+pub fn matmul_gpu(
+    ctx: &GpuContext,
+    a: &[f32],
+    b: &[f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Vec<f32> {
     assert_eq!(a.len(), m * k, "A must be {}×{}", m, k);
     assert_eq!(b.len(), k * n, "B must be {}×{}", k, n);
 
@@ -73,11 +80,13 @@ pub fn matmul_gpu(ctx: &GpuContext, a: &[f32], b: &[f32], m: usize, k: usize, n:
     let buf_c = ctx.create_output_buffer("mat_c", (m * n * std::mem::size_of::<f32>()) as u64);
 
     use wgpu::util::DeviceExt;
-    let buf_params = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("params"),
-        contents: bytemuck::cast_slice(&[params]),
-        usage: BufferUsages::UNIFORM,
-    });
+    let buf_params = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("params"),
+            contents: bytemuck::cast_slice(&[params]),
+            usage: BufferUsages::UNIFORM,
+        });
 
     let pipeline = ctx.create_compute_pipeline("matmul", MATMUL_SHADER, "matmul");
 
@@ -86,16 +95,30 @@ pub fn matmul_gpu(ctx: &GpuContext, a: &[f32], b: &[f32], m: usize, k: usize, n:
         label: Some("matmul_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_a.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_b.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_c.as_entire_binding() },
-            BindGroupEntry { binding: 3, resource: buf_params.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_a.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_b.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_c.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: buf_params.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("matmul_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("matmul_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {

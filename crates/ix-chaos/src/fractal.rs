@@ -53,12 +53,7 @@ pub fn box_counting_dimension_2d(points: &[(f64, f64)], num_scales: usize) -> f6
 ///
 /// C(r) = (2 / N*(N-1)) * #{pairs with |x_i - x_j| < r}
 /// D_2 = lim_{r->0} log(C(r)) / log(r)
-pub fn correlation_dimension(
-    data: &[Vec<f64>],
-    r_min: f64,
-    r_max: f64,
-    num_scales: usize,
-) -> f64 {
+pub fn correlation_dimension(data: &[Vec<f64>], r_min: f64, r_max: f64, num_scales: usize) -> f64 {
     let n = data.len();
     if n < 2 {
         return 0.0;
@@ -75,7 +70,9 @@ pub fn correlation_dimension(
         let mut count = 0u64;
         for i in 0..n {
             for j in (i + 1)..n {
-                let dist_sq: f64 = data[i].iter().zip(data[j].iter())
+                let dist_sq: f64 = data[i]
+                    .iter()
+                    .zip(data[j].iter())
                     .map(|(a, b)| (a - b) * (a - b))
                     .sum();
                 if dist_sq < r_sq {
@@ -127,7 +124,8 @@ pub fn hurst_exponent(data: &[f64]) -> f64 {
             let range = cum_dev.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
                 - cum_dev.iter().cloned().fold(f64::INFINITY, f64::min);
 
-            let std_dev = (window.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / size as f64).sqrt();
+            let std_dev =
+                (window.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / size as f64).sqrt();
 
             if std_dev > 1e-15 {
                 rs_values.push(range / std_dev);
@@ -181,7 +179,11 @@ mod tests {
             .collect();
 
         let dim = box_counting_dimension_2d(&points, 8);
-        assert!(dim > 0.8 && dim < 1.3, "Line dimension should be ~1, got {}", dim);
+        assert!(
+            dim > 0.8 && dim < 1.3,
+            "Line dimension should be ~1, got {}",
+            dim
+        );
     }
 
     #[test]
@@ -195,7 +197,11 @@ mod tests {
         }
 
         let dim = box_counting_dimension_2d(&points, 6);
-        assert!(dim > 1.5 && dim < 2.5, "Square dimension should be ~2, got {}", dim);
+        assert!(
+            dim > 1.5 && dim < 2.5,
+            "Square dimension should be ~2, got {}",
+            dim
+        );
     }
 
     #[test]

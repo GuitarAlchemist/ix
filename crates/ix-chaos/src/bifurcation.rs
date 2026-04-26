@@ -58,7 +58,14 @@ where
 /// Detect the period of an orbit for a 1D map at a given parameter.
 ///
 /// Returns None if the orbit appears chaotic (period > max_period).
-pub fn detect_period<F>(map: F, x0: f64, param: f64, transient: usize, max_period: usize, tolerance: f64) -> Option<usize>
+pub fn detect_period<F>(
+    map: F,
+    x0: f64,
+    param: f64,
+    transient: usize,
+    max_period: usize,
+    tolerance: f64,
+) -> Option<usize>
 where
     F: Fn(f64, f64) -> f64,
 {
@@ -141,7 +148,8 @@ mod tests {
         assert!(!diagram.is_empty());
 
         // At r=3.0 should be near fixed point ~0.666
-        let near_3: Vec<_> = diagram.iter()
+        let near_3: Vec<_> = diagram
+            .iter()
             .filter(|p| (p.parameter - 3.0).abs() < 0.02)
             .collect();
         assert!(!near_3.is_empty());
@@ -165,8 +173,11 @@ mod tests {
         let deltas = feigenbaum_delta(&bif_points);
         // First delta should approach 4.669...
         if !deltas.is_empty() {
-            assert!(deltas[0] > 3.0 && deltas[0] < 6.0,
-                "Feigenbaum delta estimate: {}", deltas[0]);
+            assert!(
+                deltas[0] > 3.0 && deltas[0] < 6.0,
+                "Feigenbaum delta estimate: {}",
+                deltas[0]
+            );
         }
     }
 }

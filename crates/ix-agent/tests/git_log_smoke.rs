@@ -168,8 +168,5 @@ fn rejects_unknown_bucket() {
         "bucket": "century"
     }))
     .expect_err("unknown bucket must reject");
-    assert!(
-        err.contains("bucket"),
-        "expected bucket error, got: {err}"
-    );
+    assert!(err.contains("bucket"), "expected bucket error, got: {err}");
 }

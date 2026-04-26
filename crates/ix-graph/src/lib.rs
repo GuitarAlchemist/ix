@@ -6,5 +6,5 @@
 pub mod graph;
 pub mod hmm;
 pub mod markov;
-pub mod state_space;
 pub mod routing;
+pub mod state_space;

@@ -33,7 +33,11 @@ pub struct AdversarialResult<M> {
 pub fn minimax<S: GameState>(state: &S, depth: usize) -> AdversarialResult<S::Move> {
     let mut nodes = 0;
     let (value, best_move) = minimax_recursive(state, depth, &mut nodes);
-    AdversarialResult { best_move, value, nodes_evaluated: nodes }
+    AdversarialResult {
+        best_move,
+        value,
+        nodes_evaluated: nodes,
+    }
 }
 
 fn minimax_recursive<S: GameState>(
@@ -86,8 +90,13 @@ fn minimax_recursive<S: GameState>(
 /// Alpha-Beta pruning search — minimax with branch elimination.
 pub fn alpha_beta<S: GameState>(state: &S, depth: usize) -> AdversarialResult<S::Move> {
     let mut nodes = 0;
-    let (value, best_move) = ab_recursive(state, depth, f64::NEG_INFINITY, f64::INFINITY, &mut nodes);
-    AdversarialResult { best_move, value, nodes_evaluated: nodes }
+    let (value, best_move) =
+        ab_recursive(state, depth, f64::NEG_INFINITY, f64::INFINITY, &mut nodes);
+    AdversarialResult {
+        best_move,
+        value,
+        nodes_evaluated: nodes,
+    }
 }
 
 fn ab_recursive<S: GameState>(
@@ -151,8 +160,19 @@ fn ab_recursive<S: GameState>(
 pub fn negamax<S: GameState>(state: &S, depth: usize) -> AdversarialResult<S::Move> {
     let mut nodes = 0;
     let color = if state.is_maximizer_turn() { 1.0 } else { -1.0 };
-    let (value, best_move) = negamax_recursive(state, depth, f64::NEG_INFINITY, f64::INFINITY, color, &mut nodes);
-    AdversarialResult { best_move, value: value * color, nodes_evaluated: nodes }
+    let (value, best_move) = negamax_recursive(
+        state,
+        depth,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        color,
+        &mut nodes,
+    );
+    AdversarialResult {
+        best_move,
+        value: value * color,
+        nodes_evaluated: nodes,
+    }
 }
 
 fn negamax_recursive<S: GameState>(
@@ -206,10 +226,17 @@ pub trait StochasticGameState: GameState {
     fn chance_outcomes(&self) -> Vec<(f64, Self)>;
 }
 
-pub fn expectiminimax<S: StochasticGameState>(state: &S, depth: usize) -> AdversarialResult<S::Move> {
+pub fn expectiminimax<S: StochasticGameState>(
+    state: &S,
+    depth: usize,
+) -> AdversarialResult<S::Move> {
     let mut nodes = 0;
     let (value, best_move) = expecti_recursive(state, depth, &mut nodes);
-    AdversarialResult { best_move, value, nodes_evaluated: nodes }
+    AdversarialResult {
+        best_move,
+        value,
+        nodes_evaluated: nodes,
+    }
 }
 
 fn expecti_recursive<S: StochasticGameState>(
@@ -225,7 +252,8 @@ fn expecti_recursive<S: StochasticGameState>(
 
     if state.is_chance_node() {
         let outcomes = state.chance_outcomes();
-        let expected: f64 = outcomes.iter()
+        let expected: f64 = outcomes
+            .iter()
             .map(|(prob, child)| {
                 let (val, _) = expecti_recursive(child, depth - 1, nodes);
                 prob * val
@@ -282,7 +310,11 @@ mod tests {
         type Move = i32;
 
         fn legal_moves(&self) -> Vec<i32> {
-            if self.is_terminal() { vec![] } else { vec![1, -1] }
+            if self.is_terminal() {
+                vec![]
+            } else {
+                vec![1, -1]
+            }
         }
 
         fn apply_move(&self, m: &i32) -> Self {
@@ -308,7 +340,11 @@ mod tests {
 
     #[test]
     fn test_minimax_basic() {
-        let state = NumberGame { value: 5, max_turn: true, turns_left: 4 };
+        let state = NumberGame {
+            value: 5,
+            max_turn: true,
+            turns_left: 4,
+        };
         let result = minimax(&state, 4);
         assert!(result.best_move.is_some());
         // Maximizer should try to increase value
@@ -317,7 +353,11 @@ mod tests {
 
     #[test]
     fn test_alpha_beta_prunes() {
-        let state = NumberGame { value: 5, max_turn: true, turns_left: 6 };
+        let state = NumberGame {
+            value: 5,
+            max_turn: true,
+            turns_left: 6,
+        };
 
         let mm = minimax(&state, 6);
         let ab = alpha_beta(&state, 6);
@@ -325,7 +365,11 @@ mod tests {
         // Same result
         assert_eq!(mm.value, ab.value);
         // Alpha-beta should evaluate fewer nodes
-        assert!(ab.nodes_evaluated <= mm.nodes_evaluated,
-            "AB: {}, MM: {}", ab.nodes_evaluated, mm.nodes_evaluated);
+        assert!(
+            ab.nodes_evaluated <= mm.nodes_evaluated,
+            "AB: {}, MM: {}",
+            ab.nodes_evaluated,
+            mm.nodes_evaluated
+        );
     }
 }

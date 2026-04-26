@@ -147,14 +147,8 @@ pub fn shannon_entropy(values: &[f64], bins: usize) -> f64 {
         return 0.0;
     }
     let bins = bins.min(MAX_HISTOGRAM_BINS);
-    let min = values
-        .iter()
-        .cloned()
-        .fold(f64::INFINITY, f64::min);
-    let max = values
-        .iter()
-        .cloned()
-        .fold(f64::NEG_INFINITY, f64::max);
+    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     if (max - min).abs() <= f64::EPSILON {
         return 0.0;
     }
@@ -218,7 +212,11 @@ mod tests {
     fn test_gini_all_equal() {
         let values = vec![1.0, 1.0, 1.0, 1.0];
         let g = gini_coefficient(&values);
-        assert!(g.abs() < 1e-9, "gini for equal values should be 0, got {}", g);
+        assert!(
+            g.abs() < 1e-9,
+            "gini for equal values should be 0, got {}",
+            g
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, Points, PlotPoints, Bar, BarChart};
-use ndarray::{Array2, Array3, s};
+use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints, Points};
+use ndarray::{s, Array2, Array3};
 
 #[derive(PartialEq, Clone, Copy)]
 enum TransformerMode {
@@ -66,8 +66,16 @@ impl TransformerDemo {
 
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.mode, TransformerMode::Attention, "Attention");
-            ui.radio_value(&mut self.mode, TransformerMode::Positional, "Positional Encoding");
-            ui.radio_value(&mut self.mode, TransformerMode::FullBlock, "Transformer Stack");
+            ui.radio_value(
+                &mut self.mode,
+                TransformerMode::Positional,
+                "Positional Encoding",
+            );
+            ui.radio_value(
+                &mut self.mode,
+                TransformerMode::FullBlock,
+                "Transformer Stack",
+            );
         });
 
         ui.separator();
@@ -103,41 +111,47 @@ impl TransformerDemo {
             let n = w.nrows();
             let cell_size = (400.0 / n as f32).min(40.0);
 
-            egui::Grid::new("attn_heatmap").spacing([1.0, 1.0]).show(ui, |ui| {
-                // Header
-                ui.label("");
-                for j in 0..n {
-                    ui.label(egui::RichText::new(format!("K{j}")).small());
-                }
-                ui.end_row();
-
-                for i in 0..n {
-                    ui.label(egui::RichText::new(format!("Q{i}")).small());
+            egui::Grid::new("attn_heatmap")
+                .spacing([1.0, 1.0])
+                .show(ui, |ui| {
+                    // Header
+                    ui.label("");
                     for j in 0..n {
-                        let val = w[[i, j]];
-                        let intensity = (val * 255.0).clamp(0.0, 255.0) as u8;
-                        let color = egui::Color32::from_rgb(intensity, intensity / 3, 255 - intensity);
-                        let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(cell_size, cell_size),
-                            egui::Sense::hover(),
-                        );
-                        ui.painter().rect_filled(rect, 0.0, color);
-                        // Show value on hover
-                        if ui.rect_contains_pointer(rect) {
-                            egui::show_tooltip(ui.ctx(), ui.layer_id(), egui::Id::new(("attn_tip", i, j)), |ui| {
-                                ui.label(format!("Q{i}→K{j}: {val:.4}"));
-                            });
-                        }
+                        ui.label(egui::RichText::new(format!("K{j}")).small());
                     }
                     ui.end_row();
-                }
-            });
+
+                    for i in 0..n {
+                        ui.label(egui::RichText::new(format!("Q{i}")).small());
+                        for j in 0..n {
+                            let val = w[[i, j]];
+                            let intensity = (val * 255.0).clamp(0.0, 255.0) as u8;
+                            let color =
+                                egui::Color32::from_rgb(intensity, intensity / 3, 255 - intensity);
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(cell_size, cell_size),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().rect_filled(rect, 0.0, color);
+                            // Show value on hover
+                            if ui.rect_contains_pointer(rect) {
+                                egui::show_tooltip(
+                                    ui.ctx(),
+                                    ui.layer_id(),
+                                    egui::Id::new(("attn_tip", i, j)),
+                                    |ui| {
+                                        ui.label(format!("Q{i}→K{j}: {val:.4}"));
+                                    },
+                                );
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
 
             // Also show as bar chart for first query
             ui.label("Attention distribution for Q0:");
-            let bars: Vec<Bar> = (0..n)
-                .map(|j| Bar::new(j as f64, w[[0, j]]))
-                .collect();
+            let bars: Vec<Bar> = (0..n).map(|j| Bar::new(j as f64, w[[0, j]])).collect();
             Plot::new("attn_bars").height(150.0).show(ui, |plot_ui| {
                 plot_ui.bar_chart(BarChart::new(bars).name("Q0 attention").width(0.7));
             });
@@ -170,8 +184,15 @@ impl TransformerDemo {
         let eye = Array2::from_diag(&ndarray::Array1::ones(self.d_model));
 
         let (_output, head_weights) = multi_head_attention(
-            &q, &k, &v, &eye, &eye, &eye, &eye,
-            self.n_heads, mask.as_ref(),
+            &q,
+            &k,
+            &v,
+            &eye,
+            &eye,
+            &eye,
+            &eye,
+            self.n_heads,
+            mask.as_ref(),
         );
 
         // Show first head's weights
@@ -181,7 +202,10 @@ impl TransformerDemo {
 
         self.status = format!(
             "Computed {}-head attention: seq_len={}, d_model={}, d_k={}",
-            self.n_heads, self.seq_len, self.d_model, self.d_model / self.n_heads
+            self.n_heads,
+            self.seq_len,
+            self.d_model,
+            self.d_model / self.n_heads
         );
     }
 
@@ -216,20 +240,29 @@ impl TransformerDemo {
                             egui::Color32::from_rgb(255, 200, 50),
                         ];
                         for dim in 0..4.min(self.pe_data[0].len()) {
-                            let pts: PlotPoints = self.pe_data.iter().enumerate()
+                            let pts: PlotPoints = self
+                                .pe_data
+                                .iter()
+                                .enumerate()
                                 .map(|(pos, row)| [pos as f64, row[dim]])
                                 .collect();
-                            plot_ui.line(Line::new(pts)
-                                .name(format!("dim {dim}"))
-                                .width(2.0)
-                                .color(colors[dim % colors.len()]));
+                            plot_ui.line(
+                                Line::new(pts)
+                                    .name(format!("dim {dim}"))
+                                    .width(2.0)
+                                    .color(colors[dim % colors.len()]),
+                            );
                         }
                     });
                 }
                 PeType::Rope => {
-                    ui.label("Dot product between position 0 and position p (shows relative decay):");
+                    ui.label(
+                        "Dot product between position 0 and position p (shows relative decay):",
+                    );
                     Plot::new("rope_plot").height(300.0).show(ui, |plot_ui| {
-                        let pts: PlotPoints = self.pe_data[0].iter().enumerate()
+                        let pts: PlotPoints = self.pe_data[0]
+                            .iter()
+                            .enumerate()
                             .map(|(i, &v)| [i as f64, v])
                             .collect();
                         plot_ui.line(Line::new(pts).name("dot(pos_0, pos_p)").width(2.0));
@@ -246,13 +279,17 @@ impl TransformerDemo {
                             egui::Color32::from_rgb(255, 200, 50),
                         ];
                         for h in 0..n_show {
-                            let pts: PlotPoints = self.pe_data[h].iter().enumerate()
+                            let pts: PlotPoints = self.pe_data[h]
+                                .iter()
+                                .enumerate()
                                 .map(|(j, &v)| [j as f64, v])
                                 .collect();
-                            plot_ui.line(Line::new(pts)
-                                .name(format!("head {h}"))
-                                .width(2.0)
-                                .color(colors[h % colors.len()]));
+                            plot_ui.line(
+                                Line::new(pts)
+                                    .name(format!("head {h}"))
+                                    .width(2.0)
+                                    .color(colors[h % colors.len()]),
+                            );
                         }
                     });
                 }
@@ -264,9 +301,7 @@ impl TransformerDemo {
         match self.pe_type {
             PeType::Sinusoidal => {
                 let pe = ix_nn::positional::sinusoidal_encoding(self.pe_max_len, self.pe_d_model);
-                self.pe_data = pe.rows().into_iter()
-                    .map(|row| row.to_vec())
-                    .collect();
+                self.pe_data = pe.rows().into_iter().map(|row| row.to_vec()).collect();
                 self.status = format!(
                     "Sinusoidal PE: {} positions × {} dims",
                     self.pe_max_len, self.pe_d_model
@@ -278,18 +313,21 @@ impl TransformerDemo {
                 let n = self.pe_max_len;
 
                 // Create vectors at each position and rotate them
-                let base_vec = Array2::from_shape_fn((n, d), |(_, j)| {
-                    if j == 0 { 1.0 } else { 0.0 }
-                });
+                let base_vec =
+                    Array2::from_shape_fn((n, d), |(_, j)| if j == 0 { 1.0 } else { 0.0 });
                 let rotated = ix_nn::positional::rope_rotate(&base_vec, 10000.0);
 
                 // Dot product of position 0 with all others
                 let ref_row = rotated.row(0).to_owned();
-                let dots: Vec<f64> = (0..n).map(|p| {
-                    ref_row.iter().zip(rotated.row(p).iter())
-                        .map(|(a, b)| a * b)
-                        .sum()
-                }).collect();
+                let dots: Vec<f64> = (0..n)
+                    .map(|p| {
+                        ref_row
+                            .iter()
+                            .zip(rotated.row(p).iter())
+                            .map(|(a, b)| a * b)
+                            .sum()
+                    })
+                    .collect();
 
                 self.pe_data = vec![dots];
                 self.status = format!("RoPE relative position encoding: {} positions, d={}", n, d);
@@ -300,16 +338,23 @@ impl TransformerDemo {
                 let seq = self.pe_max_len.min(32); // limit for readability
 
                 // For each head, show the last row of the bias matrix (how token at end attends)
-                self.pe_data = slopes.iter().map(|&slope| {
-                    let bias = ix_nn::positional::alibi_bias(seq, slope);
-                    let last_row = seq - 1;
-                    (0..seq).map(|j| bias[[last_row, j]].max(-10.0)).collect()
-                }).collect();
+                self.pe_data = slopes
+                    .iter()
+                    .map(|&slope| {
+                        let bias = ix_nn::positional::alibi_bias(seq, slope);
+                        let last_row = seq - 1;
+                        (0..seq).map(|j| bias[[last_row, j]].max(-10.0)).collect()
+                    })
+                    .collect();
 
                 self.status = format!(
                     "ALiBi: {} heads, slopes: [{}]",
                     n_heads,
-                    slopes.iter().map(|s| format!("{s:.4}")).collect::<Vec<_>>().join(", ")
+                    slopes
+                        .iter()
+                        .map(|s| format!("{s:.4}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
             }
         }
@@ -341,28 +386,43 @@ impl TransformerDemo {
 
         if !self.input_data.is_empty() {
             ui.label("Input vs Output (first 2 dimensions, PCA-like projection):");
-            Plot::new("transformer_io").height(400.0).data_aspect(1.0).show(ui, |plot_ui| {
-                let in_pts: PlotPoints = self.input_data.iter().copied().collect();
-                let out_pts: PlotPoints = self.output_data.iter().copied().collect();
+            Plot::new("transformer_io")
+                .height(400.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    let in_pts: PlotPoints = self.input_data.iter().copied().collect();
+                    let out_pts: PlotPoints = self.output_data.iter().copied().collect();
 
-                plot_ui.points(Points::new(in_pts).radius(6.0)
-                    .color(egui::Color32::from_rgb(100, 100, 255))
-                    .name("Input tokens"));
-                plot_ui.points(Points::new(out_pts).radius(6.0)
-                    .color(egui::Color32::from_rgb(255, 100, 100))
-                    .name("Output tokens"));
+                    plot_ui.points(
+                        Points::new(in_pts)
+                            .radius(6.0)
+                            .color(egui::Color32::from_rgb(100, 100, 255))
+                            .name("Input tokens"),
+                    );
+                    plot_ui.points(
+                        Points::new(out_pts)
+                            .radius(6.0)
+                            .color(egui::Color32::from_rgb(255, 100, 100))
+                            .name("Output tokens"),
+                    );
 
-                // Draw arrows from input to output
-                for (inp, outp) in self.input_data.iter().zip(self.output_data.iter()) {
-                    let arrow: PlotPoints = vec![*inp, *outp].into_iter().collect();
-                    plot_ui.line(Line::new(arrow).width(1.0)
-                        .color(egui::Color32::from_rgba_premultiplied(200, 200, 200, 100)));
-                }
-            });
+                    // Draw arrows from input to output
+                    for (inp, outp) in self.input_data.iter().zip(self.output_data.iter()) {
+                        let arrow: PlotPoints = vec![*inp, *outp].into_iter().collect();
+                        plot_ui.line(
+                            Line::new(arrow)
+                                .width(1.0)
+                                .color(egui::Color32::from_rgba_premultiplied(200, 200, 200, 100)),
+                        );
+                    }
+                });
 
             // Norm comparison
             ui.label("Per-token L2 norm change:");
-            let norms: Vec<Bar> = self.input_data.iter().zip(self.output_data.iter())
+            let norms: Vec<Bar> = self
+                .input_data
+                .iter()
+                .zip(self.output_data.iter())
                 .enumerate()
                 .map(|(i, (inp, outp))| {
                     let in_norm = (inp[0] * inp[0] + inp[1] * inp[1]).sqrt();
@@ -377,9 +437,9 @@ impl TransformerDemo {
     }
 
     fn run_full_block(&mut self) {
-        use ix_nn::transformer::TransformerStack;
         use ix_nn::attention::causal_mask;
         use ix_nn::positional::sinusoidal_encoding;
+        use ix_nn::transformer::TransformerStack;
         use rand::Rng;
         let mut rng = rand::rng();
 
@@ -406,12 +466,12 @@ impl TransformerDemo {
         let output = stack.forward(&input, mask.as_ref());
 
         // Project to 2D for visualization (just take first 2 dims)
-        self.input_data = (0..self.seq_len).map(|i| {
-            [input[[0, i, 0]], input[[0, i, 1]]]
-        }).collect();
-        self.output_data = (0..self.seq_len).map(|i| {
-            [output[[0, i, 0]], output[[0, i, 1]]]
-        }).collect();
+        self.input_data = (0..self.seq_len)
+            .map(|i| [input[[0, i, 0]], input[[0, i, 1]]])
+            .collect();
+        self.output_data = (0..self.seq_len)
+            .map(|i| [output[[0, i, 0]], output[[0, i, 1]]])
+            .collect();
 
         let in_norm: f64 = input.mapv(|v| v * v).sum().sqrt();
         let out_norm: f64 = output.mapv(|v| v * v).sum().sqrt();

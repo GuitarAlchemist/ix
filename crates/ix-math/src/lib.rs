@@ -3,24 +3,24 @@
 //! Core math primitives for the machin ML toolkit.
 //! Linear algebra, statistics, distances, activation functions, and numerical calculus.
 
-pub mod linalg;
-pub mod stats;
-pub mod distance;
-pub mod geometric_space;
-pub mod svd;
-pub mod eigen;
 pub mod activation;
-pub mod calculus;
-pub mod random;
-pub mod hyperbolic;
-pub mod poincare_hierarchy;
-pub mod quaternion;
-pub mod dual_quaternion;
-pub mod plucker;
-pub mod primes;
-pub mod sedenion;
 pub mod bsp;
+pub mod calculus;
+pub mod distance;
+pub mod dual_quaternion;
+pub mod eigen;
 pub mod error;
+pub mod geometric_space;
+pub mod hyperbolic;
+pub mod linalg;
+pub mod plucker;
+pub mod poincare_hierarchy;
 pub mod preprocessing;
+pub mod primes;
+pub mod quaternion;
+pub mod random;
+pub mod sedenion;
+pub mod stats;
+pub mod svd;
 
 pub use ndarray;

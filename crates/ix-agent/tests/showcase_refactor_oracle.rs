@@ -334,9 +334,7 @@ fn fake_client(ctx: ServerContext, outbound: Receiver<String>, canned: String) {
             let Some(id) = envelope.get("id").and_then(|v| v.as_i64()) else {
                 continue;
             };
-            if envelope.get("method").and_then(|m| m.as_str())
-                != Some("sampling/createMessage")
-            {
+            if envelope.get("method").and_then(|m| m.as_str()) != Some("sampling/createMessage") {
                 continue;
             }
             let response = json!({
@@ -447,7 +445,8 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
         let id = step_id.as_str().unwrap();
         let key = cache_keys.get(id).expect("cache key present");
         assert!(
-            key.as_str().is_some_and(|k| k.starts_with("ix_pipeline_run:")),
+            key.as_str()
+                .is_some_and(|k| k.starts_with("ix_pipeline_run:")),
             "step {id}: expected asset-backed cache key, got {key:?}"
         );
     }
@@ -472,7 +471,10 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
     // (20+ crates) with denormalized projection vectors aligned.
     let cargo = unwrap_tool_result(&exec["results"]["s00_cargo_deps"]);
     let n_nodes = cargo["n_nodes"].as_u64().expect("n_nodes") as usize;
-    assert!(n_nodes >= 20, "workspace should have 20+ crates, got {n_nodes}");
+    assert!(
+        n_nodes >= 20,
+        "workspace should have 20+ crates, got {n_nodes}"
+    );
     let sloc_vec = cargo["sloc"].as_array().unwrap();
     assert_eq!(sloc_vec.len(), n_nodes);
 
@@ -480,7 +482,11 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
     // for the 90-day window.
     let git = unwrap_tool_result(&exec["results"]["s01_git_log"]);
     let series = git["series"].as_array().unwrap();
-    assert_eq!(series.len(), 13, "90-day weekly series should have 13 buckets");
+    assert_eq!(
+        series.len(),
+        13,
+        "90-day weekly series should have 13 buckets"
+    );
 
     // s09 k-means must have produced k=3 labels covering every crate.
     let clusters = unwrap_tool_result(&exec["results"]["s09_crate_clusters"]);
@@ -622,7 +628,10 @@ fn run_refactor_oracle_with_narration() {
         .unwrap_or_default();
     println!("─── STEP 0  ix_cargo_deps (source adapter) ─────────────────────────────");
     println!("    workspace crates discovered : {n_nodes}");
-    println!("    edges emitted               : {}", s00["edges"].as_array().map(|a| a.len()).unwrap_or(0));
+    println!(
+        "    edges emitted               : {}",
+        s00["edges"].as_array().map(|a| a.len()).unwrap_or(0)
+    );
     println!("    feature cols per crate      : 3 (sloc, file_count, dep_count)");
     println!();
 
@@ -631,7 +640,10 @@ fn run_refactor_oracle_with_narration() {
     println!("    path       : crates/ix-agent");
     println!("    window     : 90 days, weekly buckets");
     println!("    commits    : {}", s01["commits"].as_u64().unwrap_or(0));
-    println!("    n_buckets  : {}", s01["n_buckets"].as_u64().unwrap_or(0));
+    println!(
+        "    n_buckets  : {}",
+        s01["n_buckets"].as_u64().unwrap_or(0)
+    );
     println!();
 
     // ─── Live analysis steps ───────────────────────────────────────
@@ -639,7 +651,10 @@ fn run_refactor_oracle_with_narration() {
     println!("─── STEP 2  ix_stats (SLOC baseline over ALL workspace crates) ─────────");
     println!("    n_crates  = {}", s2["count"].as_u64().unwrap_or(0));
     println!("    mean      = {:.0}", s2["mean"].as_f64().unwrap_or(0.0));
-    println!("    std_dev   = {:.0}", s2["std_dev"].as_f64().unwrap_or(0.0));
+    println!(
+        "    std_dev   = {:.0}",
+        s2["std_dev"].as_f64().unwrap_or(0.0)
+    );
     println!("    max       = {:.0}", s2["max"].as_f64().unwrap_or(0.0));
     println!();
 
@@ -653,7 +668,10 @@ fn run_refactor_oracle_with_narration() {
         rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         println!("    top 5 most-depended-upon crates:");
         for (idx, score) in rows.iter().take(5) {
-            let name = crate_names.get(*idx).cloned().unwrap_or_else(|| format!("#{idx}"));
+            let name = crate_names
+                .get(*idx)
+                .cloned()
+                .unwrap_or_else(|| format!("#{idx}"));
             println!("      {name:<28} rank = {score:.4}");
         }
     }
@@ -666,7 +684,14 @@ fn run_refactor_oracle_with_narration() {
         let first_named: Vec<String> = ord
             .iter()
             .take(5)
-            .filter_map(|v| v.as_u64().map(|i| crate_names.get(i as usize).cloned().unwrap_or_else(|| format!("#{i}"))))
+            .filter_map(|v| {
+                v.as_u64().map(|i| {
+                    crate_names
+                        .get(i as usize)
+                        .cloned()
+                        .unwrap_or_else(|| format!("#{i}"))
+                })
+            })
             .collect();
         println!("    first 5 in topo order: {first_named:?}");
     }
@@ -674,7 +699,10 @@ fn run_refactor_oracle_with_narration() {
 
     let s5 = unwrap_tool_result(&results["s05_betti_numbers"]);
     println!("─── STEP 5  ix_topo betti_at_radius (metric cloud) ─────────────────────");
-    println!("    radius        = {}", s5["radius"].as_f64().unwrap_or(0.0));
+    println!(
+        "    radius        = {}",
+        s5["radius"].as_f64().unwrap_or(0.0)
+    );
     println!("    betti_numbers = {:?}", s5["betti_numbers"]);
     println!();
 
@@ -697,7 +725,10 @@ fn run_refactor_oracle_with_narration() {
             .take(5)
             .map(|v| format!("{:.2}", v.as_f64().unwrap_or(0.0)))
             .collect();
-        println!("    fft_size      = {}", s7["fft_size"].as_u64().unwrap_or(0));
+        println!(
+            "    fft_size      = {}",
+            s7["fft_size"].as_u64().unwrap_or(0)
+        );
         println!("    first 5 bins  = [{}]", first_few.join(", "));
     }
     println!();
@@ -705,8 +736,14 @@ fn run_refactor_oracle_with_narration() {
     let s8 = unwrap_tool_result(&results["s08_velocity_regime"]);
     println!("─── STEP 8  ix_chaos_lyapunov (logistic-map regime) ────────────────────");
     println!("    parameter r       = {:.3}", LYAPUNOV_R);
-    println!("    lyapunov_exponent = {:.4}", s8["lyapunov_exponent"].as_f64().unwrap_or(0.0));
-    println!("    dynamics          = {}", s8["dynamics"].as_str().unwrap_or("?"));
+    println!(
+        "    lyapunov_exponent = {:.4}",
+        s8["lyapunov_exponent"].as_f64().unwrap_or(0.0)
+    );
+    println!(
+        "    dynamics          = {}",
+        s8["dynamics"].as_str().unwrap_or("?")
+    );
     println!();
 
     let s9 = unwrap_tool_result(&results["s09_crate_clusters"]);
@@ -717,18 +754,32 @@ fn run_refactor_oracle_with_narration() {
         .iter()
         .filter_map(|v| v.as_i64())
         .collect();
-    let mut counts: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
+    let mut counts: std::collections::BTreeMap<i64, Vec<String>> =
+        std::collections::BTreeMap::new();
     for (i, label) in labels.iter().enumerate() {
-        let name = crate_names.get(i).cloned().unwrap_or_else(|| format!("#{i}"));
+        let name = crate_names
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| format!("#{i}"));
         counts.entry(*label).or_default().push(name);
     }
     for (label, members) in &counts {
-        println!("    cluster {label}  ({} crates): {}",
-                 members.len(),
-                 members.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
-                     + if members.len() > 3 { ", ..." } else { "" });
+        println!(
+            "    cluster {label}  ({} crates): {}",
+            members.len(),
+            members
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+                + if members.len() > 3 { ", ..." } else { "" }
+        );
     }
-    println!("    inertia  = {:.1}", s9["inertia"].as_f64().unwrap_or(0.0));
+    println!(
+        "    inertia  = {:.1}",
+        s9["inertia"].as_f64().unwrap_or(0.0)
+    );
     println!();
 
     let s10 = unwrap_tool_result(&results["s10_risk_classifier"]);
@@ -740,7 +791,11 @@ fn run_refactor_oracle_with_narration() {
         .filter_map(|v| v.as_i64())
         .collect();
     let accuracy = if !preds.is_empty() {
-        preds.iter().zip(labels.iter()).filter(|(p, l)| p == l).count() as f64
+        preds
+            .iter()
+            .zip(labels.iter())
+            .filter(|(p, l)| p == l)
+            .count() as f64
             / preds.len() as f64
     } else {
         0.0
@@ -753,23 +808,43 @@ fn run_refactor_oracle_with_narration() {
     println!("─── STEP 11  ix_adversarial_fgsm (refactor perturbation) ───────────────");
     println!("    input         = {:?}", s11["adversarial_input"]);
     println!("    perturbation  = {:?}", s11["perturbation"]);
-    println!("    l_inf_norm    = {:.3}", s11["l_inf_norm"].as_f64().unwrap_or(0.0));
+    println!(
+        "    l_inf_norm    = {:.3}",
+        s11["l_inf_norm"].as_f64().unwrap_or(0.0)
+    );
     println!();
 
     let s12 = unwrap_tool_result(&results["s12_refactor_search"]);
     println!("─── STEP 12  ix_evolution (GA over 3-dim refactor space) ───────────────");
-    println!("    algorithm      = {}", s12["algorithm"].as_str().unwrap_or("?"));
-    println!("    function       = {}  (symbolic stand-in for real fitness)", s12["function"].as_str().unwrap_or("?"));
+    println!(
+        "    algorithm      = {}",
+        s12["algorithm"].as_str().unwrap_or("?")
+    );
+    println!(
+        "    function       = {}  (symbolic stand-in for real fitness)",
+        s12["function"].as_str().unwrap_or("?")
+    );
     println!("    best_params    = {:?}", s12["best_params"]);
-    println!("    best_fitness   = {:.6}", s12["best_fitness"].as_f64().unwrap_or(0.0));
+    println!(
+        "    best_fitness   = {:.6}",
+        s12["best_fitness"].as_f64().unwrap_or(0.0)
+    );
     println!();
 
     let s13 = unwrap_tool_result(&results["s13_governance_audit"]);
     println!("─── STEP 13  ix_governance_check (Demerzel verdict) ────────────────────");
-    println!("    compliant             = {}", s13["compliant"].as_bool().unwrap_or(false));
-    println!("    constitution_version  = {}", s13["constitution_version"].as_str().unwrap_or("?"));
-    println!("    warnings              = {}",
-             s13["warnings"].as_array().map(|a| a.len()).unwrap_or(0));
+    println!(
+        "    compliant             = {}",
+        s13["compliant"].as_bool().unwrap_or(false)
+    );
+    println!(
+        "    constitution_version  = {}",
+        s13["constitution_version"].as_str().unwrap_or("?")
+    );
+    println!(
+        "    warnings              = {}",
+        s13["warnings"].as_array().map(|a| a.len()).unwrap_or(0)
+    );
     if let Some(articles) = s13.get("relevant_articles").and_then(|v| v.as_array()) {
         println!("    relevant articles     = {} matched", articles.len());
     }
@@ -778,18 +853,17 @@ fn run_refactor_oracle_with_narration() {
     // Pipeline-level summary.
     let cache_hits = exec["cache_hits"].as_array().unwrap();
     let durations = exec["durations_ms"].as_object().unwrap();
-    let total_ms: u64 = durations
-        .values()
-        .filter_map(|v| v.as_u64())
-        .sum();
+    let total_ms: u64 = durations.values().filter_map(|v| v.as_u64()).sum();
     println!("┌──────────────────────────────────────────────────────────────────────┐");
     println!("│                        PIPELINE SUMMARY                              │");
     println!("├──────────────────────────────────────────────────────────────────────┤");
     println!("│  steps executed       : {:<45} │", order.len());
     println!("│  cache hits           : {:<45} │", cache_hits.len());
     println!("│  total duration (ms)  : {:<45} │", total_ms);
-    println!("│  lineage DAG entries  : {:<45} │",
-             exec["lineage"].as_object().map(|o| o.len()).unwrap_or(0));
+    println!(
+        "│  lineage DAG entries  : {:<45} │",
+        exec["lineage"].as_object().map(|o| o.len()).unwrap_or(0)
+    );
     println!("└──────────────────────────────────────────────────────────────────────┘");
 }
 

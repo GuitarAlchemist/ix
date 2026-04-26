@@ -237,12 +237,7 @@ fn dispatch(cli: Cli) -> i32 {
             skill,
             input_file,
             input_literal,
-        } => match verbs::run::run(
-            &skill,
-            input_file.as_deref(),
-            input_literal.as_deref(),
-            fmt,
-        ) {
+        } => match verbs::run::run(&skill, input_file.as_deref(), input_literal.as_deref(), fmt) {
             Ok(()) => exit::OK_TRUE,
             Err(e) => {
                 eprintln!("ix run: {e}");
@@ -251,9 +246,11 @@ fn dispatch(cli: Cli) -> i32 {
         },
 
         Verb::List { noun } => match noun {
-            ListNoun::Skills { domain, query } => {
-                try_or(verbs::list::skills(domain.as_deref(), query.as_deref(), fmt))
-            }
+            ListNoun::Skills { domain, query } => try_or(verbs::list::skills(
+                domain.as_deref(),
+                query.as_deref(),
+                fmt,
+            )),
             ListNoun::Domains => try_or(verbs::list::domains(fmt)),
             ListNoun::Personas => try_or(verbs::list::personas(fmt)),
         },
@@ -316,9 +313,7 @@ fn dispatch(cli: Cli) -> i32 {
 
         Verb::Demo { noun } => match noun {
             DemoNoun::List => try_or(verbs::demo::list(fmt)),
-            DemoNoun::Describe { scenario } => {
-                try_or(verbs::demo::describe(&scenario, fmt))
-            }
+            DemoNoun::Describe { scenario } => try_or(verbs::demo::describe(&scenario, fmt)),
             DemoNoun::Run {
                 scenario,
                 seed,

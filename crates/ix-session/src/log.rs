@@ -89,7 +89,10 @@ impl SessionLog {
     /// should call `next_ordinal` on their [`SessionSink`] inside
     /// a single emit operation.
     pub fn next_ordinal(&self) -> u64 {
-        *self.next_ordinal.lock().expect("next_ordinal mutex poisoned")
+        *self
+            .next_ordinal
+            .lock()
+            .expect("next_ordinal mutex poisoned")
     }
 
     /// Errors captured during the most recent reload. Empty means
@@ -215,12 +218,14 @@ impl Iterator for EventIter {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    return Some(serde_json::from_str::<SessionEvent>(trimmed).map_err(
-                        |source| ReloadError::BadJson {
-                            line: self.line_number,
-                            source,
-                        },
-                    ));
+                    return Some(
+                        serde_json::from_str::<SessionEvent>(trimmed).map_err(|source| {
+                            ReloadError::BadJson {
+                                line: self.line_number,
+                                source,
+                            }
+                        }),
+                    );
                 }
                 Err(_) => {
                     self.line_number += 1;

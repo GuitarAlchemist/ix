@@ -29,8 +29,15 @@ fn optimize_schema() -> Value {
     })
 }
 /// Minimize a benchmark function via SGD / Adam / PSO / simulated annealing.
-#[ix_skill(domain = "optimize", name = "optimize", governance = "deterministic", schema_fn = "crate::skills::batch2::optimize_schema")]
-pub fn optimize(p: Value) -> Result<Value, String> { handlers::optimize(p) }
+#[ix_skill(
+    domain = "optimize",
+    name = "optimize",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::optimize_schema"
+)]
+pub fn optimize(p: Value) -> Result<Value, String> {
+    handlers::optimize(p)
+}
 
 // ---- markov --------------------------------------------------------------
 fn markov_schema() -> Value {
@@ -44,8 +51,15 @@ fn markov_schema() -> Value {
     })
 }
 /// Markov chain stationary distribution via power iteration.
-#[ix_skill(domain = "graph", name = "markov", governance = "deterministic", schema_fn = "crate::skills::batch2::markov_schema")]
-pub fn markov(p: Value) -> Result<Value, String> { handlers::markov(p) }
+#[ix_skill(
+    domain = "graph",
+    name = "markov",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::markov_schema"
+)]
+pub fn markov(p: Value) -> Result<Value, String> {
+    handlers::markov(p)
+}
 
 // ---- viterbi -------------------------------------------------------------
 fn viterbi_schema() -> Value {
@@ -61,8 +75,15 @@ fn viterbi_schema() -> Value {
     })
 }
 /// HMM Viterbi decoding — most-likely hidden state sequence.
-#[ix_skill(domain = "graph", name = "viterbi", governance = "deterministic", schema_fn = "crate::skills::batch2::viterbi_schema")]
-pub fn viterbi(p: Value) -> Result<Value, String> { handlers::viterbi(p) }
+#[ix_skill(
+    domain = "graph",
+    name = "viterbi",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::viterbi_schema"
+)]
+pub fn viterbi(p: Value) -> Result<Value, String> {
+    handlers::viterbi(p)
+}
 
 // ---- search --------------------------------------------------------------
 fn search_schema() -> Value {
@@ -76,8 +97,15 @@ fn search_schema() -> Value {
     })
 }
 /// Search algorithm catalog (A*, BFS, DFS): descriptions and complexity.
-#[ix_skill(domain = "search", name = "search", governance = "deterministic", schema_fn = "crate::skills::batch2::search_schema")]
-pub fn search(p: Value) -> Result<Value, String> { handlers::search_info(p) }
+#[ix_skill(
+    domain = "search",
+    name = "search",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::search_schema"
+)]
+pub fn search(p: Value) -> Result<Value, String> {
+    handlers::search_info(p)
+}
 
 // ---- game.nash -----------------------------------------------------------
 fn game_nash_schema() -> Value {
@@ -91,8 +119,15 @@ fn game_nash_schema() -> Value {
     })
 }
 /// Nash equilibria of a 2-player bimatrix game via support enumeration.
-#[ix_skill(domain = "game", name = "game.nash", governance = "deterministic", schema_fn = "crate::skills::batch2::game_nash_schema")]
-pub fn game_nash(p: Value) -> Result<Value, String> { handlers::game_nash(p) }
+#[ix_skill(
+    domain = "game",
+    name = "game.nash",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::game_nash_schema"
+)]
+pub fn game_nash(p: Value) -> Result<Value, String> {
+    handlers::game_nash(p)
+}
 
 // ---- chaos.lyapunov ------------------------------------------------------
 fn chaos_lyapunov_schema() -> Value {
@@ -107,8 +142,15 @@ fn chaos_lyapunov_schema() -> Value {
     })
 }
 /// Maximal Lyapunov exponent of the logistic map at parameter r.
-#[ix_skill(domain = "chaos", name = "chaos.lyapunov", governance = "empirical,deterministic", schema_fn = "crate::skills::batch2::chaos_lyapunov_schema")]
-pub fn chaos_lyapunov(p: Value) -> Result<Value, String> { handlers::chaos_lyapunov(p) }
+#[ix_skill(
+    domain = "chaos",
+    name = "chaos.lyapunov",
+    governance = "empirical,deterministic",
+    schema_fn = "crate::skills::batch2::chaos_lyapunov_schema"
+)]
+pub fn chaos_lyapunov(p: Value) -> Result<Value, String> {
+    handlers::chaos_lyapunov(p)
+}
 
 // ---- adversarial.fgsm ----------------------------------------------------
 fn adversarial_fgsm_schema() -> Value {
@@ -123,8 +165,15 @@ fn adversarial_fgsm_schema() -> Value {
     })
 }
 /// Fast Gradient Sign Method adversarial perturbation.
-#[ix_skill(domain = "adversarial", name = "adversarial.fgsm", governance = "safety", schema_fn = "crate::skills::batch2::adversarial_fgsm_schema")]
-pub fn adversarial_fgsm(p: Value) -> Result<Value, String> { handlers::adversarial_fgsm(p) }
+#[ix_skill(
+    domain = "adversarial",
+    name = "adversarial.fgsm",
+    governance = "safety",
+    schema_fn = "crate::skills::batch2::adversarial_fgsm_schema"
+)]
+pub fn adversarial_fgsm(p: Value) -> Result<Value, String> {
+    handlers::adversarial_fgsm(p)
+}
 
 // ---- bloom_filter --------------------------------------------------------
 fn bloom_filter_schema() -> Value {
@@ -140,8 +189,15 @@ fn bloom_filter_schema() -> Value {
     })
 }
 /// Bloom filter: probabilistic set membership.
-#[ix_skill(domain = "probabilistic", name = "bloom_filter", governance = "deterministic", schema_fn = "crate::skills::batch2::bloom_filter_schema")]
-pub fn bloom_filter(p: Value) -> Result<Value, String> { handlers::bloom_filter(p) }
+#[ix_skill(
+    domain = "probabilistic",
+    name = "bloom_filter",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::bloom_filter_schema"
+)]
+pub fn bloom_filter(p: Value) -> Result<Value, String> {
+    handlers::bloom_filter(p)
+}
 
 // ---- grammar.weights -----------------------------------------------------
 fn grammar_weights_schema() -> Value {
@@ -161,8 +217,15 @@ fn grammar_weights_schema() -> Value {
     })
 }
 /// Bayesian (Beta-Binomial) update + softmax query of grammar rule weights.
-#[ix_skill(domain = "grammar", name = "grammar.weights", governance = "empirical", schema_fn = "crate::skills::batch2::grammar_weights_schema")]
-pub fn grammar_weights(p: Value) -> Result<Value, String> { handlers::grammar_weights(p) }
+#[ix_skill(
+    domain = "grammar",
+    name = "grammar.weights",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::grammar_weights_schema"
+)]
+pub fn grammar_weights(p: Value) -> Result<Value, String> {
+    handlers::grammar_weights(p)
+}
 
 // ---- grammar.evolve ------------------------------------------------------
 fn grammar_evolve_schema() -> Value {
@@ -181,8 +244,15 @@ fn grammar_evolve_schema() -> Value {
     })
 }
 /// Grammar rule competition via replicator dynamics.
-#[ix_skill(domain = "grammar", name = "grammar.evolve", governance = "empirical", schema_fn = "crate::skills::batch2::grammar_evolve_schema")]
-pub fn grammar_evolve(p: Value) -> Result<Value, String> { handlers::grammar_evolve(p) }
+#[ix_skill(
+    domain = "grammar",
+    name = "grammar.evolve",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::grammar_evolve_schema"
+)]
+pub fn grammar_evolve(p: Value) -> Result<Value, String> {
+    handlers::grammar_evolve(p)
+}
 
 // ---- grammar.search ------------------------------------------------------
 fn grammar_search_schema() -> Value {
@@ -199,8 +269,15 @@ fn grammar_search_schema() -> Value {
     })
 }
 /// Grammar-guided MCTS derivation search.
-#[ix_skill(domain = "grammar", name = "grammar.search", governance = "empirical", schema_fn = "crate::skills::batch2::grammar_search_schema")]
-pub fn grammar_search(p: Value) -> Result<Value, String> { handlers::grammar_search(p) }
+#[ix_skill(
+    domain = "grammar",
+    name = "grammar.search",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::grammar_search_schema"
+)]
+pub fn grammar_search(p: Value) -> Result<Value, String> {
+    handlers::grammar_search(p)
+}
 
 // ---- rotation ------------------------------------------------------------
 fn rotation_schema() -> Value {
@@ -221,8 +298,15 @@ fn rotation_schema() -> Value {
     })
 }
 /// 3D rotation ops: quaternions, SLERP, Euler conversions, rotation matrices.
-#[ix_skill(domain = "rotation", name = "rotation", governance = "deterministic", schema_fn = "crate::skills::batch2::rotation_schema")]
-pub fn rotation(p: Value) -> Result<Value, String> { handlers::rotation(p) }
+#[ix_skill(
+    domain = "rotation",
+    name = "rotation",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::rotation_schema"
+)]
+pub fn rotation(p: Value) -> Result<Value, String> {
+    handlers::rotation(p)
+}
 
 // ---- number_theory -------------------------------------------------------
 fn number_theory_schema() -> Value {
@@ -239,8 +323,15 @@ fn number_theory_schema() -> Value {
     })
 }
 /// Number theory: primes, modular arithmetic, gcd/lcm.
-#[ix_skill(domain = "number_theory", name = "number_theory", governance = "deterministic", schema_fn = "crate::skills::batch2::number_theory_schema")]
-pub fn number_theory(p: Value) -> Result<Value, String> { handlers::number_theory(p) }
+#[ix_skill(
+    domain = "number_theory",
+    name = "number_theory",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::number_theory_schema"
+)]
+pub fn number_theory(p: Value) -> Result<Value, String> {
+    handlers::number_theory(p)
+}
 
 // ---- fractal -------------------------------------------------------------
 fn fractal_schema() -> Value {
@@ -257,8 +348,15 @@ fn fractal_schema() -> Value {
     })
 }
 /// Fractals: Takagi curve, Hilbert/Peano curves, Morton encoding.
-#[ix_skill(domain = "fractal", name = "fractal", governance = "deterministic", schema_fn = "crate::skills::batch2::fractal_schema")]
-pub fn fractal(p: Value) -> Result<Value, String> { handlers::fractal(p) }
+#[ix_skill(
+    domain = "fractal",
+    name = "fractal",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::fractal_schema"
+)]
+pub fn fractal(p: Value) -> Result<Value, String> {
+    handlers::fractal(p)
+}
 
 // ---- sedenion ------------------------------------------------------------
 fn sedenion_schema() -> Value {
@@ -273,8 +371,15 @@ fn sedenion_schema() -> Value {
     })
 }
 /// Sedenion / octonion algebra: multiplication, conjugate, norm, Cayley-Dickson.
-#[ix_skill(domain = "sedenion", name = "sedenion", governance = "deterministic", schema_fn = "crate::skills::batch2::sedenion_schema")]
-pub fn sedenion(p: Value) -> Result<Value, String> { handlers::sedenion(p) }
+#[ix_skill(
+    domain = "sedenion",
+    name = "sedenion",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::sedenion_schema"
+)]
+pub fn sedenion(p: Value) -> Result<Value, String> {
+    handlers::sedenion(p)
+}
 
 // ---- topo ----------------------------------------------------------------
 fn topo_schema() -> Value {
@@ -292,8 +397,15 @@ fn topo_schema() -> Value {
     })
 }
 /// Topological data analysis: persistent homology + Betti numbers.
-#[ix_skill(domain = "topo", name = "topo", governance = "empirical", schema_fn = "crate::skills::batch2::topo_schema")]
-pub fn topo(p: Value) -> Result<Value, String> { handlers::topo(p) }
+#[ix_skill(
+    domain = "topo",
+    name = "topo",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::topo_schema"
+)]
+pub fn topo(p: Value) -> Result<Value, String> {
+    handlers::topo(p)
+}
 
 // ---- category ------------------------------------------------------------
 fn category_schema() -> Value {
@@ -309,8 +421,15 @@ fn category_schema() -> Value {
     })
 }
 /// Category theory: verify monad laws; free-forgetful adjunction.
-#[ix_skill(domain = "category", name = "category", governance = "deterministic", schema_fn = "crate::skills::batch2::category_schema")]
-pub fn category(p: Value) -> Result<Value, String> { handlers::category(p) }
+#[ix_skill(
+    domain = "category",
+    name = "category",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::category_schema"
+)]
+pub fn category(p: Value) -> Result<Value, String> {
+    handlers::category(p)
+}
 
 // ---- nn.forward ----------------------------------------------------------
 fn nn_forward_schema() -> Value {
@@ -328,8 +447,15 @@ fn nn_forward_schema() -> Value {
     })
 }
 /// Neural network forward pass: dense / loss / attention / positional encoding.
-#[ix_skill(domain = "nn", name = "nn.forward", governance = "empirical", schema_fn = "crate::skills::batch2::nn_forward_schema")]
-pub fn nn_forward(p: Value) -> Result<Value, String> { handlers::nn_forward(p) }
+#[ix_skill(
+    domain = "nn",
+    name = "nn.forward",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::nn_forward_schema"
+)]
+pub fn nn_forward(p: Value) -> Result<Value, String> {
+    handlers::nn_forward(p)
+}
 
 // ---- bandit --------------------------------------------------------------
 fn bandit_schema() -> Value {
@@ -346,8 +472,15 @@ fn bandit_schema() -> Value {
     })
 }
 /// Multi-armed bandit simulation (epsilon-greedy / UCB1 / Thompson).
-#[ix_skill(domain = "rl", name = "bandit", governance = "empirical", schema_fn = "crate::skills::batch2::bandit_schema")]
-pub fn bandit(p: Value) -> Result<Value, String> { handlers::bandit(p) }
+#[ix_skill(
+    domain = "rl",
+    name = "bandit",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::bandit_schema"
+)]
+pub fn bandit(p: Value) -> Result<Value, String> {
+    handlers::bandit(p)
+}
 
 // ---- evolution -----------------------------------------------------------
 fn evolution_schema() -> Value {
@@ -365,8 +498,15 @@ fn evolution_schema() -> Value {
     })
 }
 /// Evolutionary optimization: genetic algorithm / differential evolution.
-#[ix_skill(domain = "evolution", name = "evolution", governance = "empirical", schema_fn = "crate::skills::batch2::evolution_schema")]
-pub fn evolution(p: Value) -> Result<Value, String> { handlers::evolution(p) }
+#[ix_skill(
+    domain = "evolution",
+    name = "evolution",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::evolution_schema"
+)]
+pub fn evolution(p: Value) -> Result<Value, String> {
+    handlers::evolution(p)
+}
 
 // ---- random_forest -------------------------------------------------------
 fn random_forest_schema() -> Value {
@@ -383,8 +523,15 @@ fn random_forest_schema() -> Value {
     })
 }
 /// Random forest classifier: train and predict.
-#[ix_skill(domain = "ensemble", name = "random_forest", governance = "empirical", schema_fn = "crate::skills::batch2::random_forest_schema")]
-pub fn random_forest(p: Value) -> Result<Value, String> { handlers::random_forest(p) }
+#[ix_skill(
+    domain = "ensemble",
+    name = "random_forest",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::random_forest_schema"
+)]
+pub fn random_forest(p: Value) -> Result<Value, String> {
+    handlers::random_forest(p)
+}
 
 // ---- gradient_boosting ---------------------------------------------------
 fn gradient_boosting_schema() -> Value {
@@ -402,8 +549,15 @@ fn gradient_boosting_schema() -> Value {
     })
 }
 /// Gradient boosted trees classifier (binary + multiclass).
-#[ix_skill(domain = "ensemble", name = "gradient_boosting", governance = "empirical", schema_fn = "crate::skills::batch2::gradient_boosting_schema")]
-pub fn gradient_boosting(p: Value) -> Result<Value, String> { handlers::gradient_boosting(p) }
+#[ix_skill(
+    domain = "ensemble",
+    name = "gradient_boosting",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::gradient_boosting_schema"
+)]
+pub fn gradient_boosting(p: Value) -> Result<Value, String> {
+    handlers::gradient_boosting(p)
+}
 
 // ---- supervised ----------------------------------------------------------
 fn supervised_schema() -> Value {
@@ -427,8 +581,15 @@ fn supervised_schema() -> Value {
     })
 }
 /// Supervised learning dispatcher: train / predict / metrics / cross-validate.
-#[ix_skill(domain = "supervised", name = "supervised", governance = "empirical", schema_fn = "crate::skills::batch2::supervised_schema")]
-pub fn supervised(p: Value) -> Result<Value, String> { handlers::supervised(p) }
+#[ix_skill(
+    domain = "supervised",
+    name = "supervised",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch2::supervised_schema"
+)]
+pub fn supervised(p: Value) -> Result<Value, String> {
+    handlers::supervised(p)
+}
 
 // ---- graph ---------------------------------------------------------------
 fn graph_schema() -> Value {
@@ -446,8 +607,15 @@ fn graph_schema() -> Value {
     })
 }
 /// Graph algorithms: Dijkstra, PageRank, BFS/DFS, topological sort.
-#[ix_skill(domain = "graph", name = "graph", governance = "deterministic", schema_fn = "crate::skills::batch2::graph_schema")]
-pub fn graph(p: Value) -> Result<Value, String> { handlers::graph_ops(p) }
+#[ix_skill(
+    domain = "graph",
+    name = "graph",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::graph_schema"
+)]
+pub fn graph(p: Value) -> Result<Value, String> {
+    handlers::graph_ops(p)
+}
 
 // ---- hyperloglog ---------------------------------------------------------
 fn hyperloglog_schema() -> Value {
@@ -463,8 +631,15 @@ fn hyperloglog_schema() -> Value {
     })
 }
 /// HyperLogLog cardinality estimation.
-#[ix_skill(domain = "probabilistic", name = "hyperloglog", governance = "deterministic", schema_fn = "crate::skills::batch2::hyperloglog_schema")]
-pub fn hyperloglog(p: Value) -> Result<Value, String> { handlers::hyperloglog(p) }
+#[ix_skill(
+    domain = "probabilistic",
+    name = "hyperloglog",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::hyperloglog_schema"
+)]
+pub fn hyperloglog(p: Value) -> Result<Value, String> {
+    handlers::hyperloglog(p)
+}
 
 // ---- governance.check ----------------------------------------------------
 fn governance_check_schema() -> Value {
@@ -478,8 +653,15 @@ fn governance_check_schema() -> Value {
     })
 }
 /// Check a proposed action against the Demerzel constitution.
-#[ix_skill(domain = "governance", name = "governance.check", governance = "safety,reversible", schema_fn = "crate::skills::batch2::governance_check_schema")]
-pub fn governance_check(p: Value) -> Result<Value, String> { handlers::governance_check(p) }
+#[ix_skill(
+    domain = "governance",
+    name = "governance.check",
+    governance = "safety,reversible",
+    schema_fn = "crate::skills::batch2::governance_check_schema"
+)]
+pub fn governance_check(p: Value) -> Result<Value, String> {
+    handlers::governance_check(p)
+}
 
 // ---- governance.persona --------------------------------------------------
 fn governance_persona_schema() -> Value {
@@ -492,8 +674,15 @@ fn governance_persona_schema() -> Value {
     })
 }
 /// Load a Demerzel persona by name.
-#[ix_skill(domain = "governance", name = "governance.persona", governance = "safety", schema_fn = "crate::skills::batch2::governance_persona_schema")]
-pub fn governance_persona(p: Value) -> Result<Value, String> { handlers::governance_persona(p) }
+#[ix_skill(
+    domain = "governance",
+    name = "governance.persona",
+    governance = "safety",
+    schema_fn = "crate::skills::batch2::governance_persona_schema"
+)]
+pub fn governance_persona(p: Value) -> Result<Value, String> {
+    handlers::governance_persona(p)
+}
 
 // ---- governance.policy ---------------------------------------------------
 fn governance_policy_schema() -> Value {
@@ -507,5 +696,12 @@ fn governance_policy_schema() -> Value {
     })
 }
 /// Query Demerzel governance policies.
-#[ix_skill(domain = "governance", name = "governance.policy", governance = "safety", schema_fn = "crate::skills::batch2::governance_policy_schema")]
-pub fn governance_policy(p: Value) -> Result<Value, String> { handlers::governance_policy(p) }
+#[ix_skill(
+    domain = "governance",
+    name = "governance.policy",
+    governance = "safety",
+    schema_fn = "crate::skills::batch2::governance_policy_schema"
+)]
+pub fn governance_policy(p: Value) -> Result<Value, String> {
+    handlers::governance_policy(p)
+}

@@ -85,10 +85,7 @@ enum CargoEvent {
 ///
 /// Malformed JSONL lines are skipped (not errors). Unknown event
 /// variants and unknown fields are silently ignored.
-pub fn cargo_to_observations(
-    input: &[u8],
-    round: u32,
-) -> Result<Vec<SessionEvent>, AdapterError> {
+pub fn cargo_to_observations(input: &[u8], round: u32) -> Result<Vec<SessionEvent>, AdapterError> {
     // Fail loudly on non-UTF-8 bytes (cargo always writes UTF-8
     // JSON), but tolerate JSON parse failures line-by-line.
     let text = std::str::from_utf8(input)?;
@@ -215,22 +212,19 @@ struct SuiteSummary {
 /// emits one at the end of every run; if multiple fire (e.g.,
 /// multiple test binaries in one invocation), we take the last.
 fn find_suite_event(events: &[CargoEvent]) -> Option<SuiteSummary> {
-    events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            CargoEvent::Suite {
-                event,
-                passed,
-                failed,
-                ..
-            } => Some(SuiteSummary {
-                event: event.clone(),
-                passed: *passed,
-                failed: *failed,
-            }),
-            _ => None,
-        })
+    events.iter().rev().find_map(|e| match e {
+        CargoEvent::Suite {
+            event,
+            passed,
+            failed,
+            ..
+        } => Some(SuiteSummary {
+            event: event.clone(),
+            passed: *passed,
+            failed: *failed,
+        }),
+        _ => None,
+    })
 }
 
 /// Build a claim_key for a test observation. Uses `test:` as the
@@ -357,9 +351,12 @@ mod tests {
     #[test]
     fn all_pass_suite_emits_positive_baseline_and_test_observations() {
         let input = concat!(
-            r#"{"type":"test","event":"ok","name":"foo::test_a","exec_time":0.01}"#, "\n",
-            r#"{"type":"test","event":"ok","name":"foo::test_b","exec_time":0.02}"#, "\n",
-            r#"{"type":"suite","event":"ok","passed":2,"failed":0,"ignored":0,"exec_time":0.5}"#, "\n",
+            r#"{"type":"test","event":"ok","name":"foo::test_a","exec_time":0.01}"#,
+            "\n",
+            r#"{"type":"test","event":"ok","name":"foo::test_b","exec_time":0.02}"#,
+            "\n",
+            r#"{"type":"suite","event":"ok","passed":2,"failed":0,"ignored":0,"exec_time":0.5}"#,
+            "\n",
         );
         let obs = cargo_to_observations(input.as_bytes(), 1).expect("parses");
 
@@ -389,9 +386,7 @@ mod tests {
         // 9 passed, 1 failed → pass ratio = 0.9 → D with weight 0.7
         let mut lines = Vec::new();
         for i in 0..9 {
-            lines.push(format!(
-                r#"{{"type":"test","event":"ok","name":"t_{i}"}}"#
-            ));
+            lines.push(format!(r#"{{"type":"test","event":"ok","name":"t_{i}"}}"#));
         }
         lines.push(r#"{"type":"test","event":"failed","name":"t_fail"}"#.to_string());
         lines.push(
@@ -411,9 +406,12 @@ mod tests {
     #[test]
     fn total_failure_suite_emits_f_at_full_weight() {
         let input = concat!(
-            r#"{"type":"test","event":"failed","name":"a"}"#, "\n",
-            r#"{"type":"test","event":"failed","name":"b"}"#, "\n",
-            r#"{"type":"suite","event":"failed","passed":0,"failed":2,"ignored":0}"#, "\n",
+            r#"{"type":"test","event":"failed","name":"a"}"#,
+            "\n",
+            r#"{"type":"test","event":"failed","name":"b"}"#,
+            "\n",
+            r#"{"type":"suite","event":"failed","passed":0,"failed":2,"ignored":0}"#,
+            "\n",
         );
         let obs = cargo_to_observations(input.as_bytes(), 1).expect("parses");
         let (_, _, variant, weight) = extract(&obs[0]);
@@ -426,8 +424,10 @@ mod tests {
     #[test]
     fn ignored_test_emits_unknown_with_low_weight() {
         let input = concat!(
-            r#"{"type":"test","event":"ignored","name":"flaky"}"#, "\n",
-            r#"{"type":"suite","event":"ok","passed":0,"failed":0,"ignored":1}"#, "\n",
+            r#"{"type":"test","event":"ignored","name":"flaky"}"#,
+            "\n",
+            r#"{"type":"suite","event":"ok","passed":0,"failed":0,"ignored":1}"#,
+            "\n",
         );
         let obs = cargo_to_observations(input.as_bytes(), 1).expect("parses");
 
@@ -445,8 +445,10 @@ mod tests {
     #[test]
     fn slow_test_emits_additional_timely_observation() {
         let input = concat!(
-            r#"{"type":"test","event":"ok","name":"slow_integration","exec_time":7.5}"#, "\n",
-            r#"{"type":"suite","event":"ok","passed":1,"failed":0,"ignored":0}"#, "\n",
+            r#"{"type":"test","event":"ok","name":"slow_integration","exec_time":7.5}"#,
+            "\n",
+            r#"{"type":"suite","event":"ok","passed":1,"failed":0,"ignored":0}"#,
+            "\n",
         );
         let obs = cargo_to_observations(input.as_bytes(), 1).expect("parses");
         // Expected: 1 suite + 1 valuable + 1 timely = 3
@@ -466,8 +468,10 @@ mod tests {
     #[test]
     fn deep_module_path_in_test_name_parses_correctly() {
         let input = concat!(
-            r#"{"type":"test","event":"ok","name":"ix_math::eigen::jacobi::basic_test"}"#, "\n",
-            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#, "\n",
+            r#"{"type":"test","event":"ok","name":"ix_math::eigen::jacobi::basic_test"}"#,
+            "\n",
+            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#,
+            "\n",
         );
         let obs = cargo_to_observations(input.as_bytes(), 0).expect("parses");
         let test = obs
@@ -485,9 +489,11 @@ mod tests {
     fn malformed_lines_are_skipped_not_errors() {
         let input = concat!(
             "this is not JSON\n",
-            r#"{"type":"test","event":"ok","name":"valid"}"#, "\n",
+            r#"{"type":"test","event":"ok","name":"valid"}"#,
+            "\n",
             "{another garbage line\n",
-            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#, "\n",
+            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#,
+            "\n",
         );
         let obs = cargo_to_observations(input.as_bytes(), 0).expect("should tolerate garbage");
         // Should still emit the suite + 1 valid test.
@@ -513,8 +519,10 @@ mod tests {
     #[test]
     fn same_input_produces_same_diagnosis_id() {
         let input = concat!(
-            r#"{"type":"test","event":"ok","name":"a"}"#, "\n",
-            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#, "\n",
+            r#"{"type":"test","event":"ok","name":"a"}"#,
+            "\n",
+            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#,
+            "\n",
         );
         let obs1 = cargo_to_observations(input.as_bytes(), 0).unwrap();
         let obs2 = cargo_to_observations(input.as_bytes(), 0).unwrap();
@@ -526,11 +534,16 @@ mod tests {
     #[test]
     fn compute_stats_counts_terminal_events_only() {
         let input = concat!(
-            r#"{"type":"test","event":"started","name":"a"}"#, "\n",
-            r#"{"type":"test","event":"ok","name":"a"}"#, "\n",
-            r#"{"type":"test","event":"failed","name":"b"}"#, "\n",
-            r#"{"type":"test","event":"ignored","name":"c"}"#, "\n",
-            r#"{"type":"test","event":"ok","name":"d","exec_time":6.0}"#, "\n",
+            r#"{"type":"test","event":"started","name":"a"}"#,
+            "\n",
+            r#"{"type":"test","event":"ok","name":"a"}"#,
+            "\n",
+            r#"{"type":"test","event":"failed","name":"b"}"#,
+            "\n",
+            r#"{"type":"test","event":"ignored","name":"c"}"#,
+            "\n",
+            r#"{"type":"test","event":"ok","name":"d","exec_time":6.0}"#,
+            "\n",
         );
         let stats = compute_stats(input.as_bytes()).unwrap();
         assert_eq!(stats.total_tests, 4);
@@ -545,8 +558,10 @@ mod tests {
     #[test]
     fn emitted_events_serialize_round_trip() {
         let input = concat!(
-            r#"{"type":"test","event":"ok","name":"a"}"#, "\n",
-            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#, "\n",
+            r#"{"type":"test","event":"ok","name":"a"}"#,
+            "\n",
+            r#"{"type":"suite","event":"ok","passed":1,"failed":0}"#,
+            "\n",
         );
         let obs = cargo_to_observations(input.as_bytes(), 1).unwrap();
         for event in &obs {

@@ -24,11 +24,31 @@ pub fn generate(
     }
 
     // Observation summary
-    let f = merged.observations.iter().filter(|o| o.variant == Hexavalent::False).count();
-    let d = merged.observations.iter().filter(|o| o.variant == Hexavalent::Doubtful).count();
-    let t = merged.observations.iter().filter(|o| o.variant == Hexavalent::True).count();
-    let p = merged.observations.iter().filter(|o| o.variant == Hexavalent::Probable).count();
-    let u = merged.observations.iter().filter(|o| o.variant == Hexavalent::Unknown).count();
+    let f = merged
+        .observations
+        .iter()
+        .filter(|o| o.variant == Hexavalent::False)
+        .count();
+    let d = merged
+        .observations
+        .iter()
+        .filter(|o| o.variant == Hexavalent::Doubtful)
+        .count();
+    let t = merged
+        .observations
+        .iter()
+        .filter(|o| o.variant == Hexavalent::True)
+        .count();
+    let p = merged
+        .observations
+        .iter()
+        .filter(|o| o.variant == Hexavalent::Probable)
+        .count();
+    let u = merged
+        .observations
+        .iter()
+        .filter(|o| o.variant == Hexavalent::Unknown)
+        .count();
     let c = merged.contradictions.len();
 
     out.push_str("## Observation Summary\n\n");

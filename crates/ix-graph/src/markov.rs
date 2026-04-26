@@ -1,8 +1,8 @@
 //! Markov chains: transition matrices, stationary distributions, simulation.
 
 use ndarray::{Array1, Array2};
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 
 /// A discrete-time Markov chain defined by a transition matrix.
@@ -91,7 +91,14 @@ impl MarkovChain {
     }
 
     /// Mean first passage time from state i to state j (estimated via simulation).
-    pub fn mean_first_passage(&self, from: usize, to: usize, n_simulations: usize, max_steps: usize, seed: u64) -> f64 {
+    pub fn mean_first_passage(
+        &self,
+        from: usize,
+        to: usize,
+        n_simulations: usize,
+        max_steps: usize,
+        seed: u64,
+    ) -> f64 {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut total_steps = 0u64;
         let mut reached = 0u64;

@@ -195,12 +195,7 @@ impl ProjectIndex {
             let module_path =
                 infer_module_path(&abs_path, &crate_info.src_dir, &crate_info.crate_name);
 
-            let file_index = parse_file(
-                &rel_path,
-                &crate_info.crate_name,
-                &module_path,
-                &source,
-            )?;
+            let file_index = parse_file(&rel_path, &crate_info.crate_name, &module_path, &source)?;
 
             // Promote file-level definitions into the flat symbol table.
             for (name, def) in &file_index.free_fns {
@@ -329,7 +324,10 @@ fn walk_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), IndexError> 
 
 /// Find the crate that owns `file_path` by walking up to the nearest
 /// `Cargo.toml` containing a `[package] name = "..."` entry.
-fn find_crate_for(file_path: &Path, workspace_root: &Path) -> Result<Option<CrateInfo>, IndexError> {
+fn find_crate_for(
+    file_path: &Path,
+    workspace_root: &Path,
+) -> Result<Option<CrateInfo>, IndexError> {
     let mut cursor = file_path.parent();
     while let Some(dir) = cursor {
         if !dir.starts_with(workspace_root) && dir != workspace_root {
@@ -482,10 +480,24 @@ fn parse_file(
 
     // Query 1: free function definitions at module scope.
     // `function_item` nodes whose parent is NOT an impl body.
-    extract_free_functions(tree.root_node(), bytes, rel_path, crate_name, module_path, &mut file_index)?;
+    extract_free_functions(
+        tree.root_node(),
+        bytes,
+        rel_path,
+        crate_name,
+        module_path,
+        &mut file_index,
+    )?;
 
     // Query 2: impl blocks (inherent + trait).
-    extract_impl_methods(tree.root_node(), bytes, rel_path, crate_name, module_path, &mut file_index)?;
+    extract_impl_methods(
+        tree.root_node(),
+        bytes,
+        rel_path,
+        crate_name,
+        module_path,
+        &mut file_index,
+    )?;
 
     // Query 3: use aliases.
     extract_use_aliases(&tree, bytes, &mut file_index)?;
@@ -503,7 +515,8 @@ fn extract_free_functions(
 ) -> Result<(), IndexError> {
     const QUERY_SRC: &str = r#"(function_item name: (identifier) @fn.name) @fn.item"#;
     let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-    let query = Query::new(&language, QUERY_SRC).map_err(|e| IndexError::QueryBuild(e.to_string()))?;
+    let query =
+        Query::new(&language, QUERY_SRC).map_err(|e| IndexError::QueryBuild(e.to_string()))?;
     let name_idx = query.capture_index_for_name("fn.name");
     let item_idx = query.capture_index_for_name("fn.item");
 
@@ -696,9 +709,7 @@ fn collect_use_paths(node: Node, prefix: &[String], bytes: &[u8], file_index: &m
             if let Ok(text) = node.utf8_text(bytes) {
                 let mut segments: Vec<String> = prefix.to_vec();
                 segments.push(text.to_string());
-                file_index
-                    .use_aliases
-                    .insert(text.to_string(), segments);
+                file_index.use_aliases.insert(text.to_string(), segments);
             }
         }
         "use_as_clause" => {
@@ -822,14 +833,20 @@ name="foo"
     fn module_path_for_flat_module_file() {
         let src = PathBuf::from("/w/crates/foo/src");
         let file = PathBuf::from("/w/crates/foo/src/eigen.rs");
-        assert_eq!(infer_module_path(&file, &src, "foo"), vec!["eigen".to_string()]);
+        assert_eq!(
+            infer_module_path(&file, &src, "foo"),
+            vec!["eigen".to_string()]
+        );
     }
 
     #[test]
     fn module_path_for_mod_rs_uses_parent_dir() {
         let src = PathBuf::from("/w/crates/foo/src");
         let file = PathBuf::from("/w/crates/foo/src/eigen/mod.rs");
-        assert_eq!(infer_module_path(&file, &src, "foo"), vec!["eigen".to_string()]);
+        assert_eq!(
+            infer_module_path(&file, &src, "foo"),
+            vec!["eigen".to_string()]
+        );
     }
 
     #[test]
@@ -955,7 +972,11 @@ fn main() { let _ = jacobi; }
         let segs = fi.use_aliases.get("jacobi").expect("jacobi alias missing");
         assert_eq!(
             segs,
-            &vec!["crate".to_string(), "eigen".to_string(), "jacobi".to_string()]
+            &vec![
+                "crate".to_string(),
+                "eigen".to_string(),
+                "jacobi".to_string()
+            ]
         );
     }
 
@@ -968,7 +989,11 @@ use crate::eigen::jacobi as j;
         let segs = fi.use_aliases.get("j").expect("j alias missing");
         assert_eq!(
             segs,
-            &vec!["crate".to_string(), "eigen".to_string(), "jacobi".to_string()]
+            &vec![
+                "crate".to_string(),
+                "eigen".to_string(),
+                "jacobi".to_string()
+            ]
         );
     }
 
@@ -1124,10 +1149,7 @@ impl Solver {
         write_fixture(
             root,
             &[
-                (
-                    "Cargo.toml",
-                    "[workspace]\nmembers = [\"crates/mini\"]\n",
-                ),
+                ("Cargo.toml", "[workspace]\nmembers = [\"crates/mini\"]\n"),
                 (
                     "crates/mini/Cargo.toml",
                     "[package]\nname = \"mini\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -1156,7 +1178,11 @@ impl Greet for World { fn greet(&self) -> String { "world".into() } }
         );
         for (key, _) in &matches {
             match key {
-                SymbolKey::TraitMethod { trait_name, ty, method } => {
+                SymbolKey::TraitMethod {
+                    trait_name,
+                    ty,
+                    method,
+                } => {
                     assert_eq!(trait_name, "Greet");
                     assert_eq!(method, "greet");
                     assert!(ty == "Hello" || ty == "World");

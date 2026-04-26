@@ -92,15 +92,26 @@ pub fn batch_quaternion_rotate_gpu(ctx: &GpuContext, points: &[f32], quat: &[f32
         label: Some("quat_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_points.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_quat.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_output.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_points.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_quat.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_output.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("quat_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("quat_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -157,7 +168,10 @@ mod tests {
         let identity = [1.0, 0.0, 0.0, 0.0]; // no rotation
         let result = batch_quaternion_rotate_cpu(&points, &identity);
         for (a, b) in result.iter().zip(points.iter()) {
-            assert!((a - b).abs() < 1e-6, "Identity rotation should not change points");
+            assert!(
+                (a - b).abs() < 1e-6,
+                "Identity rotation should not change points"
+            );
         }
     }
 
@@ -170,7 +184,11 @@ mod tests {
         let result = batch_quaternion_rotate_cpu(&points, &quat);
         // Should map to y-axis: (0, 1, 0)
         assert!(result[0].abs() < 1e-5, "x should be ~0, got {}", result[0]);
-        assert!((result[1] - 1.0).abs() < 1e-5, "y should be ~1, got {}", result[1]);
+        assert!(
+            (result[1] - 1.0).abs() < 1e-5,
+            "y should be ~1, got {}",
+            result[1]
+        );
         assert!(result[2].abs() < 1e-5, "z should be ~0, got {}", result[2]);
     }
 
@@ -208,15 +226,26 @@ mod tests {
         let s = 0.5f32;
         let c = (1.0 - 3.0 * s * s).sqrt();
         let quat = [c, s, s, s]; // arbitrary rotation
-        // Normalize quaternion
-        let norm = (quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3]).sqrt();
-        let quat = [quat[0] / norm, quat[1] / norm, quat[2] / norm, quat[3] / norm];
+                                 // Normalize quaternion
+        let norm =
+            (quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3]).sqrt();
+        let quat = [
+            quat[0] / norm,
+            quat[1] / norm,
+            quat[2] / norm,
+            quat[3] / norm,
+        ];
 
         let points = vec![3.0, 4.0, 0.0];
         let result = batch_quaternion_rotate_cpu(&points, &quat);
-        let len_before = (points[0] * points[0] + points[1] * points[1] + points[2] * points[2]).sqrt();
-        let len_after = (result[0] * result[0] + result[1] * result[1] + result[2] * result[2]).sqrt();
-        assert!((len_before - len_after).abs() < 1e-4, "Rotation should preserve length");
+        let len_before =
+            (points[0] * points[0] + points[1] * points[1] + points[2] * points[2]).sqrt();
+        let len_after =
+            (result[0] * result[0] + result[1] * result[1] + result[2] * result[2]).sqrt();
+        assert!(
+            (len_before - len_after).abs() < 1e-4,
+            "Rotation should preserve length"
+        );
     }
 
     #[test]
@@ -247,7 +276,10 @@ mod tests {
         let quat = [s, 0.0, 0.0, s]; // 90° around Z
         let points = vec![1.0, 2.0, 7.0];
         let result = batch_quaternion_rotate_cpu(&points, &quat);
-        assert!((result[2] - 7.0).abs() < 1e-4, "Z component should be unchanged");
+        assert!(
+            (result[2] - 7.0).abs() < 1e-4,
+            "Z component should be unchanged"
+        );
     }
 
     // GPU tests require hardware — commented out

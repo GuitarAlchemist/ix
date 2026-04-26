@@ -151,19 +151,13 @@ pub fn koch_snowflake_maps() -> Vec<AffineMap> {
         },
         // Second segment: scale by 1/3 and rotate +60 degrees
         AffineMap {
-            a: [
-                [cos60 / 3.0, -sin60 / 3.0],
-                [sin60 / 3.0, cos60 / 3.0],
-            ],
+            a: [[cos60 / 3.0, -sin60 / 3.0], [sin60 / 3.0, cos60 / 3.0]],
             b: [1.0 / 3.0, 0.0],
             weight: 1.0,
         },
         // Third segment: scale by 1/3 and rotate -60 degrees
         AffineMap {
-            a: [
-                [cos60 / 3.0, sin60 / 3.0],
-                [-sin60 / 3.0, cos60 / 3.0],
-            ],
+            a: [[cos60 / 3.0, sin60 / 3.0], [-sin60 / 3.0, cos60 / 3.0]],
             b: [0.5, sin60 / 3.0],
             weight: 1.0,
         },
@@ -195,16 +189,8 @@ mod tests {
 
         // Skip first 100 transient points
         for &[x, y] in &points[100..] {
-            assert!(
-                (-0.01..=1.01).contains(&x),
-                "x={} out of bounds",
-                x
-            );
-            assert!(
-                (-0.01..=0.87).contains(&y),
-                "y={} out of bounds",
-                y
-            );
+            assert!((-0.01..=1.01).contains(&x), "x={} out of bounds", x);
+            assert!((-0.01..=0.87).contains(&y), "y={} out of bounds", y);
         }
     }
 
@@ -216,16 +202,8 @@ mod tests {
 
         // Fern should be roughly in [-3, 3] x [0, 10]
         for &[x, y] in &points[100..] {
-            assert!(
-                (-3.0..=3.0).contains(&x),
-                "fern x={} out of bounds",
-                x
-            );
-            assert!(
-                (-0.5..=11.0).contains(&y),
-                "fern y={} out of bounds",
-                y
-            );
+            assert!((-3.0..=3.0).contains(&x), "fern x={} out of bounds", x);
+            assert!((-0.5..=11.0).contains(&y), "fern y={} out of bounds", y);
         }
     }
 
@@ -265,16 +243,8 @@ mod tests {
 
         // Koch curve should stay roughly bounded
         for &[x, y] in &points[100..] {
-            assert!(
-                (-0.5..=1.5).contains(&x),
-                "koch x={} out of bounds",
-                x
-            );
-            assert!(
-                (-0.5..=1.0).contains(&y),
-                "koch y={} out of bounds",
-                y
-            );
+            assert!((-0.5..=1.5).contains(&x), "koch x={} out of bounds", x);
+            assert!((-0.5..=1.0).contains(&y), "koch y={} out of bounds", y);
         }
     }
 

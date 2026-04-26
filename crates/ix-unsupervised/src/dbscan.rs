@@ -4,9 +4,9 @@
 //! Points not assigned to any cluster are given label 0 (noise), and actual
 //! clusters are labeled starting from 1.
 
-use ndarray::{Array1, Array2};
 use crate::traits::Clusterer;
 use ix_math::distance::euclidean;
+use ndarray::{Array1, Array2};
 
 /// DBSCAN clustering algorithm.
 ///
@@ -149,8 +149,14 @@ mod tests {
     fn test_dbscan_two_clusters() {
         // Two well-separated clusters
         let x = array![
-            [0.0, 0.0], [0.1, 0.1], [0.2, 0.0], [0.0, 0.2],
-            [5.0, 5.0], [5.1, 5.1], [5.2, 5.0], [5.0, 5.2]
+            [0.0, 0.0],
+            [0.1, 0.1],
+            [0.2, 0.0],
+            [0.0, 0.2],
+            [5.0, 5.0],
+            [5.1, 5.1],
+            [5.2, 5.0],
+            [5.0, 5.2]
         ];
 
         let mut db = DBSCAN::new(0.5, 2);
@@ -167,15 +173,20 @@ mod tests {
         assert_eq!(labels[5], labels[6]);
         assert_eq!(labels[6], labels[7]);
 
-        assert_ne!(labels[0], labels[4], "Two groups should be different clusters");
+        assert_ne!(
+            labels[0], labels[4],
+            "Two groups should be different clusters"
+        );
     }
 
     #[test]
     fn test_dbscan_noise() {
         // Cluster + outlier
         let x = array![
-            [0.0, 0.0], [0.1, 0.1], [0.2, 0.0],
-            [100.0, 100.0]  // outlier
+            [0.0, 0.0],
+            [0.1, 0.1],
+            [0.2, 0.0],
+            [100.0, 100.0] // outlier
         ];
 
         let mut db = DBSCAN::new(0.5, 2);
@@ -190,11 +201,7 @@ mod tests {
     #[test]
     fn test_dbscan_all_noise() {
         // Points too far apart for any cluster
-        let x = array![
-            [0.0, 0.0],
-            [10.0, 10.0],
-            [20.0, 20.0]
-        ];
+        let x = array![[0.0, 0.0], [10.0, 10.0], [20.0, 20.0]];
 
         let mut db = DBSCAN::new(0.5, 2);
         let labels = db.fit_predict(&x);
@@ -207,17 +214,21 @@ mod tests {
     #[test]
     fn test_dbscan_predict_new_data() {
         let x = array![
-            [0.0, 0.0], [0.1, 0.1], [0.2, 0.0],
-            [5.0, 5.0], [5.1, 5.1], [5.2, 5.0]
+            [0.0, 0.0],
+            [0.1, 0.1],
+            [0.2, 0.0],
+            [5.0, 5.0],
+            [5.1, 5.1],
+            [5.2, 5.0]
         ];
 
         let mut db = DBSCAN::new(0.5, 2);
         db.fit(&x);
 
         let new_data = array![
-            [0.05, 0.05],  // should be cluster 1
-            [5.05, 5.05],  // should be cluster 2
-            [50.0, 50.0],  // should be noise
+            [0.05, 0.05], // should be cluster 1
+            [5.05, 5.05], // should be cluster 2
+            [50.0, 50.0], // should be noise
         ];
 
         let pred = db.predict(&new_data);
@@ -230,8 +241,14 @@ mod tests {
     #[test]
     fn test_dbscan_single_dense_cluster() {
         let x = array![
-            [0.0, 0.0], [0.1, 0.0], [0.2, 0.0], [0.3, 0.0],
-            [0.0, 0.1], [0.1, 0.1], [0.2, 0.1], [0.3, 0.1]
+            [0.0, 0.0],
+            [0.1, 0.0],
+            [0.2, 0.0],
+            [0.3, 0.0],
+            [0.0, 0.1],
+            [0.1, 0.1],
+            [0.2, 0.1],
+            [0.3, 0.1]
         ];
 
         let mut db = DBSCAN::new(0.5, 3);
@@ -241,7 +258,10 @@ mod tests {
         let cluster = labels[0];
         assert!(cluster > 0);
         for i in 1..8 {
-            assert_eq!(labels[i], cluster, "All dense points should share a cluster");
+            assert_eq!(
+                labels[i], cluster,
+                "All dense points should share a cluster"
+            );
         }
     }
 }

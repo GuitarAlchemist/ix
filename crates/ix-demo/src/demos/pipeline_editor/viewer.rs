@@ -262,23 +262,71 @@ impl<'a> SnarlViewer<IxNode> for IxViewer<'a> {
         };
 
         ui.label(egui::RichText::new("IO").strong().small());
-        add(ui, "CSV Read", IxNode::CsvRead { path: String::new() }, self.menu_matches("CSV Read"));
-        add(ui, "CSV Write", IxNode::CsvWrite { path: String::new() }, self.menu_matches("CSV Write"));
-        add(ui, "Constant", IxNode::Constant { value: 0.0 }, self.menu_matches("Constant"));
+        add(
+            ui,
+            "CSV Read",
+            IxNode::CsvRead {
+                path: String::new(),
+            },
+            self.menu_matches("CSV Read"),
+        );
+        add(
+            ui,
+            "CSV Write",
+            IxNode::CsvWrite {
+                path: String::new(),
+            },
+            self.menu_matches("CSV Write"),
+        );
+        add(
+            ui,
+            "Constant",
+            IxNode::Constant { value: 0.0 },
+            self.menu_matches("Constant"),
+        );
 
         ui.label(egui::RichText::new("Transform").strong().small());
-        add(ui, "Normalize", IxNode::Normalize { method: NormMethod::ZScore }, self.menu_matches("Normalize"));
-        add(ui, "FFT", IxNode::Fft { inverse: false }, self.menu_matches("FFT"));
+        add(
+            ui,
+            "Normalize",
+            IxNode::Normalize {
+                method: NormMethod::ZScore,
+            },
+            self.menu_matches("Normalize"),
+        );
+        add(
+            ui,
+            "FFT",
+            IxNode::Fft { inverse: false },
+            self.menu_matches("FFT"),
+        );
 
         ui.label(egui::RichText::new("ML").strong().small());
-        add(ui, "K-Means", IxNode::KMeans { k: 3, max_iter: 100, seed: 42 }, self.menu_matches("K-Means"));
-        add(ui, "Linear Reg", IxNode::LinearReg, self.menu_matches("Linear Reg"));
+        add(
+            ui,
+            "K-Means",
+            IxNode::KMeans {
+                k: 3,
+                max_iter: 100,
+                seed: 42,
+            },
+            self.menu_matches("K-Means"),
+        );
+        add(
+            ui,
+            "Linear Reg",
+            IxNode::LinearReg,
+            self.menu_matches("Linear Reg"),
+        );
 
         ui.label(egui::RichText::new("Governance").strong().small());
         add(
             ui,
             "Policy Gate",
-            IxNode::PolicyGate { policy: "alignment".into(), threshold: 0.7 },
+            IxNode::PolicyGate {
+                policy: "alignment".into(),
+                threshold: 0.7,
+            },
             self.menu_matches("Policy Gate"),
         );
         add(
@@ -293,7 +341,14 @@ impl<'a> SnarlViewer<IxNode> for IxViewer<'a> {
         );
 
         ui.label(egui::RichText::new("Sink").strong().small());
-        add(ui, "Plot", IxNode::Plot { title: "plot".into() }, self.menu_matches("Plot"));
+        add(
+            ui,
+            "Plot",
+            IxNode::Plot {
+                title: "plot".into(),
+            },
+            self.menu_matches("Plot"),
+        );
     }
 
     fn has_node_menu(&mut self, _node: &IxNode) -> bool {

@@ -1,16 +1,23 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Wrapper to serialize Vec<usize> keys as strings for JSON compatibility
 mod serde_helpers {
     use super::*;
-    use serde::{Serializer, Deserializer};
+    use serde::{Deserializer, Serializer};
 
     pub fn ser_ctx_map<S: Serializer>(
-        map: &HashMap<Vec<usize>, HashMap<usize, f64>>, s: S,
+        map: &HashMap<Vec<usize>, HashMap<usize, f64>>,
+        s: S,
     ) -> Result<S::Ok, S::Error> {
-        let m: HashMap<String, HashMap<String, f64>> = map.iter()
-            .map(|(k, v)| (format!("{:?}", k), v.iter().map(|(k2, v2)| (k2.to_string(), *v2)).collect()))
+        let m: HashMap<String, HashMap<String, f64>> = map
+            .iter()
+            .map(|(k, v)| {
+                (
+                    format!("{:?}", k),
+                    v.iter().map(|(k2, v2)| (k2.to_string(), *v2)).collect(),
+                )
+            })
             .collect();
         m.serialize(s)
     }
@@ -20,17 +27,26 @@ mod serde_helpers {
         d: D,
     ) -> Result<HashMap<Vec<usize>, HashMap<usize, f64>>, D::Error> {
         let m: HashMap<String, HashMap<String, f64>> = HashMap::deserialize(d)?;
-        Ok(m.into_iter().map(|(k, v)| {
-            let ctx: Vec<usize> = k.trim_matches(|c| c == '[' || c == ']')
-                .split(", ").filter(|s| !s.is_empty())
-                .filter_map(|s| s.parse().ok()).collect();
-            let next_map = v.into_iter().filter_map(|(k2, v2)| k2.parse().ok().map(|k2| (k2, v2))).collect();
-            (ctx, next_map)
-        }).collect())
+        Ok(m.into_iter()
+            .map(|(k, v)| {
+                let ctx: Vec<usize> = k
+                    .trim_matches(|c| c == '[' || c == ']')
+                    .split(", ")
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                let next_map = v
+                    .into_iter()
+                    .filter_map(|(k2, v2)| k2.parse().ok().map(|k2| (k2, v2)))
+                    .collect();
+                (ctx, next_map)
+            })
+            .collect())
     }
 
     pub fn ser_totals<S: Serializer>(
-        map: &HashMap<Vec<usize>, f64>, s: S,
+        map: &HashMap<Vec<usize>, f64>,
+        s: S,
     ) -> Result<S::Ok, S::Error> {
         let m: HashMap<String, f64> = map.iter().map(|(k, v)| (format!("{:?}", k), *v)).collect();
         m.serialize(s)
@@ -40,21 +56,32 @@ mod serde_helpers {
         d: D,
     ) -> Result<HashMap<Vec<usize>, f64>, D::Error> {
         let m: HashMap<String, f64> = HashMap::deserialize(d)?;
-        Ok(m.into_iter().map(|(k, v)| {
-            let ctx: Vec<usize> = k.trim_matches(|c| c == '[' || c == ']')
-                .split(", ").filter(|s| !s.is_empty())
-                .filter_map(|s| s.parse().ok()).collect();
-            (ctx, v)
-        }).collect())
+        Ok(m.into_iter()
+            .map(|(k, v)| {
+                let ctx: Vec<usize> = k
+                    .trim_matches(|c| c == '[' || c == ']')
+                    .split(", ")
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                (ctx, v)
+            })
+            .collect())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkovTensor {
     max_order: usize,
-    #[serde(serialize_with = "serde_helpers::ser_ctx_map", deserialize_with = "serde_helpers::de_ctx_map")]
+    #[serde(
+        serialize_with = "serde_helpers::ser_ctx_map",
+        deserialize_with = "serde_helpers::de_ctx_map"
+    )]
     transitions: HashMap<Vec<usize>, HashMap<usize, f64>>,
-    #[serde(serialize_with = "serde_helpers::ser_totals", deserialize_with = "serde_helpers::de_totals")]
+    #[serde(
+        serialize_with = "serde_helpers::ser_totals",
+        deserialize_with = "serde_helpers::de_totals"
+    )]
     context_totals: HashMap<Vec<usize>, f64>,
     state_count: usize,
 }
@@ -69,37 +96,58 @@ impl MarkovTensor {
         }
     }
 
-    pub fn max_order(&self) -> usize { self.max_order }
-    pub fn state_count(&self) -> usize { self.state_count }
+    pub fn max_order(&self) -> usize {
+        self.max_order
+    }
+    pub fn state_count(&self) -> usize {
+        self.state_count
+    }
 
     pub fn sparsity(&self) -> f64 {
-        if self.state_count == 0 { return 1.0; }
+        if self.state_count == 0 {
+            return 1.0;
+        }
         let total_possible = self.context_totals.len() as f64 * self.state_count as f64;
-        if total_possible == 0.0 { return 1.0; }
+        if total_possible == 0.0 {
+            return 1.0;
+        }
         let total_nonzero: f64 = self.transitions.values().map(|m| m.len() as f64).sum();
         1.0 - (total_nonzero / total_possible)
     }
 
     pub fn observe(&mut self, context: &[usize], next: usize) {
         for &s in context.iter().chain(std::iter::once(&next)) {
-            if s >= self.state_count { self.state_count = s + 1; }
+            if s >= self.state_count {
+                self.state_count = s + 1;
+            }
         }
         let len = context.len().min(self.max_order);
         for start in 0..len {
             let ctx = context[start..].to_vec();
-            *self.transitions.entry(ctx.clone()).or_default().entry(next).or_insert(0.0) += 1.0;
+            *self
+                .transitions
+                .entry(ctx.clone())
+                .or_default()
+                .entry(next)
+                .or_insert(0.0) += 1.0;
             *self.context_totals.entry(ctx).or_insert(0.0) += 1.0;
         }
-        *self.transitions.entry(vec![]).or_default().entry(next).or_insert(0.0) += 1.0;
+        *self
+            .transitions
+            .entry(vec![])
+            .or_default()
+            .entry(next)
+            .or_insert(0.0) += 1.0;
         *self.context_totals.entry(vec![]).or_insert(0.0) += 1.0;
     }
 
     pub fn predict(&self, context: &[usize]) -> Vec<(usize, f64)> {
         let ctx = context.to_vec();
         match (self.transitions.get(&ctx), self.context_totals.get(&ctx)) {
-            (Some(next_map), Some(&total)) if total > 0.0 => {
-                next_map.iter().map(|(&state, &count)| (state, count / total)).collect()
-            }
+            (Some(next_map), Some(&total)) if total > 0.0 => next_map
+                .iter()
+                .map(|(&state, &count)| (state, count / total))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -111,7 +159,12 @@ impl MarkovTensor {
     pub fn merge(&mut self, other: &MarkovTensor) {
         for (ctx, next_map) in &other.transitions {
             for (&state, &count) in next_map {
-                *self.transitions.entry(ctx.clone()).or_default().entry(state).or_insert(0.0) += count;
+                *self
+                    .transitions
+                    .entry(ctx.clone())
+                    .or_default()
+                    .entry(state)
+                    .or_insert(0.0) += count;
             }
         }
         for (ctx, &total) in &other.context_totals {

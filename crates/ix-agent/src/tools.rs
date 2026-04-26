@@ -37,10 +37,7 @@ fn strip_markdown_fence(s: &str) -> &str {
 /// `upstream_results`. A bare `"$step_id"` replaces with the full
 /// result. Useful for pipeline argument chaining without requiring
 /// the LLM to marshal upstream outputs by hand.
-fn substitute_refs(
-    value: &Value,
-    upstream: &HashMap<String, Value>,
-) -> Result<Value, String> {
+fn substitute_refs(value: &Value, upstream: &HashMap<String, Value>) -> Result<Value, String> {
     match value {
         Value::String(s) if s.starts_with('$') => {
             let path = &s[1..];
@@ -416,9 +413,8 @@ impl ToolRegistry {
             if let Some(deps) = step.get("depends_on").and_then(|v| v.as_array()) {
                 for dep in deps {
                     if let Some(dep_id) = dep.as_str() {
-                        dag.add_edge(dep_id, id).map_err(|e| {
-                            format!("ix_pipeline_run: edge {dep_id} -> {id}: {e}")
-                        })?;
+                        dag.add_edge(dep_id, id)
+                            .map_err(|e| format!("ix_pipeline_run: edge {dep_id} -> {id}: {e}"))?;
                         depends_on
                             .get_mut(id)
                             .expect("id registered")
@@ -450,9 +446,8 @@ impl ToolRegistry {
                 .clone();
 
             // Substitute any "$step_id.field" references with upstream results.
-            let resolved = substitute_refs(&raw_args, &results).map_err(|e| {
-                format!("ix_pipeline_run: step '{id}' arg substitution: {e}")
-            })?;
+            let resolved = substitute_refs(&raw_args, &results)
+                .map_err(|e| format!("ix_pipeline_run: step '{id}' arg substitution: {e}"))?;
 
             // Derive cache key if the step declared an asset_name.
             let cache_key: Option<String> = asset_name.as_ref().map(|name| {
@@ -484,9 +479,9 @@ impl ToolRegistry {
             }
 
             let start = Instant::now();
-            let result = self.call(&tool, resolved).map_err(|e| {
-                format!("ix_pipeline_run: step '{id}' (tool '{tool}') failed: {e}")
-            })?;
+            let result = self
+                .call(&tool, resolved)
+                .map_err(|e| format!("ix_pipeline_run: step '{id}' (tool '{tool}') failed: {e}"))?;
             let elapsed = start.elapsed().as_millis();
 
             // Store in cache on miss (only when asset_name was declared).
@@ -510,10 +505,7 @@ impl ToolRegistry {
         //     steps, which is what downstream audits walk to prove
         //     "where did this decision come from"
         for id in &order {
-            let deps = depends_on
-                .get(id)
-                .cloned()
-                .unwrap_or_default();
+            let deps = depends_on.get(id).cloned().unwrap_or_default();
             let upstream_keys: Vec<Value> = deps
                 .iter()
                 .map(|dep| cache_keys.get(dep).cloned().unwrap_or(Value::Null))
@@ -580,10 +572,7 @@ impl ToolRegistry {
             .get("sentence")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "ix_pipeline_compile: missing 'sentence' (string)".to_string())?;
-        let max_steps = args
-            .get("max_steps")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(12) as usize;
+        let max_steps = args.get("max_steps").and_then(|v| v.as_u64()).unwrap_or(12) as usize;
         let context_hint = args
             .get("context")
             .map(|v| serde_json::to_string(v).unwrap_or_default())
@@ -1051,7 +1040,8 @@ Example 2 — "cluster crates by complexity then classify":
 
         self.tools.push(Tool {
             name: "ix_game_nash",
-            description: "Find Nash equilibria of a 2-player bimatrix game via support enumeration.",
+            description:
+                "Find Nash equilibria of a 2-player bimatrix game via support enumeration.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1985,7 +1975,8 @@ Example 2 — "cluster crates by complexity then classify":
     fn register_federation_discovery(&mut self) {
         self.tools.push(Tool {
             name: "ix_federation_discover",
-            description: "Discover capabilities across the GuitarAlchemist ecosystem (ix, tars, ga)",
+            description:
+                "Discover capabilities across the GuitarAlchemist ecosystem (ix, tars, ga)",
             input_schema: json!({
                 "type": "object",
                 "properties": {

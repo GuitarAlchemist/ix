@@ -170,13 +170,7 @@ mod tests {
     #[test]
     fn test_pgd_stays_in_ball() {
         let input = array![0.5, 0.5];
-        let adv = pgd(
-            &input,
-            |_x| array![1.0, 1.0],
-            0.1,
-            0.05,
-            100,
-        );
+        let adv = pgd(&input, |_x| array![1.0, 1.0], 0.1, 0.05, 100);
         let diff = &adv - &input;
         for &d in diff.iter() {
             assert!(d.abs() <= 0.1 + 1e-10);
@@ -194,15 +188,7 @@ mod tests {
     #[test]
     fn test_cw_attack_produces_perturbation() {
         let input = array![0.5, 0.5, 0.5];
-        let adv = cw_attack(
-            &input,
-            1,
-            |_x, _t| 1.0,
-            |x| x.clone(),
-            1.0,
-            10,
-            0.01,
-        );
+        let adv = cw_attack(&input, 1, |_x, _t| 1.0, |x| x.clone(), 1.0, 10, 0.01);
         // Should differ from input
         let diff_norm = (&adv - &input).mapv(|d| d * d).sum().sqrt();
         // Just verify it ran without panic and produced something
@@ -227,13 +213,7 @@ mod tests {
     #[test]
     fn test_jsma_respects_max_perturbations() {
         let input = array![0.0, 0.0, 0.0, 0.0];
-        let adv = jsma(
-            &input,
-            0,
-            |_x| array![0.5, 0.5, 0.5, 0.5],
-            2,
-            1.0,
-        );
+        let adv = jsma(&input, 0, |_x| array![0.5, 0.5, 0.5, 0.5], 2, 1.0);
         let changed = adv.iter().filter(|&&v| v != 0.0).count();
         assert_eq!(changed, 2);
     }
@@ -241,13 +221,7 @@ mod tests {
     #[test]
     fn test_universal_perturbation_bounded() {
         let inputs = vec![array![1.0, 0.0], array![0.0, 1.0]];
-        let pert = universal_perturbation(
-            &inputs,
-            |_x| 1.0,
-            |x| x.clone(),
-            0.5,
-            3,
-        );
+        let pert = universal_perturbation(&inputs, |_x| 1.0, |x| x.clone(), 0.5, 3);
         let norm = pert.mapv(|p| p * p).sum().sqrt();
         assert!(norm <= 0.5 + 1e-10);
     }

@@ -83,7 +83,10 @@ fn obsolescence_chain_for_2616_reaches_9110() {
         .collect();
     // Must include the seed, the intermediates, and the current.
     assert!(numbers.contains(&2616), "chain must include seed 2616");
-    assert!(numbers.contains(&9110), "chain must reach 9110 via 7230-7235");
+    assert!(
+        numbers.contains(&9110),
+        "chain must reach 9110 via 7230-7235"
+    );
 }
 
 #[test]

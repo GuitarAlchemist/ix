@@ -122,11 +122,7 @@ impl Sedenion {
 
     /// Dot product (inner product of components).
     pub fn dot(&self, other: &Self) -> f64 {
-        self.0
-            .iter()
-            .zip(other.0.iter())
-            .map(|(a, b)| a * b)
-            .sum()
+        self.0.iter().zip(other.0.iter()).map(|(a, b)| a * b).sum()
     }
 
     /// Scale all components by a scalar.

@@ -38,11 +38,7 @@ fn parse_json_array(arr: &[serde_json::Value]) -> Result<DataBatch, IoError> {
             if let serde_json::Value::Object(obj) = item {
                 let row: Vec<f64> = names
                     .iter()
-                    .map(|key| {
-                        obj.get(key)
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(f64::NAN)
-                    })
+                    .map(|key| obj.get(key).and_then(|v| v.as_f64()).unwrap_or(f64::NAN))
                     .collect();
                 batch.push(DataRecord::Row(row));
             }
@@ -116,11 +112,7 @@ pub fn read_ndjson_string(data: &str) -> Result<DataBatch, IoError> {
             if let Some(ref names) = batch.column_names {
                 let row: Vec<f64> = names
                     .iter()
-                    .map(|key| {
-                        obj.get(key)
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(f64::NAN)
-                    })
+                    .map(|key| obj.get(key).and_then(|v| v.as_f64()).unwrap_or(f64::NAN))
                     .collect();
                 batch.push(DataRecord::Row(row));
             }

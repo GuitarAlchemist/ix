@@ -79,9 +79,7 @@ fn bench_open(c: &mut Criterion) {
 
 fn bench_search_unfiltered_top10(c: &mut Criterion) {
     let Some(path) = resolve_index_path() else {
-        eprintln!(
-            "ix-optick bench_search_unfiltered_top10: OPTICK_INDEX_PATH not set — skipping"
-        );
+        eprintln!("ix-optick bench_search_unfiltered_top10: OPTICK_INDEX_PATH not set — skipping");
         return;
     };
 
@@ -163,9 +161,7 @@ fn bench_search_bass_top10(c: &mut Criterion) {
 
 fn bench_search_ukulele_top10(c: &mut Criterion) {
     let Some(path) = resolve_index_path() else {
-        eprintln!(
-            "ix-optick bench_search_ukulele_top10: OPTICK_INDEX_PATH not set — skipping"
-        );
+        eprintln!("ix-optick bench_search_ukulele_top10: OPTICK_INDEX_PATH not set — skipping");
         return;
     };
 

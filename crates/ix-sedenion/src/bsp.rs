@@ -6,9 +6,7 @@
 #[derive(Debug, Clone)]
 pub enum BspNode {
     /// Leaf containing point indices.
-    Leaf {
-        indices: Vec<usize>,
-    },
+    Leaf { indices: Vec<usize> },
     /// Internal split node.
     Split {
         axis: usize,
@@ -69,8 +67,12 @@ fn build_recursive(points: &[Vec<f64>], indices: &[usize], max_leaf_size: usize)
             let mut max_val = f64::NEG_INFINITY;
             for &idx in indices {
                 let v = points[idx][axis];
-                if v < min_val { min_val = v; }
-                if v > max_val { max_val = v; }
+                if v < min_val {
+                    min_val = v;
+                }
+                if v > max_val {
+                    max_val = v;
+                }
             }
             let spread = max_val - min_val;
             if spread > best_spread {
@@ -109,7 +111,9 @@ fn build_recursive(points: &[Vec<f64>], indices: &[usize], max_leaf_size: usize)
         let mid = indices.len() / 2;
         let mut sorted_indices = indices.to_vec();
         sorted_indices.sort_by(|&a, &b| {
-            points[a][best_axis].partial_cmp(&points[b][best_axis]).unwrap()
+            points[a][best_axis]
+                .partial_cmp(&points[b][best_axis])
+                .unwrap()
         });
         left_indices = sorted_indices[..mid].to_vec();
         right_indices = sorted_indices[mid..].to_vec();
@@ -134,7 +138,8 @@ fn build_recursive(points: &[Vec<f64>], indices: &[usize], max_leaf_size: usize)
 }
 
 fn euclidean_dist(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b.iter())
+    a.iter()
+        .zip(b.iter())
         .map(|(x, y)| (x - y) * (x - y))
         .sum::<f64>()
         .sqrt()
@@ -144,7 +149,9 @@ fn worst_dist(best: &[(usize, f64)], k: usize) -> f64 {
     if best.len() < k {
         f64::INFINITY
     } else {
-        best.iter().map(|(_, d)| *d).fold(f64::NEG_INFINITY, f64::max)
+        best.iter()
+            .map(|(_, d)| *d)
+            .fold(f64::NEG_INFINITY, f64::max)
     }
 }
 
@@ -168,7 +175,12 @@ fn knn_search(
                 }
             }
         }
-        BspNode::Split { axis, value, left, right } => {
+        BspNode::Split {
+            axis,
+            value,
+            left,
+            right,
+        } => {
             let goes_left = query[*axis] <= *value;
             let (first, second) = if goes_left {
                 (left.as_ref(), right.as_ref())
@@ -203,7 +215,12 @@ fn radius_search(
                 }
             }
         }
-        BspNode::Split { axis, value, left, right } => {
+        BspNode::Split {
+            axis,
+            value,
+            left,
+            right,
+        } => {
             let plane_dist = query[*axis] - *value;
 
             if plane_dist <= 0.0 {
@@ -246,7 +263,7 @@ mod tests {
         let tree = BspNode::build(&points, 2);
         // Just verify it doesn't panic and produces a valid tree
         match &tree {
-            BspNode::Leaf { .. } => {} // small enough for leaf
+            BspNode::Leaf { .. } => {}  // small enough for leaf
             BspNode::Split { .. } => {} // split is fine
         }
     }
@@ -261,13 +278,18 @@ mod tests {
         assert_eq!(result.len(), 1);
 
         // Brute force nearest
-        let mut brute: Vec<(usize, f64)> = points.iter().enumerate()
+        let mut brute: Vec<(usize, f64)> = points
+            .iter()
+            .enumerate()
             .map(|(i, p)| (i, euclidean_dist(&query, p)))
             .collect();
         brute.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-        assert_eq!(result[0].0, brute[0].0,
-            "BSP nearest: idx={}, brute force: idx={}", result[0].0, brute[0].0);
+        assert_eq!(
+            result[0].0, brute[0].0,
+            "BSP nearest: idx={}, brute force: idx={}",
+            result[0].0, brute[0].0
+        );
     }
 
     #[test]
@@ -281,7 +303,9 @@ mod tests {
         assert_eq!(result.len(), k);
 
         // Brute force k-nearest
-        let mut brute: Vec<(usize, f64)> = points.iter().enumerate()
+        let mut brute: Vec<(usize, f64)> = points
+            .iter()
+            .enumerate()
             .map(|(i, p)| (i, euclidean_dist(&query, p)))
             .collect();
         brute.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -290,8 +314,10 @@ mod tests {
         let mut brute_indices: Vec<usize> = brute[..k].iter().map(|(i, _)| *i).collect();
         bsp_indices.sort();
         brute_indices.sort();
-        assert_eq!(bsp_indices, brute_indices,
-            "BSP k-NN indices don't match brute force");
+        assert_eq!(
+            bsp_indices, brute_indices,
+            "BSP k-NN indices don't match brute force"
+        );
     }
 
     #[test]
@@ -306,14 +332,19 @@ mod tests {
         result.sort();
 
         // Brute force
-        let mut brute: Vec<usize> = points.iter().enumerate()
+        let mut brute: Vec<usize> = points
+            .iter()
+            .enumerate()
             .filter(|(_, p)| euclidean_dist(&query, p) <= radius)
             .map(|(i, _)| i)
             .collect();
         brute.sort();
 
-        assert_eq!(result, brute,
-            "BSP radius query: {:?}, brute force: {:?}", result, brute);
+        assert_eq!(
+            result, brute,
+            "BSP radius query: {:?}, brute force: {:?}",
+            result, brute
+        );
     }
 
     #[test]
@@ -364,19 +395,27 @@ mod tests {
 
         // For low-D (3D) we verify exact brute-force match
         let points_3d: Vec<Vec<f64>> = (0..20)
-            .map(|i| vec![(i * 3) as f64 % 7.0, (i * 5) as f64 % 11.0, (i * 7) as f64 % 13.0])
+            .map(|i| {
+                vec![
+                    (i * 3) as f64 % 7.0,
+                    (i * 5) as f64 % 11.0,
+                    (i * 7) as f64 % 13.0,
+                ]
+            })
             .collect();
         let tree_3d = BspNode::build(&points_3d, 4);
         let query_3d = vec![3.0, 5.0, 6.0];
         let result_3d = tree_3d.query_nearest(&points_3d, &query_3d, 3);
 
-        let mut brute: Vec<(usize, f64)> = points_3d.iter().enumerate()
+        let mut brute: Vec<(usize, f64)> = points_3d
+            .iter()
+            .enumerate()
             .map(|(i, p)| (i, euclidean_dist(&query_3d, p)))
             .collect();
         brute.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-        let mut bsp_idx: Vec<usize> = result_3d.iter().map(|(i,_)| *i).collect();
-        let mut brute_idx: Vec<usize> = brute[..3].iter().map(|(i,_)| *i).collect();
+        let mut bsp_idx: Vec<usize> = result_3d.iter().map(|(i, _)| *i).collect();
+        let mut brute_idx: Vec<usize> = brute[..3].iter().map(|(i, _)| *i).collect();
         bsp_idx.sort();
         brute_idx.sort();
         assert_eq!(bsp_idx, brute_idx);

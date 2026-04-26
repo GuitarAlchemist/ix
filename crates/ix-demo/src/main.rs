@@ -157,25 +157,51 @@ impl eframe::App for IxApp {
                 ui.separator();
                 // ML
                 ui.label(egui::RichText::new("ML").strong().small());
-                for tab in [Tab::Clustering, Tab::NeuralNet, Tab::Transformer, Tab::Evolution, Tab::Reinforcement] {
+                for tab in [
+                    Tab::Clustering,
+                    Tab::NeuralNet,
+                    Tab::Transformer,
+                    Tab::Evolution,
+                    Tab::Reinforcement,
+                ] {
                     ui.selectable_value(&mut self.active_tab, tab, tab.label());
                 }
                 ui.separator();
                 // Advanced Math
                 ui.label(egui::RichText::new("Advanced").strong().small());
-                for tab in [Tab::Rotation, Tab::NumberTheory, Tab::Fractal, Tab::Sedenion, Tab::Topology, Tab::Category] {
+                for tab in [
+                    Tab::Rotation,
+                    Tab::NumberTheory,
+                    Tab::Fractal,
+                    Tab::Sedenion,
+                    Tab::Topology,
+                    Tab::Category,
+                ] {
                     ui.selectable_value(&mut self.active_tab, tab, tab.label());
                 }
                 ui.separator();
                 // Infrastructure & Systems
                 ui.label(egui::RichText::new("Systems").strong().small());
-                for tab in [Tab::Chaos, Tab::Signal, Tab::IKChain, Tab::Search, Tab::GameTheory, Tab::Probabilistic, Tab::GpuKernels, Tab::Governance] {
+                for tab in [
+                    Tab::Chaos,
+                    Tab::Signal,
+                    Tab::IKChain,
+                    Tab::Search,
+                    Tab::GameTheory,
+                    Tab::Probabilistic,
+                    Tab::GpuKernels,
+                    Tab::Governance,
+                ] {
                     ui.selectable_value(&mut self.active_tab, tab, tab.label());
                 }
                 ui.separator();
                 // Pipelines
                 ui.label(egui::RichText::new("Pipelines").strong().small());
-                ui.selectable_value(&mut self.active_tab, Tab::PipelineEditor, Tab::PipelineEditor.label());
+                ui.selectable_value(
+                    &mut self.active_tab,
+                    Tab::PipelineEditor,
+                    Tab::PipelineEditor.label(),
+                );
             });
         });
 
@@ -186,32 +212,30 @@ impl eframe::App for IxApp {
                 self.pipeline_editor.ui(ui);
                 return;
             }
-            egui::ScrollArea::both().show(ui, |ui| {
-                match self.active_tab {
-                    Tab::Stats => self.stats_demo.ui(ui),
-                    Tab::Regression => self.regression_demo.ui(ui),
-                    Tab::Clustering => self.clustering_demo.ui(ui),
-                    Tab::NeuralNet => self.nn_demo.ui(ui),
-                    Tab::Optimization => self.optim_demo.ui(ui),
-                    Tab::Chaos => self.chaos_demo.ui(ui),
-                    Tab::Signal => self.signal_demo.ui(ui),
-                    Tab::IKChain => self.ik_demo.ui(ui),
-                    Tab::Evolution => self.evolution_demo.ui(ui),
-                    Tab::Reinforcement => self.rl_demo.ui(ui),
-                    Tab::Search => self.search_demo.ui(ui),
-                    Tab::GameTheory => self.game_demo.ui(ui),
-                    Tab::Probabilistic => self.prob_demo.ui(ui),
-                    Tab::GpuKernels => self.gpu_demo.ui(ui),
-                    Tab::Transformer => self.transformer_demo.ui(ui),
-                    Tab::Rotation => self.rotation_demo.ui(ui),
-                    Tab::NumberTheory => self.number_theory_demo.ui(ui),
-                    Tab::Fractal => self.fractal_demo.ui(ui),
-                    Tab::Sedenion => self.sedenion_demo.ui(ui),
-                    Tab::Topology => self.topology_demo.ui(ui),
-                    Tab::Category => self.category_demo.ui(ui),
-                    Tab::Governance => self.governance_demo.ui(ui),
-                    Tab::PipelineEditor => unreachable!("routed above"),
-                }
+            egui::ScrollArea::both().show(ui, |ui| match self.active_tab {
+                Tab::Stats => self.stats_demo.ui(ui),
+                Tab::Regression => self.regression_demo.ui(ui),
+                Tab::Clustering => self.clustering_demo.ui(ui),
+                Tab::NeuralNet => self.nn_demo.ui(ui),
+                Tab::Optimization => self.optim_demo.ui(ui),
+                Tab::Chaos => self.chaos_demo.ui(ui),
+                Tab::Signal => self.signal_demo.ui(ui),
+                Tab::IKChain => self.ik_demo.ui(ui),
+                Tab::Evolution => self.evolution_demo.ui(ui),
+                Tab::Reinforcement => self.rl_demo.ui(ui),
+                Tab::Search => self.search_demo.ui(ui),
+                Tab::GameTheory => self.game_demo.ui(ui),
+                Tab::Probabilistic => self.prob_demo.ui(ui),
+                Tab::GpuKernels => self.gpu_demo.ui(ui),
+                Tab::Transformer => self.transformer_demo.ui(ui),
+                Tab::Rotation => self.rotation_demo.ui(ui),
+                Tab::NumberTheory => self.number_theory_demo.ui(ui),
+                Tab::Fractal => self.fractal_demo.ui(ui),
+                Tab::Sedenion => self.sedenion_demo.ui(ui),
+                Tab::Topology => self.topology_demo.ui(ui),
+                Tab::Category => self.category_demo.ui(ui),
+                Tab::Governance => self.governance_demo.ui(ui),
+                Tab::PipelineEditor => unreachable!("routed above"),
             });
         });
     }

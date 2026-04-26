@@ -16,5 +16,12 @@ pub trait Environment {
 /// An RL agent.
 pub trait Agent<E: Environment> {
     fn select_action(&self, state: &E::State) -> E::Action;
-    fn update(&mut self, state: &E::State, action: &E::Action, reward: f64, next_state: &E::State, done: bool);
+    fn update(
+        &mut self,
+        state: &E::State,
+        action: &E::Action,
+        reward: f64,
+        next_state: &E::State,
+        done: bool,
+    );
 }

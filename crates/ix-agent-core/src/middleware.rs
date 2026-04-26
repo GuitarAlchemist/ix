@@ -249,8 +249,12 @@ mod tests {
     impl AgentHandler for EchoHandler {
         fn run(&self, _cx: &ReadContext, action: &AgentAction) -> ActionResult {
             match action {
-                AgentAction::InvokeTool { params, .. } => Ok(ActionOutcome::value_only(params.clone())),
-                AgentAction::Return { payload, .. } => Ok(ActionOutcome::value_only(payload.clone())),
+                AgentAction::InvokeTool { params, .. } => {
+                    Ok(ActionOutcome::value_only(params.clone()))
+                }
+                AgentAction::Return { payload, .. } => {
+                    Ok(ActionOutcome::value_only(payload.clone()))
+                }
                 _ => Err(ActionError::Exec("unsupported".into())),
             }
         }

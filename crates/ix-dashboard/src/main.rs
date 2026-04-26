@@ -78,7 +78,7 @@ fn ui(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),  // tabs
+            Constraint::Length(2), // tabs
             Constraint::Fill(1),   // main content
             Constraint::Length(1), // status bar
         ])

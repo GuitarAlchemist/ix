@@ -274,9 +274,15 @@ fn check_19_prime_form_self_representative(x: PcSet) -> bool {
 /// AND R(R(x)) == x. Non-triads silently skip (not a violation, just out of scope).
 fn check_14_plr_involutions(x: PcSet) -> bool {
     let bx = ix_bracelet::PcSet::new(x.0);
-    let Some(px) = ix_bracelet::p(bx) else { return false };
-    let Some(lx) = ix_bracelet::l(bx) else { return false };
-    let Some(rx) = ix_bracelet::r(bx) else { return false };
+    let Some(px) = ix_bracelet::p(bx) else {
+        return false;
+    };
+    let Some(lx) = ix_bracelet::l(bx) else {
+        return false;
+    };
+    let Some(rx) = ix_bracelet::r(bx) else {
+        return false;
+    };
     ix_bracelet::p(px) == Some(bx)
         && ix_bracelet::l(lx) == Some(bx)
         && ix_bracelet::r(rx) == Some(bx)
@@ -315,16 +321,46 @@ fn check_22_seventh_cardinality(x: PcSet) -> bool {
 
 fn checks() -> Vec<Check> {
     vec![
-        Check { id: 14, holds: check_14_plr_involutions },
-        Check { id: 15, holds: check_15_plr_composites },
-        Check { id: 16, holds: check_16_t12_identity },
-        Check { id: 17, holds: check_17_double_inversion },
-        Check { id: 18, holds: check_18_rotate_by_cardinality },
-        Check { id: 19, holds: check_19_prime_form_self_representative },
-        Check { id: 20, holds: check_20_icv_inversion_invariant },
-        Check { id: 21, holds: check_21_triad_cardinality },
-        Check { id: 22, holds: check_22_seventh_cardinality },
-        Check { id: 24, holds: check_24_icv_shape },
+        Check {
+            id: 14,
+            holds: check_14_plr_involutions,
+        },
+        Check {
+            id: 15,
+            holds: check_15_plr_composites,
+        },
+        Check {
+            id: 16,
+            holds: check_16_t12_identity,
+        },
+        Check {
+            id: 17,
+            holds: check_17_double_inversion,
+        },
+        Check {
+            id: 18,
+            holds: check_18_rotate_by_cardinality,
+        },
+        Check {
+            id: 19,
+            holds: check_19_prime_form_self_representative,
+        },
+        Check {
+            id: 20,
+            holds: check_20_icv_inversion_invariant,
+        },
+        Check {
+            id: 21,
+            holds: check_21_triad_cardinality,
+        },
+        Check {
+            id: 22,
+            holds: check_22_seventh_cardinality,
+        },
+        Check {
+            id: 24,
+            holds: check_24_icv_shape,
+        },
     ]
 }
 
@@ -432,7 +468,10 @@ mod tests {
         assert_eq!(PcSet::from_pcs([0, 3, 6, 9]).rotational_symmetry(), Some(3));
         assert_eq!(PcSet::from_pcs([0, 4, 8]).rotational_symmetry(), Some(4));
         assert_eq!(PcSet::from_pcs([0, 6]).rotational_symmetry(), Some(6));
-        assert_eq!(PcSet::from_pcs([0, 2, 4, 6, 8, 10]).rotational_symmetry(), Some(2));
+        assert_eq!(
+            PcSet::from_pcs([0, 2, 4, 6, 8, 10]).rotational_symmetry(),
+            Some(2)
+        );
         assert_eq!(PcSet::from_pcs([0, 4, 7]).rotational_symmetry(), None);
     }
 
@@ -440,10 +479,26 @@ mod tests {
     fn universal_checks_fire_on_every_exemplar() {
         let corp = corpus();
         for spec in &corp {
-            assert!(check_16_t12_identity(spec.pcs), "invariant 16 failed on {}", spec.id);
-            assert!(check_17_double_inversion(spec.pcs), "invariant 17 failed on {}", spec.id);
-            assert!(check_20_icv_inversion_invariant(spec.pcs), "invariant 20 failed on {}", spec.id);
-            assert!(check_24_icv_shape(spec.pcs), "invariant 24 failed on {}", spec.id);
+            assert!(
+                check_16_t12_identity(spec.pcs),
+                "invariant 16 failed on {}",
+                spec.id
+            );
+            assert!(
+                check_17_double_inversion(spec.pcs),
+                "invariant 17 failed on {}",
+                spec.id
+            );
+            assert!(
+                check_20_icv_inversion_invariant(spec.pcs),
+                "invariant 20 failed on {}",
+                spec.id
+            );
+            assert!(
+                check_24_icv_shape(spec.pcs),
+                "invariant 24 failed on {}",
+                spec.id
+            );
         }
     }
 
@@ -454,13 +509,17 @@ mod tests {
         // hexachord (T_6 maps it to itself).
         assert!(check_18_rotate_by_cardinality(PcSet::new(0)));
         assert!(check_18_rotate_by_cardinality(PcSet::new(0xFFF)));
-        assert!(check_18_rotate_by_cardinality(PcSet::from_pcs([0, 2, 4, 6, 8, 10])));
+        assert!(check_18_rotate_by_cardinality(PcSet::from_pcs([
+            0, 2, 4, 6, 8, 10
+        ])));
         // Does NOT fire on sets whose symmetry period ≠ cardinality:
         //   augmented triad {0,4,8}: T4-symmetric, card 3 — T_3 gives {3,7,11}, not self.
         //   diminished 7th {0,3,6,9}: T3-symmetric, card 4 — T_4 gives {4,7,10,1}.
         //   major triad: no rotational symmetry.
         assert!(!check_18_rotate_by_cardinality(PcSet::from_pcs([0, 4, 8])));
-        assert!(!check_18_rotate_by_cardinality(PcSet::from_pcs([0, 3, 6, 9])));
+        assert!(!check_18_rotate_by_cardinality(PcSet::from_pcs([
+            0, 3, 6, 9
+        ])));
         assert!(!check_18_rotate_by_cardinality(PcSet::from_pcs([0, 4, 7])));
     }
 

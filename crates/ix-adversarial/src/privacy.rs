@@ -99,11 +99,7 @@ mod tests {
 
     #[test]
     fn test_membership_inference_high_confidence() {
-        let score = membership_inference_score(
-            |_x| array![0.1, 0.9, 0.0],
-            &array![1.0, 2.0],
-            1,
-        );
+        let score = membership_inference_score(|_x| array![0.1, 0.9, 0.0], &array![1.0, 2.0], 1);
         assert!((score - 0.9).abs() < 1e-10);
     }
 

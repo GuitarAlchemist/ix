@@ -139,7 +139,11 @@ impl Middleware for BeliefMiddleware {
                 // broken). For the MVP, False is correct enough.
                 if current_belief != Some(Hexavalent::False) {
                     let error_evidence = match e {
-                        ActionError::Blocked { code, reason, blocker } => {
+                        ActionError::Blocked {
+                            code,
+                            reason,
+                            blocker,
+                        } => {
                             serde_json::json!({
                                 "source": "ix_beliefs",
                                 "trigger": "action_blocked",
@@ -308,7 +312,10 @@ mod tests {
         let result: ActionResult = Ok(crate::event::ActionOutcome::value_only(json!(42)));
 
         mw.post(&mut wc, &action, &result);
-        assert!(sink.events.is_empty(), "should not emit when belief matches");
+        assert!(
+            sink.events.is_empty(),
+            "should not emit when belief matches"
+        );
     }
 
     #[test]

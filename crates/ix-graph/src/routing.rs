@@ -8,8 +8,8 @@
 //! The router finds the optimal sequence of skills to fulfill a request
 //! while minimizing total token consumption.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::graph::Graph;
 
@@ -271,9 +271,21 @@ mod tests {
         assert!(plan.uncovered_capabilities.is_empty());
 
         // Check order: data-load before preprocess, preprocess before train
-        let load_pos = plan.execution_order.iter().position(|s| s == "data-load").unwrap();
-        let prep_pos = plan.execution_order.iter().position(|s| s == "preprocess").unwrap();
-        let train_pos = plan.execution_order.iter().position(|s| s == "train").unwrap();
+        let load_pos = plan
+            .execution_order
+            .iter()
+            .position(|s| s == "data-load")
+            .unwrap();
+        let prep_pos = plan
+            .execution_order
+            .iter()
+            .position(|s| s == "preprocess")
+            .unwrap();
+        let train_pos = plan
+            .execution_order
+            .iter()
+            .position(|s| s == "train")
+            .unwrap();
         assert!(load_pos < prep_pos);
         assert!(prep_pos < train_pos);
     }

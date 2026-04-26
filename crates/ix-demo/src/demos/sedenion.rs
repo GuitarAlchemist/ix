@@ -57,9 +57,21 @@ impl SedenionDemo {
         ui.heading("Sedenion Algebra (ix-sedenion)");
 
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.mode, SedenionMode::CayleyDickson, "Cayley-Dickson Chain");
-            ui.radio_value(&mut self.mode, SedenionMode::SedenionAlgebra, "Sedenion Algebra");
-            ui.radio_value(&mut self.mode, SedenionMode::OctonionAssociativity, "Octonion Non-Associativity");
+            ui.radio_value(
+                &mut self.mode,
+                SedenionMode::CayleyDickson,
+                "Cayley-Dickson Chain",
+            );
+            ui.radio_value(
+                &mut self.mode,
+                SedenionMode::SedenionAlgebra,
+                "Sedenion Algebra",
+            );
+            ui.radio_value(
+                &mut self.mode,
+                SedenionMode::OctonionAssociativity,
+                "Octonion Non-Associativity",
+            );
         });
 
         match self.mode {
@@ -142,13 +154,21 @@ impl SedenionDemo {
         ui.horizontal(|ui| {
             ui.label("Sedenion A:");
             for (idx, val) in self.sed_a.iter_mut().enumerate() {
-                ui.add(egui::DragValue::new(val).speed(0.1).prefix(format!("e{}=", idx)));
+                ui.add(
+                    egui::DragValue::new(val)
+                        .speed(0.1)
+                        .prefix(format!("e{}=", idx)),
+                );
             }
         });
         ui.horizontal(|ui| {
             ui.label("Sedenion B:");
             for (idx, val) in self.sed_b.iter_mut().enumerate() {
-                ui.add(egui::DragValue::new(val).speed(0.1).prefix(format!("e{}=", idx)));
+                ui.add(
+                    egui::DragValue::new(val)
+                        .speed(0.1)
+                        .prefix(format!("e{}=", idx)),
+                );
             }
         });
 
@@ -214,7 +234,10 @@ impl SedenionDemo {
             let ej_ek = Octonion::mul(&ej, &ek);
             let rhs = Octonion::mul(&ei, &ej_ek);
 
-            let differ = lhs.components.iter().zip(rhs.components.iter())
+            let differ = lhs
+                .components
+                .iter()
+                .zip(rhs.components.iter())
                 .any(|(a, b)| (a - b).abs() > 1e-10);
 
             self.oct_lhs = Some(lhs.components);
@@ -228,12 +251,16 @@ impl SedenionDemo {
             ui.separator();
             ui.label(format!(
                 "(e{} * e{}) * e{} = {}",
-                self.oct_i, self.oct_j, self.oct_k,
+                self.oct_i,
+                self.oct_j,
+                self.oct_k,
                 format_components_8(lhs)
             ));
             ui.label(format!(
                 "e{} * (e{} * e{}) = {}",
-                self.oct_i, self.oct_j, self.oct_k,
+                self.oct_i,
+                self.oct_j,
+                self.oct_k,
                 format_components_8(rhs)
             ));
 

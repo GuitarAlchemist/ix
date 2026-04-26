@@ -70,9 +70,7 @@ impl<'a> CallSiteResolver<'a> {
             CalleeHint::Bare { name } => {
                 self.resolve_bare(name, caller_file, caller_crate, caller_module)
             }
-            CalleeHint::Scoped { segments } => {
-                self.resolve_scoped(segments, caller_crate)
-            }
+            CalleeHint::Scoped { segments } => self.resolve_scoped(segments, caller_crate),
             CalleeHint::MethodCall {
                 method,
                 receiver_hint,
@@ -252,11 +250,7 @@ impl<'a> CallSiteResolver<'a> {
 
     // ── Method calls ────────────────────────────────────────────────────
 
-    fn resolve_method(
-        &self,
-        method: &str,
-        receiver_hint: Option<&str>,
-    ) -> ResolvedOrAmbiguous {
+    fn resolve_method(&self, method: &str, receiver_hint: Option<&str>) -> ResolvedOrAmbiguous {
         // If the receiver hint looks like a known type, try InherentMethod
         // lookup directly. The receiver_hint from CalleeHint::MethodCall is
         // the raw source text of the receiver — it may be a variable name,
@@ -265,7 +259,10 @@ impl<'a> CallSiteResolver<'a> {
             // Strip trailing `()` or `.method()` patterns from the hint to
             // recover a bare type name in simple cases like `Widget::new()`
             // or `foo.bar()`.
-            let bare = receiver.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("");
+            let bare = receiver
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or("");
             if !bare.is_empty() {
                 if let Some(def) = self.index.find_inherent_method(bare, method) {
                     return ResolvedOrAmbiguous::Resolved {
@@ -476,7 +473,11 @@ fn caller() { let _ = jacobi; }
         let (_tmp, idx) = build_index(files);
         let resolver = CallSiteResolver::new(&idx);
         let hint = CalleeHint::Scoped {
-            segments: vec!["crate".to_string(), "eigen".to_string(), "jacobi".to_string()],
+            segments: vec![
+                "crate".to_string(),
+                "eigen".to_string(),
+                "jacobi".to_string(),
+            ],
         };
         let out = resolver.resolve(&hint, "crates/mini/src/lib.rs", "mini", &[]);
         match out {
@@ -592,10 +593,7 @@ fn caller() {
                 assert!(joined.contains("Hello"), "missing Hello impl: {joined}");
                 assert!(joined.contains("World"), "missing World impl: {joined}");
             }
-            other => panic!(
-                "expected Ambiguous for greet with 2 impls, got {:?}",
-                other
-            ),
+            other => panic!("expected Ambiguous for greet with 2 impls, got {:?}", other),
         }
     }
 

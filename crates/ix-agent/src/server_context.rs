@@ -303,7 +303,11 @@ impl ServerContext {
                             out.push_str(t);
                         }
                     }
-                    if out.is_empty() { None } else { Some(out) }
+                    if out.is_empty() {
+                        None
+                    } else {
+                        Some(out)
+                    }
                 } else {
                     c.get("text").and_then(|v| v.as_str()).map(str::to_string)
                 }

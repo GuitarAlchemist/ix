@@ -140,7 +140,13 @@ pub trait Catalog: Sync {
 /// ```
 pub fn normalize_snake_case(s: &str) -> String {
     s.chars()
-        .map(|c| if c == '-' { '_' } else { c.to_ascii_lowercase() })
+        .map(|c| {
+            if c == '-' {
+                '_'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
         .collect()
 }
 
@@ -269,7 +275,10 @@ mod tests {
     #[test]
     fn string_contains_ci_is_case_insensitive() {
         assert!(string_contains_ci("HTTP/2 over TLS", "http"));
-        assert!(string_contains_ci("Abstract Interpretation", "INTERPRETATION"));
+        assert!(string_contains_ci(
+            "Abstract Interpretation",
+            "INTERPRETATION"
+        ));
         assert!(!string_contains_ci("HTTP/2", "http3"));
     }
 

@@ -66,9 +66,7 @@ impl PCA {
         let ev = self.explained_variance.as_ref()?;
         let mean = self.mean.as_ref()?;
 
-        let components = (0..comps.nrows())
-            .map(|r| comps.row(r).to_vec())
-            .collect();
+        let components = (0..comps.nrows()).map(|r| comps.row(r).to_vec()).collect();
 
         Some(PcaState {
             components,
@@ -83,7 +81,11 @@ impl PCA {
         let n_components = state.n_components;
         let n_features = state.mean.len();
 
-        let flat: Vec<f64> = state.components.iter().flat_map(|r| r.iter().copied()).collect();
+        let flat: Vec<f64> = state
+            .components
+            .iter()
+            .flat_map(|r| r.iter().copied())
+            .collect();
         let components = Array2::from_shape_vec((n_components, n_features), flat)
             .expect("PcaState components dimensions mismatch");
 
@@ -222,12 +224,7 @@ mod tests {
 
     #[test]
     fn test_pca_single_component() {
-        let x = array![
-            [1.0, 2.0],
-            [2.0, 4.0],
-            [3.0, 6.0],
-            [4.0, 8.0],
-        ];
+        let x = array![[1.0, 2.0], [2.0, 4.0], [3.0, 6.0], [4.0, 8.0],];
 
         let mut pca = PCA::new(1);
         let transformed = pca.fit_transform(&x);
@@ -236,7 +233,11 @@ mod tests {
 
         // The first PC should capture nearly all variance since data is on a line
         let ev_ratio = pca.explained_variance_ratio().unwrap();
-        assert!(ev_ratio[0] > 0.99, "First PC should explain >99% variance, got {}", ev_ratio[0]);
+        assert!(
+            ev_ratio[0] > 0.99,
+            "First PC should explain >99% variance, got {}",
+            ev_ratio[0]
+        );
     }
 
     #[test]
@@ -277,7 +278,10 @@ mod tests {
     #[test]
     fn test_pca_save_state_unfitted() {
         let pca = PCA::new(2);
-        assert!(pca.save_state().is_none(), "unfitted PCA should return None");
+        assert!(
+            pca.save_state().is_none(),
+            "unfitted PCA should return None"
+        );
     }
 
     #[test]
@@ -298,7 +302,11 @@ mod tests {
         let comps = pca.components().unwrap();
         // Check orthogonality: dot product of PC1 and PC2 should be ~0
         let dot: f64 = comps.row(0).dot(&comps.row(1));
-        assert!(dot.abs() < 1e-6, "Components should be orthogonal, dot={}", dot);
+        assert!(
+            dot.abs() < 1e-6,
+            "Components should be orthogonal, dot={}",
+            dot
+        );
     }
 
     #[test]

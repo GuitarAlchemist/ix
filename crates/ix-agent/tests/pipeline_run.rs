@@ -34,14 +34,19 @@ fn pipeline_run_single_step_stats() {
         ]
     });
 
-    let result = reg.call_with_ctx("ix_pipeline_run", args, &ctx).expect("ok");
+    let result = reg
+        .call_with_ctx("ix_pipeline_run", args, &ctx)
+        .expect("ok");
     let results = result.get("results").expect("results");
     let s1 = results.get("s1").expect("s1");
     // Response may be wrapped or bare — check for mean either way.
     let mean = extract_mean(s1).expect("mean present");
     assert!((mean - 3.0).abs() < 1e-9, "mean = {mean}");
 
-    let order = result.get("execution_order").and_then(|v| v.as_array()).expect("order");
+    let order = result
+        .get("execution_order")
+        .and_then(|v| v.as_array())
+        .expect("order");
     assert_eq!(order.len(), 1);
     assert_eq!(order[0], "s1");
 }
@@ -71,7 +76,9 @@ fn pipeline_run_two_step_chain_with_substitution() {
         ]
     });
 
-    let result = reg.call_with_ctx("ix_pipeline_run", args, &ctx).expect("ok");
+    let result = reg
+        .call_with_ctx("ix_pipeline_run", args, &ctx)
+        .expect("ok");
     let order = result
         .get("execution_order")
         .and_then(|v| v.as_array())
@@ -161,7 +168,10 @@ fn cache_miss_then_hit_on_replay() {
     // Results should be identical (semantically; check mean value).
     let m1 = extract_mean(run1.get("results").unwrap().get("s1").unwrap()).expect("mean1");
     let m2 = extract_mean(run2.get("results").unwrap().get("s1").unwrap()).expect("mean2");
-    assert!((m1 - m2).abs() < 1e-12, "cached result should equal fresh result");
+    assert!(
+        (m1 - m2).abs() < 1e-12,
+        "cached result should equal fresh result"
+    );
     assert!((m1 - 8.5).abs() < 1e-12);
 }
 
@@ -250,7 +260,9 @@ fn pipeline_run_placeholder_handler_errors() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        err.contains("top-level MCP dispatcher") || err.contains("call_with_ctx") || err.contains("ToolRegistry::run_pipeline"),
+        err.contains("top-level MCP dispatcher")
+            || err.contains("call_with_ctx")
+            || err.contains("ToolRegistry::run_pipeline"),
         "error should mention the correct entry point, got: {err}"
     );
 }

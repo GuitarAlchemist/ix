@@ -31,7 +31,10 @@ fn returns_well_formed_node_edge_structure() {
     let nodes = result["nodes"].as_array().expect("nodes");
     let edges = result["edges"].as_array().expect("edges");
 
-    assert!(n_nodes >= 20, "ix workspace should have 20+ crates, got {n_nodes}");
+    assert!(
+        n_nodes >= 20,
+        "ix workspace should have 20+ crates, got {n_nodes}"
+    );
     assert_eq!(nodes.len(), n_nodes);
 
     // Every node has the expected fields. We don't assert on
@@ -123,7 +126,9 @@ fn denormalized_projections_align_with_nodes() {
     let n_nodes = result["n_nodes"].as_u64().unwrap() as usize;
 
     let sloc = result["sloc"].as_array().expect("sloc vector");
-    let file_counts = result["file_counts"].as_array().expect("file_counts vector");
+    let file_counts = result["file_counts"]
+        .as_array()
+        .expect("file_counts vector");
     let dep_counts = result["dep_counts"].as_array().expect("dep_counts vector");
     let names = result["names"].as_array().expect("names vector");
     let features = result["features"].as_array().expect("features matrix");
@@ -143,7 +148,10 @@ fn denormalized_projections_align_with_nodes() {
     // Projections must align with the nodes array element-wise.
     let nodes = result["nodes"].as_array().unwrap();
     for (i, node) in nodes.iter().enumerate() {
-        assert_eq!(sloc[i].as_f64().unwrap(), node["sloc"].as_u64().unwrap() as f64);
+        assert_eq!(
+            sloc[i].as_f64().unwrap(),
+            node["sloc"].as_u64().unwrap() as f64
+        );
         assert_eq!(
             file_counts[i].as_f64().unwrap(),
             node["file_count"].as_u64().unwrap() as f64

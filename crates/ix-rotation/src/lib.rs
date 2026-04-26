@@ -13,10 +13,10 @@
 //! - **rotation_matrix**: SO(3) rotation matrix utilities
 //! - **plucker**: Plücker line coordinates for 3D geometry
 
-pub mod quaternion;
-pub mod dual_quaternion;
-pub mod slerp;
-pub mod euler;
 pub mod axis_angle;
-pub mod rotation_matrix;
+pub mod dual_quaternion;
+pub mod euler;
 pub mod plucker;
+pub mod quaternion;
+pub mod rotation_matrix;
+pub mod slerp;

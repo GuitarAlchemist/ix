@@ -392,7 +392,10 @@ mod tests {
 
     #[test]
     fn file_id_format() {
-        assert_eq!(file_id("crates/ix-math/src/eigen.rs"), "file:crates/ix-math/src/eigen.rs");
+        assert_eq!(
+            file_id("crates/ix-math/src/eigen.rs"),
+            "file:crates/ix-math/src/eigen.rs"
+        );
     }
 
     #[test]

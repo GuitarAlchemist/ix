@@ -1,5 +1,5 @@
-use crate::state::DashboardData;
 use crate::reader;
+use crate::state::DashboardData;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

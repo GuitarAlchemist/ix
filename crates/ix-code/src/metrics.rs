@@ -1,7 +1,7 @@
 //! Extracted code metrics in a flat, ML-friendly format.
 
 use ndarray::Array1;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Flat code metrics for a single function or file scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,22 +66,52 @@ impl CodeMetrics {
     /// Feature names for ML pipeline integration.
     pub fn feature_names() -> Vec<&'static str> {
         vec![
-            "cyclomatic", "cognitive", "n_exits", "n_args",
-            "sloc", "ploc", "lloc", "cloc", "blank",
-            "h_u_ops", "h_u_opnds", "h_total_ops", "h_total_opnds",
-            "h_vocabulary", "h_length", "h_volume", "h_difficulty",
-            "h_effort", "h_bugs", "maintainability_index",
+            "cyclomatic",
+            "cognitive",
+            "n_exits",
+            "n_args",
+            "sloc",
+            "ploc",
+            "lloc",
+            "cloc",
+            "blank",
+            "h_u_ops",
+            "h_u_opnds",
+            "h_total_ops",
+            "h_total_opnds",
+            "h_vocabulary",
+            "h_length",
+            "h_volume",
+            "h_difficulty",
+            "h_effort",
+            "h_bugs",
+            "maintainability_index",
         ]
     }
 
     /// Convert metrics to a feature vector for ML pipelines.
     pub fn to_features(&self) -> Array1<f64> {
         Array1::from_vec(vec![
-            self.cyclomatic, self.cognitive, self.n_exits, self.n_args,
-            self.sloc, self.ploc, self.lloc, self.cloc, self.blank,
-            self.h_u_ops, self.h_u_opnds, self.h_total_ops, self.h_total_opnds,
-            self.h_vocabulary, self.h_length, self.h_volume, self.h_difficulty,
-            self.h_effort, self.h_bugs, self.maintainability_index,
+            self.cyclomatic,
+            self.cognitive,
+            self.n_exits,
+            self.n_args,
+            self.sloc,
+            self.ploc,
+            self.lloc,
+            self.cloc,
+            self.blank,
+            self.h_u_ops,
+            self.h_u_opnds,
+            self.h_total_ops,
+            self.h_total_opnds,
+            self.h_vocabulary,
+            self.h_length,
+            self.h_volume,
+            self.h_difficulty,
+            self.h_effort,
+            self.h_bugs,
+            self.maintainability_index,
         ])
     }
 
@@ -112,12 +142,28 @@ mod tests {
     fn test_feature_vector_length() {
         let m = CodeMetrics {
             name: "test".to_string(),
-            start_line: 1, end_line: 10,
-            cyclomatic: 1.0, cognitive: 0.0, n_exits: 1.0, n_args: 2.0,
-            sloc: 8.0, ploc: 10.0, lloc: 5.0, cloc: 1.0, blank: 1.0,
-            h_u_ops: 5.0, h_u_opnds: 3.0, h_total_ops: 10.0, h_total_opnds: 7.0,
-            h_vocabulary: 8.0, h_length: 17.0, h_volume: 51.0, h_difficulty: 5.8,
-            h_effort: 296.0, h_bugs: 0.017, maintainability_index: 120.0,
+            start_line: 1,
+            end_line: 10,
+            cyclomatic: 1.0,
+            cognitive: 0.0,
+            n_exits: 1.0,
+            n_args: 2.0,
+            sloc: 8.0,
+            ploc: 10.0,
+            lloc: 5.0,
+            cloc: 1.0,
+            blank: 1.0,
+            h_u_ops: 5.0,
+            h_u_opnds: 3.0,
+            h_total_ops: 10.0,
+            h_total_opnds: 7.0,
+            h_vocabulary: 8.0,
+            h_length: 17.0,
+            h_volume: 51.0,
+            h_difficulty: 5.8,
+            h_effort: 296.0,
+            h_bugs: 0.017,
+            maintainability_index: 120.0,
         };
         let features = m.to_features();
         assert_eq!(features.len(), CodeMetrics::n_features());

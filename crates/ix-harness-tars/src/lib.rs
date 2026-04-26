@@ -145,13 +145,10 @@ struct ServiceHealth {
 /// of the canonical input bytes, so two runs on the same input
 /// produce correlated observations that dedup cleanly in the G-Set
 /// merge.
-pub fn tars_to_observations(
-    input: &[u8],
-    round: u32,
-) -> Result<Vec<SessionEvent>, AdapterError> {
+pub fn tars_to_observations(input: &[u8], round: u32) -> Result<Vec<SessionEvent>, AdapterError> {
     // Parse tars JSON — permissive by default (unknown fields OK).
-    let diag: TarsDiagnostics = serde_json::from_slice(input)
-        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+    let diag: TarsDiagnostics =
+        serde_json::from_slice(input).map_err(|e| AdapterError::Parse(e.to_string()))?;
 
     let diagnosis_id = sha256_hex(input);
     let mut out: Vec<SessionEvent> = Vec::new();
@@ -442,7 +439,8 @@ pub fn tars_to_observations(
                 "filesystem permission failure".to_string(),
             ));
         }
-        if svc.database_connectivity && svc.web_service_availability && svc.file_system_permissions {
+        if svc.database_connectivity && svc.web_service_availability && svc.file_system_permissions
+        {
             out.push(emit(
                 &mut ordinal,
                 &diagnosis_id,
@@ -707,8 +705,12 @@ mod tests {
         let obs2 = tars_to_observations(input2.as_bytes(), 0).unwrap();
 
         if let (
-            SessionEvent::ObservationAdded { diagnosis_id: d1, .. },
-            SessionEvent::ObservationAdded { diagnosis_id: d2, .. },
+            SessionEvent::ObservationAdded {
+                diagnosis_id: d1, ..
+            },
+            SessionEvent::ObservationAdded {
+                diagnosis_id: d2, ..
+            },
         ) = (&obs1[0], &obs2[0])
         {
             assert_ne!(d1, d2);
@@ -737,8 +739,14 @@ mod tests {
     #[test]
     fn gpu_name_sanitization_handles_spaces_and_punctuation() {
         assert_eq!(sanitize_name("NVIDIA RTX 5080"), "nvidia_rtx_5080");
-        assert_eq!(sanitize_name("AMD Radeon RX 7900 XTX"), "amd_radeon_rx_7900_xtx");
-        assert_eq!(sanitize_name("  trailing whitespace  "), "trailing_whitespace");
+        assert_eq!(
+            sanitize_name("AMD Radeon RX 7900 XTX"),
+            "amd_radeon_rx_7900_xtx"
+        );
+        assert_eq!(
+            sanitize_name("  trailing whitespace  "),
+            "trailing_whitespace"
+        );
         assert_eq!(sanitize_name("!!!special!!!"), "special");
     }
 
@@ -746,8 +754,7 @@ mod tests {
 
     #[test]
     fn malformed_json_returns_parse_error() {
-        let err = tars_to_observations(b"{not valid json", 0)
-            .expect_err("should fail");
+        let err = tars_to_observations(b"{not valid json", 0).expect_err("should fail");
         assert!(matches!(err, AdapterError::Parse(_)));
     }
 

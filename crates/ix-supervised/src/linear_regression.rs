@@ -94,8 +94,16 @@ mod tests {
         model.fit(&x, &y);
 
         let w = model.weights.as_ref().unwrap();
-        assert!((w[0] - 2.0).abs() < 1e-8, "weight should be ~2, got {}", w[0]);
-        assert!((model.bias - 1.0).abs() < 1e-8, "bias should be ~1, got {}", model.bias);
+        assert!(
+            (w[0] - 2.0).abs() < 1e-8,
+            "weight should be ~2, got {}",
+            w[0]
+        );
+        assert!(
+            (model.bias - 1.0).abs() < 1e-8,
+            "bias should be ~1, got {}",
+            model.bias
+        );
 
         let pred = model.predict(&array![[6.0]]);
         assert!((pred[0] - 13.0).abs() < 1e-8);
@@ -110,7 +118,9 @@ mod tests {
         let mut model = LinearRegression::new();
         model.fit(&x, &y);
 
-        let state = model.save_state().expect("fitted model should produce state");
+        let state = model
+            .save_state()
+            .expect("fitted model should produce state");
 
         // Roundtrip through JSON
         let json = serde_json::to_string(&state).unwrap();
@@ -132,7 +142,10 @@ mod tests {
     #[test]
     fn test_linear_regression_save_state_unfitted() {
         let model = LinearRegression::new();
-        assert!(model.save_state().is_none(), "unfitted model should return None");
+        assert!(
+            model.save_state().is_none(),
+            "unfitted model should return None"
+        );
     }
 
     #[test]

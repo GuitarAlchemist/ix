@@ -64,11 +64,7 @@ impl DataBatch {
     /// Convert numeric rows to an Array2<f64>.
     /// Ignores non-Row records.
     pub fn to_array2(&self) -> Option<Array2<f64>> {
-        let rows: Vec<&[f64]> = self
-            .records
-            .iter()
-            .filter_map(|r| r.as_row())
-            .collect();
+        let rows: Vec<&[f64]> = self.records.iter().filter_map(|r| r.as_row()).collect();
 
         if rows.is_empty() {
             return None;

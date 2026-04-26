@@ -1,5 +1,5 @@
-use std::ops::{Add, Sub, Mul, Neg};
 use crate::octonion::Octonion;
+use std::ops::{Add, Mul, Neg, Sub};
 
 /// A sedenion: 16-dimensional hypercomplex number built via Cayley-Dickson
 /// construction from octonion pairs.
@@ -16,7 +16,9 @@ impl Sedenion {
 
     /// The zero sedenion.
     pub fn zero() -> Self {
-        Self { components: [0.0; 16] }
+        Self {
+            components: [0.0; 16],
+        }
     }
 
     /// The multiplicative identity (1, 0, 0, ..., 0).
@@ -248,7 +250,9 @@ mod tests {
     const EPS: f64 = 1e-10;
 
     fn approx_eq(a: &Sedenion, b: &Sedenion) -> bool {
-        a.components.iter().zip(b.components.iter())
+        a.components
+            .iter()
+            .zip(b.components.iter())
             .all(|(x, y)| (x - y).abs() < EPS)
     }
 
@@ -261,8 +265,9 @@ mod tests {
     #[test]
     fn test_unit_multiply() {
         let one = Sedenion::one();
-        let s = Sedenion::new([1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,
-                               9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0]);
+        let s = Sedenion::new([
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ]);
         assert!(approx_eq(&Sedenion::mul(&one, &s), &s));
         assert!(approx_eq(&Sedenion::mul(&s, &one), &s));
     }
@@ -274,42 +279,61 @@ mod tests {
         for i in 1..16 {
             let ei = Sedenion::basis(i);
             let sq = Sedenion::mul(&ei, &ei);
-            assert!(approx_eq(&sq, &neg_one),
-                "e_{}^2 should be -1, got {:?}", i, sq.components);
+            assert!(
+                approx_eq(&sq, &neg_one),
+                "e_{}^2 should be -1, got {:?}",
+                i,
+                sq.components
+            );
         }
     }
 
     #[test]
     fn test_conjugate_times_self_is_norm_squared() {
-        let s = Sedenion::new([1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,
-                               9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0]);
+        let s = Sedenion::new([
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ]);
         let conj = s.conjugate();
         let product = Sedenion::mul(&conj, &s);
         let ns = s.norm_squared();
-        assert!((product.components[0] - ns).abs() < EPS,
-            "real part should be norm², got {} vs {}", product.components[0], ns);
+        assert!(
+            (product.components[0] - ns).abs() < EPS,
+            "real part should be norm², got {} vs {}",
+            product.components[0],
+            ns
+        );
         for i in 1..16 {
-            assert!(product.components[i].abs() < EPS,
-                "imaginary part {} should be 0, got {}", i, product.components[i]);
+            assert!(
+                product.components[i].abs() < EPS,
+                "imaginary part {} should be 0, got {}",
+                i,
+                product.components[i]
+            );
         }
     }
 
     #[test]
     fn test_power_associativity() {
         // Sedenions are power-associative: x*(x*x) = (x*x)*x
-        let x = Sedenion::new([1.0,0.5,0.3,0.1,0.2,0.4,0.6,0.8,
-                               0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]);
+        let x = Sedenion::new([
+            1.0, 0.5, 0.3, 0.1, 0.2, 0.4, 0.6, 0.8, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+        ]);
         let xx = Sedenion::mul(&x, &x);
         let lhs = Sedenion::mul(&x, &xx);
         let rhs = Sedenion::mul(&xx, &x);
-        assert!(approx_eq(&lhs, &rhs),
-            "Power associativity failed:\nlhs={:?}\nrhs={:?}", lhs.components, rhs.components);
+        assert!(
+            approx_eq(&lhs, &rhs),
+            "Power associativity failed:\nlhs={:?}\nrhs={:?}",
+            lhs.components,
+            rhs.components
+        );
     }
 
     #[test]
     fn test_scalar_multiplication() {
-        let s = Sedenion::new([1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,
-                               9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0]);
+        let s = Sedenion::new([
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ]);
         let scaled = s.scale(2.0);
         for i in 0..16 {
             assert!((scaled.components[i] - 2.0 * s.components[i]).abs() < EPS);
@@ -326,18 +350,22 @@ mod tests {
 
     #[test]
     fn test_inverse() {
-        let s = Sedenion::new([1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,
-                               0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]);
+        let s = Sedenion::new([
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+        ]);
         let inv = s.inverse();
         let product = Sedenion::mul(&s, &inv);
-        assert!(approx_eq(&product, &Sedenion::one()),
-            "s * s^-1 should be 1, got {:?}", product.components);
+        assert!(
+            approx_eq(&product, &Sedenion::one()),
+            "s * s^-1 should be 1, got {:?}",
+            product.components
+        );
     }
 
     #[test]
     fn test_add_sub() {
-        let a = Sedenion::new([1.0;16]);
-        let b = Sedenion::new([2.0;16]);
+        let a = Sedenion::new([1.0; 16]);
+        let b = Sedenion::new([2.0; 16]);
         let sum = a + b;
         for i in 0..16 {
             assert!((sum.components[i] - 3.0).abs() < EPS);
@@ -350,8 +378,9 @@ mod tests {
 
     #[test]
     fn test_neg() {
-        let a = Sedenion::new([1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,
-                               9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0]);
+        let a = Sedenion::new([
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ]);
         let neg_a = -a;
         for i in 0..16 {
             assert!((neg_a.components[i] + a.components[i]).abs() < EPS);

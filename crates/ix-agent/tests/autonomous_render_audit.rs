@@ -21,11 +21,11 @@
 //! The harness does this autonomously. No human writes the fix.
 //! The fix is generated from the evidence payload.
 
-use ix_agent_core::{
-    project_beliefs, AgentAction, BeliefMiddleware, EventSink, MiddlewareChain,
-    ReadContext, SessionEvent, VecEventSink, WriteContext,
-};
 use ix_agent_core::handler::AgentHandler;
+use ix_agent_core::{
+    project_beliefs, AgentAction, BeliefMiddleware, EventSink, MiddlewareChain, ReadContext,
+    SessionEvent, VecEventSink, WriteContext,
+};
 use ix_types::Hexavalent;
 use std::path::PathBuf;
 
@@ -35,8 +35,7 @@ use std::path::PathBuf;
 /// so different invariants can pattern-match on different source
 /// shapes. Extracted to a type alias to keep clippy::type_complexity
 /// quiet.
-type InvariantCheck =
-    Box<dyn Fn(&str) -> Result<(), InvariantViolation> + Send + Sync>;
+type InvariantCheck = Box<dyn Fn(&str) -> Result<(), InvariantViolation> + Send + Sync>;
 
 /// A rendering invariant: a testable proposition about the
 /// codebase's rendering correctness.
@@ -325,9 +324,10 @@ impl AgentHandler for RenderingAuditHandler {
                     source.push_str(&content);
                 }
                 Err(e) => {
-                    return Err(ix_agent_core::ActionError::Exec(
-                        format!("read {}: {e}", path.display())
-                    ));
+                    return Err(ix_agent_core::ActionError::Exec(format!(
+                        "read {}: {e}",
+                        path.display()
+                    )));
                 }
             }
         }
@@ -370,10 +370,10 @@ impl AgentHandler for RenderingAuditHandler {
 #[test]
 fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
     let solar_system_path = PathBuf::from(
-        r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\SolarSystem.ts"
+        r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\SolarSystem.ts",
     );
     let force_radiant_path = PathBuf::from(
-        r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\ForceRadiant.tsx"
+        r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\ForceRadiant.tsx",
     );
 
     if !solar_system_path.exists() || !force_radiant_path.exists() {
@@ -445,8 +445,14 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
 
     // Assert every violation has the required structure.
     for v in &violations {
-        assert!(v["proposition"].as_str().is_some(), "violation should have a proposition");
-        assert!(v["issue"].as_str().is_some(), "violation should have an issue description");
+        assert!(
+            v["proposition"].as_str().is_some(),
+            "violation should have a proposition"
+        );
+        assert!(
+            v["issue"].as_str().is_some(),
+            "violation should have an issue description"
+        );
         assert!(
             v["proposed_fix"]["search_text"].as_str().is_some(),
             "proposed fix should include search text for the patch"
@@ -459,7 +465,11 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
 
     eprintln!("\n  Discovered {} violation(s):", violations.len());
     for v in &violations {
-        eprintln!("    - {} : {}", v["proposition"].as_str().unwrap(), v["issue"].as_str().unwrap());
+        eprintln!(
+            "    - {} : {}",
+            v["proposition"].as_str().unwrap(),
+            v["issue"].as_str().unwrap()
+        );
     }
 
     // BeliefMiddleware observed the SUCCESSFUL audit dispatch and
@@ -512,8 +522,7 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
 
         let mut applied = false;
         for path in &all_paths {
-            let source = std::fs::read_to_string(path)
-                .unwrap_or_default();
+            let source = std::fs::read_to_string(path).unwrap_or_default();
             if source.contains(search) {
                 let patched = source.replacen(search, replace, 1);
                 std::fs::write(path, &patched)

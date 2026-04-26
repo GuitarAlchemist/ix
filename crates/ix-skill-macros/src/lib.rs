@@ -103,12 +103,9 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
             .into();
     }
     let ReturnType::Type(_, ret_ty_box) = &func.sig.output else {
-        return syn::Error::new_spanned(
-            &func.sig,
-            "#[ix_skill] requires an explicit return type",
-        )
-        .to_compile_error()
-        .into();
+        return syn::Error::new_spanned(&func.sig, "#[ix_skill] requires an explicit return type")
+            .to_compile_error()
+            .into();
     };
     let ret_ty = &**ret_ty_box;
 
@@ -118,7 +115,9 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "unknown".into());
     let domain_for_name = domain.clone();
     let skill_name = name_override.unwrap_or_else(|| {
-        let crate_short = crate_name.strip_prefix("ix-").unwrap_or(crate_name.as_str());
+        let crate_short = crate_name
+            .strip_prefix("ix-")
+            .unwrap_or(crate_name.as_str());
         format!("{crate_short}.{domain_for_name}.{fn_name_str}")
     });
 

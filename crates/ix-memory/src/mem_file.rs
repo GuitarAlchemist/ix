@@ -224,9 +224,7 @@ mod tests {
 
     #[test]
     fn reject_bad_magic() {
-        let mut bytes = MemFile::new(KIND_HRR, vec![1, 2, 3])
-            .unwrap()
-            .encode();
+        let mut bytes = MemFile::new(KIND_HRR, vec![1, 2, 3]).unwrap().encode();
         bytes[0] = b'X';
         assert!(matches!(
             MemFile::decode(&bytes),
@@ -236,9 +234,7 @@ mod tests {
 
     #[test]
     fn reject_bad_version() {
-        let mut bytes = MemFile::new(KIND_HRR, vec![1, 2, 3])
-            .unwrap()
-            .encode();
+        let mut bytes = MemFile::new(KIND_HRR, vec![1, 2, 3]).unwrap().encode();
         bytes[4] = 0xFF;
         assert!(matches!(
             MemFile::decode(&bytes),

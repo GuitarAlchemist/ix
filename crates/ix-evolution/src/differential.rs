@@ -1,8 +1,8 @@
 //! Differential Evolution (DE/rand/1/bin).
 
 use ndarray::Array1;
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 
 use crate::traits::EvolutionResult;

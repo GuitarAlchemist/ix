@@ -116,7 +116,12 @@ pub fn exponential_search(data: &[f64], target: f64) -> Option<usize> {
     binary_search_range(data, target, low, high)
 }
 
-fn binary_search_range(data: &[f64], target: f64, mut low: usize, mut high: usize) -> Option<usize> {
+fn binary_search_range(
+    data: &[f64],
+    target: f64,
+    mut low: usize,
+    mut high: usize,
+) -> Option<usize> {
     while low < high {
         let mid = low + (high - low) / 2;
         if (data[mid] - target).abs() < 1e-10 {
@@ -171,7 +176,8 @@ impl HashTable {
 
     pub fn get(&self, key: &str) -> Option<&str> {
         let idx = self.hash(key);
-        self.buckets[idx].iter()
+        self.buckets[idx]
+            .iter()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.as_str())
     }
@@ -204,7 +210,12 @@ impl HashTable {
 }
 
 /// Ternary search — find max of unimodal function on [lo, hi].
-pub fn ternary_search_max<F: Fn(f64) -> f64>(f: F, mut lo: f64, mut hi: f64, iterations: usize) -> f64 {
+pub fn ternary_search_max<F: Fn(f64) -> f64>(
+    f: F,
+    mut lo: f64,
+    mut hi: f64,
+    iterations: usize,
+) -> f64 {
     for _ in 0..iterations {
         let m1 = lo + (hi - lo) / 3.0;
         let m2 = hi - (hi - lo) / 3.0;

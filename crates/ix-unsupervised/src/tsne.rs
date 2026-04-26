@@ -3,9 +3,9 @@
 //! Barnes-Hut approximation with perplexity-based affinity computation.
 
 use ndarray::{Array1, Array2};
+use ndarray_rand::RandomExt;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use ndarray_rand::RandomExt;
 use rand_distr::Normal;
 
 use crate::traits::DimensionReducer;
@@ -227,8 +227,8 @@ impl DimensionReducer for TSNE {
                         g + 0.2
                     };
 
-                    let update: f64 =
-                        current_momentum * prev_update[[i, d]] - self.learning_rate * gains[[i, d]] * grad[[i, d]];
+                    let update: f64 = current_momentum * prev_update[[i, d]]
+                        - self.learning_rate * gains[[i, d]] * grad[[i, d]];
                     y[[i, d]] += update;
                     prev_update[[i, d]] = update;
                 }
@@ -282,6 +282,10 @@ mod tests {
         let c1 = (y.row(0).to_owned() + y.row(1).to_owned() + y.row(2).to_owned()) / 3.0;
         let c2 = (y.row(3).to_owned() + y.row(4).to_owned() + y.row(5).to_owned()) / 3.0;
         let dist = euclidean_squared(&c1, &c2).unwrap();
-        assert!(dist > 0.1, "clusters should be separated in embedding, dist={}", dist);
+        assert!(
+            dist > 0.1,
+            "clusters should be separated in embedding, dist={}",
+            dist
+        );
     }
 }

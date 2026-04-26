@@ -152,7 +152,11 @@ impl Chain {
 
     /// Forward kinematics: compute the full 4×4 end-effector transform.
     pub fn forward_transform(&self, params: &[f64]) -> Array2<f64> {
-        assert_eq!(params.len(), self.joints.len(), "params must match joint count");
+        assert_eq!(
+            params.len(),
+            self.joints.len(),
+            "params must match joint count"
+        );
         let mut t = Array2::eye(4);
         for (joint, &q) in self.joints.iter().zip(params.iter()) {
             let q = joint.clamp(q);
@@ -215,11 +219,7 @@ impl Chain {
             for i in (0..self.joints.len()).rev() {
                 // Pre-joint transform: frame at joint i's pivot, before its rotation
                 let t_pre = self.pre_joint_transform(&params, i);
-                let joint_pos = Array1::from_vec(vec![
-                    t_pre[[0, 3]],
-                    t_pre[[1, 3]],
-                    t_pre[[2, 3]],
-                ]);
+                let joint_pos = Array1::from_vec(vec![t_pre[[0, 3]], t_pre[[1, 3]], t_pre[[2, 3]]]);
                 let r_pre = t_pre.slice(ndarray::s![..3, ..3]).to_owned();
                 let local_axis = Array1::from_vec(vec![
                     self.joints[i].axis[0],
@@ -257,8 +257,7 @@ impl Chain {
                         }
 
                         // Angle between projections
-                        let cos_angle = ee_proj.dot(&target_proj)
-                            / (ee_proj_len * target_proj_len);
+                        let cos_angle = ee_proj.dot(&target_proj) / (ee_proj_len * target_proj_len);
                         let cos_angle = cos_angle.clamp(-1.0, 1.0);
                         let mut angle = cos_angle.acos();
 
@@ -387,11 +386,7 @@ impl Chain {
         for i in 0..n {
             // Pre-joint transform: frame at joint i's pivot
             let t_pre = self.pre_joint_transform(params, i);
-            let joint_pos = Array1::from_vec(vec![
-                t_pre[[0, 3]],
-                t_pre[[1, 3]],
-                t_pre[[2, 3]],
-            ]);
+            let joint_pos = Array1::from_vec(vec![t_pre[[0, 3]], t_pre[[1, 3]], t_pre[[2, 3]]]);
             let r_pre = t_pre.slice(ndarray::s![..3, ..3]).to_owned();
             let local_axis = Array1::from_vec(vec![
                 self.joints[i].axis[0],
@@ -505,8 +500,7 @@ mod tests {
 
     #[test]
     fn test_joint_limits() {
-        let j = Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
-            .with_limits(-PI, PI);
+        let j = Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]).with_limits(-PI, PI);
         assert_eq!(j.limits, Some((-PI, PI)));
         assert!((j.clamp(10.0) - PI).abs() < TOL);
         assert!((j.clamp(-10.0) - (-PI)).abs() < TOL);
@@ -524,9 +518,7 @@ mod tests {
 
     #[test]
     fn test_fk_single_revolute_zero_angle() {
-        let chain = Chain::new(vec![
-            Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
-        ]);
+        let chain = Chain::new(vec![Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0])]);
         let pos = chain.forward(&[0.0]);
         // Link along X, no rotation → end at (1, 0, 0)
         assert!((pos[0] - 1.0).abs() < TOL);
@@ -536,9 +528,7 @@ mod tests {
 
     #[test]
     fn test_fk_single_revolute_90_deg() {
-        let chain = Chain::new(vec![
-            Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
-        ]);
+        let chain = Chain::new(vec![Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0])]);
         let pos = chain.forward(&[FRAC_PI_2]);
         // Convention: Rot(90°Z) * Trans(1,0,0) → rotates (1,0,0) to (0,1,0)
         assert!(pos[0].abs() < TOL, "x should be ~0, got {}", pos[0]);
@@ -584,15 +574,17 @@ mod tests {
         // T1 = Rot(0) * Trans(1,0,0) → position (1,0,0)
         // T2 = Rot(PI) * Trans(1,0,0) → in parent frame: RotZ(PI)*(1,0,0) = (-1,0,0)
         // Total: (1,0,0) + (-1,0,0) = (0,0,0)
-        assert!(pos[0].abs() < TOL, "folded arm should be at origin x, got {}", pos[0]);
+        assert!(
+            pos[0].abs() < TOL,
+            "folded arm should be at origin x, got {}",
+            pos[0]
+        );
         assert!(pos[1].abs() < TOL, "y should be ~0, got {}", pos[1]);
     }
 
     #[test]
     fn test_fk_prismatic_joint() {
-        let chain = Chain::new(vec![
-            Joint::prismatic([1.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
-        ]);
+        let chain = Chain::new(vec![Joint::prismatic([1.0, 0.0, 0.0], [0.0, 0.0, 0.0])]);
         let pos = chain.forward(&[5.0]);
         assert!((pos[0] - 5.0).abs() < TOL);
         assert!(pos[1].abs() < TOL);
@@ -615,9 +607,7 @@ mod tests {
     #[test]
     fn test_fk_3d_chain() {
         // Joint rotating around X, then link along Z
-        let chain = Chain::new(vec![
-            Joint::revolute([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
-        ]);
+        let chain = Chain::new(vec![Joint::revolute([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])]);
         let pos = chain.forward(&[FRAC_PI_2]);
         // Convention: RotX(90°) * Trans(0,0,1)
         // RotX(90°) maps Z to Y: (0,0,1) → (0,1,0)... wait:
@@ -650,8 +640,13 @@ mod tests {
         for i in 0..3 {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };
-                assert!((rrt[[i, j]] - expected).abs() < 1e-8,
-                    "R*R^T[{},{}] = {}", i, j, rrt[[i, j]]);
+                assert!(
+                    (rrt[[i, j]] - expected).abs() < 1e-8,
+                    "R*R^T[{},{}] = {}",
+                    i,
+                    j,
+                    rrt[[i, j]]
+                );
             }
         }
     }
@@ -715,17 +710,19 @@ mod tests {
     #[test]
     fn test_ccd_with_limits() {
         let chain = Chain::new(vec![
-            Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
-                .with_limits(-FRAC_PI_4, FRAC_PI_4),
-            Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
-                .with_limits(-FRAC_PI_4, FRAC_PI_4),
+            Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]).with_limits(-FRAC_PI_4, FRAC_PI_4),
+            Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]).with_limits(-FRAC_PI_4, FRAC_PI_4),
         ]);
         let target = [1.5, 0.5, 0.0];
         let result = chain.solve_ccd(&target, &[0.0, 0.0], 100, 1e-3);
         if let Ok(params) = &result {
             for (i, &p) in params.iter().enumerate() {
-                assert!((-FRAC_PI_4 - TOL..=FRAC_PI_4 + TOL).contains(&p),
-                    "joint {} exceeds limits: {}", i, p);
+                assert!(
+                    (-FRAC_PI_4 - TOL..=FRAC_PI_4 + TOL).contains(&p),
+                    "joint {} exceeds limits: {}",
+                    i,
+                    p
+                );
             }
         }
     }
@@ -766,7 +763,9 @@ mod tests {
             Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
         ]);
         let target = [1.0, 1.0, 0.0];
-        let result = chain.solve_jacobian(&target, &[0.1, 0.1], 200, 1e-4, 0.1).unwrap();
+        let result = chain
+            .solve_jacobian(&target, &[0.1, 0.1], 200, 1e-4, 0.1)
+            .unwrap();
         let ee = chain.forward(&result);
         let err = ((ee[0] - target[0]).powi(2) + (ee[1] - target[1]).powi(2)).sqrt();
         assert!(err < 1e-3, "Jacobian IK error = {}", err);
@@ -779,7 +778,9 @@ mod tests {
             Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
         ]);
         let target = [2.0, 0.0, 0.0];
-        let result = chain.solve_jacobian(&target, &[0.1, 0.1], 200, 1e-3, 0.1).unwrap();
+        let result = chain
+            .solve_jacobian(&target, &[0.1, 0.1], 200, 1e-3, 0.1)
+            .unwrap();
         let ee = chain.forward(&result);
         let err = ((ee[0] - 2.0).powi(2) + ee[1].powi(2)).sqrt();
         assert!(err < 1e-2, "error = {}", err);
@@ -787,9 +788,7 @@ mod tests {
 
     #[test]
     fn test_jacobian_ik_unreachable() {
-        let chain = Chain::new(vec![
-            Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
-        ]);
+        let chain = Chain::new(vec![Joint::revolute([0.0, 0.0, 1.0], [1.0, 0.0, 0.0])]);
         let result = chain.solve_jacobian(&[10.0, 0.0, 0.0], &[0.0], 50, 1e-4, 0.1);
         assert!(result.is_err());
     }
@@ -804,7 +803,9 @@ mod tests {
         let target = [1.5, 1.0, 0.0];
         let init = [0.1, 0.1, 0.1];
         let ccd_result = chain.solve_ccd(&target, &init, 200, 1e-4).unwrap();
-        let jac_result = chain.solve_jacobian(&target, &init, 200, 1e-4, 0.1).unwrap();
+        let jac_result = chain
+            .solve_jacobian(&target, &init, 200, 1e-4, 0.1)
+            .unwrap();
 
         let ccd_ee = chain.forward(&ccd_result);
         let jac_ee = chain.forward(&jac_result);
@@ -834,16 +835,16 @@ mod tests {
         // Verify FK uses the same rotation as lie::so3_exp
         let angle = 0.7;
         let axis = [0.0, 0.0, 1.0];
-        let chain = Chain::new(vec![
-            Joint::revolute(axis, [0.0, 0.0, 0.0]),
-        ]);
+        let chain = Chain::new(vec![Joint::revolute(axis, [0.0, 0.0, 0.0])]);
         let t = chain.forward_transform(&[angle]);
         let r_fk = t.slice(ndarray::s![..3, ..3]).to_owned();
         let r_lie = lie::so3_exp(&[0.0, 0.0, angle]);
         for i in 0..3 {
             for j in 0..3 {
-                assert!((r_fk[[i, j]] - r_lie[[i, j]]).abs() < 1e-10,
-                    "FK rotation should match lie::so3_exp");
+                assert!(
+                    (r_fk[[i, j]] - r_lie[[i, j]]).abs() < 1e-10,
+                    "FK rotation should match lie::so3_exp"
+                );
             }
         }
     }
@@ -859,9 +860,14 @@ mod tests {
         // Pick a reachable 3D target
         let test_angles = [0.5, -0.3, 0.8];
         let target = chain.forward(&test_angles);
-        let result = chain.solve_ccd(&target, &[0.0, 0.0, 0.0], 200, 1e-3).unwrap();
+        let result = chain
+            .solve_ccd(&target, &[0.0, 0.0, 0.0], 200, 1e-3)
+            .unwrap();
         let ee = chain.forward(&result);
-        let err = ((ee[0] - target[0]).powi(2) + (ee[1] - target[1]).powi(2) + (ee[2] - target[2]).powi(2)).sqrt();
+        let err = ((ee[0] - target[0]).powi(2)
+            + (ee[1] - target[1]).powi(2)
+            + (ee[2] - target[2]).powi(2))
+        .sqrt();
         assert!(err < 1e-2, "3D CCD error = {}", err);
     }
 

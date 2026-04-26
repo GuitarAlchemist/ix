@@ -109,10 +109,7 @@ mod tests {
 
     #[test]
     fn test_pure_translation() {
-        let dq = DualQuaternion::from_rotation_translation(
-            Quaternion::identity(),
-            [1.0, 2.0, 3.0],
-        );
+        let dq = DualQuaternion::from_rotation_translation(Quaternion::identity(), [1.0, 2.0, 3.0]);
         let r = dq.transform_point([0.0, 0.0, 0.0]);
         assert!(approx_point(r, [1.0, 2.0, 3.0]));
     }
@@ -128,10 +125,8 @@ mod tests {
     #[test]
     fn test_composition() {
         // Translate by (1,0,0) then rotate 90° around Z
-        let dq1 = DualQuaternion::from_rotation_translation(
-            Quaternion::identity(),
-            [1.0, 0.0, 0.0],
-        );
+        let dq1 =
+            DualQuaternion::from_rotation_translation(Quaternion::identity(), [1.0, 0.0, 0.0]);
         let q_rot = Quaternion::from_axis_angle([0.0, 0.0, 1.0], PI / 2.0);
         let dq2 = DualQuaternion::from_rotation_translation(q_rot, [0.0, 0.0, 0.0]);
 

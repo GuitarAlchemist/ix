@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::feedback::{EvolutionLog, MlFeedbackRecommendation};
 use crate::feedback::{ConstitutionalCheck, MlEvidence, Recommendation};
+use crate::feedback::{EvolutionLog, MlFeedbackRecommendation};
 
 // ── Report types ────────────────────────────────────────────────────────────
 
@@ -136,7 +136,8 @@ impl ViolationPatternAnalyzer {
 
         if total_violations == 0 {
             recommendations.push(
-                "No violations detected. Governance controls are operating effectively.".to_string(),
+                "No violations detected. Governance controls are operating effectively."
+                    .to_string(),
             );
         }
 
@@ -186,11 +187,7 @@ impl ViolationPatternAnalyzer {
                     "Continued compliance through proactive monitoring".to_string()
                 },
             },
-            confidence: if total_violations == 0 {
-                0.95
-            } else {
-                0.85
-            },
+            confidence: if total_violations == 0 { 0.95 } else { 0.85 },
             evidence: MlEvidence {
                 data_points: total_artifacts,
                 model_version: "violation-pattern-v1".to_string(),
@@ -220,7 +217,10 @@ impl ViolationPatternAnalyzer {
     fn compute_trend(evolution: &[EvolutionLog], artifact_type: &str) -> TrendDirection {
         let mut violation_timestamps: Vec<DateTime<Utc>> = Vec::new();
 
-        for log in evolution.iter().filter(|l| l.artifact_type == artifact_type) {
+        for log in evolution
+            .iter()
+            .filter(|l| l.artifact_type == artifact_type)
+        {
             for event in &log.events {
                 if event.event_type == "violated" {
                     violation_timestamps.push(event.timestamp);
@@ -239,8 +239,14 @@ impl ViolationPatternAnalyzer {
         let last = *violation_timestamps.last().unwrap();
         let midpoint = first + (last - first) / 2;
 
-        let early_count = violation_timestamps.iter().filter(|t| **t <= midpoint).count();
-        let late_count = violation_timestamps.iter().filter(|t| **t > midpoint).count();
+        let early_count = violation_timestamps
+            .iter()
+            .filter(|t| **t <= midpoint)
+            .count();
+        let late_count = violation_timestamps
+            .iter()
+            .filter(|t| **t > midpoint)
+            .count();
 
         if late_count > early_count {
             TrendDirection::Increasing
@@ -316,11 +322,7 @@ mod tests {
                 violation_count,
                 compliance_rate,
                 last_cited: Some(now),
-                last_violated: if violation_count > 0 {
-                    Some(now)
-                } else {
-                    None
-                },
+                last_violated: if violation_count > 0 { Some(now) } else { None },
                 promotion_candidate: false,
                 deprecation_candidate: false,
             },
@@ -420,7 +422,13 @@ mod tests {
 
     #[test]
     fn test_violation_pattern_recommendations() {
-        let logs = vec![make_evolution_log("failing-policy", "policy", 5, 0.5, vec![])];
+        let logs = vec![make_evolution_log(
+            "failing-policy",
+            "policy",
+            5,
+            0.5,
+            vec![],
+        )];
 
         let (report, _rec) = ViolationPatternAnalyzer::analyze(&logs);
 
@@ -470,7 +478,13 @@ mod tests {
 
     #[test]
     fn test_violation_report_serde_roundtrip() {
-        let logs = vec![make_evolution_log("test-artifact", "policy", 2, 0.8, vec![])];
+        let logs = vec![make_evolution_log(
+            "test-artifact",
+            "policy",
+            2,
+            0.8,
+            vec![],
+        )];
         let (report, _) = ViolationPatternAnalyzer::analyze(&logs);
         let json = serde_json::to_string(&report).expect("serialize");
         let parsed: ViolationPatternReport = serde_json::from_str(&json).expect("deserialize");

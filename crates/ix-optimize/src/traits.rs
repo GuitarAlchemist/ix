@@ -9,11 +9,7 @@ pub trait ObjectiveFunction {
 
     /// Gradient of f at x. Default uses numerical gradient.
     fn gradient(&self, x: &Array1<f64>) -> Array1<f64> {
-        ix_math::calculus::numerical_gradient(
-            &|p: &Array1<f64>| self.evaluate(p),
-            x,
-            1e-7,
-        )
+        ix_math::calculus::numerical_gradient(&|p: &Array1<f64>| self.evaluate(p), x, 1e-7)
     }
 
     /// Dimensionality of the search space.

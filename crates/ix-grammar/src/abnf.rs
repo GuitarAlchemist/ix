@@ -125,7 +125,10 @@ enum Token {
     /// Repetition operator encountered as `*` in `*element` or as
     /// part of `N*M element`. The tokeniser emits it with the
     /// optional bounds pre-parsed.
-    Repetition { min: u32, max: Option<u32> },
+    Repetition {
+        min: u32,
+        max: Option<u32>,
+    },
     Newline,
 }
 
@@ -499,10 +502,7 @@ impl Parser {
         let mut seq = Vec::new();
         loop {
             match self.peek() {
-                None
-                | Some(Token::Slash)
-                | Some(Token::RBracket)
-                | Some(Token::RParen) => break,
+                None | Some(Token::Slash) | Some(Token::RBracket) | Some(Token::RParen) => break,
                 Some(Token::Newline) => {
                     // Newline ends a rule unless the next line
                     // starts with `/` (alternation continuation),
@@ -622,9 +622,15 @@ mod tests {
         let alts = g.alternatives("url");
         assert_eq!(alts.len(), 1);
         let last = alts[0].last().unwrap();
-        assert!(last.starts_with("_opt_"), "last token should be optional aux");
+        assert!(
+            last.starts_with("_opt_"),
+            "last token should be optional aux"
+        );
         let opt = g.alternatives(last);
-        assert!(opt.iter().any(|a| a.is_empty()), "optional must have ε alternative");
+        assert!(
+            opt.iter().any(|a| a.is_empty()),
+            "optional must have ε alternative"
+        );
     }
 
     #[test]
@@ -636,7 +642,10 @@ mod tests {
         let rep = &alts[0][0];
         assert!(rep.starts_with("_rep_"));
         let rep_alts = g.alternatives(rep);
-        assert!(rep_alts.iter().any(|a| a.is_empty()), "zero-or-more must have ε");
+        assert!(
+            rep_alts.iter().any(|a| a.is_empty()),
+            "zero-or-more must have ε"
+        );
     }
 
     #[test]

@@ -68,8 +68,7 @@ pub fn save_snapshot(cache: &Cache, path: &Path) -> io::Result<usize> {
 
     let file = fs::File::create(path)?;
     let writer = BufWriter::new(file);
-    serde_json::to_writer(writer, &snapshot)
-        .map_err(io::Error::other)?;
+    serde_json::to_writer(writer, &snapshot).map_err(io::Error::other)?;
 
     Ok(num)
 }
@@ -94,8 +93,8 @@ pub fn load_snapshot(cache: &Cache, path: &Path) -> io::Result<usize> {
 
     let mut loaded = 0;
     for entry in &snapshot.entries {
-        let val: serde_json::Value = serde_json::from_slice(&entry.data)
-            .unwrap_or(serde_json::Value::Null);
+        let val: serde_json::Value =
+            serde_json::from_slice(&entry.data).unwrap_or(serde_json::Value::Null);
 
         let ttl = entry.ttl_ms.map(Duration::from_millis);
         cache.set_with_ttl(&entry.key, &val, ttl);

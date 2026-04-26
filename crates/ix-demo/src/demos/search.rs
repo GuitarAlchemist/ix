@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Points, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints, Points};
 
 pub struct SearchDemo {
     grid_size: usize,
@@ -32,8 +32,10 @@ impl SearchDemo {
         ui.heading("A* Pathfinding (ix-search)");
 
         ui.horizontal(|ui| {
-            ui.label("Grid:"); ui.add(egui::Slider::new(&mut self.grid_size, 5..=40));
-            ui.label("Obstacles:"); ui.add(egui::Slider::new(&mut self.obstacle_pct, 0.0..=0.4));
+            ui.label("Grid:");
+            ui.add(egui::Slider::new(&mut self.grid_size, 5..=40));
+            ui.label("Obstacles:");
+            ui.add(egui::Slider::new(&mut self.obstacle_pct, 0.0..=0.4));
         });
 
         if ui.button("Generate & Search").clicked() {
@@ -44,24 +46,35 @@ impl SearchDemo {
         ui.label(&self.status);
 
         let gs = self.grid_size as f64;
-        Plot::new("search_plot").height(500.0).data_aspect(1.0)
-            .include_x(-1.0).include_x(gs)
-            .include_y(-1.0).include_y(gs)
+        Plot::new("search_plot")
+            .height(500.0)
+            .data_aspect(1.0)
+            .include_x(-1.0)
+            .include_x(gs)
+            .include_y(-1.0)
+            .include_y(gs)
             .show(ui, |plot_ui| {
                 // Obstacles
                 if !self.obstacles.is_empty() {
                     let pts: PlotPoints = self.obstacles.iter().copied().collect();
-                    plot_ui.points(Points::new(pts).radius(5.0)
-                        .color(egui::Color32::from_rgb(80, 80, 80)).name("Obstacles")
-                        .shape(egui_plot::MarkerShape::Square));
+                    plot_ui.points(
+                        Points::new(pts)
+                            .radius(5.0)
+                            .color(egui::Color32::from_rgb(80, 80, 80))
+                            .name("Obstacles")
+                            .shape(egui_plot::MarkerShape::Square),
+                    );
                 }
 
                 // Explored
                 if !self.explored.is_empty() {
                     let pts: PlotPoints = self.explored.iter().copied().collect();
-                    plot_ui.points(Points::new(pts).radius(3.0)
-                        .color(egui::Color32::from_rgba_premultiplied(100, 150, 255, 80))
-                        .name("Explored"));
+                    plot_ui.points(
+                        Points::new(pts)
+                            .radius(3.0)
+                            .color(egui::Color32::from_rgba_premultiplied(100, 150, 255, 80))
+                            .name("Explored"),
+                    );
                 }
 
                 // Path
@@ -69,17 +82,34 @@ impl SearchDemo {
                     let data = self.path.clone();
                     let pts1: PlotPoints = data.iter().copied().collect();
                     let pts2: PlotPoints = data.iter().copied().collect();
-                    plot_ui.line(Line::new(pts1).name("Path").width(3.0)
-                        .color(egui::Color32::YELLOW));
-                    plot_ui.points(Points::new(pts2).radius(5.0)
-                        .color(egui::Color32::YELLOW));
+                    plot_ui.line(
+                        Line::new(pts1)
+                            .name("Path")
+                            .width(3.0)
+                            .color(egui::Color32::YELLOW),
+                    );
+                    plot_ui.points(Points::new(pts2).radius(5.0).color(egui::Color32::YELLOW));
                 }
 
                 // Start/Goal
-                plot_ui.points(Points::new(PlotPoints::new(vec![[self.start[0] as f64, self.start[1] as f64]]))
-                    .radius(10.0).color(egui::Color32::GREEN).name("Start"));
-                plot_ui.points(Points::new(PlotPoints::new(vec![[self.goal[0] as f64, self.goal[1] as f64]]))
-                    .radius(10.0).color(egui::Color32::RED).name("Goal"));
+                plot_ui.points(
+                    Points::new(PlotPoints::new(vec![[
+                        self.start[0] as f64,
+                        self.start[1] as f64,
+                    ]]))
+                    .radius(10.0)
+                    .color(egui::Color32::GREEN)
+                    .name("Start"),
+                );
+                plot_ui.points(
+                    Points::new(PlotPoints::new(vec![[
+                        self.goal[0] as f64,
+                        self.goal[1] as f64,
+                    ]]))
+                    .radius(10.0)
+                    .color(egui::Color32::RED)
+                    .name("Goal"),
+                );
             });
     }
 
@@ -93,7 +123,9 @@ impl SearchDemo {
         self.obstacles.clear();
         for (r, row) in blocked.iter_mut().enumerate() {
             for (c, cell) in row.iter_mut().enumerate() {
-                if (r == self.start[0] && c == self.start[1]) || (r == self.goal[0] && c == self.goal[1]) {
+                if (r == self.start[0] && c == self.start[1])
+                    || (r == self.goal[0] && c == self.goal[1])
+                {
                     continue;
                 }
                 if rng.random_range(0.0..1.0) < self.obstacle_pct {
@@ -104,8 +136,8 @@ impl SearchDemo {
         }
 
         // A* search
-        use std::collections::{BinaryHeap, HashMap};
         use std::cmp::Reverse;
+        use std::collections::{BinaryHeap, HashMap};
 
         let heuristic = |pos: [usize; 2]| -> f64 {
             let dr = pos[0] as f64 - self.goal[0] as f64;
@@ -138,10 +170,11 @@ impl SearchDemo {
                 (current.0 + 1, current.1),
                 (current.0, current.1.wrapping_sub(1)),
                 (current.0, current.1 + 1),
-            ].iter()
-                .filter(|&&(r, c)| r < n && c < n && !blocked[r][c])
-                .copied()
-                .collect();
+            ]
+            .iter()
+            .filter(|&&(r, c)| r < n && c < n && !blocked[r][c])
+            .copied()
+            .collect();
 
             for next in neighbors {
                 let tentative_g = cur_g + 1.0;
@@ -165,7 +198,11 @@ impl SearchDemo {
                 cur = prev;
             }
             path.reverse();
-            self.status = format!("Path found! Length: {}, Explored: {} nodes", path.len(), self.explored.len());
+            self.status = format!(
+                "Path found! Length: {}, Explored: {} nodes",
+                path.len(),
+                self.explored.len()
+            );
             self.path = path;
         } else {
             self.path.clear();
@@ -177,5 +214,9 @@ impl SearchDemo {
 // Helper for BinaryHeap ordering with f64
 fn ordered_float(f: f64) -> u64 {
     let bits = f.to_bits();
-    if bits >> 63 == 1 { !bits } else { bits ^ (1 << 63) }
+    if bits >> 63 == 1 {
+        !bits
+    } else {
+        bits ^ (1 << 63)
+    }
 }

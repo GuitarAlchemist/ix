@@ -66,8 +66,8 @@ pub fn github_actions_to_observations(
     input_bytes: &[u8],
     round: u32,
 ) -> Result<Vec<SessionEvent>, AdapterError> {
-    let input: Input = serde_json::from_slice(input_bytes)
-        .map_err(|e| AdapterError::Parse(e.to_string()))?;
+    let input: Input =
+        serde_json::from_slice(input_bytes).map_err(|e| AdapterError::Parse(e.to_string()))?;
     let diagnosis_id = sha256_hex(input_bytes);
 
     let mut out: Vec<SessionEvent> = Vec::new();
@@ -80,9 +80,7 @@ pub fn github_actions_to_observations(
     } else {
         format!("ci_run:{workflow_key}::reliable")
     };
-    let (variant, weight, evidence) = classify_run_conclusion(
-        input.run.conclusion.as_deref(),
-    );
+    let (variant, weight, evidence) = classify_run_conclusion(input.run.conclusion.as_deref());
     out.push(emit(
         &mut ordinal,
         &diagnosis_id,

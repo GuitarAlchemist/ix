@@ -614,22 +614,43 @@ fn block_kinds_for(lang: &crate::analyze::Language) -> &'static [&'static str] {
     use crate::analyze::Language;
     match lang {
         Language::Rust => &[
-            "block", "if_expression", "match_expression", "while_expression",
-            "for_expression", "loop_expression", "function_item",
+            "block",
+            "if_expression",
+            "match_expression",
+            "while_expression",
+            "for_expression",
+            "loop_expression",
+            "function_item",
         ],
         Language::CSharp => &[
-            "block", "if_statement", "while_statement", "for_statement",
-            "foreach_statement", "switch_statement", "try_statement",
-            "method_declaration", "constructor_declaration",
+            "block",
+            "if_statement",
+            "while_statement",
+            "for_statement",
+            "foreach_statement",
+            "switch_statement",
+            "try_statement",
+            "method_declaration",
+            "constructor_declaration",
         ],
         Language::TypeScript | Language::JavaScript => &[
-            "statement_block", "if_statement", "while_statement", "for_statement",
-            "switch_statement", "try_statement", "function_declaration",
-            "method_definition", "arrow_function",
+            "statement_block",
+            "if_statement",
+            "while_statement",
+            "for_statement",
+            "switch_statement",
+            "try_statement",
+            "function_declaration",
+            "method_definition",
+            "arrow_function",
         ],
         Language::FSharp => &[
-            "function_definition", "if_expression", "match_expression",
-            "for_expression", "while_expression", "do_expression",
+            "function_definition",
+            "if_expression",
+            "match_expression",
+            "for_expression",
+            "while_expression",
+            "do_expression",
             "computation_expression",
         ],
         _ => &["block"],
@@ -706,7 +727,10 @@ pub fn extract_semantic_metrics_for(
     }
 
     let Some((tree, _ts_lang)) = parse_for_language(source, &language) else {
-        return SemanticMetrics { parse_quality: 0.0, ..Default::default() };
+        return SemanticMetrics {
+            parse_quality: 0.0,
+            ..Default::default()
+        };
     };
 
     let root = tree.root_node();
@@ -724,13 +748,12 @@ pub fn extract_semantic_metrics_for(
     let (nesting_depth_max, nesting_depth_mean) = nesting_stats_generic(root, block_kinds);
 
     // Safety concerns: AST-level + lexical fallback.
-    let unsafe_blocks = count_kind(root, safety_kinds_for(&language))
-        + lexical_safety_count(source, &language);
+    let unsafe_blocks =
+        count_kind(root, safety_kinds_for(&language)) + lexical_safety_count(source, &language);
 
     // Error-handling density reuses lexical heuristics adapted per language.
-    let error_handling_density =
-        generic_error_handling_count(source, &language) as f64 * 100.0
-            / ast_node_count.max(1) as f64;
+    let error_handling_density = generic_error_handling_count(source, &language) as f64 * 100.0
+        / ast_node_count.max(1) as f64;
 
     // Type annotation ratio: unsupported for non-Rust (returns 1.0 = "fully typed").
     let type_annotation_ratio = 1.0;
@@ -764,7 +787,11 @@ fn nesting_stats_generic(root: tree_sitter::Node, block_kinds: &[&str]) -> (usiz
     loop {
         if cursor.goto_first_child() {
             let parent_depth = *depth_stack.last().unwrap();
-            let child_depth = if is_block(cursor.node().kind()) { parent_depth + 1 } else { parent_depth };
+            let child_depth = if is_block(cursor.node().kind()) {
+                parent_depth + 1
+            } else {
+                parent_depth
+            };
             depth_stack.push(child_depth);
             if is_block(cursor.node().kind()) {
                 max_depth = max_depth.max(child_depth);
@@ -777,7 +804,11 @@ fn nesting_stats_generic(root: tree_sitter::Node, block_kinds: &[&str]) -> (usiz
             depth_stack.pop();
             if cursor.goto_next_sibling() {
                 let parent_depth = *depth_stack.last().unwrap();
-                let sib_depth = if is_block(cursor.node().kind()) { parent_depth + 1 } else { parent_depth };
+                let sib_depth = if is_block(cursor.node().kind()) {
+                    parent_depth + 1
+                } else {
+                    parent_depth
+                };
                 depth_stack.push(sib_depth);
                 if is_block(cursor.node().kind()) {
                     max_depth = max_depth.max(sib_depth);
@@ -787,7 +818,11 @@ fn nesting_stats_generic(root: tree_sitter::Node, block_kinds: &[&str]) -> (usiz
                 break;
             }
             if !cursor.goto_parent() {
-                let mean = if block_count == 0 { 0.0 } else { depth_sum as f64 / block_count as f64 };
+                let mean = if block_count == 0 {
+                    0.0
+                } else {
+                    depth_sum as f64 / block_count as f64
+                };
                 return (max_depth, mean);
             }
         }
@@ -838,7 +873,11 @@ pub fn run_ast_query(
     let query = tree_sitter::Query::new(&ts_lang, query_str)
         .map_err(|e| format!("Invalid tree-sitter query: {e}"))?;
 
-    let capture_names: Vec<String> = query.capture_names().iter().map(|s| s.to_string()).collect();
+    let capture_names: Vec<String> = query
+        .capture_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     let mut cursor = tree_sitter::QueryCursor::new();
     let root = tree.root_node();

@@ -46,13 +46,14 @@ impl Classifier for GaussianNaiveBayes {
             let count = mask.len() as f64;
             self.priors.push(count / n);
 
-            let class_data: Array2<f64> = Array2::from_shape_fn(
-                (mask.len(), x.ncols()),
-                |(i, j)| x[[mask[i], j]],
-            );
+            let class_data: Array2<f64> =
+                Array2::from_shape_fn((mask.len(), x.ncols()), |(i, j)| x[[mask[i], j]]);
 
             let mean = class_data.mean_axis(ndarray::Axis(0)).unwrap();
-            let var = class_data.mapv(|v| v * v).mean_axis(ndarray::Axis(0)).unwrap()
+            let var = class_data
+                .mapv(|v| v * v)
+                .mean_axis(ndarray::Axis(0))
+                .unwrap()
                 - &mean.mapv(|v| v * v);
             // Add small epsilon to avoid division by zero
             let var = var.mapv(|v| v.max(1e-9));
@@ -65,9 +66,13 @@ impl Classifier for GaussianNaiveBayes {
     fn predict(&self, x: &Array2<f64>) -> Array1<usize> {
         let proba = self.predict_proba(x);
         Array1::from_iter((0..x.nrows()).map(|i| {
-            proba.row(i).iter().enumerate()
+            proba
+                .row(i)
+                .iter()
+                .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .unwrap().0
+                .unwrap()
+                .0
         }))
     }
 
@@ -84,8 +89,8 @@ impl Classifier for GaussianNaiveBayes {
                     let var = self.variances[c][j];
                     // Log of Gaussian PDF
                     let diff = x[[i, j]] - mean;
-                    log_likelihood += -0.5 * (2.0 * std::f64::consts::PI * var).ln()
-                        - 0.5 * diff * diff / var;
+                    log_likelihood +=
+                        -0.5 * (2.0 * std::f64::consts::PI * var).ln() - 0.5 * diff * diff / var;
                 }
                 log_proba[[i, c]] = log_likelihood;
             }
@@ -93,7 +98,11 @@ impl Classifier for GaussianNaiveBayes {
 
         // Convert log probabilities to probabilities (softmax-style)
         for i in 0..n {
-            let max_log = log_proba.row(i).iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let max_log = log_proba
+                .row(i)
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
             let mut row_sum = 0.0;
             for c in 0..self.n_classes {
                 log_proba[[i, c]] = (log_proba[[i, c]] - max_log).exp();
@@ -117,8 +126,12 @@ mod tests {
     #[test]
     fn test_gaussian_nb() {
         let x = array![
-            [1.0, 1.0], [1.5, 2.0], [2.0, 1.0],
-            [6.0, 5.0], [7.0, 7.0], [6.5, 6.0]
+            [1.0, 1.0],
+            [1.5, 2.0],
+            [2.0, 1.0],
+            [6.0, 5.0],
+            [7.0, 7.0],
+            [6.5, 6.0]
         ];
         let y = array![0, 0, 0, 1, 1, 1];
 

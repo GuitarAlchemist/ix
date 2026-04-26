@@ -1,12 +1,12 @@
-use std::collections::VecDeque;
-use rand::Rng;
-use serde::{Serialize, Deserialize};
-use crate::error::Result;
-use crate::tensor::MarkovTensor;
 use crate::conductance::ConductanceMatrix;
-use crate::vlmm::VariableOrderSelector;
 use crate::consolidator::MemoryConsolidator;
+use crate::error::Result;
 use crate::serde_state::{EngineConfig, EngineState};
+use crate::tensor::MarkovTensor;
+use crate::vlmm::VariableOrderSelector;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EngineDiagnostics {
@@ -32,14 +32,27 @@ pub struct MemristiveEngine {
 impl MemristiveEngine {
     pub fn new(config: EngineConfig) -> Self {
         let tensor = MarkovTensor::new(config.max_order);
-        let session_conductance = ConductanceMatrix::new(config.session_alpha, config.session_beta, config.g_min);
-        let long_term_conductance = Some(ConductanceMatrix::new(config.long_term_alpha, config.long_term_beta, config.g_min));
-        let vlmm = VariableOrderSelector::new(config.max_order, config.min_observations, config.fallback);
-        let consolidator = MemoryConsolidator::new(config.consolidation_gamma, config.min_session_observations);
+        let session_conductance =
+            ConductanceMatrix::new(config.session_alpha, config.session_beta, config.g_min);
+        let long_term_conductance = Some(ConductanceMatrix::new(
+            config.long_term_alpha,
+            config.long_term_beta,
+            config.g_min,
+        ));
+        let vlmm =
+            VariableOrderSelector::new(config.max_order, config.min_observations, config.fallback);
+        let consolidator =
+            MemoryConsolidator::new(config.consolidation_gamma, config.min_session_observations);
         Self {
-            tensor, session_conductance, long_term_conductance, vlmm, consolidator,
+            tensor,
+            session_conductance,
+            long_term_conductance,
+            vlmm,
+            consolidator,
             context_buffer: VecDeque::with_capacity(config.max_order),
-            config, total_observations: 0, session_observations: 0,
+            config,
+            total_observations: 0,
+            session_observations: 0,
         }
     }
 
@@ -73,7 +86,9 @@ impl MemristiveEngine {
     }
 
     pub fn observe_sequence(&mut self, states: &[usize]) {
-        for &s in states { self.observe(s); }
+        for &s in states {
+            self.observe(s);
+        }
     }
 
     pub fn predict(&mut self) -> Vec<(usize, f64)> {
@@ -82,10 +97,17 @@ impl MemristiveEngine {
         let modulated = self.session_conductance.modulate(&context, &base);
         if let Some(lt) = &self.long_term_conductance {
             let lt_modulated = lt.modulate(&context, &base);
-            let blended: Vec<(usize, f64)> = modulated.iter().map(|&(s, sp)| {
-                let lp = lt_modulated.iter().find(|(ls, _)| *ls == s).map(|(_, p)| *p).unwrap_or(0.0);
-                (s, 0.7 * sp + 0.3 * lp)
-            }).collect();
+            let blended: Vec<(usize, f64)> = modulated
+                .iter()
+                .map(|&(s, sp)| {
+                    let lp = lt_modulated
+                        .iter()
+                        .find(|(ls, _)| *ls == s)
+                        .map(|(_, p)| *p)
+                        .unwrap_or(0.0);
+                    (s, 0.7 * sp + 0.3 * lp)
+                })
+                .collect();
             let total: f64 = blended.iter().map(|(_, p)| p).sum();
             if total > 0.0 {
                 return blended.into_iter().map(|(s, p)| (s, p / total)).collect();
@@ -101,14 +123,26 @@ impl MemristiveEngine {
 
     pub fn consolidate(&mut self) {
         if let Some(lt) = &mut self.long_term_conductance {
-            self.consolidator.consolidate(&self.session_conductance, lt, self.session_observations as usize);
+            self.consolidator.consolidate(
+                &self.session_conductance,
+                lt,
+                self.session_observations as usize,
+            );
         }
-        self.session_conductance = ConductanceMatrix::new(self.config.session_alpha, self.config.session_beta, self.config.g_min);
+        self.session_conductance = ConductanceMatrix::new(
+            self.config.session_alpha,
+            self.config.session_beta,
+            self.config.g_min,
+        );
         self.session_observations = 0;
     }
 
     pub fn reset_session(&mut self) {
-        self.session_conductance = ConductanceMatrix::new(self.config.session_alpha, self.config.session_beta, self.config.g_min);
+        self.session_conductance = ConductanceMatrix::new(
+            self.config.session_alpha,
+            self.config.session_beta,
+            self.config.g_min,
+        );
         self.context_buffer.clear();
         self.session_observations = 0;
     }
@@ -143,15 +177,25 @@ mod tests {
     use super::*;
     use rand::SeedableRng;
 
-    fn test_rng() -> rand::rngs::StdRng { rand::rngs::StdRng::seed_from_u64(42) }
+    fn test_rng() -> rand::rngs::StdRng {
+        rand::rngs::StdRng::seed_from_u64(42)
+    }
 
     #[test]
     fn test_engine_observe_and_predict() {
         let mut engine = MemristiveEngine::new(EngineConfig::default());
-        for _ in 0..20 { engine.observe(0); engine.observe(1); engine.observe(2); }
+        for _ in 0..20 {
+            engine.observe(0);
+            engine.observe(1);
+            engine.observe(2);
+        }
         let dist = engine.predict();
         assert!(!dist.is_empty());
-        let p0 = dist.iter().find(|(s, _)| *s == 0).map(|(_, p)| *p).unwrap_or(0.0);
+        let p0 = dist
+            .iter()
+            .find(|(s, _)| *s == 0)
+            .map(|(_, p)| *p)
+            .unwrap_or(0.0);
         assert!(p0 > 0.5, "After 2, should predict 0: {}", p0);
     }
 
@@ -174,7 +218,8 @@ mod tests {
     #[test]
     fn test_consolidation_resets_session() {
         let mut engine = MemristiveEngine::new(EngineConfig {
-            min_session_observations: 5, ..EngineConfig::default()
+            min_session_observations: 5,
+            ..EngineConfig::default()
         });
         engine.observe_sequence(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
         assert_eq!(engine.diagnostics().session_observations, 10);
@@ -208,8 +253,21 @@ mod tests {
         // Context is now [1], predict after 0:
         engine.observe(0);
         let dist = engine.predict();
-        let p1 = dist.iter().find(|(s, _)| *s == 1).map(|(_, p)| *p).unwrap_or(0.0);
-        let p2 = dist.iter().find(|(s, _)| *s == 2).map(|(_, p)| *p).unwrap_or(0.0);
-        assert!(p1 > p2, "Conductance should bias toward 1: p1={}, p2={}", p1, p2);
+        let p1 = dist
+            .iter()
+            .find(|(s, _)| *s == 1)
+            .map(|(_, p)| *p)
+            .unwrap_or(0.0);
+        let p2 = dist
+            .iter()
+            .find(|(s, _)| *s == 2)
+            .map(|(_, p)| *p)
+            .unwrap_or(0.0);
+        assert!(
+            p1 > p2,
+            "Conductance should bias toward 1: p1={}, p2={}",
+            p1,
+            p2
+        );
     }
 }

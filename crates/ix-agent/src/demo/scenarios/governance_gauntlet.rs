@@ -51,11 +51,13 @@ impl DemoScenario for GovernanceGauntlet {
                     "Read-only action check.".into()
                 },
                 interpret: Some(|output: &Value| {
-                    let verdict = output.get("verdict").and_then(|v| v.as_str()).unwrap_or("?");
+                    let verdict = output
+                        .get("verdict")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
                     format!("Verdict: {verdict}. Read-only, no risk — full autonomy granted.")
                 }),
             },
-
             // Step 2: Low-risk write → allow with note
             DemoStep {
                 label: "Check: commit formatting fix to feature branch".into(),
@@ -72,14 +74,16 @@ impl DemoScenario for GovernanceGauntlet {
                     "Low-risk write check.".into()
                 },
                 interpret: Some(|output: &Value| {
-                    let verdict = output.get("verdict").and_then(|v| v.as_str()).unwrap_or("?");
+                    let verdict = output
+                        .get("verdict")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
                     format!(
                         "Verdict: {verdict}. Allowed, but the audit trail notes this was \
                          an autonomous write — someone can review later."
                     )
                 }),
             },
-
             // Step 3: Medium risk → confirm (THE AHA MOMENT)
             DemoStep {
                 label: "Check: merge to main without review".into(),
@@ -96,7 +100,10 @@ impl DemoScenario for GovernanceGauntlet {
                     "Unreviewed merge to main check.".into()
                 },
                 interpret: Some(|output: &Value| {
-                    let verdict = output.get("verdict").and_then(|v| v.as_str()).unwrap_or("?");
+                    let verdict = output
+                        .get("verdict")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
                     format!(
                         "Verdict: {verdict}. The constitution blocks unreviewed merges to \
                          main — even when CI passes. Human oversight is constitutionally \
@@ -104,7 +111,6 @@ impl DemoScenario for GovernanceGauntlet {
                     )
                 }),
             },
-
             // Step 4: Check self-modification policy
             DemoStep {
                 label: "Query self-modification policy".into(),
@@ -127,7 +133,6 @@ impl DemoScenario for GovernanceGauntlet {
                         .into()
                 }),
             },
-
             // Step 5: Who watches the watchers?
             DemoStep {
                 label: "Load skeptical-auditor persona".into(),
@@ -144,7 +149,10 @@ impl DemoScenario for GovernanceGauntlet {
                     "Load adversarial auditor persona.".into()
                 },
                 interpret: Some(|output: &Value| {
-                    let name = output.get("name").and_then(|v| v.as_str()).unwrap_or("skeptical-auditor");
+                    let name = output
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("skeptical-auditor");
                     format!(
                         "Persona '{name}' loaded. Its affordances are audit-only: it can \
                          review, challenge, and report — but cannot take direct actions. \

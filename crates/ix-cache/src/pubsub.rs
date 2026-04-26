@@ -113,7 +113,8 @@ impl PubSub {
 
     /// Count subscribers on a channel.
     pub fn subscriber_count(&self, channel: &str) -> usize {
-        self.channels.read()
+        self.channels
+            .read()
             .get(channel)
             .map_or(0, |subs| subs.len())
     }

@@ -167,27 +167,27 @@ mod tests {
     #[test]
     fn test_mobius() {
         assert_eq!(mobius(1), 1);
-        assert_eq!(mobius(2), -1);    // single prime
-        assert_eq!(mobius(6), 1);     // 6 = 2*3, two distinct primes
-        assert_eq!(mobius(4), 0);     // 4 = 2², squared factor
-        assert_eq!(mobius(30), -1);   // 30 = 2*3*5, three distinct primes
-        assert_eq!(mobius(12), 0);    // 12 = 2²*3
+        assert_eq!(mobius(2), -1); // single prime
+        assert_eq!(mobius(6), 1); // 6 = 2*3, two distinct primes
+        assert_eq!(mobius(4), 0); // 4 = 2², squared factor
+        assert_eq!(mobius(30), -1); // 30 = 2*3*5, three distinct primes
+        assert_eq!(mobius(12), 0); // 12 = 2²*3
     }
 
     #[test]
     fn test_divisor_count() {
         assert_eq!(divisor_count(1), 1);
-        assert_eq!(divisor_count(6), 4);    // 1,2,3,6
-        assert_eq!(divisor_count(12), 6);   // 1,2,3,4,6,12
-        assert_eq!(divisor_count(7), 2);    // prime
+        assert_eq!(divisor_count(6), 4); // 1,2,3,6
+        assert_eq!(divisor_count(12), 6); // 1,2,3,4,6,12
+        assert_eq!(divisor_count(7), 2); // prime
     }
 
     #[test]
     fn test_divisor_sum() {
         assert_eq!(divisor_sum(1), 1);
-        assert_eq!(divisor_sum(6), 12);     // 1+2+3+6 = 12 (perfect number)
-        assert_eq!(divisor_sum(28), 56);    // perfect number: σ(28) = 2*28
-        assert_eq!(divisor_sum(7), 8);      // 1+7
+        assert_eq!(divisor_sum(6), 12); // 1+2+3+6 = 12 (perfect number)
+        assert_eq!(divisor_sum(28), 56); // perfect number: σ(28) = 2*28
+        assert_eq!(divisor_sum(7), 8); // 1+7
     }
 
     #[test]

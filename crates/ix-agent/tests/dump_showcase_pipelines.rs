@@ -89,7 +89,11 @@ fn dump_one(spec: &DumpSpec) {
     let scenario: Box<dyn DemoScenario> = find_scenario(spec.scenario_id)
         .unwrap_or_else(|| panic!("scenario '{}' not registered", spec.scenario_id));
     let steps = scenario.steps(SEED, VERBOSITY);
-    assert!(!steps.is_empty(), "scenario '{}' has no steps", spec.scenario_id);
+    assert!(
+        !steps.is_empty(),
+        "scenario '{}' has no steps",
+        spec.scenario_id
+    );
 
     let mut json_steps: Vec<Value> = Vec::with_capacity(steps.len());
     let mut prev_id: Option<String> = None;

@@ -32,7 +32,10 @@ pub struct TabularQ<S: Hash + Eq> {
 
 impl<S: Hash + Eq> TabularQ<S> {
     pub fn new(default: f64) -> Self {
-        Self { values: HashMap::new(), default }
+        Self {
+            values: HashMap::new(),
+            default,
+        }
     }
 
     pub fn set(&mut self, state: S, value: f64) {
@@ -62,7 +65,10 @@ impl<S: SearchState> Eq for QStarNode<S> {}
 
 impl<S: SearchState> Ord for QStarNode<S> {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.f_cost.partial_cmp(&self.f_cost).unwrap_or(Ordering::Equal)
+        other
+            .f_cost
+            .partial_cmp(&self.f_cost)
+            .unwrap_or(Ordering::Equal)
     }
 }
 impl<S: SearchState> PartialOrd for QStarNode<S> {
@@ -232,8 +238,12 @@ where
             actions.reverse();
 
             return Some(QStarResult {
-                path, actions, cost: current.g_cost,
-                nodes_expanded, nodes_generated, heuristic_calls,
+                path,
+                actions,
+                cost: current.g_cost,
+                nodes_expanded,
+                nodes_generated,
+                heuristic_calls,
             });
         }
 
@@ -243,7 +253,9 @@ where
         closed.insert(current.state.clone());
         nodes_expanded += 1;
 
-        for (idx, (action, successor, step_cost)) in current.state.successors().into_iter().enumerate() {
+        for (idx, (action, successor, step_cost)) in
+            current.state.successors().into_iter().enumerate()
+        {
             nodes_generated += 1;
 
             if closed.contains(&successor) {
@@ -251,7 +263,8 @@ where
             }
 
             // Two-head: use learned transition cost if available
-            let actual_cost = q_function.estimate_transition_cost(&current.state, idx)
+            let actual_cost = q_function
+                .estimate_transition_cost(&current.state, idx)
                 .unwrap_or(step_cost);
 
             let new_g = current.g_cost + actual_cost;
@@ -280,11 +293,7 @@ where
 ///
 /// Guarantees solution cost <= (1 + epsilon) * optimal cost.
 /// Uses focal search: maintains two lists (OPEN and FOCAL).
-pub fn qstar_bounded<S, Q>(
-    start: S,
-    q_function: &Q,
-    epsilon: f64,
-) -> Option<QStarResult<S>>
+pub fn qstar_bounded<S, Q>(start: S, q_function: &Q, epsilon: f64) -> Option<QStarResult<S>>
 where
     S: SearchState,
     Q: QFunction<S>,
@@ -300,7 +309,10 @@ pub fn compare_qstar_vs_astar<S, Q, H>(
     start: S,
     q_function: &Q,
     heuristic: H,
-) -> (Option<QStarResult<S>>, Option<crate::astar::SearchResult<S>>)
+) -> (
+    Option<QStarResult<S>>,
+    Option<crate::astar::SearchResult<S>>,
+)
 where
     S: SearchState,
     Q: QFunction<S>,
@@ -335,7 +347,15 @@ mod tests {
                     let nx = self.x + dx;
                     let ny = self.y + dy;
                     if nx >= 0 && nx < self.width && ny >= 0 && ny < self.height {
-                        Some(((dx, dy), GridPos { x: nx, y: ny, ..*self }, 1.0))
+                        Some((
+                            (dx, dy),
+                            GridPos {
+                                x: nx,
+                                y: ny,
+                                ..*self
+                            },
+                            1.0,
+                        ))
                     } else {
                         None
                     }
@@ -355,7 +375,14 @@ mod tests {
 
     #[test]
     fn test_qstar_finds_optimal() {
-        let start = GridPos { x: 0, y: 0, goal_x: 4, goal_y: 4, width: 10, height: 10 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 4,
+            goal_y: 4,
+            width: 10,
+            height: 10,
+        };
         let q = make_q();
         let result = qstar_search(start, &q).unwrap();
         assert_eq!(result.cost, 8.0);
@@ -363,29 +390,52 @@ mod tests {
 
     #[test]
     fn test_qstar_fewer_heuristic_calls() {
-        let start = GridPos { x: 0, y: 0, goal_x: 5, goal_y: 5, width: 15, height: 15 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 5,
+            goal_y: 5,
+            width: 15,
+            height: 15,
+        };
         let q = make_q();
 
         let qr = qstar_search(start.clone(), &q).unwrap();
         let ar = crate::astar::astar(start, |s: &GridPos| {
             ((s.x - s.goal_x).abs() + (s.y - s.goal_y).abs()) as f64
-        }).unwrap();
+        })
+        .unwrap();
 
         // Q* should use fewer or equal heuristic evaluations
         // (In this simple grid, they may be similar, but Q* has the structural advantage)
-        assert!(qr.cost <= ar.cost + 0.1, "Q* should find optimal or near-optimal");
+        assert!(
+            qr.cost <= ar.cost + 0.1,
+            "Q* should find optimal or near-optimal"
+        );
     }
 
     #[test]
     fn test_weighted_qstar() {
-        let start = GridPos { x: 0, y: 0, goal_x: 9, goal_y: 9, width: 20, height: 20 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 9,
+            goal_y: 9,
+            width: 20,
+            height: 20,
+        };
         let q = make_q();
 
         let optimal = qstar_search(start.clone(), &q).unwrap();
         let weighted = qstar_weighted(start, &q, 2.0).unwrap();
 
-        assert!(weighted.cost <= optimal.cost * 2.0, "Bounded suboptimal guarantee");
-        assert!(weighted.nodes_expanded <= optimal.nodes_expanded,
-            "Weighted should expand fewer nodes");
+        assert!(
+            weighted.cost <= optimal.cost * 2.0,
+            "Bounded suboptimal guarantee"
+        );
+        assert!(
+            weighted.nodes_expanded <= optimal.nodes_expanded,
+            "Weighted should expand fewer nodes"
+        );
     }
 }

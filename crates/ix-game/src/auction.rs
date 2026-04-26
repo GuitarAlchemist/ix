@@ -24,7 +24,8 @@ pub fn first_price_auction(bids: &[Bid]) -> Option<AuctionResult> {
         return None;
     }
 
-    let winner = bids.iter()
+    let winner = bids
+        .iter()
         .max_by(|a, b| a.amount.partial_cmp(&b.amount).unwrap())?;
 
     Some(AuctionResult {
@@ -58,7 +59,8 @@ pub fn all_pay_auction(bids: &[Bid]) -> Option<(usize, Vec<f64>)> {
         return None;
     }
 
-    let winner = bids.iter()
+    let winner = bids
+        .iter()
         .max_by(|a, b| a.amount.partial_cmp(&b.amount).unwrap())?;
 
     let max_bidder = bids.iter().map(|b| b.bidder).max().unwrap_or(0);
@@ -97,8 +99,13 @@ pub fn english_auction(values: &[f64], start_price: f64, increment: f64) -> Auct
     }
 
     let winner = active.iter().position(|&a| a).unwrap_or(0);
-    let bids: Vec<Bid> = values.iter().enumerate()
-        .map(|(i, &v)| Bid { bidder: i, amount: v })
+    let bids: Vec<Bid> = values
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| Bid {
+            bidder: i,
+            amount: v,
+        })
         .collect();
 
     AuctionResult {
@@ -118,8 +125,13 @@ pub fn dutch_auction(values: &[f64], start_price: f64, decrement: f64) -> Auctio
         // Check if any bidder accepts
         for (i, &v) in values.iter().enumerate() {
             if v >= price {
-                let bids: Vec<Bid> = values.iter().enumerate()
-                    .map(|(j, &val)| Bid { bidder: j, amount: val })
+                let bids: Vec<Bid> = values
+                    .iter()
+                    .enumerate()
+                    .map(|(j, &val)| Bid {
+                        bidder: j,
+                        amount: val,
+                    })
                     .collect();
                 return AuctionResult {
                     winner: i,
@@ -136,8 +148,13 @@ pub fn dutch_auction(values: &[f64], start_price: f64, decrement: f64) -> Auctio
     }
 
     // No one bid
-    let bids: Vec<Bid> = values.iter().enumerate()
-        .map(|(i, &v)| Bid { bidder: i, amount: v })
+    let bids: Vec<Bid> = values
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| Bid {
+            bidder: i,
+            amount: v,
+        })
         .collect();
     AuctionResult {
         winner: 0,
@@ -150,24 +167,23 @@ pub fn dutch_auction(values: &[f64], start_price: f64, decrement: f64) -> Auctio
 ///
 /// Runs many auction simulations with random values and compares
 /// first-price and second-price auction revenues.
-pub fn revenue_equivalence_test(
-    num_bidders: usize,
-    num_trials: usize,
-    seed: u64,
-) -> (f64, f64) {
+pub fn revenue_equivalence_test(num_bidders: usize, num_trials: usize, seed: u64) -> (f64, f64) {
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
     let mut fp_total = 0.0;
     let mut sp_total = 0.0;
 
     for _ in 0..num_trials {
-        let values: Vec<f64> = (0..num_bidders)
-            .map(|_| rng.random::<f64>())
-            .collect();
+        let values: Vec<f64> = (0..num_bidders).map(|_| rng.random::<f64>()).collect();
 
         // Second-price: bid truthfully
-        let sp_bids: Vec<Bid> = values.iter().enumerate()
-            .map(|(i, &v)| Bid { bidder: i, amount: v })
+        let sp_bids: Vec<Bid> = values
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| Bid {
+                bidder: i,
+                amount: v,
+            })
             .collect();
         if let Some(sp_result) = second_price_auction(&sp_bids) {
             sp_total += sp_result.payment;
@@ -175,8 +191,13 @@ pub fn revenue_equivalence_test(
 
         // First-price: optimal bid = (n-1)/n * value (for uniform distribution)
         let factor = (num_bidders - 1) as f64 / num_bidders as f64;
-        let fp_bids: Vec<Bid> = values.iter().enumerate()
-            .map(|(i, &v)| Bid { bidder: i, amount: v * factor })
+        let fp_bids: Vec<Bid> = values
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| Bid {
+                bidder: i,
+                amount: v * factor,
+            })
             .collect();
         if let Some(fp_result) = first_price_auction(&fp_bids) {
             fp_total += fp_result.payment;
@@ -193,14 +214,26 @@ mod tests {
     #[test]
     fn test_second_price_truthful() {
         let bids = vec![
-            Bid { bidder: 0, amount: 10.0 },
-            Bid { bidder: 1, amount: 7.0 },
-            Bid { bidder: 2, amount: 5.0 },
+            Bid {
+                bidder: 0,
+                amount: 10.0,
+            },
+            Bid {
+                bidder: 1,
+                amount: 7.0,
+            },
+            Bid {
+                bidder: 2,
+                amount: 5.0,
+            },
         ];
 
         let result = second_price_auction(&bids).unwrap();
         assert_eq!(result.winner, 0);
-        assert!((result.payment - 7.0).abs() < 1e-10, "Should pay second-highest bid");
+        assert!(
+            (result.payment - 7.0).abs() < 1e-10,
+            "Should pay second-highest bid"
+        );
     }
 
     #[test]
@@ -217,7 +250,12 @@ mod tests {
         let (fp_rev, sp_rev) = revenue_equivalence_test(3, 10_000, 42);
         // Revenue equivalence: both should yield similar average revenue
         let ratio = fp_rev / sp_rev;
-        assert!(ratio > 0.85 && ratio < 1.15,
-            "Revenue equivalence: FP={:.4}, SP={:.4}, ratio={:.4}", fp_rev, sp_rev, ratio);
+        assert!(
+            ratio > 0.85 && ratio < 1.15,
+            "Revenue equivalence: FP={:.4}, SP={:.4}, ratio={:.4}",
+            fp_rev,
+            sp_rev,
+            ratio
+        );
     }
 }

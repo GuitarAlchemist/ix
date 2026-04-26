@@ -24,10 +24,7 @@ fn no_filters_returns_every_entry() {
 fn python_query_returns_python_grammar() {
     let result = call(json!({ "language": "python" })).expect("python call");
     let entries = result["entries"].as_array().expect("entries");
-    let names: Vec<&str> = entries
-        .iter()
-        .filter_map(|e| e["name"].as_str())
-        .collect();
+    let names: Vec<&str> = entries.iter().filter_map(|e| e["name"].as_str()).collect();
     assert!(
         names.iter().any(|n| n.contains("Python")),
         "python query should return a Python grammar; got {names:?}"
@@ -38,15 +35,15 @@ fn python_query_returns_python_grammar() {
 fn abnf_format_filter_catches_rfc_protocols() {
     let result = call(json!({ "format": "abnf" })).expect("abnf call");
     let entries = result["entries"].as_array().expect("entries");
-    let names: Vec<&str> = entries
-        .iter()
-        .filter_map(|e| e["name"].as_str())
-        .collect();
+    let names: Vec<&str> = entries.iter().filter_map(|e| e["name"].as_str()).collect();
     // Must include at least one HTTP/URI/JSON/TLS entry.
     let has_rfc_proto = names.iter().any(|n| {
         n.contains("HTTP") || n.contains("URI") || n.contains("JSON") || n.contains("TLS")
     });
-    assert!(has_rfc_proto, "expected at least one RFC protocol in ABNF results, got {names:?}");
+    assert!(
+        has_rfc_proto,
+        "expected at least one RFC protocol in ABNF results, got {names:?}"
+    );
 }
 
 #[test]
@@ -79,5 +76,8 @@ fn combined_language_and_format_filter() {
 fn topic_filter_finds_rfc_tag() {
     let result = call(json!({ "topic": "rfc" })).expect("topic call");
     let matched = result["matched"].as_u64().unwrap();
-    assert!(matched >= 10, "expected 10+ rfc-tagged entries, got {matched}");
+    assert!(
+        matched >= 10,
+        "expected 10+ rfc-tagged entries, got {matched}"
+    );
 }

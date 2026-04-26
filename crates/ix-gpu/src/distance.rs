@@ -61,7 +61,10 @@ fn pairwise_distance(
 ///
 /// Returns flat row-major N×N distance matrix.
 pub fn pairwise_distance_gpu(ctx: &GpuContext, points: &[f32], dim: usize) -> Vec<f32> {
-    assert!(points.len() % dim == 0, "Points length must be multiple of dim");
+    assert!(
+        points.len() % dim == 0,
+        "Points length must be multiple of dim"
+    );
     let n = points.len() / dim;
 
     let buf_points = ctx.create_buffer_init("points", points);
@@ -70,31 +73,45 @@ pub fn pairwise_distance_gpu(ctx: &GpuContext, points: &[f32], dim: usize) -> Ve
     let params = [n as u32, dim as u32];
     let params_bytes: &[u8] = bytemuck::cast_slice(&params);
     use wgpu::util::DeviceExt;
-    let buf_params = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("params"),
-        contents: params_bytes,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-    });
+    let buf_params = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("params"),
+            contents: params_bytes,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
 
     let output_size = (n * n * std::mem::size_of::<f32>()) as u64;
     let buf_output = ctx.create_output_buffer("distances", output_size);
 
-    let pipeline = ctx.create_compute_pipeline("dist_matrix", DISTANCE_MATRIX_SHADER, "pairwise_distance");
+    let pipeline =
+        ctx.create_compute_pipeline("dist_matrix", DISTANCE_MATRIX_SHADER, "pairwise_distance");
 
     let bind_group_layout = pipeline.get_bind_group_layout(0);
     let bind_group = ctx.device.create_bind_group(&BindGroupDescriptor {
         label: Some("dist_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_points.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_params.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_output.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_points.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_params.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_output.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("dist_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("dist_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -114,7 +131,10 @@ pub fn pairwise_distance_gpu(ctx: &GpuContext, points: &[f32], dim: usize) -> Ve
 
 /// CPU fallback: compute N×N pairwise Euclidean distance matrix.
 pub fn pairwise_distance_cpu(points: &[f32], dim: usize) -> Vec<f32> {
-    assert!(points.len() % dim == 0, "Points length must be multiple of dim");
+    assert!(
+        points.len() % dim == 0,
+        "Points length must be multiple of dim"
+    );
     let n = points.len() / dim;
     let mut dist = vec![0.0f32; n * n];
 
@@ -161,8 +181,10 @@ mod tests {
         let n = 3;
         for i in 0..n {
             for j in 0..n {
-                assert!((dist[i * n + j] - dist[j * n + i]).abs() < 1e-10,
-                    "Distance matrix should be symmetric");
+                assert!(
+                    (dist[i * n + j] - dist[j * n + i]).abs() < 1e-10,
+                    "Distance matrix should be symmetric"
+                );
             }
         }
     }

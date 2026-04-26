@@ -133,14 +133,7 @@ mod tests {
     fn test_detect_adversarial_stable_model() {
         // constant model -> no variance -> not adversarial
         let input = array![0.5, 0.5];
-        let detected = detect_adversarial(
-            &input,
-            |_x| array![1.0, 0.0],
-            0.1,
-            50,
-            0.01,
-            42,
-        );
+        let detected = detect_adversarial(&input, |_x| array![1.0, 0.0], 0.1, 50, 0.01, 42);
         assert!(!detected);
     }
 
@@ -148,14 +141,7 @@ mod tests {
     fn test_detect_adversarial_sensitive_model() {
         // model that amplifies input -> high variance on noisy inputs
         let input = array![0.5, 0.5];
-        let detected = detect_adversarial(
-            &input,
-            |x| x * 100.0,
-            1.0,
-            100,
-            0.001,
-            42,
-        );
+        let detected = detect_adversarial(&input, |x| x * 100.0, 1.0, 100, 0.001, 42);
         assert!(detected);
     }
 

@@ -1,10 +1,10 @@
 //! Simulated Annealing optimization.
 
 use ndarray::Array1;
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
-use rand_distr::{Normal, Distribution};
+use rand_distr::{Distribution, Normal};
 
 use crate::traits::{ObjectiveFunction, OptimizeResult};
 
@@ -167,7 +167,11 @@ mod tests {
             .with_seed(42);
 
         let result = sa.minimize(&obj, array![10.0, 10.0]);
-        assert!(result.best_value < 1.0, "SA should find near-zero for quadratic, got {}", result.best_value);
+        assert!(
+            result.best_value < 1.0,
+            "SA should find near-zero for quadratic, got {}",
+            result.best_value
+        );
     }
 
     #[test]

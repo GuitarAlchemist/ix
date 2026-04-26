@@ -298,7 +298,16 @@ mod tests {
         assert_eq!(rows.len(), 7);
 
         // Check header
-        assert_eq!(rows[0], vec!["trace_id", "timestamp", "outcome", "event_type", "duration_ms"]);
+        assert_eq!(
+            rows[0],
+            vec![
+                "trace_id",
+                "timestamp",
+                "outcome",
+                "event_type",
+                "duration_ms"
+            ]
+        );
 
         // Check first data row
         assert_eq!(rows[1][0], "t1");

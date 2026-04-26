@@ -69,9 +69,7 @@ async fn handle_client(stream: TcpStream, cache: Arc<Cache>) -> std::io::Result<
             writer.write_all(response.as_bytes()).await?;
         } else {
             // Inline command (space-separated)
-            let args: Vec<String> = trimmed.split_whitespace()
-                .map(|s| s.to_string())
-                .collect();
+            let args: Vec<String> = trimmed.split_whitespace().map(|s| s.to_string()).collect();
 
             if args.is_empty() {
                 continue;
@@ -101,7 +99,9 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "GET" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             match cache.get_str(&args[1]) {
                 Some(val) => resp_bulk_string(&val),
                 None => resp_null(),
@@ -109,7 +109,9 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "SET" => {
-            if args.len() < 3 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 3 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let mut ttl = None;
 
             // Parse optional EX/PX
@@ -134,19 +136,23 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "DEL" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let mut count = 0i64;
             for key in &args[1..] {
-                if cache.delete(key) { count += 1; }
+                if cache.delete(key) {
+                    count += 1;
+                }
             }
             resp_integer(count)
         }
 
         "EXISTS" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
-            let count: i64 = args[1..].iter()
-                .filter(|k| cache.contains(k))
-                .count() as i64;
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
+            let count: i64 = args[1..].iter().filter(|k| cache.contains(k)).count() as i64;
             resp_integer(count)
         }
 
@@ -157,19 +163,25 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "INCR" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let val = cache.incr(&args[1]);
             resp_integer(val)
         }
 
         "DECR" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let val = cache.decr(&args[1]);
             resp_integer(val)
         }
 
         "TTL" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             match cache.ttl(&args[1]) {
                 Some(d) => resp_integer(d.as_secs() as i64),
                 None => {
@@ -183,7 +195,9 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "EXPIRE" => {
-            if args.len() < 3 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 3 {
+                return resp_error("ERR wrong number of arguments");
+            }
             match args[2].parse::<u64>() {
                 Ok(secs) => {
                     let ok = cache.expire(&args[1], std::time::Duration::from_secs(secs));
@@ -194,13 +208,17 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "PERSIST" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let ok = cache.persist(&args[1]);
             resp_integer(if ok { 1 } else { 0 })
         }
 
         "LPUSH" => {
-            if args.len() < 3 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 3 {
+                return resp_error("ERR wrong number of arguments");
+            }
             for val in &args[2..] {
                 cache.lpush(&args[1], val);
             }
@@ -208,7 +226,9 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "RPUSH" => {
-            if args.len() < 3 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 3 {
+                return resp_error("ERR wrong number of arguments");
+            }
             for val in &args[2..] {
                 cache.rpush(&args[1], val);
             }
@@ -216,7 +236,9 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "LPOP" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             match cache.lpop::<String>(&args[1]) {
                 Some(val) => resp_bulk_string(&val),
                 None => resp_null(),
@@ -224,7 +246,9 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "RPOP" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             match cache.rpop::<String>(&args[1]) {
                 Some(val) => resp_bulk_string(&val),
                 None => resp_null(),
@@ -232,41 +256,61 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
         }
 
         "LLEN" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             resp_integer(cache.llen(&args[1]) as i64)
         }
 
         "SADD" => {
-            if args.len() < 3 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 3 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let mut added = 0i64;
             for member in &args[2..] {
-                if cache.sadd(&args[1], member) { added += 1; }
+                if cache.sadd(&args[1], member) {
+                    added += 1;
+                }
             }
             resp_integer(added)
         }
 
         "SREM" => {
-            if args.len() < 3 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 3 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let mut removed = 0i64;
             for member in &args[2..] {
-                if cache.srem(&args[1], member) { removed += 1; }
+                if cache.srem(&args[1], member) {
+                    removed += 1;
+                }
             }
             resp_integer(removed)
         }
 
         "SISMEMBER" => {
-            if args.len() < 3 { return resp_error("ERR wrong number of arguments"); }
-            resp_integer(if cache.sismember(&args[1], &args[2]) { 1 } else { 0 })
+            if args.len() < 3 {
+                return resp_error("ERR wrong number of arguments");
+            }
+            resp_integer(if cache.sismember(&args[1], &args[2]) {
+                1
+            } else {
+                0
+            })
         }
 
         "SMEMBERS" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             let members = cache.smembers(&args[1]);
             resp_array_strings(&members)
         }
 
         "SCARD" => {
-            if args.len() < 2 { return resp_error("ERR wrong number of arguments"); }
+            if args.len() < 2 {
+                return resp_error("ERR wrong number of arguments");
+            }
             resp_integer(cache.scard(&args[1]) as i64)
         }
 
@@ -275,9 +319,7 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
             resp_simple("OK")
         }
 
-        "DBSIZE" => {
-            resp_integer(cache.stats().total_entries as i64)
-        }
+        "DBSIZE" => resp_integer(cache.stats().total_entries as i64),
 
         "INFO" => {
             let stats = cache.stats();
@@ -285,9 +327,13 @@ fn execute_command(cache: &Cache, args: &[String]) -> String {
                 "# Stats\r\nhits:{}\r\nmisses:{}\r\nhit_rate:{:.4}\r\n\
                  evictions:{}\r\nexpirations:{}\r\ntotal_entries:{}\r\n\
                  total_bytes:{}\r\n",
-                stats.hits, stats.misses, stats.hit_rate(),
-                stats.evictions, stats.expirations,
-                stats.total_entries, stats.total_bytes,
+                stats.hits,
+                stats.misses,
+                stats.hit_rate(),
+                stats.evictions,
+                stats.expirations,
+                stats.total_entries,
+                stats.total_bytes,
             );
             resp_bulk_string(&info)
         }

@@ -1,8 +1,5 @@
 use eframe::egui;
-use ix_governance::{
-    BeliefState, Constitution, EvidenceItem, Persona, TruthValue,
-    list_personas,
-};
+use ix_governance::{list_personas, BeliefState, Constitution, EvidenceItem, Persona, TruthValue};
 
 fn governance_dir() -> std::path::PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -36,9 +33,9 @@ pub struct GovernanceDemo {
 
 impl Default for GovernanceDemo {
     fn default() -> Self {
-        let constitution = Constitution::load(
-            &governance_dir().join("constitutions/default.constitution.md"),
-        ).ok();
+        let constitution =
+            Constitution::load(&governance_dir().join("constitutions/default.constitution.md"))
+                .ok();
         let constitution_error = if constitution.is_none() {
             Some("Failed to load constitution from governance/demerzel/constitutions/".into())
         } else {
@@ -77,7 +74,9 @@ impl Default for GovernanceDemo {
 impl GovernanceDemo {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Governance (ix-governance)");
-        ui.label("Demerzel agent governance: tetravalent logic, constitution, beliefs, and personas.");
+        ui.label(
+            "Demerzel agent governance: tetravalent logic, constitution, beliefs, and personas.",
+        );
         ui.add_space(8.0);
 
         self.tetravalent_section(ui);
@@ -289,10 +288,7 @@ impl GovernanceDemo {
                 // Load on change or first time
                 if self.loaded_persona.is_none() || prev_idx != self.selected_persona_idx {
                     if let Some(name) = self.persona_names.get(self.selected_persona_idx) {
-                        match Persona::load_by_name(
-                            &governance_dir().join("personas"),
-                            name,
-                        ) {
+                        match Persona::load_by_name(&governance_dir().join("personas"), name) {
                             Ok(p) => {
                                 self.loaded_persona = Some(p);
                                 self.persona_load_error = None;
@@ -312,26 +308,28 @@ impl GovernanceDemo {
 
                 if let Some(p) = &self.loaded_persona {
                     ui.add_space(4.0);
-                    egui::Grid::new("persona_grid").striped(true).show(ui, |ui| {
-                        ui.label("Name:");
-                        ui.label(&p.name);
-                        ui.end_row();
-                        ui.label("Role:");
-                        ui.label(&p.role);
-                        ui.end_row();
-                        ui.label("Domain:");
-                        ui.label(&p.domain);
-                        ui.end_row();
-                        ui.label("Voice tone:");
-                        ui.label(&p.voice.tone);
-                        ui.end_row();
-                        ui.label("Voice verbosity:");
-                        ui.label(&p.voice.verbosity);
-                        ui.end_row();
-                        ui.label("Voice style:");
-                        ui.label(&p.voice.style);
-                        ui.end_row();
-                    });
+                    egui::Grid::new("persona_grid")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label("Name:");
+                            ui.label(&p.name);
+                            ui.end_row();
+                            ui.label("Role:");
+                            ui.label(&p.role);
+                            ui.end_row();
+                            ui.label("Domain:");
+                            ui.label(&p.domain);
+                            ui.end_row();
+                            ui.label("Voice tone:");
+                            ui.label(&p.voice.tone);
+                            ui.end_row();
+                            ui.label("Voice verbosity:");
+                            ui.label(&p.voice.verbosity);
+                            ui.end_row();
+                            ui.label("Voice style:");
+                            ui.label(&p.voice.style);
+                            ui.end_row();
+                        });
 
                     if !p.capabilities.is_empty() {
                         ui.add_space(4.0);

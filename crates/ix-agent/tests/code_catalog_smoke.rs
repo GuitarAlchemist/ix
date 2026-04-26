@@ -27,10 +27,7 @@ fn no_filters_returns_every_tool() {
 fn language_filter_narrows_to_rust_suite() {
     let result = call(json!({ "language": "rust" })).expect("rust call");
     let tools = result["tools"].as_array().expect("tools array");
-    let names: Vec<&str> = tools
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     for required in ["Kani", "Verus", "Creusot", "Miri", "Loom", "rustdoc"] {
         assert!(
             names.contains(&required),

@@ -18,8 +18,8 @@
 
 use ix_agent::registry_bridge;
 use ix_agent_core::{
-    AgentAction, BeliefMiddleware, ReadContext, VecEventSink, WriteContext,
-    project_beliefs, tool_proposition,
+    project_beliefs, tool_proposition, AgentAction, BeliefMiddleware, ReadContext, VecEventSink,
+    WriteContext,
 };
 use ix_session::SessionLog;
 use ix_types::Hexavalent;
@@ -36,8 +36,7 @@ fn false_belief_corrected_after_tool_failure() {
     registry_bridge::install_session_log(log);
 
     // Clean the shared loop detector so it doesn't interfere.
-    registry_bridge::shared_loop_detector()
-        .clear_key("ix_totally_fake_belief_tool");
+    registry_bridge::shared_loop_detector().clear_key("ix_totally_fake_belief_tool");
 
     // Seed a ReadContext with a false belief: we believe
     // "ix_totally_fake_belief_tool" will succeed (Probable), but
@@ -79,11 +78,7 @@ fn false_belief_corrected_after_tool_failure() {
         // tool that doesn't exist.
         struct FailHandler;
         impl ix_agent_core::AgentHandler for FailHandler {
-            fn run(
-                &self,
-                _cx: &ReadContext,
-                _action: &AgentAction,
-            ) -> ix_agent_core::ActionResult {
+            fn run(&self, _cx: &ReadContext, _action: &AgentAction) -> ix_agent_core::ActionResult {
                 Err(ix_agent_core::ActionError::Exec(
                     "tool not found: ix_totally_fake_belief_tool".into(),
                 ))
@@ -173,11 +168,7 @@ fn successful_dispatch_sets_belief_to_true() {
         // Handler returns success.
         struct OkHandler;
         impl ix_agent_core::AgentHandler for OkHandler {
-            fn run(
-                &self,
-                _cx: &ReadContext,
-                _action: &AgentAction,
-            ) -> ix_agent_core::ActionResult {
+            fn run(&self, _cx: &ReadContext, _action: &AgentAction) -> ix_agent_core::ActionResult {
                 Ok(ix_agent_core::ActionOutcome::value_only(
                     serde_json::json!({"mean": 3.0}),
                 ))
@@ -223,14 +214,10 @@ fn no_redundant_belief_event_when_already_true() {
 
         struct OkHandler;
         impl ix_agent_core::AgentHandler for OkHandler {
-            fn run(
-                &self,
-                _cx: &ReadContext,
-                _action: &AgentAction,
-            ) -> ix_agent_core::ActionResult {
-                Ok(ix_agent_core::ActionOutcome::value_only(
-                    serde_json::json!(42),
-                ))
+            fn run(&self, _cx: &ReadContext, _action: &AgentAction) -> ix_agent_core::ActionResult {
+                Ok(ix_agent_core::ActionOutcome::value_only(serde_json::json!(
+                    42
+                )))
             }
         }
 
@@ -275,11 +262,7 @@ fn true_belief_corrected_to_false_on_failure() {
 
         struct FailHandler;
         impl ix_agent_core::AgentHandler for FailHandler {
-            fn run(
-                &self,
-                _cx: &ReadContext,
-                _action: &AgentAction,
-            ) -> ix_agent_core::ActionResult {
+            fn run(&self, _cx: &ReadContext, _action: &AgentAction) -> ix_agent_core::ActionResult {
                 Err(ix_agent_core::ActionError::Exec("runtime crash".into()))
             }
         }
@@ -294,9 +277,7 @@ fn true_belief_corrected_to_false_on_failure() {
     }
 
     match &sink.events.last().unwrap() {
-        ix_agent_core::SessionEvent::BeliefChanged {
-            old, new, ..
-        } => {
+        ix_agent_core::SessionEvent::BeliefChanged { old, new, .. } => {
             assert_eq!(*old, Some(Hexavalent::True));
             assert_eq!(*new, Hexavalent::False);
         }

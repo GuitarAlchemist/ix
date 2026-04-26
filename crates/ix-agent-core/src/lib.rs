@@ -65,9 +65,9 @@ pub mod handler;
 pub mod middleware;
 
 pub use action::AgentAction;
+pub use beliefs::{project_beliefs, tool_proposition, BeliefMiddleware};
 pub use context::{AgentCapabilities, EventSink, ReadContext, VecEventSink, WriteContext};
 pub use error::{ActionError, ActionResult};
 pub use event::{ActionOutcome, BlockCode, MiddlewareVerdict, SessionEvent};
 pub use handler::{AgentHandler, LegacyAdapter};
-pub use beliefs::{BeliefMiddleware, project_beliefs, tool_proposition};
 pub use middleware::{Middleware, MiddlewareChain};

@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Points, PlotPoints};
+use egui_plot::{Plot, PlotPoints, Points};
 use ndarray::Array2;
 
 pub struct ClusteringDemo {
@@ -18,7 +18,12 @@ struct ClusterResult {
 
 impl Default for ClusteringDemo {
     fn default() -> Self {
-        Self { k: 3, n_points: 150, spread: 1.5, result: None }
+        Self {
+            k: 3,
+            n_points: 150,
+            spread: 1.5,
+            result: None,
+        }
     }
 }
 
@@ -53,21 +58,37 @@ impl ClusteringDemo {
                 egui::Color32::from_rgb(200, 70, 150),
             ];
 
-            Plot::new("cluster_plot").height(500.0).data_aspect(1.0).show(ui, |plot_ui| {
-                for c in 0..self.k {
-                    let pts: PlotPoints = r.points.iter().zip(r.labels.iter())
-                        .filter(|(_, &l)| l == c)
-                        .map(|(p, _)| *p)
-                        .collect();
-                    let color = colors[c % colors.len()];
-                    plot_ui.points(Points::new(pts).radius(4.0).color(color).name(format!("Cluster {c}")));
-                }
+            Plot::new("cluster_plot")
+                .height(500.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    for c in 0..self.k {
+                        let pts: PlotPoints = r
+                            .points
+                            .iter()
+                            .zip(r.labels.iter())
+                            .filter(|(_, &l)| l == c)
+                            .map(|(p, _)| *p)
+                            .collect();
+                        let color = colors[c % colors.len()];
+                        plot_ui.points(
+                            Points::new(pts)
+                                .radius(4.0)
+                                .color(color)
+                                .name(format!("Cluster {c}")),
+                        );
+                    }
 
-                // Centroids
-                let cpts: PlotPoints = r.centroids.iter().copied().collect();
-                plot_ui.points(Points::new(cpts).radius(10.0).shape(egui_plot::MarkerShape::Diamond)
-                    .color(egui::Color32::WHITE).name("Centroids"));
-            });
+                    // Centroids
+                    let cpts: PlotPoints = r.centroids.iter().copied().collect();
+                    plot_ui.points(
+                        Points::new(cpts)
+                            .radius(10.0)
+                            .shape(egui_plot::MarkerShape::Diamond)
+                            .color(egui::Color32::WHITE)
+                            .name("Centroids"),
+                    );
+                });
         }
     }
 
@@ -78,10 +99,12 @@ impl ClusteringDemo {
         // Generate clustered data
         let pts_per_cluster = self.n_points / self.k;
         let mut points = Vec::new();
-        let centers: Vec<[f64; 2]> = (0..self.k).map(|i| {
-            let angle = 2.0 * std::f64::consts::PI * i as f64 / self.k as f64;
-            [angle.cos() * 5.0, angle.sin() * 5.0]
-        }).collect();
+        let centers: Vec<[f64; 2]> = (0..self.k)
+            .map(|i| {
+                let angle = 2.0 * std::f64::consts::PI * i as f64 / self.k as f64;
+                [angle.cos() * 5.0, angle.sin() * 5.0]
+            })
+            .collect();
 
         for center in &centers {
             for _ in 0..pts_per_cluster {
@@ -101,12 +124,14 @@ impl ClusteringDemo {
         let labels: Vec<usize> = labels_arr.to_vec();
 
         if let Some(ref centroids_arr) = km.centroids {
-            let centroids: Vec<[f64; 2]> = centroids_arr.outer_iter()
-                .map(|r| [r[0], r[1]])
-                .collect();
+            let centroids: Vec<[f64; 2]> =
+                centroids_arr.outer_iter().map(|r| [r[0], r[1]]).collect();
 
             self.result = Some(ClusterResult {
-                points, labels, centroids, iterations: 100,
+                points,
+                labels,
+                centroids,
+                iterations: 100,
             });
         }
     }

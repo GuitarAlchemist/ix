@@ -105,7 +105,11 @@ fn cost_anomaly_hunter_replays_via_pipeline_run() {
     // Identify which cluster index is the "high-cost" anomaly cluster
     // by finding the centroid with the higher mean value.
     assert_eq!(centroids.len(), 2, "k=2 clusters");
-    let anomaly_cluster_idx = if centroids[0][0] > centroids[1][0] { 0 } else { 1 };
+    let anomaly_cluster_idx = if centroids[0][0] > centroids[1][0] {
+        0
+    } else {
+        1
+    };
 
     let anomaly_days: Vec<usize> = labels
         .iter()

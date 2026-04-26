@@ -59,7 +59,11 @@ pub fn rmse(y_true: &Array1<f64>, y_pred: &Array1<f64>) -> f64 {
 /// R² (coefficient of determination).
 pub fn r_squared(y_true: &Array1<f64>, y_pred: &Array1<f64>) -> f64 {
     let mean = y_true.mean().unwrap();
-    let ss_res: f64 = y_true.iter().zip(y_pred.iter()).map(|(t, p)| (t - p).powi(2)).sum();
+    let ss_res: f64 = y_true
+        .iter()
+        .zip(y_pred.iter())
+        .map(|(t, p)| (t - p).powi(2))
+        .sum();
     let ss_tot: f64 = y_true.iter().map(|t| (t - mean).powi(2)).sum();
     if ss_tot < 1e-12 {
         return 0.0;
@@ -86,33 +90,61 @@ pub fn mae(y_true: &Array1<f64>, y_pred: &Array1<f64>) -> f64 {
 
 /// Classification accuracy.
 pub fn accuracy(y_true: &Array1<usize>, y_pred: &Array1<usize>) -> f64 {
-    let correct: usize = y_true.iter().zip(y_pred.iter()).filter(|(t, p)| t == p).count();
+    let correct: usize = y_true
+        .iter()
+        .zip(y_pred.iter())
+        .filter(|(t, p)| t == p)
+        .count();
     correct as f64 / y_true.len() as f64
 }
 
 /// Precision for a specific class.
 pub fn precision(y_true: &Array1<usize>, y_pred: &Array1<usize>, class: usize) -> f64 {
-    let tp: usize = y_true.iter().zip(y_pred.iter())
-        .filter(|(&t, &p)| t == class && p == class).count();
-    let fp: usize = y_true.iter().zip(y_pred.iter())
-        .filter(|(&t, &p)| t != class && p == class).count();
-    if tp + fp == 0 { 0.0 } else { tp as f64 / (tp + fp) as f64 }
+    let tp: usize = y_true
+        .iter()
+        .zip(y_pred.iter())
+        .filter(|(&t, &p)| t == class && p == class)
+        .count();
+    let fp: usize = y_true
+        .iter()
+        .zip(y_pred.iter())
+        .filter(|(&t, &p)| t != class && p == class)
+        .count();
+    if tp + fp == 0 {
+        0.0
+    } else {
+        tp as f64 / (tp + fp) as f64
+    }
 }
 
 /// Recall for a specific class.
 pub fn recall(y_true: &Array1<usize>, y_pred: &Array1<usize>, class: usize) -> f64 {
-    let tp: usize = y_true.iter().zip(y_pred.iter())
-        .filter(|(&t, &p)| t == class && p == class).count();
-    let r#fn: usize = y_true.iter().zip(y_pred.iter())
-        .filter(|(&t, &p)| t == class && p != class).count();
-    if tp + r#fn == 0 { 0.0 } else { tp as f64 / (tp + r#fn) as f64 }
+    let tp: usize = y_true
+        .iter()
+        .zip(y_pred.iter())
+        .filter(|(&t, &p)| t == class && p == class)
+        .count();
+    let r#fn: usize = y_true
+        .iter()
+        .zip(y_pred.iter())
+        .filter(|(&t, &p)| t == class && p != class)
+        .count();
+    if tp + r#fn == 0 {
+        0.0
+    } else {
+        tp as f64 / (tp + r#fn) as f64
+    }
 }
 
 /// F1 score for a specific class.
 pub fn f1_score(y_true: &Array1<usize>, y_pred: &Array1<usize>, class: usize) -> f64 {
     let p = precision(y_true, y_pred, class);
     let r = recall(y_true, y_pred, class);
-    if p + r < 1e-12 { 0.0 } else { 2.0 * p * r / (p + r) }
+    if p + r < 1e-12 {
+        0.0
+    } else {
+        2.0 * p * r / (p + r)
+    }
 }
 
 /// Averaging strategy for multi-class metrics.
@@ -165,7 +197,13 @@ fn average_metric(
     avg: Average,
     metric_fn: fn(&Array1<usize>, &Array1<usize>, usize) -> f64,
 ) -> f64 {
-    let n_classes = y_true.iter().chain(y_pred.iter()).copied().max().unwrap_or(0) + 1;
+    let n_classes = y_true
+        .iter()
+        .chain(y_pred.iter())
+        .copied()
+        .max()
+        .unwrap_or(0)
+        + 1;
     match avg {
         Average::Macro => {
             let sum: f64 = (0..n_classes).map(|c| metric_fn(y_true, y_pred, c)).sum();
@@ -257,7 +295,11 @@ impl ConfusionMatrix {
     pub fn accuracy(&self) -> f64 {
         let correct: usize = (0..self.n_classes).map(|i| self.matrix[[i, i]]).sum();
         let total: usize = self.matrix.sum();
-        if total == 0 { 0.0 } else { correct as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            correct as f64 / total as f64
+        }
     }
 
     /// Per-class precision, recall, F1, and support.
@@ -289,7 +331,11 @@ impl ConfusionMatrix {
 
             let p = if tp + fp > 0.0 { tp / (tp + fp) } else { 0.0 };
             let r = if tp + fn_ > 0.0 { tp / (tp + fn_) } else { 0.0 };
-            let f = if p + r > 0.0 { 2.0 * p * r / (p + r) } else { 0.0 };
+            let f = if p + r > 0.0 {
+                2.0 * p * r / (p + r)
+            } else {
+                0.0
+            };
 
             prec.push(p);
             rec.push(r);
@@ -344,10 +390,7 @@ impl ConfusionMatrix {
 /// assert!(*fpr.first().unwrap() <= 0.0 + 1e-10);
 /// assert!(*fpr.last().unwrap() >= 1.0 - 1e-10);
 /// ```
-pub fn roc_curve(
-    y_true: &Array1<usize>,
-    y_scores: &Array1<f64>,
-) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+pub fn roc_curve(y_true: &Array1<usize>, y_scores: &Array1<f64>) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let n = y_true.len();
     let n_pos = y_true.iter().filter(|&&t| t == 1).count() as f64;
     let n_neg = n as f64 - n_pos;
@@ -597,7 +640,11 @@ mod tests {
 
         let (fpr, tpr, _) = roc_curve(&y_true, &y_scores);
         let auc = roc_auc(&fpr, &tpr);
-        assert!((auc - 1.0).abs() < 1e-10, "Perfect separation should give AUC=1.0, got {}", auc);
+        assert!(
+            (auc - 1.0).abs() < 1e-10,
+            "Perfect separation should give AUC=1.0, got {}",
+            auc
+        );
     }
 
     #[test]
@@ -608,7 +655,11 @@ mod tests {
 
         let (fpr, tpr, _) = roc_curve(&y_true, &y_scores);
         let auc = roc_auc(&fpr, &tpr);
-        assert!((auc - 0.5).abs() < 0.1, "Random scores should give AUC≈0.5, got {}", auc);
+        assert!(
+            (auc - 0.5).abs() < 0.1,
+            "Random scores should give AUC≈0.5, got {}",
+            auc
+        );
     }
 
     #[test]
@@ -619,7 +670,11 @@ mod tests {
 
         let (fpr, tpr, _) = roc_curve(&y_true, &y_scores);
         let auc = roc_auc(&fpr, &tpr);
-        assert!(auc < 0.1, "Inverted scores should give AUC≈0.0, got {}", auc);
+        assert!(
+            auc < 0.1,
+            "Inverted scores should give AUC≈0.0, got {}",
+            auc
+        );
     }
 
     #[test]
@@ -647,6 +702,9 @@ mod tests {
         let y_prob_good = array![0.1, 0.1, 0.9, 0.9];
         let loss_good = log_loss(&y_true, &y_prob_good);
 
-        assert!(loss_bad > loss_good, "Bad predictions should have higher loss");
+        assert!(
+            loss_bad > loss_good,
+            "Bad predictions should have higher loss"
+        );
     }
 }

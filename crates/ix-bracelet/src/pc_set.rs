@@ -134,6 +134,9 @@ mod tests {
     fn display_forte_style() {
         assert_eq!(PcSet::empty().to_string(), "{}");
         assert_eq!(PcSet::from_pcs([0, 4, 7]).to_string(), "{0, 4, 7}");
-        assert_eq!(PcSet::chromatic().to_string(), "{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}");
+        assert_eq!(
+            PcSet::chromatic().to_string(),
+            "{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}"
+        );
     }
 }

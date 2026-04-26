@@ -22,8 +22,8 @@ pub trait SearchState: Clone + Eq + Hash {
 #[allow(dead_code)]
 struct SearchNode<S: SearchState> {
     state: S,
-    g_cost: f64,   // Path cost from start
-    f_cost: f64,   // g + h (estimated total)
+    g_cost: f64, // Path cost from start
+    f_cost: f64, // g + h (estimated total)
     parent: Option<S>,
     action: Option<S::Action>,
 }
@@ -38,7 +38,10 @@ impl<S: SearchState> Eq for SearchNode<S> {}
 
 impl<S: SearchState> Ord for SearchNode<S> {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.f_cost.partial_cmp(&self.f_cost).unwrap_or(Ordering::Equal)
+        other
+            .f_cost
+            .partial_cmp(&self.f_cost)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -214,7 +217,10 @@ where
         for (action, successor, step_cost) in current.state.successors() {
             nodes_generated += 1;
             if !visited.contains(&successor) {
-                came_from.insert(successor.clone(), (current.state.clone(), action.clone(), step_cost));
+                came_from.insert(
+                    successor.clone(),
+                    (current.state.clone(), action.clone(), step_cost),
+                );
                 let h = heuristic(&successor);
                 open.push(SearchNode {
                     state: successor,
@@ -422,7 +428,15 @@ mod tests {
                     let nx = self.x + dx;
                     let ny = self.y + dy;
                     if nx >= 0 && nx < self.width && ny >= 0 && ny < self.height {
-                        Some(((dx, dy), GridPos { x: nx, y: ny, ..*self }, 1.0))
+                        Some((
+                            (dx, dy),
+                            GridPos {
+                                x: nx,
+                                y: ny,
+                                ..*self
+                            },
+                            1.0,
+                        ))
                     } else {
                         None
                     }
@@ -441,7 +455,14 @@ mod tests {
 
     #[test]
     fn test_astar_finds_shortest() {
-        let start = GridPos { x: 0, y: 0, goal_x: 4, goal_y: 4, width: 10, height: 10 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 4,
+            goal_y: 4,
+            width: 10,
+            height: 10,
+        };
         let result = astar(start, manhattan).unwrap();
         assert_eq!(result.cost, 8.0, "Manhattan distance on grid should be 8");
         assert_eq!(result.path.len(), 9);
@@ -449,7 +470,14 @@ mod tests {
 
     #[test]
     fn test_weighted_astar_faster() {
-        let start = GridPos { x: 0, y: 0, goal_x: 9, goal_y: 9, width: 20, height: 20 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 9,
+            goal_y: 9,
+            width: 20,
+            height: 20,
+        };
 
         let opt = astar(start.clone(), manhattan).unwrap();
         let weighted = weighted_astar(start, manhattan, 2.0).unwrap();
@@ -462,7 +490,14 @@ mod tests {
 
     #[test]
     fn test_greedy_finds_path() {
-        let start = GridPos { x: 0, y: 0, goal_x: 3, goal_y: 3, width: 10, height: 10 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 3,
+            goal_y: 3,
+            width: 10,
+            height: 10,
+        };
         let result = greedy_best_first(start, manhattan).unwrap();
         assert!(result.path.last().unwrap().is_goal());
     }

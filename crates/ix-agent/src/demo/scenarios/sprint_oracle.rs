@@ -49,7 +49,10 @@ impl DemoScenario for SprintOracle {
                 },
                 interpret: Some(|output: &Value| {
                     let mean = output.get("mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let std = output.get("std_dev").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let std = output
+                        .get("std_dev")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
                     let min = output.get("min").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let max = output.get("max").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     format!(
@@ -59,7 +62,6 @@ impl DemoScenario for SprintOracle {
                     )
                 }),
             },
-
             // Step 2: ix_linear_regression — velocity trend
             DemoStep {
                 label: "Fit velocity trend line".into(),
@@ -85,7 +87,8 @@ impl DemoScenario for SprintOracle {
                     "Regression: velocity trend + prediction.".into()
                 },
                 interpret: Some(|output: &Value| {
-                    let slope = output.get("weights")
+                    let slope = output
+                        .get("weights")
                         .and_then(|v| v.as_array())
                         .and_then(|a| a.first())
                         .and_then(|v| v.as_f64())
@@ -106,7 +109,6 @@ impl DemoScenario for SprintOracle {
                     )
                 }),
             },
-
             // Step 3: ix_markov — ticket state transitions (THE AHA MOMENT)
             DemoStep {
                 label: "Model ticket state transitions".into(),
@@ -142,7 +144,6 @@ impl DemoScenario for SprintOracle {
                         .into()
                 }),
             },
-
             // Step 4: ix_bandit — optimize estimation strategy
             DemoStep {
                 label: "Optimize story point estimation".into(),
@@ -165,7 +166,8 @@ impl DemoScenario for SprintOracle {
                     let best = output.get("best_arm").and_then(|v| v.as_u64()).unwrap_or(0);
                     let strategies = ["planning poker", "t-shirt sizing + calibration", "gut feel"];
                     let name = strategies.get(best as usize).unwrap_or(&"unknown");
-                    let regret = output.get("cumulative_regret")
+                    let regret = output
+                        .get("cumulative_regret")
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0);
                     format!(
@@ -185,7 +187,9 @@ fn generate_velocity_history(sprints: usize, seed: u64) -> Vec<f64> {
     let mut rng_state = seed;
     let mut data = Vec::with_capacity(sprints);
     for i in 0..sprints {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let noise = ((rng_state >> 33) as f64 / u32::MAX as f64 - 0.5) * 10.0;
         // Base 30 points + slight upward trend + noise
         let velocity = 30.0 + 1.5 * i as f64 + noise;

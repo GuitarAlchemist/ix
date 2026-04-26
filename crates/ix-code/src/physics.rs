@@ -73,10 +73,7 @@ pub fn analyze_code_stability(metric_history: &[f64]) -> CodeStability {
     }
 
     // Detect a (near-)constant series up front and classify it as Stable.
-    let min = metric_history
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min);
+    let min = metric_history.iter().copied().fold(f64::INFINITY, f64::min);
     let max = metric_history
         .iter()
         .copied()
@@ -115,10 +112,7 @@ pub fn analyze_code_stability(metric_history: &[f64]) -> CodeStability {
 
     // A useful auxiliary signal: the normalized total variation. Chaotic
     // trajectories oscillate with large jumps relative to their range.
-    let total_variation: f64 = metric_history
-        .windows(2)
-        .map(|w| (w[1] - w[0]).abs())
-        .sum();
+    let total_variation: f64 = metric_history.windows(2).map(|w| (w[1] - w[0]).abs()).sum();
     let normalized_tv =
         total_variation / (range * (metric_history.len().saturating_sub(1) as f64).max(1.0));
 
@@ -344,9 +338,7 @@ pub fn model_code_evolution(quality_history: &[f64], n_states: usize) -> CodeEvo
         idx.clamp(0, n_states as isize - 1) as usize
     };
 
-    let edges: Vec<f64> = (0..=n_states)
-        .map(|i| min + width * i as f64)
-        .collect();
+    let edges: Vec<f64> = (0..=n_states).map(|i| min + width * i as f64).collect();
 
     // Count transitions.
     let mut counts = vec![vec![0.0f64; n_states]; n_states];
@@ -454,8 +446,7 @@ pub fn compute_laplacian_spectrum(n: usize, edges: &[(usize, usize)]) -> Laplaci
     // back sorted in *descending* order, but the Laplacian analysis wants
     // the smallest eigenvalues (lambda_1 = 0, lambda_2 = algebraic
     // connectivity), so reverse into ascending order.
-    let (eig_desc, vec_desc) =
-        ix_math::eigen::symmetric_eigen(&lap).expect("square Laplacian");
+    let (eig_desc, vec_desc) = ix_math::eigen::symmetric_eigen(&lap).expect("square Laplacian");
     let total = eig_desc.len();
     let indexed: Vec<(f64, Vec<f64>)> = (0..total)
         .rev()
@@ -570,9 +561,7 @@ mod tests {
 
         // Total variation of the filtered signal should be strictly less than
         // that of the noisy input.
-        let tv = |xs: &[f64]| -> f64 {
-            xs.windows(2).map(|w| (w[1] - w[0]).abs()).sum()
-        };
+        let tv = |xs: &[f64]| -> f64 { xs.windows(2).map(|w| (w[1] - w[0]).abs()).sum() };
         let tv_noisy = tv(&noisy);
         let est: Vec<f64> = filtered.iter().map(|f| f.estimated_quality).collect();
         let tv_filt = tv(&est);

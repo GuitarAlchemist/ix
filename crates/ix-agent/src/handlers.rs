@@ -21,7 +21,10 @@ fn parse_f64_array(val: &Value, field: &str) -> Result<Vec<f64>, String> {
         .and_then(|v| v.as_array())
         .ok_or_else(|| format!("Missing or invalid field '{}'", field))?
         .iter()
-        .map(|v| v.as_f64().ok_or_else(|| format!("Non-numeric value in '{}'", field)))
+        .map(|v| {
+            v.as_f64()
+                .ok_or_else(|| format!("Non-numeric value in '{}'", field))
+        })
         .collect()
 }
 
@@ -34,7 +37,10 @@ fn parse_f64_matrix(val: &Value, field: &str) -> Result<Vec<Vec<f64>>, String> {
             row.as_array()
                 .ok_or_else(|| format!("Non-array row in '{}'", field))?
                 .iter()
-                .map(|v| v.as_f64().ok_or_else(|| format!("Non-numeric value in '{}'", field)))
+                .map(|v| {
+                    v.as_f64()
+                        .ok_or_else(|| format!("Non-numeric value in '{}'", field))
+                })
                 .collect()
         })
         .collect()
@@ -113,18 +119,16 @@ pub fn distance(params: Value) -> Result<Value, String> {
 
     let (distance, metric_name) = match metric {
         "euclidean" => {
-            let d = ix_math::distance::euclidean(&arr_a, &arr_b)
-                .map_err(|e| format!("{}", e))?;
+            let d = ix_math::distance::euclidean(&arr_a, &arr_b).map_err(|e| format!("{}", e))?;
             (d, "euclidean")
         }
         "cosine" => {
-            let d = ix_math::distance::cosine_distance(&arr_a, &arr_b)
-                .map_err(|e| format!("{}", e))?;
+            let d =
+                ix_math::distance::cosine_distance(&arr_a, &arr_b).map_err(|e| format!("{}", e))?;
             (d, "cosine")
         }
         "manhattan" => {
-            let d = ix_math::distance::manhattan(&arr_a, &arr_b)
-                .map_err(|e| format!("{}", e))?;
+            let d = ix_math::distance::manhattan(&arr_a, &arr_b).map_err(|e| format!("{}", e))?;
             (d, "manhattan")
         }
         _ => return Err(format!("Unknown metric: {}", metric)),
@@ -245,7 +249,11 @@ pub fn linear_regression(params: Value) -> Result<Value, String> {
     model.fit(&x, &y);
 
     let predictions = model.predict(&x);
-    let weights = model.weights.as_ref().map(|w| w.to_vec()).unwrap_or_default();
+    let weights = model
+        .weights
+        .as_ref()
+        .map(|w| w.to_vec())
+        .unwrap_or_default();
 
     Ok(json!({
         "weights": weights,
@@ -276,9 +284,11 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
         .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
         .unwrap_or_default();
 
-    let inertia = km.centroids.as_ref().map(|c| {
-        ix_unsupervised::kmeans::inertia(&data, &labels, c)
-    }).unwrap_or(0.0);
+    let inertia = km
+        .centroids
+        .as_ref()
+        .map(|c| ix_unsupervised::kmeans::inertia(&data, &labels, c))
+        .unwrap_or(0.0);
 
     Ok(json!({
         "labels": labels.to_vec(),
@@ -339,7 +349,11 @@ pub fn viterbi(params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_array())
         .ok_or_else(|| "Missing or invalid field 'observations'".to_string())?
         .iter()
-        .map(|v| v.as_u64().ok_or_else(|| "Non-integer in observations".to_string()).map(|n| n as usize))
+        .map(|v| {
+            v.as_u64()
+                .ok_or_else(|| "Non-integer in observations".to_string())
+                .map(|n| n as usize)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let initial = vec_to_array1(&initial_data);
@@ -472,7 +486,11 @@ pub fn adversarial_fgsm(params: Value) -> Result<Value, String> {
 
     let adversarial = ix_adversarial::evasion::fgsm(&input_arr, &grad_arr, epsilon);
     let perturbation = &adversarial - &input_arr;
-    let l_inf = perturbation.mapv(f64::abs).iter().cloned().fold(0.0_f64, f64::max);
+    let l_inf = perturbation
+        .mapv(f64::abs)
+        .iter()
+        .cloned()
+        .fold(0.0_f64, f64::max);
 
     Ok(json!({
         "adversarial_input": adversarial.to_vec(),
@@ -520,14 +538,12 @@ pub fn bloom_filter(params: Value) -> Result<Value, String> {
                 "bit_size": bf.bit_size(),
             }))
         }
-        _ => {
-            Ok(json!({
-                "created": true,
-                "items_count": items.len(),
-                "bit_size": bf.bit_size(),
-                "estimated_fp_rate": bf.estimated_fp_rate(),
-            }))
-        }
+        _ => Ok(json!({
+            "created": true,
+            "items_count": items.len(),
+            "bit_size": bf.bit_size(),
+            "estimated_fp_rate": bf.estimated_fp_rate(),
+        })),
     }
 }
 
@@ -545,21 +561,43 @@ pub fn grammar_weights(params: Value) -> Result<Value, String> {
     let mut rules: Vec<WeightedRule> = rules_val
         .iter()
         .map(|r| {
-            let id = r.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = r
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let alpha = r.get("alpha").and_then(|v| v.as_f64()).unwrap_or(1.0);
             let beta = r.get("beta").and_then(|v| v.as_f64()).unwrap_or(1.0);
-            let weight = r.get("weight").and_then(|v| v.as_f64()).unwrap_or(alpha / (alpha + beta));
+            let weight = r
+                .get("weight")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(alpha / (alpha + beta));
             let level = r.get("level").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let source = r.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            WeightedRule { id, alpha, beta, weight, level, source }
+            let source = r
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            WeightedRule {
+                id,
+                alpha,
+                beta,
+                weight,
+                level,
+                source,
+            }
         })
         .collect();
 
     // Apply Bayesian update if observation provided
     if let Some(obs) = params.get("observation") {
-        let rule_id = obs.get("rule_id").and_then(|v| v.as_str())
+        let rule_id = obs
+            .get("rule_id")
+            .and_then(|v| v.as_str())
             .ok_or("observation.rule_id required")?;
-        let success = obs.get("success").and_then(|v| v.as_bool())
+        let success = obs
+            .get("success")
+            .and_then(|v| v.as_bool())
             .ok_or("observation.success required")?;
 
         for rule in &mut rules {
@@ -570,19 +608,24 @@ pub fn grammar_weights(params: Value) -> Result<Value, String> {
         }
     }
 
-    let temperature = params.get("temperature").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let temperature = params
+        .get("temperature")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
     let probs = softmax(&rules, temperature);
 
     let rules_json: Vec<Value> = rules
         .iter()
-        .map(|r| json!({
-            "id": r.id,
-            "alpha": r.alpha,
-            "beta": r.beta,
-            "weight": r.weight,
-            "level": r.level,
-            "source": r.source,
-        }))
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "alpha": r.alpha,
+                "beta": r.beta,
+                "weight": r.weight,
+                "level": r.level,
+                "source": r.source,
+            })
+        })
         .collect();
 
     let probs_json: Vec<Value> = probs
@@ -610,30 +653,48 @@ pub fn grammar_evolve(params: Value) -> Result<Value, String> {
     let species: Vec<GrammarSpecies> = species_val
         .iter()
         .map(|s| {
-            let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = s
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let proportion = s.get("proportion").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let fitness = s.get("fitness").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let is_stable = s.get("is_stable").and_then(|v| v.as_bool()).unwrap_or(false);
-            GrammarSpecies { id, proportion, fitness, is_stable }
+            let is_stable = s
+                .get("is_stable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            GrammarSpecies {
+                id,
+                proportion,
+                fitness,
+                is_stable,
+            }
         })
         .collect();
 
     let steps = parse_usize(&params, "steps")?;
     let dt = params.get("dt").and_then(|v| v.as_f64()).unwrap_or(0.05);
-    let prune_threshold = params.get("prune_threshold").and_then(|v| v.as_f64()).unwrap_or(1e-6);
+    let prune_threshold = params
+        .get("prune_threshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1e-6);
 
     let result = simulate(&species, steps, dt, prune_threshold);
 
-    let species_to_json = |s: &GrammarSpecies| json!({
-        "id": s.id,
-        "proportion": s.proportion,
-        "fitness": s.fitness,
-        "is_stable": s.is_stable,
-    });
+    let species_to_json = |s: &GrammarSpecies| {
+        json!({
+            "id": s.id,
+            "proportion": s.proportion,
+            "fitness": s.fitness,
+            "is_stable": s.is_stable,
+        })
+    };
 
     // Return trajectory sampled at most every 10 steps to keep payload manageable
     let sample_rate = (steps / 100).max(1);
-    let trajectory_json: Vec<Value> = result.trajectory
+    let trajectory_json: Vec<Value> = result
+        .trajectory
         .iter()
         .step_by(sample_rate)
         .map(|step| step.iter().map(species_to_json).collect::<Vec<_>>().into())
@@ -656,9 +717,18 @@ pub fn grammar_search(params: Value) -> Result<Value, String> {
     let grammar_str = parse_str(&params, "grammar_ebnf")?;
     let grammar = EbnfGrammar::from_str(grammar_str)?;
 
-    let max_iterations = params.get("max_iterations").and_then(|v| v.as_u64()).unwrap_or(500) as usize;
-    let exploration = params.get("exploration").and_then(|v| v.as_f64()).unwrap_or(1.41);
-    let max_depth = params.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let max_iterations = params
+        .get("max_iterations")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(500) as usize;
+    let exploration = params
+        .get("exploration")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.41);
+    let max_depth = params
+        .get("max_depth")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20) as usize;
     let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
 
     let result = search_derivation(grammar, max_iterations, exploration, max_depth, seed);
@@ -686,20 +756,35 @@ pub fn rotation(params: Value) -> Result<Value, String> {
     match op {
         "quaternion" => {
             let axis = parse_f64_array(&params, "axis")?;
-            let angle = params.get("angle").and_then(|v| v.as_f64())
+            let angle = params
+                .get("angle")
+                .and_then(|v| v.as_f64())
                 .ok_or("Missing 'angle'")?;
-            if axis.len() != 3 { return Err("axis must have 3 elements".into()); }
+            if axis.len() != 3 {
+                return Err("axis must have 3 elements".into());
+            }
             let q = Quaternion::from_axis_angle([axis[0], axis[1], axis[2]], angle);
             Ok(json!({ "w": q.w, "x": q.x, "y": q.y, "z": q.z, "norm": q.norm() }))
         }
         "slerp" => {
             use ix_rotation::slerp::slerp;
             let axis1 = parse_f64_array(&params, "axis")?;
-            let angle1 = params.get("angle").and_then(|v| v.as_f64()).ok_or("Missing 'angle'")?;
+            let angle1 = params
+                .get("angle")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'angle'")?;
             let axis2 = parse_f64_array(&params, "axis2")?;
-            let angle2 = params.get("angle2").and_then(|v| v.as_f64()).ok_or("Missing 'angle2'")?;
-            let t = params.get("t").and_then(|v| v.as_f64()).ok_or("Missing 't'")?;
-            if axis1.len() != 3 || axis2.len() != 3 { return Err("axes must have 3 elements".into()); }
+            let angle2 = params
+                .get("angle2")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'angle2'")?;
+            let t = params
+                .get("t")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 't'")?;
+            if axis1.len() != 3 || axis2.len() != 3 {
+                return Err("axes must have 3 elements".into());
+            }
             let q0 = Quaternion::from_axis_angle([axis1[0], axis1[1], axis1[2]], angle1);
             let q1 = Quaternion::from_axis_angle([axis2[0], axis2[1], axis2[2]], angle2);
             let r = slerp(&q0, &q1, t);
@@ -707,25 +792,43 @@ pub fn rotation(params: Value) -> Result<Value, String> {
         }
         "euler_to_quat" => {
             use ix_rotation::euler::{to_quaternion, EulerOrder};
-            let roll = params.get("roll").and_then(|v| v.as_f64()).ok_or("Missing 'roll'")?;
-            let pitch = params.get("pitch").and_then(|v| v.as_f64()).ok_or("Missing 'pitch'")?;
-            let yaw = params.get("yaw").and_then(|v| v.as_f64()).ok_or("Missing 'yaw'")?;
+            let roll = params
+                .get("roll")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'roll'")?;
+            let pitch = params
+                .get("pitch")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'pitch'")?;
+            let yaw = params
+                .get("yaw")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'yaw'")?;
             let q = to_quaternion(roll, pitch, yaw, EulerOrder::XYZ);
             Ok(json!({ "w": q.w, "x": q.x, "y": q.y, "z": q.z, "norm": q.norm() }))
         }
         "quat_to_euler" => {
-            use ix_rotation::euler::{from_quaternion, EulerOrder, gimbal_lock_check};
+            use ix_rotation::euler::{from_quaternion, gimbal_lock_check, EulerOrder};
             let qv = parse_f64_array(&params, "quaternion")?;
-            if qv.len() != 4 { return Err("quaternion must have 4 elements [w,x,y,z]".into()); }
+            if qv.len() != 4 {
+                return Err("quaternion must have 4 elements [w,x,y,z]".into());
+            }
             let q = Quaternion::new(qv[0], qv[1], qv[2], qv[3]);
             let (roll, pitch, yaw) = from_quaternion(&q, EulerOrder::XYZ);
-            Ok(json!({ "roll": roll, "pitch": pitch, "yaw": yaw, "gimbal_lock": gimbal_lock_check(pitch) }))
+            Ok(
+                json!({ "roll": roll, "pitch": pitch, "yaw": yaw, "gimbal_lock": gimbal_lock_check(pitch) }),
+            )
         }
         "rotate_point" => {
             let axis = parse_f64_array(&params, "axis")?;
-            let angle = params.get("angle").and_then(|v| v.as_f64()).ok_or("Missing 'angle'")?;
+            let angle = params
+                .get("angle")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'angle'")?;
             let point = parse_f64_array(&params, "point")?;
-            if axis.len() != 3 || point.len() != 3 { return Err("axis and point must have 3 elements".into()); }
+            if axis.len() != 3 || point.len() != 3 {
+                return Err("axis and point must have 3 elements".into());
+            }
             let q = Quaternion::from_axis_angle([axis[0], axis[1], axis[2]], angle);
             let rotated = q.rotate_point([point[0], point[1], point[2]]);
             Ok(json!({ "rotated_point": rotated }))
@@ -733,12 +836,19 @@ pub fn rotation(params: Value) -> Result<Value, String> {
         "rotation_matrix" => {
             use ix_rotation::rotation_matrix::{from_quaternion, is_rotation_matrix};
             let axis = parse_f64_array(&params, "axis")?;
-            let angle = params.get("angle").and_then(|v| v.as_f64()).ok_or("Missing 'angle'")?;
-            if axis.len() != 3 { return Err("axis must have 3 elements".into()); }
+            let angle = params
+                .get("angle")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'angle'")?;
+            if axis.len() != 3 {
+                return Err("axis must have 3 elements".into());
+            }
             let q = Quaternion::from_axis_angle([axis[0], axis[1], axis[2]], angle);
             let m = from_quaternion(&q);
             let valid = is_rotation_matrix(&m, 1e-8);
-            Ok(json!({ "matrix": m, "valid": valid, "quaternion": { "w": q.w, "x": q.x, "y": q.y, "z": q.z } }))
+            Ok(
+                json!({ "matrix": m, "valid": valid, "quaternion": { "w": q.w, "x": q.x, "y": q.y, "z": q.z } }),
+            )
         }
         _ => Err(format!("Unknown rotation operation: {}", op)),
     }
@@ -756,33 +866,65 @@ pub fn number_theory(params: Value) -> Result<Value, String> {
             Ok(json!({ "primes": primes, "count": primes.len(), "limit": limit }))
         }
         "is_prime" => {
-            let n = params.get("n").and_then(|v| v.as_u64()).ok_or("Missing 'n'")?;
+            let n = params
+                .get("n")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'n'")?;
             let trial = ix_number_theory::primality::is_prime_trial(n);
             let miller_rabin = ix_number_theory::primality::is_prime_miller_rabin(n, 10);
             Ok(json!({ "n": n, "is_prime_trial": trial, "is_prime_miller_rabin": miller_rabin }))
         }
         "mod_pow" => {
-            let base = params.get("base").and_then(|v| v.as_u64()).ok_or("Missing 'base'")?;
-            let exp = params.get("exp").and_then(|v| v.as_u64()).ok_or("Missing 'exp'")?;
-            let modulus = params.get("modulus").and_then(|v| v.as_u64()).ok_or("Missing 'modulus'")?;
+            let base = params
+                .get("base")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'base'")?;
+            let exp = params
+                .get("exp")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'exp'")?;
+            let modulus = params
+                .get("modulus")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'modulus'")?;
             let result = ix_number_theory::modular::mod_pow(base, exp, modulus);
-            Ok(json!({ "result": result, "expression": format!("{}^{} mod {}", base, exp, modulus) }))
+            Ok(
+                json!({ "result": result, "expression": format!("{}^{} mod {}", base, exp, modulus) }),
+            )
         }
         "gcd" => {
-            let a = params.get("a").and_then(|v| v.as_u64()).ok_or("Missing 'a'")?;
-            let b = params.get("b").and_then(|v| v.as_u64()).ok_or("Missing 'b'")?;
+            let a = params
+                .get("a")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'a'")?;
+            let b = params
+                .get("b")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'b'")?;
             let g = ix_number_theory::modular::gcd(a, b);
             Ok(json!({ "gcd": g, "a": a, "b": b }))
         }
         "lcm" => {
-            let a = params.get("a").and_then(|v| v.as_u64()).ok_or("Missing 'a'")?;
-            let b = params.get("b").and_then(|v| v.as_u64()).ok_or("Missing 'b'")?;
+            let a = params
+                .get("a")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'a'")?;
+            let b = params
+                .get("b")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'b'")?;
             let l = ix_number_theory::modular::lcm(a, b);
             Ok(json!({ "lcm": l, "a": a, "b": b }))
         }
         "mod_inverse" => {
-            let a = params.get("a").and_then(|v| v.as_u64()).ok_or("Missing 'a'")?;
-            let modulus = params.get("modulus").and_then(|v| v.as_u64()).ok_or("Missing 'modulus'")?;
+            let a = params
+                .get("a")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'a'")?;
+            let modulus = params
+                .get("modulus")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'modulus'")?;
             let inv = ix_number_theory::modular::mod_inverse(a, modulus);
             Ok(json!({ "inverse": inv, "a": a, "modulus": modulus, "exists": inv.is_some() }))
         }
@@ -791,8 +933,14 @@ pub fn number_theory(params: Value) -> Result<Value, String> {
             let primes = ix_number_theory::sieve::sieve_of_eratosthenes(limit);
             let gaps: Vec<usize> = primes.windows(2).map(|w| w[1] - w[0]).collect();
             let max_gap = gaps.iter().copied().max().unwrap_or(0);
-            let avg_gap = if gaps.is_empty() { 0.0 } else { gaps.iter().sum::<usize>() as f64 / gaps.len() as f64 };
-            Ok(json!({ "prime_count": primes.len(), "max_gap": max_gap, "avg_gap": avg_gap, "first_10_gaps": &gaps[..gaps.len().min(10)] }))
+            let avg_gap = if gaps.is_empty() {
+                0.0
+            } else {
+                gaps.iter().sum::<usize>() as f64 / gaps.len() as f64
+            };
+            Ok(
+                json!({ "prime_count": primes.len(), "max_gap": max_gap, "avg_gap": avg_gap, "first_10_gaps": &gaps[..gaps.len().min(10)] }),
+            )
         }
         _ => Err(format!("Unknown number theory operation: {}", op)),
     }
@@ -809,28 +957,46 @@ pub fn fractal(params: Value) -> Result<Value, String> {
             let terms = parse_usize(&params, "terms")?;
             let curve = ix_fractal::takagi::takagi_series(n_points, terms);
             let step = 1.0 / (n_points - 1).max(1) as f64;
-            let points: Vec<[f64; 2]> = curve.iter().enumerate()
-                .map(|(i, &y)| [i as f64 * step, y]).collect();
+            let points: Vec<[f64; 2]> = curve
+                .iter()
+                .enumerate()
+                .map(|(i, &y)| [i as f64 * step, y])
+                .collect();
             Ok(json!({ "points": points, "n_points": n_points, "terms": terms }))
         }
         "hilbert" => {
-            let order = params.get("order").and_then(|v| v.as_u64()).ok_or("Missing 'order'")? as u32;
+            let order = params
+                .get("order")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'order'")? as u32;
             let points = ix_fractal::space_filling::hilbert_curve(order);
             Ok(json!({ "points": points, "order": order, "n_points": points.len() }))
         }
         "peano" => {
-            let order = params.get("order").and_then(|v| v.as_u64()).ok_or("Missing 'order'")? as u32;
+            let order = params
+                .get("order")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'order'")? as u32;
             let points = ix_fractal::space_filling::peano_curve(order);
             Ok(json!({ "points": points, "order": order, "n_points": points.len() }))
         }
         "morton_encode" => {
-            let x = params.get("x").and_then(|v| v.as_u64()).ok_or("Missing 'x'")? as u32;
-            let y = params.get("y").and_then(|v| v.as_u64()).ok_or("Missing 'y'")? as u32;
+            let x = params
+                .get("x")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'x'")? as u32;
+            let y = params
+                .get("y")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'y'")? as u32;
             let z = ix_fractal::space_filling::morton_encode(x, y);
             Ok(json!({ "z_order": z, "x": x, "y": y }))
         }
         "morton_decode" => {
-            let z = params.get("z").and_then(|v| v.as_u64()).ok_or("Missing 'z'")?;
+            let z = params
+                .get("z")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'z'")?;
             let (x, y) = ix_fractal::space_filling::morton_decode(z);
             Ok(json!({ "x": x, "y": y, "z_order": z }))
         }
@@ -847,7 +1013,9 @@ pub fn sedenion(params: Value) -> Result<Value, String> {
     match op {
         "multiply" => {
             let b_vec = parse_f64_array(&params, "b")?;
-            if a_vec.len() != b_vec.len() { return Err("a and b must have same length".into()); }
+            if a_vec.len() != b_vec.len() {
+                return Err("a and b must have same length".into());
+            }
             let product = ix_sedenion::cayley_dickson::double_multiply(&a_vec, &b_vec);
             Ok(json!({ "product": product, "dimension": a_vec.len() }))
         }
@@ -875,26 +1043,44 @@ pub fn topo(params: Value) -> Result<Value, String> {
     let points_raw = parse_f64_matrix(&params, "points")?;
 
     let max_dim = params.get("max_dim").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-    let max_radius = params.get("max_radius").and_then(|v| v.as_f64()).unwrap_or(2.0);
+    let max_radius = params
+        .get("max_radius")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(2.0);
 
     match op {
         "persistence" => {
-            let diagrams = ix_topo::pointcloud::persistence_from_points(&points_raw, max_dim, max_radius);
-            let diag_json: Vec<Value> = diagrams.iter().enumerate().map(|(dim, d)| {
-                let pairs: Vec<Value> = d.pairs.iter().map(|p| json!({ "birth": p.0, "death": p.1 })).collect();
-                json!({ "dimension": dim, "pairs": pairs })
-            }).collect();
+            let diagrams =
+                ix_topo::pointcloud::persistence_from_points(&points_raw, max_dim, max_radius);
+            let diag_json: Vec<Value> = diagrams
+                .iter()
+                .enumerate()
+                .map(|(dim, d)| {
+                    let pairs: Vec<Value> = d
+                        .pairs
+                        .iter()
+                        .map(|p| json!({ "birth": p.0, "death": p.1 }))
+                        .collect();
+                    json!({ "dimension": dim, "pairs": pairs })
+                })
+                .collect();
             Ok(json!({ "diagrams": diag_json, "max_dim": max_dim, "max_radius": max_radius }))
         }
         "betti_at_radius" => {
-            let radius = params.get("radius").and_then(|v| v.as_f64()).ok_or("Missing 'radius'")?;
+            let radius = params
+                .get("radius")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing 'radius'")?;
             let betti = ix_topo::pointcloud::betti_at_radius(&points_raw, max_dim, radius);
             Ok(json!({ "betti_numbers": betti, "radius": radius }))
         }
         "betti_curve" => {
             let n_steps = params.get("n_steps").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
             let curve = ix_topo::pointcloud::betti_curve(&points_raw, max_dim, n_steps);
-            let curve_json: Vec<Value> = curve.iter().map(|(r, b)| json!({ "radius": r, "betti": b })).collect();
+            let curve_json: Vec<Value> = curve
+                .iter()
+                .map(|(r, b)| json!({ "radius": r, "betti": b }))
+                .collect();
             Ok(json!({ "curve": curve_json, "n_steps": n_steps }))
         }
         _ => Err(format!("Unknown topo operation: {}", op)),
@@ -908,7 +1094,7 @@ pub fn category(params: Value) -> Result<Value, String> {
 
     match op {
         "monad_laws" => {
-            use ix_category::monad::{OptionMonad, Monad};
+            use ix_category::monad::{Monad, OptionMonad};
             let a = params.get("value").and_then(|v| v.as_i64()).unwrap_or(5) as i32;
             let f = |x: i32| -> Option<i32> { Some(x + 1) };
             let g = |x: i32| -> Option<i32> { Some(x * 2) };
@@ -929,8 +1115,9 @@ pub fn category(params: Value) -> Result<Value, String> {
                 Some(v) => OptionMonad::bind(Some(v), g),
                 None => None,
             };
-            let rhs_assoc: Option<i32> = OptionMonad::bind(m, |x| {
-                match f(x) { Some(v) => OptionMonad::bind(Some(v), g), None => None }
+            let rhs_assoc: Option<i32> = OptionMonad::bind(m, |x| match f(x) {
+                Some(v) => OptionMonad::bind(Some(v), g),
+                None => None,
             });
             let assoc_ok = lhs_assoc == rhs_assoc;
 
@@ -944,9 +1131,14 @@ pub fn category(params: Value) -> Result<Value, String> {
         }
         "free_forgetful" => {
             use ix_category::monad::FreeForgetfulAdj;
-            let elements: Vec<i32> = params.get("elements")
+            let elements: Vec<i32> = params
+                .get("elements")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_i64().map(|n| n as i32))
+                        .collect()
+                })
                 .unwrap_or_else(|| vec![1, 2, 3]);
             let free = FreeForgetfulAdj::free(&elements);
             let forget = FreeForgetfulAdj::forget(&free);
@@ -977,8 +1169,11 @@ pub fn nn_forward(params: Value) -> Result<Value, String> {
             let mut layer = ix_nn::layer::Dense::new(input_size, output_size);
             let output = layer.forward(&input);
             let output_rows: Vec<Vec<f64>> = (0..output.nrows())
-                .map(|i| output.row(i).to_vec()).collect();
-            Ok(json!({ "output": output_rows, "input_size": input_size, "output_size": output_size }))
+                .map(|i| output.row(i).to_vec())
+                .collect();
+            Ok(
+                json!({ "output": output_rows, "input_size": input_size, "output_size": output_size }),
+            )
         }
         "mse_loss" => {
             let pred_rows = parse_f64_matrix(&params, "input")?;
@@ -1000,8 +1195,7 @@ pub fn nn_forward(params: Value) -> Result<Value, String> {
             let max_len = parse_usize(&params, "max_len")?;
             let d_model = parse_usize(&params, "d_model")?;
             let enc = ix_nn::positional::sinusoidal_encoding(max_len, d_model);
-            let rows: Vec<Vec<f64>> = (0..enc.nrows())
-                .map(|i| enc.row(i).to_vec()).collect();
+            let rows: Vec<Vec<f64>> = (0..enc.nrows()).map(|i| enc.row(i).to_vec()).collect();
             Ok(json!({ "encoding": rows, "max_len": max_len, "d_model": d_model }))
         }
         _ => Err(format!("Unknown nn operation: {}", op)),
@@ -1012,7 +1206,7 @@ pub fn nn_forward(params: Value) -> Result<Value, String> {
 
 pub fn bandit(params: Value) -> Result<Value, String> {
     use rand::SeedableRng;
-    use rand_distr::{Normal, Distribution};
+    use rand_distr::{Distribution, Normal};
 
     let algo = parse_str(&params, "algorithm")?;
     let true_means = parse_f64_array(&params, "true_means")?;
@@ -1025,7 +1219,10 @@ pub fn bandit(params: Value) -> Result<Value, String> {
 
     match algo {
         "epsilon_greedy" => {
-            let epsilon = params.get("epsilon").and_then(|v| v.as_f64()).unwrap_or(0.1);
+            let epsilon = params
+                .get("epsilon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.1);
             let mut bandit = ix_rl::bandit::EpsilonGreedy::new(n_arms, epsilon, 42);
             for _ in 0..rounds {
                 let arm = bandit.select_arm();
@@ -1090,7 +1287,10 @@ pub fn evolution(params: Value) -> Result<Value, String> {
     let func_name = parse_str(&params, "function")?;
     let dimensions = parse_usize(&params, "dimensions")?;
     let generations = parse_usize(&params, "generations")?;
-    let pop_size = params.get("population_size").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let pop_size = params
+        .get("population_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50) as usize;
 
     #[allow(clippy::type_complexity)]
     let fitness_fn: Box<dyn Fn(&Array1<f64>) -> f64> = match func_name {
@@ -1102,14 +1302,20 @@ pub fn evolution(params: Value) -> Result<Value, String> {
         }),
         "rastrigin" => Box::new(|x: &Array1<f64>| {
             let n = x.len() as f64;
-            10.0 * n + x.iter().map(|&xi| xi * xi - 10.0 * (2.0 * std::f64::consts::PI * xi).cos()).sum::<f64>()
+            10.0 * n
+                + x.iter()
+                    .map(|&xi| xi * xi - 10.0 * (2.0 * std::f64::consts::PI * xi).cos())
+                    .sum::<f64>()
         }),
         _ => return Err(format!("Unknown function: {}", func_name)),
     };
 
     let result = match algo {
         "genetic" => {
-            let mutation_rate = params.get("mutation_rate").and_then(|v| v.as_f64()).unwrap_or(0.1);
+            let mutation_rate = params
+                .get("mutation_rate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.1);
             let ga = ix_evolution::genetic::GeneticAlgorithm::new()
                 .with_population_size(pop_size)
                 .with_generations(generations)
@@ -1145,11 +1351,16 @@ pub fn random_forest(params: Value) -> Result<Value, String> {
     use ix_ensemble::traits::EnsembleClassifier;
 
     let x_train_rows = parse_f64_matrix(&params, "x_train")?;
-    let y_train_raw: Vec<usize> = params.get("y_train")
+    let y_train_raw: Vec<usize> = params
+        .get("y_train")
         .and_then(|v| v.as_array())
         .ok_or("Missing 'y_train'")?
         .iter()
-        .map(|v| v.as_u64().ok_or("Non-integer in y_train").map(|n| n as usize))
+        .map(|v| {
+            v.as_u64()
+                .ok_or("Non-integer in y_train")
+                .map(|n| n as usize)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let x_test_rows = parse_f64_matrix(&params, "x_test")?;
 
@@ -1158,14 +1369,18 @@ pub fn random_forest(params: Value) -> Result<Value, String> {
     let x_test = vecs_to_array2(&x_test_rows)?;
 
     let n_trees = params.get("n_trees").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-    let max_depth = params.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+    let max_depth = params
+        .get("max_depth")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5) as usize;
 
     let mut rf = ix_ensemble::random_forest::RandomForest::new(n_trees, max_depth).with_seed(42);
     rf.fit(&x_train, &y_train);
     let predictions = rf.predict(&x_test);
     let probas = rf.predict_proba(&x_test);
     let proba_rows: Vec<Vec<f64>> = (0..probas.nrows())
-        .map(|i| probas.row(i).to_vec()).collect();
+        .map(|i| probas.row(i).to_vec())
+        .collect();
 
     Ok(json!({
         "predictions": predictions.to_vec(),
@@ -1182,11 +1397,16 @@ pub fn gradient_boosting(params: Value) -> Result<Value, String> {
     use ix_ensemble::traits::EnsembleClassifier;
 
     let x_train_rows = parse_f64_matrix(&params, "x_train")?;
-    let y_train_raw: Vec<usize> = params.get("y_train")
+    let y_train_raw: Vec<usize> = params
+        .get("y_train")
         .and_then(|v| v.as_array())
         .ok_or("Missing 'y_train'")?
         .iter()
-        .map(|v| v.as_u64().ok_or("Non-integer in y_train").map(|n| n as usize))
+        .map(|v| {
+            v.as_u64()
+                .ok_or("Non-integer in y_train")
+                .map(|n| n as usize)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let x_test_rows = parse_f64_matrix(&params, "x_test")?;
 
@@ -1194,15 +1414,22 @@ pub fn gradient_boosting(params: Value) -> Result<Value, String> {
     let y_train = Array1::from_vec(y_train_raw);
     let x_test = vecs_to_array2(&x_test_rows)?;
 
-    let n_estimators = params.get("n_estimators").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
-    let learning_rate = params.get("learning_rate").and_then(|v| v.as_f64()).unwrap_or(0.1);
+    let n_estimators = params
+        .get("n_estimators")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50) as usize;
+    let learning_rate = params
+        .get("learning_rate")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.1);
 
     let mut gbc = GradientBoostedClassifier::new(n_estimators, learning_rate);
     gbc.fit(&x_train, &y_train);
     let predictions = gbc.predict(&x_test);
     let probas = gbc.predict_proba(&x_test);
     let proba_rows: Vec<Vec<f64>> = (0..probas.nrows())
-        .map(|i| probas.row(i).to_vec()).collect();
+        .map(|i| probas.row(i).to_vec())
+        .collect();
 
     Ok(json!({
         "predictions": predictions.to_vec(),
@@ -1215,19 +1442,23 @@ pub fn gradient_boosting(params: Value) -> Result<Value, String> {
 // ── ix_supervised ──────────────────────────────────────────
 
 pub fn supervised(params: Value) -> Result<Value, String> {
+    use ix_supervised::decision_tree::DecisionTree;
+    use ix_supervised::knn::KNN;
     use ix_supervised::linear_regression::LinearRegression;
     use ix_supervised::logistic_regression::LogisticRegression;
-    use ix_supervised::svm::LinearSVM;
-    use ix_supervised::knn::KNN;
-    use ix_supervised::naive_bayes::GaussianNaiveBayes;
-    use ix_supervised::decision_tree::DecisionTree;
-    use ix_supervised::traits::{Classifier, Regressor};
     use ix_supervised::metrics;
+    use ix_supervised::naive_bayes::GaussianNaiveBayes;
+    use ix_supervised::svm::LinearSVM;
+    use ix_supervised::traits::{Classifier, Regressor};
 
     let operation = parse_str(&params, "operation")?;
 
     match operation {
-        "linear_regression" | "logistic_regression" | "svm" | "knn" | "naive_bayes"
+        "linear_regression"
+        | "logistic_regression"
+        | "svm"
+        | "knn"
+        | "naive_bayes"
         | "decision_tree" => {
             let x_train = parse_f64_matrix_to_ndarray(&params, "x_train")?;
             let y_train_raw = parse_f64_array(&params, "y_train")?;
@@ -1243,9 +1474,8 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                 }
                 "logistic_regression" => {
                     let mut model = LogisticRegression::new();
-                    let y: Array1<usize> = Array1::from_vec(
-                        y_train_raw.iter().map(|v| *v as usize).collect(),
-                    );
+                    let y: Array1<usize> =
+                        Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
                     model.fit(&x_train, &y);
                     let preds = model.predict(&x_test);
                     let probs = model.predict_proba(&x_test);
@@ -1258,9 +1488,8 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                 "svm" => {
                     let c = params.get("c").and_then(|v| v.as_f64()).unwrap_or(1.0);
                     let mut model = LinearSVM::new(c);
-                    let y: Array1<usize> = Array1::from_vec(
-                        y_train_raw.iter().map(|v| *v as usize).collect(),
-                    );
+                    let y: Array1<usize> =
+                        Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
                     model.fit(&x_train, &y);
                     let preds = model.predict(&x_test);
                     Ok(json!({ "predictions": preds.to_vec(), "algorithm": "svm", "c": c }))
@@ -1268,9 +1497,8 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                 "knn" => {
                     let k = params.get("k").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
                     let mut model = KNN::new(k);
-                    let y: Array1<usize> = Array1::from_vec(
-                        y_train_raw.iter().map(|v| *v as usize).collect(),
-                    );
+                    let y: Array1<usize> =
+                        Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
                     model.fit(&x_train, &y);
                     let preds = model.predict(&x_test);
                     let probs = model.predict_proba(&x_test);
@@ -1282,19 +1510,20 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                 }
                 "naive_bayes" => {
                     let mut model = GaussianNaiveBayes::new();
-                    let y: Array1<usize> = Array1::from_vec(
-                        y_train_raw.iter().map(|v| *v as usize).collect(),
-                    );
+                    let y: Array1<usize> =
+                        Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
                     model.fit(&x_train, &y);
                     let preds = model.predict(&x_test);
                     Ok(json!({ "predictions": preds.to_vec(), "algorithm": "naive_bayes" }))
                 }
                 "decision_tree" => {
-                    let max_depth = params.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                    let max_depth = params
+                        .get("max_depth")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(5) as usize;
                     let mut model = DecisionTree::new(max_depth);
-                    let y: Array1<usize> = Array1::from_vec(
-                        y_train_raw.iter().map(|v| *v as usize).collect(),
-                    );
+                    let y: Array1<usize> =
+                        Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
                     model.fit(&x_train, &y);
                     let preds = model.predict(&x_test);
                     let probs = model.predict_proba(&x_test);
@@ -1316,11 +1545,15 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                 "mse" => {
                     let yt = Array1::from_vec(y_true_raw);
                     let yp = Array1::from_vec(y_pred_raw);
-                    Ok(json!({ "mse": metrics::mse(&yt, &yp), "rmse": metrics::rmse(&yt, &yp), "r_squared": metrics::r_squared(&yt, &yp) }))
+                    Ok(
+                        json!({ "mse": metrics::mse(&yt, &yp), "rmse": metrics::rmse(&yt, &yp), "r_squared": metrics::r_squared(&yt, &yp) }),
+                    )
                 }
                 "accuracy" => {
-                    let yt: Array1<usize> = Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
-                    let yp: Array1<usize> = Array1::from_vec(y_pred_raw.iter().map(|v| *v as usize).collect());
+                    let yt: Array1<usize> =
+                        Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
+                    let yp: Array1<usize> =
+                        Array1::from_vec(y_pred_raw.iter().map(|v| *v as usize).collect());
                     let class = params.get("class").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
                     Ok(json!({
                         "accuracy": metrics::accuracy(&yt, &yp),
@@ -1329,15 +1562,21 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                         "f1": metrics::f1_score(&yt, &yp, class)
                     }))
                 }
-                _ => Err(format!("Unknown metric_type: {metric_type}. Use 'mse' or 'accuracy'")),
+                _ => Err(format!(
+                    "Unknown metric_type: {metric_type}. Use 'mse' or 'accuracy'"
+                )),
             }
         }
         "confusion_matrix" => {
             let y_true_raw = parse_f64_array(&params, "y_true")?;
             let y_pred_raw = parse_f64_array(&params, "y_pred")?;
-            let yt: Array1<usize> = Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
-            let yp: Array1<usize> = Array1::from_vec(y_pred_raw.iter().map(|v| *v as usize).collect());
-            let n_classes = params.get("n_classes").and_then(|v| v.as_u64())
+            let yt: Array1<usize> =
+                Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
+            let yp: Array1<usize> =
+                Array1::from_vec(y_pred_raw.iter().map(|v| *v as usize).collect());
+            let n_classes = params
+                .get("n_classes")
+                .and_then(|v| v.as_u64())
                 .map(|v| v as usize)
                 .unwrap_or_else(|| *yt.iter().chain(yp.iter()).max().unwrap() + 1);
 
@@ -1362,7 +1601,8 @@ pub fn supervised(params: Value) -> Result<Value, String> {
         "roc_auc" => {
             let y_true_raw = parse_f64_array(&params, "y_true")?;
             let y_scores_raw = parse_f64_array(&params, "y_scores")?;
-            let yt: Array1<usize> = Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
+            let yt: Array1<usize> =
+                Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
             let ys = Array1::from_vec(y_scores_raw);
 
             let (fpr, tpr, thresholds) = metrics::roc_curve(&yt, &ys);
@@ -1383,7 +1623,10 @@ pub fn supervised(params: Value) -> Result<Value, String> {
             let y: Array1<usize> = Array1::from_vec(y_raw.iter().map(|v| *v as usize).collect());
             let k = params.get("k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
             let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
-            let model = params.get("model").and_then(|v| v.as_str()).unwrap_or("decision_tree");
+            let model = params
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("decision_tree");
 
             let scores = match model {
                 "knn" => {
@@ -1404,7 +1647,9 @@ pub fn supervised(params: Value) -> Result<Value, String> {
             };
 
             let mean = scores.iter().sum::<f64>() / scores.len() as f64;
-            let std = (scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / scores.len() as f64).sqrt();
+            let std = (scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>()
+                / scores.len() as f64)
+                .sqrt();
 
             Ok(json!({
                 "fold_scores": scores,
@@ -1587,8 +1832,13 @@ pub fn hyperloglog(params: Value) -> Result<Value, String> {
 
     match operation {
         "estimate" => {
-            let precision = params.get("precision").and_then(|v| v.as_u64()).unwrap_or(14) as usize;
-            let items = params.get("items").and_then(|v| v.as_array())
+            let precision = params
+                .get("precision")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(14) as usize;
+            let items = params
+                .get("items")
+                .and_then(|v| v.as_array())
                 .ok_or_else(|| "Missing 'items' array".to_string())?;
 
             let mut hll = HyperLogLog::new(precision);
@@ -1611,8 +1861,13 @@ pub fn hyperloglog(params: Value) -> Result<Value, String> {
             }))
         }
         "merge" => {
-            let precision = params.get("precision").and_then(|v| v.as_u64()).unwrap_or(14) as usize;
-            let sets = params.get("sets").and_then(|v| v.as_array())
+            let precision = params
+                .get("precision")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(14) as usize;
+            let sets = params
+                .get("sets")
+                .and_then(|v| v.as_array())
                 .ok_or_else(|| "Missing 'sets' array of arrays".to_string())?;
 
             let mut merged = HyperLogLog::new(precision);
@@ -1639,7 +1894,9 @@ pub fn hyperloglog(params: Value) -> Result<Value, String> {
                 "precision": precision
             }))
         }
-        _ => Err(format!("Unknown hyperloglog operation: {operation}. Use 'estimate' or 'merge'")),
+        _ => Err(format!(
+            "Unknown hyperloglog operation: {operation}. Use 'estimate' or 'merge'"
+        )),
     }
 }
 
@@ -1760,7 +2017,11 @@ pub fn git_log(params: Value) -> Result<Value, String> {
     let since_arg = format!("--since={since_days} days ago");
     let mut cmd = Command::new("git");
     if let Some(root) = repo_root {
-        cmd.arg("-C").arg(root);
+        let safe_root = root.replace('\\', "/");
+        cmd.arg("-c")
+            .arg(format!("safe.directory={safe_root}"))
+            .arg("-C")
+            .arg(root);
     }
     let output = cmd
         .arg("log")
@@ -1858,7 +2119,20 @@ fn is_safe_git_path(path: &str) -> bool {
     for c in path.chars() {
         if matches!(
             c,
-            '|' | '&' | ';' | '<' | '>' | '$' | '`' | '(' | ')' | '{' | '}' | '*' | '?' | '\n' | '\r'
+            '|' | '&'
+                | ';'
+                | '<'
+                | '>'
+                | '$'
+                | '`'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '*'
+                | '?'
+                | '\n'
+                | '\r'
         ) {
             return false;
         }
@@ -1897,7 +2171,11 @@ fn ymd_to_epoch_days(s: &str) -> Option<i64> {
     // classic Howard Hinnant formula, then rebase to 1970-01-01
     // (epoch day 0 ≡ rata die 719162).
     let year = if m <= 2 { y - 1 } else { y };
-    let era = if year >= 0 { year / 400 } else { (year - 399) / 400 };
+    let era = if year >= 0 {
+        year / 400
+    } else {
+        (year - 399) / 400
+    };
     let yoe = year - era * 400; // [0, 399]
     let month_adj = if m > 2 { m - 3 } else { m + 9 };
     let doy = (153 * month_adj + 2) / 5 + d - 1; // [0, 365]
@@ -1909,7 +2187,11 @@ fn ymd_to_epoch_days(s: &str) -> Option<i64> {
 /// `YYYY-MM-DD`. Uses the same Hinnant algorithm in reverse.
 fn epoch_days_to_ymd(days: i64) -> String {
     let z = days + 719468;
-    let era = if z >= 0 { z / 146097 } else { (z - 146096) / 146097 };
+    let era = if z >= 0 {
+        z / 146097
+    } else {
+        (z - 146096) / 146097
+    };
     let doe = z - era * 146097; // [0, 146096]
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
     let y = yoe + era * 400;
@@ -2020,8 +2302,7 @@ pub fn catalog_list(_params: Value) -> Result<Value, String> {
     use ix_grammar::catalog::GrammarCatalog;
     use ix_net::rfc_catalog::RfcCatalog;
 
-    let catalogs: Vec<&dyn Catalog> =
-        vec![&CodeAnalysisCatalog, &GrammarCatalog, &RfcCatalog];
+    let catalogs: Vec<&dyn Catalog> = vec![&CodeAnalysisCatalog, &GrammarCatalog, &RfcCatalog];
 
     let summaries: Vec<Value> = catalogs
         .iter()
@@ -2076,8 +2357,7 @@ pub fn catalog_list(_params: Value) -> Result<Value, String> {
 pub fn cargo_deps(params: Value) -> Result<Value, String> {
     let workspace_root = match params.get("workspace_root").and_then(|v| v.as_str()) {
         Some(s) => std::path::PathBuf::from(s),
-        None => std::env::current_dir()
-            .map_err(|e| format!("ix_cargo_deps: cwd: {e}"))?,
+        None => std::env::current_dir().map_err(|e| format!("ix_cargo_deps: cwd: {e}"))?,
     };
     let crates_dir = workspace_root.join("crates");
     if !crates_dir.is_dir() {
@@ -2130,12 +2410,8 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         let src_dir = manifest.parent().unwrap().join("src");
         let (sloc, file_count) = measure_src_tree(&src_dir);
 
-        let manifest_text = std::fs::read_to_string(manifest).map_err(|e| {
-            format!(
-                "ix_cargo_deps: read {}: {e}",
-                manifest.display()
-            )
-        })?;
+        let manifest_text = std::fs::read_to_string(manifest)
+            .map_err(|e| format!("ix_cargo_deps: read {}: {e}", manifest.display()))?;
         let deps = extract_workspace_deps(&manifest_text, &known_crates);
         let dep_count = deps.len();
 
@@ -2286,10 +2562,7 @@ fn extract_workspace_deps(
             }
             Section::Deps => {
                 // Dep line: `ix-math = ...` or `ix-math.workspace = true`.
-                let key = line
-                    .split_once('=')
-                    .map(|(k, _)| k.trim())
-                    .unwrap_or(line);
+                let key = line.split_once('=').map(|(k, _)| k.trim()).unwrap_or(line);
                 // Strip table prefix like `ix-math.workspace` → `ix-math`.
                 let key = key.split('.').next().unwrap_or(key);
                 if known_crates.contains(key) {
@@ -2444,7 +2717,9 @@ pub fn pipeline_list(params: Value) -> Result<Value, String> {
 /// ```
 pub fn autograd_run(params: Value) -> Result<Value, String> {
     use ix_autograd::prelude::*;
-    use ix_autograd::tools::{linear_regression::LinearRegressionTool, stats_variance::StatsVarianceTool};
+    use ix_autograd::tools::{
+        linear_regression::LinearRegressionTool, stats_variance::StatsVarianceTool,
+    };
 
     let tool_name = params
         .get("tool")
@@ -2459,8 +2734,8 @@ pub fn autograd_run(params: Value) -> Result<Value, String> {
     // Parse each input into an ArrayD<f64> via generic helpers.
     let mut in_map = ValueMap::new();
     for (key, val) in inputs_json {
-        let array = parse_array_d(val)
-            .map_err(|e| format!("ix_autograd_run: input '{key}': {e}"))?;
+        let array =
+            parse_array_d(val).map_err(|e| format!("ix_autograd_run: input '{key}': {e}"))?;
         in_map.insert(key.clone(), Tensor::from_array_with_grad(array));
     }
 
@@ -2534,9 +2809,7 @@ fn parse_array_d(v: &Value) -> Result<ndarray::ArrayD<f64>, String> {
                 let cols = first_row.len();
                 let mut flat: Vec<f64> = Vec::with_capacity(rows * cols);
                 for (i, row) in a.iter().enumerate() {
-                    let row_arr = row
-                        .as_array()
-                        .ok_or_else(|| format!("row {i} not array"))?;
+                    let row_arr = row.as_array().ok_or_else(|| format!("row {i} not array"))?;
                     if row_arr.len() != cols {
                         return Err(format!(
                             "row {i} has {} cols, expected {cols}",
@@ -2544,9 +2817,10 @@ fn parse_array_d(v: &Value) -> Result<ndarray::ArrayD<f64>, String> {
                         ));
                     }
                     for x in row_arr {
-                        flat.push(x.as_f64().ok_or_else(|| {
-                            format!("row {i} contains non-f64 element")
-                        })?);
+                        flat.push(
+                            x.as_f64()
+                                .ok_or_else(|| format!("row {i} contains non-f64 element"))?,
+                        );
                     }
                 }
                 Array::from_shape_vec(IxDyn(&[rows, cols]), flat)
@@ -2581,10 +2855,7 @@ fn serialize_value_map(map: &ix_autograd::tool::ValueMap) -> Value {
         } else {
             // Higher-rank: flatten + emit shape.
             let flat: Vec<f64> = arr.iter().copied().collect();
-            out.insert(
-                k.clone(),
-                json!({ "shape": shape, "data": flat }),
-            );
+            out.insert(k.clone(), json!({ "shape": shape, "data": flat }));
         }
     }
     Value::Object(out)
@@ -2600,15 +2871,23 @@ pub fn pipeline_exec(params: Value) -> Result<Value, String> {
     match operation {
         "info" => {
             // Build a DAG from step definitions and return structure info
-            let steps = params.get("steps").and_then(|v| v.as_array())
+            let steps = params
+                .get("steps")
+                .and_then(|v| v.as_array())
                 .ok_or_else(|| "Missing 'steps' array".to_string())?;
 
             let mut dag: Dag<String> = Dag::new();
             for step in steps {
-                let id = step.get("id").and_then(|v| v.as_str())
+                let id = step
+                    .get("id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Each step needs an 'id'")?;
-                let desc = step.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                dag.add_node(id, desc.to_string()).map_err(|e| e.to_string())?;
+                let desc = step
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                dag.add_node(id, desc.to_string())
+                    .map_err(|e| e.to_string())?;
             }
 
             // Add edges from dependencies
@@ -2624,7 +2903,8 @@ pub fn pipeline_exec(params: Value) -> Result<Value, String> {
             }
 
             let levels = dag.parallel_levels();
-            let level_ids: Vec<Vec<&str>> = levels.iter()
+            let level_ids: Vec<Vec<&str>> = levels
+                .iter()
                 .map(|level| level.iter().map(|id| id.as_str()).collect())
                 .collect();
 
@@ -2638,7 +2918,9 @@ pub fn pipeline_exec(params: Value) -> Result<Value, String> {
                 "max_parallelism": levels.iter().map(|l| l.len()).max().unwrap_or(0)
             }))
         }
-        _ => Err(format!("Unknown pipeline operation: {operation}. Use 'info'")),
+        _ => Err(format!(
+            "Unknown pipeline operation: {operation}. Use 'info'"
+        )),
     }
 }
 
@@ -2671,10 +2953,7 @@ pub fn cache_op(params: Value) -> Result<Value, String> {
             Ok(json!({ "key": key, "deleted": deleted }))
         }
         "keys" => {
-            let pattern = params
-                .get("key")
-                .and_then(|v| v.as_str())
-                .unwrap_or("*");
+            let pattern = params.get("key").and_then(|v| v.as_str()).unwrap_or("*");
             let keys = cache.keys(pattern);
             Ok(json!({ "keys": keys, "count": keys.len() }))
         }
@@ -2699,7 +2978,9 @@ fn workspace_root() -> std::path::PathBuf {
         if dir.join("Cargo.toml").exists() && dir.join("governance").exists() {
             return dir;
         }
-        if !dir.pop() { break; }
+        if !dir.pop() {
+            break;
+        }
     }
     std::path::PathBuf::from(".")
 }
@@ -2819,24 +3100,41 @@ pub fn governance_belief(params: Value) -> Result<Value, String> {
             "D" => Ok(ix_governance::TruthValue::Disputed),
             "F" => Ok(ix_governance::TruthValue::False),
             "C" => Ok(ix_governance::TruthValue::Contradictory),
-            _ => Err(format!("Invalid truth value '{}': use T, P, U, D, F, or C", s)),
+            _ => Err(format!(
+                "Invalid truth value '{}': use T, P, U, D, F, or C",
+                s
+            )),
         }
     }
 
-    let tv_str = params.get("truth_value").and_then(|v| v.as_str()).unwrap_or("U");
+    let tv_str = params
+        .get("truth_value")
+        .and_then(|v| v.as_str())
+        .unwrap_or("U");
     let tv = parse_truth_value(tv_str)?;
-    let confidence = params.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+    let confidence = params
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5);
 
     let supporting: Vec<String> = params
         .get("supporting")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let contradicting: Vec<String> = params
         .get("contradicting")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     match operation {
@@ -2881,7 +3179,10 @@ pub fn governance_belief(params: Value) -> Result<Value, String> {
                 },
             }))
         }
-        _ => Err(format!("Unknown belief operation: {}. Use 'create', 'update', or 'resolve'", operation)),
+        _ => Err(format!(
+            "Unknown belief operation: {}. Use 'create', 'update', or 'resolve'",
+            operation
+        )),
     }
 }
 
@@ -2897,7 +3198,12 @@ pub fn governance_policy(params: Value) -> Result<Value, String> {
         "alignment" => "alignment-policy.yaml",
         "rollback" => "rollback-policy.yaml",
         "self-modification" => "self-modification-policy.yaml",
-        _ => return Err(format!("Unknown policy: {}. Use 'alignment', 'rollback', or 'self-modification'", policy_name)),
+        _ => {
+            return Err(format!(
+                "Unknown policy: {}. Use 'alignment', 'rollback', or 'self-modification'",
+                policy_name
+            ))
+        }
     };
 
     let path = policies_dir.join(filename);
@@ -2968,20 +3274,27 @@ pub fn federation_discover(params: Value) -> Result<Value, String> {
     let domain_filter = params.get("domain").and_then(|v| v.as_str());
     let query_filter = params.get("query").and_then(|v| v.as_str());
 
-    let registry_path = workspace_root().join("governance/demerzel/schemas/capability-registry.json");
+    let registry_path =
+        workspace_root().join("governance/demerzel/schemas/capability-registry.json");
     let content = std::fs::read_to_string(&registry_path)
         .map_err(|e| format!("Failed to read capability registry: {}", e))?;
     let registry: Value = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse capability registry: {}", e))?;
 
-    let repos = registry.get("repos").and_then(|v| v.as_object())
+    let repos = registry
+        .get("repos")
+        .and_then(|v| v.as_object())
         .ok_or_else(|| "Invalid registry: missing 'repos'".to_string())?;
 
     let mut results = Vec::new();
 
     for (repo_name, repo_info) in repos {
-        let description = repo_info.get("description").and_then(|v| v.as_str()).unwrap_or("");
-        let domains: Vec<&str> = repo_info.get("domains")
+        let description = repo_info
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let domains: Vec<&str> = repo_info
+            .get("domains")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
@@ -3000,13 +3313,20 @@ pub fn federation_discover(params: Value) -> Result<Value, String> {
         if let Some(q) = query_filter {
             let q_lower = q.to_lowercase();
             if let Some(tool_map) = tools {
-                let filtered: serde_json::Map<String, Value> = tool_map.iter()
+                let filtered: serde_json::Map<String, Value> = tool_map
+                    .iter()
                     .filter(|(cat, tools_arr)| {
-                        cat.contains(&q_lower) || tools_arr.as_array()
-                            .map(|arr| arr.iter().any(|t| {
-                                t.as_str().map(|s| s.to_lowercase().contains(&q_lower)).unwrap_or(false)
-                            }))
-                            .unwrap_or(false)
+                        cat.contains(&q_lower)
+                            || tools_arr
+                                .as_array()
+                                .map(|arr| {
+                                    arr.iter().any(|t| {
+                                        t.as_str()
+                                            .map(|s| s.to_lowercase().contains(&q_lower))
+                                            .unwrap_or(false)
+                                    })
+                                })
+                                .unwrap_or(false)
                     })
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
@@ -3063,7 +3383,8 @@ pub fn trace_ingest(params: Value) -> Result<Value, String> {
         }));
     }
 
-    let traces = trace_bridge::load_traces(&dir).map_err(|e| format!("Failed to load traces: {e}"))?;
+    let traces =
+        trace_bridge::load_traces(&dir).map_err(|e| format!("Failed to load traces: {e}"))?;
 
     if traces.is_empty() {
         return Ok(json!({
@@ -3108,15 +3429,8 @@ pub fn fuzzy_eval(params: Value) -> Result<Value, String> {
 
     fn parse_dist(v: &Value) -> Result<HexavalentDistribution, String> {
         let get = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
-        hexavalent_from_tpudfc(
-            get("T"),
-            get("P"),
-            get("U"),
-            get("D"),
-            get("F"),
-            get("C"),
-        )
-        .map_err(|e| format!("invalid distribution: {e}"))
+        hexavalent_from_tpudfc(get("T"), get("P"), get("U"), get("D"), get("F"), get("C"))
+            .map_err(|e| format!("invalid distribution: {e}"))
     }
 
     let op = params
@@ -3203,9 +3517,7 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
     let written = flywheel::export_session_to_trace_dir(&log, &trace_dir, trace_id)
         .map_err(|e| format!("export trace: {e}"))?;
 
-    let trace_count = log.events()
-        .map(|it| it.count())
-        .unwrap_or(0);
+    let trace_count = log.events().map(|it| it.count()).unwrap_or(0);
 
     Ok(json!({
         "written": written.display().to_string(),
@@ -3217,8 +3529,8 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
 // ── ix_ml_pipeline ────────────────────────────────────────────
 
 pub fn ml_pipeline(params: Value) -> Result<Value, String> {
-    let config: crate::ml_pipeline::PipelineConfig = serde_json::from_value(params)
-        .map_err(|e| format!("Invalid pipeline config: {}", e))?;
+    let config: crate::ml_pipeline::PipelineConfig =
+        serde_json::from_value(params).map_err(|e| format!("Invalid pipeline config: {}", e))?;
     crate::ml_pipeline::run_pipeline(config)
 }
 
@@ -3233,21 +3545,29 @@ pub fn ml_predict(params: Value) -> Result<Value, String> {
 // ── ix_code_analyze ─────────────────────────────────────────────────
 
 pub fn code_analyze(params: Value) -> Result<Value, String> {
-    use ix_code::analyze::{Language, analyze_source, analyze_file};
+    use ix_code::analyze::{analyze_file, analyze_source, Language};
     use std::path::Path;
 
     // Option 1: analyze a file by path
     if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
         let path = Path::new(path_str);
-        let metrics = analyze_file(path)
-            .ok_or_else(|| format!("Could not analyze file: {} (unsupported language or read error)", path_str))?;
+        let metrics = analyze_file(path).ok_or_else(|| {
+            format!(
+                "Could not analyze file: {} (unsupported language or read error)",
+                path_str
+            )
+        })?;
         return Ok(serde_json::to_value(&metrics).unwrap());
     }
 
     // Option 2: analyze source code string
-    let source = params.get("source").and_then(|v| v.as_str())
+    let source = params
+        .get("source")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| "Either 'source' or 'path' is required".to_string())?;
-    let lang_str = params.get("language").and_then(|v| v.as_str())
+    let lang_str = params
+        .get("language")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| "'language' is required when using 'source'".to_string())?;
 
     let lang = Language::from_extension(lang_str)
@@ -3288,7 +3608,9 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
     result["feature_names"] = json!(ix_code::metrics::CodeMetrics::feature_names());
     result["file_features"] = json!(metrics.file_scope.to_features().to_vec());
     if !metrics.functions.is_empty() {
-        let fn_features: Vec<Vec<f64>> = metrics.functions.iter()
+        let fn_features: Vec<Vec<f64>> = metrics
+            .functions
+            .iter()
             .map(|f| f.to_features().to_vec())
             .collect();
         result["function_features"] = json!(fn_features);
@@ -3307,7 +3629,8 @@ pub fn tars_bridge(params: Value) -> Result<Value, String> {
             use ix_io::trace_bridge;
             use std::path::PathBuf;
 
-            let dir = params.get("trace_dir")
+            let dir = params
+                .get("trace_dir")
                 .and_then(|v| v.as_str())
                 .map(PathBuf::from)
                 .unwrap_or_else(trace_bridge::default_trace_dir);
@@ -3342,34 +3665,33 @@ pub fn tars_bridge(params: Value) -> Result<Value, String> {
                 "instruction": "Call TARS tool 'ingest_ga_traces' with the payload above to trigger pattern promotion"
             }))
         }
-        "prepare_patterns" => {
-            Ok(json!({
-                "action": "prepare_patterns",
-                "description": "Prepare pattern data for TARS promotion pipeline",
-                "workflow": [
-                    {"step": 1, "ix_tool": "ix_grammar_weights", "description": "Get current grammar rules with Bayesian weights"},
-                    {"step": 2, "ix_tool": "ix_trace_ingest", "description": "Analyze traces to find recurring tool-call sequences"},
-                    {"step": 3, "tars_tool": "run_promotion_pipeline", "description": "Run 7-step promotion (Inspect→Extract→Classify→Propose→Validate→Persist→Govern)"},
-                    {"step": 4, "tars_tool": "promotion_index", "description": "View ranked promotion results"}
-                ],
-                "min_frequency": params.get("min_frequency").and_then(|v| v.as_i64()).unwrap_or(3),
-                "instruction": "First call ix_grammar_weights to get current state, then call TARS run_promotion_pipeline"
-            }))
-        }
-        "export_grammar" => {
-            Ok(json!({
-                "action": "export_grammar",
-                "description": "Export ix grammar state for TARS synchronization",
-                "workflow": [
-                    {"step": 1, "ix_tool": "ix_grammar_weights", "description": "Get current Bayesian-weighted rules from ix"},
-                    {"step": 2, "tars_tool": "grammar_weights", "description": "View current TARS grammar weights"},
-                    {"step": 3, "tars_tool": "grammar_update", "description": "Update TARS rules with ix weights (per-rule: PatternId + Success)"}
-                ],
-                "tars_grammar_tools": ["grammar_weights", "grammar_update", "grammar_evolve", "grammar_search"],
-                "instruction": "Call ix_grammar_weights first, then sync to TARS via grammar_update for each rule"
-            }))
-        }
-        _ => Err(format!("Unknown tars_bridge action: {}. Use: prepare_traces, prepare_patterns, export_grammar", action)),
+        "prepare_patterns" => Ok(json!({
+            "action": "prepare_patterns",
+            "description": "Prepare pattern data for TARS promotion pipeline",
+            "workflow": [
+                {"step": 1, "ix_tool": "ix_grammar_weights", "description": "Get current grammar rules with Bayesian weights"},
+                {"step": 2, "ix_tool": "ix_trace_ingest", "description": "Analyze traces to find recurring tool-call sequences"},
+                {"step": 3, "tars_tool": "run_promotion_pipeline", "description": "Run 7-step promotion (Inspect→Extract→Classify→Propose→Validate→Persist→Govern)"},
+                {"step": 4, "tars_tool": "promotion_index", "description": "View ranked promotion results"}
+            ],
+            "min_frequency": params.get("min_frequency").and_then(|v| v.as_i64()).unwrap_or(3),
+            "instruction": "First call ix_grammar_weights to get current state, then call TARS run_promotion_pipeline"
+        })),
+        "export_grammar" => Ok(json!({
+            "action": "export_grammar",
+            "description": "Export ix grammar state for TARS synchronization",
+            "workflow": [
+                {"step": 1, "ix_tool": "ix_grammar_weights", "description": "Get current Bayesian-weighted rules from ix"},
+                {"step": 2, "tars_tool": "grammar_weights", "description": "View current TARS grammar weights"},
+                {"step": 3, "tars_tool": "grammar_update", "description": "Update TARS rules with ix weights (per-rule: PatternId + Success)"}
+            ],
+            "tars_grammar_tools": ["grammar_weights", "grammar_update", "grammar_evolve", "grammar_search"],
+            "instruction": "Call ix_grammar_weights first, then sync to TARS via grammar_update for each rule"
+        })),
+        _ => Err(format!(
+            "Unknown tars_bridge action: {}. Use: prepare_traces, prepare_patterns, export_grammar",
+            action
+        )),
     }
 }
 
@@ -3507,12 +3829,10 @@ pub fn ga_bridge(params: Value) -> Result<Value, String> {
 /// is retained to keep the [`crate::tools::Tool`] struct shape intact for
 /// all other tools.
 pub fn explain_algorithm(_params: Value) -> Result<Value, String> {
-    Err(
-        "ix_explain_algorithm must be dispatched via ServerContext \
+    Err("ix_explain_algorithm must be dispatched via ServerContext \
          (bidirectional JSON-RPC). This codepath should be intercepted by \
          ToolRegistry::call_with_ctx."
-            .into(),
-    )
+        .into())
 }
 
 /// Context-aware implementation. Builds an algorithm catalog, asks the
@@ -3639,8 +3959,8 @@ pub fn explain_algorithm_with_ctx(
         ]
     });
 
-    let catalog_pretty = serde_json::to_string_pretty(&catalog)
-        .unwrap_or_else(|_| "<catalog unavailable>".into());
+    let catalog_pretty =
+        serde_json::to_string_pretty(&catalog).unwrap_or_else(|_| "<catalog unavailable>".into());
 
     let user_text = format!(
         "Given this problem: \"{}\"\n\n\
@@ -3686,12 +4006,10 @@ pub fn explain_algorithm_with_ctx(
 /// implementation lives in [`triage_session_with_ctx`] and is routed
 /// there by [`crate::tools::ToolRegistry::call_with_ctx`].
 pub fn triage_session(_params: Value) -> Result<Value, String> {
-    Err(
-        "ix_triage_session must be dispatched via ServerContext \
+    Err("ix_triage_session must be dispatched via ServerContext \
          (bidirectional JSON-RPC). This codepath should be intercepted by \
          ToolRegistry::call_with_ctx."
-            .into(),
-    )
+        .into())
 }
 
 /// Context-aware implementation of `ix_triage_session`.
@@ -3724,9 +4042,7 @@ pub fn triage_session_with_ctx(
 ) -> Result<Value, String> {
     use crate::projection::events_to_observations;
     use crate::registry_bridge;
-    use crate::triage::{
-        build_distribution, parse_plan, sort_plan_by_priority, TriagePlanItem,
-    };
+    use crate::triage::{build_distribution, parse_plan, sort_plan_by_priority, TriagePlanItem};
     use ix_agent_core::{AgentAction, ReadContext, SessionEvent};
     use ix_fuzzy::escalation_triggered;
     use ix_fuzzy::observations::{merge_with_default_staleness, HexObservation};
@@ -3746,10 +4062,7 @@ pub fn triage_session_with_ctx(
         .get("learn")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let round = params
-        .get("round")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+    let round = params.get("round").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
     // Parse optional `prior_observations` — typically populated by
     // the main-agent shuttle with tars-emitted diagnosis observations
@@ -3759,11 +4072,7 @@ pub fn triage_session_with_ctx(
     let prior_observations: Vec<HexObservation> = params
         .get("prior_observations")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(parse_prior_observation)
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(parse_prior_observation).collect())
         .unwrap_or_default();
 
     // ── 2. Read the installed session log ─────────────────────────
@@ -3884,8 +4193,8 @@ pub fn triage_session_with_ctx(
     // Preserve the plan-only distribution for backward-compat output
     // so callers that used to read the plan distribution still see
     // it. The merged distribution is what drives escalation.
-    let plan_only_distribution = build_distribution(&plan)
-        .map_err(|e| format!("plan distribution build failed: {e}"))?;
+    let plan_only_distribution =
+        build_distribution(&plan).map_err(|e| format!("plan distribution build failed: {e}"))?;
     let escalate = escalation_triggered(&merged.distribution);
 
     if escalate {
@@ -4015,9 +4324,7 @@ pub fn triage_session_with_ctx(
 /// malformed entries — the triage session prefers partial data
 /// over a hard failure when the caller's observations list has
 /// typos or stale fields.
-fn parse_prior_observation(
-    value: &Value,
-) -> Option<ix_fuzzy::observations::HexObservation> {
+fn parse_prior_observation(value: &Value) -> Option<ix_fuzzy::observations::HexObservation> {
     use ix_fuzzy::observations::HexObservation;
     let obj = value.as_object()?;
     let variant_label = obj.get("variant").and_then(|v| v.as_str())?;
@@ -4033,7 +4340,10 @@ fn parse_prior_observation(
         claim_key: obj.get("claim_key").and_then(|v| v.as_str())?.to_string(),
         variant,
         weight: obj.get("weight").and_then(|v| v.as_f64())?,
-        evidence: obj.get("evidence").and_then(|v| v.as_str()).map(String::from),
+        evidence: obj
+            .get("evidence")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     })
 }
 
@@ -4093,9 +4403,7 @@ fn distribution_as_json(dist: &ix_fuzzy::HexavalentDistribution) -> Value {
 /// Render a list of synthesized contradictions as JSON objects.
 /// Used in both the escalation-path and dispatch-path output so
 /// callers can always see why the merge flagged a disagreement.
-fn contradictions_as_json(
-    contradictions: &[ix_fuzzy::observations::HexObservation],
-) -> Value {
+fn contradictions_as_json(contradictions: &[ix_fuzzy::observations::HexObservation]) -> Value {
     Value::Array(
         contradictions
             .iter()
@@ -4136,11 +4444,11 @@ fn summarize_events(events: &[&ix_agent_core::SessionEvent]) -> String {
                 code,
                 reason,
                 emitted_by,
-            } => format!(
-                "#{ordinal} BLOCKED by {emitted_by} ({code:?}): {reason}"
-            ),
+            } => format!("#{ordinal} BLOCKED by {emitted_by} ({code:?}): {reason}"),
             SessionEvent::ActionReplaced {
-                ordinal, emitted_by, ..
+                ordinal,
+                emitted_by,
+                ..
             } => format!("#{ordinal} replaced by {emitted_by}"),
             SessionEvent::ActionFailed { ordinal, error } => {
                 format!("#{ordinal} FAILED: {error}")
@@ -4223,12 +4531,10 @@ fn hexavalent_label(h: &ix_types::Hexavalent) -> &'static str {
 /// Back-compat stub for the rendering audit tool. Must be routed
 /// through the context-aware path.
 pub fn render_audit(_params: Value) -> Result<Value, String> {
-    Err(
-        "ix_render_audit must be dispatched via ServerContext \
+    Err("ix_render_audit must be dispatched via ServerContext \
          (bidirectional JSON-RPC for MCP sampling). This codepath should \
          be intercepted by ToolRegistry::call_with_ctx."
-            .into(),
-    )
+        .into())
 }
 
 /// Context-aware implementation of `ix_render_audit`.
@@ -4516,10 +4822,11 @@ pub fn ast_query(params: Value) -> Result<Value, String> {
         let path = Path::new(path_str);
         let src = std::fs::read_to_string(path)
             .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
-        let lang = Language::from_extension(
-            path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-        )
-        .ok_or_else(|| format!("Cannot detect language from extension of '{}'", path_str))?;
+        let lang =
+            Language::from_extension(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
+                .ok_or_else(|| {
+                    format!("Cannot detect language from extension of '{}'", path_str)
+                })?;
         (src, lang)
     } else {
         let src = params
@@ -4576,10 +4883,9 @@ pub fn code_smells(params: Value) -> Result<Value, String> {
         let path = Path::new(path_str);
         let src = std::fs::read_to_string(path)
             .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
-        let lang = Language::from_extension(
-            path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-        )
-        .ok_or_else(|| format!("Cannot detect language from '{}'", path_str))?;
+        let lang =
+            Language::from_extension(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
+                .ok_or_else(|| format!("Cannot detect language from '{}'", path_str))?;
         let smells = detect_smells(&src, lang);
         return Ok(json!({
             "path": path_str,
@@ -4612,24 +4918,34 @@ fn scan_dir_for_smells(dir: &std::path::Path, max_kb: usize, out: &mut Vec<Value
     use ix_code::analyze::Language;
     use ix_code::smells::detect_smells;
 
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
             // Skip hidden dirs and common build artefacts.
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name.starts_with('.') || matches!(name, "target" | "node_modules" | "dist" | "bin" | "obj") {
+            if name.starts_with('.')
+                || matches!(name, "target" | "node_modules" | "dist" | "bin" | "obj")
+            {
                 continue;
             }
             scan_dir_for_smells(&path, max_kb, out);
         } else if path.is_file() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let Some(lang) = Language::from_extension(ext) else { continue };
+            let Some(lang) = Language::from_extension(ext) else {
+                continue;
+            };
             // Skip files over the size limit.
             if let Ok(meta) = path.metadata() {
-                if meta.len() > (max_kb * 1024) as u64 { continue; }
+                if meta.len() > (max_kb * 1024) as u64 {
+                    continue;
+                }
             }
-            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             let smells = detect_smells(&src, lang);
             if !smells.is_empty() {
                 out.push(json!({

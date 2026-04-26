@@ -198,7 +198,10 @@ stages:
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(lines.len() >= 3, "expected start + stage + done, got: {stdout}");
+    assert!(
+        lines.len() >= 3,
+        "expected start + stage + done, got: {stdout}"
+    );
     // Every line must be valid JSON with an `event` key.
     for line in &lines {
         let v: serde_json::Value = serde_json::from_str(line).expect("valid ndjson line");

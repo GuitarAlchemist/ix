@@ -15,7 +15,10 @@ const DEFAULT_FILE: &str = "ix.yaml";
 pub fn new(name: &str, format: Format) -> Result<(), String> {
     let path = Path::new(DEFAULT_FILE);
     if path.exists() {
-        return Err(format!("{} already exists (refusing to overwrite)", path.display()));
+        return Err(format!(
+            "{} already exists (refusing to overwrite)",
+            path.display()
+        ));
     }
     let spec = PipelineSpec::scaffold(name);
     let yaml = spec.to_yaml_string().map_err(|e| format!("{e}"))?;
@@ -97,12 +100,14 @@ pub fn run(file: Option<&str>, stream_ndjson: bool, format: Format) -> Result<()
     // The current executor doesn't expose per-stage callbacks, so we emit
     // start+done around the whole run for phase 1. Per-stage events arrive
     // in a future iteration that adds a callback hook to `execute()`.
-    let result = execute(&dag, &Default::default(), &NoCache)
-        .map_err(|e| format!("execution: {e}"))?;
+    let result =
+        execute(&dag, &Default::default(), &NoCache).map_err(|e| format!("execution: {e}"))?;
 
     // Write ix.lock alongside the spec (phase 1: write-only, no enforcement).
     let lock = LockFile::from_run(&spec, &result);
-    let lock_yaml = lock.to_yaml_string().map_err(|e| format!("lock yaml: {e}"))?;
+    let lock_yaml = lock
+        .to_yaml_string()
+        .map_err(|e| format!("lock yaml: {e}"))?;
     let lock_path = Path::new(path)
         .parent()
         .unwrap_or(Path::new("."))

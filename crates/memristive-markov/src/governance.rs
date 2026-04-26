@@ -6,10 +6,10 @@
 //! sustained health decreases resistance to staying healthy.
 
 use crate::engine::MemristiveEngine;
+use crate::sampler::SamplingStrategy;
 use crate::serde_state::EngineConfig;
 use crate::vlmm::FallbackStrategy;
-use crate::sampler::SamplingStrategy;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// The four governance states from anti-lolli-inflation-policy.yaml
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -73,13 +73,13 @@ impl GovernanceMarkov {
     /// Create a new governance Markov model with governance-tuned parameters
     pub fn new() -> Self {
         let config = EngineConfig {
-            max_order: 2,                // Consider last 2 states
-            session_alpha: 0.15,         // Moderate learning rate
-            session_beta: 0.05,          // 5% decay per cycle
+            max_order: 2,        // Consider last 2 states
+            session_alpha: 0.15, // Moderate learning rate
+            session_beta: 0.05,  // 5% decay per cycle
             long_term_alpha: 0.02,
             long_term_beta: 0.005,
             g_min: 0.01,
-            min_observations: 2,         // Low threshold for governance (few cycles)
+            min_observations: 2, // Low threshold for governance (few cycles)
             fallback: FallbackStrategy::MarginalDistribution,
             consolidation_gamma: 0.1,
             min_session_observations: 3,
@@ -193,7 +193,10 @@ mod tests {
 
     #[test]
     fn classify_healthy() {
-        assert_eq!(GovernanceState::classify(0.95, 1.0), GovernanceState::Healthy);
+        assert_eq!(
+            GovernanceState::classify(0.95, 1.0),
+            GovernanceState::Healthy
+        );
     }
 
     #[test]
@@ -203,7 +206,10 @@ mod tests {
 
     #[test]
     fn classify_warning() {
-        assert_eq!(GovernanceState::classify(0.6, 2.8), GovernanceState::Warning);
+        assert_eq!(
+            GovernanceState::classify(0.6, 2.8),
+            GovernanceState::Warning
+        );
     }
 
     #[test]
@@ -218,7 +224,12 @@ mod tests {
 
     #[test]
     fn state_roundtrip() {
-        for state in [GovernanceState::Healthy, GovernanceState::Watch, GovernanceState::Warning, GovernanceState::Freeze] {
+        for state in [
+            GovernanceState::Healthy,
+            GovernanceState::Watch,
+            GovernanceState::Warning,
+            GovernanceState::Freeze,
+        ] {
             assert_eq!(GovernanceState::from_index(state.as_index()), Some(state));
         }
     }
@@ -229,7 +240,11 @@ mod tests {
         model.observe(GovernanceState::Healthy);
         let probs = model.predict();
         let sum: f64 = probs.iter().sum();
-        assert!((sum - 1.0).abs() < 0.01, "Probabilities must sum to ~1.0, got {}", sum);
+        assert!(
+            (sum - 1.0).abs() < 0.01,
+            "Probabilities must sum to ~1.0, got {}",
+            sum
+        );
     }
 
     #[test]

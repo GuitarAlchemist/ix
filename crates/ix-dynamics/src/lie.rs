@@ -124,9 +124,8 @@ pub fn so3_log(r: &Array2<f64>) -> Result<[f64; 3], DynamicsError> {
         let mut best_col = 0;
         let mut best_norm = 0.0;
         for c in 0..3 {
-            let norm_sq = rpi[[0, c]] * rpi[[0, c]]
-                + rpi[[1, c]] * rpi[[1, c]]
-                + rpi[[2, c]] * rpi[[2, c]];
+            let norm_sq =
+                rpi[[0, c]] * rpi[[0, c]] + rpi[[1, c]] * rpi[[1, c]] + rpi[[2, c]] * rpi[[2, c]];
             if norm_sq > best_norm {
                 best_norm = norm_sq;
                 best_col = c;
@@ -378,8 +377,8 @@ mod tests {
     fn test_so3_log_identity() {
         let r = Array2::eye(3);
         let omega = so3_log(&r).unwrap();
-        for i in 0..3 {
-            assert!(omega[i].abs() < TEST_TOL);
+        for value in &omega {
+            assert!(value.abs() < TEST_TOL);
         }
     }
 
@@ -439,12 +438,7 @@ mod tests {
     #[test]
     fn test_su2_quaternion_roundtrip() {
         // Unit quaternion for 90° around Z: (cos 45°, 0, 0, sin 45°)
-        let q = [
-            (PI / 4.0).cos(),
-            0.0,
-            0.0,
-            (PI / 4.0).sin(),
-        ];
+        let q = [(PI / 4.0).cos(), 0.0, 0.0, (PI / 4.0).sin()];
         let su2 = su2_from_quaternion(&q);
         let recovered = quaternion_from_su2(&su2);
         for i in 0..4 {
@@ -532,13 +526,16 @@ mod tests {
     }
 
     /// Helper: multiply two 2×2 complex matrices.
-    fn mat_mul_2x2(
-        a: &[[Complex; 2]; 2],
-        b: &[[Complex; 2]; 2],
-    ) -> [[Complex; 2]; 2] {
+    fn mat_mul_2x2(a: &[[Complex; 2]; 2], b: &[[Complex; 2]; 2]) -> [[Complex; 2]; 2] {
         [
-            [a[0][0] * b[0][0] + a[0][1] * b[1][0], a[0][0] * b[0][1] + a[0][1] * b[1][1]],
-            [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1]],
+            [
+                a[0][0] * b[0][0] + a[0][1] * b[1][0],
+                a[0][0] * b[0][1] + a[0][1] * b[1][1],
+            ],
+            [
+                a[1][0] * b[0][0] + a[1][1] * b[1][0],
+                a[1][0] * b[0][1] + a[1][1] * b[1][1],
+            ],
         ]
     }
 }

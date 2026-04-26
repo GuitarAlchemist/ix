@@ -64,11 +64,23 @@ pub fn lyapunov_spectrum(
     for step in 0..total {
         // RK4 integration of state
         let k1 = dynamics(&x, t);
-        let x_mid1: Vec<f64> = x.iter().zip(k1.iter()).map(|(xi, ki)| xi + 0.5 * dt * ki).collect();
+        let x_mid1: Vec<f64> = x
+            .iter()
+            .zip(k1.iter())
+            .map(|(xi, ki)| xi + 0.5 * dt * ki)
+            .collect();
         let k2 = dynamics(&x_mid1, t + 0.5 * dt);
-        let x_mid2: Vec<f64> = x.iter().zip(k2.iter()).map(|(xi, ki)| xi + 0.5 * dt * ki).collect();
+        let x_mid2: Vec<f64> = x
+            .iter()
+            .zip(k2.iter())
+            .map(|(xi, ki)| xi + 0.5 * dt * ki)
+            .collect();
         let k3 = dynamics(&x_mid2, t + 0.5 * dt);
-        let x_end: Vec<f64> = x.iter().zip(k3.iter()).map(|(xi, ki)| xi + dt * ki).collect();
+        let x_end: Vec<f64> = x
+            .iter()
+            .zip(k3.iter())
+            .map(|(xi, ki)| xi + dt * ki)
+            .collect();
         let k4 = dynamics(&x_end, t + dt);
 
         for i in 0..n {
@@ -172,7 +184,11 @@ mod tests {
         let df = |x: f64| r * (1.0 - 2.0 * x);
 
         let mle = mle_1d(f, df, 0.1, 10_000, 1000);
-        assert!((mle - 2.0_f64.ln()).abs() < 0.05, "MLE at r=4 should be ln(2), got {}", mle);
+        assert!(
+            (mle - 2.0_f64.ln()).abs() < 0.05,
+            "MLE at r=4 should be ln(2), got {}",
+            mle
+        );
     }
 
     #[test]

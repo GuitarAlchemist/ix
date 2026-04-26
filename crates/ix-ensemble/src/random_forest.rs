@@ -5,8 +5,8 @@
 //! are made by majority vote across all trees.
 
 use ndarray::{Array1, Array2};
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 
 use ix_supervised::decision_tree::DecisionTree;
@@ -53,7 +53,10 @@ impl EnsembleClassifier for RandomForest {
         self.n_classes = *y.iter().max().unwrap() + 1;
 
         // Default: sqrt(n_features)
-        let max_features = self.max_features.unwrap_or((p as f64).sqrt().ceil() as usize).min(p);
+        let max_features = self
+            .max_features
+            .unwrap_or((p as f64).sqrt().ceil() as usize)
+            .min(p);
 
         let mut rng = StdRng::seed_from_u64(self.seed);
         self.trees.clear();
@@ -132,14 +135,20 @@ impl EnsembleClassifier for RandomForest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::array;
     use ix_supervised::metrics::accuracy;
+    use ndarray::array;
 
     #[test]
     fn test_random_forest_basic() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0], [0.3, 0.2],
-            [5.0, 5.0], [5.5, 5.5], [6.0, 5.0], [5.3, 5.2]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [1.0, 0.0],
+            [0.3, 0.2],
+            [5.0, 5.0],
+            [5.5, 5.5],
+            [6.0, 5.0],
+            [5.3, 5.2]
         ];
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
@@ -148,15 +157,16 @@ mod tests {
 
         let pred = rf.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 0.9, "Random forest should classify separable data well, got acc={}", acc);
+        assert!(
+            acc >= 0.9,
+            "Random forest should classify separable data well, got acc={}",
+            acc
+        );
     }
 
     #[test]
     fn test_random_forest_predict_proba() {
-        let x = array![
-            [0.0, 0.0], [0.5, 0.5],
-            [5.0, 5.0], [5.5, 5.5]
-        ];
+        let x = array![[0.0, 0.0], [0.5, 0.5], [5.0, 5.0], [5.5, 5.5]];
         let y = array![0, 0, 1, 1];
 
         let mut rf = RandomForest::new(10, 5).with_seed(42);
@@ -165,7 +175,11 @@ mod tests {
         let proba = rf.predict_proba(&x);
         for i in 0..proba.nrows() {
             let sum: f64 = proba.row(i).sum();
-            assert!((sum - 1.0).abs() < 1e-6, "Probabilities should sum to 1, got {}", sum);
+            assert!(
+                (sum - 1.0).abs() < 1e-6,
+                "Probabilities should sum to 1, got {}",
+                sum
+            );
         }
     }
 
@@ -183,9 +197,12 @@ mod tests {
     #[test]
     fn test_random_forest_multiclass() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.0],
-            [5.0, 0.0], [5.5, 0.0],
-            [0.0, 5.0], [0.5, 5.0]
+            [0.0, 0.0],
+            [0.5, 0.0],
+            [5.0, 0.0],
+            [5.5, 0.0],
+            [0.0, 5.0],
+            [0.5, 5.0]
         ];
         let y = array![0, 0, 1, 1, 2, 2];
 
@@ -194,6 +211,10 @@ mod tests {
 
         let pred = rf.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 0.8, "Random forest should handle 3 classes, got acc={}", acc);
+        assert!(
+            acc >= 0.8,
+            "Random forest should handle 3 classes, got acc={}",
+            acc
+        );
     }
 }

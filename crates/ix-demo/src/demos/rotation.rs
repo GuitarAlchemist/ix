@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 
 #[derive(PartialEq, Clone, Copy)]
 enum RotationMode {
@@ -62,7 +62,11 @@ impl RotationDemo {
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.mode, RotationMode::Slerp, "SLERP Animation");
             ui.radio_value(&mut self.mode, RotationMode::Euler, "Euler Angles");
-            ui.radio_value(&mut self.mode, RotationMode::RotationMatrix, "Rotation Matrix");
+            ui.radio_value(
+                &mut self.mode,
+                RotationMode::RotationMatrix,
+                "Rotation Matrix",
+            );
         });
 
         match self.mode {
@@ -78,20 +82,30 @@ impl RotationDemo {
         ui.separator();
         ui.label("Quaternion A (axis-angle):");
         ui.horizontal(|ui| {
-            ui.label("Axis X:"); ui.add(egui::Slider::new(&mut self.axis1[0], -1.0..=1.0));
-            ui.label("Y:"); ui.add(egui::Slider::new(&mut self.axis1[1], -1.0..=1.0));
-            ui.label("Z:"); ui.add(egui::Slider::new(&mut self.axis1[2], -1.0..=1.0));
+            ui.label("Axis X:");
+            ui.add(egui::Slider::new(&mut self.axis1[0], -1.0..=1.0));
+            ui.label("Y:");
+            ui.add(egui::Slider::new(&mut self.axis1[1], -1.0..=1.0));
+            ui.label("Z:");
+            ui.add(egui::Slider::new(&mut self.axis1[2], -1.0..=1.0));
         });
-        ui.add(egui::Slider::new(&mut self.angle1, 0.0..=std::f64::consts::TAU).text("Angle A (rad)"));
+        ui.add(
+            egui::Slider::new(&mut self.angle1, 0.0..=std::f64::consts::TAU).text("Angle A (rad)"),
+        );
 
         ui.separator();
         ui.label("Quaternion B (axis-angle):");
         ui.horizontal(|ui| {
-            ui.label("Axis X:"); ui.add(egui::Slider::new(&mut self.axis2[0], -1.0..=1.0));
-            ui.label("Y:"); ui.add(egui::Slider::new(&mut self.axis2[1], -1.0..=1.0));
-            ui.label("Z:"); ui.add(egui::Slider::new(&mut self.axis2[2], -1.0..=1.0));
+            ui.label("Axis X:");
+            ui.add(egui::Slider::new(&mut self.axis2[0], -1.0..=1.0));
+            ui.label("Y:");
+            ui.add(egui::Slider::new(&mut self.axis2[1], -1.0..=1.0));
+            ui.label("Z:");
+            ui.add(egui::Slider::new(&mut self.axis2[2], -1.0..=1.0));
         });
-        ui.add(egui::Slider::new(&mut self.angle2, 0.0..=std::f64::consts::TAU).text("Angle B (rad)"));
+        ui.add(
+            egui::Slider::new(&mut self.angle2, 0.0..=std::f64::consts::TAU).text("Angle B (rad)"),
+        );
 
         ui.add(egui::Slider::new(&mut self.slerp_samples, 10..=200).text("Samples"));
 
@@ -105,10 +119,25 @@ impl RotationDemo {
                 let x: PlotPoints = self.slerp_data_x.iter().copied().collect();
                 let y: PlotPoints = self.slerp_data_y.iter().copied().collect();
                 let z: PlotPoints = self.slerp_data_z.iter().copied().collect();
-                plot_ui.line(Line::new(w).name("w").width(2.0).color(egui::Color32::WHITE));
+                plot_ui.line(
+                    Line::new(w)
+                        .name("w")
+                        .width(2.0)
+                        .color(egui::Color32::WHITE),
+                );
                 plot_ui.line(Line::new(x).name("x").width(2.0).color(egui::Color32::RED));
-                plot_ui.line(Line::new(y).name("y").width(2.0).color(egui::Color32::GREEN));
-                plot_ui.line(Line::new(z).name("z").width(2.0).color(egui::Color32::from_rgb(80, 140, 255)));
+                plot_ui.line(
+                    Line::new(y)
+                        .name("y")
+                        .width(2.0)
+                        .color(egui::Color32::GREEN),
+                );
+                plot_ui.line(
+                    Line::new(z)
+                        .name("z")
+                        .width(2.0)
+                        .color(egui::Color32::from_rgb(80, 140, 255)),
+                );
             });
         }
     }
@@ -128,7 +157,11 @@ impl RotationDemo {
 
         let n = samples.len();
         for (i, q) in samples.iter().enumerate() {
-            let t = if n > 1 { i as f64 / (n - 1) as f64 } else { 0.0 };
+            let t = if n > 1 {
+                i as f64 / (n - 1) as f64
+            } else {
+                0.0
+            };
             self.slerp_data_w.push([t, q.w]);
             self.slerp_data_x.push([t, q.x]);
             self.slerp_data_y.push([t, q.y]);
@@ -139,12 +172,27 @@ impl RotationDemo {
     fn euler_ui(&mut self, ui: &mut egui::Ui) {
         ui.label("Convert Euler angles (XYZ order) to quaternion and back.");
 
-        ui.add(egui::Slider::new(&mut self.roll, -std::f64::consts::PI..=std::f64::consts::PI).text("Roll (rad)"));
-        ui.add(egui::Slider::new(&mut self.pitch, -std::f64::consts::FRAC_PI_2..=std::f64::consts::FRAC_PI_2).text("Pitch (rad)"));
-        ui.add(egui::Slider::new(&mut self.yaw, -std::f64::consts::PI..=std::f64::consts::PI).text("Yaw (rad)"));
+        ui.add(
+            egui::Slider::new(&mut self.roll, -std::f64::consts::PI..=std::f64::consts::PI)
+                .text("Roll (rad)"),
+        );
+        ui.add(
+            egui::Slider::new(
+                &mut self.pitch,
+                -std::f64::consts::FRAC_PI_2..=std::f64::consts::FRAC_PI_2,
+            )
+            .text("Pitch (rad)"),
+        );
+        ui.add(
+            egui::Slider::new(&mut self.yaw, -std::f64::consts::PI..=std::f64::consts::PI)
+                .text("Yaw (rad)"),
+        );
 
         if ix_rotation::euler::gimbal_lock_check(self.pitch) {
-            ui.colored_label(egui::Color32::YELLOW, "Warning: Pitch is near +/-90 deg — gimbal lock region!");
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "Warning: Pitch is near +/-90 deg — gimbal lock region!",
+            );
         }
 
         if ui.button("Convert").clicked() {
@@ -158,7 +206,7 @@ impl RotationDemo {
     }
 
     fn compute_euler(&mut self) {
-        use ix_rotation::euler::{EulerOrder, to_quaternion, from_quaternion, gimbal_lock_check};
+        use ix_rotation::euler::{from_quaternion, gimbal_lock_check, to_quaternion, EulerOrder};
 
         let q = to_quaternion(self.roll, self.pitch, self.yaw, EulerOrder::XYZ);
         let (r2, p2, y2) = from_quaternion(&q, EulerOrder::XYZ);
@@ -188,11 +236,16 @@ impl RotationDemo {
         ui.label("Convert a quaternion (via axis-angle) to a 3x3 rotation matrix.");
 
         ui.horizontal(|ui| {
-            ui.label("Axis X:"); ui.add(egui::Slider::new(&mut self.rm_axis[0], -1.0..=1.0));
-            ui.label("Y:"); ui.add(egui::Slider::new(&mut self.rm_axis[1], -1.0..=1.0));
-            ui.label("Z:"); ui.add(egui::Slider::new(&mut self.rm_axis[2], -1.0..=1.0));
+            ui.label("Axis X:");
+            ui.add(egui::Slider::new(&mut self.rm_axis[0], -1.0..=1.0));
+            ui.label("Y:");
+            ui.add(egui::Slider::new(&mut self.rm_axis[1], -1.0..=1.0));
+            ui.label("Z:");
+            ui.add(egui::Slider::new(&mut self.rm_axis[2], -1.0..=1.0));
         });
-        ui.add(egui::Slider::new(&mut self.rm_angle, 0.0..=std::f64::consts::TAU).text("Angle (rad)"));
+        ui.add(
+            egui::Slider::new(&mut self.rm_angle, 0.0..=std::f64::consts::TAU).text("Angle (rad)"),
+        );
 
         if ui.button("Compute Matrix").clicked() {
             self.compute_rotation_matrix();
@@ -239,7 +292,11 @@ impl RotationDemo {
         let valid = is_rotation_matrix(&m, 1e-8);
         text.push_str(&format!(
             "\nOrthogonality check: {}",
-            if valid { "PASS (orthogonal, det=1)" } else { "FAIL" }
+            if valid {
+                "PASS (orthogonal, det=1)"
+            } else {
+                "FAIL"
+            }
         ));
 
         self.rm_result = text;

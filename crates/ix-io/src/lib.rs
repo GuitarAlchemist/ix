@@ -11,13 +11,13 @@
 //! - **websocket**: WebSocket for real-time data feeds
 //! - **protocol**: Common trait for all data sources/sinks
 
-pub mod protocol;
 pub mod csv_io;
-pub mod json_io;
-pub mod watcher;
-pub mod pipe;
-pub mod tcp;
-pub mod http;
-pub mod websocket;
 pub mod error;
+pub mod http;
+pub mod json_io;
+pub mod pipe;
+pub mod protocol;
+pub mod tcp;
 pub mod trace_bridge;
+pub mod watcher;
+pub mod websocket;

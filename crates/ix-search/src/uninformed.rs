@@ -22,7 +22,12 @@ where
         nodes_expanded += 1;
 
         if current.is_goal() {
-            return Some(reconstruct(current, &came_from, nodes_expanded, nodes_generated));
+            return Some(reconstruct(
+                current,
+                &came_from,
+                nodes_expanded,
+                nodes_generated,
+            ));
         }
 
         for (action, successor, cost) in current.successors() {
@@ -55,7 +60,12 @@ where
         nodes_expanded += 1;
 
         if current.is_goal() {
-            return Some(reconstruct(current, &came_from, nodes_expanded, nodes_generated));
+            return Some(reconstruct(
+                current,
+                &came_from,
+                nodes_expanded,
+                nodes_generated,
+            ));
         }
 
         for (action, successor, cost) in current.successors() {
@@ -103,7 +113,15 @@ where
             *generated += 1;
             if !visited.contains(&successor) {
                 came_from.insert(successor.clone(), (state.clone(), action, cost));
-                if dls_recursive(&successor, depth + 1, limit, visited, came_from, expanded, generated) {
+                if dls_recursive(
+                    &successor,
+                    depth + 1,
+                    limit,
+                    visited,
+                    came_from,
+                    expanded,
+                    generated,
+                ) {
                     return true;
                 }
             }
@@ -116,15 +134,29 @@ where
     let mut visited = HashSet::new();
     let mut came_from = HashMap::new();
 
-    if dls_recursive(&start, 0, limit, &mut visited, &mut came_from, &mut nodes_expanded, &mut nodes_generated) {
+    if dls_recursive(
+        &start,
+        0,
+        limit,
+        &mut visited,
+        &mut came_from,
+        &mut nodes_expanded,
+        &mut nodes_generated,
+    ) {
         // Find the goal state
-        let goal = came_from.keys()
+        let goal = came_from
+            .keys()
             .chain(std::iter::once(&start))
             .find(|s| s.is_goal())
             .cloned();
 
         if let Some(goal) = goal {
-            return Some(reconstruct(goal, &came_from, nodes_expanded, nodes_generated));
+            return Some(reconstruct(
+                goal,
+                &came_from,
+                nodes_expanded,
+                nodes_generated,
+            ));
         }
     }
 
@@ -192,8 +224,22 @@ mod tests {
 
         fn successors(&self) -> Vec<(Self::Action, Self, f64)> {
             vec![
-                (1, SimpleState { val: self.val + 1, goal: self.goal }, 1.0),
-                (-1, SimpleState { val: self.val - 1, goal: self.goal }, 1.0),
+                (
+                    1,
+                    SimpleState {
+                        val: self.val + 1,
+                        goal: self.goal,
+                    },
+                    1.0,
+                ),
+                (
+                    -1,
+                    SimpleState {
+                        val: self.val - 1,
+                        goal: self.goal,
+                    },
+                    1.0,
+                ),
             ]
         }
 

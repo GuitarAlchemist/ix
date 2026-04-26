@@ -181,18 +181,16 @@ impl AgentHandler for RegistryLookupHandler {
                 tool_name, params, ..
             } => {
                 let mcp_name = tool_name.as_str();
-                let skill_name = mcp_to_skill_name(mcp_name)
-                    .ok_or_else(|| ActionError::Exec(format!(
-                        "not a registry-backed tool: {mcp_name}"
-                    )))?;
-                let descriptor = ix_registry::by_name(&skill_name)
-                    .ok_or_else(|| ActionError::Exec(format!(
-                        "skill not in registry: {skill_name}"
-                    )))?;
+                let skill_name = mcp_to_skill_name(mcp_name).ok_or_else(|| {
+                    ActionError::Exec(format!("not a registry-backed tool: {mcp_name}"))
+                })?;
+                let descriptor = ix_registry::by_name(&skill_name).ok_or_else(|| {
+                    ActionError::Exec(format!("skill not in registry: {skill_name}"))
+                })?;
 
                 let args = [IxValue::Json(params.clone())];
-                let out = (descriptor.fn_ptr)(&args)
-                    .map_err(|e| ActionError::Exec(e.to_string()))?;
+                let out =
+                    (descriptor.fn_ptr)(&args).map_err(|e| ActionError::Exec(e.to_string()))?;
                 match out {
                     IxValue::Json(j) => Ok(ActionOutcome::value_only(j)),
                     other => {
@@ -290,10 +288,10 @@ pub fn dispatch(mcp_tool_name: &str, params: JsonValue) -> Result<JsonValue, Str
              This is a governance-instrument safety check, not a transient error."
         )),
         Err(ActionError::Blocked {
-            code, reason, blocker,
-        }) => Err(format!(
-            "{blocker}: action blocked ({code:?}) — {reason}"
-        )),
+            code,
+            reason,
+            blocker,
+        }) => Err(format!("{blocker}: action blocked ({code:?}) — {reason}")),
         Err(ActionError::Exec(e)) => Err(e),
         Err(ActionError::InvalidResult(e)) => Err(e),
     }

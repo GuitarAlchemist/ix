@@ -7,8 +7,8 @@
 //! Use case for agents: quickly check "has this query been seen before?"
 //! or "does this skill exist?" without loading full data.
 
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// A Bloom filter.
 #[derive(Debug, Clone)]
@@ -93,7 +93,12 @@ impl BloomFilter {
         if self.size != other.size || self.num_hashes != other.num_hashes {
             return None;
         }
-        let bits = self.bits.iter().zip(other.bits.iter()).map(|(&a, &b)| a || b).collect();
+        let bits = self
+            .bits
+            .iter()
+            .zip(other.bits.iter())
+            .map(|(&a, &b)| a || b)
+            .collect();
         Some(Self {
             bits,
             num_hashes: self.num_hashes,

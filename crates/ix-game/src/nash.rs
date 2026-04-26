@@ -72,14 +72,14 @@ impl BimatrixGame {
     pub fn best_response_a(&self, strategy_b: &Array1<f64>) -> Array1<f64> {
         let m = self.num_strategies_a();
         let expected: Vec<f64> = (0..m)
-            .map(|i| {
-                self.payoff_a.row(i).dot(strategy_b)
-            })
+            .map(|i| self.payoff_a.row(i).dot(strategy_b))
             .collect();
 
         let max_val = expected.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let mut br = Array1::zeros(m);
-        let best_indices: Vec<usize> = expected.iter().enumerate()
+        let best_indices: Vec<usize> = expected
+            .iter()
+            .enumerate()
             .filter(|(_, &v)| (v - max_val).abs() < 1e-10)
             .map(|(i, _)| i)
             .collect();
@@ -93,14 +93,14 @@ impl BimatrixGame {
     pub fn best_response_b(&self, strategy_a: &Array1<f64>) -> Array1<f64> {
         let n = self.num_strategies_b();
         let expected: Vec<f64> = (0..n)
-            .map(|j| {
-                self.payoff_b.column(j).dot(strategy_a)
-            })
+            .map(|j| self.payoff_b.column(j).dot(strategy_a))
             .collect();
 
         let max_val = expected.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let mut br = Array1::zeros(n);
-        let best_indices: Vec<usize> = expected.iter().enumerate()
+        let best_indices: Vec<usize> = expected
+            .iter()
+            .enumerate()
             .filter(|(_, &v)| (v - max_val).abs() < 1e-10)
             .map(|(i, _)| i)
             .collect();
@@ -193,7 +193,10 @@ impl BimatrixGame {
                 let mut pb = Array1::zeros(n);
                 pa[i] = 1.0;
                 pb[j] = 1.0;
-                return Some(StrategyProfile { player_a: pa, player_b: pb });
+                return Some(StrategyProfile {
+                    player_a: pa,
+                    player_b: pb,
+                });
             }
             return None;
         }
@@ -241,10 +244,7 @@ impl BimatrixGame {
 /// Find Nash equilibria using iterated best response (fictitious play).
 ///
 /// May not converge for all games, but works well in practice for many.
-pub fn fictitious_play(
-    game: &BimatrixGame,
-    iterations: usize,
-) -> StrategyProfile {
+pub fn fictitious_play(game: &BimatrixGame, iterations: usize) -> StrategyProfile {
     let m = game.num_strategies_a();
     let n = game.num_strategies_b();
 
@@ -256,15 +256,21 @@ pub fn fictitious_play(
     for _ in 0..iterations {
         let empirical_b = &count_b / count_b.sum();
         let br_a = game.best_response_a(&empirical_b);
-        let action_a = br_a.iter().enumerate()
+        let action_a = br_a
+            .iter()
+            .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap().0;
+            .unwrap()
+            .0;
 
         let empirical_a = &count_a / count_a.sum();
         let br_b = game.best_response_b(&empirical_a);
-        let action_b = br_b.iter().enumerate()
+        let action_b = br_b
+            .iter()
+            .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap().0;
+            .unwrap()
+            .0;
 
         count_a[action_a] += 1.0;
         count_b[action_b] += 1.0;
@@ -284,7 +290,13 @@ fn subsets(n: usize, k: usize) -> Vec<Vec<usize>> {
     result
 }
 
-fn subsets_helper(n: usize, k: usize, start: usize, current: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+fn subsets_helper(
+    n: usize,
+    k: usize,
+    start: usize,
+    current: &mut Vec<usize>,
+    result: &mut Vec<Vec<usize>>,
+) {
     if current.len() == k {
         result.push(current.clone());
         return;
@@ -303,16 +315,12 @@ pub fn dominant_strategy_equilibrium(game: &BimatrixGame) -> Option<StrategyProf
 
     // Find strictly dominant strategy for A
     let dom_a = (0..m).find(|&i| {
-        (0..m).all(|k| {
-            k == i || (0..n).all(|j| game.payoff_a[[i, j]] > game.payoff_a[[k, j]])
-        })
+        (0..m).all(|k| k == i || (0..n).all(|j| game.payoff_a[[i, j]] > game.payoff_a[[k, j]]))
     });
 
     // Find strictly dominant strategy for B
     let dom_b = (0..n).find(|&j| {
-        (0..n).all(|k| {
-            k == j || (0..m).all(|i| game.payoff_b[[i, j]] > game.payoff_b[[i, k]])
-        })
+        (0..n).all(|k| k == j || (0..m).all(|i| game.payoff_b[[i, j]] > game.payoff_b[[i, k]]))
     });
 
     match (dom_a, dom_b) {
@@ -321,7 +329,10 @@ pub fn dominant_strategy_equilibrium(game: &BimatrixGame) -> Option<StrategyProf
             let mut pb = Array1::zeros(n);
             pa[i] = 1.0;
             pb[j] = 1.0;
-            Some(StrategyProfile { player_a: pa, player_b: pb })
+            Some(StrategyProfile {
+                player_a: pa,
+                player_b: pb,
+            })
         }
         _ => None,
     }
@@ -362,7 +373,9 @@ mod tests {
 
         let equilibria = game.support_enumeration();
         // Should find the mixed equilibrium (0.5, 0.5)
-        let mixed = equilibria.iter().find(|e| e.player_a[0] > 0.1 && e.player_a[0] < 0.9);
+        let mixed = equilibria
+            .iter()
+            .find(|e| e.player_a[0] > 0.1 && e.player_a[0] < 0.9);
         assert!(mixed.is_some(), "Should find mixed NE");
         let m = mixed.unwrap();
         assert!((m.player_a[0] - 0.5).abs() < 0.01);
@@ -381,7 +394,11 @@ mod tests {
 
         let equilibria = game.support_enumeration();
         // Should find at least 2 pure NE + 1 mixed NE
-        assert!(equilibria.len() >= 2, "BoS has 3 equilibria, found {}", equilibria.len());
+        assert!(
+            equilibria.len() >= 2,
+            "BoS has 3 equilibria, found {}",
+            equilibria.len()
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, Points, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints, Points};
 
 #[derive(PartialEq, Clone, Copy)]
 enum OptMethod {
@@ -38,7 +38,11 @@ impl OptimizationDemo {
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.method, OptMethod::Sgd, "SGD");
             ui.radio_value(&mut self.method, OptMethod::Adam, "Adam");
-            ui.radio_value(&mut self.method, OptMethod::SimulatedAnnealing, "Sim. Annealing");
+            ui.radio_value(
+                &mut self.method,
+                OptMethod::SimulatedAnnealing,
+                "Sim. Annealing",
+            );
         });
         ui.horizontal(|ui| {
             ui.label("LR:");
@@ -56,38 +60,48 @@ impl OptimizationDemo {
         if !self.trajectory.is_empty() {
             ui.columns(2, |cols| {
                 // Trajectory plot
-                Plot::new("opt_trajectory").height(300.0).show(&mut cols[0], |plot_ui| {
-                    let data: Vec<[f64; 2]> = self.trajectory.clone();
-                    let pts1: PlotPoints = data.iter().copied().collect();
-                    let pts2: PlotPoints = data.iter().copied().collect();
-                    plot_ui.line(Line::new(pts1).name("Path").width(1.5));
-                    plot_ui.points(Points::new(pts2).radius(2.0).name("Steps"));
+                Plot::new("opt_trajectory")
+                    .height(300.0)
+                    .show(&mut cols[0], |plot_ui| {
+                        let data: Vec<[f64; 2]> = self.trajectory.clone();
+                        let pts1: PlotPoints = data.iter().copied().collect();
+                        let pts2: PlotPoints = data.iter().copied().collect();
+                        plot_ui.line(Line::new(pts1).name("Path").width(1.5));
+                        plot_ui.points(Points::new(pts2).radius(2.0).name("Steps"));
 
-                    // Mark optimum
-                    plot_ui.points(Points::new(PlotPoints::new(vec![[1.0, 1.0]]))
-                        .radius(8.0).color(egui::Color32::GREEN).name("Optimum"));
-                });
+                        // Mark optimum
+                        plot_ui.points(
+                            Points::new(PlotPoints::new(vec![[1.0, 1.0]]))
+                                .radius(8.0)
+                                .color(egui::Color32::GREEN)
+                                .name("Optimum"),
+                        );
+                    });
 
                 // Loss curve
-                Plot::new("opt_loss").height(300.0).show(&mut cols[1], |plot_ui| {
-                    let pts: PlotPoints = self.loss_history.iter().enumerate()
-                        .map(|(i, &l)| [i as f64, l.ln().max(-10.0)])
-                        .collect();
-                    plot_ui.line(Line::new(pts).name("log(loss)").width(2.0));
-                });
+                Plot::new("opt_loss")
+                    .height(300.0)
+                    .show(&mut cols[1], |plot_ui| {
+                        let pts: PlotPoints = self
+                            .loss_history
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &l)| [i as f64, l.ln().max(-10.0)])
+                            .collect();
+                        plot_ui.line(Line::new(pts).name("log(loss)").width(2.0));
+                    });
             });
         }
     }
 
     fn run(&mut self) {
         // Rosenbrock gradient
-        let rosenbrock = |x: f64, y: f64| -> f64 {
-            (1.0 - x).powi(2) + 100.0 * (y - x*x).powi(2)
-        };
+        let rosenbrock =
+            |x: f64, y: f64| -> f64 { (1.0 - x).powi(2) + 100.0 * (y - x * x).powi(2) };
         let grad = |x: f64, y: f64| -> [f64; 2] {
             [
-                -2.0 * (1.0 - x) - 400.0 * x * (y - x*x),
-                200.0 * (y - x*x),
+                -2.0 * (1.0 - x) - 400.0 * x * (y - x * x),
+                200.0 * (y - x * x),
             ]
         };
 

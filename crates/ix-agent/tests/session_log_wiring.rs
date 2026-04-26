@@ -9,8 +9,8 @@
 use ix_agent::registry_bridge::{
     clear_session_log, dispatch_action, install_session_log, shared_loop_detector,
 };
-use ix_agent_core::{ActionError, AgentAction, ReadContext, SessionEvent};
 use ix_agent_core::event::BlockCode;
+use ix_agent_core::{ActionError, AgentAction, ReadContext, SessionEvent};
 use ix_session::SessionLog;
 use tempfile::tempdir;
 
@@ -37,8 +37,8 @@ fn dispatch_action_writes_events_to_installed_session_log() {
         target_hint: None,
     };
 
-    let outcome = dispatch_action(&cx, action)
-        .expect("ix_stats is Tier 1 Read and should auto-approve");
+    let outcome =
+        dispatch_action(&cx, action).expect("ix_stats is Tier 1 Read and should auto-approve");
     assert!(outcome.value.is_object());
 
     // Reopen the log from disk to prove events were flushed, not

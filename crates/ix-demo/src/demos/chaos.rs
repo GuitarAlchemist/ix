@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Points, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints, Points};
 
 #[derive(PartialEq, Clone, Copy)]
 enum ChaosMode {
@@ -72,16 +72,23 @@ impl ChaosDemo {
         if !self.plot_data.is_empty() {
             Plot::new("bifurcation").height(500.0).show(ui, |plot_ui| {
                 let pts: PlotPoints = self.plot_data.iter().copied().collect();
-                plot_ui.points(Points::new(pts).radius(0.5).color(egui::Color32::LIGHT_BLUE));
+                plot_ui.points(
+                    Points::new(pts)
+                        .radius(0.5)
+                        .color(egui::Color32::LIGHT_BLUE),
+                );
             });
         }
     }
 
     fn lorenz_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("σ:"); ui.add(egui::Slider::new(&mut self.sigma, 1.0..=20.0));
-            ui.label("ρ:"); ui.add(egui::Slider::new(&mut self.rho, 1.0..=50.0));
-            ui.label("β:"); ui.add(egui::Slider::new(&mut self.beta, 0.1..=10.0));
+            ui.label("σ:");
+            ui.add(egui::Slider::new(&mut self.sigma, 1.0..=20.0));
+            ui.label("ρ:");
+            ui.add(egui::Slider::new(&mut self.rho, 1.0..=50.0));
+            ui.label("β:");
+            ui.add(egui::Slider::new(&mut self.beta, 0.1..=10.0));
         });
         ui.add(egui::Slider::new(&mut self.lorenz_steps, 1000..=20000).text("Steps"));
 
@@ -90,10 +97,13 @@ impl ChaosDemo {
         }
 
         if !self.plot_data.is_empty() {
-            Plot::new("lorenz").height(500.0).data_aspect(1.0).show(ui, |plot_ui| {
-                let pts: PlotPoints = self.plot_data.iter().copied().collect();
-                plot_ui.line(Line::new(pts).name("XZ projection").width(0.5));
-            });
+            Plot::new("lorenz")
+                .height(500.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    let pts: PlotPoints = self.plot_data.iter().copied().collect();
+                    plot_ui.line(Line::new(pts).name("XZ projection").width(0.5));
+                });
         }
     }
 
@@ -110,10 +120,13 @@ impl ChaosDemo {
         }
 
         if !self.plot_data.is_empty() {
-            Plot::new("mandelbrot").height(500.0).data_aspect(1.0).show(ui, |plot_ui| {
-                let pts: PlotPoints = self.plot_data.iter().copied().collect();
-                plot_ui.points(Points::new(pts).radius(1.0).color(egui::Color32::WHITE));
-            });
+            Plot::new("mandelbrot")
+                .height(500.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    let pts: PlotPoints = self.plot_data.iter().copied().collect();
+                    plot_ui.points(Points::new(pts).radius(1.0).color(egui::Color32::WHITE));
+                });
         }
     }
 

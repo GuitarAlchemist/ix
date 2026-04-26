@@ -91,11 +91,7 @@ pub fn influence_function(
     // H^{-1} ≈ (1/damping) I - (1/damping^2) (H - damping*I)
     // For a simple implementation, we use element-wise approximation
     // with diagonal dominance assumption:
-    let test_residual = test_label
-        - train_features
-            .mean_axis(Axis(0))
-            .unwrap()
-            .dot(test_point);
+    let test_residual = test_label - train_features.mean_axis(Axis(0)).unwrap().dot(test_point);
 
     // influence ≈ (x_train · x_test) * residual / (n · damping)
     let influences = Array1::from_iter((0..n).map(|i| {
@@ -230,11 +226,8 @@ mod tests {
 
     #[test]
     fn test_influence_function_returns_correct_size() {
-        let features = Array2::from_shape_vec(
-            (4, 2),
-            vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0],
-        )
-        .unwrap();
+        let features =
+            Array2::from_shape_vec((4, 2), vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0]).unwrap();
         let labels = array![1.0, 0.0, 1.0, 0.0];
         let test_pt = array![0.5, 0.5];
         let inf = influence_function(&features, &labels, &test_pt, 1.0, 0.1);
@@ -249,9 +242,7 @@ mod tests {
         let inf_low = influence_function(&features, &labels, &test_pt, 1.0, 0.01);
         let inf_high = influence_function(&features, &labels, &test_pt, 1.0, 10.0);
         // Higher damping should reduce influence magnitude
-        assert!(
-            inf_low.mapv(|x| x.abs()).sum() >= inf_high.mapv(|x| x.abs()).sum()
-        );
+        assert!(inf_low.mapv(|x| x.abs()).sum() >= inf_high.mapv(|x| x.abs()).sum());
     }
 
     #[test]

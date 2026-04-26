@@ -161,19 +161,22 @@ pub fn riemannian_sgd_step_expmap(
 
 /// Initialize embeddings uniformly in the Poincaré ball.
 /// Points are placed near the origin (small radius) for stable training.
-pub fn init_embeddings(n_points: usize, dim: usize, max_radius: f64, seed: u64) -> Vec<Array1<f64>> {
-    use rand::SeedableRng;
-    use rand::Rng;
+pub fn init_embeddings(
+    n_points: usize,
+    dim: usize,
+    max_radius: f64,
+    seed: u64,
+) -> Vec<Array1<f64>> {
     use rand::rngs::StdRng;
+    use rand::Rng;
+    use rand::SeedableRng;
 
     let mut rng = StdRng::seed_from_u64(seed);
     let r = max_radius.min(0.999); // Stay inside ball
 
     (0..n_points)
         .map(|_| {
-            let v: Array1<f64> = Array1::from_iter(
-                (0..dim).map(|_| rng.random_range(-1.0..1.0))
-            );
+            let v: Array1<f64> = Array1::from_iter((0..dim).map(|_| rng.random_range(-1.0..1.0)));
             let norm = v.dot(&v).sqrt();
             if norm < 1e-15 {
                 Array1::zeros(dim)
@@ -215,9 +218,10 @@ pub fn project_to_ball(x: &Array1<f64>) -> Array1<f64> {
 fn check_in_ball(x: &Array1<f64>) -> Result<(), MathError> {
     let norm_sq = x.dot(x);
     if norm_sq >= 1.0 {
-        return Err(MathError::InvalidParameter(
-            format!("Point must be inside unit ball (||x||²={:.6} >= 1)", norm_sq),
-        ));
+        return Err(MathError::InvalidParameter(format!(
+            "Point must be inside unit ball (||x||²={:.6} >= 1)",
+            norm_sq
+        )));
     }
     Ok(())
 }
@@ -241,7 +245,11 @@ fn artanh(x: f64) -> f64 {
 
 /// Sample points along the geodesic (shortest path) between u and v.
 /// Returns `n_points` evenly spaced along the geodesic.
-pub fn geodesic(u: &Array1<f64>, v: &Array1<f64>, n_points: usize) -> Result<Vec<Array1<f64>>, MathError> {
+pub fn geodesic(
+    u: &Array1<f64>,
+    v: &Array1<f64>,
+    n_points: usize,
+) -> Result<Vec<Array1<f64>>, MathError> {
     check_in_ball(u)?;
     check_in_ball(v)?;
 
@@ -263,7 +271,9 @@ pub fn geodesic(u: &Array1<f64>, v: &Array1<f64>, n_points: usize) -> Result<Vec
 ///   y_i = x_i / (z + 1)
 pub fn hyperboloid_to_poincare(hyperboloid_point: &Array1<f64>) -> Result<Array1<f64>, MathError> {
     if hyperboloid_point.len() < 2 {
-        return Err(MathError::InvalidParameter("Need at least 2 components (z, x...)".into()));
+        return Err(MathError::InvalidParameter(
+            "Need at least 2 components (z, x...)".into(),
+        ));
     }
     let z = hyperboloid_point[0];
     let x = hyperboloid_point.slice(ndarray::s![1..]);
@@ -322,7 +332,10 @@ mod tests {
 
         let d_near = poincare_distance(&origin, &near).unwrap();
         let d_far = poincare_distance(&origin, &far).unwrap();
-        assert!(d_far > d_near * 3.0, "Distance should grow rapidly near boundary");
+        assert!(
+            d_far > d_near * 3.0,
+            "Distance should grow rapidly near boundary"
+        );
     }
 
     #[test]
@@ -342,8 +355,18 @@ mod tests {
         let q = exp_map(&p, &v).unwrap();
         let v_recovered = log_map(&p, &q).unwrap();
 
-        assert!((v[0] - v_recovered[0]).abs() < 1e-6, "v0: {} vs {}", v[0], v_recovered[0]);
-        assert!((v[1] - v_recovered[1]).abs() < 1e-6, "v1: {} vs {}", v[1], v_recovered[1]);
+        assert!(
+            (v[0] - v_recovered[0]).abs() < 1e-6,
+            "v0: {} vs {}",
+            v[0],
+            v_recovered[0]
+        );
+        assert!(
+            (v[1] - v_recovered[1]).abs() < 1e-6,
+            "v1: {} vs {}",
+            v[1],
+            v_recovered[1]
+        );
     }
 
     #[test]

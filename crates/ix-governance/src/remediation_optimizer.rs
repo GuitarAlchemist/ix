@@ -2,6 +2,7 @@
 //! prioritizes remediation actions based on impact and urgency.
 
 use chrono::{DateTime, Utc};
+use ix_quality_trend::{is_key_metric_name, QualityTrendSummary};
 use serde::{Deserialize, Serialize};
 
 use crate::feedback::{ConstitutionalCheck, MlEvidence, MlFeedbackRecommendation, Recommendation};
@@ -79,6 +80,24 @@ impl RemediationOptimizer {
         anomalies: &MlFeedbackRecommendation,
         violation_report: &ViolationPatternReport,
     ) -> (RemediationPlan, MlFeedbackRecommendation) {
+        Self::optimize_with_quality_trends(
+            calibration,
+            staleness,
+            anomalies,
+            violation_report,
+            None,
+        )
+    }
+
+    /// Variant of [`optimize`] that can also consume quality-trend drift and
+    /// regression signals from `ix-quality-trend`.
+    pub fn optimize_with_quality_trends(
+        calibration: &MlFeedbackRecommendation,
+        staleness: &MlFeedbackRecommendation,
+        anomalies: &MlFeedbackRecommendation,
+        violation_report: &ViolationPatternReport,
+        quality_trends: Option<&QualityTrendSummary>,
+    ) -> (RemediationPlan, MlFeedbackRecommendation) {
         let now = Utc::now();
         let mut actions = Vec::new();
         let mut action_id = 0u32;
@@ -151,6 +170,39 @@ impl RemediationOptimizer {
                 estimated_impact: 0.4,
                 urgency_score: 0.6,
             });
+        }
+
+        // ── Process quality drift/regression summaries ─────────────────
+        if let Some(summary) = quality_trends {
+            for trend in summary.all_trends() {
+                let Some(drift) = &trend.drift else {
+                    continue;
+                };
+
+                action_id += 1;
+                let key_metric = is_key_metric_name(&trend.name);
+                actions.push(RemediationAction {
+                    id: format!("REM-{action_id:03}"),
+                    source_pipeline: "quality-trend".to_string(),
+                    action: if key_metric {
+                        "escalate_quality_drift".to_string()
+                    } else {
+                        "investigate_quality_drift".to_string()
+                    },
+                    rationale: if let Some(regression) = &trend.regression {
+                        format!("{}; {}", drift.description, regression.description)
+                    } else {
+                        drift.description.clone()
+                    },
+                    priority: if key_metric {
+                        Priority::Critical
+                    } else {
+                        Priority::High
+                    },
+                    estimated_impact: if key_metric { 0.85 } else { 0.65 },
+                    urgency_score: if key_metric { 0.95 } else { 0.75 },
+                });
+            }
         }
 
         // ── Sort by priority then urgency ───────────────────────────────
@@ -282,8 +334,13 @@ impl RemediationOptimizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feedback::{ConstitutionalCheck, MlEvidence, MlFeedbackRecommendation, Recommendation};
+    use crate::feedback::{
+        ConstitutionalCheck, MlEvidence, MlFeedbackRecommendation, Recommendation,
+    };
     use crate::violation_pattern::ViolationPatternReport;
+    use ix_quality_trend::{
+        DriftFlag, MetricTrend, QualityTrendSummary, RegressionFlag, TrendDirection,
+    };
 
     fn make_pipeline_rec(
         pipeline_id: &str,
@@ -328,21 +385,48 @@ mod tests {
         }
     }
 
+    fn make_metric_trend(name: &str, drift: bool) -> MetricTrend {
+        MetricTrend {
+            name: name.to_string(),
+            unit: "%".to_string(),
+            direction: TrendDirection::HigherIsBetter,
+            latest: Some(70.0),
+            latest_date: Some(Utc::now().date_naive()),
+            previous: Some(95.0),
+            avg_7d: Some(90.0),
+            avg_30d: Some(92.0),
+            delta_vs_previous_pct: Some(-26.3),
+            delta_vs_7d_pct: Some(-22.2),
+            sparkline: "█▇▂▁".to_string(),
+            regression: Some(RegressionFlag {
+                metric: name.to_string(),
+                delta_pct: -22.2,
+                description: format!("{name} dropped sharply"),
+            }),
+            drift: drift.then(|| DriftFlag {
+                metric: name.to_string(),
+                since: Utc::now().date_naive(),
+                description: format!("{name} shifted into a worse regime"),
+            }),
+            n_points: 12,
+        }
+    }
+
     #[test]
     fn test_remediation_all_healthy() {
         let calibration = make_pipeline_rec("calibrator", "maintain", "all good");
         let staleness = make_pipeline_rec("staleness", "maintain", "all fresh");
         let anomalies = make_pipeline_rec("anomaly", "maintain", "no anomalies");
-        let violations = make_violation_report(0, vec![
-            "No violations detected. Governance controls are operating effectively.".to_string(),
-        ]);
-
-        let (plan, rec) = RemediationOptimizer::optimize(
-            &calibration,
-            &staleness,
-            &anomalies,
-            &violations,
+        let violations = make_violation_report(
+            0,
+            vec![
+                "No violations detected. Governance controls are operating effectively."
+                    .to_string(),
+            ],
         );
+
+        let (plan, rec) =
+            RemediationOptimizer::optimize(&calibration, &staleness, &anomalies, &violations);
 
         // The one recommendation from violations generates a low-priority action.
         assert_eq!(rec.pipeline_id, "remediation-optimizer");
@@ -352,32 +436,17 @@ mod tests {
 
     #[test]
     fn test_remediation_with_issues() {
-        let calibration = make_pipeline_rec(
-            "calibrator",
-            "adjust_thresholds",
-            "Miscalibration detected",
-        );
-        let staleness = make_pipeline_rec(
-            "staleness",
-            "review_stale_beliefs",
-            "3 beliefs at risk",
-        );
-        let anomalies = make_pipeline_rec(
-            "anomaly",
-            "investigate_anomalies",
-            "2 anomalies found",
-        );
+        let calibration =
+            make_pipeline_rec("calibrator", "adjust_thresholds", "Miscalibration detected");
+        let staleness = make_pipeline_rec("staleness", "review_stale_beliefs", "3 beliefs at risk");
+        let anomalies = make_pipeline_rec("anomaly", "investigate_anomalies", "2 anomalies found");
         let violations = make_violation_report(5, vec![
             "URGENT: 'policy' violations are increasing (count=5). Review and strengthen governance controls.".to_string(),
             "MONITOR: 'persona' has persistent violations (count=2). Consider targeted policy refinement.".to_string(),
         ]);
 
-        let (plan, rec) = RemediationOptimizer::optimize(
-            &calibration,
-            &staleness,
-            &anomalies,
-            &violations,
-        );
+        let (plan, rec) =
+            RemediationOptimizer::optimize(&calibration, &staleness, &anomalies, &violations);
 
         assert_eq!(rec.recommendation.action, "execute_remediation_plan");
         assert!(plan.prioritized_actions.len() >= 4);
@@ -399,21 +468,11 @@ mod tests {
     fn test_remediation_priority_ordering() {
         let calibration = make_pipeline_rec("calibrator", "maintain", "ok");
         let staleness = make_pipeline_rec("staleness", "maintain", "ok");
-        let anomalies = make_pipeline_rec(
-            "anomaly",
-            "investigate_anomalies",
-            "found issues",
-        );
-        let violations = make_violation_report(3, vec![
-            "URGENT: critical issue".to_string(),
-        ]);
+        let anomalies = make_pipeline_rec("anomaly", "investigate_anomalies", "found issues");
+        let violations = make_violation_report(3, vec!["URGENT: critical issue".to_string()]);
 
-        let (plan, _rec) = RemediationOptimizer::optimize(
-            &calibration,
-            &staleness,
-            &anomalies,
-            &violations,
-        );
+        let (plan, _rec) =
+            RemediationOptimizer::optimize(&calibration, &staleness, &anomalies, &violations);
 
         // Verify ordering: Critical before High.
         let priorities: Vec<&Priority> = plan
@@ -422,7 +481,10 @@ mod tests {
             .map(|a| &a.priority)
             .collect();
         for i in 1..priorities.len() {
-            assert!(priorities[i] >= priorities[i - 1], "actions should be sorted by priority");
+            assert!(
+                priorities[i] >= priorities[i - 1],
+                "actions should be sorted by priority"
+            );
         }
     }
 
@@ -433,12 +495,8 @@ mod tests {
         let anomalies = make_pipeline_rec("anomaly", "maintain", "ok");
         let violations = make_violation_report(0, vec![]);
 
-        let (plan, _) = RemediationOptimizer::optimize(
-            &calibration,
-            &staleness,
-            &anomalies,
-            &violations,
-        );
+        let (plan, _) =
+            RemediationOptimizer::optimize(&calibration, &staleness, &anomalies, &violations);
 
         let json = serde_json::to_string(&plan).expect("serialize");
         let parsed: RemediationPlan = serde_json::from_str(&json).expect("deserialize");
@@ -455,22 +513,53 @@ mod tests {
         let anomalies = make_pipeline_rec("anomaly", "maintain", "ok");
 
         // Many urgent violations should lower confidence.
-        let violations = make_violation_report(10, vec![
-            "URGENT: issue 1".to_string(),
-            "URGENT: issue 2".to_string(),
-            "URGENT: issue 3".to_string(),
-        ]);
-
-        let (_plan, rec) = RemediationOptimizer::optimize(
-            &calibration,
-            &staleness,
-            &anomalies,
-            &violations,
+        let violations = make_violation_report(
+            10,
+            vec![
+                "URGENT: issue 1".to_string(),
+                "URGENT: issue 2".to_string(),
+                "URGENT: issue 3".to_string(),
+            ],
         );
+
+        let (_plan, rec) =
+            RemediationOptimizer::optimize(&calibration, &staleness, &anomalies, &violations);
 
         assert!(
             rec.confidence < 0.9,
             "confidence should be lower with critical issues"
         );
+    }
+
+    #[test]
+    fn test_quality_drift_adds_critical_remediation_action() {
+        let calibration = make_pipeline_rec("calibrator", "maintain", "ok");
+        let staleness = make_pipeline_rec("staleness", "maintain", "ok");
+        let anomalies = make_pipeline_rec("anomaly", "maintain", "ok");
+        let violations = make_violation_report(0, vec![]);
+        let quality = QualityTrendSummary {
+            embedding_trends: vec![make_metric_trend(
+                "Embeddings · STRUCTURE leak accuracy",
+                true,
+            )],
+            voicing_trends: vec![],
+            chatbot_trends: vec![],
+        };
+
+        let (plan, rec) = RemediationOptimizer::optimize_with_quality_trends(
+            &calibration,
+            &staleness,
+            &anomalies,
+            &violations,
+            Some(&quality),
+        );
+
+        assert!(plan
+            .prioritized_actions
+            .iter()
+            .any(|action| action.source_pipeline == "quality-trend"
+                && action.priority == Priority::Critical));
+        assert_eq!(rec.recommendation.action, "execute_remediation_plan");
+        assert!(!rec.constitutional_check.concerns.is_empty());
     }
 }

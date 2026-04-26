@@ -34,9 +34,7 @@ fn test_lock() -> &'static Mutex<()> {
 }
 
 use ix_agent::handlers::triage_session_with_ctx;
-use ix_agent::registry_bridge::{
-    clear_session_log, install_session_log, shared_loop_detector,
-};
+use ix_agent::registry_bridge::{clear_session_log, install_session_log, shared_loop_detector};
 use ix_agent::server_context::ServerContext;
 use ix_agent_core::{AgentAction, EventSink, SessionEvent};
 use ix_session::SessionLog;
@@ -248,10 +246,7 @@ fn escalation_blocks_dispatch_when_contradiction_dominates() {
     let result = triage_session_with_ctx(params, &ctx).expect("triage returns Ok");
 
     assert_eq!(result["status"], "escalated");
-    assert!(result["reason"]
-        .as_str()
-        .unwrap()
-        .contains("contradiction"));
+    assert!(result["reason"].as_str().unwrap().contains("contradiction"));
     // No dispatched field on escalation path.
     assert!(result.get("dispatched").is_none());
 
@@ -289,7 +284,9 @@ fn recursion_guard_surfaces_parse_failure() {
     assert_eq!(result["status"], "parse_failed");
     let error = result["error"].as_str().unwrap();
     assert!(
-        error.contains("recursion") || error.contains("Recursion") || error.contains("ix_triage_session"),
+        error.contains("recursion")
+            || error.contains("Recursion")
+            || error.contains("ix_triage_session"),
         "expected recursion error, got {error}"
     );
     // Raw response is echoed back for debugging.
@@ -314,8 +311,8 @@ fn refuses_without_installed_session_log() {
     // No stub needed — we never reach sample().
 
     let params = json!({});
-    let err = triage_session_with_ctx(params, &ctx)
-        .expect_err("expected error when no log installed");
+    let err =
+        triage_session_with_ctx(params, &ctx).expect_err("expected error when no log installed");
     assert!(
         err.contains("SessionLog"),
         "expected log requirement error, got {err}"

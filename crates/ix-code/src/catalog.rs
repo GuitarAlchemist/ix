@@ -112,26 +112,14 @@ impl ToolCategory {
         let normalised = normalize_snake_case(s);
         match normalised.as_str() {
             "static_analysis" | "static" => Some(Self::StaticAnalysis),
-            "formal_verification" | "formal" | "verification" => {
-                Some(Self::FormalVerification)
-            }
+            "formal_verification" | "formal" | "verification" => Some(Self::FormalVerification),
             "safety_memory" | "safety" | "memory" => Some(Self::SafetyMemory),
-            "statistical_analysis" | "statistical" | "stats" => {
-                Some(Self::StatisticalAnalysis)
-            }
+            "statistical_analysis" | "statistical" | "stats" => Some(Self::StatisticalAnalysis),
             "documentation" | "docs" => Some(Self::Documentation),
-            "numeric_library" | "numeric" | "library" => {
-                Some(Self::NumericLibrary)
-            }
-            "ml_framework" | "ml" | "ml-framework" | "framework" => {
-                Some(Self::MlFramework)
-            }
-            "fuzzing" | "fuzz" | "property_testing" | "property" => {
-                Some(Self::Fuzzing)
-            }
-            "supply_chain" | "supply-chain" | "sbom" | "audit" => {
-                Some(Self::SupplyChain)
-            }
+            "numeric_library" | "numeric" | "library" => Some(Self::NumericLibrary),
+            "ml_framework" | "ml" | "ml-framework" | "framework" => Some(Self::MlFramework),
+            "fuzzing" | "fuzz" | "property_testing" | "property" => Some(Self::Fuzzing),
+            "supply_chain" | "supply-chain" | "sbom" | "audit" => Some(Self::SupplyChain),
             _ => None,
         }
     }
@@ -1050,7 +1038,11 @@ mod tests {
     #[test]
     fn catalog_is_not_empty_and_covers_every_category() {
         let c = counts();
-        assert!(c.total >= 60, "expected at least 60 entries, got {}", c.total);
+        assert!(
+            c.total >= 60,
+            "expected at least 60 entries, got {}",
+            c.total
+        );
         assert!(c.static_analysis > 0);
         assert!(c.formal_verification > 0);
         assert!(c.safety_memory > 0);
@@ -1067,7 +1059,10 @@ mod tests {
         for tool in CATALOG {
             assert!(!tool.name.is_empty(), "name must be non-empty");
             assert!(!tool.technique.is_empty(), "technique must be non-empty");
-            assert!(!tool.description.is_empty(), "description must be non-empty");
+            assert!(
+                !tool.description.is_empty(),
+                "description must be non-empty"
+            );
             assert!(
                 !tool.languages.is_empty(),
                 "{}: languages list must be non-empty",
@@ -1086,14 +1081,24 @@ mod tests {
 
     #[test]
     fn rust_query_includes_the_rust_specific_suite() {
-        let rust_tools: Vec<&str> = by_language("rust")
-            .iter()
-            .map(|t| t.name)
-            .collect();
+        let rust_tools: Vec<&str> = by_language("rust").iter().map(|t| t.name).collect();
         for required in [
-            "Kani", "Verus", "Creusot", "Miri", "Loom", "MIRAI", "rustdoc", "mdBook",
-            "clippy", "cargo-audit", "cargo-deny", "cargo-fuzz", "proptest", "Prusti",
-            "cargo-tarpaulin", "criterion",
+            "Kani",
+            "Verus",
+            "Creusot",
+            "Miri",
+            "Loom",
+            "MIRAI",
+            "rustdoc",
+            "mdBook",
+            "clippy",
+            "cargo-audit",
+            "cargo-deny",
+            "cargo-fuzz",
+            "proptest",
+            "Prusti",
+            "cargo-tarpaulin",
+            "criterion",
         ] {
             assert!(
                 rust_tools.contains(&required),
@@ -1117,20 +1122,28 @@ mod tests {
     #[test]
     fn category_filter_is_exclusive() {
         let formal = by_category(ToolCategory::FormalVerification);
-        assert!(formal.iter().all(|t| t.category == ToolCategory::FormalVerification));
+        assert!(formal
+            .iter()
+            .all(|t| t.category == ToolCategory::FormalVerification));
         let static_ = by_category(ToolCategory::StaticAnalysis);
-        assert!(static_.iter().all(|t| t.category == ToolCategory::StaticAnalysis));
+        assert!(static_
+            .iter()
+            .all(|t| t.category == ToolCategory::StaticAnalysis));
     }
 
     #[test]
     fn technique_substring_match_finds_cyclomatic_and_abstract_interpretation() {
         let cyclomatic = by_technique("cyclomatic");
         assert!(!cyclomatic.is_empty());
-        assert!(cyclomatic.iter().any(|t| t.name == "Radon" || t.name == "gocyclo"));
+        assert!(cyclomatic
+            .iter()
+            .any(|t| t.name == "Radon" || t.name == "gocyclo"));
 
         let abstract_interp = by_technique("abstract interpretation");
         assert!(!abstract_interp.is_empty());
-        assert!(abstract_interp.iter().any(|t| t.name == "Astrée" || t.name == "MIRAI"));
+        assert!(abstract_interp
+            .iter()
+            .any(|t| t.name == "Astrée" || t.name == "MIRAI"));
     }
 
     #[test]
@@ -1170,7 +1183,13 @@ mod tests {
     fn fuzzing_category_includes_proptest_and_cargo_fuzz() {
         let fuzzing = by_category(ToolCategory::Fuzzing);
         let names: Vec<&str> = fuzzing.iter().map(|t| t.name).collect();
-        for required in ["proptest", "cargo-fuzz", "Hypothesis", "QuickCheck", "AFL++"] {
+        for required in [
+            "proptest",
+            "cargo-fuzz",
+            "Hypothesis",
+            "QuickCheck",
+            "AFL++",
+        ] {
             assert!(names.contains(&required), "fuzzing missing {required}");
         }
     }
@@ -1188,7 +1207,16 @@ mod tests {
     fn ml_framework_query_includes_burn_candle_linfa() {
         let ml = by_category(ToolCategory::MlFramework);
         let names: Vec<&str> = ml.iter().map(|t| t.name).collect();
-        for required in ["Burn", "Candle", "tch-rs", "dfdx", "Linfa", "SmartCore", "Polars", "Tract"] {
+        for required in [
+            "Burn",
+            "Candle",
+            "tch-rs",
+            "dfdx",
+            "Linfa",
+            "SmartCore",
+            "Polars",
+            "Tract",
+        ] {
             assert!(
                 names.contains(&required),
                 "ml_framework missing expected entry {required}"

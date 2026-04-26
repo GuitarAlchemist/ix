@@ -55,8 +55,8 @@
 
 use ndarray::{Array1, Array2};
 use rand::rngs::StdRng;
-use rand::SeedableRng;
 use rand::Rng;
+use rand::SeedableRng;
 
 /// SMOTE — Synthetic Minority Over-sampling Technique.
 ///
@@ -94,7 +94,11 @@ impl Smote {
     /// - `seed` — random seed for reproducibility
     pub fn new(k: usize, seed: u64) -> Self {
         assert!(k >= 1, "k must be at least 1");
-        Self { k, seed, target_ratio: 1.0 }
+        Self {
+            k,
+            seed,
+            target_ratio: 1.0,
+        }
     }
 
     /// Set the target ratio of minority to majority samples.
@@ -102,7 +106,10 @@ impl Smote {
     /// - `1.0` (default) — fully balance classes
     /// - `0.5` — oversample minority to 50% of majority count
     pub fn with_target_ratio(mut self, ratio: f64) -> Self {
-        assert!(ratio > 0.0 && ratio <= 1.0, "target_ratio must be in (0, 1]");
+        assert!(
+            ratio > 0.0 && ratio <= 1.0,
+            "target_ratio must be in (0, 1]"
+        );
         self.target_ratio = ratio;
         self
     }
@@ -112,11 +119,7 @@ impl Smote {
     /// The original data is preserved; only synthetic minority samples
     /// are appended. If there are multiple minority classes, each is
     /// oversampled independently.
-    pub fn fit_resample(
-        &self,
-        x: &Array2<f64>,
-        y: &Array1<usize>,
-    ) -> (Array2<f64>, Array1<usize>) {
+    pub fn fit_resample(&self, x: &Array2<f64>, y: &Array1<usize>) -> (Array2<f64>, Array1<usize>) {
         let n = x.nrows();
         let p = x.ncols();
         let n_classes = *y.iter().max().unwrap() + 1;
@@ -143,9 +146,7 @@ impl Smote {
             let n_to_generate = target_count - count;
 
             // Indices of this class
-            let class_indices: Vec<usize> = (0..n)
-                .filter(|&i| y[i] == class)
-                .collect();
+            let class_indices: Vec<usize> = (0..n).filter(|&i| y[i] == class).collect();
 
             // Effective k (can't exceed number of same-class neighbors - 1)
             let effective_k = self.k.min(class_indices.len() - 1).max(1);
@@ -233,7 +234,8 @@ pub fn random_undersample(
         class_indices[label].push(i);
     }
 
-    let min_count = class_indices.iter()
+    let min_count = class_indices
+        .iter()
         .filter(|v| !v.is_empty())
         .map(|v| v.len())
         .min()
@@ -284,28 +286,30 @@ pub fn class_distribution(y: &Array1<usize>) -> Vec<(usize, usize, f64)> {
     for &label in y.iter() {
         counts[label] += 1;
     }
-    counts.iter().enumerate()
+    counts
+        .iter()
+        .enumerate()
         .map(|(c, &count)| (c, count, count as f64 / n as f64 * 100.0))
         .collect()
 }
 
 /// Find k nearest neighbors for each sample within a class subset.
 /// Returns neighbors[i] = indices into the original x matrix.
-fn find_knn_within_class(
-    x: &Array2<f64>,
-    class_indices: &[usize],
-    k: usize,
-) -> Vec<Vec<usize>> {
+fn find_knn_within_class(x: &Array2<f64>, class_indices: &[usize], k: usize) -> Vec<Vec<usize>> {
     let n = class_indices.len();
     let mut neighbors = Vec::with_capacity(n);
 
     for &i in class_indices {
         // Compute distances to all other samples in the same class
-        let mut dists: Vec<(usize, f64)> = class_indices.iter()
+        let mut dists: Vec<(usize, f64)> = class_indices
+            .iter()
             .filter(|&&j| j != i)
             .map(|&j| {
                 // Squared Euclidean distance (preserves ordering, avoids sqrt)
-            let dist: f64 = x.row(i).iter().zip(x.row(j).iter())
+                let dist: f64 = x
+                    .row(i)
+                    .iter()
+                    .zip(x.row(j).iter())
                     .map(|(a, b)| (a - b).powi(2))
                     .sum::<f64>();
                 (j, dist)
@@ -328,11 +332,14 @@ mod tests {
     #[test]
     fn test_smote_balances_binary() {
         // 8 class-0, 2 class-1
-        let x = Array2::from_shape_vec((10, 2), vec![
-            0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2,
-            0.8, 0.1, 0.2, 0.7, 0.6, 0.3, 0.4, 0.8,
-            5.0, 5.0, 5.5, 5.5,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (10, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 0.8, 0.1, 0.2, 0.7, 0.6, 0.3, 0.4, 0.8,
+                5.0, 5.0, 5.5, 5.5,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 0, 0, 0, 0, 1, 1];
 
         let smote = Smote::new(1, 42);
@@ -349,10 +356,11 @@ mod tests {
 
     #[test]
     fn test_smote_preserves_original_data() {
-        let x = Array2::from_shape_vec((6, 2), vec![
-            0.0, 0.0, 1.0, 1.0, 2.0, 2.0,
-            5.0, 5.0, 6.0, 6.0, 7.0, 7.0,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (6, 2),
+            vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 5.0, 5.0, 6.0, 6.0, 7.0, 7.0],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 1, 1, 1];
 
         let smote = Smote::new(2, 42);
@@ -369,10 +377,11 @@ mod tests {
     #[test]
     fn test_smote_synthetic_in_range() {
         // Minority class at (5,5) and (6,6)
-        let x = Array2::from_shape_vec((6, 2), vec![
-            0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0,
-            5.0, 5.0, 6.0, 6.0,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (6, 2),
+            vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 5.0, 5.0, 6.0, 6.0],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 1, 1];
 
         let smote = Smote::new(1, 42);
@@ -381,22 +390,30 @@ mod tests {
         // Synthetic class-1 samples should be between (5,5) and (6,6)
         for i in 6..x_new.nrows() {
             assert_eq!(y_new[i], 1);
-            assert!(x_new[[i, 0]] >= 5.0 - 1e-10 && x_new[[i, 0]] <= 6.0 + 1e-10,
-                "Synthetic x[0]={} should be in [5, 6]", x_new[[i, 0]]);
-            assert!(x_new[[i, 1]] >= 5.0 - 1e-10 && x_new[[i, 1]] <= 6.0 + 1e-10,
-                "Synthetic x[1]={} should be in [5, 6]", x_new[[i, 1]]);
+            assert!(
+                x_new[[i, 0]] >= 5.0 - 1e-10 && x_new[[i, 0]] <= 6.0 + 1e-10,
+                "Synthetic x[0]={} should be in [5, 6]",
+                x_new[[i, 0]]
+            );
+            assert!(
+                x_new[[i, 1]] >= 5.0 - 1e-10 && x_new[[i, 1]] <= 6.0 + 1e-10,
+                "Synthetic x[1]={} should be in [5, 6]",
+                x_new[[i, 1]]
+            );
         }
     }
 
     #[test]
     fn test_smote_target_ratio() {
         // 10 class-0, 2 class-1
-        let x = Array2::from_shape_vec((12, 2), vec![
-            0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2,
-            0.8, 0.1, 0.2, 0.7, 0.6, 0.3, 0.4, 0.8,
-            0.9, 0.4, 0.1, 0.6,
-            5.0, 5.0, 5.5, 5.5,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (12, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 0.8, 0.1, 0.2, 0.7, 0.6, 0.3, 0.4, 0.8,
+                0.9, 0.4, 0.1, 0.6, 5.0, 5.0, 5.5, 5.5,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1];
 
         let smote = Smote::new(1, 42).with_target_ratio(0.5);
@@ -412,11 +429,14 @@ mod tests {
     #[test]
     fn test_smote_multiclass() {
         // 6 class-0, 3 class-1, 2 class-2
-        let x = Array2::from_shape_vec((11, 2), vec![
-            0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 0.8, 0.1, 0.2, 0.7,
-            5.0, 5.0, 5.5, 5.5, 5.2, 5.3,
-            9.0, 9.0, 9.5, 9.5,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (11, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 0.8, 0.1, 0.2, 0.7, 5.0, 5.0, 5.5, 5.5,
+                5.2, 5.3, 9.0, 9.0, 9.5, 9.5,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2];
 
         let smote = Smote::new(2, 42);
@@ -433,10 +453,8 @@ mod tests {
 
     #[test]
     fn test_smote_already_balanced() {
-        let x = Array2::from_shape_vec((4, 2), vec![
-            0.0, 0.0, 1.0, 1.0,
-            5.0, 5.0, 6.0, 6.0,
-        ]).unwrap();
+        let x =
+            Array2::from_shape_vec((4, 2), vec![0.0, 0.0, 1.0, 1.0, 5.0, 5.0, 6.0, 6.0]).unwrap();
         let y = array![0, 0, 1, 1];
 
         let smote = Smote::new(1, 42);
@@ -448,11 +466,14 @@ mod tests {
 
     #[test]
     fn test_random_undersample() {
-        let x = Array2::from_shape_vec((10, 2), vec![
-            0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2,
-            0.8, 0.1, 0.2, 0.7, 0.6, 0.3, 0.4, 0.8,
-            5.0, 5.0, 5.5, 5.5,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (10, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 0.8, 0.1, 0.2, 0.7, 0.6, 0.3, 0.4, 0.8,
+                5.0, 5.0, 5.5, 5.5,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 0, 0, 0, 0, 1, 1];
 
         let (x_new, y_new) = random_undersample(&x, &y, 42);
@@ -478,10 +499,11 @@ mod tests {
 
     #[test]
     fn test_smote_reproducible() {
-        let x = Array2::from_shape_vec((6, 2), vec![
-            0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0,
-            5.0, 5.0, 6.0, 6.0,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (6, 2),
+            vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 5.0, 5.0, 6.0, 6.0],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 1, 1];
 
         let smote = Smote::new(1, 99);

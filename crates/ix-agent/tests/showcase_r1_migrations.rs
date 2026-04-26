@@ -28,8 +28,8 @@ fn load_spec(folder: &str) -> Value {
     path.push("canonical-showcase");
     path.push(folder);
     path.push("pipeline.json");
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let mut spec: Value = serde_json::from_str(&raw).expect("valid JSON");
     let steps = spec
         .get_mut("steps")
@@ -117,7 +117,8 @@ fn assert_all_cache_keys_set(result: &Value, expected_step_count: usize) {
             .get(id)
             .unwrap_or_else(|| panic!("cache_keys missing '{id}'"));
         assert!(
-            key.as_str().is_some_and(|k| k.starts_with("ix_pipeline_run:")),
+            key.as_str()
+                .is_some_and(|k| k.starts_with("ix_pipeline_run:")),
             "step '{id}' expected asset-backed cache key, got {key:?}"
         );
     }
@@ -244,7 +245,10 @@ fn sprint_oracle_replays_via_pipeline_run() {
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_f64())
         .expect("linreg weights");
-    assert!(slope > 0.0, "sprint velocity should trend up, got slope={slope}");
+    assert!(
+        slope > 0.0,
+        "sprint velocity should trend up, got slope={slope}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +327,11 @@ fn sprint_oracle_lineage_walks_upstream_cache_keys() {
         if i == 0 {
             assert!(deps.is_empty(), "first step has no dependencies");
         } else {
-            assert_eq!(deps.len(), 1, "step {id} should depend on exactly one parent");
+            assert_eq!(
+                deps.len(),
+                1,
+                "step {id} should depend on exactly one parent"
+            );
             let parent = deps[0].as_str().unwrap();
             let parent_key = cache_keys.get(parent).unwrap();
             let upstream = entry
@@ -360,7 +368,12 @@ fn pipeline_list_discovers_canonical_showcase() {
         .iter()
         .filter_map(|p| p.get("name").and_then(|n| n.as_str()))
         .collect();
-    for expected in ["cost-anomaly-hunter", "chaos-detective", "governance-gauntlet", "sprint-oracle"] {
+    for expected in [
+        "cost-anomaly-hunter",
+        "chaos-detective",
+        "governance-gauntlet",
+        "sprint-oracle",
+    ] {
         assert!(
             names.contains(&expected),
             "expected pipeline '{expected}' in {names:?}"

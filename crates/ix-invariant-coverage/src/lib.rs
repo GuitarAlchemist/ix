@@ -25,5 +25,5 @@ pub mod producer;
 pub mod report;
 
 pub use coverage::{CoverageMatrix, OptimalityVerdict, Report as CoverageReport};
-pub use invariant::{Invariant, InvariantStatus, parse_catalog};
-pub use producer::{PcSet, produce_firings};
+pub use invariant::{parse_catalog, Invariant, InvariantStatus};
+pub use producer::{produce_firings, PcSet};

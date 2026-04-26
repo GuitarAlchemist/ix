@@ -35,9 +35,7 @@ fn fake_client(ctx: ServerContext, outbound: Receiver<String>, canned_response: 
             let Some(id) = envelope.get("id").and_then(|v| v.as_i64()) else {
                 continue;
             };
-            if envelope.get("method").and_then(|m| m.as_str())
-                != Some("sampling/createMessage")
-            {
+            if envelope.get("method").and_then(|m| m.as_str()) != Some("sampling/createMessage") {
                 continue;
             }
             // Construct a canned response envelope in the shape the
@@ -59,12 +57,8 @@ fn fake_client(ctx: ServerContext, outbound: Receiver<String>, canned_response: 
 }
 
 fn call_compile(reg: &ToolRegistry, ctx: &ServerContext, sentence: &str) -> Value {
-    reg.call_with_ctx(
-        "ix_pipeline_compile",
-        json!({ "sentence": sentence }),
-        ctx,
-    )
-    .expect("compile should return Ok envelope")
+    reg.call_with_ctx("ix_pipeline_compile", json!({ "sentence": sentence }), ctx)
+        .expect("compile should return Ok envelope")
 }
 
 #[test]
@@ -296,7 +290,10 @@ fn multi_step_compiled_pipeline_runs_end_to_end() {
     // Lineage DAG must be well-formed (R2 Phase 2 check).
     let lineage = exec["lineage"].as_object().unwrap();
     assert_eq!(lineage.len(), 2);
-    assert_eq!(lineage["s02_clusters"]["depends_on"], json!(["s01_baseline"]));
+    assert_eq!(
+        lineage["s02_clusters"]["depends_on"],
+        json!(["s01_baseline"])
+    );
 
     // Give the background thread a breath to drain pending sends
     // (the test assertion path is what matters; the drain is cosmetic).

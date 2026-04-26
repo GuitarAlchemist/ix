@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use crate::index::ProjectIndex;
 use crate::model::ContextBundle;
-use crate::walk::{Walker, WalkBudget, WalkStrategy};
+use crate::walk::{WalkBudget, WalkStrategy, Walker};
 
 /// Request envelope for the `ix_context_walk` tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -172,13 +172,11 @@ pub fn handle_json_request(
     index: &ProjectIndex,
     req: serde_json::Value,
 ) -> Result<serde_json::Value, WalkError> {
-    let parsed: WalkRequest = serde_json::from_value(req).map_err(|e| {
-        WalkError::UnknownStrategy(format!("request parse failed: {e}"))
-    })?;
+    let parsed: WalkRequest = serde_json::from_value(req)
+        .map_err(|e| WalkError::UnknownStrategy(format!("request parse failed: {e}")))?;
     let response = handle_walk_request(index, parsed)?;
-    serde_json::to_value(response).map_err(|e| {
-        WalkError::UnknownStrategy(format!("response serialize failed: {e}"))
-    })
+    serde_json::to_value(response)
+        .map_err(|e| WalkError::UnknownStrategy(format!("response serialize failed: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +279,10 @@ pub fn gamma() { beta(); }
                 budget: BudgetParams::default(),
             };
             let out = handle_walk_request(&idx, req);
-            assert!(out.is_ok(), "strategy {short} should be accepted, got {out:?}");
+            assert!(
+                out.is_ok(),
+                "strategy {short} should be accepted, got {out:?}"
+            );
         }
     }
 
@@ -301,7 +302,10 @@ pub fn gamma() { beta(); }
                 budget: BudgetParams::default(),
             };
             let out = handle_walk_request(&idx, req);
-            assert!(out.is_ok(), "strategy {long} should be accepted, got {out:?}");
+            assert!(
+                out.is_ok(),
+                "strategy {long} should be accepted, got {out:?}"
+            );
         }
     }
 
@@ -342,7 +346,11 @@ pub fn gamma() { beta(); }
             .edges
             .iter()
             .any(|e| matches!(&e.to, crate::model::ResolvedOrAmbiguous::Resolved { id } if id.contains("alpha")));
-        assert!(has_alpha, "beta -> alpha edge missing: {:#?}", response.bundle.edges);
+        assert!(
+            has_alpha,
+            "beta -> alpha edge missing: {:#?}",
+            response.bundle.edges
+        );
     }
 
     #[test]

@@ -39,16 +39,14 @@ impl GpuContext {
         let info = adapter.get_info();
 
         let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    label: Some("ix-gpu"),
-                    required_features: Features::empty(),
-                    required_limits: Limits::default(),
-                    memory_hints: MemoryHints::Performance,
-                    experimental_features: ExperimentalFeatures::default(),
-                    trace: Trace::Off,
-                },
-            )
+            .request_device(&DeviceDescriptor {
+                label: Some("ix-gpu"),
+                required_features: Features::empty(),
+                required_limits: Limits::default(),
+                memory_hints: MemoryHints::Performance,
+                experimental_features: ExperimentalFeatures::default(),
+                trace: Trace::Off,
+            })
             .await
             .map_err(|e: RequestDeviceError| GpuError::DeviceRequest(e.to_string()))?;
 
@@ -72,11 +70,12 @@ impl GpuContext {
     /// Create a storage buffer initialized with f32 data.
     pub fn create_buffer_init(&self, label: &str, data: &[f32]) -> Buffer {
         use wgpu::util::DeviceExt;
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(data),
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(data),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            })
     }
 
     /// Create a read-back buffer for retrieving results from GPU.
@@ -103,9 +102,11 @@ impl GpuContext {
     pub fn read_buffer(&self, buffer: &Buffer, size: u64) -> Vec<f32> {
         let readback = self.create_readback_buffer("readback", size);
 
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("readback_encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("readback_encoder"),
+            });
         encoder.copy_buffer_to_buffer(buffer, 0, &readback, 0, size);
         self.queue.submit(Some(encoder.finish()));
 
@@ -114,7 +115,10 @@ impl GpuContext {
         slice.map_async(MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        let _ = self.device.poll(PollType::Wait { submission_index: None, timeout: None });
+        let _ = self.device.poll(PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx.recv().unwrap().unwrap();
 
         let data = slice.get_mapped_range();
@@ -126,20 +130,26 @@ impl GpuContext {
     }
 
     /// Create a compute pipeline from WGSL shader source.
-    pub fn create_compute_pipeline(&self, label: &str, shader_source: &str, entry_point: &str) -> ComputePipeline {
+    pub fn create_compute_pipeline(
+        &self,
+        label: &str,
+        shader_source: &str,
+        entry_point: &str,
+    ) -> ComputePipeline {
         let shader_module = self.device.create_shader_module(ShaderModuleDescriptor {
             label: Some(label),
             source: ShaderSource::Wgsl(shader_source.into()),
         });
 
-        self.device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some(label),
-            layout: None, // Auto layout
-            module: &shader_module,
-            entry_point: Some(entry_point),
-            compilation_options: Default::default(),
-            cache: None,
-        })
+        self.device
+            .create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some(label),
+                layout: None, // Auto layout
+                module: &shader_module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
     }
 }
 

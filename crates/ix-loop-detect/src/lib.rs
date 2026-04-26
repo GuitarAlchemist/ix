@@ -176,10 +176,7 @@ impl LoopDetector {
     /// stays limited to [`AgentAction`] inputs — callers cannot
     /// smuggle in arbitrary keys.
     fn record_key_at(&self, key: &str, now: Instant) -> LoopVerdict {
-        let mut guard = self
-            .windows
-            .lock()
-            .expect("loop-detector mutex poisoned");
+        let mut guard = self.windows.lock().expect("loop-detector mutex poisoned");
         let cutoff = now.checked_sub(self.config.window);
         let deque = guard.entry(key.to_string()).or_default();
 
@@ -210,19 +207,13 @@ impl LoopDetector {
     /// Drop all state for `key` — useful when the caller knows the
     /// loop has been legitimately resolved and wants a fresh window.
     pub fn clear_key(&self, key: &str) {
-        let mut guard = self
-            .windows
-            .lock()
-            .expect("loop-detector mutex poisoned");
+        let mut guard = self.windows.lock().expect("loop-detector mutex poisoned");
         guard.remove(key);
     }
 
     /// Drop all state for all keys.
     pub fn clear_all(&self) {
-        let mut guard = self
-            .windows
-            .lock()
-            .expect("loop-detector mutex poisoned");
+        let mut guard = self.windows.lock().expect("loop-detector mutex poisoned");
         guard.clear();
     }
 
@@ -292,7 +283,11 @@ mod tests {
             assert_eq!(d.record(&action("x")), LoopVerdict::Ok);
         }
         match d.record(&action("x")) {
-            LoopVerdict::TooManyEdits { count, threshold, window: _ } => {
+            LoopVerdict::TooManyEdits {
+                count,
+                threshold,
+                window: _,
+            } => {
                 assert_eq!(count, 4);
                 assert_eq!(threshold, 3);
             }

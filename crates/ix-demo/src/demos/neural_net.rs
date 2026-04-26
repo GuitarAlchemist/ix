@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 
 pub struct NeuralNetDemo {
     layers: String,
@@ -45,7 +45,10 @@ impl NeuralNetDemo {
 
         if !self.loss_history.is_empty() {
             Plot::new("nn_loss").height(300.0).show(ui, |plot_ui| {
-                let pts: PlotPoints = self.loss_history.iter().enumerate()
+                let pts: PlotPoints = self
+                    .loss_history
+                    .iter()
+                    .enumerate()
                     .map(|(i, &l)| [i as f64, l])
                     .collect();
                 plot_ui.line(Line::new(pts).name("Loss").width(2.0));
@@ -60,7 +63,9 @@ impl NeuralNetDemo {
         let x = array![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]];
         let y = array![[0.0], [1.0], [1.0], [0.0]];
 
-        let layer_sizes: Vec<usize> = self.layers.split(',')
+        let layer_sizes: Vec<usize> = self
+            .layers
+            .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
 
@@ -75,12 +80,11 @@ impl NeuralNetDemo {
         use rand::Rng;
         let mut rng = rand::rng();
 
-        for i in 0..layer_sizes.len()-1 {
-            let w = Array2::from_shape_fn(
-                (layer_sizes[i], layer_sizes[i+1]),
-                |_| rng.random_range(-1.0..1.0)
-            );
-            let b = ndarray::Array1::zeros(layer_sizes[i+1]);
+        for i in 0..layer_sizes.len() - 1 {
+            let w = Array2::from_shape_fn((layer_sizes[i], layer_sizes[i + 1]), |_| {
+                rng.random_range(-1.0..1.0)
+            });
+            let b = ndarray::Array1::zeros(layer_sizes[i + 1]);
             weights.push(w);
             biases.push(b);
         }
@@ -119,6 +123,9 @@ impl NeuralNetDemo {
         }
 
         let final_loss = self.loss_history.last().copied().unwrap_or(0.0);
-        self.status = format!("Trained {} epochs. Final loss: {:.6}", self.epochs, final_loss);
+        self.status = format!(
+            "Trained {} epochs. Final loss: {:.6}",
+            self.epochs, final_loss
+        );
     }
 }

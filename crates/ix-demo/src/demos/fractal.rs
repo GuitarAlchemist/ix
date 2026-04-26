@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Points, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints, Points};
 
 #[derive(PartialEq, Clone, Copy)]
 enum FractalMode {
@@ -58,7 +58,6 @@ impl Default for FractalDemo {
             space_preset: SpaceFillingPreset::Hilbert,
             space_order: 3,
             plot_points: Vec::new(),
-
         }
     }
 }
@@ -100,27 +99,46 @@ impl FractalDemo {
     fn ifs_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.ifs_preset, IfsPreset::Sierpinski, "Sierpinski");
-            ui.radio_value(&mut self.ifs_preset, IfsPreset::BarnsleyFern, "Barnsley Fern");
+            ui.radio_value(
+                &mut self.ifs_preset,
+                IfsPreset::BarnsleyFern,
+                "Barnsley Fern",
+            );
             ui.radio_value(&mut self.ifs_preset, IfsPreset::Koch, "Koch");
         });
-        ui.add(egui::Slider::new(&mut self.ifs_iterations, 1000..=100_000).text("Iterations").logarithmic(true));
+        ui.add(
+            egui::Slider::new(&mut self.ifs_iterations, 1000..=100_000)
+                .text("Iterations")
+                .logarithmic(true),
+        );
 
         if ui.button("Run Chaos Game").clicked() {
             self.gen_ifs();
         }
 
         if !self.plot_points.is_empty() {
-            Plot::new("ifs").height(500.0).data_aspect(1.0).show(ui, |plot_ui| {
-                let pts: PlotPoints = self.plot_points.iter().copied().collect();
-                plot_ui.points(Points::new(pts).radius(0.5).color(egui::Color32::LIGHT_GREEN));
-            });
+            Plot::new("ifs")
+                .height(500.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    let pts: PlotPoints = self.plot_points.iter().copied().collect();
+                    plot_ui.points(
+                        Points::new(pts)
+                            .radius(0.5)
+                            .color(egui::Color32::LIGHT_GREEN),
+                    );
+                });
         }
     }
 
     fn lsystem_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.lsystem_preset, LSystemPreset::Dragon, "Dragon");
-            ui.radio_value(&mut self.lsystem_preset, LSystemPreset::Sierpinski, "Sierpinski");
+            ui.radio_value(
+                &mut self.lsystem_preset,
+                LSystemPreset::Sierpinski,
+                "Sierpinski",
+            );
             ui.radio_value(&mut self.lsystem_preset, LSystemPreset::Koch, "Koch");
         });
         ui.add(egui::Slider::new(&mut self.lsystem_iterations, 1..=8).text("Iterations"));
@@ -130,16 +148,23 @@ impl FractalDemo {
         }
 
         if !self.plot_points.is_empty() {
-            Plot::new("lsystem").height(500.0).data_aspect(1.0).show(ui, |plot_ui| {
-                let pts: PlotPoints = self.plot_points.iter().copied().collect();
-                plot_ui.line(Line::new(pts).name("L-System path").width(1.0));
-            });
+            Plot::new("lsystem")
+                .height(500.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    let pts: PlotPoints = self.plot_points.iter().copied().collect();
+                    plot_ui.line(Line::new(pts).name("L-System path").width(1.0));
+                });
         }
     }
 
     fn space_filling_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.space_preset, SpaceFillingPreset::Hilbert, "Hilbert");
+            ui.radio_value(
+                &mut self.space_preset,
+                SpaceFillingPreset::Hilbert,
+                "Hilbert",
+            );
             ui.radio_value(&mut self.space_preset, SpaceFillingPreset::Peano, "Peano");
         });
         ui.add(egui::Slider::new(&mut self.space_order, 1..=6).text("Order"));
@@ -149,10 +174,13 @@ impl FractalDemo {
         }
 
         if !self.plot_points.is_empty() {
-            Plot::new("space_filling").height(500.0).data_aspect(1.0).show(ui, |plot_ui| {
-                let pts: PlotPoints = self.plot_points.iter().copied().collect();
-                plot_ui.line(Line::new(pts).name("Space-filling curve").width(1.0));
-            });
+            Plot::new("space_filling")
+                .height(500.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    let pts: PlotPoints = self.plot_points.iter().copied().collect();
+                    plot_ui.line(Line::new(pts).name("Space-filling curve").width(1.0));
+                });
         }
     }
 
@@ -189,7 +217,9 @@ impl FractalDemo {
 
     fn gen_space_filling(&mut self) {
         self.plot_points = match self.space_preset {
-            SpaceFillingPreset::Hilbert => ix_fractal::space_filling::hilbert_curve(self.space_order),
+            SpaceFillingPreset::Hilbert => {
+                ix_fractal::space_filling::hilbert_curve(self.space_order)
+            }
             SpaceFillingPreset::Peano => ix_fractal::space_filling::peano_curve(self.space_order),
         };
     }

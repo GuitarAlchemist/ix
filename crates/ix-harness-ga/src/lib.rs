@@ -76,10 +76,7 @@ pub enum GaSeverity {
 
 /// Project a stream of canonical ga governance events into
 /// `SessionEvent::ObservationAdded` records.
-pub fn ga_to_observations(
-    input: &[u8],
-    round: u32,
-) -> Result<Vec<SessionEvent>, AdapterError> {
+pub fn ga_to_observations(input: &[u8], round: u32) -> Result<Vec<SessionEvent>, AdapterError> {
     let text = std::str::from_utf8(input)?;
     let diagnosis_id = sha256_hex(input);
 
@@ -122,26 +119,10 @@ fn project_event(event: &GaGovernanceEvent) -> (String, Hexavalent, f64) {
 
     match (event.kind, event.severity) {
         // algedonic → ga:<subject>::reliable
-        (Algedonic, Info) => (
-            format!("ga:{subject}::reliable"),
-            Hexavalent::True,
-            0.7,
-        ),
-        (Algedonic, Warning) => (
-            format!("ga:{subject}::reliable"),
-            Hexavalent::Doubtful,
-            0.6,
-        ),
-        (Algedonic, Error) => (
-            format!("ga:{subject}::reliable"),
-            Hexavalent::False,
-            0.8,
-        ),
-        (Algedonic, Critical) => (
-            format!("ga:{subject}::reliable"),
-            Hexavalent::False,
-            1.0,
-        ),
+        (Algedonic, Info) => (format!("ga:{subject}::reliable"), Hexavalent::True, 0.7),
+        (Algedonic, Warning) => (format!("ga:{subject}::reliable"), Hexavalent::Doubtful, 0.6),
+        (Algedonic, Error) => (format!("ga:{subject}::reliable"), Hexavalent::False, 0.8),
+        (Algedonic, Critical) => (format!("ga:{subject}::reliable"), Hexavalent::False, 1.0),
 
         // constitutional → ga_constitution:<article>::safe or ::valuable
         (Constitutional, Info) => (
@@ -266,7 +247,8 @@ mod tests {
 
     #[test]
     fn algedonic_critical_emits_reliable_false_full_weight() {
-        let input = r#"{"kind":"algedonic","severity":"critical","subject":"audit_panic","evidence":null}"#;
+        let input =
+            r#"{"kind":"algedonic","severity":"critical","subject":"audit_panic","evidence":null}"#;
         let obs = ga_to_observations(input.as_bytes(), 1).unwrap();
         assert_eq!(obs.len(), 1);
         let (claim, variant, weight) = extract(&obs[0]);
@@ -277,7 +259,8 @@ mod tests {
 
     #[test]
     fn constitutional_info_emits_valuable_true() {
-        let input = r#"{"kind":"constitutional","severity":"info","subject":"article_1","evidence":null}"#;
+        let input =
+            r#"{"kind":"constitutional","severity":"info","subject":"article_1","evidence":null}"#;
         let obs = ga_to_observations(input.as_bytes(), 1).unwrap();
         let (claim, variant, _) = extract(&obs[0]);
         assert_eq!(claim, "ga_constitution:article_1::valuable");
@@ -286,7 +269,8 @@ mod tests {
 
     #[test]
     fn constitutional_error_emits_safe_false() {
-        let input = r#"{"kind":"constitutional","severity":"error","subject":"article_3","evidence":null}"#;
+        let input =
+            r#"{"kind":"constitutional","severity":"error","subject":"article_3","evidence":null}"#;
         let obs = ga_to_observations(input.as_bytes(), 1).unwrap();
         let (claim, variant, _) = extract(&obs[0]);
         assert_eq!(claim, "ga_constitution:article_3::safe");
@@ -305,9 +289,12 @@ mod tests {
     #[test]
     fn multi_event_stream_preserves_order_and_ordinals() {
         let input = concat!(
-            r#"{"kind":"algedonic","severity":"info","subject":"a"}"#, "\n",
-            r#"{"kind":"belief","severity":"warning","subject":"b"}"#, "\n",
-            r#"{"kind":"compliance","severity":"critical","subject":"c"}"#, "\n",
+            r#"{"kind":"algedonic","severity":"info","subject":"a"}"#,
+            "\n",
+            r#"{"kind":"belief","severity":"warning","subject":"b"}"#,
+            "\n",
+            r#"{"kind":"compliance","severity":"critical","subject":"c"}"#,
+            "\n",
         );
         let obs = ga_to_observations(input.as_bytes(), 5).unwrap();
         assert_eq!(obs.len(), 3);
@@ -323,8 +310,10 @@ mod tests {
     fn malformed_lines_are_silently_skipped() {
         let input = concat!(
             "not json at all\n",
-            r#"{"kind":"compliance","severity":"info","subject":"ok"}"#, "\n",
-            r#"{"kind":"unknown_kind","severity":"info","subject":"x"}"#, "\n",
+            r#"{"kind":"compliance","severity":"info","subject":"ok"}"#,
+            "\n",
+            r#"{"kind":"unknown_kind","severity":"info","subject":"x"}"#,
+            "\n",
         );
         let obs = ga_to_observations(input.as_bytes(), 1).unwrap();
         // Only the valid line produces an observation.

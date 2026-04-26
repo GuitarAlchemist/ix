@@ -240,10 +240,7 @@ impl StateReader {
                     Err(e) => {
                         // Skip files that don't conform to the expected schema.
                         // Evolution files may use a different format during transitions.
-                        eprintln!(
-                            "governance: skipping {}: {e}",
-                            path.display()
-                        );
+                        eprintln!("governance: skipping {}: {e}", path.display());
                     }
                 }
             }
@@ -264,13 +261,7 @@ impl ConfidenceCalibrator {
     /// (high-confidence beliefs that changed truth value), and recommends
     /// threshold adjustments when miscalibration exceeds 5%.
     pub fn calibrate(beliefs: &[BeliefFile]) -> MlFeedbackRecommendation {
-        let buckets: [(f64, f64); 5] = [
-            (0.0, 0.3),
-            (0.3, 0.5),
-            (0.5, 0.7),
-            (0.7, 0.9),
-            (0.9, 1.0),
-        ];
+        let buckets: [(f64, f64); 5] = [(0.0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 0.9), (0.9, 1.0)];
 
         let mut total_high_confidence = 0u32;
         let mut overconfident = 0u32;
@@ -295,8 +286,7 @@ impl ConfidenceCalibrator {
                 total_low_confidence += 1;
                 // A low-confidence belief that is actually True/False
                 // suggests underconfidence.
-                if belief.truth_value == TruthValue::True
-                    || belief.truth_value == TruthValue::False
+                if belief.truth_value == TruthValue::True || belief.truth_value == TruthValue::False
                 {
                     underconfident += 1;
                 }
@@ -384,17 +374,12 @@ impl StalenessPredictor {
     ///
     /// Flags beliefs older than 5 days (approaching the 7-day threshold)
     /// and estimates staleness velocity based on evidence source types.
-    pub fn predict(
-        beliefs: &[BeliefFile],
-        horizon_days: i64,
-    ) -> MlFeedbackRecommendation {
+    pub fn predict(beliefs: &[BeliefFile], horizon_days: i64) -> MlFeedbackRecommendation {
         let now = Utc::now();
         let mut at_risk: Vec<String> = Vec::new();
 
         for belief in beliefs {
-            let age = now
-                .signed_duration_since(belief.last_updated)
-                .num_days();
+            let age = now.signed_duration_since(belief.last_updated).num_days();
             // Flag beliefs older than (7 - horizon) days, minimum 5 days.
             let threshold = (7 - horizon_days).max(5);
             if age >= threshold {
@@ -465,20 +450,14 @@ impl AnomalyDetector {
     /// - Sudden confidence drops (> 0.3 change between expected and actual)
     /// - Beliefs with contradictory truth values
     /// - Evolution logs with sudden violation spikes
-    pub fn detect(
-        beliefs: &[BeliefFile],
-        evolution: &[EvolutionLog],
-    ) -> MlFeedbackRecommendation {
+    pub fn detect(beliefs: &[BeliefFile], evolution: &[EvolutionLog]) -> MlFeedbackRecommendation {
         let mut anomalies: Vec<String> = Vec::new();
 
         // Check beliefs for anomalous patterns.
         for belief in beliefs {
             // Flag contradictory beliefs — they indicate conflicting evidence.
             if belief.truth_value == TruthValue::Contradictory {
-                anomalies.push(format!(
-                    "contradictory-belief: '{}'",
-                    belief.proposition
-                ));
+                anomalies.push(format!("contradictory-belief: '{}'", belief.proposition));
             }
             // Flag high-confidence unknowns — shouldn't be confident about unknowns.
             if belief.truth_value == TruthValue::Unknown && belief.confidence > 0.7 {
@@ -509,10 +488,7 @@ impl AnomalyDetector {
                 ));
             }
             if log.metrics.deprecation_candidate {
-                anomalies.push(format!(
-                    "deprecation-candidate: '{}'",
-                    log.artifact
-                ));
+                anomalies.push(format!("deprecation-candidate: '{}'", log.artifact));
             }
         }
 
@@ -623,7 +599,9 @@ mod tests {
             "should find at least one evolution log"
         );
 
-        let pdca = reader.read_pdca_records().expect("should read pdca records");
+        let pdca = reader
+            .read_pdca_records()
+            .expect("should read pdca records");
         assert!(!pdca.is_empty(), "should find at least one pdca record");
     }
 
@@ -746,7 +724,10 @@ mod tests {
         let rec = AnomalyDetector::detect(&beliefs, &evolution);
         assert_eq!(rec.pipeline_id, "anomaly-detector");
         assert_eq!(rec.recommendation.action, "investigate_anomalies");
-        assert!(rec.recommendation.rationale.contains("contradictory-belief"));
+        assert!(rec
+            .recommendation
+            .rationale
+            .contains("contradictory-belief"));
     }
 
     #[test]

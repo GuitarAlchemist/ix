@@ -19,9 +19,7 @@ pub fn delay_embed(data: &[f64], dim: usize, delay: usize) -> Vec<Vec<f64>> {
 
     let num_points = n - (dim - 1) * delay;
     (0..num_points)
-        .map(|i| {
-            (0..dim).map(|d| data[i + d * delay]).collect()
-        })
+        .map(|i| (0..dim).map(|d| data[i + d * delay]).collect())
         .collect()
 }
 
@@ -40,7 +38,9 @@ pub fn optimal_delay(data: &[f64], max_lag: usize, num_bins: usize) -> usize {
     let bin_width = range / num_bins as f64;
 
     let to_bin = |x: f64| -> usize {
-        ((x - min_val) / bin_width).floor().min((num_bins - 1) as f64) as usize
+        ((x - min_val) / bin_width)
+            .floor()
+            .min((num_bins - 1) as f64) as usize
     };
 
     let mut prev_mi = f64::INFINITY;
@@ -89,11 +89,7 @@ pub fn optimal_delay(data: &[f64], max_lag: usize, num_bins: usize) -> usize {
 ///
 /// Returns the ratio E1(d) for each dimension. When E1 stops changing
 /// significantly (E1 ≈ 1), the embedding dimension is sufficient.
-pub fn cao_embedding_dimension(
-    data: &[f64],
-    delay: usize,
-    max_dim: usize,
-) -> Vec<f64> {
+pub fn cao_embedding_dimension(data: &[f64], delay: usize, max_dim: usize) -> Vec<f64> {
     let mut e_values = Vec::new();
 
     for d in 1..max_dim {
@@ -116,7 +112,9 @@ pub fn cao_embedding_dimension(
                 if i == j {
                     continue;
                 }
-                let dist: f64 = embedded_d[i].iter().zip(embedded_d[j].iter())
+                let dist: f64 = embedded_d[i]
+                    .iter()
+                    .zip(embedded_d[j].iter())
                     .map(|(a, b)| (a - b).abs())
                     .fold(f64::NEG_INFINITY, f64::max); // Chebyshev distance
                 if dist < min_dist {
@@ -125,7 +123,9 @@ pub fn cao_embedding_dimension(
                 }
             }
 
-            let dist_d1: f64 = embedded_d1[i].iter().zip(embedded_d1[nn_idx].iter())
+            let dist_d1: f64 = embedded_d1[i]
+                .iter()
+                .zip(embedded_d1[nn_idx].iter())
                 .map(|(a, b)| (a - b).abs())
                 .fold(f64::NEG_INFINITY, f64::max);
 
@@ -177,7 +177,7 @@ mod tests {
             .collect();
 
         let embedded = delay_embed(&data, 2, 25); // quarter-period delay
-        // Check that the embedded points roughly form a circle
+                                                  // Check that the embedded points roughly form a circle
         for point in &embedded {
             let r = (point[0] * point[0] + point[1] * point[1]).sqrt();
             assert!(r < 1.5, "Embedded sine should be bounded");
@@ -193,6 +193,10 @@ mod tests {
         let delay = optimal_delay(&data, 50, 16);
         // Optimal delay for a sine wave should be around T/4 = 25
         // The mutual information method can vary; accept a wider range
-        assert!((1..=50).contains(&delay), "Optimal delay for sine: {}", delay);
+        assert!(
+            (1..=50).contains(&delay),
+            "Optimal delay for sine: {}",
+            delay
+        );
     }
 }

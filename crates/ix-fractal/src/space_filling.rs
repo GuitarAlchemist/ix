@@ -117,9 +117,15 @@ fn peano_digit_to_xy(digit: u32, level: u32) -> (u32, u32) {
     // Standard Peano curve traversal order for a 3x3 grid:
     // Level-dependent serpentine pattern
     let base = [
-        (0, 0), (0, 1), (0, 2),
-        (1, 2), (1, 1), (1, 0),
-        (2, 0), (2, 1), (2, 2),
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 2),
+        (1, 1),
+        (1, 0),
+        (2, 0),
+        (2, 1),
+        (2, 2),
     ];
 
     let (bx, by) = base[digit as usize % 9];
@@ -193,16 +199,8 @@ mod tests {
     fn test_hilbert_bounded() {
         let curve = hilbert_curve(3);
         for &[x, y] in &curve {
-            assert!(
-                (-0.01..=1.01).contains(&x),
-                "hilbert x={} out of [0,1]",
-                x
-            );
-            assert!(
-                (-0.01..=1.01).contains(&y),
-                "hilbert y={} out of [0,1]",
-                y
-            );
+            assert!((-0.01..=1.01).contains(&x), "hilbert x={} out of [0,1]", x);
+            assert!((-0.01..=1.01).contains(&y), "hilbert y={} out of [0,1]", y);
         }
     }
 
@@ -261,16 +259,8 @@ mod tests {
     fn test_peano_bounded() {
         let curve = peano_curve(2);
         for &[x, y] in &curve {
-            assert!(
-                (-0.01..=1.01).contains(&x),
-                "peano x={} out of [0,1]",
-                x
-            );
-            assert!(
-                (-0.01..=1.01).contains(&y),
-                "peano y={} out of [0,1]",
-                y
-            );
+            assert!((-0.01..=1.01).contains(&x), "peano x={} out of [0,1]", x);
+            assert!((-0.01..=1.01).contains(&y), "peano y={} out of [0,1]", y);
         }
     }
 

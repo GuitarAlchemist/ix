@@ -166,7 +166,11 @@ impl<const D: usize> BspTree<D> {
             return None;
         }
         let dim = depth % D;
-        points.sort_by(|a, b| a[dim].partial_cmp(&b[dim]).unwrap_or(std::cmp::Ordering::Equal));
+        points.sort_by(|a, b| {
+            a[dim]
+                .partial_cmp(&b[dim])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let mid = points.len() / 2;
 
         let point = points[mid];
@@ -227,7 +231,8 @@ impl<const D: usize> BspTree<D> {
         results: &mut Vec<Point<D>>,
     ) {
         // Check if this point is inside the region
-        let inside = (0..D).all(|i| node.point[i] >= min_corner[i] && node.point[i] <= max_corner[i]);
+        let inside =
+            (0..D).all(|i| node.point[i] >= min_corner[i] && node.point[i] <= max_corner[i]);
         if inside {
             results.push(node.point);
         }
@@ -278,12 +283,7 @@ impl<const D: usize> BspTree<D> {
         }
     }
 
-    fn knn_search(
-        node: &BspNode<D>,
-        query: &Point<D>,
-        k: usize,
-        heap: &mut Vec<(Point<D>, f64)>,
-    ) {
+    fn knn_search(node: &BspNode<D>, query: &Point<D>, k: usize, heap: &mut Vec<(Point<D>, f64)>) {
         let dist_sq = squared_distance(&node.point, query);
 
         // Insert if heap isn't full or this point is closer than the worst
@@ -447,7 +447,7 @@ mod tests {
 
         let results = tree.query_radius(&[0.0, 0.0], 1.5);
         assert_eq!(results.len(), 3); // [0,0], [1,0], [0,1]
-        // Should be sorted by distance
+                                      // Should be sorted by distance
         assert_eq!(results[0].0, [0.0, 0.0]);
     }
 

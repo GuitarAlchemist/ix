@@ -105,7 +105,11 @@ pub fn segmented_sieve(lo: usize, hi: usize) -> Vec<usize> {
             p * p - lo
         } else {
             let rem = lo % p;
-            if rem == 0 { 0 } else { p - rem }
+            if rem == 0 {
+                0
+            } else {
+                p - rem
+            }
         };
         let mut j = start;
         while j < size {
@@ -129,8 +133,8 @@ mod tests {
     use super::*;
 
     const PRIMES_UP_TO_100: &[usize] = &[
-        2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83,
-        89, 97,
+        2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89,
+        97,
     ];
 
     #[test]

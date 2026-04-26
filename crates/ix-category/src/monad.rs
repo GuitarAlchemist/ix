@@ -195,9 +195,8 @@ mod tests {
 
     #[test]
     fn test_option_bind_none_output() {
-        let result: Option<i32> = OptionMonad::bind(Some(0), |x| {
-            if x == 0 { None } else { Some(100 / x) }
-        });
+        let result: Option<i32> =
+            OptionMonad::bind(Some(0), |x| if x == 0 { None } else { Some(100 / x) });
         assert_eq!(result, None);
     }
 
@@ -213,7 +212,7 @@ mod tests {
     fn test_option_right_unit_law() {
         // bind(m, unit) = m
         let m = Some(42);
-        let result: Option<i32> = OptionMonad::bind(m, |x| OptionMonad::unit(x));
+        let result: Option<i32> = OptionMonad::bind(m, OptionMonad::unit);
         assert_eq!(result, m);
     }
 
@@ -245,8 +244,7 @@ mod tests {
 
     #[test]
     fn test_result_bind_err() {
-        let result: Result<i32, String> =
-            ResultMonad::bind(Err("bad".to_string()), |x| Ok(x * 3));
+        let result: Result<i32, String> = ResultMonad::bind(Err("bad".to_string()), |x| Ok(x * 3));
         assert_eq!(result, Err("bad".to_string()));
     }
 
@@ -285,7 +283,7 @@ mod tests {
         // then ε([[x]]) = [x] = F(x) ✓
         let x = 5;
         let fx = vec![x]; // F(x) = [x]
-        let f_eta_fx: Vec<Vec<i32>> = fx.iter().map(|e| FreeForgetfulAdj::unit(e)).collect(); // [[x]]
+        let f_eta_fx: Vec<Vec<i32>> = fx.iter().map(FreeForgetfulAdj::unit).collect(); // [[x]]
         let result = FreeForgetfulAdj::counit(&f_eta_fx); // [x]
         assert_eq!(result, fx);
     }

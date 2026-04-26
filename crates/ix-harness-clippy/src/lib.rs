@@ -46,10 +46,7 @@ struct LintCode {
 
 /// Project a clippy JSON stream into
 /// [`SessionEvent::ObservationAdded`] records.
-pub fn clippy_to_observations(
-    input: &[u8],
-    round: u32,
-) -> Result<Vec<SessionEvent>, AdapterError> {
+pub fn clippy_to_observations(input: &[u8], round: u32) -> Result<Vec<SessionEvent>, AdapterError> {
     let text = std::str::from_utf8(input)?;
     let diagnosis_id = sha256_hex(input);
 
@@ -75,8 +72,7 @@ pub fn clippy_to_observations(
     let mut ordinal: u64 = 0;
 
     // Aggregate reliability observation first.
-    let (variant, weight, evidence) =
-        classify_run(error_count, warning_count);
+    let (variant, weight, evidence) = classify_run(error_count, warning_count);
     out.push(emit(
         &mut ordinal,
         &diagnosis_id,
@@ -89,11 +85,7 @@ pub fn clippy_to_observations(
 
     // Per-lint observations.
     for d in &diagnostics {
-        let lint_name = d
-            .code
-            .as_ref()
-            .map(|c| c.code.clone())
-            .unwrap_or_default();
+        let lint_name = d.code.as_ref().map(|c| c.code.clone()).unwrap_or_default();
         if let Some((aspect, variant, weight)) = classify_diagnostic(&d.level, &lint_name) {
             let claim_key = format!("clippy:{lint_name}::{aspect}");
             let evidence = format!("{}: {}", d.level, d.message);
@@ -127,10 +119,7 @@ fn classify_run(errors: usize, warnings: usize) -> (Hexavalent, f64, String) {
 
 /// Classify one diagnostic into `(aspect, variant, weight)`.
 /// Returns `None` for `help` and unknown levels.
-fn classify_diagnostic(
-    level: &str,
-    lint_name: &str,
-) -> Option<(&'static str, Hexavalent, f64)> {
+fn classify_diagnostic(level: &str, lint_name: &str) -> Option<(&'static str, Hexavalent, f64)> {
     match level {
         "error" => Some(("safe", Hexavalent::False, 1.0)),
         "warning" => {

@@ -98,19 +98,12 @@ pub fn find_ess(payoff_matrix: &Array2<f64>) -> Vec<usize> {
 /// Dove vs Hawk: 0
 /// Dove vs Dove: V/2
 pub fn hawk_dove_matrix(value: f64, cost: f64) -> Array2<f64> {
-    ndarray::array![
-        [(value - cost) / 2.0, value],
-        [0.0, value / 2.0]
-    ]
+    ndarray::array![[(value - cost) / 2.0, value], [0.0, value / 2.0]]
 }
 
 /// Rock-Paper-Scissors payoff matrix (with configurable payoffs).
 pub fn rps_matrix(win: f64, lose: f64, draw: f64) -> Array2<f64> {
-    ndarray::array![
-        [draw, lose, win],
-        [win, draw, lose],
-        [lose, win, draw]
-    ]
+    ndarray::array![[draw, lose, win], [win, draw, lose], [lose, win, draw]]
 }
 
 /// Multi-population replicator dynamics (two asymmetric populations).
@@ -156,12 +149,20 @@ pub fn two_population_replicator(
         }
 
         // Project onto simplex
-        for v in new_xa.iter_mut() { *v = v.max(0.0); }
-        for v in new_xb.iter_mut() { *v = v.max(0.0); }
+        for v in new_xa.iter_mut() {
+            *v = v.max(0.0);
+        }
+        for v in new_xb.iter_mut() {
+            *v = v.max(0.0);
+        }
         let sa = new_xa.sum();
         let sb = new_xb.sum();
-        if sa > 1e-15 { new_xa /= sa; }
-        if sb > 1e-15 { new_xb /= sb; }
+        if sa > 1e-15 {
+            new_xa /= sa;
+        }
+        if sb > 1e-15 {
+            new_xb /= sb;
+        }
 
         xa = new_xa;
         xb = new_xb;
@@ -200,7 +201,11 @@ mod tests {
         let final_state = traj.last().unwrap();
 
         // Defectors should take over
-        assert!(final_state[1] > 0.95, "Defectors should dominate: {:?}", final_state);
+        assert!(
+            final_state[1] > 0.95,
+            "Defectors should dominate: {:?}",
+            final_state
+        );
     }
 
     #[test]
@@ -214,7 +219,11 @@ mod tests {
 
         // All strategies should still be present
         for &x in final_state.iter() {
-            assert!(x > 0.1, "RPS should maintain all strategies: {:?}", final_state);
+            assert!(
+                x > 0.1,
+                "RPS should maintain all strategies: {:?}",
+                final_state
+            );
         }
     }
 }

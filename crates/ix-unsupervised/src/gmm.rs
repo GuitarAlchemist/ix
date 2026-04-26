@@ -53,7 +53,12 @@ impl GMM {
         for i in 0..x.nrows() {
             let mut sum = 0.0;
             for k in 0..self.k {
-                sum += weights[k] * gaussian_pdf(&x.row(i).to_owned(), &means.row(k).to_owned(), &covs.row(k).to_owned());
+                sum += weights[k]
+                    * gaussian_pdf(
+                        &x.row(i).to_owned(),
+                        &means.row(k).to_owned(),
+                        &covs.row(k).to_owned(),
+                    );
             }
             ll += sum.max(1e-300).ln();
         }
@@ -65,7 +70,9 @@ impl GMM {
 fn gaussian_pdf(x: &Array1<f64>, mean: &Array1<f64>, cov_diag: &Array1<f64>) -> f64 {
     let d = x.len() as f64;
     let diff = x - mean;
-    let exponent: f64 = diff.iter().zip(cov_diag.iter())
+    let exponent: f64 = diff
+        .iter()
+        .zip(cov_diag.iter())
         .map(|(&di, &ci)| di * di / ci.max(1e-10))
         .sum();
     let det: f64 = cov_diag.iter().map(|&c| c.max(1e-10)).product();
@@ -117,7 +124,12 @@ impl Clusterer for GMM {
                 let xi = x.row(i).to_owned();
                 let mut row_sum = 0.0;
                 for k in 0..self.k {
-                    let p = weights[k] * gaussian_pdf(&xi, &means.row(k).to_owned(), &covariances.row(k).to_owned());
+                    let p = weights[k]
+                        * gaussian_pdf(
+                            &xi,
+                            &means.row(k).to_owned(),
+                            &covariances.row(k).to_owned(),
+                        );
                     resp[[i, k]] = p;
                     row_sum += p;
                 }
@@ -188,7 +200,8 @@ impl Clusterer for GMM {
             let mut best_k = 0;
             let mut best_p = f64::NEG_INFINITY;
             for k in 0..self.k {
-                let p = weights[k] * gaussian_pdf(&xi, &means.row(k).to_owned(), &covs.row(k).to_owned());
+                let p = weights[k]
+                    * gaussian_pdf(&xi, &means.row(k).to_owned(), &covs.row(k).to_owned());
                 if p > best_p {
                     best_p = p;
                     best_k = k;
@@ -207,8 +220,14 @@ mod tests {
     #[test]
     fn test_gmm_two_clusters() {
         let x = array![
-            [0.0, 0.0], [0.1, 0.1], [0.2, 0.0], [-0.1, 0.2],
-            [10.0, 10.0], [10.1, 10.1], [10.2, 10.0], [9.9, 10.2]
+            [0.0, 0.0],
+            [0.1, 0.1],
+            [0.2, 0.0],
+            [-0.1, 0.2],
+            [10.0, 10.0],
+            [10.1, 10.1],
+            [10.2, 10.0],
+            [9.9, 10.2]
         ];
 
         let mut gmm = GMM::new(2).with_seed(42);
@@ -227,8 +246,12 @@ mod tests {
     #[test]
     fn test_gmm_log_likelihood_increases() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0],
-            [10.0, 10.0], [10.5, 10.5], [11.0, 10.0]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [1.0, 0.0],
+            [10.0, 10.0],
+            [10.5, 10.5],
+            [11.0, 10.0]
         ];
 
         let mut gmm = GMM::new(2).with_seed(42).with_max_iterations(1);

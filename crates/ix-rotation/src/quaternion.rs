@@ -19,7 +19,12 @@ impl Quaternion {
 
     /// The identity quaternion (no rotation).
     pub fn identity() -> Self {
-        Self { w: 1.0, x: 0.0, y: 0.0, z: 0.0 }
+        Self {
+            w: 1.0,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
     }
 
     /// Create a quaternion from an axis and angle (radians).

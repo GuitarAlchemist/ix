@@ -421,7 +421,11 @@ pub fn by_language(lang: &str) -> Vec<GrammarEntry> {
 
 /// Filter by grammar notation format.
 pub fn by_format(format: GrammarFormat) -> Vec<GrammarEntry> {
-    CATALOG.iter().filter(|e| e.format == format).cloned().collect()
+    CATALOG
+        .iter()
+        .filter(|e| e.format == format)
+        .cloned()
+        .collect()
 }
 
 /// Filter by topic substring (case-insensitive). An entry matches
@@ -575,7 +579,11 @@ mod tests {
         for e in CATALOG {
             assert!(!e.name.is_empty(), "empty name");
             assert!(!e.url.is_empty(), "empty url for {}", e.name);
-            assert!(!e.description.is_empty(), "empty description for {}", e.name);
+            assert!(
+                !e.description.is_empty(),
+                "empty description for {}",
+                e.name
+            );
             assert!(!e.language.is_empty(), "empty language for {}", e.name);
             assert!(e.year >= 1960, "bogus year for {}: {}", e.name, e.year);
             assert!(
@@ -644,6 +652,10 @@ mod tests {
     #[test]
     fn topic_filter_finds_rfc_entries() {
         let rfc = by_topic("rfc");
-        assert!(rfc.len() >= 10, "expected 10+ RFC-tagged entries, got {}", rfc.len());
+        assert!(
+            rfc.len() >= 10,
+            "expected 10+ RFC-tagged entries, got {}",
+            rfc.len()
+        );
     }
 }

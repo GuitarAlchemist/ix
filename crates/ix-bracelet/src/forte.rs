@@ -71,12 +71,20 @@ pub struct ForteNumber {
 impl ForteNumber {
     /// Construct a non-Z Forte number.
     pub const fn new(cardinality: u8, ordinal: u16) -> Self {
-        Self { cardinality, ordinal, z: false }
+        Self {
+            cardinality,
+            ordinal,
+            z: false,
+        }
     }
 
     /// Construct a Z-related Forte number (displayed with a `Z` prefix on the ordinal).
     pub const fn new_z(cardinality: u8, ordinal: u16) -> Self {
-        Self { cardinality, ordinal, z: true }
+        Self {
+            cardinality,
+            ordinal,
+            z: true,
+        }
     }
 }
 
@@ -387,7 +395,11 @@ mod tests {
     fn every_prime_form_has_a_forte_number() {
         for &pf in all_prime_forms() {
             let fn_ = forte_number(pf);
-            assert!(fn_.is_some(), "prime form 0x{:03X} missing Forte number", pf.raw());
+            assert!(
+                fn_.is_some(),
+                "prime form 0x{:03X} missing Forte number",
+                pf.raw()
+            );
             assert_eq!(
                 fn_.unwrap().cardinality as u32,
                 pf.cardinality(),
@@ -418,7 +430,10 @@ mod tests {
             let base = forte_number(x).unwrap();
             for reflected in [false, true] {
                 for rotation in 0u8..12 {
-                    let g = DihedralElement { rotation, reflected };
+                    let g = DihedralElement {
+                        rotation,
+                        reflected,
+                    };
                     let y = g.apply(x);
                     assert_eq!(
                         forte_number(y).unwrap(),
@@ -553,11 +568,22 @@ mod tests {
         for (a, b, label_a, label_b) in pairs.iter().copied() {
             let na = forte_number(PcSet::new(a)).unwrap();
             let nb = forte_number(PcSet::new(b)).unwrap();
-            assert_eq!(na.to_string(), label_a, "0x{a:03X} should be {label_a}, got {na}");
-            assert_eq!(nb.to_string(), label_b, "0x{b:03X} should be {label_b}, got {nb}");
+            assert_eq!(
+                na.to_string(),
+                label_a,
+                "0x{a:03X} should be {label_a}, got {na}"
+            );
+            assert_eq!(
+                nb.to_string(),
+                label_b,
+                "0x{b:03X} should be {label_b}, got {nb}"
+            );
             assert_ne!(na, nb, "Z-partners {label_a} and {label_b} collided");
             assert!(na.z && nb.z, "Z flag missing on {label_a}/{label_b}");
-            assert_eq!(na.cardinality, nb.cardinality, "Z-pair cardinality mismatch");
+            assert_eq!(
+                na.cardinality, nb.cardinality,
+                "Z-pair cardinality mismatch"
+            );
         }
     }
 

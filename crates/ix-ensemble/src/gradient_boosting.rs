@@ -101,11 +101,7 @@ struct RegressionStump {
 
 impl RegressionStump {
     /// Fit a depth-1 regression tree to minimize squared error.
-    fn fit(
-        x: &Array2<f64>,
-        residuals: &Array1<f64>,
-        min_samples_leaf: usize,
-    ) -> Self {
+    fn fit(x: &Array2<f64>, residuals: &Array1<f64>, min_samples_leaf: usize) -> Self {
         let (n, p) = x.dim();
         let overall_mean = residuals.mean().unwrap_or(0.0);
 
@@ -263,7 +259,8 @@ impl EnsembleClassifier for GradientBoostedClassifier {
         for &label in y.iter() {
             class_counts[label] += 1;
         }
-        self.init_scores = class_counts.iter()
+        self.init_scores = class_counts
+            .iter()
             .map(|&c| ((c as f64 + 1.0) / (n as f64 + self.n_classes as f64)).ln())
             .collect();
 
@@ -276,7 +273,11 @@ impl EnsembleClassifier for GradientBoostedClassifier {
             // Compute probabilities via inline softmax (avoids per-row Vec alloc)
             let mut proba = Array2::zeros((n, self.n_classes));
             for i in 0..n {
-                let max_s = scores.row(i).iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let max_s = scores
+                    .row(i)
+                    .iter()
+                    .cloned()
+                    .fold(f64::NEG_INFINITY, f64::max);
                 let mut sum = 0.0;
                 for c in 0..self.n_classes {
                     proba[[i, c]] = (scores[[i, c]] - max_s).exp();
@@ -344,15 +345,18 @@ impl EnsembleClassifier for GradientBoostedClassifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::array;
     use ix_supervised::metrics::accuracy;
+    use ndarray::array;
 
     #[test]
     fn test_gbc_binary_separable() {
-        let x = Array2::from_shape_vec((8, 2), vec![
-            0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2,
-            5.0, 5.0, 5.5, 5.5, 6.0, 5.0, 5.3, 5.2,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 5.0, 5.0, 5.5, 5.5, 6.0, 5.0, 5.3, 5.2,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
         let mut gbc = GradientBoostedClassifier::new(50, 0.1);
@@ -360,16 +364,23 @@ mod tests {
 
         let pred = gbc.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 1.0, "Should perfectly classify separable data, got acc={}", acc);
+        assert!(
+            acc >= 1.0,
+            "Should perfectly classify separable data, got acc={}",
+            acc
+        );
     }
 
     #[test]
     fn test_gbc_multiclass() {
-        let x = Array2::from_shape_vec((9, 2), vec![
-            0.0, 0.0, 0.5, 0.0, 0.0, 0.5,
-            5.0, 0.0, 5.5, 0.0, 5.0, 0.5,
-            0.0, 5.0, 0.5, 5.0, 0.0, 5.5,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (9, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.0, 0.0, 0.5, 5.0, 0.0, 5.5, 0.0, 5.0, 0.5, 0.0, 5.0, 0.5, 5.0,
+                0.0, 5.5,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 1, 1, 1, 2, 2, 2];
 
         let mut gbc = GradientBoostedClassifier::new(50, 0.1);
@@ -382,10 +393,8 @@ mod tests {
 
     #[test]
     fn test_gbc_predict_proba_sums_to_one() {
-        let x = Array2::from_shape_vec((4, 2), vec![
-            0.0, 0.0, 1.0, 1.0,
-            5.0, 5.0, 6.0, 6.0,
-        ]).unwrap();
+        let x =
+            Array2::from_shape_vec((4, 2), vec![0.0, 0.0, 1.0, 1.0, 5.0, 5.0, 6.0, 6.0]).unwrap();
         let y = array![0, 0, 1, 1];
 
         let mut gbc = GradientBoostedClassifier::new(20, 0.1);
@@ -394,7 +403,12 @@ mod tests {
         let proba = gbc.predict_proba(&x);
         for i in 0..proba.nrows() {
             let sum: f64 = proba.row(i).sum();
-            assert!((sum - 1.0).abs() < 1e-6, "Row {} probabilities sum to {}, expected 1.0", i, sum);
+            assert!(
+                (sum - 1.0).abs() < 1e-6,
+                "Row {} probabilities sum to {}, expected 1.0",
+                i,
+                sum
+            );
         }
     }
 
@@ -411,9 +425,7 @@ mod tests {
 
     #[test]
     fn test_gbc_learning_rate_effect() {
-        let x = Array2::from_shape_vec((6, 1), vec![
-            0.0, 1.0, 2.0, 8.0, 9.0, 10.0,
-        ]).unwrap();
+        let x = Array2::from_shape_vec((6, 1), vec![0.0, 1.0, 2.0, 8.0, 9.0, 10.0]).unwrap();
         let y = array![0, 0, 0, 1, 1, 1];
 
         // High LR with few trees
@@ -429,33 +441,45 @@ mod tests {
         let acc_slow = accuracy(&y, &pred_slow);
 
         // Both should work on this easy data
-        assert!(acc_fast >= 0.8, "High LR should still work, got {}", acc_fast);
-        assert!(acc_slow >= 0.8, "Low LR should work with enough rounds, got {}", acc_slow);
+        assert!(
+            acc_fast >= 0.8,
+            "High LR should still work, got {}",
+            acc_fast
+        );
+        assert!(
+            acc_slow >= 0.8,
+            "Low LR should work with enough rounds, got {}",
+            acc_slow
+        );
     }
 
     #[test]
     fn test_gbc_with_min_samples_leaf() {
-        let x = Array2::from_shape_vec((8, 2), vec![
-            0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2,
-            5.0, 5.0, 5.5, 5.5, 6.0, 5.0, 5.3, 5.2,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 5.0, 5.0, 5.5, 5.5, 6.0, 5.0, 5.3, 5.2,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
-        let mut gbc = GradientBoostedClassifier::new(50, 0.1)
-            .with_min_samples_leaf(2);
+        let mut gbc = GradientBoostedClassifier::new(50, 0.1).with_min_samples_leaf(2);
         gbc.fit(&x, &y);
 
         let pred = gbc.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 0.9, "min_samples_leaf=2 should still classify well, got {}", acc);
+        assert!(
+            acc >= 0.9,
+            "min_samples_leaf=2 should still classify well, got {}",
+            acc
+        );
     }
 
     #[test]
     fn test_regression_stump_basic() {
         // Simple 1D data: left half should predict negative, right half positive
-        let x = Array2::from_shape_vec((6, 1), vec![
-            0.0, 1.0, 2.0, 8.0, 9.0, 10.0,
-        ]).unwrap();
+        let x = Array2::from_shape_vec((6, 1), vec![0.0, 1.0, 2.0, 8.0, 9.0, 10.0]).unwrap();
         let residuals = array![-1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
 
         let stump = RegressionStump::fit(&x, &residuals, 1);
@@ -463,10 +487,18 @@ mod tests {
 
         // Left partition should predict ~-1, right should predict ~+1
         for i in 0..3 {
-            assert!(preds[i] < 0.0, "Left prediction should be negative, got {}", preds[i]);
+            assert!(
+                preds[i] < 0.0,
+                "Left prediction should be negative, got {}",
+                preds[i]
+            );
         }
         for i in 3..6 {
-            assert!(preds[i] > 0.0, "Right prediction should be positive, got {}", preds[i]);
+            assert!(
+                preds[i] > 0.0,
+                "Right prediction should be positive, got {}",
+                preds[i]
+            );
         }
     }
 }

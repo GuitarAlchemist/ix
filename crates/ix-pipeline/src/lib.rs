@@ -4,9 +4,9 @@
 //! functions and edges carry typed data. Independent branches run in
 //! parallel, results are memoized, and the whole thing is cache-friendly.
 
+pub mod builder;
 pub mod dag;
 pub mod executor;
-pub mod builder;
-pub mod spec;
-pub mod lower;
 pub mod lock;
+pub mod lower;
+pub mod spec;

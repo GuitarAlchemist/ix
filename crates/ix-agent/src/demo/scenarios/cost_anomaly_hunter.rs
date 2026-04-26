@@ -50,7 +50,10 @@ impl DemoScenario for CostAnomalyHunter {
                 },
                 interpret: Some(|output: &Value| {
                     let mean = output.get("mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let std = output.get("std_dev").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let std = output
+                        .get("std_dev")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
                     let max = output.get("max").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     format!(
                         "Baseline: ${mean:.0}/day ± ${std:.0}. But max=${max:.0} — \
@@ -59,7 +62,6 @@ impl DemoScenario for CostAnomalyHunter {
                     )
                 }),
             },
-
             // Step 2: ix_fft — find billing cycles
             DemoStep {
                 label: "FFT to detect spending cycles".into(),
@@ -77,16 +79,19 @@ impl DemoScenario for CostAnomalyHunter {
                 interpret: Some(|output: &Value| {
                     if let Some(magnitudes) = output.get("magnitudes").and_then(|v| v.as_array()) {
                         // Look for peaks — bin ~13 would be ~7-day cycle in 90-day data
-                        let mags: Vec<f64> = magnitudes.iter()
-                            .filter_map(|v| v.as_f64())
-                            .collect();
-                        let max_bin = mags.iter()
+                        let mags: Vec<f64> = magnitudes.iter().filter_map(|v| v.as_f64()).collect();
+                        let max_bin = mags
+                            .iter()
                             .enumerate()
                             .skip(1) // skip DC
                             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
                             .map(|(i, _)| i)
                             .unwrap_or(0);
-                        let period = if max_bin > 0 { 90.0 / max_bin as f64 } else { 0.0 };
+                        let period = if max_bin > 0 {
+                            90.0 / max_bin as f64
+                        } else {
+                            0.0
+                        };
                         format!(
                             "Dominant cycle at bin {max_bin} ≈ {period:.1}-day period. \
                              That's the weekly dev-cluster shutdown pattern. Costs dip \
@@ -97,7 +102,6 @@ impl DemoScenario for CostAnomalyHunter {
                     }
                 }),
             },
-
             // Step 3: ix_kmeans — cluster by cost pattern (THE AHA MOMENT)
             DemoStep {
                 label: "Cluster services by spend pattern".into(),
@@ -120,17 +124,29 @@ impl DemoScenario for CostAnomalyHunter {
                     "Cluster 8 services by cost pattern.".into()
                 },
                 interpret: Some(|output: &Value| {
-                    if let Some(assignments) = output.get("assignments").and_then(|v| v.as_array()) {
+                    if let Some(assignments) = output.get("assignments").and_then(|v| v.as_array())
+                    {
                         let services = [
-                            "EC2-prod", "RDS-main", "S3-logs", "Lambda-api",
-                            "EKS-dev", "CloudFront", "SageMaker-train", "EC2-autoscale"
+                            "EC2-prod",
+                            "RDS-main",
+                            "S3-logs",
+                            "Lambda-api",
+                            "EKS-dev",
+                            "CloudFront",
+                            "SageMaker-train",
+                            "EC2-autoscale",
                         ];
-                        let mut clusters: std::collections::HashMap<u64, Vec<&str>> = std::collections::HashMap::new();
+                        let mut clusters: std::collections::HashMap<u64, Vec<&str>> =
+                            std::collections::HashMap::new();
                         for (i, a) in assignments.iter().enumerate() {
                             let c = a.as_u64().unwrap_or(0);
-                            clusters.entry(c).or_default().push(services.get(i).unwrap_or(&"?"));
+                            clusters
+                                .entry(c)
+                                .or_default()
+                                .push(services.get(i).unwrap_or(&"?"));
                         }
-                        let anomalous = clusters.values()
+                        let anomalous = clusters
+                            .values()
                             .min_by_key(|v| v.len())
                             .map(|v| v.join(", "))
                             .unwrap_or_default();
@@ -144,7 +160,6 @@ impl DemoScenario for CostAnomalyHunter {
                     }
                 }),
             },
-
             // Step 4: ix_bloom_filter — fast watchlist check
             DemoStep {
                 label: "Check against known-costly resource watchlist".into(),
@@ -189,7 +204,9 @@ fn generate_cloud_spend(days: usize, seed: u64) -> Vec<f64> {
     let mut data = Vec::with_capacity(days);
     for day in 0..days {
         // Simple LCG for deterministic noise
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let noise = ((rng_state >> 33) as f64 / u32::MAX as f64 - 0.5) * 100.0;
         // Base + weekly cycle (dip on weekends)
         let base = 1000.0;
@@ -206,21 +223,55 @@ fn generate_cloud_spend(days: usize, seed: u64) -> Vec<f64> {
 fn generate_service_features(seed: u64) -> Vec<Vec<f64>> {
     let mut rng_state = seed;
     let mut next = || -> f64 {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (rng_state >> 33) as f64 / u32::MAX as f64
     };
 
     vec![
         // Normal services: moderate cost, low variance, low growth
-        vec![200.0 + next() * 50.0, 20.0 + next() * 10.0, 0.02 + next() * 0.03],  // EC2-prod
-        vec![150.0 + next() * 30.0, 15.0 + next() * 8.0,  0.01 + next() * 0.02],  // RDS-main
-        vec![50.0  + next() * 20.0, 10.0 + next() * 5.0,  0.03 + next() * 0.02],  // S3-logs
-        vec![80.0  + next() * 25.0, 12.0 + next() * 6.0,  0.02 + next() * 0.03],  // Lambda-api
-        vec![120.0 + next() * 40.0, 25.0 + next() * 10.0, 0.01 + next() * 0.02],  // EKS-dev
-        vec![60.0  + next() * 15.0, 8.0  + next() * 4.0,  0.01 + next() * 0.01],  // CloudFront
+        vec![
+            200.0 + next() * 50.0,
+            20.0 + next() * 10.0,
+            0.02 + next() * 0.03,
+        ], // EC2-prod
+        vec![
+            150.0 + next() * 30.0,
+            15.0 + next() * 8.0,
+            0.01 + next() * 0.02,
+        ], // RDS-main
+        vec![
+            50.0 + next() * 20.0,
+            10.0 + next() * 5.0,
+            0.03 + next() * 0.02,
+        ], // S3-logs
+        vec![
+            80.0 + next() * 25.0,
+            12.0 + next() * 6.0,
+            0.02 + next() * 0.03,
+        ], // Lambda-api
+        vec![
+            120.0 + next() * 40.0,
+            25.0 + next() * 10.0,
+            0.01 + next() * 0.02,
+        ], // EKS-dev
+        vec![
+            60.0 + next() * 15.0,
+            8.0 + next() * 4.0,
+            0.01 + next() * 0.01,
+        ], // CloudFront
         // Elevated but expected (ML training)
-        vec![350.0 + next() * 80.0, 60.0 + next() * 20.0, 0.05 + next() * 0.03],  // SageMaker
+        vec![
+            350.0 + next() * 80.0,
+            60.0 + next() * 20.0,
+            0.05 + next() * 0.03,
+        ], // SageMaker
         // ANOMALY: auto-scaler gone wild
-        vec![800.0 + next() * 200.0, 250.0 + next() * 50.0, 0.35 + next() * 0.1], // EC2-autoscale
+        vec![
+            800.0 + next() * 200.0,
+            250.0 + next() * 50.0,
+            0.35 + next() * 0.1,
+        ], // EC2-autoscale
     ]
 }

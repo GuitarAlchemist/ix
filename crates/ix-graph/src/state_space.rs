@@ -3,8 +3,8 @@
 //! Used for agent decision-making: explore a space of possible actions/states
 //! to find optimal paths (e.g., which skill to invoke, in what order).
 
-use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 use std::hash::Hash;
 
 /// A state in a state space.
@@ -92,7 +92,11 @@ pub fn astar<S: State>(initial: S) -> Option<SearchResult<S>> {
 
 /// Beam search: keeps only top-k states at each level.
 /// Useful for agent routing where you want fast approximate solutions.
-pub fn beam_search<S: State>(initial: S, beam_width: usize, max_depth: usize) -> Option<SearchResult<S>> {
+pub fn beam_search<S: State>(
+    initial: S,
+    beam_width: usize,
+    max_depth: usize,
+) -> Option<SearchResult<S>> {
     let mut beam: Vec<(S, f64, Vec<S>)> = vec![(initial.clone(), 0.0, vec![initial])];
     let mut expanded = 0usize;
 
@@ -213,14 +217,24 @@ mod tests {
 
     #[test]
     fn test_astar_grid() {
-        let start = GridPos { x: 0, y: 0, goal_x: 3, goal_y: 3 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 3,
+            goal_y: 3,
+        };
         let result = astar(start).unwrap();
         assert!((result.total_cost - 6.0).abs() < 1e-10); // Manhattan distance
     }
 
     #[test]
     fn test_beam_search_grid() {
-        let start = GridPos { x: 0, y: 0, goal_x: 2, goal_y: 2 };
+        let start = GridPos {
+            x: 0,
+            y: 0,
+            goal_x: 2,
+            goal_y: 2,
+        };
         let result = beam_search(start, 10, 20).unwrap();
         assert!((result.total_cost - 4.0).abs() < 1e-10);
     }

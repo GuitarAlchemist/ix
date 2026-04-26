@@ -93,11 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (pcs, inst_map) in &multi_instrument_pcs {
         let exemplar_id = format!("pcs-0x{:03X}-n{}", pcs, inst_map.len());
-        let instruments_list = inst_map
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(",");
+        let instruments_list = inst_map.keys().cloned().collect::<Vec<_>>().join(",");
         let description = format!(
             "PC-set 0x{:03X} (cardinality {}) across instruments: {}",
             pcs,
@@ -115,9 +111,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let slices: Vec<(&String, Vec<f32>)> = inst_map
             .iter()
             .filter_map(|(instrument, &vidx)| {
-                index
-                    .vector(vidx)
-                    .map(|v| (instrument, v[STRUCTURE_OFFSET..STRUCTURE_OFFSET + STRUCTURE_DIM].to_vec()))
+                index.vector(vidx).map(|v| {
+                    (
+                        instrument,
+                        v[STRUCTURE_OFFSET..STRUCTURE_OFFSET + STRUCTURE_DIM].to_vec(),
+                    )
+                })
             })
             .collect();
 

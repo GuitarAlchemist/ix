@@ -364,10 +364,7 @@ mod tests {
         // data-quality errors inside a plausible-looking verdict.
         assert_eq!(verdict_from_delta(f64::NAN, 0.9), Hexavalent::Unknown);
         assert_eq!(verdict_from_delta(0.1, f64::NAN), Hexavalent::Unknown);
-        assert_eq!(
-            verdict_from_delta(f64::INFINITY, 0.9),
-            Hexavalent::Unknown
-        );
+        assert_eq!(verdict_from_delta(f64::INFINITY, 0.9), Hexavalent::Unknown);
         assert_eq!(
             verdict_from_delta(0.1, f64::NEG_INFINITY),
             Hexavalent::Unknown
@@ -447,7 +444,10 @@ mod tests {
         );
         assert_eq!(report.verdict, Hexavalent::False);
         assert!(
-            report.signals.iter().any(|s| s.name == "cyclomatic_regression"),
+            report
+                .signals
+                .iter()
+                .any(|s| s.name == "cyclomatic_regression"),
             "expected cyclomatic_regression signal"
         );
         assert_eq!(

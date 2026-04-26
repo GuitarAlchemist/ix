@@ -250,11 +250,7 @@ mod tests {
         let a = array![[5.0, 2.0, 1.0], [2.0, 6.0, 3.0], [1.0, 3.0, 4.0]];
         let (values, _) = symmetric_eigen(&a).unwrap();
         for i in 1..values.len() {
-            assert!(
-                values[i - 1] >= values[i],
-                "not sorted: {:?}",
-                values
-            );
+            assert!(values[i - 1] >= values[i], "not sorted: {:?}", values);
         }
     }
 

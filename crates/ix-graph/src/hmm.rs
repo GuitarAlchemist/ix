@@ -39,10 +39,7 @@ impl HiddenMarkovModel {
         // Validate emission matrix has N rows.
         let (en, _em) = emission.dim();
         if en != n {
-            return Err(format!(
-                "Emission matrix must have {} rows, got {}",
-                n, en
-            ));
+            return Err(format!("Emission matrix must have {} rows, got {}", n, en));
         }
 
         // Validate initial distribution sums to 1.
@@ -401,13 +398,9 @@ impl HiddenMarkovModel {
             // Transition matrix.
             let mut new_transition = Array2::<f64>::zeros((n, n));
             for i in 0..n {
-                let gamma_sum: f64 = (0..t_len.saturating_sub(1))
-                    .map(|t| gamma[[t, i]])
-                    .sum();
+                let gamma_sum: f64 = (0..t_len.saturating_sub(1)).map(|t| gamma[[t, i]]).sum();
                 for j in 0..n {
-                    let xi_sum: f64 = (0..t_len.saturating_sub(1))
-                        .map(|t| xi[t][[i, j]])
-                        .sum();
+                    let xi_sum: f64 = (0..t_len.saturating_sub(1)).map(|t| xi[t][[i, j]]).sum();
                     new_transition[[i, j]] = if gamma_sum > 0.0 {
                         xi_sum / gamma_sum
                     } else {
@@ -600,10 +593,10 @@ mod tests {
     fn test_viterbi_single() {
         let hmm = weather_hmm();
         let (path, _log_prob) = hmm.viterbi(&[0]); // Walk
-        // With initial=[0.6,0.4] and emission: Rainy->Walk=0.1, Sunny->Walk=0.6
-        // P(Rainy,Walk) = 0.6*0.1 = 0.06
-        // P(Sunny,Walk) = 0.4*0.6 = 0.24
-        // Sunny is more likely.
+                                                   // With initial=[0.6,0.4] and emission: Rainy->Walk=0.1, Sunny->Walk=0.6
+                                                   // P(Rainy,Walk) = 0.6*0.1 = 0.06
+                                                   // P(Sunny,Walk) = 0.4*0.6 = 0.24
+                                                   // Sunny is more likely.
         assert_eq!(path, vec![1]);
     }
 
@@ -724,16 +717,8 @@ mod tests {
     #[test]
     fn test_three_state_hmm() {
         let initial = array![0.5, 0.3, 0.2];
-        let transition = array![
-            [0.6, 0.3, 0.1],
-            [0.2, 0.5, 0.3],
-            [0.1, 0.2, 0.7]
-        ];
-        let emission = array![
-            [0.7, 0.2, 0.1],
-            [0.1, 0.6, 0.3],
-            [0.2, 0.2, 0.6]
-        ];
+        let transition = array![[0.6, 0.3, 0.1], [0.2, 0.5, 0.3], [0.1, 0.2, 0.7]];
+        let emission = array![[0.7, 0.2, 0.1], [0.1, 0.6, 0.3], [0.2, 0.2, 0.6]];
         let hmm = HiddenMarkovModel::new(initial, transition, emission).unwrap();
 
         let obs = [0, 1, 2, 0, 2, 1];

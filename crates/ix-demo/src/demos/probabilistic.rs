@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Bar, BarChart};
+use egui_plot::{Bar, BarChart, Plot};
 
 pub struct ProbabilisticDemo {
     n_elements: usize,
@@ -41,7 +41,11 @@ impl ProbabilisticDemo {
 
         ui.separator();
         ui.subheading("Bloom Filter");
-        ui.add(egui::Slider::new(&mut self.bloom_fp_rate, 0.001..=0.1).text("Target FP rate").logarithmic(true));
+        ui.add(
+            egui::Slider::new(&mut self.bloom_fp_rate, 0.001..=0.1)
+                .text("Target FP rate")
+                .logarithmic(true),
+        );
 
         if ui.button("Test Bloom Filter").clicked() {
             self.test_bloom();
@@ -49,11 +53,21 @@ impl ProbabilisticDemo {
 
         if let Some(r) = &self.bloom_result {
             egui::Grid::new("bloom_grid").show(ui, |ui| {
-                ui.label("Elements inserted:"); ui.label(format!("{}", r.expected_elements)); ui.end_row();
-                ui.label("True positives:"); ui.label(format!("{}", r.true_positives)); ui.end_row();
-                ui.label("False positives:"); ui.label(format!("{}", r.false_positives)); ui.end_row();
-                ui.label("True negatives:"); ui.label(format!("{}", r.true_negatives)); ui.end_row();
-                ui.label("Actual FP rate:"); ui.label(format!("{:.4}", r.actual_fp_rate)); ui.end_row();
+                ui.label("Elements inserted:");
+                ui.label(format!("{}", r.expected_elements));
+                ui.end_row();
+                ui.label("True positives:");
+                ui.label(format!("{}", r.true_positives));
+                ui.end_row();
+                ui.label("False positives:");
+                ui.label(format!("{}", r.false_positives));
+                ui.end_row();
+                ui.label("True negatives:");
+                ui.label(format!("{}", r.true_negatives));
+                ui.end_row();
+                ui.label("Actual FP rate:");
+                ui.label(format!("{:.4}", r.actual_fp_rate));
+                ui.end_row();
             });
         }
 
@@ -66,9 +80,15 @@ impl ProbabilisticDemo {
 
         if let Some(r) = &self.hll_result {
             egui::Grid::new("hll_grid").show(ui, |ui| {
-                ui.label("Actual unique:"); ui.label(format!("{}", r.actual_count)); ui.end_row();
-                ui.label("Estimated:"); ui.label(format!("{:.1}", r.estimated_count)); ui.end_row();
-                ui.label("Error:"); ui.label(format!("{:.2}%", r.error_pct)); ui.end_row();
+                ui.label("Actual unique:");
+                ui.label(format!("{}", r.actual_count));
+                ui.end_row();
+                ui.label("Estimated:");
+                ui.label(format!("{:.1}", r.estimated_count));
+                ui.end_row();
+                ui.label("Error:");
+                ui.label(format!("{:.2}%", r.error_pct));
+                ui.end_row();
             });
 
             let bars = vec![
@@ -106,15 +126,23 @@ impl ProbabilisticDemo {
             let in_set = inserted.contains(&key);
             let in_bloom = bf.contains(&key);
 
-            if in_set && in_bloom { tp += 1; }
-            else if !in_set && in_bloom { fp += 1; }
-            else if !in_set && !in_bloom { tn += 1; }
+            if in_set && in_bloom {
+                tp += 1;
+            } else if !in_set && in_bloom {
+                fp += 1;
+            } else if !in_set && !in_bloom {
+                tn += 1;
+            }
         }
 
         let neg_count = (fp + tn) as f64;
         self.bloom_result = Some(BloomResult {
             expected_elements: self.n_elements,
-            actual_fp_rate: if neg_count > 0.0 { fp as f64 / neg_count } else { 0.0 },
+            actual_fp_rate: if neg_count > 0.0 {
+                fp as f64 / neg_count
+            } else {
+                0.0
+            },
             true_positives: tp,
             false_positives: fp,
             true_negatives: tn,

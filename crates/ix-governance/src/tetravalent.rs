@@ -452,7 +452,14 @@ mod tests {
             // F AND {T, P, U, D, F, C}
             [False, False, False, False, False, False],
             // C AND {T, P, U, D, F, C}
-            [Contradictory, Contradictory, Contradictory, Contradictory, False, Contradictory],
+            [
+                Contradictory,
+                Contradictory,
+                Contradictory,
+                Contradictory,
+                False,
+                Contradictory,
+            ],
         ];
         let values = TruthValue::all();
         for (i, &a) in values.iter().enumerate() {
@@ -486,7 +493,14 @@ mod tests {
             // F OR {T, P, U, D, F, C}
             [True, Probable, Unknown, Disputed, False, Contradictory],
             // C OR {T, P, U, D, F, C}
-            [True, Contradictory, Contradictory, Contradictory, Contradictory, Contradictory],
+            [
+                True,
+                Contradictory,
+                Contradictory,
+                Contradictory,
+                Contradictory,
+                Contradictory,
+            ],
         ];
         let values = TruthValue::all();
         for (i, &a) in values.iter().enumerate() {
@@ -537,7 +551,10 @@ mod tests {
     fn hexavalent_all_returns_six() {
         let all = TruthValue::all();
         assert_eq!(all.len(), 6);
-        assert_eq!(all, [True, Probable, Unknown, Disputed, False, Contradictory]);
+        assert_eq!(
+            all,
+            [True, Probable, Unknown, Disputed, False, Contradictory]
+        );
     }
 
     /// NOT is an involution: !!x == x for all 6 values.

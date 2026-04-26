@@ -357,9 +357,8 @@ mod tests {
         let c1 = centroid(3);
         let c2 = centroid(6);
 
-        let dist = |a: (f64, f64), b: (f64, f64)| {
-            ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
-        };
+        let dist =
+            |a: (f64, f64), b: (f64, f64)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
         // Each pair should be meaningfully separated in the projection.
         assert!(
             dist(c0, c1) > 1.0 && dist(c0, c2) > 1.0 && dist(c1, c2) > 1.0,

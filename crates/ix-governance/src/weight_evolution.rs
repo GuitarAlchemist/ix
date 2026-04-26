@@ -65,10 +65,14 @@ impl WeightEvolver {
             let training_samples = dept_outcomes.len();
 
             let hypothesis_weights = Self::compute_weights(
-                dept_outcomes.iter().map(|o| (o.hypothesis_method.as_str(), o.success)),
+                dept_outcomes
+                    .iter()
+                    .map(|o| (o.hypothesis_method.as_str(), o.success)),
             );
             let test_weights = Self::compute_weights(
-                dept_outcomes.iter().map(|o| (o.test_method.as_str(), o.success)),
+                dept_outcomes
+                    .iter()
+                    .map(|o| (o.test_method.as_str(), o.success)),
             );
 
             let n = training_samples as f64;
@@ -166,8 +170,7 @@ impl WeightEvolver {
             let name_str = name.to_string_lossy();
             if name_str.starts_with(&prefix) && name_str.ends_with(".cycle.json") {
                 if let Ok(contents) = std::fs::read_to_string(entry.path()) {
-                    if let Ok(mut parsed) =
-                        serde_json::from_str::<Vec<ResearchOutcome>>(&contents)
+                    if let Ok(mut parsed) = serde_json::from_str::<Vec<ResearchOutcome>>(&contents)
                     {
                         outcomes.append(&mut parsed);
                     }
@@ -182,9 +185,7 @@ impl WeightEvolver {
 
     /// Compute normalised success-rate weights for a set of (method, success) pairs.
     /// Returns a vec sorted by weight descending.
-    fn compute_weights<'a>(
-        entries: impl Iterator<Item = (&'a str, bool)>,
-    ) -> Vec<(String, f64)> {
+    fn compute_weights<'a>(entries: impl Iterator<Item = (&'a str, bool)>) -> Vec<(String, f64)> {
         let mut counts: HashMap<String, (usize, usize)> = HashMap::new(); // (successes, total)
         for (method, success) in entries {
             let entry = counts.entry(method.to_string()).or_insert((0, 0));

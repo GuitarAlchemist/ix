@@ -220,11 +220,7 @@ impl Category for GraphCategory {
 
     fn compose(f: &Self::Mor, g: &Self::Mor) -> Self::Mor {
         // g ∘ f: compose vertex maps
-        let vertex_map: Vec<usize> = f
-            .vertex_map
-            .iter()
-            .map(|&v| g.vertex_map[v])
-            .collect();
+        let vertex_map: Vec<usize> = f.vertex_map.iter().map(|&v| g.vertex_map[v]).collect();
         GraphHomomorphism {
             source: f.source.clone(),
             target: g.target.clone(),

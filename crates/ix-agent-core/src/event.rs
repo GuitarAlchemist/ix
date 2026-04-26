@@ -256,7 +256,10 @@ mod tests {
             (BlockCode::BudgetExceeded, r#""budget_exceeded""#),
             (BlockCode::ApprovalRequired, r#""approval_required""#),
             (BlockCode::PolicyDenied, r#""policy_denied""#),
-            (BlockCode::BlastRadiusTooLarge, r#""blast_radius_too_large""#),
+            (
+                BlockCode::BlastRadiusTooLarge,
+                r#""blast_radius_too_large""#,
+            ),
             (BlockCode::GovernanceViolation, r#""governance_violation""#),
         ];
         for (code, expected) in cases {
@@ -442,7 +445,9 @@ mod tests {
         let json = serde_json::to_string(&e).unwrap();
         let back: SessionEvent = serde_json::from_str(&json).unwrap();
         match back {
-            SessionEvent::ObservationAdded { source, variant, .. } => {
+            SessionEvent::ObservationAdded {
+                source, variant, ..
+            } => {
                 assert_eq!(source, "demerzel-merge");
                 assert_eq!(variant, Hexavalent::Contradictory);
             }

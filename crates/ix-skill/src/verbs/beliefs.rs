@@ -127,8 +127,7 @@ pub fn snapshot(description: &str, format: Format) -> Result<(), String> {
         "count": beliefs.len(),
     });
     let text = serde_json::to_string_pretty(&payload).unwrap();
-    std::fs::write(&snapshot_file, &text)
-        .map_err(|e| format!("writing {snapshot_file}: {e}"))?;
+    std::fs::write(&snapshot_file, &text).map_err(|e| format!("writing {snapshot_file}: {e}"))?;
 
     output::emit(
         &json!({
@@ -196,8 +195,7 @@ pub fn get(key: &str, format: Format) -> Result<(), String> {
         return Err(format!("belief not found: {file}"));
     }
     let text = std::fs::read_to_string(p).map_err(|e| format!("reading {file}: {e}"))?;
-    let value: Value =
-        serde_json::from_str(&text).map_err(|e| format!("parsing {file}: {e}"))?;
+    let value: Value = serde_json::from_str(&text).map_err(|e| format!("parsing {file}: {e}"))?;
     output::emit(&value, format).map_err(|e| format!("writing output: {e}"))?;
     Ok(())
 }

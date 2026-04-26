@@ -3,8 +3,8 @@
 //! Use case for agents: track how often each skill is invoked,
 //! estimate query frequencies for caching decisions — all in O(1) space.
 
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Count-Min Sketch for frequency estimation.
 #[derive(Debug, Clone)]

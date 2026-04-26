@@ -59,10 +59,10 @@ impl Environment for GridWorld {
     fn step(&mut self, action: &Self::Action) -> (Self::State, f64, bool) {
         let (r, c) = self.current;
         self.current = match action {
-            0 => (r.saturating_sub(1), c),           // Up
-            1 => (r, (c + 1).min(self.cols - 1)),    // Right
-            2 => ((r + 1).min(self.rows - 1), c),    // Down
-            3 => (r, c.saturating_sub(1)),            // Left
+            0 => (r.saturating_sub(1), c),        // Up
+            1 => (r, (c + 1).min(self.cols - 1)), // Right
+            2 => ((r + 1).min(self.rows - 1), c), // Down
+            3 => (r, c.saturating_sub(1)),        // Left
             _ => (r, c),
         };
 

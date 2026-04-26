@@ -22,7 +22,11 @@ pub fn relu(x: f64) -> f64 {
 }
 
 pub fn relu_derivative(x: f64) -> f64 {
-    if x > 0.0 { 1.0 } else { 0.0 }
+    if x > 0.0 {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 pub fn relu_array(x: &Array1<f64>) -> Array1<f64> {
@@ -31,11 +35,19 @@ pub fn relu_array(x: &Array1<f64>) -> Array1<f64> {
 
 /// Leaky ReLU: max(alpha * x, x)
 pub fn leaky_relu(x: f64, alpha: f64) -> f64 {
-    if x > 0.0 { x } else { alpha * x }
+    if x > 0.0 {
+        x
+    } else {
+        alpha * x
+    }
 }
 
 pub fn leaky_relu_derivative(x: f64, alpha: f64) -> f64 {
-    if x > 0.0 { 1.0 } else { alpha }
+    if x > 0.0 {
+        1.0
+    } else {
+        alpha
+    }
 }
 
 /// Tanh: (exp(x) - exp(-x)) / (exp(x) + exp(-x))

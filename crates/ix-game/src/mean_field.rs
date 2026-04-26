@@ -17,8 +17,14 @@ pub struct MeanFieldGame {
 }
 
 impl MeanFieldGame {
-    pub fn new(num_actions: usize, payoff_fn: impl Fn(usize, &Array1<f64>) -> f64 + 'static) -> Self {
-        Self { num_actions, payoff_fn: Box::new(payoff_fn) }
+    pub fn new(
+        num_actions: usize,
+        payoff_fn: impl Fn(usize, &Array1<f64>) -> f64 + 'static,
+    ) -> Self {
+        Self {
+            num_actions,
+            payoff_fn: Box::new(payoff_fn),
+        }
     }
 
     /// Compute payoffs for all actions given current distribution.
@@ -26,7 +32,7 @@ impl MeanFieldGame {
         Array1::from_vec(
             (0..self.num_actions)
                 .map(|a| (self.payoff_fn)(a, distribution))
-                .collect()
+                .collect(),
         )
     }
 
@@ -112,9 +118,7 @@ pub fn congestion_payoff(
     base_payoffs: &[f64],
     congestion_cost: f64,
 ) -> impl Fn(usize, &Array1<f64>) -> f64 + '_ {
-    move |action: usize, dist: &Array1<f64>| {
-        base_payoffs[action] - congestion_cost * dist[action]
-    }
+    move |action: usize, dist: &Array1<f64>| base_payoffs[action] - congestion_cost * dist[action]
 }
 
 /// Quantal Response Equilibrium (QRE) — bounded rationality.
@@ -158,16 +162,18 @@ mod tests {
         // 3 routes, base payoffs [10, 8, 6], congestion cost 5
         // Equilibrium: players spread out to equalize payoffs
         let base = [10.0, 8.0, 6.0];
-        let payoff_fn = move |a: usize, dist: &Array1<f64>| -> f64 {
-            base[a] - 5.0 * dist[a]
-        };
+        let payoff_fn = move |a: usize, dist: &Array1<f64>| -> f64 { base[a] - 5.0 * dist[a] };
 
         let game = MeanFieldGame::new(3, payoff_fn);
         let eq = game.find_equilibrium(10.0, 1e-6, 10_000);
 
         // Higher base payoff routes should have more players
         assert!(eq[0] > eq[1], "Route 0 should be more popular: {:?}", eq);
-        assert!(eq[1] > eq[2], "Route 1 should be more popular than 2: {:?}", eq);
+        assert!(
+            eq[1] > eq[2],
+            "Route 1 should be more popular than 2: {:?}",
+            eq
+        );
     }
 
     #[test]
@@ -179,8 +185,14 @@ mod tests {
         let qre_high = qre_logit(&payoff, 10.0, 1e-8, 1000);
 
         // At high lambda, should be mostly Defect (index 1)
-        assert!(qre_high[1] > qre_low[1], "Higher lambda should favor dominant strategy");
-        assert!(qre_high[1] > 0.8, "Should strongly favor Defect at high lambda");
+        assert!(
+            qre_high[1] > qre_low[1],
+            "Higher lambda should favor dominant strategy"
+        );
+        assert!(
+            qre_high[1] > 0.8,
+            "Should strongly favor Defect at high lambda"
+        );
     }
 
     #[test]
@@ -196,6 +208,10 @@ mod tests {
 
         // Should converge toward equilibrium
         let last = traj.last().unwrap();
-        assert!(last[0] > 0.3 && last[0] < 0.9, "Should approach equilibrium: {:?}", last);
+        assert!(
+            last[0] > 0.3 && last[0] < 0.9,
+            "Should approach equilibrium: {:?}",
+            last
+        );
     }
 }

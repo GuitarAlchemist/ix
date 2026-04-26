@@ -182,9 +182,7 @@ pub fn compute_code_topology(call_graph: &CallGraph) -> CodeTopology {
 /// Betti_k is the count of essential (infinite-death) features in the
 /// dimension-k diagram — the standard definition of the k-th Betti number
 /// for the final complex in the filtration.
-fn summarize(
-    diagrams: &[PersistenceDiagram],
-) -> (usize, usize, Vec<(f64, f64)>, f64, f64) {
+fn summarize(diagrams: &[PersistenceDiagram]) -> (usize, usize, Vec<(f64, f64)>, f64, f64) {
     let mut betti_0 = 0usize;
     let mut betti_1 = 0usize;
     let mut pairs = Vec::new();
@@ -275,10 +273,7 @@ mod tests {
         // Two disjoint linear chains: {A-B} and {C-D}. betti_0 == 2.
         let cg = CallGraph {
             nodes: vec![node("A"), node("B"), node("C"), node("D")],
-            edges: vec![
-                (node("A"), node("B"), 1.0),
-                (node("C"), node("D"), 1.0),
-            ],
+            edges: vec![(node("A"), node("B"), 1.0), (node("C"), node("D"), 1.0)],
         };
         let topo = compute_code_topology(&cg);
         assert_eq!(topo.parse_quality, 1.0);

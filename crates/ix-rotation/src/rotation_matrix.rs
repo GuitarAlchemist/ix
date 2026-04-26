@@ -102,9 +102,15 @@ pub fn orthogonalize(m: &mut [[f64; 3]; 3]) {
     c2[2] = c0[0] * c1[1] - c0[1] * c1[0];
 
     // Write back
-    m[0][0] = c0[0]; m[0][1] = c1[0]; m[0][2] = c2[0];
-    m[1][0] = c0[1]; m[1][1] = c1[1]; m[1][2] = c2[1];
-    m[2][0] = c0[2]; m[2][1] = c1[2]; m[2][2] = c2[2];
+    m[0][0] = c0[0];
+    m[0][1] = c1[0];
+    m[0][2] = c2[0];
+    m[1][0] = c0[1];
+    m[1][1] = c1[1];
+    m[1][2] = c2[1];
+    m[2][0] = c0[2];
+    m[2][1] = c1[2];
+    m[2][2] = c2[2];
 }
 
 fn determinant(m: &[[f64; 3]; 3]) -> f64 {
@@ -136,10 +142,10 @@ mod tests {
     fn test_identity_matrix() {
         let q = Quaternion::identity();
         let m = from_quaternion(&q);
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, row) in m.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
                 let expected = if i == j { 1.0 } else { 0.0 };
-                assert!(approx_eq(m[i][j], expected));
+                assert!(approx_eq(*value, expected));
             }
         }
     }
@@ -179,11 +185,7 @@ mod tests {
     #[test]
     fn test_orthogonalize() {
         // Start with a slightly skewed matrix
-        let mut m = [
-            [1.0, 0.01, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ];
+        let mut m = [[1.0, 0.01, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         orthogonalize(&mut m);
         assert!(is_rotation_matrix(&m, 1e-10));
     }

@@ -160,8 +160,7 @@ fn reload_skips_blank_lines() {
     let path = tmp.path().join("blanks.jsonl");
 
     // Write a file with blank lines between events.
-    let event_json = serde_json::to_string(&action_completed(0, json!("ok")))
-        .expect("serialize");
+    let event_json = serde_json::to_string(&action_completed(0, json!("ok"))).expect("serialize");
     let contents = format!("{event_json}\n\n{event_json}\n\n");
     std::fs::write(&path, contents).expect("write fixture");
 
@@ -177,8 +176,7 @@ fn reload_records_bad_json_in_reload_errors() {
     let path = tmp.path().join("corrupt.jsonl");
 
     // Write a file with one good event, one garbage line, one good event.
-    let event_json = serde_json::to_string(&action_completed(0, json!("ok")))
-        .expect("serialize");
+    let event_json = serde_json::to_string(&action_completed(0, json!("ok"))).expect("serialize");
     let contents = format!("{event_json}\n{{not valid json}}\n{event_json}\n");
     std::fs::write(&path, contents).expect("write fixture");
 

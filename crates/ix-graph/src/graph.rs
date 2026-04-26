@@ -1,7 +1,7 @@
 //! Core graph data structures and algorithms.
 
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 /// A weighted directed graph using adjacency list.
 #[derive(Debug, Clone)]
@@ -40,7 +40,10 @@ impl Graph {
     }
 
     pub fn neighbors(&self, node: usize) -> &[(usize, f64)] {
-        self.adjacency.get(&node).map(|v| v.as_slice()).unwrap_or(&[])
+        self.adjacency
+            .get(&node)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Breadth-first search. Returns distances from source (-1 = unreachable).
@@ -96,7 +99,10 @@ impl Graph {
             prev.insert(node, None);
         }
         dist.insert(source, 0.0);
-        heap.push(DijkstraState { cost: 0.0, node: source });
+        heap.push(DijkstraState {
+            cost: 0.0,
+            node: source,
+        });
 
         while let Some(DijkstraState { cost, node }) = heap.pop() {
             if cost > dist[&node] {
@@ -107,7 +113,10 @@ impl Graph {
                 if new_cost < *dist.get(&neighbor).unwrap_or(&f64::INFINITY) {
                     dist.insert(neighbor, new_cost);
                     prev.insert(neighbor, Some(node));
-                    heap.push(DijkstraState { cost: new_cost, node: neighbor });
+                    heap.push(DijkstraState {
+                        cost: new_cost,
+                        node: neighbor,
+                    });
                 }
             }
         }
@@ -175,11 +184,8 @@ impl Graph {
     /// PageRank algorithm.
     pub fn pagerank(&self, damping: f64, iterations: usize) -> HashMap<usize, f64> {
         let n = self.adjacency.len() as f64;
-        let mut rank: HashMap<usize, f64> = self
-            .adjacency
-            .keys()
-            .map(|&node| (node, 1.0 / n))
-            .collect();
+        let mut rank: HashMap<usize, f64> =
+            self.adjacency.keys().map(|&node| (node, 1.0 / n)).collect();
 
         let out_degree: HashMap<usize, usize> = self
             .adjacency
@@ -227,7 +233,10 @@ impl Eq for DijkstraState {}
 
 impl Ord for DijkstraState {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
+        other
+            .cost
+            .partial_cmp(&self.cost)
+            .unwrap_or(Ordering::Equal)
     }
 }
 

@@ -123,13 +123,12 @@ fn run() -> Result<(), CliError> {
 
     let round = round.ok_or_else(|| {
         CliError::Usage(
-            "missing required --round <N>. Pass the current remediation round number."
-                .to_string(),
+            "missing required --round <N>. Pass the current remediation round number.".to_string(),
         )
     })?;
 
-    let events = cargo_to_observations(&input_bytes, round)
-        .map_err(|e| CliError::Adapter(e.to_string()))?;
+    let events =
+        cargo_to_observations(&input_bytes, round).map_err(|e| CliError::Adapter(e.to_string()))?;
 
     let mut out: Box<dyn Write> = match output_path {
         Some(path) => Box::new(

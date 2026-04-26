@@ -51,8 +51,7 @@ impl<'a> SessionSink<'a> {
     /// fallible version of [`EventSink::emit`] — use it when you
     /// need to handle write failures at the call site.
     pub fn try_emit(&mut self, event: SessionEvent) -> Result<(), String> {
-        let json = serde_json::to_string(&event)
-            .map_err(|e| format!("serialize event: {e}"))?;
+        let json = serde_json::to_string(&event).map_err(|e| format!("serialize event: {e}"))?;
         let mut writer = self.log.writer_lock();
         writer
             .write_all(json.as_bytes())
@@ -60,9 +59,7 @@ impl<'a> SessionSink<'a> {
         writer
             .write_all(b"\n")
             .map_err(|e| format!("write newline: {e}"))?;
-        writer
-            .flush()
-            .map_err(|e| format!("flush: {e}"))?;
+        writer.flush().map_err(|e| format!("flush: {e}"))?;
         Ok(())
     }
 }

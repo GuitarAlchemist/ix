@@ -42,12 +42,10 @@
 
 use ndarray::Array1;
 use rand::rngs::StdRng;
-use rand::SeedableRng;
 use rand::Rng;
+use rand::SeedableRng;
 
-use crate::hyperbolic::{
-    poincare_distance, riemannian_sgd_step, init_embeddings, project_to_ball,
-};
+use crate::hyperbolic::{init_embeddings, poincare_distance, project_to_ball, riemannian_sgd_step};
 
 /// Poincaré embedding trainer using Riemannian SGD with negative sampling.
 ///
@@ -125,9 +123,7 @@ impl PoincareEmbedder {
         }
         // Compute target radius: roots near 0, leaves near boundary
         // Depth via BFS from roots
-        let roots: Vec<usize> = (0..n_nodes)
-            .filter(|&i| !child_set[i])
-            .collect();
+        let roots: Vec<usize> = (0..n_nodes).filter(|&i| !child_set[i]).collect();
         let mut depth = vec![0usize; n_nodes];
         let mut queue = std::collections::VecDeque::new();
         for &r in &roots {
@@ -143,7 +139,8 @@ impl PoincareEmbedder {
         }
         let max_depth = *depth.iter().max().unwrap_or(&1).max(&1);
         // Target radius: depth 0 → 0.1, max_depth → 0.9
-        let target_radius: Vec<f64> = depth.iter()
+        let target_radius: Vec<f64> = depth
+            .iter()
             .map(|&d| 0.1 + 0.8 * d as f64 / max_depth as f64)
             .collect();
 
@@ -164,18 +161,16 @@ impl PoincareEmbedder {
                     if neg_idx == u_idx || neg_idx == v_idx {
                         continue;
                     }
-                    let d_pos = poincare_distance(&embeddings[u_idx], &embeddings[v_idx])
-                        .unwrap_or(0.0);
+                    let d_pos =
+                        poincare_distance(&embeddings[u_idx], &embeddings[v_idx]).unwrap_or(0.0);
                     let d_neg = poincare_distance(&embeddings[u_idx], &embeddings[neg_idx])
                         .unwrap_or(f64::INFINITY);
 
                     if d_neg < d_pos + self.margin {
-                        let neg_grad = self.distance_gradient(
-                            &embeddings[u_idx], &embeddings[neg_idx],
-                        );
-                        embeddings[u_idx] = riemannian_sgd_step(
-                            &embeddings[u_idx], &(-1.0 * &neg_grad), lr * 0.5,
-                        );
+                        let neg_grad =
+                            self.distance_gradient(&embeddings[u_idx], &embeddings[neg_idx]);
+                        embeddings[u_idx] =
+                            riemannian_sgd_step(&embeddings[u_idx], &(-1.0 * &neg_grad), lr * 0.5);
                     }
                 }
             }
@@ -240,15 +235,14 @@ pub struct HierarchyDecoder<'a> {
 impl<'a> HierarchyDecoder<'a> {
     /// Create a decoder from trained embeddings.
     pub fn new(embeddings: &'a [Array1<f64>]) -> Self {
-        let norms: Vec<f64> = embeddings.iter()
-            .map(|e| e.dot(e).sqrt())
-            .collect();
+        let norms: Vec<f64> = embeddings.iter().map(|e| e.dot(e).sqrt()).collect();
         Self { embeddings, norms }
     }
 
     /// Find the root node (closest to origin).
     pub fn root(&self) -> usize {
-        self.norms.iter()
+        self.norms
+            .iter()
             .enumerate()
             .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap()
@@ -259,19 +253,24 @@ impl<'a> HierarchyDecoder<'a> {
     ///
     /// Nodes are ranked by distance from origin. Returns `(node_idx, rank)`.
     pub fn depth_ranking(&self) -> Vec<(usize, usize)> {
-        let mut indexed: Vec<(usize, f64)> = self.norms.iter()
+        let mut indexed: Vec<(usize, f64)> = self
+            .norms
+            .iter()
             .enumerate()
             .map(|(i, &n)| (i, n))
             .collect();
         indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        indexed.iter().enumerate()
+        indexed
+            .iter()
+            .enumerate()
             .map(|(rank, &(idx, _))| (idx, rank))
             .collect()
     }
 
     /// Get children of a node from a known edge list.
     pub fn children(&self, parent: usize, edges: &[(usize, usize)]) -> Vec<usize> {
-        edges.iter()
+        edges
+            .iter()
             .filter(|&&(p, _)| p == parent)
             .map(|&(_, c)| c)
             .collect()
@@ -313,7 +312,8 @@ impl<'a> HierarchyDecoder<'a> {
     ///
     /// Each edge `(parent, child)` is inferred from geometry.
     pub fn infer_tree(&self) -> Vec<(usize, usize)> {
-        self.infer_parents().iter()
+        self.infer_parents()
+            .iter()
             .enumerate()
             .filter_map(|(child, parent)| parent.map(|p| (p, child)))
             .collect()
@@ -350,9 +350,7 @@ impl<'a> HierarchyDecoder<'a> {
     pub fn leaves(&self) -> Vec<usize> {
         let tree = self.infer_tree();
         let n = self.embeddings.len();
-        let has_children: std::collections::HashSet<usize> = tree.iter()
-            .map(|&(p, _)| p)
-            .collect();
+        let has_children: std::collections::HashSet<usize> = tree.iter().map(|&(p, _)| p).collect();
         (0..n).filter(|i| !has_children.contains(i)).collect()
     }
 }
@@ -361,10 +359,7 @@ impl<'a> HierarchyDecoder<'a> {
 ///
 /// For each node, checks if its true parent (from edges) is the
 /// geometrically closest shallower node. Higher MAP = better embedding.
-pub fn hierarchy_map_score(
-    embeddings: &[Array1<f64>],
-    edges: &[(usize, usize)],
-) -> f64 {
+pub fn hierarchy_map_score(embeddings: &[Array1<f64>], edges: &[(usize, usize)]) -> f64 {
     let decoder = HierarchyDecoder::new(embeddings);
     let inferred = decoder.infer_parents();
 
@@ -386,7 +381,11 @@ pub fn hierarchy_map_score(
         }
     }
 
-    if total == 0 { 1.0 } else { correct as f64 / total as f64 }
+    if total == 0 {
+        1.0
+    } else {
+        correct as f64 / total as f64
+    }
 }
 
 #[cfg(test)]
@@ -416,8 +415,12 @@ mod tests {
         // Root (0) should be closest to origin
         let root_norm = norms[0];
         let leaf_avg = (norms[3] + norms[4]) / 2.0;
-        assert!(root_norm < leaf_avg,
-            "Root norm ({:.4}) should be less than leaf avg ({:.4})", root_norm, leaf_avg);
+        assert!(
+            root_norm < leaf_avg,
+            "Root norm ({:.4}) should be less than leaf avg ({:.4})",
+            root_norm,
+            leaf_avg
+        );
     }
 
     #[test]
@@ -432,8 +435,10 @@ mod tests {
         let norm_child_3 = emb[3].dot(&emb[3]).sqrt();
         let norm_child_4 = emb[4].dot(&emb[4]).sqrt();
 
-        assert!(norm_parent < norm_child_3 || norm_parent < norm_child_4,
-            "Parent should generally be closer to origin than at least one child");
+        assert!(
+            norm_parent < norm_child_3 || norm_parent < norm_child_4,
+            "Parent should generally be closer to origin than at least one child"
+        );
     }
 
     #[test]
@@ -448,8 +453,12 @@ mod tests {
         // Note: 0→1 is direct edge, 0→4 is two hops
         let d_connected = poincare_distance(&emb[0], &emb[1]).unwrap();
         let d_two_hop = poincare_distance(&emb[0], &emb[4]).unwrap();
-        assert!(d_connected < d_two_hop,
-            "Direct edge ({:.4}) should be shorter than two-hop ({:.4})", d_connected, d_two_hop);
+        assert!(
+            d_connected < d_two_hop,
+            "Direct edge ({:.4}) should be shorter than two-hop ({:.4})",
+            d_connected,
+            d_two_hop
+        );
     }
 
     #[test]
@@ -520,7 +529,11 @@ mod tests {
         let decoder = HierarchyDecoder::new(&emb);
         let leaves = decoder.leaves();
         // Nodes 2, 3, 4 are leaves (no children in inferred tree should roughly match)
-        assert!(leaves.len() >= 2, "Should have at least 2 leaves, got {}", leaves.len());
+        assert!(
+            leaves.len() >= 2,
+            "Should have at least 2 leaves, got {}",
+            leaves.len()
+        );
     }
 
     #[test]
@@ -547,7 +560,10 @@ mod tests {
 
         for (a, b) in emb1.iter().zip(emb2.iter()) {
             for (x, y) in a.iter().zip(b.iter()) {
-                assert!((x - y).abs() < 1e-10, "Same seed should give same embeddings");
+                assert!(
+                    (x - y).abs() < 1e-10,
+                    "Same seed should give same embeddings"
+                );
             }
         }
     }
@@ -560,11 +576,7 @@ mod tests {
         //    1  2  3
         //   /|  |
         //  4 5  6
-        let edges = vec![
-            (0, 1), (0, 2), (0, 3),
-            (1, 4), (1, 5),
-            (2, 6),
-        ];
+        let edges = vec![(0, 1), (0, 2), (0, 3), (1, 4), (1, 5), (2, 6)];
 
         let embedder = PoincareEmbedder::new(10, 5)
             .with_epochs(500)
@@ -577,9 +589,13 @@ mod tests {
         // Root should be closer to origin than all leaves
         let root_norm = decoder.norm(0);
         for &leaf in &[3, 4, 5, 6] {
-            assert!(root_norm < decoder.norm(leaf),
+            assert!(
+                root_norm < decoder.norm(leaf),
                 "Root norm ({:.4}) should be < leaf {} norm ({:.4})",
-                root_norm, leaf, decoder.norm(leaf));
+                root_norm,
+                leaf,
+                decoder.norm(leaf)
+            );
         }
     }
 }

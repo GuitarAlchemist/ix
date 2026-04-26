@@ -13,9 +13,9 @@
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 
+use ix_ktheory::graph_k::{k0_from_adjacency, k1_from_adjacency};
 use ix_math::bsp::BspTree;
 use ix_math::poincare_hierarchy::{hierarchy_map_score, HierarchyDecoder, PoincareEmbedder};
-use ix_ktheory::graph_k::{k0_from_adjacency, k1_from_adjacency};
 use ix_signal::fft::{rfft, Complex};
 
 use crate::metrics::CodeMetrics;
@@ -83,10 +83,7 @@ pub fn embed_call_hierarchy(
         // Fall back to the geometric root.
         root_indices.push(decoder.root());
     }
-    let root_functions: Vec<String> = root_indices
-        .iter()
-        .map(|&i| nodes[i].clone())
-        .collect();
+    let root_functions: Vec<String> = root_indices.iter().map(|&i| nodes[i].clone()).collect();
 
     let score = if edges.is_empty() {
         1.0
@@ -277,11 +274,7 @@ impl CodeSimilarityIndex {
 
     /// Return the `k` functions closest to `query_features`, as
     /// `(name, squared_distance)` tuples sorted ascending by distance.
-    pub fn similar_functions(
-        &self,
-        query_features: &[f64; 20],
-        k: usize,
-    ) -> Vec<(String, f64)> {
+    pub fn similar_functions(&self, query_features: &[f64; 20], k: usize) -> Vec<(String, f64)> {
         if self.is_empty() || k == 0 {
             return Vec::new();
         }
@@ -381,11 +374,7 @@ mod tests {
     #[test]
     fn test_k_invariants_dag() {
         // DAG: 0 -> 1 -> 2 (no cycles)
-        let adj = array![
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0]
-        ];
+        let adj = array![[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]];
         let inv = compute_k_invariants(&adj);
         assert_eq!(inv.k1_rank, 0, "DAG should have zero K1 rank");
     }

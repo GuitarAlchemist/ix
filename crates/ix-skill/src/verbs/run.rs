@@ -22,8 +22,7 @@ pub fn run(
     // Resolve input
     let params_json: Value = match (input_file, input_literal) {
         (Some(path), _) => {
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| format!("reading {path}: {e}"))?;
+            let text = std::fs::read_to_string(path).map_err(|e| format!("reading {path}: {e}"))?;
             serde_json::from_str(&text).map_err(|e| format!("parsing JSON from {path}: {e}"))?
         }
         (None, Some(lit)) => {

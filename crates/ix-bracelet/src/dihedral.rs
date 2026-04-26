@@ -23,25 +23,37 @@ pub struct DihedralElement {
 impl DihedralElement {
     #[inline]
     pub const fn identity() -> Self {
-        Self { rotation: 0, reflected: false }
+        Self {
+            rotation: 0,
+            reflected: false,
+        }
     }
 
     /// Pure rotation `Tₙ`. `n` is reduced mod 12.
     #[inline]
     pub const fn rotation(n: u8) -> Self {
-        Self { rotation: n % 12, reflected: false }
+        Self {
+            rotation: n % 12,
+            reflected: false,
+        }
     }
 
     /// Inversion about pitch-class 0 (the operator `I = T₀I`).
     #[inline]
     pub const fn inversion() -> Self {
-        Self { rotation: 0, reflected: true }
+        Self {
+            rotation: 0,
+            reflected: true,
+        }
     }
 
     /// Builder: `Tₙ` if `!inverted`, `TₙI` if `inverted`.
     #[inline]
     pub const fn from_tn_tni(n: u8, inverted: bool) -> Self {
-        Self { rotation: n % 12, reflected: inverted }
+        Self {
+            rotation: n % 12,
+            reflected: inverted,
+        }
     }
 }
 
@@ -98,7 +110,10 @@ mod tests {
         let mut v = Vec::with_capacity(24);
         for reflected in [false, true] {
             for rotation in 0u8..12 {
-                v.push(DihedralElement { rotation, reflected });
+                v.push(DihedralElement {
+                    rotation,
+                    reflected,
+                });
             }
         }
         v
@@ -111,7 +126,10 @@ mod tests {
         assert_eq!(DihedralElement::rotation(24), DihedralElement::identity());
         assert_eq!(
             DihedralElement::from_tn_tni(15, true),
-            DihedralElement { rotation: 3, reflected: true }
+            DihedralElement {
+                rotation: 3,
+                reflected: true
+            }
         );
     }
 
@@ -155,7 +173,11 @@ mod tests {
         // Every reflection is an involution.
         assert_eq!(DihedralElement::inversion().order(), 2);
         for n in 0u8..12 {
-            assert_eq!(DihedralElement::from_tn_tni(n, true).order(), 2, "TnI n={n}");
+            assert_eq!(
+                DihedralElement::from_tn_tni(n, true).order(),
+                2,
+                "TnI n={n}"
+            );
         }
     }
 
@@ -191,7 +213,19 @@ mod tests {
         let left = t3.compose(&inv);
         let right = inv.compose(&t3);
         assert_ne!(left, right);
-        assert_eq!(left, DihedralElement { rotation: 3, reflected: true });
-        assert_eq!(right, DihedralElement { rotation: 9, reflected: true });
+        assert_eq!(
+            left,
+            DihedralElement {
+                rotation: 3,
+                reflected: true
+            }
+        );
+        assert_eq!(
+            right,
+            DihedralElement {
+                rotation: 9,
+                reflected: true
+            }
+        );
     }
 }

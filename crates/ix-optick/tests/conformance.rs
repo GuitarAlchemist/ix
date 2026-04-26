@@ -49,11 +49,20 @@ fn conformance_open_real_index() {
 
 #[test]
 fn conformance_instrument_counts_sum_to_total() {
-    let Some(path) = index_path() else { return; };
-    if !path.exists() { return; }
+    let Some(path) = index_path() else {
+        return;
+    };
+    if !path.exists() {
+        return;
+    }
 
     let index = OptickIndex::open(&path).unwrap();
-    let total: u64 = index.header().instrument_slices.iter().map(|s| s.count).sum();
+    let total: u64 = index
+        .header()
+        .instrument_slices
+        .iter()
+        .map(|s| s.count)
+        .sum();
     assert_eq!(
         total,
         index.count(),
@@ -63,8 +72,12 @@ fn conformance_instrument_counts_sum_to_total() {
 
 #[test]
 fn conformance_search_per_instrument() {
-    let Some(path) = index_path() else { return; };
-    if !path.exists() { return; }
+    let Some(path) = index_path() else {
+        return;
+    };
+    if !path.exists() {
+        return;
+    }
 
     let index = OptickIndex::open(&path).unwrap();
     let dim = index.dimension() as usize;
@@ -74,26 +87,42 @@ fn conformance_search_per_instrument() {
     query[0] = 1.0;
 
     for inst in &["guitar", "bass", "ukulele"] {
-        let idx = match *inst { "guitar" => 0, "bass" => 1, "ukulele" => 2, _ => unreachable!() };
+        let idx = match *inst {
+            "guitar" => 0,
+            "bass" => 1,
+            "ukulele" => 2,
+            _ => unreachable!(),
+        };
         let slice = &index.header().instrument_slices[idx];
-        if slice.count == 0 { continue; }
+        if slice.count == 0 {
+            continue;
+        }
 
         let results = index.search(&query, Some(inst), 3).expect("search");
         assert!(!results.is_empty(), "{inst} search returned no results");
         for r in &results {
-            assert_eq!(r.metadata.instrument, *inst,
-                "instrument filter leak: got '{}' in {inst} search", r.metadata.instrument);
+            assert_eq!(
+                r.metadata.instrument, *inst,
+                "instrument filter leak: got '{}' in {inst} search",
+                r.metadata.instrument
+            );
         }
-        eprintln!("{inst}: top-1 score={:.4} diagram={}",
-            results[0].score, results[0].metadata.diagram);
+        eprintln!(
+            "{inst}: top-1 score={:.4} diagram={}",
+            results[0].score, results[0].metadata.diagram
+        );
     }
 }
 
 #[test]
 fn conformance_metadata_random_access() {
     // v4's metadata offset table allows O(1) fetch for any index.
-    let Some(path) = index_path() else { return; };
-    if !path.exists() { return; }
+    let Some(path) = index_path() else {
+        return;
+    };
+    if !path.exists() {
+        return;
+    }
 
     let index = OptickIndex::open(&path).unwrap();
     let dim = index.dimension() as usize;
@@ -102,8 +131,12 @@ fn conformance_metadata_random_access() {
     query[0] = 1.0;
     let results = index.search(&query, Some("guitar"), 1).expect("search");
     assert_eq!(results.len(), 1);
-    assert!(!results[0].metadata.diagram.is_empty(),
-        "metadata must include diagram");
-    assert!(!results[0].metadata.midi_notes.is_empty(),
-        "metadata must include midi_notes");
+    assert!(
+        !results[0].metadata.diagram.is_empty(),
+        "metadata must include diagram"
+    );
+    assert!(
+        !results[0].metadata.midi_notes.is_empty(),
+        "metadata must include midi_notes"
+    );
 }

@@ -6,7 +6,6 @@
 //! Use case: connect machin to external processes (Python scripts, other tools)
 //! for real-time data exchange without network overhead.
 
-
 use crate::error::IoError;
 use crate::protocol::{DataBatch, DataRecord};
 
@@ -52,9 +51,7 @@ pub fn write_to_pipe(config: &PipeConfig, data: &[u8]) -> Result<(), IoError> {
             .map_err(|e| IoError::Pipe(format!("Failed to create FIFO: {}", e)))?;
     }
 
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .open(pipe_path)?;
+    let mut file = std::fs::OpenOptions::new().write(true).open(pipe_path)?;
     file.write_all(data)?;
     file.flush()?;
     Ok(())
@@ -63,8 +60,8 @@ pub fn write_to_pipe(config: &PipeConfig, data: &[u8]) -> Result<(), IoError> {
 /// Write data to a named pipe (Windows).
 #[cfg(windows)]
 pub fn write_to_pipe(config: &PipeConfig, data: &[u8]) -> Result<(), IoError> {
-    use std::io::Write;
     use std::fs::OpenOptions;
+    use std::io::Write;
 
     let path = config.path();
     // On Windows, we open the pipe as a regular file for client-side writes
@@ -108,8 +105,8 @@ pub fn write_batch_to_pipe(config: &PipeConfig, batch: &DataBatch) -> Result<(),
 /// Async named pipe server using tokio (Windows).
 #[cfg(windows)]
 pub mod async_pipe {
-    use tokio::net::windows::named_pipe::{ServerOptions, NamedPipeServer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
     use super::PipeConfig;
     use crate::error::IoError;
@@ -124,8 +121,13 @@ pub mod async_pipe {
     }
 
     /// Read a message from the pipe.
-    pub async fn read_message(server: &mut NamedPipeServer, buf_size: usize) -> Result<Vec<u8>, IoError> {
-        server.connect().await
+    pub async fn read_message(
+        server: &mut NamedPipeServer,
+        buf_size: usize,
+    ) -> Result<Vec<u8>, IoError> {
+        server
+            .connect()
+            .await
             .map_err(|e| IoError::Pipe(format!("Client connect failed: {}", e)))?;
 
         let mut buffer = vec![0u8; buf_size];
@@ -164,10 +166,7 @@ pub mod async_pipe {
     /// Write to a FIFO asynchronously.
     pub async fn write_fifo(config: &PipeConfig, data: &[u8]) -> Result<(), IoError> {
         let path = config.path();
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .await?;
+        let mut file = fs::OpenOptions::new().write(true).open(&path).await?;
         file.write_all(data).await?;
         file.flush().await?;
         Ok(())

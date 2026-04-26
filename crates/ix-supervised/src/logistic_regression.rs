@@ -69,7 +69,12 @@ impl Classifier for LogisticRegression {
 
     fn predict(&self, x: &Array2<f64>) -> Array1<usize> {
         let proba = self.predict_proba(x);
-        Array1::from_iter(proba.column(1).iter().map(|&p| if p >= 0.5 { 1 } else { 0 }))
+        Array1::from_iter(
+            proba
+                .column(1)
+                .iter()
+                .map(|&p| if p >= 0.5 { 1 } else { 0 }),
+        )
     }
 
     fn predict_proba(&self, x: &Array2<f64>) -> Array2<f64> {
@@ -96,8 +101,12 @@ mod tests {
     fn test_logistic_regression_linearly_separable() {
         // Simple linearly separable data
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [0.3, 0.2],
-            [3.0, 3.0], [3.5, 3.5], [3.2, 3.3]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [0.3, 0.2],
+            [3.0, 3.0],
+            [3.5, 3.5],
+            [3.2, 3.3]
         ];
         let y = array![0, 0, 0, 1, 1, 1];
 
@@ -108,6 +117,10 @@ mod tests {
 
         let pred = model.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc > 0.8, "Should classify linearly separable data, got acc={}", acc);
+        assert!(
+            acc > 0.8,
+            "Should classify linearly separable data, got acc={}",
+            acc
+        );
     }
 }

@@ -71,8 +71,7 @@ fn run() -> Result<(), String> {
         }
     };
 
-    let events =
-        github_actions_to_observations(&input_bytes, round).map_err(|e| e.to_string())?;
+    let events = github_actions_to_observations(&input_bytes, round).map_err(|e| e.to_string())?;
 
     let mut out: Box<dyn Write> = match output_path {
         Some(p) => Box::new(fs::File::create(&p).map_err(|e| format!("create {p}: {e}"))?),

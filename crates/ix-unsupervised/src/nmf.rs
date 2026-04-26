@@ -255,11 +255,7 @@ mod tests {
     #[test]
     fn test_nmf_rank_one_matrix() {
         // Outer product of two non-negative vectors is rank-1
-        let v = array![
-            [1.0, 2.0, 3.0],
-            [2.0, 4.0, 6.0],
-            [3.0, 6.0, 9.0],
-        ];
+        let v = array![[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [3.0, 6.0, 9.0],];
         let mut nmf = NonNegativeMatrixFactorization::new(1).with_max_iter(500);
         let w = nmf.fit_transform(&v).unwrap();
         assert_eq!(w.nrows(), 3);
@@ -271,11 +267,7 @@ mod tests {
 
     #[test]
     fn test_nmf_non_negative_output() {
-        let v = array![
-            [1.0, 0.0, 2.0],
-            [0.0, 3.0, 1.0],
-            [2.0, 1.0, 0.0],
-        ];
+        let v = array![[1.0, 0.0, 2.0], [0.0, 3.0, 1.0], [2.0, 1.0, 0.0],];
         let mut nmf = NonNegativeMatrixFactorization::new(2).with_max_iter(200);
         let w = nmf.fit_transform(&v).unwrap();
         // All entries should be non-negative
@@ -334,6 +326,11 @@ mod tests {
         let _w = nmf.fit_transform(&v).unwrap();
         let err = nmf.reconstruction_err.unwrap();
         let total_mag = total(&v);
-        assert!(err < total_mag, "err {} should be < matrix magnitude {}", err, total_mag);
+        assert!(
+            err < total_mag,
+            "err {} should be < matrix magnitude {}",
+            err,
+            total_mag
+        );
     }
 }

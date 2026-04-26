@@ -215,14 +215,20 @@ pub fn bottleneck_distance(pd1: &PersistenceDiagram, pd2: &PersistenceDiagram) -
 /// Wasserstein distance between two persistence diagrams.
 ///
 /// W_p(D1, D2) = (sum of |matched pair costs|^p)^(1/p)
-pub fn wasserstein_distance(
-    pd1: &PersistenceDiagram,
-    pd2: &PersistenceDiagram,
-    p: f64,
-) -> f64 {
+pub fn wasserstein_distance(pd1: &PersistenceDiagram, pd2: &PersistenceDiagram, p: f64) -> f64 {
     // Greedy approximation matching by persistence
-    let mut pts1: Vec<(f64, f64)> = pd1.pairs.iter().filter(|x| x.1.is_finite()).copied().collect();
-    let mut pts2: Vec<(f64, f64)> = pd2.pairs.iter().filter(|x| x.1.is_finite()).copied().collect();
+    let mut pts1: Vec<(f64, f64)> = pd1
+        .pairs
+        .iter()
+        .filter(|x| x.1.is_finite())
+        .copied()
+        .collect();
+    let mut pts2: Vec<(f64, f64)> = pd2
+        .pairs
+        .iter()
+        .filter(|x| x.1.is_finite())
+        .copied()
+        .collect();
 
     // Pad with diagonal projections
     while pts1.len() < pts2.len() {
@@ -356,10 +362,7 @@ mod tests {
         // H₁ should have at least one feature (the loop)
         if diagrams.len() > 1 {
             let h1 = &diagrams[1];
-            assert!(
-                !h1.is_empty(),
-                "triangle boundary should create a 1-cycle"
-            );
+            assert!(!h1.is_empty(), "triangle boundary should create a 1-cycle");
         }
     }
 

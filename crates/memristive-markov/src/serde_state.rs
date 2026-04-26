@@ -1,9 +1,9 @@
-use serde::{Serialize, Deserialize};
-use crate::tensor::MarkovTensor;
 use crate::conductance::ConductanceMatrix;
-use crate::vlmm::{VariableOrderSelector, FallbackStrategy};
 use crate::consolidator::MemoryConsolidator;
 use crate::sampler::SamplingStrategy;
+use crate::tensor::MarkovTensor;
+use crate::vlmm::{FallbackStrategy, VariableOrderSelector};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {

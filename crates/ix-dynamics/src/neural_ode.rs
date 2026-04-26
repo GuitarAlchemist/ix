@@ -259,11 +259,7 @@ mod tests {
         let y_final = &traj.last().unwrap().1;
         // After π/2 rotation: [1,0] → [0,1]
         assert!(y_final[0].abs() < 1e-3, "x ≈ 0, got {}", y_final[0]);
-        assert!(
-            (y_final[1] - 1.0).abs() < 1e-3,
-            "y ≈ 1, got {}",
-            y_final[1]
-        );
+        assert!((y_final[1] - 1.0).abs() < 1e-3, "y ≈ 1, got {}", y_final[1]);
     }
 
     #[test]

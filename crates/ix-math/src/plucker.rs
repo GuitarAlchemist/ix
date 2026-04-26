@@ -62,9 +62,10 @@ impl PluckerLine {
     ///
     /// Direction is internally normalized. Returns `Err` if direction has near-zero length.
     pub fn from_point_direction(point: &[f64; 3], direction: &[f64; 3]) -> Result<Self, MathError> {
-        let len =
-            (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
-                .sqrt();
+        let len = (direction[0] * direction[0]
+            + direction[1] * direction[1]
+            + direction[2] * direction[2])
+            .sqrt();
         if len < NORM_EPSILON {
             return Err(MathError::InvalidParameter(
                 "direction has near-zero length".into(),
@@ -241,7 +242,10 @@ mod tests {
     fn test_reciprocal_product_symmetric() {
         let l1 = PluckerLine::from_two_points(&[1.0, 2.0, 3.0], &[4.0, 5.0, 6.0]).unwrap();
         let l2 = PluckerLine::from_two_points(&[0.0, 1.0, 2.0], &[3.0, 0.0, 1.0]).unwrap();
-        assert!(approx_eq(l1.reciprocal_product(&l2), l2.reciprocal_product(&l1)));
+        assert!(approx_eq(
+            l1.reciprocal_product(&l2),
+            l2.reciprocal_product(&l1)
+        ));
     }
 
     #[test]

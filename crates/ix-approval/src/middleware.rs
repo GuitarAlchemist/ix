@@ -230,7 +230,7 @@ mod tests {
     use ix_agent_core::{
         context::{ReadContext, VecEventSink},
         middleware::MiddlewareChain,
-        AgentHandler, ActionOutcome, ActionResult,
+        ActionOutcome, ActionResult, AgentHandler,
     };
     use serde_json::json;
 
@@ -301,11 +301,7 @@ mod tests {
     /// Trivial handler used by the chain tests. Echoes InvokeTool params.
     struct EchoHandler;
     impl AgentHandler for EchoHandler {
-        fn run(
-            &self,
-            _cx: &ReadContext,
-            action: &AgentAction,
-        ) -> ActionResult {
+        fn run(&self, _cx: &ReadContext, action: &AgentAction) -> ActionResult {
             match action {
                 AgentAction::InvokeTool { params, .. } => {
                     Ok(ActionOutcome::value_only(params.clone()))

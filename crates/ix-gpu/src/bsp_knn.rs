@@ -261,7 +261,10 @@ pub fn bsp_knn_gpu(
 ) -> (Vec<u32>, Vec<f32>) {
     assert!(dim > 0, "dimension must be positive");
     assert!(refs.len() % dim == 0, "refs length must be multiple of dim");
-    assert!(queries.len() % dim == 0, "queries length must be multiple of dim");
+    assert!(
+        queries.len() % dim == 0,
+        "queries length must be multiple of dim"
+    );
 
     let num_refs = refs.len() / dim;
     let num_queries = queries.len() / dim;
@@ -287,25 +290,31 @@ pub fn bsp_knn_gpu(
     ];
     let params_bytes: &[u8] = bytemuck::cast_slice(&params);
     use wgpu::util::DeviceExt;
-    let buf_params = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("bsp_params"),
-        contents: params_bytes,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-    });
+    let buf_params = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bsp_params"),
+            contents: params_bytes,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
 
     let ref_cells_bytes: &[u8] = bytemuck::cast_slice(&ref_cells);
-    let buf_ref_cells = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("bsp_ref_cells"),
-        contents: ref_cells_bytes,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-    });
+    let buf_ref_cells = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bsp_ref_cells"),
+            contents: ref_cells_bytes,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
 
     let bounds_bytes: &[u8] = bytemuck::cast_slice(&bounds);
-    let buf_bounds = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("bsp_bounds"),
-        contents: bounds_bytes,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-    });
+    let buf_bounds = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bsp_bounds"),
+            contents: bounds_bytes,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
 
     let candidates_per_query = 256usize;
     let total_candidates = num_queries * candidates_per_query;
@@ -321,19 +330,42 @@ pub fn bsp_knn_gpu(
         label: Some("bsp_knn_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_refs.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_queries.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_params.as_entire_binding() },
-            BindGroupEntry { binding: 3, resource: buf_ref_cells.as_entire_binding() },
-            BindGroupEntry { binding: 4, resource: buf_out_idx.as_entire_binding() },
-            BindGroupEntry { binding: 5, resource: buf_out_dist.as_entire_binding() },
-            BindGroupEntry { binding: 6, resource: buf_bounds.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_refs.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_queries.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_params.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: buf_ref_cells.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: buf_out_idx.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 5,
+                resource: buf_out_dist.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 6,
+                resource: buf_bounds.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("bsp_knn_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("bsp_knn_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -386,15 +418,13 @@ pub fn bsp_knn_gpu(
 /// in adjacent cells.
 ///
 /// Returns `(indices, distances)` flattened: query_i's k results at `[i*k..(i+1)*k]`.
-pub fn bsp_knn_cpu(
-    refs: &[f32],
-    queries: &[f32],
-    dim: usize,
-    k: usize,
-) -> (Vec<u32>, Vec<f32>) {
+pub fn bsp_knn_cpu(refs: &[f32], queries: &[f32], dim: usize, k: usize) -> (Vec<u32>, Vec<f32>) {
     assert!(dim > 0, "dimension must be positive");
     assert!(refs.len() % dim == 0, "refs length must be multiple of dim");
-    assert!(queries.len() % dim == 0, "queries length must be multiple of dim");
+    assert!(
+        queries.len() % dim == 0,
+        "queries length must be multiple of dim"
+    );
 
     let num_refs = refs.len() / dim;
     let num_queries = queries.len() / dim;
@@ -464,9 +494,8 @@ pub fn bsp_knn_cpu(
                 // Check if we have enough candidates to guarantee correctness:
                 // the closest point outside the current ring must be farther than
                 // our k-th best candidate.
-                candidates.sort_by(|a, b| {
-                    a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
-                });
+                candidates
+                    .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
                 found_enough = true;
             }
         }
@@ -616,8 +645,8 @@ mod tests {
     fn test_cpu_bsp_knn_matches_brute_force() {
         // Verify BSP kNN matches brute-force for a random-ish dataset
         let refs = vec![
-            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 0.5, 1.5, 2.5, 3.5,
-            4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5,
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 0.5, 1.5, 2.5, 3.5, 4.5,
+            5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5,
         ];
         let queries = vec![2.0, 3.0, 4.0];
         let dim = 3;

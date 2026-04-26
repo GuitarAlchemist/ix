@@ -26,7 +26,7 @@
 //! - No Tokio, no I/O, no globals. Everything is a pure function over
 //!   `&str` / owned JSON.
 
-use ix_fuzzy::{HexavalentDistribution, FuzzyError};
+use ix_fuzzy::{FuzzyError, HexavalentDistribution};
 use ix_types::Hexavalent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -103,11 +103,7 @@ pub fn parse_plan(raw: &str) -> Result<Vec<TriagePlanItem>, TriageError> {
                         TriageError::Parse(format!("lenient extraction failed: {e}"))
                     })?
                 }
-                _ => {
-                    return Err(TriageError::Parse(
-                        "response contains no JSON array".into(),
-                    ))
-                }
+                _ => return Err(TriageError::Parse("response contains no JSON array".into())),
             }
         }
     };
@@ -124,12 +120,10 @@ pub fn parse_plan(raw: &str) -> Result<Vec<TriagePlanItem>, TriageError> {
 }
 
 fn parse_item(index: usize, value: &Value) -> Result<TriagePlanItem, TriageError> {
-    let obj = value
-        .as_object()
-        .ok_or_else(|| TriageError::InvalidItem {
-            index,
-            reason: "not an object".into(),
-        })?;
+    let obj = value.as_object().ok_or_else(|| TriageError::InvalidItem {
+        index,
+        reason: "not an object".into(),
+    })?;
 
     let tool_name = obj
         .get("tool_name")
@@ -169,12 +163,11 @@ fn parse_item(index: usize, value: &Value) -> Result<TriagePlanItem, TriageError
             index,
             reason: "missing or non-string `confidence`".into(),
         })?;
-    let confidence = parse_hexavalent_label(confidence_label).ok_or_else(|| {
-        TriageError::BadConfidence {
+    let confidence =
+        parse_hexavalent_label(confidence_label).ok_or_else(|| TriageError::BadConfidence {
             index,
             label: confidence_label.to_string(),
-        }
-    })?;
+        })?;
 
     let reason = obj
         .get("reason")
@@ -239,9 +232,7 @@ pub fn sort_plan_by_priority(plan: &mut [TriagePlanItem]) {
 /// The resulting distribution can be passed to
 /// `ix_fuzzy::escalation_triggered` to decide whether the plan as a
 /// whole should be escalated to a human instead of dispatched.
-pub fn build_distribution(
-    plan: &[TriagePlanItem],
-) -> Result<HexavalentDistribution, TriageError> {
+pub fn build_distribution(plan: &[TriagePlanItem]) -> Result<HexavalentDistribution, TriageError> {
     if plan.is_empty() {
         return Ok(HexavalentDistribution::uniform(vec![
             Hexavalent::True,
@@ -305,8 +296,14 @@ mod tests {
     #[test]
     fn parses_full_word_labels() {
         assert_eq!(parse_hexavalent_label("true"), Some(Hexavalent::True));
-        assert_eq!(parse_hexavalent_label("Probable"), Some(Hexavalent::Probable));
-        assert_eq!(parse_hexavalent_label("CONTRADICTORY"), Some(Hexavalent::Contradictory));
+        assert_eq!(
+            parse_hexavalent_label("Probable"),
+            Some(Hexavalent::Probable)
+        );
+        assert_eq!(
+            parse_hexavalent_label("CONTRADICTORY"),
+            Some(Hexavalent::Contradictory)
+        );
     }
 
     #[test]

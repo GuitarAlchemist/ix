@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 
 pub struct EvolutionDemo {
     pop_size: usize,
@@ -29,9 +29,12 @@ impl EvolutionDemo {
         ui.label("Maximize f(x,y) = -(x² + y²) — optimum at (0, 0)");
 
         ui.horizontal(|ui| {
-            ui.label("Pop:"); ui.add(egui::Slider::new(&mut self.pop_size, 10..=200));
-            ui.label("Gens:"); ui.add(egui::Slider::new(&mut self.generations, 10..=500));
-            ui.label("Mutation:"); ui.add(egui::Slider::new(&mut self.mutation_rate, 0.01..=0.5));
+            ui.label("Pop:");
+            ui.add(egui::Slider::new(&mut self.pop_size, 10..=200));
+            ui.label("Gens:");
+            ui.add(egui::Slider::new(&mut self.generations, 10..=500));
+            ui.label("Mutation:");
+            ui.add(egui::Slider::new(&mut self.mutation_rate, 0.01..=0.5));
         });
 
         if ui.button("Evolve").clicked() {
@@ -42,12 +45,30 @@ impl EvolutionDemo {
 
         if !self.best_history.is_empty() {
             Plot::new("evo_plot").height(350.0).show(ui, |plot_ui| {
-                let best: PlotPoints = self.best_history.iter().enumerate()
-                    .map(|(i, &v)| [i as f64, v]).collect();
-                let avg: PlotPoints = self.avg_history.iter().enumerate()
-                    .map(|(i, &v)| [i as f64, v]).collect();
-                plot_ui.line(Line::new(best).name("Best fitness").width(2.0).color(egui::Color32::GREEN));
-                plot_ui.line(Line::new(avg).name("Avg fitness").width(1.5).color(egui::Color32::YELLOW));
+                let best: PlotPoints = self
+                    .best_history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &v)| [i as f64, v])
+                    .collect();
+                let avg: PlotPoints = self
+                    .avg_history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &v)| [i as f64, v])
+                    .collect();
+                plot_ui.line(
+                    Line::new(best)
+                        .name("Best fitness")
+                        .width(2.0)
+                        .color(egui::Color32::GREEN),
+                );
+                plot_ui.line(
+                    Line::new(avg)
+                        .name("Avg fitness")
+                        .width(1.5)
+                        .color(egui::Color32::YELLOW),
+                );
             });
         }
     }
@@ -56,9 +77,7 @@ impl EvolutionDemo {
         use rand::Rng;
         let mut rng = rand::rng();
 
-        let fitness = |genes: &[f64]| -> f64 {
-            -(genes[0] * genes[0] + genes[1] * genes[1])
-        };
+        let fitness = |genes: &[f64]| -> f64 { -(genes[0] * genes[0] + genes[1] * genes[1]) };
 
         // Initialize population
         let mut pop: Vec<Vec<f64>> = (0..self.pop_size)
@@ -69,7 +88,9 @@ impl EvolutionDemo {
         self.avg_history.clear();
 
         for _ in 0..self.generations {
-            let mut fits: Vec<(f64, usize)> = pop.iter().enumerate()
+            let mut fits: Vec<(f64, usize)> = pop
+                .iter()
+                .enumerate()
                 .map(|(i, g)| (fitness(g), i))
                 .collect();
             fits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -80,7 +101,8 @@ impl EvolutionDemo {
             self.avg_history.push(avg_fit);
 
             // Selection: top 50%
-            let survivors: Vec<Vec<f64>> = fits.iter()
+            let survivors: Vec<Vec<f64>> = fits
+                .iter()
                 .take(self.pop_size / 2)
                 .map(|&(_, i)| pop[i].clone())
                 .collect();
@@ -105,12 +127,19 @@ impl EvolutionDemo {
             pop = new_pop;
         }
 
-        let best = pop.iter().min_by(|a, b| {
-            let fa = a[0]*a[0] + a[1]*a[1];
-            let fb = b[0]*b[0] + b[1]*b[1];
-            fa.partial_cmp(&fb).unwrap()
-        }).unwrap();
-        self.status = format!("Best: ({:.4}, {:.4}), fitness: {:.6}",
-            best[0], best[1], fitness(best));
+        let best = pop
+            .iter()
+            .min_by(|a, b| {
+                let fa = a[0] * a[0] + a[1] * a[1];
+                let fb = b[0] * b[0] + b[1] * b[1];
+                fa.partial_cmp(&fb).unwrap()
+            })
+            .unwrap();
+        self.status = format!(
+            "Best: ({:.4}, {:.4}), fitness: {:.6}",
+            best[0],
+            best[1],
+            fitness(best)
+        );
     }
 }

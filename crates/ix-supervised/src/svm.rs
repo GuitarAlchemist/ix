@@ -3,8 +3,8 @@
 //! Implements linear SVM with hinge loss and subgradient descent.
 //! Minimizes: (1/2)||w||^2 + C * sum(max(0, 1 - yi*(w.xi + b)))
 
-use ndarray::{Array1, Array2};
 use crate::traits::Classifier;
+use ndarray::{Array1, Array2};
 
 /// Linear SVM for binary classification (classes 0 and 1).
 pub struct LinearSVM {
@@ -112,8 +112,12 @@ mod tests {
     #[test]
     fn test_linear_svm_separable() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [0.3, 0.2],
-            [3.0, 3.0], [3.5, 3.5], [3.2, 3.3]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [0.3, 0.2],
+            [3.0, 3.0],
+            [3.5, 3.5],
+            [3.2, 3.3]
         ];
         let y = array![0, 0, 0, 1, 1, 1];
 
@@ -124,15 +128,16 @@ mod tests {
 
         let pred = svm.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 1.0, "SVM should classify separable data, got acc={}", acc);
+        assert!(
+            acc >= 1.0,
+            "SVM should classify separable data, got acc={}",
+            acc
+        );
     }
 
     #[test]
     fn test_linear_svm_predict_proba() {
-        let x = array![
-            [0.0, 0.0], [0.5, 0.5],
-            [5.0, 5.0], [5.5, 5.5]
-        ];
+        let x = array![[0.0, 0.0], [0.5, 0.5], [5.0, 5.0], [5.5, 5.5]];
         let y = array![0, 0, 1, 1];
 
         let mut svm = LinearSVM::new(1.0)
@@ -143,7 +148,11 @@ mod tests {
         let proba = svm.predict_proba(&x);
         for i in 0..proba.nrows() {
             let sum: f64 = proba.row(i).sum();
-            assert!((sum - 1.0).abs() < 1e-10, "Probabilities should sum to 1, got {}", sum);
+            assert!(
+                (sum - 1.0).abs() < 1e-10,
+                "Probabilities should sum to 1, got {}",
+                sum
+            );
         }
         // Class-0 sample should have higher prob for class 0
         assert!(proba[[0, 0]] > proba[[0, 1]]);
@@ -153,10 +162,7 @@ mod tests {
 
     #[test]
     fn test_linear_svm_high_c() {
-        let x = array![
-            [-2.0, -2.0], [-1.0, -1.0],
-            [1.0, 1.0], [2.0, 2.0]
-        ];
+        let x = array![[-2.0, -2.0], [-1.0, -1.0], [1.0, 1.0], [2.0, 2.0]];
         let y = array![0, 0, 1, 1];
 
         let mut svm = LinearSVM::new(100.0)
@@ -166,6 +172,10 @@ mod tests {
 
         let pred = svm.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 1.0, "High-C SVM should be perfect on separable data, got acc={}", acc);
+        assert!(
+            acc >= 1.0,
+            "High-C SVM should be perfect on separable data, got acc={}",
+            acc
+        );
     }
 }

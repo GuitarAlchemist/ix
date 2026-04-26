@@ -70,7 +70,11 @@ pub struct KFold {
 impl KFold {
     pub fn new(k: usize) -> Self {
         assert!(k >= 2, "k must be at least 2");
-        Self { k, shuffle: true, seed: 42 }
+        Self {
+            k,
+            shuffle: true,
+            seed: 42,
+        }
     }
 
     pub fn with_seed(mut self, seed: u64) -> Self {
@@ -104,7 +108,8 @@ impl KFold {
             let size = fold_size + if i < remainder { 1 } else { 0 };
             let end = start + size;
             let test: Vec<usize> = indices[start..end].to_vec();
-            let train: Vec<usize> = indices[..start].iter()
+            let train: Vec<usize> = indices[..start]
+                .iter()
                 .chain(indices[end..].iter())
                 .copied()
                 .collect();
@@ -143,7 +148,11 @@ pub struct StratifiedKFold {
 impl StratifiedKFold {
     pub fn new(k: usize) -> Self {
         assert!(k >= 2, "k must be at least 2");
-        Self { k, shuffle: true, seed: 42 }
+        Self {
+            k,
+            shuffle: true,
+            seed: 42,
+        }
     }
 
     pub fn with_seed(mut self, seed: u64) -> Self {
@@ -189,7 +198,8 @@ impl StratifiedKFold {
         let mut folds = Vec::with_capacity(self.k);
         for fold_i in 0..self.k {
             let test = fold_indices[fold_i].clone();
-            let train: Vec<usize> = fold_indices.iter()
+            let train: Vec<usize> = fold_indices
+                .iter()
                 .enumerate()
                 .filter(|(j, _)| *j != fold_i)
                 .flat_map(|(_, v)| v.iter().copied())
@@ -302,17 +312,20 @@ where
     let skf = StratifiedKFold::new(k).with_seed(seed);
     let folds = skf.split(y);
 
-    folds.iter().map(|(train_idx, test_idx)| {
-        let x_train = select_rows(x, train_idx);
-        let y_train = select_elements(y, train_idx);
-        let x_test = select_rows(x, test_idx);
-        let y_test = select_elements(y, test_idx);
+    folds
+        .iter()
+        .map(|(train_idx, test_idx)| {
+            let x_train = select_rows(x, train_idx);
+            let y_train = select_elements(y, train_idx);
+            let x_test = select_rows(x, test_idx);
+            let y_test = select_elements(y, test_idx);
 
-        let mut model = make_model();
-        model.fit(&x_train, &y_train);
-        let preds = model.predict(&x_test);
-        scorer(&y_test, &preds)
-    }).collect()
+            let mut model = make_model();
+            model.fit(&x_train, &y_train);
+            let preds = model.predict(&x_test);
+            scorer(&y_test, &preds)
+        })
+        .collect()
 }
 
 /// Select rows from a 2D array by index.
@@ -397,40 +410,47 @@ mod tests {
     fn test_cross_val_score_separable() {
         use crate::knn::KNN;
 
-        let x = Array2::from_shape_vec((8, 2), vec![
-            0.0, 0.0,  0.5, 0.5,  1.0, 0.0,  0.3, 0.2,
-            5.0, 5.0,  5.5, 5.5,  6.0, 5.0,  5.3, 5.2,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 5.0, 5.0, 5.5, 5.5, 6.0, 5.0, 5.3, 5.2,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
-        let scores = cross_val_score(
-            &x, &y,
-            || KNN::new(1),
-            2, 42,
-        );
+        let scores = cross_val_score(&x, &y, || KNN::new(1), 2, 42);
         assert_eq!(scores.len(), 2);
         let mean = scores.iter().sum::<f64>() / scores.len() as f64;
-        assert!(mean >= 0.75, "KNN-1 should classify well-separated data, mean_acc={}", mean);
+        assert!(
+            mean >= 0.75,
+            "KNN-1 should classify well-separated data, mean_acc={}",
+            mean
+        );
     }
 
     #[test]
     fn test_cross_val_score_decision_tree() {
         use crate::decision_tree::DecisionTree;
 
-        let x = Array2::from_shape_vec((12, 2), vec![
-            0.0, 0.0,  0.5, 0.5,  1.0, 0.0,  0.3, 0.2,  0.8, 0.1,  0.2, 0.7,
-            5.0, 5.0,  5.5, 5.5,  6.0, 5.0,  5.3, 5.2,  5.8, 5.1,  5.2, 5.7,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (12, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 0.8, 0.1, 0.2, 0.7, 5.0, 5.0, 5.5, 5.5,
+                6.0, 5.0, 5.3, 5.2, 5.8, 5.1, 5.2, 5.7,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1];
 
-        let scores = cross_val_score(
-            &x, &y,
-            || DecisionTree::new(5),
-            3, 99,
-        );
+        let scores = cross_val_score(&x, &y, || DecisionTree::new(5), 3, 99);
         assert_eq!(scores.len(), 3);
         for &s in &scores {
-            assert!(s >= 0.5, "Each fold should be better than random, got {}", s);
+            assert!(
+                s >= 0.5,
+                "Each fold should be better than random, got {}",
+                s
+            );
         }
     }
 
@@ -443,21 +463,23 @@ mod tests {
             0.42
         }
 
-        let x = Array2::from_shape_vec((8, 2), vec![
-            0.0, 0.0,  0.5, 0.5,  1.0, 0.0,  0.3, 0.2,
-            5.0, 5.0,  5.5, 5.5,  6.0, 5.0,  5.3, 5.2,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 5.0, 5.0, 5.5, 5.5, 6.0, 5.0, 5.3, 5.2,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
-        let scores = cross_val_score_with(
-            &x, &y,
-            || KNN::new(3),
-            4, 42,
-            constant_scorer,
-        );
+        let scores = cross_val_score_with(&x, &y, || KNN::new(3), 4, 42, constant_scorer);
         assert_eq!(scores.len(), 4);
         for &s in &scores {
-            assert!((s - 0.42).abs() < 1e-12, "custom scorer should return 0.42, got {}", s);
+            assert!(
+                (s - 0.42).abs() < 1e-12,
+                "custom scorer should return 0.42, got {}",
+                s
+            );
         }
     }
 
@@ -466,10 +488,13 @@ mod tests {
         use crate::knn::KNN;
         use crate::metrics::accuracy;
 
-        let x = Array2::from_shape_vec((8, 2), vec![
-            0.0, 0.0,  0.5, 0.5,  1.0, 0.0,  0.3, 0.2,
-            5.0, 5.0,  5.5, 5.5,  6.0, 5.0,  5.3, 5.2,
-        ]).unwrap();
+        let x = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.3, 0.2, 5.0, 5.0, 5.5, 5.5, 6.0, 5.0, 5.3, 5.2,
+            ],
+        )
+        .unwrap();
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
         let default_scores = cross_val_score(&x, &y, || KNN::new(1), 2, 42);

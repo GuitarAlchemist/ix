@@ -19,11 +19,7 @@ impl State3D {
 }
 
 /// Integrate a 3D ODE system using RK4.
-pub fn rk4_step(
-    state: State3D,
-    dt: f64,
-    derivatives: &dyn Fn(State3D) -> State3D,
-) -> State3D {
+pub fn rk4_step(state: State3D, dt: f64, derivatives: &dyn Fn(State3D) -> State3D) -> State3D {
     let k1 = derivatives(state);
     let k2 = derivatives(State3D::new(
         state.x + 0.5 * dt * k1.x,
@@ -78,7 +74,11 @@ pub struct LorenzParams {
 
 impl Default for LorenzParams {
     fn default() -> Self {
-        Self { sigma: 10.0, rho: 28.0, beta: 8.0 / 3.0 }
+        Self {
+            sigma: 10.0,
+            rho: 28.0,
+            beta: 8.0 / 3.0,
+        }
     }
 }
 
@@ -108,7 +108,11 @@ pub struct RosslerParams {
 
 impl Default for RosslerParams {
     fn default() -> Self {
-        Self { a: 0.2, b: 0.2, c: 5.7 }
+        Self {
+            a: 0.2,
+            b: 0.2,
+            c: 5.7,
+        }
     }
 }
 
@@ -136,7 +140,11 @@ pub struct ChenParams {
 
 impl Default for ChenParams {
     fn default() -> Self {
-        Self { a: 35.0, b: 3.0, c: 28.0 }
+        Self {
+            a: 35.0,
+            b: 3.0,
+            c: 28.0,
+        }
     }
 }
 
@@ -213,8 +221,10 @@ mod tests {
         let traj = lorenz(State3D::new(1.0, 1.0, 1.0), &params, 0.01, 10_000);
         // Lorenz attractor should stay bounded
         for s in &traj {
-            assert!(s.x.abs() < 100.0 && s.y.abs() < 100.0 && s.z.abs() < 100.0,
-                "Lorenz trajectory diverged");
+            assert!(
+                s.x.abs() < 100.0 && s.y.abs() < 100.0 && s.z.abs() < 100.0,
+                "Lorenz trajectory diverged"
+            );
         }
     }
 
@@ -242,6 +252,10 @@ mod tests {
         // r=2.5: fixed point at x* = 1 - 1/r = 0.6
         let traj = logistic_map(0.5, 2.5, 1000);
         let last = *traj.last().unwrap();
-        assert!((last - 0.6).abs() < 1e-6, "Should converge to 0.6, got {}", last);
+        assert!(
+            (last - 0.6).abs() < 1e-6,
+            "Should converge to 0.6, got {}",
+            last
+        );
     }
 }

@@ -102,11 +102,7 @@ pub fn svd(a: &Array2<f64>) -> Result<SvdResult, MathError> {
 }
 
 /// Compute SVD with explicit iteration limits.
-pub fn svd_with_opts(
-    a: &Array2<f64>,
-    max_sweeps: usize,
-    tol: f64,
-) -> Result<SvdResult, MathError> {
+pub fn svd_with_opts(a: &Array2<f64>, max_sweeps: usize, tol: f64) -> Result<SvdResult, MathError> {
     let m = a.nrows();
     let n = a.ncols();
     if m == 0 || n == 0 {
@@ -275,12 +271,7 @@ mod tests {
 
     #[test]
     fn test_svd_tall_matrix() {
-        let a = array![
-            [1.0, 2.0],
-            [3.0, 4.0],
-            [5.0, 6.0],
-            [7.0, 8.0]
-        ];
+        let a = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]];
         let res = svd(&a).unwrap();
         assert_eq!(res.singular_values.len(), 2);
         let recon = res.reconstruct();

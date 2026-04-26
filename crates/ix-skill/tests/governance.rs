@@ -102,9 +102,7 @@ fn beliefs_set_creates_file_with_hexavalent_value() {
 fn beliefs_set_rejects_invalid_truth() {
     let dir = tempdir("beliefs_bad_truth");
     ix_in(&dir)
-        .args([
-            "beliefs", "set", "foo", "proposition", "--truth", "X",
-        ])
+        .args(["beliefs", "set", "foo", "proposition", "--truth", "X"])
         .assert()
         .failure();
     fs::remove_dir_all(&dir).ok();

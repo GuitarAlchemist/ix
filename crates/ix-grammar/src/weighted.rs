@@ -179,7 +179,11 @@ mod tests {
         // High temperature → near uniform
         let probs = softmax(&rules, 100.0);
         let diff = (probs[0].1 - probs[1].1).abs();
-        assert!(diff < 0.05, "Expected near-uniform at high temperature, diff={}", diff);
+        assert!(
+            diff < 0.05,
+            "Expected near-uniform at high temperature, diff={}",
+            diff
+        );
     }
 
     #[test]
@@ -217,6 +221,10 @@ mod tests {
             .map(|_| select_weighted(&rules, &mut rng).unwrap())
             .collect();
         let high_count = selections.iter().filter(|s| s.as_str() == "high").count();
-        assert!(high_count > 275, "High-weight rule should be selected more often (>55%): {}", high_count);
+        assert!(
+            high_count > 275,
+            "High-weight rule should be selected more often (>55%): {}",
+            high_count
+        );
     }
 }

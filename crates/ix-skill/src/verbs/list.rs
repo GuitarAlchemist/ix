@@ -3,16 +3,18 @@
 use crate::output::{self, Format};
 use serde_json::{json, Value};
 
-pub fn skills(domain_filter: Option<&str>, query: Option<&str>, format: Format) -> Result<(), String> {
+pub fn skills(
+    domain_filter: Option<&str>,
+    query: Option<&str>,
+    format: Format,
+) -> Result<(), String> {
     let mut entries: Vec<&'static ix_registry::SkillDescriptor> = match domain_filter {
         Some(d) => ix_registry::by_domain(d),
         None => ix_registry::all().collect(),
     };
     if let Some(q) = query {
         let q = q.to_lowercase();
-        entries.retain(|s| {
-            s.name.to_lowercase().contains(&q) || s.doc.to_lowercase().contains(&q)
-        });
+        entries.retain(|s| s.name.to_lowercase().contains(&q) || s.doc.to_lowercase().contains(&q));
     }
     entries.sort_by_key(|s| s.name);
 
@@ -36,8 +38,8 @@ pub fn skills(domain_filter: Option<&str>, query: Option<&str>, format: Format) 
 pub fn personas(format: Format) -> Result<(), String> {
     // Resolve governance dir: IX_GOVERNANCE_DIR env var, else
     // ./governance/demerzel (common submodule location).
-    let gov_dir = std::env::var("IX_GOVERNANCE_DIR")
-        .unwrap_or_else(|_| "governance/demerzel".to_string());
+    let gov_dir =
+        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
     let personas_dir = format!("{gov_dir}/personas");
 
     let names = ix_governance::list_personas(std::path::Path::new(&personas_dir))

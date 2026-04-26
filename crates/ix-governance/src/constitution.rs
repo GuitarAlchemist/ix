@@ -86,10 +86,7 @@ impl Constitution {
                 // Parse "N: Name"
                 if let Some((num_str, name)) = rest.split_once(':') {
                     let num: u8 = num_str.trim().parse().map_err(|_| {
-                        GovernanceError::ParseError(format!(
-                            "invalid article number: {}",
-                            num_str
-                        ))
+                        GovernanceError::ParseError(format!("invalid article number: {}", num_str))
                     })?;
                     current_number = Some(num);
                     current_name = Some(name.trim().to_string());
@@ -282,7 +279,9 @@ impl Constitution {
 
         // Article 10: Stakeholder Pluralism — ignore users, optimize only for
         if lower.contains("ignore")
-            && (lower.contains("user") || lower.contains("stakeholder") || lower.contains("downstream"))
+            && (lower.contains("user")
+                || lower.contains("stakeholder")
+                || lower.contains("downstream"))
         {
             if let Some(a) = self.find_article(10) {
                 warnings.push(format!(
@@ -398,7 +397,11 @@ mod tests {
     #[test]
     fn load_default_constitution() {
         let c = Constitution::load(&constitution_path()).expect("should load constitution");
-        assert!(c.articles.len() >= 7, "expected at least 7 articles, got {}", c.articles.len());
+        assert!(
+            c.articles.len() >= 7,
+            "expected at least 7 articles, got {}",
+            c.articles.len()
+        );
         // Accept any 1.x or 2.x version — the constitution is append-only
         // within a major so the test should track growth without pinning
         // a specific patch release.
@@ -458,20 +461,21 @@ mod tests {
         let c = Constitution::load(&constitution_path()).unwrap();
         let result = c.check_action("fabricate a benchmark result");
         assert!(!result.compliant);
-        assert!(result
-            .relevant_articles
-            .iter()
-            .any(|a| a.number == 1));
+        assert!(result.relevant_articles.iter().any(|a| a.number == 1));
     }
 
     #[test]
     fn refactor_action_is_compliant_but_cites_article_12_and_14() {
         let c = Constitution::load(&constitution_path()).unwrap();
-        let result = c.check_action("ship the refactor plan to decompose ix-agent into four smaller crates");
+        let result =
+            c.check_action("ship the refactor plan to decompose ix-agent into four smaller crates");
         // The action is a legitimate refactor, not a violation — compliant
         // stays true, but the relevant articles list must now cite the
         // structural-change articles introduced in constitution 2.2.0.
-        assert!(result.compliant, "refactor plans are not inherently non-compliant");
+        assert!(
+            result.compliant,
+            "refactor plans are not inherently non-compliant"
+        );
         let numbers: Vec<u8> = result.relevant_articles.iter().map(|a| a.number).collect();
         assert!(
             numbers.contains(&12),
@@ -488,7 +492,8 @@ mod tests {
     #[test]
     fn big_atomic_rewrite_cites_article_13() {
         let c = Constitution::load(&constitution_path()).unwrap();
-        let result = c.check_action("do a full rewrite of the grammar subsystem as an atomic refactor");
+        let result =
+            c.check_action("do a full rewrite of the grammar subsystem as an atomic refactor");
         let numbers: Vec<u8> = result.relevant_articles.iter().map(|a| a.number).collect();
         assert!(
             numbers.contains(&13),
@@ -520,10 +525,7 @@ mod tests {
         let c = Constitution::load(&constitution_path()).unwrap();
         let result = c.check_action("delete the production database");
         assert!(!result.compliant);
-        assert!(result
-            .relevant_articles
-            .iter()
-            .any(|a| a.number == 3));
+        assert!(result.relevant_articles.iter().any(|a| a.number == 3));
     }
 
     #[test]
@@ -531,10 +533,7 @@ mod tests {
         let c = Constitution::load(&constitution_path()).unwrap();
         let result = c.check_action("conceal the error from the user");
         assert!(!result.compliant);
-        assert!(result
-            .relevant_articles
-            .iter()
-            .any(|a| a.number == 2));
+        assert!(result.relevant_articles.iter().any(|a| a.number == 2));
     }
 
     #[test]
@@ -542,10 +541,7 @@ mod tests {
         let c = Constitution::load(&constitution_path()).unwrap();
         let result = c.check_action("overhaul the entire codebase");
         assert!(!result.compliant);
-        assert!(result
-            .relevant_articles
-            .iter()
-            .any(|a| a.number == 4));
+        assert!(result.relevant_articles.iter().any(|a| a.number == 4));
     }
 
     #[test]
@@ -553,9 +549,6 @@ mod tests {
         let c = Constitution::load(&constitution_path()).unwrap();
         let result = c.check_action("mislead the user about the severity");
         assert!(!result.compliant);
-        assert!(result
-            .relevant_articles
-            .iter()
-            .any(|a| a.number == 5));
+        assert!(result.relevant_articles.iter().any(|a| a.number == 5));
     }
 }

@@ -13,7 +13,8 @@ pub static META: ScenarioMeta = ScenarioMeta {
     id: "chaos-detective",
     title: "Chaos Detective",
     tagline: "That noise is not noise",
-    description: "An IoT sensor signal looks like pure noise. Classical stats and FFT see nothing. \
+    description:
+        "An IoT sensor signal looks like pure noise. Classical stats and FFT see nothing. \
                   But Lyapunov exponents reveal deterministic chaos, and persistent homology \
                   confirms the attractor has topological structure.",
     difficulty: Difficulty::Intermediate,
@@ -58,14 +59,16 @@ impl DemoScenario for ChaosDetective {
                 narrative: narrative_1,
                 interpret: Some(|output: &Value| {
                     let mean = output.get("mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let std = output.get("std_dev").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let std = output
+                        .get("std_dev")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
                     format!(
                         "Mean={mean:.3}, StdDev={std:.3}. Looks like uniform noise — \
                          nothing obviously structured here."
                     )
                 }),
             },
-
             // Step 2: ix_fft — no dominant frequency
             DemoStep {
                 label: "Frequency analysis via FFT".into(),
@@ -74,7 +77,8 @@ impl DemoScenario for ChaosDetective {
                 narrative: narrative_2,
                 interpret: Some(|output: &Value| {
                     if let Some(magnitudes) = output.get("magnitudes").and_then(|v| v.as_array()) {
-                        let max_mag = magnitudes.iter()
+                        let max_mag = magnitudes
+                            .iter()
                             .filter_map(|v| v.as_f64())
                             .fold(0.0_f64, f64::max);
                         format!(
@@ -86,7 +90,6 @@ impl DemoScenario for ChaosDetective {
                     }
                 }),
             },
-
             // Step 3: ix_chaos_lyapunov — THE AHA MOMENT
             DemoStep {
                 label: "Lyapunov exponent analysis".into(),
@@ -101,7 +104,8 @@ impl DemoScenario for ChaosDetective {
                             Zero = periodic. Negative = stable."
                     .into(),
                 interpret: Some(|output: &Value| {
-                    let exponent = output.get("lyapunov_exponent")
+                    let exponent = output
+                        .get("lyapunov_exponent")
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0);
                     if exponent > 0.0 {
@@ -116,14 +120,14 @@ impl DemoScenario for ChaosDetective {
                     }
                 }),
             },
-
             // Step 4: ix_topo — topological confirmation
             DemoStep {
                 label: "Topological fingerprint via persistent homology".into(),
                 tool: "ix_topo".into(),
                 input: StepInput::Static({
                     // Delay-embed: pairs [[x_i, x_{i+1}], ...] reveal the attractor shape
-                    let pairs: Vec<Vec<f64>> = data_for_fft.windows(2)
+                    let pairs: Vec<Vec<f64>> = data_for_fft
+                        .windows(2)
                         .take(50)
                         .map(|w| vec![w[0], w[1]])
                         .collect();
@@ -140,7 +144,8 @@ impl DemoScenario for ChaosDetective {
                     .into(),
                 interpret: Some(|output: &Value| {
                     if let Some(bars) = output.get("bars").and_then(|v| v.as_array()) {
-                        let h1_bars: Vec<_> = bars.iter()
+                        let h1_bars: Vec<_> = bars
+                            .iter()
                             .filter(|b| b.get("dimension").and_then(|d| d.as_u64()) == Some(1))
                             .collect();
                         if h1_bars.is_empty() {

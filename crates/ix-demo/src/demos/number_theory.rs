@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Points, PlotPoints};
+use egui_plot::{Plot, PlotPoints, Points};
 
 #[derive(PartialEq, Clone, Copy)]
 enum Mode {
@@ -48,7 +48,11 @@ impl NumberTheoryDemo {
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.mode, Mode::PrimeSieve, "Prime Sieve");
             ui.radio_value(&mut self.mode, Mode::PrimeGaps, "Prime Gaps");
-            ui.radio_value(&mut self.mode, Mode::ModularArithmetic, "Modular Arithmetic");
+            ui.radio_value(
+                &mut self.mode,
+                Mode::ModularArithmetic,
+                "Modular Arithmetic",
+            );
             ui.radio_value(&mut self.mode, Mode::PrimalityTest, "Primality Test");
         });
 
@@ -63,7 +67,11 @@ impl NumberTheoryDemo {
     }
 
     fn ui_prime_sieve(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Prime Sieve (Eratosthenes)").strong().size(16.0));
+        ui.label(
+            egui::RichText::new("Prime Sieve (Eratosthenes)")
+                .strong()
+                .size(16.0),
+        );
 
         ui.add(
             egui::Slider::new(&mut self.sieve_limit, 100..=1_000_000)
@@ -124,7 +132,11 @@ impl NumberTheoryDemo {
     }
 
     fn ui_modular(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Modular Exponentiation").strong().size(16.0));
+        ui.label(
+            egui::RichText::new("Modular Exponentiation")
+                .strong()
+                .size(16.0),
+        );
 
         egui::Grid::new("mod_inputs").show(ui, |ui| {
             ui.label("Base:");
@@ -159,7 +171,11 @@ impl NumberTheoryDemo {
     }
 
     fn ui_primality(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Miller-Rabin Primality Test").strong().size(16.0));
+        ui.label(
+            egui::RichText::new("Miller-Rabin Primality Test")
+                .strong()
+                .size(16.0),
+        );
 
         ui.horizontal(|ui| {
             ui.label("Number:");

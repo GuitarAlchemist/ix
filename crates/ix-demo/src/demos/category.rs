@@ -72,8 +72,16 @@ impl CategoryDemo {
 
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.mode, CategoryMode::Monad, "Monad Demo");
-            ui.radio_value(&mut self.mode, CategoryMode::FreeForgetful, "Free-Forgetful Adjunction");
-            ui.radio_value(&mut self.mode, CategoryMode::MonadLaws, "Monad Laws Verifier");
+            ui.radio_value(
+                &mut self.mode,
+                CategoryMode::FreeForgetful,
+                "Free-Forgetful Adjunction",
+            );
+            ui.radio_value(
+                &mut self.mode,
+                CategoryMode::MonadLaws,
+                "Monad Laws Verifier",
+            );
         });
 
         ui.separator();
@@ -86,7 +94,11 @@ impl CategoryDemo {
     }
 
     fn ui_monad(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Monad: unit, bind, chain").strong().size(16.0));
+        ui.label(
+            egui::RichText::new("Monad: unit, bind, chain")
+                .strong()
+                .size(16.0),
+        );
         ui.label("Input an integer, then chain operations: safe_div(100/x) and add_one(x+1).");
 
         ui.horizontal(|ui| {
@@ -106,11 +118,21 @@ impl CategoryDemo {
 
         if let Some(r) = &self.monad_result {
             egui::Grid::new("monad_grid").striped(true).show(ui, |ui| {
-                ui.label("Step"); ui.label("Value"); ui.end_row();
-                ui.label("Parse input:"); ui.label(&r.initial); ui.end_row();
-                ui.label("unit(x):"); ui.label(&r.after_unit); ui.end_row();
-                ui.label("bind(safe_div = 100/x):"); ui.label(&r.after_safe_div); ui.end_row();
-                ui.label("bind(add_one = x+1):"); ui.label(&r.after_add_one); ui.end_row();
+                ui.label("Step");
+                ui.label("Value");
+                ui.end_row();
+                ui.label("Parse input:");
+                ui.label(&r.initial);
+                ui.end_row();
+                ui.label("unit(x):");
+                ui.label(&r.after_unit);
+                ui.end_row();
+                ui.label("bind(safe_div = 100/x):");
+                ui.label(&r.after_safe_div);
+                ui.end_row();
+                ui.label("bind(add_one = x+1):");
+                ui.label(&r.after_add_one);
+                ui.end_row();
             });
         }
     }
@@ -120,7 +142,7 @@ impl CategoryDemo {
 
         match self.monad_type {
             MonadType::OptionMonad => {
-                use ix_category::monad::{OptionMonad, Monad};
+                use ix_category::monad::{Monad, OptionMonad};
 
                 let initial_str = match &parsed {
                     Ok(v) => format!("Some({})", v),
@@ -137,7 +159,11 @@ impl CategoryDemo {
                 };
 
                 let safe_div = |x: i32| -> Option<i32> {
-                    if x == 0 { None } else { Some(100 / x) }
+                    if x == 0 {
+                        None
+                    } else {
+                        Some(100 / x)
+                    }
                 };
                 let after_safe_div_val: Option<i32> = match wrapped {
                     Some(v) => OptionMonad::bind(OptionMonad::unit(v), safe_div),
@@ -160,7 +186,7 @@ impl CategoryDemo {
                 });
             }
             MonadType::ResultMonad => {
-                use ix_category::monad::{ResultMonad, Monad};
+                use ix_category::monad::{Monad, ResultMonad};
 
                 let initial_str = match &parsed {
                     Ok(v) => format!("Ok({})", v),
@@ -207,8 +233,14 @@ impl CategoryDemo {
     }
 
     fn ui_free_forgetful(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Free ⊣ Forgetful Adjunction").strong().size(16.0));
-        ui.label("Free functor wraps each element in a singleton list. Forgetful functor flattens back.");
+        ui.label(
+            egui::RichText::new("Free ⊣ Forgetful Adjunction")
+                .strong()
+                .size(16.0),
+        );
+        ui.label(
+            "Free functor wraps each element in a singleton list. Forgetful functor flattens back.",
+        );
         ui.label("The round-trip Forget(Free(S)) should equal the original set S.");
 
         ui.horizontal(|ui| {
@@ -269,7 +301,11 @@ impl CategoryDemo {
     }
 
     fn ui_monad_laws(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Monad Laws Verifier (OptionMonad)").strong().size(16.0));
+        ui.label(
+            egui::RichText::new("Monad Laws Verifier (OptionMonad)")
+                .strong()
+                .size(16.0),
+        );
         ui.label("Verifies the three monad laws for OptionMonad with f(x) = Some(x + 1).");
 
         ui.horizontal(|ui| {
@@ -323,7 +359,7 @@ impl CategoryDemo {
     }
 
     fn run_laws(&mut self) {
-        use ix_category::monad::{OptionMonad, Monad};
+        use ix_category::monad::{Monad, OptionMonad};
 
         let a = match self.laws_input.trim().parse::<i32>() {
             Ok(v) => v,

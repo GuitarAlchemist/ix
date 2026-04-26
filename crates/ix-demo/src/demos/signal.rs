@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 
 pub struct SignalDemo {
     freq1: f64,
@@ -31,12 +31,16 @@ impl SignalDemo {
         ui.label("Generate a signal with two frequencies, compute FFT, and low-pass filter.");
 
         ui.horizontal(|ui| {
-            ui.label("Freq 1 (Hz):"); ui.add(egui::Slider::new(&mut self.freq1, 1.0..=50.0));
-            ui.label("Freq 2 (Hz):"); ui.add(egui::Slider::new(&mut self.freq2, 1.0..=50.0));
+            ui.label("Freq 1 (Hz):");
+            ui.add(egui::Slider::new(&mut self.freq1, 1.0..=50.0));
+            ui.label("Freq 2 (Hz):");
+            ui.add(egui::Slider::new(&mut self.freq2, 1.0..=50.0));
         });
         ui.horizontal(|ui| {
-            ui.label("Noise:"); ui.add(egui::Slider::new(&mut self.noise_level, 0.0..=2.0));
-            ui.label("Samples:"); ui.add(egui::Slider::new(&mut self.n_samples, 64..=1024));
+            ui.label("Noise:");
+            ui.add(egui::Slider::new(&mut self.noise_level, 0.0..=2.0));
+            ui.label("Samples:");
+            ui.add(egui::Slider::new(&mut self.n_samples, 64..=1024));
         });
 
         if ui.button("Analyze").clicked() {
@@ -49,14 +53,24 @@ impl SignalDemo {
                 plot_ui.line(Line::new(pts).name("Signal").width(1.0));
                 if !self.filtered_data.is_empty() {
                     let fpts: PlotPoints = self.filtered_data.iter().copied().collect();
-                    plot_ui.line(Line::new(fpts).name("Filtered").width(2.0).color(egui::Color32::YELLOW));
+                    plot_ui.line(
+                        Line::new(fpts)
+                            .name("Filtered")
+                            .width(2.0)
+                            .color(egui::Color32::YELLOW),
+                    );
                 }
             });
 
             ui.label("FFT Magnitude Spectrum:");
             Plot::new("signal_freq").height(200.0).show(ui, |plot_ui| {
                 let pts: PlotPoints = self.freq_data.iter().copied().collect();
-                plot_ui.line(Line::new(pts).name("|FFT|").width(1.5).color(egui::Color32::from_rgb(100, 200, 255)));
+                plot_ui.line(
+                    Line::new(pts)
+                        .name("|FFT|")
+                        .width(1.5)
+                        .color(egui::Color32::from_rgb(100, 200, 255)),
+                );
             });
         }
     }
@@ -68,30 +82,34 @@ impl SignalDemo {
         let fs = 100.0; // sample rate
 
         // Generate signal
-        let signal: Vec<f64> = (0..n).map(|i| {
-            let t = i as f64 / fs;
-            
-            (2.0 * std::f64::consts::PI * self.freq1 * t).sin()
-                + 0.5 * (2.0 * std::f64::consts::PI * self.freq2 * t).sin()
-                + rng.random_range(-self.noise_level..self.noise_level)
-        }).collect();
+        let signal: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 / fs;
 
-        self.time_data = signal.iter().enumerate()
+                (2.0 * std::f64::consts::PI * self.freq1 * t).sin()
+                    + 0.5 * (2.0 * std::f64::consts::PI * self.freq2 * t).sin()
+                    + rng.random_range(-self.noise_level..self.noise_level)
+            })
+            .collect();
+
+        self.time_data = signal
+            .iter()
+            .enumerate()
             .map(|(i, &v)| [i as f64 / fs, v])
             .collect();
 
         // FFT using ix-signal
-        use ix_signal::fft::{Complex, fft};
-        let complex_input: Vec<Complex> = signal.iter()
-            .map(|&v| Complex::from_real(v))
-            .collect();
+        use ix_signal::fft::{fft, Complex};
+        let complex_input: Vec<Complex> = signal.iter().map(|&v| Complex::from_real(v)).collect();
         let spectrum = fft(&complex_input);
         let half = n / 2;
-        self.freq_data = (0..half).map(|i| {
-            let freq = i as f64 * fs / n as f64;
-            let mag = spectrum[i].magnitude() / n as f64 * 2.0;
-            [freq, mag]
-        }).collect();
+        self.freq_data = (0..half)
+            .map(|i| {
+                let freq = i as f64 * fs / n as f64;
+                let mag = spectrum[i].magnitude() / n as f64 * 2.0;
+                [freq, mag]
+            })
+            .collect();
 
         // Simple moving average as low-pass filter
         let window = 5;
@@ -103,7 +121,9 @@ impl SignalDemo {
             *slot = sum / (end - start) as f64;
         }
 
-        self.filtered_data = filtered.iter().enumerate()
+        self.filtered_data = filtered
+            .iter()
+            .enumerate()
             .map(|(i, &v)| [i as f64 / fs, v])
             .collect();
     }

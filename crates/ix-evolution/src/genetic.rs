@@ -95,7 +95,10 @@ impl GeneticAlgorithm {
             let mut next_gen: Vec<RealIndividual> = Vec::with_capacity(self.population_size);
 
             // Elitism: keep top individuals
-            for ind in population.iter().take(self.elitism.min(self.population_size)) {
+            for ind in population
+                .iter()
+                .take(self.elitism.min(self.population_size))
+            {
                 next_gen.push(ind.clone());
             }
 

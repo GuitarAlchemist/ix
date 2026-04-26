@@ -31,10 +31,8 @@ fn perturbed_loss<F>(
 where
     F: Fn(&HashMap<String, ArrayD<f64>>) -> f64,
 {
-    let mut cloned: HashMap<String, ArrayD<f64>> = inputs
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    let mut cloned: HashMap<String, ArrayD<f64>> =
+        inputs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let arr = cloned.get_mut(name).expect("input name not found");
     // iter_mut works regardless of memory layout
     *arr.iter_mut().nth(flat_idx).expect("index out of range") += delta;
@@ -86,27 +84,15 @@ where
 // ---------------------------------------------------------------------------
 
 fn array_2x3_a() -> ArrayD<f64> {
-    Array::from_shape_vec(
-        IxDyn(&[2, 3]),
-        vec![0.1, -0.5, 1.2, 0.3, -0.8, 0.7],
-    )
-    .expect("2x3 shape")
+    Array::from_shape_vec(IxDyn(&[2, 3]), vec![0.1, -0.5, 1.2, 0.3, -0.8, 0.7]).expect("2x3 shape")
 }
 
 fn array_2x3_b() -> ArrayD<f64> {
-    Array::from_shape_vec(
-        IxDyn(&[2, 3]),
-        vec![-0.4, 0.9, 0.2, 1.1, -0.3, 0.6],
-    )
-    .expect("2x3 shape")
+    Array::from_shape_vec(IxDyn(&[2, 3]), vec![-0.4, 0.9, 0.2, 1.1, -0.3, 0.6]).expect("2x3 shape")
 }
 
 fn array_3x2_b() -> ArrayD<f64> {
-    Array::from_shape_vec(
-        IxDyn(&[3, 2]),
-        vec![0.5, -0.2, 0.8, 1.1, -0.4, 0.3],
-    )
-    .expect("3x2 shape")
+    Array::from_shape_vec(IxDyn(&[3, 2]), vec![0.5, -0.2, 0.8, 1.1, -0.4, 0.3]).expect("3x2 shape")
 }
 
 fn array_1x3() -> ArrayD<f64> {
@@ -312,11 +298,7 @@ fn verify_linear_regression_backward() {
     let x = Array::from_shape_vec(
         IxDyn(&[5, 3]),
         vec![
-            0.1, 0.2, 0.3,
-            0.4, -0.1, 0.5,
-            -0.2, 0.6, 0.1,
-            0.3, 0.2, -0.4,
-            0.5, -0.3, 0.2,
+            0.1, 0.2, 0.3, 0.4, -0.1, 0.5, -0.2, 0.6, 0.1, 0.3, 0.2, -0.4, 0.5, -0.3, 0.2,
         ],
     )
     .expect("x shape");
@@ -417,7 +399,11 @@ fn verify_add_with_broadcast() {
 
     let grad_a = grads[&a_h].clone();
     let grad_b = grads[&b_h].clone();
-    assert_eq!(grad_a.shape(), &[2, 3], "grad_a shape must contract to a's shape");
+    assert_eq!(
+        grad_a.shape(),
+        &[2, 3],
+        "grad_a shape must contract to a's shape"
+    );
     assert_eq!(grad_b.shape(), &[1, 3], "grad_b shape must stay [1, 3]");
 
     let mut analytical = HashMap::new();
@@ -654,11 +640,7 @@ fn verify_linear_regression_mse_backward() {
     let x = Array::from_shape_vec(
         IxDyn(&[5, 3]),
         vec![
-            0.1, 0.2, 0.3,
-            0.4, -0.1, 0.5,
-            -0.2, 0.6, 0.1,
-            0.3, 0.2, -0.4,
-            0.5, -0.3, 0.2,
+            0.1, 0.2, 0.3, 0.4, -0.1, 0.5, -0.2, 0.6, 0.1, 0.3, 0.2, -0.4, 0.5, -0.3, 0.2,
         ],
     )
     .expect("x shape");
@@ -681,7 +663,10 @@ fn verify_linear_regression_mse_backward() {
     let dummy = ValueMap::new();
     let grads_out = tool.backward(&mut ctx, &dummy).expect("backward");
     // y is a target, not a parameter — the tool should not return a y grad.
-    assert!(!grads_out.contains_key("y"), "y must not receive a gradient");
+    assert!(
+        !grads_out.contains_key("y"),
+        "y must not receive a gradient"
+    );
 
     let mut analytical = HashMap::new();
     analytical.insert(
@@ -759,7 +744,11 @@ fn verify_add_scalar_to_matrix() {
     assert_eq!(grad_a.shape(), &[2, 3]);
     assert_eq!(grad_b.shape(), &[1, 1]);
     // grad_b should sum the entire upstream grad (6 elements of 1.0)
-    assert!((grad_b[[0, 0]] - 6.0).abs() < 1e-12, "grad_b = {}", grad_b[[0, 0]]);
+    assert!(
+        (grad_b[[0, 0]] - 6.0).abs() < 1e-12,
+        "grad_b = {}",
+        grad_b[[0, 0]]
+    );
 
     let mut analytical = HashMap::new();
     analytical.insert("a".into(), grad_a);

@@ -54,12 +54,12 @@ impl VcgMechanism {
 
         // Find socially optimal outcome: argmax sum of valuations
         let social_values: Vec<f64> = (0..k)
-            .map(|outcome| {
-                self.players.iter().map(|p| p.valuations[outcome]).sum()
-            })
+            .map(|outcome| self.players.iter().map(|p| p.valuations[outcome]).sum())
             .collect();
 
-        let (outcome, &social_welfare) = social_values.iter().enumerate()
+        let (outcome, &social_welfare) = social_values
+            .iter()
+            .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap();
 
@@ -70,7 +70,9 @@ impl VcgMechanism {
             // Optimal outcome without player i
             let best_without_i: f64 = (0..k)
                 .map(|o| {
-                    self.players.iter().enumerate()
+                    self.players
+                        .iter()
+                        .enumerate()
                         .filter(|&(j, _)| j != i)
                         .map(|(_, p)| p.valuations[o])
                         .sum::<f64>()
@@ -78,7 +80,10 @@ impl VcgMechanism {
                 .fold(f64::NEG_INFINITY, f64::max);
 
             // Others' welfare at chosen outcome
-            let others_at_chosen: f64 = self.players.iter().enumerate()
+            let others_at_chosen: f64 = self
+                .players
+                .iter()
+                .enumerate()
                 .filter(|&(j, _)| j != i)
                 .map(|(_, p)| p.valuations[outcome])
                 .sum();
@@ -144,7 +149,10 @@ mod tests {
 
         let result = vcg.run();
         assert_eq!(result.outcome, 1, "Should allocate to highest bidder");
-        assert!((result.payments[0] - 7.0).abs() < 1e-8, "Winner pays second-highest bid");
+        assert!(
+            (result.payments[0] - 7.0).abs() < 1e-8,
+            "Winner pays second-highest bid"
+        );
         assert!(is_individually_rational(&result));
     }
 
@@ -155,8 +163,8 @@ mod tests {
         // Outcomes: 0 = don't build, 1 = build
         let mut vcg = VcgMechanism::new(2);
 
-        vcg.add_player(vec![0.0, 8.0]);  // Player 0
-        vcg.add_player(vec![0.0, 6.0]);  // Player 1
+        vcg.add_player(vec![0.0, 8.0]); // Player 0
+        vcg.add_player(vec![0.0, 6.0]); // Player 1
 
         let result = vcg.run();
         assert_eq!(result.outcome, 1, "Should build (total value 14 > 0)");

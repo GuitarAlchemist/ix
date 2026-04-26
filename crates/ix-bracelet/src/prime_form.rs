@@ -41,7 +41,10 @@ pub fn bracelet_prime_form(x: PcSet) -> PcSet {
     let mut best = x;
     for reflected in [false, true] {
         for rotation in 0u8..12 {
-            let g = DihedralElement { rotation, reflected };
+            let g = DihedralElement {
+                rotation,
+                reflected,
+            };
             let cand = g.apply(x);
             if lex_less(cand.raw(), best.raw()) {
                 best = cand;
@@ -74,7 +77,10 @@ mod tests {
         let mut v = Vec::with_capacity(24);
         for reflected in [false, true] {
             for rotation in 0u8..12 {
-                v.push(DihedralElement { rotation, reflected });
+                v.push(DihedralElement {
+                    rotation,
+                    reflected,
+                });
             }
         }
         v
@@ -163,7 +169,10 @@ mod tests {
         for x in sample_sets() {
             let b = bracelet_prime_form(x).raw();
             let n = necklace_prime_form(x).raw();
-            assert!(b == n || lex_less(b, n), "x={x:?} bracelet={b:012b} necklace={n:012b}");
+            assert!(
+                b == n || lex_less(b, n),
+                "x={x:?} bracelet={b:012b} necklace={n:012b}"
+            );
         }
     }
 

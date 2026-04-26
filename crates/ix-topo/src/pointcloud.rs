@@ -46,11 +46,7 @@ pub fn persistence_from_points(
 /// Compute Betti numbers at a single filtration radius.
 ///
 /// Returns β₀, β₁, ... up to max_dim.
-pub fn betti_at_radius(
-    points: &[Vec<f64>],
-    max_dim: usize,
-    radius: f64,
-) -> Vec<usize> {
+pub fn betti_at_radius(points: &[Vec<f64>], max_dim: usize, radius: f64) -> Vec<usize> {
     let stream = rips_complex(points, max_dim, radius);
     stream.betti_numbers(radius)
 }
@@ -59,11 +55,7 @@ pub fn betti_at_radius(
 ///
 /// Returns a vector of (radius, betti_numbers) pairs.
 /// The max_radius is determined from the maximum pairwise distance.
-pub fn betti_curve(
-    points: &[Vec<f64>],
-    max_dim: usize,
-    n_steps: usize,
-) -> Vec<(f64, Vec<usize>)> {
+pub fn betti_curve(points: &[Vec<f64>], max_dim: usize, n_steps: usize) -> Vec<(f64, Vec<usize>)> {
     if points.is_empty() || n_steps == 0 {
         return vec![];
     }
@@ -106,11 +98,10 @@ pub fn most_persistent_features(
     let mut features: Vec<(usize, f64, f64, f64)> = diagrams
         .iter()
         .flat_map(|d| {
-            d.pairs.iter().filter(|(_, death)| death.is_finite()).map(
-                move |(birth, death)| {
-                    (d.dimension, *birth, *death, death - birth)
-                },
-            )
+            d.pairs
+                .iter()
+                .filter(|(_, death)| death.is_finite())
+                .map(move |(birth, death)| (d.dimension, *birth, *death, death - birth))
         })
         .collect();
 
@@ -126,11 +117,7 @@ mod tests {
     use super::*;
 
     fn triangle_points() -> Vec<Vec<f64>> {
-        vec![
-            vec![0.0, 0.0],
-            vec![1.0, 0.0],
-            vec![0.5, 0.866],
-        ]
+        vec![vec![0.0, 0.0], vec![1.0, 0.0], vec![0.5, 0.866]]
     }
 
     fn two_clusters() -> Vec<Vec<f64>> {

@@ -72,8 +72,7 @@ fn default_catalog() -> Vec<CatalogEntry> {
         CatalogEntry {
             pattern: "cargo_suite::".to_string(),
             command: "cargo test --workspace --no-fail-fast".to_string(),
-            description: "Re-run tests to confirm failure (not a fix, a verification)"
-                .to_string(),
+            description: "Re-run tests to confirm failure (not a fix, a verification)".to_string(),
             confidence: 'P',
         },
         // Rendering audit — runs the autonomous rendering invariant

@@ -6,5 +6,5 @@
 
 pub mod bloom;
 pub mod count_min;
-pub mod hyperloglog;
 pub mod cuckoo;
+pub mod hyperloglog;

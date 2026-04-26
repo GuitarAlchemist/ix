@@ -3,13 +3,13 @@
 //! Use case for agents: track active sessions, skill availability,
 //! or active tool registrations with the ability to remove entries.
 
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// A Cuckoo Filter supporting insert, lookup, and delete.
 #[derive(Debug, Clone)]
 pub struct CuckooFilter {
-    buckets: Vec<Vec<u16>>,        // Each bucket holds up to BUCKET_SIZE fingerprints
+    buckets: Vec<Vec<u16>>, // Each bucket holds up to BUCKET_SIZE fingerprints
     num_buckets: usize,
     max_kicks: usize,
     count: usize,

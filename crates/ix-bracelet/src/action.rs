@@ -58,7 +58,10 @@ mod tests {
         let mut v = Vec::with_capacity(24);
         for reflected in [false, true] {
             for rotation in 0u8..12 {
-                v.push(DihedralElement { rotation, reflected });
+                v.push(DihedralElement {
+                    rotation,
+                    reflected,
+                });
             }
         }
         v
@@ -68,13 +71,13 @@ mod tests {
         vec![
             PcSet::empty(),
             PcSet::chromatic(),
-            PcSet::from_pcs([0, 4, 7]),         // C major triad
-            PcSet::from_pcs([0, 3, 7]),         // C minor triad
+            PcSet::from_pcs([0, 4, 7]),              // C major triad
+            PcSet::from_pcs([0, 3, 7]),              // C minor triad
             PcSet::from_pcs([0, 2, 4, 5, 7, 9, 11]), // C major scale
             PcSet::from_pcs([0, 1, 4, 6]),
             PcSet::from_pcs([0, 2, 4, 6, 8, 10]), // whole tone
             PcSet::from_pcs([0]),
-            PcSet::from_pcs([0, 6]),            // tritone
+            PcSet::from_pcs([0, 6]), // tritone
         ]
     }
 

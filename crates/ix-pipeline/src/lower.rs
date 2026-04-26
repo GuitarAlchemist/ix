@@ -83,9 +83,8 @@ pub fn lower(spec: &PipelineSpec) -> Result<Dag<PipelineNode>, LowerError> {
 
         let compute = Box::new(
             move |inputs: &HashMap<String, Value>| -> Result<Value, PipelineError> {
-                let resolved = resolve_from_refs(&args_template, inputs).map_err(|e| {
-                    PipelineError::ComputeError(format!("{stage_id_for_err}: {e}"))
-                })?;
+                let resolved = resolve_from_refs(&args_template, inputs)
+                    .map_err(|e| PipelineError::ComputeError(format!("{stage_id_for_err}: {e}")))?;
 
                 let desc = ix_registry::by_name(&skill_name).ok_or_else(|| {
                     PipelineError::ComputeError(format!(
@@ -93,9 +92,8 @@ pub fn lower(spec: &PipelineSpec) -> Result<Dag<PipelineNode>, LowerError> {
                     ))
                 })?;
                 let args = [ix_types::Value::Json(resolved)];
-                let out = (desc.fn_ptr)(&args).map_err(|e| {
-                    PipelineError::ComputeError(format!("{stage_id_for_err}: {e}"))
-                })?;
+                let out = (desc.fn_ptr)(&args)
+                    .map_err(|e| PipelineError::ComputeError(format!("{stage_id_for_err}: {e}")))?;
                 match out {
                     ix_types::Value::Json(j) => Ok(j),
                     other => serde_json::to_value(other).map_err(|e| {
@@ -157,10 +155,7 @@ fn collect_from_refs(value: &Value, out: &mut BTreeSet<String>) {
 
 /// Clone `template` replacing every `{"from": "..."}` reference with the
 /// matching upstream output. Unknown references bubble up as `Err`.
-fn resolve_from_refs(
-    template: &Value,
-    inputs: &HashMap<String, Value>,
-) -> Result<Value, String> {
+fn resolve_from_refs(template: &Value, inputs: &HashMap<String, Value>) -> Result<Value, String> {
     match template {
         Value::Object(map) => {
             if let Some(Value::String(target)) = map.get("from") {

@@ -111,7 +111,8 @@ pub(crate) fn backward_rfft_magnitude(
     let n = saved
         .get("n")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| AutogradError::MissingSaved("rfft_magnitude.n".into()))? as usize;
+        .ok_or_else(|| AutogradError::MissingSaved("rfft_magnitude.n".into()))?
+        as usize;
     let real: Vec<f64> = saved
         .get("real")
         .and_then(|v| v.as_array())

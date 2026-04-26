@@ -153,11 +153,7 @@ pub fn distance(
             let mut sb: Vec<f64> = b.iter().copied().collect();
             sa.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
             sb.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-            let acc: f64 = sa
-                .iter()
-                .zip(sb.iter())
-                .map(|(x, y)| (x - y).abs())
-                .sum();
+            let acc: f64 = sa.iter().zip(sb.iter()).map(|(x, y)| (x - y).abs()).sum();
             Ok(acc / a.len() as f64)
         }
 
@@ -243,12 +239,7 @@ mod tests {
     fn test_hyperbolic_inside_ball() {
         let a = array![0.1, 0.0];
         let b = array![0.2, 0.0];
-        let d = distance(
-            &GeometricSpace::Hyperbolic { curvature: 1.0 },
-            &a,
-            &b,
-        )
-        .unwrap();
+        let d = distance(&GeometricSpace::Hyperbolic { curvature: 1.0 }, &a, &b).unwrap();
         assert!(d > 0.0);
         // Hyperbolic distance is larger than Euclidean for points away from origin
         let euclid = distance(&GeometricSpace::Euclidean, &a, &b).unwrap();
@@ -258,12 +249,7 @@ mod tests {
     #[test]
     fn test_spherical_same_point() {
         let a = array![1.0, 0.0, 0.0];
-        let d = distance(
-            &GeometricSpace::Spherical { radius: 1.0 },
-            &a,
-            &a,
-        )
-        .unwrap();
+        let d = distance(&GeometricSpace::Spherical { radius: 1.0 }, &a, &a).unwrap();
         assert!(close(d, 0.0));
     }
 
@@ -271,12 +257,7 @@ mod tests {
     fn test_spherical_orthogonal() {
         let a = array![1.0, 0.0, 0.0];
         let b = array![0.0, 1.0, 0.0];
-        let d = distance(
-            &GeometricSpace::Spherical { radius: 1.0 },
-            &a,
-            &b,
-        )
-        .unwrap();
+        let d = distance(&GeometricSpace::Spherical { radius: 1.0 }, &a, &b).unwrap();
         // 90 degrees = pi/2
         assert!(close(d, std::f64::consts::FRAC_PI_2));
     }
@@ -299,12 +280,7 @@ mod tests {
         let a = array![0.0, 0.0];
         let b = array![3.0, 4.0];
         let inv_cov = Array2::eye(2);
-        let d = distance(
-            &GeometricSpace::Mahalanobis { inv_cov },
-            &a,
-            &b,
-        )
-        .unwrap();
+        let d = distance(&GeometricSpace::Mahalanobis { inv_cov }, &a, &b).unwrap();
         assert!(close(d, 5.0));
     }
 

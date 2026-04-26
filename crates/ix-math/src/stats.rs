@@ -25,7 +25,9 @@ pub fn variance(x: &Array1<f64>) -> Result<f64, MathError> {
 pub fn sample_variance(x: &Array1<f64>) -> Result<f64, MathError> {
     let n = x.len();
     if n < 2 {
-        return Err(MathError::InvalidParameter("need at least 2 samples".into()));
+        return Err(MathError::InvalidParameter(
+            "need at least 2 samples".into(),
+        ));
     }
     let m = x.mean().unwrap();
     let sum_sq: f64 = x.mapv(|v| (v - m).powi(2)).sum();
@@ -42,7 +44,9 @@ pub fn std_dev(x: &Array1<f64>) -> Result<f64, MathError> {
 pub fn covariance_matrix(x: &Array2<f64>) -> Result<Array2<f64>, MathError> {
     let n = x.nrows();
     if n < 2 {
-        return Err(MathError::InvalidParameter("need at least 2 observations".into()));
+        return Err(MathError::InvalidParameter(
+            "need at least 2 observations".into(),
+        ));
     }
     let means = x.mean_axis(Axis(0)).unwrap();
     let centered = x - &means;

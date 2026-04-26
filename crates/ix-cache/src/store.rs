@@ -92,7 +92,11 @@ pub struct CacheStats {
 impl CacheStats {
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
-        if total == 0 { 0.0 } else { self.hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
     }
 }
 
@@ -268,7 +272,11 @@ impl Cache {
         shard.entries.get(key).and_then(|e| {
             e.expires_at.map(|exp| {
                 let now = Instant::now();
-                if exp > now { exp - now } else { Duration::ZERO }
+                if exp > now {
+                    exp - now
+                } else {
+                    Duration::ZERO
+                }
             })
         })
     }
@@ -368,7 +376,9 @@ impl Cache {
         let mut expired_count = 0u64;
         for shard_lock in &self.shards {
             let mut shard = shard_lock.write();
-            let expired_keys: Vec<String> = shard.entries.iter()
+            let expired_keys: Vec<String> = shard
+                .entries
+                .iter()
                 .filter(|(_, v)| v.is_expired())
                 .map(|(k, _)| k.clone())
                 .collect();
@@ -389,7 +399,8 @@ impl Cache {
 
     /// Approximate total bytes.
     fn total_bytes_approx(&self) -> usize {
-        self.shards.iter()
+        self.shards
+            .iter()
             .map(|s| s.read().entries.values().map(|e| e.size).sum::<usize>())
             .sum()
     }
@@ -486,10 +497,16 @@ impl Cache {
     }
 
     /// LRANGE: get a range from a list.
-    pub fn lrange<V: for<'de> Deserialize<'de>>(&self, key: &str, start: usize, stop: usize) -> Vec<V> {
+    pub fn lrange<V: for<'de> Deserialize<'de>>(
+        &self,
+        key: &str,
+        start: usize,
+        stop: usize,
+    ) -> Vec<V> {
         let list: Vec<serde_json::Value> = self.get(key).unwrap_or_default();
         let end = stop.min(list.len());
-        list[start..end].iter()
+        list[start..end]
+            .iter()
             .filter_map(|v| serde_json::from_value(v.clone()).ok())
             .collect()
     }
@@ -587,12 +604,12 @@ mod tests {
         let cache = Cache::default_cache();
 
         cache.set("count", &42i64);
-        cache.set("pi", &3.14159f64);
+        cache.set("quarter", &0.25f64);
         cache.set("items", &vec![1, 2, 3]);
         cache.set("flag", &true);
 
         assert_eq!(cache.get::<i64>("count"), Some(42));
-        assert_eq!(cache.get::<f64>("pi"), Some(3.14159));
+        assert_eq!(cache.get::<f64>("quarter"), Some(0.25));
         assert_eq!(cache.get::<Vec<i32>>("items"), Some(vec![1, 2, 3]));
         assert_eq!(cache.get::<bool>("flag"), Some(true));
     }
@@ -646,7 +663,7 @@ mod tests {
         assert!(cache.contains("a")); // Recently accessed
         assert!(cache.contains("c"));
         assert!(cache.contains("d")); // Just added
-        // "b" may or may not be evicted depending on shard distribution
+                                      // "b" may or may not be evicted depending on shard distribution
     }
 
     #[test]
@@ -669,7 +686,10 @@ mod tests {
         cache.hset("user", "name", &"Alice".to_string());
         cache.hset("user", "age", &30i64);
 
-        assert_eq!(cache.hget::<String>("user", "name"), Some("Alice".to_string()));
+        assert_eq!(
+            cache.hget::<String>("user", "name"),
+            Some("Alice".to_string())
+        );
         assert_eq!(cache.hget::<i64>("user", "age"), Some(30));
 
         let all: HashMap<String, serde_json::Value> = cache.hgetall("user");

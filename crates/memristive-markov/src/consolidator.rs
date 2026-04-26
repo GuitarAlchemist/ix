@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::conductance::ConductanceMatrix;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConsolidator {
@@ -10,7 +10,11 @@ pub struct MemoryConsolidator {
 
 impl MemoryConsolidator {
     pub fn new(gamma: f64, min_session_observations: usize) -> Self {
-        Self { gamma, min_session_observations, decay_on_consolidate: true }
+        Self {
+            gamma,
+            min_session_observations,
+            decay_on_consolidate: true,
+        }
     }
 
     /// Transfer session conductance into long-term.
@@ -36,7 +40,9 @@ impl MemoryConsolidator {
         true
     }
 
-    pub fn gamma(&self) -> f64 { self.gamma }
+    pub fn gamma(&self) -> f64 {
+        self.gamma
+    }
 }
 
 #[cfg(test)]
@@ -46,7 +52,9 @@ mod tests {
     #[test]
     fn test_consolidation_blends() {
         let mut session = ConductanceMatrix::new(0.5, 0.01, 0.01);
-        for _ in 0..10 { session.strengthen(&[0], 1); }
+        for _ in 0..10 {
+            session.strengthen(&[0], 1);
+        }
         let session_g = session.get(&[0], 1);
         let mut long_term = ConductanceMatrix::new(0.01, 0.001, 0.01);
         let consolidator = MemoryConsolidator::new(0.1, 5);

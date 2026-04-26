@@ -330,18 +330,9 @@ mod tests {
         // Rows (GF(2)): a=[1,1,0], b=[0,1,1], c=a⊕b=[1,0,1]. Rank = 2, not 3.
         let invs = vec![inv(1), inv(2), inv(3)];
         let mut fired = BTreeMap::new();
-        fired.insert(
-            1,
-            ["x", "y"].into_iter().map(String::from).collect(),
-        );
-        fired.insert(
-            2,
-            ["y", "z"].into_iter().map(String::from).collect(),
-        );
-        fired.insert(
-            3,
-            ["x", "z"].into_iter().map(String::from).collect(),
-        );
+        fired.insert(1, ["x", "y"].into_iter().map(String::from).collect());
+        fired.insert(2, ["y", "z"].into_iter().map(String::from).collect());
+        fired.insert(3, ["x", "z"].into_iter().map(String::from).collect());
         let firings = Firings {
             exemplars: vec![ex("x"), ex("y"), ex("z")],
             fired,

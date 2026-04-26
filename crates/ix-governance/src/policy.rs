@@ -96,8 +96,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn policies_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../governance/demerzel/policies")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../governance/demerzel/policies")
     }
 
     #[test]
@@ -150,7 +149,11 @@ mod tests {
 
     #[test]
     fn load_generic_policies() {
-        let names = ["alignment-policy.yaml", "rollback-policy.yaml", "self-modification-policy.yaml"];
+        let names = [
+            "alignment-policy.yaml",
+            "rollback-policy.yaml",
+            "self-modification-policy.yaml",
+        ];
         for name in &names {
             let p = Policy::load(&policies_dir().join(name));
             assert!(p.is_ok(), "failed to load policy: {}", name);
@@ -162,7 +165,13 @@ mod tests {
         let p = Policy::load(&policies_dir().join("rollback-policy.yaml")).unwrap();
         assert_eq!(p.name, "rollback-policy");
         // The extra fields should contain "triggers", "procedure", etc.
-        assert!(p.extra.get("triggers").is_some(), "should have triggers field");
-        assert!(p.extra.get("procedure").is_some(), "should have procedure field");
+        assert!(
+            p.extra.get("triggers").is_some(),
+            "should have triggers field"
+        );
+        assert!(
+            p.extra.get("procedure").is_some(),
+            "should have procedure field"
+        );
     }
 }

@@ -40,9 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // generator (no external rand dep needed for this demo).
     let x_flat: Vec<f64> = (0..N_SAMPLES * N_FEATURES)
         .map(|i| {
-            let seed = (i as u64)
-                .wrapping_mul(1103515245)
-                .wrapping_add(12345);
+            let seed = (i as u64).wrapping_mul(1103515245).wrapping_add(12345);
             (((seed >> 16) & 0x7fff) as f64 / 32767.0) * 2.0 - 1.0
         })
         .collect();
@@ -105,16 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let grads = tool.backward(&mut ctx, &dummy)?;
         n_grad_evals += 1;
 
-        let grad_w = grads
-            .get("w")
-            .expect("w grad")
-            .as_f64()
-            .clone();
-        let grad_b = grads
-            .get("b")
-            .expect("b grad")
-            .as_f64()
-            .clone();
+        let grad_w = grads.get("w").expect("w grad").as_f64().clone();
+        let grad_b = grads.get("b").expect("b grad").as_f64().clone();
 
         // ------ Adam update on w ------
         let step_f = step as f64;
@@ -162,8 +152,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -----------------------------------------------------------------
     println!("{}", "=".repeat(60));
     println!("Final loss:   {final_loss:.8}");
-    println!("Final w:      [{:>8.5}, {:>8.5}, {:>8.5}]", w[[0, 0]], w[[1, 0]], w[[2, 0]]);
-    println!("True w:       [{:>8.5}, {:>8.5}, {:>8.5}]", true_w[0], true_w[1], true_w[2]);
+    println!(
+        "Final w:      [{:>8.5}, {:>8.5}, {:>8.5}]",
+        w[[0, 0]],
+        w[[1, 0]],
+        w[[2, 0]]
+    );
+    println!(
+        "True w:       [{:>8.5}, {:>8.5}, {:>8.5}]",
+        true_w[0], true_w[1], true_w[2]
+    );
     println!("Final b:      {:>8.5}", b[[0, 0]]);
     println!("True b:       {:>8.5}", true_b);
     println!("Grad evals:   {n_grad_evals}");
@@ -175,7 +173,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Comparison vs evolutionary search:");
             println!("  ix-evolution GA on a similar 4-parameter optimum typically");
             println!("  needs ~5000-10000 fitness evaluations to reach the same loss.");
-            println!("  Gradient-based Adam reached it in {step} — that's a {:.0}x speedup.", 7500.0 / step as f64);
+            println!(
+                "  Gradient-based Adam reached it in {step} — that's a {:.0}x speedup.",
+                7500.0 / step as f64
+            );
             println!();
             println!("R7 Day 3 go/no-go: PASS (speedup >= 20x target).");
             Ok(())

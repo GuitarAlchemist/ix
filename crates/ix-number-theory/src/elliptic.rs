@@ -81,10 +81,10 @@ impl EllipticCurve {
                     self.compute_new_point(lambda, x1, y1, x2)
                 } else {
                     // Different points: λ = (y2 - y1) / (x2 - x1)
-                    let numerator = ((y2 as i128 - y1 as i128) % p as i128 + p as i128) as u128
-                        % p as u128;
-                    let denominator = ((x2 as i128 - x1 as i128) % p as i128 + p as i128) as u128
-                        % p as u128;
+                    let numerator =
+                        ((y2 as i128 - y1 as i128) % p as i128 + p as i128) as u128 % p as u128;
+                    let denominator =
+                        ((x2 as i128 - x1 as i128) % p as i128 + p as i128) as u128 % p as u128;
                     let inv = match mod_inverse(denominator as u64, p) {
                         Some(v) => v,
                         None => return Point::Identity,

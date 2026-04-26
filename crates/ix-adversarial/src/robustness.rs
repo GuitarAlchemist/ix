@@ -166,7 +166,11 @@ fn probit(p: f64) -> f64 {
     let d3 = 0.001_308;
 
     let val = t - (c0 + c1 * t + c2 * t * t) / (1.0 + d1 * t + d2 * t * t + d3 * t * t * t);
-    if p < 0.5 { -val } else { val }
+    if p < 0.5 {
+        -val
+    } else {
+        val
+    }
 }
 
 #[cfg(test)]

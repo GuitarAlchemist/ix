@@ -220,10 +220,7 @@ mod tests {
         let sig_orig = SessionSignature::fold(&original);
         let sig_swap = SessionSignature::fold(&swapped);
 
-        assert_ne!(
-            sig_orig, sig_swap,
-            "permutation must change the signature"
-        );
+        assert_ne!(sig_orig, sig_swap, "permutation must change the signature");
         // Distance should be meaningful (above floating-point noise).
         let d = sig_orig.distance(&sig_swap);
         assert!(d > 1e-6, "permutation distance too small: {d}");
@@ -273,12 +270,7 @@ mod tests {
         let seeds: Vec<u64> = (0..100).collect();
         let atoms = atoms_from_seeds(&seeds);
         let sig = SessionSignature::fold(&atoms);
-        let magnitude: f64 = sig
-            .components
-            .iter()
-            .map(|c| c * c)
-            .sum::<f64>()
-            .sqrt();
+        let magnitude: f64 = sig.components.iter().map(|c| c * c).sum::<f64>().sqrt();
         // Non-trivially non-zero — sedenion products of unit-ish
         // atoms don't usually cancel to zero.
         assert!(

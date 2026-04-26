@@ -67,7 +67,10 @@ fn autograd_run_linear_regression_forward_and_backward() {
     assert!(forward.contains_key("loss"));
 
     // Loss is a scalar (rank-0 tensor serialized as f64)
-    let loss = forward.get("loss").and_then(extract_scalar).expect("loss scalar");
+    let loss = forward
+        .get("loss")
+        .and_then(extract_scalar)
+        .expect("loss scalar");
     assert!(loss.is_finite());
     assert!(loss >= 0.0, "MSE loss should be non-negative");
 

@@ -27,8 +27,15 @@ fn pipeline_schema() -> Value {
     })
 }
 /// DAG pipeline analysis: toposort, parallel levels, critical path.
-#[ix_skill(domain = "pipeline", name = "pipeline", governance = "deterministic", schema_fn = "crate::skills::batch3::pipeline_schema")]
-pub fn pipeline(p: Value) -> Result<Value, String> { handlers::pipeline_exec(p) }
+#[ix_skill(
+    domain = "pipeline",
+    name = "pipeline",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch3::pipeline_schema"
+)]
+pub fn pipeline(p: Value) -> Result<Value, String> {
+    handlers::pipeline_exec(p)
+}
 
 // ---- cache ---------------------------------------------------------------
 fn cache_schema() -> Value {
@@ -43,8 +50,15 @@ fn cache_schema() -> Value {
     })
 }
 /// In-memory cache: set/get/delete/list operations.
-#[ix_skill(domain = "cache", name = "cache", governance = "deterministic", schema_fn = "crate::skills::batch3::cache_schema")]
-pub fn cache(p: Value) -> Result<Value, String> { handlers::cache_op(p) }
+#[ix_skill(
+    domain = "cache",
+    name = "cache",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch3::cache_schema"
+)]
+pub fn cache(p: Value) -> Result<Value, String> {
+    handlers::cache_op(p)
+}
 
 // ---- federation.discover -------------------------------------------------
 fn federation_discover_schema() -> Value {
@@ -57,8 +71,15 @@ fn federation_discover_schema() -> Value {
     })
 }
 /// Discover capabilities across ix / tars / ga ecosystems.
-#[ix_skill(domain = "federation", name = "federation.discover", governance = "safety", schema_fn = "crate::skills::batch3::federation_discover_schema")]
-pub fn federation_discover(p: Value) -> Result<Value, String> { handlers::federation_discover(p) }
+#[ix_skill(
+    domain = "federation",
+    name = "federation.discover",
+    governance = "safety",
+    schema_fn = "crate::skills::batch3::federation_discover_schema"
+)]
+pub fn federation_discover(p: Value) -> Result<Value, String> {
+    handlers::federation_discover(p)
+}
 
 // ---- trace.ingest --------------------------------------------------------
 fn trace_ingest_schema() -> Value {
@@ -70,8 +91,15 @@ fn trace_ingest_schema() -> Value {
     })
 }
 /// Ingest GA trace files and compute summary statistics.
-#[ix_skill(domain = "trace", name = "trace.ingest", governance = "empirical", schema_fn = "crate::skills::batch3::trace_ingest_schema")]
-pub fn trace_ingest(p: Value) -> Result<Value, String> { handlers::trace_ingest(p) }
+#[ix_skill(
+    domain = "trace",
+    name = "trace.ingest",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch3::trace_ingest_schema"
+)]
+pub fn trace_ingest(p: Value) -> Result<Value, String> {
+    handlers::trace_ingest(p)
+}
 
 // ---- fuzzy.eval (primitive #5) -----------------------------------------
 fn fuzzy_eval_schema() -> Value {
@@ -101,8 +129,15 @@ fn fuzzy_eval_schema() -> Value {
     })
 }
 /// Evaluate hexavalent fuzzy distribution ops: info / not / and / or.
-#[ix_skill(domain = "fuzzy", name = "fuzzy.eval", governance = "deterministic", schema_fn = "crate::skills::batch3::fuzzy_eval_schema")]
-pub fn fuzzy_eval(p: Value) -> Result<Value, String> { handlers::fuzzy_eval(p) }
+#[ix_skill(
+    domain = "fuzzy",
+    name = "fuzzy.eval",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch3::fuzzy_eval_schema"
+)]
+pub fn fuzzy_eval(p: Value) -> Result<Value, String> {
+    handlers::fuzzy_eval(p)
+}
 
 // ---- session.flywheel_export (primitive #6) -----------------------------
 fn session_flywheel_export_schema() -> Value {
@@ -117,8 +152,15 @@ fn session_flywheel_export_schema() -> Value {
     })
 }
 /// Convert a persisted SessionLog to a GA trace file consumable by ix_trace_ingest.
-#[ix_skill(domain = "session", name = "session.flywheel_export", governance = "deterministic", schema_fn = "crate::skills::batch3::session_flywheel_export_schema")]
-pub fn session_flywheel_export(p: Value) -> Result<Value, String> { handlers::session_flywheel_export(p) }
+#[ix_skill(
+    domain = "session",
+    name = "session.flywheel_export",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch3::session_flywheel_export_schema"
+)]
+pub fn session_flywheel_export(p: Value) -> Result<Value, String> {
+    handlers::session_flywheel_export(p)
+}
 
 // ---- ml_pipeline ---------------------------------------------------------
 fn ml_pipeline_schema() -> Value {
@@ -154,8 +196,15 @@ fn ml_pipeline_schema() -> Value {
     })
 }
 /// End-to-end ML pipeline: load → preprocess → train → evaluate → persist.
-#[ix_skill(domain = "ml_pipeline", name = "ml_pipeline", governance = "empirical", schema_fn = "crate::skills::batch3::ml_pipeline_schema")]
-pub fn ml_pipeline(p: Value) -> Result<Value, String> { handlers::ml_pipeline(p) }
+#[ix_skill(
+    domain = "ml_pipeline",
+    name = "ml_pipeline",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch3::ml_pipeline_schema"
+)]
+pub fn ml_pipeline(p: Value) -> Result<Value, String> {
+    handlers::ml_pipeline(p)
+}
 
 // ---- ml_predict ----------------------------------------------------------
 fn ml_predict_schema() -> Value {
@@ -169,8 +218,15 @@ fn ml_predict_schema() -> Value {
     })
 }
 /// Predict using a previously-persisted ML model (by persist_key).
-#[ix_skill(domain = "ml_pipeline", name = "ml_predict", governance = "empirical", schema_fn = "crate::skills::batch3::ml_predict_schema")]
-pub fn ml_predict(p: Value) -> Result<Value, String> { handlers::ml_predict(p) }
+#[ix_skill(
+    domain = "ml_pipeline",
+    name = "ml_predict",
+    governance = "empirical",
+    schema_fn = "crate::skills::batch3::ml_predict_schema"
+)]
+pub fn ml_predict(p: Value) -> Result<Value, String> {
+    handlers::ml_predict(p)
+}
 
 // ---- code_analyze --------------------------------------------------------
 fn code_analyze_schema() -> Value {
@@ -184,8 +240,15 @@ fn code_analyze_schema() -> Value {
     })
 }
 /// Code complexity analysis: cyclomatic, cognitive, Halstead, SLOC, MI.
-#[ix_skill(domain = "code", name = "code_analyze", governance = "deterministic", schema_fn = "crate::skills::batch3::code_analyze_schema")]
-pub fn code_analyze(p: Value) -> Result<Value, String> { handlers::code_analyze(p) }
+#[ix_skill(
+    domain = "code",
+    name = "code_analyze",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch3::code_analyze_schema"
+)]
+pub fn code_analyze(p: Value) -> Result<Value, String> {
+    handlers::code_analyze(p)
+}
 
 // ---- tars_bridge ---------------------------------------------------------
 fn tars_bridge_schema() -> Value {
@@ -200,8 +263,15 @@ fn tars_bridge_schema() -> Value {
     })
 }
 /// Prepare ix results for TARS ingestion (traces / patterns / grammar).
-#[ix_skill(domain = "federation", name = "tars_bridge", governance = "safety", schema_fn = "crate::skills::batch3::tars_bridge_schema")]
-pub fn tars_bridge(p: Value) -> Result<Value, String> { handlers::tars_bridge(p) }
+#[ix_skill(
+    domain = "federation",
+    name = "tars_bridge",
+    governance = "safety",
+    schema_fn = "crate::skills::batch3::tars_bridge_schema"
+)]
+pub fn tars_bridge(p: Value) -> Result<Value, String> {
+    handlers::tars_bridge(p)
+}
 
 // ---- ga_bridge -----------------------------------------------------------
 fn ga_bridge_schema() -> Value {
@@ -216,8 +286,15 @@ fn ga_bridge_schema() -> Value {
     })
 }
 /// Convert GA music theory data into ML-ready feature matrices.
-#[ix_skill(domain = "federation", name = "ga_bridge", governance = "safety", schema_fn = "crate::skills::batch3::ga_bridge_schema")]
-pub fn ga_bridge(p: Value) -> Result<Value, String> { handlers::ga_bridge(p) }
+#[ix_skill(
+    domain = "federation",
+    name = "ga_bridge",
+    governance = "safety",
+    schema_fn = "crate::skills::batch3::ga_bridge_schema"
+)]
+pub fn ga_bridge(p: Value) -> Result<Value, String> {
+    handlers::ga_bridge(p)
+}
 
 // ---- context.walk --------------------------------------------------------
 //
@@ -283,12 +360,15 @@ pub fn context_walk(p: Value) -> Result<Value, String> {
     // handing the rest to ix-context's handler.
     let workspace_root = match p.get("workspace_root").and_then(|v| v.as_str()) {
         Some(path) => std::path::PathBuf::from(path),
-        None => std::env::current_dir()
-            .map_err(|e| format!("failed to read current dir: {e}"))?,
+        None => std::env::current_dir().map_err(|e| format!("failed to read current dir: {e}"))?,
     };
 
-    let index = ix_context::index::ProjectIndex::build(&workspace_root)
-        .map_err(|e| format!("failed to build ProjectIndex at {}: {e}", workspace_root.display()))?;
+    let index = ix_context::index::ProjectIndex::build(&workspace_root).map_err(|e| {
+        format!(
+            "failed to build ProjectIndex at {}: {e}",
+            workspace_root.display()
+        )
+    })?;
 
     // Strip workspace_root from the params before forwarding — the ix-context
     // WalkRequest schema doesn't know about it.

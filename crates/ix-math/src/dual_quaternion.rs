@@ -351,8 +351,7 @@ mod tests {
     #[test]
     fn test_transform_point_rotation_only() {
         let rot = Quaternion::from_axis_angle(&[0.0, 0.0, 1.0], FRAC_PI_2).unwrap();
-        let dq =
-            DualQuaternion::from_rotation_translation(&rot, &[0.0, 0.0, 0.0]).unwrap();
+        let dq = DualQuaternion::from_rotation_translation(&rot, &[0.0, 0.0, 0.0]).unwrap();
         let p = dq.transform_point(&[1.0, 0.0, 0.0]).unwrap();
         assert!(vec3_approx_eq(&p, &[0.0, 1.0, 0.0]));
     }
@@ -361,8 +360,7 @@ mod tests {
     fn test_transform_point_combined() {
         // Rotate 90° around Z, then translate (0, 0, 5)
         let rot = Quaternion::from_axis_angle(&[0.0, 0.0, 1.0], FRAC_PI_2).unwrap();
-        let dq =
-            DualQuaternion::from_rotation_translation(&rot, &[0.0, 0.0, 5.0]).unwrap();
+        let dq = DualQuaternion::from_rotation_translation(&rot, &[0.0, 0.0, 5.0]).unwrap();
         let p = dq.transform_point(&[1.0, 0.0, 0.0]).unwrap();
         // (1,0,0) rotated 90° Z → (0,1,0), then + (0,0,5) → (0,1,5)
         assert!(vec3_approx_eq(&p, &[0.0, 1.0, 5.0]));
@@ -402,16 +400,12 @@ mod tests {
     #[test]
     fn test_mul_composition() {
         // dq1 then dq2: transform a point through both
-        let dq1 = DualQuaternion::from_rotation_translation(
-            &Quaternion::identity(),
-            &[1.0, 0.0, 0.0],
-        )
-        .unwrap();
-        let dq2 = DualQuaternion::from_rotation_translation(
-            &Quaternion::identity(),
-            &[0.0, 2.0, 0.0],
-        )
-        .unwrap();
+        let dq1 =
+            DualQuaternion::from_rotation_translation(&Quaternion::identity(), &[1.0, 0.0, 0.0])
+                .unwrap();
+        let dq2 =
+            DualQuaternion::from_rotation_translation(&Quaternion::identity(), &[0.0, 2.0, 0.0])
+                .unwrap();
         let composed = dq2 * dq1;
         let p = composed.transform_point(&[0.0, 0.0, 0.0]).unwrap();
         assert!(vec3_approx_eq(&p, &[1.0, 2.0, 0.0]));
@@ -419,14 +413,11 @@ mod tests {
 
     #[test]
     fn test_sclerp_endpoints() {
-        let dq1 = DualQuaternion::from_rotation_translation(
-            &Quaternion::identity(),
-            &[0.0, 0.0, 0.0],
-        )
-        .unwrap();
+        let dq1 =
+            DualQuaternion::from_rotation_translation(&Quaternion::identity(), &[0.0, 0.0, 0.0])
+                .unwrap();
         let rot2 = Quaternion::from_axis_angle(&[0.0, 0.0, 1.0], FRAC_PI_2).unwrap();
-        let dq2 =
-            DualQuaternion::from_rotation_translation(&rot2, &[1.0, 2.0, 3.0]).unwrap();
+        let dq2 = DualQuaternion::from_rotation_translation(&rot2, &[1.0, 2.0, 3.0]).unwrap();
 
         let s0 = sclerp(&dq1, &dq2, 0.0).unwrap();
         let s1 = sclerp(&dq1, &dq2, 1.0).unwrap();
@@ -439,16 +430,12 @@ mod tests {
 
     #[test]
     fn test_sclerp_pure_translation() {
-        let dq1 = DualQuaternion::from_rotation_translation(
-            &Quaternion::identity(),
-            &[0.0, 0.0, 0.0],
-        )
-        .unwrap();
-        let dq2 = DualQuaternion::from_rotation_translation(
-            &Quaternion::identity(),
-            &[10.0, 0.0, 0.0],
-        )
-        .unwrap();
+        let dq1 =
+            DualQuaternion::from_rotation_translation(&Quaternion::identity(), &[0.0, 0.0, 0.0])
+                .unwrap();
+        let dq2 =
+            DualQuaternion::from_rotation_translation(&Quaternion::identity(), &[10.0, 0.0, 0.0])
+                .unwrap();
 
         let mid = sclerp(&dq1, &dq2, 0.5).unwrap();
         let (r, t) = mid.to_rotation_translation();
@@ -460,11 +447,9 @@ mod tests {
 
     #[test]
     fn test_neg() {
-        let dq = DualQuaternion::from_rotation_translation(
-            &Quaternion::identity(),
-            &[1.0, 2.0, 3.0],
-        )
-        .unwrap();
+        let dq =
+            DualQuaternion::from_rotation_translation(&Quaternion::identity(), &[1.0, 2.0, 3.0])
+                .unwrap();
         let neg = -dq;
         assert_eq!(neg.real, -dq.real);
         assert_eq!(neg.dual, -dq.dual);

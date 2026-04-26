@@ -24,7 +24,10 @@ fn accepts_a_valid_single_step_spec() {
     });
     let (errors, warnings) = reg.validate_pipeline_spec(&spec);
     assert!(errors.is_empty(), "expected no errors, got {errors:?}");
-    assert!(warnings.is_empty(), "expected no warnings, got {warnings:?}");
+    assert!(
+        warnings.is_empty(),
+        "expected no warnings, got {warnings:?}"
+    );
 }
 
 #[test]

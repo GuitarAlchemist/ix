@@ -93,19 +93,36 @@ pub enum FlatNode {
     /// (left subtree immediately after, right subtree after the left subtree).
     Split { feature: usize, threshold: f64 },
     /// Leaf node with predicted class and class distribution.
-    Leaf { class: usize, class_counts: Vec<f64> },
+    Leaf {
+        class: usize,
+        class_counts: Vec<f64>,
+    },
 }
 
 /// Flatten a `Node` tree into a pre-order `Vec<FlatNode>`.
 fn flatten_node(node: &Node, out: &mut Vec<FlatNode>) {
     match node {
-        Node::Split { feature, threshold, left, right } => {
-            out.push(FlatNode::Split { feature: *feature, threshold: *threshold });
+        Node::Split {
+            feature,
+            threshold,
+            left,
+            right,
+        } => {
+            out.push(FlatNode::Split {
+                feature: *feature,
+                threshold: *threshold,
+            });
             flatten_node(left, out);
             flatten_node(right, out);
         }
-        Node::Leaf { class, class_counts } => {
-            out.push(FlatNode::Leaf { class: *class, class_counts: class_counts.clone() });
+        Node::Leaf {
+            class,
+            class_counts,
+        } => {
+            out.push(FlatNode::Leaf {
+                class: *class,
+                class_counts: class_counts.clone(),
+            });
         }
     }
 }
@@ -117,18 +134,28 @@ fn unflatten_node(nodes: &[FlatNode], idx: usize) -> Option<(Node, usize)> {
         return None;
     }
     match &nodes[idx] {
-        FlatNode::Leaf { class, class_counts } => {
-            Some((Node::Leaf { class: *class, class_counts: class_counts.clone() }, idx + 1))
-        }
+        FlatNode::Leaf {
+            class,
+            class_counts,
+        } => Some((
+            Node::Leaf {
+                class: *class,
+                class_counts: class_counts.clone(),
+            },
+            idx + 1,
+        )),
         FlatNode::Split { feature, threshold } => {
             let (left, next) = unflatten_node(nodes, idx + 1)?;
             let (right, next) = unflatten_node(nodes, next)?;
-            Some((Node::Split {
-                feature: *feature,
-                threshold: *threshold,
-                left: Box::new(left),
-                right: Box::new(right),
-            }, next))
+            Some((
+                Node::Split {
+                    feature: *feature,
+                    threshold: *threshold,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                next,
+            ))
         }
     }
 }
@@ -262,8 +289,24 @@ fn build_tree(
             };
         }
 
-        let left = build_tree(x, y, &left_global, n_classes, depth + 1, max_depth, min_samples_split);
-        let right = build_tree(x, y, &right_global, n_classes, depth + 1, max_depth, min_samples_split);
+        let left = build_tree(
+            x,
+            y,
+            &left_global,
+            n_classes,
+            depth + 1,
+            max_depth,
+            min_samples_split,
+        );
+        let right = build_tree(
+            x,
+            y,
+            &right_global,
+            n_classes,
+            depth + 1,
+            max_depth,
+            min_samples_split,
+        );
 
         Node::Split {
             feature,
@@ -282,8 +325,16 @@ fn build_tree(
 /// Predict a single sample through the tree.
 fn predict_one<'a>(node: &'a Node, sample: &ndarray::ArrayView1<f64>) -> (usize, &'a [f64]) {
     match node {
-        Node::Leaf { class, class_counts } => (*class, class_counts),
-        Node::Split { feature, threshold, left, right } => {
+        Node::Leaf {
+            class,
+            class_counts,
+        } => (*class, class_counts),
+        Node::Split {
+            feature,
+            threshold,
+            left,
+            right,
+        } => {
             if sample[*feature] <= *threshold {
                 predict_one(left, sample)
             } else {
@@ -349,8 +400,14 @@ mod tests {
     fn test_decision_tree_simple() {
         // Simple dataset: class 0 in bottom-left, class 1 in top-right
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0], [0.2, 0.3],
-            [3.0, 3.0], [3.5, 3.5], [4.0, 3.0], [3.2, 3.3]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [1.0, 0.0],
+            [0.2, 0.3],
+            [3.0, 3.0],
+            [3.5, 3.5],
+            [4.0, 3.0],
+            [3.2, 3.3]
         ];
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
@@ -359,15 +416,22 @@ mod tests {
 
         let pred = tree.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 1.0, "Should perfectly classify linearly separable data, got acc={}", acc);
+        assert!(
+            acc >= 1.0,
+            "Should perfectly classify linearly separable data, got acc={}",
+            acc
+        );
     }
 
     #[test]
     fn test_decision_tree_three_classes() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.0],
-            [5.0, 0.0], [5.5, 0.0],
-            [0.0, 5.0], [0.5, 5.0]
+            [0.0, 0.0],
+            [0.5, 0.0],
+            [5.0, 0.0],
+            [5.5, 0.0],
+            [0.0, 5.0],
+            [0.5, 5.0]
         ];
         let y = array![0, 0, 1, 1, 2, 2];
 
@@ -376,15 +440,16 @@ mod tests {
 
         let pred = tree.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 1.0, "Should perfectly fit training data with 3 classes, got acc={}", acc);
+        assert!(
+            acc >= 1.0,
+            "Should perfectly fit training data with 3 classes, got acc={}",
+            acc
+        );
     }
 
     #[test]
     fn test_decision_tree_predict_proba() {
-        let x = array![
-            [0.0, 0.0], [0.5, 0.5],
-            [3.0, 3.0], [3.5, 3.5]
-        ];
+        let x = array![[0.0, 0.0], [0.5, 0.5], [3.0, 3.0], [3.5, 3.5]];
         let y = array![0, 0, 1, 1];
 
         let mut tree = DecisionTree::new(5);
@@ -394,7 +459,11 @@ mod tests {
         // Each row should sum to ~1.0
         for i in 0..proba.nrows() {
             let row_sum: f64 = proba.row(i).sum();
-            assert!((row_sum - 1.0).abs() < 1e-10, "Probabilities should sum to 1, got {}", row_sum);
+            assert!(
+                (row_sum - 1.0).abs() < 1e-10,
+                "Probabilities should sum to 1, got {}",
+                row_sum
+            );
         }
     }
 
@@ -410,8 +479,14 @@ mod tests {
     #[test]
     fn test_decision_tree_save_load_roundtrip() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0], [0.2, 0.3],
-            [3.0, 3.0], [3.5, 3.5], [4.0, 3.0], [3.2, 3.3]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [1.0, 0.0],
+            [0.2, 0.3],
+            [3.0, 3.0],
+            [3.5, 3.5],
+            [4.0, 3.0],
+            [3.2, 3.3]
         ];
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
@@ -427,26 +502,32 @@ mod tests {
 
         let orig_pred = tree.predict(&x);
         let rest_pred = restored.predict(&x);
-        assert_eq!(orig_pred, rest_pred, "predictions must match after roundtrip");
+        assert_eq!(
+            orig_pred, rest_pred,
+            "predictions must match after roundtrip"
+        );
 
         let orig_proba = tree.predict_proba(&x);
         let rest_proba = restored.predict_proba(&x);
-        assert_eq!(orig_proba, rest_proba, "probabilities must match after roundtrip");
+        assert_eq!(
+            orig_proba, rest_proba,
+            "probabilities must match after roundtrip"
+        );
     }
 
     #[test]
     fn test_decision_tree_save_state_unfitted() {
         let tree = DecisionTree::new(5);
-        assert!(tree.save_state().is_none(), "unfitted tree should return None");
+        assert!(
+            tree.save_state().is_none(),
+            "unfitted tree should return None"
+        );
     }
 
     #[test]
     fn test_decision_tree_max_depth_1() {
         // With max_depth=1, should create a single stump
-        let x = array![
-            [0.0], [1.0], [2.0], [3.0],
-            [10.0], [11.0], [12.0], [13.0]
-        ];
+        let x = array![[0.0], [1.0], [2.0], [3.0], [10.0], [11.0], [12.0], [13.0]];
         let y = array![0, 0, 0, 0, 1, 1, 1, 1];
 
         let mut tree = DecisionTree::new(1);
@@ -454,6 +535,10 @@ mod tests {
 
         let pred = tree.predict(&x);
         let acc = accuracy(&y, &pred);
-        assert!(acc >= 1.0, "Stump should separate well-separated data, got acc={}", acc);
+        assert!(
+            acc >= 1.0,
+            "Stump should separate well-separated data, got acc={}",
+            acc
+        );
     }
 }

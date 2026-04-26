@@ -128,11 +128,13 @@ pub fn batch_knn_gpu(
     let params = [num_refs as u32, num_queries as u32, dim as u32, k as u32];
     let params_bytes: &[u8] = bytemuck::cast_slice(&params);
     use wgpu::util::DeviceExt;
-    let buf_params = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("params"),
-        contents: params_bytes,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-    });
+    let buf_params = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("params"),
+            contents: params_bytes,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
 
     // Each query gets 256 candidate results from the GPU
     let candidates_per_query = 256usize;
@@ -150,17 +152,34 @@ pub fn batch_knn_gpu(
         label: Some("knn_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_refs.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_queries.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_params.as_entire_binding() },
-            BindGroupEntry { binding: 3, resource: buf_out_idx.as_entire_binding() },
-            BindGroupEntry { binding: 4, resource: buf_out_dist.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_refs.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_queries.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_params.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: buf_out_idx.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: buf_out_dist.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("knn_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("knn_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -212,12 +231,7 @@ pub fn batch_knn_gpu(
 /// CPU fallback: brute-force kNN.
 ///
 /// Returns `(indices, distances)` flattened: query_i's k results at `[i*k..(i+1)*k]`.
-pub fn batch_knn_cpu(
-    refs: &[f32],
-    queries: &[f32],
-    dim: usize,
-    k: usize,
-) -> (Vec<u32>, Vec<f32>) {
+pub fn batch_knn_cpu(refs: &[f32], queries: &[f32], dim: usize, k: usize) -> (Vec<u32>, Vec<f32>) {
     assert!(refs.len() % dim == 0);
     assert!(queries.len() % dim == 0);
 
@@ -343,7 +357,10 @@ mod tests {
         let queries = vec![0.0, 0.0];
         let (_, dists) = batch_knn_cpu(&refs, &queries, 2, 4);
         for i in 0..dists.len() - 1 {
-            assert!(dists[i] <= dists[i + 1], "distances should be sorted ascending");
+            assert!(
+                dists[i] <= dists[i + 1],
+                "distances should be sorted ascending"
+            );
         }
     }
 

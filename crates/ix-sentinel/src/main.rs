@@ -33,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ix_agent_core::SessionEvent;
-use ix_fuzzy::observations::{merge, HexObservation, MergedState, DEFAULT_STALENESS_K};
 use ix_fuzzy::escalation_triggered;
+use ix_fuzzy::observations::{merge, HexObservation, MergedState, DEFAULT_STALENESS_K};
 use ix_types::Hexavalent;
 use serde::Serialize;
 
@@ -149,10 +149,8 @@ fn parse_args() -> Args {
         i += 1;
     }
 
-    let session_log = session_log
-        .unwrap_or_else(|| repo_root.join(".ix").join("session.jsonl"));
-    let harness_dir = harness_dir
-        .unwrap_or_else(|| repo_root.join("target").join("release"));
+    let session_log = session_log.unwrap_or_else(|| repo_root.join(".ix").join("session.jsonl"));
+    let harness_dir = harness_dir.unwrap_or_else(|| repo_root.join("target").join("release"));
     let round = round.unwrap_or(1);
 
     Args {
@@ -172,7 +170,10 @@ fn run(args: &Args) -> Result<SentinelOutcome, String> {
     }
 
     // ── WAKE ────────────────────────────────────────────────────
-    eprintln!("[sentinel] WAKE — round {}, mode {:?}", args.round, args.mode);
+    eprintln!(
+        "[sentinel] WAKE — round {}, mode {:?}",
+        args.round, args.mode
+    );
     let catalog = catalog::load(&args.catalog_path, &args.repo_root);
     eprintln!("[sentinel]   catalog: {} entries", catalog.len());
 
@@ -209,17 +210,19 @@ fn run(args: &Args) -> Result<SentinelOutcome, String> {
 
     // ── REASON ──────────────────────────────────────────────────
     eprintln!("[sentinel] REASON — merging observations");
-    let merged = merge(&all_observations, Some(args.round), Some(DEFAULT_STALENESS_K))
-        .map_err(|e| format!("merge: {e}"))?;
+    let merged = merge(
+        &all_observations,
+        Some(args.round),
+        Some(DEFAULT_STALENESS_K),
+    )
+    .map_err(|e| format!("merge: {e}"))?;
 
     let f_count = count_variant(&merged, Hexavalent::False);
     let d_count = count_variant(&merged, Hexavalent::Doubtful);
     let t_count = count_variant(&merged, Hexavalent::True);
     let c_count = merged.contradictions.len();
 
-    eprintln!(
-        "[sentinel]   merged: F={f_count} D={d_count} T={t_count} contradictions={c_count}"
-    );
+    eprintln!("[sentinel]   merged: F={f_count} D={d_count} T={t_count} contradictions={c_count}");
 
     // Escalation check
     let escalated = escalation_triggered(&merged.distribution);
@@ -227,7 +230,9 @@ fn run(args: &Args) -> Result<SentinelOutcome, String> {
         let reason = if !merged.contradictions.is_empty() {
             format!(
                 "cross-source contradiction on: {}",
-                merged.contradictions.iter()
+                merged
+                    .contradictions
+                    .iter()
                     .map(|c| c.claim_key.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -268,7 +273,8 @@ fn run(args: &Args) -> Result<SentinelOutcome, String> {
         .iter()
         .filter(|o| matches!(o.variant, Hexavalent::False | Hexavalent::Doubtful))
         .filter_map(|o| {
-            catalog.iter()
+            catalog
+                .iter()
                 .find(|e| o.claim_key.contains(&e.pattern))
                 .map(|e| (o, e))
         })
@@ -340,18 +346,34 @@ fn run(args: &Args) -> Result<SentinelOutcome, String> {
                 if let Ok(hash) = auto_commit(args, &merged, succeeded) {
                     committed = true;
                     commit_hash = Some(hash);
-                    eprintln!("[sentinel]   committed: {}", commit_hash.as_deref().unwrap_or("?"));
+                    eprintln!(
+                        "[sentinel]   committed: {}",
+                        commit_hash.as_deref().unwrap_or("?")
+                    );
                 }
             }
         }
     }
 
-    let report_path = write_report(args, &merged, &unique_fixes.keys().cloned().collect::<Vec<_>>(), false, "");
+    let report_path = write_report(
+        args,
+        &merged,
+        &unique_fixes.keys().cloned().collect::<Vec<_>>(),
+        false,
+        "",
+    );
 
     Ok(SentinelOutcome {
         round: args.round,
         mode: format!("{:?}", args.mode),
-        phase: if committed { "committed" } else if files_changed > 0 { "pending_review" } else { "clean" }.to_string(),
+        phase: if committed {
+            "committed"
+        } else if files_changed > 0 {
+            "pending_review"
+        } else {
+            "clean"
+        }
+        .to_string(),
         observations_collected: total_obs,
         f_count,
         d_count,
@@ -393,17 +415,10 @@ fn discover_adapters(harness_dir: &Path) -> Vec<(String, PathBuf)> {
     adapters
 }
 
-fn run_adapter(
-    binary: &Path,
-    round: u32,
-    repo_root: &Path,
-) -> Result<Vec<SessionEvent>, String> {
+fn run_adapter(binary: &Path, round: u32, repo_root: &Path) -> Result<Vec<SessionEvent>, String> {
     // Each adapter needs its native input piped in. For the MVP,
     // we generate the input inline based on adapter type.
-    let name = binary
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let name = binary.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
     let (_input_cmd, adapter_cmd) = match name {
         "ix-harness-cargo" => (
@@ -523,11 +538,7 @@ fn count_changed_files(repo_root: &Path) -> usize {
         .unwrap_or(0)
 }
 
-fn auto_commit(
-    args: &Args,
-    merged: &MergedState,
-    fixes_applied: usize,
-) -> Result<String, String> {
+fn auto_commit(args: &Args, merged: &MergedState, fixes_applied: usize) -> Result<String, String> {
     // Stage only .rs files
     let _status = Command::new("bash")
         .arg("-c")
@@ -566,7 +577,11 @@ fn auto_commit(
 }
 
 fn count_variant(merged: &MergedState, v: Hexavalent) -> usize {
-    merged.observations.iter().filter(|o| o.variant == v).count()
+    merged
+        .observations
+        .iter()
+        .filter(|o| o.variant == v)
+        .count()
 }
 
 fn write_report(

@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Points, PlotPoints, Line};
+use egui_plot::{Line, Plot, PlotPoints, Points};
 
 #[derive(PartialEq, Clone, Copy)]
 enum TopoMode {
@@ -57,7 +57,11 @@ impl TopologyDemo {
         ui.heading("Topology / Persistent Homology (ix-topo)");
 
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.mode, TopoMode::Persistence, "Point Cloud Persistence");
+            ui.radio_value(
+                &mut self.mode,
+                TopoMode::Persistence,
+                "Point Cloud Persistence",
+            );
             ui.radio_value(&mut self.mode, TopoMode::BettiCurve, "Betti Curve");
             ui.radio_value(&mut self.mode, TopoMode::BettiAtRadius, "Betti at Radius");
         });
@@ -77,7 +81,11 @@ impl TopologyDemo {
             ui.label("Preset:");
             ui.radio_value(&mut self.preset, PointCloudPreset::Triangle, "Triangle");
             ui.radio_value(&mut self.preset, PointCloudPreset::Circle, "Circle");
-            ui.radio_value(&mut self.preset, PointCloudPreset::TwoClusters, "Two Clusters");
+            ui.radio_value(
+                &mut self.preset,
+                PointCloudPreset::TwoClusters,
+                "Two Clusters",
+            );
         });
 
         if self.preset == PointCloudPreset::Circle {
@@ -87,11 +95,7 @@ impl TopologyDemo {
 
     fn generate_points(&mut self) {
         self.points = match self.preset {
-            PointCloudPreset::Triangle => vec![
-                vec![0.0, 0.0],
-                vec![1.0, 0.0],
-                vec![0.5, 0.866],
-            ],
+            PointCloudPreset::Triangle => vec![vec![0.0, 0.0], vec![1.0, 0.0], vec![0.5, 0.866]],
             PointCloudPreset::Circle => {
                 let n = self.circle_n;
                 (0..n)
@@ -122,11 +126,8 @@ impl TopologyDemo {
 
         if ui.button("Compute Persistence").clicked() {
             self.generate_points();
-            let diagrams = ix_topo::pointcloud::persistence_from_points(
-                &self.points,
-                2,
-                self.max_radius,
-            );
+            let diagrams =
+                ix_topo::pointcloud::persistence_from_points(&self.points, 2, self.max_radius);
 
             self.persistence_scatter.clear();
             for d in &diagrams {
@@ -171,20 +172,22 @@ impl TopologyDemo {
         if !self.top_features.is_empty() {
             ui.separator();
             ui.label("Most persistent features:");
-            egui::Grid::new("top_features_grid").striped(true).show(ui, |ui| {
-                ui.label("Dim");
-                ui.label("Birth");
-                ui.label("Death");
-                ui.label("Persistence");
-                ui.end_row();
-                for &(dim, birth, death, persistence) in &self.top_features {
-                    ui.label(format!("H{}", dim));
-                    ui.label(format!("{:.4}", birth));
-                    ui.label(format!("{:.4}", death));
-                    ui.label(format!("{:.4}", persistence));
+            egui::Grid::new("top_features_grid")
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label("Dim");
+                    ui.label("Birth");
+                    ui.label("Death");
+                    ui.label("Persistence");
                     ui.end_row();
-                }
-            });
+                    for &(dim, birth, death, persistence) in &self.top_features {
+                        ui.label(format!("H{}", dim));
+                        ui.label(format!("{:.4}", birth));
+                        ui.label(format!("{:.4}", death));
+                        ui.label(format!("{:.4}", persistence));
+                        ui.end_row();
+                    }
+                });
         }
     }
 
@@ -198,8 +201,16 @@ impl TopologyDemo {
             self.betti0_curve.clear();
             self.betti1_curve.clear();
             for (r, betti) in &curve {
-                let b0 = if !betti.is_empty() { betti[0] as f64 } else { 0.0 };
-                let b1 = if betti.len() > 1 { betti[1] as f64 } else { 0.0 };
+                let b0 = if !betti.is_empty() {
+                    betti[0] as f64
+                } else {
+                    0.0
+                };
+                let b1 = if betti.len() > 1 {
+                    betti[1] as f64
+                } else {
+                    0.0
+                };
                 self.betti0_curve.push([*r, b0]);
                 self.betti1_curve.push([*r, b1]);
             }
@@ -241,7 +252,11 @@ impl TopologyDemo {
         if !self.betti_at_r.is_empty() {
             ui.separator();
             let b0 = self.betti_at_r[0];
-            let b1 = if self.betti_at_r.len() > 1 { self.betti_at_r[1] } else { 0 };
+            let b1 = if self.betti_at_r.len() > 1 {
+                self.betti_at_r[1]
+            } else {
+                0
+            };
             ui.label(format!(
                 "At radius {:.4}:  b0 = {} (connected components),  b1 = {} (loops)",
                 self.betti_radius, b0, b1

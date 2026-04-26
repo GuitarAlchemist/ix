@@ -84,8 +84,7 @@ pub fn list_scenarios() -> Vec<&'static ScenarioMeta> {
 
 /// Execute a demo scenario by calling real tool handlers.
 pub fn run_scenario(id: &str, seed: u64, verbosity: u8) -> Result<Value, String> {
-    let scenario = find_scenario(id)
-        .ok_or_else(|| format!("unknown scenario: {id}"))?;
+    let scenario = find_scenario(id).ok_or_else(|| format!("unknown scenario: {id}"))?;
 
     let registry = crate::tools::ToolRegistry::new();
     let steps = scenario.steps(seed, verbosity);
@@ -100,7 +99,8 @@ pub fn run_scenario(id: &str, seed: u64, verbosity: u8) -> Result<Value, String>
         let input = match &step.input {
             StepInput::Static(v) => v.clone(),
             StepInput::Glue(f) => {
-                let prev = prev_output.as_ref()
+                let prev = prev_output
+                    .as_ref()
                     .ok_or_else(|| format!("step {i} has Glue input but no previous output"))?;
                 f(prev)?
             }
@@ -112,11 +112,18 @@ pub fn run_scenario(id: &str, seed: u64, verbosity: u8) -> Result<Value, String>
         total_ms += elapsed;
 
         let (output, success) = match result {
-            Ok(v) => { succeeded += 1; (v, true) }
-            Err(e) => { failed += 1; (json!({"error": e}), false) }
+            Ok(v) => {
+                succeeded += 1;
+                (v, true)
+            }
+            Err(e) => {
+                failed += 1;
+                (json!({"error": e}), false)
+            }
         };
 
-        let interpretation = step.interpret
+        let interpretation = step
+            .interpret
             .and_then(|f| if success { Some(f(&output)) } else { None });
 
         if !tools_used.contains(&step.tool) {
@@ -169,7 +176,9 @@ fn summarize_input(input: &Value) -> Value {
                     Value::Array(arr) if arr.len() > 10 => {
                         out.insert(k.clone(), json!(format!("[{} elements]", arr.len())));
                     }
-                    _ => { out.insert(k.clone(), v.clone()); }
+                    _ => {
+                        out.insert(k.clone(), v.clone());
+                    }
                 }
             }
             Value::Object(out)
@@ -182,39 +191,48 @@ fn summarize_input(input: &Value) -> Value {
 
 /// MCP tool handler for `ix_demo`.
 pub fn ix_demo(params: Value) -> Result<Value, String> {
-    let action = params.get("action")
+    let action = params
+        .get("action")
         .and_then(|v| v.as_str())
         .ok_or("missing 'action' (list | run | describe)")?;
 
     match action {
         "list" => {
-            let scenarios: Vec<Value> = list_scenarios().iter().map(|m| {
-                json!({
-                    "id": m.id,
-                    "title": m.title,
-                    "tagline": m.tagline,
-                    "difficulty": m.difficulty,
-                    "tags": m.tags,
-                    "tools_used": m.tools_used,
+            let scenarios: Vec<Value> = list_scenarios()
+                .iter()
+                .map(|m| {
+                    json!({
+                        "id": m.id,
+                        "title": m.title,
+                        "tagline": m.tagline,
+                        "difficulty": m.difficulty,
+                        "tags": m.tags,
+                        "tools_used": m.tools_used,
+                    })
                 })
-            }).collect();
+                .collect();
             Ok(json!({ "scenarios": scenarios }))
         }
         "describe" => {
-            let id = params.get("scenario")
+            let id = params
+                .get("scenario")
                 .and_then(|v| v.as_str())
                 .ok_or("'scenario' required for describe")?;
-            let scenario = find_scenario(id)
-                .ok_or_else(|| format!("unknown scenario: {id}"))?;
+            let scenario = find_scenario(id).ok_or_else(|| format!("unknown scenario: {id}"))?;
             let meta = scenario.meta();
-            let steps: Vec<Value> = scenario.steps(42, 1).iter().enumerate().map(|(i, s)| {
-                json!({
-                    "index": i,
-                    "label": s.label,
-                    "tool": s.tool,
-                    "narrative": s.narrative,
+            let steps: Vec<Value> = scenario
+                .steps(42, 1)
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    json!({
+                        "index": i,
+                        "label": s.label,
+                        "tool": s.tool,
+                        "narrative": s.narrative,
+                    })
                 })
-            }).collect();
+                .collect();
             Ok(json!({
                 "id": meta.id,
                 "title": meta.title,
@@ -227,18 +245,20 @@ pub fn ix_demo(params: Value) -> Result<Value, String> {
             }))
         }
         "run" => {
-            let id = params.get("scenario")
+            let id = params
+                .get("scenario")
                 .and_then(|v| v.as_str())
                 .ok_or("'scenario' required for run")?;
-            let seed = params.get("seed")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(42);
-            let verbosity = params.get("verbosity")
+            let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
+            let verbosity = params
+                .get("verbosity")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1) as u8;
             run_scenario(id, seed, verbosity)
         }
-        other => Err(format!("unknown action: {other} (expected list | run | describe)"))
+        other => Err(format!(
+            "unknown action: {other} (expected list | run | describe)"
+        )),
     }
 }
 

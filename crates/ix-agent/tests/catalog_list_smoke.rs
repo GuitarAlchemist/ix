@@ -17,10 +17,7 @@ fn lists_all_three_registered_catalogs() {
     assert_eq!(total, 3, "expected 3 registered catalogs");
 
     let catalogs = result["catalogs"].as_array().expect("catalogs array");
-    let names: Vec<&str> = catalogs
-        .iter()
-        .filter_map(|c| c["name"].as_str())
-        .collect();
+    let names: Vec<&str> = catalogs.iter().filter_map(|c| c["name"].as_str()).collect();
     for required in ["code_analysis", "grammar", "rfc"] {
         assert!(
             names.contains(&required),

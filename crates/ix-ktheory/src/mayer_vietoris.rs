@@ -39,7 +39,9 @@ pub fn consistency_check<T: Eq + std::hash::Hash + Clone>(
 
     // Verify overlap is actually a subset of both A and B
     let overlap_set: HashSet<&T> = overlap.iter().collect();
-    let overlap_valid = overlap_set.iter().all(|x| set_a.contains(x) && set_b.contains(x));
+    let overlap_valid = overlap_set
+        .iter()
+        .all(|x| set_a.contains(x) && set_b.contains(x));
 
     if !overlap_valid {
         return false;

@@ -78,7 +78,10 @@ pub struct Implicant {
 
 impl std::fmt::Display for Implicant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let parts: Vec<String> = self.constraints.iter().enumerate()
+        let parts: Vec<String> = self
+            .constraints
+            .iter()
+            .enumerate()
             .filter_map(|(i, c)| c.map(|v| format!("x{}={}", i, v)))
             .collect();
         if parts.is_empty() {
@@ -92,7 +95,10 @@ impl std::fmt::Display for Implicant {
 impl Implicant {
     /// Format with variable names instead of x0, x1, ...
     pub fn display_named(&self, var_names: &[String]) -> String {
-        let parts: Vec<String> = self.constraints.iter().enumerate()
+        let parts: Vec<String> = self
+            .constraints
+            .iter()
+            .enumerate()
             .filter_map(|(i, c)| {
                 let name = var_names.get(i).map(|s| s.as_str()).unwrap_or("?");
                 c.map(|v| format!("{}={}", name, v))
@@ -111,8 +117,15 @@ impl KarnaughMap {
     ///
     /// All cells default to `Unknown`.
     pub fn new(n_vars: usize, var_names: Vec<&str>) -> Self {
-        assert!((1..=4).contains(&n_vars), "Karnaugh maps support 1-4 variables");
-        assert_eq!(var_names.len(), n_vars, "Must provide one name per variable");
+        assert!(
+            (1..=4).contains(&n_vars),
+            "Karnaugh maps support 1-4 variables"
+        );
+        assert_eq!(
+            var_names.len(),
+            n_vars,
+            "Must provide one name per variable"
+        );
 
         let n_cells = 6usize.pow(n_vars as u32);
         Self {
@@ -140,7 +153,6 @@ impl KarnaughMap {
 
     /// Find all variable assignments that produce the target value.
     pub fn cells_matching(&self, target: TruthValue) -> Vec<Vec<TruthValue>> {
-
         let n_cells = 6usize.pow(self.n_vars as u32);
         let mut results = Vec::new();
 
@@ -167,24 +179,18 @@ impl KarnaughMap {
             return vec![];
         }
 
-
         let mut implicants: Vec<Implicant> = Vec::new();
 
         // Generate candidate implicants by trying all possible constraint patterns
         // For each subset of variables, check if fixing them covers only target cells
-        self.find_implicants_recursive(
-            &vec![None; self.n_vars],
-            0,
-            target,
-            &mut implicants,
-        );
+        self.find_implicants_recursive(&vec![None; self.n_vars], 0, target, &mut implicants);
 
         // Remove implicants that are subsumed by larger ones
         let mut prime = Vec::new();
         for imp in &implicants {
-            let subsumed = implicants.iter().any(|other| {
-                other.coverage > imp.coverage && self.subsumes(other, imp)
-            });
+            let subsumed = implicants
+                .iter()
+                .any(|other| other.coverage > imp.coverage && self.subsumes(other, imp));
             if !subsumed {
                 prime.push(imp.clone());
             }
@@ -212,10 +218,12 @@ impl KarnaughMap {
 
         while !uncovered.is_empty() {
             // Find the implicant that covers the most uncovered cells
-            let best = primes.iter()
-                .max_by_key(|imp| {
-                    uncovered.iter().filter(|cell| self.implicant_covers(imp, cell)).count()
-                });
+            let best = primes.iter().max_by_key(|imp| {
+                uncovered
+                    .iter()
+                    .filter(|cell| self.implicant_covers(imp, cell))
+                    .count()
+            });
 
             match best {
                 Some(imp) => {
@@ -242,7 +250,6 @@ impl KarnaughMap {
 
     /// Generate the full truth table as a string.
     pub fn truth_table(&self) -> String {
-
         let n_cells = 6usize.pow(self.n_vars as u32);
         let mut lines = Vec::new();
 
@@ -336,19 +343,27 @@ impl KarnaughMap {
         self.find_implicants_recursive(&dc_constraints, var_idx + 1, target, results);
     }
 
-    fn check_coverage(&self, constraints: &[Option<TruthValue>], target: TruthValue) -> (bool, usize) {
-
+    fn check_coverage(
+        &self,
+        constraints: &[Option<TruthValue>],
+        target: TruthValue,
+    ) -> (bool, usize) {
         let mut count = 0;
         let mut all_match = true;
 
-        self.iterate_cells(constraints, 0, &mut vec![TruthValue::True; self.n_vars], &mut |values| {
-            let cell = self.get(values);
-            if cell == target {
-                count += 1;
-            } else {
-                all_match = false;
-            }
-        });
+        self.iterate_cells(
+            constraints,
+            0,
+            &mut vec![TruthValue::True; self.n_vars],
+            &mut |values| {
+                let cell = self.get(values);
+                if cell == target {
+                    count += 1;
+                } else {
+                    all_match = false;
+                }
+            },
+        );
 
         (all_match, count)
     }
@@ -383,22 +398,23 @@ impl KarnaughMap {
         // larger subsumes smaller if every cell covered by smaller is also covered by larger
         for (l, s) in larger.constraints.iter().zip(smaller.constraints.iter()) {
             match (l, s) {
-                (None, _) => {} // don't care covers everything
+                (None, _) => {}                        // don't care covers everything
                 (Some(lv), Some(sv)) if lv == sv => {} // same constraint
-                (Some(_), None) => return false, // larger is more constrained here
-                (Some(_), Some(_)) => return false, // different values
+                (Some(_), None) => return false,       // larger is more constrained here
+                (Some(_), Some(_)) => return false,    // different values
             }
         }
         true
     }
 
     fn implicant_covers(&self, imp: &Implicant, cell: &[TruthValue]) -> bool {
-        imp.constraints.iter().zip(cell.iter()).all(|(c, v)| {
-            match c {
+        imp.constraints
+            .iter()
+            .zip(cell.iter())
+            .all(|(c, v)| match c {
                 None => true,
                 Some(cv) => cv == v,
-            }
-        })
+            })
     }
 
     fn display_1var(&self) -> String {
@@ -414,7 +430,10 @@ impl KarnaughMap {
 
     fn display_2var(&self) -> String {
         let all = TruthValue::all();
-        let mut s = format!("Karnaugh Map (2 vars: {}, {})\n", self.var_names[0], self.var_names[1]);
+        let mut s = format!(
+            "Karnaugh Map (2 vars: {}, {})\n",
+            self.var_names[0], self.var_names[1]
+        );
         s.push_str(&format!("{:>12} |", self.var_names[1]));
         for &v in &all {
             s.push_str(&format!("  {:>1} ", v));
@@ -434,10 +453,12 @@ impl KarnaughMap {
     }
 
     fn display_generic(&self) -> String {
-        format!("Karnaugh Map ({} vars: {})\n{}",
+        format!(
+            "Karnaugh Map ({} vars: {})\n{}",
             self.n_vars,
             self.var_names.join(", "),
-            self.truth_table())
+            self.truth_table()
+        )
     }
 }
 
@@ -536,7 +557,11 @@ mod tests {
         let cover = kmap.minimal_cover(True);
         assert!(!cover.is_empty());
         // Should need at most 2 implicants: A=T and B=C
-        assert!(cover.len() <= 2, "Minimal cover should have <= 2 terms, got {}", cover.len());
+        assert!(
+            cover.len() <= 2,
+            "Minimal cover should have <= 2 terms, got {}",
+            cover.len()
+        );
     }
 
     #[test]

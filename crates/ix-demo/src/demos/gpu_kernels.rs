@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Points, PlotPoints};
+use egui_plot::{Plot, PlotPoints, Points};
 
 #[derive(PartialEq, Clone, Copy)]
 enum GpuDemo {
@@ -51,7 +51,11 @@ impl GpuKernelsDemo {
         ui.label("Using CPU fallback — same algorithms as WGSL shaders.");
 
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.mode, GpuDemo::QuaternionRotate, "Quaternion Rotate");
+            ui.radio_value(
+                &mut self.mode,
+                GpuDemo::QuaternionRotate,
+                "Quaternion Rotate",
+            );
             ui.radio_value(&mut self.mode, GpuDemo::Knn, "k-NN");
             ui.radio_value(&mut self.mode, GpuDemo::PairwiseDistance, "Distance Matrix");
         });
@@ -65,7 +69,8 @@ impl GpuKernelsDemo {
 
     fn quaternion_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Angle (deg):"); ui.add(egui::Slider::new(&mut self.quat_angle, 0.0..=360.0));
+            ui.label("Angle (deg):");
+            ui.add(egui::Slider::new(&mut self.quat_angle, 0.0..=360.0));
             ui.label("Axis:");
             ui.radio_value(&mut self.quat_axis, 0, "X");
             ui.radio_value(&mut self.quat_axis, 1, "Y");
@@ -79,18 +84,29 @@ impl GpuKernelsDemo {
         ui.label(&self.status);
 
         // Plot XY projection
-        Plot::new("quat_plot").height(400.0).data_aspect(1.0).show(ui, |plot_ui| {
-            if !self.quat_points.is_empty() {
-                let pts: PlotPoints = self.quat_points.iter().map(|p| [p[0], p[1]]).collect();
-                plot_ui.points(Points::new(pts).radius(4.0)
-                    .color(egui::Color32::from_rgb(100, 100, 255)).name("Original"));
-            }
-            if !self.quat_rotated.is_empty() {
-                let pts: PlotPoints = self.quat_rotated.iter().map(|p| [p[0], p[1]]).collect();
-                plot_ui.points(Points::new(pts).radius(4.0)
-                    .color(egui::Color32::from_rgb(255, 100, 100)).name("Rotated"));
-            }
-        });
+        Plot::new("quat_plot")
+            .height(400.0)
+            .data_aspect(1.0)
+            .show(ui, |plot_ui| {
+                if !self.quat_points.is_empty() {
+                    let pts: PlotPoints = self.quat_points.iter().map(|p| [p[0], p[1]]).collect();
+                    plot_ui.points(
+                        Points::new(pts)
+                            .radius(4.0)
+                            .color(egui::Color32::from_rgb(100, 100, 255))
+                            .name("Original"),
+                    );
+                }
+                if !self.quat_rotated.is_empty() {
+                    let pts: PlotPoints = self.quat_rotated.iter().map(|p| [p[0], p[1]]).collect();
+                    plot_ui.points(
+                        Points::new(pts)
+                            .radius(4.0)
+                            .color(egui::Color32::from_rgb(255, 100, 100))
+                            .name("Rotated"),
+                    );
+                }
+            });
     }
 
     fn run_quaternion(&mut self) {
@@ -112,26 +128,35 @@ impl GpuKernelsDemo {
             _ => [c, 0.0, 0.0, s],
         };
 
-        let flat: Vec<f32> = self.quat_points.iter()
+        let flat: Vec<f32> = self
+            .quat_points
+            .iter()
             .flat_map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
             .collect();
 
         let result = batch_quaternion_rotate_cpu(&flat, &quat);
 
-        self.quat_rotated = result.chunks(3)
+        self.quat_rotated = result
+            .chunks(3)
             .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
             .collect();
 
-        self.status = format!("Rotated {} points by {:.0}° around {} axis",
-            self.quat_points.len(), self.quat_angle,
-            ["X", "Y", "Z"][self.quat_axis]);
+        self.status = format!(
+            "Rotated {} points by {:.0}° around {} axis",
+            self.quat_points.len(),
+            self.quat_angle,
+            ["X", "Y", "Z"][self.quat_axis]
+        );
     }
 
     fn knn_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("k:"); ui.add(egui::Slider::new(&mut self.knn_k, 1..=10));
-            ui.label("Query X:"); ui.add(egui::Slider::new(&mut self.knn_query[0], -5.0..=5.0));
-            ui.label("Query Y:"); ui.add(egui::Slider::new(&mut self.knn_query[1], -5.0..=5.0));
+            ui.label("k:");
+            ui.add(egui::Slider::new(&mut self.knn_k, 1..=10));
+            ui.label("Query X:");
+            ui.add(egui::Slider::new(&mut self.knn_query[0], -5.0..=5.0));
+            ui.label("Query Y:");
+            ui.add(egui::Slider::new(&mut self.knn_query[1], -5.0..=5.0));
         });
 
         if ui.button("Generate & Query").clicked() {
@@ -140,56 +165,82 @@ impl GpuKernelsDemo {
 
         ui.label(&self.status);
 
-        Plot::new("knn_plot").height(400.0).data_aspect(1.0).show(ui, |plot_ui| {
-            // All ref points
-            if !self.knn_refs.is_empty() {
-                let non_neighbor: PlotPoints = self.knn_refs.iter().enumerate()
-                    .filter(|(i, _)| !self.knn_neighbors.contains(i))
-                    .map(|(_, p)| *p)
-                    .collect();
-                plot_ui.points(Points::new(non_neighbor).radius(4.0)
-                    .color(egui::Color32::GRAY).name("Ref points"));
+        Plot::new("knn_plot")
+            .height(400.0)
+            .data_aspect(1.0)
+            .show(ui, |plot_ui| {
+                // All ref points
+                if !self.knn_refs.is_empty() {
+                    let non_neighbor: PlotPoints = self
+                        .knn_refs
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !self.knn_neighbors.contains(i))
+                        .map(|(_, p)| *p)
+                        .collect();
+                    plot_ui.points(
+                        Points::new(non_neighbor)
+                            .radius(4.0)
+                            .color(egui::Color32::GRAY)
+                            .name("Ref points"),
+                    );
 
-                let neighbor_pts: PlotPoints = self.knn_neighbors.iter()
-                    .filter(|&&i| i < self.knn_refs.len())
-                    .map(|&i| self.knn_refs[i])
-                    .collect();
-                plot_ui.points(Points::new(neighbor_pts).radius(7.0)
-                    .color(egui::Color32::GREEN).name("Neighbors"));
-            }
+                    let neighbor_pts: PlotPoints = self
+                        .knn_neighbors
+                        .iter()
+                        .filter(|&&i| i < self.knn_refs.len())
+                        .map(|&i| self.knn_refs[i])
+                        .collect();
+                    plot_ui.points(
+                        Points::new(neighbor_pts)
+                            .radius(7.0)
+                            .color(egui::Color32::GREEN)
+                            .name("Neighbors"),
+                    );
+                }
 
-            // Query point
-            plot_ui.points(Points::new(PlotPoints::new(vec![self.knn_query]))
-                .radius(10.0).color(egui::Color32::RED).name("Query")
-                .shape(egui_plot::MarkerShape::Cross));
-        });
+                // Query point
+                plot_ui.points(
+                    Points::new(PlotPoints::new(vec![self.knn_query]))
+                        .radius(10.0)
+                        .color(egui::Color32::RED)
+                        .name("Query")
+                        .shape(egui_plot::MarkerShape::Cross),
+                );
+            });
     }
 
     fn run_knn(&mut self) {
-        use rand::Rng;
         use ix_gpu::knn::batch_knn_cpu;
+        use rand::Rng;
         let mut rng = rand::rng();
 
         // Generate random 2D ref points
-        self.knn_refs = (0..50).map(|_| {
-            [rng.random_range(-5.0..5.0), rng.random_range(-5.0..5.0)]
-        }).collect();
+        self.knn_refs = (0..50)
+            .map(|_| [rng.random_range(-5.0..5.0), rng.random_range(-5.0..5.0)])
+            .collect();
 
-        let refs_flat: Vec<f32> = self.knn_refs.iter()
+        let refs_flat: Vec<f32> = self
+            .knn_refs
+            .iter()
             .flat_map(|p| [p[0] as f32, p[1] as f32])
             .collect();
         let query_flat = vec![self.knn_query[0] as f32, self.knn_query[1] as f32];
 
         let (indices, dists) = batch_knn_cpu(&refs_flat, &query_flat, 2, self.knn_k);
 
-        self.knn_neighbors = indices.iter()
+        self.knn_neighbors = indices
+            .iter()
             .filter(|&&i| i != u32::MAX)
             .map(|&i| i as usize)
             .collect();
 
         let nearest_dist = dists.first().copied().unwrap_or(f32::NAN);
-        self.status = format!("{} nearest neighbors found. Closest: {:.3}",
-            self.knn_neighbors.len(), nearest_dist);
+        self.status = format!(
+            "{} nearest neighbors found. Closest: {:.3}",
+            self.knn_neighbors.len(),
+            nearest_dist
+        );
     }
 
     fn distance_ui(&mut self, ui: &mut egui::Ui) {
@@ -202,11 +253,19 @@ impl GpuKernelsDemo {
         // Show distance matrix as colored grid
         if !self.dist_matrix.is_empty() {
             let n = self.dist_matrix.len();
-            Plot::new("dist_plot").height(400.0).data_aspect(1.0).show(ui, |plot_ui| {
-                // Plot points
-                let pts: PlotPoints = self.dist_points.iter().copied().collect();
-                plot_ui.points(Points::new(pts).radius(6.0).color(egui::Color32::WHITE).name("Points"));
-            });
+            Plot::new("dist_plot")
+                .height(400.0)
+                .data_aspect(1.0)
+                .show(ui, |plot_ui| {
+                    // Plot points
+                    let pts: PlotPoints = self.dist_points.iter().copied().collect();
+                    plot_ui.points(
+                        Points::new(pts)
+                            .radius(6.0)
+                            .color(egui::Color32::WHITE)
+                            .name("Points"),
+                    );
+                });
 
             // Distance matrix text
             ui.label("Distance matrix (first 8x8):");
@@ -229,24 +288,26 @@ impl GpuKernelsDemo {
     }
 
     fn run_distance(&mut self) {
-        use rand::Rng;
         use ix_gpu::distance::pairwise_distance_cpu;
+        use rand::Rng;
         let mut rng = rand::rng();
 
         let n = 10;
-        self.dist_points = (0..n).map(|_| {
-            [rng.random_range(-5.0..5.0), rng.random_range(-5.0..5.0)]
-        }).collect();
+        self.dist_points = (0..n)
+            .map(|_| [rng.random_range(-5.0..5.0), rng.random_range(-5.0..5.0)])
+            .collect();
 
-        let flat: Vec<f32> = self.dist_points.iter()
+        let flat: Vec<f32> = self
+            .dist_points
+            .iter()
             .flat_map(|p| [p[0] as f32, p[1] as f32])
             .collect();
 
         let result = pairwise_distance_cpu(&flat, 2);
 
-        self.dist_matrix = (0..n).map(|i| {
-            (0..n).map(|j| result[i * n + j] as f64).collect()
-        }).collect();
+        self.dist_matrix = (0..n)
+            .map(|i| (0..n).map(|j| result[i * n + j] as f64).collect())
+            .collect();
 
         self.status = format!("{n}x{n} pairwise distance matrix computed");
     }

@@ -214,14 +214,27 @@ mod tests {
     #[test]
     fn every_variant_has_title() {
         let variants = [
-            IxNode::CsvRead { path: String::new() },
-            IxNode::CsvWrite { path: String::new() },
+            IxNode::CsvRead {
+                path: String::new(),
+            },
+            IxNode::CsvWrite {
+                path: String::new(),
+            },
             IxNode::Constant { value: 0.0 },
-            IxNode::Normalize { method: NormMethod::ZScore },
-            IxNode::KMeans { k: 3, max_iter: 100, seed: 42 },
+            IxNode::Normalize {
+                method: NormMethod::ZScore,
+            },
+            IxNode::KMeans {
+                k: 3,
+                max_iter: 100,
+                seed: 42,
+            },
             IxNode::LinearReg,
             IxNode::Fft { inverse: false },
-            IxNode::PolicyGate { policy: "x".into(), threshold: 0.5 },
+            IxNode::PolicyGate {
+                policy: "x".into(),
+                threshold: 0.5,
+            },
             IxNode::Plot { title: "p".into() },
         ];
         for v in &variants {
@@ -231,39 +244,78 @@ mod tests {
 
     #[test]
     fn only_policy_gate_is_gate() {
-        assert!(IxNode::PolicyGate { policy: "x".into(), threshold: 0.5 }.is_gate());
-        assert!(!IxNode::KMeans { k: 3, max_iter: 100, seed: 1 }.is_gate());
+        assert!(IxNode::PolicyGate {
+            policy: "x".into(),
+            threshold: 0.5
+        }
+        .is_gate());
+        assert!(!IxNode::KMeans {
+            k: 3,
+            max_iter: 100,
+            seed: 1
+        }
+        .is_gate());
         assert!(!IxNode::LinearReg.is_gate());
     }
 
     #[test]
     fn registry_skill_mapping_covers_ml_nodes() {
         assert_eq!(
-            IxNode::KMeans { k: 3, max_iter: 100, seed: 1 }.registry_skill(),
+            IxNode::KMeans {
+                k: 3,
+                max_iter: 100,
+                seed: 1
+            }
+            .registry_skill(),
             Some("kmeans")
         );
-        assert_eq!(IxNode::LinearReg.registry_skill(), Some("linear_regression"));
+        assert_eq!(
+            IxNode::LinearReg.registry_skill(),
+            Some("linear_regression")
+        );
         assert_eq!(IxNode::Fft { inverse: false }.registry_skill(), Some("fft"));
         assert_eq!(
-            IxNode::PolicyGate { policy: "x".into(), threshold: 0.5 }.registry_skill(),
+            IxNode::PolicyGate {
+                policy: "x".into(),
+                threshold: 0.5
+            }
+            .registry_skill(),
             Some("governance.check")
         );
         // IO / viz nodes return None (no direct skill mapping).
         assert_eq!(IxNode::Plot { title: "x".into() }.registry_skill(), None);
-        assert_eq!(
-            IxNode::CsvRead { path: "x".into() }.registry_skill(),
-            None
-        );
+        assert_eq!(IxNode::CsvRead { path: "x".into() }.registry_skill(), None);
     }
 
     #[test]
     fn input_output_sockets_never_panic() {
         // Static arrays — just confirm len + first-pair types for a few.
-        assert_eq!(IxNode::KMeans { k: 3, max_iter: 1, seed: 1 }.input_sockets().len(), 1);
-        assert_eq!(IxNode::KMeans { k: 3, max_iter: 1, seed: 1 }.output_sockets().len(), 2);
+        assert_eq!(
+            IxNode::KMeans {
+                k: 3,
+                max_iter: 1,
+                seed: 1
+            }
+            .input_sockets()
+            .len(),
+            1
+        );
+        assert_eq!(
+            IxNode::KMeans {
+                k: 3,
+                max_iter: 1,
+                seed: 1
+            }
+            .output_sockets()
+            .len(),
+            2
+        );
         assert_eq!(IxNode::LinearReg.input_sockets().len(), 2);
         assert_eq!(IxNode::LinearReg.output_sockets().len(), 2);
-        assert_eq!(IxNode::CsvRead { path: "x".into() }.input_sockets().len(), 0);
+        assert_eq!(
+            IxNode::CsvRead { path: "x".into() }.input_sockets().len(),
+            0
+        );
         assert_eq!(IxNode::Plot { title: "x".into() }.output_sockets().len(), 0);
     }
 
@@ -345,7 +397,11 @@ mod tests {
 
     #[test]
     fn ixnode_roundtrips_through_serde() {
-        let original = IxNode::KMeans { k: 5, max_iter: 200, seed: 7 };
+        let original = IxNode::KMeans {
+            k: 5,
+            max_iter: 200,
+            seed: 7,
+        };
         let json = serde_json::to_string(&original).unwrap();
         let back: IxNode = serde_json::from_str(&json).unwrap();
         match back {

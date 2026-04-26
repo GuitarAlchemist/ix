@@ -125,9 +125,9 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
     // In-project edits — tools that write to state/ or emit trace data
     // inside the workspace.
     const EDIT_IN_PROJECT_TOOLS: &[&str] = &[
-        "ix_demo", // writes demo outputs (images, videos) to project dirs
-        "ix_trace_ingest", // writes trace data
-        "ix_governance_belief", // writes to state/beliefs/
+        "ix_demo",                    // writes demo outputs (images, videos) to project dirs
+        "ix_trace_ingest",            // writes trace data
+        "ix_governance_belief",       // writes to state/beliefs/
         "ix_governance_graph_rescan", // rebuilds graph state
         "ix_session_flywheel_export", // writes a GA Trace JSON file
     ];
@@ -182,10 +182,7 @@ mod tests {
             classify_action_kind("ix_definitely_not_a_real_tool"),
             ActionKind::Unknown
         );
-        assert_eq!(
-            classify_action_kind("rm_rf_slash"),
-            ActionKind::Unknown
-        );
+        assert_eq!(classify_action_kind("rm_rf_slash"), ActionKind::Unknown);
     }
 
     #[test]

@@ -9,13 +9,13 @@
 //! - Optional disk persistence (snapshots)
 //! - Optional RESP protocol server (feature = "resp-server")
 
-pub mod store;
 pub mod lru;
-pub mod pubsub;
 pub mod persist;
+pub mod pubsub;
 #[cfg(feature = "resp-server")]
 pub mod resp;
+pub mod store;
 
-pub use store::{Cache, CacheConfig, CacheEntry, CacheStats};
 pub use lru::LruPolicy;
 pub use pubsub::{PubSub, Subscription};
+pub use store::{Cache, CacheConfig, CacheEntry, CacheStats};

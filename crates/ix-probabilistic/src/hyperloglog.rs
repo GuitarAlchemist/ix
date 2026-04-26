@@ -3,14 +3,14 @@
 //! Use case for agents: estimate unique queries, unique skills used,
 //! unique error types — without storing all values.
 
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// HyperLogLog cardinality estimator.
 #[derive(Debug, Clone)]
 pub struct HyperLogLog {
     registers: Vec<u8>,
-    precision: usize, // p: number of bits for bucket index
+    precision: usize,   // p: number of bits for bucket index
     num_buckets: usize, // m = 2^p
 }
 
@@ -127,7 +127,11 @@ mod tests {
             hll.add(&"same_item");
         }
         let estimate = hll.count();
-        assert!(estimate < 5.0, "Duplicates should not increase count, got {}", estimate);
+        assert!(
+            estimate < 5.0,
+            "Duplicates should not increase count, got {}",
+            estimate
+        );
     }
 
     #[test]

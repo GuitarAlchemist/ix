@@ -1,8 +1,8 @@
 //! Particle Swarm Optimization (PSO).
 
 use ndarray::Array1;
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 
 use crate::traits::{ObjectiveFunction, OptimizeResult};
@@ -12,8 +12,8 @@ pub struct ParticleSwarm {
     pub num_particles: usize,
     pub max_iterations: usize,
     pub inertia: f64,
-    pub cognitive: f64,   // c1: pull toward personal best
-    pub social: f64,      // c2: pull toward global best
+    pub cognitive: f64, // c1: pull toward personal best
+    pub social: f64,    // c2: pull toward global best
     pub bounds: (f64, f64),
     pub seed: u64,
 }
@@ -76,10 +76,8 @@ impl ParticleSwarm {
             .collect();
 
         let mut personal_best: Vec<Array1<f64>> = positions.clone();
-        let mut personal_best_values: Vec<f64> = positions
-            .iter()
-            .map(|p| objective.evaluate(p))
-            .collect();
+        let mut personal_best_values: Vec<f64> =
+            positions.iter().map(|p| objective.evaluate(p)).collect();
 
         let mut global_best_idx = personal_best_values
             .iter()
@@ -163,6 +161,10 @@ mod tests {
             .with_seed(42);
 
         let result = pso.minimize(&obj);
-        assert!(result.best_value < 0.01, "PSO should find near-zero, got {}", result.best_value);
+        assert!(
+            result.best_value < 0.01,
+            "PSO should find near-zero, got {}",
+            result.best_value
+        );
     }
 }

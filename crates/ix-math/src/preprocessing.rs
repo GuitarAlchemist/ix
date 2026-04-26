@@ -37,7 +37,11 @@ impl StandardScaler {
             let var = centered.mapv(|v| v * v).mean_axis(Axis(0)).unwrap();
             var.mapv(|v| {
                 let s = v.sqrt();
-                if s == 0.0 { 1.0 } else { s }
+                if s == 0.0 {
+                    1.0
+                } else {
+                    s
+                }
             })
         };
 
@@ -93,20 +97,16 @@ impl MinMaxScaler {
         if n == 0 {
             return Err(MathError::EmptyInput);
         }
-        let col_min = x
-            .axis_iter(Axis(0))
-            .fold(x.row(0).to_owned(), |acc, row| {
-                ndarray::Zip::from(&acc)
-                    .and(&row)
-                    .map_collect(|&a, &b| a.min(b))
-            });
-        let col_max = x
-            .axis_iter(Axis(0))
-            .fold(x.row(0).to_owned(), |acc, row| {
-                ndarray::Zip::from(&acc)
-                    .and(&row)
-                    .map_collect(|&a, &b| a.max(b))
-            });
+        let col_min = x.axis_iter(Axis(0)).fold(x.row(0).to_owned(), |acc, row| {
+            ndarray::Zip::from(&acc)
+                .and(&row)
+                .map_collect(|&a, &b| a.min(b))
+        });
+        let col_max = x.axis_iter(Axis(0)).fold(x.row(0).to_owned(), |acc, row| {
+            ndarray::Zip::from(&acc)
+                .and(&row)
+                .map_collect(|&a, &b| a.max(b))
+        });
         let ranges = (&col_max - &col_min).mapv(|r| if r == 0.0 { 1.0 } else { r });
         self.mins = col_min;
         self.ranges = ranges;
@@ -232,7 +232,9 @@ pub enum InferredTask {
 /// of distinct values is at most `cardinality_threshold`, treat it as
 /// classification; otherwise regression.
 pub fn infer_task_type(y: &[f64], cardinality_threshold: usize) -> InferredTask {
-    let all_integer = y.iter().all(|&v| v.fract() == 0.0 && v >= 0.0 && v.is_finite());
+    let all_integer = y
+        .iter()
+        .all(|&v| v.fract() == 0.0 && v >= 0.0 && v.is_finite());
     if !all_integer {
         return InferredTask::Regression;
     }
@@ -302,7 +304,7 @@ mod tests {
         let x = array![[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]];
         let (_, t) = MinMaxScaler::fit_transform(&x, 0.0, 1.0).unwrap();
         for &v in t.iter() {
-            assert!(v >= -1e-12 && v <= 1.0 + 1e-12, "out of range: {v}");
+            assert!((-1e-12..=1.0 + 1e-12).contains(&v), "out of range: {v}");
         }
         // min row should be 0, max row should be 1
         assert!((t[[0, 0]] - 0.0).abs() < 1e-12);
@@ -373,12 +375,7 @@ mod tests {
 
     #[test]
     fn drop_nan_basic() {
-        let x = array![
-            [1.0, 2.0],
-            [f64::NAN, 3.0],
-            [4.0, 5.0],
-            [6.0, f64::NAN]
-        ];
+        let x = array![[1.0, 2.0], [f64::NAN, 3.0], [4.0, 5.0], [6.0, f64::NAN]];
         let clean = drop_nan_rows(&x);
         assert_eq!(clean.nrows(), 2);
         assert_eq!(clean, array![[1.0, 2.0], [4.0, 5.0]]);
@@ -410,7 +407,7 @@ mod tests {
 
     #[test]
     fn infer_regression() {
-        let y = vec![0.1, 0.5, 1.3, 2.7, 3.14];
+        let y = vec![0.1, 0.5, 1.3, 2.7, 3.125];
         assert_eq!(infer_task_type(&y, 10), InferredTask::Regression);
     }
 

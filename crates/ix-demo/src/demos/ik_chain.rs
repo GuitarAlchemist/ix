@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_plot::{Plot, Line, Points, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints, Points};
 
 #[derive(PartialEq, Clone, Copy)]
 enum IKSolver {
@@ -65,7 +65,8 @@ impl IKChainDemo {
         if self.animate {
             self.anim_angle += 0.02;
             self.target_x = self.anim_angle.cos() * (self.n_links as f64 * self.link_length * 0.7);
-            self.target_y = self.anim_angle.sin() * (self.n_links as f64 * self.link_length * 0.7) + 1.0;
+            self.target_y =
+                self.anim_angle.sin() * (self.n_links as f64 * self.link_length * 0.7) + 1.0;
             self.solve();
             ui.ctx().request_repaint();
         }
@@ -73,39 +74,60 @@ impl IKChainDemo {
         ui.label(&self.status);
 
         let max_reach = self.n_links as f64 * self.link_length;
-        Plot::new("ik_plot").height(500.0).data_aspect(1.0)
-            .include_x(-max_reach - 1.0).include_x(max_reach + 1.0)
-            .include_y(-1.0).include_y(max_reach + 1.0)
+        Plot::new("ik_plot")
+            .height(500.0)
+            .data_aspect(1.0)
+            .include_x(-max_reach - 1.0)
+            .include_x(max_reach + 1.0)
+            .include_y(-1.0)
+            .include_y(max_reach + 1.0)
             .show(ui, |plot_ui| {
                 // Chain links
                 if !self.joint_positions.is_empty() {
                     let data = self.joint_positions.clone();
                     let pts1: PlotPoints = data.iter().copied().collect();
                     let pts2: PlotPoints = data.iter().copied().collect();
-                    plot_ui.line(Line::new(pts1).name("Chain").width(3.0)
-                        .color(egui::Color32::from_rgb(100, 180, 255)));
-                    plot_ui.points(Points::new(pts2).radius(6.0)
-                        .color(egui::Color32::from_rgb(100, 180, 255)).name("Joints"));
+                    plot_ui.line(
+                        Line::new(pts1)
+                            .name("Chain")
+                            .width(3.0)
+                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                    );
+                    plot_ui.points(
+                        Points::new(pts2)
+                            .radius(6.0)
+                            .color(egui::Color32::from_rgb(100, 180, 255))
+                            .name("Joints"),
+                    );
                 }
 
                 // Target
-                plot_ui.points(Points::new(PlotPoints::new(vec![[self.target_x, self.target_y]]))
-                    .radius(10.0).color(egui::Color32::RED).name("Target")
-                    .shape(egui_plot::MarkerShape::Cross));
+                plot_ui.points(
+                    Points::new(PlotPoints::new(vec![[self.target_x, self.target_y]]))
+                        .radius(10.0)
+                        .color(egui::Color32::RED)
+                        .name("Target")
+                        .shape(egui_plot::MarkerShape::Cross),
+                );
 
                 // Reach circle
-                let circle: PlotPoints = (0..=64).map(|i| {
-                    let a = 2.0 * std::f64::consts::PI * i as f64 / 64.0;
-                    [a.cos() * max_reach, a.sin() * max_reach]
-                }).collect();
-                plot_ui.line(Line::new(circle).name("Reach limit")
-                    .style(egui_plot::LineStyle::dashed_dense())
-                    .color(egui::Color32::from_rgba_premultiplied(150, 150, 150, 80)));
+                let circle: PlotPoints = (0..=64)
+                    .map(|i| {
+                        let a = 2.0 * std::f64::consts::PI * i as f64 / 64.0;
+                        [a.cos() * max_reach, a.sin() * max_reach]
+                    })
+                    .collect();
+                plot_ui.line(
+                    Line::new(circle)
+                        .name("Reach limit")
+                        .style(egui_plot::LineStyle::dashed_dense())
+                        .color(egui::Color32::from_rgba_premultiplied(150, 150, 150, 80)),
+                );
             });
     }
 
     fn solve(&mut self) {
-        use ix_dynamics::ik::{Joint, Chain};
+        use ix_dynamics::ik::{Chain, Joint};
 
         // Build a planar chain (all revolute around Z axis)
         let joints: Vec<Joint> = (0..self.n_links)
@@ -137,7 +159,8 @@ impl IKChainDemo {
                 }
 
                 let ee = positions.last().unwrap();
-                let dist = ((ee[0] - self.target_x).powi(2) + (ee[1] - self.target_y).powi(2)).sqrt();
+                let dist =
+                    ((ee[0] - self.target_x).powi(2) + (ee[1] - self.target_y).powi(2)).sqrt();
                 self.status = format!("Solved! End-effector error: {:.4}", dist);
                 self.joint_angles = angles;
                 self.joint_positions = positions;

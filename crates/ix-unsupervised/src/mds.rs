@@ -176,7 +176,11 @@ mod tests {
         let embedding = classical_mds(&dists, 2).unwrap();
         assert_eq!(embedding.nrows(), 5);
         let err = pairwise_error(&dists, &embedding);
-        assert!(err < 1e-5, "coplanar points should embed exactly, err = {}", err);
+        assert!(
+            err < 1e-5,
+            "coplanar points should embed exactly, err = {}",
+            err
+        );
     }
 
     #[test]

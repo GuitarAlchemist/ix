@@ -1,7 +1,7 @@
 //! Multi-armed bandit algorithms.
 
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal};
 
@@ -150,9 +150,13 @@ mod tests {
         }
 
         // Best arm should have highest Q-value
-        let best = bandit.q_values.iter().enumerate()
+        let best = bandit
+            .q_values
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .unwrap().0;
+            .unwrap()
+            .0;
         assert_eq!(best, 2);
     }
 

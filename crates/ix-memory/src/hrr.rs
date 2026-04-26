@@ -285,10 +285,7 @@ mod tests {
     fn random_vector_is_approximately_unit_length() {
         let v = HrrVector::random_seeded(TEST_DIM, 42);
         let norm: f64 = v.components().iter().map(|x| x * x).sum::<f64>().sqrt();
-        assert!(
-            (norm - 1.0).abs() < 1e-9,
-            "expected unit norm, got {norm}"
-        );
+        assert!((norm - 1.0).abs() < 1e-9, "expected unit norm, got {norm}");
     }
 
     #[test]

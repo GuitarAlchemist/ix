@@ -162,7 +162,9 @@ pub fn events_to_observations(
                         aspect,
                         variant,
                         weight,
-                        Some(format!("action_blocked({code:?}) by {emitted_by}: {reason}")),
+                        Some(format!(
+                            "action_blocked({code:?}) by {emitted_by}: {reason}"
+                        )),
                     ));
                 }
             }
@@ -250,7 +252,7 @@ pub fn events_to_observations(
             // Intentionally ignored variants.
             SessionEvent::ActionProposed { .. } => {} // proposals are not outcomes
             SessionEvent::MetadataMounted { .. } => {} // implementation detail
-            SessionEvent::BeliefChanged { .. } => {} // future: re-emit as observation
+            SessionEvent::BeliefChanged { .. } => {}  // future: re-emit as observation
         }
     }
     out
@@ -360,10 +362,7 @@ mod tests {
         ];
         let obs = project(&events);
         assert_eq!(obs.len(), 1);
-        assert_eq!(
-            obs[0].claim_key,
-            "ix_context_walk:crates/ix-math::valuable"
-        );
+        assert_eq!(obs[0].claim_key, "ix_context_walk:crates/ix-math::valuable");
     }
 
     #[test]
@@ -559,7 +558,10 @@ mod tests {
                 .find(|o| o.claim_key == claim && o.ordinal == ord)
                 .unwrap_or_else(|| panic!("missing {claim} at ord {ord}"))
         };
-        assert_eq!(find("ix_stats:baseline::valuable", 0).variant, Hexavalent::True);
+        assert_eq!(
+            find("ix_stats:baseline::valuable", 0).variant,
+            Hexavalent::True
+        );
         assert_eq!(find("ix_delete_all::safe", 1).variant, Hexavalent::False);
         assert_eq!(
             find("ix_stats:baseline::valuable", 2).variant,

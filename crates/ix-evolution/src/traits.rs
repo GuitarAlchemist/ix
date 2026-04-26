@@ -43,13 +43,11 @@ impl Individual for RealIndividual {
     fn crossover(&self, other: &Self, rng: &mut impl rand::Rng) -> Self {
         // BLX-alpha crossover
         let alpha = 0.5;
-        let genes = Array1::from_iter(
-            self.genes.iter().zip(other.genes.iter()).map(|(&a, &b)| {
-                let lo = a.min(b) - alpha * (a - b).abs();
-                let hi = a.max(b) + alpha * (a - b).abs();
-                rng.random_range(lo..=hi)
-            }),
-        );
+        let genes = Array1::from_iter(self.genes.iter().zip(other.genes.iter()).map(|(&a, &b)| {
+            let lo = a.min(b) - alpha * (a - b).abs();
+            let hi = a.max(b) + alpha * (a - b).abs();
+            rng.random_range(lo..=hi)
+        }));
         RealIndividual::new(genes)
     }
 

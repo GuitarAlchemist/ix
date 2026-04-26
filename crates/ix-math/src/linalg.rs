@@ -166,7 +166,11 @@ pub fn standardize(a: &Array2<f64>) -> (Array2<f64>, Array1<f64>, Array1<f64>) {
     let means = col_mean(a);
     let centered = a - &means;
     let _n = a.nrows() as f64;
-    let stds = centered.mapv(|x| x * x).mean_axis(Axis(0)).unwrap().mapv(|x| (x).sqrt().max(1e-12));
+    let stds = centered
+        .mapv(|x| x * x)
+        .mean_axis(Axis(0))
+        .unwrap()
+        .mapv(|x| (x).sqrt().max(1e-12));
     let normalized = &centered / &stds;
     (normalized, means, stds)
 }

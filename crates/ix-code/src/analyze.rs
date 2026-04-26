@@ -70,24 +70,35 @@ impl Language {
     /// Branch keywords that increment cyclomatic complexity.
     fn branch_keywords(&self) -> &[&str] {
         match self {
-            Language::Rust => &["if", "else if", "match", "while", "for", "loop", "&&", "||", "?"],
+            Language::Rust => &[
+                "if", "else if", "match", "while", "for", "loop", "&&", "||", "?",
+            ],
             Language::Python => &["if", "elif", "while", "for", "and", "or", "except", "with"],
-            Language::JavaScript | Language::TypeScript =>
-                &["if", "else if", "while", "for", "switch", "case", "catch", "&&", "||", "?", "??"],
-            Language::Cpp =>
-                &["if", "else if", "while", "for", "switch", "case", "catch", "&&", "||", "?"],
-            Language::Java =>
-                &["if", "else if", "while", "for", "switch", "case", "catch", "&&", "||", "?"],
-            Language::Go =>
-                &["if", "else if", "for", "switch", "case", "select", "&&", "||"],
-            Language::CSharp =>
-                &["if", "else if", "while", "for", "foreach", "switch", "case", "catch", "&&", "||", "?", "??"],
-            Language::FSharp =>
-                &["if", "elif", "match", "while", "for", "&&", "||", "|>"],
-            Language::Php =>
-                &["if", "elseif", "while", "for", "foreach", "switch", "case", "catch", "&&", "||", "?", "??"],
-            Language::Ruby =>
-                &["if", "elsif", "unless", "while", "until", "for", "case", "when", "rescue", "&&", "||"],
+            Language::JavaScript | Language::TypeScript => &[
+                "if", "else if", "while", "for", "switch", "case", "catch", "&&", "||", "?", "??",
+            ],
+            Language::Cpp => &[
+                "if", "else if", "while", "for", "switch", "case", "catch", "&&", "||", "?",
+            ],
+            Language::Java => &[
+                "if", "else if", "while", "for", "switch", "case", "catch", "&&", "||", "?",
+            ],
+            Language::Go => &[
+                "if", "else if", "for", "switch", "case", "select", "&&", "||",
+            ],
+            Language::CSharp => &[
+                "if", "else if", "while", "for", "foreach", "switch", "case", "catch", "&&", "||",
+                "?", "??",
+            ],
+            Language::FSharp => &["if", "elif", "match", "while", "for", "&&", "||", "|>"],
+            Language::Php => &[
+                "if", "elseif", "while", "for", "foreach", "switch", "case", "catch", "&&", "||",
+                "?", "??",
+            ],
+            Language::Ruby => &[
+                "if", "elsif", "unless", "while", "until", "for", "case", "when", "rescue", "&&",
+                "||",
+            ],
         }
     }
 
@@ -96,14 +107,20 @@ impl Language {
         match self {
             Language::Rust => &["if", "match", "while", "for", "loop", "fn", "impl"],
             Language::Python => &["if", "while", "for", "def", "class", "try", "with"],
-            Language::JavaScript | Language::TypeScript =>
-                &["if", "while", "for", "function", "class", "try", "switch"],
-            Language::Cpp | Language::Java | Language::CSharp =>
-                &["if", "while", "for", "switch", "try", "class"],
+            Language::JavaScript | Language::TypeScript => {
+                &["if", "while", "for", "function", "class", "try", "switch"]
+            }
+            Language::Cpp | Language::Java | Language::CSharp => {
+                &["if", "while", "for", "switch", "try", "class"]
+            }
             Language::Go => &["if", "for", "switch", "select", "func"],
             Language::FSharp => &["if", "match", "while", "for", "let", "module"],
-            Language::Php => &["if", "while", "for", "foreach", "function", "class", "try", "switch"],
-            Language::Ruby => &["if", "unless", "while", "until", "for", "def", "class", "module", "begin", "case"],
+            Language::Php => &[
+                "if", "while", "for", "foreach", "function", "class", "try", "switch",
+            ],
+            Language::Ruby => &[
+                "if", "unless", "while", "until", "for", "def", "class", "module", "begin", "case",
+            ],
         }
     }
 
@@ -124,10 +141,9 @@ impl Language {
     fn operators(&self) -> &[&str] {
         // Common operators across most languages
         &[
-            "+=", "-=", "*=", "/=", "%=", "==", "!=", "<=", ">=", "&&", "||",
-            "<<", ">>", "->", "=>", "::", "..", "?.",
-            "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "~",
-            "(", ")", "[", "]", "{", "}", ",", ";", ":", ".",
+            "+=", "-=", "*=", "/=", "%=", "==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "->",
+            "=>", "::", "..", "?.", "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^",
+            "~", "(", ")", "[", "]", "{", "}", ",", ";", ":", ".",
         ]
     }
 }
@@ -192,7 +208,9 @@ fn analyze_code(source: &str, lang: Language, name: &str) -> CodeMetrics {
         }
 
         // Python docstrings (simplified)
-        if matches!(lang, Language::Python) && (trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''")) {
+        if matches!(lang, Language::Python)
+            && (trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''"))
+        {
             cloc += 1;
             continue;
         }
@@ -215,13 +233,16 @@ fn analyze_code(source: &str, lang: Language, name: &str) -> CodeMetrics {
     let ploc = total_lines;
 
     // Count logical lines (lines ending with ; or { or : for Python)
-    let lloc = lines.iter().filter(|l| {
-        let t = l.trim();
-        match lang {
-            Language::Python => t.ends_with(':') && !t.starts_with('#'),
-            _ => t.ends_with(';') || t.ends_with('{'),
-        }
-    }).count();
+    let lloc = lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim();
+            match lang {
+                Language::Python => t.ends_with(':') && !t.starts_with('#'),
+                _ => t.ends_with(';') || t.ends_with('{'),
+            }
+        })
+        .count();
 
     // Cyclomatic complexity: 1 + count of branch keywords
     let mut cyclomatic = 1.0;
@@ -247,10 +268,14 @@ fn analyze_code(source: &str, lang: Language, name: &str) -> CodeMetrics {
     let cognitive = estimate_cognitive(source, lang);
 
     // Count function exit points (return statements)
-    let n_exits = lines.iter().filter(|l| {
-        let t = l.trim();
-        !t.starts_with(lang.line_comment()) && contains_keyword(t, "return")
-    }).count().max(1) as f64;
+    let n_exits = lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim();
+            !t.starts_with(lang.line_comment()) && contains_keyword(t, "return")
+        })
+        .count()
+        .max(1) as f64;
 
     // Halstead metrics
     let (h_u_ops, h_u_opnds, h_total_ops, h_total_opnds) = halstead_counts(source, lang);
@@ -371,7 +396,9 @@ fn extract_fn_name(line: &str, lang: Language) -> String {
         } else {
             rest
         };
-        let end = rest.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(rest.len());
+        let end = rest
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(rest.len());
         rest[..end].to_string()
     } else {
         String::new()
@@ -413,7 +440,10 @@ fn find_fn_end(lines: &[&str], start: usize, lang: Language) -> usize {
         }
         Language::Ruby => {
             // Ruby uses def/end blocks: track nesting of block-opening keywords
-            let openers = ["def", "class", "module", "do", "if", "unless", "while", "until", "for", "case", "begin"];
+            let openers = [
+                "def", "class", "module", "do", "if", "unless", "while", "until", "for", "case",
+                "begin",
+            ];
             let mut depth = 0i32;
             for (i, line) in lines.iter().enumerate().skip(start) {
                 let trimmed = line.trim();
@@ -440,8 +470,13 @@ fn find_fn_end(lines: &[&str], start: usize, lang: Language) -> usize {
             let mut found_open = false;
             for (i, line) in lines.iter().enumerate().skip(start) {
                 for ch in line.chars() {
-                    if ch == '{' { depth += 1; found_open = true; }
-                    if ch == '}' { depth -= 1; }
+                    if ch == '{' {
+                        depth += 1;
+                        found_open = true;
+                    }
+                    if ch == '}' {
+                        depth -= 1;
+                    }
                 }
                 if found_open && depth <= 0 {
                     return i;
@@ -493,7 +528,9 @@ fn estimate_cognitive(source: &str, lang: Language) -> f64 {
         }
 
         // Check for nesting increasers
-        let opens_scope = lang.nesting_keywords().iter()
+        let opens_scope = lang
+            .nesting_keywords()
+            .iter()
             .any(|kw| contains_keyword(trimmed, kw));
 
         // Count branch keywords with nesting penalty
@@ -568,7 +605,9 @@ fn tokenize_operands(line: &str) -> Vec<String> {
             while let Some(&c) = chars.peek() {
                 s.push(c);
                 chars.next();
-                if c == ch { break; }
+                if c == ch {
+                    break;
+                }
             }
             tokens.push(s);
         } else {
@@ -604,8 +643,14 @@ mod tests {
 
     #[test]
     fn test_language_from_path() {
-        assert_eq!(Language::from_path(Path::new("main.rs")), Some(Language::Rust));
-        assert_eq!(Language::from_path(Path::new("script.py")), Some(Language::Python));
+        assert_eq!(
+            Language::from_path(Path::new("main.rs")),
+            Some(Language::Rust)
+        );
+        assert_eq!(
+            Language::from_path(Path::new("script.py")),
+            Some(Language::Python)
+        );
     }
 
     #[test]
@@ -631,13 +676,21 @@ fn add(a: i32, b: i32) -> i32 {
         let hello_fn = result.functions.iter().find(|f| f.name == "hello");
         assert!(hello_fn.is_some(), "should find hello function");
         let hello = hello_fn.unwrap();
-        assert!(hello.cyclomatic >= 2.0, "hello should have CC >= 2, got {}", hello.cyclomatic);
+        assert!(
+            hello.cyclomatic >= 2.0,
+            "hello should have CC >= 2, got {}",
+            hello.cyclomatic
+        );
 
         // add function should be simple
         let add_fn = result.functions.iter().find(|f| f.name == "add");
         assert!(add_fn.is_some(), "should find add function");
         let add = add_fn.unwrap();
-        assert!((add.n_args - 2.0).abs() < 0.01, "add should have 2 args, got {}", add.n_args);
+        assert!(
+            (add.n_args - 2.0).abs() < 0.01,
+            "add should have 2 args, got {}",
+            add.n_args
+        );
     }
 
     #[test]
@@ -659,7 +712,11 @@ def fibonacci(n):
         let fib = result.functions.iter().find(|f| f.name == "fibonacci");
         assert!(fib.is_some(), "should find fibonacci function");
         let fib = fib.unwrap();
-        assert!(fib.cyclomatic >= 3.0, "fibonacci CC should be >= 3, got {}", fib.cyclomatic);
+        assert!(
+            fib.cyclomatic >= 3.0,
+            "fibonacci CC should be >= 3, got {}",
+            fib.cyclomatic
+        );
     }
 
     #[test]
@@ -709,8 +766,14 @@ fn compute(x: f64, y: f64) -> f64 {
 "#;
         let path = Path::new("test.rs");
         let result = analyze_source(source, Language::Rust, path);
-        assert!(result.file_scope.h_length > 0.0, "Halstead length should be > 0");
-        assert!(result.file_scope.h_volume > 0.0, "Halstead volume should be > 0");
+        assert!(
+            result.file_scope.h_length > 0.0,
+            "Halstead length should be > 0"
+        );
+        assert!(
+            result.file_scope.h_volume > 0.0,
+            "Halstead volume should be > 0"
+        );
     }
 
     #[test]
@@ -723,22 +786,37 @@ fn simple() -> i32 {
         let path = Path::new("test.rs");
         let result = analyze_source(source, Language::Rust, path);
         let mi = result.file_scope.maintainability_index;
-        assert!(mi > 0.0 && mi <= 171.0, "MI should be in [0, 171], got {mi}");
+        assert!(
+            mi > 0.0 && mi <= 171.0,
+            "MI should be in [0, 171], got {mi}"
+        );
     }
 
     #[test]
     fn test_count_keyword_occurrences() {
-        assert_eq!(count_keyword_occurrences("if x > 0 { if y > 0 { } }", "if"), 2);
+        assert_eq!(
+            count_keyword_occurrences("if x > 0 { if y > 0 { } }", "if"),
+            2
+        );
         assert_eq!(count_keyword_occurrences("iffy", "if"), 0);
         assert_eq!(count_keyword_occurrences("else if x > 0", "else if"), 1);
     }
 
     #[test]
     fn test_extract_fn_name() {
-        assert_eq!(extract_fn_name("fn hello(x: i32) -> i32 {", Language::Rust), "hello");
+        assert_eq!(
+            extract_fn_name("fn hello(x: i32) -> i32 {", Language::Rust),
+            "hello"
+        );
         assert_eq!(extract_fn_name("pub fn greet() {", Language::Rust), "greet");
-        assert_eq!(extract_fn_name("def fibonacci(n):", Language::Python), "fibonacci");
-        assert_eq!(extract_fn_name("function greet(name) {", Language::JavaScript), "greet");
+        assert_eq!(
+            extract_fn_name("def fibonacci(n):", Language::Python),
+            "fibonacci"
+        );
+        assert_eq!(
+            extract_fn_name("function greet(name) {", Language::JavaScript),
+            "greet"
+        );
         assert_eq!(extract_fn_name("func main() {", Language::Go), "main");
     }
 
@@ -757,7 +835,10 @@ fn simple() -> i32 {
 
         let c1 = estimate_cognitive(simple, Language::Rust);
         let c2 = estimate_cognitive(nested, Language::Rust);
-        assert!(c2 > c1, "nested code should have higher cognitive complexity: {c1} vs {c2}");
+        assert!(
+            c2 > c1,
+            "nested code should have higher cognitive complexity: {c1} vs {c2}"
+        );
     }
 
     #[test]
@@ -781,13 +862,25 @@ function add($a, $b) {
         let path = Path::new("test.php");
         let result = analyze_source(source, Language::Php, path);
         assert_eq!(result.language, "PHP");
-        assert!(result.functions.len() >= 2, "should find 2 functions, got {}", result.functions.len());
+        assert!(
+            result.functions.len() >= 2,
+            "should find 2 functions, got {}",
+            result.functions.len()
+        );
 
         let fib = result.functions.iter().find(|f| f.name == "fibonacci");
         assert!(fib.is_some(), "should find fibonacci function");
         let fib = fib.unwrap();
-        assert!(fib.cyclomatic >= 3.0, "fibonacci CC should be >= 3, got {}", fib.cyclomatic);
-        assert!((fib.n_args - 1.0).abs() < 0.01, "fibonacci should have 1 arg, got {}", fib.n_args);
+        assert!(
+            fib.cyclomatic >= 3.0,
+            "fibonacci CC should be >= 3, got {}",
+            fib.cyclomatic
+        );
+        assert!(
+            (fib.n_args - 1.0).abs() < 0.01,
+            "fibonacci should have 1 arg, got {}",
+            fib.n_args
+        );
     }
 
     #[test]
@@ -810,12 +903,20 @@ end
         let path = Path::new("test.rb");
         let result = analyze_source(source, Language::Ruby, path);
         assert_eq!(result.language, "Ruby");
-        assert!(result.functions.len() >= 2, "should find 2 functions, got {}", result.functions.len());
+        assert!(
+            result.functions.len() >= 2,
+            "should find 2 functions, got {}",
+            result.functions.len()
+        );
 
         let fib = result.functions.iter().find(|f| f.name == "fibonacci");
         assert!(fib.is_some(), "should find fibonacci function");
         let fib = fib.unwrap();
-        assert!(fib.cyclomatic >= 3.0, "fibonacci CC should be >= 3, got {}", fib.cyclomatic);
+        assert!(
+            fib.cyclomatic >= 3.0,
+            "fibonacci CC should be >= 3, got {}",
+            fib.cyclomatic
+        );
     }
 
     #[test]

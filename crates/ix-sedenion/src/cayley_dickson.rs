@@ -13,7 +13,10 @@
 pub fn double_multiply(a: &[f64], b: &[f64]) -> Vec<f64> {
     let n = a.len();
     assert_eq!(n, b.len(), "Cayley-Dickson multiply: mismatched dimensions");
-    assert!(n.is_power_of_two(), "Cayley-Dickson: dimension must be a power of 2");
+    assert!(
+        n.is_power_of_two(),
+        "Cayley-Dickson: dimension must be a power of 2"
+    );
 
     if n == 1 {
         return vec![a[0] * b[0]];
@@ -29,14 +32,20 @@ pub fn double_multiply(a: &[f64], b: &[f64]) -> Vec<f64> {
     // first half: a1*b1 - conj(b2)*a2
     let a1_b1 = double_multiply(a1, b1);
     let conj_b2_a2 = double_multiply(&conj_b2, a2);
-    let first: Vec<f64> = a1_b1.iter().zip(conj_b2_a2.iter())
-        .map(|(x, y)| x - y).collect();
+    let first: Vec<f64> = a1_b1
+        .iter()
+        .zip(conj_b2_a2.iter())
+        .map(|(x, y)| x - y)
+        .collect();
 
     // second half: b2*a1 + a2*conj(b1)
     let b2_a1 = double_multiply(b2, a1);
     let a2_conj_b1 = double_multiply(a2, &conj_b1);
-    let second: Vec<f64> = b2_a1.iter().zip(a2_conj_b1.iter())
-        .map(|(x, y)| x + y).collect();
+    let second: Vec<f64> = b2_a1
+        .iter()
+        .zip(a2_conj_b1.iter())
+        .map(|(x, y)| x + y)
+        .collect();
 
     let mut result = first;
     result.extend(second);
@@ -78,7 +87,9 @@ impl<const N: usize> CayleyDickson<N> {
 
     /// The zero element.
     pub fn zero() -> Self {
-        Self { components: [0.0; N] }
+        Self {
+            components: [0.0; N],
+        }
     }
 
     /// The multiplicative identity.
@@ -137,11 +148,19 @@ mod tests {
         assert!((result[0] - k[0]).abs() < EPS);
         assert!((result[1] - k[1]).abs() < EPS);
         assert!((result[2] - k[2]).abs() < EPS);
-        assert!((result[3] - k[3]).abs() < EPS, "i*j should be k, got {:?}", result);
+        assert!(
+            (result[3] - k[3]).abs() < EPS,
+            "i*j should be k, got {:?}",
+            result
+        );
 
         // j*i = -k
         let result2 = double_multiply(&j, &i);
-        assert!((result2[3] - (-1.0)).abs() < EPS, "j*i should be -k, got {:?}", result2);
+        assert!(
+            (result2[3] - (-1.0)).abs() < EPS,
+            "j*i should be -k, got {:?}",
+            result2
+        );
     }
 
     #[test]
@@ -153,8 +172,14 @@ mod tests {
             e[idx] = 1.0;
             let sq = double_multiply(&e, &e);
             for c in 0..4 {
-                assert!((sq[c] - neg1[c]).abs() < EPS,
-                    "e_{}^2 component {}: got {}, expected {}", idx, c, sq[c], neg1[c]);
+                assert!(
+                    (sq[c] - neg1[c]).abs() < EPS,
+                    "e_{}^2 component {}: got {}, expected {}",
+                    idx,
+                    c,
+                    sq[c],
+                    neg1[c]
+                );
             }
         }
     }
@@ -164,10 +189,12 @@ mod tests {
         // Verify that double_multiply for 16D matches Sedenion::mul
         use crate::sedenion::Sedenion;
 
-        let a_arr = [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,
-                     0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8];
-        let b_arr = [0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1,
-                     8.0,7.0,6.0,5.0,4.0,3.0,2.0,1.0];
+        let a_arr = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+        ];
+        let b_arr = [
+            0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0,
+        ];
 
         let generic = double_multiply(&a_arr, &b_arr);
         let sa = Sedenion::new(a_arr);
@@ -175,8 +202,13 @@ mod tests {
         let specific = Sedenion::mul(&sa, &sb);
 
         for (i, &g) in generic.iter().enumerate().take(16) {
-            assert!((g - specific.components[i]).abs() < EPS,
-                "mismatch at {}: generic={}, specific={}", i, g, specific.components[i]);
+            assert!(
+                (g - specific.components[i]).abs() < EPS,
+                "mismatch at {}: generic={}, specific={}",
+                i,
+                g,
+                specific.components[i]
+            );
         }
     }
 
@@ -213,11 +245,14 @@ mod tests {
             let mut e = [0.0f64; 32];
             e[idx] = 1.0;
             let sq = double_multiply(&e, &e);
-            assert!((sq[0] - (-1.0)).abs() < EPS,
-                "32-ion e_{}^2 real part: {}", idx, sq[0]);
+            assert!(
+                (sq[0] - (-1.0)).abs() < EPS,
+                "32-ion e_{}^2 real part: {}",
+                idx,
+                sq[0]
+            );
             for (c, &v) in sq.iter().enumerate().take(32).skip(1) {
-                assert!(v.abs() < EPS,
-                    "32-ion e_{}^2 imag part {}: {}", idx, c, v);
+                assert!(v.abs() < EPS, "32-ion e_{}^2 imag part {}: {}", idx, c, v);
             }
         }
     }

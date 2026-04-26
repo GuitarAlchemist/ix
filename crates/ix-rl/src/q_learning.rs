@@ -1,11 +1,11 @@
 //! Tabular Q-Learning and SARSA.
 
 use ndarray::Array2;
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 
-use crate::traits::{Environment, Agent};
+use crate::traits::{Agent, Environment};
 
 /// Tabular Q-Learning agent.
 pub struct QLearning {

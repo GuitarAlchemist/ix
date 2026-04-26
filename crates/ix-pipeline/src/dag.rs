@@ -60,7 +60,11 @@ impl<N> Dag<N> {
     }
 
     /// Add a directed edge from → to. Returns error if it would create a cycle.
-    pub fn add_edge(&mut self, from: impl Into<NodeId>, to: impl Into<NodeId>) -> Result<(), DagError> {
+    pub fn add_edge(
+        &mut self,
+        from: impl Into<NodeId>,
+        to: impl Into<NodeId>,
+    ) -> Result<(), DagError> {
         let from = from.into();
         let to = to.into();
 
@@ -80,7 +84,10 @@ impl<N> Dag<N> {
             return Err(DagError::CycleDetected(from, to));
         }
 
-        self.edges.entry(from.clone()).or_default().insert(to.clone());
+        self.edges
+            .entry(from.clone())
+            .or_default()
+            .insert(to.clone());
         self.reverse.entry(to).or_default().insert(from);
         Ok(())
     }
@@ -124,23 +131,27 @@ impl<N> Dag<N> {
 
     /// Get the predecessors (dependencies) of a node.
     pub fn predecessors(&self, id: &str) -> Vec<&NodeId> {
-        self.reverse.get(id)
+        self.reverse
+            .get(id)
             .map(|s| s.iter().collect())
             .unwrap_or_default()
     }
 
     /// Get the successors (dependents) of a node.
     pub fn successors(&self, id: &str) -> Vec<&NodeId> {
-        self.edges.get(id)
+        self.edges
+            .get(id)
             .map(|s| s.iter().collect())
             .unwrap_or_default()
     }
 
     /// Get all root nodes (no predecessors).
     pub fn roots(&self) -> Vec<&NodeId> {
-        self.order.iter()
+        self.order
+            .iter()
             .filter(|id| {
-                self.reverse.get(id.as_str())
+                self.reverse
+                    .get(id.as_str())
                     .map_or(true, |preds| preds.is_empty())
             })
             .collect()
@@ -148,9 +159,11 @@ impl<N> Dag<N> {
 
     /// Get all leaf nodes (no successors).
     pub fn leaves(&self) -> Vec<&NodeId> {
-        self.order.iter()
+        self.order
+            .iter()
             .filter(|id| {
-                self.edges.get(id.as_str())
+                self.edges
+                    .get(id.as_str())
                     .map_or(true, |succs| succs.is_empty())
             })
             .collect()
@@ -191,7 +204,8 @@ impl<N> Dag<N> {
             in_degrees.insert(id, self.in_degree(id));
         }
 
-        let mut queue: VecDeque<&str> = in_degrees.iter()
+        let mut queue: VecDeque<&str> = in_degrees
+            .iter()
             .filter(|(_, &deg)| deg == 0)
             .map(|(&id, _)| id)
             .collect();
@@ -213,8 +227,11 @@ impl<N> Dag<N> {
         }
 
         // Map back to NodeId references from self.order, preserving topological order
-        let pos_map: HashMap<&str, usize> = sorted.iter().enumerate().map(|(i, &s)| (s, i)).collect();
-        let mut result: Vec<&NodeId> = self.order.iter()
+        let pos_map: HashMap<&str, usize> =
+            sorted.iter().enumerate().map(|(i, &s)| (s, i)).collect();
+        let mut result: Vec<&NodeId> = self
+            .order
+            .iter()
             .filter(|id| pos_map.contains_key(id.as_str()))
             .collect();
         result.sort_by_key(|id| pos_map.get(id.as_str()).copied().unwrap_or(usize::MAX));
@@ -239,7 +256,8 @@ impl<N> Dag<N> {
             let level = if preds.is_empty() {
                 0
             } else {
-                preds.iter()
+                preds
+                    .iter()
                     .map(|p| assigned.get(p.as_str()).copied().unwrap_or(0) + 1)
                     .max()
                     .unwrap_or(0)
@@ -271,16 +289,16 @@ impl<N> Dag<N> {
             let node_cost = cost_fn(id, self.nodes.get(id.as_str()).unwrap());
             let preds = self.predecessors(id);
 
-            let max_pred = preds.iter()
+            let max_pred = preds
+                .iter()
                 .map(|p| dist.get(p.as_str()).copied().unwrap_or(0.0))
                 .fold(0.0f64, f64::max);
 
-            let best_pred = preds.iter()
-                .max_by(|a, b| {
-                    let da = dist.get(a.as_str()).unwrap_or(&0.0);
-                    let db = dist.get(b.as_str()).unwrap_or(&0.0);
-                    da.partial_cmp(db).unwrap()
-                });
+            let best_pred = preds.iter().max_by(|a, b| {
+                let da = dist.get(a.as_str()).unwrap_or(&0.0);
+                let db = dist.get(b.as_str()).unwrap_or(&0.0);
+                da.partial_cmp(db).unwrap()
+            });
 
             dist.insert(id, max_pred + node_cost);
             if let Some(pred) = best_pred {
@@ -289,7 +307,8 @@ impl<N> Dag<N> {
         }
 
         // Find the end node with maximum distance
-        let (&end_node, &total_cost) = dist.iter()
+        let (&end_node, &total_cost) = dist
+            .iter()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap_or((&"", &0.0));
 

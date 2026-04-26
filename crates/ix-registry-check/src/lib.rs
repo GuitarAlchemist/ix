@@ -147,9 +147,7 @@ pub fn compare(old: &Registry, new: &Registry) -> Vec<Finding> {
                 findings.push(Finding {
                     severity: Severity::Breaking,
                     path: format!("repos.{repo}.tools.{cat}.{tool}"),
-                    message: format!(
-                        "tool '{tool}' was removed from '{repo}' category '{cat}'"
-                    ),
+                    message: format!("tool '{tool}' was removed from '{repo}' category '{cat}'"),
                 });
             }
             for tool in new_tools.difference(&old_tools) {

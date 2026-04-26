@@ -86,7 +86,11 @@ pub fn parse_catalog_str(content: &str) -> Result<Vec<Invariant>, Error> {
             s if s.starts_with('C') => InvariantStatus::Claimed,
             s if s.starts_with('N') => InvariantStatus::Latent,
             s if s.contains("FAIL") => InvariantStatus::Failing,
-            other => return Err(Error::Parse(format!("unknown status '{other}' for invariant {id}"))),
+            other => {
+                return Err(Error::Parse(format!(
+                    "unknown status '{other}' for invariant {id}"
+                )))
+            }
         };
 
         invariants.push(Invariant {

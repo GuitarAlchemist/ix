@@ -158,8 +158,11 @@ impl SimplexStream {
         let mut betti = Vec::with_capacity(max_dim + 1);
 
         for d in 0..=max_dim {
-            let simplices_d: Vec<&Simplex> =
-                active.iter().filter(|s| s.dimension() == d).copied().collect();
+            let simplices_d: Vec<&Simplex> = active
+                .iter()
+                .filter(|s| s.dimension() == d)
+                .copied()
+                .collect();
             let simplices_d_minus_1: Vec<&Simplex> = if d > 0 {
                 active
                     .iter()
@@ -233,7 +236,16 @@ pub fn rips_complex(points: &[Vec<f64>], max_dim: usize, max_radius: f64) -> Sim
     for dim in 1..=max_dim {
         // Generate all (dim+1)-subsets of vertices
         let mut subset = vec![0usize; dim + 1];
-        add_simplices_recursive(&dist, &mut stream, &mut subset, 0, 0, n, dim + 1, max_radius);
+        add_simplices_recursive(
+            &dist,
+            &mut stream,
+            &mut subset,
+            0,
+            0,
+            n,
+            dim + 1,
+            max_radius,
+        );
     }
 
     stream.sort();
@@ -412,11 +424,7 @@ mod tests {
 
     #[test]
     fn test_rips_complex_three_points() {
-        let points = vec![
-            vec![0.0, 0.0],
-            vec![1.0, 0.0],
-            vec![0.5, 0.866],
-        ];
+        let points = vec![vec![0.0, 0.0], vec![1.0, 0.0], vec![0.5, 0.866]];
         let stream = rips_complex(&points, 2, 1.5);
 
         // Should have 3 vertices + 3 edges + 1 triangle = 7

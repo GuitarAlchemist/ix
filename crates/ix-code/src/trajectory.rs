@@ -379,9 +379,7 @@ mod tests {
         fs::write(&full, contents).unwrap();
 
         let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"], IndexAddOption::DEFAULT, None)
-            .unwrap();
+        index.add_all(["*"], IndexAddOption::DEFAULT, None).unwrap();
         index.write().unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
@@ -420,8 +418,7 @@ mod tests {
             "init",
         );
 
-        let traj =
-            compute_trajectory(tmp.path(), "lib.rs", "cyclomatic", 100).unwrap();
+        let traj = compute_trajectory(tmp.path(), "lib.rs", "cyclomatic", 100).unwrap();
         assert_eq!(traj.n_commits, 1);
         assert_eq!(traj.confidence, 0.0);
         assert_eq!(traj.trend, Trend::Stable);
@@ -473,7 +470,10 @@ mod tests {
         // Rising.
         let rising: Vec<f64> = (1..=10).map(|i| i as f64).collect();
         let vr = ix_signal::timeseries::difference(&rising, 1);
-        assert_eq!(classify_trend(&rising, &vr, std_dev(&rising)), Trend::Rising);
+        assert_eq!(
+            classify_trend(&rising, &vr, std_dev(&rising)),
+            Trend::Rising
+        );
 
         // Falling.
         let falling: Vec<f64> = (1..=10).rev().map(|i| i as f64).collect();
@@ -492,9 +492,7 @@ mod tests {
         );
 
         // Volatile — wild swings around a mean, with small net drift.
-        let volatile = vec![
-            10.0, 1.0, 20.0, 2.0, 18.0, 3.0, 19.0, 2.0, 17.0, 11.0,
-        ];
+        let volatile = vec![10.0, 1.0, 20.0, 2.0, 18.0, 3.0, 19.0, 2.0, 17.0, 11.0];
         let vv = ix_signal::timeseries::difference(&volatile, 1);
         assert_eq!(
             classify_trend(&volatile, &vv, std_dev(&volatile)),
@@ -518,8 +516,7 @@ mod tests {
             commit_file(&repo, tmp.path(), "lib.rs", v, &format!("rev {i}"));
         }
 
-        let traj =
-            compute_trajectory(tmp.path(), "lib.rs", "cyclomatic", 100).unwrap();
+        let traj = compute_trajectory(tmp.path(), "lib.rs", "cyclomatic", 100).unwrap();
         assert_eq!(traj.n_commits, versions.len());
         assert!(traj.confidence > 0.0);
         assert_eq!(traj.trend, Trend::Rising);

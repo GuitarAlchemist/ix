@@ -40,7 +40,8 @@ pub fn chinese_remainder_theorem(residues: &[(u64, u64)]) -> Option<u64> {
         let step = (x_mod * (diff % m)) % m;
         combined_remainder += combined_modulus * step;
         combined_modulus *= m;
-        combined_remainder = ((combined_remainder % combined_modulus) + combined_modulus) % combined_modulus;
+        combined_remainder =
+            ((combined_remainder % combined_modulus) + combined_modulus) % combined_modulus;
     }
 
     Some(combined_remainder as u64)

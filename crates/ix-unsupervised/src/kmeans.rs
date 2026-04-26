@@ -1,8 +1,8 @@
 //! K-Means clustering with K-Means++ initialization.
 
 use ndarray::{Array1, Array2};
-use rand::Rng;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 
@@ -45,9 +45,7 @@ impl KMeans {
     pub fn save_state(&self) -> Option<KMeansState> {
         self.centroids.as_ref().map(|c| {
             let rows = c.nrows();
-            let centroids = (0..rows)
-                .map(|r| c.row(r).to_vec())
-                .collect();
+            let centroids = (0..rows).map(|r| c.row(r).to_vec()).collect();
             KMeansState {
                 centroids,
                 k: self.k,
@@ -59,7 +57,11 @@ impl KMeans {
     pub fn load_state(state: &KMeansState) -> Self {
         let k = state.k;
         let cols = state.centroids.first().map_or(0, |r| r.len());
-        let flat: Vec<f64> = state.centroids.iter().flat_map(|r| r.iter().copied()).collect();
+        let flat: Vec<f64> = state
+            .centroids
+            .iter()
+            .flat_map(|r| r.iter().copied())
+            .collect();
         let centroids = Array2::from_shape_vec((k, cols), flat)
             .expect("KMeansState centroids dimensions mismatch");
         Self {
@@ -134,9 +136,7 @@ impl Clusterer for KMeans {
 
             for (c, &count) in counts.iter().enumerate().take(self.k) {
                 if count > 0 {
-                    new_centroids
-                        .row_mut(c)
-                        .mapv_inplace(|v| v / count as f64);
+                    new_centroids.row_mut(c).mapv_inplace(|v| v / count as f64);
                 }
             }
 
@@ -193,8 +193,12 @@ mod tests {
     #[test]
     fn test_kmeans_two_clusters() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0],
-            [10.0, 10.0], [10.5, 10.5], [11.0, 10.0]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [1.0, 0.0],
+            [10.0, 10.0],
+            [10.5, 10.5],
+            [11.0, 10.0]
         ];
 
         let mut km = KMeans::new(2).with_seed(42);
@@ -211,8 +215,12 @@ mod tests {
     #[test]
     fn test_kmeans_save_load_roundtrip() {
         let x = array![
-            [0.0, 0.0], [0.5, 0.5], [1.0, 0.0],
-            [10.0, 10.0], [10.5, 10.5], [11.0, 10.0]
+            [0.0, 0.0],
+            [0.5, 0.5],
+            [1.0, 0.0],
+            [10.0, 10.0],
+            [10.5, 10.5],
+            [11.0, 10.0]
         ];
 
         let mut km = KMeans::new(2).with_seed(42);
@@ -227,12 +235,18 @@ mod tests {
         let restored = KMeans::load_state(&restored_state);
 
         let rest_labels = restored.predict(&x);
-        assert_eq!(orig_labels, rest_labels, "predictions must match after roundtrip");
+        assert_eq!(
+            orig_labels, rest_labels,
+            "predictions must match after roundtrip"
+        );
     }
 
     #[test]
     fn test_kmeans_save_state_unfitted() {
         let km = KMeans::new(3);
-        assert!(km.save_state().is_none(), "unfitted model should return None");
+        assert!(
+            km.save_state().is_none(),
+            "unfitted model should return None"
+        );
     }
 }

@@ -26,8 +26,8 @@ pub fn doctor(format: Format) -> Result<i32, String> {
     }));
 
     // Governance submodule presence
-    let gov_dir = std::env::var("IX_GOVERNANCE_DIR")
-        .unwrap_or_else(|_| "governance/demerzel".to_string());
+    let gov_dir =
+        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
     let gov_ok = std::path::Path::new(&gov_dir).is_dir();
     if !gov_ok {
         any_warn = true;
@@ -83,13 +83,9 @@ pub fn doctor(format: Format) -> Result<i32, String> {
 
 /// Check a proposed action against the Demerzel constitution. Returns a
 /// hexavalent-friendly exit code based on compliance.
-pub fn action(
-    action_text: &str,
-    _context: Option<&str>,
-    format: Format,
-) -> Result<i32, String> {
-    let gov_dir = std::env::var("IX_GOVERNANCE_DIR")
-        .unwrap_or_else(|_| "governance/demerzel".to_string());
+pub fn action(action_text: &str, _context: Option<&str>, format: Format) -> Result<i32, String> {
+    let gov_dir =
+        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
     let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
 
     let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
@@ -111,7 +107,14 @@ pub fn action(
     // Heuristic verdict: no relevant articles hit → T (no constraint fired).
     // Relevant hits → P (probable compliance, review). Keywords like
     // "delete", "drop", "rm -rf", "force-push" → D (doubtful).
-    let danger_words = ["delete", "drop table", "rm -rf", "force push", "--force", "truncate"];
+    let danger_words = [
+        "delete",
+        "drop table",
+        "rm -rf",
+        "force push",
+        "--force",
+        "truncate",
+    ];
     let dangerous = danger_words.iter().any(|w| action_lower.contains(w));
 
     let verdict = if dangerous {

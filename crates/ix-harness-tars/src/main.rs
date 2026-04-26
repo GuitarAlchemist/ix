@@ -69,9 +69,9 @@ fn run() -> Result<(), CliError> {
         match args[i].as_str() {
             "--round" => {
                 i += 1;
-                let s = args.get(i).ok_or_else(|| {
-                    CliError::Usage("--round requires a value".to_string())
-                })?;
+                let s = args
+                    .get(i)
+                    .ok_or_else(|| CliError::Usage("--round requires a value".to_string()))?;
                 round = Some(
                     s.parse()
                         .map_err(|_| CliError::Usage(format!("invalid round: {s}")))?,
@@ -106,16 +106,13 @@ fn run() -> Result<(), CliError> {
 
     let round = round.ok_or_else(|| {
         CliError::Usage(
-            "missing required --round <N>. Pass the current remediation round number."
-                .to_string(),
+            "missing required --round <N>. Pass the current remediation round number.".to_string(),
         )
     })?;
 
     // Read input bytes from file or stdin.
     let input_bytes: Vec<u8> = match input_path {
-        Some(path) => {
-            fs::read(&path).map_err(|e| CliError::Io(format!("read {path}: {e}")))?
-        }
+        Some(path) => fs::read(&path).map_err(|e| CliError::Io(format!("read {path}: {e}")))?,
         None => {
             let mut buf = Vec::new();
             io::stdin()
@@ -126,8 +123,8 @@ fn run() -> Result<(), CliError> {
     };
 
     // Project.
-    let events = tars_to_observations(&input_bytes, round)
-        .map_err(|e| CliError::Adapter(e.to_string()))?;
+    let events =
+        tars_to_observations(&input_bytes, round).map_err(|e| CliError::Adapter(e.to_string()))?;
 
     // Write JSONL to file or stdout.
     let mut out: Box<dyn Write> = match output_path {

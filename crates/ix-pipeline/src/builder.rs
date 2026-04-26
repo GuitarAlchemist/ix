@@ -53,7 +53,10 @@ impl NodeBuilder {
     /// Set the compute function.
     pub fn compute<F>(mut self, f: F) -> Self
     where
-        F: Fn(&HashMap<String, Value>) -> Result<Value, crate::executor::PipelineError> + Send + Sync + 'static,
+        F: Fn(&HashMap<String, Value>) -> Result<Value, crate::executor::PipelineError>
+            + Send
+            + Sync
+            + 'static,
     {
         self.compute = Some(Box::new(f));
         self
@@ -62,13 +65,15 @@ impl NodeBuilder {
     /// Map an input name to a source node's output.
     /// `source` is the node ID, reads the full output.
     pub fn input(mut self, name: &str, source: &str) -> Self {
-        self.input_map.insert(name.to_string(), (source.to_string(), "*".to_string()));
+        self.input_map
+            .insert(name.to_string(), (source.to_string(), "*".to_string()));
         self
     }
 
     /// Map an input name to a specific field of a source node's output.
     pub fn input_field(mut self, name: &str, source: &str, field: &str) -> Self {
-        self.input_map.insert(name.to_string(), (source.to_string(), field.to_string()));
+        self.input_map
+            .insert(name.to_string(), (source.to_string(), field.to_string()));
         self
     }
 
@@ -119,9 +124,7 @@ impl PipelineBuilder {
     where
         F: Fn() -> Result<Value, crate::executor::PipelineError> + Send + Sync + 'static,
     {
-        self.node(id, |b| {
-            b.compute(move |_| f())
-        })
+        self.node(id, |b| b.compute(move |_| f()))
     }
 
     /// Add a directed edge (dependency).
@@ -133,9 +136,8 @@ impl PipelineBuilder {
     /// Auto-detect edges from input mappings.
     /// If a node's input references another node, create the edge automatically.
     fn auto_edges(&mut self) {
-        let node_ids: std::collections::HashSet<String> = self.nodes.iter()
-            .map(|(id, _)| id.clone())
-            .collect();
+        let node_ids: std::collections::HashSet<String> =
+            self.nodes.iter().map(|(id, _)| id.clone()).collect();
 
         let mut auto = Vec::new();
         for (id, node) in &self.nodes {
@@ -197,20 +199,18 @@ mod tests {
     fn test_builder_linear() {
         let pipeline = PipelineBuilder::new()
             .source("input", || Ok(Value::from(10.0)))
-            .node("double", |b| b
-                .input("x", "input")
-                .compute(|inputs| {
+            .node("double", |b| {
+                b.input("x", "input").compute(|inputs| {
                     let x = inputs["x"].as_f64().unwrap();
                     Ok(Value::from(x * 2.0))
                 })
-            )
-            .node("add_one", |b| b
-                .input("x", "double")
-                .compute(|inputs| {
+            })
+            .node("add_one", |b| {
+                b.input("x", "double").compute(|inputs| {
                     let x = inputs["x"].as_f64().unwrap();
                     Ok(Value::from(x + 1.0))
                 })
-            )
+            })
             .build()
             .unwrap();
 
@@ -223,29 +223,27 @@ mod tests {
     fn test_builder_diamond() {
         let pipeline = PipelineBuilder::new()
             .source("data", || Ok(Value::from(100.0)))
-            .node("branch_a", |b| b
-                .input("x", "data")
-                .compute(|inputs| {
+            .node("branch_a", |b| {
+                b.input("x", "data").compute(|inputs| {
                     let x = inputs["x"].as_f64().unwrap();
                     Ok(Value::from(x + 50.0))
                 })
-            )
-            .node("branch_b", |b| b
-                .input("x", "data")
-                .compute(|inputs| {
+            })
+            .node("branch_b", |b| {
+                b.input("x", "data").compute(|inputs| {
                     let x = inputs["x"].as_f64().unwrap();
                     Ok(Value::from(x * 0.5))
                 })
-            )
-            .node("merge", |b| b
-                .input("a", "branch_a")
-                .input("b", "branch_b")
-                .compute(|inputs| {
-                    let a = inputs["a"].as_f64().unwrap();
-                    let b = inputs["b"].as_f64().unwrap();
-                    Ok(Value::from(a - b))
-                })
-            )
+            })
+            .node("merge", |b| {
+                b.input("a", "branch_a")
+                    .input("b", "branch_b")
+                    .compute(|inputs| {
+                        let a = inputs["a"].as_f64().unwrap();
+                        let b = inputs["b"].as_f64().unwrap();
+                        Ok(Value::from(a - b))
+                    })
+            })
             .build()
             .unwrap();
 
@@ -287,14 +285,14 @@ mod tests {
     #[test]
     fn test_pipeline_with_external_inputs() {
         let pipeline = PipelineBuilder::new()
-            .node("greet", |b| b
-                .input("name", "name")  // References external input "name"
-                .compute(|inputs| {
-                    let name = inputs["name"].as_str().unwrap_or("world");
-                    Ok(Value::from(format!("Hello, {}!", name)))
-                })
-                .no_cache()
-            )
+            .node("greet", |b| {
+                b.input("name", "name") // References external input "name"
+                    .compute(|inputs| {
+                        let name = inputs["name"].as_str().unwrap_or("world");
+                        Ok(Value::from(format!("Hello, {}!", name)))
+                    })
+                    .no_cache()
+            })
             .build()
             .unwrap();
 

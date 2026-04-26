@@ -429,11 +429,7 @@ mod tests {
     #[test]
     fn test_3_cycle() {
         // 0→1→2→0
-        let adj = array![
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0]
-        ];
+        let adj = array![[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];
         let k0 = k0_from_adjacency(&adj).unwrap();
         let k1 = k1_from_adjacency(&adj).unwrap();
         let cycles = detect_feedback_cycles(&adj).unwrap();

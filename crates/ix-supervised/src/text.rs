@@ -132,7 +132,8 @@ impl CountVectorizer {
 
         // Build vocabulary with min_df and max_df filtering
         let max_df_count = (self.max_df_ratio * n_docs as f64).ceil() as usize;
-        let mut words: Vec<String> = df.into_iter()
+        let mut words: Vec<String> = df
+            .into_iter()
             .filter(|(_, count)| *count >= self.min_df && *count <= max_df_count)
             .map(|(word, _)| word)
             .collect();
@@ -433,8 +434,10 @@ mod tests {
             // "the" doesn't appear in doc 2 at all, so this is trivially true
             // Better test: in doc 0, "sat" (appears in 2 docs) vs "mat" (appears in 1)
             if let (Some(&sat_idx), Some(&mat_idx)) = (vocab.get("sat"), vocab.get("mat")) {
-                assert!(matrix[[0, mat_idx]] > matrix[[0, sat_idx]],
-                    "Rarer word 'mat' should have higher TF-IDF than common word 'sat'");
+                assert!(
+                    matrix[[0, mat_idx]] > matrix[[0, sat_idx]],
+                    "Rarer word 'mat' should have higher TF-IDF than common word 'sat'"
+                );
             }
         }
     }
@@ -448,7 +451,12 @@ mod tests {
         // Each row should have L2 norm ≈ 1
         for i in 0..matrix.nrows() {
             let norm: f64 = matrix.row(i).mapv(|v| v * v).sum().sqrt();
-            assert!((norm - 1.0).abs() < 1e-10, "Row {} L2 norm should be 1, got {}", i, norm);
+            assert!(
+                (norm - 1.0).abs() < 1e-10,
+                "Row {} L2 norm should be 1, got {}",
+                i,
+                norm
+            );
         }
     }
 

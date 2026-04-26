@@ -78,7 +78,8 @@ pub fn return_map(crossings: &[Crossing], map_axis: usize) -> Vec<(f64, f64)> {
         _ => c.state.z,
     };
 
-    crossings.windows(2)
+    crossings
+        .windows(2)
         .map(|w| (get_coord(&w[0]), get_coord(&w[1])))
         .collect()
 }

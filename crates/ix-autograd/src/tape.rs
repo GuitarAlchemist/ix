@@ -100,7 +100,10 @@ impl std::fmt::Debug for DiffContext {
         f.debug_struct("DiffContext")
             .field("tape", &self.tape)
             .field("mode", &self.mode)
-            .field("tool_state_keys", &self.tool_state.keys().collect::<Vec<_>>())
+            .field(
+                "tool_state_keys",
+                &self.tool_state.keys().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }

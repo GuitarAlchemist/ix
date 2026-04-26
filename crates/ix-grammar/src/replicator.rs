@@ -205,7 +205,12 @@ mod tests {
             GrammarSpecies::new("unfit", 0.5, 0.0),
         ];
         let result = simulate(&species, 500, 0.05, 1e-6);
-        let fit_prop = result.final_species.iter().find(|s| s.id == "fit").unwrap().proportion;
+        let fit_prop = result
+            .final_species
+            .iter()
+            .find(|s| s.id == "fit")
+            .unwrap()
+            .proportion;
         assert!(fit_prop > 0.99, "Fit species should dominate: {}", fit_prop);
     }
 

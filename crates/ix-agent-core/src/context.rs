@@ -141,9 +141,7 @@ impl ReadContext {
     pub fn child_seed(&self, sub_index: u32) -> u64 {
         // Splittable seeding: xor the ordinal and sub_index into the
         // parent seed. Cheap, deterministic, adequate for non-crypto use.
-        self.replay_seed
-            ^ self.ordinal.rotate_left(17)
-            ^ (sub_index as u64).rotate_left(31)
+        self.replay_seed ^ self.ordinal.rotate_left(17) ^ (sub_index as u64).rotate_left(31)
     }
 
     /// Build a synthetic context for legacy callers of
@@ -321,7 +319,8 @@ mod tests {
         cx.policy_labels = vec!["approval:tier-two".into()];
         cx.metadata
             .insert("approval/blast_radius".into(), json!({"nodes": 42}));
-        cx.metadata.insert("budget/remaining_ms".into(), json!(4200));
+        cx.metadata
+            .insert("budget/remaining_ms".into(), json!(4200));
         cx.beliefs.insert("api_stable".into(), Hexavalent::Probable);
         cx.capabilities.middleware = true;
         cx.capabilities.approval = true;

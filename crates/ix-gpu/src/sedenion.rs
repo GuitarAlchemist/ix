@@ -394,8 +394,16 @@ fn batch_mul(
 ///
 /// - `left`, `right`: slices of sedenions (each 16 f32 components)
 /// - Returns: products[i] = left[i] * right[i]
-pub fn batch_sedenion_mul_gpu(ctx: &GpuContext, left: &[[f32; 16]], right: &[[f32; 16]]) -> Vec<[f32; 16]> {
-    assert_eq!(left.len(), right.len(), "Must have same number of sedenions");
+pub fn batch_sedenion_mul_gpu(
+    ctx: &GpuContext,
+    left: &[[f32; 16]],
+    right: &[[f32; 16]],
+) -> Vec<[f32; 16]> {
+    assert_eq!(
+        left.len(),
+        right.len(),
+        "Must have same number of sedenions"
+    );
     let count = left.len();
     if count == 0 {
         return vec![];
@@ -414,11 +422,13 @@ pub fn batch_sedenion_mul_gpu(ctx: &GpuContext, left: &[[f32; 16]], right: &[[f3
     let params = [count as u32];
     let params_bytes: &[u8] = bytemuck::cast_slice(&params);
     use wgpu::util::DeviceExt;
-    let buf_params = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("params"),
-        contents: params_bytes,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-    });
+    let buf_params = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("params"),
+            contents: params_bytes,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        });
 
     let pipeline = ctx.create_compute_pipeline("sedenion_mul", SEDENION_MUL_SHADER, "batch_mul");
 
@@ -427,16 +437,30 @@ pub fn batch_sedenion_mul_gpu(ctx: &GpuContext, left: &[[f32; 16]], right: &[[f3
         label: Some("sed_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_left.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_right.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_output.as_entire_binding() },
-            BindGroupEntry { binding: 3, resource: buf_params.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_left.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_right.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_output.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: buf_params.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("sed_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("sed_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -551,8 +575,8 @@ mod tests {
         let one = unit_sedenion();
         let result = batch_sedenion_mul_cpu(&[one], &[one]);
         assert!((result[0][0] - 1.0).abs() < 1e-5, "1*1 should be 1");
-        for i in 1..16 {
-            assert!(result[0][i].abs() < 1e-5, "component {} should be 0", i);
+        for (i, value) in result[0].iter().enumerate().skip(1) {
+            assert!(value.abs() < 1e-5, "component {} should be 0", i);
         }
     }
 
@@ -565,8 +589,13 @@ mod tests {
         other[5] = -1.0;
         let result = batch_sedenion_mul_cpu(&[one], &[other]);
         for i in 0..16 {
-            assert!((result[0][i] - other[i]).abs() < 1e-5,
-                "1*x should be x, component {} differs: {} vs {}", i, result[0][i], other[i]);
+            assert!(
+                (result[0][i] - other[i]).abs() < 1e-5,
+                "1*x should be x, component {} differs: {} vs {}",
+                i,
+                result[0][i],
+                other[i]
+            );
         }
     }
 
@@ -577,8 +606,8 @@ mod tests {
         e1[1] = 1.0;
         let result = batch_sedenion_mul_cpu(&[e1], &[e1]);
         assert!((result[0][0] - (-1.0)).abs() < 1e-5, "e1^2 should be -1");
-        for i in 1..16 {
-            assert!(result[0][i].abs() < 1e-5);
+        for value in result[0].iter().skip(1) {
+            assert!(value.abs() < 1e-5);
         }
     }
 
@@ -611,15 +640,19 @@ mod tests {
         // conj(s) = (s[0], -s[1], -s[2], ..., -s[15])
         let mut conj_s = [0.0f32; 16];
         conj_s[0] = s[0];
-        for i in 1..16 {
-            conj_s[i] = -s[i];
+        for (i, value) in s.iter().enumerate().skip(1) {
+            conj_s[i] = -*value;
         }
 
         let result = batch_sedenion_mul_cpu(&[s], &[conj_s]);
         // s * conj(s) should give norm² in the real part
         let norm_sq: f32 = s.iter().map(|x| x * x).sum();
-        assert!((result[0][0] - norm_sq).abs() < 1e-4,
-            "s * conj(s) real part should be norm²: got {} expected {}", result[0][0], norm_sq);
+        assert!(
+            (result[0][0] - norm_sq).abs() < 1e-4,
+            "s * conj(s) real part should be norm²: got {} expected {}",
+            result[0][0],
+            norm_sq
+        );
     }
 
     #[test]
@@ -629,11 +662,20 @@ mod tests {
             let mut e = [0.0f32; 16];
             e[i] = 1.0;
             let result = batch_sedenion_mul_cpu(&[e], &[e]);
-            assert!((result[0][0] - (-1.0)).abs() < 1e-5,
-                "e_{}^2 real part should be -1, got {}", i, result[0][0]);
-            for j in 1..16 {
-                assert!(result[0][j].abs() < 1e-5,
-                    "e_{}^2 component {} should be 0, got {}", i, j, result[0][j]);
+            assert!(
+                (result[0][0] - (-1.0)).abs() < 1e-5,
+                "e_{}^2 real part should be -1, got {}",
+                i,
+                result[0][0]
+            );
+            for (j, value) in result[0].iter().enumerate().skip(1) {
+                assert!(
+                    value.abs() < 1e-5,
+                    "e_{}^2 component {} should be 0, got {}",
+                    i,
+                    j,
+                    value
+                );
             }
         }
     }
@@ -642,13 +684,19 @@ mod tests {
     fn test_cpu_power_associativity() {
         // Sedenions are power-associative: (a*a)*a == a*(a*a)
         let mut a = [0.0f32; 16];
-        a[0] = 1.0; a[1] = 0.5; a[3] = -0.3; a[8] = 0.7;
+        a[0] = 1.0;
+        a[1] = 0.5;
+        a[3] = -0.3;
+        a[8] = 0.7;
         let aa = batch_sedenion_mul_cpu(&[a], &[a]);
         let aaa_left = batch_sedenion_mul_cpu(&aa, &[a]);
         let aaa_right = batch_sedenion_mul_cpu(&[a], &aa);
         for i in 0..16 {
-            assert!((aaa_left[0][i] - aaa_right[0][i]).abs() < 1e-3,
-                "power associativity failed at component {}", i);
+            assert!(
+                (aaa_left[0][i] - aaa_right[0][i]).abs() < 1e-3,
+                "power associativity failed at component {}",
+                i
+            );
         }
     }
 
@@ -661,8 +709,8 @@ mod tests {
         b[0] = 3.0;
         let result = batch_sedenion_mul_cpu(&[a], &[b]);
         assert!((result[0][0] - 6.0).abs() < 1e-5);
-        for i in 1..16 {
-            assert!(result[0][i].abs() < 1e-5);
+        for value in result[0].iter().skip(1) {
+            assert!(value.abs() < 1e-5);
         }
     }
 

@@ -260,8 +260,8 @@ mod tests {
 
     #[test]
     fn scalar_roundtrip() {
-        let v = 3.14_f64.into_value();
-        assert_eq!(f64::from_value(&v).unwrap(), 3.14);
+        let v = 3.125_f64.into_value();
+        assert_eq!(f64::from_value(&v).unwrap(), 3.125);
     }
 
     #[test]

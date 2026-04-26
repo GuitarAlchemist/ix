@@ -92,8 +92,8 @@ pub fn policy(name: &str, format: Format) -> Result<(), String> {
         .find(|p| Path::new(p).is_file())
         .ok_or_else(|| format!("policy '{name}' not found (tried: {candidates:?})"))?;
 
-    let p = ix_governance::Policy::load(Path::new(path))
-        .map_err(|e| format!("loading {path}: {e}"))?;
+    let p =
+        ix_governance::Policy::load(Path::new(path)).map_err(|e| format!("loading {path}: {e}"))?;
     let payload = json!({
         "name": p.name,
         "version": p.version,

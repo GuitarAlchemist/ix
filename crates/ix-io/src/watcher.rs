@@ -84,11 +84,7 @@ fn translate_event(event: Event) -> Option<FileEvent> {
 
 /// Watch a file and call a callback on every modification.
 /// Blocks the current thread. Use in a spawned thread.
-pub fn watch_file_loop<F>(
-    path: &Path,
-    debounce: Duration,
-    mut callback: F,
-) -> Result<(), IoError>
+pub fn watch_file_loop<F>(path: &Path, debounce: Duration, mut callback: F) -> Result<(), IoError>
 where
     F: FnMut(&Path),
 {

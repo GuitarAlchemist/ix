@@ -10,10 +10,7 @@ use crate::similarity::cosine_similarity_cpu;
 ///
 /// Given N vectors of dimension D, returns an N×N similarity matrix.
 /// Uses GPU if context is provided, otherwise CPU fallback.
-pub fn similarity_matrix(
-    ctx: Option<&GpuContext>,
-    vectors: &[Vec<f32>],
-) -> Vec<Vec<f32>> {
+pub fn similarity_matrix(ctx: Option<&GpuContext>, vectors: &[Vec<f32>]) -> Vec<Vec<f32>> {
     let _n = vectors.len();
 
     match ctx {
@@ -54,7 +51,8 @@ pub fn similarity_matrix_gpu(ctx: &GpuContext, vectors: &[Vec<f32>]) -> Vec<Vec<
     let flat: Vec<f32> = vectors.iter().flat_map(|v| v.iter().copied()).collect();
 
     // Pre-compute norms
-    let norms: Vec<f32> = vectors.iter()
+    let norms: Vec<f32> = vectors
+        .iter()
         .map(|v| v.iter().map(|x| x * x).sum::<f32>().sqrt())
         .collect();
 
@@ -92,7 +90,9 @@ pub fn top_k_similar(
     corpus: &[Vec<f32>],
     k: usize,
 ) -> Vec<(usize, f32)> {
-    let similarities: Vec<(usize, f32)> = corpus.iter().enumerate()
+    let similarities: Vec<(usize, f32)> = corpus
+        .iter()
+        .enumerate()
         .map(|(i, vec)| {
             let sim = cosine_similarity_cpu(query, vec);
             (i, sim)
@@ -127,10 +127,12 @@ pub fn batch_top_k(
     let c_flat: Vec<f32> = corpus.iter().flat_map(|v| v.iter().copied()).collect();
 
     // Compute norms
-    let q_norms: Vec<f32> = queries.iter()
+    let q_norms: Vec<f32> = queries
+        .iter()
         .map(|v| v.iter().map(|x| x * x).sum::<f32>().sqrt())
         .collect();
-    let c_norms: Vec<f32> = corpus.iter()
+    let c_norms: Vec<f32> = corpus
+        .iter()
         .map(|v| v.iter().map(|x| x * x).sum::<f32>().sqrt())
         .collect();
 
@@ -147,21 +149,25 @@ pub fn batch_top_k(
     };
 
     // For each query, compute cosine similarities and find top-k
-    (0..nq).map(|qi| {
-        let mut sims: Vec<(usize, f32)> = (0..nc).map(|ci| {
-            let denom = q_norms[qi] * c_norms[ci];
-            let sim = if denom > 1e-10 {
-                dot_matrix[qi * nc + ci] / denom
-            } else {
-                0.0
-            };
-            (ci, sim)
-        }).collect();
+    (0..nq)
+        .map(|qi| {
+            let mut sims: Vec<(usize, f32)> = (0..nc)
+                .map(|ci| {
+                    let denom = q_norms[qi] * c_norms[ci];
+                    let sim = if denom > 1e-10 {
+                        dot_matrix[qi * nc + ci] / denom
+                    } else {
+                        0.0
+                    };
+                    (ci, sim)
+                })
+                .collect();
 
-        sims.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        sims.truncate(k);
-        sims
-    }).collect()
+            sims.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            sims.truncate(k);
+            sims
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -179,17 +185,17 @@ mod tests {
         let matrix = similarity_matrix_cpu(&vectors);
         assert!((matrix[0][0] - 1.0).abs() < 1e-5);
         assert!(matrix[0][1].abs() < 1e-5); // Orthogonal
-        assert!(matrix[0][2] > 0.5);         // Partially aligned
+        assert!(matrix[0][2] > 0.5); // Partially aligned
     }
 
     #[test]
     fn test_top_k() {
         let query = vec![1.0, 0.0, 0.0];
         let corpus = vec![
-            vec![1.0, 0.0, 0.0],   // Identical
-            vec![0.9, 0.1, 0.0],   // Very similar
-            vec![0.0, 1.0, 0.0],   // Orthogonal
-            vec![-1.0, 0.0, 0.0],  // Opposite
+            vec![1.0, 0.0, 0.0],  // Identical
+            vec![0.9, 0.1, 0.0],  // Very similar
+            vec![0.0, 1.0, 0.0],  // Orthogonal
+            vec![-1.0, 0.0, 0.0], // Opposite
         ];
 
         let results = top_k_similar(None, &query, &corpus, 2);
@@ -200,15 +206,8 @@ mod tests {
 
     #[test]
     fn test_batch_top_k_cpu() {
-        let queries = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-        ];
-        let corpus = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-            vec![0.5, 0.5],
-        ];
+        let queries = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let corpus = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![0.5, 0.5]];
 
         let results = batch_top_k(None, &queries, &corpus, 1);
         assert_eq!(results[0][0].0, 0); // Query [1,0] most similar to corpus [1,0]
@@ -231,16 +230,14 @@ mod tests {
 
     #[test]
     fn test_similarity_matrix_symmetry() {
-        let vectors = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-            vec![1.0, 1.0],
-        ];
+        let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![1.0, 1.0]];
         let matrix = similarity_matrix_cpu(&vectors);
-        for i in 0..3 {
-            for j in 0..3 {
-                assert!((matrix[i][j] - matrix[j][i]).abs() < 1e-10,
-                    "similarity matrix should be symmetric");
+        for (i, row) in matrix.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
+                assert!(
+                    (*value - matrix[j][i]).abs() < 1e-10,
+                    "similarity matrix should be symmetric"
+                );
             }
         }
     }
@@ -253,19 +250,18 @@ mod tests {
             vec![-1.0, 0.0, 1.0],
         ];
         let matrix = similarity_matrix_cpu(&vectors);
-        for i in 0..3 {
-            assert!((matrix[i][i] - 1.0).abs() < 1e-5,
-                "diagonal should be 1.0 (self-similarity)");
+        for (i, row) in matrix.iter().enumerate() {
+            assert!(
+                (row[i] - 1.0).abs() < 1e-5,
+                "diagonal should be 1.0 (self-similarity)"
+            );
         }
     }
 
     #[test]
     fn test_top_k_all() {
         let query = vec![1.0, 0.0];
-        let corpus = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-        ];
+        let corpus = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
         let results = top_k_similar(None, &query, &corpus, 10);
         assert_eq!(results.len(), 2); // truncated to corpus size
     }
@@ -274,16 +270,18 @@ mod tests {
     fn test_top_k_ordering() {
         let query = vec![1.0, 0.0, 0.0];
         let corpus = vec![
-            vec![0.0, 1.0, 0.0],   // orthogonal (sim ≈ 0)
-            vec![1.0, 0.1, 0.0],   // very similar
-            vec![-1.0, 0.0, 0.0],  // opposite (sim ≈ -1)
-            vec![0.9, 0.3, 0.0],   // similar
+            vec![0.0, 1.0, 0.0],  // orthogonal (sim ≈ 0)
+            vec![1.0, 0.1, 0.0],  // very similar
+            vec![-1.0, 0.0, 0.0], // opposite (sim ≈ -1)
+            vec![0.9, 0.3, 0.0],  // similar
         ];
         let results = top_k_similar(None, &query, &corpus, 4);
         // Should be sorted descending by similarity
         for i in 0..results.len() - 1 {
-            assert!(results[i].1 >= results[i + 1].1,
-                "results should be sorted descending by similarity");
+            assert!(
+                results[i].1 >= results[i + 1].1,
+                "results should be sorted descending by similarity"
+            );
         }
     }
 
@@ -305,11 +303,7 @@ mod tests {
     #[test]
     fn test_batch_top_k_multiple_k() {
         let queries = vec![vec![1.0, 0.0]];
-        let corpus = vec![
-            vec![1.0, 0.0],
-            vec![0.9, 0.1],
-            vec![0.0, 1.0],
-        ];
+        let corpus = vec![vec![1.0, 0.0], vec![0.9, 0.1], vec![0.0, 1.0]];
         let results = batch_top_k(None, &queries, &corpus, 2);
         assert_eq!(results[0].len(), 2);
         assert_eq!(results[0][0].0, 0); // most similar
@@ -317,10 +311,7 @@ mod tests {
 
     #[test]
     fn test_similarity_matrix_with_context_none() {
-        let vectors = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-        ];
+        let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
         let matrix = similarity_matrix(None, &vectors);
         assert!((matrix[0][1]).abs() < 1e-5); // orthogonal
         assert!((matrix[0][0] - 1.0).abs() < 1e-5); // self

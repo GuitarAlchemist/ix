@@ -100,7 +100,9 @@ pub fn mcts_search<S: MctsState>(
     }
 
     // Select most visited child of root
-    nodes[0].children.iter()
+    nodes[0]
+        .children
+        .iter()
         .max_by_key(|&&c| nodes[c].visits)
         .and_then(|&c| nodes[c].action.clone())
 }
@@ -109,7 +111,9 @@ pub fn mcts_search<S: MctsState>(
 fn select_child<S: MctsState>(nodes: &[MctsNode<S>], parent: usize, c: f64) -> usize {
     let parent_visits = nodes[parent].visits as f64;
 
-    *nodes[parent].children.iter()
+    *nodes[parent]
+        .children
+        .iter()
         .max_by(|&&a, &&b| {
             let ucb_a = ucb1(nodes[a].total_reward, nodes[a].visits, parent_visits, c);
             let ucb_b = ucb1(nodes[b].total_reward, nodes[b].visits, parent_visits, c);
@@ -183,7 +187,9 @@ mod tests {
         type Action = i32;
 
         fn legal_actions(&self) -> Vec<i32> {
-            if self.is_terminal() { return vec![]; }
+            if self.is_terminal() {
+                return vec![];
+            }
             let max = 3.min(21 - self.count);
             (1..=max).collect()
         }
@@ -202,7 +208,11 @@ mod tests {
         fn reward(&self) -> f64 {
             // Player who reaches 21 wins
             if self.count >= 21 {
-                if self.my_turn { 0.0 } else { 1.0 } // Previous player won
+                if self.my_turn {
+                    0.0
+                } else {
+                    1.0
+                } // Previous player won
             } else {
                 0.5
             }
@@ -211,10 +221,13 @@ mod tests {
 
     #[test]
     fn test_mcts_finds_move() {
-        let state = NimState { count: 0, my_turn: true };
+        let state = NimState {
+            count: 0,
+            my_turn: true,
+        };
         let action = mcts_search(&state, 1000, 1.41, 42);
         assert!(action.is_some());
         let a = action.unwrap();
-        assert!(a >= 1 && a <= 3);
+        assert!((1..=3).contains(&a));
     }
 }

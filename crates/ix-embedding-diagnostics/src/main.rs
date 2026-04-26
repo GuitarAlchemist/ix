@@ -77,12 +77,42 @@ struct Partition {
 }
 
 const PARTITIONS: &[Partition] = &[
-    Partition { name: "STRUCTURE",  start: 0,   end: 24,  expected_leak: "likely_leak" },
-    Partition { name: "MORPHOLOGY", start: 24,  end: 48,  expected_leak: "by_design"   },
-    Partition { name: "CONTEXT",    start: 48,  end: 60,  expected_leak: "possible"    },
-    Partition { name: "SYMBOLIC",   start: 60,  end: 72,  expected_leak: "likely_leak" },
-    Partition { name: "MODAL",      start: 72,  end: 112, expected_leak: "possible"    },
-    Partition { name: "ROOT",       start: 112, end: 124, expected_leak: "by_design"   },
+    Partition {
+        name: "STRUCTURE",
+        start: 0,
+        end: 24,
+        expected_leak: "likely_leak",
+    },
+    Partition {
+        name: "MORPHOLOGY",
+        start: 24,
+        end: 48,
+        expected_leak: "by_design",
+    },
+    Partition {
+        name: "CONTEXT",
+        start: 48,
+        end: 60,
+        expected_leak: "possible",
+    },
+    Partition {
+        name: "SYMBOLIC",
+        start: 60,
+        end: 72,
+        expected_leak: "likely_leak",
+    },
+    Partition {
+        name: "MODAL",
+        start: 72,
+        end: 112,
+        expected_leak: "possible",
+    },
+    Partition {
+        name: "ROOT",
+        start: 112,
+        end: 124,
+        expected_leak: "by_design",
+    },
 ];
 
 // -----------------------------------------------------------------------------
@@ -127,6 +157,12 @@ struct Cli {
     /// Max K-means iterations (lower = faster; default is enough to settle).
     #[arg(long, default_value_t = 30)]
     kmeans_iter: usize,
+
+    /// Optional cap on the number of voicings used for K-means.
+    /// When set, a deterministic random sample is clustered instead of the
+    /// full corpus to keep CI memory and runtime bounded.
+    #[arg(long)]
+    cluster_sample: Option<usize>,
 
     /// Sample size per instrument for persistent homology (diagnostic 4).
     /// Rips is O(n²) in edges — keep modest.
@@ -187,6 +223,7 @@ struct RetrievalConsistency {
 struct ClusterBaseline {
     k: usize,
     n_voicings: usize,
+    sampled_from: Option<usize>,
     iterations_ran: usize,
     file: String,
 }
@@ -319,7 +356,8 @@ fn run_leak_detection(
     cli: &Cli,
     rng: &mut StdRng,
 ) -> LeakDetection {
-    let (voicing_ids, labels_u8) = stratified_sample(per_class, cli.class_samples_per_instrument, rng);
+    let (voicing_ids, labels_u8) =
+        stratified_sample(per_class, cli.class_samples_per_instrument, rng);
     let n = voicing_ids.len();
     let y: Array1<usize> = Array1::from_iter(labels_u8.iter().map(|&b| b as usize));
 
@@ -481,15 +519,26 @@ fn run_cluster_baseline(
     index: &OptickIndex,
     cli: &Cli,
     out_dir: &std::path::Path,
+    rng: &mut StdRng,
 ) -> (ClusterBaseline, std::path::PathBuf) {
     let count = index.count() as usize;
     let vectors = index.vectors();
+    let mut sample_ids: Vec<usize> = (0..count).collect();
+    let sampled_from = cli
+        .cluster_sample
+        .filter(|limit| *limit > 0 && *limit < count)
+        .map(|limit| {
+            sample_ids.shuffle(rng);
+            sample_ids.truncate(limit);
+            sample_ids.sort_unstable();
+            count
+        });
 
-    // Build full 313k × 112 matrix. Peak memory: ~280 MB f64.
-    let mut x = Array2::<f64>::zeros((count, DIM));
-    for i in 0..count {
+    let mut x = Array2::<f64>::zeros((sample_ids.len(), DIM));
+    for (row, &voicing_index) in sample_ids.iter().enumerate() {
+        let base = voicing_index * DIM;
         for d in 0..DIM {
-            x[[i, d]] = vectors[i * DIM + d] as f64;
+            x[[row, d]] = vectors[base + d] as f64;
         }
     }
 
@@ -499,11 +548,16 @@ fn run_cluster_baseline(
     let labels = km.predict(&x);
 
     let cluster_file = out_dir.join(format!("embedding-clusters-k{}.json", cli.kmeans_k));
-    let rows: Vec<ClusterLabel> = (0..count)
-        .map(|i| ClusterLabel {
-            voicing_index: i,
-            cluster: labels[i],
-            instrument: index.instrument_of(i).unwrap_or("unknown").to_string(),
+    let rows: Vec<ClusterLabel> = sample_ids
+        .iter()
+        .enumerate()
+        .map(|(row, &voicing_index)| ClusterLabel {
+            voicing_index,
+            cluster: labels[row],
+            instrument: index
+                .instrument_of(voicing_index)
+                .unwrap_or("unknown")
+                .to_string(),
         })
         .collect();
     let json = serde_json::to_string(&rows).expect("serialize cluster labels");
@@ -512,7 +566,8 @@ fn run_cluster_baseline(
     (
         ClusterBaseline {
             k: cli.kmeans_k,
-            n_voicings: count,
+            n_voicings: sample_ids.len(),
+            sampled_from,
             iterations_ran: cli.kmeans_iter,
             file: cluster_file.to_string_lossy().to_string(),
         },
@@ -542,9 +597,17 @@ fn run_topology(
     } else {
         let b0s: Vec<usize> = finite.iter().map(|e| e.beta_0).collect();
         let b1s: Vec<usize> = finite.iter().map(|e| e.beta_1).collect();
-        let b0_diverge = b0s.iter().max().copied().unwrap_or(0)
+        let b0_diverge = b0s
+            .iter()
+            .max()
+            .copied()
+            .unwrap_or(0)
             .saturating_sub(b0s.iter().min().copied().unwrap_or(0));
-        let b1_diverge = b1s.iter().max().copied().unwrap_or(0)
+        let b1_diverge = b1s
+            .iter()
+            .max()
+            .copied()
+            .unwrap_or(0)
             .saturating_sub(b1s.iter().min().copied().unwrap_or(0));
         format!(
             "beta0_range={}, beta1_range={} (larger = more instrument-specific topology)",
@@ -674,7 +737,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Diagnostic 3
     eprintln!("[4/5] Diagnostic 3: K-means baseline (k={})", cli.kmeans_k);
-    let (clusters, _cluster_file) = run_cluster_baseline(&index, &cli, &cli.out_dir);
+    let (clusters, _cluster_file) = run_cluster_baseline(&index, &cli, &cli.out_dir, &mut rng);
     eprintln!(
         "      wrote cluster labels for {} voicings → {}",
         clusters.n_voicings, clusters.file
@@ -686,11 +749,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.topo_sample
     );
     let topo = run_topology(&index, &per_class, &cli, &mut rng);
-    for (name, entry) in [("guitar", &topo.guitar), ("bass", &topo.bass), ("ukulele", &topo.ukulele)] {
+    for (name, entry) in [
+        ("guitar", &topo.guitar),
+        ("bass", &topo.bass),
+        ("ukulele", &topo.ukulele),
+    ] {
         match entry {
             Some(e) => eprintln!(
                 "      {:<8} n={} β₀={} β₁={} radius={:.4} avg_d={:.4}",
-                name, e.sample_size, e.beta_0, e.beta_1, e.filtration_radius, e.avg_pairwise_distance
+                name,
+                e.sample_size,
+                e.beta_0,
+                e.beta_1,
+                e.filtration_radius,
+                e.avg_pairwise_distance
             ),
             None => eprintln!("      {:<8} no data", name),
         }
@@ -703,12 +775,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into(),
     );
     notes.push(
-        "ix-topo has no native Adjusted Rand Index; post-refactor comparison will add one"
-            .into(),
+        "ix-topo has no native Adjusted Rand Index; post-refactor comparison will add one".into(),
     );
     notes.push(
-        "Rips complex is O(n²) in edges — topology sampled at 1000 points per instrument"
-            .into(),
+        "Rips complex is O(n²) in edges — topology sampled at 1000 points per instrument".into(),
     );
     notes.push(format!(
         "Leak confirmed criterion: mean accuracy > 0.40 on balanced 3-class problem (baseline={:.3})",
@@ -747,20 +817,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("─────────────────────────────────────────────────────────────");
     eprintln!(" BASELINE SUMMARY");
     eprintln!("─────────────────────────────────────────────────────────────");
-    eprintln!(" corpus            {} voicings × {} dims", report.corpus.count, report.corpus.dims);
-    eprintln!(" full-dim acc      {:.3}  (vs random {:.3})",
-        report.leak_detection.full_classifier_accuracy, report.leak_detection.baseline_random);
+    eprintln!(
+        " corpus            {} voicings × {} dims",
+        report.corpus.count, report.corpus.dims
+    );
+    eprintln!(
+        " full-dim acc      {:.3}  (vs random {:.3})",
+        report.leak_detection.full_classifier_accuracy, report.leak_detection.baseline_random
+    );
     for p in &report.leak_detection.by_partition {
-        let flag = if p.leak_confirmed { "LEAK " } else if p.partition == "MORPHOLOGY" { "BYDSG" } else { "  ok " };
-        eprintln!(" {:<10} [{}]  acc={:.3} ± {:.3}", p.partition, flag, p.accuracy_mean, p.accuracy_std);
+        let flag = if p.leak_confirmed {
+            "LEAK "
+        } else if p.partition == "MORPHOLOGY" {
+            "BYDSG"
+        } else {
+            "  ok "
+        };
+        eprintln!(
+            " {:<10} [{}]  acc={:.3} ± {:.3}",
+            p.partition, flag, p.accuracy_mean, p.accuracy_std
+        );
     }
-    eprintln!(" retrieval         avg PC-set match = {:.1}%", 100.0 * report.retrieval_consistency.avg_pc_set_match_pct);
-    eprintln!(" clusters          k={} saved to {}", report.cluster_baseline.k, report.cluster_baseline.file);
-    if let (Some(g), Some(b), Some(u)) =
-        (&report.topology.guitar, &report.topology.bass, &report.topology.ukulele)
-    {
-        eprintln!(" topology          guitar β₀={} β₁={}   bass β₀={} β₁={}   ukulele β₀={} β₁={}",
-            g.beta_0, g.beta_1, b.beta_0, b.beta_1, u.beta_0, u.beta_1);
+    eprintln!(
+        " retrieval         avg PC-set match = {:.1}%",
+        100.0 * report.retrieval_consistency.avg_pc_set_match_pct
+    );
+    eprintln!(
+        " clusters          k={} saved to {}",
+        report.cluster_baseline.k, report.cluster_baseline.file
+    );
+    if let (Some(g), Some(b), Some(u)) = (
+        &report.topology.guitar,
+        &report.topology.bass,
+        &report.topology.ukulele,
+    ) {
+        eprintln!(
+            " topology          guitar β₀={} β₁={}   bass β₀={} β₁={}   ukulele β₀={} β₁={}",
+            g.beta_0, g.beta_1, b.beta_0, b.beta_1, u.beta_0, u.beta_1
+        );
     }
     eprintln!(" runtime           {:.1}s", report.runtime_seconds);
     eprintln!(" report            {}", report_path.display());

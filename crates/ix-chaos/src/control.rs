@@ -117,7 +117,9 @@ pub fn drive_response_sync(
         driver_traj.push(driver.clone());
         response_traj.push(response.clone());
 
-        let err: f64 = driver.iter().zip(response.iter())
+        let err: f64 = driver
+            .iter()
+            .zip(response.iter())
             .map(|(d, r)| (d - r).powi(2))
             .sum::<f64>()
             .sqrt();
@@ -158,14 +160,24 @@ mod tests {
 
         let traj = ogy_control(
             |x, r| r * x * (1.0 - x),
-            target, r, df_dx, df_dr,
-            0.1, 0.5, 200, 50,
+            target,
+            r,
+            df_dx,
+            df_dr,
+            0.1,
+            0.5,
+            200,
+            50,
         );
 
         // After control kicks in, should approach target
         let last_x = traj.last().unwrap().0;
-        assert!((last_x - target).abs() < 0.1,
-            "OGY should stabilize near {}, got {}", target, last_x);
+        assert!(
+            (last_x - target).abs() < 0.1,
+            "OGY should stabilize near {}, got {}",
+            target,
+            last_x
+        );
     }
 
     #[test]
@@ -192,6 +204,10 @@ mod tests {
         // Verify the synchronization produced error values (chaotic coupling is noisy)
         assert!(!errors.is_empty(), "Should produce synchronization errors");
         let final_err = *errors.last().unwrap();
-        assert!(final_err.is_finite(), "Final sync error should be finite: {}", final_err);
+        assert!(
+            final_err.is_finite(),
+            "Final sync error should be finite: {}",
+            final_err
+        );
     }
 }

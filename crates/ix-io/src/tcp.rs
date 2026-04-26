@@ -29,8 +29,8 @@ impl TcpDataServer {
 
         for record in &batch.records {
             if let DataRecord::Row(row) = record {
-                let json = serde_json::to_string(row)
-                    .map_err(|e| IoError::Connection(e.to_string()))?;
+                let json =
+                    serde_json::to_string(row).map_err(|e| IoError::Connection(e.to_string()))?;
                 stream.write_all(json.as_bytes()).await?;
                 stream.write_all(b"\n").await?;
             }
@@ -86,9 +86,7 @@ impl TcpDataClient {
     }
 
     /// Stream data: connect and yield records one at a time via channel.
-    pub async fn stream(
-        addr: &str,
-    ) -> Result<tokio::sync::mpsc::Receiver<DataRecord>, IoError> {
+    pub async fn stream(addr: &str) -> Result<tokio::sync::mpsc::Receiver<DataRecord>, IoError> {
         let stream = TcpStream::connect(addr).await?;
         let reader = BufReader::new(stream);
         let (tx, rx) = tokio::sync::mpsc::channel(100);
@@ -121,8 +119,8 @@ pub async fn send_batch(addr: &str, batch: &DataBatch) -> Result<(), IoError> {
 
     for record in &batch.records {
         if let DataRecord::Row(row) = record {
-            let json = serde_json::to_string(row)
-                .map_err(|e| IoError::Connection(e.to_string()))?;
+            let json =
+                serde_json::to_string(row).map_err(|e| IoError::Connection(e.to_string()))?;
             stream.write_all(json.as_bytes()).await?;
             stream.write_all(b"\n").await?;
         }

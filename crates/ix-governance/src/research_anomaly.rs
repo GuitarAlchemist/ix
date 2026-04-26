@@ -103,8 +103,10 @@ impl AnomalyClusterer {
 
                 cluster_counter += 1;
                 let cluster_id = format!("cluster-{cluster_counter}");
-                let group: Vec<&ResearchAnomaly> =
-                    group_indices.iter().map(|&idx| dept_anomalies[idx]).collect();
+                let group: Vec<&ResearchAnomaly> = group_indices
+                    .iter()
+                    .map(|&idx| dept_anomalies[idx])
+                    .collect();
 
                 let anomaly_ids: Vec<String> = group.iter().map(|a| a.anomaly_id.clone()).collect();
                 let shared_path = Self::shared_elements(
@@ -142,8 +144,10 @@ impl AnomalyClusterer {
 
     /// Assess paradigm health for a single department.
     pub fn assess_paradigm(clusters: &[AnomalyCluster], department: &str) -> ParadigmAssessment {
-        let dept_clusters: Vec<&AnomalyCluster> =
-            clusters.iter().filter(|c| c.department == department).collect();
+        let dept_clusters: Vec<&AnomalyCluster> = clusters
+            .iter()
+            .filter(|c| c.department == department)
+            .collect();
 
         let cluster_count = dept_clusters.len();
         let total_anomalies: usize = dept_clusters.iter().map(|c| c.anomaly_count).sum();
@@ -159,8 +163,13 @@ impl AnomalyClusterer {
         };
 
         let recommendation = match state {
-            "crisis" => "Immediate paradigm review required — high-severity anomaly cluster detected.".to_string(),
-            "tension" => "Schedule paradigm review — recurring anomaly pattern emerging.".to_string(),
+            "crisis" => {
+                "Immediate paradigm review required — high-severity anomaly cluster detected."
+                    .to_string()
+            }
+            "tension" => {
+                "Schedule paradigm review — recurring anomaly pattern emerging.".to_string()
+            }
             "watch" => "Monitor anomaly cluster — potential pattern forming.".to_string(),
             _ => "No action needed — paradigm operating normally.".to_string(),
         };
@@ -262,21 +271,46 @@ mod tests {
             0.5,
         )];
         let clusters = AnomalyClusterer::cluster(&anomalies);
-        assert!(clusters.is_empty(), "single anomaly should not form a cluster");
+        assert!(
+            clusters.is_empty(),
+            "single anomaly should not form a cluster"
+        );
     }
 
     #[test]
     fn cluster_shared_path() {
         let anomalies = vec![
-            make_anomaly("a1", "psychohistory", vec!["observe", "hypothesize", "test"], vec!["math", "stats"], 0.4),
-            make_anomaly("a2", "psychohistory", vec!["observe", "hypothesize", "conclude"], vec!["math"], 0.5),
-            make_anomaly("a3", "psychohistory", vec!["observe", "hypothesize", "validate"], vec!["stats", "math"], 0.3),
+            make_anomaly(
+                "a1",
+                "psychohistory",
+                vec!["observe", "hypothesize", "test"],
+                vec!["math", "stats"],
+                0.4,
+            ),
+            make_anomaly(
+                "a2",
+                "psychohistory",
+                vec!["observe", "hypothesize", "conclude"],
+                vec!["math"],
+                0.5,
+            ),
+            make_anomaly(
+                "a3",
+                "psychohistory",
+                vec!["observe", "hypothesize", "validate"],
+                vec!["stats", "math"],
+                0.3,
+            ),
         ];
         let clusters = AnomalyClusterer::cluster(&anomalies);
         assert_eq!(clusters.len(), 1);
         assert_eq!(clusters[0].anomaly_count, 3);
-        assert!(clusters[0].shared_path_elements.contains(&"observe".to_string()));
-        assert!(clusters[0].shared_path_elements.contains(&"hypothesize".to_string()));
+        assert!(clusters[0]
+            .shared_path_elements
+            .contains(&"observe".to_string()));
+        assert!(clusters[0]
+            .shared_path_elements
+            .contains(&"hypothesize".to_string()));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! 61-tool parity test — protects the MCP surface during the manual→registry
+//! 64-tool parity test — protects the MCP surface during the manual→registry
 //! migration and any subsequent additions.
 //!
 //! Every tool name in `EXPECTED` must remain reachable through
@@ -18,6 +18,7 @@ use std::collections::HashSet;
 /// adapters ix_git_log + ix_cargo_deps.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
+    "ix_ast_query",
     "ix_autograd_run",
     "ix_bandit",
     "ix_bloom_filter",
@@ -28,6 +29,7 @@ const EXPECTED: &[&str] = &[
     "ix_chaos_lyapunov",
     "ix_code_analyze",
     "ix_code_catalog",
+    "ix_code_smells",
     "ix_context_walk",
     "ix_demo",
     "ix_distance",
@@ -61,6 +63,7 @@ const EXPECTED: &[&str] = &[
     "ix_nn_forward",
     "ix_number_theory",
     "ix_optimize",
+    "ix_optick_search",
     "ix_pipeline",
     "ix_pipeline_compile",
     "ix_pipeline_list",
@@ -87,17 +90,12 @@ fn exposed_names() -> HashSet<String> {
         .as_array()
         .expect("tools array")
         .iter()
-        .map(|t| {
-            t["name"]
-                .as_str()
-                .expect("tool.name is string")
-                .to_string()
-        })
+        .map(|t| t["name"].as_str().expect("tool.name is string").to_string())
         .collect()
 }
 
 #[test]
-fn parity_all_61_tools_reachable() {
+fn parity_all_64_tools_reachable() {
     let exposed = exposed_names();
     let missing: Vec<&&str> = EXPECTED.iter().filter(|n| !exposed.contains(**n)).collect();
     assert!(
@@ -127,10 +125,11 @@ fn parity_expected_count() {
     // ix_triage_session + ix_pipeline_run + ix_pipeline_list +
     // ix_autograd_run + ix_pipeline_compile + ix_git_log +
     // ix_cargo_deps + ix_code_catalog + ix_catalog_list +
-    // ix_grammar_catalog + ix_rfc_catalog = 61.
+    // ix_grammar_catalog + ix_rfc_catalog + ix_ast_query +
+    // ix_optick_search + ix_code_smells = 64.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 61);
+    assert_eq!(EXPECTED.len(), 64);
 }
 
 #[test]
@@ -171,8 +170,8 @@ fn dispatch_action_blocks_unknown_tool_via_approval() {
     // an ActionError::Blocked with BlockCode::ApprovalRequired —
     // proving the full middleware chain fires on the new path.
     use ix_agent::registry_bridge;
-    use ix_agent_core::{ActionError, AgentAction, ReadContext};
     use ix_agent_core::event::BlockCode;
+    use ix_agent_core::{ActionError, AgentAction, ReadContext};
 
     let cx = ReadContext::synthetic_for_legacy();
     let action = AgentAction::InvokeTool {
@@ -187,9 +186,9 @@ fn dispatch_action_blocks_unknown_tool_via_approval() {
             assert_eq!(code, BlockCode::ApprovalRequired);
             assert_eq!(blocker, "ix_approval");
         }
-        other => panic!(
-            "expected Blocked(ApprovalRequired) from approval middleware, got {other:?}"
-        ),
+        other => {
+            panic!("expected Blocked(ApprovalRequired) from approval middleware, got {other:?}")
+        }
     }
 }
 

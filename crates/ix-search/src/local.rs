@@ -22,7 +22,8 @@ pub fn hill_climbing<S: LocalSearchState>(initial: S, max_steps: usize) -> (S, f
             break;
         }
 
-        let best = neighbors.into_iter()
+        let best = neighbors
+            .into_iter()
             .max_by(|a, b| a.evaluate().partial_cmp(&b.evaluate()).unwrap());
 
         if let Some(best) = best {
@@ -51,7 +52,8 @@ pub fn stochastic_hill_climbing<S: LocalSearchState>(
 
     for _ in 0..max_steps {
         let neighbors = current.neighbors();
-        let improving: Vec<S> = neighbors.into_iter()
+        let improving: Vec<S> = neighbors
+            .into_iter()
             .filter(|n| n.evaluate() > current_val)
             .collect();
 
@@ -101,9 +103,7 @@ pub fn beam_search<S: LocalSearchState>(
     let mut beam = initial;
 
     for _ in 0..max_steps {
-        let mut candidates: Vec<S> = beam.iter()
-            .flat_map(|s| s.neighbors())
-            .collect();
+        let mut candidates: Vec<S> = beam.iter().flat_map(|s| s.neighbors()).collect();
 
         if candidates.is_empty() {
             break;
@@ -143,7 +143,8 @@ pub fn tabu_search<S: LocalSearchState + std::hash::Hash + Eq>(
         let neighbors = current.neighbors();
 
         // Find best non-tabu neighbor (or best overall if all tabu)
-        let best_neighbor = neighbors.into_iter()
+        let best_neighbor = neighbors
+            .into_iter()
             .filter(|n| !tabu_vec.contains(n))
             .max_by(|a, b| a.evaluate().partial_cmp(&b.evaluate()).unwrap());
 
@@ -199,6 +200,10 @@ mod tests {
         let initial = vec![NumState(0), NumState(5), NumState(15)];
         let (state, _) = beam_search(initial, 3, 100);
         // Beam search may land within ±1 of optimum depending on neighbor generation
-        assert!((state.0 - 10).abs() <= 1, "Expected near 10, got {}", state.0);
+        assert!(
+            (state.0 - 10).abs() <= 1,
+            "Expected near 10, got {}",
+            state.0
+        );
     }
 }

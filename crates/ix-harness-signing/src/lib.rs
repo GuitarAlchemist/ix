@@ -101,16 +101,15 @@ pub fn canonical_form(obs: &HexObservation) -> Result<String, SigningError> {
     // also work but adds a dependency on BTreeMap's key ordering;
     // manual assembly makes the order explicit and audit-friendly.
     let evidence_json = match &obs.evidence {
-        Some(s) => serde_json::to_string(s)
-            .map_err(|e| SigningError::Canonical(e.to_string()))?,
+        Some(s) => serde_json::to_string(s).map_err(|e| SigningError::Canonical(e.to_string()))?,
         None => "null".to_string(),
     };
     let claim_key_json = serde_json::to_string(&obs.claim_key)
         .map_err(|e| SigningError::Canonical(e.to_string()))?;
     let diagnosis_id_json = serde_json::to_string(&obs.diagnosis_id)
         .map_err(|e| SigningError::Canonical(e.to_string()))?;
-    let source_json = serde_json::to_string(&obs.source)
-        .map_err(|e| SigningError::Canonical(e.to_string()))?;
+    let source_json =
+        serde_json::to_string(&obs.source).map_err(|e| SigningError::Canonical(e.to_string()))?;
 
     Ok(format!(
         "{{\"claim_key\":{claim_key_json},\"diagnosis_id\":{diagnosis_id_json},\"evidence\":{evidence_json},\"ordinal\":{ordinal},\"round\":{round},\"source\":{source_json},\"variant\":\"{variant}\",\"weight\":{weight_str}}}",

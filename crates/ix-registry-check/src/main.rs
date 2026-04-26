@@ -18,9 +18,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn print_usage(program: &str) {
-    eprintln!(
-        "usage: {program} --old <path> --new <path> [--allowlist <path>] [--json]"
-    );
+    eprintln!("usage: {program} --old <path> --new <path> [--allowlist <path>] [--json]");
     eprintln!();
     eprintln!("Compares two versions of capability-registry.json and");
     eprintln!("fails (exit 1) on any breaking change not in the allowlist.");
@@ -33,7 +31,10 @@ fn print_usage(program: &str) {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    let program = args.first().cloned().unwrap_or_else(|| "ix-registry-check".into());
+    let program = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "ix-registry-check".into());
 
     let mut old: Option<PathBuf> = None;
     let mut new: Option<PathBuf> = None;

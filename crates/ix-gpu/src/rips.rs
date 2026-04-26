@@ -17,13 +17,18 @@
 //! ```
 
 use crate::context::GpuContext;
-use crate::distance::{pairwise_distance_gpu, pairwise_distance_cpu};
+use crate::distance::{pairwise_distance_cpu, pairwise_distance_gpu};
 
 /// Build Rips 1-skeleton (edges) on the GPU.
 ///
 /// Returns pairs `(i, j)` where `i < j` and `dist(point_i, point_j) <= radius`.
 /// Uses GPU-accelerated distance matrix computation.
-pub fn rips_edges_gpu(ctx: &GpuContext, points: &[f32], dim: usize, radius: f32) -> Vec<(usize, usize)> {
+pub fn rips_edges_gpu(
+    ctx: &GpuContext,
+    points: &[f32],
+    dim: usize,
+    radius: f32,
+) -> Vec<(usize, usize)> {
     let dist_matrix = pairwise_distance_gpu(ctx, points, dim);
     let n = points.len() / dim;
     extract_edges(&dist_matrix, n, radius)
@@ -216,10 +221,7 @@ mod tests {
     fn test_cpu_rips_tetrahedron() {
         // 4 points close together
         let points = vec![
-            0.0f32, 0.0, 0.0,
-            1.0, 0.0, 0.0,
-            0.5, 0.866, 0.0,
-            0.5, 0.289, 0.816,
+            0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 0.866, 0.0, 0.5, 0.289, 0.816,
         ];
         let complex = rips_complex_cpu(&points, 3, 3, 2.0);
         let tets = complex.iter().filter(|(s, _)| s.len() == 4).count();

@@ -15,13 +15,7 @@ pub fn read_csv(path: &Path, has_header: bool) -> Result<DataBatch, IoError> {
         .from_path(path)?;
 
     let column_names = if has_header {
-        Some(
-            reader
-                .headers()?
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
+        Some(reader.headers()?.iter().map(|s| s.to_string()).collect())
     } else {
         None
     };
@@ -50,13 +44,7 @@ pub fn read_csv_string(data: &str, has_header: bool) -> Result<DataBatch, IoErro
         .from_reader(data.as_bytes());
 
     let column_names = if has_header {
-        Some(
-            reader
-                .headers()?
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
+        Some(reader.headers()?.iter().map(|s| s.to_string()).collect())
     } else {
         None
     };

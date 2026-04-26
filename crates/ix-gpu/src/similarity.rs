@@ -3,8 +3,8 @@
 //! Computes cosine similarity between vectors entirely on the GPU
 //! using WGSL compute shaders.
 
-use wgpu::*;
 use crate::context::GpuContext;
+use wgpu::*;
 
 /// WGSL compute shader for cosine similarity.
 ///
@@ -131,15 +131,26 @@ pub fn cosine_similarity_gpu(ctx: &GpuContext, a: &[f32], b: &[f32]) -> f32 {
         label: Some("cosine_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_a.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_b.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_result.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_a.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_b.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_result.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("cosine_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("cosine_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -183,15 +194,26 @@ pub fn dot_product_gpu(ctx: &GpuContext, a: &[f32], b: &[f32]) -> f32 {
         label: Some("dot_bind"),
         layout: &bind_group_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: buf_a.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: buf_b.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: buf_result.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: buf_a.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: buf_b.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: buf_result.as_entire_binding(),
+            },
         ],
     });
 
-    let mut encoder = ctx.device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("dot_encoder"),
-    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("dot_encoder"),
+        });
 
     {
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -227,7 +249,8 @@ pub fn cosine_similarity_cpu(a: &[f32], b: &[f32]) -> f32 {
 /// Euclidean distance on GPU (via compute shader).
 pub fn euclidean_distance_cpu(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len());
-    a.iter().zip(b.iter())
+    a.iter()
+        .zip(b.iter())
         .map(|(x, y)| (x - y) * (x - y))
         .sum::<f32>()
         .sqrt()
@@ -265,7 +288,10 @@ mod tests {
         let a = vec![3.0, 4.0, 0.0];
         let b = vec![6.0, 8.0, 0.0]; // same direction, different magnitude
         let sim = cosine_similarity_cpu(&a, &b);
-        assert!((sim - 1.0).abs() < 1e-5, "parallel vectors should have similarity 1.0");
+        assert!(
+            (sim - 1.0).abs() < 1e-5,
+            "parallel vectors should have similarity 1.0"
+        );
     }
 
     #[test]
@@ -290,7 +316,10 @@ mod tests {
         let b = vec![4.0, -1.0, 2.0];
         let sim_ab = cosine_similarity_cpu(&a, &b);
         let sim_ba = cosine_similarity_cpu(&b, &a);
-        assert!((sim_ab - sim_ba).abs() < 1e-10, "cosine similarity should be symmetric");
+        assert!(
+            (sim_ab - sim_ba).abs() < 1e-10,
+            "cosine similarity should be symmetric"
+        );
     }
 
     #[test]

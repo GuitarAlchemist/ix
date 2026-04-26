@@ -168,11 +168,9 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
         let pre_rows = x.nrows();
         if let Some(ref y) = y_opt {
             // Combine X and y to drop rows with NaN in either
-            let combined = ndarray::concatenate(
-                Axis(1),
-                &[x.view(), y.clone().insert_axis(Axis(1)).view()],
-            )
-            .map_err(|e| format!("concat error: {e}"))?;
+            let combined =
+                ndarray::concatenate(Axis(1), &[x.view(), y.clone().insert_axis(Axis(1)).view()])
+                    .map_err(|e| format!("concat error: {e}"))?;
             let clean = preprocessing::drop_nan_rows(&combined);
             if clean.nrows() == 0 {
                 return Err("All rows contain NaN values".into());
@@ -241,7 +239,9 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
     let result = match task.as_str() {
         "classify" => run_classification(
             &x,
-            y_opt.as_ref().ok_or("Classification requires a target column")?,
+            y_opt
+                .as_ref()
+                .ok_or("Classification requires a target column")?,
             &model_name,
             &config.model_params,
             &config.split,
@@ -249,7 +249,9 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
         )?,
         "regress" => run_regression(
             &x,
-            y_opt.as_ref().ok_or("Regression requires a target column")?,
+            y_opt
+                .as_ref()
+                .ok_or("Regression requires a target column")?,
             &model_name,
             &config.split,
             config.return_predictions,
@@ -260,7 +262,12 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
             &config.model_params,
             config.return_predictions,
         )?,
-        _ => return Err(format!("Unknown task: '{}'. Use classify, regress, cluster, or auto", task)),
+        _ => {
+            return Err(format!(
+                "Unknown task: '{}'. Use classify, regress, cluster, or auto",
+                task
+            ))
+        }
     };
 
     // 8. Persist
@@ -282,10 +289,7 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
         let envelope = ModelEnvelope {
             version: "0.1.0".to_string(),
             algorithm: model_name.clone(),
-            params: result
-                .get("model_state")
-                .cloned()
-                .unwrap_or(json!(null)),
+            params: result.get("model_state").cloned().unwrap_or(json!(null)),
             preprocessing: preprocessing_state,
             feature_names: col_names,
             trained_at: timestamp_now_stub(),
@@ -382,9 +386,8 @@ pub fn run_predict(persist_key: &str, data: &[Vec<f64>]) -> Result<Value, String
         "linear_regression" => {
             use ix_supervised::linear_regression::{LinearRegression, LinearRegressionState};
             use ix_supervised::traits::Regressor;
-            let state: LinearRegressionState =
-                serde_json::from_value(envelope.params.clone())
-                    .map_err(|e| format!("Deserialize model state: {e}"))?;
+            let state: LinearRegressionState = serde_json::from_value(envelope.params.clone())
+                .map_err(|e| format!("Deserialize model state: {e}"))?;
             let model = LinearRegression::load_state(&state);
             let preds = model.predict(&x);
             json!(preds.to_vec())
@@ -392,9 +395,8 @@ pub fn run_predict(persist_key: &str, data: &[Vec<f64>]) -> Result<Value, String
         "decision_tree" => {
             use ix_supervised::decision_tree::{DecisionTree, DecisionTreeState};
             use ix_supervised::traits::Classifier;
-            let state: DecisionTreeState =
-                serde_json::from_value(envelope.params.clone())
-                    .map_err(|e| format!("Deserialize model state: {e}"))?;
+            let state: DecisionTreeState = serde_json::from_value(envelope.params.clone())
+                .map_err(|e| format!("Deserialize model state: {e}"))?;
             let model = DecisionTree::load_state(&state);
             let preds = model.predict(&x);
             json!(preds.to_vec())
@@ -402,14 +404,18 @@ pub fn run_predict(persist_key: &str, data: &[Vec<f64>]) -> Result<Value, String
         "kmeans" => {
             use ix_unsupervised::kmeans::{KMeans, KMeansState};
             use ix_unsupervised::traits::Clusterer;
-            let state: KMeansState =
-                serde_json::from_value(envelope.params.clone())
-                    .map_err(|e| format!("Deserialize model state: {e}"))?;
+            let state: KMeansState = serde_json::from_value(envelope.params.clone())
+                .map_err(|e| format!("Deserialize model state: {e}"))?;
             let model = KMeans::load_state(&state);
             let preds = model.predict(&x);
             json!(preds.to_vec())
         }
-        other => return Err(format!("Prediction not supported for algorithm '{}'", other)),
+        other => {
+            return Err(format!(
+                "Prediction not supported for algorithm '{}'",
+                other
+            ))
+        }
     };
 
     Ok(json!({
@@ -579,23 +585,69 @@ fn run_classification(
             model.fit(&split_result.x_train, &y_train_usize);
             let preds = model.predict(&split_result.x_test);
             // RandomForest doesn't have save_state; store null
-            (preds, json!(null), json!({ "n_trees": n_trees, "max_depth": max_depth }))
+            (
+                preds,
+                json!(null),
+                json!({ "n_trees": n_trees, "max_depth": max_depth }),
+            )
         }
         "transformer" => {
             use ix_nn::classifier::{TransformerClassifier, TransformerConfig};
             use ix_supervised::traits::Classifier;
-            let d_model = model_params.as_ref().and_then(|p| p.get("d_model")).and_then(|v| v.as_u64()).unwrap_or(32) as usize;
-            let n_heads = model_params.as_ref().and_then(|p| p.get("n_heads")).and_then(|v| v.as_u64()).unwrap_or(4) as usize;
-            let n_layers = model_params.as_ref().and_then(|p| p.get("n_layers")).and_then(|v| v.as_u64()).unwrap_or(2) as usize;
-            let d_ff = model_params.as_ref().and_then(|p| p.get("d_ff")).and_then(|v| v.as_u64()).unwrap_or(128) as usize;
-            let epochs = model_params.as_ref().and_then(|p| p.get("epochs")).and_then(|v| v.as_u64()).unwrap_or(50) as usize;
-            let lr = model_params.as_ref().and_then(|p| p.get("learning_rate")).and_then(|v| v.as_f64()).unwrap_or(0.001);
-            let seq_len = model_params.as_ref().and_then(|p| p.get("seq_len")).and_then(|v| v.as_u64()).map(|v| v as usize);
-            let config = TransformerConfig { d_model, n_heads, n_layers, d_ff, seq_len, epochs, learning_rate: lr, seed: split.seed, ..Default::default() };
+            let d_model = model_params
+                .as_ref()
+                .and_then(|p| p.get("d_model"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(32) as usize;
+            let n_heads = model_params
+                .as_ref()
+                .and_then(|p| p.get("n_heads"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(4) as usize;
+            let n_layers = model_params
+                .as_ref()
+                .and_then(|p| p.get("n_layers"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2) as usize;
+            let d_ff = model_params
+                .as_ref()
+                .and_then(|p| p.get("d_ff"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(128) as usize;
+            let epochs = model_params
+                .as_ref()
+                .and_then(|p| p.get("epochs"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50) as usize;
+            let lr = model_params
+                .as_ref()
+                .and_then(|p| p.get("learning_rate"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.001);
+            let seq_len = model_params
+                .as_ref()
+                .and_then(|p| p.get("seq_len"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let config = TransformerConfig {
+                d_model,
+                n_heads,
+                n_layers,
+                d_ff,
+                seq_len,
+                epochs,
+                learning_rate: lr,
+                seed: split.seed,
+                ..Default::default()
+            };
             let mut model = TransformerClassifier::new(config);
             model.fit(&split_result.x_train, &y_train_usize);
             let preds = model.predict(&split_result.x_test);
-            (preds, json!(null), json!({ "d_model": d_model, "n_heads": n_heads, "n_layers": n_layers, "d_ff": d_ff, "epochs": epochs }))
+            (
+                preds,
+                json!(null),
+                json!({ "d_model": d_model, "n_heads": n_heads, "n_layers": n_layers, "d_ff": d_ff, "epochs": epochs }),
+            )
         }
         other => return Err(format!("Unknown classification model: '{}'", other)),
     };
@@ -663,11 +715,17 @@ fn run_regression(
             (preds, state)
         }
         "transformer" => {
-            use ix_nn::classifier::{TransformerRegressor, TransformerConfig};
+            use ix_nn::classifier::{TransformerConfig, TransformerRegressor};
             use ix_supervised::traits::Regressor;
             let config = TransformerConfig {
-                d_model: 32, n_heads: 4, n_layers: 2, d_ff: 128,
-                seq_len: None, epochs: 50, learning_rate: 0.001, seed: split.seed,
+                d_model: 32,
+                n_heads: 4,
+                n_layers: 2,
+                d_ff: 128,
+                seq_len: None,
+                epochs: 50,
+                learning_rate: 0.001,
+                seed: split.seed,
                 ..Default::default()
             };
             let mut model = TransformerRegressor::new(config);
@@ -735,10 +793,7 @@ fn run_clustering(
                 .map(|c| json!({ "cluster": c, "size": sizes.get(&c).copied().unwrap_or(0) }))
                 .collect();
 
-            let model_state = model
-                .save_state()
-                .map(|s| json!(s))
-                .unwrap_or(json!(null));
+            let model_state = model.save_state().map(|s| json!(s)).unwrap_or(json!(null));
 
             let mut result = json!({
                 "cluster_info": {

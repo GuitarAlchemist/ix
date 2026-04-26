@@ -18,7 +18,10 @@ impl CooperativeGame {
         assert!(num_players <= 63, "Max 63 players (bitmask limit)");
         let mut values = HashMap::new();
         values.insert(0, 0.0); // Empty coalition has value 0
-        Self { num_players, values }
+        Self {
+            num_players,
+            values,
+        }
     }
 
     /// Set the value of a coalition given as a bitmask.
@@ -199,7 +202,10 @@ mod tests {
 
         let shapley = game.shapley_value();
         // Player 2 (right) should get more than 0 or 1 (left)
-        assert!(shapley[2] > shapley[0], "Right glove holder should have more power");
+        assert!(
+            shapley[2] > shapley[0],
+            "Right glove holder should have more power"
+        );
         // Shapley values sum to v(N) = 1
         let total: f64 = shapley.iter().sum();
         assert!((total - 1.0).abs() < 1e-8);
@@ -220,7 +226,10 @@ mod tests {
         let shapley = game.shapley_value();
         // All should be equal = 1.0
         for &s in &shapley {
-            assert!((s - 1.0).abs() < 1e-8, "Symmetric game: all Shapley values should be 1.0");
+            assert!(
+                (s - 1.0).abs() < 1e-8,
+                "Symmetric game: all Shapley values should be 1.0"
+            );
         }
     }
 
@@ -252,6 +261,9 @@ mod tests {
         let banzhaf = game.banzhaf_index();
 
         // Permanent members should have more power
-        assert!(banzhaf[0] > banzhaf[3], "Permanent members should have more power");
+        assert!(
+            banzhaf[0] > banzhaf[3],
+            "Permanent members should have more power"
+        );
     }
 }

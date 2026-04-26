@@ -68,14 +68,16 @@ fn build_index_over_real_ix_math() {
 
     // The target symbol must be present under its fully-qualified name.
     assert!(
-        idx.find_free_fn("ix-math::eigen::symmetric_eigen").is_some()
-            || idx.find_free_fn("ix_math::eigen::symmetric_eigen").is_some(),
+        idx.find_free_fn("ix-math::eigen::symmetric_eigen")
+            .is_some()
+            || idx
+                .find_free_fn("ix_math::eigen::symmetric_eigen")
+                .is_some(),
         "symmetric_eigen not found — symbol names: {:?}",
         idx.symbols
             .keys()
             .filter_map(|k| match k {
-                ix_context::index::SymbolKey::FreeFn(p) if p.contains("eigen") =>
-                    Some(p.clone()),
+                ix_context::index::SymbolKey::FreeFn(p) if p.contains("eigen") => Some(p.clone()),
                 _ => None,
             })
             .take(10)
@@ -194,7 +196,8 @@ fn walk_trace_is_bit_identical_across_replay() {
     );
 
     assert_eq!(
-        bundle1.walk_trace, bundle2.walk_trace,
+        bundle1.walk_trace,
+        bundle2.walk_trace,
         "replay walk_trace diverged: {} steps vs {} steps",
         bundle1.walk_trace.len(),
         bundle2.walk_trace.len()
@@ -242,9 +245,10 @@ fn module_siblings_from_eigen_enumerates_same_file_fns() {
     // eigen.rs has at least symmetric_eigen and symmetric_eigen_with_opts
     // as module-level free fns, so the siblings walk should include at
     // least the with_opts variant.
-    let has_with_opts = bundle.nodes.iter().any(|n| {
-        n.meta().label == "symmetric_eigen_with_opts"
-    });
+    let has_with_opts = bundle
+        .nodes
+        .iter()
+        .any(|n| n.meta().label == "symmetric_eigen_with_opts");
     assert!(
         has_with_opts,
         "siblings walk should include symmetric_eigen_with_opts. \
