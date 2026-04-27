@@ -52,7 +52,9 @@ pub mod error;
 pub mod log;
 pub mod milestones;
 pub mod policy;
+pub mod target_chatbot;
 pub mod target_grammar;
+pub mod target_optick;
 pub mod time_budget;
 
 pub use cache::CacheBridge;
@@ -65,7 +67,9 @@ pub use policy::{
     ben_ameur_t0, calibrate_initial_temperature, AcceptancePolicy, Decision, GreedyPolicy,
     RandomSearchPolicy, SimulatedAnnealingPolicy, Strategy,
 };
+pub use target_chatbot::{ChatbotConfig, ChatbotScore, ChatbotTarget};
 pub use target_grammar::{GrammarConfig, GrammarScore, GrammarTarget};
+pub use target_optick::{OpticKConfig, OpticKScore, OpticKTarget, RebuildMode};
 pub use time_budget::TimeBudget;
 
 use std::path::{Path, PathBuf};

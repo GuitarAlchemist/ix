@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+rand_distr = { workspace = true }
 uuid = { workspace = true }
 blake3 = { workspace = true }
 ix-cache = { workspace = true }

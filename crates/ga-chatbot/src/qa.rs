@@ -101,6 +101,72 @@ static RELATIONAL_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::n
 /// If transition cost exceeds this, the claim is disputed.
 const DEFAULT_COST_THRESHOLD: f64 = 6.0;
 
+/// Tunable thresholds the autoresearch loop can perturb.
+///
+/// Loaded from `--autoresearch-config <path>` JSON in `ga-chatbot qa`.
+/// Defaults match the constants used in the original
+/// [`run_deterministic_checks`] code path.
+///
+/// v1 only `deterministic_pass_threshold` is wired through; the other
+/// fields are accepted in JSON for forward-compatibility with the
+/// autoresearch adapter's `ChatbotConfig` schema and will be threaded
+/// through in v1.5 once their target call-sites exist.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct AutoresearchConfig {
+    /// Confidence above which a response receives the auto-PASS verdict
+    /// at qa.rs Layer 2. Default 0.9 preserves the original behavior.
+    #[serde(default = "default_deterministic_pass_threshold")]
+    pub deterministic_pass_threshold: f64,
+    /// Judge-panel agreement threshold (v1.5+: not yet wired).
+    #[serde(default = "default_judge_accept_threshold")]
+    pub judge_accept_threshold: f64,
+    /// Minimum fixture confidence to be considered (v1.5+: not yet wired).
+    #[serde(default = "default_fixture_confidence_floor")]
+    pub fixture_confidence_floor: f64,
+    /// If true, require non-empty `sources` whenever confidence > 0.5
+    /// (v1.5+: not yet wired).
+    #[serde(default)]
+    pub strict_grounding: bool,
+}
+
+fn default_deterministic_pass_threshold() -> f64 {
+    0.9
+}
+fn default_judge_accept_threshold() -> f64 {
+    0.6
+}
+fn default_fixture_confidence_floor() -> f64 {
+    0.0
+}
+
+impl Default for AutoresearchConfig {
+    fn default() -> Self {
+        Self {
+            deterministic_pass_threshold: default_deterministic_pass_threshold(),
+            judge_accept_threshold: default_judge_accept_threshold(),
+            fixture_confidence_floor: default_fixture_confidence_floor(),
+            strict_grounding: false,
+        }
+    }
+}
+
+/// Like [`run_deterministic_checks_with_topology`] but uses the
+/// supplied [`AutoresearchConfig`] in Layer 2 (confidence verdicts).
+///
+/// Existing call sites that don't need the autoresearch knob continue
+/// to use [`run_deterministic_checks`], which delegates here with
+/// [`AutoresearchConfig::default()`].
+pub fn run_deterministic_checks_with_config(
+    prompt_id: &str,
+    prompt: &str,
+    response: &ChatbotResponse,
+    corpus_ids: &HashSet<String>,
+    transitions: Option<&HashMap<(String, String), f64>>,
+    config: &AutoresearchConfig,
+) -> Vec<Finding> {
+    run_deterministic_checks_inner(prompt_id, prompt, response, corpus_ids, transitions, config)
+}
+
 /// Check if a chatbot response makes relational claims about voicing pairs
 /// that are not supported by the transition data (Layer 1.5).
 ///
@@ -206,6 +272,26 @@ pub fn run_deterministic_checks_with_topology(
     corpus_ids: &HashSet<String>,
     transitions: Option<&HashMap<(String, String), f64>>,
 ) -> Vec<Finding> {
+    run_deterministic_checks_inner(
+        prompt_id,
+        prompt,
+        response,
+        corpus_ids,
+        transitions,
+        &AutoresearchConfig::default(),
+    )
+}
+
+/// Internal worker — caller supplies the autoresearch config; the
+/// public wrappers above default it.
+fn run_deterministic_checks_inner(
+    prompt_id: &str,
+    prompt: &str,
+    response: &ChatbotResponse,
+    corpus_ids: &HashSet<String>,
+    transitions: Option<&HashMap<(String, String), f64>>,
+    config: &AutoresearchConfig,
+) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     // Layer 0: injection sanitization
@@ -251,10 +337,15 @@ pub fn run_deterministic_checks_with_topology(
     }
 
     // Layer 2: confidence thresholds (alignment policy)
-    let confidence_verdict = if response.confidence > 0.9 {
-        ('T', "High confidence (>0.9) — autonomous proceed")
+    // Layer 2 thresholds: T-cut is autoresearch-tunable
+    // (`config.deterministic_pass_threshold`, default 0.9). The lower
+    // tiers (P, U, F) keep their original cuts in v1; the autoresearch
+    // adapter perturbs only the T cut for v1.
+    let t_cut = config.deterministic_pass_threshold;
+    let confidence_verdict = if response.confidence > t_cut {
+        ('T', "High confidence — autonomous proceed")
     } else if response.confidence > 0.7 {
-        ('P', "Moderate confidence (0.7-0.9) — proceed with caveat")
+        ('P', "Moderate confidence (0.7..T) — proceed with caveat")
     } else if response.confidence > 0.5 {
         ('U', "Low confidence (0.5-0.7) — gather evidence / confirm")
     } else {

@@ -2,11 +2,15 @@
 
 use clap::{Parser, Subcommand};
 use ga_chatbot::aggregate::{JudgeVerdict, QaResult};
+use ga_chatbot::algebra::{answer_query, AlgebraRequest};
 use ga_chatbot::mcp_bridge::{McpBridge, McpBridgeConfig};
-use ga_chatbot::qa::{load_corpus_ids, run_deterministic_checks};
+use ga_chatbot::qa::{
+    load_corpus_ids, run_deterministic_checks, run_deterministic_checks_with_config,
+    AutoresearchConfig,
+};
 use ga_chatbot::{ask_stub, load_fixtures, ChatbotRequest, Instrument};
 use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -67,6 +71,18 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         ix_args: Vec<String>,
     },
+    /// Answer a deterministic pitch-class algebra query from IX bracelet machinery.
+    Algebra {
+        /// Natural-language algebra query. If omitted, read {"query":"..."} JSON from stdin.
+        #[arg(long)]
+        query: Option<String>,
+        /// Grounding source label to emit in the JSON response.
+        #[arg(long, default_value = "ix")]
+        source: String,
+        /// Revision string to emit in the JSON response.
+        #[arg(long, default_value = "unknown")]
+        revision: String,
+    },
     /// Run the deterministic QA pipeline on the adversarial corpus.
     Qa {
         /// Directory containing adversarial prompt corpus (*.jsonl files).
@@ -91,6 +107,14 @@ enum Commands {
         /// First tries OpenAI model names, then Ollama. Default: gpt-4o-mini.
         #[arg(long, default_value = "gpt-4o-mini")]
         models: String,
+        /// Path to a JSON file with autoresearch-tunable QA thresholds.
+        /// Schema: `{ deterministic_pass_threshold: f64, judge_accept_threshold:
+        /// f64, fixture_confidence_floor: f64, strict_grounding: bool }`. v1
+        /// only `deterministic_pass_threshold` is wired through (qa.rs Layer 2
+        /// T-cut, default 0.9). Used by `ix-autoresearch` Target B to perturb
+        /// the QA pipeline.
+        #[arg(long)]
+        autoresearch_config: Option<PathBuf>,
     },
 }
 
@@ -154,6 +178,23 @@ fn main() {
             let resp = ask_stub(&req, &fixture_map);
             println!("{}", serde_json::to_string_pretty(&resp).unwrap());
         }
+        Commands::Algebra {
+            query,
+            source,
+            revision,
+        } => {
+            let query = match query {
+                Some(query) => query,
+                None => read_algebra_query_from_stdin(),
+            };
+
+            let Some(response) = answer_query(&query, &source, &revision) else {
+                eprintln!("[ga-chatbot algebra] unsupported query: {query}");
+                std::process::exit(2);
+            };
+
+            println!("{}", serde_json::to_string(&response).unwrap());
+        }
         Commands::Qa {
             corpus,
             fixtures,
@@ -162,26 +203,77 @@ fn main() {
             shapley,
             benchmark,
             models,
+            autoresearch_config,
         } => {
+            // Load tunable thresholds if --autoresearch-config was supplied;
+            // otherwise use defaults that match the original hardcoded behavior.
+            let qa_config = match autoresearch_config {
+                None => ga_chatbot::qa::AutoresearchConfig::default(),
+                Some(path) => match std::fs::read_to_string(&path) {
+                    Ok(s) => match serde_json::from_str::<ga_chatbot::qa::AutoresearchConfig>(&s) {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            eprintln!(
+                                "[ga-chatbot qa] cannot parse --autoresearch-config {}: {e}",
+                                path.display()
+                            );
+                            std::process::exit(2);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!(
+                            "[ga-chatbot qa] cannot read --autoresearch-config {}: {e}",
+                            path.display()
+                        );
+                        std::process::exit(2);
+                    }
+                },
+            };
+
             if benchmark {
                 let model_list: Vec<&str> = models.split(',').map(|s| s.trim()).collect();
                 std::process::exit(run_benchmark(&corpus, &corpus_dir, &output, &model_list));
             } else {
-                std::process::exit(run_qa(&corpus, &fixtures, &corpus_dir, &output, shapley));
+                std::process::exit(run_qa(
+                    &corpus,
+                    &fixtures,
+                    &corpus_dir,
+                    &output,
+                    shapley,
+                    &qa_config,
+                ));
             }
         }
     }
 }
 
+fn read_algebra_query_from_stdin() -> String {
+    let mut buffer = String::new();
+    io::stdin()
+        .read_to_string(&mut buffer)
+        .expect("read algebra stdin");
+
+    let trimmed = buffer.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    serde_json::from_str::<AlgebraRequest>(trimmed)
+        .map(|request| request.query)
+        .unwrap_or_else(|_| trimmed.to_string())
+}
+
 /// Run the deterministic QA pipeline over all adversarial prompts.
 ///
-/// Returns 0 if no F/D verdicts, 1 otherwise.
+/// Returns 0 if no F/D verdicts, 1 otherwise. `qa_config` carries the
+/// autoresearch-tunable thresholds (see `--autoresearch-config`).
 fn run_qa(
     corpus_path: &std::path::Path,
     fixtures_path: &std::path::Path,
     corpus_dir: &std::path::Path,
     output_path: &std::path::Path,
     shapley: bool,
+    qa_config: &AutoresearchConfig,
 ) -> i32 {
     // Load fixtures for stub responses
     let fixture_map = load_fixtures(fixtures_path);
@@ -231,8 +323,14 @@ fn run_qa(
             instrument: Some(Instrument::Guitar),
         };
         let response = ask_stub(&req, &fixture_map);
-        let findings =
-            run_deterministic_checks(&entry.id, &entry.prompt, &response, &all_corpus_ids);
+        let findings = run_deterministic_checks_with_config(
+            &entry.id,
+            &entry.prompt,
+            &response,
+            &all_corpus_ids,
+            None,
+            qa_config,
+        );
 
         // Determine worst verdict from deterministic checks
         let det_verdict = worst_verdict(&findings);
