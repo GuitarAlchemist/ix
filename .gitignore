@@ -20,3 +20,8 @@ state/adversarial/summary.json
 
 # TARS knowledge graph logs — rebuilt from claims ingest
 state/graph/
+
+# ix-autoresearch: per-run logs are noisy (one JSONL per overnight session);
+# only milestones/ is tracked, populated via `ix-autoresearch promote`.
+state/autoresearch/runs/*
+!state/autoresearch/runs/.gitkeep

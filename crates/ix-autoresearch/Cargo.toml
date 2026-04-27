@@ -1,0 +1,25 @@
+[package]
+name = "ix-autoresearch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["command-line-utilities", "algorithms"]
+keywords = ["autoresearch", "experiment", "loop", "tuning", "search"]
+description = "Karpathy-style edit-eval-iterate kernel + target adapters for IX subsystems"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+uuid = { workspace = true }
+blake3 = { workspace = true }
+ix-cache = { workspace = true }
+ix-fuzzy = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
