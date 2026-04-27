@@ -52,6 +52,7 @@ pub mod error;
 pub mod log;
 pub mod milestones;
 pub mod policy;
+pub mod target_grammar;
 pub mod time_budget;
 
 pub use cache::CacheBridge;
@@ -64,6 +65,7 @@ pub use policy::{
     ben_ameur_t0, calibrate_initial_temperature, AcceptancePolicy, Decision, GreedyPolicy,
     RandomSearchPolicy, SimulatedAnnealingPolicy, Strategy,
 };
+pub use target_grammar::{GrammarConfig, GrammarScore, GrammarTarget};
 pub use time_budget::TimeBudget;
 
 use std::path::{Path, PathBuf};
