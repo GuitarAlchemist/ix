@@ -2460,5 +2460,69 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::grothendieck_path,
         });
+
+        self.tools.push(Tool {
+            name: "ix_autoresearch_run",
+            description: "Run a Karpathy-style edit-eval-iterate loop against an IX subsystem. v1 ships only the 'grammar' target (smoke test). Iterations are capped at 10000 over MCP; use the CLI binary `ix-autoresearch run` for larger runs. Returns the run id, best reward, log path, and a cost ledger.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "enum": ["grammar"],
+                        "default": "grammar",
+                        "description": "Adapter to invoke. Only 'grammar' in v1; Phase 4/5 add 'chatbot' and 'optick'."
+                    },
+                    "iterations": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10000,
+                        "description": "Number of perturb→eval→decide cycles (MCP cap is 10000)."
+                    },
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["greedy", "sa", "random"],
+                        "default": "greedy",
+                        "description": "Acceptance strategy. 'sa' = simulated annealing; pair with 'initial_temperature' + 'cooling_rate'."
+                    },
+                    "initial_temperature": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "SA initial temperature; omit to trigger Ben-Ameur 2004 calibration on first 10 random samples."
+                    },
+                    "cooling_rate": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "default": 0.95,
+                        "description": "SA geometric cooling rate (T_{n+1} = cooling_rate · T_n)."
+                    },
+                    "soft_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "default": 300,
+                        "description": "Per-iteration soft deadline (eval honors as a hint)."
+                    },
+                    "hard_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Optional per-iteration hard timeout (kernel watchdog kills the worker)."
+                    },
+                    "seed": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 42,
+                        "description": "Deterministic RNG seed."
+                    },
+                    "state_dir": {
+                        "type": "string",
+                        "default": "state/autoresearch",
+                        "description": "Root for runs/ and milestones/ subdirs."
+                    }
+                },
+                "required": ["iterations"]
+            }),
+            handler: handlers::autoresearch_run,
+        });
     }
 }

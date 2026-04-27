@@ -5093,3 +5093,118 @@ pub fn grothendieck_path(params: Value) -> Result<Value, String> {
         "path": path.into_iter().map(pc_set_to_array).collect::<Vec<_>>(),
     }))
 }
+
+// ── ix_autoresearch_run ──────────────────────────────────────
+//
+// Karpathy-style edit-eval-iterate loop kernel exposure. v1 ships
+// Target C (grammar smoke test); future MCP additions can take a
+// `target` enum once Phase 4 (chatbot) and Phase 5 (OPTIC-K) land.
+//
+// Iteration cap: per security review, MCP rejects `iterations >
+// MCP_ITERATION_CAP` (10_000). CLI is unconstrained.
+
+pub fn autoresearch_run(params: Value) -> Result<Value, String> {
+    use ix_autoresearch::{
+        run_experiment, GrammarTarget, Strategy, TimeBudget, MCP_ITERATION_CAP,
+    };
+
+    let target = params
+        .get("target")
+        .and_then(|v| v.as_str())
+        .unwrap_or("grammar");
+    if target != "grammar" {
+        return Err(format!(
+            "unknown target '{target}'; v1 supports only 'grammar' (Phase 4/5 will add 'chatbot' and 'optick')"
+        ));
+    }
+
+    let iterations = params
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .ok_or("Missing or invalid field 'iterations' (positive integer)")?
+        as usize;
+    if iterations == 0 {
+        return Err("'iterations' must be ≥ 1".to_string());
+    }
+    if iterations > MCP_ITERATION_CAP {
+        return Err(format!(
+            "'iterations' = {iterations} exceeds MCP cap of {MCP_ITERATION_CAP}; \
+             use the CLI binary for larger runs"
+        ));
+    }
+
+    let strategy_kind = params
+        .get("strategy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("greedy");
+    let strategy = match strategy_kind {
+        "greedy" => Strategy::Greedy,
+        "random" | "random_search" => Strategy::RandomSearch,
+        "sa" | "simulated_annealing" => {
+            let initial_temperature = params
+                .get("initial_temperature")
+                .and_then(|v| v.as_f64());
+            let cooling_rate = params
+                .get("cooling_rate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.95);
+            Strategy::SimulatedAnnealing {
+                initial_temperature,
+                cooling_rate,
+            }
+        }
+        other => return Err(format!("unknown strategy '{other}'; expected 'greedy' | 'sa' | 'random'")),
+    };
+
+    let soft_seconds = params
+        .get("soft_seconds")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(300.0);
+    if !soft_seconds.is_finite() || soft_seconds <= 0.0 {
+        return Err(format!("'soft_seconds' must be > 0, got {soft_seconds}"));
+    }
+    let hard_seconds = params.get("hard_seconds").and_then(|v| v.as_f64());
+    let budget = match hard_seconds {
+        None => TimeBudget::soft(std::time::Duration::from_secs_f64(soft_seconds)),
+        Some(h) if h.is_finite() && h > 0.0 => TimeBudget::soft_and_hard(
+            std::time::Duration::from_secs_f64(soft_seconds),
+            std::time::Duration::from_secs_f64(h),
+        ),
+        Some(h) => return Err(format!("'hard_seconds' must be > 0, got {h}")),
+    };
+
+    let seed = params
+        .get("seed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(42);
+
+    let state_dir = params
+        .get("state_dir")
+        .and_then(|v| v.as_str())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("state/autoresearch"));
+    let runs_root = state_dir.join("runs");
+    std::fs::create_dir_all(&runs_root)
+        .map_err(|e| format!("cannot create runs dir {}: {e}", runs_root.display()))?;
+
+    let mut tgt = GrammarTarget::default_smoke();
+    let outcome = run_experiment(&mut tgt, strategy, iterations, budget, &runs_root, seed)
+        .map_err(|e| format!("autoresearch run failed: {e}"))?;
+
+    Ok(json!({
+        "run_id": outcome.run_id.as_string(),
+        "target": "grammar",
+        "iterations": outcome.iterations,
+        "accepted": outcome.accepted,
+        "best_reward": outcome.best_reward,
+        "best_iteration": outcome.best_iteration,
+        "log_path": outcome.log_path.display().to_string(),
+        "aborted_kills": outcome.aborted_kills,
+        "cost": {
+            "total_elapsed_ms": outcome.cost.total_elapsed_ms,
+            "cache_hit_count": outcome.cost.cache_hit_count,
+            "eval_failure_count": outcome.cost.eval_failure_count,
+            "rejected_count": outcome.cost.rejected_count,
+        },
+    }))
+}
