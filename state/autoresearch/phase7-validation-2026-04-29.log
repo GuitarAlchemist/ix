@@ -1,0 +1,38 @@
+[Wed Apr 29 19:13:43 EDT 2026] Phase 7 validation: 3 seeds × 30 iters × export_max=1500
+(expected ~30 min on laptop)
+
+=== Phase 7 validation: live OPTIC-K weight tuning ===
+  GA CLI:        C:/Users/spare/source/repos/ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Release/net10.0/FretboardVoicingsCLI.exe
+  invariants:    ./target/release/ix-optick-invariants.exe
+  diagnostics:   ./target/release/baseline-diagnostics.exe
+  iterations:    30 per seed
+  seeds:         3
+  --export-max:  1500
+
+  seed 20260429 (1/3): running 30 iters of SimulatedAnnealing...
+  seed 21260432 (2/3): running 30 iters of SimulatedAnnealing...
+  seed 22260435 (3/3): running 30 iters of SimulatedAnnealing...
+
+=== Per-seed trajectories (structure_leak_pct each iter) ===
+  seed 20260429: 0.034 0.054 0.049 0.053 0.062 0.012 0.031 0.011 0.001 0.000 0.024 0.004 0.017 0.032 0.004 0.003 0.000 0.036 0.029 0.040 0.043 0.041 0.030 0.018 0.004 0.022 0.000 0.015 0.000 0.037
+  seed 21260432: 0.000 0.000 0.042 0.028 0.000 0.021 0.056 0.033 0.000 0.003 0.058 0.034 0.014 0.041 0.018 0.018 0.000 0.041 0.017 0.000 0.024 0.021 0.017 0.027 0.032 0.017 0.021 0.022 0.050 0.000
+  seed 22260435: 0.018 0.012 0.022 0.043 0.012 0.021 0.042 0.007 0.036 0.060 0.036 0.018 0.000 0.000 0.046 0.084 0.029 0.008 0.030 0.000 0.015 0.032 0.000 0.000 0.021 0.013 0.000 0.003 0.019 0.030
+
+=== Per-seed summary ===
+              seed    baseline        best   delta(pp)    acc  fail   elapsed
+          20260429      0.0340      0.0000        3.40     25     0    160.9s
+          21260432      0.0000      0.0000        0.00     25     0    157.4s
+          22260435      0.0180      0.0000        1.80      0     0    156.7s
+
+=== Across seeds ===
+  baseline leak: μ=0.0173  σ=0.0139
+  best leak:     μ=0.0000  σ=0.0000
+  delta (pp):    μ=1.73    σ=1.39
+  signal/noise:  1.25  (weak signal (1-2σ))
+
+=== Lex-best config across all seeds ===
+  seed:        20260429
+  leak_pct:    0.0000
+  cfg:         S=0.127 M=0.294 C=0.152 Y=0.128 L=0.173 R=0.126
+
+[Wed Apr 29 19:21:38 EDT 2026] DONE
