@@ -69,7 +69,9 @@ pub use policy::{
 };
 pub use target_chatbot::{ChatbotConfig, ChatbotScore, ChatbotTarget};
 pub use target_grammar::{GrammarConfig, GrammarScore, GrammarTarget};
-pub use target_optick::{OpticKConfig, OpticKScore, OpticKTarget, RebuildMode};
+pub use target_optick::{
+    CIReducedConfig, OpticKConfig, OpticKScore, OpticKTarget, RebuildMode,
+};
 pub use time_budget::TimeBudget;
 
 use std::path::{Path, PathBuf};

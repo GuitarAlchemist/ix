@@ -51,7 +51,7 @@ fn parse_args() -> Args {
     let mut argv = std::env::args().skip(1);
     let mut ga_cli: Option<PathBuf> = None;
     let mut iterations: u32 = 5;
-    let mut seed: u64 = 2026_04_27;
+    let mut seed: u64 = 20_260_427;
     while let Some(flag) = argv.next() {
         match flag.as_str() {
             "--ga-cli" => ga_cli = argv.next().map(PathBuf::from),

@@ -29,7 +29,9 @@
 //!   to sum 1 *before* sampling. Without the floor, zero weights are
 //!   absorbing states under `Dirichlet(0, ...)`.
 
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Dirichlet, Distribution};
@@ -110,17 +112,77 @@ pub struct OpticKTarget {
     rebuild_mode: RebuildMode,
 }
 
-/// Rebuild dispatch — synthetic (mocked v1) or live (Phase 6+).
-#[derive(Debug, Clone, Copy)]
+/// Rebuild dispatch — synthetic (mocked v1) or live (Phase 7+).
+#[derive(Debug, Clone)]
 pub enum RebuildMode {
     /// Compute synthetic score from config distance to `true_optimum`.
     /// No shell-out. Default for v1.
     Synthetic,
-    // Live shell-out variants land in Phase 6+ alongside the GA
-    // `--weights-config` flag. Reserved here so the enum doesn't grow
-    // breaking in v1.5.
-    // CIReduced { ga_cli_path: PathBuf, ... },
-    // LiveCorpus { ... },
+    /// Shell out to GA's `FretboardVoicingsCLI --weights-config` to
+    /// rebuild a small (CI-sized) tri-instrument index, then to
+    /// `ix-optick-invariants` and `baseline-diagnostics` to score it.
+    /// Per-iter cost ≈ 4–5s on a laptop with `export_max=2000`.
+    CIReduced(CIReducedConfig),
+    // Future: LiveCorpus { ... } for full 313K-voicing rebuilds.
+}
+
+/// Configuration for the `RebuildMode::CIReduced` live evaluator.
+///
+/// All three binary paths must exist as Release builds before
+/// [`OpticKTarget::evaluate`] is called. The `workdir` MUST already
+/// exist; the evaluator writes per-iter artifacts (weights JSON,
+/// rebuilt index, firings JSON, diagnostics report dir) into it,
+/// keyed by a 12-char blake3 prefix of the config so concurrent
+/// runs don't collide.
+#[derive(Debug, Clone)]
+pub struct CIReducedConfig {
+    /// Path to `FretboardVoicingsCLI[.exe]` Release build.
+    pub ga_cli_path: PathBuf,
+    /// Path to `ix-optick-invariants[.exe]` Release build.
+    pub invariants_bin: PathBuf,
+    /// Path to `baseline-diagnostics[.exe]` Release build.
+    pub diagnostics_bin: PathBuf,
+    /// Pre-existing scratch directory for per-iter artifacts.
+    pub workdir: PathBuf,
+    /// `--export-max` per instrument. 2000 → ~6K tri-instrument
+    /// voicings → ~4s rebuild on a laptop. Headroom for #25/#32/#36
+    /// without burning iters.
+    pub export_max: u32,
+    /// Diagnostic 2 (retrieval consistency) query count.
+    pub retrieval_queries: u32,
+    /// Diagnostic 1 classifier samples per instrument.
+    pub class_samples: u32,
+    /// Random-forest tree count for diagnostic 1.
+    pub n_trees: u32,
+    /// Random-forest max depth for diagnostic 1.
+    pub tree_depth: u32,
+    /// Deterministic seed for diagnostics binary.
+    pub diag_seed: u64,
+}
+
+impl CIReducedConfig {
+    /// CI-sized defaults: export_max=2000 per-instrument, 30 retrieval
+    /// queries, 500 class samples × 10 trees @ depth 8. Total per-iter
+    /// cost on a laptop: ~4s rebuild + ~50ms invariants + ~100ms diag.
+    pub fn new(
+        ga_cli_path: impl Into<PathBuf>,
+        invariants_bin: impl Into<PathBuf>,
+        diagnostics_bin: impl Into<PathBuf>,
+        workdir: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            ga_cli_path: ga_cli_path.into(),
+            invariants_bin: invariants_bin.into(),
+            diagnostics_bin: diagnostics_bin.into(),
+            workdir: workdir.into(),
+            export_max: 2000,
+            retrieval_queries: 30,
+            class_samples: 500,
+            n_trees: 10,
+            tree_depth: 8,
+            diag_seed: 42,
+        }
+    }
 }
 
 impl OpticKTarget {
@@ -144,6 +206,19 @@ impl OpticKTarget {
             floor: 1e-3,
             rebuild_mode: RebuildMode::Synthetic,
         }
+    }
+
+    /// Live CI-reduced instance: same Dirichlet defaults as
+    /// `default_smoke`, but the rebuild shells out to the GA CLI +
+    /// IX scoring binaries described in `cfg`. The "true_optimum" is
+    /// kept (as the production weights reference point) so the
+    /// synthetic distance still surfaces in logs as a sanity number,
+    /// but the score returned by `evaluate` comes from the live
+    /// pipeline, not synthetic distance.
+    pub fn ci_reduced(cfg: CIReducedConfig) -> Self {
+        let mut t = Self::default_smoke();
+        t.rebuild_mode = RebuildMode::CIReduced(cfg);
+        t
     }
 
     pub fn with_alpha(mut self, alpha: f64) -> Self {
@@ -231,8 +306,9 @@ impl Experiment for OpticKTarget {
             }));
         }
 
-        match self.rebuild_mode {
+        match &self.rebuild_mode {
             RebuildMode::Synthetic => Ok(self.synthetic_score(config)),
+            RebuildMode::CIReduced(cfg) => self.live_score(config, cfg, _soft_deadline),
         }
     }
 
@@ -268,6 +344,151 @@ impl Experiment for OpticKTarget {
 }
 
 impl OpticKTarget {
+    /// Live CI-reduced score. Three subprocesses per call:
+    /// (1) GA `FretboardVoicingsCLI --weights-config` → `index-<nonce>.optk`,
+    /// (2) `ix-optick-invariants --index … --out firings-<nonce>.json`,
+    ///     stderr parsed for "X/Y PASS" pass rates,
+    /// (3) `baseline-diagnostics --index … --out-dir diag-<nonce>/`,
+    ///     report JSON parsed for STRUCTURE leak + retrieval match.
+    /// Per-iter artifacts share a 12-char blake3 nonce so concurrent
+    /// runs cannot collide. Deadlines are checked between phases.
+    fn live_score(
+        &self,
+        config: &OpticKConfig,
+        cfg: &CIReducedConfig,
+        deadline: Instant,
+    ) -> Result<OpticKScore, AutoresearchError> {
+        let cfg_bytes = serde_json::to_vec(config).map_err(|e| {
+            AutoresearchError::EvalFailed(EvalCategory::JsonParseFailed {
+                reason: format!("serialize config: {e}"),
+            })
+        })?;
+        let nonce: String = blake3::hash(&cfg_bytes)
+            .to_hex()
+            .as_str()
+            .chars()
+            .take(12)
+            .collect();
+        let weights_path = cfg.workdir.join(format!("weights-{nonce}.json"));
+        let index_path = cfg.workdir.join(format!("index-{nonce}.optk"));
+        let firings_path = cfg.workdir.join(format!("firings-{nonce}.json"));
+        let diag_dir = cfg.workdir.join(format!("diag-{nonce}"));
+
+        // 1. Atomic write weights JSON (write to .tmp + rename).
+        write_weights_json(config, &weights_path)?;
+
+        // 2. GA rebuild.
+        check_deadline(deadline)?;
+        let ga_out = Command::new(&cfg.ga_cli_path)
+            .args([
+                "--export-embeddings",
+                "--export-max",
+                &cfg.export_max.to_string(),
+                "--weights-config",
+                weights_path.to_str().ok_or_else(non_utf8_path)?,
+                "--output",
+                index_path.to_str().ok_or_else(non_utf8_path)?,
+            ])
+            .output()
+            .map_err(|e| internal(format!("spawn GA CLI: {e}")))?;
+        if !ga_out.status.success() {
+            let stderr = String::from_utf8_lossy(&ga_out.stderr);
+            eprintln!(
+                "GA CLI failed (first 200 chars of stderr): {}",
+                stderr.chars().take(200).collect::<String>()
+            );
+            return Err(AutoresearchError::EvalFailed(
+                EvalCategory::SubprocessFailedExitCode {
+                    code: ga_out.status.code().unwrap_or(-1),
+                },
+            ));
+        }
+        if !index_path.exists() {
+            return Err(AutoresearchError::EvalFailed(
+                EvalCategory::MissingExpectedFile {
+                    path: index_path.display().to_string(),
+                },
+            ));
+        }
+
+        // 3. Invariants — parse stderr for "invariant #N: P/T ... PASS".
+        check_deadline(deadline)?;
+        let inv_out = Command::new(&cfg.invariants_bin)
+            .args([
+                "--index",
+                index_path.to_str().ok_or_else(non_utf8_path)?,
+                "--out",
+                firings_path.to_str().ok_or_else(non_utf8_path)?,
+            ])
+            .output()
+            .map_err(|e| internal(format!("spawn invariants: {e}")))?;
+        if !inv_out.status.success() {
+            return Err(AutoresearchError::EvalFailed(
+                EvalCategory::SubprocessFailedExitCode {
+                    code: inv_out.status.code().unwrap_or(-1),
+                },
+            ));
+        }
+        let inv_stderr = String::from_utf8_lossy(&inv_out.stderr);
+        let (p25, p32, p36) = parse_invariant_pass_rates(&inv_stderr);
+
+        // 4. Diagnostics — JSON-only.
+        check_deadline(deadline)?;
+        std::fs::create_dir_all(&diag_dir)
+            .map_err(|e| internal(format!("create diag dir: {e}")))?;
+        let diag_out = Command::new(&cfg.diagnostics_bin)
+            .args([
+                "--index",
+                index_path.to_str().ok_or_else(non_utf8_path)?,
+                "--out-dir",
+                diag_dir.to_str().ok_or_else(non_utf8_path)?,
+                "--class-samples-per-instrument",
+                &cfg.class_samples.to_string(),
+                "--n-trees",
+                &cfg.n_trees.to_string(),
+                "--tree-depth",
+                &cfg.tree_depth.to_string(),
+                "--retrieval-queries",
+                &cfg.retrieval_queries.to_string(),
+                "--seed",
+                &cfg.diag_seed.to_string(),
+                // Smaller cluster + topo so diagnostics is < 200ms.
+                "--kmeans-k",
+                "20",
+                "--kmeans-iter",
+                "15",
+                "--cluster-sample",
+                "1000",
+                "--topo-sample",
+                "200",
+            ])
+            .output()
+            .map_err(|e| internal(format!("spawn diagnostics: {e}")))?;
+        if !diag_out.status.success() {
+            return Err(AutoresearchError::EvalFailed(
+                EvalCategory::SubprocessFailedExitCode {
+                    code: diag_out.status.code().unwrap_or(-1),
+                },
+            ));
+        }
+        let report = find_and_parse_diag_report(&diag_dir)?;
+        let leak = parse_structure_leak(&report)?;
+        let retr = parse_retrieval_match(&report)?;
+
+        // Best-effort cleanup of the per-iter index file (keeps workdir
+        // small over long runs). Diagnostics + firings stay around for
+        // post-hoc inspection.
+        let _ = std::fs::remove_file(&index_path);
+
+        Ok(OpticKScore {
+            structure_leak_pct: leak,
+            retrieval_match_pct: retr,
+            inv_25_pass_rate: p25,
+            inv_32_pass_rate: p32,
+            inv_36_pass_rate: p36,
+        })
+    }
+
     /// Synthetic score derivation. Mirrors what the live pipeline would
     /// produce in shape (the same OpticKScore fields), but computes
     /// values purely from the config's distance to true_optimum.
@@ -291,6 +512,171 @@ impl OpticKTarget {
             inv_36_pass_rate,
         }
     }
+}
+
+// ─── Live evaluator helpers ─────────────────────────────────────────────
+
+fn write_weights_json(
+    config: &OpticKConfig,
+    path: &Path,
+) -> Result<(), AutoresearchError> {
+    let payload = serde_json::json!({
+        "schema_version":   1,
+        "structure_weight":  config.structure_weight,
+        "morphology_weight": config.morphology_weight,
+        "context_weight":    config.context_weight,
+        "symbolic_weight":   config.symbolic_weight,
+        "modal_weight":      config.modal_weight,
+        "root_weight":       config.root_weight,
+    });
+    let bytes = serde_json::to_vec_pretty(&payload).map_err(|e| {
+        AutoresearchError::EvalFailed(EvalCategory::JsonParseFailed {
+            reason: format!("serialize weights: {e}"),
+        })
+    })?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &bytes).map_err(|e| internal(format!("write weights tmp: {e}")))?;
+    std::fs::rename(&tmp, path).map_err(|e| internal(format!("rename weights: {e}")))?;
+    Ok(())
+}
+
+fn check_deadline(deadline: Instant) -> Result<(), AutoresearchError> {
+    if Instant::now() >= deadline {
+        Err(AutoresearchError::TimedOut(Duration::from_secs(0)))
+    } else {
+        Ok(())
+    }
+}
+
+fn internal(msg: String) -> AutoresearchError {
+    AutoresearchError::EvalFailed(EvalCategory::InternalError { reason: msg })
+}
+
+fn non_utf8_path() -> AutoresearchError {
+    AutoresearchError::EvalFailed(EvalCategory::InternalError {
+        reason: "non-UTF8 path".to_string(),
+    })
+}
+
+/// Parse `ix-optick-invariants` stderr for `"invariant #N: P/T … PASS"`
+/// lines. Returns `(p25, p32, p36)` pass rates ∈ [0, 1]. Missing or
+/// 0/0 invariants default to `1.0` (vacuously satisfied — nothing
+/// in the corpus could violate the invariant).
+fn parse_invariant_pass_rates(stderr: &str) -> (f64, f64, f64) {
+    let mut p25: Option<f64> = None;
+    let mut p32: Option<f64> = None;
+    let mut p36: Option<f64> = None;
+    const PREFIX: &str = "invariant #";
+    for line in stderr.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix(PREFIX) else {
+            continue;
+        };
+        let Some((num_s, after_colon)) = rest.split_once(':') else {
+            continue;
+        };
+        let Ok(inv_num) = num_s.trim().parse::<u32>() else {
+            continue;
+        };
+        let trimmed = after_colon.trim_start();
+        let Some((passes_s, after_slash)) = trimmed.split_once('/') else {
+            continue;
+        };
+        let Ok(passes) = passes_s.trim().parse::<u64>() else {
+            continue;
+        };
+        let total_end = after_slash
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(after_slash.len());
+        let Ok(total) = after_slash[..total_end].parse::<u64>() else {
+            continue;
+        };
+        let rate = if total == 0 {
+            1.0
+        } else {
+            passes as f64 / total as f64
+        };
+        match inv_num {
+            25 => p25 = Some(rate),
+            32 => p32 = Some(rate),
+            36 => p36 = Some(rate),
+            _ => {}
+        }
+    }
+    (p25.unwrap_or(1.0), p32.unwrap_or(1.0), p36.unwrap_or(1.0))
+}
+
+/// Locate `embedding-diagnostics-*.json` inside `diag_dir` (date-stamped
+/// filename) and parse it as a generic JSON value.
+fn find_and_parse_diag_report(
+    diag_dir: &Path,
+) -> Result<serde_json::Value, AutoresearchError> {
+    let entries =
+        std::fs::read_dir(diag_dir).map_err(|e| internal(format!("read diag_dir: {e}")))?;
+    let mut report_path: Option<PathBuf> = None;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.starts_with("embedding-diagnostics-") && name.ends_with(".json") {
+            report_path = Some(p);
+            break;
+        }
+    }
+    let path = report_path.ok_or_else(|| {
+        AutoresearchError::EvalFailed(EvalCategory::MissingExpectedFile {
+            path: format!("{}/embedding-diagnostics-*.json", diag_dir.display()),
+        })
+    })?;
+    let bytes = std::fs::read(&path).map_err(|e| internal(format!("read diag report: {e}")))?;
+    serde_json::from_slice(&bytes).map_err(|e| {
+        AutoresearchError::EvalFailed(EvalCategory::JsonParseFailed {
+            reason: format!("parse diag report {}: {e}", path.display()),
+        })
+    })
+}
+
+/// Extract STRUCTURE classifier accuracy from the diagnostics report
+/// and rescale to a leak fraction in [0, 1] where 0 = "indistinguishable
+/// from random" (acc ≈ 1/3 with three instruments) and 1 = "perfectly
+/// reveals the instrument" (acc = 1.0).
+fn parse_structure_leak(report: &serde_json::Value) -> Result<f64, AutoresearchError> {
+    let parts = report
+        .pointer("/leak_detection/by_partition")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            AutoresearchError::EvalFailed(EvalCategory::JsonParseFailed {
+                reason: "missing /leak_detection/by_partition[]".to_string(),
+            })
+        })?;
+    let structure = parts
+        .iter()
+        .find(|p| p.get("partition").and_then(|s| s.as_str()) == Some("STRUCTURE"))
+        .ok_or_else(|| {
+            AutoresearchError::EvalFailed(EvalCategory::JsonParseFailed {
+                reason: "no STRUCTURE entry in by_partition".to_string(),
+            })
+        })?;
+    let acc = structure
+        .get("accuracy_mean")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| {
+            AutoresearchError::EvalFailed(EvalCategory::JsonParseFailed {
+                reason: "STRUCTURE.accuracy_mean missing or non-numeric".to_string(),
+            })
+        })?;
+    let baseline = 1.0_f64 / 3.0;
+    Ok(((acc - baseline) / (1.0 - baseline)).clamp(0.0, 1.0))
+}
+
+fn parse_retrieval_match(report: &serde_json::Value) -> Result<f64, AutoresearchError> {
+    report
+        .pointer("/retrieval_consistency/avg_pc_set_match_pct")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| {
+            AutoresearchError::EvalFailed(EvalCategory::JsonParseFailed {
+                reason: "missing /retrieval_consistency/avg_pc_set_match_pct".to_string(),
+            })
+        })
 }
 
 #[cfg(test)]
