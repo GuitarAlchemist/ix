@@ -943,6 +943,43 @@ Example 2 — "cluster crates by complexity then classify":
         });
 
         self.tools.push(Tool {
+            name: "ix_tsne",
+            description: "t-SNE dimensionality reduction (van der Maaten & Hinton 2008). Project a high-dim matrix to 2D or 3D for visualization. O(n²); keep n ≤ ~5000.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "array",
+                        "items": { "type": "array", "items": { "type": "number" } },
+                        "description": "Data matrix (rows=samples, cols=features)"
+                    },
+                    "perplexity": {
+                        "type": "number",
+                        "description": "Perplexity (default 30). Must be < (n-1)/3.",
+                        "minimum": 1
+                    },
+                    "n_iter": {
+                        "type": "integer",
+                        "description": "Iterations (default 500)",
+                        "minimum": 50
+                    },
+                    "target_dim": {
+                        "type": "integer",
+                        "description": "Output dimension (default 2)",
+                        "minimum": 1,
+                        "maximum": 3
+                    },
+                    "seed": {
+                        "type": "integer",
+                        "description": "RNG seed for determinism (default 0)"
+                    }
+                },
+                "required": ["data"]
+            }),
+            handler: handlers::tsne,
+        });
+
+        self.tools.push(Tool {
             name: "ix_fft",
             description: "Compute the Fast Fourier Transform of a real-valued signal. Returns frequency bins and magnitudes.",
             input_schema: json!({

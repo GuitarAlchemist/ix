@@ -18,6 +18,7 @@ ix-math = { workspace = true }
 ix-optimize = { workspace = true }
 ix-supervised = { workspace = true }
 ix-unsupervised = { workspace = true }
+ix-manifold = { workspace = true }
 ix-graph = { workspace = true }
 ix-search = { workspace = true }
 ix-chaos = { workspace = true }

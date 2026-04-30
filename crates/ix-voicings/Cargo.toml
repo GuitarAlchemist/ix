@@ -22,6 +22,10 @@ ix-search = { workspace = true }
 ix-grammar = { workspace = true }
 ix-pipeline = { workspace = true }
 ix-math = { workspace = true }
+ix-manifold = { workspace = true }
+ix-optick = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
 
 [[bin]]
 name = "ix-voicings"

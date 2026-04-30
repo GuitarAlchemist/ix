@@ -84,6 +84,7 @@ const EXPECTED: &[&str] = &[
     "ix_tars_bridge",
     "ix_topo",
     "ix_trace_ingest",
+    "ix_tsne",
     "ix_triage_session",
     "ix_viterbi",
 ];
@@ -133,10 +134,10 @@ fn parity_expected_count() {
     // ix_grammar_catalog + ix_rfc_catalog + ix_ast_query +
     // ix_optick_search + ix_code_smells +
     // ix_grothendieck_delta + ix_grothendieck_nearby + ix_grothendieck_path +
-    // ix_autoresearch_run = 68.
+    // ix_autoresearch_run = 68. + ix_tsne (2026-04-29) = 69.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 68);
+    assert_eq!(EXPECTED.len(), 69);
 }
 
 #[test]

@@ -298,6 +298,58 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_tsne ────────────────────────────────────────────────
+
+pub fn tsne(params: Value) -> Result<Value, String> {
+    let data_rows = parse_f64_matrix(&params, "data")?;
+    if data_rows.len() < 2 {
+        return Err("data must have ≥ 2 rows".into());
+    }
+    let perplexity = params
+        .get("perplexity")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(30.0);
+    let n_iter = params
+        .get("n_iter")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(500) as usize;
+    let target_dim = params
+        .get("target_dim")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2) as usize;
+    let seed = params
+        .get("seed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let data = vecs_to_array2(&data_rows)?;
+    let n = data.nrows();
+    if perplexity >= ((n - 1) as f64) / 3.0 {
+        return Err(format!(
+            "perplexity {perplexity} too large for {n} rows (must be < (n-1)/3 = {})",
+            (n - 1) as f64 / 3.0
+        ));
+    }
+
+    let y = ix_manifold::Tsne::new()
+        .with_perplexity(perplexity)
+        .with_n_iter(n_iter)
+        .with_target_dim(target_dim)
+        .with_seed(seed)
+        .fit_transform(data.view());
+
+    let points: Vec<Vec<f64>> = (0..y.nrows()).map(|i| y.row(i).to_vec()).collect();
+    Ok(json!({
+        "points": points,
+        "n": n,
+        "input_dim": data.ncols(),
+        "target_dim": target_dim,
+        "perplexity": perplexity,
+        "n_iter": n_iter,
+        "seed": seed,
+    }))
+}
+
 // ── ix_fft ─────────────────────────────────────────────────
 
 pub fn fft(params: Value) -> Result<Value, String> {
