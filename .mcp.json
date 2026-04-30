@@ -19,6 +19,10 @@
     "notebooklm": {
       "command": "npx",
       "args": ["notebooklm-mcp@latest"]
+    },
+    "sentrux": {
+      "command": "C:/Users/spare/bin/sentrux.exe",
+      "args": ["mcp"]
     }
   }
 }
