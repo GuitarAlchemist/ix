@@ -78,6 +78,7 @@ name  = "ml"
 paths = [
   "crates/ix-supervised/*",
   "crates/ix-unsupervised/*",
+  "crates/ix-manifold/*",
   "crates/ix-nn/*",
   "crates/ix-autograd/*",
   "crates/ix-ensemble/*",

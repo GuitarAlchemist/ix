@@ -41,6 +41,7 @@ members = [
     "crates/ix-skill-macros",
     "crates/ix-context",
     "crates/ix-loop-detect",
+    "crates/ix-manifold",
     "crates/ix-agent-core",
     "crates/ix-approval",
     "crates/ix-session",
@@ -144,6 +145,7 @@ ix-registry = { path = "crates/ix-registry", version = "0.1.0" }
 ix-skill-macros = { path = "crates/ix-skill-macros", version = "0.1.0" }
 ix-context = { path = "crates/ix-context", version = "0.1.0" }
 ix-loop-detect = { path = "crates/ix-loop-detect", version = "0.1.0" }
+ix-manifold = { path = "crates/ix-manifold", version = "0.1.0" }
 ix-agent-core = { path = "crates/ix-agent-core", version = "0.1.0" }
 ix-autograd = { path = "crates/ix-autograd", version = "0.1.0" }
 ix-approval = { path = "crates/ix-approval", version = "0.1.0" }

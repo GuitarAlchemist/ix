@@ -1,0 +1,16 @@
+[package]
+name = "ix-manifold"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "science"]
+keywords = ["machine-learning", "tsne", "umap", "manifold", "dimensionality-reduction"]
+description = "Pure-Rust manifold learning: t-SNE for 2D/3D embedding visualization"
+
+[dependencies]
+ndarray = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_distr = { workspace = true }
