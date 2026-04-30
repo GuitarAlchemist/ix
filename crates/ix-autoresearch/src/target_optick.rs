@@ -103,6 +103,13 @@ pub struct OpticKTarget {
     /// `EmbeddingSchema.PartitionWeights` from GA, hardcoded as a
     /// reference point.
     true_optimum: OpticKConfig,
+    /// Where the SA loop *starts*. Independent of `true_optimum`.
+    /// `default_smoke()` initialises this to uniform 1/6 (the historical
+    /// behaviour); production runs should call [`with_baseline`] to
+    /// start from the deployed weights, which give ~11% leak vs
+    /// uniform's ~3.6% — i.e. the deployed schema has the headroom
+    /// the optimizer needs to actually find an improvement.
+    baseline: OpticKConfig,
     /// Concentration α for Dirichlet perturbation. Default 200.
     alpha: f64,
     /// Floor on every weight before Dirichlet scaling. Default 1e-3.
@@ -177,7 +184,12 @@ impl CIReducedConfig {
             workdir: workdir.into(),
             export_max: 2000,
             retrieval_queries: 30,
-            class_samples: 500,
+            // Bumped 500 → 4000 (matches the diag binary's own default) on 2026-04-29
+            // after Phase 7 first-pass: every seed bottomed out at exactly leak=0.000
+            // because the RF classifier on 500-sample folds hit its small-sample noise
+            // floor. With 8× more training data the accuracy distribution tightens and
+            // the score should stop saturating.
+            class_samples: 4000,
             n_trees: 10,
             tree_depth: 8,
             diag_seed: 42,
@@ -202,10 +214,28 @@ impl OpticKTarget {
         ]);
         Self {
             true_optimum,
+            // Historical default: uniform 1/6. Production loops should
+            // call `with_baseline(production_weights())` to start from
+            // the deployed schema (real headroom for the optimizer).
+            baseline: OpticKConfig::from_array([1.0 / 6.0; 6]),
             alpha: 200.0,
             floor: 1e-3,
             rebuild_mode: RebuildMode::Synthetic,
         }
+    }
+
+    /// OPTIC-K v4-pp-r v1.8 production partition weights (the deployed
+    /// schema). Use as the `with_baseline` argument for runs that ask
+    /// "can the loop find weights better than what's in production?".
+    pub fn production_weights() -> OpticKConfig {
+        OpticKConfig::from_array([
+            0.30, // STRUCTURE
+            0.25, // MORPHOLOGY
+            0.15, // CONTEXT
+            0.10, // SYMBOLIC
+            0.15, // MODAL
+            0.05, // ROOT
+        ])
     }
 
     /// Live CI-reduced instance: same Dirichlet defaults as
@@ -219,6 +249,13 @@ impl OpticKTarget {
         let mut t = Self::default_smoke();
         t.rebuild_mode = RebuildMode::CIReduced(cfg);
         t
+    }
+
+    /// Override the SA starting point. Default is uniform 1/6 (historical).
+    /// For "can we beat production?" tests, pass [`production_weights`].
+    pub fn with_baseline(mut self, baseline: OpticKConfig) -> Self {
+        self.baseline = baseline;
+        self
     }
 
     pub fn with_alpha(mut self, alpha: f64) -> Self {
@@ -264,9 +301,7 @@ impl Experiment for OpticKTarget {
     type Score = OpticKScore;
 
     fn baseline(&self) -> OpticKConfig {
-        // Uniform 1/6 across all six partitions — far from the
-        // production `true_optimum`, so SA has room to improve.
-        OpticKConfig::from_array([1.0 / 6.0; 6])
+        self.baseline.clone()
     }
 
     fn perturb(&mut self, current: &OpticKConfig, rng: &mut ChaCha8Rng) -> OpticKConfig {

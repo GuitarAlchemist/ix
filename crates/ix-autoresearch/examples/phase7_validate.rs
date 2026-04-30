@@ -44,6 +44,12 @@ use ix_autoresearch::{
 };
 use tempfile::TempDir;
 
+#[derive(Clone, Copy, Debug)]
+enum Baseline {
+    Production,
+    Uniform,
+}
+
 struct Args {
     ga_cli: PathBuf,
     invariants: PathBuf,
@@ -52,6 +58,7 @@ struct Args {
     seeds: u32,
     export_max: u32,
     base_seed: u64,
+    baseline: Baseline,
 }
 
 fn parse_args() -> Args {
@@ -63,6 +70,10 @@ fn parse_args() -> Args {
     let mut seeds: u32 = 3;
     let mut export_max: u32 = 2000;
     let mut base_seed: u64 = 20_260_429;
+    // Default to production weights — that's the question worth asking
+    // ("can the loop beat what's deployed?"). Pass --baseline uniform to
+    // reproduce the original 2026-04-29 weak-signal run.
+    let mut baseline = Baseline::Production;
     while let Some(flag) = argv.next() {
         match flag.as_str() {
             "--ga-cli" => ga_cli = argv.next().map(PathBuf::from),
@@ -73,6 +84,14 @@ fn parse_args() -> Args {
             "--export-max" => export_max = argv.next().and_then(|s| s.parse().ok()).unwrap_or(2000),
             "--base-seed" => {
                 base_seed = argv.next().and_then(|s| s.parse().ok()).unwrap_or(base_seed)
+            }
+            "--baseline" => {
+                baseline = match argv.next().as_deref() {
+                    Some("production") => Baseline::Production,
+                    Some("uniform") => Baseline::Uniform,
+                    Some(other) => panic!("--baseline must be 'production' or 'uniform'; got '{other}'"),
+                    None => panic!("--baseline requires an argument"),
+                }
             }
             other => panic!("unknown flag: {other}"),
         }
@@ -85,6 +104,7 @@ fn parse_args() -> Args {
         seeds,
         export_max,
         base_seed,
+        baseline,
     }
 }
 
@@ -112,7 +132,11 @@ fn run_seed(args: &Args, seed: u64, idx: u32) -> SeedResult {
     );
     cfg.export_max = args.export_max;
 
-    let mut target = OpticKTarget::ci_reduced(cfg);
+    let baseline_cfg = match args.baseline {
+        Baseline::Production => OpticKTarget::production_weights(),
+        Baseline::Uniform => OpticKConfig::from_array([1.0 / 6.0; 6]),
+    };
+    let mut target = OpticKTarget::ci_reduced(cfg).with_baseline(baseline_cfg);
 
     let start = std::time::Instant::now();
     eprintln!(
@@ -221,6 +245,17 @@ fn main() {
     println!("  iterations:    {} per seed", args.iterations);
     println!("  seeds:         {}", args.seeds);
     println!("  --export-max:  {}", args.export_max);
+    println!(
+        "  baseline:      {} ({})",
+        match args.baseline {
+            Baseline::Production => "production",
+            Baseline::Uniform => "uniform 1/6",
+        },
+        match args.baseline {
+            Baseline::Production => "S=0.30 M=0.25 C=0.15 Y=0.10 L=0.15 R=0.05",
+            Baseline::Uniform => "S=0.167 M=0.167 C=0.167 Y=0.167 L=0.167 R=0.167",
+        }
+    );
     println!();
 
     let mut results: Vec<SeedResult> = Vec::with_capacity(args.seeds as usize);
