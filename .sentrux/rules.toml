@@ -1,0 +1,178 @@
+# Sentrux architectural rules for IX.
+#
+# Enforced by `sentrux check .` and the `mcp__sentrux__check_rules`
+# tool. Rules encode IX's constitutional invariants from CLAUDE.md.
+#
+# Philosophy: this file should fail when an agent (or human) violates
+# a rule the codebase already follows — NOT when it tries to do
+# something genuinely new. Start conservative; tighten only after a
+# rule has held green for a while.
+
+[constraints]
+# Acyclicity is already perfect (sentrux baseline 2026-04-29:
+# acyclicity score 10000/10000). Lock it in.
+max_cycles = 0
+
+# Cyclomatic complexity ceiling per function. 100 captures only
+# genuine outliers above the existing max (RESP command dispatch
+# in ix-cache:execute_command at cc=83 on 2026-04-29 baseline).
+# The thresholds are deliberately loose so this rule fails ONLY
+# on regressions — most existing high-cc functions are dispatch
+# tables (RESP, constitution, MCP tool registration) where
+# splitting hurts readability. Tighten progressively once
+# specific hotspots are organically refactored.
+max_cc = 100
+
+# Function length ceiling. 400 captures only regressions beyond
+# `register_bridges_and_session` (390 LOC, MCP tool registration
+# is naturally a flat list).
+max_fn_lines = 400
+
+# God-file detector: ix-agent/src/handlers.rs has fan-out=29
+# (legitimate — it's the central MCP handler dispatch). Disable
+# until handlers.rs is decomposed into per-tool modules.
+# TODO: re-enable after agent handler refactor.
+no_god_files = false
+
+# ─── Layer architecture ────────────────────────────────────────────
+#
+# IX's DSM already reports clean layering (above_diagonal=0).
+# These declarations make the implicit layer ordering explicit so
+# that any future cross-layer cycle gets caught.
+#
+# Foundation (no IX deps) — types, IO, math primitives.
+[[layers]]
+name  = "foundation"
+paths = [
+  "crates/ix-types/*",
+  "crates/ix-math/*",
+  "crates/ix-io/*",
+  "crates/ix-sanitize/*",
+  "crates/ix-fuzzy/*",
+  "crates/ix-cache/*",
+]
+order = 0
+
+# Core algorithms.
+[[layers]]
+name  = "core"
+paths = [
+  "crates/ix-stats/*",
+  "crates/ix-rotation/*",
+  "crates/ix-number-theory/*",
+  "crates/ix-fractal/*",
+  "crates/ix-sedenion/*",
+  "crates/ix-graph/*",
+  "crates/ix-topo/*",
+  "crates/ix-signal/*",
+  "crates/ix-chaos/*",
+  "crates/ix-category/*",
+  "crates/ix-ktheory/*",
+  "crates/ix-probabilistic/*",
+]
+order = 1
+
+# ML and learning primitives.
+[[layers]]
+name  = "ml"
+paths = [
+  "crates/ix-supervised/*",
+  "crates/ix-unsupervised/*",
+  "crates/ix-nn/*",
+  "crates/ix-autograd/*",
+  "crates/ix-ensemble/*",
+  "crates/ix-grammar/*",
+  "crates/ix-rl/*",
+  "crates/ix-adversarial/*",
+  "crates/ix-evolution/*",
+  "crates/ix-optimize/*",
+  "crates/ix-search/*",
+  "crates/ix-pipeline/*",
+  "crates/ix-game/*",
+  "crates/ix-dynamics/*",
+]
+order = 2
+
+# Domain layer — music + voicing + autoresearch + code analysis.
+[[layers]]
+name  = "domain"
+paths = [
+  "crates/ix-bracelet/*",
+  "crates/ix-voicings/*",
+  "crates/ix-optick/*",
+  "crates/ix-optick-invariants/*",
+  "crates/ix-embedding-diagnostics/*",
+  "crates/ix-invariant-coverage/*",
+  "crates/ix-quality-trend/*",
+  "crates/ix-autoresearch/*",
+  "crates/ix-code/*",
+  "crates/ix-context/*",
+  "crates/ix-memory/*",
+  "crates/ix-loop-detect/*",
+]
+order = 3
+
+# Governance + harness primitives.
+[[layers]]
+name  = "governance"
+paths = [
+  "crates/ix-governance/*",
+  "crates/ix-approval/*",
+  "crates/ix-sentinel/*",
+  "crates/ix-registry/*",
+  "crates/ix-registry-check/*",
+  "crates/ix-harness-cargo/*",
+  "crates/ix-harness-clippy/*",
+  "crates/ix-harness-ga/*",
+  "crates/ix-harness-github-actions/*",
+  "crates/ix-harness-signing/*",
+  "crates/ix-harness-tars/*",
+]
+order = 4
+
+# Runtime / integration.
+[[layers]]
+name  = "runtime"
+paths = [
+  "crates/ix-agent/*",
+  "crates/ix-agent-core/*",
+  "crates/ix-skill/*",
+  "crates/ix-skill-macros/*",
+  "crates/ix-net/*",
+  "crates/ix-session/*",
+  "crates/ix-dashboard/*",
+  "crates/ix-demo/*",
+  "crates/ix-catalog-core/*",
+  "crates/ix-gpu/*",
+]
+order = 5
+
+# Top-level applications.
+[[layers]]
+name  = "app"
+paths = [
+  "crates/ga-chatbot/*",
+  "crates/memristive-markov/*",
+]
+order = 6
+
+# ─── Boundaries ────────────────────────────────────────────────────
+#
+# Hard prohibitions. Each entry must cite a CLAUDE.md or
+# constitutional invariant.
+
+# CLAUDE.md: "GPU uses f32 via WGPU shaders" — wgpu-touching code
+# stays in ix-gpu. Other crates accept GPU outputs but do not
+# import wgpu directly.
+[[boundaries]]
+from   = "crates/ix-types/*"
+to     = "crates/ix-gpu/*"
+reason = "ix-types is the foundation; cannot depend on the runtime GPU crate"
+
+# Realtime vs offline code-analysis boundary (CLAUDE.md): sentrux
+# owns realtime; ix-code-* owns offline catalog. The ix-code crate
+# must not import the runtime/agent layer.
+[[boundaries]]
+from   = "crates/ix-code/*"
+to     = "crates/ix-agent/*"
+reason = "Offline code-analysis must not depend on the realtime agent runtime"
