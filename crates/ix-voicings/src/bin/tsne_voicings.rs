@@ -36,14 +36,23 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
-use ix_manifold::Tsne;
+use clap::{Parser, ValueEnum};
+use ix_manifold::{BarnesHutTsne, Tsne};
 use ix_optick::OptickIndex;
 use ndarray::Array2;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Algorithm {
+    /// Exact O(n²) — pure Rust, deterministic with seed, caps ~5K.
+    Exact,
+    /// Barnes-Hut O(n log n) — wraps `bhtsne`. 50K-300K tractable.
+    /// Note: not seed-deterministic (bhtsne uses thread_rng for init).
+    BarnesHut,
+}
 
 #[derive(Parser, Debug)]
 #[command(about = "Project OPTIC-K voicings to 2D via t-SNE")]
@@ -56,10 +65,19 @@ struct Cli {
     #[arg(long, default_value = "state/viz/voicings-tsne.json")]
     output: PathBuf,
 
-    /// Number of voicings to sample (t-SNE is O(n²); 2000 finishes in
-    /// under a minute on a laptop, 5000 in ~5 minutes).
-    #[arg(long, default_value_t = 2000)]
+    /// Number of voicings to sample. Exact tops out around 5000;
+    /// barnes-hut handles 50K-300K.
+    #[arg(long, default_value_t = 5000)]
     sample: usize,
+
+    /// Algorithm: `exact` (O(n²)) or `barnes-hut` (O(n log n)).
+    #[arg(long, value_enum, default_value_t = Algorithm::BarnesHut)]
+    algorithm: Algorithm,
+
+    /// Barnes-Hut θ (accuracy/speed knob; smaller = more accurate).
+    /// Ignored for exact.
+    #[arg(long, default_value_t = 0.5)]
+    theta: f64,
 
     /// Perplexity. Default 30 matches scikit-learn.
     #[arg(long, default_value_t = 30.0)]
@@ -134,14 +152,22 @@ fn main() {
 
     // Project.
     eprintln!(
-        "running t-SNE: perplexity={}, iters={}, seed={}",
-        cli.perplexity, cli.iterations, cli.seed
+        "running t-SNE [{:?}]: perplexity={}, iters={}, seed={}",
+        cli.algorithm, cli.perplexity, cli.iterations, cli.seed
     );
-    let y = Tsne::new()
-        .with_perplexity(cli.perplexity)
-        .with_n_iter(cli.iterations)
-        .with_seed(cli.seed)
-        .fit_transform(x.view());
+    let y = match cli.algorithm {
+        Algorithm::Exact => Tsne::new()
+            .with_perplexity(cli.perplexity)
+            .with_n_iter(cli.iterations)
+            .with_seed(cli.seed)
+            .fit_transform(x.view()),
+        Algorithm::BarnesHut => BarnesHutTsne::new()
+            .with_perplexity(cli.perplexity as f32)
+            .with_theta(cli.theta as f32)
+            .with_epochs(cli.iterations)
+            .with_seed(cli.seed)
+            .fit_transform(x.view()),
+    };
 
     // Build output.
     let points: Vec<Point> = all

@@ -297,6 +297,124 @@ fn compute_gradient(y: &Array2<f64>, p: &Array2<f64>) -> Array2<f64> {
     grad
 }
 
+// ─── Barnes-Hut t-SNE ──────────────────────────────────────────────
+//
+// Wrapper around the `bhtsne` crate (pinned to 0.5.3, edition 2021).
+// O(n log n) per iteration via space-partitioning trees on both
+// the kNN-perplexity step and the gradient step. Practical ceiling
+// is ~100K-300K points where the exact `Tsne` above caps at ~5K.
+
+/// Barnes-Hut t-SNE configuration. Defaults match scikit-learn /
+/// openTSNE: perplexity=30, theta=0.5, 1000 epochs, 2D output.
+#[derive(Debug, Clone)]
+pub struct BarnesHutTsne {
+    perplexity: f32,
+    theta: f32,
+    epochs: usize,
+    target_dim: u8,
+    seed: u64,
+}
+
+impl Default for BarnesHutTsne {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BarnesHutTsne {
+    /// Defaults: perplexity=30, theta=0.5 (Barnes-Hut accuracy knob;
+    /// smaller = more accurate, slower), 1000 epochs, 2D, seed 0.
+    pub fn new() -> Self {
+        Self {
+            perplexity: 30.0,
+            theta: 0.5,
+            epochs: 1000,
+            target_dim: 2,
+            seed: 0,
+        }
+    }
+
+    pub fn with_perplexity(mut self, p: f32) -> Self {
+        self.perplexity = p;
+        self
+    }
+    /// Barnes-Hut θ: tradeoff between accuracy (small θ) and speed
+    /// (large θ). 0.5 is the standard default. Range typically
+    /// [0.1, 0.8].
+    pub fn with_theta(mut self, t: f32) -> Self {
+        self.theta = t;
+        self
+    }
+    pub fn with_epochs(mut self, n: usize) -> Self {
+        self.epochs = n;
+        self
+    }
+    pub fn with_target_dim(mut self, d: u8) -> Self {
+        assert!(d >= 1 && d <= 3, "target_dim must be 1..=3 (got {d})");
+        self.target_dim = d;
+        self
+    }
+    pub fn with_seed(mut self, s: u64) -> Self {
+        self.seed = s;
+        self
+    }
+
+    /// Fit on `x` (rows = samples, cols = features) and return the
+    /// low-dim embedding (rows = samples, cols = `target_dim`).
+    ///
+    /// Note: bhtsne uses f32 internally, so we down-cast on entry
+    /// and up-cast on exit. The input matrix must outlive the call
+    /// because bhtsne takes `&[&[f32]]` slices.
+    pub fn fit_transform(&self, x: ArrayView2<f64>) -> Array2<f64> {
+        let n = x.nrows();
+        let d = x.ncols();
+        assert!(n >= 2, "Barnes-Hut t-SNE needs ≥ 2 samples; got {n}");
+        assert!(
+            self.perplexity < ((n - 1) as f32) / 3.0,
+            "perplexity {} too large for {} samples (must be < (n-1)/3 = {})",
+            self.perplexity,
+            n,
+            (n - 1) as f32 / 3.0
+        );
+
+        // Flatten to row-major f32 buffer + slice-of-slices view.
+        let mut flat: Vec<f32> = Vec::with_capacity(n * d);
+        for i in 0..n {
+            for j in 0..d {
+                flat.push(x[[i, j]] as f32);
+            }
+        }
+        let samples: Vec<&[f32]> = flat.chunks(d).collect();
+
+        // bhtsne uses thread_rng internally for the embedding init;
+        // it is not seeded by us. For determinism guarantees we'd
+        // need to fork bhtsne or use the exact `Tsne`. Document this
+        // in the type docs. For now, seed is reserved for forward
+        // compatibility (e.g. a future `with_init_seed` if bhtsne
+        // exposes one).
+        let _ = self.seed;
+
+        let mut tsne_builder = bhtsne::tSNE::new(&samples);
+        tsne_builder
+            .embedding_dim(self.target_dim)
+            .perplexity(self.perplexity)
+            .epochs(self.epochs);
+        tsne_builder.barnes_hut(self.theta, |a: &&[f32], b: &&[f32]| {
+            a.iter()
+                .zip(b.iter())
+                .map(|(x, y)| (x - y).powi(2))
+                .sum::<f32>()
+                .sqrt()
+        });
+
+        // Extract the embedding. bhtsne stores it as a flat Vec<f32>
+        // of length n × target_dim, row-major.
+        let emb: Vec<f32> = tsne_builder.embedding();
+        let target_dim = self.target_dim as usize;
+        Array2::from_shape_fn((n, target_dim), |(i, j)| emb[i * target_dim + j] as f64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,6 +524,67 @@ mod tests {
         assert!((d[[1, 0]] - 25.0).abs() < 1e-9);
         assert!((d[[0, 2]] - 100.0).abs() < 1e-9);
         assert!(d[[0, 0]].abs() < 1e-9);
+    }
+
+    #[test]
+    fn barnes_hut_output_shape_matches_target_dim() {
+        // bhtsne needs n much greater than perplexity. Use 200 points,
+        // perplexity 5, 2D output.
+        let x = Array2::<f64>::from_shape_fn((200, 6), |(i, j)| ((i * j) as f64).cos());
+        let y = BarnesHutTsne::new()
+            .with_perplexity(5.0)
+            .with_epochs(50)
+            .with_target_dim(2)
+            .fit_transform(x.view());
+        assert_eq!(y.shape(), &[200, 2]);
+        for v in y.iter() {
+            assert!(v.is_finite(), "non-finite output: {v}");
+        }
+    }
+
+    #[test]
+    fn barnes_hut_separates_two_clusters() {
+        // Two well-separated Gaussians in 8D — Barnes-Hut should split
+        // them in 2D.
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let n_per = 100;
+        let dim = 8;
+        let normal = Normal::new(0.0, 0.1).unwrap();
+        let mut x = Array2::<f64>::zeros((2 * n_per, dim));
+        for i in 0..n_per {
+            for k in 0..dim {
+                x[[i, k]] = normal.sample(&mut rng);
+                x[[n_per + i, k]] = 8.0 + normal.sample(&mut rng);
+            }
+        }
+        let y = BarnesHutTsne::new()
+            .with_perplexity(20.0)
+            .with_epochs(500)
+            .with_theta(0.5)
+            .fit_transform(x.view());
+
+        let c0 = y.slice(s![0..n_per, ..]).mean_axis(Axis(0)).unwrap();
+        let c1 = y.slice(s![n_per.., ..]).mean_axis(Axis(0)).unwrap();
+        let inter = sq_dist(c0.view(), c1.view()).sqrt();
+        let mut intra = 0.0;
+        for i in 0..n_per {
+            intra += sq_dist(y.row(i), c0.view()).sqrt();
+            intra += sq_dist(y.row(n_per + i), c1.view()).sqrt();
+        }
+        intra /= (2 * n_per) as f64;
+        assert!(
+            inter > 2.0 * intra,
+            "Barnes-Hut clusters not separated: inter={inter:.3}, intra_avg={intra:.3}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "perplexity")]
+    fn barnes_hut_perplexity_too_large_panics() {
+        let x = Array2::<f64>::eye(10);
+        let _ = BarnesHutTsne::new()
+            .with_perplexity(30.0)
+            .fit_transform(x.view());
     }
 
     #[test]

@@ -14,3 +14,4 @@ ndarray = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
+bhtsne = { workspace = true }

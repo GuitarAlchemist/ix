@@ -83,6 +83,10 @@ ndarray-rand = "0.16"
 rand = "0.9"
 rand_chacha = "0.9"
 rand_distr = "0.5"
+# Barnes-Hut t-SNE — pinned to 0.5.3 (last edition-2021 release; 0.5.4
+# bumped to edition 2024 which would force MSRV 1.85). Used by
+# ix-manifold for O(n log n) projection of large embeddings.
+bhtsne = { version = "=0.5.3", default-features = false }
 uuid = { version = "1", features = ["v7", "serde"] }
 blake3 = "1.5"
 serde = { version = "1", features = ["derive"] }
