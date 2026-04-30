@@ -135,8 +135,18 @@ struct Cli {
 
     /// Max samples PER INSTRUMENT for classification (diagnostic 1).
     /// Balanced sampling counteracts the ~96/3/1 guitar/bass/ukulele imbalance.
+    /// Ignored when `--balanced-full` is set.
     #[arg(long, default_value_t = 4000)]
     class_samples_per_instrument: usize,
+
+    /// Balanced-full mode: use ALL voicings of the smallest class, then
+    /// match-sample the other classes to the same count. Eliminates the
+    /// small-sample noise floor that surfaces when the class cap is much
+    /// smaller than the natural minority-class size, at no additional cost
+    /// (the smallest class caps the total either way). Overrides
+    /// `--class-samples-per-instrument` for diagnostic #1.
+    #[arg(long, default_value_t = false)]
+    balanced_full: bool,
 
     /// Number of random-forest trees (deeper = slower but more stable).
     #[arg(long, default_value_t = 30)]
@@ -356,8 +366,22 @@ fn run_leak_detection(
     cli: &Cli,
     rng: &mut StdRng,
 ) -> LeakDetection {
-    let (voicing_ids, labels_u8) =
-        stratified_sample(per_class, cli.class_samples_per_instrument, rng);
+    // In balanced-full mode, the per-class count is the size of the
+    // smallest non-empty class. Every voicing of that class is used; the
+    // others are randomly down-sampled to match. This removes the
+    // small-sample noise floor at no extra cost (the minority class
+    // caps total samples either way under the existing stratified path).
+    let n_per = if cli.balanced_full {
+        per_class
+            .iter()
+            .filter(|c| !c.is_empty())
+            .map(|c| c.len())
+            .min()
+            .unwrap_or(0)
+    } else {
+        cli.class_samples_per_instrument
+    };
+    let (voicing_ids, labels_u8) = stratified_sample(per_class, n_per, rng);
     let n = voicing_ids.len();
     let y: Array1<usize> = Array1::from_iter(labels_u8.iter().map(|&b| b as usize));
 
@@ -368,10 +392,7 @@ fn run_leak_detection(
             1 => "bass",
             _ => "ukulele",
         };
-        per_class_count.insert(
-            name.to_string(),
-            cli.class_samples_per_instrument.min(pool.len()),
-        );
+        per_class_count.insert(name.to_string(), n_per.min(pool.len()));
     }
 
     // Full-dim classifier (baseline)

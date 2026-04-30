@@ -157,8 +157,14 @@ pub struct CIReducedConfig {
     pub export_max: u32,
     /// Diagnostic 2 (retrieval consistency) query count.
     pub retrieval_queries: u32,
-    /// Diagnostic 1 classifier samples per instrument.
+    /// Diagnostic 1 classifier samples per instrument. Used only when
+    /// [`Self::balanced_full`] is false.
     pub class_samples: u32,
+    /// When true, pass `--balanced-full` to the diagnostics binary: it
+    /// uses every voicing of the smallest class and match-samples the
+    /// others. Eliminates the small-sample noise floor that saturated
+    /// the original Phase 7 run. Default true.
+    pub balanced_full: bool,
     /// Random-forest tree count for diagnostic 1.
     pub n_trees: u32,
     /// Random-forest max depth for diagnostic 1.
@@ -184,12 +190,15 @@ impl CIReducedConfig {
             workdir: workdir.into(),
             export_max: 2000,
             retrieval_queries: 30,
-            // Bumped 500 → 4000 (matches the diag binary's own default) on 2026-04-29
-            // after Phase 7 first-pass: every seed bottomed out at exactly leak=0.000
-            // because the RF classifier on 500-sample folds hit its small-sample noise
-            // floor. With 8× more training data the accuracy distribution tightens and
-            // the score should stop saturating.
+            // Used only when balanced_full=false. With balanced_full=true
+            // the diag binary auto-picks min(class_count) which is strictly
+            // better whenever the natural minority class is comparable to
+            // or smaller than this cap (true at any --export-max ≥ ~3000).
             class_samples: 4000,
+            // Better signal at no extra cost — see commit message + the
+            // standalone probe at 2026-04-29 (σ=0.011 vs σ=0.032 with
+            // class_samples=500 on the same 5484-voicing index).
+            balanced_full: true,
             n_trees: 10,
             tree_depth: 8,
             diag_seed: 42,
@@ -471,32 +480,43 @@ impl OpticKTarget {
         check_deadline(deadline)?;
         std::fs::create_dir_all(&diag_dir)
             .map_err(|e| internal(format!("create diag dir: {e}")))?;
+        let mut diag_args: Vec<String> = vec![
+            "--index".into(),
+            index_path
+                .to_str()
+                .ok_or_else(non_utf8_path)?
+                .to_string(),
+            "--out-dir".into(),
+            diag_dir
+                .to_str()
+                .ok_or_else(non_utf8_path)?
+                .to_string(),
+            "--n-trees".into(),
+            cfg.n_trees.to_string(),
+            "--tree-depth".into(),
+            cfg.tree_depth.to_string(),
+            "--retrieval-queries".into(),
+            cfg.retrieval_queries.to_string(),
+            "--seed".into(),
+            cfg.diag_seed.to_string(),
+            // Smaller cluster + topo so diagnostics is < 200ms.
+            "--kmeans-k".into(),
+            "20".into(),
+            "--kmeans-iter".into(),
+            "15".into(),
+            "--cluster-sample".into(),
+            "1000".into(),
+            "--topo-sample".into(),
+            "200".into(),
+        ];
+        if cfg.balanced_full {
+            diag_args.push("--balanced-full".into());
+        } else {
+            diag_args.push("--class-samples-per-instrument".into());
+            diag_args.push(cfg.class_samples.to_string());
+        }
         let diag_out = Command::new(&cfg.diagnostics_bin)
-            .args([
-                "--index",
-                index_path.to_str().ok_or_else(non_utf8_path)?,
-                "--out-dir",
-                diag_dir.to_str().ok_or_else(non_utf8_path)?,
-                "--class-samples-per-instrument",
-                &cfg.class_samples.to_string(),
-                "--n-trees",
-                &cfg.n_trees.to_string(),
-                "--tree-depth",
-                &cfg.tree_depth.to_string(),
-                "--retrieval-queries",
-                &cfg.retrieval_queries.to_string(),
-                "--seed",
-                &cfg.diag_seed.to_string(),
-                // Smaller cluster + topo so diagnostics is < 200ms.
-                "--kmeans-k",
-                "20",
-                "--kmeans-iter",
-                "15",
-                "--cluster-sample",
-                "1000",
-                "--topo-sample",
-                "200",
-            ])
+            .args(&diag_args)
             .output()
             .map_err(|e| internal(format!("spawn diagnostics: {e}")))?;
         if !diag_out.status.success() {
