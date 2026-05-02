@@ -2,7 +2,7 @@
 date: 2026-05-02
 reversibility: one-way-door (schema published to GA + governance registry)
 revisit-trigger: GA users want to interact with voicings beyond view-and-pan, OR voicing-positions schema needs a breaking change, OR Prime Radiant adds a second non-governance dataset (need a generic loader pattern)
-status: phases 1-4 shipped 2026-05-02. Phase 1 = ix MCP tool (ix:1d9bad2). Phase 2 = GA Prime Radiant integration (ga:158d9da). Phase 3 = governance schema + registry (demerzel:cb78692, ix submodule bump 625b1a9). Phase 4 = data-layer contract test (ix-agent:tests/voicings_payload_contract.rs). Visual smoke (Three.js render in scene) deferred to manual browser verification — headless Chrome/Edge can't capture the GA Vite SPA reliably.
+status: phases 1-5 shipped 2026-05-02. Phase 1 = ix MCP tool (ix:1d9bad2). Phase 2 = GA Prime Radiant integration (ga:158d9da). Phase 3 = governance schema + registry (demerzel:cb78692, ix submodule bump 625b1a9). Phase 4 = data-layer contract test (ix-agent:tests/voicings_payload_contract.rs). Phase 5 = lazy-fetch corpus route + 2D click-region wiring. Visual smoke (Three.js render in scene) deferred to manual browser verification — headless Chrome/Edge can't capture the GA Vite SPA reliably.
 ---
 
 # Push the voicing cloud to GA's Prime Radiant in a separate scene area
@@ -98,7 +98,7 @@ The binary format is exactly what the local viewer already consumes (`voicing-po
 | 2 | ga side: `loadVoicingCloud` action + HUD | 1–2 sessions | yes |
 | 3 | governance: register schema, write check | 1 session | **no** (schema is now public contract) |
 | 4 | Cross-repo smoke test (ix MCP → ga SignalR → Prime Radiant render) | 0.5 session | yes |
-| 5 (later) | Lazy-fetch metadata on click — addresses the 7K-of-688K detail gap | 1 session | yes |
+| 5 | Lazy-fetch metadata on click — addresses the 7K-of-688K detail gap. **Shipped 2026-05-02**: serve_viz `/data/voicing/{id}` route + cache, 2D viewer click-region "load" link. | 1 session | yes |
 
 **Order:** 1 → 2 → 4 (smoke test before locking schema) → 3.
 

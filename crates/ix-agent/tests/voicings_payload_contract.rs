@@ -66,6 +66,32 @@ fn payload_handler_matches_voicings_payload_v1_schema() {
     );
 }
 
+/// Phase 5: serve_viz can serve a single voicing's full metadata from
+/// `state/voicings/{instrument}-corpus.json` when the precomputed
+/// details sample doesn't contain it. This test exercises the on-disk
+/// half — does the corpus file exist and yield a parseable entry at
+/// the requested index? — without speaking HTTP.
+#[test]
+fn corpus_lazy_lookup_resolves_when_present() {
+    let bass_corpus = project_root().join("state/voicings/bass-corpus.json");
+    if !bass_corpus.exists() {
+        eprintln!("skipping: bass-corpus.json not present");
+        return;
+    }
+    let bytes = std::fs::read(&bass_corpus).expect("read bass corpus");
+    let entries: Vec<Value> = serde_json::from_slice(&bytes).expect("parse bass corpus");
+    assert!(!entries.is_empty(), "corpus should have at least one voicing");
+    let first = &entries[0];
+    assert!(
+        first.get("instrument").and_then(|v| v.as_str()) == Some("bass"),
+        "first bass corpus entry should declare instrument=bass"
+    );
+    assert!(
+        first.get("frets").is_some() || first.get("midiNotes").is_some(),
+        "corpus entries must carry at least frets or midiNotes for the lookup to be useful"
+    );
+}
+
 /// If the binary buffer + sidecar exist locally, verify they honour the
 /// contract the payload promises. Skipped silently otherwise — CI
 /// without OPTIC-K data shouldn't fail.

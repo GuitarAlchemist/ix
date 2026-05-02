@@ -28,6 +28,10 @@
   #region td { padding: 2px 6px 2px 0; color: #aab2bf; font-family: ui-monospace, monospace; vertical-align: top; }
   #region td.id { color: #d6dce4; white-space: nowrap; }
   #region td.name { color: #fff; }
+  #region td a.load { color: #4ea1ff; cursor: pointer; text-decoration: none; }
+  #region td a.load:hover { color: #fff; text-decoration: underline; }
+  #region td.loading { color: #6a7280; font-style: italic; }
+  #region td.error { color: #c0392b; }
   #region .more { color: #6a7280; font-size: 11px; margin-top: 6px; }
   #region .close { position: absolute; top: 6px; right: 8px; cursor: pointer; color: #6a7280; font-size: 14px; }
   #region .close:hover { color: #fff; }
@@ -356,14 +360,14 @@ function showRegion(mx, my) {
   const counts = { guitar: 0, bass: 0, ukulele: 0 };
   for (const h of hits) counts[h.p.instrument]++;
 
-  // Pull a sample of names from voicings that have details, prioritising
-  // closer hits and trying to spread across instruments.
-  const named = [];
+  // Build a unified row list of the first REGION_MAX_LIST closest hits.
+  // Cached entries render full metadata inline; uncached entries get a
+  // "load" link that lazy-fetches /data/voicing/{id} on demand.
+  const rows = [];
   for (const h of hits) {
-    if (named.length >= REGION_MAX_LIST) break;
+    if (rows.length >= REGION_MAX_LIST) break;
     const key = h.p.instrument + "_v" + String(h.p.id).padStart(4, "0");
-    const d = details[key];
-    if (d) named.push({ key, d, dist: Math.sqrt(h.d2) });
+    rows.push({ key, d: details[key] || null });
   }
 
   let html = '<span class="close" title="dismiss">×</span>';
@@ -374,21 +378,18 @@ function showRegion(mx, my) {
     html += `<span><i style="background:${STYLES[inst].color}"></i>${inst} ${counts[inst]}</span>`;
   }
   html += "</div>";
-  if (named.length > 0) {
-    html += "<table>";
-    for (const n of named) {
-      const fingering = n.d.f ? n.d.f.join(" ") : "—";
-      html += `<tr><td class="id">${n.key}</td><td class="name">${n.d.n || "?"}</td><td>${fingering}</td></tr>`;
+  html += "<table>";
+  for (const r of rows) {
+    if (r.d) {
+      const fingering = r.d.f ? r.d.f.join(" ") : "—";
+      html += `<tr><td class="id">${r.key}</td><td class="name">${r.d.n || "?"}</td><td>${fingering}</td></tr>`;
+    } else {
+      html += `<tr data-key="${r.key}"><td class="id">${r.key}</td><td colspan="2"><a class="load" href="#">load</a></td></tr>`;
     }
-    html += "</table>";
-    const detailedTotal = hits.filter(h => details[h.p.instrument + "_v" + String(h.p.id).padStart(4, "0")]).length;
-    if (detailedTotal > named.length) {
-      html += `<div class="more">+ ${detailedTotal - named.length} more with metadata, ${hits.length - detailedTotal} without</div>`;
-    } else if (hits.length > named.length) {
-      html += `<div class="more">+ ${hits.length - named.length} without metadata</div>`;
-    }
-  } else {
-    html += `<div class="more">no metadata for any voicing in this region (try the dense blue clusters)</div>`;
+  }
+  html += "</table>";
+  if (hits.length > rows.length) {
+    html += `<div class="more">+ ${hits.length - rows.length} more (truncated to ${REGION_MAX_LIST} closest)</div>`;
   }
   region.innerHTML = html;
   region.style.display = "block";
@@ -396,6 +397,45 @@ function showRegion(mx, my) {
     region.style.display = "none";
     selectionMarker.style.display = "none";
   });
+  // Wire the lazy-load links. Each click calls /data/voicing/{id}, mutates
+  // the global details cache, and rewrites the row in place.
+  for (const link of region.querySelectorAll("a.load")) {
+    link.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const tr = link.closest("tr");
+      const key = tr.dataset.key;
+      const cell = link.closest("td");
+      cell.outerHTML = '<td colspan="2" class="loading">loading…</td>';
+      try {
+        const res = await fetch("data/voicing/" + key);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const raw = await res.json();
+        // Normalise corpus shape (frets array, midiNotes, etc.) to the
+        // short keys the existing pre-loaded details file uses, so the
+        // global cache stays uniform.
+        const d = {
+          g: key,
+          n: raw.name || raw.canonical || raw.n || "",
+          f: raw.frets || raw.f || null,
+          m: raw.midiNotes || raw.m || null,
+          p: raw.pitchClasses || raw.p || null,
+          s: raw.stringCount ?? raw.size ?? raw.s ?? null,
+          i: raw.instrument || raw.i,
+        };
+        details[key] = d;
+        const fingering = d.f ? d.f.join(" ") : "—";
+        const newRow = document.createElement("tr");
+        newRow.innerHTML = `<td class="id">${key}</td><td class="name">${d.n || "?"}</td><td>${fingering}</td>`;
+        tr.replaceWith(newRow);
+      } catch (err) {
+        const errCell = tr.querySelector("td.loading");
+        if (errCell) {
+          errCell.className = "error";
+          errCell.textContent = "load failed: " + err.message;
+        }
+      }
+    });
+  }
 
   // Draw a selection circle so the user remembers what they clicked.
   selectionMarker.style.display = "block";

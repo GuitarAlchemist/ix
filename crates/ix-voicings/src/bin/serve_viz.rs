@@ -10,15 +10,17 @@
 //! cargo run -p ix-voicings --bin serve-viz -- --port 8765 --data state/viz
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Instant;
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
 const INDEX_3D_HTML: &str = include_str!("../../web/3d.html");
@@ -26,6 +28,14 @@ const VOICING_LAYOUT: &str = "voicing-layout.json";
 const CLUSTER_ASSIGNMENTS: &str = "cluster-assignments.json";
 const POSITIONS_BIN: &str = "voicing-positions.bin";
 const POSITIONS_META: &str = "voicing-positions.meta.json";
+
+/// Per-instrument corpus dir (set once in main, read from any handler thread).
+static CORPUS_DIR: OnceLock<PathBuf> = OnceLock::new();
+/// Per-instrument parsed corpus, lazy-loaded on first lookup. Each entry
+/// is an `instrument` -> `Vec<Value>` keyed by per-instrument id. Guitar
+/// corpus is ~100 MB on disk; loading it costs a couple of seconds and
+/// ~150 MB RAM, but only once and only if anything actually clicks.
+static CORPUS_CACHE: OnceLock<Mutex<HashMap<String, Vec<Value>>>> = OnceLock::new();
 
 #[derive(Parser, Debug)]
 #[command(about = "Serve the ix-voicings t-SNE viewer on localhost")]
@@ -43,6 +53,13 @@ struct Cli {
     /// Directory containing the viz JSON files (served at /data/<file>).
     #[arg(long, default_value = "state/viz")]
     data: PathBuf,
+
+    /// Directory containing the per-instrument corpus JSON files
+    /// (`{instrument}-corpus.json`). Used for the lazy
+    /// `/data/voicing/{id}` metadata lookup that backs the click-region
+    /// panel for voicings outside the precomputed details sample.
+    #[arg(long, default_value = "state/voicings")]
+    corpus: PathBuf,
 }
 
 fn main() {
@@ -51,6 +68,12 @@ fn main() {
         .data
         .canonicalize()
         .unwrap_or_else(|_| cli.data.clone());
+    let corpus_dir = cli
+        .corpus
+        .canonicalize()
+        .unwrap_or_else(|_| cli.corpus.clone());
+    CORPUS_DIR.set(corpus_dir.clone()).expect("CORPUS_DIR set once");
+    CORPUS_CACHE.set(Mutex::new(HashMap::new())).expect("CORPUS_CACHE set once");
 
     if let Err(e) = ensure_cluster_assignments(&data_dir) {
         eprintln!("warning: could not derive {CLUSTER_ASSIGNMENTS}: {e}");
@@ -109,6 +132,15 @@ fn handle(mut stream: TcpStream, data_dir: &Path) -> std::io::Result<()> {
         return write_response(&mut stream, 200, "text/html; charset=utf-8", INDEX_3D_HTML.as_bytes());
     }
 
+    // Lazy-load metadata for a single voicing from `state/voicings/
+    // {instrument}-corpus.json`. Closes the gap exposed by phase 4: only
+    // 7,141 of 313K voicings have details in the precomputed sample, so
+    // most click-region panels say "no metadata in this region". Plan
+    // doc has the math: docs/plans/2026-05-02-voicings-in-prime-radiant.md.
+    if let Some(rest) = path.strip_prefix("/data/voicing/") {
+        return serve_voicing_lookup(&mut stream, rest);
+    }
+
     if let Some(rest) = path.strip_prefix("/data/") {
         // Reject anything that escapes the data dir.
         if rest.contains("..") || rest.contains('\\') || rest.starts_with('/') {
@@ -136,6 +168,66 @@ fn handle(mut stream: TcpStream, data_dir: &Path) -> std::io::Result<()> {
     } else {
         write_response(&mut stream, 404, "text/plain", b"not found")
     }
+}
+
+/// Serve a single voicing's full metadata, looked up by id like
+/// `guitar_v0042`. The id syntax mirrors the t-SNE point's `id` field
+/// joined to its `instrument`. Loads `{instrument}-corpus.json` on
+/// first request per instrument, caches forever.
+fn serve_voicing_lookup(stream: &mut TcpStream, id: &str) -> std::io::Result<()> {
+    let Some((inst, idx)) = parse_voicing_id(id) else {
+        return write_response(stream, 400, "text/plain", b"bad voicing id");
+    };
+
+    let cache = CORPUS_CACHE.get().expect("cache initialised");
+    let mut guard = cache.lock().expect("cache mutex");
+
+    if !guard.contains_key(&inst) {
+        let path = CORPUS_DIR
+            .get()
+            .expect("CORPUS_DIR initialised")
+            .join(format!("{inst}-corpus.json"));
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(_) => {
+                return write_response(stream, 404, "text/plain", b"corpus missing");
+            }
+        };
+        let parsed: Vec<Value> = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(_) => {
+                return write_response(stream, 500, "text/plain", b"corpus parse failed");
+            }
+        };
+        guard.insert(inst.clone(), parsed);
+    }
+
+    let corpus = &guard[&inst];
+    if idx >= corpus.len() {
+        return write_response(stream, 404, "text/plain", b"voicing id out of range");
+    }
+
+    let body = serde_json::to_vec(&corpus[idx])
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    write!(
+        stream,
+        "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n",
+        body.len()
+    )?;
+    stream.write_all(&body)
+}
+
+/// Parse `guitar_v0042` -> ("guitar", 42). Returns None on any malformed
+/// input — the id comes straight off URLs, treat as untrusted.
+fn parse_voicing_id(id: &str) -> Option<(String, usize)> {
+    for inst in ["guitar", "bass", "ukulele"] {
+        if let Some(rest) = id.strip_prefix(inst).and_then(|r| r.strip_prefix("_v")) {
+            if let Ok(n) = rest.parse::<usize>() {
+                return Some((inst.to_string(), n));
+            }
+        }
+    }
+    None
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, ct: &str, body: &[u8]) -> std::io::Result<()> {
