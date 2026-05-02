@@ -20,10 +20,10 @@ chrono = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
+ix-bracelet = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-ix-bracelet = { workspace = true }
 
 [[bin]]
 name = "ga-chatbot"

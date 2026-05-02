@@ -25,3 +25,8 @@ state/graph/
 # only milestones/ is tracked, populated via `ix-autoresearch promote`.
 state/autoresearch/runs/*
 !state/autoresearch/runs/.gitkeep
+
+# ix-voicings viz: t-SNE / cluster / neighbor JSON outputs are regenerable
+# from the OPTIC-K corpus (cargo run -p ix-voicings --example tsne_export).
+# Layouts can be 100MB+, so keep them out of the tree.
+state/viz/

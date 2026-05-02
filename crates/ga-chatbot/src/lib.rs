@@ -6,6 +6,7 @@
 //! corpus grounding, confidence thresholds) before expensive LLM judges.
 
 pub mod aggregate;
+pub mod algebra;
 pub mod mcp_bridge;
 pub mod qa;
 pub mod shapley;
