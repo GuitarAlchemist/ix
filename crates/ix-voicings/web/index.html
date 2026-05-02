@@ -50,6 +50,11 @@
   <label><input type="checkbox" id="showBass" checked>bass</label>
   <label><input type="checkbox" id="showUkulele" checked>ukulele</label>
   <label><input type="checkbox" id="showClusters" checked>cluster labels</label>
+  <hr style="border:0;border-top:1px solid #2a313b;margin:8px 0">
+  <label style="color:#d6dce4;font-weight:600">color by</label>
+  <label><input type="radio" name="colorBy" value="instrument" checked>instrument</label>
+  <label><input type="radio" name="colorBy" value="cluster">cluster (15)</label>
+  <label><input type="radio" name="colorBy" value="family">chord family</label>
 </div>
 <div id="status">scroll to zoom · drag to pan · hover for chord · click for region</div>
 <div id="tooltip"></div>
@@ -73,6 +78,15 @@ const REGION_RADIUS_PX = 40;
 // Cap how many neighbours we list in the region panel (keeps the DOM cheap).
 const REGION_MAX_LIST = 30;
 
+// Stable HSL palette for categorical fields with unbounded cardinality
+// (cluster, family). Hue spread by golden angle so adjacent indices land
+// in visually distinct buckets.
+function categoricalColor(i) {
+  if (i < 0) return "#3a4250"; // unknown / unmapped
+  const hue = (i * 137.508) % 360; // golden-angle conjugate
+  return `hsl(${hue.toFixed(1)}, 70%, 60%)`;
+}
+
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d", { alpha: false });
 const meta = document.getElementById("meta");
@@ -90,6 +104,17 @@ let dragging = null;
 let dragMoved = false;
 let visible = { guitar: true, bass: true, ukulele: true };
 let showClusters = true;
+let colorBy = "instrument";       // "instrument" | "cluster" | "family"
+let assignments = null;           // { clusters, cluster_by_inst, family_by_inst }
+// Pre-cached per-point fill color for the active colorBy mode, indexed
+// parallel to `points`. Recomputed when colorBy or assignments change.
+let pointColors = null;
+// Pre-cached per-point fill alpha + dot radius. In instrument mode these
+// vary by instrument (guitar background-faded, minorities boosted); in
+// cluster/family modes everything renders at one weight so the categorical
+// signal doesn't get overwritten by the imbalance fix.
+let pointAlphas = null;
+let pointRadii = null;
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
@@ -126,37 +151,49 @@ function render() {
   ctx.fillStyle = "#0b0d10";
   ctx.fillRect(0, 0, innerWidth, innerHeight);
 
-  // 1. Guitar background — uniform style, single fillStyle/alpha set.
-  if (visible.guitar) {
-    const s = STYLES.guitar;
-    ctx.fillStyle = s.color;
-    ctx.globalAlpha = s.alpha;
-    const r = s.radius, d = r * 2;
-    for (const i of guitarIdx) {
-      const p = points[i];
-      if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
-      ctx.fillRect(p.sx - r, p.sy - r, d, d);
-    }
-  }
-
-  // 2. Minorities in shuffled order so neither color systematically occludes
-  //    the other. fillStyle/alpha switch only when the instrument changes.
-  let lastInst = null;
-  let r2 = 0, d2 = 0;
-  for (const i of minorityIdx) {
-    const p = points[i];
-    if (!visible[p.instrument]) continue;
-    if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
-    if (p.instrument !== lastInst) {
-      const s = STYLES[p.instrument];
+  if (colorBy === "instrument") {
+    // Two-pass: faded guitar background, shuffled minorities on top.
+    if (visible.guitar) {
+      const s = STYLES.guitar;
       ctx.fillStyle = s.color;
       ctx.globalAlpha = s.alpha;
-      r2 = s.radius; d2 = r2 * 2;
-      lastInst = p.instrument;
+      const r = s.radius, d = r * 2;
+      for (const i of guitarIdx) {
+        const p = points[i];
+        if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
+        ctx.fillRect(p.sx - r, p.sy - r, d, d);
+      }
     }
-    ctx.fillRect(p.sx - r2, p.sy - r2, d2, d2);
+    let lastInst = null, r2 = 0, d2 = 0;
+    for (const i of minorityIdx) {
+      const p = points[i];
+      if (!visible[p.instrument]) continue;
+      if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
+      if (p.instrument !== lastInst) {
+        const s = STYLES[p.instrument];
+        ctx.fillStyle = s.color;
+        ctx.globalAlpha = s.alpha;
+        r2 = s.radius; d2 = r2 * 2;
+        lastInst = p.instrument;
+      }
+      ctx.fillRect(p.sx - r2, p.sy - r2, d2, d2);
+    }
+    ctx.globalAlpha = 1;
+  } else {
+    // Categorical mode: pre-cached per-point colors. fillStyle changes per
+    // point are slow (~5x) but at 313K points / 1.4MB palette it's still
+    // sub-100ms on a desktop and only fires on pan/zoom, not hover.
+    ctx.globalAlpha = 0.7;
+    const r = 1.6, d = r * 2;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      if (!visible[p.instrument]) continue;
+      if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
+      ctx.fillStyle = pointColors[i];
+      ctx.fillRect(p.sx - r, p.sy - r, d, d);
+    }
+    ctx.globalAlpha = 1;
   }
-  ctx.globalAlpha = 1;
 
   if (showClusters && clusters.length) {
     ctx.font = "11px system-ui, sans-serif";
@@ -272,6 +309,27 @@ document.getElementById("showClusters").addEventListener("change", (e) => {
   showClusters = e.target.checked; render();
 });
 
+for (const radio of document.querySelectorAll('input[name="colorBy"]')) {
+  radio.addEventListener("change", (e) => {
+    if (!e.target.checked) return;
+    colorBy = e.target.value;
+    if (colorBy !== "instrument") rebuildPointColors();
+    render();
+  });
+}
+
+function rebuildPointColors() {
+  if (!assignments) return;
+  pointColors = new Array(points.length);
+  const lookup = colorBy === "cluster" ? assignments.cluster_by_inst : assignments.family_by_inst;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const arr = lookup[p.instrument];
+    const idx = (arr && p.id < arr.length) ? arr[p.id] : -1;
+    pointColors[i] = categoricalColor(idx);
+  }
+}
+
 const region = document.getElementById("region");
 const selectionMarker = document.getElementById("selectionMarker");
 
@@ -382,6 +440,9 @@ async function main() {
     try { clusters = await fetchJSON("data/cluster-layout.json", "cluster layout"); }
     catch { clusters = []; }
 
+    try { assignments = await fetchJSON("data/cluster-assignments.json", "cluster assignments"); }
+    catch (e) { console.warn("cluster-assignments unavailable; cluster/family colour modes disabled", e); }
+
     // Index points by (instrument, id) so we can resolve each cluster's
     // representative voicing to its t-SNE position.
     const pointIdx = new Map();
@@ -391,6 +452,15 @@ async function main() {
     }
 
     fitView();
+    // Allow URL-hash override for screenshotting (e.g. #colorBy=cluster).
+    const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const hashColor = hashParams.get("colorBy");
+    if (assignments && (hashColor === "cluster" || hashColor === "family")) {
+      colorBy = hashColor;
+      const radio = document.querySelector(`input[name="colorBy"][value="${hashColor}"]`);
+      if (radio) radio.checked = true;
+      rebuildPointColors();
+    }
     render();
     meta.innerHTML = `<b>${points.length.toLocaleString()}</b> voicings · perplexity ${tsne.perplexity} · ${tsne.iterations} iters · ${Object.keys(details).length.toLocaleString()} with metadata · ${clusters.length} clusters`;
   } catch (err) {
