@@ -21,8 +21,11 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 
 const INDEX_HTML: &str = include_str!("../../web/index.html");
+const INDEX_3D_HTML: &str = include_str!("../../web/3d.html");
 const VOICING_LAYOUT: &str = "voicing-layout.json";
 const CLUSTER_ASSIGNMENTS: &str = "cluster-assignments.json";
+const POSITIONS_BIN: &str = "voicing-positions.bin";
+const POSITIONS_META: &str = "voicing-positions.meta.json";
 
 #[derive(Parser, Debug)]
 #[command(about = "Serve the ix-voicings t-SNE viewer on localhost")]
@@ -46,6 +49,10 @@ fn main() {
     if let Err(e) = ensure_cluster_assignments(&data_dir) {
         eprintln!("warning: could not derive {CLUSTER_ASSIGNMENTS}: {e}");
         eprintln!("         (the viewer will fall back to instrument-only colouring)");
+    }
+    if let Err(e) = ensure_position_buffer(&data_dir) {
+        eprintln!("warning: could not derive {POSITIONS_BIN}: {e}");
+        eprintln!("         (the 3D view will be unavailable)");
     }
 
     let listener = TcpListener::bind(("127.0.0.1", cli.port))
@@ -91,6 +98,9 @@ fn handle(mut stream: TcpStream, data_dir: &Path) -> std::io::Result<()> {
 
     if path == "/" || path == "/index.html" {
         return write_response(&mut stream, 200, "text/html; charset=utf-8", INDEX_HTML.as_bytes());
+    }
+    if path == "/3d" || path == "/3d.html" {
+        return write_response(&mut stream, 200, "text/html; charset=utf-8", INDEX_3D_HTML.as_bytes());
     }
 
     if let Some(rest) = path.strip_prefix("/data/") {
@@ -216,7 +226,7 @@ fn ensure_cluster_assignments(data_dir: &Path) -> std::io::Result<()> {
 
     let assignments = ClusterAssignments { clusters, cluster_by_inst, family_by_inst };
     let serialized = serde_json::to_vec(&assignments)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(std::io::Error::other)?;
     std::fs::write(&out_path, &serialized)?;
 
     println!(
@@ -229,12 +239,109 @@ fn ensure_cluster_assignments(data_dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Per-instrument metadata sidecar describing the layout of `voicing-positions.bin`.
+#[derive(Serialize)]
+struct PositionMeta {
+    total: usize,
+    instruments: Vec<InstrumentBlock>,
+    bounds: Bounds,
+}
+
+#[derive(Serialize)]
+struct InstrumentBlock {
+    name: String,
+    /// Index of the first voicing in this block (units = voicings, not bytes).
+    offset: usize,
+    /// Number of voicings in this block.
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct Bounds {
+    min: [f32; 3],
+    max: [f32; 3],
+}
+
+#[derive(Deserialize)]
+struct PositionRow {
+    position: [f32; 3],
+    instrument: String,
+}
+
+fn ensure_position_buffer(data_dir: &Path) -> std::io::Result<()> {
+    let bin_path = data_dir.join(POSITIONS_BIN);
+    let meta_path = data_dir.join(POSITIONS_META);
+    if bin_path.exists() && meta_path.exists() {
+        return Ok(());
+    }
+    let layout_path = data_dir.join(VOICING_LAYOUT);
+    if !layout_path.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{} missing — run `cargo run -p ix-voicings -- viz-precompute`", layout_path.display()),
+        ));
+    }
+
+    println!("deriving {POSITIONS_BIN} + {POSITIONS_META} from {VOICING_LAYOUT}...");
+    let started = Instant::now();
+    let bytes = std::fs::read(&layout_path)?;
+    let rows: Vec<PositionRow> = serde_json::from_slice(&bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    // Bucket by instrument while preserving source order. Three.js reads
+    // per-instrument blocks back-to-back so colouring is just a vertex
+    // attribute slice.
+    let mut by_inst: BTreeMap<String, Vec<[f32; 3]>> = BTreeMap::new();
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for row in rows {
+        for k in 0..3 {
+            if row.position[k] < min[k] { min[k] = row.position[k]; }
+            if row.position[k] > max[k] { max[k] = row.position[k]; }
+        }
+        by_inst.entry(row.instrument).or_default().push(row.position);
+    }
+
+    // Concatenate in a stable order so the meta offsets stay deterministic.
+    let order = ["guitar", "bass", "ukulele"];
+    let mut buf: Vec<u8> = Vec::new();
+    let mut blocks: Vec<InstrumentBlock> = Vec::new();
+    let mut cursor = 0usize;
+    for name in order {
+        let Some(block) = by_inst.remove(name) else { continue; };
+        let count = block.len();
+        for pos in &block {
+            for v in pos {
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        blocks.push(InstrumentBlock { name: name.to_string(), offset: cursor, count });
+        cursor += count;
+    }
+
+    std::fs::write(&bin_path, &buf)?;
+    let meta = PositionMeta { total: cursor, instruments: blocks, bounds: Bounds { min, max } };
+    let meta_json = serde_json::to_vec_pretty(&meta)
+        .map_err(std::io::Error::other)?;
+    std::fs::write(&meta_path, &meta_json)?;
+
+    println!(
+        "wrote {} ({} voicings, {:.1}MB binary, {:.1}s)",
+        bin_path.display(),
+        cursor,
+        buf.len() as f64 / 1_048_576.0,
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
 fn content_type(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("json") => "application/json",
         Some("html") => "text/html; charset=utf-8",
         Some("css") => "text/css",
         Some("js") => "application/javascript",
+        Some("bin") => "application/octet-stream",
         _ => "application/octet-stream",
     }
 }

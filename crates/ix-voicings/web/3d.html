@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ix-voicings — 3D voicing cloud</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d10; color: #d6dce4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #canvas { display: block; }
+  #hud { position: fixed; top: 12px; left: 12px; padding: 10px 14px; background: rgba(20,24,30,0.85); border: 1px solid #2a313b; border-radius: 6px; max-width: 360px; pointer-events: none; }
+  #hud h1 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: #fff; }
+  #hud .meta { color: #8a93a0; font-size: 11px; }
+  #legend { margin-top: 8px; }
+  #legend span { display: inline-block; margin-right: 10px; }
+  #legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+  #status { position: fixed; bottom: 12px; left: 12px; color: #8a93a0; font-size: 11px; }
+  #controls { position: fixed; top: 12px; right: 12px; padding: 10px 14px; background: rgba(20,24,30,0.85); border: 1px solid #2a313b; border-radius: 6px; }
+  #controls label { display: block; margin: 4px 0; font-size: 11px; color: #8a93a0; }
+  #controls input[type=checkbox] { margin-right: 6px; }
+  #controls input[type=range] { width: 140px; vertical-align: middle; margin-left: 4px; }
+  #controls .label-2d { color: #4ea1ff; text-decoration: none; display: block; margin-top: 8px; font-size: 11px; }
+  #controls .label-2d:hover { color: #fff; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="hud">
+  <h1>ix-voicings · 3D voicing cloud</h1>
+  <div class="meta" id="meta">loading…</div>
+  <div id="legend">
+    <span><i style="background:#4ea1ff"></i>guitar</span>
+    <span><i style="background:#7bd88f"></i>bass</span>
+    <span><i style="background:#f5a04a"></i>ukulele</span>
+  </div>
+</div>
+<div id="controls">
+  <label><input type="checkbox" id="showGuitar" checked>guitar</label>
+  <label><input type="checkbox" id="showBass" checked>bass</label>
+  <label><input type="checkbox" id="showUkulele" checked>ukulele</label>
+  <label>point size <input type="range" id="pointSize" min="0.05" max="2" step="0.05" value="0.3"></label>
+  <label>spread <input type="range" id="spread" min="0" max="3" step="0.1" value="0" title="add jitter so the dense cluster knots become readable"></label>
+  <a class="label-2d" href="/">← back to 2D t-SNE view</a>
+</div>
+<div id="status">drag to rotate · right-drag to pan · scroll to zoom</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://esm.sh/three@0.160.0",
+    "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const COLORS = {
+  guitar:  [0.306, 0.631, 1.000],
+  bass:    [0.482, 0.847, 0.561],
+  ukulele: [0.961, 0.627, 0.290],
+};
+
+const meta = document.getElementById("meta");
+const canvas = document.getElementById("canvas");
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight, false);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d10);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 5000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+addEventListener("resize", () => {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+let pointsObject = null;
+let positionMeta = null;        // server-provided meta with per-instrument blocks
+let basePositions = null;       // Float32Array of all positions, never mutated
+let visiblePositions = null;    // Float32Array currently bound to geometry
+let visibleColors = null;       // matching color attribute
+const visible = { guitar: true, bass: true, ukulele: true };
+let pointSize = 0.3;
+let spreadAmount = 0;
+
+async function loadData() {
+  meta.textContent = "loading position metadata…";
+  const metaRes = await fetch("/data/voicing-positions.meta.json");
+  if (!metaRes.ok) throw new Error("voicing-positions.meta.json missing — restart serve_viz so it can be derived");
+  positionMeta = await metaRes.json();
+
+  meta.textContent = `loading ${(positionMeta.total).toLocaleString()} positions (binary, ~${(positionMeta.total * 12 / 1048576).toFixed(1)}MB)…`;
+  const binRes = await fetch("/data/voicing-positions.bin");
+  if (!binRes.ok) throw new Error("voicing-positions.bin missing");
+  const buf = await binRes.arrayBuffer();
+  basePositions = new Float32Array(buf);
+  if (basePositions.length !== positionMeta.total * 3) {
+    throw new Error(`positions length mismatch: bin has ${basePositions.length / 3} points, meta says ${positionMeta.total}`);
+  }
+}
+
+function rebuildVisibleAttributes() {
+  // Walk per-instrument blocks, copy positions of currently-visible
+  // instruments into a fresh contiguous buffer, and assign the matching
+  // colour. ~688K * 12B = 8.3MB allocation per toggle is fine on modern
+  // machines and avoids per-vertex alpha / shader complexity.
+  let visibleCount = 0;
+  for (const block of positionMeta.instruments) {
+    if (visible[block.name]) visibleCount += block.count;
+  }
+  visiblePositions = new Float32Array(visibleCount * 3);
+  visibleColors = new Float32Array(visibleCount * 3);
+  let dst = 0;
+  for (const block of positionMeta.instruments) {
+    if (!visible[block.name]) continue;
+    const srcStart = block.offset * 3;
+    const srcEnd = srcStart + block.count * 3;
+    visiblePositions.set(basePositions.subarray(srcStart, srcEnd), dst * 3);
+    if (spreadAmount > 0) {
+      // Add deterministic-ish jitter so points stop sub-pixel-overlapping.
+      // Triangular distribution (avg of two uniforms) is cheap and looks
+      // more natural than uniform.
+      const start = dst * 3, end = (dst + block.count) * 3;
+      for (let i = start; i < end; i++) {
+        visiblePositions[i] += (Math.random() + Math.random() - 1) * spreadAmount;
+      }
+    }
+    const c = COLORS[block.name];
+    for (let i = 0; i < block.count; i++) {
+      visibleColors[(dst + i) * 3]     = c[0];
+      visibleColors[(dst + i) * 3 + 1] = c[1];
+      visibleColors[(dst + i) * 3 + 2] = c[2];
+    }
+    dst += block.count;
+  }
+}
+
+function buildPoints() {
+  rebuildVisibleAttributes();
+  if (pointsObject) {
+    scene.remove(pointsObject);
+    pointsObject.geometry.dispose();
+    pointsObject.material.dispose();
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(visiblePositions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(visibleColors, 3));
+  // sizeAttenuation: true makes points grow as you zoom in — essential here
+  // because the layout precompute packs ~99% of each instrument's voicings
+  // into a sub-1-unit-diameter knot per cluster. Without attenuation those
+  // knots render as a single sub-pixel blob at default zoom.
+  const material = new THREE.PointsMaterial({
+    size: pointSize,
+    vertexColors: true,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.85,
+    depthWrite: false,
+  });
+  pointsObject = new THREE.Points(geometry, material);
+  scene.add(pointsObject);
+}
+
+function fitCamera() {
+  const b = positionMeta.bounds;
+  const cx = (b.min[0] + b.max[0]) / 2;
+  const cy = (b.min[1] + b.max[1]) / 2;
+  const cz = (b.min[2] + b.max[2]) / 2;
+  const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+  controls.target.set(cx, cy, cz);
+  camera.position.set(cx + span * 0.9, cy + span * 0.5, cz + span * 1.4);
+  camera.near = span / 1000;
+  camera.far = span * 20;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function animate() {
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+
+for (const inst of ["guitar", "bass", "ukulele"]) {
+  const id = "show" + inst[0].toUpperCase() + inst.slice(1);
+  document.getElementById(id).addEventListener("change", (e) => {
+    visible[inst] = e.target.checked;
+    buildPoints();
+  });
+}
+document.getElementById("pointSize").addEventListener("input", (e) => {
+  pointSize = parseFloat(e.target.value);
+  if (pointsObject) pointsObject.material.size = pointSize;
+});
+let spreadRebuildTimer = 0;
+document.getElementById("spread").addEventListener("input", (e) => {
+  spreadAmount = parseFloat(e.target.value);
+  // Debounce: rebuilding the geometry on every slider tick is expensive.
+  if (spreadRebuildTimer) clearTimeout(spreadRebuildTimer);
+  spreadRebuildTimer = setTimeout(buildPoints, 50);
+});
+
+loadData().then(() => {
+  meta.innerHTML = `<b>${positionMeta.total.toLocaleString()}</b> voicings (full corpus, not the t-SNE sample). guitar ${positionMeta.instruments.find(b => b.name === "guitar")?.count.toLocaleString() ?? 0}, bass ${positionMeta.instruments.find(b => b.name === "bass")?.count.toLocaleString() ?? 0}, ukulele ${positionMeta.instruments.find(b => b.name === "ukulele")?.count.toLocaleString() ?? 0}`;
+  // Hash params let headless screenshots set spread / size without UI clicks.
+  const hp = new URLSearchParams(location.hash.replace(/^#/, ""));
+  if (hp.has("spread")) {
+    spreadAmount = parseFloat(hp.get("spread"));
+    document.getElementById("spread").value = spreadAmount;
+  }
+  if (hp.has("size")) {
+    pointSize = parseFloat(hp.get("size"));
+    document.getElementById("pointSize").value = pointSize;
+  }
+  buildPoints();
+  fitCamera();
+  animate();
+}).catch((err) => {
+  meta.textContent = "error: " + err.message;
+  console.error(err);
+});
+</script>
+</body>
+</html>
