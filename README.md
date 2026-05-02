@@ -47,6 +47,10 @@ cargo run -p ix-agent
 | ix-search | Stable | A*, MCTS, minimax, BFS/DFS |
 | ix-graph | Stable | Markov chains, HMM/Viterbi, agent routing |
 | ix-signal | Stable | FFT, wavelets, Kalman, spectral analysis |
+| ix-cache | Stable | Embedded in-process cache (TTL, LRU, pub/sub) — promoted 2026-05-02 |
+| ix-probabilistic | Stable | Bloom, HLL, Count-Min, Cuckoo — promoted 2026-05-02 |
+| ix-game | Stable | Nash, Shapley, auctions, mechanism design — promoted 2026-05-02 |
+| ix-rl | Stable | Bandits (EpsilonGreedy, UCB1, Thompson), Q-learning — promoted 2026-05-02 |
 
 ### Beta Crates
 
@@ -56,14 +60,10 @@ cargo run -p ix-agent
 | ix-pipeline | Beta | DAG executor — critical infrastructure, API stabilizing |
 | ix-agent | Beta | MCP server (68 tools) — production-facing integration point |
 | ix-governance | Beta | Demerzel governance bridge — consumed by ga/tars |
-| ix-cache | Beta | Embedded Redis-like cache — stable patterns |
 | ix-io | Beta | I/O utilities (CSV, JSON, TCP, WebSocket) |
-| ix-probabilistic | Beta | Bloom, HLL, Count-Min — well-defined algorithms |
-| ix-game | Beta | Nash, Shapley, auctions — solid math, newer API |
 | ix-grammar | Beta | Earley, CYK parsers, EBNF/ABNF parsers, ~30-entry grammar catalog |
 | ix-catalog-core | Beta | Shared `Catalog` trait substrate used by ix-code, ix-grammar, ix-net catalogs |
 | ix-net | Beta | Curated catalog of ~70 IETF RFCs with obsolescence-graph queries |
-| ix-rl | Beta | Bandits, Q-learning — actively used in demos |
 
 ### Experimental Crates
 
