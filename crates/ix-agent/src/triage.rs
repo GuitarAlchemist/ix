@@ -221,7 +221,7 @@ pub fn hex_priority(h: Hexavalent) -> u8 {
 /// The original item order is preserved for ties — the LLM's order is
 /// the secondary signal when confidences are equal.
 pub fn sort_plan_by_priority(plan: &mut [TriagePlanItem]) {
-    plan.sort_by(|a, b| hex_priority(b.confidence).cmp(&hex_priority(a.confidence)));
+    plan.sort_by_key(|item| std::cmp::Reverse(hex_priority(item.confidence)));
 }
 
 /// Build a [`HexavalentDistribution`] from the plan's confidence
