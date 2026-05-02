@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ix-voicings — t-SNE explorer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d10; color: #d6dce4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #canvas { display: block; cursor: crosshair; }
+  #hud { position: fixed; top: 12px; left: 12px; padding: 10px 14px; background: rgba(20,24,30,0.85); border: 1px solid #2a313b; border-radius: 6px; max-width: 320px; pointer-events: none; }
+  #hud h1 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: #fff; }
+  #hud .meta { color: #8a93a0; font-size: 11px; }
+  #legend { margin-top: 8px; }
+  #legend span { display: inline-block; margin-right: 10px; }
+  #legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+  #status { position: fixed; bottom: 12px; left: 12px; color: #8a93a0; font-size: 11px; }
+  #tooltip { position: fixed; padding: 8px 10px; background: rgba(20,24,30,0.95); border: 1px solid #3a4250; border-radius: 4px; pointer-events: none; display: none; max-width: 280px; font-size: 12px; }
+  #tooltip .name { color: #fff; font-weight: 600; }
+  #tooltip .row { color: #aab2bf; margin-top: 4px; font-family: ui-monospace, monospace; font-size: 11px; }
+  #controls { position: fixed; top: 12px; right: 12px; padding: 10px 14px; background: rgba(20,24,30,0.85); border: 1px solid #2a313b; border-radius: 6px; }
+  #controls label { display: block; margin: 4px 0; font-size: 11px; color: #8a93a0; }
+  #controls input[type=checkbox] { margin-right: 6px; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="hud">
+  <h1>ix-voicings · t-SNE explorer</h1>
+  <div class="meta" id="meta">loading…</div>
+  <div id="legend">
+    <span><i style="background:#4ea1ff"></i>guitar</span>
+    <span><i style="background:#7bd88f"></i>bass</span>
+    <span><i style="background:#f5a04a"></i>ukulele</span>
+  </div>
+</div>
+<div id="controls">
+  <label><input type="checkbox" id="showGuitar" checked>guitar</label>
+  <label><input type="checkbox" id="showBass" checked>bass</label>
+  <label><input type="checkbox" id="showUkulele" checked>ukulele</label>
+  <label><input type="checkbox" id="showClusters" checked>cluster labels</label>
+</div>
+<div id="status">scroll to zoom · drag to pan · hover for chord</div>
+<div id="tooltip"></div>
+
+<script>
+"use strict";
+
+const COLORS = { guitar: "#4ea1ff", bass: "#7bd88f", ukulele: "#f5a04a" };
+const POINT_RADIUS = 1.4;
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d", { alpha: false });
+const meta = document.getElementById("meta");
+const tooltip = document.getElementById("tooltip");
+
+let points = [];      // {id, instrument, x, y, sx, sy} -- sx/sy are screen
+let details = {};     // "guitar_v0042" -> details row
+let clusters = [];    // cluster-layout array (3D pts; we use [0] and [2] as x/y)
+let bounds = null;    // {minx, maxx, miny, maxy}
+let view = { tx: 0, ty: 0, scale: 1 };
+let dragging = null;
+let visible = { guitar: true, bass: true, ukulele: true };
+let showClusters = true;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
+  canvas.style.width = innerWidth + "px";
+  canvas.style.height = innerHeight + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (points.length) { fitView(); render(); }
+}
+addEventListener("resize", resize);
+
+function fitView() {
+  if (!bounds) return;
+  const pad = 40;
+  const w = innerWidth - 2 * pad;
+  const h = innerHeight - 2 * pad;
+  const dx = bounds.maxx - bounds.minx;
+  const dy = bounds.maxy - bounds.miny;
+  view.scale = Math.min(w / dx, h / dy);
+  view.tx = pad - bounds.minx * view.scale + (w - dx * view.scale) / 2;
+  view.ty = pad - bounds.miny * view.scale + (h - dy * view.scale) / 2;
+}
+
+function projectAll() {
+  for (const p of points) {
+    p.sx = p.x * view.scale + view.tx;
+    p.sy = p.y * view.scale + view.ty;
+  }
+}
+
+function render() {
+  projectAll();
+  ctx.fillStyle = "#0b0d10";
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+  // Render in instrument order so the smaller groups (ukulele, bass) draw on top.
+  const order = ["guitar", "bass", "ukulele"];
+  for (const inst of order) {
+    if (!visible[inst]) continue;
+    ctx.fillStyle = COLORS[inst];
+    ctx.globalAlpha = 0.55;
+    for (const p of points) {
+      if (p.instrument !== inst) continue;
+      if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
+      ctx.fillRect(p.sx - POINT_RADIUS, p.sy - POINT_RADIUS, POINT_RADIUS * 2, POINT_RADIUS * 2);
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  if (showClusters && clusters.length) {
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const c of clusters) {
+      // Cluster centroids live in a different (3D) space than t-SNE; place each
+      // label at the t-SNE coords of its representative voicing instead.
+      const rep = c._rep;
+      if (!rep) continue;
+      const sx = rep.sx, sy = rep.sy;
+      if (sx < 0 || sx > innerWidth || sy < 0 || sy > innerHeight) continue;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      const label = c.display_label || c.id;
+      const w = ctx.measureText(label).width + 8;
+      ctx.fillRect(sx - w / 2, sy - 8, w, 16);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, sx, sy);
+    }
+  }
+}
+
+function nearestPoint(mx, my) {
+  let best = null, bestDist = 12 * 12;
+  for (const p of points) {
+    if (!visible[p.instrument]) continue;
+    const dx = p.sx - mx, dy = p.sy - my;
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) { bestDist = d; best = p; }
+  }
+  return best;
+}
+
+function voicingKey(p) {
+  return p.instrument + "_v" + String(p.id).padStart(4, "0");
+}
+
+function showTooltip(p, mx, my) {
+  const key = voicingKey(p);
+  const d = details[key];
+  let html = `<div class="name">${key}</div>`;
+  if (d) {
+    if (d.n) html += `<div class="row">name: ${d.n}</div>`;
+    if (d.f) html += `<div class="row">frets: ${d.f.join(" ")}</div>`;
+    if (d.m) html += `<div class="row">midi: ${d.m.join(" ")}</div>`;
+    if (d.p) html += `<div class="row">pitch-classes: ${d.p.join(",")}</div>`;
+    if (d.s != null) html += `<div class="row">size: ${d.s} note(s)</div>`;
+  } else {
+    html += `<div class="row" style="color:#666">(no metadata in details file)</div>`;
+  }
+  html += `<div class="row" style="color:#666">tsne: ${p.x.toFixed(2)}, ${p.y.toFixed(2)}</div>`;
+  tooltip.innerHTML = html;
+  tooltip.style.display = "block";
+  const rect = tooltip.getBoundingClientRect();
+  let tx = mx + 14, ty = my + 14;
+  if (tx + rect.width > innerWidth) tx = mx - rect.width - 14;
+  if (ty + rect.height > innerHeight) ty = my - rect.height - 14;
+  tooltip.style.left = tx + "px";
+  tooltip.style.top = ty + "px";
+}
+
+let mousemoveRaf = 0;
+canvas.addEventListener("mousemove", (e) => {
+  if (dragging) {
+    view.tx += e.clientX - dragging.x;
+    view.ty += e.clientY - dragging.y;
+    dragging.x = e.clientX; dragging.y = e.clientY;
+    render();
+    return;
+  }
+  if (mousemoveRaf) cancelAnimationFrame(mousemoveRaf);
+  mousemoveRaf = requestAnimationFrame(() => {
+    const p = nearestPoint(e.clientX, e.clientY);
+    if (p) showTooltip(p, e.clientX, e.clientY);
+    else tooltip.style.display = "none";
+  });
+});
+
+canvas.addEventListener("mousedown", (e) => {
+  dragging = { x: e.clientX, y: e.clientY };
+  canvas.style.cursor = "grabbing";
+  tooltip.style.display = "none";
+});
+addEventListener("mouseup", () => {
+  dragging = null;
+  canvas.style.cursor = "crosshair";
+});
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  // Zoom around cursor
+  const wx = (e.clientX - view.tx) / view.scale;
+  const wy = (e.clientY - view.ty) / view.scale;
+  view.scale *= factor;
+  view.tx = e.clientX - wx * view.scale;
+  view.ty = e.clientY - wy * view.scale;
+  render();
+}, { passive: false });
+
+for (const inst of ["guitar", "bass", "ukulele"]) {
+  document.getElementById("show" + inst[0].toUpperCase() + inst.slice(1))
+    .addEventListener("change", (e) => { visible[inst] = e.target.checked; render(); });
+}
+document.getElementById("showClusters").addEventListener("change", (e) => {
+  showClusters = e.target.checked; render();
+});
+
+async function fetchJSON(url, label) {
+  meta.textContent = "loading " + label + "…";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  return res.json();
+}
+
+async function main() {
+  resize();
+  try {
+    const tsne = await fetchJSON("data/voicings-tsne-313k-perp80.json", "t-SNE points");
+    points = tsne.points;
+    let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+    for (const p of points) {
+      if (p.x < minx) minx = p.x;
+      if (p.x > maxx) maxx = p.x;
+      if (p.y < miny) miny = p.y;
+      if (p.y > maxy) maxy = p.y;
+    }
+    bounds = { minx, maxx, miny, maxy };
+
+    const detailsArr = await fetchJSON("data/voicing-details.json", "voicing details");
+    for (const d of detailsArr) details[d.g] = d;
+
+    try { clusters = await fetchJSON("data/cluster-layout.json", "cluster layout"); }
+    catch { clusters = []; }
+
+    // Index points by (instrument, id) so we can resolve each cluster's
+    // representative voicing to its t-SNE position.
+    const pointIdx = new Map();
+    for (const p of points) pointIdx.set(p.instrument + "/" + p.id, p);
+    for (const c of clusters) {
+      c._rep = pointIdx.get(c.instrument + "/" + c.representative_voicing_idx) || null;
+    }
+
+    fitView();
+    render();
+    meta.innerHTML = `<b>${points.length.toLocaleString()}</b> voicings · perplexity ${tsne.perplexity} · ${tsne.iterations} iters · ${Object.keys(details).length.toLocaleString()} with metadata · ${clusters.length} clusters`;
+  } catch (err) {
+    meta.textContent = "error: " + err.message;
+    console.error(err);
+  }
+}
+
+main();
+</script>
+</body>
+</html>
