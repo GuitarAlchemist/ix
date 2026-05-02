@@ -2,7 +2,7 @@
 date: 2026-05-02
 reversibility: one-way-door (schema published to GA + governance registry)
 revisit-trigger: GA users want to interact with voicings beyond view-and-pan, OR voicing-positions schema needs a breaking change, OR Prime Radiant adds a second non-governance dataset (need a generic loader pattern)
-status: phases 1-3 shipped 2026-05-02 (ix MCP tool 1d9bad2; GA Prime Radiant integration 8187092 [unpushed]; governance schema + registry cb78692); phase 4 (cross-repo smoke) remains
+status: phases 1-4 shipped 2026-05-02. Phase 1 = ix MCP tool (ix:1d9bad2). Phase 2 = GA Prime Radiant integration (ga:158d9da). Phase 3 = governance schema + registry (demerzel:cb78692, ix submodule bump 625b1a9). Phase 4 = data-layer contract test (ix-agent:tests/voicings_payload_contract.rs). Visual smoke (Three.js render in scene) deferred to manual browser verification — headless Chrome/Edge can't capture the GA Vite SPA reliably.
 ---
 
 # Push the voicing cloud to GA's Prime Radiant in a separate scene area
