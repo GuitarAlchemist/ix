@@ -64,16 +64,17 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let data_dir = cli
-        .data
-        .canonicalize()
-        .unwrap_or_else(|_| cli.data.clone());
+    let data_dir = cli.data.canonicalize().unwrap_or_else(|_| cli.data.clone());
     let corpus_dir = cli
         .corpus
         .canonicalize()
         .unwrap_or_else(|_| cli.corpus.clone());
-    CORPUS_DIR.set(corpus_dir.clone()).expect("CORPUS_DIR set once");
-    CORPUS_CACHE.set(Mutex::new(HashMap::new())).expect("CORPUS_CACHE set once");
+    CORPUS_DIR
+        .set(corpus_dir.clone())
+        .expect("CORPUS_DIR set once");
+    CORPUS_CACHE
+        .set(Mutex::new(HashMap::new()))
+        .expect("CORPUS_CACHE set once");
 
     if let Err(e) = ensure_cluster_assignments(&data_dir) {
         eprintln!("warning: could not derive {CLUSTER_ASSIGNMENTS}: {e}");
@@ -126,10 +127,20 @@ fn handle(mut stream: TcpStream, data_dir: &Path) -> std::io::Result<()> {
     }
 
     if path == "/" || path == "/index.html" {
-        return write_response(&mut stream, 200, "text/html; charset=utf-8", INDEX_HTML.as_bytes());
+        return write_response(
+            &mut stream,
+            200,
+            "text/html; charset=utf-8",
+            INDEX_HTML.as_bytes(),
+        );
     }
     if path == "/3d" || path == "/3d.html" {
-        return write_response(&mut stream, 200, "text/html; charset=utf-8", INDEX_3D_HTML.as_bytes());
+        return write_response(
+            &mut stream,
+            200,
+            "text/html; charset=utf-8",
+            INDEX_3D_HTML.as_bytes(),
+        );
     }
 
     // Lazy-load metadata for a single voicing from `state/voicings/
@@ -158,7 +169,9 @@ fn handle(mut stream: TcpStream, data_dir: &Path) -> std::io::Result<()> {
                 let mut buf = vec![0u8; 64 * 1024];
                 loop {
                     let n = f.read(&mut buf)?;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     stream.write_all(&buf[..n])?;
                 }
                 Ok(())
@@ -207,8 +220,7 @@ fn serve_voicing_lookup(stream: &mut TcpStream, id: &str) -> std::io::Result<()>
         return write_response(stream, 404, "text/plain", b"voicing id out of range");
     }
 
-    let body = serde_json::to_vec(&corpus[idx])
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let body = serde_json::to_vec(&corpus[idx]).map_err(std::io::Error::other)?;
     write!(
         stream,
         "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n",
@@ -230,7 +242,12 @@ fn parse_voicing_id(id: &str) -> Option<(String, usize)> {
     None
 }
 
-fn write_response(stream: &mut TcpStream, status: u16, ct: &str, body: &[u8]) -> std::io::Result<()> {
+fn write_response(
+    stream: &mut TcpStream,
+    status: u16,
+    ct: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
@@ -279,7 +296,10 @@ fn ensure_cluster_assignments(data_dir: &Path) -> std::io::Result<()> {
     if !layout_path.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("{} missing — run `cargo run -p ix-voicings -- viz-precompute`", layout_path.display()),
+            format!(
+                "{} missing — run `cargo run -p ix-voicings -- viz-precompute`",
+                layout_path.display()
+            ),
         ));
     }
 
@@ -307,7 +327,9 @@ fn ensure_cluster_assignments(data_dir: &Path) -> std::io::Result<()> {
         let Some(rest) = row.global_id.strip_prefix(&format!("{}_v", row.instrument)) else {
             continue;
         };
-        let Ok(id): Result<usize, _> = rest.parse() else { continue; };
+        let Ok(id): Result<usize, _> = rest.parse() else {
+            continue;
+        };
 
         let cluster_bucket = cluster_by_inst.entry(row.instrument.clone()).or_default();
         if cluster_bucket.len() <= id {
@@ -322,9 +344,12 @@ fn ensure_cluster_assignments(data_dir: &Path) -> std::io::Result<()> {
         family_bucket[id] = row.chord_family_id;
     }
 
-    let assignments = ClusterAssignments { clusters, cluster_by_inst, family_by_inst };
-    let serialized = serde_json::to_vec(&assignments)
-        .map_err(std::io::Error::other)?;
+    let assignments = ClusterAssignments {
+        clusters,
+        cluster_by_inst,
+        family_by_inst,
+    };
+    let serialized = serde_json::to_vec(&assignments).map_err(std::io::Error::other)?;
     std::fs::write(&out_path, &serialized)?;
 
     println!(
@@ -376,7 +401,10 @@ fn ensure_position_buffer(data_dir: &Path) -> std::io::Result<()> {
     if !layout_path.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("{} missing — run `cargo run -p ix-voicings -- viz-precompute`", layout_path.display()),
+            format!(
+                "{} missing — run `cargo run -p ix-voicings -- viz-precompute`",
+                layout_path.display()
+            ),
         ));
     }
 
@@ -394,10 +422,17 @@ fn ensure_position_buffer(data_dir: &Path) -> std::io::Result<()> {
     let mut max = [f32::NEG_INFINITY; 3];
     for row in rows {
         for k in 0..3 {
-            if row.position[k] < min[k] { min[k] = row.position[k]; }
-            if row.position[k] > max[k] { max[k] = row.position[k]; }
+            if row.position[k] < min[k] {
+                min[k] = row.position[k];
+            }
+            if row.position[k] > max[k] {
+                max[k] = row.position[k];
+            }
         }
-        by_inst.entry(row.instrument).or_default().push(row.position);
+        by_inst
+            .entry(row.instrument)
+            .or_default()
+            .push(row.position);
     }
 
     // Concatenate in a stable order so the meta offsets stay deterministic.
@@ -406,21 +441,30 @@ fn ensure_position_buffer(data_dir: &Path) -> std::io::Result<()> {
     let mut blocks: Vec<InstrumentBlock> = Vec::new();
     let mut cursor = 0usize;
     for name in order {
-        let Some(block) = by_inst.remove(name) else { continue; };
+        let Some(block) = by_inst.remove(name) else {
+            continue;
+        };
         let count = block.len();
         for pos in &block {
             for v in pos {
                 buf.extend_from_slice(&v.to_le_bytes());
             }
         }
-        blocks.push(InstrumentBlock { name: name.to_string(), offset: cursor, count });
+        blocks.push(InstrumentBlock {
+            name: name.to_string(),
+            offset: cursor,
+            count,
+        });
         cursor += count;
     }
 
     std::fs::write(&bin_path, &buf)?;
-    let meta = PositionMeta { total: cursor, instruments: blocks, bounds: Bounds { min, max } };
-    let meta_json = serde_json::to_vec_pretty(&meta)
-        .map_err(std::io::Error::other)?;
+    let meta = PositionMeta {
+        total: cursor,
+        instruments: blocks,
+        bounds: Bounds { min, max },
+    };
+    let meta_json = serde_json::to_vec_pretty(&meta).map_err(std::io::Error::other)?;
     std::fs::write(&meta_path, &meta_json)?;
 
     println!(
