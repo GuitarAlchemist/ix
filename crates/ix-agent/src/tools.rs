@@ -2204,6 +2204,36 @@ Example 2 — "cluster crates by complexity then classify":
         });
 
         self.tools.push(Tool {
+            name: "ix_voicings_payload",
+            description: "Returns a `voicings.payload.v1` JSON payload that tells GA's Prime Radiant (or any consumer) where to fetch the binary voicing-positions buffer and how to render it. Reuses the binary buffer pre-derived by `serve_viz` (`voicing-positions.bin` + `.meta.json`). The caller passes overrides; this tool does no I/O. See docs/plans/2026-05-02-voicings-in-prime-radiant.md.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene_offset": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "[x,y,z] translation for the cloud root. Default [200,0,0] keeps it clear of the governance graph at origin."
+                    },
+                    "default_spread": {
+                        "type": "number",
+                        "description": "Initial per-axis jitter to spread the densely-packed cluster knots. 0 = raw positions. Default 1.5."
+                    },
+                    "default_point_size": {
+                        "type": "number",
+                        "description": "Initial Three.js PointsMaterial.size. Default 0.3."
+                    },
+                    "serve_url": {
+                        "type": "string",
+                        "description": "Base URL where serve_viz is reachable. Default `http://127.0.0.1:8765`. Override when GA + ix run on different hosts (start serve_viz with --bind 0.0.0.0)."
+                    }
+                }
+            }),
+            handler: handlers::voicings_payload,
+        });
+
+        self.tools.push(Tool {
             name: "ix_tars_bridge",
             description: "Cross-repo bridge to TARS. Prepares ix analysis results (trace stats, pattern data, grammar weights) in the format TARS expects for ingestion. Returns structured payload ready for TARS tools (ingest_ga_traces, run_promotion_pipeline).",
             input_schema: json!({

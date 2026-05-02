@@ -30,6 +30,12 @@ const POSITIONS_META: &str = "voicing-positions.meta.json";
 #[derive(Parser, Debug)]
 #[command(about = "Serve the ix-voicings t-SNE viewer on localhost")]
 struct Cli {
+    /// Bind address. Defaults to 127.0.0.1 so the demo is reachable only
+    /// from this machine. Pass 0.0.0.0 to expose it on the LAN — needed
+    /// when GA's Prime Radiant runs on a different host than ix.
+    #[arg(long, default_value = "127.0.0.1")]
+    bind: String,
+
     /// Bind port (0 = pick a free one).
     #[arg(long, default_value_t = 8765)]
     port: u16,
@@ -55,8 +61,8 @@ fn main() {
         eprintln!("         (the 3D view will be unavailable)");
     }
 
-    let listener = TcpListener::bind(("127.0.0.1", cli.port))
-        .unwrap_or_else(|e| panic!("bind 127.0.0.1:{}: {e}", cli.port));
+    let listener = TcpListener::bind((cli.bind.as_str(), cli.port))
+        .unwrap_or_else(|e| panic!("bind {}:{}: {e}", cli.bind, cli.port));
     let addr = listener.local_addr().expect("local_addr");
     println!("serving viewer at  http://{addr}/");
     println!("                   data dir: {}", data_dir.display());

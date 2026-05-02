@@ -5260,3 +5260,89 @@ pub fn autoresearch_run(params: Value) -> Result<Value, String> {
         },
     }))
 }
+
+/// Returns a `voicings.payload.v1` JSON payload describing where to fetch
+/// the binary voicing-positions buffer and how to render it. Used by the
+/// GA Prime Radiant integration (see
+/// docs/plans/2026-05-02-voicings-in-prime-radiant.md). This handler does
+/// no I/O — it just synthesises the contract from caller-supplied (or
+/// default) parameters. The caller is responsible for pointing
+/// `serve_url` at a reachable serve_viz instance.
+pub fn voicings_payload(params: Value) -> Result<Value, String> {
+    let scene_offset = params
+        .get("scene_offset")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_f64())
+                .collect::<Vec<f64>>()
+        })
+        .filter(|v| v.len() == 3)
+        .unwrap_or_else(|| vec![200.0, 0.0, 0.0]);
+
+    let default_spread = params
+        .get("default_spread")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.5);
+
+    let default_point_size = params
+        .get("default_point_size")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.3);
+
+    let serve_url = params
+        .get("serve_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("http://127.0.0.1:8765")
+        .trim_end_matches('/');
+
+    Ok(json!({
+        "schema": "voicings.payload.v1",
+        "format": "binary-positions+meta",
+        "positions_url": format!("{serve_url}/data/voicing-positions.bin"),
+        "meta_url": format!("{serve_url}/data/voicing-positions.meta.json"),
+        "scene_offset": scene_offset,
+        "default_spread": default_spread,
+        "default_point_size": default_point_size,
+    }))
+}
+
+#[cfg(test)]
+mod voicings_payload_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_plan_doc() {
+        let out = voicings_payload(json!({})).expect("ok");
+        assert_eq!(out["schema"], "voicings.payload.v1");
+        assert_eq!(out["format"], "binary-positions+meta");
+        assert_eq!(out["positions_url"], "http://127.0.0.1:8765/data/voicing-positions.bin");
+        assert_eq!(out["meta_url"], "http://127.0.0.1:8765/data/voicing-positions.meta.json");
+        assert_eq!(out["scene_offset"], json!([200.0, 0.0, 0.0]));
+        assert_eq!(out["default_spread"], 1.5);
+        assert_eq!(out["default_point_size"], 0.3);
+    }
+
+    #[test]
+    fn caller_overrides_apply() {
+        let out = voicings_payload(json!({
+            "scene_offset": [0.0, 0.0, 50.0],
+            "default_spread": 0.0,
+            "default_point_size": 1.2,
+            "serve_url": "http://demo.local:9000/",
+        })).expect("ok");
+        assert_eq!(out["scene_offset"], json!([0.0, 0.0, 50.0]));
+        assert_eq!(out["default_spread"], 0.0);
+        assert_eq!(out["default_point_size"], 1.2);
+        // Trailing slash gets stripped.
+        assert_eq!(out["positions_url"], "http://demo.local:9000/data/voicing-positions.bin");
+    }
+
+    #[test]
+    fn malformed_offset_falls_back_to_default() {
+        // Two-element offset is invalid (must be 3D); handler should fall
+        // back to the default rather than emitting nonsense to the wire.
+        let out = voicings_payload(json!({"scene_offset": [1.0, 2.0]})).expect("ok");
+        assert_eq!(out["scene_offset"], json!([200.0, 0.0, 0.0]));
+    }
+}
