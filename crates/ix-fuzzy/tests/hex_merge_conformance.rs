@@ -1,21 +1,20 @@
-//! Hex-merge conformance test suite — IX-side mirror of
-//! `hari/crates/hari-lattice/tests/hex_merge_conformance.rs`.
+//! Hex-merge conformance test suite — IX-side runner against the
+//! canonical Demerzel fixture corpus.
 //!
-//! Loads the same JSON fixtures as the Hari test (copied from
-//! `hari/fixtures/hex-merge/` into `tests/fixtures/hex-merge/` here)
-//! and asserts that `ix_fuzzy::observations::merge` produces output
-//! matching the embedded expected block. When both this test and the
-//! Hari-side test pass against the same corpus, byte-equivalence
-//! between the two implementations is proven by transitivity.
+//! Loads JSON fixtures from `Demerzel/fixtures/hex-merge/` (reached
+//! here through the existing `governance/demerzel` submodule) and
+//! asserts that `ix_fuzzy::observations::merge` produces output
+//! matching the embedded expected block. When both this test and
+//! the analogous Hari-side test
+//! (`hari/crates/hari-lattice/tests/hex_merge_conformance.rs`) pass
+//! against the same corpus, byte-equivalence between the two
+//! implementations is proven by transitivity.
 //!
-//! See `tests/fixtures/hex-merge/README.md` for the fixture schema.
+//! See `Demerzel/fixtures/hex-merge/README.md` for the fixture
+//! schema and the canonical-vs-mirror policy.
 //! `ix-types::Hexavalent` already uses the single-letter wire format
 //! (`"T"`/`"P"`/`"U"`/`"D"`/`"F"`/`"C"`) so the fixtures load
 //! directly without an adapter.
-//!
-//! The canonical home for these fixtures should eventually be
-//! `Demerzel/fixtures/hex-merge/` so both consumer repos pull from
-//! one source. Until that lands, this is a copy.
 
 use ix_fuzzy::observations::{merge, HexObservation};
 use ix_types::Hexavalent;
@@ -110,9 +109,17 @@ struct ExpectedDistribution {
 const TOL: f64 = 1e-9;
 
 fn fixture_dir() -> PathBuf {
+    // Canonical home is `Demerzel/fixtures/hex-merge/`, reached here
+    // via the existing `governance/demerzel` submodule. From the
+    // crate manifest at `crates/ix-fuzzy/`, that's two parents up
+    // to the workspace root, then into the submodule.
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set in tests");
     Path::new(&manifest)
-        .join("tests")
+        .ancestors()
+        .nth(2)
+        .expect("workspace root above crate")
+        .join("governance")
+        .join("demerzel")
         .join("fixtures")
         .join("hex-merge")
 }
