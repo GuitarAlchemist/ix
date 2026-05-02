@@ -19,6 +19,19 @@
   #controls { position: fixed; top: 12px; right: 12px; padding: 10px 14px; background: rgba(20,24,30,0.85); border: 1px solid #2a313b; border-radius: 6px; }
   #controls label { display: block; margin: 4px 0; font-size: 11px; color: #8a93a0; }
   #controls input[type=checkbox] { margin-right: 6px; }
+  #region { position: fixed; bottom: 36px; right: 12px; padding: 10px 14px; background: rgba(20,24,30,0.92); border: 1px solid #2a313b; border-radius: 6px; max-width: 360px; max-height: 60vh; overflow: auto; display: none; }
+  #region h2 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: #fff; }
+  #region .summary { color: #aab2bf; font-size: 11px; margin-bottom: 8px; }
+  #region .summary span { display: inline-block; margin-right: 10px; }
+  #region .summary i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+  #region table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  #region td { padding: 2px 6px 2px 0; color: #aab2bf; font-family: ui-monospace, monospace; vertical-align: top; }
+  #region td.id { color: #d6dce4; white-space: nowrap; }
+  #region td.name { color: #fff; }
+  #region .more { color: #6a7280; font-size: 11px; margin-top: 6px; }
+  #region .close { position: absolute; top: 6px; right: 8px; cursor: pointer; color: #6a7280; font-size: 14px; }
+  #region .close:hover { color: #fff; }
+  .selection-marker { position: fixed; pointer-events: none; border: 1px solid rgba(214,220,228,0.7); border-radius: 50%; }
 </style>
 </head>
 <body>
@@ -38,8 +51,10 @@
   <label><input type="checkbox" id="showUkulele" checked>ukulele</label>
   <label><input type="checkbox" id="showClusters" checked>cluster labels</label>
 </div>
-<div id="status">scroll to zoom · drag to pan · hover for chord</div>
+<div id="status">scroll to zoom · drag to pan · hover for chord · click for region</div>
 <div id="tooltip"></div>
+<div id="region"></div>
+<div id="selectionMarker" class="selection-marker" style="display:none"></div>
 
 <script>
 "use strict";
@@ -53,9 +68,10 @@ const STYLES = {
   bass:    { color: "#7bd88f", radius: 2.0, alpha: 0.85 },
   ukulele: { color: "#f5a04a", radius: 2.0, alpha: 0.85 },
 };
-// Z-order: dominant first, minorities on top. Within minorities, bass last
-// so it wins ties against ukulele (bass is the smaller of the two).
-const RENDER_ORDER = ["guitar", "ukulele", "bass"];
+// Selection radius (pixels) for click-to-explore-region.
+const REGION_RADIUS_PX = 40;
+// Cap how many neighbours we list in the region panel (keeps the DOM cheap).
+const REGION_MAX_LIST = 30;
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d", { alpha: false });
@@ -63,11 +79,15 @@ const meta = document.getElementById("meta");
 const tooltip = document.getElementById("tooltip");
 
 let points = [];      // {id, instrument, x, y, sx, sy} -- sx/sy are screen
+let guitarIdx = [];   // indices of guitar points (drawn first, faded background)
+let minorityIdx = []; // indices of bass+ukulele points, shuffled once at load
+                      // so neither color systematically wins occlusion ties
 let details = {};     // "guitar_v0042" -> details row
 let clusters = [];    // cluster-layout array (3D pts; we use [0] and [2] as x/y)
 let bounds = null;    // {minx, maxx, miny, maxy}
 let view = { tx: 0, ty: 0, scale: 1 };
 let dragging = null;
+let dragMoved = false;
 let visible = { guitar: true, bass: true, ukulele: true };
 let showClusters = true;
 
@@ -106,18 +126,35 @@ function render() {
   ctx.fillStyle = "#0b0d10";
   ctx.fillRect(0, 0, innerWidth, innerHeight);
 
-  for (const inst of RENDER_ORDER) {
-    if (!visible[inst]) continue;
-    const style = STYLES[inst];
-    ctx.fillStyle = style.color;
-    ctx.globalAlpha = style.alpha;
-    const r = style.radius;
-    const d = r * 2;
-    for (const p of points) {
-      if (p.instrument !== inst) continue;
+  // 1. Guitar background — uniform style, single fillStyle/alpha set.
+  if (visible.guitar) {
+    const s = STYLES.guitar;
+    ctx.fillStyle = s.color;
+    ctx.globalAlpha = s.alpha;
+    const r = s.radius, d = r * 2;
+    for (const i of guitarIdx) {
+      const p = points[i];
       if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
       ctx.fillRect(p.sx - r, p.sy - r, d, d);
     }
+  }
+
+  // 2. Minorities in shuffled order so neither color systematically occludes
+  //    the other. fillStyle/alpha switch only when the instrument changes.
+  let lastInst = null;
+  let r2 = 0, d2 = 0;
+  for (const i of minorityIdx) {
+    const p = points[i];
+    if (!visible[p.instrument]) continue;
+    if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
+    if (p.instrument !== lastInst) {
+      const s = STYLES[p.instrument];
+      ctx.fillStyle = s.color;
+      ctx.globalAlpha = s.alpha;
+      r2 = s.radius; d2 = r2 * 2;
+      lastInst = p.instrument;
+    }
+    ctx.fillRect(p.sx - r2, p.sy - r2, d2, d2);
   }
   ctx.globalAlpha = 1;
 
@@ -199,11 +236,18 @@ canvas.addEventListener("mousemove", (e) => {
 });
 
 canvas.addEventListener("mousedown", (e) => {
-  dragging = { x: e.clientX, y: e.clientY };
+  dragging = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY };
+  dragMoved = false;
   canvas.style.cursor = "grabbing";
   tooltip.style.display = "none";
 });
-addEventListener("mouseup", () => {
+addEventListener("mouseup", (e) => {
+  if (dragging) {
+    // A real drag moves >3px; anything tighter is a click.
+    const dx = e.clientX - dragging.startX;
+    const dy = e.clientY - dragging.startY;
+    if (Math.hypot(dx, dy) < 4) showRegion(e.clientX, e.clientY);
+  }
   dragging = null;
   canvas.style.cursor = "crosshair";
 });
@@ -228,6 +272,79 @@ document.getElementById("showClusters").addEventListener("change", (e) => {
   showClusters = e.target.checked; render();
 });
 
+const region = document.getElementById("region");
+const selectionMarker = document.getElementById("selectionMarker");
+
+function showRegion(mx, my) {
+  // Find every visible point within REGION_RADIUS_PX of the click.
+  const r2 = REGION_RADIUS_PX * REGION_RADIUS_PX;
+  const hits = [];
+  for (const p of points) {
+    if (!visible[p.instrument]) continue;
+    const dx = p.sx - mx, dy = p.sy - my;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < r2) hits.push({ p, d2 });
+  }
+  if (hits.length === 0) {
+    region.style.display = "none";
+    selectionMarker.style.display = "none";
+    return;
+  }
+  hits.sort((a, b) => a.d2 - b.d2);
+
+  // Per-instrument count.
+  const counts = { guitar: 0, bass: 0, ukulele: 0 };
+  for (const h of hits) counts[h.p.instrument]++;
+
+  // Pull a sample of names from voicings that have details, prioritising
+  // closer hits and trying to spread across instruments.
+  const named = [];
+  for (const h of hits) {
+    if (named.length >= REGION_MAX_LIST) break;
+    const key = h.p.instrument + "_v" + String(h.p.id).padStart(4, "0");
+    const d = details[key];
+    if (d) named.push({ key, d, dist: Math.sqrt(h.d2) });
+  }
+
+  let html = '<span class="close" title="dismiss">×</span>';
+  html += `<h2>${hits.length} voicing${hits.length === 1 ? "" : "s"} within ${REGION_RADIUS_PX}px</h2>`;
+  html += '<div class="summary">';
+  for (const inst of ["guitar", "bass", "ukulele"]) {
+    if (counts[inst] === 0) continue;
+    html += `<span><i style="background:${STYLES[inst].color}"></i>${inst} ${counts[inst]}</span>`;
+  }
+  html += "</div>";
+  if (named.length > 0) {
+    html += "<table>";
+    for (const n of named) {
+      const fingering = n.d.f ? n.d.f.join(" ") : "—";
+      html += `<tr><td class="id">${n.key}</td><td class="name">${n.d.n || "?"}</td><td>${fingering}</td></tr>`;
+    }
+    html += "</table>";
+    const detailedTotal = hits.filter(h => details[h.p.instrument + "_v" + String(h.p.id).padStart(4, "0")]).length;
+    if (detailedTotal > named.length) {
+      html += `<div class="more">+ ${detailedTotal - named.length} more with metadata, ${hits.length - detailedTotal} without</div>`;
+    } else if (hits.length > named.length) {
+      html += `<div class="more">+ ${hits.length - named.length} without metadata</div>`;
+    }
+  } else {
+    html += `<div class="more">no metadata for any voicing in this region (try the dense blue clusters)</div>`;
+  }
+  region.innerHTML = html;
+  region.style.display = "block";
+  region.querySelector(".close").addEventListener("click", () => {
+    region.style.display = "none";
+    selectionMarker.style.display = "none";
+  });
+
+  // Draw a selection circle so the user remembers what they clicked.
+  selectionMarker.style.display = "block";
+  selectionMarker.style.left = (mx - REGION_RADIUS_PX) + "px";
+  selectionMarker.style.top = (my - REGION_RADIUS_PX) + "px";
+  selectionMarker.style.width = (REGION_RADIUS_PX * 2) + "px";
+  selectionMarker.style.height = (REGION_RADIUS_PX * 2) + "px";
+}
+
 async function fetchJSON(url, label) {
   meta.textContent = "loading " + label + "…";
   const res = await fetch(url);
@@ -241,13 +358,23 @@ async function main() {
     const tsne = await fetchJSON("data/voicings-tsne-313k-perp80.json", "t-SNE points");
     points = tsne.points;
     let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
-    for (const p of points) {
+    guitarIdx = [];
+    minorityIdx = [];
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
       if (p.x < minx) minx = p.x;
       if (p.x > maxx) maxx = p.x;
       if (p.y < miny) miny = p.y;
       if (p.y > maxy) maxy = p.y;
+      if (p.instrument === "guitar") guitarIdx.push(i);
+      else minorityIdx.push(i);
     }
     bounds = { minx, maxx, miny, maxy };
+    // Fisher-Yates shuffle so bass and ukulele get fair occlusion ties.
+    for (let i = minorityIdx.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [minorityIdx[i], minorityIdx[j]] = [minorityIdx[j], minorityIdx[i]];
+    }
 
     const detailsArr = await fetchJSON("data/voicing-details.json", "voicing details");
     for (const d of detailsArr) details[d.g] = d;
