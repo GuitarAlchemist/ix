@@ -46,8 +46,8 @@ async fn handle_client(stream: TcpStream, cache: Arc<Cache>) -> std::io::Result<
         let trimmed = line.trim();
 
         // RESP protocol: commands start with *N (array of N bulk strings)
-        if trimmed.starts_with('*') {
-            let num_args: usize = trimmed[1..].parse().unwrap_or(0);
+        if let Some(rest) = trimmed.strip_prefix('*') {
+            let num_args: usize = rest.parse().unwrap_or(0);
             let mut args = Vec::with_capacity(num_args);
 
             for _ in 0..num_args {

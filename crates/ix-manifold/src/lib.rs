@@ -350,7 +350,7 @@ impl BarnesHutTsne {
         self
     }
     pub fn with_target_dim(mut self, d: u8) -> Self {
-        assert!(d >= 1 && d <= 3, "target_dim must be 1..=3 (got {d})");
+        assert!((1..=3).contains(&d), "target_dim must be 1..=3 (got {d})");
         self.target_dim = d;
         self
     }
