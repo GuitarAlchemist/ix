@@ -2,7 +2,7 @@
 date: 2026-05-02
 reversibility: one-way-door (schema published to GA + governance registry)
 revisit-trigger: GA users want to interact with voicings beyond view-and-pan, OR voicing-positions schema needs a breaking change, OR Prime Radiant adds a second non-governance dataset (need a generic loader pattern)
-status: phase 1 shipped 2026-05-02 (ix_voicings_payload MCP tool + serve_viz --bind); phases 2-4 pending GA-side work
+status: phases 1-3 shipped 2026-05-02 (ix MCP tool 1d9bad2; GA Prime Radiant integration 8187092 [unpushed]; governance schema + registry cb78692); phase 4 (cross-repo smoke) remains
 ---
 
 # Push the voicing cloud to GA's Prime Radiant in a separate scene area
