@@ -87,6 +87,7 @@ const EXPECTED: &[&str] = &[
     "ix_tsne",
     "ix_triage_session",
     "ix_viterbi",
+    "ix_voicings_payload",
 ];
 
 fn exposed_names() -> HashSet<String> {
@@ -135,9 +136,10 @@ fn parity_expected_count() {
     // ix_optick_search + ix_code_smells +
     // ix_grothendieck_delta + ix_grothendieck_nearby + ix_grothendieck_path +
     // ix_autoresearch_run = 68. + ix_tsne (2026-04-29) = 69.
+    // + ix_voicings_payload (2026-05-02, voicings -> Prime Radiant Phase 1) = 70.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 69);
+    assert_eq!(EXPECTED.len(), 70);
 }
 
 #[test]
