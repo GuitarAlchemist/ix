@@ -44,8 +44,18 @@
 <script>
 "use strict";
 
-const COLORS = { guitar: "#4ea1ff", bass: "#7bd88f", ukulele: "#f5a04a" };
-const POINT_RADIUS = 1.4;
+// Per-instrument render weights: guitar dominates the corpus (~95%) so we
+// draw it small and translucent as background, then layer the minorities
+// (bass, ukulele — ~2.5% each) on top with bigger, brighter dots so they
+// don't get buried under the guitar fill.
+const STYLES = {
+  guitar:  { color: "#4ea1ff", radius: 1.0, alpha: 0.35 },
+  bass:    { color: "#7bd88f", radius: 2.0, alpha: 0.85 },
+  ukulele: { color: "#f5a04a", radius: 2.0, alpha: 0.85 },
+};
+// Z-order: dominant first, minorities on top. Within minorities, bass last
+// so it wins ties against ukulele (bass is the smaller of the two).
+const RENDER_ORDER = ["guitar", "ukulele", "bass"];
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d", { alpha: false });
@@ -96,16 +106,17 @@ function render() {
   ctx.fillStyle = "#0b0d10";
   ctx.fillRect(0, 0, innerWidth, innerHeight);
 
-  // Render in instrument order so the smaller groups (ukulele, bass) draw on top.
-  const order = ["guitar", "bass", "ukulele"];
-  for (const inst of order) {
+  for (const inst of RENDER_ORDER) {
     if (!visible[inst]) continue;
-    ctx.fillStyle = COLORS[inst];
-    ctx.globalAlpha = 0.55;
+    const style = STYLES[inst];
+    ctx.fillStyle = style.color;
+    ctx.globalAlpha = style.alpha;
+    const r = style.radius;
+    const d = r * 2;
     for (const p of points) {
       if (p.instrument !== inst) continue;
       if (p.sx < -2 || p.sx > innerWidth + 2 || p.sy < -2 || p.sy > innerHeight + 2) continue;
-      ctx.fillRect(p.sx - POINT_RADIUS, p.sy - POINT_RADIUS, POINT_RADIUS * 2, POINT_RADIUS * 2);
+      ctx.fillRect(p.sx - r, p.sy - r, d, d);
     }
   }
   ctx.globalAlpha = 1;
