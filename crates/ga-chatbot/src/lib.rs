@@ -1,4 +1,17 @@
-//! `ga-chatbot` — domain-specific voicing chatbot with deterministic QA harness.
+//! `ga-chatbot` — Rust QA harness + MCP bridge for the GA chatbot.
+//!
+//! **Naming note:** despite the crate name, this is **not** the production
+//! Guitar Alchemist chatbot. The user-facing chatbot lives in the `ga` repo
+//! (`Apps/ga-server/GaApi/Controllers/NebulaChatController.cs` and friends).
+//! This crate exists to *test* the GA chatbot adversarially using IX
+//! primitives — `ix-sanitize` (prompt injection), `ix-bracelet` (pitch-class
+//! algebra grounding), `ix-game::nash` (Shapley judge aggregation), and
+//! `ix-fuzzy` (adversarial corpus). It also ships a Rust MCP bridge that
+//! spawns the GA + IX MCP servers as children and proxies tool calls.
+//!
+//! It is named `ga-chatbot` because every test it runs targets the GA
+//! chatbot. Rename to `ix-chatbot-harness` if the boundary ever causes real
+//! confusion — workspace-internal name, no published consumers.
 //!
 //! A stub MCP server that answers grounded questions about chord voicings on
 //! guitar, bass, and ukulele. Every voicing cited must resolve to a real row
