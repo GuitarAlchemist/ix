@@ -62,6 +62,7 @@ members = [
     "crates/ix-voicings",
     "crates/ix-optick",
     "crates/ix-optick-invariants",
+    "crates/ix-optick-sae",
     "crates/ix-embedding-diagnostics",
     "crates/ix-quality-trend",
     "crates/ix-invariant-coverage",
@@ -160,6 +161,7 @@ ix-memory = { path = "crates/ix-memory", version = "0.1.0" }
 ix-fuzzy = { path = "crates/ix-fuzzy", version = "0.1.0" }
 ix-sanitize = { path = "crates/ix-sanitize", version = "0.1.0" }
 ix-optick = { path = "crates/ix-optick", version = "0.1.0" }
+ix-optick-sae = { path = "crates/ix-optick-sae", version = "0.1.0" }
 ix-embedding-diagnostics = { path = "crates/ix-embedding-diagnostics", version = "0.1.0" }
 ix-quality-trend = { path = "crates/ix-quality-trend", version = "0.1.0" }
 ix-invariant-coverage = { path = "crates/ix-invariant-coverage", version = "0.1.0" }
