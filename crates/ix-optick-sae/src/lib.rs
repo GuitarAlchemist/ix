@@ -38,8 +38,15 @@ pub struct InputMeta {
     pub optick_index_path: String,
     /// Must match `^sha256:[0-9a-f]{64}$`
     pub optick_index_sha: String,
-    /// 240 for OPTIC-K v1.8. Read from EmbeddingSchema.TotalDimension; do not hardcode.
+    /// OPTIC-K embedding TOTAL dimension. 240 for v1.8. Read from
+    /// EmbeddingSchema.TotalDimension; do not hardcode.
     pub optick_dim: u32,
+    /// Dimension the SAE actually trained on (compact OPTK = 124 for v1.8).
+    /// Optional in contract v0.1.x; equal to `optick_dim` if the trainer
+    /// used the full embedding. Disambiguates total-vs-training dim that
+    /// caused PR #82's "118-dim" narrative bug. See GA contract v0.1.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_training_dim: Option<u32>,
     /// "OPTIC-K-v1.8"
     pub schema_version: String,
     pub corpus_size: u64,
@@ -182,6 +189,7 @@ mod tests {
                 optick_index_path: "synthetic".into(),
                 optick_index_sha: format!("sha256:{}", "a".repeat(64)),
                 optick_dim: 240,
+                compact_training_dim: Some(124),
                 schema_version: "OPTIC-K-v1.8".into(),
                 corpus_size: 1000,
                 partitions_used: PHASE1_PARTITIONS.iter().map(|s| s.to_string()).collect(),

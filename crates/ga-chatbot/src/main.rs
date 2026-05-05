@@ -3,6 +3,7 @@
 use clap::{Parser, Subcommand};
 use ga_chatbot::aggregate::{JudgeVerdict, QaResult};
 use ga_chatbot::algebra::{answer_query, AlgebraRequest};
+use ga_chatbot::coverage::{analyze, load_corpus_categories, load_telemetry};
 use ga_chatbot::mcp_bridge::{McpBridge, McpBridgeConfig};
 use ga_chatbot::qa::{
     load_corpus_ids, run_deterministic_checks, run_deterministic_checks_with_config,
@@ -115,6 +116,22 @@ enum Commands {
         /// the QA pipeline.
         #[arg(long)]
         autoresearch_config: Option<PathBuf>,
+    },
+    /// Cluster real telemetry queries, diff against the adversarial corpus,
+    /// and emit proposed test cases for uncovered intents.
+    Coverage {
+        /// Directory of GA voicing-search telemetry (`*.jsonl`).
+        #[arg(long)]
+        telemetry: PathBuf,
+        /// Directory of adversarial corpus categories (`*.jsonl`).
+        #[arg(long)]
+        corpus: PathBuf,
+        /// Output path for the coverage report JSON.
+        #[arg(long, default_value = "coverage-report.json")]
+        output: PathBuf,
+        /// Exit nonzero if coverage_score is below this threshold (CI gate).
+        #[arg(long)]
+        fail_under: Option<f64>,
     },
 }
 
@@ -244,7 +261,65 @@ fn main() {
                 ));
             }
         }
+        Commands::Coverage {
+            telemetry,
+            corpus,
+            output,
+            fail_under,
+        } => {
+            std::process::exit(run_coverage(&telemetry, &corpus, &output, fail_under));
+        }
     }
+}
+
+/// Drive `coverage::analyze` on disk inputs and write a JSON report.
+///
+/// Returns 0 if `fail_under` is None or `coverage_score >= fail_under`,
+/// 1 if the threshold was breached, 2 if writing the report failed.
+fn run_coverage(
+    telemetry_dir: &std::path::Path,
+    corpus_dir: &std::path::Path,
+    output_path: &std::path::Path,
+    fail_under: Option<f64>,
+) -> i32 {
+    let telemetry = load_telemetry(telemetry_dir);
+    let corpus_counts = load_corpus_categories(corpus_dir);
+    eprintln!(
+        "[coverage] {} telemetry queries, {} corpus categories",
+        telemetry.len(),
+        corpus_counts.len()
+    );
+    let report = analyze(telemetry, corpus_counts, chrono::Utc::now().to_rfc3339());
+    let json = match serde_json::to_string_pretty(&report) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[coverage] serialize failed: {e}");
+            return 2;
+        }
+    };
+    if let Err(e) = std::fs::write(output_path, &json) {
+        eprintln!(
+            "[coverage] write {} failed: {e}",
+            output_path.display()
+        );
+        return 2;
+    }
+    eprintln!(
+        "[coverage] {} clusters, {} uncovered, score {:.3}",
+        report.clusters.len(),
+        report.uncovered_clusters.len(),
+        report.coverage_score
+    );
+    if let Some(threshold) = fail_under {
+        if report.coverage_score < threshold {
+            eprintln!(
+                "[coverage] FAIL: coverage_score {:.3} < threshold {:.3}",
+                report.coverage_score, threshold
+            );
+            return 1;
+        }
+    }
+    0
 }
 
 fn read_algebra_query_from_stdin() -> String {
