@@ -3,6 +3,17 @@
 //! A tabbed egui application showcasing ML/math algorithms from
 //! every crate in the workspace.
 
+// Suppress nightly's `float_literal_f32_fallback` lint (issue #154024) at
+// the crate root: ix-demo wraps egui APIs that take `f32` (Points::radius,
+// Line::width, Color32 channels, etc.). The 50+ numeric literals like
+// `.radius(0.5)` are inferred to f32 because the API demands it; the
+// "fallback" the lint flags is the correct type, not a mistake. Adding
+// explicit `_f32` suffixes everywhere would clutter UI code without
+// changing behavior. `unknown_lints` guards against the lint not yet
+// existing on stable toolchains.
+#![allow(unknown_lints)]
+#![allow(float_literal_f32_fallback)]
+
 mod demos;
 
 // Force-link ix-agent's skills module so `linkme::distributed_slice`

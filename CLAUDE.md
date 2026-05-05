@@ -36,6 +36,16 @@ State lives in `state/` — beliefs, PDCA cycles, knowledge packages, snapshots.
 
 For governance details, Demerzel policies, Galactic Protocol contracts, or agent persona requirements, use the `demerzel-*` skills.
 
+## Cross-repo contracts
+
+ix collaborates with sibling repos via JSON-on-disk contracts (the canonical handoff pattern across the GuitarAlchemist ecosystem). Sibling clones are typically peers under the same parent directory:
+
+- **ga** (`../ga/`, .NET / C# / F# / React, music theory + RAG): consumes `state/voicings/optick.index` produced by `ix-voicings` / `ix-optick`; consumes SAE artifacts produced by `ix-optick-sae` per `ga/docs/contracts/2026-05-02-optick-sae-artifact.contract.md` (schema: `ga/docs/contracts/optick-sae-artifact.schema.json`).
+- **Demerzel** (`../Demerzel/`, governance + IXQL): defines constitutions, policies, and the Galactic Protocol; orchestrates the QA Architect tribunal per `ga/docs/contracts/2026-05-02-qa-verdict.contract.md`.
+- **tars** (`../tars/`, F# grammar + metacognition): cross-model theory validator.
+
+Locked-field changes need cross-repo coordination. The `links.supersedes` pattern in `optick-sae-artifact` is how to introduce a non-breaking baseline shift without freezing the schema. Contracts marked v0.1.x are still drafts (Phase 0–3 of their respective plans); only freeze at the explicitly named Phase 4 milestone.
+
 ## Collaboration discipline
 
 Drawn from Karpathy's skill + sohaibt/product-mode (merged, not installed). These apply to non-trivial work only — typos and one-liners skip this.
