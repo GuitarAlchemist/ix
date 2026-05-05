@@ -343,7 +343,7 @@ pub fn run_viz_precompute(instruments: &[Instrument]) -> Result<VizManifest, Voi
             .push(idx);
     }
     let mut sampled_details: Vec<VoicingDetail> = Vec::new();
-    for (_cid, indices) in per_cluster.iter() {
+    for indices in per_cluster.values() {
         let step = (indices.len() / DETAIL_SAMPLE_CAP).max(1);
         for (i, &det_idx) in indices.iter().enumerate() {
             if i % step == 0 {
