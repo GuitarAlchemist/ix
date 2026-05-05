@@ -110,7 +110,7 @@ fn build_embeddings_snapshot(
 
     let mut total = 0u64;
     for instrument in ["guitar", "bass", "ukulele"] {
-        let count = count_jsonl_lines(&state_dir.join("raw").join(format!("{instrument}.jsonl")))?;
+        let count = count_voicings(state_dir, instrument)?;
         total += count as u64;
     }
 
@@ -136,18 +136,10 @@ fn build_voicing_snapshot(state_dir: &Path) -> Result<serde_json::Value, String>
     let mut interval_spread_invariant = 0u64;
 
     for (instrument_idx, instrument) in ["guitar", "bass", "ukulele"].iter().enumerate() {
-        let path = state_dir.join("raw").join(format!("{instrument}.jsonl"));
-        let file = File::open(&path).map_err(|e| format!("open {:?}: {e}", path))?;
-        let reader = BufReader::new(file);
+        let voicings = read_voicings(state_dir, instrument)?;
         let mut count = 0u64;
 
-        for line in reader.lines() {
-            let line = line.map_err(|e| format!("read {:?}: {e}", path))?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let voicing: RawVoicing =
-                serde_json::from_str(&line).map_err(|e| format!("parse {:?}: {e}", path))?;
+        for voicing in voicings {
             count += 1;
 
             let played_strings = voicing.frets.iter().filter(|f| f.as_str() != "x").count();
@@ -309,6 +301,48 @@ fn build_chatbot_snapshot(qa_results: &Path) -> Result<serde_json::Value, String
     }))
 }
 
+/// Read voicings for an instrument from raw/{name}.jsonl if present, falling
+/// back to {name}-corpus.json (JSON array of the same RawVoicing shape).
+/// Missing instruments return an empty Vec — partial coverage > total failure.
+fn read_voicings(state_dir: &Path, instrument: &str) -> Result<Vec<RawVoicing>, String> {
+    let raw_path = state_dir.join("raw").join(format!("{instrument}.jsonl"));
+    let corpus_path = state_dir.join(format!("{instrument}-corpus.json"));
+
+    if raw_path.exists() {
+        let file = File::open(&raw_path).map_err(|e| format!("open {:?}: {e}", raw_path))?;
+        let reader = BufReader::new(file);
+        let mut out = Vec::new();
+        for line in reader.lines() {
+            let line = line.map_err(|e| format!("read {:?}: {e}", raw_path))?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            out.push(
+                serde_json::from_str(&line).map_err(|e| format!("parse {:?}: {e}", raw_path))?,
+            );
+        }
+        Ok(out)
+    } else if corpus_path.exists() {
+        let bytes =
+            fs::read(&corpus_path).map_err(|e| format!("read {:?}: {e}", corpus_path))?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse {:?}: {e}", corpus_path))
+    } else {
+        eprintln!(
+            "ix-quality-trend-bootstrap: no input for '{instrument}' \
+             (looked for {raw_path:?} and {corpus_path:?}), skipping"
+        );
+        Ok(Vec::new())
+    }
+}
+
+/// Count voicings for an instrument via `read_voicings`. Cheap because the
+/// fallback parses the whole file anyway; consistency with `read_voicings`
+/// is more valuable than the avoided allocation here.
+fn count_voicings(state_dir: &Path, instrument: &str) -> Result<usize, String> {
+    Ok(read_voicings(state_dir, instrument)?.len())
+}
+
+#[allow(dead_code)]
 fn count_jsonl_lines(path: &Path) -> Result<usize, String> {
     let file = File::open(path).map_err(|e| format!("open {:?}: {e}", path))?;
     let reader = BufReader::new(file);

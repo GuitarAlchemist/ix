@@ -1,0 +1,22 @@
+[package]
+name = "ix-blast-radius"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools"]
+keywords = ["blast-radius", "qa-architect", "demerzel", "governance"]
+description = "Path-based blast-radius analyzer matching the qa-verdict.blast_radius contract"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+
+[[bin]]
+name = "ix-blast-radius"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"

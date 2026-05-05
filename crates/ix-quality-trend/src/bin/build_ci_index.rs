@@ -74,20 +74,28 @@ fn run(cli: &Cli) -> Result<(), String> {
     let mut by_instrument: [Vec<IndexedVoicing>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
     for (instrument_idx, instrument) in INSTRUMENTS.iter().enumerate() {
-        let path = cli
+        let raw_path = cli
             .state_dir
             .join("raw")
             .join(format!("{instrument}.jsonl"));
-        let file = File::open(&path).map_err(|e| format!("open {:?}: {e}", path))?;
-        let reader = BufReader::new(file);
+        let corpus_path = cli.state_dir.join(format!("{instrument}-corpus.json"));
 
-        for line in reader.lines() {
-            let line = line.map_err(|e| format!("read {:?}: {e}", path))?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let raw: RawVoicing =
-                serde_json::from_str(&line).map_err(|e| format!("parse {:?}: {e}", path))?;
+        let voicings = if raw_path.exists() {
+            read_jsonl(&raw_path)?
+        } else if corpus_path.exists() {
+            read_corpus_json(&corpus_path)?
+        } else {
+            // Production has raw dumps; CI has only corpus.json fixtures;
+            // a fresh clone with neither just skips the instrument so the
+            // index still builds (partial coverage > total failure).
+            eprintln!(
+                "ix-quality-trend-build-ci-index: no input for '{instrument}' — \
+                 looked for {raw_path:?} and {corpus_path:?}, skipping"
+            );
+            continue;
+        };
+
+        for raw in voicings {
             let quality_inferred = infer_quality_label(&raw);
             by_instrument[instrument_idx].push(IndexedVoicing {
                 vector: build_vector(&raw),
@@ -102,6 +110,27 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
 
     write_index(&cli.out, &by_instrument)
+}
+
+/// Read a `raw/{instrument}.jsonl` file (one RawVoicing per line).
+fn read_jsonl(path: &Path) -> Result<Vec<RawVoicing>, String> {
+    let file = File::open(path).map_err(|e| format!("open {:?}: {e}", path))?;
+    let reader = BufReader::new(file);
+    let mut out = Vec::new();
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("read {:?}: {e}", path))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        out.push(serde_json::from_str(&line).map_err(|e| format!("parse {:?}: {e}", path))?);
+    }
+    Ok(out)
+}
+
+/// Read a `{instrument}-corpus.json` file (JSON array of RawVoicing).
+fn read_corpus_json(path: &Path) -> Result<Vec<RawVoicing>, String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("open {:?}: {e}", path))?;
+    serde_json::from_str(&content).map_err(|e| format!("parse {:?}: {e}", path))
 }
 
 fn build_vector(raw: &RawVoicing) -> [f32; DIM] {

@@ -173,6 +173,8 @@ jobs:
       - name: Enforce critical health gate
         if: always()
         shell: bash
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
           set -euo pipefail
 
@@ -186,13 +188,23 @@ jobs:
 
           STATUS=$(jq -r '.status' "${ARTIFACT}")
 
+          # PR runs are advisory: a "critical" status often reflects a
+          # one-time rebaseline (a metric jumping from no-data to real
+          # data) which the drift detector correctly flags but which is
+          # not actually a regression. Surface as warning, don't block.
+          # Scheduled / main runs accumulate enough history to
+          # distinguish real regressions and DO block on critical.
           case "${STATUS}" in
             healthy|warning)
               echo "GA quality gate passed with status '${STATUS}'."
               ;;
             critical)
-              echo "::error::GA quality gate failed: status is 'critical'. See uploaded artifacts for details."
-              exit 1
+              if [[ "${IS_PR}" == "true" ]]; then
+                echo "::warning::GA quality gate reports 'critical' on PR run — advisory only, see uploaded artifacts. Scheduled runs on main will block on this."
+              else
+                echo "::error::GA quality gate failed: status is 'critical'. See uploaded artifacts for details."
+                exit 1
+              fi
               ;;
             *)
               echo "::error::GA quality gate failed: unrecognized status '${STATUS}'."

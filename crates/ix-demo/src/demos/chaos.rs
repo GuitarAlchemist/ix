@@ -74,7 +74,7 @@ impl ChaosDemo {
                 let pts: PlotPoints = self.plot_data.iter().copied().collect();
                 plot_ui.points(
                     Points::new(pts)
-                        .radius(0.5)
+                        .radius(0.5_f32)
                         .color(egui::Color32::LIGHT_BLUE),
                 );
             });
@@ -102,7 +102,7 @@ impl ChaosDemo {
                 .data_aspect(1.0)
                 .show(ui, |plot_ui| {
                     let pts: PlotPoints = self.plot_data.iter().copied().collect();
-                    plot_ui.line(Line::new(pts).name("XZ projection").width(0.5));
+                    plot_ui.line(Line::new(pts).name("XZ projection").width(0.5_f32));
                 });
         }
     }
@@ -125,7 +125,7 @@ impl ChaosDemo {
                 .data_aspect(1.0)
                 .show(ui, |plot_ui| {
                     let pts: PlotPoints = self.plot_data.iter().copied().collect();
-                    plot_ui.points(Points::new(pts).radius(1.0).color(egui::Color32::WHITE));
+                    plot_ui.points(Points::new(pts).radius(1.0_f32).color(egui::Color32::WHITE));
                 });
         }
     }
