@@ -6,8 +6,13 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const RECONSTRUCTION_MSE_GUARDRAIL: f64 = 0.05;
 pub const DEAD_FEATURES_PCT_GUARDRAIL: f64 = 30.0;
 
+// Canonical Phase 1 partition set — similarity-relevant only.
+// IDENTITY (0..6) is excluded because it encodes the lowest pitch's (octave, pitch_class)
+// as identity tags, not similarity features. ROOT (228..240) is included because it
+// carries chord-root identity which is critical for similarity comparisons.
+// Source: state/quality/optick-sae/2026-05-04/optick-sae-artifact.json (canonical baseline).
 pub const PHASE1_PARTITIONS: &[&str] = &[
-    "IDENTITY", "STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL",
+    "STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL", "ROOT",
 ];
 
 // ── Artifact JSON shape (mirrors optick-sae-artifact.schema.json v0.1) ─────────

@@ -16,6 +16,18 @@ pub struct TrainConfig {
     pub retry_note: Option<String>,
 }
 
+/// Platform-appropriate default Python interpreter name.
+/// Windows ships a `python3.exe` Store stub that has no packages; users typically
+/// install via the python.org installer which provides `python.exe`. POSIX
+/// systems follow PEP 394 — `python3` is the canonical name.
+pub const fn default_python_bin() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "python"
+    } else {
+        "python3"
+    }
+}
+
 /// Exit code the Python trainer emits when dead_features_pct > 30%.
 pub const EXIT_DEAD_FEATURES: i32 = 3;
 /// Exit code the Python trainer emits when reconstruction_mse > 0.05.
@@ -54,8 +66,12 @@ pub enum TrainerError {
 ///
 /// If dead_features_pct > 30% the Python process exits with code `EXIT_DEAD_FEATURES` (3)
 /// *without* writing an artifact. The CLI handles the retry loop.
-pub fn run_python_trainer(script: &Path, config: &TrainConfig) -> Result<(), TrainerError> {
-    let mut cmd = Command::new("python3");
+pub fn run_python_trainer(
+    script: &Path,
+    config: &TrainConfig,
+    python_bin: &str,
+) -> Result<(), TrainerError> {
+    let mut cmd = Command::new(python_bin);
     cmd.arg(script)
         .arg("--index")
         .arg(&config.index_path)

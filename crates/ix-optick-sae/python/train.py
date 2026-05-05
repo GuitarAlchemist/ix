@@ -2,11 +2,14 @@
 """
 OPTIC-K Sparse Autoencoder Trainer — Phase 1.
 
-Trains a TopK SAE over the OPTIC-K v1.8 partition slice (118 dims out of 240).
+Trains a TopK SAE over the OPTIC-K v1.8 similarity-partition slice (124 dims out of 240).
 Falls back to a synthetic corpus when optick.index is absent (cloud CI env).
 
-Partition coverage: IDENTITY, STRUCTURE, MORPHOLOGY, CONTEXT, SYMBOLIC, MODAL.
-Skipped for Phase 1: EXTENSIONS, SPECTRAL, HIERARCHY, ATONAL_MODAL, ROOT.
+Partition coverage: STRUCTURE, MORPHOLOGY, CONTEXT, SYMBOLIC, MODAL, ROOT.
+Skipped for Phase 1: IDENTITY (tag-like, not similarity), EXTENSIONS, SPECTRAL,
+HIERARCHY, ATONAL_MODAL.
+
+Aligned to canonical baseline at state/quality/optick-sae/2026-05-04/.
 
 Exit codes (read by Rust orchestrator):
   0  — success; artifact written to --output-dir
@@ -64,7 +67,7 @@ _ALL_PARTITION_SLICES: Dict[str, Tuple[int, int]] = {
 }
 
 PHASE1_PARTITIONS: List[str] = [
-    "IDENTITY", "STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL",
+    "STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL", "ROOT",
 ]
 
 # Global indices of Phase 1 dimensions within the full 240-dim vector.
@@ -73,7 +76,7 @@ PHASE1_GLOBAL_INDICES: List[int] = [
     for name in PHASE1_PARTITIONS
     for i in range(*_ALL_PARTITION_SLICES[name])
 ]
-PHASE1_DIM = len(PHASE1_GLOBAL_INDICES)  # 118
+PHASE1_DIM = len(PHASE1_GLOBAL_INDICES)  # 124
 
 # Local (0-based) slice boundaries inside the 118-dim Phase 1 space.
 _LOCAL_OFFSETS: List[Tuple[str, int, int]] = []
@@ -313,7 +316,7 @@ def train(
     sparsity = float((all_acts > 0).float().mean().item())
 
     # ── Partition purity from decoder weights ─────────────────────────────────
-    W = model.W_dec.detach().cpu().numpy()  # (dict_size, 118)
+    W = model.W_dec.detach().cpu().numpy()  # (dict_size, PHASE1_DIM)
     purity = _partition_purity(W)
     purity_mean = float(np.mean(purity))
     purity_p10 = float(np.percentile(purity, 10))
@@ -419,10 +422,10 @@ def build_artifact(
     retry_note: Optional[str],
 ) -> Dict:
     base = (
-        "Phase 1 smoke run — synthetic 1 000-voicing × 118-dim corpus "
+        f"Phase 1 smoke run — synthetic 1 000-voicing x {PHASE1_DIM}-dim corpus "
         "(optick.index absent in CI env; deviation documented)."
         if is_synthetic
-        else "Phase 1 training run on real OPTIC-K corpus."
+        else f"Phase 1 training run on real OPTIC-K corpus ({PHASE1_DIM}-dim slice)."
     )
     suffix = f" {retry_note}" if retry_note else ""
     narrative = (base + suffix)[:500]
@@ -437,6 +440,7 @@ def build_artifact(
             "optick_index_path": index_path,
             "optick_index_sha": index_sha,
             "optick_dim": OPTIC_TOTAL_DIM,
+            "compact_training_dim": PHASE1_DIM,
             "schema_version": OPTIC_SCHEMA_VERSION,
             "corpus_size": corpus_size,
             "partitions_used": PHASE1_PARTITIONS,

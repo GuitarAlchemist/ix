@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use uuid::{NoContext, Timestamp, Uuid};
 
 use ix_optick_sae::trainer::{
-    run_python_trainer, TrainConfig, TrainerError, EXIT_DEAD_FEATURES,
+    default_python_bin, run_python_trainer, TrainConfig, TrainerError, EXIT_DEAD_FEATURES,
 };
 use ix_optick_sae::{validate_artifact, SaeArtifact, DEAD_FEATURES_PCT_GUARDRAIL};
 
@@ -76,6 +76,13 @@ struct TrainArgs {
     /// Defaults to the python/train.py next to this crate's Cargo.toml.
     #[arg(long, default_value = DEFAULT_PYTHON_SCRIPT)]
     python_script: PathBuf,
+
+    /// Python interpreter to invoke. Default is platform-appropriate
+    /// (`python` on Windows because `python3` typically resolves to the
+    /// Microsoft Store stub; `python3` on POSIX per PEP 394).
+    /// Override to point at a venv: `--python-bin .venv/bin/python`.
+    #[arg(long, default_value_t = default_python_bin().to_string())]
+    python_bin: String,
 }
 
 fn main() {
@@ -110,7 +117,7 @@ fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
         retry_note: None,
     };
 
-    match run_python_trainer(&args.python_script, &config) {
+    match run_python_trainer(&args.python_script, &config, &args.python_bin) {
         Ok(()) => finish(args.output, &artifact_id),
         Err(TrainerError::MseGuardrailExceeded) => {
             eprintln!(
@@ -132,7 +139,7 @@ fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
                 DEAD_FEATURES_PCT_GUARDRAIL
             ));
 
-            match run_python_trainer(&args.python_script, &config) {
+            match run_python_trainer(&args.python_script, &config, &args.python_bin) {
                 Ok(()) => finish(args.output, &artifact_id),
                 Err(TrainerError::MseGuardrailExceeded) => {
                     eprintln!("FAIL: reconstruction_mse > 0.05 on retry — no artifact emitted.");
