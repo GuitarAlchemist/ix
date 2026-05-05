@@ -20,6 +20,7 @@
 
 pub mod aggregate;
 pub mod algebra;
+pub mod coverage;
 pub mod mcp_bridge;
 pub mod qa;
 pub mod shapley;

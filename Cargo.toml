@@ -62,12 +62,14 @@ members = [
     "crates/ix-voicings",
     "crates/ix-optick",
     "crates/ix-optick-invariants",
+    "crates/ix-optick-sae",
     "crates/ix-embedding-diagnostics",
     "crates/ix-quality-trend",
     "crates/ix-invariant-coverage",
     "crates/ix-bracelet",
     "crates/ga-chatbot",
     "crates/ix-autoresearch",
+    "crates/ix-blast-radius",
 ]
 
 [workspace.package]
@@ -160,11 +162,13 @@ ix-memory = { path = "crates/ix-memory", version = "0.1.0" }
 ix-fuzzy = { path = "crates/ix-fuzzy", version = "0.1.0" }
 ix-sanitize = { path = "crates/ix-sanitize", version = "0.1.0" }
 ix-optick = { path = "crates/ix-optick", version = "0.1.0" }
+ix-optick-sae = { path = "crates/ix-optick-sae", version = "0.1.0" }
 ix-embedding-diagnostics = { path = "crates/ix-embedding-diagnostics", version = "0.1.0" }
 ix-quality-trend = { path = "crates/ix-quality-trend", version = "0.1.0" }
 ix-invariant-coverage = { path = "crates/ix-invariant-coverage", version = "0.1.0" }
 ix-bracelet = { path = "crates/ix-bracelet", version = "0.1.0" }
 ix-autoresearch = { path = "crates/ix-autoresearch", version = "0.1.0" }
+ix-blast-radius = { path = "crates/ix-blast-radius", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

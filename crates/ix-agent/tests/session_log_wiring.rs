@@ -5,6 +5,13 @@
 //! Uses its own test binary so the global `session_log_slot` in
 //! `registry_bridge` doesn't leak across unrelated tests in
 //! `parity.rs`. Each `tests/*.rs` file compiles to a separate binary.
+//!
+//! The 4 tests in this file all touch the same global session-log slot
+//! and the shared loop detector; cargo runs tests in a binary in
+//! parallel by default, which produces order-dependent flakes (Linux
+//! and Windows both observed). `TEST_SERIAL` mutex serialises them
+//! within this binary without affecting the rest of the workspace's
+//! parallelism.
 
 use ix_agent::registry_bridge::{
     clear_session_log, dispatch_action, install_session_log, shared_loop_detector,
@@ -12,12 +19,24 @@ use ix_agent::registry_bridge::{
 use ix_agent_core::event::BlockCode;
 use ix_agent_core::{ActionError, AgentAction, ReadContext, SessionEvent};
 use ix_session::SessionLog;
+use std::sync::Mutex;
 use tempfile::tempdir;
+
+static TEST_SERIAL: Mutex<()> = Mutex::new(());
+
+/// Acquire the per-binary serial lock. If a prior test panicked while
+/// holding the lock, recover by stripping the poison — every test in
+/// this file restores global state at the end via `clear_session_log`,
+/// so a poisoned guard does not imply corrupted shared state.
+fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Tier 1 read-only tool: events from an auto-approving dispatch
 /// should land on disk and be replayable via `SessionLog::events`.
 #[test]
 fn dispatch_action_writes_events_to_installed_session_log() {
+    let _serial = serial_guard();
     let dir = tempdir().expect("create tempdir");
     let path = dir.path().join("session.jsonl");
     let log = SessionLog::open(&path).expect("open session log");
@@ -77,6 +96,7 @@ fn dispatch_action_writes_events_to_installed_session_log() {
 /// returning `Block`).
 #[test]
 fn blocked_dispatch_still_persists_approval_metadata() {
+    let _serial = serial_guard();
     let dir = tempdir().expect("create tempdir");
     let path = dir.path().join("blocked.jsonl");
     let log = SessionLog::open(&path).expect("open session log");
@@ -120,6 +140,7 @@ fn blocked_dispatch_still_persists_approval_metadata() {
 /// self-improvement loop without any hand-edited data.
 #[test]
 fn flywheel_round_trip_session_log_to_trace_ingest() {
+    let _serial = serial_guard();
     let dir = tempdir().expect("create tempdir");
     let log_path = dir.path().join("flywheel.jsonl");
     let log = SessionLog::open(&log_path).expect("open session log");
@@ -169,6 +190,7 @@ fn flywheel_round_trip_session_log_to_trace_ingest() {
 /// existing `parity.rs` tests which run without a log.
 #[test]
 fn dispatch_without_installed_log_is_in_memory_only() {
+    let _serial = serial_guard();
     clear_session_log();
     shared_loop_detector().clear_key("ix_stats");
 

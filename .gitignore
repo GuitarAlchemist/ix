@@ -13,6 +13,14 @@ Cargo.lock
 !/state/voicings/raw/.gitkeep
 state/voicings/*-corpus.json
 state/voicings/*-features.json
+# Exceptions: per-instrument corpus fixtures consumed by the adversarial QA
+# workflow (.github/workflows/adversarial-qa.yml) for Layer 1 grounding and
+# by the GA Nightly Quality build_ci_index step. Sized as small samples
+# (~80KB guitar, ~2MB bass, ~1.3MB ukulele); the rebuild bomb scenario
+# (>100MB) needs `git checkout HEAD --` recovery.
+!state/voicings/guitar-corpus.json
+!state/voicings/bass-corpus.json
+!state/voicings/ukulele-corpus.json
 
 # Adversarial QA: regenerable from CI
 state/adversarial/findings.jsonl
