@@ -69,6 +69,7 @@ members = [
     "crates/ix-bracelet",
     "crates/ga-chatbot",
     "crates/ix-autoresearch",
+    "crates/ix-blast-radius",
 ]
 
 [workspace.package]
@@ -167,6 +168,7 @@ ix-quality-trend = { path = "crates/ix-quality-trend", version = "0.1.0" }
 ix-invariant-coverage = { path = "crates/ix-invariant-coverage", version = "0.1.0" }
 ix-bracelet = { path = "crates/ix-bracelet", version = "0.1.0" }
 ix-autoresearch = { path = "crates/ix-autoresearch", version = "0.1.0" }
+ix-blast-radius = { path = "crates/ix-blast-radius", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 
