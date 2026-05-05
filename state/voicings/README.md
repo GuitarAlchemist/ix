@@ -11,28 +11,30 @@ and the OPTIC-K embedding pipeline.
 | `*-progressions.json`     | yes       | Tiny progression seeds                                 |
 | `*-topology.json`         | yes       | Topology graphs                                        |
 | `*-transitions.json`      | yes       | Transition tables                                      |
-| `guitar-corpus.json`      | **yes**   | Small (~80 KB) tracked fixture — adversarial QA needs it for Layer 1 grounding |
-| `*-corpus.json` (others)  | no        | Bass/ukulele corpora — regenerable, can be huge        |
+| `{guitar,bass,ukulele}-corpus.json` | **yes** | Per-instrument corpus fixtures (~80 KB / 2 MB / 1.3 MB) — adversarial QA needs them for Layer 1 grounding, GA Nightly Quality reads them via build_ci_index fallback |
 | `*-features.json`         | no        | OPTIC-K feature vectors — regenerable, can be huge     |
-| `raw/*.jsonl`             | no        | Raw GA CLI dumps                                        |
+| `raw/*.jsonl`             | no        | Raw GA CLI dumps (production-only; CI falls back to `*-corpus.json`) |
 
-`*-corpus.json` and `*-features.json` are gitignored because the
-full-corpus rebuild produces files >100 MB, which exceeds GitHub's
-single-file push limit. **Exception**: `guitar-corpus.json` stays
-tracked at ~80 KB because `.github/workflows/adversarial-qa.yml` loads
-it for Layer 1 grounding — without it, every prompt that cites a
-`guitar_v###` ID fails as "hallucinated voicing ID". The gitignore
-re-includes it via a `!state/voicings/guitar-corpus.json` line.
+`*-features.json` is gitignored because the full-corpus rebuild
+produces files >100 MB, which exceeds GitHub's single-file push limit.
+**Exception**: the three `*-corpus.json` files stay tracked because
+`.github/workflows/adversarial-qa.yml` loads them for Layer 1
+grounding — without them, every prompt that cites a `guitar_v###` /
+`bass_v###` / `ukulele_v###` ID fails as "hallucinated voicing ID".
+GA Nightly Quality's `build_ci_index` step also falls back to these
+when `raw/*.jsonl` dumps are absent (the typical PR scenario). The
+gitignore re-includes them via `!state/voicings/{name}-corpus.json`
+lines.
 
-If a future rebuild bombs `guitar-corpus.json` past ~1 MB, restore the
+If a future rebuild bombs any `*-corpus.json` past ~10 MB, restore the
 canonical small version with:
 
 ```pwsh
 git checkout HEAD -- state/voicings/guitar-corpus.json
 ```
 
-`guitar-features.json` is freely regenerable; the adversarial QA path
-does not consume it.
+`*-features.json` files are freely regenerable; the adversarial QA
+path does not consume them.
 
 ## Regenerating from GA
 
