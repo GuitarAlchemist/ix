@@ -36,9 +36,11 @@ pub struct TelemetryEntry {
 
 /// Coarse intent label assigned by the rule-based classifier.
 ///
-/// Kept intentionally small for v1 — rule-based, not learned. The labels
-/// map 1:1 to recommended adversarial corpus categories so the proposal
-/// loop is deterministic.
+/// Rule-based, not learned. Each label maps 1:1 to a recommended
+/// adversarial corpus category so the proposal loop is deterministic.
+/// v2 adds mood/style/famous-reference buckets surfaced by real
+/// telemetry ("something warm and mellow", "Hendrix chord") that v1
+/// silently routed to out_of_scope/uncategorized.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntentLabel {
@@ -46,6 +48,12 @@ pub enum IntentLabel {
     ScaleQuery,
     VoiceLeading,
     InstrumentSpecific,
+    /// Mood/affect language ("warm", "dark", "ethereal").
+    MoodBased,
+    /// Genre/style tags ("jazz", "blues", "bossa").
+    StyleQuery,
+    /// Artist or song reference ("Hendrix chord", "Beatles voicing").
+    FamousReference,
     OutOfScope,
     NaturalLanguage,
     Uncategorized,
@@ -53,12 +61,21 @@ pub enum IntentLabel {
 
 impl IntentLabel {
     /// Adversarial corpus category most likely to cover this intent.
+    ///
+    /// MoodBased and FamousReference route to `hallucination` because the
+    /// risk is the chatbot fabricating a plausible-but-wrong answer; the
+    /// QA harness should grade restraint, not creativity. StyleQuery
+    /// goes to `graduated` because style/genre tags need stratified
+    /// difficulty, not a single canonical answer.
     pub fn recommended_corpus_category(&self) -> &'static str {
         match self {
             IntentLabel::ChordVoicing => "grounding",
             IntentLabel::ScaleQuery => "grounding",
             IntentLabel::VoiceLeading => "graduated",
             IntentLabel::InstrumentSpecific => "cross-instrument",
+            IntentLabel::MoodBased => "hallucination",
+            IntentLabel::StyleQuery => "graduated",
+            IntentLabel::FamousReference => "hallucination",
             IntentLabel::OutOfScope => "hallucination",
             IntentLabel::NaturalLanguage => "graduated",
             IntentLabel::Uncategorized => "graduated",
@@ -66,11 +83,74 @@ impl IntentLabel {
     }
 }
 
+/// Famous artist/band references that signal a "name-the-chord" intent.
+///
+/// Lowercase; matched as substring after lowercasing the query. Kept
+/// narrow to avoid false positives — extend by telemetry, not guess.
+const FAMOUS_REFERENCES: &[&str] = &[
+    "hendrix",
+    "beatles",
+    "pink floyd",
+    "steely dan",
+    "coltrane",
+    "monk",
+    "metheny",
+    "holdsworth",
+    "wes montgomery",
+    "miles davis",
+    "bowie",
+    "zappa",
+];
+
+/// Style/genre keywords. Lowercase substring match.
+const STYLE_KEYWORDS: &[&str] = &[
+    "jazz",
+    "blues",
+    "rock",
+    "metal",
+    "funk",
+    "bossa",
+    "samba",
+    "swing",
+    "bebop",
+    "fusion",
+    "gospel",
+    "country",
+    "folk",
+    "gypsy",
+    "reggae",
+    "latin",
+    "comping",
+];
+
+/// Mood/affect adjectives. Picked for low overlap with voice-leading
+/// vocabulary ("smooth" stays in VL, not here).
+const MOOD_KEYWORDS: &[&str] = &[
+    "warm",
+    "dark",
+    "bright",
+    "mellow",
+    "ethereal",
+    "gritty",
+    "dreamy",
+    "mysterious",
+    "haunting",
+    "nostalgic",
+    "sad",
+    "happy",
+    "tense",
+    "open",
+    "lush",
+];
+
 /// Classify a telemetry entry into an intent bucket.
 ///
-/// Order matters: out-of-scope dominates (empty results = no chatbot
-/// answer regardless of phrasing), then explicit musical intents, then
-/// fallback heuristics on length.
+/// Order is load-bearing: out-of-scope dominates everything; voice
+/// leading wins over mood (a "smooth resolve" is VL, not affect);
+/// famous-reference wins over style ("Hendrix chord" is a reference,
+/// not a genre); style/instrument win over mood (more specific). Mood
+/// is the catch-all for affective language before length-based
+/// fallbacks.
 pub fn classify_intent(entry: &TelemetryEntry) -> IntentLabel {
     if entry.empty || entry.results == 0 {
         return IntentLabel::OutOfScope;
@@ -83,6 +163,12 @@ pub fn classify_intent(entry: &TelemetryEntry) -> IntentLabel {
         || q.contains("resolve")
     {
         return IntentLabel::VoiceLeading;
+    }
+    if FAMOUS_REFERENCES.iter().any(|k| q.contains(k)) {
+        return IntentLabel::FamousReference;
+    }
+    if STYLE_KEYWORDS.iter().any(|k| q.contains(k)) {
+        return IntentLabel::StyleQuery;
     }
     let instruments = [
         "bass",
@@ -108,6 +194,9 @@ pub fn classify_intent(entry: &TelemetryEntry) -> IntentLabel {
         || q.contains("locrian")
     {
         return IntentLabel::ScaleQuery;
+    }
+    if MOOD_KEYWORDS.iter().any(|k| q.contains(k)) {
+        return IntentLabel::MoodBased;
     }
     if entry.chord.is_some() {
         return IntentLabel::ChordVoicing;
@@ -339,6 +428,38 @@ mod tests {
     fn scale_keyword_routes_to_scale_query() {
         let e = entry("Lydian scale notes", None, 5, false);
         assert_eq!(classify_intent(&e), IntentLabel::ScaleQuery);
+    }
+
+    #[test]
+    fn mood_keyword_routes_to_mood_based() {
+        let e = entry("something warm and mellow", None, 5, false);
+        assert_eq!(classify_intent(&e), IntentLabel::MoodBased);
+    }
+
+    #[test]
+    fn style_keyword_routes_to_style_query() {
+        let e = entry("jazz comping voicings", None, 5, false);
+        assert_eq!(classify_intent(&e), IntentLabel::StyleQuery);
+    }
+
+    #[test]
+    fn famous_reference_routes_to_famous_reference() {
+        let e = entry("Hendrix chord", None, 5, false);
+        assert_eq!(classify_intent(&e), IntentLabel::FamousReference);
+    }
+
+    #[test]
+    fn voice_leading_wins_over_mood() {
+        // "smooth" is a VL keyword, "warm" is mood — VL must win
+        let e = entry("smooth warm transition to tonic", None, 5, false);
+        assert_eq!(classify_intent(&e), IntentLabel::VoiceLeading);
+    }
+
+    #[test]
+    fn famous_reference_wins_over_style() {
+        // "jazz" is style, "Coltrane" is famous — famous must win
+        let e = entry("Coltrane jazz changes", None, 5, false);
+        assert_eq!(classify_intent(&e), IntentLabel::FamousReference);
     }
 
     #[test]
