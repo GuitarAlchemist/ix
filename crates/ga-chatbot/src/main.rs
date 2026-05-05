@@ -904,6 +904,12 @@ const TOOLS: &str = r#"[
   }
 ]"#;
 
+// The chained `else if let Some(r) = ... { ... } else { return None }` shape
+// below is a chord-root parser, not a question-mark candidate — each branch
+// produces a distinct (pc, rest) pair, so `?` cannot consolidate them. Nightly
+// clippy's `question_mark` lint flags only the LAST branch but rewriting it
+// would tangle with the chain. Allow at function scope.
+#[allow(clippy::question_mark)]
 fn parse_chord_pitch_classes(query: &str) -> Option<Vec<u8>> {
     let q = query.trim().to_lowercase();
     // Extract root note
