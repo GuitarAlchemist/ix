@@ -13,6 +13,11 @@ Cargo.lock
 !/state/voicings/raw/.gitkeep
 state/voicings/*-corpus.json
 state/voicings/*-features.json
+# Exceptions: guitar-corpus.json is a deliberate ~80KB tracked fixture
+# consumed by the adversarial QA workflow (.github/workflows/adversarial-qa.yml)
+# for Layer 1 grounding. If a corpus rebuild bombs it past 1MB, untrack
+# the bombed copy and restore the canonical via `git checkout HEAD --`.
+!state/voicings/guitar-corpus.json
 
 # Adversarial QA: regenerable from CI
 state/adversarial/findings.jsonl

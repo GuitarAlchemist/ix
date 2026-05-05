@@ -11,16 +11,28 @@ and the OPTIC-K embedding pipeline.
 | `*-progressions.json`     | yes       | Tiny progression seeds                                 |
 | `*-topology.json`         | yes       | Topology graphs                                        |
 | `*-transitions.json`      | yes       | Transition tables                                      |
-| `*-corpus.json`           | **no**    | Per-instrument voicing corpus — regenerable, can be huge |
-| `*-features.json`         | **no**    | OPTIC-K feature vectors — regenerable, can be huge       |
+| `guitar-corpus.json`      | **yes**   | Small (~80 KB) tracked fixture — adversarial QA needs it for Layer 1 grounding |
+| `*-corpus.json` (others)  | no        | Bass/ukulele corpora — regenerable, can be huge        |
+| `*-features.json`         | no        | OPTIC-K feature vectors — regenerable, can be huge     |
 | `raw/*.jsonl`             | no        | Raw GA CLI dumps                                        |
 
 `*-corpus.json` and `*-features.json` are gitignored because the
 full-corpus rebuild produces files >100 MB, which exceeds GitHub's
-single-file push limit. Earlier `guitar-corpus.json` and
-`guitar-features.json` were tracked at small sample sizes (~80 KB and
-~250 KB) and got bombed by a corpus rebuild on 2026-05-04 (working tree
-hit ~475 MB total). Untracked since `62ab038`+1 to prevent recurrence.
+single-file push limit. **Exception**: `guitar-corpus.json` stays
+tracked at ~80 KB because `.github/workflows/adversarial-qa.yml` loads
+it for Layer 1 grounding — without it, every prompt that cites a
+`guitar_v###` ID fails as "hallucinated voicing ID". The gitignore
+re-includes it via a `!state/voicings/guitar-corpus.json` line.
+
+If a future rebuild bombs `guitar-corpus.json` past ~1 MB, restore the
+canonical small version with:
+
+```pwsh
+git checkout HEAD -- state/voicings/guitar-corpus.json
+```
+
+`guitar-features.json` is freely regenerable; the adversarial QA path
+does not consume it.
 
 ## Regenerating from GA
 
