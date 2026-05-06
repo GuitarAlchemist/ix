@@ -1,0 +1,7 @@
+{
+  "_comment": "Canonical Phase 1 partition snapshot, mirrored from GA's state/quality/optick-sae/<date>/optick-sae-artifact.json (latest dated directory). This is a deliberate point-in-time snapshot, NOT a live mirror — the contract test asserts ix-optick-sae's PHASE1_PARTITIONS matches this list. When this list legitimately needs to change, coordinate the producer constant + this fixture + GA's canonical artifact in one PR. Refusing to update both producer and fixture is the bug class PR #82 + ix #29 hit.",
+  "_source": "ga/state/quality/optick-sae/<date>/optick-sae-artifact.json",
+  "_optick_k_schema_version": "OPTIC-K-v1.8",
+  "partitions_used": ["STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL", "ROOT"],
+  "compact_training_dim": 124
+}
