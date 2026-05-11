@@ -1,10 +1,10 @@
 {
   "grammar_file": "crates/ix-voicings/grammars/progressions.cfg",
   "parse_counts": {
-    "ii_V_I": 0,
-    "I_vi_IV_V": 0,
     "BLUES12": 0,
-    "I_IV_V": 125
+    "I_IV_V": 64,
+    "I_vi_IV_V": 0,
+    "ii_V_I": 0
   },
   "deviation": "ix-grammar uses MCTS-based generative derivation, not Earley recognition. Parse counts reflect how many representative-quality permutations match each production pattern via direct expansion, not full chart parsing."
 }
