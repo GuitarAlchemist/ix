@@ -602,7 +602,39 @@ pub fn load_features(
 
 /// Silhouette score for a clustering. Returns a value in [-1, 1].
 /// Higher is better; above 0.15 is our threshold for accepting the clustering.
+///
+/// For `n > SILHOUETTE_FULL_THRESHOLD` (10k) the exact O(n²) computation is
+/// replaced by a seeded random subsample of `SILHOUETTE_SAMPLE_SIZE` (5k)
+/// rows scored against itself — same approximation sklearn uses when
+/// `sample_size` is set. Without this guard the 667k-row guitar corpus
+/// would need ~4.5×10¹¹ pairwise distances per k-candidate and never finish.
 pub fn silhouette_score(data: &Array2<f64>, labels: &[usize]) -> f64 {
+    let n = data.nrows();
+    if n < 2 {
+        return 0.0;
+    }
+    if n <= SILHOUETTE_FULL_THRESHOLD {
+        return silhouette_score_exact(data, labels);
+    }
+    // Subsample: pick SILHOUETTE_SAMPLE_SIZE indices without replacement
+    // using a seeded ChaCha8 RNG so the score is reproducible across runs.
+    use rand::seq::IteratorRandom;
+    use rand::SeedableRng;
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(SILHOUETTE_SEED);
+    let sample_idx: Vec<usize> = (0..n).choose_multiple(&mut rng, SILHOUETTE_SAMPLE_SIZE);
+    let sub_data = data.select(ndarray::Axis(0), &sample_idx);
+    let sub_labels: Vec<usize> = sample_idx.iter().map(|&i| labels[i]).collect();
+    silhouette_score_exact(&sub_data, &sub_labels)
+}
+
+/// Threshold above which [`silhouette_score`] switches to subsampling.
+pub const SILHOUETTE_FULL_THRESHOLD: usize = 10_000;
+/// Subsample size used when n exceeds [`SILHOUETTE_FULL_THRESHOLD`].
+pub const SILHOUETTE_SAMPLE_SIZE: usize = 5_000;
+/// RNG seed for the subsample selection.
+const SILHOUETTE_SEED: u64 = 42;
+
+fn silhouette_score_exact(data: &Array2<f64>, labels: &[usize]) -> f64 {
     let n = data.nrows();
     if n < 2 {
         return 0.0;
@@ -1823,6 +1855,33 @@ mod tests {
             sil > 0.5,
             "Well-separated clusters should have high silhouette, got {sil}"
         );
+    }
+
+    #[test]
+    fn silhouette_uses_subsample_above_threshold() {
+        // n above SILHOUETTE_FULL_THRESHOLD must take the sampled path and
+        // still report a high silhouette on two well-separated clusters —
+        // proves the subsample preserves the geometry of the clustering.
+        let n_per = SILHOUETTE_FULL_THRESHOLD; // -> total n = 2 * threshold
+        let p = 2;
+        let mut data_vec = Vec::with_capacity(2 * n_per * p);
+        for i in 0..n_per {
+            data_vec.push((i as f64) * 1e-6);
+            data_vec.push(0.0);
+        }
+        for i in 0..n_per {
+            data_vec.push(100.0 + (i as f64) * 1e-6);
+            data_vec.push(0.0);
+        }
+        let data = Array2::from_shape_vec((2 * n_per, p), data_vec).unwrap();
+        let labels: Vec<usize> = (0..2 * n_per).map(|i| i / n_per).collect();
+        let sil = silhouette_score(&data, &labels);
+        assert!(
+            sil > 0.9,
+            "subsampled silhouette must still recognize well-separated clusters, got {sil}"
+        );
+        // Determinism: same input → same output across calls.
+        assert_eq!(sil, silhouette_score(&data, &labels));
     }
 
     #[test]
