@@ -666,6 +666,13 @@ pub struct ClusterArtifacts {
     pub centroids: Vec<Vec<f64>>,
     pub assignments: Vec<usize>,
     pub representative_voicing_per_cluster: Vec<usize>,
+    /// Z-score normalization applied to features before clustering. Stored so
+    /// Phase C can assign cluster labels to corpus voicings not covered by the
+    /// sample-sized `assignments` vector (corpus may be larger than the Phase B
+    /// training sample). Empty for artifacts generated before this field was added;
+    /// re-run Phase B to populate.
+    #[serde(default)]
+    pub normalization: HashMap<String, Normalization>,
 }
 
 /// Run K-Means clustering on the feature matrix and write artifacts.
@@ -673,7 +680,7 @@ pub struct ClusterArtifacts {
 /// Tries k=5 initially. If silhouette < 0.15, falls back to k=3.
 /// Writes `state/voicings/{instrument}-clusters.json`.
 pub fn cluster(instrument: Instrument) -> Result<ClusterArtifacts, VoicingsError> {
-    let (_fm, data) = load_features(instrument)?;
+    let (fm, data) = load_features(instrument)?;
     let n = data.nrows();
 
     // Try k=5 first, fall back to k=3 if silhouette is poor
@@ -725,6 +732,7 @@ pub fn cluster(instrument: Instrument) -> Result<ClusterArtifacts, VoicingsError
             centroids: centroid_vecs,
             assignments: labels_vec,
             representative_voicing_per_cluster: representatives,
+            normalization: fm.normalization.clone(),
         };
 
         if sil >= 0.15 || best.is_none() {
@@ -743,6 +751,46 @@ pub fn cluster(instrument: Instrument) -> Result<ClusterArtifacts, VoicingsError
         .join(format!("{}-clusters.json", instrument.as_str()));
     std::fs::write(&out_path, serde_json::to_vec_pretty(&artifacts)?)?;
     Ok(artifacts)
+}
+
+/// Predict the cluster index for a corpus voicing using pre-fitted centroids.
+///
+/// Applies the same z-score normalization as Phase B so that raw voicing
+/// features are projected into the same space as the stored centroids.
+/// Used by Phase C to assign labels to corpus rows not covered by the
+/// (sample-sized) `assignments` vector in `ClusterArtifacts`.
+pub fn predict_cluster(
+    row: &VoicingRow,
+    centroids: &[Vec<f64>],
+    normalization: &HashMap<String, Normalization>,
+) -> usize {
+    let raw = build_raw_feature_row(row);
+    let features: Vec<f64> = FEATURE_COLUMNS
+        .iter()
+        .zip(raw.iter())
+        .map(|(col, &v)| {
+            if let Some(norm) = normalization.get(*col) {
+                let centered = v - norm.mean;
+                if norm.stddev > f64::EPSILON {
+                    centered / norm.stddev
+                } else {
+                    centered
+                }
+            } else {
+                v
+            }
+        })
+        .collect();
+    centroids
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            let da: f64 = a.iter().zip(&features).map(|(x, y)| (x - y).powi(2)).sum();
+            let db: f64 = b.iter().zip(&features).map(|(x, y)| (x - y).powi(2)).sum();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 /// Topology artifacts written by [`topology`].
@@ -1871,5 +1919,59 @@ mod tests {
         // The pipeline has 5 nodes
         let levels = dag.parallel_levels();
         assert!(!levels.is_empty(), "pipeline should have levels");
+    }
+
+    #[test]
+    fn predict_cluster_lands_in_valid_range() {
+        // Build two synthetic centroids in 27-dim feature space (all zeros, plus
+        // a large offset on dimension 0 for centroid 1) and verify predict_cluster
+        // returns 0 for the origin voicing.
+        let n_cols = FEATURE_COLUMNS.len();
+        let centroids = vec![vec![0.0f64; n_cols], {
+            let mut c = vec![0.0f64; n_cols];
+            c[0] = 100.0; // far away on fret_span dimension
+            c
+        }];
+        let norm = HashMap::new(); // no normalization: raw features used
+        let row = sample_row(); // low fret_span row → nearest to centroid 0
+        let assignment = predict_cluster(&row, &centroids, &norm);
+        assert_eq!(assignment, 0, "low-span voicing should land in centroid 0");
+    }
+
+    #[test]
+    fn cluster_balance_invariant() {
+        // Regression guard: no cluster may hold >70% of voicings in a balanced
+        // clustering. This is the invariant that the cluster-degeneracy bug
+        // (2026-05-09) violated — 99.94% of guitar voicings in C0.
+        let n = 30usize;
+        let p = FEATURE_COLUMNS.len();
+        let mut data_vec = vec![0.0f64; n * p];
+        // Three clearly separated groups on fret_span and min_fret axes
+        for i in 0..10 {
+            data_vec[i * p] = -5.0; // low fret_span
+            data_vec[i * p + 9] = -5.0; // low min_fret
+        }
+        for i in 10..20 {
+            data_vec[i * p] = 5.0; // high fret_span
+            data_vec[i * p + 9] = 0.0;
+        }
+        for i in 20..30 {
+            data_vec[i * p] = 0.0;
+            data_vec[i * p + 9] = 5.0; // high min_fret
+        }
+        let data = Array2::from_shape_vec((n, p), data_vec).unwrap();
+        let mut km = KMeans::new(3).with_seed(42);
+        let labels = km.fit_predict(&data);
+        let labels_vec: Vec<usize> = labels.iter().copied().collect();
+        let max_count = (0..3)
+            .map(|c| labels_vec.iter().filter(|&&l| l == c).count())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_count <= (n * 70 / 100),
+            "degenerate clustering: largest cluster holds {max_count}/{n} ({:.1}%); \
+             expected ≤70%. This is the cluster-degeneracy invariant.",
+            100.0 * max_count as f64 / n as f64
+        );
     }
 }

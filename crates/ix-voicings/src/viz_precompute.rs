@@ -542,12 +542,24 @@ fn load_and_layout_instrument(
     // details[i].g == voicings[i].global_id is guaranteed.
     let n = corpus.len();
     for (idx, row) in corpus.iter().enumerate() {
-        let local_cluster = cluster_art
-            .assignments
-            .get(idx)
-            .copied()
-            .unwrap_or(0)
-            .min(cluster_art.k.saturating_sub(1));
+        // Use saved assignment when available (in-sample voicings), otherwise
+        // predict from centroids. Without this, all corpus rows beyond the
+        // sample size silently land in C0 via unwrap_or(0), collapsing 95-99%
+        // of bass/ukulele voicings into one cluster.
+        let local_cluster = if idx < cluster_art.assignments.len() {
+            cluster_art.assignments[idx].min(cluster_art.k.saturating_sub(1))
+        } else if !cluster_art.normalization.is_empty() {
+            crate::predict_cluster(row, &cluster_art.centroids, &cluster_art.normalization)
+        } else {
+            // Old artifact without normalization stored — fall back to C0 and
+            // warn. Re-run Phase B to populate normalization in the artifact.
+            eprintln!(
+                "viz-precompute: {inst_name}_v{idx:04} has no saved assignment and \
+                 clusters artifact carries no normalization; defaulting to C0. \
+                 Re-run `phase-b` to fix."
+            );
+            0
+        };
         let global_id = format!("{inst_name}_v{idx:04}");
         let cluster_id = format!("{inst_name}-C{local_cluster}");
         voicings.push(VoicingLayout {
