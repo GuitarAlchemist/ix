@@ -38,3 +38,21 @@ state/autoresearch/runs/*
 # from the OPTIC-K corpus (cargo run -p ix-voicings --example tsne_export).
 # Layouts can be 100MB+, so keep them out of the tree.
 state/viz/
+
+# Claude Code runtime state (not source): octopus plugin state, agent
+# memory caches, PID locks for the /schedule harness.
+.claude-octopus/
+.claude/agent-memory/
+.claude/agent-memory-local/
+.claude/scheduled_tasks.lock
+
+# Local IX scratch dir: cargo/clippy round JSONLs, decision briefs,
+# remediation snapshots, reports. Regenerable from the source.
+.ix/
+
+# Test-only target dir used by harness fixtures.
+target-test/
+
+# Python bytecode from ix-optick-sae TopK trainer.
+**/__pycache__/
+*.pyc
