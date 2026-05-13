@@ -119,6 +119,79 @@ Each one would benefit from its own dated plan + governance check. Specifically:
 - `feedback_audit_before_building.md` — "Always read settings.json before claiming hooks are unwired. The subagent audit asserted `.claude/hooks/*.sh` were unwired; reading `.claude/settings.json` showed 3 of 4 were already wired. Lesson: file existence ≠ wiring; check configuration before proposing plumbing."
 - `project_self_improvement_loops_status.md` — "IX Pattern 1/2/3 all wired. G2–G8 remaining gaps owned by sibling repos. See `docs/plans/2026-05-12-self-improvement-loops.md`."
 
+## Cherny ↔ Demerzel mapping
+
+Demerzel is a **superset** of Cherny's three-pattern framework, not merely compliant with it. Cherny is a tactical 3-step pattern (loop, memory, verify); Demerzel embeds those patterns inside a constitutional framework with confidence-gated autonomy, hexavalent logic, and append-only audit trails.
+
+### Pattern 1 (scheduled /loop) — 8 scheduled workflows
+
+In `../Demerzel/.github/workflows/`:
+
+| Workflow | Cherny role |
+|---|---|
+| `streeling-daily.yml` | daily knowledge sweep |
+| `demerzel-self-improvement.yml` (weekly Sun 15:17 UTC) | self-improvement cycle |
+| `demerzel-capability-expansion.yml` | autonomous capability discovery |
+| `demerzel-discussion-lifecycle.yml` | GH Discussions triage |
+| `demerzel-ideation.yml` | idea generation |
+| `demerzel-showcase.yml` | output publishing |
+| `ga-chatbot-discussions.yml` | cross-repo chatbot triage |
+| `seldon-plan.yml` | strategic planning loop |
+
+Plus a Phase-4 cron stub inside `qa-architect-cycle.ixql` (`0 6 * * *`) waiting to be enabled in Phase 4.
+
+### Pattern 2 (institutional memory / CLAUDE.md) — `LOG.md` + driver cycle
+
+`../Demerzel/LOG.md` is the explicit Cherny analogue — auto-appended after every governance action, with a **COMPOUND** phase in the driver cycle:
+
+```
+WAKE → RECON → PLAN → EXECUTE → VERIFY → COMPOUND → PERSIST → SLEEP
+```
+
+This is structurally richer than Cherny's "log the mistake and write a prevention rule." COMPOUND distills durable insights; PERSIST writes them to `LOG.md` + constitutions (append-only) + policies. Sample LOG.md entry from cycle 001 (2026-03-20):
+
+> Submodule staleness is #1 health drag — submodule-notify should create triggers
+> ga has 50+ untracked files needing cleanup
+> tars has 26 dependabot alerts (next critical priority)
+> Demerzel CI failures are missing API keys, not code bugs
+
+Each insight becomes input to future plan stages. Plus `CLAUDE.md`, `AGENTS.md`, personas, contracts, and `state/`.
+
+### Pattern 3 (execution verification) — 20 IXQL pipelines
+
+In `../Demerzel/pipelines/`:
+
+| Pipeline | LOC | Cherny analogue |
+|---|---|---|
+| `shake-metafix-loop.ixql` | 240 | **literal Pattern 3** — inject → detect → fix → re-measure, Netflix Chaos Monkey + 5-level MetaFix |
+| `ml-feedback-loop.ixql` | 188 | ML training feedback closed loop |
+| `conscience-cycle.ixql` | 147 | ethics-check loop |
+| `qa-architect-cycle.ixql` | 109 | verdict pipeline (**Phase 0 skeleton — G6 gap**) |
+| `chaos-test.ixql` | — | chaos-injection catalog (11 injection points) |
+| `governance-shake-test.ixql` | — | shake-testing |
+| `algedonic-belief-monitor.ixql` | — | pain/pleasure signal monitor |
+| `driver-cycle.ixql` | — | top-level WAKE→…→SLEEP orchestrator |
+| `scheduled-research.ixql` | — | autonomous research loop |
+| (10 more) | — | constitutional-evolution, governance-audit, governance-markov, content-intelligence, cross-pipeline-deps, hyperlight-orchestrator, lolli-lint, metasync, render-critic, resilience-dashboard |
+
+### Where Cherny < Demerzel (structural deltas)
+
+| Dimension | Cherny | Demerzel |
+|---|---|---|
+| Logic | binary pass/fail | hexavalent T/P/U/D/F/C |
+| Autonomy | implicit (agent decides) | confidence-gated (≥0.9 auto, ≥0.7 note, ≥0.5 confirm, ≥0.3 escalate) |
+| Reversibility | not mandated | Article 3 mandate |
+| Audit trail | optional | Article 7 mandate, append-only constitutions |
+| Stop condition | "until tests pass" | guardrails: max 3 mods/session, 5-min cooldown, test-pass before permanent |
+| Memory substrate | `CLAUDE.md` (flat) | `LOG.md` + constitutions + policies + personas + state/ + driver-cycle COMPOUND phase |
+| Verification primitive | run tests, read errors | 20 IXQL pipelines spanning chaos-injection, ML feedback, ethics, governance audit, conscience |
+
+### Net verdict
+
+**Demerzel is Cherny-compliant by construction, with one known stub.** `qa-architect-cycle.ixql` remains Phase 0 (hardcoded skeleton verdicts) — this is G6 in the gap matrix. Phases 1-4 are designed in `../ga/docs/plans/2026-05-04-chatbot-autonomy-action-layer.md` and shipping them closes the last fragment of Cherny Pattern 3 that's currently a stub.
+
+The mapping is preserved here so that "is Demerzel Cherny-compliant?" doesn't need re-deriving next time. Short answer: yes, and then some.
+
 ## Appendix — copy-pasteable issue templates
 
 When ready to push these to siblings, the bodies below are pre-shaped against the gap matrix.
