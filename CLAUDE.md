@@ -26,7 +26,7 @@ MSRV: Rust 1.80+ (due to wgpu 28).
 
 ## MCP Federation
 
-MCP peers in `.mcp.json`: **ix** (Rust, algorithms + governance), **tars** (F#, grammar + metacognition), **ga** (C#, music theory), **sentrux** (Rust, realtime structural-quality sensor). Capability registry: `governance/demerzel/schemas/capability-registry.json`.
+MCP peers in `.mcp.json`: **ix** (Rust, algorithms + governance), **tars** (F#, grammar + metacognition), **ga** (C#, music theory), **sentrux** (Rust, realtime structural-quality sensor), **hari** (Rust, belief-state substrate — batch tools `hari_query_belief` / `hari_snapshot` / `hari_diff` / `hari_record_observation` / `hari_consensus` plus live Phase-6 multiplexer `hari_session_open` / `hari_session_event` / `hari_session_close`). Capability registry: `governance/demerzel/schemas/capability-registry.json`.
 
 **Realtime vs offline code analysis boundary.** Sentrux owns *realtime* structural quality (live treemap, regression gate, file-watcher feedback for in-progress agent edits). The `ix-code-*` crates own *offline* catalog work (large-corpus AST analysis, code-smell mining, code catalog snapshots that feed governance reports). When in doubt: if it's "what changed in the last 30 seconds," call sentrux; if it's "snapshot the whole codebase for the daily quality trend," use `ix-code-analyze`.
 

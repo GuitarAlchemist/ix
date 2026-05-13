@@ -23,6 +23,11 @@
     "sentrux": {
       "command": "C:/Users/spare/bin/sentrux.exe",
       "args": ["mcp"]
+    },
+    "hari": {
+      "command": "C:/Users/spare/source/repos/hari/target/release/hari-mcp.exe",
+      "args": [],
+      "env": { "HARI_STATE_DIR": "C:/Users/spare/source/repos/hari/state/harness" }
     }
   }
 }
