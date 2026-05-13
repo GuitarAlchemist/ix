@@ -186,11 +186,37 @@ In `../Demerzel/pipelines/`:
 | Memory substrate | `CLAUDE.md` (flat) | `LOG.md` + constitutions + policies + personas + state/ + driver-cycle COMPOUND phase |
 | Verification primitive | run tests, read errors | 20 IXQL pipelines spanning chaos-injection, ML feedback, ethics, governance audit, conscience |
 
-### Net verdict
+### Net verdict — STRUCTURAL compliance is high; OPERATIONAL output is degraded
 
-**Demerzel is Cherny-compliant by construction, with one known stub.** `qa-architect-cycle.ixql` remains Phase 0 (hardcoded skeleton verdicts) — this is G6 in the gap matrix. Phases 1-4 are designed in `../ga/docs/plans/2026-05-04-chatbot-autonomy-action-layer.md` and shipping them closes the last fragment of Cherny Pattern 3 that's currently a stub.
+**Demerzel is Cherny-compliant by construction but operationally hollow at the high-value autonomous layer.** Live evidence pulled 2026-05-12:
 
-The mapping is preserved here so that "is Demerzel Cherny-compliant?" doesn't need re-deriving next time. Short answer: yes, and then some.
+**What demonstrably works:**
+- `.claude/hooks/governance-check.sh` — live tested: blocks `rm -rf /` and force-push-to-main with constitutional citations (exit 1), warns on `git reset --hard` (exit 0). Real Pattern 3 enforcement inside Claude Code's tool chain.
+- `ix_governance_check` MCP tool — returns compliant/non-compliant against constitution v2.2.0. Caveat: checks *constitutional* compliance, not *analytical* correctness; returned `compliant: true` on proposals that turned out to be unnecessary plumbing.
+- `submodule-auto-update.yml` (TARS, 6-hourly) — produces real submodule bumps.
+- `state/conscience/regrets/2026-03-17-stale-directive-submodules.regret.json` — exemplary self-honesty: "Created a false appearance of governance activity. Directives exist as artifacts suggesting governance is being propagated, but no actual governance propagation occurred." That's compounding done right. **But no new entries since 2026-03-18.**
+
+**What demonstrably does NOT work despite running on cron:**
+- **Seldon Plan (`seldon-plan.yml`)** — green CI for ~50 days (49/50 successful runs), zero artifacts. Workflow body inspected in a 2026-05-12 22:22 UTC run log: the Claude invocation is **commented out**, leaving only `echo "Cycle invocation placeholder"`. State file says `total_cycles_all_time: 4, last_cycle_timestamp: 2026-03-23T12:00:00Z`. Literal Sentinel's Void.
+- **Driver Cycle** — `state/driver/last-cycle.json` shows cycle-2026-03-21-003 completed 2026-03-21. 50 days idle.
+- **qa-architect-cycle.ixql** — Phase 0 stub. `state/quality/verdicts/` is empty. Zero real verdicts produced.
+- **Conscience compounding** — last regret 2026-03-17, last pattern 2026-03-18. Pipeline silent for 50 days.
+- **Cross-repo issue triage** — GA has 15 open issues, 11 of them 35-40 days old (Prime Radiant panel enhancements). No autofix or routing activity.
+
+### The "green-but-dead" anti-pattern
+
+Demerzel's high-value autonomous workflows have **decoupled CI status from value production**. Workflows run on cron, mark success, commit nothing useful. From the user 2026-05-12: *"Seldon did not produce anything useful for weeks, and issues are still piling up in all repos."* Confirmed on disk.
+
+This is the precise failure mode `feedback_sentinels_void.md` predicted: governance scaffolding over no actual substance. The structural Cherny-compliance count (20 IXQL pipelines, 8 scheduled workflows, 14-article constitution) **masks** the operational gap.
+
+### Honest recommendations (not promises)
+
+1. **Replace silent stubs with explicit failures.** Seldon's commented-out Claude invocation should either be wired up or the workflow should `exit 1` with "PLACEHOLDER — DO NOT MARK GREEN." Green CI on a no-op is worse than red.
+2. **Either ship qa-architect-cycle Phase 1-4 or remove the Phase 0 skeleton.** Phase 0 producing hardcoded verdicts to disk gives the illusion of QA activity. The 2026-05-04 chatbot-autonomy plan has the design.
+3. **Triage GA's 15-issue backlog manually before resurrecting Seldon.** Until there's a human-curated example of what "useful output" looks like, an autonomous workflow has nothing to imitate.
+4. **Surface workflow-output-staleness as a first-class signal.** A workflow with `last_cycle_timestamp` more than 7 days old should self-report degraded, not green.
+
+The mapping is preserved here so that "is Demerzel Cherny-compliant?" doesn't need re-deriving next time. Short answer: **structurally yes, operationally degraded as of 2026-05-12.**
 
 ## Appendix — copy-pasteable issue templates
 
