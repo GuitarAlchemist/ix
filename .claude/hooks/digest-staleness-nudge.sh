@@ -3,6 +3,18 @@
 # Karpathy R1+R4. Silent when digest is fresh.
 
 set -e
+
+# Cross-platform mtime — closes macOS/BSD portability gap from code review.
+get_mtime_sec() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}
+get_age_min() {
+  local mtime
+  mtime="$(get_mtime_sec "$1")"
+  if [ -z "$mtime" ] || [ "$mtime" = "0" ]; then echo 0; return; fi
+  echo "$(( ($(date +%s) - mtime) / 60 ))"
+}
+
 repoRoot="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -z "$repoRoot" ] && exit 0
 
@@ -11,7 +23,7 @@ counter="$repoRoot/state/digests/.activity-counter"
 
 digestAgeMin=""
 if [ -f "$latest" ]; then
-  digestAgeMin="$(find "$latest" -printf '%T@\n' 2>/dev/null | awk -v now="$(date +%s)" '{ printf "%d", (now - $1) / 60 }')"
+  digestAgeMin="$(get_age_min "$latest")"
 fi
 
 mutationCount=0

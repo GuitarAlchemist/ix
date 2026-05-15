@@ -2,6 +2,17 @@
 # Stop hook — writes a finalize digest if /digest hasn't run in last 10 min.
 
 set -e
+
+# Sanitizers — same as precompact-digest.sh. Closes YAML-injection findings.
+safe_yaml() {
+  local v="${1:-}" m="${2:-200}"
+  if [ -z "$v" ]; then printf 'null'; return; fi
+  local c
+  c="$(printf '%s' "$v" | tr '\r\n' '  ' | head -c "$m")"
+  c="$(printf '%s' "$c" | sed "s/'/''/g")"
+  printf "'%s'" "$c"
+}
+
 repoRoot="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -z "$repoRoot" ] && exit 0
 
@@ -32,16 +43,20 @@ fi
 prLine=""
 [ -n "$openPr" ] && prLine="**Open PR:** $openPr"$'\n'
 
+branchYaml="$(safe_yaml "$branch")"
+headShaYaml="$(safe_yaml "$headSha")"
+headSubjYaml="$(safe_yaml "$headSubj")"
+openPrYaml="$(safe_yaml "$openPr")"
 cat > "$latest" <<EOF
 ---
 schema_version: 1
 session_id: stop-finalize
 written_at: $tsIso
 trigger: stop-hook-finalize
-branch: $branch
-head_sha: $headSha
-head_subject: $headSubj
-open_pr: $openPr
+branch: $branchYaml
+head_sha: $headShaYaml
+head_subject: $headSubjYaml
+open_pr: $openPrYaml
 ---
 
 # Session digest (Stop-hook finalize — /digest not invoked in last 10 min)

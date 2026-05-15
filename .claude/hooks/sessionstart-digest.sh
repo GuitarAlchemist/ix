@@ -3,6 +3,19 @@
 # Skips silently if missing or >24h stale.
 
 set -e
+
+# Cross-platform mtime (replaces GNU-only `find -printf '%T@'`).
+# Closes the macOS/BSD portability gap from the 2026-05-15 code review.
+get_mtime_sec() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}
+get_age_min() {
+  local mtime
+  mtime="$(get_mtime_sec "$1")"
+  if [ -z "$mtime" ] || [ "$mtime" = "0" ]; then echo 0; return; fi
+  echo "$(( ($(date +%s) - mtime) / 60 ))"
+}
+
 repoRoot="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -z "$repoRoot" ] && exit 0
 
@@ -16,8 +29,7 @@ if [ -z "$(find "$latest" -mmin -1440 2>/dev/null)" ]; then
   exit 0
 fi
 
-ageMin="$(find "$latest" -printf '%T@\n' 2>/dev/null | awk -v now="$(date +%s)" '{ printf "%d", (now - $1) / 60 }')"
-[ -z "$ageMin" ] && ageMin=0
+ageMin="$(get_age_min "$latest")"
 
 if [ "$ageMin" -lt 60 ]; then
   ageStr="$ageMin min"
