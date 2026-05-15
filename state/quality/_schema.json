@@ -1,0 +1,16 @@
+{
+  "$comment": "Schema pin declaration for state/quality/** and state/quality-snapshots/** artifacts in ix. Phase 0 deliverable #5 of ga/docs/plans/2026-05-14-arch-cherny-adoption-and-tribunal-ci-plan-v2.md.",
+  "schema_version": 1,
+  "applies_to_path": "state/quality/**",
+  "pins": {
+    "OPTIC-K": "v1.8",
+    "rust": "1.80+",
+    "ix_optick_sae_artifact_schema": "ga/docs/contracts/optick-sae-artifact.schema.json (vendored upstream)",
+    "qa_verdict_schema": "ga/docs/contracts/qa-verdict.schema.json (vendored upstream)"
+  },
+  "policy": {
+    "scope": "Quality artifacts produced AFTER this file's git introduction are considered pinned to these versions. Dated daily snapshots under state/quality-snapshots/ pre-dating this file are implicitly draft/v0.",
+    "bump_rule": "On OPTIC-K version bump (e.g. v1.8 -> v1.9), this file MUST be updated before consumers (ga RAG layer, Demerzel tribunal) re-tune against new artifacts. Cascade invalidation via per-domain .lock + manual rebaselining.",
+    "owner": "ix maintainer + cross-repo coordinator (Demerzel tribunal)"
+  }
+}
