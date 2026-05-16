@@ -11,6 +11,7 @@ permissions:
   checks: write
 
 env:
+  AGENT_BLACKBOX_REF: "v0.1.0-beta.1"
   VERIFY_COMMAND: "cargo test --workspace"
   IX_BLAST_RADIUS_BUILD_COMMAND: "cargo build -p ix-blast-radius"
   IX_BLAST_RADIUS_COMMAND: "target/debug/ix-blast-radius"
@@ -35,6 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: GuitarAlchemist/agent-blackbox
+          ref: ${{ env.AGENT_BLACKBOX_REF }}
           path: .agent-blackbox
           token: ${{ secrets.AGENT_BLACKBOX_TOKEN || github.token }}
 
