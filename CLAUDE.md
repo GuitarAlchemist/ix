@@ -54,3 +54,28 @@ Drawn from Karpathy's skill + sohaibt/product-mode (merged, not installed). Thes
 - **Frame problem before solution.** State who is in pain and what changes for them before proposing code. Check prior art in the workspace first — IX already has ≥10 graph modules, most ML primitives, and full governance.
 - **Instrument before you ship.** Metric-moving changes declare baseline + expected direction + guardrail. Baselines live in `ga/state/quality/`, aggregated by `ix-quality-trend` → `ga/docs/quality/README.md`. Never "we'll add analytics later."
 - **Log one-way doors.** Non-trivial decisions go in `docs/plans/YYYY-MM-DD-*.md` with reversibility (one-way / two-way door) and revisit trigger (metric / date / condition). One-way doors — schema hashes, public crate APIs, OPTIC-K partition layout, Galactic Protocol contracts — require explicit sign-off.
+
+## Karpathy 4 Rules — AI coding discipline
+
+These rules complement (don't replace) the Collaboration discipline above. They apply to every Claude proposal that touches code:
+
+1. **Think before coding.** State your interpretation of the request + assumptions; ask one clarifying question if anything is ambiguous; wait for confirmation before writing code.
+2. **Simplicity first.** Write minimum code that solves the exact problem. No speculative features, no future-proofing.
+3. **Surgical changes only.** Only modify code directly related to the request. Don't refactor adjacent code, don't fix unrelated style issues.
+4. **Goal-driven execution.** Transform every task into verifiable success criteria. Loop until each is demonstrably met. "Task completed" ≠ "goal achieved." Use native `/goal <condition>` (Claude Code v2.1.139+) to mechanize this — Claude keeps working across turns until an evaluator confirms the condition holds. `/digest`'s `success_criteria` field is the **declared** form; `/goal` is the **operational** driver.
+
+Self-improvement reflex: when the user corrects you, invoke `/correct` so the rule lands in this file's **Session-learned rules** section — Cherny's "most important loop" from the 2026 Sequoia talk.
+
+## Session continuity (Cherny pattern)
+
+- `/digest` — captures meaningful session state (cursor, in-flight, hypotheses, success criteria) to `state/digests/latest.md`. Auto-fallback via `.claude/hooks/precompact-digest.sh`; auto-injected on next session via `.claude/hooks/sessionstart-digest.sh`. See `.claude/skills/digest/SKILL.md`.
+- `/learnings` — captures surprises (non-obvious facts worth grep-finding later) into `docs/solutions/<category>/<date>-<topic>.md`.
+- `/correct` — turns user corrections into permanent rules in this CLAUDE.md.
+
+The hooks are validated in CI by `.github/workflows/karpathy-cherny-discipline.yml`.
+
+## Session-learned rules
+
+_Appended by `/correct` when the user corrects an approach. Persists across sessions._
+
+(none yet)
