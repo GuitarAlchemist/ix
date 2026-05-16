@@ -12,6 +12,8 @@ permissions:
 
 env:
   VERIFY_COMMAND: "cargo test --workspace"
+  IX_BLAST_RADIUS_BUILD_COMMAND: "cargo build -p ix-blast-radius"
+  IX_BLAST_RADIUS_COMMAND: "target/debug/ix-blast-radius"
 
 jobs:
   risk-report:
@@ -42,23 +44,77 @@ jobs:
           mkdir -p dist
           git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/changed-files.txt
           git diff "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/diff.patch
+          if [ -n "${IX_BLAST_RADIUS_BUILD_COMMAND:-}" ]; then
+            bash -lc "$IX_BLAST_RADIUS_BUILD_COMMAND"
+          fi
           set +e
           bash -lc "$VERIFY_COMMAND" > dist/test-output.txt 2>&1
           verify_exit=$?
           set -e
           echo "verify_exit=$verify_exit" >> "$GITHUB_ENV"
+          export AGENT_BLACKBOX_VERIFY_EXIT="$verify_exit"
           echo "verify command exited with code $verify_exit" >> dist/test-output.txt
           cat dist/test-output.txt
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          def event(**kwargs):
+              payload = {
+                  "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                  **kwargs,
+              }
+              return json.dumps(payload, sort_keys=True)
+
+          changed_files = [
+              line.strip()
+              for line in Path("dist/changed-files.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          ]
+          verify_exit = int(os.environ.get("AGENT_BLACKBOX_VERIFY_EXIT", "0"))
+          lines = [
+              event(
+                  event="workflow_evidence",
+                  tool="git.diff",
+                  status="ok",
+                  path="dist/changed-files.txt",
+                  data={"changed_file_count": len(changed_files)},
+              ),
+              event(
+                  event="verification",
+                  tool="shell.exec",
+                  command=os.environ.get("VERIFY_COMMAND", ""),
+                  status="ok" if verify_exit == 0 else "failed",
+              ),
+          ]
+          if os.environ.get("IX_BLAST_RADIUS_COMMAND"):
+              lines.append(
+                  event(
+                      event="analysis",
+                      tool="ix-blast-radius",
+                      command=os.environ["IX_BLAST_RADIUS_COMMAND"],
+                      status="ok",
+                  )
+              )
+          Path("dist/agent-trace.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
 
       - name: Generate risk report
         shell: bash
         run: |
-          PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox analyze \
+          analyze_args=(analyze \
             --policy agent-blackbox.policy.json \
             --changed-files dist/changed-files.txt \
             --diff dist/diff.patch \
             --test-output dist/test-output.txt \
-            --out-dir dist
+            --trace dist/agent-trace.jsonl \
+            --out-dir dist)
+          if [ -n "${IX_BLAST_RADIUS_COMMAND:-}" ]; then
+            analyze_args+=(--ix-blast-radius-cmd "$IX_BLAST_RADIUS_COMMAND")
+          fi
+          PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox "${analyze_args[@]}"
 
       - name: Comment risk report
         uses: actions/github-script@v7
