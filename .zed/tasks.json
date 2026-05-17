@@ -6,6 +6,47 @@
 //
 // $ZED_FILE and $ZED_STEM are expanded at spawn time.
 [
+  // Shared labels used by the global Zed keymap.
+  {
+    "label": "workspace: build",
+    "command": "cargo build --workspace",
+    "reveal": "always",
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "workspace: test",
+    "command": "cargo test --workspace",
+    "reveal": "always",
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "workspace: lint",
+    "command": "cargo clippy --workspace -- -D warnings",
+    "reveal": "always",
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "workspace: verify",
+    "command": "pwsh",
+    "args": [
+      "-NoProfile",
+      "-Command",
+      "cargo fmt --all -- --check; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cargo clippy --workspace -- -D warnings; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cargo test --workspace; exit $LASTEXITCODE"
+    ],
+    "reveal": "always",
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "workspace: test focused",
+    "command": "cargo test -p $ZED_STEM",
+    "reveal": "always"
+  },
+  {
+    "label": "workspace: smoke",
+    "command": "cargo test -p ix-agent --test session_log_wiring --test loop_detect --test parity",
+    "reveal": "always"
+  },
+
   // ── Cargo surface ───────────────────────────────────────────
   {
     "label": "cargo build --workspace",
