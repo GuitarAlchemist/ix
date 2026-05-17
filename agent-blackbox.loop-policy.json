@@ -1,0 +1,34 @@
+{
+  "version": "0.1.0",
+  "description": "Edit scopes for the supervised autonomous loop in ix. Sibling to agent-blackbox.policy.json (which governs PR risk scoring). The supervised-loop skill must only edit paths matched by allow_edit and must never edit paths matched by protected_paths. Rust source and Cargo manifests are protected; observability state and docs are loop-eligible.",
+  "allow_edit": [
+    "docs/**",
+    "examples/**",
+    "scripts/**",
+    "tests/**",
+    ".claude/skills/**",
+    "state/governance/**",
+    "state/quality/**",
+    "README.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CHANGELOG.md"
+  ],
+  "protected_paths": [
+    ".github/workflows/**",
+    "schemas/**",
+    "contracts/**",
+    "migrations/**",
+    "infra/production/**",
+    "billing/**",
+    "legal/**",
+    "security/**",
+    "crates/**",
+    "src/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "governance/demerzel/schemas/**",
+    "agent-blackbox.policy.json",
+    "agent-blackbox.loop-policy.json"
+  ]
+}

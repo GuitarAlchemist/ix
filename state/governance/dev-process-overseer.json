@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "0.1",
+  "emittedAt": "2026-05-16T23:43:55Z",
+  "repo": {
+    "root": "C:\\Users\\spare\\source\\repos\\ix",
+    "branch": "main",
+    "head": "a77a418"
+  },
+  "workflowMode": "loop-eligible",
+  "counts": {
+    "dirtyFiles": 9,
+    "blocks": 0,
+    "warnings": 0
+  },
+  "haltAll": {
+    "path": "C:\\Users\\spare\\.demerzel\\HALT-ALL",
+    "present": false,
+    "active": false,
+    "readStatus": "missing",
+    "scope": null,
+    "expiresAt": null,
+    "reason": null
+  },
+  "findings": [],
+  "domains": [
+    {
+      "domain": "ix-harness",
+      "baselinePath": "state/quality/ix-harness/baseline.json",
+      "lock": {
+        "present": false
+      },
+      "stopPresent": false,
+      "lastJsonPath": "state/quality/ix-harness/last.json",
+      "lastJsonWriteTime": "2026-05-16T19:34:12.2499383-04:00",
+      "oracleStatus": "ok",
+      "metricValue": 1.0,
+      "outOfScopeDirty": [],
+      "protectedDirty": [],
+      "recentHistoryLines": []
+    }
+  ],
+  "recommendations": {
+    "immediateAction": "Eligible for scheduled /loop or /goal automation, subject to normal review gates.",
+    "claudeGoal": "/goal The repo is safe for the current autonomous development cycle: the oracle command has been run and printed a valid metric_value with oracle_status ok; git status contains no dirty files outside the active loop allow_edit scope; protected paths are untouched; required build/test commands have been run and surfaced with exit code 0; or stop after 8 turns and summarize blockers.",
+    "claudeLoop": "/loop 1h \"Run the dev process overseer, then continue the active quality loop only if it reports loop-eligible; otherwise summarize blockers and stop.\""
+  }
+}

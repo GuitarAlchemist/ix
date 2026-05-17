@@ -9,16 +9,15 @@
     "infra/production/**",
     "billing/**",
     "legal/**",
-    "security/**",
-    "Cargo.lock",
-    "rust-toolchain.toml"
+    "security/**"
   ],
   "one_way_door_paths": [
     "schemas/**",
     "contracts/**",
     "migrations/**",
+    "governance/demerzel/schemas/**",
     "Cargo.toml",
-    "**/build.rs"
+    "Cargo.lock"
   ],
   "required_evidence": [
     "changed_files",
