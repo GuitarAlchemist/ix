@@ -12,6 +12,12 @@ cargo test --workspace
 cargo clippy --workspace -- -D warnings
 ```
 
+Repo harness verification:
+
+```powershell
+pwsh scripts/verify.ps1
+```
+
 MSRV: Rust 1.80+ (due to wgpu 28).
 
 ## Conventions

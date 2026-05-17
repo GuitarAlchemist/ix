@@ -1,0 +1,190 @@
+name: Agent Blackbox
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+
+# Pinning: AGENT_BLACKBOX_REF is a 40-char commit SHA (not main), per install-audit
+# scoring. Bump the SHA in a dedicated PR when consuming a new agent-blackbox release.
+# Latest agent-blackbox main commit as of 2026-05-17.
+env:
+  AGENT_BLACKBOX_REF: "942f808d3290441ab7d47e78a6b05e0e5587441d"
+  VERIFY_COMMAND: "pwsh scripts/verify.ps1"
+  IX_BLAST_RADIUS_BUILD_COMMAND: ""
+  IX_BLAST_RADIUS_COMMAND: ""
+  HARNESS_AUDIT_FAIL_BELOW: "60"
+  RESPONSE_QUALITY_INPUT: "dist/agent-response.txt"
+  RESPONSE_QUALITY_MAX_WORDS: "180"
+  RESPONSE_QUALITY_REQUIRE_GROUNDING: "false"
+
+jobs:
+  risk-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout Agent Blackbox
+        uses: actions/checkout@v4
+        with:
+          repository: GuitarAlchemist/agent-blackbox
+          ref: ${{ env.AGENT_BLACKBOX_REF }}
+          path: .agent-blackbox
+          token: ${{ secrets.AGENT_BLACKBOX_TOKEN || github.token }}
+
+      - name: Collect PR evidence
+        shell: bash
+        run: |
+          mkdir -p dist
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/changed-files.txt
+          git diff "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > dist/diff.patch
+          if [ -n "${IX_BLAST_RADIUS_BUILD_COMMAND:-}" ]; then
+            bash -lc "$IX_BLAST_RADIUS_BUILD_COMMAND"
+          fi
+          set +e
+          bash -lc "$VERIFY_COMMAND" > dist/test-output.txt 2>&1
+          verify_exit=$?
+          set -e
+          echo "verify_exit=$verify_exit" >> "$GITHUB_ENV"
+          export AGENT_BLACKBOX_VERIFY_EXIT="$verify_exit"
+          echo "verify command exited with code $verify_exit" >> dist/test-output.txt
+          cat dist/test-output.txt
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          def event(**kwargs):
+              payload = {
+                  "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                  **kwargs,
+              }
+              return json.dumps(payload, sort_keys=True)
+
+          changed_files = [
+              line.strip()
+              for line in Path("dist/changed-files.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          ]
+          verify_exit = int(os.environ.get("AGENT_BLACKBOX_VERIFY_EXIT", "0"))
+          lines = [
+              event(
+                  event="workflow_evidence",
+                  tool="git.diff",
+                  status="ok",
+                  path="dist/changed-files.txt",
+                  data={"changed_file_count": len(changed_files)},
+              ),
+              event(
+                  event="verification",
+                  tool="shell.exec",
+                  command=os.environ.get("VERIFY_COMMAND", ""),
+                  status="ok" if verify_exit == 0 else "failed",
+              ),
+          ]
+          if os.environ.get("IX_BLAST_RADIUS_COMMAND"):
+              lines.append(
+                  event(
+                      event="analysis",
+                      tool="ix-blast-radius",
+                      command=os.environ["IX_BLAST_RADIUS_COMMAND"],
+                      status="ok",
+                  )
+              )
+          Path("dist/agent-trace.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Generate risk report
+        shell: bash
+        run: |
+          analyze_args=(analyze \
+            --policy agent-blackbox.policy.json \
+            --changed-files dist/changed-files.txt \
+            --diff dist/diff.patch \
+            --test-output dist/test-output.txt \
+            --trace dist/agent-trace.jsonl \
+            --out-dir dist)
+          if [ -n "${IX_BLAST_RADIUS_COMMAND:-}" ]; then
+            analyze_args+=(--ix-blast-radius-cmd "$IX_BLAST_RADIUS_COMMAND")
+          fi
+          PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox "${analyze_args[@]}"
+          # risk-report.json is produced under dist/ by analyze; subsequent steps consume it.
+
+      - name: Generate harness audit
+        shell: bash
+        run: |
+          PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox harness-audit \
+            --repo . \
+            --out-dir dist \
+            --fail-below "${HARNESS_AUDIT_FAIL_BELOW}"
+
+      - name: Generate response quality report
+        shell: bash
+        run: |
+          # response-quality skipped when no agent response is captured for this PR.
+          if [ ! -s "${RESPONSE_QUALITY_INPUT}" ]; then
+            echo "No response-quality input at ${RESPONSE_QUALITY_INPUT}; skipping."
+            exit 0
+          fi
+          args=(response-quality \
+            --input "${RESPONSE_QUALITY_INPUT}" \
+            --out-dir dist \
+            --max-words "${RESPONSE_QUALITY_MAX_WORDS}")
+          if [ "${RESPONSE_QUALITY_REQUIRE_GROUNDING}" = "true" ]; then
+            args+=(--require-grounding)
+          fi
+          PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox "${args[@]}"
+
+      - name: Comment risk report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- agent-blackbox-risk-report -->';
+            let body = marker + '\n' + fs.readFileSync('dist/risk-report.md', 'utf8');
+            if (fs.existsSync('dist/harness-audit.md')) {
+              body += '\n\n---\n\n' + fs.readFileSync('dist/harness-audit.md', 'utf8');
+            }
+            if (fs.existsSync('dist/response-quality.md')) {
+              body += '\n\n---\n\n' + fs.readFileSync('dist/response-quality.md', 'utf8');
+            }
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+            const existing = comments.data.find(comment =>
+              comment.user.type === 'Bot' && comment.body && comment.body.includes(marker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Upload risk artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-blackbox-risk-report
+          path: dist/
+
+      - name: Enforce verdict
+        shell: bash
+        env:
+          AGENT_BLACKBOX_REVIEWED: ${{ contains(github.event.pull_request.labels.*.name, 'agent-blackbox-reviewed') }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Re-check live labels in case the label race happens during a synchronize event.
+          live_reviewed="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${{ github.event.pull_request.number }}/labels" --jq 'any(.[]; .name == "agent-blackbox-reviewed")' 2>/dev/null || echo false)"
+          if [ "$AGENT_BLACKBOX_REVIEWED" = "true" ] || [ "$live_reviewed" = "true" ]; then
+            echo "Agent Blackbox human-review override label present; skipping hard enforcement."
+            exit 0
+          fi
+          PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox enforce --report dist/risk-report.json
