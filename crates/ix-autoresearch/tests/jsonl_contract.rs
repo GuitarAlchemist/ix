@@ -252,7 +252,7 @@ fn derive_events(log_path: &Path) -> Vec<DerivedEvent> {
                 let error_present = v
                     .get("error")
                     .and_then(Value::as_str)
-                    .map_or(false, |s| !s.is_empty());
+                    .is_some_and(|s| !s.is_empty());
 
                 let confidence = if accepted {
                     0.66
