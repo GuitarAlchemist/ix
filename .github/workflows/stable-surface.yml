@@ -1,0 +1,209 @@
+name: Stable Surface Guard
+
+# Enforces the maturity-tier "Stable" contract: any change to the public API
+# of a Stable-tier crate must be accompanied by either (a) a demotion in
+# `crate-maturity.toml` or (b) a major version bump on the crate.
+#
+# Source of truth: `crate-maturity.toml` (workspace root).
+# Implementation: `ix stable-surface --format=json` (in crates/ix-skill).
+# Policy doc: README.md "Stability contract" section.
+
+on:
+  pull_request:
+    branches: [main]
+    # Trigger on any change — we always want to know if a Stable API moved.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  diff:
+    name: diff Stable public-API hashes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: pr
+
+      - name: Checkout base (main)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          submodules: recursive
+          path: base
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            pr
+            base
+
+      - name: Build ix-skill on PR
+        working-directory: pr
+        run: cargo build -p ix-skill --bin ix --release
+
+      - name: Build ix-skill on base
+        working-directory: base
+        # Tolerate base lacking the verb (first introduction); fall back to
+        # the PR binary running against the base workspace tree.
+        run: cargo build -p ix-skill --bin ix --release || echo "base has no ix-skill stable-surface verb yet — will use PR binary"
+
+      - name: Capture PR report
+        working-directory: pr
+        run: ./target/release/ix stable-surface --format=json > ../pr-report.json
+
+      - name: Capture base report
+        # Prefer the base's own binary; if missing, run the PR binary against
+        # the base workspace. Either way, we get a comparable report.
+        run: |
+          set -euo pipefail
+          if [ -x base/target/release/ix ]; then
+            (cd base && ./target/release/ix stable-surface --format=json) > base-report.json
+          else
+            echo "Using PR binary against base tree (first-run bootstrap)."
+            IX_ROOT="$PWD/base" pr/target/release/ix stable-surface --format=json > base-report.json
+          fi
+
+      - name: Diff & enforce
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Build a name -> {tier, hash} map for each side via jq.
+          jq -r '.crates[] | "\(.name)\t\(.tier)\t\(.api_hash)"' base-report.json | sort > base.tsv
+          jq -r '.crates[] | "\(.name)\t\(.tier)\t\(.api_hash)"' pr-report.json   | sort > pr.tsv
+
+          echo "::group::Base report"
+          cat base.tsv
+          echo "::endgroup::"
+          echo "::group::PR report"
+          cat pr.tsv
+          echo "::endgroup::"
+
+          declare -A BASE_TIER BASE_HASH PR_TIER PR_HASH
+
+          while IFS=$'\t' read -r name tier hash; do
+            [ -n "$name" ] || continue
+            BASE_TIER["$name"]="$tier"
+            BASE_HASH["$name"]="$hash"
+          done < base.tsv
+
+          while IFS=$'\t' read -r name tier hash; do
+            [ -n "$name" ] || continue
+            PR_TIER["$name"]="$tier"
+            PR_HASH["$name"]="$hash"
+          done < pr.tsv
+
+          STABLE_CHANGED=()
+          OTHER_CHANGED=()
+          ADDED=()
+          REMOVED=()
+
+          # All crate names across both sides.
+          ALL_NAMES=$(printf "%s\n" "${!BASE_HASH[@]}" "${!PR_HASH[@]}" | sort -u)
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            b_h="${BASE_HASH[$name]:-}"
+            p_h="${PR_HASH[$name]:-}"
+            b_t="${BASE_TIER[$name]:-}"
+            p_t="${PR_TIER[$name]:-}"
+            if [ -z "$b_h" ]; then
+              ADDED+=("$name (tier=$p_t)")
+              continue
+            fi
+            if [ -z "$p_h" ]; then
+              REMOVED+=("$name (was tier=$b_t)")
+              continue
+            fi
+            if [ "$b_h" != "$p_h" ]; then
+              if [ "$b_t" = "stable" ] || [ "$p_t" = "stable" ]; then
+                STABLE_CHANGED+=("$name | tier: $b_t->$p_t | hash: ${b_h}->${p_h}")
+              else
+                OTHER_CHANGED+=("$name | tier: $b_t->$p_t | hash: ${b_h}->${p_h}")
+              fi
+            fi
+          done <<< "$ALL_NAMES"
+
+          echo ""
+          echo "## Stable Surface Diff"
+          echo ""
+          if [ "${#STABLE_CHANGED[@]}" -gt 0 ]; then
+            echo "::error::Stable-tier public API change(s) detected:"
+            for c in "${STABLE_CHANGED[@]}"; do
+              echo "::error::  $c"
+            done
+          fi
+          if [ "${#OTHER_CHANGED[@]}" -gt 0 ]; then
+            echo "Non-stable hash changes (warn only):"
+            for c in "${OTHER_CHANGED[@]}"; do
+              echo "::warning::  $c"
+            done
+          fi
+          if [ "${#ADDED[@]}" -gt 0 ]; then
+            echo "New crates in maturity table:"
+            for c in "${ADDED[@]}"; do
+              echo "  + $c"
+            done
+          fi
+          if [ "${#REMOVED[@]}" -gt 0 ]; then
+            echo "Crates removed from maturity table:"
+            for c in "${REMOVED[@]}"; do
+              echo "  - $c"
+            done
+          fi
+
+          # Persist outputs for the summary step.
+          {
+            echo "stable_count=${#STABLE_CHANGED[@]}"
+            echo "other_count=${#OTHER_CHANGED[@]}"
+            echo "added_count=${#ADDED[@]}"
+            echo "removed_count=${#REMOVED[@]}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "${#STABLE_CHANGED[@]}" -gt 0 ]; then
+            echo ""
+            echo "Public API of one or more Stable-tier crates changed."
+            echo ""
+            echo "Required action — either:"
+            echo "  (a) Demote the affected crate to 'beta' in crate-maturity.toml IN THIS SAME PR, or"
+            echo "  (b) Bump the crate's MAJOR version in its Cargo.toml."
+            echo ""
+            echo "See README.md \"Stability contract\" for the full policy."
+            exit 1
+          fi
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# Stable Surface Guard"
+            echo ""
+            echo "| Category | Count |"
+            echo "|---|---|"
+            echo "| Stable-tier changed (fails CI) | ${{ steps.diff.outputs.stable_count }} |"
+            echo "| Non-stable changed (warn only) | ${{ steps.diff.outputs.other_count }} |"
+            echo "| Crates added | ${{ steps.diff.outputs.added_count }} |"
+            echo "| Crates removed | ${{ steps.diff.outputs.removed_count }} |"
+            echo ""
+            echo "## Stable subset hashes (PR branch)"
+            echo ""
+            echo '```'
+            jq -r '.crates[] | select(.tier == "stable") | "\(.name)\t\(.api_hash)\t(\(.decl_count) pub decls)"' pr-report.json
+            echo '```'
+            echo ""
+            echo "See \`crate-maturity.toml\` for the source of truth."
+          } >> "$GITHUB_STEP_SUMMARY"

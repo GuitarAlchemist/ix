@@ -97,6 +97,18 @@ enum Verb {
         #[command(subcommand)]
         noun: ServeNoun,
     },
+
+    /// Print the maturity-tier "Stable" crates with a public-API hash each.
+    ///
+    /// CI uses this on `main` and on PR branches and fails the PR if a
+    /// Stable crate's hash changed without an explicit demotion. See
+    /// `crate-maturity.toml` for the source of truth and the README's
+    /// "Stability contract" section for the policy.
+    StableSurface {
+        /// Include non-Stable crates in the report (default: Stable only).
+        #[arg(long)]
+        all_tiers: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -329,6 +341,8 @@ fn dispatch(cli: Cli) -> i32 {
             eprintln!("{msg}");
             exit::UNKNOWN
         }
+
+        Verb::StableSurface { all_tiers } => try_or(verbs::stable_surface::run(fmt, all_tiers)),
     }
 }
 

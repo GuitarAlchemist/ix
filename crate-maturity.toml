@@ -1,0 +1,91 @@
+# Crate maturity source of truth for the ix workspace.
+#
+# Tiers (see README.md "Crate Maturity & Stability" for full definitions):
+#   - "stable"        — API commitments, CI prevents silent breakage
+#   - "beta"          — Feature-complete, API may change between minor versions
+#   - "experimental"  — Research-grade, no stability guarantees
+#   - "internal"      — Tooling/infra, not intended for direct external use
+#
+# Adding a new crate: add it here. CI's `stable-surface` check reads this file
+# to know which crates are guarded.
+#
+# Demoting a crate from "stable" requires updating this file in the SAME PR
+# that breaks the public API. See README.md "Stability contract" for the flow.
+
+[crates]
+# --- Stable tier (12 crates, guarded by CI) -----------------------------
+ix-math          = "stable"
+ix-optimize      = "stable"
+ix-supervised    = "stable"
+ix-ensemble      = "stable"
+ix-unsupervised  = "stable"
+ix-search        = "stable"
+ix-graph         = "stable"
+ix-signal        = "stable"
+ix-cache         = "stable"
+ix-probabilistic = "stable"
+ix-game          = "stable"
+ix-rl            = "stable"
+
+# --- Beta tier ----------------------------------------------------------
+ix-nn          = "beta"
+ix-pipeline    = "beta"
+ix-agent       = "beta"
+ix-governance  = "beta"
+ix-io          = "beta"
+ix-grammar     = "beta"
+ix-catalog-core = "beta"
+ix-net         = "beta"
+
+# --- Experimental tier --------------------------------------------------
+ix-evolution      = "experimental"
+ix-chaos          = "experimental"
+ix-adversarial    = "experimental"
+ix-dynamics       = "experimental"
+ix-topo           = "experimental"
+ix-ktheory        = "experimental"
+ix-category       = "experimental"
+ix-rotation       = "experimental"
+ix-sedenion       = "experimental"
+ix-fractal        = "experimental"
+ix-number-theory  = "experimental"
+ix-gpu            = "experimental"
+memristive-markov = "experimental"
+
+# --- Internal tier ------------------------------------------------------
+ix-skill                  = "internal"
+ix-skill-macros           = "internal"
+ix-demo                   = "internal"
+ix-dashboard              = "internal"
+ix-registry               = "internal"
+ix-code                   = "internal"
+ix-types                  = "internal"
+ix-agent-core             = "internal"
+ix-approval               = "internal"
+ix-autograd               = "internal"
+ix-context                = "internal"
+ix-fuzzy                  = "internal"
+ix-harness-cargo          = "internal"
+ix-harness-clippy         = "internal"
+ix-harness-ga             = "internal"
+ix-harness-github-actions = "internal"
+ix-harness-signing        = "internal"
+ix-harness-tars           = "internal"
+ix-loop-detect            = "internal"
+ix-memory                 = "internal"
+ix-registry-check         = "internal"
+ix-sentinel               = "internal"
+ix-session                = "internal"
+ix-manifold               = "internal"
+ix-sanitize               = "internal"
+ix-voicings               = "internal"
+ix-optick                 = "internal"
+ix-optick-invariants      = "internal"
+ix-optick-sae             = "internal"
+ix-embedding-diagnostics  = "internal"
+ix-quality-trend          = "internal"
+ix-invariant-coverage     = "internal"
+ix-bracelet               = "internal"
+ga-chatbot                = "internal"
+ix-autoresearch           = "internal"
+ix-blast-radius           = "internal"
