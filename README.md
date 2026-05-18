@@ -52,6 +52,43 @@ cargo run -p ix-agent
 | ix-game | Stable | Nash, Shapley, auctions, mechanism design — promoted 2026-05-02 |
 | ix-rl | Stable | Bandits (EpsilonGreedy, UCB1, Thompson), Q-learning — promoted 2026-05-02 |
 
+### Stability contract
+
+"Stable" is not just documentation — **CI prevents silent breakage**. The
+[`stable-surface.yml`](.github/workflows/stable-surface.yml) workflow runs on
+every PR: it hashes the public-API surface of each Stable-tier crate on
+`main`, then again on the PR branch, and **fails** the check if any hash
+changed. Non-stable crates produce a warning only.
+
+Source of truth: [`crate-maturity.toml`](crate-maturity.toml) at the workspace
+root. The CLI subcommand `ix stable-surface` is the reference implementation
+used by CI and is runnable locally:
+
+```bash
+cargo run -p ix-skill -- stable-surface --format=json
+```
+
+The hash is a BLAKE3 over the sorted, deduplicated set of `pub` declarations
+discovered in each crate's `src/**.rs`. It catches **added / removed /
+renamed exported symbols** — enough to stop accidental breaks. It does NOT
+catch finer-grained changes (function signature edits, trait-bound
+additions, variance shifts). Those are out of scope for v1; revisit with
+`cargo public-api` integration when a real break slips through.
+
+**To intentionally break a Stable API**, do one of the following in the
+SAME PR that introduces the change:
+
+1. **Demote the crate** to `beta` in `crate-maturity.toml`. The guard then
+   downgrades the diff to a warning. Document the demotion in the PR body.
+2. **Bump the crate's major version** in its `Cargo.toml`. (v1 of this
+   guard still flags the hash change — bumping the major version is the
+   semver-correct signal to downstream consumers, but the guard does not
+   yet auto-detect it. Use the demotion path for the CI to go green, then
+   restore the tier in a follow-up release PR.)
+
+The current 12 Stable crates (see table above) cover the safe-to-consume
+subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
+
 ### Beta Crates
 
 | Crate | Tier | Notes |

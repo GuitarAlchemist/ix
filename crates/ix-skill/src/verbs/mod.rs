@@ -7,3 +7,4 @@ pub mod describe;
 pub mod list;
 pub mod pipeline;
 pub mod run;
+pub mod stable_surface;

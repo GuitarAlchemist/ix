@@ -6,6 +6,21 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Added — Stable Surface guard (2026-05-17)
+
+- `crate-maturity.toml` workspace-root file: single source of truth mapping
+  every crate to one of `stable` / `beta` / `experimental` / `internal`.
+- `ix stable-surface` CLI subcommand: prints each Stable crate's public-API
+  hash (BLAKE3 over sorted `pub` declarations). `--all-tiers` includes the
+  rest. JSON output is the wire format for CI.
+- `.github/workflows/stable-surface.yml`: diffs the report between `main`
+  and the PR. Stable hash changes → fail. Non-stable hash changes → warn.
+- README "Stability contract" section documenting the demotion escape
+  hatch.
+- Unit tests in `ix-skill::verbs::stable_surface::tests` cover pub-line
+  extraction, internal-vs-external change detection, and the diff
+  partitioning across tiers (4 tests, all green).
+
 ### Added — Phase 1 delivery (Weeks 1–8)
 
 **New foundation crates**
