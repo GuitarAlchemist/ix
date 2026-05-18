@@ -36,9 +36,10 @@
 
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
+use ix_agent::scopes::Scope;
 use ix_agent::server_context::ServerContext;
 use ix_agent::tools::ToolRegistry;
 
@@ -49,6 +50,18 @@ const JSONRPC_INTERNAL_ERROR: i64 = -32603;
 fn main() {
     let registry = Arc::new(ToolRegistry::new());
     let (ctx, outbound_rx) = ServerContext::new();
+
+    // Active scope for this MCP session. Resolved at startup from the
+    // IX_MCP_SCOPE env var, then potentially overridden by the
+    // `initialize` request's `clientInfo.scope` field. Wrapped in a
+    // Mutex because the reader thread reads it on every tools/list and
+    // the initialize handler writes to it once on connect.
+    let initial_scope = Scope::resolve(None);
+    let scope = Arc::new(Mutex::new(initial_scope));
+    eprintln!(
+        "[ix-mcp] startup scope = {:?} (override via IX_MCP_SCOPE or clientInfo.scope)",
+        initial_scope
+    );
 
     // Writer thread: single owner of stdout. All outbound JSON-RPC
     // messages (responses, notifications, and server-initiated
@@ -129,6 +142,25 @@ fn main() {
 
         match method.as_str() {
             "initialize" => {
+                // Allow the client to nominate a scope via
+                // params.clientInfo.scope. If absent, keep whatever
+                // env-derived scope is already in the slot.
+                if let Some(hint) = params
+                    .as_ref()
+                    .and_then(|p| p.get("clientInfo"))
+                    .and_then(|ci| ci.get("scope"))
+                    .and_then(|v| v.as_str())
+                {
+                    let resolved = Scope::resolve(Some(hint));
+                    let mut slot = scope.lock().expect("scope mutex poisoned");
+                    if *slot != resolved {
+                        eprintln!(
+                            "[ix-mcp] scope override from clientInfo: {:?} -> {:?}",
+                            *slot, resolved
+                        );
+                        *slot = resolved;
+                    }
+                }
                 let resp = handle_initialize(id, registry.as_ref());
                 ctx.write_value(&resp);
             }
@@ -136,7 +168,8 @@ fn main() {
                 // Notification — no response required.
             }
             "tools/list" => {
-                let resp = handle_tools_list(id, registry.as_ref());
+                let active = *scope.lock().expect("scope mutex poisoned");
+                let resp = handle_tools_list(id, registry.as_ref(), active);
                 ctx.write_value(&resp);
             }
             "tools/call" => {
@@ -206,8 +239,8 @@ fn handle_initialize(id: Value, _registry: &ToolRegistry) -> Value {
     )
 }
 
-fn handle_tools_list(id: Value, registry: &ToolRegistry) -> Value {
-    success_response(id, registry.list())
+fn handle_tools_list(id: Value, registry: &ToolRegistry, scope: Scope) -> Value {
+    success_response(id, registry.list_scoped(scope))
 }
 
 fn handle_tools_call(

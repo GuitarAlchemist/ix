@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod ml_pipeline;
 pub mod projection;
 pub mod registry_bridge;
+pub mod scopes;
 pub mod server_context;
 pub mod skills;
 pub mod tools;
