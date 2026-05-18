@@ -776,7 +776,9 @@ mod tests {
             LoaderStatus::LoadedFallbackDate
         );
         assert_eq!(
-            status_for(&manifest, "baseline.json").date_source.as_deref(),
+            status_for(&manifest, "baseline.json")
+                .date_source
+                .as_deref(),
             Some("timestamp-field")
         );
         // gibberish.json has no filename date and no timestamp field — mtime
