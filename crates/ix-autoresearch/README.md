@@ -2,6 +2,8 @@
 
 Karpathy-style edit-eval-iterate kernel for IX subsystems.
 
+> **JSONL wire contract:** the per-line event shape this crate emits is a published contract consumed by Hari's `hari-from-ix-autoresearch` adapter. See [`SCHEMA.md`](./SCHEMA.md) for the pinned schema and the derived semantic event view, [`jsonl-event.schema.json`](./jsonl-event.schema.json) for the machine-readable JSON Schema, and [`examples/grammar_pinned_contract.rs`](./examples/grammar_pinned_contract.rs) for the canonical producer. Acceptance criteria (append-only, deterministic replay, contradictory findings preserved) are enforced by `tests/jsonl_contract.rs`.
+
 ## What it does
 
 Runs an autonomous experiment loop:
