@@ -177,8 +177,14 @@ mod tests {
     fn from_name_aliases() {
         assert_eq!(Scope::from_name("default"), Some(Scope::Default));
         assert_eq!(Scope::from_name(""), Some(Scope::Default));
-        assert_eq!(Scope::from_name("AGENT-BLACKBOX"), Some(Scope::AgentBlackbox));
-        assert_eq!(Scope::from_name("agent_blackbox"), Some(Scope::AgentBlackbox));
+        assert_eq!(
+            Scope::from_name("AGENT-BLACKBOX"),
+            Some(Scope::AgentBlackbox)
+        );
+        assert_eq!(
+            Scope::from_name("agent_blackbox"),
+            Some(Scope::AgentBlackbox)
+        );
         assert_eq!(Scope::from_name("blackbox"), Some(Scope::AgentBlackbox));
         assert_eq!(Scope::from_name("hari"), None);
     }
