@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GuitarAlchemist/ix/blob/main/crates/ix-autoresearch/jsonl-event.schema.json",
+  "title": "ix-autoresearch JSONL event",
+  "description": "One line of an ix-autoresearch run log. Tagged via the `event` field. See crates/ix-autoresearch/SCHEMA.md for the Hari boundary contract.",
+  "type": "object",
+  "required": ["event", "schema_version"],
+  "properties": {
+    "event": {
+      "type": "string",
+      "enum": ["run_start", "iteration", "run_complete"]
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "oneOf": [
+    {
+      "title": "run_start",
+      "type": "object",
+      "required": ["event", "schema_version", "run_id", "timestamp", "target", "strategy", "seed", "baseline_config"],
+      "properties": {
+        "event": { "const": "run_start" },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "target": { "type": "string", "minLength": 1 },
+        "strategy": { },
+        "seed": { "type": "integer", "minimum": 0 },
+        "git_sha": { "type": ["string", "null"] },
+        "git_sha_reason": { "type": ["string", "null"] },
+        "baseline_config": { },
+        "eval_inputs_hash": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "iteration",
+      "type": "object",
+      "required": ["event", "schema_version", "iteration", "timestamp", "config", "config_hash", "accepted", "elapsed_ms"],
+      "properties": {
+        "event": { "const": "iteration" },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "iteration": { "type": "integer", "minimum": 0 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "config": { },
+        "config_hash": { "type": "string", "minLength": 1 },
+        "score": { },
+        "reward": { "type": ["number", "null"] },
+        "accepted": { "type": "boolean" },
+        "previous_hash": { "type": ["string", "null"] },
+        "error": { "type": ["string", "null"] },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "strategy_state": { },
+        "cache_hit": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "run_complete",
+      "type": "object",
+      "required": ["event", "schema_version", "timestamp", "iterations", "accepted"],
+      "properties": {
+        "event": { "const": "run_complete" },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "iterations": { "type": "integer", "minimum": 0 },
+        "accepted": { "type": "integer", "minimum": 0 },
+        "best_iteration": { "type": ["integer", "null"], "minimum": 0 },
+        "best_reward": { "type": ["number", "null"] },
+        "consecutive_kills_at_abort": { "type": ["integer", "null"], "minimum": 0 },
+        "cost": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["total_elapsed_ms", "cache_hit_count", "eval_failure_count", "rejected_count"],
+              "properties": {
+                "total_elapsed_ms": { "type": "integer", "minimum": 0 },
+                "cache_hit_count": { "type": "integer", "minimum": 0 },
+                "eval_failure_count": { "type": "integer", "minimum": 0 },
+                "rejected_count": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  ]
+}
