@@ -344,7 +344,11 @@ impl Experiment for OpticKTarget {
                 reason: format!("weights must sum to ≈ 1.0; got sum = {s:.6}"),
             }));
         }
-        if config.as_array().iter().any(|w| !w.is_finite() || *w < -1e-12) {
+        if config
+            .as_array()
+            .iter()
+            .any(|w| !w.is_finite() || *w < -1e-12)
+        {
             return Err(AutoresearchError::EvalFailed(EvalCategory::InvalidConfig {
                 reason: "weights must be non-negative and finite".to_string(),
             }));
@@ -482,15 +486,9 @@ impl OpticKTarget {
             .map_err(|e| internal(format!("create diag dir: {e}")))?;
         let mut diag_args: Vec<String> = vec![
             "--index".into(),
-            index_path
-                .to_str()
-                .ok_or_else(non_utf8_path)?
-                .to_string(),
+            index_path.to_str().ok_or_else(non_utf8_path)?.to_string(),
             "--out-dir".into(),
-            diag_dir
-                .to_str()
-                .ok_or_else(non_utf8_path)?
-                .to_string(),
+            diag_dir.to_str().ok_or_else(non_utf8_path)?.to_string(),
             "--n-trees".into(),
             cfg.n_trees.to_string(),
             "--tree-depth".into(),
@@ -549,12 +547,11 @@ impl OpticKTarget {
     /// values purely from the config's distance to true_optimum.
     fn synthetic_score(&self, config: &OpticKConfig) -> OpticKScore {
         let l1 = self.l1_to_optimum(config); // ∈ [0, 2]
-        // Linear scale: l1=0 → leak=0; l1=2 → leak=1.
+                                             // Linear scale: l1=0 → leak=0; l1=2 → leak=1.
         let structure_leak_pct = (l1 / 2.0).clamp(0.0, 1.0);
         // Inverse of leak with a tiny "structural prior" so retrieval
         // doesn't track leak exactly. v1: retrieval = 1 − leak² (concave).
-        let retrieval_match_pct =
-            (1.0 - structure_leak_pct.powi(2)).clamp(0.0, 1.0);
+        let retrieval_match_pct = (1.0 - structure_leak_pct.powi(2)).clamp(0.0, 1.0);
         // Synthetic invariant pass rates: smoothly decay with leak.
         let inv_25_pass_rate = (1.0 - structure_leak_pct).clamp(0.0, 1.0);
         let inv_32_pass_rate = (1.0 - structure_leak_pct).clamp(0.0, 1.0);
@@ -571,10 +568,7 @@ impl OpticKTarget {
 
 // ─── Live evaluator helpers ─────────────────────────────────────────────
 
-fn write_weights_json(
-    config: &OpticKConfig,
-    path: &Path,
-) -> Result<(), AutoresearchError> {
+fn write_weights_json(config: &OpticKConfig, path: &Path) -> Result<(), AutoresearchError> {
     let payload = serde_json::json!({
         "schema_version":   1,
         "structure_weight":  config.structure_weight,
@@ -663,9 +657,7 @@ fn parse_invariant_pass_rates(stderr: &str) -> (f64, f64, f64) {
 
 /// Locate `embedding-diagnostics-*.json` inside `diag_dir` (date-stamped
 /// filename) and parse it as a generic JSON value.
-fn find_and_parse_diag_report(
-    diag_dir: &Path,
-) -> Result<serde_json::Value, AutoresearchError> {
+fn find_and_parse_diag_report(diag_dir: &Path) -> Result<serde_json::Value, AutoresearchError> {
     let entries =
         std::fs::read_dir(diag_dir).map_err(|e| internal(format!("read diag_dir: {e}")))?;
     let mut report_path: Option<PathBuf> = None;
@@ -808,7 +800,10 @@ mod tests {
         let mut t = make_target();
         let baseline = t.baseline();
         let score = t
-            .evaluate(&baseline, Instant::now() + std::time::Duration::from_secs(1))
+            .evaluate(
+                &baseline,
+                Instant::now() + std::time::Duration::from_secs(1),
+            )
             .unwrap();
         assert!(score.structure_leak_pct > 0.0);
         assert!(score.structure_leak_pct < 1.0);

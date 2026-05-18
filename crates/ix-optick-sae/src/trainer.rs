@@ -104,7 +104,9 @@ pub fn run_python_trainer(
     match status.code() {
         Some(0) => Ok(()),
         Some(EXIT_MSE_FAIL) => Err(TrainerError::MseGuardrailExceeded),
-        Some(EXIT_DEAD_FEATURES) => Err(TrainerError::UnexpectedExitCode { code: EXIT_DEAD_FEATURES }),
+        Some(EXIT_DEAD_FEATURES) => Err(TrainerError::UnexpectedExitCode {
+            code: EXIT_DEAD_FEATURES,
+        }),
         Some(code) => Err(TrainerError::UnexpectedExitCode { code }),
         None => Err(TrainerError::KilledBySignal),
     }

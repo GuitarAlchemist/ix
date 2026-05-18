@@ -298,10 +298,7 @@ fn run_coverage(
         }
     };
     if let Err(e) = std::fs::write(output_path, &json) {
-        eprintln!(
-            "[coverage] write {} failed: {e}",
-            output_path.display()
-        );
+        eprintln!("[coverage] write {} failed: {e}", output_path.display());
         return 2;
     }
     eprintln!(

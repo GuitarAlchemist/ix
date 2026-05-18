@@ -66,7 +66,9 @@ impl CacheBridge {
     /// Compute the cache key for a config. Returns `None` when caching
     /// is disabled. Hash is `blake3(serde_json(config) || salt)`.
     pub fn key_for<C: Serialize>(&self, config: &C) -> Result<Option<String>, AutoresearchError> {
-        let Some(salt) = &self.salt else { return Ok(None) };
+        let Some(salt) = &self.salt else {
+            return Ok(None);
+        };
         let mut buf = serde_json::to_vec(config)?;
         buf.extend_from_slice(salt.as_bytes());
         let hash = blake3::hash(&buf);
@@ -80,7 +82,9 @@ impl CacheBridge {
         C: Serialize,
         S: DeserializeOwned,
     {
-        let Some(key) = self.key_for(config)? else { return Ok(None) };
+        let Some(key) = self.key_for(config)? else {
+            return Ok(None);
+        };
         Ok(global_cache().get::<S>(&key))
     }
 
@@ -90,7 +94,9 @@ impl CacheBridge {
         C: Serialize,
         S: Serialize,
     {
-        let Some(key) = self.key_for(config)? else { return Ok(()) };
+        let Some(key) = self.key_for(config)? else {
+            return Ok(());
+        };
         global_cache().set_with_ttl(&key, score, self.ttl);
         Ok(())
     }

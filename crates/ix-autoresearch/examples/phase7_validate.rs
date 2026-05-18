@@ -83,13 +83,18 @@ fn parse_args() -> Args {
             "--seeds" => seeds = argv.next().and_then(|s| s.parse().ok()).unwrap_or(3),
             "--export-max" => export_max = argv.next().and_then(|s| s.parse().ok()).unwrap_or(2000),
             "--base-seed" => {
-                base_seed = argv.next().and_then(|s| s.parse().ok()).unwrap_or(base_seed)
+                base_seed = argv
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(base_seed)
             }
             "--baseline" => {
                 baseline = match argv.next().as_deref() {
                     Some("production") => Baseline::Production,
                     Some("uniform") => Baseline::Uniform,
-                    Some(other) => panic!("--baseline must be 'production' or 'uniform'; got '{other}'"),
+                    Some(other) => {
+                        panic!("--baseline must be 'production' or 'uniform'; got '{other}'")
+                    }
                     None => panic!("--baseline requires an argument"),
                 }
             }

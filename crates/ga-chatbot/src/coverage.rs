@@ -104,23 +104,8 @@ const FAMOUS_REFERENCES: &[&str] = &[
 
 /// Style/genre keywords. Lowercase substring match.
 const STYLE_KEYWORDS: &[&str] = &[
-    "jazz",
-    "blues",
-    "rock",
-    "metal",
-    "funk",
-    "bossa",
-    "samba",
-    "swing",
-    "bebop",
-    "fusion",
-    "gospel",
-    "country",
-    "folk",
-    "gypsy",
-    "reggae",
-    "latin",
-    "comping",
+    "jazz", "blues", "rock", "metal", "funk", "bossa", "samba", "swing", "bebop", "fusion",
+    "gospel", "country", "folk", "gypsy", "reggae", "latin", "comping",
 ];
 
 /// Mood/affect adjectives. Picked for low overlap with voice-leading
@@ -171,14 +156,7 @@ pub fn classify_intent(entry: &TelemetryEntry) -> IntentLabel {
         return IntentLabel::StyleQuery;
     }
     let instruments = [
-        "bass",
-        "ukulele",
-        "mandolin",
-        "banjo",
-        "baritone",
-        "7-string",
-        "8-string",
-        "fretless",
+        "bass", "ukulele", "mandolin", "banjo", "baritone", "7-string", "8-string", "fretless",
     ];
     if instruments.iter().any(|k| q.contains(k)) {
         return IntentLabel::InstrumentSpecific;
@@ -508,10 +486,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.jsonl");
         let mut f = std::fs::File::create(&path).unwrap();
-        writeln!(f, r#"{{"ts":"2026-05-04T00:00:00Z","q":"Cmaj7","results":3}}"#).unwrap();
+        writeln!(
+            f,
+            r#"{{"ts":"2026-05-04T00:00:00Z","q":"Cmaj7","results":3}}"#
+        )
+        .unwrap();
         writeln!(f, "this is not json").unwrap();
         writeln!(f).unwrap();
-        writeln!(f, r#"{{"ts":"2026-05-04T00:01:00Z","q":"Dm7","results":3}}"#).unwrap();
+        writeln!(
+            f,
+            r#"{{"ts":"2026-05-04T00:01:00Z","q":"Dm7","results":3}}"#
+        )
+        .unwrap();
         let entries = load_telemetry(dir.path());
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].q, "Cmaj7");

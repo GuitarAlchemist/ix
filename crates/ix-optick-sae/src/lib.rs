@@ -12,7 +12,12 @@ pub const DEAD_FEATURES_PCT_GUARDRAIL: f64 = 30.0;
 // carries chord-root identity which is critical for similarity comparisons.
 // Source: state/quality/optick-sae/2026-05-04/optick-sae-artifact.json (canonical baseline).
 pub const PHASE1_PARTITIONS: &[&str] = &[
-    "STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL", "ROOT",
+    "STRUCTURE",
+    "MORPHOLOGY",
+    "CONTEXT",
+    "SYMBOLIC",
+    "MODAL",
+    "ROOT",
 ];
 
 // ── Artifact JSON shape (mirrors optick-sae-artifact.schema.json v0.1) ─────────
@@ -110,14 +115,10 @@ pub enum ValidationError {
     #[error("schema_version must be {expected}, got {got}")]
     WrongSchemaVersion { expected: u32, got: u32 },
 
-    #[error(
-        "artifact_id '{id}' is not filename-safe (must not contain ':' or '/')"
-    )]
+    #[error("artifact_id '{id}' is not filename-safe (must not contain ':' or '/')")]
     InvalidArtifactId { id: String },
 
-    #[error(
-        "reconstruction_mse {mse:.8} exceeds guardrail {guardrail:.2} — artifact not emitted"
-    )]
+    #[error("reconstruction_mse {mse:.8} exceeds guardrail {guardrail:.2} — artifact not emitted")]
     ReconstructionMseTooHigh { mse: f64, guardrail: f64 },
 
     #[error(
@@ -246,7 +247,10 @@ mod tests {
     #[test]
     fn mse_above_guardrail_fails() {
         let err = validate_artifact(&stub_artifact(0.051, 10.0)).unwrap_err();
-        assert!(matches!(err, ValidationError::ReconstructionMseTooHigh { .. }));
+        assert!(matches!(
+            err,
+            ValidationError::ReconstructionMseTooHigh { .. }
+        ));
     }
 
     #[test]

@@ -46,15 +46,24 @@ fn payload_handler_matches_voicings_payload_v1_schema() {
         let url = payload[url_field]
             .as_str()
             .unwrap_or_else(|| panic!("{url_field} must be a string"));
-        assert!(url.starts_with("http"), "{url_field} should be an http URL, got {url}");
-        assert!(!url.ends_with('/'), "{url_field} should not end with a slash");
+        assert!(
+            url.starts_with("http"),
+            "{url_field} should be an http URL, got {url}"
+        );
+        assert!(
+            !url.ends_with('/'),
+            "{url_field} should not end with a slash"
+        );
     }
 
     let offset = payload["scene_offset"]
         .as_array()
         .expect("scene_offset is an array");
     assert_eq!(offset.len(), 3, "scene_offset must be [x,y,z]");
-    assert_eq!(offset[0], 200.0, "default x offset clears the governance graph");
+    assert_eq!(
+        offset[0], 200.0,
+        "default x offset clears the governance graph"
+    );
 
     assert!(
         payload["default_spread"].as_f64().unwrap() >= 0.0,
@@ -80,7 +89,10 @@ fn corpus_lazy_lookup_resolves_when_present() {
     }
     let bytes = std::fs::read(&bass_corpus).expect("read bass corpus");
     let entries: Vec<Value> = serde_json::from_slice(&bytes).expect("parse bass corpus");
-    assert!(!entries.is_empty(), "corpus should have at least one voicing");
+    assert!(
+        !entries.is_empty(),
+        "corpus should have at least one voicing"
+    );
     let first = &entries[0];
     assert!(
         first.get("instrument").and_then(|v| v.as_str()) == Some("bass"),
@@ -101,7 +113,9 @@ fn binary_buffer_layout_matches_meta_when_present() {
     let meta_path = project_root().join("state/viz/voicing-positions.meta.json");
 
     if !bin_path.exists() || !meta_path.exists() {
-        eprintln!("skipping: voicing-positions.{{bin,meta.json}} not present (run serve_viz first)");
+        eprintln!(
+            "skipping: voicing-positions.{{bin,meta.json}} not present (run serve_viz first)"
+        );
         return;
     }
 
@@ -109,9 +123,7 @@ fn binary_buffer_layout_matches_meta_when_present() {
     let meta: Value = serde_json::from_slice(&meta_bytes).expect("meta is JSON");
     let total = meta["total"].as_u64().expect("meta.total is integer") as usize;
 
-    let bin_size = std::fs::metadata(&bin_path)
-        .expect("stat bin")
-        .len() as usize;
+    let bin_size = std::fs::metadata(&bin_path).expect("stat bin").len() as usize;
     let expected = total * 3 * 4;
     assert_eq!(
         bin_size, expected,
@@ -131,5 +143,8 @@ fn binary_buffer_layout_matches_meta_when_present() {
         );
         running += count;
     }
-    assert_eq!(running, total, "sum of per-instrument counts ({running}) must equal total ({total})");
+    assert_eq!(
+        running, total,
+        "sum of per-instrument counts ({running}) must equal total ({total})"
+    );
 }

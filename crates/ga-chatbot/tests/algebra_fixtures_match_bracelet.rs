@@ -43,7 +43,10 @@ fn algebra_001_major_minor_triads_share_set_class() {
     assert_eq!(icv(c_maj), icv(c_min));
 
     let resp = fixture_for("are c major and c minor triads in the same set class");
-    assert!(resp.answer.contains("3-11"), "answer should cite Forte 3-11");
+    assert!(
+        resp.answer.contains("3-11"),
+        "answer should cite Forte 3-11"
+    );
     assert!(
         resp.answer.contains("[0, 0, 1, 1, 1, 0]"),
         "answer should cite the ICV [0, 0, 1, 1, 1, 0]"
@@ -90,7 +93,10 @@ fn algebra_004_g7_db7_tritone_substitution() {
     assert!(grothendieck_delta(g7, db7).is_zero());
 
     let resp = fixture_for("is db7 a valid substitution for g7");
-    assert!(resp.answer.contains("4-27"), "answer should cite Forte 4-27");
+    assert!(
+        resp.answer.contains("4-27"),
+        "answer should cite Forte 4-27"
+    );
     assert!(
         resp.answer.contains("[0, 1, 2, 1, 1, 1]"),
         "answer should cite the dominant-7th ICV"
@@ -131,9 +137,8 @@ fn algebra_006_aug_dim_distance_is_l1_6() {
     assert_eq!(delta.data, [0, 0, 2, -3, 0, 1]);
     assert_eq!(delta.l1_norm(), 6);
 
-    let resp = fixture_for(
-        "what is the harmonic distance between c augmented and c diminished triads",
-    );
+    let resp =
+        fixture_for("what is the harmonic distance between c augmented and c diminished triads");
     assert!(resp.answer.contains("[0, 0, 0, 3, 0, 0]"));
     assert!(resp.answer.contains("[0, 0, 2, 0, 0, 1]"));
     assert!(

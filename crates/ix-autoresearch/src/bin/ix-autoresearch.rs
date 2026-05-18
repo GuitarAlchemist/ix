@@ -175,9 +175,9 @@ fn main() -> ExitCode {
     let result: Result<(), String> = match cli.verb {
         Verb::Run(args) => verb_run(&runs_root, args, cli.quiet),
         Verb::Resume(args) => verb_resume(args, cli.quiet),
-        Verb::List {
-            include_milestones,
-        } => verb_list(&runs_root, &milestones_root, include_milestones),
+        Verb::List { include_milestones } => {
+            verb_list(&runs_root, &milestones_root, include_milestones)
+        }
         Verb::Promote(args) => verb_promote(&runs_root, &milestones_root, args, cli.quiet),
         Verb::Revert(args) => verb_revert(&runs_root, args),
     };
@@ -212,8 +212,15 @@ fn verb_run(runs_root: &std::path::Path, args: RunArgs, quiet: bool) -> Result<(
             )
             .map_err(|e| format!("run failed: {e}"))?;
             if !quiet {
-                print_outcome("grammar", &outcome.run_id, &outcome.log_path, outcome.iterations,
-                              outcome.accepted, outcome.best_reward, outcome.aborted_kills);
+                print_outcome(
+                    "grammar",
+                    &outcome.run_id,
+                    &outcome.log_path,
+                    outcome.iterations,
+                    outcome.accepted,
+                    outcome.best_reward,
+                    outcome.aborted_kills,
+                );
             }
         }
     }
@@ -234,8 +241,15 @@ fn verb_resume(args: ResumeArgs, quiet: bool) -> Result<(), String> {
             )
             .map_err(|e| format!("resume failed: {e}"))?;
             if !quiet {
-                print_outcome("grammar", &outcome.run_id, &outcome.log_path, outcome.iterations,
-                              outcome.accepted, outcome.best_reward, outcome.aborted_kills);
+                print_outcome(
+                    "grammar",
+                    &outcome.run_id,
+                    &outcome.log_path,
+                    outcome.iterations,
+                    outcome.accepted,
+                    outcome.best_reward,
+                    outcome.aborted_kills,
+                );
             }
         }
     }
@@ -313,8 +327,14 @@ fn verb_promote(
     args: PromoteArgs,
     quiet: bool,
 ) -> Result<(), String> {
-    let dst = promote_run(runs_root, milestones_root, &args.run_id, &args.note, args.force)
-        .map_err(|e| format!("promote failed: {e}"))?;
+    let dst = promote_run(
+        runs_root,
+        milestones_root,
+        &args.run_id,
+        &args.note,
+        args.force,
+    )
+    .map_err(|e| format!("promote failed: {e}"))?;
     if !quiet {
         println!("promoted: {}", dst.display());
     }

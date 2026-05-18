@@ -58,8 +58,8 @@ fn phase1_partitions_match_canonical_baseline() {
 
 #[test]
 fn compact_training_dim_matches_canonical_baseline() {
-    let canonical: CanonicalSnapshot = serde_json::from_str(CANONICAL_FIXTURE)
-        .expect("canonical-partitions.json failed to parse");
+    let canonical: CanonicalSnapshot =
+        serde_json::from_str(CANONICAL_FIXTURE).expect("canonical-partitions.json failed to parse");
 
     // The OPTIC-K v1.8 partition widths (from
     // ga/Common/GA.Business.ML/Embeddings/EmbeddingSchema.cs SimilarityPartitions):

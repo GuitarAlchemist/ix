@@ -88,9 +88,19 @@ fn every_line_validates_against_pinned_schema() {
         match event {
             "run_start" => {
                 assert!(!seen_run_start, "duplicate run_start at line {i}");
-                assert!(!seen_run_complete, "run_start after run_complete at line {i}");
+                assert!(
+                    !seen_run_complete,
+                    "run_start after run_complete at line {i}"
+                );
                 assert_eq!(i, 0, "run_start must be the first line");
-                for req in ["run_id", "timestamp", "target", "strategy", "seed", "baseline_config"] {
+                for req in [
+                    "run_id",
+                    "timestamp",
+                    "target",
+                    "strategy",
+                    "seed",
+                    "baseline_config",
+                ] {
                     assert!(
                         v.get(req).is_some(),
                         "run_start line {i} missing required field `{req}`"
@@ -100,7 +110,10 @@ fn every_line_validates_against_pinned_schema() {
             }
             "iteration" => {
                 assert!(seen_run_start, "iteration before run_start at line {i}");
-                assert!(!seen_run_complete, "iteration after run_complete at line {i}");
+                assert!(
+                    !seen_run_complete,
+                    "iteration after run_complete at line {i}"
+                );
                 for req in [
                     "iteration",
                     "timestamp",
@@ -200,7 +213,10 @@ fn deterministic_replay_same_seed_produces_same_config_hash_sequence() {
 
     let a = extract(&path_a);
     let b = extract(&path_b);
-    assert_eq!(a, b, "same-seed runs must produce identical config_hash sequence");
+    assert_eq!(
+        a, b,
+        "same-seed runs must produce identical config_hash sequence"
+    );
 }
 
 /// Derived semantic event view (per SCHEMA.md "Layer 2"). Produced by
@@ -414,12 +430,19 @@ fn contradictory_findings_preserved_in_derived_view() {
 
 #[test]
 fn json_schema_file_is_present_and_well_formed() {
-    let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("jsonl-event.schema.json");
+    let schema_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("jsonl-event.schema.json");
     let raw = std::fs::read_to_string(&schema_path)
         .unwrap_or_else(|e| panic!("missing {}: {e}", schema_path.display()));
     let parsed: Value = serde_json::from_str(&raw).expect("schema is valid JSON");
-    assert_eq!(parsed.get("$schema").and_then(Value::as_str).unwrap_or(""),
-               "https://json-schema.org/draft/2020-12/schema");
+    assert_eq!(
+        parsed.get("$schema").and_then(Value::as_str).unwrap_or(""),
+        "https://json-schema.org/draft/2020-12/schema"
+    );
     let one_of = parsed.get("oneOf").and_then(Value::as_array).unwrap();
-    assert_eq!(one_of.len(), 3, "schema must define run_start, iteration, run_complete");
+    assert_eq!(
+        one_of.len(),
+        3,
+        "schema must define run_start, iteration, run_complete"
+    );
 }

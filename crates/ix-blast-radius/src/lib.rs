@@ -206,11 +206,7 @@ pub fn one_way_doors_in(paths: &[String]) -> Vec<String> {
 /// changes have the widest blast radius; one-way doors gate merge so
 /// they push hard; component count breadth contributes a small bump
 /// past five touched components.
-pub fn score_blast(
-    layers: &[Layer],
-    one_way_doors: &[String],
-    components: &[String],
-) -> f64 {
+pub fn score_blast(layers: &[Layer], one_way_doors: &[String], components: &[String]) -> f64 {
     let mut score: f64 = 0.0;
     score += (layers.len() as f64 * 0.10).min(0.40);
     score += (one_way_doors.len() as f64 * 0.15).min(0.50);
@@ -307,8 +303,7 @@ mod tests {
 
     #[test]
     fn schema_change_recorded_as_one_way_door() {
-        let doors =
-            one_way_doors_in(&["docs/contracts/some-thing.schema.json".into()]);
+        let doors = one_way_doors_in(&["docs/contracts/some-thing.schema.json".into()]);
         assert_eq!(doors.len(), 1);
         assert!(doors[0].starts_with("contract:"));
     }

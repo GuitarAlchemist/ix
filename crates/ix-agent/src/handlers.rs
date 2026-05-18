@@ -309,18 +309,12 @@ pub fn tsne(params: Value) -> Result<Value, String> {
         .get("perplexity")
         .and_then(|v| v.as_f64())
         .unwrap_or(30.0);
-    let n_iter = params
-        .get("n_iter")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(500) as usize;
+    let n_iter = params.get("n_iter").and_then(|v| v.as_u64()).unwrap_or(500) as usize;
     let target_dim = params
         .get("target_dim")
         .and_then(|v| v.as_u64())
         .unwrap_or(2) as usize;
-    let seed = params
-        .get("seed")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let data = vecs_to_array2(&data_rows)?;
     let n = data.nrows();
@@ -5043,7 +5037,9 @@ fn parse_pc_set(params: &Value, field: &str) -> Result<ix_bracelet::PcSet, Strin
     let arr = params
         .get(field)
         .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("Missing or invalid field '{field}' (expected array of pitch classes)"))?;
+        .ok_or_else(|| {
+            format!("Missing or invalid field '{field}' (expected array of pitch classes)")
+        })?;
     let mut pcs: Vec<u8> = Vec::with_capacity(arr.len());
     for v in arr {
         let n = v
@@ -5089,8 +5085,9 @@ pub fn grothendieck_nearby(params: Value) -> Result<Value, String> {
     let max_l1 = params
         .get("max_l1")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| "Missing or invalid field 'max_l1' (expected non-negative integer)".to_string())?
-        as u32;
+        .ok_or_else(|| {
+            "Missing or invalid field 'max_l1' (expected non-negative integer)".to_string()
+        })? as u32;
     let limit = params
         .get("limit")
         .and_then(|v| v.as_u64())
@@ -5156,9 +5153,7 @@ pub fn grothendieck_path(params: Value) -> Result<Value, String> {
 // MCP_ITERATION_CAP` (10_000). CLI is unconstrained.
 
 pub fn autoresearch_run(params: Value) -> Result<Value, String> {
-    use ix_autoresearch::{
-        run_experiment, GrammarTarget, Strategy, TimeBudget, MCP_ITERATION_CAP,
-    };
+    use ix_autoresearch::{run_experiment, GrammarTarget, Strategy, TimeBudget, MCP_ITERATION_CAP};
 
     let target = params
         .get("target")
@@ -5193,9 +5188,7 @@ pub fn autoresearch_run(params: Value) -> Result<Value, String> {
         "greedy" => Strategy::Greedy,
         "random" | "random_search" => Strategy::RandomSearch,
         "sa" | "simulated_annealing" => {
-            let initial_temperature = params
-                .get("initial_temperature")
-                .and_then(|v| v.as_f64());
+            let initial_temperature = params.get("initial_temperature").and_then(|v| v.as_f64());
             let cooling_rate = params
                 .get("cooling_rate")
                 .and_then(|v| v.as_f64())
@@ -5205,7 +5198,11 @@ pub fn autoresearch_run(params: Value) -> Result<Value, String> {
                 cooling_rate,
             }
         }
-        other => return Err(format!("unknown strategy '{other}'; expected 'greedy' | 'sa' | 'random'")),
+        other => {
+            return Err(format!(
+                "unknown strategy '{other}'; expected 'greedy' | 'sa' | 'random'"
+            ))
+        }
     };
 
     let soft_seconds = params
@@ -5225,10 +5222,7 @@ pub fn autoresearch_run(params: Value) -> Result<Value, String> {
         Some(h) => return Err(format!("'hard_seconds' must be > 0, got {h}")),
     };
 
-    let seed = params
-        .get("seed")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(42);
+    let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
 
     let state_dir = params
         .get("state_dir")
@@ -5272,11 +5266,7 @@ pub fn voicings_payload(params: Value) -> Result<Value, String> {
     let scene_offset = params
         .get("scene_offset")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_f64())
-                .collect::<Vec<f64>>()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect::<Vec<f64>>())
         .filter(|v| v.len() == 3)
         .unwrap_or_else(|| vec![200.0, 0.0, 0.0]);
 
@@ -5316,8 +5306,14 @@ mod voicings_payload_tests {
         let out = voicings_payload(json!({})).expect("ok");
         assert_eq!(out["schema"], "voicings.payload.v1");
         assert_eq!(out["format"], "binary-positions+meta");
-        assert_eq!(out["positions_url"], "http://127.0.0.1:8765/data/voicing-positions.bin");
-        assert_eq!(out["meta_url"], "http://127.0.0.1:8765/data/voicing-positions.meta.json");
+        assert_eq!(
+            out["positions_url"],
+            "http://127.0.0.1:8765/data/voicing-positions.bin"
+        );
+        assert_eq!(
+            out["meta_url"],
+            "http://127.0.0.1:8765/data/voicing-positions.meta.json"
+        );
         assert_eq!(out["scene_offset"], json!([200.0, 0.0, 0.0]));
         assert_eq!(out["default_spread"], 1.5);
         assert_eq!(out["default_point_size"], 0.3);
@@ -5330,12 +5326,16 @@ mod voicings_payload_tests {
             "default_spread": 0.0,
             "default_point_size": 1.2,
             "serve_url": "http://demo.local:9000/",
-        })).expect("ok");
+        }))
+        .expect("ok");
         assert_eq!(out["scene_offset"], json!([0.0, 0.0, 50.0]));
         assert_eq!(out["default_spread"], 0.0);
         assert_eq!(out["default_point_size"], 1.2);
         // Trailing slash gets stripped.
-        assert_eq!(out["positions_url"], "http://demo.local:9000/data/voicing-positions.bin");
+        assert_eq!(
+            out["positions_url"],
+            "http://demo.local:9000/data/voicing-positions.bin"
+        );
     }
 
     #[test]

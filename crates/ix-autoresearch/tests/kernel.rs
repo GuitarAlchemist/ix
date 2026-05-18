@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
 use ix_autoresearch::{
-    promote_run, resume_experiment, run_experiment, sanitize_text, validate_run_id,
-    validate_slug, AutoresearchError, EvalCategory, Experiment, LogEvent, Strategy, TimeBudget,
+    promote_run, resume_experiment, run_experiment, sanitize_text, validate_run_id, validate_slug,
+    AutoresearchError, EvalCategory, Experiment, LogEvent, Strategy, TimeBudget,
     HARD_KILL_CASCADE_THRESHOLD, MCP_ITERATION_CAP,
 };
 
@@ -332,7 +332,10 @@ fn three_consecutive_hard_kills_aborts_run() {
         ..
     } = last
     {
-        assert_eq!(*consecutive_kills_at_abort, Some(HARD_KILL_CASCADE_THRESHOLD));
+        assert_eq!(
+            *consecutive_kills_at_abort,
+            Some(HARD_KILL_CASCADE_THRESHOLD)
+        );
     } else {
         panic!("last event should be RunComplete");
     }
@@ -385,7 +388,12 @@ fn slug_regex_rejects_path_traversal_and_unsafe_chars() {
             "should have rejected slug {bad:?}"
         );
     }
-    for good in &["ok", "1", "first-overnight-tune", "2026-04-26-grammar-smoke"] {
+    for good in &[
+        "ok",
+        "1",
+        "first-overnight-tune",
+        "2026-04-26-grammar-smoke",
+    ] {
         assert!(
             validate_slug(good).is_ok(),
             "should have accepted slug {good:?}"

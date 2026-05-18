@@ -33,10 +33,7 @@ fn main() {
 
     let raw = match cli.paths_file {
         Some(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
-            eprintln!(
-                "[ix-blast-radius] cannot read {}: {e}",
-                path.display()
-            );
+            eprintln!("[ix-blast-radius] cannot read {}: {e}", path.display());
             std::process::exit(2);
         }),
         None => {
@@ -70,4 +67,3 @@ fn main() {
     });
     println!("{out}");
 }
-

@@ -445,9 +445,9 @@ mod tests {
         // At cost 0, we get the entire orbit of src (all sets with the same ICV
         // *via the major-triad orbit*; Z-relations would not appear here since
         // they are different orbit reps).
-        assert!(near.iter().any(|(s, d, c)| {
-            *s == src && d.is_zero() && *c == 0
-        }));
+        assert!(near
+            .iter()
+            .any(|(s, d, c)| { *s == src && d.is_zero() && *c == 0 }));
     }
 
     #[test]
@@ -516,7 +516,10 @@ mod tests {
     fn z_related_pairs_have_identical_icvs() {
         // Definitional check: every pair returned must share an ICV.
         let pairs = z_related_pairs();
-        assert!(!pairs.is_empty(), "12-TET has known Z-pairs at cardinalities 4-8");
+        assert!(
+            !pairs.is_empty(),
+            "12-TET has known Z-pairs at cardinalities 4-8"
+        );
         for (a, b) in &pairs {
             assert_eq!(
                 icv(*a),
@@ -584,7 +587,10 @@ mod tests {
         let c_maj_scale = pcset(&[0, 2, 4, 5, 7, 9, 11]);
         let g_maj_scale = pcset(&[0, 2, 4, 6, 7, 9, 11]); // C major + F♯ instead of F
         let path = find_shortest_path(c_maj_scale, g_maj_scale, 8);
-        assert!(!path.is_empty(), "expected a path between adjacent diatonic scales");
+        assert!(
+            !path.is_empty(),
+            "expected a path between adjacent diatonic scales"
+        );
         assert_eq!(*path.first().unwrap(), c_maj_scale);
         assert_eq!(*path.last().unwrap(), g_maj_scale);
     }

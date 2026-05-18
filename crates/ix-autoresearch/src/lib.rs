@@ -69,9 +69,7 @@ pub use policy::{
 };
 pub use target_chatbot::{ChatbotConfig, ChatbotScore, ChatbotTarget};
 pub use target_grammar::{GrammarConfig, GrammarScore, GrammarTarget};
-pub use target_optick::{
-    CIReducedConfig, OpticKConfig, OpticKScore, OpticKTarget, RebuildMode,
-};
+pub use target_optick::{CIReducedConfig, OpticKConfig, OpticKScore, OpticKTarget, RebuildMode};
 pub use time_budget::TimeBudget;
 
 use std::path::{Path, PathBuf};
@@ -110,8 +108,8 @@ impl RunId {
     /// [`validate_run_id`].
     pub fn parse(s: &str) -> Result<Self, AutoresearchError> {
         let canonical = validate_run_id(s)?;
-        let parsed = uuid::Uuid::parse_str(&canonical)
-            .expect("validate_run_id returned non-UUID string");
+        let parsed =
+            uuid::Uuid::parse_str(&canonical).expect("validate_run_id returned non-UUID string");
         Ok(Self(parsed))
     }
 
@@ -641,8 +639,7 @@ fn resolve_sa_calibration<E: Experiment>(
             initial_temperature: None,
             cooling_rate,
         } => {
-            let baseline_score = experiment
-                .evaluate(baseline, budget.soft_deadline_from_now())?;
+            let baseline_score = experiment.evaluate(baseline, budget.soft_deadline_from_now())?;
             let baseline_reward = experiment.score_to_reward(&baseline_score);
             // Distinct seed for calibration so it doesn't deplete the main loop's RNG stream.
             let mut calib_rng = ChaCha8Rng::seed_from_u64(seed.wrapping_add(0xCA1B_EAFE));
@@ -664,10 +661,7 @@ fn resolve_sa_calibration<E: Experiment>(
 
 /// Compute the cache key + a "config hash" string for log entries.
 /// When caching is disabled we still produce a hash for log uniqueness.
-fn config_hash<C: Serialize>(
-    cache: &CacheBridge,
-    config: &C,
-) -> Result<String, AutoresearchError> {
+fn config_hash<C: Serialize>(cache: &CacheBridge, config: &C) -> Result<String, AutoresearchError> {
     if let Some(k) = cache.key_for(config)? {
         return Ok(k);
     }
@@ -684,7 +678,10 @@ fn best_effort_git_sha() -> (Option<String>, Option<String>) {
     match output {
         Ok(o) if o.status.success() => {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
+            if s.len() == 40
+                && s.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+            {
                 (Some(s), None)
             } else {
                 (None, Some("malformed sha".to_string()))
@@ -765,9 +762,8 @@ where
         }
     }
 
-    let run_id = run_id.ok_or_else(|| {
-        AutoresearchError::InvalidRunId("log has no RunStart event".to_string())
-    })?;
+    let run_id = run_id
+        .ok_or_else(|| AutoresearchError::InvalidRunId("log has no RunStart event".to_string()))?;
     let baseline = baseline.ok_or_else(|| {
         AutoresearchError::InvalidRunId("log has no baseline_config in RunStart".to_string())
     })?;
