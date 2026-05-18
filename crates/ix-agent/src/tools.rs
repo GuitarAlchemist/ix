@@ -277,11 +277,25 @@ impl ToolRegistry {
         reg
     }
 
-    /// List all tools as MCP tool definitions.
+    /// List all tools as MCP tool definitions (full surface).
+    ///
+    /// Equivalent to `list_scoped(Scope::Default)`. Kept as the canonical
+    /// entry point because every existing test + caller goes through it.
     pub fn list(&self) -> Value {
+        self.list_scoped(crate::scopes::Scope::Default)
+    }
+
+    /// List tools advertised under the given scope.
+    ///
+    /// `Scope::Default` returns everything (backward compat). Named
+    /// scopes return only the tools whitelisted in
+    /// [`crate::scopes::SCOPES`]. The shape (`{ "tools": [...] }`) is
+    /// identical regardless of scope.
+    pub fn list_scoped(&self, scope: crate::scopes::Scope) -> Value {
         let tools: Vec<Value> = self
             .tools
             .iter()
+            .filter(|t| scope.allows(t.name))
             .map(|t| {
                 json!({
                     "name": t.name,
@@ -291,6 +305,13 @@ impl ToolRegistry {
             })
             .collect();
         json!({ "tools": tools })
+    }
+
+    /// Iterate every registered tool name. Used by scope coverage tests
+    /// to assert that scoped subsets are strict subsets of the default
+    /// surface.
+    pub fn tool_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.tools.iter().map(|t| t.name)
     }
 
     /// Call a tool by name with the given arguments.
