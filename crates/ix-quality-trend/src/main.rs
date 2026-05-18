@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use ix_quality_trend::report;
-use ix_quality_trend::snapshot::load_all;
+use ix_quality_trend::snapshot::{load_with, LoadOptions, LoaderStatus};
 
 /// Aggregate quality snapshots and emit a trend report.
 #[derive(Debug, Parser)]
@@ -36,6 +36,21 @@ struct Cli {
     /// Regression flag threshold in percent absolute Δ vs 7-day average.
     #[arg(long, default_value_t = 5.0)]
     regression_threshold_pct: f64,
+
+    /// Strict mode: turn any unparseable-filename-with-no-fallback or JSON
+    /// parse failure into a hard error instead of a warning.
+    #[arg(long)]
+    strict: bool,
+
+    /// Suppress per-file warnings on stderr (manifest still captures them).
+    #[arg(long)]
+    quiet: bool,
+
+    /// Optional JSON manifest path. Writes a per-file audit record (status =
+    /// `loaded` / `loaded-fallback-date` / `skipped-date-unparseable` /
+    /// `skipped-empty` / `failed-parse`) so callers can self-validate.
+    #[arg(long)]
+    manifest: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -56,13 +71,72 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let set = match load_all(&cli.snapshots_dir) {
+    let opts = LoadOptions {
+        strict: cli.strict,
+        quiet: cli.quiet,
+    };
+
+    let (set, manifest) = match load_with(&cli.snapshots_dir, opts) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("ix-quality-trend: load error: {e}");
             return ExitCode::from(1);
         }
     };
+
+    // Optional manifest write — useful as an audit trail and for consumers
+    // that want to confirm their producer's filename actually made it in.
+    if let Some(manifest_path) = &cli.manifest {
+        if let Some(parent) = manifest_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("ix-quality-trend: cannot create {parent:?}: {e}");
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        match serde_json::to_vec_pretty(&manifest) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(manifest_path, json) {
+                    eprintln!(
+                        "ix-quality-trend: cannot write manifest {:?}: {e}",
+                        manifest_path
+                    );
+                    return ExitCode::from(1);
+                }
+            }
+            Err(e) => {
+                eprintln!("ix-quality-trend: cannot serialize manifest: {e}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    // Visible end-of-run audit so a CI log shows which files were skipped.
+    let skipped = manifest
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.status,
+                LoaderStatus::SkippedDateUnparseable
+                    | LoaderStatus::SkippedEmpty
+                    | LoaderStatus::FailedParse
+            )
+        })
+        .count();
+    let fallback = manifest
+        .entries
+        .iter()
+        .filter(|e| e.status == LoaderStatus::LoadedFallbackDate)
+        .count();
+    if (skipped > 0 || fallback > 0) && !cli.quiet {
+        eprintln!(
+            "ix-quality-trend: loader audit — {} skipped, {} loaded-via-fallback. \
+             Pass --manifest <path> for a JSON audit trail.",
+            skipped, fallback
+        );
+    }
 
     let summary = report::summarize(&set, cli.regression_threshold_pct);
     let artifact = report::build_health_artifact(&summary, cli.regression_threshold_pct);

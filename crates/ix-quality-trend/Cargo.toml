@@ -20,6 +20,9 @@ ix-signal = { workspace = true }
 ix-optick = { workspace = true }
 rmp-serde = "1"
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [[bin]]
 name = "ix-quality-trend"
 path = "src/main.rs"

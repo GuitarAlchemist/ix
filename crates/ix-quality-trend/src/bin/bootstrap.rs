@@ -323,8 +323,7 @@ fn read_voicings(state_dir: &Path, instrument: &str) -> Result<Vec<RawVoicing>, 
         }
         Ok(out)
     } else if corpus_path.exists() {
-        let bytes =
-            fs::read(&corpus_path).map_err(|e| format!("read {:?}: {e}", corpus_path))?;
+        let bytes = fs::read(&corpus_path).map_err(|e| format!("read {:?}: {e}", corpus_path))?;
         serde_json::from_slice(&bytes).map_err(|e| format!("parse {:?}: {e}", corpus_path))
     } else {
         eprintln!(

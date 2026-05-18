@@ -17,7 +17,17 @@
 //!   chatbot-qa/YYYY-MM-DD.json
 //! ```
 //!
-//! Dates are parsed from the filename stem; non-date filenames are skipped.
+//! ## Loader behaviour
+//!
+//! Filenames are first matched against a `YYYY-MM-DD` prefix (so
+//! `2026-05-15.json` and `2026-05-15-soak.json` both load with date
+//! `2026-05-15`). If that fails, the loader falls back to (a) a `timestamp`
+//! field inside the JSON, then (b) the file's modification time. Only when
+//! all three sources fail is the file skipped — and that skip is now a
+//! **warning on stderr plus a manifest entry**, not a silent drop.
+//!
+//! See [`load_with`] and [`LoadOptions`] for the strict / quiet / manifest
+//! switches.
 
 pub mod report;
 pub mod snapshot;
@@ -28,7 +38,8 @@ pub use report::{
     QualityHealthStatus, QualityTrendSummary,
 };
 pub use snapshot::{
-    ChatbotQaSnapshot, DatedSnapshot, EmbeddingsSnapshot, SnapshotCategory, SnapshotSet,
+    load_all, load_with, ChatbotQaSnapshot, DatedSnapshot, EmbeddingsSnapshot, LoadOptions,
+    LoaderManifest, LoaderStatus, ManifestEntry, SnapshotCategory, SnapshotSet,
     VoicingAnalysisSnapshot,
 };
 pub use trend::{DriftFlag, MetricSeries, MetricTrend, RegressionFlag, TrendDirection};
