@@ -65,14 +65,26 @@ jobs:
         run: ./target/release/ix stable-surface --format=json > ../pr-report.json
 
       - name: Capture base report
-        # Prefer the base's own binary; if missing, run the PR binary against
-        # the base workspace. Either way, we get a comparable report.
+        # Prefer the base's own binary; if it lacks the subcommand (first-run
+        # bootstrap: this PR is what introduces the verb), fall back to the
+        # PR binary run against the base workspace tree.
         run: |
           set -euo pipefail
+          base_has_verb=0
           if [ -x base/target/release/ix ]; then
+            if base/target/release/ix stable-surface --help >/dev/null 2>&1; then
+              base_has_verb=1
+            fi
+          fi
+          if [ "$base_has_verb" = "1" ]; then
             (cd base && ./target/release/ix stable-surface --format=json) > base-report.json
           else
-            echo "Using PR binary against base tree (first-run bootstrap)."
+            echo "Base binary lacks 'stable-surface' subcommand — running PR binary against base tree (first-run bootstrap)."
+            # crate-maturity.toml might not exist on base either; copy it from
+            # the PR tree so the PR binary can locate it under IX_ROOT=base.
+            if [ ! -f base/crate-maturity.toml ]; then
+              cp pr/crate-maturity.toml base/crate-maturity.toml
+            fi
             IX_ROOT="$PWD/base" pr/target/release/ix stable-surface --format=json > base-report.json
           fi
 
