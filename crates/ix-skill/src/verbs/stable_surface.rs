@@ -63,10 +63,9 @@ pub fn locate_workspace_root() -> Result<PathBuf, String> {
 /// Parse `crate-maturity.toml` into a name→tier map.
 pub fn load_maturity(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let path = root.join("crate-maturity.toml");
-    let body = fs::read_to_string(&path)
-        .map_err(|e| format!("reading {}: {e}", path.display()))?;
-    let parsed: toml::Value = toml::from_str(&body)
-        .map_err(|e| format!("parsing {}: {e}", path.display()))?;
+    let body = fs::read_to_string(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let parsed: toml::Value =
+        toml::from_str(&body).map_err(|e| format!("parsing {}: {e}", path.display()))?;
     let crates = parsed
         .get("crates")
         .and_then(|v| v.as_table())
@@ -129,8 +128,7 @@ fn collect_pub_decls(crate_src: &Path) -> Result<BTreeSet<String>, String> {
     let mut decls = BTreeSet::new();
     let mut stack = vec![crate_src.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let entries = fs::read_dir(&dir)
-            .map_err(|e| format!("reading {}: {e}", dir.display()))?;
+        let entries = fs::read_dir(&dir).map_err(|e| format!("reading {}: {e}", dir.display()))?;
         for entry in entries {
             let entry = entry.map_err(|e| format!("entry in {}: {e}", dir.display()))?;
             let path = entry.path();
@@ -139,8 +137,7 @@ fn collect_pub_decls(crate_src: &Path) -> Result<BTreeSet<String>, String> {
                 .map_err(|e| format!("file_type of {}: {e}", path.display()))?;
             if file_type.is_dir() {
                 stack.push(path);
-            } else if file_type.is_file()
-                && path.extension().and_then(|s| s.to_str()) == Some("rs")
+            } else if file_type.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rs")
             {
                 let body = fs::read_to_string(&path)
                     .map_err(|e| format!("reading {}: {e}", path.display()))?;
@@ -350,7 +347,9 @@ fn private() {}
         assert!(lines.iter().any(|l| l.starts_with("pub struct Bar")));
         assert!(lines.iter().any(|l| l.starts_with("pub use crate::baz")));
         assert!(!lines.iter().any(|l| l.starts_with("pub(crate) fn hidden")));
-        assert!(!lines.iter().any(|l| l.starts_with("pub(super) fn also_hidden")));
+        assert!(!lines
+            .iter()
+            .any(|l| l.starts_with("pub(super) fn also_hidden")));
         assert!(!lines.iter().any(|l| l.starts_with("fn private")));
     }
 
