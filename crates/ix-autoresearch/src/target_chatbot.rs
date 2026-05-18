@@ -170,7 +170,14 @@ impl Experiment for ChatbotTarget {
         let mut cmd = Command::new(&self.chatbot_bin);
         cmd.env_clear();
         // Allow-list only what the subprocess truly needs.
-        for var in &["PATH", "SystemRoot", "USERPROFILE", "TEMP", "TMP", "RUST_BACKTRACE"] {
+        for var in &[
+            "PATH",
+            "SystemRoot",
+            "USERPROFILE",
+            "TEMP",
+            "TMP",
+            "RUST_BACKTRACE",
+        ] {
             if let Ok(v) = std::env::var(var) {
                 cmd.env(var, v);
             }
@@ -226,10 +233,7 @@ impl Experiment for ChatbotTarget {
                     reason: "summary.json missing match_rate".to_string(),
                 })
             })?;
-        let total = summary
-            .get("total")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as f64;
+        let total = summary.get("total").and_then(|v| v.as_u64()).unwrap_or(1) as f64;
 
         // Compute FP / FN from the mismatches array.
         let mismatches = summary

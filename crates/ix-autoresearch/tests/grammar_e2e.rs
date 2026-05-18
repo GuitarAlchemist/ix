@@ -11,9 +11,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-use ix_autoresearch::{
-    run_experiment, Experiment, GrammarTarget, LogEvent, Strategy, TimeBudget,
-};
+use ix_autoresearch::{run_experiment, Experiment, GrammarTarget, LogEvent, Strategy, TimeBudget};
 
 #[test]
 fn sa_finds_improvement_over_uniform_baseline_on_skewed_held_out() {
@@ -25,10 +23,7 @@ fn sa_finds_improvement_over_uniform_baseline_on_skewed_held_out() {
 
     // Compute baseline reward (deterministic, no eval cost — just calls evaluate once).
     let baseline_score = target
-        .evaluate(
-            &target.baseline(),
-            Instant::now() + Duration::from_secs(1),
-        )
+        .evaluate(&target.baseline(), Instant::now() + Duration::from_secs(1))
         .unwrap();
     let baseline_reward = target.score_to_reward(&baseline_score);
     // Sanity: 1/6 + 0.1 * ess_stability_at_uniform.

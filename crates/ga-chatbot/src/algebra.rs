@@ -1,4 +1,6 @@
-use ix_bracelet::{bracelet_prime_form, forte_number, grothendieck_delta, icv, z_related_pairs, PcSet};
+use ix_bracelet::{
+    bracelet_prime_form, forte_number, grothendieck_delta, icv, z_related_pairs, PcSet,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -29,7 +31,10 @@ pub fn answer_query(query: &str, source: &str, revision: &str) -> Option<Algebra
 
     let normalized = query.to_lowercase();
 
-    if normalized.contains("z-related") || normalized.contains("z relation") || normalized.contains("z-pair") {
+    if normalized.contains("z-related")
+        || normalized.contains("z relation")
+        || normalized.contains("z-pair")
+    {
         return Some(answer_z_relation(&sets, source, revision));
     }
 
@@ -37,7 +42,11 @@ pub fn answer_query(query: &str, source: &str, revision: &str) -> Option<Algebra
         return Some(answer_prime_form(sets[0], source, revision));
     }
 
-    if normalized.contains("interval-class vector") || normalized.contains("interval class vector") || normalized.contains(" icv") || normalized.ends_with("icv") {
+    if normalized.contains("interval-class vector")
+        || normalized.contains("interval class vector")
+        || normalized.contains(" icv")
+        || normalized.ends_with("icv")
+    {
         return Some(answer_interval_class_vector(sets[0], source, revision));
     }
 
@@ -64,7 +73,11 @@ fn answer_prime_form(set: PcSet, source: &str, revision: &str) -> AlgebraRespons
     ]);
 
     AlgebraResponse {
-        natural_language_answer: format!("The prime form of {} is {}.", format_set(set), format_set(prime)),
+        natural_language_answer: format!(
+            "The prime form of {} is {}.",
+            format_set(set),
+            format_set(prime)
+        ),
         query_type: "prime-form".to_string(),
         facts,
         source: source.to_string(),
@@ -81,7 +94,11 @@ fn answer_interval_class_vector(set: PcSet, source: &str, revision: &str) -> Alg
     ]);
 
     AlgebraResponse {
-        natural_language_answer: format!("The interval-class vector for {} is {}.", format_set(set), formatted),
+        natural_language_answer: format!(
+            "The interval-class vector for {} is {}.",
+            format_set(set),
+            formatted
+        ),
         query_type: "interval-class-vector".to_string(),
         facts,
         source: source.to_string(),
@@ -91,7 +108,9 @@ fn answer_interval_class_vector(set: PcSet, source: &str, revision: &str) -> Alg
 
 fn answer_forte(set: PcSet, source: &str, revision: &str) -> AlgebraResponse {
     let prime = bracelet_prime_form(set);
-    let forte = forte_number(set).map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string());
+    let forte = forte_number(set)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
     let facts = BTreeMap::from([
         ("input".to_string(), format_set(set)),
         ("primeForm".to_string(), format_set(prime)),
@@ -99,7 +118,10 @@ fn answer_forte(set: PcSet, source: &str, revision: &str) -> AlgebraResponse {
     ]);
 
     let natural_language_answer = if forte == "unavailable" {
-        format!("I could compute the prime form for {}, but no Forte label was available.", format_set(set))
+        format!(
+            "I could compute the prime form for {}, but no Forte label was available.",
+            format_set(set)
+        )
     } else {
         format!("The Forte label for {} is {}.", format_set(set), forte)
     };
@@ -116,7 +138,9 @@ fn answer_forte(set: PcSet, source: &str, revision: &str) -> AlgebraResponse {
 fn answer_set_class_summary(set: PcSet, source: &str, revision: &str) -> AlgebraResponse {
     let prime = bracelet_prime_form(set);
     let vector = icv(set);
-    let forte = forte_number(set).map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string());
+    let forte = forte_number(set)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
     let formatted_icv = format_icv(vector.data);
     let facts = BTreeMap::from([
         ("input".to_string(), format_set(set)),
@@ -131,7 +155,8 @@ fn answer_set_class_summary(set: PcSet, source: &str, revision: &str) -> Algebra
             format_set(set),
             format_set(prime),
             formatted_icv,
-            forte),
+            forte
+        ),
         query_type: "set-class-summary".to_string(),
         facts,
         source: source.to_string(),
@@ -146,8 +171,12 @@ fn answer_z_relation(sets: &[PcSet], source: &str, revision: &str) -> AlgebraRes
         let left_icv = icv(left);
         let right_icv = icv(right);
         let is_z_related = left != right && left_icv == right_icv;
-        let left_forte = forte_number(left).map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string());
-        let right_forte = forte_number(right).map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string());
+        let left_forte = forte_number(left)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unavailable".to_string());
+        let right_forte = forte_number(right)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unavailable".to_string());
         let facts = BTreeMap::from([
             ("left".to_string(), format_set(left)),
             ("right".to_string(), format_set(right)),
@@ -167,7 +196,11 @@ fn answer_z_relation(sets: &[PcSet], source: &str, revision: &str) -> AlgebraRes
                 right_forte,
                 format_icv(left_icv.data))
         } else {
-            format!("{} and {} are not Z-related.", format_set(left), format_set(right))
+            format!(
+                "{} and {} are not Z-related.",
+                format_set(left),
+                format_set(right)
+            )
         };
 
         return AlgebraResponse {
@@ -190,7 +223,9 @@ fn answer_z_relation(sets: &[PcSet], source: &str, revision: &str) -> AlgebraRes
         }
     });
     let vector = icv(set);
-    let forte = forte_number(set).map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string());
+    let forte = forte_number(set)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
     let mut facts = BTreeMap::from([
         ("input".to_string(), format_set(set)),
         ("forte".to_string(), forte),
@@ -199,7 +234,9 @@ fn answer_z_relation(sets: &[PcSet], source: &str, revision: &str) -> AlgebraRes
     ]);
 
     let natural_language_answer = if let Some(partner) = partner {
-        let partner_forte = forte_number(partner).map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string());
+        let partner_forte = forte_number(partner)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unavailable".to_string());
         facts.insert("partner".to_string(), format_set(partner));
         facts.insert("partnerForte".to_string(), partner_forte.clone());
         format!(
@@ -207,7 +244,8 @@ fn answer_z_relation(sets: &[PcSet], source: &str, revision: &str) -> AlgebraRes
             format_set(set),
             format_set(partner),
             partner_forte,
-            format_icv(vector.data))
+            format_icv(vector.data)
+        )
     } else {
         format!("{} is not Z-related.", format_set(set))
     };
@@ -240,7 +278,8 @@ fn answer_distance(left: PcSet, right: PcSet, source: &str, revision: &str) -> A
             format_set(left),
             format_set(right),
             format_delta(delta.data),
-            delta.l1_norm()),
+            delta.l1_norm()
+        ),
         query_type: "distance".to_string(),
         facts,
         source: source.to_string(),
@@ -327,16 +366,26 @@ fn normalize_token(token: &str) -> String {
 }
 
 fn format_set(set: PcSet) -> String {
-    let pcs = set.iter_pcs().map(|pc| pc.to_string()).collect::<Vec<_>>().join(",");
+    let pcs = set
+        .iter_pcs()
+        .map(|pc| pc.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     format!("[{pcs}]")
 }
 
 fn format_icv(data: [u32; 6]) -> String {
-    format!("[{}, {}, {}, {}, {}, {}]", data[0], data[1], data[2], data[3], data[4], data[5])
+    format!(
+        "[{}, {}, {}, {}, {}, {}]",
+        data[0], data[1], data[2], data[3], data[4], data[5]
+    )
 }
 
 fn format_delta(data: [i32; 6]) -> String {
-    format!("[{}, {}, {}, {}, {}, {}]", data[0], data[1], data[2], data[3], data[4], data[5])
+    format!(
+        "[{}, {}, {}, {}, {}, {}]",
+        data[0], data[1], data[2], data[3], data[4], data[5]
+    )
 }
 
 fn bracketed_set_regex() -> &'static Regex {
@@ -360,18 +409,26 @@ mod tests {
 
     #[test]
     fn answers_prime_form_query() {
-        let response = answer_query("What is the prime form of [0,1,4,6]?", "ix", "7b02a56").expect("answer");
+        let response =
+            answer_query("What is the prime form of [0,1,4,6]?", "ix", "7b02a56").expect("answer");
         assert_eq!(response.query_type, "prime-form");
-        assert_eq!(response.facts.get("primeForm").map(String::as_str), Some("[0,1,4,6]"));
+        assert_eq!(
+            response.facts.get("primeForm").map(String::as_str),
+            Some("[0,1,4,6]")
+        );
         assert_eq!(response.source, "ix");
         assert_eq!(response.revision, "7b02a56");
     }
 
     #[test]
     fn answers_z_relation_query() {
-        let response = answer_query("Are 0146 and 0137 z-related?", "ix", "7b02a56").expect("answer");
+        let response =
+            answer_query("Are 0146 and 0137 z-related?", "ix", "7b02a56").expect("answer");
         assert_eq!(response.query_type, "z-relation");
-        assert_eq!(response.facts.get("zRelated").map(String::as_str), Some("true"));
+        assert_eq!(
+            response.facts.get("zRelated").map(String::as_str),
+            Some("true")
+        );
         assert!(response.natural_language_answer.contains("share ICV"));
     }
 
@@ -380,8 +437,13 @@ mod tests {
         let response = answer_query(
             "What is the harmonic distance between [0,4,8] and [0,3,6]?",
             "ix",
-            "7b02a56").expect("answer");
+            "7b02a56",
+        )
+        .expect("answer");
         assert_eq!(response.query_type, "distance");
-        assert_eq!(response.facts.get("l1Distance").map(String::as_str), Some("6"));
+        assert_eq!(
+            response.facts.get("l1Distance").map(String::as_str),
+            Some("6")
+        );
     }
 }

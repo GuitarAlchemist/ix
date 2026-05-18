@@ -25,13 +25,13 @@ const MAX_SLUG_TAIL: usize = 63;
 /// Patterns that indicate a leak in promote sanitization. Adding to this
 /// list does NOT bump the schema; it strengthens the safety net.
 const REDACTION_PATTERNS: &[&str] = &[
-    "sk-ant-",          // Anthropic API key prefix
-    "Bearer ",          // Generic OAuth bearer
-    "AKIA",             // AWS access key prefix
-    "ghp_",             // GitHub personal access token
-    "ghs_",             // GitHub server token
-    "github_pat_",      // GitHub fine-grained token prefix
-    "AIza",             // Google API key prefix
+    "sk-ant-",     // Anthropic API key prefix
+    "Bearer ",     // Generic OAuth bearer
+    "AKIA",        // AWS access key prefix
+    "ghp_",        // GitHub personal access token
+    "ghs_",        // GitHub server token
+    "github_pat_", // GitHub fine-grained token prefix
+    "AIza",        // Google API key prefix
 ];
 
 /// Validate a milestone slug. Slugs must:

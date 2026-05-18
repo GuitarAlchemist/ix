@@ -334,7 +334,10 @@ mod tests {
         let mut t = GrammarTarget::default_smoke();
         let baseline = t.baseline();
         let score = t
-            .evaluate(&baseline, Instant::now() + std::time::Duration::from_secs(1))
+            .evaluate(
+                &baseline,
+                Instant::now() + std::time::Duration::from_secs(1),
+            )
             .unwrap();
         assert!(
             (score.parse_success_rate - 1.0 / 6.0).abs() < 1e-12,

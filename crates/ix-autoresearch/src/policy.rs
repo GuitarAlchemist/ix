@@ -98,9 +98,9 @@ impl Strategy {
                 })
             }
             Self::RandomSearch => Box::new(RandomSearchPolicy),
-            Self::Custom => panic!(
-                "Strategy::Custom is reserved for v1.5+; cannot construct a policy in v1"
-            ),
+            Self::Custom => {
+                panic!("Strategy::Custom is reserved for v1.5+; cannot construct a policy in v1")
+            }
         }
     }
 
@@ -301,7 +301,10 @@ mod tests {
             })
             .count();
         let rate = downhill_accepts as f64 / trials as f64;
-        assert!(rate > 0.5, "high-T SA should accept most downhill moves; rate={rate}");
+        assert!(
+            rate > 0.5,
+            "high-T SA should accept most downhill moves; rate={rate}"
+        );
     }
 
     #[test]

@@ -202,7 +202,10 @@ fn main() {
     println!("  GA CLI:      {}", args.ga_cli.display());
     println!("  iterations:  {}", args.iterations);
     println!("  seed:        {}", args.seed);
-    println!("  --export-max {} per iter (small for demo speed)", EXPORT_MAX);
+    println!(
+        "  --export-max {} per iter (small for demo speed)",
+        EXPORT_MAX
+    );
     println!("  workdir:     {}", workdir.path().display());
     println!();
 
@@ -230,11 +233,7 @@ fn main() {
     println!();
     println!("=== Summary ===");
     let accepted: Vec<&IterResult> = results.iter().filter(|r| r.accepted).collect();
-    println!(
-        "  accepted: {}/{}",
-        accepted.len(),
-        results.len()
-    );
+    println!("  accepted: {}/{}", accepted.len(), results.len());
     if let Some(min_bytes) = accepted.iter().map(|r| r.index_bytes).min() {
         println!("  smallest index: {} bytes", min_bytes);
     }
@@ -256,7 +255,10 @@ fn main() {
     {
         println!();
         println!("=== Lex-best (smallest bytes, fastest tiebreak) ===");
-        println!("  bytes={}  elapsed={}ms", best.index_bytes, best.elapsed_ms);
+        println!(
+            "  bytes={}  elapsed={}ms",
+            best.index_bytes, best.elapsed_ms
+        );
         println!("  cfg: {}", fmt_cfg(&best.cfg));
     }
 }

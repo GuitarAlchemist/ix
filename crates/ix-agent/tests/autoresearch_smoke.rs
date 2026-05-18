@@ -111,10 +111,7 @@ fn ix_autoresearch_run_sa_with_calibration_runs_to_completion() {
 fn ix_autoresearch_run_rejects_zero_iterations() {
     let reg = ToolRegistry::new();
     let err = reg
-        .call(
-            "ix_autoresearch_run",
-            json!({ "iterations": 0 }),
-        )
+        .call("ix_autoresearch_run", json!({ "iterations": 0 }))
         .expect_err("expected zero-iterations error");
     assert!(err.contains("≥ 1"), "got: {err}");
 }

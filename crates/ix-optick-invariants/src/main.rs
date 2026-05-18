@@ -165,9 +165,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Exit non-zero if any invariant failed — lets CI gate on regressions.
-    let any_failed = (tested25 - passed25) > 0
-        || (tested32 - passed32) > 0
-        || (tested36 - passed36) > 0;
+    let any_failed =
+        (tested25 - passed25) > 0 || (tested32 - passed32) > 0 || (tested36 - passed36) > 0;
     if any_failed {
         std::process::exit(1);
     }
@@ -204,11 +203,7 @@ fn check_invariant_36_z_pair_separation(
             .into_iter()
             .find_map(|s| by_pcs_all.get(&s.raw()).and_then(|vs| vs.first().copied()));
 
-        let exemplar_id = format!(
-            "z-pair-0x{:03X}-0x{:03X}",
-            rep_a.raw(),
-            rep_b.raw()
-        );
+        let exemplar_id = format!("z-pair-0x{:03X}-0x{:03X}", rep_a.raw(), rep_b.raw());
         let card = rep_a.cardinality();
         let description = format!(
             "Z-pair card={} {{ {} }} ↔ {{ {} }}",
@@ -231,8 +226,12 @@ fn check_invariant_36_z_pair_separation(
             kind: "embedding-invariant".to_string(),
         });
 
-        let Some(vec_a) = index.vector(vidx_a) else { continue };
-        let Some(vec_b) = index.vector(vidx_b) else { continue };
+        let Some(vec_a) = index.vector(vidx_a) else {
+            continue;
+        };
+        let Some(vec_b) = index.vector(vidx_b) else {
+            continue;
+        };
         let slice_a = &vec_a[STRUCTURE_OFFSET..STRUCTURE_OFFSET + STRUCTURE_DIM];
         let slice_b = &vec_b[STRUCTURE_OFFSET..STRUCTURE_OFFSET + STRUCTURE_DIM];
         let cos = cosine(slice_a, slice_b);
@@ -335,10 +334,8 @@ fn check_invariant_32(
     by_pcs_all: &BTreeMap<u16, Vec<usize>>,
     cosine_tolerance: f32,
 ) -> (Vec<Exemplar>, BTreeSet<String>, Vec<String>) {
-    let multi_voicing: Vec<(&u16, &Vec<usize>)> = by_pcs_all
-        .iter()
-        .filter(|(_, vs)| vs.len() >= 2)
-        .collect();
+    let multi_voicing: Vec<(&u16, &Vec<usize>)> =
+        by_pcs_all.iter().filter(|(_, vs)| vs.len() >= 2).collect();
 
     let mut exemplars = Vec::new();
     let mut fired = BTreeSet::new();

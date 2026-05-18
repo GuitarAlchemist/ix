@@ -138,5 +138,8 @@ fn ix_grothendieck_delta_rejects_non_array_source() {
             }),
         )
         .expect_err("expected an error for non-array source");
-    assert!(err.contains("source"), "error should mention 'source': {err}");
+    assert!(
+        err.contains("source"),
+        "error should mention 'source': {err}"
+    );
 }

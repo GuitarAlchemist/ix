@@ -112,10 +112,7 @@ impl Tsne {
     /// low-dim embedding (rows = samples, cols = `target_dim`).
     pub fn fit_transform(&self, x: ArrayView2<f64>) -> Array2<f64> {
         let n = x.nrows();
-        assert!(
-            n >= 2,
-            "t-SNE needs ≥ 2 samples; got {n}"
-        );
+        assert!(n >= 2, "t-SNE needs ≥ 2 samples; got {n}");
         assert!(
             self.perplexity < ((n - 1) as f64) / 3.0,
             "perplexity {} too large for {} samples (must be < (n-1)/3 = {})",
@@ -133,9 +130,8 @@ impl Tsne {
 
         let mut rng = ChaCha8Rng::seed_from_u64(self.seed);
         let normal = Normal::new(0.0, 1e-4_f64.sqrt()).unwrap();
-        let mut y: Array2<f64> = Array2::from_shape_fn((n, self.target_dim), |_| {
-            normal.sample(&mut rng)
-        });
+        let mut y: Array2<f64> =
+            Array2::from_shape_fn((n, self.target_dim), |_| normal.sample(&mut rng));
         let mut y_prev = y.clone();
         let mut p_eff = p.clone();
         p_eff *= self.early_exaggeration;
@@ -176,10 +172,7 @@ fn pairwise_sq_dist(x: ArrayView2<f64>) -> Array2<f64> {
 
 #[inline]
 fn sq_dist(a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64 {
-    a.iter()
-        .zip(b.iter())
-        .map(|(x, y)| (x - y).powi(2))
-        .sum()
+    a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
 }
 
 /// Compute the conditional probability matrix P with per-row σ_i
@@ -266,7 +259,11 @@ fn compute_gradient(y: &Array2<f64>, p: &Array2<f64>) -> Array2<f64> {
     let mut num = Array2::<f64>::zeros((n, n));
     for i in 0..n {
         for j in 0..n {
-            num[[i, j]] = if i == j { 0.0 } else { 1.0 / (1.0 + dist_sq[[i, j]]) };
+            num[[i, j]] = if i == j {
+                0.0
+            } else {
+                1.0 / (1.0 + dist_sq[[i, j]])
+            };
         }
     }
     let z: f64 = num.sum();
@@ -437,7 +434,10 @@ mod tests {
     #[test]
     fn deterministic_with_same_seed() {
         let x = Array2::<f64>::from_shape_fn((30, 5), |(i, j)| ((i + j) as f64).sin());
-        let cfg = Tsne::new().with_n_iter(100).with_perplexity(5.0).with_seed(42);
+        let cfg = Tsne::new()
+            .with_n_iter(100)
+            .with_perplexity(5.0)
+            .with_seed(42);
         let a = cfg.clone().fit_transform(x.view());
         let b = cfg.fit_transform(x.view());
         for (av, bv) in a.iter().zip(b.iter()) {
@@ -515,9 +515,7 @@ mod tests {
     fn perplexity_too_large_panics() {
         // n=10, perplexity=30 → (n-1)/3 = 3, so 30 is invalid.
         let x = Array2::<f64>::eye(10);
-        let _ = Tsne::new()
-            .with_perplexity(30.0)
-            .fit_transform(x.view());
+        let _ = Tsne::new().with_perplexity(30.0).fit_transform(x.view());
     }
 
     #[test]

@@ -168,10 +168,7 @@ impl JsonlLog {
     /// already exist; this fails fast on missing parent or unwritable target.
     pub fn open(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self, AutoresearchError> {
         let path = path.into();
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
         Ok(Self {
             file,
             path,
@@ -236,9 +233,7 @@ where
 {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let lines: Vec<String> = reader
-        .lines()
-        .collect::<std::io::Result<Vec<_>>>()?;
+    let lines: Vec<String> = reader.lines().collect::<std::io::Result<Vec<_>>>()?;
 
     let mut out: Vec<LogEvent<C, S>> = Vec::with_capacity(lines.len());
     let total = lines.len();

@@ -11,8 +11,7 @@ use ix_optick_sae::trainer::{
 use ix_optick_sae::{validate_artifact, SaeArtifact, DEAD_FEATURES_PCT_GUARDRAIL};
 
 // Resolved at compile time so the binary always knows where its Python trainer lives.
-const DEFAULT_PYTHON_SCRIPT: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/python/train.py");
+const DEFAULT_PYTHON_SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/python/train.py");
 
 #[derive(Parser)]
 #[command(
@@ -167,8 +166,8 @@ fn finish(output_dir: PathBuf, artifact_id: &str) -> Result<(), Box<dyn std::err
     let json = fs::read_to_string(&artifact_path)
         .map_err(|e| format!("cannot read artifact at {}: {e}", artifact_path.display()))?;
 
-    let artifact: SaeArtifact = serde_json::from_str(&json)
-        .map_err(|e| format!("artifact JSON is malformed: {e}"))?;
+    let artifact: SaeArtifact =
+        serde_json::from_str(&json).map_err(|e| format!("artifact JSON is malformed: {e}"))?;
 
     validate_artifact(&artifact).map_err(|e| format!("artifact validation failed: {e}"))?;
 
