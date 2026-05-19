@@ -78,7 +78,7 @@ PHASE1_GLOBAL_INDICES: List[int] = [
 ]
 PHASE1_DIM = len(PHASE1_GLOBAL_INDICES)  # 124
 
-# Local (0-based) slice boundaries inside the 118-dim Phase 1 space.
+# Local (0-based) slice boundaries inside the 124-dim Phase 1 space.
 _LOCAL_OFFSETS: List[Tuple[str, int, int]] = []
 _cursor = 0
 for _name in PHASE1_PARTITIONS:
@@ -138,6 +138,25 @@ class TopKSAE(nn.Module):
         acts = self.encode(x)
         return self.decode(acts), acts
 
+    def auxk_reconstruct(
+        self, x: torch.Tensor, dead_mask: torch.Tensor, k_aux: int
+    ) -> "Optional[torch.Tensor]":
+        """Reconstruct using only dead features (Anthropic AuxK / ghost-grads).
+        Dead features receive zero gradient through the main top-k path; this
+        auxiliary loss threads gradient through them so they can wake up."""
+        if not dead_mask.any():
+            return None
+        x_cent = x - self.b_dec
+        pre_acts = self.W_enc(x_cent)
+        # Zero out live features so top-k selects only from dead ones.
+        pre_dead = pre_acts * dead_mask.to(pre_acts.dtype).unsqueeze(0)
+        n_dead = int(dead_mask.sum().item())
+        k_eff = min(k_aux, n_dead)
+        topk_vals, topk_idx = torch.topk(pre_dead, k_eff, dim=-1)
+        acts_aux = torch.zeros_like(pre_acts)
+        acts_aux.scatter_(-1, topk_idx, torch.relu(topk_vals))
+        return acts_aux @ self.W_dec + self.b_dec
+
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
@@ -151,12 +170,12 @@ def load_corpus(
     p = Path(index_path)
     if index_path == "synthetic" or not p.exists():
         log.warning(
-            "optick.index not found at '%s' — generating synthetic 1 000-voicing × %d-dim "
+            "optick.index not found at '%s' — generating synthetic 5 000-voicing × %d-dim "
             "corpus. DEVIATION: smoke run uses synthetic data, not real OPTIC-K index.",
             index_path,
             OPTIC_TOTAL_DIM,
         )
-        data = _synthetic_corpus(1_000, rng)
+        data = _synthetic_corpus(5_000, rng)
         sha = "sha256:" + hashlib.sha256(data.tobytes()).hexdigest()
         return data, sha, True
 
@@ -206,7 +225,7 @@ def _synthetic_corpus(n: int, rng: np.random.Generator) -> np.ndarray:
 
 
 def slice_phase1(data: np.ndarray) -> np.ndarray:
-    """Extract the 118 Phase 1 dimensions from full 240-dim embeddings."""
+    """Extract the 124 Phase 1 dimensions from full 240-dim embeddings."""
     return data[:, PHASE1_GLOBAL_INDICES]
 
 
@@ -221,6 +240,8 @@ def train(
     lr: float,
     seed: int,
     held_out_pct: float,
+    aux_alpha: float = 0.10,
+    aux_k: int = 64,
 ) -> Tuple[TopKSAE, Dict]:
     """
     Trains TopK SAE and returns (model, metrics_dict).
@@ -250,29 +271,53 @@ def train(
 
     history: List[float] = []
     t0 = time.time()
+    # Track dead features across epochs for AuxK ghost grads.
+    dead_mask = torch.zeros(dict_size, dtype=torch.bool)
 
     for epoch in range(1, epochs + 1):
         model.train()
         perm = torch.randperm(len(X_train))
         epoch_loss = 0.0
+        epoch_aux_loss = 0.0
         n_batches = 0
+        epoch_active_counts = torch.zeros(dict_size)
+
         for i in range(0, len(X_train), batch_size):
             batch = X_train[perm[i : i + batch_size]]
-            x_hat, _ = model(batch)
-            loss = nn.functional.mse_loss(x_hat, batch)
+            x_hat, acts = model(batch)
+            main_loss = nn.functional.mse_loss(x_hat, batch)
+
+            with torch.no_grad():
+                epoch_active_counts += (acts > 0).float().sum(dim=0)
+
+            total_loss = main_loss
+            if aux_alpha > 0.0 and dead_mask.any():
+                residual = (batch - x_hat).detach()
+                x_hat_aux = model.auxk_reconstruct(batch, dead_mask, aux_k)
+                if x_hat_aux is not None:
+                    aux_loss = nn.functional.mse_loss(x_hat_aux, residual)
+                    total_loss = main_loss + aux_alpha * aux_loss
+                    epoch_aux_loss += aux_loss.item()
+
             optimiser.zero_grad()
-            loss.backward()
+            total_loss.backward()
             # Gradient clipping for stability on small corpora.
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimiser.step()
             model._normalise_decoder()
-            epoch_loss += loss.item()
+            epoch_loss += main_loss.item()
             n_batches += 1
 
         avg = epoch_loss / max(n_batches, 1)
         history.append(avg)
+        dead_mask = (epoch_active_counts == 0)
+        n_dead_now = int(dead_mask.sum().item())
         if epoch % log_interval == 0 or epoch == epochs:
-            log.info("epoch %d/%d  loss=%.6f  elapsed=%.1fs", epoch, epochs, avg, time.time() - t0)
+            avg_aux = epoch_aux_loss / max(n_batches, 1)
+            log.info(
+                "epoch %d/%d  loss=%.6f  aux=%.6f  dead=%d  elapsed=%.1fs",
+                epoch, epochs, avg, avg_aux, n_dead_now, time.time() - t0,
+            )
 
     # ── Evaluation on validation set ──────────────────────────────────────────
     model.eval()
@@ -420,9 +465,10 @@ def build_artifact(
     metrics: Dict,
     is_synthetic: bool,
     retry_note: Optional[str],
+    supersedes: Optional[str] = None,
 ) -> Dict:
     base = (
-        f"Phase 1 smoke run — synthetic 1 000-voicing x {PHASE1_DIM}-dim corpus "
+        f"Phase 1 smoke run — synthetic 5 000-voicing x {PHASE1_DIM}-dim corpus "
         "(optick.index absent in CI env; deviation documented)."
         if is_synthetic
         else f"Phase 1 training run on real OPTIC-K corpus ({PHASE1_DIM}-dim slice)."
@@ -482,7 +528,7 @@ def build_artifact(
             "feature_manifest_jsonl": "feature_manifest.jsonl",
             "training_log": "training.log",
             "model_weights": "sae_weights.safetensors",
-            "supersedes": None,
+            "supersedes": supersedes,
         },
         "narrative": narrative,
     }
@@ -503,12 +549,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--artifact-id",  required=True)
     p.add_argument("--dict-size",    type=int,   default=1024)
     p.add_argument("--k-sparse",     type=int,   default=32)
-    p.add_argument("--epochs",       type=int,   default=100)
+    p.add_argument("--epochs",       type=int,   default=50)
     p.add_argument("--batch-size",   type=int,   default=256)
     p.add_argument("--lr",           type=float, default=1e-3)
     p.add_argument("--seed",         type=int,   default=42)
     p.add_argument("--held-out-pct", type=float, default=0.05)
     p.add_argument("--retry-note",   default=None)
+    p.add_argument("--aux-alpha",    type=float, default=0.10,
+                   help="Weight on AuxK ghost-grad auxiliary loss (0 = disabled).")
+    p.add_argument("--aux-k",        type=int,   default=64,
+                   help="Top-k_aux from the dead-feature pool.")
+    p.add_argument("--supersedes",   default=None,
+                   help="artifact_id this run supersedes (links.supersedes in the artifact).")
     return p.parse_args()
 
 
@@ -541,6 +593,8 @@ def main() -> None:
         lr=args.lr,
         seed=args.seed,
         held_out_pct=args.held_out_pct,
+        aux_alpha=args.aux_alpha,
+        aux_k=args.aux_k,
     )
 
     log.info(
@@ -586,6 +640,7 @@ def main() -> None:
         metrics=metrics,
         is_synthetic=is_synthetic,
         retry_note=args.retry_note,
+        supersedes=args.supersedes,
     )
 
     artifact_path = output_dir / "optick-sae-artifact.json"
