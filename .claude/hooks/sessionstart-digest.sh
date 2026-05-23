@@ -20,6 +20,24 @@ repoRoot="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -z "$repoRoot" ] && exit 0
 
 latest="$repoRoot/state/digests/latest.md"
+bootstrap="$repoRoot/.claude/manifest-bootstrap.md"
+
+# Sync manifest dynamically via pwsh if available
+if command -v pwsh &> /dev/null; then
+  pwsh -File "$repoRoot/scripts/manifest-sync.ps1" &> /dev/null || true
+elif command -v powershell &> /dev/null; then
+  powershell -File "$repoRoot/scripts/manifest-sync.ps1" &> /dev/null || true
+fi
+
+# Inject local/live ecosystem manifest into context
+if [ -f "$bootstrap" ]; then
+  echo ""
+  echo "=== Ecosystem Manifest (Vite Dev Data) ==="
+  cat "$bootstrap"
+  echo "=== End Manifest ==="
+  echo ""
+fi
+
 [ ! -f "$latest" ] && exit 0
 
 if [ -z "$(find "$latest" -mmin -1440 2>/dev/null)" ]; then
