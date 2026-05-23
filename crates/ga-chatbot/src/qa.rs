@@ -364,10 +364,147 @@ fn run_deterministic_checks_inner(
     findings
 }
 
+// ---------------------------------------------------------------------------
+// Semantic Quality Index (SQI) Implementation
+// ---------------------------------------------------------------------------
+
+/// Result of the continuous semantic QA grading benchmark.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SemanticScore {
+    /// Pitch-Class Correctness score (0.0 to 40.0).
+    #[serde(rename = "pitchClassCorrectness")]
+    pub pitch_class_correctness: f64,
+    /// Physical Playability Index (0.0 to 30.0).
+    #[serde(rename = "physicalPlayability")]
+    pub physical_playability: f64,
+    /// Voice-Leading Smoothness score (0.0 to 30.0).
+    #[serde(rename = "voiceLeadingSmoothness")]
+    pub voice_leading_smoothness: f64,
+    /// Total combined Semantic Quality Index (0.0 to 100.0).
+    #[serde(rename = "totalScore")]
+    pub total_score: f64,
+}
+
+/// Parses a voicing fret string (e.g. "x-10-8-x-x-x") into a fret vector.
+pub fn parse_fret_array(fret_str: &str) -> Vec<Option<u32>> {
+    fret_str
+        .split('-')
+        .map(|s| {
+            let s_trimmed = s.trim();
+            if s_trimmed == "x" || s_trimmed == "X" || s_trimmed.is_empty() {
+                None
+            } else {
+                s_trimmed.parse::<u32>().ok()
+            }
+        })
+        .collect()
+}
+
+/// Calculates the exact pitch classes (0-11) for active frets under standard tuning.
+pub fn calculate_pitch_classes(frets: &[Option<u32>], instrument: &crate::Instrument) -> Vec<u8> {
+    // String root pitch classes (0 = C, 1 = C#, ..., 11 = B)
+    // Guitar tuning (standard EADGBE, 6 strings): E=4, A=9, D=2, G=7, B=11, E=4.
+    let roots: &[u32] = match instrument {
+        crate::Instrument::Guitar => &[4, 9, 2, 7, 11, 4], // E, A, D, G, B, E
+        crate::Instrument::Bass => &[4, 9, 2, 7],          // E, A, D, G (standard 4-string bass)
+        crate::Instrument::Ukulele => &[7, 0, 4, 9],       // G, C, E, A (standard ukulele)
+    };
+
+    let mut pitch_classes = Vec::new();
+    for (i, &fret_opt) in frets.iter().enumerate() {
+        if i >= roots.len() {
+            break;
+        }
+        if let Some(fret) = fret_opt {
+            let pc = (roots[i] + fret) % 12;
+            pitch_classes.push(pc as u8);
+        }
+    }
+    pitch_classes.sort();
+    pitch_classes.dedup();
+    pitch_classes
+}
+
+/// Computes the complete multi-dimensional Semantic Quality Index (SQI) for a voicing.
+pub fn compute_semantic_score(
+    voicing_frets: &str,
+    target_chord_pcs: &[u8],
+    prev_voicing_frets: Option<&str>,
+    instrument: &crate::Instrument,
+) -> SemanticScore {
+    let frets = parse_fret_array(voicing_frets);
+    let pcs = calculate_pitch_classes(&frets, instrument);
+
+    // 1. Pitch-Class Correctness (PCC) [Max 40]
+    let pcc = if target_chord_pcs.is_empty() {
+        40.0
+    } else {
+        let intersection: usize = pcs
+            .iter()
+            .filter(|&pc| target_chord_pcs.contains(pc))
+            .count();
+        40.0 * (intersection as f64) / (target_chord_pcs.len() as f64)
+    };
+
+    // 2. Physical Playability Index (PPI) [Max 30]
+    // Filter active frets > 0 (open strings do not count for hand stretch)
+    let active_frets: Vec<u32> = frets.iter().filter_map(|&f| f).filter(|&f| f > 0).collect();
+    let ppi = if active_frets.is_empty() {
+        30.0
+    } else {
+        let min_fret = *active_frets.iter().min().unwrap();
+        let max_fret = *active_frets.iter().max().unwrap();
+        let span = max_fret.saturating_sub(min_fret);
+        if span <= 3 {
+            30.0
+        } else {
+            let excess = span - 3;
+            (30.0 - (excess as f64) * 5.0).max(0.0)
+        }
+    };
+
+    // 3. Voice-Leading Smoothness (VLS) [Max 30]
+    let vls = match prev_voicing_frets {
+        None => 30.0, // Default to optimal if no transition
+        Some(prev_str) => {
+            let prev_frets = parse_fret_array(prev_str);
+            let mut total_distance = 0.0;
+            let mut active_voices = 0;
+            for (i, &curr_f) in frets.iter().enumerate() {
+                if i >= prev_frets.len() {
+                    break;
+                }
+                if let (Some(c), Some(p)) = (curr_f, prev_frets[i]) {
+                    // Semitone difference in fret height on the same string
+                    total_distance += ((c as f64) - (p as f64)).abs();
+                    active_voices += 1;
+                }
+            }
+            if active_voices == 0 {
+                30.0
+            } else {
+                let d = total_distance / (active_voices as f64);
+                if d <= 2.0 {
+                    30.0
+                } else {
+                    (30.0 - (d - 2.0) * 6.0).max(0.0)
+                }
+            }
+        }
+    };
+
+    SemanticScore {
+        pitch_class_correctness: pcc,
+        physical_playability: ppi,
+        voice_leading_smoothness: vls,
+        total_score: pcc + ppi + vls,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChatbotResponse, Source};
+    use crate::{ChatbotResponse, Instrument, Source};
 
     fn sample_corpus_ids() -> HashSet<String> {
         let mut ids = HashSet::new();
@@ -610,5 +747,69 @@ mod tests {
             "Topology drift should be detected in full pipeline"
         );
         assert!(topo_finding.unwrap().reason.contains("Topology drift"));
+    }
+
+    #[test]
+    fn test_parse_fret_array() {
+        assert_eq!(
+            parse_fret_array("x-10-8-x-x-x"),
+            vec![None, Some(10), Some(8), None, None, None]
+        );
+        assert_eq!(
+            parse_fret_array("3-x-5-3-3-x"),
+            vec![Some(3), None, Some(5), Some(3), Some(3), None]
+        );
+    }
+
+    #[test]
+    fn test_calculate_pitch_classes() {
+        // guitar_v000 (8-8-x-x-x-x) -> C on low E (8) and F on A (8)
+        // E (4) + 8 = 12 -> 0 (C)
+        // A (9) + 8 = 17 -> 5 (F)
+        let frets = parse_fret_array("8-8-x-x-x-x");
+        let pcs = calculate_pitch_classes(&frets, &Instrument::Guitar);
+        assert_eq!(pcs, vec![0, 5]);
+
+        // standard ukulele open GCEA
+        let uke_frets = parse_fret_array("0-0-0-0");
+        let uke_pcs = calculate_pitch_classes(&uke_frets, &Instrument::Ukulele);
+        // G (7), C (0), E (4), A (9) -> sorted: [0, 4, 7, 9]
+        assert_eq!(uke_pcs, vec![0, 4, 7, 9]);
+    }
+
+    #[test]
+    fn test_compute_semantic_score() {
+        // C major triad pitch classes: C=0, E=4, G=7
+        let target_chord = vec![0, 4, 7];
+
+        // 1. Voicing 1: Easy C major (x-3-2-0-1-0) -> open strings, low stretch
+        // Active frets > 0: fret 3 on string 5, fret 2 on string 4, fret 1 on string 2.
+        // span = 3 - 1 = 2 -> PPI = 30.0
+        // pcs: C (0), E (4), G (7), C (0), E (4) -> matches all -> PCC = 40.0
+        // no previous voicing -> VLS = 30.0
+        // total = 100.0
+        let score = compute_semantic_score("x-3-2-0-1-0", &target_chord, None, &Instrument::Guitar);
+        assert!((score.pitch_class_correctness - 40.0).abs() < 1e-9);
+        assert!((score.physical_playability - 30.0).abs() < 1e-9);
+        assert!((score.voice_leading_smoothness - 30.0).abs() < 1e-9);
+        assert!((score.total_score - 100.0).abs() < 1e-9);
+
+        // 2. Voicing 2: High stretch (8-x-14-12-x-x) -> 8 to 14 active frets
+        // active frets > 0: 8, 14, 12 -> min=8, max=14 -> span = 6.
+        // PPI = 30 - (6 - 3) * 5 = 15.0.
+        let stretch_score =
+            compute_semantic_score("8-x-14-12-x-x", &target_chord, None, &Instrument::Guitar);
+        assert!((stretch_score.physical_playability - 15.0).abs() < 1e-9);
+
+        // 3. Voice leading transition: easy C (x-3-2-0-1-0) to G (x-2-0-0-0-3)
+        // distance: string 5 (3 -> 2 = 1), string 4 (2 -> 0 = 2), string 2 (1 -> 0 = 1).
+        // total_dist = 4.0. active_voices = 3. d = 1.33. d <= 2.0 -> VLS = 30.0
+        let transition_score = compute_semantic_score(
+            "x-2-0-0-0-3",
+            &target_chord,
+            Some("x-3-2-0-1-0"),
+            &Instrument::Guitar,
+        );
+        assert!((transition_score.voice_leading_smoothness - 30.0).abs() < 1e-9);
     }
 }

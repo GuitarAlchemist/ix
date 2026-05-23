@@ -117,22 +117,251 @@ fn classify_run(errors: usize, warnings: usize) -> (Hexavalent, f64, String) {
     }
 }
 
+const CORRECTNESS_LINTS: &[&str] = &[
+    "absurd_extreme_comparisons",
+    "approx_constant",
+    "async_yields_async",
+    "bad_bit_mask",
+    "cast_slice_from_raw_parts",
+    "clone_on_copy",
+    "cmp_nan",
+    "deprecated_semver",
+    "derive_hash_xor_eq",
+    "derive_ord_xor_partial_ord",
+    "double_comparisons",
+    "drop_copy",
+    "drop_ref",
+    "duration_subsec",
+    "erasing_op",
+    "float_cmp",
+    "fn_address_comparisons",
+    "forget_copy",
+    "forget_non_drop",
+    "forget_ref",
+    "ifs_same_cond",
+    "infinite_iter",
+    "inherent_to_string_shadow_display",
+    "inline_fn_without_body",
+    "invalid_null_ptr_usage",
+    "invalid_regex",
+    "invisible_characters",
+    "iter_next_loop",
+    "iterator_step_by_zero",
+    "let_underscore_lock",
+    "logic_bug",
+    "mem_replace_with_uninit",
+    "min_max",
+    "mismatched_target_os",
+    "mistyped_array_indexes",
+    "mut_from_ref",
+    "mut_range_bound",
+    "needless_bool",
+    "non_octal_unix_permissions",
+    "nonsensical_open_options",
+    "not_unsafe_ptr_arg_deref",
+    "option_env_unwrap",
+    "out_of_bounds_indexing",
+    "panicking_unwrap",
+    "possible_missing_comma",
+    "reversed_empty_ranges",
+    "self_assignment",
+    "serde_api_misuse",
+    "size_of_in_element_count",
+    "suspicious_splitn",
+    "to_string_in_format_args",
+    "transmute_undefined_repr",
+    "transmuting_null",
+    "unaligned_references",
+    "undocumented_unsafe_blocks",
+    "uninit_assumed_init",
+    "unit_cmp",
+    "unnecessary_cast",
+    "unnecessary_filter_map",
+    "unnecessary_fold",
+    "unnecessary_lazy_evaluations",
+    "unnecessary_mut_passed",
+    "unnecessary_operation",
+    "unnecessary_to_owned",
+    "unnecessary_unwrap",
+    "unreachable_code",
+    "unused_io_amount",
+    "unused_must_use",
+    "unused_unit",
+    "useless_asref",
+    "useless_format",
+    "vtable_address_comparisons",
+    "while_immutable_condition",
+    "wrong_pub_self_convention",
+    "zero_divided_by_zero",
+];
+
+const SUSPICIOUS_LINTS: &[&str] = &[
+    "almost_swapped",
+    "arc_with_non_send_sync",
+    "await_holding_lock",
+    "await_holding_refcell_ref",
+    "blanket_clippy_restriction_lints",
+    "cast_lossless",
+    "cast_possible_truncation",
+    "cast_possible_wrap",
+    "cast_precision_loss",
+    "cast_sign_loss",
+    "cognitive_complexity",
+    "copy_iterator",
+    "crate_in_macro_def",
+    "debug_assert_with_mut_call",
+    "decimal_literal_representation",
+    "declare_interior_mutable_const",
+    "default_numeric_fallback",
+    "deprecated_cfg_attr",
+    "diverging_sub_expression",
+    "doc_markdown",
+    "empty_loop",
+    "eval_order_dependence",
+    "float_arithmetic",
+    "float_cmp_const",
+    "format_in_format_args",
+    "implicit_hasher",
+    "inconsistent_digits_grouping",
+    "index_refutable_slice",
+    "integer_arithmetic",
+    "items_after_statements",
+    "large_digit_groups",
+    "large_stack_arrays",
+    "large_types_passed_by_value",
+    "let_and_return",
+    "let_underscore_must_use",
+    "let_unit_value",
+    "linkedlist",
+    "macro_use_imports",
+    "maybe_infinite_iter",
+    "mem_forget",
+    "missing_const_for_fn",
+    "missing_enforced_import_renames",
+    "missing_errors_doc",
+    "missing_inline_in_public_items",
+    "missing_panics_doc",
+    "missing_safety_doc",
+    "missing_spin_loop",
+    "modulo_arithmetic",
+    "modulo_one",
+    "multiple_crate_versions",
+    "multiple_inherent_impl",
+    "mut_mut",
+    "mutex_atomic",
+    "mutex_integer",
+    "needless_continue",
+    "needless_for_each",
+    "needless_pass_by_value",
+    "non_ascii_literal",
+    "nonstandard_macro_attributes",
+    "option_if_let_else",
+    "path_buf_push_overwrite",
+    "print_stderr",
+    "print_stdout",
+    "rc_buffer",
+    "rc_mutex",
+    "redundant_feature_names",
+    "rest_pat_in_fully_bound_structs",
+    "same_item_push",
+    "search_is_some",
+    "self_named_module_files",
+    "semicolon_if_nothing_returned",
+    "single_char_pattern",
+    "single_match",
+    "single_match_else",
+    "size_of_ref",
+    "suboptimal_flops",
+    "suspicious_arithmetic_impl",
+    "suspicious_assignment_formatting",
+    "suspicious_else_formatting",
+    "suspicious_map",
+    "suspicious_op_assign_impl",
+    "suspicious_to_owned",
+    "suspicious_unary_op_formatting",
+    "todo",
+    "trait_duplication_in_bounds",
+    "type_repetition_in_bounds",
+    "unimplemented",
+    "unnecessary_self_imports",
+    "unnecessary_wraps",
+    "unpack_nested_variable_matches",
+    "unreadable_literal",
+    "unsafe_derive_deserialize",
+    "unused_async",
+    "unused_peekable",
+    "unused_rounding",
+    "unused_self",
+    "use_self",
+    "useless_let_if_seq",
+    "useless_transmute",
+    "verbose_bit_mask",
+    "verbose_file_reads",
+    "wildcard_dependencies",
+    "wildcard_imports",
+    "write_stderr",
+    "write_stdout",
+    "wrong_self_convention",
+    "zero_prefixed_literal",
+];
+
+const PERF_LINTS: &[&str] = &[
+    "box_collection",
+    "boxed_local",
+    "cmp_owned",
+    "expect_fun_call",
+    "format_collect",
+    "inefficient_to_string",
+    "iter_nth",
+    "iter_nth_zero",
+    "iter_ovf",
+    "large_const_arrays",
+    "large_enum_variant",
+    "manual_memcpy",
+    "manual_str_repeat",
+    "needless_collect",
+    "or_fun_call",
+    "redundant_allocation",
+    "redundant_clone",
+    "slow_vector_initialization",
+    "stable_sort_primitive",
+    "to_string_in_format_args",
+    "unnecessary_to_owned",
+    "useless_vec",
+    "vec_box",
+];
+
+fn get_leaf_lint_name(lint_name: &str) -> &str {
+    lint_name.split("::").last().unwrap_or(lint_name)
+}
+
 /// Classify one diagnostic into `(aspect, variant, weight)`.
 /// Returns `None` for `help` and unknown levels.
 fn classify_diagnostic(level: &str, lint_name: &str) -> Option<(&'static str, Hexavalent, f64)> {
     match level {
         "error" => Some(("safe", Hexavalent::False, 1.0)),
         "warning" => {
-            // Inspect the lint path to pick aspect + weight.
-            if lint_name.contains("::correctness::") {
+            let leaf = get_leaf_lint_name(lint_name);
+
+            // Check lookup tables first.
+            if CORRECTNESS_LINTS.binary_search(&leaf).is_ok() {
                 Some(("safe", Hexavalent::Doubtful, 0.8))
-            } else if lint_name.contains("::suspicious::") {
+            } else if SUSPICIOUS_LINTS.binary_search(&leaf).is_ok() {
                 Some(("safe", Hexavalent::Doubtful, 0.7))
-            } else if lint_name.contains("::perf::") {
+            } else if PERF_LINTS.binary_search(&leaf).is_ok() {
                 Some(("timely", Hexavalent::Doubtful, 0.6))
             } else {
-                // style / complexity / pedantic / nursery / default
-                Some(("valuable", Hexavalent::Doubtful, 0.5))
+                // Fall back to matching explicit substrings (primarily for custom mock prefixes in tests)
+                if lint_name.contains("::correctness::") {
+                    Some(("safe", Hexavalent::Doubtful, 0.8))
+                } else if lint_name.contains("::suspicious::") {
+                    Some(("safe", Hexavalent::Doubtful, 0.7))
+                } else if lint_name.contains("::perf::") {
+                    Some(("timely", Hexavalent::Doubtful, 0.6))
+                } else {
+                    // Default for style / complexity / pedantic / nursery / other lints
+                    Some(("valuable", Hexavalent::Doubtful, 0.5))
+                }
             }
         }
         "note" => Some(("valuable", Hexavalent::Unknown, 0.3)),
@@ -330,5 +559,58 @@ mod tests {
             let back: SessionEvent = serde_json::from_str(&json).unwrap();
             assert_eq!(back, *event);
         }
+    }
+
+    #[test]
+    fn standard_real_world_clippy_warnings_are_mapped_correctly() {
+        // Standard real-world clippy warnings without the artificial category subfolder.
+        let correctness_input = r#"{"reason":"compiler-message","message":{"level":"warning","code":{"code":"clippy::float_cmp"},"message":"strict float comparison"}}"#;
+        let suspicious_input = r#"{"reason":"compiler-message","message":{"level":"warning","code":{"code":"clippy::almost_swapped"},"message":"almost swapped"}}"#;
+        let perf_input = r#"{"reason":"compiler-message","message":{"level":"warning","code":{"code":"clippy::needless_collect"},"message":"unnecessary collect"}}"#;
+        let style_input = r#"{"reason":"compiler-message","message":{"level":"warning","code":{"code":"clippy::needless_return"},"message":"needless return"}}"#;
+
+        // Correctness should map to safe aspect, weight 0.8
+        let obs_c = clippy_to_observations(correctness_input.as_bytes(), 0).unwrap();
+        let lint_c = obs_c
+            .iter()
+            .find(|e| extract(e).1.contains("float_cmp"))
+            .unwrap();
+        let (_, claim_c, variant_c, weight_c) = extract(lint_c);
+        assert!(claim_c.ends_with("::safe"), "got claim: {claim_c}");
+        assert_eq!(variant_c, Hexavalent::Doubtful);
+        assert!((weight_c - 0.8).abs() < 1e-9);
+
+        // Suspicious should map to safe aspect, weight 0.7
+        let obs_s = clippy_to_observations(suspicious_input.as_bytes(), 0).unwrap();
+        let lint_s = obs_s
+            .iter()
+            .find(|e| extract(e).1.contains("almost_swapped"))
+            .unwrap();
+        let (_, claim_s, variant_s, weight_s) = extract(lint_s);
+        assert!(claim_s.ends_with("::safe"), "got claim: {claim_s}");
+        assert_eq!(variant_s, Hexavalent::Doubtful);
+        assert!((weight_s - 0.7).abs() < 1e-9);
+
+        // Perf should map to timely aspect, weight 0.6
+        let obs_p = clippy_to_observations(perf_input.as_bytes(), 0).unwrap();
+        let lint_p = obs_p
+            .iter()
+            .find(|e| extract(e).1.contains("needless_collect"))
+            .unwrap();
+        let (_, claim_p, variant_p, weight_p) = extract(lint_p);
+        assert!(claim_p.ends_with("::timely"), "got claim: {claim_p}");
+        assert_eq!(variant_p, Hexavalent::Doubtful);
+        assert!((weight_p - 0.6).abs() < 1e-9);
+
+        // Style should map to valuable aspect, weight 0.5
+        let obs_st = clippy_to_observations(style_input.as_bytes(), 0).unwrap();
+        let lint_st = obs_st
+            .iter()
+            .find(|e| extract(e).1.contains("needless_return"))
+            .unwrap();
+        let (_, claim_st, variant_st, weight_st) = extract(lint_st);
+        assert!(claim_st.ends_with("::valuable"), "got claim: {claim_st}");
+        assert_eq!(variant_st, Hexavalent::Doubtful);
+        assert!((weight_st - 0.5).abs() < 1e-9);
     }
 }
