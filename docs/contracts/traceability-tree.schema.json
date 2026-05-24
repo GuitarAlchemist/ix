@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GuitarAlchemist/ix/contracts/traceability-tree-v1.json",
+  "title": "Traceability Tree Node",
+  "description": "A single node in a hierarchical Merkle-style summary tree over a codebase plus dev-process artifacts. Supports semantic zoom-in / zoom-out with explicit kept/dropped manifests so compression is lossy at the level but lossless from the root. See docs/contracts/2026-05-24-traceability-tree.contract.md for the full contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "schema_version", "level", "kind", "summary", "provenance"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^blake3:[a-f0-9]{64}$",
+      "description": "Stable content-addressed hash. Computed as blake3 over canonical(summary || kind || level || provenance.source_path || sorted(children)). Determines node identity across rebuilds."
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Bumped only on breaking field rename or removal. New optional fields are additive without a bump."
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "description": "0 (raw leaf) to 6 (epic). See contract section 4 for per-level semantics and compression targets. A node MUST NOT have children whose level is strictly greater than its own, nor more than two below."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "epic",
+        "story",
+        "task",
+        "subsystem",
+        "module",
+        "file",
+        "symbol",
+        "test_unit",
+        "test_integration",
+        "test_plan",
+        "qa_session",
+        "demo",
+        "post_mortem"
+      ],
+      "description": "Semantic kind. Superset of ga BACKLOG.md parser kinds (BacklogEpic / EpicSubSection / BacklogItem) so a BACKLOG entry maps to a node with no schema bending. Extended to cover code (module / file / symbol), tests (test_unit / test_integration / test_plan), and process artifacts (qa_session / demo / post_mortem)."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Markdown body. MUST be self-contained at this level - readable without consulting the children. The wavelet's coarse approximation at this resolution."
+    },
+    "children": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^blake3:[a-f0-9]{64}$" },
+      "description": "Ordered list of child node ids. Empty for leaves. Order is significant for the canonical hash."
+    },
+    "parent": {
+      "type": ["string", "null"],
+      "pattern": "^blake3:[a-f0-9]{64}$",
+      "description": "Parent node id, or null for root. Trees are forests-of-one in v1."
+    },
+    "cross_refs": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^blake3:[a-f0-9]{64}$" },
+      "description": "Non-tree edges to nodes in the same workspace. Examples: task to test_unit (proof-of-implementation), file to post_mortem (root cause site), demo to story (delivers). Edge type is implicit from the kinds at both ends in v1; an explicit edge_kind enum is a candidate v2 addition."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_path"],
+      "properties": {
+        "source_path": {
+          "type": "string",
+          "description": "Repo-relative path. For aggregate nodes (L2+), the directory or section path the aggregate covers."
+        },
+        "source_line_range": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[start_line, end_line] inclusive. Only meaningful for leaf nodes that point at a specific span."
+        },
+        "source_mtime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Filesystem mtime of source_path at summarization time. Feeds the drift detector - a newer mtime than source_mtime is the first signal that re-summarization may be needed."
+        },
+        "summarizer_model": {
+          "type": "string",
+          "description": "Model and date used to produce summary. Example: claude-opus-4-7@2026-05-24. A model swap shows up as drift and forces re-summarization."
+        },
+        "summarized_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 timestamp of the summarization LLM call. Absent for L0 (raw) nodes."
+        }
+      }
+    },
+    "fidelity": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "0.0 (lost everything) to 1.0 (lossless at this level). Self-report from the summarizer. Soft signal, not load-bearing in v1. Leaves are 1.0 by definition. Calibration across summarizers is an open question - see contract section 12."
+    },
+    "kept": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Explicit list of facts preserved at this level. Each entry is a short string the reader can take to the bank. AI annotations (@ai:invariant, @ai:contract) MUST be promoted from descendants into this list - they are the wavelet's low-frequency coefficients and survive every zoom-out. The reconciler enforces this structurally."
+    },
+    "dropped": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Explicit list of facts compressed away at this level. Each entry MUST be drilled-down-reachable - the reader can follow children until a descendant's summary covers that fact in full. Nothing disappears - lossy at the level, lossless from the root."
+    },
+    "stale": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set by the sync engine when the underlying children have changed but this node has not yet been re-summarized. Triggers Phase-1 selective re-summarization."
+    },
+    "stale_reason": {
+      "type": ["string", "null"],
+      "description": "Free-text explanation: which child diverged, by what hash delta, when. Surfaced to the operator via ix_tree_drift."
+    },
+    "ai_claims": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "description": "References to @ai: annotation ids (per docs/contracts/ai-annotation.schema.json) that live in the subtree rooted here. Promoted upward by the build. The annotation contract owns the leaf format; the traceability tree is the index over the annotation corpus."
+    },
+    "contract_invariants": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Free-text invariants this node guarantees to its parent. The parent's kept array MUST include every entry here. A divergence triggers a drift alarm (algedonic signal) routed to state/quality/traceability-drift.jsonl."
+    }
+  }
+}
