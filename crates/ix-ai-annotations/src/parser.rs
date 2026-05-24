@@ -224,4 +224,35 @@ mod tests {
         let m = parse_line(line).expect("parses");
         assert_eq!(m.truth_value, TruthValue::C);
     }
+
+    // --- schema v2 additive kinds ---
+
+    #[test]
+    fn business_value_kind_parses() {
+        let line = "// @ai:business-value core chord-recognition pipeline drives all voicing search [T:manually-reviewed conf:0.95 src:product-owner@2026-05-24]";
+        let m = parse_line(line).expect("parses");
+        assert_eq!(m.kind, AnnotationKind::BusinessValue);
+        assert_eq!(m.truth_value, TruthValue::T);
+        assert_eq!(m.certainty, Certainty::ManuallyReviewed);
+        assert_eq!(m.confidence, Some(0.95));
+        assert_eq!(m.evidence.as_deref(), Some("product-owner@2026-05-24"));
+    }
+
+    #[test]
+    fn hot_path_kind_parses() {
+        let line = "// @ai:hot-path 92% of /api/chord calls hit this method [T:test conf:0.99 src:https://grafana.example/d/abc]";
+        let m = parse_line(line).expect("parses");
+        assert_eq!(m.kind, AnnotationKind::HotPath);
+        assert_eq!(m.truth_value, TruthValue::T);
+        assert_eq!(m.certainty, Certainty::Test);
+        assert_eq!(m.evidence.as_deref(), Some("https://grafana.example/d/abc"));
+    }
+
+    #[test]
+    fn business_value_python_hash_marker() {
+        let line = "# @ai:business-value primary user onboarding entry point [P:assumed conf:0.8]";
+        let m = parse_line(line).expect("parses");
+        assert_eq!(m.kind, AnnotationKind::BusinessValue);
+        assert_eq!(m.truth_value, TruthValue::P);
+    }
 }
