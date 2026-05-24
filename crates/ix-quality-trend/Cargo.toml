@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+uuid = { workspace = true }
 ix-signal = { workspace = true }
 ix-optick = { workspace = true }
 rmp-serde = "1"
@@ -38,3 +39,7 @@ path = "src/bin/build_ci_index.rs"
 [[bin]]
 name = "ix-quality-trend-seed-history"
 path = "src/bin/seed_history.rs"
+
+[[bin]]
+name = "ix-sentrux-gate-writer"
+path = "src/bin/sentrux_gate_writer.rs"

@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "quality-gate-ledger-v1",
+  "title": "Quality Gate Ledger v1",
+  "description": "Unified append-only row format for the cross-repo quality-gate substrate. See docs/contracts/2026-05-24-quality-gate-ledger.contract.md.",
+  "type": "object",
+  "required": ["schema_version", "schema", "id", "run_at", "source", "domain", "decision", "metric"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "schema": { "const": "quality-gate-ledger-v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "run_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "string",
+      "description": "Producer id. Open enum; current values: ix-quality-trend, sentrux, chatbot-qa, council, e2e, test-plans, tribunal."
+    },
+    "domain": {
+      "type": "string",
+      "description": "Open enum; current values: structural, tests, invariants, coverage, chatbot, routing, voicings, harness, governance."
+    },
+    "decision": { "type": "string", "enum": ["pass", "fail", "warn", "skip"] },
+    "metric": {
+      "type": "object",
+      "required": ["name", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "type": "number" },
+        "threshold": { "type": "number" },
+        "trend": { "type": "string", "enum": ["improving", "stable", "degrading", "unknown"] }
+      }
+    },
+    "evidence": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "ref"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["url", "file", "sha", "run-id", "pr"] },
+            "ref": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "operator_ack": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["by", "at"],
+          "properties": {
+            "by": { "type": "string" },
+            "at": { "type": "string", "format": "date-time" },
+            "note": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "extra": {
+      "type": "object",
+      "description": "Producer-specific extension blob. Consumers MUST ignore unknown keys.",
+      "additionalProperties": true
+    }
+  }
+}
