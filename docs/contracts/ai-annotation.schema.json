@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GuitarAlchemist/ix/contracts/ai-annotation-v1.json",
+  "title": "AI Source-Code Annotation",
+  "description": "An in-source, line-local, agent-authored claim about code: an invariant, assumption, hypothesis, contract, smell, decision, or hint. Carries hexavalent truth value (T/P/U/D/F/C) and certainty marker. Aligned with governance/demerzel/schemas/hexavalent-distribution.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "kind",
+    "claim",
+    "truth_value",
+    "certainty",
+    "confidence",
+    "source",
+    "location",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Deterministic SHA-256 over path:line_start:kind:claim; identifies the same annotation across extractions."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["invariant", "assumption", "hypothesis", "contract", "smell", "decision", "hint"]
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Human-readable text of the claim."
+    },
+    "truth_value": {
+      "type": "string",
+      "enum": ["T", "P", "U", "D", "F", "C"],
+      "description": "Hexavalent truth value per Demerzel hexavalent-distribution.schema.json."
+    },
+    "certainty": {
+      "type": "string",
+      "enum": [
+        "test",
+        "formal-proof",
+        "manually-reviewed",
+        "assumed",
+        "uncertain",
+        "inferred",
+        "dismissed"
+      ],
+      "description": "How the truth value was reached."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "0.0-1.0 per Demerzel confidence thresholds (>=0.9 autonomous, >=0.7 with note, >=0.5 confirm, >=0.3 escalate, <0.3 do not act)."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["author"],
+      "properties": {
+        "author": {
+          "type": "string",
+          "enum": ["claude", "codex", "gemini", "junie", "auggie", "human", "auto"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Optional model id e.g. claude-opus-4-7."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Optional evidence reference: test path:line, PR#, MIRI run id, etc."
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line_start", "line_end"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Repo-relative file path."
+        },
+        "line_start": { "type": "integer", "minimum": 1 },
+        "line_end": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "stale": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set by the reconciler when the underlying file has been modified materially after the annotation was last updated."
+    },
+    "reconciliation": {
+      "type": "object",
+      "description": "Optional block populated by the reconciler in Phase 1. Absent in raw extractor output.",
+      "additionalProperties": false,
+      "properties": {
+        "test_match": {
+          "type": ["string", "null"],
+          "description": "Test path that appears to exercise this claim, or null."
+        },
+        "promoted_to_C_from": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["T", "P", "U", "D", "F"] },
+          "description": "Other truth values seen at the same location that triggered C-promotion."
+        },
+        "weighted_truth_value": {
+          "type": "string",
+          "enum": ["T", "P", "U", "D", "F", "C"],
+          "description": "Multi-source weighted hexavalent result."
+        },
+        "weighted_confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      }
+    }
+  }
+}
