@@ -5297,6 +5297,83 @@ pub fn voicings_payload(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_annotations_scan ─────────────────────────────────────────────
+//
+// Scan a workspace for in-source @ai: annotations (extract + reconcile)
+// and return a JSON report.
+
+pub fn annotations_scan(params: Value) -> Result<Value, String> {
+    use ix_ai_annotations::{reconcile, walker, ReconcilerConfig};
+    use std::path::PathBuf;
+
+    let workspace = params
+        .get("workspace")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let stale_days = params
+        .get("stale_days")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(7);
+
+    let annotations = walker::extract(&workspace).map_err(|e| format!("extract failed: {}", e))?;
+
+    let test_files: Vec<PathBuf> = params
+        .get("test_files")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(PathBuf::from))
+                .collect()
+        })
+        .unwrap_or_else(|| discover_test_paths(&workspace));
+
+    let cfg = ReconcilerConfig {
+        test_files,
+        workspace: workspace.clone(),
+        stale_threshold_days: stale_days,
+    };
+    let report = reconcile(annotations, &cfg);
+    serde_json::to_value(&report).map_err(|e| format!("serialize report failed: {}", e))
+}
+
+fn discover_test_paths(workspace: &std::path::Path) -> Vec<std::path::PathBuf> {
+    use ignore::WalkBuilder;
+    let mut paths = Vec::new();
+    let mut wb = WalkBuilder::new(workspace);
+    wb.filter_entry(|e| {
+        let n = e.file_name().to_string_lossy();
+        !matches!(
+            n.as_ref(),
+            "target" | "node_modules" | ".git" | "dist" | "build"
+        )
+    });
+    for ent in wb.build().flatten() {
+        if !ent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let p = ent.path();
+        let rel = p.strip_prefix(workspace).unwrap_or(p).to_path_buf();
+        let s = rel.to_string_lossy().to_lowercase().replace('\\', "/");
+        let stem = p
+            .file_stem()
+            .map(|st| st.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let looks_like_test = s.contains("/tests/")
+            || s.starts_with("tests/")
+            || stem.ends_with("_test")
+            || stem.ends_with("_tests")
+            || stem.starts_with("test_")
+            || stem.ends_with(".test")
+            || stem.ends_with(".spec");
+        if looks_like_test {
+            paths.push(rel);
+        }
+    }
+    paths
+}
+
 #[cfg(test)]
 mod voicings_payload_tests {
     use super::*;

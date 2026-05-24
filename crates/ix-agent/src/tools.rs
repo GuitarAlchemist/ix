@@ -2189,6 +2189,32 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::code_analyze,
         });
+
+        // ── ix_annotations_scan ─────────────────────────────────────
+
+        self.tools.push(Tool {
+            name: "ix_annotations_scan",
+            description: "Scan a workspace for in-source @ai: annotations (invariant, assumption, hypothesis, contract, smell, decision, hint) with hexavalent truth values (T/P/U/D/F/C) and certainty markers. Runs the extractor + reconciler: matches annotations against test files, promotes contradictory same-line claims to C, flags stale ones, and emits weighted multi-source aggregates. See docs/contracts/2026-05-24-ai-annotation.contract.md.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workspace": {
+                        "type": "string",
+                        "description": "Workspace root to scan. Default: current directory."
+                    },
+                    "stale_days": {
+                        "type": "integer",
+                        "description": "Days after annotation update_at before file mtime flips the stale bit. Default: 7."
+                    },
+                    "test_files": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional explicit list of test files (workspace-relative). If omitted, auto-discovered."
+                    }
+                }
+            }),
+            handler: handlers::annotations_scan,
+        });
     }
 
     /// Governance sub-group 4: cross-repo bridges (TARS, GA) plus the
