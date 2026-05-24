@@ -144,7 +144,11 @@ fn comment_for_path(path: &str) -> &'static str {
         "#"
     } else if p.ends_with(".lua") || p.ends_with(".sql") || p.ends_with(".hs") {
         "--"
-    } else if p.ends_with(".html") || p.ends_with(".htm") || p.ends_with(".xml") || p.ends_with(".md") {
+    } else if p.ends_with(".html")
+        || p.ends_with(".htm")
+        || p.ends_with(".xml")
+        || p.ends_with(".md")
+    {
         "<!--"
     } else {
         "//"
@@ -226,10 +230,7 @@ mod tests {
     #[test]
     fn sidecar_writes_jsonl_one_per_line() {
         let dir = tempdir().unwrap();
-        let annos = vec![
-            make("a.rs", 10, "claim a"),
-            make("b.rs", 20, "claim b"),
-        ];
+        let annos = vec![make("a.rs", 10, "claim a"), make("b.rs", 20, "claim b")];
         let outcome = emit_sidecar(dir.path(), &annos, None).unwrap();
         assert_eq!(outcome.written, 2);
         let sidecar = dir.path().join(crate::DEFAULT_SIDECAR_PATH);
@@ -247,7 +248,12 @@ mod tests {
     fn sidecar_overwrites_on_rerun() {
         let dir = tempdir().unwrap();
         emit_sidecar(dir.path(), &[make("a.rs", 1, "x")], None).unwrap();
-        emit_sidecar(dir.path(), &[make("b.rs", 2, "y"), make("c.rs", 3, "z")], None).unwrap();
+        emit_sidecar(
+            dir.path(),
+            &[make("b.rs", 2, "y"), make("c.rs", 3, "z")],
+            None,
+        )
+        .unwrap();
         let body = fs::read_to_string(dir.path().join(crate::DEFAULT_SIDECAR_PATH)).unwrap();
         assert_eq!(body.lines().count(), 2);
         assert!(body.contains("b.rs"));
@@ -281,7 +287,7 @@ mod tests {
         )
         .unwrap();
         let a = make("src/foo.rs", 2, "sentrux rule `max_fn_lines` violated");
-        emit_inline(dir.path(), &[a.clone()], false).unwrap();
+        emit_inline(dir.path(), std::slice::from_ref(&a), false).unwrap();
         let after_first = std::fs::read_to_string(dir.path().join("src/foo.rs")).unwrap();
         let second = emit_inline(dir.path(), &[a], false).unwrap();
         assert_eq!(second.written, 0);

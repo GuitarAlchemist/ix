@@ -52,9 +52,7 @@ impl Default for SentruxConfig {
 /// - [`Error::RpcError`] / [`Error::BadResponse`] on protocol errors.
 pub fn run_sentrux_check(cfg: &SentruxConfig) -> Result<RulesReport, Error> {
     if !cfg.sentrux_exe.exists() {
-        return Err(Error::SentruxMissing(
-            cfg.sentrux_exe.display().to_string(),
-        ));
+        return Err(Error::SentruxMissing(cfg.sentrux_exe.display().to_string()));
     }
 
     let mut child = Command::new(&cfg.sentrux_exe)
@@ -75,8 +73,7 @@ pub fn run_sentrux_check(cfg: &SentruxConfig) -> Result<RulesReport, Error> {
     let _ = child.kill();
     let _ = child.wait();
 
-    let report =
-        parse_check_rules_response(&envelope).map_err(Error::BadResponse)?;
+    let report = parse_check_rules_response(&envelope).map_err(Error::BadResponse)?;
     Ok(report)
 }
 
@@ -169,52 +166,46 @@ fn collect_id99(child: &mut Child, timeout: Duration) -> Result<serde_json::Valu
     }
 
     let deadline = Instant::now() + timeout;
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(Error::Timeout(timeout.as_millis() as u64));
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(Error::Timeout(timeout.as_millis() as u64));
+    }
+    match rx.recv_timeout(remaining) {
+        Ok(Ok(v)) => {
+            if let Some(err) = v.get("error") {
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("(unknown)")
+                    .to_string();
+                return Err(Error::RpcError(msg));
+            }
+            Ok(v)
         }
-        match rx.recv_timeout(remaining) {
-            Ok(Ok(v)) => {
-                if let Some(err) = v.get("error") {
-                    let msg = err
-                        .get("message")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("(unknown)")
-                        .to_string();
-                    return Err(Error::RpcError(msg));
-                }
-                return Ok(v);
-            }
-            Ok(Err(_msg)) => {
-                // stdout closed early; try to capture stderr for diagnostics
-                let stderr_tail = stderr
-                    .map(|mut s| {
-                        let mut buf = String::new();
-                        let _ = s.read_to_string(&mut buf);
-                        let len = buf.len();
-                        if len > 500 {
-                            buf.split_off(len - 500)
-                        } else {
-                            buf
-                        }
-                    })
-                    .unwrap_or_default();
-                let code = child.try_wait().ok().flatten().and_then(|s| s.code());
-                return Err(Error::SentruxExitedEarly {
-                    code,
-                    stderr: stderr_tail,
-                });
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                return Err(Error::Timeout(timeout.as_millis() as u64));
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(Error::BadResponse(
-                    "stdout reader channel disconnected".into(),
-                ));
-            }
+        Ok(Err(_msg)) => {
+            // stdout closed early; try to capture stderr for diagnostics
+            let stderr_tail = stderr
+                .map(|mut s| {
+                    let mut buf = String::new();
+                    let _ = s.read_to_string(&mut buf);
+                    let len = buf.len();
+                    if len > 500 {
+                        buf.split_off(len - 500)
+                    } else {
+                        buf
+                    }
+                })
+                .unwrap_or_default();
+            let code = child.try_wait().ok().flatten().and_then(|s| s.code());
+            Err(Error::SentruxExitedEarly {
+                code,
+                stderr: stderr_tail,
+            })
         }
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::Timeout(timeout.as_millis() as u64)),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::BadResponse(
+            "stdout reader channel disconnected".into(),
+        )),
     }
 }
 

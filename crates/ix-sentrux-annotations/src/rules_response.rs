@@ -146,7 +146,11 @@ impl ViolationLocation {
 /// Unwrap the MCP envelope `{ result: { content: [{ text: "<json>" }] } }`
 /// and parse the contained JSON into a [`RulesReport`].
 ///
-/// Pass the full `tools/call` response object as parsed JSON.
+/// Pass the full `tools/call` response object as parsed JSON. If sentrux
+/// returns a human-readable diagnostic instead of a JSON body (e.g.
+/// `"No rules file found at .sentrux/rules.toml"`), the result is an
+/// empty report whose `summary` carries the diagnostic — so callers
+/// downstream see "0 violations" rather than crashing.
 pub fn parse_check_rules_response(envelope: &serde_json::Value) -> Result<RulesReport, String> {
     let text = envelope
         .get("result")
@@ -157,7 +161,18 @@ pub fn parse_check_rules_response(envelope: &serde_json::Value) -> Result<RulesR
         .and_then(|t| t.as_str())
         .ok_or_else(|| "MCP envelope missing result.content[0].text".to_string())?;
 
-    serde_json::from_str::<RulesReport>(text)
+    let trimmed = text.trim();
+    if !trimmed.starts_with('{') {
+        // Sentrux emitted a plaintext diagnostic. Treat as empty report.
+        return Ok(RulesReport {
+            pass: true,
+            rules_checked: 0,
+            summary: trimmed.to_string(),
+            violation_count: 0,
+            violations: Vec::new(),
+        });
+    }
+    serde_json::from_str::<RulesReport>(trimmed)
         .map_err(|e| format!("check_rules payload was not RulesReport JSON: {e}"))
 }
 

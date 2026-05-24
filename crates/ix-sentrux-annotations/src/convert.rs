@@ -144,9 +144,24 @@ fn looks_like_decl(line: &str, symbol: &str) -> bool {
     }
     // Anchor on common decl keywords across the languages sentrux supports.
     const KEYWORDS: &[&str] = &[
-        "fn ", "pub fn ", "async fn ", "pub async fn ", "let ", "const ", "static ",
-        "struct ", "enum ", "trait ", "impl ", "mod ", "pub mod ",
-        "function ", "def ", "class ", "type ", "interface ",
+        "fn ",
+        "pub fn ",
+        "async fn ",
+        "pub async fn ",
+        "let ",
+        "const ",
+        "static ",
+        "struct ",
+        "enum ",
+        "trait ",
+        "impl ",
+        "mod ",
+        "pub mod ",
+        "function ",
+        "def ",
+        "class ",
+        "type ",
+        "interface ",
     ];
     for kw in KEYWORDS {
         if let Some(pos) = line.find(kw) {
@@ -177,7 +192,8 @@ mod tests {
     #[test]
     fn produces_false_truth_value_and_sentrux_author() {
         let dir = tempdir().unwrap();
-        let annos = violation_to_annotation(dir.path(), &sample_violation(), "2026-05-24T18:00:00Z");
+        let annos =
+            violation_to_annotation(dir.path(), &sample_violation(), "2026-05-24T18:00:00Z");
         assert_eq!(annos.len(), 1);
         let a = &annos[0];
         assert_eq!(a.truth_value, TruthValue::F);
