@@ -45,8 +45,8 @@ fn intersection_with_2_bv_and_5_untested_emits_exactly_2() {
     .unwrap();
 
     // Step 2: load the Pro-tier test_gaps fixture from the canonical path.
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/test_gaps_pro.json");
+    let fixture_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test_gaps_pro.json");
     let raw = fs::read_to_string(&fixture_path).expect("fixture present");
     let bare: serde_json::Value = serde_json::from_str(&raw).unwrap();
     // Parse the fixture as a bare TestGapsReport (no MCP envelope).
@@ -81,8 +81,8 @@ fn intersection_with_2_bv_and_5_untested_emits_exactly_2() {
     )
     .unwrap();
     assert_eq!(outcome.written, 2);
-    let body = fs::read_to_string(ws.join("state/quality/ai-annotations-sentrux-untested.jsonl"))
-        .unwrap();
+    let body =
+        fs::read_to_string(ws.join("state/quality/ai-annotations-sentrux-untested.jsonl")).unwrap();
     assert_eq!(body.lines().count(), 2);
     for line in body.lines() {
         let v: serde_json::Value = serde_json::from_str(line).unwrap();
@@ -124,8 +124,8 @@ fn fixture_envelope_round_trips_through_parse_test_gaps_response() {
     // Cross-check that the MCP envelope form parses the same way as the
     // bare TestGapsReport form, so callers can use either fixture shape
     // interchangeably.
-    let bare_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/test_gaps_pro.json");
+    let bare_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test_gaps_pro.json");
     let bare_raw = fs::read_to_string(&bare_path).unwrap();
 
     // Wrap the bare fixture in an MCP envelope and parse via the public

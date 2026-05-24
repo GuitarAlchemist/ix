@@ -233,7 +233,10 @@ mod tests {
         let bv_paths = business_value_paths(&bv_annos);
         let intersection = untested_high_value_annotations(&untested, &bv_paths, "now");
         assert_eq!(intersection.len(), 2);
-        let paths: Vec<&str> = intersection.iter().map(|a| a.location.path.as_str()).collect();
+        let paths: Vec<&str> = intersection
+            .iter()
+            .map(|a| a.location.path.as_str())
+            .collect();
         assert!(paths.contains(&"crates/foo/src/lib.rs"));
         assert!(paths.contains(&"crates/bar/src/main.rs"));
     }

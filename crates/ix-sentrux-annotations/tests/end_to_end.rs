@@ -52,7 +52,10 @@ fn fixture_round_trip_emits_well_formed_annotation() {
     let body = fs::read_to_string(sidecar).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(body.trim_end()).unwrap();
 
-    assert_eq!(parsed["schema_version"], 1);
+    // SCHEMA_VERSION is 2 after PR #59 added @ai:business-value / @ai:hot-path
+    // kinds; the contract still accepts v1 readers, but new annotations
+    // serialize as v2.
+    assert_eq!(parsed["schema_version"], 2);
     assert_eq!(parsed["truth_value"], "F");
     assert_eq!(parsed["certainty"], "detected-by-sentrux");
     assert_eq!(parsed["confidence"], 1.0);

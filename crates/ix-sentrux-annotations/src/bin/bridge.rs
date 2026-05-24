@@ -228,8 +228,7 @@ fn load_test_gaps_fixture(path: &PathBuf) -> Result<TestGapsReport, Box<dyn std:
     let raw = fs::read_to_string(path)?;
     let v: serde_json::Value = serde_json::from_str(&raw)?;
     if v.get("result").and_then(|r| r.get("content")).is_some() {
-        return ix_sentrux_annotations::test_gaps::parse_test_gaps_response(&v)
-            .map_err(Into::into);
+        return ix_sentrux_annotations::test_gaps::parse_test_gaps_response(&v).map_err(Into::into);
     }
     // Otherwise treat the file as a bare TestGapsReport.
     let report: TestGapsReport = serde_json::from_value(v)?;

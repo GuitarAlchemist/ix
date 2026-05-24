@@ -170,11 +170,9 @@ mod tests {
 
     #[test]
     fn plaintext_diagnostic_yields_empty_report() {
-        let env = envelope(serde_json::Value::String(
-            "No scan data. Call 'scan' first.".into(),
-        ));
-        // Need to manually build because envelope wraps as JSON-stringified
-        // — re-build with literal string text.
+        // Sentrux returns plaintext (not JSON) when scan hasn't run yet.
+        // We build the envelope by hand because the helper above
+        // JSON-stringifies its argument — we want a literal string here.
         let env = serde_json::json!({
             "result": {
                 "content": [{
@@ -187,7 +185,6 @@ mod tests {
         assert_eq!(report.source_files, 0);
         assert_eq!(report.untested, 0);
         assert!(!report.has_per_file());
-        let _ = env;
     }
 
     #[test]

@@ -52,10 +52,7 @@ impl Default for SentruxConfig {
 /// - [`Error::SentruxExitedEarly`] if sentrux exits without replying.
 /// - [`Error::RpcError`] / [`Error::BadResponse`] on protocol errors.
 pub fn run_sentrux_check(cfg: &SentruxConfig) -> Result<RulesReport, Error> {
-    let envelope = run_sentrux_tool_call(
-        cfg,
-        json!({"name": "check_rules", "arguments": {}}),
-    )?;
+    let envelope = run_sentrux_tool_call(cfg, json!({"name": "check_rules", "arguments": {}}))?;
     parse_check_rules_response(&envelope).map_err(Error::BadResponse)
 }
 

@@ -2619,9 +2619,15 @@ Example 2 — "cluster crates by complexity then classify":
         // Closes the claim -> verify -> promote/demote loop with sentrux
         // as the machine ground-truth verifier (see PRs #54/#55/#56 and
         // crate `ix-sentrux-annotations`).
+        //
+        // The `emit_untested` arg adds a second pass: sentrux `test_gaps`
+        // -> intersect with `@ai:business-value` files -> emit one
+        // `@ai:smell "no test coverage detected by sentrux"` per
+        // intersection file. Default off — without it, behavior is
+        // unchanged from PR #61.
         self.tools.push(Tool {
             name: "ix_sentrux_annotate",
-            description: "Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments.",
+            description: "Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments. Set `emit_untested=true` to additionally call sentrux `test_gaps` and emit one untested-smell annotation per file in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -2648,6 +2654,21 @@ Example 2 — "cluster crates by complexity then classify":
                         "minimum": 1,
                         "default": 60,
                         "description": "Timeout for the JSON-RPC handshake."
+                    },
+                    "emit_untested": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Additionally call sentrux `test_gaps` and emit `@ai:smell` annotations for files in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations). Off by default."
+                    },
+                    "untested_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 100,
+                        "description": "Top-N untested-file cap passed through to sentrux `test_gaps.limit`. Only meaningful when emit_untested=true."
+                    },
+                    "untested_out": {
+                        "type": "string",
+                        "description": "Override sidecar path for the untested-smell JSONL stream (default `<workspace>/state/quality/ai-annotations-sentrux-untested.jsonl`). Only meaningful when emit_untested=true."
                     }
                 }
             }),
