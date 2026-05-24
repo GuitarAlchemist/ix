@@ -70,6 +70,8 @@ These rules complement (don't replace) the Collaboration discipline above. They 
 3. **Surgical changes only.** Only modify code directly related to the request. Don't refactor adjacent code, don't fix unrelated style issues.
 4. **Goal-driven execution.** Transform every task into verifiable success criteria. Loop until each is demonstrably met. "Task completed" ≠ "goal achieved." Use native `/goal <condition>` (Claude Code v2.1.139+) to mechanize this — Claude keeps working across turns until an evaluator confirms the condition holds. `/digest`'s `success_criteria` field is the **declared** form; `/goal` is the **operational** driver.
 
+Before-merge addendum: scan Codex bot comments before any `gh pr merge` — see **Session-learned rules** below for the exact command and policy.
+
 Self-improvement reflex: when the user corrects you, invoke `/correct` so the rule lands in this file's **Session-learned rules** section — Cherny's "most important loop" from the 2026 Sequoia talk.
 
 ## Session continuity (Cherny pattern)
@@ -83,5 +85,15 @@ The hooks are validated in CI by `.github/workflows/karpathy-cherny-discipline.y
 ## Session-learned rules
 
 _Appended by `/correct` when the user corrects an approach. Persists across sessions._
+
+- **Always read Codex bot comments before merging a PR.** Before any `gh pr merge`, run:
+  ```bash
+  gh api repos/$REPO/pulls/$PR/comments --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]")'
+  ```
+  Address or explicitly dismiss every P0/P1 finding. P2/P3 are advisory.
+
+  **Why:** PR #308 (ga, merged 2026-05-23) shipped with an unresolved Codex P2 that broke the README's setup instruction on fresh checkout (the `cp` step assumed `.claude/local/` existed, but the directory is gitignored). Codex comments are not surfaced in the standard `gh pr view` merge flow — Claude must opt-in to see them. A 2026-05-24 sweep of the last 30 days of merged `ga` PRs found ~30 outstanding Codex findings across 20+ PRs, including multiple P1s — silent drift, not isolated.
+
+  **How to apply:** insert into the standard "ready to merge" checklist. If Codex P0/P1 are unresolved, do NOT merge; surface to the operator with the comment body and propose a fix. Priority parses from the `![P{0,1,2,3} Badge]` markdown shield at the start of `body`.
 
 - **2026-05-24** Before claiming an invariant, assumption, or hypothesis in code, attach an `@ai:` annotation with truth_value + certainty per `docs/contracts/2026-05-24-ai-annotation.contract.md`. Hexavalent T/P/U/D/F/C only; confidence per Demerzel thresholds. Example: `// @ai:invariant arr is sorted ascending [T:test conf:0.95 src:test_search.rs:42]`.
