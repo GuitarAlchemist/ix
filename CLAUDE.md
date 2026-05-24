@@ -84,4 +84,4 @@ The hooks are validated in CI by `.github/workflows/karpathy-cherny-discipline.y
 
 _Appended by `/correct` when the user corrects an approach. Persists across sessions._
 
-(none yet)
+- **2026-05-24** Before claiming an invariant, assumption, or hypothesis in code, attach an `@ai:` annotation with truth_value + certainty per `docs/contracts/2026-05-24-ai-annotation.contract.md`. Hexavalent T/P/U/D/F/C only; confidence per Demerzel thresholds. Example: `// @ai:invariant arr is sorted ascending [T:test conf:0.95 src:test_search.rs:42]`.
