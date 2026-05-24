@@ -12,8 +12,8 @@ use std::path::Path;
 /// languages plus common config/docs.
 const SCANNABLE_EXTS: &[&str] = &[
     "rs", "cs", "fs", "fsx", "fsi", "ts", "tsx", "js", "jsx", "py", "rb", "go", "java", "swift",
-    "c", "h", "cpp", "hpp", "lua", "sql", "hs", "sh", "ps1", "psm1", "yml", "yaml", "toml",
-    "html", "htm", "xml", "md",
+    "c", "h", "cpp", "hpp", "lua", "sql", "hs", "sh", "ps1", "psm1", "yml", "yaml", "toml", "html",
+    "htm", "xml", "md",
 ];
 
 fn has_scannable_ext(path: &Path) -> bool {

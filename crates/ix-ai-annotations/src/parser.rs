@@ -140,7 +140,8 @@ mod tests {
 
     #[test]
     fn rust_double_slash_full_marker() {
-        let line = "    // @ai:invariant arr is sorted ascending [T:test conf:0.95 src:test_search.rs:42]";
+        let line =
+            "    // @ai:invariant arr is sorted ascending [T:test conf:0.95 src:test_search.rs:42]";
         let m = parse_line(line).expect("parses");
         assert_eq!(m.kind, AnnotationKind::Invariant);
         assert_eq!(m.claim, "arr is sorted ascending");

@@ -2612,5 +2612,46 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::autoresearch_run,
         });
+
+        // ── ix_sentrux_annotate ────────────────────────────────────
+        // Bridge that drives `sentrux.exe mcp` and converts each
+        // structural-rule violation into an ai-annotation-v1 record.
+        // Closes the claim -> verify -> promote/demote loop with sentrux
+        // as the machine ground-truth verifier (see PRs #54/#55/#56 and
+        // crate `ix-sentrux-annotations`).
+        self.tools.push(Tool {
+            name: "ix_sentrux_annotate",
+            description: "Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workspace": {
+                        "type": "string",
+                        "description": "Repo root passed to sentrux's `scan` tool (default `.`)."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["sidecar", "inline", "dry-run"],
+                        "default": "dry-run",
+                        "description": "Emit mode. `sidecar` writes JSONL, `inline` patches sources, `dry-run` counts without writing."
+                    },
+                    "out": {
+                        "type": "string",
+                        "description": "Override sidecar output path (default `<workspace>/state/quality/ai-annotations-sentrux.jsonl`)."
+                    },
+                    "sentrux_exe": {
+                        "type": "string",
+                        "description": "Override sentrux binary path (default C:/Users/spare/bin/sentrux.exe)."
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 60,
+                        "description": "Timeout for the JSON-RPC handshake."
+                    }
+                }
+            }),
+            handler: handlers::sentrux_annotate,
+        });
     }
 }

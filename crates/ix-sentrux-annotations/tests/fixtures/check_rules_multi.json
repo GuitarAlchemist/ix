@@ -1,0 +1,32 @@
+{
+  "pass": false,
+  "rules_checked": 12,
+  "summary": "Architectural rule violations detected",
+  "violation_count": 4,
+  "violations": [
+    {
+      "rule": "max_fn_lines",
+      "severity": "Error",
+      "message": "1 function(s) exceed max length of 400 lines",
+      "files": ["crates/ix-agent/src/tools.rs:register_bridges_and_session (420 lines)"]
+    },
+    {
+      "rule": "acyclic_modules",
+      "severity": "Error",
+      "message": "Detected import cycle of length 3",
+      "files": ["crates/ix-grammar/src/lib.rs", "crates/ix-grammar/src/weights.rs", "crates/ix-grammar/src/builder.rs"]
+    },
+    {
+      "rule": "max_module_lines",
+      "severity": "Warning",
+      "message": "Module exceeds 2000 LOC",
+      "files": ["crates/ix-agent/src/handlers.rs (5350 lines)"]
+    },
+    {
+      "rule": "no_god_class",
+      "severity": "Warning",
+      "message": "Type accumulates 47 methods (threshold: 25)",
+      "files": ["crates/ix-context/src/walker.rs:ContextWalker (47 methods)"]
+    }
+  ]
+}
