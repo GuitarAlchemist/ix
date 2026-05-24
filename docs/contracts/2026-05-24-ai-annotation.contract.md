@@ -1,10 +1,10 @@
 # AI Source-Code Annotation — Cross-Repo Contract
 
-**Version:** 0.1.0 (draft, Phase 0)
-**Schema version:** 1
+**Version:** 0.2.0 (draft, Phase 0 — additive v2 kinds for value × complexity heatmap)
+**Schema version:** 2
 **Status:** Draft (Phase 0 of `ai-annotations` campaign, 2026-05-24)
-**Producers:** `ix-ai-annotations` extractor, ga PostToolUse hook `Scripts/ai-annotation-scan.ps1`, human authors
-**Consumers:** `ix-ai-annotations` reconciler, `ix_annotations_scan` MCP tool, ga dashboard `/dev-data/ai-annotations`, `grade-last-pr` skill, pre-merge gate
+**Producers:** `ix-ai-annotations` extractor, ga PostToolUse hook `Scripts/ai-annotation-scan.ps1`, human authors, product-owner declarations, telemetry pipelines
+**Consumers:** `ix-ai-annotations` reconciler, `ix_annotations_scan` MCP tool, ga dashboard `/dev-data/ai-annotations`, ga `ValueComplexityHeatmap`, `grade-last-pr` skill, pre-merge gate
 **Schema file:** `docs/contracts/ai-annotation.schema.json`
 
 ---
@@ -73,15 +73,19 @@ Field order inside the brackets is fixed: `T:certainty` first, then optional `co
 
 ## 3. Annotation Kinds (`kind`)
 
-| kind         | meaning                                                                 |
-|--------------|-------------------------------------------------------------------------|
-| `invariant`  | something that holds at this point and the surrounding code relies on it |
-| `assumption` | something the code assumes about its environment / caller / inputs       |
-| `hypothesis` | a guess to be verified; expect this to flip to T or F over time          |
-| `contract`   | an externally-visible pre/post-condition (lighter than a full ADR)       |
-| `smell`      | code-smell or suspicion; will likely be addressed                        |
-| `decision`   | a one-line ADR pointer (the "why" of nearby code)                        |
-| `hint`       | guidance for the next reader / agent (no truth claim, default `U`)       |
+| kind             | meaning                                                                 |
+|------------------|-------------------------------------------------------------------------|
+| `invariant`      | something that holds at this point and the surrounding code relies on it |
+| `assumption`     | something the code assumes about its environment / caller / inputs       |
+| `hypothesis`     | a guess to be verified; expect this to flip to T or F over time          |
+| `contract`       | an externally-visible pre/post-condition (lighter than a full ADR)       |
+| `smell`          | code-smell or suspicion; will likely be addressed                        |
+| `decision`       | a one-line ADR pointer (the "why" of nearby code)                        |
+| `hint`           | guidance for the next reader / agent (no truth claim, default `U`)       |
+| `business-value` | (v2) operator-declared assertion that this code drives meaningful product value. Carries a free-text rationale + optional metric reference in `src:`. `source.author` should be `human` or `product-owner`; rarely auto-detected. Typical truth value `T` or `P`, certainty `manually-reviewed` or `assumed`. |
+| `hot-path`       | (v2) measured-traffic assertion: this code path is hot in production. `source.author` should be `telemetry`; `src:` should reference the metric source (e.g., Grafana panel URL, OpenTelemetry trace id). Typical truth value `T`, certainty `test` or `manually-reviewed`. |
+
+The `business-value` × `smell` cross-product drives the dashboard's value × complexity 2×2 heatmap (REFACTOR FIRST / DELETE CANDIDATE / KEEP STABLE / MAINTENANCE BURDEN).
 
 ---
 
@@ -188,6 +192,11 @@ The extractor in Phase 0 writes a JSONL file at `state/quality/ai-annotations.js
 
 ## 10. Versioning
 
-The contract is `v0.1.0` (draft). Field shapes and the truth-value enum are stable from Phase 0 onward; we only bump `schema_version` when a field is renamed or removed. New optional fields are additive (no bump).
+The contract is `v0.2.0` (draft). Field shapes and the truth-value enum are stable from Phase 0 onward; we only bump `schema_version` when a field is renamed or removed, OR when the `kind` enum is widened (consumers must opt into the new kinds). New optional fields are additive (no bump).
+
+### Changelog
+
+- **v0.2.0 (2026-05-24, schema_version 2)** — additive: two new kinds (`business-value`, `hot-path`) and two new `source.author` values (`product-owner`, `telemetry`) for the operator-decision-priority surface (value × complexity 2×2 heatmap). v1 readers will see unknown-kind annotations they must drop; v2 readers consume both. No field removals.
+- **v0.1.0 (2026-05-24, schema_version 1)** — initial seven-kind contract (invariant / assumption / hypothesis / contract / smell / decision / hint).
 
 Freeze milestone: end of Phase 3 (full pipeline shipped + ≥ 50 annotations in the codebase actively reconciled).
