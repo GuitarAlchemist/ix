@@ -113,6 +113,14 @@ The `certainty` field describes **how** the truth value was reached:
 | `uncertain`        | best-guess; explicit acknowledgement of low confidence                 |
 | `inferred`         | derived from context (e.g., heuristic match against another test)      |
 | `dismissed`        | previously flagged, now considered not-applicable                      |
+| `detected-by-sentrux` | produced by the sentrux structural-rules engine (ground-truth verifier) |
+
+The `detected-by-sentrux` certainty is reserved for annotations emitted by the
+`ix-sentrux-annotations` bridge. Sentrux runs deterministic architectural rules
+(e.g., `max_fn_lines`, cycle detection, redundancy) and surfaces every violation
+as an `F` (False) annotation: the claim "this rule holds at this location" is
+refuted by the machine. Treat it as ground-truth verifier output, not as a
+human/AI opinion.
 
 ---
 

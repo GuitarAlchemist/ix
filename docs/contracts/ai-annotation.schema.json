@@ -49,9 +49,10 @@
         "assumed",
         "uncertain",
         "inferred",
-        "dismissed"
+        "dismissed",
+        "detected-by-sentrux"
       ],
-      "description": "How the truth value was reached."
+      "description": "How the truth value was reached. `detected-by-sentrux` marks annotations produced by the sentrux structural-rules engine (see ix-sentrux-annotations)."
     },
     "confidence": {
       "type": "number",
@@ -66,7 +67,7 @@
       "properties": {
         "author": {
           "type": "string",
-          "enum": ["claude", "codex", "gemini", "junie", "auggie", "human", "auto"]
+          "enum": ["claude", "codex", "gemini", "junie", "auggie", "human", "auto", "sentrux"]
         },
         "model": {
           "type": "string",

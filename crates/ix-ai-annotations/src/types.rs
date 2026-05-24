@@ -60,6 +60,9 @@ pub enum Certainty {
     Uncertain,
     Inferred,
     Dismissed,
+    /// Produced by the sentrux structural-rules engine
+    /// (see `ix-sentrux-annotations`). Ground-truth verifier output.
+    DetectedBySentrux,
 }
 
 impl Certainty {
@@ -73,6 +76,7 @@ impl Certainty {
             "uncertain" => Some(Self::Uncertain),
             "inferred" => Some(Self::Inferred),
             "dismissed" => Some(Self::Dismissed),
+            "detected-by-sentrux" => Some(Self::DetectedBySentrux),
             _ => None,
         }
     }
