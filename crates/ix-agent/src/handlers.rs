@@ -5306,15 +5306,27 @@ pub fn voicings_payload(params: Value) -> Result<Value, String> {
 /// - `out` (string, optional) — override sidecar JSONL output path
 /// - `sentrux_exe` (string, optional) — override sentrux binary path
 /// - `timeout_secs` (number, optional, default 60)
+/// - `emit_untested` (bool, optional, default false) — additionally call
+///   sentrux `test_gaps` and emit `@ai:smell "no test coverage detected by
+///   sentrux"` for each file in the intersection of (untested files) ∩
+///   (files carrying `@ai:business-value` annotations)
+/// - `untested_limit` (integer, optional, default 100) — `top-N` cap
+///   passed through to `test_gaps.limit`
+/// - `untested_out` (string, optional) — override sidecar path for the
+///   untested-smell JSONL stream
 ///
 /// Returns the parsed violations + emitted-annotation counts so the
-/// caller can show a summary without re-reading the sidecar file.
+/// caller can show a summary without re-reading the sidecar file. When
+/// `emit_untested=true`, the response also carries an `untested` object
+/// with `total_untested`, `business_value_paths`, `intersection`, and
+/// `written` keys.
 pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
     use ix_sentrux_annotations::{
         convert::violation_to_annotation,
         emit_inline, emit_sidecar,
-        mcp_bridge::{run_sentrux_check, SentruxConfig},
-        DEFAULT_SENTRUX_EXE,
+        mcp_bridge::{run_sentrux_check, run_sentrux_test_gaps, SentruxConfig},
+        untested::{business_value_paths_from_workspace, untested_high_value_annotations},
+        DEFAULT_SENTRUX_EXE, DEFAULT_UNTESTED_SIDECAR_PATH,
     };
     use std::path::PathBuf;
     use std::time::Duration;
@@ -5338,6 +5350,23 @@ pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
         .get("timeout_secs")
         .and_then(|v| v.as_u64())
         .unwrap_or(60);
+    let emit_untested = params
+        .get("emit_untested")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let untested_limit: u32 = params
+        .get("untested_limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(u32::MAX as u64) as u32)
+        .unwrap_or(100);
+
+    // Reject unknown modes up-front so the error surfaces even when
+    // sentrux isn't installed — keeps the contract tight for callers.
+    if !matches!(mode, "sidecar" | "inline" | "dry-run") {
+        return Err(format!(
+            "unknown mode '{mode}'; expected sidecar|inline|dry-run"
+        ));
+    }
 
     let cfg = SentruxConfig {
         sentrux_exe,
@@ -5366,15 +5395,51 @@ pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
                 emit_inline(&workspace, &annotations, false).map_err(|e| e.to_string())?;
             (outcome.written, outcome.skipped, "inline")
         }
-        "dry-run" => (annotations.len(), 0, "dry-run"),
-        other => {
-            return Err(format!(
-                "unknown mode '{other}'; expected sidecar|inline|dry-run"
-            ))
-        }
+        // dry-run was validated above
+        _ => (annotations.len(), 0, "dry-run"),
     };
 
-    Ok(json!({
+    // Additive untested-emit pass (opt-in via emit_untested=true). We
+    // always write the untested sidecar as a SIDECAR-mode JSONL stream —
+    // inline patching of every untested file doesn't make sense (the
+    // smell is whole-file, not line-local). Dry-run still suppresses
+    // the on-disk write.
+    let untested_section = if emit_untested {
+        let gaps = run_sentrux_test_gaps(&cfg, untested_limit).map_err(|e| e.to_string())?;
+        let bv_paths = business_value_paths_from_workspace(&workspace);
+        let untested_annos = untested_high_value_annotations(&gaps.untested_files, &bv_paths, &now);
+
+        let untested_written = if mode == "dry-run" {
+            untested_annos.len()
+        } else {
+            let out_path = params
+                .get("untested_out")
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| workspace.join(DEFAULT_UNTESTED_SIDECAR_PATH));
+            let outcome = emit_sidecar(&workspace, &untested_annos, Some(&out_path))
+                .map_err(|e| e.to_string())?;
+            outcome.written
+        };
+
+        Some(json!({
+            "total_untested": gaps.untested_files.len(),
+            "business_value_paths": bv_paths.len(),
+            "intersection": untested_annos.len(),
+            "written": untested_written,
+            "aggregate": {
+                "source_files": gaps.source_files,
+                "test_files": gaps.test_files,
+                "tested": gaps.tested,
+                "untested": gaps.untested,
+                "coverage_score": gaps.coverage_score,
+            }
+        }))
+    } else {
+        None
+    };
+
+    let mut response = json!({
         "schema": "ix_sentrux_annotate.v1",
         "violations": report.violations.len(),
         "annotations": annotations.len(),
@@ -5384,7 +5449,11 @@ pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
         "sentrux_summary": report.summary,
         "rules_checked": report.rules_checked,
         "pass": report.pass,
-    }))
+    });
+    if let Some(u) = untested_section {
+        response["untested"] = u;
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -5404,22 +5473,41 @@ mod sentrux_annotate_tests {
 
     #[test]
     fn rejects_unknown_mode() {
-        // Use a workspace that exists but a missing sentrux exe, then assert
-        // the mode validation fires AFTER the sentrux call. To keep the
-        // test fast and offline-safe we only sanity-check the unknown-mode
-        // error surface lives in the handler.
+        // Mode validation now fires up-front, before the sentrux call,
+        // so the unknown-mode error surfaces deterministically.
         let out = sentrux_annotate(json!({
             "workspace": ".",
             "sentrux_exe": "C:/nonexistent/sentrux.exe",
             "mode": "bogus",
         }));
-        // Either the sentrux-missing error fires first (most common) or
-        // the mode validation; both are acceptable, since they both
-        // surface a useful diagnostic.
         let err = out.expect_err("must error");
         assert!(
-            err.contains("sentrux binary not found") || err.contains("unknown mode"),
-            "unexpected: {err}"
+            err.contains("unknown mode"),
+            "expected mode-validation error first, got: {err}"
+        );
+    }
+
+    #[test]
+    fn emit_untested_accepted_in_schema() {
+        // The handler should accept `emit_untested=true` (and its
+        // companion args) without rejecting them as unknown. We can't
+        // exercise the full path here because sentrux.exe must be present
+        // for that — but we CAN prove the arg parsing doesn't bail out
+        // before reaching the sentrux call.
+        let out = sentrux_annotate(json!({
+            "workspace": ".",
+            "sentrux_exe": "C:/nonexistent/sentrux.exe",
+            "mode": "dry-run",
+            "emit_untested": true,
+            "untested_limit": 50,
+            "untested_out": "/tmp/whatever.jsonl",
+        }));
+        let err = out.expect_err("must error (sentrux missing)");
+        // The handler reached the sentrux-bridge call — meaning the
+        // emit_untested/untested_limit/untested_out args were accepted.
+        assert!(
+            err.contains("sentrux binary not found"),
+            "expected SentruxMissing, got: {err}"
         );
     }
 }

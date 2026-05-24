@@ -78,6 +78,7 @@ const EXPECTED: &[&str] = &[
     "ix_rotation",
     "ix_search",
     "ix_sedenion",
+    "ix_sentrux_annotate",
     "ix_session_flywheel_export",
     "ix_stats",
     "ix_supervised",
@@ -137,9 +138,10 @@ fn parity_expected_count() {
     // ix_grothendieck_delta + ix_grothendieck_nearby + ix_grothendieck_path +
     // ix_autoresearch_run = 68. + ix_tsne (2026-04-29) = 69.
     // + ix_voicings_payload (2026-05-02, voicings -> Prime Radiant Phase 1) = 70.
+    // + ix_sentrux_annotate (2026-05-24, sentrux structural-rules bridge) = 71.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 70);
+    assert_eq!(EXPECTED.len(), 71);
 }
 
 #[test]

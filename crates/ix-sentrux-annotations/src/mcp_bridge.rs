@@ -12,6 +12,7 @@
 //! the id=99 frame, then kill the child. Timeout default: 60 s.
 
 use crate::rules_response::{parse_check_rules_response, RulesReport};
+use crate::test_gaps::{parse_test_gaps_response, TestGapsReport};
 use crate::Error;
 use serde_json::json;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -51,6 +52,33 @@ impl Default for SentruxConfig {
 /// - [`Error::SentruxExitedEarly`] if sentrux exits without replying.
 /// - [`Error::RpcError`] / [`Error::BadResponse`] on protocol errors.
 pub fn run_sentrux_check(cfg: &SentruxConfig) -> Result<RulesReport, Error> {
+    let envelope = run_sentrux_tool_call(cfg, json!({"name": "check_rules", "arguments": {}}))?;
+    parse_check_rules_response(&envelope).map_err(Error::BadResponse)
+}
+
+/// Run the full handshake and return the parsed `test_gaps` report.
+///
+/// `limit` is the `top-N riskiest untested files` cap passed through to
+/// sentrux. The free tier ignores this argument and returns aggregate
+/// counts only; the Pro tier honors it and returns up to `limit`
+/// per-file paths in [`TestGapsReport::untested_files`].
+///
+/// Errors mirror [`run_sentrux_check`].
+pub fn run_sentrux_test_gaps(cfg: &SentruxConfig, limit: u32) -> Result<TestGapsReport, Error> {
+    let envelope = run_sentrux_tool_call(
+        cfg,
+        json!({"name": "test_gaps", "arguments": {"limit": limit}}),
+    )?;
+    parse_test_gaps_response(&envelope).map_err(Error::BadResponse)
+}
+
+/// Shared transport helper: spawn `sentrux.exe mcp`, run the
+/// initialize→scan handshake, then issue ONE `tools/call` (id=99) with the
+/// caller-supplied `params` body, and return the id=99 envelope.
+fn run_sentrux_tool_call(
+    cfg: &SentruxConfig,
+    tools_call_params: serde_json::Value,
+) -> Result<serde_json::Value, Error> {
     if !cfg.sentrux_exe.exists() {
         return Err(Error::SentruxMissing(cfg.sentrux_exe.display().to_string()));
     }
@@ -63,21 +91,21 @@ pub fn run_sentrux_check(cfg: &SentruxConfig) -> Result<RulesReport, Error> {
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Send the four-frame handshake.
-    write_frames(&mut child, &cfg.workspace)?;
-
-    // Read stdout line-by-line on a worker thread; main waits with timeout.
+    write_frames(&mut child, &cfg.workspace, &tools_call_params)?;
     let envelope = collect_id99(&mut child, cfg.timeout)?;
 
     // Best-effort kill so we don't leak the child.
     let _ = child.kill();
     let _ = child.wait();
 
-    let report = parse_check_rules_response(&envelope).map_err(Error::BadResponse)?;
-    Ok(report)
+    Ok(envelope)
 }
 
-fn write_frames(child: &mut Child, workspace: &Path) -> Result<(), Error> {
+fn write_frames(
+    child: &mut Child,
+    workspace: &Path,
+    tools_call_params: &serde_json::Value,
+) -> Result<(), Error> {
     let stdin = child
         .stdin
         .as_mut()
@@ -111,7 +139,7 @@ fn write_frames(child: &mut Child, workspace: &Path) -> Result<(), Error> {
             "jsonrpc": "2.0",
             "id": 99,
             "method": "tools/call",
-            "params": { "name": "check_rules", "arguments": {} }
+            "params": tools_call_params
         }),
     ];
 
@@ -221,6 +249,19 @@ mod tests {
             timeout: Duration::from_secs(5),
         };
         let err = run_sentrux_check(&cfg).expect_err("must fail");
+        assert!(matches!(err, Error::SentruxMissing(_)));
+    }
+
+    #[test]
+    fn test_gaps_errors_when_sentrux_exe_missing() {
+        // The test_gaps entrypoint must share the same SentruxMissing guard
+        // as `run_sentrux_check` — both go through `run_sentrux_tool_call`.
+        let cfg = SentruxConfig {
+            sentrux_exe: PathBuf::from("C:/nonexistent/sentrux.exe"),
+            workspace: PathBuf::from("."),
+            timeout: Duration::from_secs(5),
+        };
+        let err = run_sentrux_test_gaps(&cfg, 50).expect_err("must fail");
         assert!(matches!(err, Error::SentruxMissing(_)));
     }
 }
