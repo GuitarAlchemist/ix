@@ -1,0 +1,26 @@
+[package]
+name = "ix-quality-validate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["quality", "schema", "validation", "ci", "dashboard"]
+description = "CLI validator: walks state/quality/*.json and validates every snapshot against the canonical dashboard-envelope JSON Schema (docs/contracts/quality-snapshot.schema.json). Exits 0 if all valid, 1 on any failure — intended as a CI gate that prevents the dashboard-misrender bug class from regressing."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+jsonschema = { version = "0.30", default-features = false }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[[bin]]
+name = "ix-quality-validate"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"

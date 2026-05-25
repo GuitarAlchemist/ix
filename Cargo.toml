@@ -72,6 +72,7 @@ members = [
     "crates/ix-blast-radius",
     "crates/ix-ai-annotations",
     "crates/ix-sentrux-annotations",
+    "crates/ix-quality-validate",
 ]
 
 [workspace.package]
