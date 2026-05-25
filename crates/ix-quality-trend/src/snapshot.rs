@@ -259,6 +259,13 @@ pub struct VoicingPerformance {
 // ============================================================================
 
 /// Summary form of ga-chatbot QA benchmark (one file per date).
+///
+/// **Degraded snapshots.** When the backend (Ollama / OPTIC-K / deps) is
+/// unavailable, the producer writes `pass_pct: null` but sets
+/// `degraded: true` and carries `last_known_good_pass_pct` from the most
+/// recent healthy run (or the baseline). Consumers should treat the carried
+/// value as a continuity hint, not a fresh measurement — see
+/// [`Self::effective_pass_pct`].
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
 pub struct ChatbotQaSnapshot {
@@ -268,6 +275,40 @@ pub struct ChatbotQaSnapshot {
     pub avg_response_ms: Option<u64>,
     /// Per-level breakdown (L1..L5). Keys match the producer's naming.
     pub by_category: Option<BTreeMap<String, ChatbotCategoryStats>>,
+    /// Degraded-envelope fields (added 2026-05). Backward compatible — older
+    /// snapshots without these fields parse with `degraded == None`.
+    pub degraded: Option<bool>,
+    pub degraded_reason: Option<String>,
+    pub last_known_good_pass_pct: Option<f64>,
+    pub last_known_good_date: Option<String>,
+    pub last_known_good_source: Option<String>,
+}
+
+impl ChatbotQaSnapshot {
+    /// Returns `true` when the snapshot is explicitly marked degraded.
+    pub fn is_degraded(&self) -> bool {
+        self.degraded.unwrap_or(false)
+    }
+
+    /// Effective pass-pct for trend aggregation.
+    ///
+    /// - If `pass_pct` is `Some`, returns `Some((value, false))`.
+    /// - If `pass_pct` is `None` AND the snapshot is degraded AND
+    ///   `last_known_good_pass_pct` is present, returns
+    ///   `Some((carried_value, true))` — the second tuple element flags this as
+    ///   a carry-forward rather than a fresh measurement.
+    /// - Otherwise returns `None` (truly missing data, skipped by aggregators).
+    pub fn effective_pass_pct(&self) -> Option<(f64, bool)> {
+        if let Some(v) = self.pass_pct {
+            return Some((v, false));
+        }
+        if self.is_degraded() {
+            if let Some(carried) = self.last_known_good_pass_pct {
+                return Some((carried, true));
+            }
+        }
+        None
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -852,5 +893,64 @@ mod tests {
         let set = load_all(dir.path()).unwrap();
         // All non-empty, non-malformed snapshots show up.
         assert_eq!(set.chatbot.len(), 4);
+    }
+
+    // ------------------------------------------------------------------
+    // Degraded-envelope tests (silent-drop regression coverage).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn legacy_snapshot_without_degraded_fields_parses() {
+        // Snapshots predating the degraded envelope must continue to load.
+        let json = r#"{"timestamp":"2026-05-15T00:00:00Z","total_prompts":50,"pass_pct":90.0}"#;
+        let s: ChatbotQaSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(s.pass_pct, Some(90.0));
+        assert!(!s.is_degraded());
+        assert_eq!(s.effective_pass_pct(), Some((90.0, false)));
+    }
+
+    #[test]
+    fn degraded_snapshot_with_carry_value_parses_full_envelope() {
+        // 2026-05-24.json shape from ga's chatbot-qa producer.
+        let json = r#"{
+            "timestamp": "2026-05-24T07:01:58Z",
+            "total_prompts": 50,
+            "pass_pct": null,
+            "degraded": true,
+            "degraded_reason": "backend_unavailable",
+            "last_known_good_pass_pct": 94.0,
+            "last_known_good_date": "2026-05-16T05:30:00Z",
+            "last_known_good_source": "baseline"
+        }"#;
+        let s: ChatbotQaSnapshot = serde_json::from_str(json).unwrap();
+        assert!(s.is_degraded());
+        assert_eq!(s.degraded_reason.as_deref(), Some("backend_unavailable"));
+        assert_eq!(s.last_known_good_pass_pct, Some(94.0));
+        assert_eq!(s.effective_pass_pct(), Some((94.0, true)));
+    }
+
+    #[test]
+    fn degraded_snapshot_without_carry_value_returns_none() {
+        // 2026-05-16..23 shape: null pass_pct + degraded note in `note` but
+        // no envelope fields — pre-PR-327 producer. Must be treated as
+        // truly missing.
+        let json = r#"{
+            "timestamp": "2026-05-16T06:43:17Z",
+            "total_prompts": 50,
+            "pass_pct": null
+        }"#;
+        let s: ChatbotQaSnapshot = serde_json::from_str(json).unwrap();
+        assert!(!s.is_degraded());
+        assert_eq!(s.effective_pass_pct(), None);
+    }
+
+    #[test]
+    fn degraded_flag_without_carry_value_is_still_skipped() {
+        // Producer says "degraded" but forgot to set last_known_good_pass_pct.
+        // No carry value → no contribution to rollup (we don't invent data).
+        let json = r#"{"pass_pct":null,"degraded":true}"#;
+        let s: ChatbotQaSnapshot = serde_json::from_str(json).unwrap();
+        assert!(s.is_degraded());
+        assert_eq!(s.effective_pass_pct(), None);
     }
 }
