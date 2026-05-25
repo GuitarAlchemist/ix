@@ -28,6 +28,10 @@ const VOICING_LAYOUT: &str = "voicing-layout.json";
 const CLUSTER_ASSIGNMENTS: &str = "cluster-assignments.json";
 const POSITIONS_BIN: &str = "voicing-positions.bin";
 const POSITIONS_META: &str = "voicing-positions.meta.json";
+/// Mark Kellogg `gaussian-splat-3d` PLY emitted by `fit-splats`. Served
+/// as-is via the generic `/data/<file>` route; this const documents the
+/// expected filename for Prime Radiant + frontend consumers.
+const VOICING_CLOUD_PLY: &str = "voicing-cloud.ply";
 
 /// Per-instrument corpus dir (set once in main, read from any handler thread).
 static CORPUS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -90,6 +94,17 @@ fn main() {
     let addr = listener.local_addr().expect("local_addr");
     println!("serving viewer at  http://{addr}/");
     println!("                   data dir: {}", data_dir.display());
+    let splat_path = data_dir.join(VOICING_CLOUD_PLY);
+    if splat_path.exists() {
+        println!(
+            "                   splat: /data/{VOICING_CLOUD_PLY} ({} bytes)",
+            std::fs::metadata(&splat_path).map(|m| m.len()).unwrap_or(0)
+        );
+    } else {
+        println!(
+            "                   splat: /data/{VOICING_CLOUD_PLY} (not built — run `fit-splats`)"
+        );
+    }
 
     for stream in listener.incoming() {
         match stream {
@@ -484,6 +499,7 @@ fn content_type(path: &Path) -> &'static str {
         Some("css") => "text/css",
         Some("js") => "application/javascript",
         Some("bin") => "application/octet-stream",
+        Some("ply") => "application/octet-stream",
         _ => "application/octet-stream",
     }
 }
