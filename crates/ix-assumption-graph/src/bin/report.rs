@@ -57,8 +57,8 @@ fn main() {
         None => Vec::new(),
     };
 
-    let graph = match AssumptionGraph::from_workspace_with_research(&PathBuf::from(&dir), research)
-    {
+    let build = AssumptionGraph::from_workspace_with_research(&PathBuf::from(&dir), research);
+    let graph = match build {
         Ok(g) => g,
         Err(e) => {
             eprintln!("error: {e}");

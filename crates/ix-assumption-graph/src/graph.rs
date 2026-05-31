@@ -59,6 +59,12 @@ impl AssumptionGraph {
 
     /// Core builder: de-duplicates nodes by id (first occurrence wins), then
     /// derives contradictions.
+    /// Build directly from a list of nodes (e.g. mined from code — see
+    /// [`crate::mine`]). De-duplicates by id; derives contradictions.
+    pub fn from_nodes(nodes: Vec<AssumptionNode>) -> Result<Self, BuildError> {
+        Self::build(nodes)
+    }
+
     fn build(nodes: Vec<AssumptionNode>) -> Result<Self, BuildError> {
         let mut dag: Dag<AssumptionNode> = Dag::new();
         for node in nodes {
@@ -77,7 +83,7 @@ impl AssumptionGraph {
 
     /// Walk a workspace, extract `@ai:` annotations, and build the graph.
     pub fn from_workspace(workspace: &Path) -> Result<Self, BuildError> {
-        Self::from_parts(ix_ai_annotations::extract_workspace(workspace)?, Vec::new())
+        Self::from_parts(production_annotations(workspace)?, Vec::new())
     }
 
     /// Walk a workspace and combine its `@ai:` annotations with research claims.
@@ -85,7 +91,7 @@ impl AssumptionGraph {
         workspace: &Path,
         research: Vec<ResearchClaim>,
     ) -> Result<Self, BuildError> {
-        Self::from_parts(ix_ai_annotations::extract_workspace(workspace)?, research)
+        Self::from_parts(production_annotations(workspace)?, research)
     }
 
     /// Number of assumption nodes.
@@ -112,6 +118,28 @@ impl AssumptionGraph {
     pub fn nodes(&self) -> impl Iterator<Item = &AssumptionNode> {
         self.dag.node_ids().iter().filter_map(|id| self.dag.get(id))
     }
+}
+
+/// Extract a workspace's `@ai:` annotations, keeping only **production** ones:
+/// annotations living in test scaffolding (`tests/`, `fixtures/`, `benches/`)
+/// are example/marker-syntax demonstrations, not claims about shipping code, so
+/// they'd otherwise inflate and pollute the graph (the same gap the code miner
+/// closes). Path matching is separator-agnostic.
+fn production_annotations(workspace: &Path) -> Result<Vec<Annotation>, BuildError> {
+    let anns = ix_ai_annotations::extract_workspace(workspace)?;
+    Ok(anns
+        .into_iter()
+        .filter(|a| {
+            let p = a.location.path.replace('\\', "/");
+            !(p.contains("/tests/")
+                || p.starts_with("tests/")
+                || p.contains("/fixtures/")
+                || p.contains("/benches/")
+                || p.contains("/docs/")
+                || p.starts_with("docs/")
+                || p.ends_with(".md"))
+        })
+        .collect())
 }
 
 /// Two truth values conflict iff one leans true and the other leans false.
