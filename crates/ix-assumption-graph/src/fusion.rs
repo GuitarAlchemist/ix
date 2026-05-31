@@ -75,7 +75,16 @@ impl AssumptionGraph {
                 .collect();
 
             let merged = merge_all(&observations)?;
-            let verdict = hexavalent_argmax(&merged.distribution);
+            let escalated = escalation_triggered(&merged.distribution);
+            // §7.2 discipline: an active contradiction (C above the escalation
+            // threshold) IS the verdict — a higher-confidence dissenting source
+            // must not let the argmax paper over it. Otherwise the tiebreak-aware
+            // argmax wins.
+            let verdict = if escalated {
+                Hexavalent::Contradictory
+            } else {
+                hexavalent_argmax(&merged.distribution)
+            };
 
             let mut sources: Vec<&str> = nodes.iter().map(|n| n.source.author.as_str()).collect();
             sources.sort_unstable();
@@ -85,7 +94,7 @@ impl AssumptionGraph {
                 claim: nodes[0].claim.clone(),
                 verdict,
                 confidence: merged.distribution.get(&verdict),
-                escalated: escalation_triggered(&merged.distribution),
+                escalated,
                 source_count: sources.len(),
                 contradiction_count: merged.contradictions.len(),
             });

@@ -26,7 +26,7 @@ pub mod temporal;
 
 pub use fusion::FusedClaim;
 pub use graph::{conflicts, AssumptionGraph, BuildError, Contradiction};
-pub use node::{polarity, AssumptionNode, Polarity};
+pub use node::{polarity, AssumptionNode, Polarity, ResearchClaim};
 pub use opinion::{from_hexavalent, to_hexavalent, Opinion, DEFAULT_BASE_RATE};
 pub use temporal::{claim_id, BeliefChange, BeliefEvent, BeliefLog, BeliefSnapshot};
 
