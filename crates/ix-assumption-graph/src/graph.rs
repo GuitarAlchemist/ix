@@ -8,7 +8,7 @@ use ix_ai_annotations::{Annotation, TruthValue};
 use ix_pipeline::dag::Dag;
 use serde::Serialize;
 
-use crate::node::{polarity, AssumptionNode, Polarity};
+use crate::node::{polarity, AssumptionNode, Polarity, ResearchClaim};
 
 /// Errors raised while building the graph.
 #[derive(Debug, thiserror::Error)]
@@ -38,12 +38,30 @@ pub struct AssumptionGraph {
 }
 
 impl AssumptionGraph {
-    /// Build from a list of annotations. Duplicate ids (same
-    /// `path:line:kind:claim`) are de-duplicated — first occurrence wins.
+    /// Build from a list of annotations (each promoted to a node).
     pub fn from_annotations(annotations: Vec<Annotation>) -> Result<Self, BuildError> {
+        Self::build(annotations.into_iter().map(AssumptionNode::from).collect())
+    }
+
+    /// Build the **unified** graph from both dev annotations AND research
+    /// claims. A research claim sharing a normalized claim with a dev
+    /// annotation participates in fusion exactly like any other source — so a
+    /// `/deep-research` finding that contradicts a code assumption escalates.
+    pub fn from_parts(
+        annotations: Vec<Annotation>,
+        research: Vec<ResearchClaim>,
+    ) -> Result<Self, BuildError> {
+        let mut nodes: Vec<AssumptionNode> =
+            annotations.into_iter().map(AssumptionNode::from).collect();
+        nodes.extend(research.into_iter().map(AssumptionNode::from));
+        Self::build(nodes)
+    }
+
+    /// Core builder: de-duplicates nodes by id (first occurrence wins), then
+    /// derives contradictions.
+    fn build(nodes: Vec<AssumptionNode>) -> Result<Self, BuildError> {
         let mut dag: Dag<AssumptionNode> = Dag::new();
-        for ann in annotations {
-            let node: AssumptionNode = ann.into();
+        for node in nodes {
             if dag.get(&node.id).is_some() {
                 continue;
             }
@@ -51,16 +69,20 @@ impl AssumptionGraph {
             dag.add_node(id, node)?;
         }
         let contradictions = derive_contradictions(&dag);
-        Ok(Self {
-            dag,
-            contradictions,
-        })
+        Ok(Self { dag, contradictions })
     }
 
     /// Walk a workspace, extract `@ai:` annotations, and build the graph.
     pub fn from_workspace(workspace: &Path) -> Result<Self, BuildError> {
-        let annotations = ix_ai_annotations::extract_workspace(workspace)?;
-        Self::from_annotations(annotations)
+        Self::from_parts(ix_ai_annotations::extract_workspace(workspace)?, Vec::new())
+    }
+
+    /// Walk a workspace and combine its `@ai:` annotations with research claims.
+    pub fn from_workspace_with_research(
+        workspace: &Path,
+        research: Vec<ResearchClaim>,
+    ) -> Result<Self, BuildError> {
+        Self::from_parts(ix_ai_annotations::extract_workspace(workspace)?, research)
     }
 
     /// Number of assumption nodes.
@@ -252,6 +274,43 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(g.node_count(), 1);
+    }
+
+    #[test]
+    fn research_claim_contradicting_a_dev_assumption_escalates() {
+        use crate::node::ResearchClaim;
+        use ix_types::Hexavalent;
+
+        // A code assumption says latency is under budget (T); a /deep-research
+        // finding refutes it (F). Distinct sources ⇒ fusion escalates to C.
+        // graph-test `ann` hardcodes author "claude".
+        let annotations = vec![ann(
+            "perf.rs",
+            10,
+            AnnotationKind::Invariant,
+            "p99 latency under 5ms",
+            TruthValue::T,
+            0.9,
+        )];
+        let research = vec![ResearchClaim {
+            claim: "p99 latency under 5ms".to_string(),
+            truth_value: TruthValue::F,
+            confidence: 0.85,
+            source: "deep-research".to_string(),
+            evidence: Some("bench-2026-05".to_string()),
+        }];
+
+        let g = AssumptionGraph::from_parts(annotations, research).unwrap();
+        assert_eq!(g.node_count(), 2);
+
+        let fused = g.fuse().unwrap();
+        let latency = fused
+            .iter()
+            .find(|f| f.claim.to_lowercase().contains("latency"))
+            .expect("latency claim present");
+        assert_eq!(latency.verdict, Hexavalent::Contradictory);
+        assert!(latency.escalated);
+        assert_eq!(latency.source_count, 2);
     }
 
     #[test]
