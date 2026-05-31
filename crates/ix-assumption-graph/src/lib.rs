@@ -18,12 +18,17 @@
 //! defined in `docs/contracts/2026-05-31-assumption-graph.contract.md` and land in
 //! Phase 2/3 — this crate is the substrate they build on.
 
+pub mod fusion;
 pub mod graph;
 pub mod node;
+pub mod opinion;
 
+pub use fusion::FusedClaim;
 pub use graph::{conflicts, AssumptionGraph, BuildError, Contradiction};
 pub use node::{polarity, AssumptionNode, Polarity};
+pub use opinion::{from_hexavalent, to_hexavalent, Opinion, DEFAULT_BASE_RATE};
 
-// Re-export the reused annotation vocabulary so consumers don't need a direct
-// dependency on ix-ai-annotations for the common case.
+// Re-export the reused vocabulary so consumers don't need direct dependencies
+// on ix-ai-annotations / ix-types for the common case.
 pub use ix_ai_annotations::{AnnotationKind, Certainty, Location, Source, TruthValue};
+pub use ix_types::Hexavalent;

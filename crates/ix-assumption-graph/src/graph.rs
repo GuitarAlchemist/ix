@@ -100,7 +100,7 @@ pub fn conflicts(a: TruthValue, b: TruthValue) -> bool {
 }
 
 /// Collapse whitespace and case so trivially-different claim spellings group together.
-fn normalize_claim(claim: &str) -> String {
+pub(crate) fn normalize_claim(claim: &str) -> String {
     claim.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
