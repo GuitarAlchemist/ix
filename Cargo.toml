@@ -72,6 +72,7 @@ members = [
     "crates/ix-blast-radius",
     "crates/ix-ai-annotations",
     "crates/ix-sentrux-annotations",
+    "crates/ix-assumption-graph",
 ]
 
 [workspace.package]
@@ -173,6 +174,7 @@ ix-autoresearch = { path = "crates/ix-autoresearch", version = "0.1.0" }
 ix-blast-radius = { path = "crates/ix-blast-radius", version = "0.1.0" }
 ix-ai-annotations = { path = "crates/ix-ai-annotations", version = "0.1.0" }
 ix-sentrux-annotations = { path = "crates/ix-sentrux-annotations", version = "0.1.0" }
+ix-assumption-graph = { path = "crates/ix-assumption-graph", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

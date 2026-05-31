@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GuitarAlchemist/ix/contracts/assumption-graph-v1.json",
+  "title": "Temporal Assumption Graph Record",
+  "description": "One JSONL record of the temporal assumption graph: a node (an assumption/claim with a hexavalent truth value + subjective-logic opinion), an edge (ABA-style relation between nodes), or a belief-event (an append-only revision of a node's epistemic state over belief-time). Reuses the truth_value / certainty / confidence / source vocabulary of the @ai: annotation contract (docs/contracts/ai-annotation.schema.json) so dev annotations promote into nodes without re-encoding. See docs/contracts/2026-05-31-assumption-graph.contract.md and docs/plans/2026-05-31-temporal-assumption-graph.md.",
+  "type": "object",
+  "required": ["schema_version", "record"],
+  "properties": {
+    "schema_version": { "type": "integer", "enum": [1] },
+    "record": { "type": "string", "enum": ["node", "edge", "belief_event"] }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/node" },
+    { "$ref": "#/$defs/edge" },
+    { "$ref": "#/$defs/belief_event" }
+  ],
+  "$defs": {
+    "hexavalent": {
+      "type": "string",
+      "enum": ["T", "P", "U", "D", "F", "C"],
+      "description": "Hexavalent truth value per Demerzel hexavalent-distribution.schema.json. T True / P Probable / U Unknown / D Doubtful / F False / C Contradictory."
+    },
+    "opinion": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Subjective-logic (Josang) binomial opinion: the certainty carrier. INVARIANT (producer-enforced, not expressible in plain JSON Schema): b + d + u == 1 (within tolerance). Projected probability E = b + a*u. Mapping to truth_value is the projection table in the contract (e.g. b high & u low -> T; u high -> U; b & d both high from conflicting fused evidence -> C, which is OUTSIDE this simplex and signals escalation).",
+      "required": ["b", "d", "u", "a"],
+      "properties": {
+        "b": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "belief mass" },
+        "d": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "disbelief mass" },
+        "u": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "uncertainty mass" },
+        "a": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "base rate (prior)" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["author"],
+      "description": "Reuses the @ai: annotation source block, widened with `deep-research` for research-claim provenance.",
+      "properties": {
+        "author": {
+          "type": "string",
+          "enum": ["claude", "codex", "gemini", "junie", "auggie", "human", "auto", "sentrux", "product-owner", "telemetry", "deep-research"]
+        },
+        "model": { "type": "string", "description": "Optional model id e.g. claude-opus-4-8." },
+        "evidence": { "type": "string", "description": "Optional evidence reference: test path:line, PR#, MIRI run id, or a confirmed-real source URL." },
+        "independence_class": {
+          "type": "string",
+          "description": "Source-independence tag used by the fusion layer. Cumulative (additive) fusion is only valid ACROSS distinct classes; observations sharing a class (same model lineage, repeated runs of one agent) must be combined with averaging fusion to avoid over-counting / certainty overstatement. See contract section 7.",
+          "examples": ["test-suite", "sentrux", "human-review", "llm:anthropic", "llm:openai", "llm:google", "deep-research-panel"]
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "record", "id", "kind", "claim", "truth_value", "certainty", "confidence", "opinion", "source", "created_at", "updated_at"],
+      "properties": {
+        "schema_version": { "type": "integer", "enum": [1] },
+        "record": { "const": "node" },
+        "id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "Deterministic SHA-256. For dev nodes: same scheme as @ai: annotations (path:line_start:kind:claim) so an annotation and its graph node share identity. For research-claim nodes: sha256 over normalized(source_url + ':' + claim)."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["invariant", "assumption", "hypothesis", "contract", "smell", "decision", "hint", "business-value", "hot-path", "research-claim"],
+          "description": "Reuses the nine @ai: annotation kinds, plus `research-claim` for nodes ingested from /deep-research."
+        },
+        "claim": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "truth_value": { "$ref": "#/$defs/hexavalent" },
+        "certainty": {
+          "type": "string",
+          "enum": ["test", "formal-proof", "manually-reviewed", "assumed", "uncertain", "inferred", "dismissed", "detected-by-sentrux", "adversarial-panel"],
+          "description": "Reuses the @ai: certainty markers, plus `adversarial-panel` for a verdict reached by a multi-judge panel (treated as a fail-closed gate, NOT a truth oracle — see contract section 7)."
+        },
+        "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "opinion": { "$ref": "#/$defs/opinion" },
+        "contrary": {
+          "type": ["string", "null"],
+          "description": "ABA contrary: the node id whose acceptance attacks this assumption. Drives a `contradicts` edge. Null if no contrary declared."
+        },
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Where this node came from. Exactly one of annotation_id / research_run is expected to be non-null.",
+          "properties": {
+            "annotation_id": { "type": ["string", "null"], "description": "sha256 id of the source @ai: annotation, if this node was promoted from one." },
+            "research_run": { "type": ["string", "null"], "description": "Identifier of the /deep-research run that produced this claim, if any." }
+          }
+        },
+        "source": { "$ref": "#/$defs/source" },
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional — present for dev nodes anchored to code; absent for research claims.",
+          "required": ["path", "line_start", "line_end"],
+          "properties": {
+            "path": { "type": "string" },
+            "line_start": { "type": "integer", "minimum": 1 },
+            "line_end": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "belief_time": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The longitudinal axis. asserted_at = when this belief was first held; revised_at = when its truth_value/opinion last changed. Distinct from created_at/updated_at (record bookkeeping) and from any valid_time (when the claim is true in the domain).",
+          "required": ["asserted_at", "revised_at"],
+          "properties": {
+            "asserted_at": { "type": "string", "format": "date-time" },
+            "revised_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "stale": { "type": "boolean", "default": false },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "record", "id", "type", "from", "to", "created_at"],
+      "properties": {
+        "schema_version": { "type": "integer", "enum": [1] },
+        "record": { "const": "edge" },
+        "id": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$", "description": "sha256 over from:type:to." },
+        "type": {
+          "type": "string",
+          "enum": ["supports", "contradicts", "depends_on", "refined_from"],
+          "description": "`contradicts` carries formal ABA attack semantics (the acceptability decision uses ONLY the contradicts sublattice in v1). `supports`/`depends_on`/`refined_from` are provenance/propagation hints — adding them moves the graph into non-flat/bipolar territory where Dung semantics do not all hold, so they are deliberately excluded from the acceptability computation in v1."
+        },
+        "from": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "to": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "weight": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Optional graded strength (possibilistic alpha-ATMS style necessity lower bound) for support/attack."
+        },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "belief_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Append-only revision record: the audit trail of how a node's epistemic state changed over belief-time. The temporal index (belief_at(t), diff(t1,t2)) is reconstructed by replaying these. Implemented in Phase 3 (ix-assumption-graph::temporal). `node_id` is the claim-level id (sha256 over the normalized claim). `to_opinion` is OPTIONAL — absent when to_truth_value is C, which lies outside the subjective-logic simplex.",
+      "required": ["schema_version", "record", "node_id", "at", "to_truth_value"],
+      "properties": {
+        "schema_version": { "type": "integer", "enum": [1] },
+        "record": { "const": "belief_event" },
+        "node_id": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "at": { "type": "string", "format": "date-time", "description": "Belief-time of this revision." },
+        "from_truth_value": { "$ref": "#/$defs/hexavalent" },
+        "to_truth_value": { "$ref": "#/$defs/hexavalent" },
+        "to_opinion": { "$ref": "#/$defs/opinion" },
+        "trigger": {
+          "type": "string",
+          "description": "What caused the revision.",
+          "examples": ["test-run", "sentrux-scan", "deep-research-reverify", "manual-review", "contradiction-detected", "fusion-merge"]
+        },
+        "evidence": { "type": "string", "description": "Evidence reference for this specific revision." }
+      }
+    }
+  }
+}
