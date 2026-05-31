@@ -20,6 +20,7 @@
 
 pub mod fusion;
 pub mod graph;
+pub mod html;
 pub mod node;
 pub mod opinion;
 pub mod temporal;

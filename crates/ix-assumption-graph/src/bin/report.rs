@@ -12,6 +12,7 @@ use ix_assumption_graph::{AssumptionGraph, ResearchClaim};
 fn main() {
     let mut dir = ".".to_string();
     let mut prime_radiant_json: Option<String> = None;
+    let mut html_path: Option<String> = None;
     let mut research_path: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -20,6 +21,13 @@ fn main() {
                 Some(p) => prime_radiant_json = Some(p),
                 None => {
                     eprintln!("error: --prime-radiant-json requires a path");
+                    std::process::exit(1);
+                }
+            },
+            "--html" => match args.next() {
+                Some(p) => html_path = Some(p),
+                None => {
+                    eprintln!("error: --html requires a path");
                     std::process::exit(1);
                 }
             },
@@ -71,6 +79,22 @@ fn main() {
             std::process::exit(1);
         }
         println!("wrote Prime Radiant graph → {path}");
+    }
+
+    if let Some(path) = &html_path {
+        let json = serde_json::to_string(&graph.prime_radiant_graph())
+            .expect("prime_radiant_graph serializes");
+        let html = ix_assumption_graph::html::render(&json);
+        if let Some(parent) = PathBuf::from(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        if let Err(e) = std::fs::write(path, html) {
+            eprintln!("error writing {path}: {e}");
+            std::process::exit(1);
+        }
+        println!("wrote 2D viewer → {path}  (open in a browser)");
     }
 
     println!("assumption graph for {dir}");
