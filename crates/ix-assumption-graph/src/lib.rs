@@ -23,12 +23,14 @@ pub mod graph;
 pub mod node;
 pub mod opinion;
 pub mod temporal;
+pub mod view;
 
 pub use fusion::FusedClaim;
 pub use graph::{conflicts, AssumptionGraph, BuildError, Contradiction};
-pub use node::{polarity, AssumptionNode, Polarity, ResearchClaim};
+pub use node::{polarity, AssumptionNode, NodeCertainty, NodeKind, Polarity, ResearchClaim};
 pub use opinion::{from_hexavalent, to_hexavalent, Opinion, DEFAULT_BASE_RATE};
 pub use temporal::{claim_id, BeliefChange, BeliefEvent, BeliefLog, BeliefSnapshot};
+pub use view::{namespace_of, ClaimView, FacetedView};
 
 // Re-export the reused vocabulary so consumers don't need direct dependencies
 // on ix-ai-annotations / ix-types for the common case.

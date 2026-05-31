@@ -26,22 +26,32 @@ fn main() {
         println!("    ⚠ \"{}\": {} vs {}", c.claim, c.a_truth.as_str(), c.b_truth.as_str());
     }
 
-    // Phase 2: independence-aware fused verdicts.
-    match graph.fuse() {
-        Ok(fused) => {
-            let escalated: Vec<_> = fused.iter().filter(|f| f.escalated).collect();
-            println!("  fused claims:           {}", fused.len());
-            println!(
-                "  escalated to C:         {}  (Phase 2: independent sources disagree)",
-                escalated.len()
-            );
-            for f in escalated {
+    // Phase 4: faceted navigation view (by namespace / kind / domain).
+    match graph.view() {
+        Ok(view) => {
+            println!("  fused claims:           {}", view.claim_count);
+            println!("  escalated to C:         {}", view.escalated_count);
+
+            println!("  by namespace:");
+            for (ns, claims) in &view.by_namespace {
+                let esc = claims.iter().filter(|c| c.escalated).count();
+                let flag = if esc > 0 { format!("  ⚠ {esc} escalated") } else { String::new() };
+                println!("    {:<24} {} claims{}", ns, claims.len(), flag);
+            }
+
+            print!("  by domain:   ");
+            for (d, n) in &view.by_domain {
+                print!("{d}={n}  ");
+            }
+            println!();
+
+            for c in &view.escalations {
                 println!(
-                    "    ⚠ ESCALATE \"{}\": verdict {} ({} sources, {} contradictions)",
-                    f.claim, f.verdict, f.source_count, f.contradiction_count
+                    "    ⚠ ESCALATE [{}] \"{}\": verdict {} ({} sources, {} contradictions)",
+                    c.namespace, c.claim, c.verdict, c.source_count, c.contradiction_count
                 );
             }
         }
-        Err(e) => eprintln!("fuse error: {e}"),
+        Err(e) => eprintln!("view error: {e}"),
     }
 }

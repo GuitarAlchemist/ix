@@ -19,6 +19,8 @@ use std::collections::HashSet;
 /// PC-set algebra tools backed by ix-bracelet.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
+    "ix_assumption_belief_at",
+    "ix_assumption_query",
     "ix_ast_query",
     "ix_autograd_run",
     "ix_bandit",
@@ -139,9 +141,11 @@ fn parity_expected_count() {
     // ix_autoresearch_run = 68. + ix_tsne (2026-04-29) = 69.
     // + ix_voicings_payload (2026-05-02, voicings -> Prime Radiant Phase 1) = 70.
     // + ix_sentrux_annotate (2026-05-24, sentrux structural-rules bridge) = 71.
+    // + ix_assumption_query + ix_assumption_belief_at (2026-05-31, temporal
+    //   assumption graph Phase 4) = 73.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 71);
+    assert_eq!(EXPECTED.len(), 73);
 }
 
 #[test]
@@ -272,8 +276,8 @@ fn parity_all_43_registry_backed() {
     // algorithm tools are registry-backed. ix_demo is manual.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 48,
-        "expected 48 registry skills, got {registry_count}"
+        registry_count, 50,
+        "expected 50 registry skills, got {registry_count}"
     );
 }
 

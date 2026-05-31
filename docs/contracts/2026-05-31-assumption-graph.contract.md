@@ -1,10 +1,10 @@
 # Temporal Assumption Graph — Cross-Repo Contract
 
-**Version:** 0.1.0 (draft, Phase 0 — schema only)
+**Version:** 0.4.0 (Phases 1–4 implemented — **freeze-candidate**, pending operator sign-off)
 **Schema version:** 1
-**Status:** Draft (Phase 0 of the `assumption-graph` campaign, 2026-05-31). Drafts are not frozen; freeze milestone is end of Phase 4 (per ecosystem convention).
-**Producers (planned):** `ix-assumption-graph` builder, `ix-ai-annotations` (via node promotion), `/deep-research` workflow (research-claim nodes), the longitudinal verify→revise loop
-**Consumers (planned):** `ix-assumption-graph` acceptability/query engine, `belief_at(t)` time-travel query, Demerzel promotion gate, (later) an MCP tool `ix_assumption_query`
+**Status:** Phases 1–4 shipped in `ix-assumption-graph` (graph + fusion + belief-time + MCP). The `node`/`edge`/`belief_event` records, the reused enums, and the `opinion` shape are stable. Freeze (→ v1.0.0, locking the one-way-door fields) is a **one-way door requiring operator sign-off** — NOT done unilaterally.
+**Producers:** `ix-assumption-graph` builder (`from_workspace`/`from_parts`), `ix-ai-annotations` (via node promotion), `/deep-research` (research-claim nodes via the `assumption-graph-loop` skill), the `revise` loop
+**Consumers:** `ix-assumption-graph` fusion/`view`/`belief_at`, the MCP tools `ix_assumption_query` + `ix_assumption_belief_at`, Demerzel promotion gate, (later) Prime Radiant / dashboard visualization
 **Schema file:** `docs/contracts/assumption-graph.schema.json`
 **Design doc:** `docs/plans/2026-05-31-temporal-assumption-graph.md`
 
@@ -146,7 +146,18 @@ The "do multi-LLM panels improve correctness or amplify shared bias?" question i
 - **Phase 1:** `ix-assumption-graph` crate — build `Dag<AssumptionNode>` from `@ai:` annotations; derive `contradicts` from `contrary`.
 - **Phase 2:** opinion fusion + Belnap `C` synthesis + the §4 bridge (reuses `ix-fuzzy`, `hari`).
 - **Phase 3:** belief-event log + `belief_at(t)` / `diff(t1,t2)`; the longitudinal loop ( `/deep-research` → research-claim nodes; scheduled re-verify; Demerzel promotion gate).
-- **Phase 4:** MCP exposure + freeze.
+- **Phase 4 (shipped):** node enums split from the annotation enums — `research-claim` kind and `adversarial-panel` certainty are now first-class (`NodeKind`/`NodeCertainty`); faceted navigation `view()` (by namespace / kind / domain + escalations); MCP tools `ix_assumption_query` (faceted view) and `ix_assumption_belief_at` (point-in-time belief state). **Freeze (→ v1.0.0) pending operator sign-off.**
+
+### Navigation & structure
+
+The graph is navigable along two axes (`AssumptionGraph::view` → `FacetedView`):
+- **namespace** — code-anchored nodes by crate (`crates/<crate>/…` → `<crate>`); research claims under `research`;
+- **domain / kind** — `dev` vs `research`; and the node `kind`.
+
+Finer "functional area" grouping (below crate/module) would need explicit tags
+on annotations — not currently modeled. Humans navigate via the
+`ix-assumption-graph-report` CLI or (future) Prime Radiant; agents via
+`ix_assumption_query`.
 
 ---
 
