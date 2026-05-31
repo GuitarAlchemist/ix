@@ -104,7 +104,8 @@ pub fn assumption_belief_at(params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("state/assumptions/belief-events.jsonl");
 
-    let contents = std::fs::read_to_string(log_path).map_err(|e| format!("read {log_path}: {e}"))?;
+    let contents =
+        std::fs::read_to_string(log_path).map_err(|e| format!("read {log_path}: {e}"))?;
     let log = BeliefLog::from_jsonl(&contents).map_err(|e| e.to_string())?;
 
     let at = match params.get("at").and_then(|v| v.as_str()) {

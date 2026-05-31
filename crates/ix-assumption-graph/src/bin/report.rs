@@ -23,7 +23,12 @@ fn main() {
         graph.contradictions().len()
     );
     for c in graph.contradictions() {
-        println!("    ⚠ \"{}\": {} vs {}", c.claim, c.a_truth.as_str(), c.b_truth.as_str());
+        println!(
+            "    ⚠ \"{}\": {} vs {}",
+            c.claim,
+            c.a_truth.as_str(),
+            c.b_truth.as_str()
+        );
     }
 
     // Phase 4: faceted navigation view (by namespace / kind / domain).
@@ -35,7 +40,11 @@ fn main() {
             println!("  by namespace:");
             for (ns, claims) in &view.by_namespace {
                 let esc = claims.iter().filter(|c| c.escalated).count();
-                let flag = if esc > 0 { format!("  ⚠ {esc} escalated") } else { String::new() };
+                let flag = if esc > 0 {
+                    format!("  ⚠ {esc} escalated")
+                } else {
+                    String::new()
+                };
                 println!("    {:<24} {} claims{}", ns, claims.len(), flag);
             }
 

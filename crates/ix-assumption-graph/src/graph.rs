@@ -69,7 +69,10 @@ impl AssumptionGraph {
             dag.add_node(id, node)?;
         }
         let contradictions = derive_contradictions(&dag);
-        Ok(Self { dag, contradictions })
+        Ok(Self {
+            dag,
+            contradictions,
+        })
     }
 
     /// Walk a workspace, extract `@ai:` annotations, and build the graph.
@@ -123,7 +126,11 @@ pub fn conflicts(a: TruthValue, b: TruthValue) -> bool {
 
 /// Collapse whitespace and case so trivially-different claim spellings group together.
 pub(crate) fn normalize_claim(claim: &str) -> String {
-    claim.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    claim
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn derive_contradictions(dag: &Dag<AssumptionNode>) -> Vec<Contradiction> {
@@ -208,9 +215,30 @@ mod tests {
     #[test]
     fn builds_one_node_per_distinct_annotation() {
         let g = AssumptionGraph::from_annotations(vec![
-            ann("a.rs", 1, AnnotationKind::Invariant, "arr is sorted", TruthValue::T, 0.95),
-            ann("b.rs", 2, AnnotationKind::Assumption, "caller holds lock", TruthValue::P, 0.7),
-            ann("c.rs", 3, AnnotationKind::Hypothesis, "race-free", TruthValue::U, 0.4),
+            ann(
+                "a.rs",
+                1,
+                AnnotationKind::Invariant,
+                "arr is sorted",
+                TruthValue::T,
+                0.95,
+            ),
+            ann(
+                "b.rs",
+                2,
+                AnnotationKind::Assumption,
+                "caller holds lock",
+                TruthValue::P,
+                0.7,
+            ),
+            ann(
+                "c.rs",
+                3,
+                AnnotationKind::Hypothesis,
+                "race-free",
+                TruthValue::U,
+                0.4,
+            ),
         ])
         .unwrap();
         assert_eq!(g.node_count(), 3);
@@ -220,8 +248,22 @@ mod tests {
     #[test]
     fn detects_contradiction_on_opposing_polarity() {
         let g = AssumptionGraph::from_annotations(vec![
-            ann("a.rs", 1, AnnotationKind::Invariant, "buffer is flushed", TruthValue::T, 0.9),
-            ann("b.rs", 9, AnnotationKind::Invariant, "buffer is flushed", TruthValue::F, 0.8),
+            ann(
+                "a.rs",
+                1,
+                AnnotationKind::Invariant,
+                "buffer is flushed",
+                TruthValue::T,
+                0.9,
+            ),
+            ann(
+                "b.rs",
+                9,
+                AnnotationKind::Invariant,
+                "buffer is flushed",
+                TruthValue::F,
+                0.8,
+            ),
         ])
         .unwrap();
         assert_eq!(g.node_count(), 2);
@@ -237,8 +279,22 @@ mod tests {
     fn normalizes_claim_spelling_before_grouping() {
         // Different whitespace/case, same claim — must still group + contradict.
         let g = AssumptionGraph::from_annotations(vec![
-            ann("a.rs", 1, AnnotationKind::Assumption, "Caller   holds the Lock", TruthValue::P, 0.7),
-            ann("b.rs", 2, AnnotationKind::Assumption, "caller holds the lock", TruthValue::D, 0.6),
+            ann(
+                "a.rs",
+                1,
+                AnnotationKind::Assumption,
+                "Caller   holds the Lock",
+                TruthValue::P,
+                0.7,
+            ),
+            ann(
+                "b.rs",
+                2,
+                AnnotationKind::Assumption,
+                "caller holds the lock",
+                TruthValue::D,
+                0.6,
+            ),
         ])
         .unwrap();
         assert_eq!(g.contradictions().len(), 1);
@@ -247,8 +303,22 @@ mod tests {
     #[test]
     fn same_polarity_is_not_a_contradiction() {
         let g = AssumptionGraph::from_annotations(vec![
-            ann("a.rs", 1, AnnotationKind::Invariant, "x positive", TruthValue::T, 0.9),
-            ann("b.rs", 2, AnnotationKind::Invariant, "x positive", TruthValue::P, 0.7),
+            ann(
+                "a.rs",
+                1,
+                AnnotationKind::Invariant,
+                "x positive",
+                TruthValue::T,
+                0.9,
+            ),
+            ann(
+                "b.rs",
+                2,
+                AnnotationKind::Invariant,
+                "x positive",
+                TruthValue::P,
+                0.7,
+            ),
         ])
         .unwrap();
         assert!(g.contradictions().is_empty());
@@ -258,8 +328,22 @@ mod tests {
     fn unknown_does_not_contradict_false() {
         // U is neutral — no evidential direction, so no conflict with F.
         let g = AssumptionGraph::from_annotations(vec![
-            ann("a.rs", 1, AnnotationKind::Hypothesis, "leak free", TruthValue::U, 0.4),
-            ann("b.rs", 2, AnnotationKind::Hypothesis, "leak free", TruthValue::F, 0.8),
+            ann(
+                "a.rs",
+                1,
+                AnnotationKind::Hypothesis,
+                "leak free",
+                TruthValue::U,
+                0.4,
+            ),
+            ann(
+                "b.rs",
+                2,
+                AnnotationKind::Hypothesis,
+                "leak free",
+                TruthValue::F,
+                0.8,
+            ),
         ])
         .unwrap();
         assert!(g.contradictions().is_empty());
@@ -269,8 +353,22 @@ mod tests {
     fn duplicate_id_is_deduped() {
         // Same path:line:kind:claim ⇒ same id ⇒ one node.
         let g = AssumptionGraph::from_annotations(vec![
-            ann("a.rs", 1, AnnotationKind::Invariant, "sorted", TruthValue::T, 0.9),
-            ann("a.rs", 1, AnnotationKind::Invariant, "sorted", TruthValue::T, 0.9),
+            ann(
+                "a.rs",
+                1,
+                AnnotationKind::Invariant,
+                "sorted",
+                TruthValue::T,
+                0.9,
+            ),
+            ann(
+                "a.rs",
+                1,
+                AnnotationKind::Invariant,
+                "sorted",
+                TruthValue::T,
+                0.9,
+            ),
         ])
         .unwrap();
         assert_eq!(g.node_count(), 1);

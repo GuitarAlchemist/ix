@@ -85,7 +85,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             .map(|h| h.to_string())
             .unwrap_or_else(|| "-".to_string());
         let short = &e.node_id[..e.node_id.len().min(19)];
-        println!("  ↻ {short}… : {from} -> {}  [{}]", e.to_truth_value, e.trigger);
+        println!(
+            "  ↻ {short}… : {from} -> {}  [{}]",
+            e.to_truth_value, e.trigger
+        );
     }
     Ok(())
 }

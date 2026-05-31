@@ -137,7 +137,11 @@ impl AssumptionNode {
     ) -> Self {
         let claim = claim.into();
         let author = source_author.into();
-        let key = format!("research:{}:{}", author, crate::graph::normalize_claim(&claim));
+        let key = format!(
+            "research:{}:{}",
+            author,
+            crate::graph::normalize_claim(&claim)
+        );
         let id = format!("sha256:{:x}", Sha256::digest(key.as_bytes()));
         Self {
             id,
@@ -227,8 +231,20 @@ mod tests {
 
     #[test]
     fn research_claim_id_is_stable_and_claim_normalized() {
-        let a = AssumptionNode::research_claim("Latency  under 5ms", TruthValue::P, 0.8, "deep-research", None);
-        let b = AssumptionNode::research_claim("latency under 5ms", TruthValue::P, 0.8, "deep-research", None);
+        let a = AssumptionNode::research_claim(
+            "Latency  under 5ms",
+            TruthValue::P,
+            0.8,
+            "deep-research",
+            None,
+        );
+        let b = AssumptionNode::research_claim(
+            "latency under 5ms",
+            TruthValue::P,
+            0.8,
+            "deep-research",
+            None,
+        );
         assert_eq!(a.id, b.id, "normalized claim ⇒ same id");
         assert!(a.id.starts_with("sha256:"));
         assert!(a.location.is_none());
@@ -246,7 +262,10 @@ mod tests {
 
     #[test]
     fn annotation_kind_and_certainty_map_to_node_enums() {
-        assert_eq!(NodeKind::from(AnnotationKind::Invariant), NodeKind::Invariant);
+        assert_eq!(
+            NodeKind::from(AnnotationKind::Invariant),
+            NodeKind::Invariant
+        );
         assert_eq!(NodeKind::from(AnnotationKind::HotPath), NodeKind::HotPath);
         assert_eq!(
             NodeCertainty::from(Certainty::DetectedBySentrux),

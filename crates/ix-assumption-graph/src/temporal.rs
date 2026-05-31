@@ -235,7 +235,14 @@ mod tests {
         s.parse().expect("rfc3339")
     }
 
-    fn ann(author: &str, path: &str, line: u32, claim: &str, tv: TruthValue, conf: f64) -> Annotation {
+    fn ann(
+        author: &str,
+        path: &str,
+        line: u32,
+        claim: &str,
+        tv: TruthValue,
+        conf: f64,
+    ) -> Annotation {
         let kind = AnnotationKind::Assumption;
         Annotation {
             schema_version: SCHEMA_VERSION,
@@ -245,8 +252,16 @@ mod tests {
             truth_value: tv,
             certainty: Certainty::Assumed,
             confidence: conf,
-            source: Source { author: author.to_string(), model: None, evidence: None },
-            location: Location { path: path.to_string(), line_start: line, line_end: line },
+            source: Source {
+                author: author.to_string(),
+                model: None,
+                evidence: None,
+            },
+            location: Location {
+                path: path.to_string(),
+                line_start: line,
+                line_end: line,
+            },
             created_at: "2026-05-31T00:00:00Z".to_string(),
             updated_at: "2026-05-31T00:00:00Z".to_string(),
             stale: false,
@@ -256,7 +271,10 @@ mod tests {
 
     #[test]
     fn claim_id_is_stable_and_normalized() {
-        assert_eq!(claim_id("Caller  Holds  Lock"), claim_id("caller holds lock"));
+        assert_eq!(
+            claim_id("Caller  Holds  Lock"),
+            claim_id("caller holds lock")
+        );
         assert!(claim_id("x").starts_with("sha256:"));
         assert_ne!(claim_id("a"), claim_id("b"));
     }
@@ -265,11 +283,31 @@ mod tests {
     fn belief_at_returns_latest_event_before_t() {
         let id = claim_id("x");
         let mut log = BeliefLog::new();
-        log.record(BeliefEvent::new(id.clone(), ts("2026-01-01T00:00:00Z"), None, Hexavalent::Probable, None, "init"));
-        log.record(BeliefEvent::new(id.clone(), ts("2026-03-01T00:00:00Z"), Some(Hexavalent::Probable), Hexavalent::False, None, "test"));
+        log.record(BeliefEvent::new(
+            id.clone(),
+            ts("2026-01-01T00:00:00Z"),
+            None,
+            Hexavalent::Probable,
+            None,
+            "init",
+        ));
+        log.record(BeliefEvent::new(
+            id.clone(),
+            ts("2026-03-01T00:00:00Z"),
+            Some(Hexavalent::Probable),
+            Hexavalent::False,
+            None,
+            "test",
+        ));
 
-        assert_eq!(log.belief_at(ts("2026-02-01T00:00:00Z"))[&id].truth_value, Hexavalent::Probable);
-        assert_eq!(log.belief_at(ts("2026-04-01T00:00:00Z"))[&id].truth_value, Hexavalent::False);
+        assert_eq!(
+            log.belief_at(ts("2026-02-01T00:00:00Z"))[&id].truth_value,
+            Hexavalent::Probable
+        );
+        assert_eq!(
+            log.belief_at(ts("2026-04-01T00:00:00Z"))[&id].truth_value,
+            Hexavalent::False
+        );
         // Before any event: empty.
         assert!(log.belief_at(ts("2025-01-01T00:00:00Z")).is_empty());
     }
@@ -278,8 +316,22 @@ mod tests {
     fn diff_reports_flips_between_times() {
         let id = claim_id("x");
         let mut log = BeliefLog::new();
-        log.record(BeliefEvent::new(id.clone(), ts("2026-01-01T00:00:00Z"), None, Hexavalent::True, None, "init"));
-        log.record(BeliefEvent::new(id.clone(), ts("2026-03-01T00:00:00Z"), Some(Hexavalent::True), Hexavalent::False, None, "refuted"));
+        log.record(BeliefEvent::new(
+            id.clone(),
+            ts("2026-01-01T00:00:00Z"),
+            None,
+            Hexavalent::True,
+            None,
+            "init",
+        ));
+        log.record(BeliefEvent::new(
+            id.clone(),
+            ts("2026-03-01T00:00:00Z"),
+            Some(Hexavalent::True),
+            Hexavalent::False,
+            None,
+            "refuted",
+        ));
 
         let changes = log.diff(ts("2026-02-01T00:00:00Z"), ts("2026-04-01T00:00:00Z"));
         assert_eq!(changes.len(), 1);

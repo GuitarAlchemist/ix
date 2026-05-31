@@ -149,7 +149,12 @@ mod tests {
     #[test]
     fn single_source_single_claim_fuses_to_its_value() {
         let g = AssumptionGraph::from_annotations(vec![ann(
-            "claude", "a.rs", 1, "buffer flushed", TruthValue::T, 0.9,
+            "claude",
+            "a.rs",
+            1,
+            "buffer flushed",
+            TruthValue::T,
+            0.9,
         )])
         .unwrap();
         let fused = g.fuse().unwrap();
@@ -164,8 +169,22 @@ mod tests {
     fn cross_source_disagreement_escalates_to_contradictory() {
         // Independent sources (claude vs sentrux) disagree on the same claim.
         let g = AssumptionGraph::from_annotations(vec![
-            ann("claude", "a.rs", 1, "lock held on entry", TruthValue::T, 1.0),
-            ann("sentrux", "b.rs", 2, "lock held on entry", TruthValue::F, 1.0),
+            ann(
+                "claude",
+                "a.rs",
+                1,
+                "lock held on entry",
+                TruthValue::T,
+                1.0,
+            ),
+            ann(
+                "sentrux",
+                "b.rs",
+                2,
+                "lock held on entry",
+                TruthValue::F,
+                1.0,
+            ),
         ])
         .unwrap();
         let fused = g.fuse().unwrap();

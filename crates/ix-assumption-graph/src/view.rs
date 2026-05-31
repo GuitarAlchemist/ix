@@ -38,7 +38,10 @@ fn namespace_from_path(path: &str) -> String {
             return (*crate_name).to_string();
         }
     }
-    parts.first().map(|s| (*s).to_string()).unwrap_or_else(|| "(unknown)".to_string())
+    parts
+        .first()
+        .map(|s| (*s).to_string())
+        .unwrap_or_else(|| "(unknown)".to_string())
 }
 
 /// One claim's fused state, with its navigation facets.
@@ -98,7 +101,10 @@ impl AssumptionGraph {
         };
 
         for node in self.nodes() {
-            *view.by_kind.entry(node.kind.as_str().to_string()).or_default() += 1;
+            *view
+                .by_kind
+                .entry(node.kind.as_str().to_string())
+                .or_default() += 1;
             *view.by_domain.entry(node.domain().to_string()).or_default() += 1;
         }
 
@@ -106,8 +112,7 @@ impl AssumptionGraph {
             let Some(f) = by_norm.get(norm) else { continue };
 
             let namespace = primary_namespace(nodes);
-            let mut domains: Vec<String> =
-                nodes.iter().map(|n| n.domain().to_string()).collect();
+            let mut domains: Vec<String> = nodes.iter().map(|n| n.domain().to_string()).collect();
             domains.sort_unstable();
             domains.dedup();
 
@@ -167,8 +172,16 @@ mod tests {
             truth_value: tv,
             certainty: Certainty::Test,
             confidence: 0.9,
-            source: Source { author: "claude".to_string(), model: None, evidence: None },
-            location: Location { path: path.to_string(), line_start: line, line_end: line },
+            source: Source {
+                author: "claude".to_string(),
+                model: None,
+                evidence: None,
+            },
+            location: Location {
+                path: path.to_string(),
+                line_start: line,
+                line_end: line,
+            },
             created_at: "2026-05-31T00:00:00Z".to_string(),
             updated_at: "2026-05-31T00:00:00Z".to_string(),
             stale: false,
@@ -178,8 +191,14 @@ mod tests {
 
     #[test]
     fn namespace_derives_crate_from_path() {
-        assert_eq!(namespace_from_path("crates/ix-search/src/binary.rs"), "ix-search");
-        assert_eq!(namespace_from_path("crates\\ix-fuzzy\\src\\ops.rs"), "ix-fuzzy");
+        assert_eq!(
+            namespace_from_path("crates/ix-search/src/binary.rs"),
+            "ix-search"
+        );
+        assert_eq!(
+            namespace_from_path("crates\\ix-fuzzy\\src\\ops.rs"),
+            "ix-fuzzy"
+        );
         assert_eq!(namespace_from_path("README.md"), "README.md");
     }
 
@@ -216,7 +235,12 @@ mod tests {
     fn view_surfaces_escalations() {
         // A research claim refutes a code assumption on the same claim.
         let g = AssumptionGraph::from_parts(
-            vec![ann("crates/ix-x/src/a.rs", 1, "fast path is safe", TruthValue::T)],
+            vec![ann(
+                "crates/ix-x/src/a.rs",
+                1,
+                "fast path is safe",
+                TruthValue::T,
+            )],
             vec![ResearchClaim {
                 claim: "fast path is safe".to_string(),
                 truth_value: TruthValue::F,
