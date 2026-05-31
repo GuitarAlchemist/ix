@@ -12,6 +12,8 @@ description = "Builds a graph of assumptions from @ai: annotations and derives c
 [dependencies]
 ix-ai-annotations = { workspace = true }
 ix-pipeline = { workspace = true }
+ix-fuzzy = { workspace = true }
+ix-types = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
