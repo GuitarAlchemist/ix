@@ -40,13 +40,19 @@ fn assumption_query_schema() -> Value {
             "research": {
                 "type": "string",
                 "description": "Optional path to a research-claims.json file to fold into the graph"
+            },
+            "format": {
+                "type": "string",
+                "enum": ["view", "prime-radiant"],
+                "description": "`view` (default) = faceted navigation; `prime-radiant` = node+edge graph payload for the Prime Radiant 3D renderer"
             }
         }
     })
 }
 
-/// Build the unified assumption graph for a workspace and return its faceted
-/// navigation view (counts by namespace / kind / domain + escalated claims).
+/// Build the unified assumption graph for a workspace and return either its
+/// faceted navigation view (default) or a Prime-Radiant-compatible node+edge
+/// graph payload (`format = "prime-radiant"`).
 #[ix_skill(
     domain = "assumption",
     name = "assumption.query",
@@ -70,8 +76,14 @@ pub fn assumption_query(params: Value) -> Result<Value, String> {
 
     let graph = AssumptionGraph::from_workspace_with_research(&workspace, research)
         .map_err(|e| e.to_string())?;
-    let view = graph.view().map_err(|e| e.to_string())?;
-    serde_json::to_value(view).map_err(|e| e.to_string())
+
+    match params.get("format").and_then(|v| v.as_str()) {
+        Some("prime-radiant") => Ok(graph.prime_radiant_graph()),
+        _ => {
+            let view = graph.view().map_err(|e| e.to_string())?;
+            serde_json::to_value(view).map_err(|e| e.to_string())
+        }
+    }
 }
 
 fn assumption_belief_at_schema() -> Value {
