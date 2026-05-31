@@ -1,0 +1,23 @@
+[package]
+name = "ix-assumption-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["data-structures", "development-tools"]
+keywords = ["assumptions", "hexavalent", "argumentation", "belief", "governance"]
+description = "Builds a graph of assumptions from @ai: annotations and derives contradiction relations from opposing hexavalent truth values. Phase 1 of the temporal assumption graph (docs/contracts/2026-05-31-assumption-graph.contract.md): code-anchored nodes + contradiction detection, no new epistemics."
+
+[dependencies]
+ix-ai-annotations = { workspace = true }
+ix-pipeline = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ix-assumption-graph-report"
+path = "src/bin/report.rs"
