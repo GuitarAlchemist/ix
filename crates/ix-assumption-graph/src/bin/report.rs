@@ -1,20 +1,77 @@
 //! Build the assumption graph for a workspace and print a summary.
 //!
-//! Usage: `ix-assumption-graph-report [workspace_dir]` (defaults to ".").
+//! Usage: `ix-assumption-graph-report [workspace_dir] [--prime-radiant-json PATH]`
+//! (workspace defaults to "."). With `--prime-radiant-json`, the
+//! Prime-Radiant-format node+edge graph is written to PATH (the JSON-on-disk
+//! source the ga Prime Radiant viz consumes).
 
 use std::path::PathBuf;
 
-use ix_assumption_graph::AssumptionGraph;
+use ix_assumption_graph::{AssumptionGraph, ResearchClaim};
 
 fn main() {
-    let dir = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let graph = match AssumptionGraph::from_workspace(&PathBuf::from(&dir)) {
+    let mut dir = ".".to_string();
+    let mut prime_radiant_json: Option<String> = None;
+    let mut research_path: Option<String> = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--prime-radiant-json" => match args.next() {
+                Some(p) => prime_radiant_json = Some(p),
+                None => {
+                    eprintln!("error: --prime-radiant-json requires a path");
+                    std::process::exit(1);
+                }
+            },
+            "--research" => match args.next() {
+                Some(p) => research_path = Some(p),
+                None => {
+                    eprintln!("error: --research requires a path");
+                    std::process::exit(1);
+                }
+            },
+            other => dir = other.to_string(),
+        }
+    }
+
+    let research: Vec<ResearchClaim> = match &research_path {
+        Some(p) => match std::fs::read_to_string(p).map(|s| serde_json::from_str(&s)) {
+            Ok(Ok(claims)) => claims,
+            Ok(Err(e)) => {
+                eprintln!("error parsing {p}: {e}");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("error reading {p}: {e}");
+                std::process::exit(1);
+            }
+        },
+        None => Vec::new(),
+    };
+
+    let graph = match AssumptionGraph::from_workspace_with_research(&PathBuf::from(&dir), research)
+    {
         Ok(g) => g,
         Err(e) => {
             eprintln!("error: {e}");
             std::process::exit(1);
         }
     };
+
+    if let Some(path) = &prime_radiant_json {
+        let json = serde_json::to_string_pretty(&graph.prime_radiant_graph())
+            .expect("prime_radiant_graph serializes");
+        if let Some(parent) = PathBuf::from(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        if let Err(e) = std::fs::write(path, json) {
+            eprintln!("error writing {path}: {e}");
+            std::process::exit(1);
+        }
+        println!("wrote Prime Radiant graph → {path}");
+    }
 
     println!("assumption graph for {dir}");
     println!("  nodes:                  {}", graph.node_count());
