@@ -1,8 +1,8 @@
 # Temporal Assumption Graph — Cross-Repo Contract
 
-**Version:** 0.4.0 (Phases 1–4 implemented — **freeze-candidate**, pending operator sign-off)
+**Version:** 1.0.0 (**FROZEN** — Phases 1–4 shipped; operator sign-off 2026-05-31)
 **Schema version:** 1
-**Status:** Phases 1–4 shipped in `ix-assumption-graph` (graph + fusion + belief-time + MCP). The `node`/`edge`/`belief_event` records, the reused enums, and the `opinion` shape are stable. Freeze (→ v1.0.0, locking the one-way-door fields) is a **one-way door requiring operator sign-off** — NOT done unilaterally.
+**Status:** **FROZEN.** The `node`/`edge`/`belief_event` records, the `id` scheme, the `truth_value` / `kind` / `certainty` enums, and the `opinion` shape are locked. Post-freeze changes follow the additive-only rule (§10): new *optional* fields and new enum *variants* are additive; renames, removals, or required-field changes bump `schema_version` and require cross-repo coordination.
 **Producers:** `ix-assumption-graph` builder (`from_workspace`/`from_parts`), `ix-ai-annotations` (via node promotion), `/deep-research` (research-claim nodes via the `assumption-graph-loop` skill), the `revise` loop
 **Consumers:** `ix-assumption-graph` fusion/`view`/`belief_at`, the MCP tools `ix_assumption_query` + `ix_assumption_belief_at`, Demerzel promotion gate, (later) Prime Radiant / dashboard visualization
 **Schema file:** `docs/contracts/assumption-graph.schema.json`
@@ -146,7 +146,7 @@ The "do multi-LLM panels improve correctness or amplify shared bias?" question i
 - **Phase 1:** `ix-assumption-graph` crate — build `Dag<AssumptionNode>` from `@ai:` annotations; derive `contradicts` from `contrary`.
 - **Phase 2:** opinion fusion + Belnap `C` synthesis + the §4 bridge (reuses `ix-fuzzy`, `hari`).
 - **Phase 3:** belief-event log + `belief_at(t)` / `diff(t1,t2)`; the longitudinal loop ( `/deep-research` → research-claim nodes; scheduled re-verify; Demerzel promotion gate).
-- **Phase 4 (shipped):** node enums split from the annotation enums — `research-claim` kind and `adversarial-panel` certainty are now first-class (`NodeKind`/`NodeCertainty`); faceted navigation `view()` (by namespace / kind / domain + escalations); MCP tools `ix_assumption_query` (faceted view) and `ix_assumption_belief_at` (point-in-time belief state). **Freeze (→ v1.0.0) pending operator sign-off.**
+- **Phase 4 (shipped):** node enums split from the annotation enums — `research-claim` kind and `adversarial-panel` certainty are now first-class (`NodeKind`/`NodeCertainty`); faceted navigation `view()` (by namespace / kind / domain + escalations); MCP tools `ix_assumption_query` (faceted view) and `ix_assumption_belief_at` (point-in-time belief state). **Frozen at v1.0.0 (operator sign-off 2026-05-31).**
 
 ### Navigation & structure
 
@@ -163,9 +163,10 @@ on annotations — not currently modeled. Humans navigate via the
 
 ## 10. Versioning
 
-`v0.1.0` (draft). The `record` discriminator, the reused enums, and the `opinion` shape are intended to be stable from Phase 1. `schema_version` bumps only on a field rename/removal or an enum widening that consumers must opt into; new optional fields are additive.
+**v1.0.0 — FROZEN.** The `record` discriminator, the `id` scheme, the `truth_value` / `kind` / `certainty` enums, and the `opinion` shape are locked. Post-freeze, `schema_version` bumps only on a field rename/removal or a required-field change (which require cross-repo coordination); new *optional* fields and new enum *variants* are additive and do not bump it.
 
 ### Changelog
+- **v1.0.0 (2026-05-31, schema_version 1)** — **frozen** with operator sign-off after Phases 1–4 shipped in `ix-assumption-graph` (graph + fusion + belief-time + faceted navigation + MCP `ix_assumption_query` / `ix_assumption_belief_at`). No schema change from v0.1.0 — the records proved stable through implementation; this entry locks them.
 - **v0.1.0 (2026-05-31, schema_version 1)** — initial draft: `node` / `edge` / `belief_event` records; reuses `@ai:` annotation vocabulary; adds subjective-logic `opinion`, ABA `contrary` + edges, `belief_time` axis, and the `adversarial-panel` certainty + `independence_class` fusion tag.
 
-**One-way-door note:** the `id` scheme and the `truth_value` enum align with the `@ai:` annotation contract and Demerzel — changing them is a one-way door requiring cross-repo sign-off. Everything else in this draft is two-way until Phase 4.
+**One-way-door note:** the `id` scheme and the `truth_value` enum align with the `@ai:` annotation contract and Demerzel — changing them is a one-way door requiring cross-repo sign-off.
