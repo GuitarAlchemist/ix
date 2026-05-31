@@ -83,7 +83,7 @@ impl BeliefEvent {
 }
 
 /// The epistemic state of one claim at a point in belief-time.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BeliefSnapshot {
     pub truth_value: Hexavalent,
     pub opinion: Option<Opinion>,
