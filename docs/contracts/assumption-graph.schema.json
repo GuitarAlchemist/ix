@@ -144,8 +144,8 @@
     "belief_event": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Append-only revision record: the audit trail of how a node's epistemic state changed over belief-time. The temporal index (belief_at(t), diff(t1,t2)) is reconstructed by replaying these. Deferred to Phase 3 — defined here so the JSONL schema is forward-stable.",
-      "required": ["schema_version", "record", "node_id", "at", "to_truth_value", "to_opinion"],
+      "description": "Append-only revision record: the audit trail of how a node's epistemic state changed over belief-time. The temporal index (belief_at(t), diff(t1,t2)) is reconstructed by replaying these. Implemented in Phase 3 (ix-assumption-graph::temporal). `node_id` is the claim-level id (sha256 over the normalized claim). `to_opinion` is OPTIONAL — absent when to_truth_value is C, which lies outside the subjective-logic simplex.",
+      "required": ["schema_version", "record", "node_id", "at", "to_truth_value"],
       "properties": {
         "schema_version": { "type": "integer", "enum": [1] },
         "record": { "const": "belief_event" },
