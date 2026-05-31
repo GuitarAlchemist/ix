@@ -125,7 +125,7 @@ impl AssumptionGraph {
 /// are example/marker-syntax demonstrations, not claims about shipping code, so
 /// they'd otherwise inflate and pollute the graph (the same gap the code miner
 /// closes). Path matching is separator-agnostic.
-fn production_annotations(workspace: &Path) -> Result<Vec<Annotation>, BuildError> {
+pub(crate) fn production_annotations(workspace: &Path) -> Result<Vec<Annotation>, BuildError> {
     let anns = ix_ai_annotations::extract_workspace(workspace)?;
     Ok(anns
         .into_iter()

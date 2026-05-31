@@ -18,6 +18,7 @@
 //! defined in `docs/contracts/2026-05-31-assumption-graph.contract.md` and land in
 //! Phase 2/3 — this crate is the substrate they build on.
 
+pub mod drift;
 pub mod fusion;
 pub mod graph;
 pub mod html;
