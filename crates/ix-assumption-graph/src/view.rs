@@ -163,6 +163,10 @@ impl AssumptionGraph {
                 "truth_value": n.truth_value.as_str(),
                 "kind": n.kind.as_str(),
                 "domain": n.domain(),
+                "certainty": n.certainty.as_str(),
+                "confidence": n.confidence,
+                "source": &n.source.author,
+                "evidence": &n.source.evidence,
             }));
         }
 

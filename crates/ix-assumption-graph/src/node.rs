@@ -92,6 +92,23 @@ impl From<Certainty> for NodeCertainty {
     }
 }
 
+impl NodeCertainty {
+    /// Kebab-case wire name (matches the serde representation).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NodeCertainty::Test => "test",
+            NodeCertainty::FormalProof => "formal-proof",
+            NodeCertainty::ManuallyReviewed => "manually-reviewed",
+            NodeCertainty::Assumed => "assumed",
+            NodeCertainty::Uncertain => "uncertain",
+            NodeCertainty::Inferred => "inferred",
+            NodeCertainty::Dismissed => "dismissed",
+            NodeCertainty::DetectedBySentrux => "detected-by-sentrux",
+            NodeCertainty::AdversarialPanel => "adversarial-panel",
+        }
+    }
+}
+
 /// A node in the temporal assumption graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssumptionNode {
