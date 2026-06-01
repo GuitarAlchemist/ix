@@ -137,7 +137,11 @@ pub(crate) fn production_annotations(workspace: &Path) -> Result<Vec<Annotation>
                 || p.contains("/benches/")
                 || p.contains("/docs/")
                 || p.starts_with("docs/")
-                || p.ends_with(".md"))
+                || p.ends_with(".md")
+                // The marker-defining crate is full of `@ai:` *examples* (its
+                // doc comments and regex-explaining comments), not claims about
+                // shipping code — don't mine the dictionary for sentences.
+                || p.contains("crates/ix-ai-annotations/"))
         })
         .collect())
 }

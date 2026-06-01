@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "claims": [
+    {
+      "key": "sha256:dd5f98b683ce720d99120636957b1c8fece736215d4b0ce424a6380c2e1b79e2",
+      "path": "crates/ix-assumption-graph/src/graph.rs",
+      "line": 151,
+      "kind": "invariant",
+      "claim": "conflicts() is symmetric: conflicts(a,b) == conflicts(b,a)",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "graph.rs::tests::conflicts_is_symmetric",
+      "anchor_hash": "sha256:3716977e270b3705032ea7a410364c307191da47844a2c5cd6c6c476037d0469",
+      "test_binding": "conflicts_is_symmetric"
+    },
+    {
+      "key": "sha256:a6971e9d3275125a33ee5272dee89471b509bf3fd153697a6a8353001fe698da",
+      "path": "crates/ix-assumption-graph/src/node.rs",
+      "line": 235,
+      "kind": "invariant",
+      "claim": "every TruthValue maps to exactly one Polarity (total match)",
+      "verdict": "T",
+      "certainty": "FormalProof",
+      "evidence": "exhaustive match, compiler-checked",
+      "anchor_hash": "sha256:b1d50c72c6d04314acc643fabcf9d61f5e6938649907fce582cf7b7822855171",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:7cd84e4fe0a29d32f1aa57b5d0c75f92f4788ad05efeaf10ff071e8e13c03230",
+      "path": "crates/ix-assumption-graph/src/opinion.rs",
+      "line": 50,
+      "kind": "invariant",
+      "claim": "b+d+u == 1 for every non-C truth value",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "opinion.rs::tests::masses_sum_to_one",
+      "anchor_hash": "sha256:fe422f3c6674f37f505539dc16dd76d199394ff0a8c790214c408667d6616a6e",
+      "test_binding": "masses_sum_to_one"
+    },
+    {
+      "key": "sha256:1fbb78a52f7ffdc9a729c3f74306ead283fa421ce5534a7539ba2b81af04e0bd",
+      "path": "crates/ix-optick/src/lib.rs",
+      "line": 213,
+      "kind": "assumption",
+      "claim": "the mmap is not modified by another process while OptickIndex lives — concurrent rewrite is UB, avoided only by convention (the rebuild runbook stops GaApi/GaMcpServer first)",
+      "verdict": "U",
+      "certainty": "Uncertain",
+      "evidence": "optic-k-rebuild-runbook",
+      "anchor_hash": "sha256:04d3a8aee2c4a46df149d3b520358473ed7013a799f3613e7bf1ddcd4eff4477",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:341000540beed08b41d6a449c9ace00db1ae1cded573bc4179f700059824edc1",
+      "path": "crates/ix-optick/src/lib.rs",
+      "line": 312,
+      "kind": "invariant",
+      "claim": "search returns exactly the top_k voicings ordered by descending dot-product score",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "test_cosine_search_ordering",
+      "anchor_hash": "sha256:d5b1320359488d8aae76afe1fa368b8f1e0b88ecb892faa742082fb188a4578c",
+      "test_binding": "test_cosine_search_ordering"
+    },
+    {
+      "key": "sha256:095ad1ce483751f90edf502562e14ceeca1e6fb1c37e81c0bc534370302838c2",
+      "path": "crates/ix-optick/src/lib.rs",
+      "line": 327,
+      "kind": "assumption",
+      "claim": "stored vectors are L2-normalized at write time so dot product == cosine; the reader normalizes only the query, so unnormalized stored data scores silently wrong with no error",
+      "verdict": "P",
+      "certainty": "Assumed",
+      "evidence": "lib.rs:328",
+      "anchor_hash": "sha256:94379548abdca748d2a0821460b59cccd060d152703ecb18e00c01cd09805fde",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:eb7ef86593e256831b4affcabc7b7d40e30c39bdb2a2b335f3ae156b99a5b97d",
+      "path": "crates/ix-optick/src/lib.rs",
+      "line": 456,
+      "kind": "invariant",
+      "claim": "the schema_hash gate rejects any index whose partition layout differs from SCHEMA_SEED",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "test_schema_hash_mismatch",
+      "anchor_hash": "sha256:f3ce05ba9679fe27e95e8bd2b14188361e91160ebd9037bbc0b5c51807e1e7e2",
+      "test_binding": "test_schema_hash_mismatch"
+    },
+    {
+      "key": "sha256:22a077966cc25567adc320feb4eb2e5c02a99f0a6c2196ff5d2bab4153e45976",
+      "path": "crates/ix-optick/src/lib.rs",
+      "line": 583,
+      "kind": "smell",
+      "claim": "the instrument↔index mapping is duplicated here and in instrument_of(); the two must be kept in sync by hand",
+      "verdict": "P",
+      "certainty": "ManuallyReviewed",
+      "evidence": "lib.rs:293",
+      "anchor_hash": "sha256:ff03ab613c3091ed7398e200f981df941e7860e547ae99e9624732515b12b4d0",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:17b748e8d5366fe6efc7db4bc09e5f7ed3836239f67b62e3ce86cd1ad64ef6bf",
+      "path": "crates/ix-optick/src/lib.rs",
+      "line": 594,
+      "kind": "assumption",
+      "claim": "similarity scores are finite; OrderedF32 collapses NaN to Equal, so any NaN (from non-finite input) makes the top-k ordering undefined",
+      "verdict": "U",
+      "certainty": "Uncertain",
+      "evidence": "lib.rs:601",
+      "anchor_hash": "sha256:f5ba6a607028d614691173bf74e49057d6b800371e3a1991d0eceeb0f691114d",
+      "test_binding": null
+    }
+  ]
+}
