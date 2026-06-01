@@ -194,6 +194,66 @@
       "test_binding": null
     },
     {
+      "key": "sha256:50cbdd5adf3ce6007ecff9300d4cf519473bb56be4c443688af4e5de43082c7b",
+      "path": "crates/ix-search/src/astar.rs",
+      "line": 75,
+      "kind": "assumption",
+      "claim": "heuristic is consistent/monotone — UNENFORCED; closed states are never reopened (astar.rs:140), so a merely-admissible-but-inconsistent h can return a suboptimal path",
+      "verdict": "U",
+      "certainty": "Uncertain",
+      "evidence": "astar.rs:140",
+      "anchor_hash": "sha256:9424bf22728753d81c4082b4f33c02d36afe2a89472f02b5f54843e19580ef36",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:95bdb31cab7e52cbf3929587d0dc62ad7a0b279e50e49b03ec8384c78712a156",
+      "path": "crates/ix-search/src/astar.rs",
+      "line": 76,
+      "kind": "invariant",
+      "claim": "for a consistent heuristic, astar returns a minimum-cost path",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "test_astar_finds_shortest",
+      "anchor_hash": "sha256:9424bf22728753d81c4082b4f33c02d36afe2a89472f02b5f54843e19580ef36",
+      "test_binding": "test_astar_finds_shortest"
+    },
+    {
+      "key": "sha256:a85dc7cb98a3fb12c319d670ade3465c9ccc8befab5e99bb264b31bd8e6d399d",
+      "path": "crates/ix-search/src/astar.rs",
+      "line": 89,
+      "kind": "invariant",
+      "claim": "weighted_astar(w) with an admissible h returns a path costing at most w x the optimal",
+      "verdict": "P",
+      "certainty": "Test",
+      "evidence": "test_weighted_astar_faster",
+      "anchor_hash": "sha256:c1b5c09c656b046fd6408a078c3bd2064189b67233d6b5c24dc031fbb9434091",
+      "test_binding": "test_weighted_astar_faster"
+    },
+    {
+      "key": "sha256:2a175164ebcb1f8f37f109ce175b2b1b555d9838e41e708044debf7e14622519",
+      "path": "crates/ix-search/src/astar.rs",
+      "line": 173,
+      "kind": "invariant",
+      "claim": "greedy_best_first reaches the goal but NOT necessarily by the optimal path — it uses only h, ignoring g",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "test_greedy_finds_path",
+      "anchor_hash": "sha256:50d2020739a6d7e44a4971223b080e31e441647be8a58fd36360eff428197f40",
+      "test_binding": "test_greedy_finds_path"
+    },
+    {
+      "key": "sha256:d34c9f069f30717bf3ffffda0131eab2157f945e84064d9ef188be1eac925a72",
+      "path": "crates/ix-search/src/astar.rs",
+      "line": 247,
+      "kind": "invariant",
+      "claim": "uniform_cost_search is A* with h=0; since h=0 is trivially consistent, it inherits A*'s optimality (Dijkstra)",
+      "verdict": "P",
+      "certainty": "Assumed",
+      "evidence": "astar.rs:244",
+      "anchor_hash": "sha256:6361faedeb8cf804ec8f1459b7541e15fdf55a0bbc24e5a869407dde2e974023",
+      "test_binding": null
+    },
+    {
       "key": "sha256:3aa21eb92e3e5f601962b51bf5cbe8bfbb61d8a16aa545de0b43221b612d2bcc",
       "path": "crates/ix-search/src/data_search.rs",
       "line": 11,
