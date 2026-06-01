@@ -120,28 +120,48 @@ impl AssumptionGraph {
     }
 }
 
-/// Extract a workspace's `@ai:` annotations, keeping only **production** ones:
-/// annotations living in test scaffolding (`tests/`, `fixtures/`, `benches/`)
-/// are example/marker-syntax demonstrations, not claims about shipping code, so
-/// they'd otherwise inflate and pollute the graph (the same gap the code miner
-/// closes). Path matching is separator-agnostic.
+/// Generic, project-independent ignore substrings: test scaffolding, build
+/// output, and documentation hold `@ai:` *examples* / marker-syntax demos, not
+/// claims about shipping code. Paths are normalized to forward slashes with a
+/// leading `/` before matching, so `/tests/` also catches a top-level `tests/`.
+const DEFAULT_IGNORE: &[&str] = &[
+    "/tests/",
+    "/fixtures/",
+    "/benches/",
+    "/docs/",
+    "/target/",
+    ".md",
+];
+
+/// Read project-specific ignore substrings from `<workspace>/.assumptionignore`
+/// (one substring per line, `#` comments and blanks skipped). Absent file → no
+/// extra patterns. This is where repo-specific policy lives — e.g. excluding
+/// the marker-defining crate, which is full of examples, not claims — so the
+/// library never hardcodes a sibling crate's name.
+fn extra_ignore_patterns(workspace: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(workspace.join(".assumptionignore")) else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Extract a workspace's `@ai:` annotations, keeping only **production** ones —
+/// dropping anything matching [`DEFAULT_IGNORE`] or a `.assumptionignore`
+/// pattern (test/doc examples would otherwise inflate and pollute the graph).
 pub(crate) fn production_annotations(workspace: &Path) -> Result<Vec<Annotation>, BuildError> {
     let anns = ix_ai_annotations::extract_workspace(workspace)?;
+    let extra = extra_ignore_patterns(workspace);
     Ok(anns
         .into_iter()
         .filter(|a| {
-            let p = a.location.path.replace('\\', "/");
-            !(p.contains("/tests/")
-                || p.starts_with("tests/")
-                || p.contains("/fixtures/")
-                || p.contains("/benches/")
-                || p.contains("/docs/")
-                || p.starts_with("docs/")
-                || p.ends_with(".md")
-                // The marker-defining crate is full of `@ai:` *examples* (its
-                // doc comments and regex-explaining comments), not claims about
-                // shipping code — don't mine the dictionary for sentences.
-                || p.contains("crates/ix-ai-annotations/"))
+            let p = format!("/{}", a.location.path.replace('\\', "/"));
+            let ignored = DEFAULT_IGNORE.iter().any(|pat| p.contains(pat))
+                || extra.iter().any(|pat| p.contains(pat.as_str()));
+            !ignored
         })
         .collect())
 }
