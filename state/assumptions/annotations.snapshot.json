@@ -192,6 +192,78 @@
       "evidence": "lib.rs:601",
       "anchor_hash": "sha256:f5ba6a607028d614691173bf74e49057d6b800371e3a1991d0eceeb0f691114d",
       "test_binding": null
+    },
+    {
+      "key": "sha256:3aa21eb92e3e5f601962b51bf5cbe8bfbb61d8a16aa545de0b43221b612d2bcc",
+      "path": "crates/ix-search/src/data_search.rs",
+      "line": 11,
+      "kind": "assumption",
+      "claim": "`data` is sorted ascending — UNENFORCED; unsorted input silently returns a wrong index or None (same precondition for jump/exponential/interpolation search)",
+      "verdict": "U",
+      "certainty": "Uncertain",
+      "evidence": "data_search.rs:10",
+      "anchor_hash": "sha256:3dd7d43a3fef311662f3b9eb1b1343690b67057518667d8ff85f760116f5187b",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:b795db7c2a174b757aa558b706bf64eb7fbfdce012ad1afc12d7249b1970f24f",
+      "path": "crates/ix-search/src/data_search.rs",
+      "line": 12,
+      "kind": "invariant",
+      "claim": "midpoint `low + (high - low) / 2` cannot overflow usize, unlike `(low + high) / 2`",
+      "verdict": "T",
+      "certainty": "FormalProof",
+      "evidence": null,
+      "anchor_hash": "sha256:3dd7d43a3fef311662f3b9eb1b1343690b67057518667d8ff85f760116f5187b",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:a37331c9337a7d6b08cd37c0eb4c7df248a422a16bd6b8be87f4a99d116b1029",
+      "path": "crates/ix-search/src/data_search.rs",
+      "line": 17,
+      "kind": "assumption",
+      "claim": "distinct values are separated by more than the 1e-10 match epsilon; closer-spaced values make the returned index arbitrary",
+      "verdict": "U",
+      "certainty": "Uncertain",
+      "evidence": "data_search.rs:17",
+      "anchor_hash": "sha256:41e0db06e8fbe9f0973c9cb31132bc6efd72cffa86e2af3548c041968cad576b",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:0e851c6d938de5113c58227110744297140fabc795447894e5938fb96fe76ab3",
+      "path": "crates/ix-search/src/data_search.rs",
+      "line": 33,
+      "kind": "assumption",
+      "claim": "inputs are ~uniformly distributed; non-uniform sorted data degrades this to O(n) — correctness holds, the complexity claim does not",
+      "verdict": "P",
+      "certainty": "Assumed",
+      "evidence": "data_search.rs:29",
+      "anchor_hash": "sha256:ba63b1154cf94b15d4054243d9c84051f29a447001a74af2a4866b0d6e31865e",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:c5948b822e913abc29824705a3c57cd88bd14afaf398e04ac8ae9d55dc807f5c",
+      "path": "crates/ix-search/src/data_search.rs",
+      "line": 150,
+      "kind": "invariant",
+      "claim": "the table always has >= 1 bucket, so hash() / load_factor() never divide by zero — new(0) is clamped",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "test_hash_table_zero_size_does_not_panic",
+      "anchor_hash": "sha256:d1fbf075f163da7a0e84d492709dd59cd47968cd3c0d90ac0623f704cf23f378",
+      "test_binding": "test_hash_table_zero_size_does_not_panic"
+    },
+    {
+      "key": "sha256:185d1e9a3c381c3e6921a724c1d522769092212766834e09ba46285292703a35",
+      "path": "crates/ix-search/src/data_search.rs",
+      "line": 221,
+      "kind": "assumption",
+      "claim": "`f` is unimodal over the lo..hi interval — UNENFORCED; a multimodal f makes ternary_search_max converge to a local feature, not the global max",
+      "verdict": "U",
+      "certainty": "Uncertain",
+      "evidence": "data_search.rs:212",
+      "anchor_hash": "sha256:f0a062f70cd5dfdc0cd70a308218e54dcc34bbf96c9f888a2f25c842535d89ad",
+      "test_binding": null
     }
   ]
 }
