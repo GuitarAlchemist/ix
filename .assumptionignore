@@ -1,0 +1,10 @@
+# Project-specific paths excluded from the @ai: assumption graph.
+# One substring per line (matched against each annotation's "/"-prefixed,
+# forward-slash path); blank lines and `#` comments are ignored.
+# Generic exclusions (tests/, fixtures/, benches/, docs/, target/, *.md) are
+# built in — this file is only for repo-specific policy.
+
+# ix-ai-annotations DEFINES the @ai: marker syntax, so its source is full of
+# examples (doc comments, regex-explaining comments), not claims about shipping
+# code. Don't mine the dictionary for sentences.
+crates/ix-ai-annotations/

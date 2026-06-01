@@ -20,6 +20,8 @@ use std::collections::HashSet;
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_assumption_belief_at",
+    "ix_assumption_claims",
+    "ix_assumption_drift",
     "ix_assumption_query",
     "ix_ast_query",
     "ix_autograd_run",
@@ -145,7 +147,7 @@ fn parity_expected_count() {
     //   assumption graph Phase 4) = 73.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 73);
+    assert_eq!(EXPECTED.len(), 75);
 }
 
 #[test]
@@ -276,8 +278,8 @@ fn parity_all_43_registry_backed() {
     // algorithm tools are registry-backed. ix_demo is manual.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 50,
-        "expected 50 registry skills, got {registry_count}"
+        registry_count, 52,
+        "expected 52 registry skills, got {registry_count}"
     );
 }
 

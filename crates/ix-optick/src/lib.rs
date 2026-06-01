@@ -210,6 +210,7 @@ impl OptickIndex {
         let file = std::fs::File::open(path)?;
         // SAFETY: the file is opened read-only and we treat the mapping as
         // immutable for the lifetime of `OptickIndex`.
+        // @ai:assumption the mmap is not modified by another process while OptickIndex lives — concurrent rewrite is UB, avoided only by convention (the rebuild runbook stops GaApi/GaMcpServer first) [U:uncertain conf:0.6 src:optic-k-rebuild-runbook]
         let mmap = unsafe { Mmap::map(&file)? };
         let header = Self::parse_header(&mmap)?;
         Ok(Self { mmap, header })
@@ -303,11 +304,12 @@ impl OptickIndex {
 
     /// Brute-force cosine search (dot product on pre-normalized vectors).
     ///
-    /// - `query`: a 112-dimensional f32 vector (will be L2-normalized internally).
+    /// - `query`: a 124-dimensional f32 vector (will be L2-normalized internally).
     /// - `instrument`: optional filter (`"guitar"`, `"bass"`, or `"ukulele"`).
     /// - `top_k`: number of results to return.
     ///
     /// Returns results sorted by descending similarity score.
+    // @ai:invariant search returns exactly the top_k voicings ordered by descending dot-product score [T:test conf:0.9 src:test_cosine_search_ordering]
     pub fn search(
         &self,
         query: &[f32],
@@ -322,6 +324,7 @@ impl OptickIndex {
             });
         }
 
+        // @ai:assumption stored vectors are L2-normalized at write time so dot product == cosine; the reader normalizes only the query, so unnormalized stored data scores silently wrong with no error [P:assumed conf:0.6 src:lib.rs:328]
         // L2-normalize the query
         let norm = query.iter().map(|x| x * x).sum::<f32>().sqrt();
         let query_norm: Vec<f32> = if norm > 0.0 {
@@ -450,6 +453,7 @@ impl OptickIndex {
 
         // Schema hash
         let schema_hash = read_u32(buf, &mut off);
+        // @ai:invariant the schema_hash gate rejects any index whose partition layout differs from SCHEMA_SEED [T:test conf:0.95 src:test_schema_hash_mismatch]
         let expected_hash = compute_schema_hash();
         if schema_hash != expected_hash {
             return Err(OptickError::SchemaMismatch {
@@ -576,6 +580,7 @@ pub fn compute_schema_hash() -> u32 {
 }
 
 /// Map instrument name to its partition index.
+// @ai:smell the instrument↔index mapping is duplicated here and in instrument_of(); the two must be kept in sync by hand [P:manually-reviewed conf:0.8 src:lib.rs:293]
 fn instrument_index(name: &str) -> Option<usize> {
     match name.to_ascii_lowercase().as_str() {
         "guitar" => Some(0),
@@ -586,6 +591,7 @@ fn instrument_index(name: &str) -> Option<usize> {
 }
 
 /// Wrapper to make f32 usable in BinaryHeap (total ordering).
+// @ai:assumption similarity scores are finite; OrderedF32 collapses NaN to Equal, so any NaN (from non-finite input) makes the top-k ordering undefined [U:uncertain conf:0.5 src:lib.rs:601]
 #[derive(Clone, Copy, PartialEq)]
 struct OrderedF32(f32);
 
@@ -774,6 +780,17 @@ mod tests {
         data[0] = b'X'; // corrupt magic
         let err = OptickIndex::from_bytes(data).unwrap_err();
         assert!(matches!(err, OptickError::InvalidMagic));
+    }
+
+    #[test]
+    fn test_schema_hash_mismatch() {
+        // Exercises the schema_hash gate (surfaced by `@ai:invariant` in
+        // parse_header as previously untested). schema_hash lives at byte
+        // offset 12: magic(4) + version(4) + header_size(4).
+        let mut data = build_test_index(&[spike_vector(0, 1.0)], [1, 0, 0]);
+        data[12] ^= 0xFF; // corrupt the schema hash → divergent layout
+        let err = OptickIndex::from_bytes(data).unwrap_err();
+        assert!(matches!(err, OptickError::SchemaMismatch { .. }));
     }
 
     #[test]

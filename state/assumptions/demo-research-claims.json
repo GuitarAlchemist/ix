@@ -1,0 +1,16 @@
+[
+  {
+    "claim": "arr is sorted ascending",
+    "truth_value": "F",
+    "confidence": 0.85,
+    "source": "deep-research",
+    "evidence": "demo: a /deep-research finding refuting a code invariant (fuzz counterexample)"
+  },
+  {
+    "claim": "hexavalent fusion is associative",
+    "truth_value": "P",
+    "confidence": 0.7,
+    "source": "deep-research",
+    "evidence": "demo: ix-fuzzy CRDT proof obligations"
+  }
+]

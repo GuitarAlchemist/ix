@@ -59,6 +59,12 @@ impl AssumptionGraph {
 
     /// Core builder: de-duplicates nodes by id (first occurrence wins), then
     /// derives contradictions.
+    /// Build directly from a list of nodes (e.g. mined from code — see
+    /// [`crate::mine`]). De-duplicates by id; derives contradictions.
+    pub fn from_nodes(nodes: Vec<AssumptionNode>) -> Result<Self, BuildError> {
+        Self::build(nodes)
+    }
+
     fn build(nodes: Vec<AssumptionNode>) -> Result<Self, BuildError> {
         let mut dag: Dag<AssumptionNode> = Dag::new();
         for node in nodes {
@@ -77,7 +83,7 @@ impl AssumptionGraph {
 
     /// Walk a workspace, extract `@ai:` annotations, and build the graph.
     pub fn from_workspace(workspace: &Path) -> Result<Self, BuildError> {
-        Self::from_parts(ix_ai_annotations::extract_workspace(workspace)?, Vec::new())
+        Self::from_parts(production_annotations(workspace)?, Vec::new())
     }
 
     /// Walk a workspace and combine its `@ai:` annotations with research claims.
@@ -85,7 +91,7 @@ impl AssumptionGraph {
         workspace: &Path,
         research: Vec<ResearchClaim>,
     ) -> Result<Self, BuildError> {
-        Self::from_parts(ix_ai_annotations::extract_workspace(workspace)?, research)
+        Self::from_parts(production_annotations(workspace)?, research)
     }
 
     /// Number of assumption nodes.
@@ -112,6 +118,52 @@ impl AssumptionGraph {
     pub fn nodes(&self) -> impl Iterator<Item = &AssumptionNode> {
         self.dag.node_ids().iter().filter_map(|id| self.dag.get(id))
     }
+}
+
+/// Generic, project-independent ignore substrings: test scaffolding, build
+/// output, and documentation hold `@ai:` *examples* / marker-syntax demos, not
+/// claims about shipping code. Paths are normalized to forward slashes with a
+/// leading `/` before matching, so `/tests/` also catches a top-level `tests/`.
+const DEFAULT_IGNORE: &[&str] = &[
+    "/tests/",
+    "/fixtures/",
+    "/benches/",
+    "/docs/",
+    "/target/",
+    ".md",
+];
+
+/// Read project-specific ignore substrings from `<workspace>/.assumptionignore`
+/// (one substring per line, `#` comments and blanks skipped). Absent file → no
+/// extra patterns. This is where repo-specific policy lives — e.g. excluding
+/// the marker-defining crate, which is full of examples, not claims — so the
+/// library never hardcodes a sibling crate's name.
+fn extra_ignore_patterns(workspace: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(workspace.join(".assumptionignore")) else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Extract a workspace's `@ai:` annotations, keeping only **production** ones —
+/// dropping anything matching [`DEFAULT_IGNORE`] or a `.assumptionignore`
+/// pattern (test/doc examples would otherwise inflate and pollute the graph).
+pub(crate) fn production_annotations(workspace: &Path) -> Result<Vec<Annotation>, BuildError> {
+    let anns = ix_ai_annotations::extract_workspace(workspace)?;
+    let extra = extra_ignore_patterns(workspace);
+    Ok(anns
+        .into_iter()
+        .filter(|a| {
+            let p = format!("/{}", a.location.path.replace('\\', "/"));
+            let ignored = DEFAULT_IGNORE.iter().any(|pat| p.contains(pat))
+                || extra.iter().any(|pat| p.contains(pat.as_str()));
+            !ignored
+        })
+        .collect())
 }
 
 /// Two truth values conflict iff one leans true and the other leans false.

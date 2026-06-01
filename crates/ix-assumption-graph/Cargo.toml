@@ -30,3 +30,7 @@ path = "src/bin/report.rs"
 [[bin]]
 name = "ix-assumption-graph-loop"
 path = "src/bin/loop_runner.rs"
+
+[[bin]]
+name = "ix-assumption-graph-drift"
+path = "src/bin/drift.rs"
