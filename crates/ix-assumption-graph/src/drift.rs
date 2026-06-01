@@ -259,7 +259,9 @@ fn extract_test_name(ev: &str) -> Option<String> {
 
 fn is_ident(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        && s.chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
         && s.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
@@ -348,7 +350,10 @@ mod tests {
     #[test]
     fn scan_fn_names_finds_definitions_only() {
         let mut s = HashSet::new();
-        scan_fn_names("fn alpha() {}\n    pub fn beta() {}\n// transform(x)\n", &mut s);
+        scan_fn_names(
+            "fn alpha() {}\n    pub fn beta() {}\n// transform(x)\n",
+            &mut s,
+        );
         assert!(s.contains("alpha"));
         assert!(s.contains("beta"));
         assert!(!s.contains("transform"));
@@ -358,13 +363,19 @@ mod tests {
     fn diff_flags_span_drift_but_not_a_clean_move() {
         let old = Snapshot {
             schema: 1,
-            claims: vec![rec("k1", "sha256:aaaa", "T", 10), rec("k2", "sha256:bbbb", "P", 20)],
+            claims: vec![
+                rec("k1", "sha256:aaaa", "T", 10),
+                rec("k2", "sha256:bbbb", "P", 20),
+            ],
         };
         let new = Snapshot {
             schema: 1,
             // k1: code under it changed (anchor differs) = span drift.
             // k2: only the line moved (anchor same) = harmless move.
-            claims: vec![rec("k1", "sha256:cccc", "T", 10), rec("k2", "sha256:bbbb", "P", 25)],
+            claims: vec![
+                rec("k1", "sha256:cccc", "T", 10),
+                rec("k2", "sha256:bbbb", "P", 25),
+            ],
         };
         let report = diff(&old, &new);
         assert_eq!(report.span_drifted.len(), 1);
@@ -376,17 +387,32 @@ mod tests {
 
     #[test]
     fn diff_treats_verdict_change_as_clean_revision() {
-        let old = Snapshot { schema: 1, claims: vec![rec("k", "sha256:aa", "P", 1)] };
-        let new = Snapshot { schema: 1, claims: vec![rec("k", "sha256:aa", "T", 1)] };
+        let old = Snapshot {
+            schema: 1,
+            claims: vec![rec("k", "sha256:aa", "P", 1)],
+        };
+        let new = Snapshot {
+            schema: 1,
+            claims: vec![rec("k", "sha256:aa", "T", 1)],
+        };
         let report = diff(&old, &new);
         assert_eq!(report.verdict_changed.len(), 1);
-        assert!(report.is_clean(), "verdict revision alone is healthy, not drift");
+        assert!(
+            report.is_clean(),
+            "verdict revision alone is healthy, not drift"
+        );
     }
 
     #[test]
     fn diff_reports_added_and_removed() {
-        let old = Snapshot { schema: 1, claims: vec![rec("gone", "sha256:aa", "T", 1)] };
-        let new = Snapshot { schema: 1, claims: vec![rec("fresh", "sha256:bb", "T", 1)] };
+        let old = Snapshot {
+            schema: 1,
+            claims: vec![rec("gone", "sha256:aa", "T", 1)],
+        };
+        let new = Snapshot {
+            schema: 1,
+            claims: vec![rec("fresh", "sha256:bb", "T", 1)],
+        };
         let report = diff(&old, &new);
         assert_eq!(report.added.len(), 1);
         assert_eq!(report.removed.len(), 1);

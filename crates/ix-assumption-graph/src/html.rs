@@ -22,7 +22,11 @@
 /// Build the viewer HTML with `graph_json` (the output of
 /// [`crate::AssumptionGraph::prime_radiant_graph`], serialized) inlined.
 pub fn render(graph_json: &str) -> String {
-    TEMPLATE.replace("/*__GRAPH__*/null", graph_json)
+    // Escape `<`/`>` so a claim containing `</script>` (or `<!--`) can't break
+    // out of the inline <script> block. `<`/`>` parse back to the same
+    // characters in JS, so the data is unchanged. (Codex P2 on #76.)
+    let safe = graph_json.replace('<', "\\u003c").replace('>', "\\u003e");
+    TEMPLATE.replace("/*__GRAPH__*/null", &safe)
 }
 
 const TEMPLATE: &str = r####"<!doctype html>

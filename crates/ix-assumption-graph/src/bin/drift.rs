@@ -29,7 +29,9 @@ fn main() {
             "--snapshot" => snapshot_out = Some(take(&args, &mut i)),
             "--check" => check_in = Some(take(&args, &mut i)),
             "-h" | "--help" => {
-                println!("ix-assumption-graph-drift --snapshot PATH | --check PATH [--workspace DIR]");
+                println!(
+                    "ix-assumption-graph-drift --snapshot PATH | --check PATH [--workspace DIR]"
+                );
                 return;
             }
             other => {
@@ -59,7 +61,10 @@ fn main() {
     let mut report = drift::diff(&baseline, &current);
     drift::verify_bindings(&ws, &current, &mut report);
 
-    println!("assumption-graph drift check ({} claims)", current.claims.len());
+    println!(
+        "assumption-graph drift check ({} claims)",
+        current.claims.len()
+    );
     println!(
         "  unchanged {}  moved {}  added {}  removed {}  verdict-revised {}",
         report.unchanged,
@@ -87,7 +92,10 @@ fn main() {
 
 fn print_items(label: &str, items: &[DriftItem]) {
     for it in items {
-        println!("  {label}: {}:{}  {}  — {}", it.path, it.line, it.detail, it.claim);
+        println!(
+            "  {label}: {}:{}  {}  — {}",
+            it.path, it.line, it.detail, it.claim
+        );
     }
 }
 
