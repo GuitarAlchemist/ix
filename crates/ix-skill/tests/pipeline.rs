@@ -252,3 +252,28 @@ stages:
     assert!(value["stages"]["audit"]["output"].is_object());
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn run_fails_closed_when_governance_unverifiable() {
+    // A structurally valid pipeline must STILL refuse to execute when the
+    // constitution can't be loaded — the gate is fail-closed, not advisory.
+    let dir = tempdir("nogov");
+    fs::write(
+        dir.join("ix.yaml"),
+        "version: \"1\"\nstages:\n  s:\n    skill: stats\n    args: { data: [1.0, 2.0, 3.0] }\n",
+    )
+    .unwrap();
+    // Plain command: NO IX_GOVERNANCE_DIR, cwd is a tempdir with no
+    // governance/demerzel — so the constitution can't be found.
+    Command::cargo_bin("ix")
+        .expect("ix binary built")
+        .current_dir(&dir)
+        .env_remove("IX_GOVERNANCE_DIR")
+        .args(["pipeline", "run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("governance"));
+    // And no ix.lock should have been written (execution never happened).
+    assert!(!dir.join("ix.lock").is_file());
+    fs::remove_dir_all(&dir).ok();
+}

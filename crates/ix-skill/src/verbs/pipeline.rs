@@ -149,6 +149,51 @@ pub(crate) fn build_schema() -> Value {
     })
 }
 
+/// Fail-closed constitutional review of a spec before it executes. Every
+/// stage's skill must (a) carry governance tags and (b) pass
+/// `Constitution::check_action`. A missing constitution, an untagged skill, or
+/// any non-compliant stage → reject. Shared by `ix pipeline run` and
+/// `ix pipeline compile` so governance is unbypassable on the canonical path.
+pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
+    let gov_dir =
+        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
+    let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
+    let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
+        .map_err(|e| {
+            format!("cannot verify governance (constitution load failed: {e}) — refusing to execute")
+        })?;
+
+    let mut cited: Vec<Value> = Vec::new();
+    for (id, stage) in &spec.stages {
+        let desc = ix_registry::by_name(&stage.skill)
+            .ok_or_else(|| format!("stage '{id}': skill '{}' not in registry", stage.skill))?;
+        if desc.governance_tags.is_empty() {
+            return Err(format!(
+                "stage '{id}' uses untagged skill '{}' (unknown blast radius) — fail-closed reject",
+                stage.skill
+            ));
+        }
+        let action = format!(
+            "execute skill '{}' ({}) with governance tags [{}] as pipeline stage '{id}'",
+            stage.skill,
+            desc.doc,
+            desc.governance_tags.join(", ")
+        );
+        let result = constitution.check_action(&action);
+        if !result.compliant {
+            return Err(format!(
+                "stage '{id}' (skill '{}') is non-compliant: {}",
+                stage.skill,
+                result.warnings.join("; ")
+            ));
+        }
+        for art in &result.relevant_articles {
+            cited.push(json!({ "stage": id, "article": art.number }));
+        }
+    }
+    Ok(json!({ "verdict": "compliant", "articles_cited": cited }))
+}
+
 /// `ix pipeline run [-f FILE] [--json]` — execute the pipeline.
 ///
 /// When `stream_ndjson` is true, emits NDJSON events (`start`, `stage_start`,
@@ -157,6 +202,8 @@ pub fn run(file: Option<&str>, stream_ndjson: bool, format: Format) -> Result<()
     let path: &str = file.unwrap_or(DEFAULT_FILE);
     let spec = PipelineSpec::from_file(path).map_err(|e| format!("loading {path}: {e}"))?;
     let dag = lower(&spec).map_err(|e| format!("lowering {path}: {e}"))?;
+    // Fail-closed governance gate — a pipeline never executes unreviewed.
+    governance_gate(&spec).map_err(|e| format!("governance gate: {e}"))?;
     let levels = dag.parallel_levels();
     let total_stages = spec.stages.len();
 

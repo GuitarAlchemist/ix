@@ -156,7 +156,9 @@ pub fn compile(
     };
 
     // ── Fail-closed governance gate (before any execution) ───────────────
-    match governance_gate(&spec) {
+    // Shared with `ix pipeline run` so governance is unbypassable on the
+    // canonical execution path, not just the compile path.
+    match crate::verbs::pipeline::governance_gate(&spec) {
         Ok(gate) => {
             // Persist the compiled spec for inspection / `ix pipeline run`.
             let yaml = spec.to_yaml_string().map_err(|e| format!("{e}"))?;
@@ -202,47 +204,6 @@ fn parse_and_lower(yaml: &str) -> Result<PipelineSpec, String> {
     let spec = PipelineSpec::from_yaml_str(yaml).map_err(|e| format!("parse/shape error: {e}"))?;
     lower(&spec).map_err(|e| format!("lowering error: {e}"))?;
     Ok(spec)
-}
-
-/// Fail-closed constitutional review. Every stage's skill must (a) carry
-/// governance tags and (b) pass `Constitution::check_action`. Missing
-/// constitution, an untagged skill, or any non-compliant stage → reject.
-fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
-    let gov_dir =
-        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
-    let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
-    let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
-        .map_err(|e| format!("cannot verify governance (constitution load failed: {e}) — refusing to execute"))?;
-
-    let mut cited: Vec<Value> = Vec::new();
-    for (id, stage) in &spec.stages {
-        let desc = ix_registry::by_name(&stage.skill)
-            .ok_or_else(|| format!("stage '{id}': skill '{}' not in registry", stage.skill))?;
-        if desc.governance_tags.is_empty() {
-            return Err(format!(
-                "stage '{id}' uses untagged skill '{}' (unknown blast radius) — fail-closed reject",
-                stage.skill
-            ));
-        }
-        let action = format!(
-            "execute skill '{}' ({}) with governance tags [{}] as pipeline stage '{id}'",
-            stage.skill,
-            desc.doc,
-            desc.governance_tags.join(", ")
-        );
-        let result = constitution.check_action(&action);
-        if !result.compliant {
-            return Err(format!(
-                "stage '{id}' (skill '{}') is non-compliant: {}",
-                stage.skill,
-                result.warnings.join("; ")
-            ));
-        }
-        for art in &result.relevant_articles {
-            cited.push(json!({ "stage": id, "article": art.number }));
-        }
-    }
-    Ok(json!({ "verdict": "compliant", "articles_cited": cited }))
 }
 
 /// Execute the lowered pipeline and narrate the run back in prose.
