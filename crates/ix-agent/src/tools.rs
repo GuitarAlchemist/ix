@@ -1680,6 +1680,31 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::pipeline_compile_placeholder,
         });
+
+        self.tools.push(Tool {
+            name: "ix_nl_to_pipeline",
+            description: "The IX \"thinking machine\": translate a natural-language request into a canonical PipelineSpec (ix.yaml), validate it with lower(), gate it through the Demerzel constitution (fail-closed), optionally execute it, and narrate the result back. Direct LLM-provider proposer with bounded self-repair and a two-tier coverage gate (refuses out-of-domain requests instead of confabulating). Prefer this over ix_pipeline_compile (which targets the legacy {steps:[…]} format via deprecated MCP sampling). Returns status one of: ok | compiled | out_of_domain | governance_rejected | translate_failed.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sentence": {
+                        "type": "string",
+                        "description": "Natural-language description of the analysis/pipeline you want"
+                    },
+                    "run": {
+                        "type": "boolean",
+                        "description": "Execute the compiled pipeline and narrate results (default false: compile + governance-gate only)"
+                    },
+                    "max_rounds": {
+                        "type": "integer",
+                        "description": "Max self-repair rounds when the generated spec fails validation (default 3)",
+                        "minimum": 0
+                    }
+                },
+                "required": ["sentence"]
+            }),
+            handler: handlers::nl_to_pipeline,
+        });
     }
 
     /// Advanced sub-group 3: catalog tools (code / grammar / RFC /
