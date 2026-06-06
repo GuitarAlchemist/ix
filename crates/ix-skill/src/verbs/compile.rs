@@ -80,26 +80,18 @@ pub fn compile(
     let schema = build_schema();
     let system_prompt = build_system_prompt(&schema, &catalog);
 
-    // Conversation history for the bounded repair loop.
-    let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": sentence })];
+    // The proposer is a closure over the live Anthropic call; `resolve_spec`
+    // drives the propose → validate → repair sub-loop and is unit-tested with a
+    // scripted proposer (see tests::repair_*).
+    let mut proposer = |msgs: &[Value]| call_anthropic(&api_key, &model, &system_prompt, msgs);
 
-    let mut last_error = String::new();
-    let mut spec: Option<PipelineSpec> = None;
-    let mut rounds_used = 0u32;
-
-    for round in 0..=max_rounds {
-        rounds_used = round;
-        let reply = call_anthropic(&api_key, &model, &system_prompt, &messages)?;
-
-        // ── Semantic coverage (fail-closed LLM relevance) ────────────────
-        // The proposer is instructed to emit `NO_COVERAGE: <reason>` when the
-        // request needs a capability no catalog skill provides. This catches
-        // the lexical-collision cases the TF-IDF pre-gate cannot ("summary of
-        // a website" vs "summary statistics"). Routing role, not self-judge;
-        // fail-closed (a wrong NO_COVERAGE only over-refuses, never confabulates).
-        if let Some(rest) = reply.trim().strip_prefix("NO_COVERAGE") {
-            let reason = rest.trim_start_matches([':', ' ', '\n']).trim();
-            log_gap(sentence, "semantic-noncoverage", reason, round);
+    let (spec, rounds_used) = match resolve_spec(&mut proposer, sentence, max_rounds)? {
+        ResolveOutcome::Compiled { spec, rounds } => (spec, rounds),
+        ResolveOutcome::NoCoverage { reason, rounds } => {
+            // Fail-closed LLM relevance: the request needs a capability no
+            // catalog skill provides (catches lexical-collision cases the
+            // TF-IDF pre-gate cannot). Routing role, not self-judge.
+            log_gap(sentence, "semantic-noncoverage", &reason, rounds);
             return emit_result(
                 format,
                 json!({
@@ -107,52 +99,25 @@ pub fn compile(
                     "sentence": sentence,
                     "reason": reason,
                     "detected_by": "llm-relevance",
-                    "rounds": round,
+                    "rounds": rounds,
                     "logged_to": gap_log_path(),
                     "note": "No IX skill serves this request (semantic relevance) — refused instead of confabulating.",
                 }),
             );
         }
-
-        let yaml = strip_fences(&reply);
-
-        match parse_and_lower(&yaml) {
-            Ok(parsed) => {
-                spec = Some(parsed);
-                break;
-            }
-            Err(e) => {
-                last_error = e;
-                if round == max_rounds {
-                    break;
-                }
-                // Feed the verbatim error back for self-repair.
-                messages.push(json!({ "role": "assistant", "content": reply }));
-                messages.push(json!({
-                    "role": "user",
-                    "content": format!(
-                        "That spec failed validation:\n\n{last_error}\n\n\
-                         Emit ONLY a corrected `ix.yaml` PipelineSpec (no prose, no fences). \
-                         Use the map-based `stages:` shape and only skills from the catalog."
-                    )
-                }));
-            }
+        ResolveOutcome::TranslateFailed { error, rounds } => {
+            log_gap(sentence, "translate", &error, rounds);
+            return emit_result(
+                format,
+                json!({
+                    "status": "translate_failed",
+                    "sentence": sentence,
+                    "rounds": rounds,
+                    "error": error,
+                    "logged_to": gap_log_path(),
+                }),
+            );
         }
-    }
-
-    let Some(spec) = spec else {
-        // Translation failure → dogfood backlog row.
-        log_gap(sentence, "translate", &last_error, rounds_used);
-        return emit_result(
-            format,
-            json!({
-                "status": "translate_failed",
-                "sentence": sentence,
-                "rounds": rounds_used,
-                "error": last_error,
-                "logged_to": gap_log_path(),
-            }),
-        );
     };
 
     // ── Fail-closed governance gate (before any execution) ───────────────
@@ -196,6 +161,62 @@ pub fn compile(
             )
         }
     }
+}
+
+/// Outcome of the propose → validate → repair sub-loop.
+#[derive(Debug)]
+enum ResolveOutcome {
+    Compiled { spec: PipelineSpec, rounds: u32 },
+    NoCoverage { reason: String, rounds: u32 },
+    TranslateFailed { error: String, rounds: u32 },
+}
+
+/// Drive the bounded self-repair loop: call the proposer, honor a `NO_COVERAGE`
+/// sentinel, parse + lower, and on a typed validation error feed it back
+/// verbatim for up to `max_rounds` repair attempts. The proposer is injected
+/// (a closure over the live API call in `compile`, a scripted fn in tests) so
+/// the loop is deterministically testable without a network call. `Err` is
+/// reserved for hard proposer failures (e.g. HTTP), not validation failures.
+fn resolve_spec(
+    proposer: &mut dyn FnMut(&[Value]) -> Result<String, String>,
+    sentence: &str,
+    max_rounds: u32,
+) -> Result<ResolveOutcome, String> {
+    let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": sentence })];
+    let mut last_error = String::new();
+
+    for round in 0..=max_rounds {
+        let reply = proposer(&messages)?;
+
+        if let Some(rest) = reply.trim().strip_prefix("NO_COVERAGE") {
+            let reason = rest.trim_start_matches([':', ' ', '\n']).trim().to_string();
+            return Ok(ResolveOutcome::NoCoverage { reason, rounds: round });
+        }
+
+        match parse_and_lower(&strip_fences(&reply)) {
+            Ok(spec) => return Ok(ResolveOutcome::Compiled { spec, rounds: round }),
+            Err(e) => {
+                last_error = e;
+                if round == max_rounds {
+                    break;
+                }
+                // Feed the verbatim error back for self-repair.
+                messages.push(json!({ "role": "assistant", "content": reply }));
+                messages.push(json!({
+                    "role": "user",
+                    "content": format!(
+                        "That spec failed validation:\n\n{last_error}\n\n\
+                         Emit ONLY a corrected `ix.yaml` PipelineSpec (no prose, no fences). \
+                         Use the map-based `stages:` shape and only skills from the catalog."
+                    )
+                }));
+            }
+        }
+    }
+    Ok(ResolveOutcome::TranslateFailed {
+        error: last_error,
+        rounds: max_rounds,
+    })
 }
 
 /// Parse YAML → `PipelineSpec` and lower it. Returns the spec or a verbatim
@@ -530,5 +551,59 @@ mod tests {
             collision > 0.1,
             "documents that lexical coverage misses the collision case; got {collision}"
         );
+    }
+
+    #[test]
+    fn repair_loop_recovers_from_unknown_skill() {
+        // Round 0: a spec naming a skill `lower()` rejects (UnknownSkill).
+        // Round 1: a valid spec. The loop must feed the error back and recover.
+        let replies = [
+            "version: \"1\"\nstages:\n  s:\n    skill: no.such.skill\n    args: {}\n",
+            "version: \"1\"\nstages:\n  s:\n    skill: stats\n    args: { data: [1.0, 2.0, 3.0] }\n",
+        ];
+        let mut calls = 0usize;
+        let mut proposer = |_m: &[Value]| -> Result<String, String> {
+            let r = replies[calls].to_string();
+            calls += 1;
+            Ok(r)
+        };
+        match resolve_spec(&mut proposer, "compute stats", 3).unwrap() {
+            ResolveOutcome::Compiled { spec, rounds } => {
+                assert_eq!(rounds, 1, "must repair on the 2nd attempt");
+                assert!(spec.stages.contains_key("s"));
+            }
+            other => panic!("expected Compiled, got {other:?}"),
+        }
+        assert_eq!(calls, 2, "proposer called exactly twice (bad, then good)");
+    }
+
+    #[test]
+    fn repair_loop_gives_up_after_max_rounds() {
+        let mut calls = 0usize;
+        let mut proposer = |_m: &[Value]| -> Result<String, String> {
+            calls += 1;
+            Ok("version: \"1\"\nstages:\n  s:\n    skill: no.such.skill\n    args: {}\n".to_string())
+        };
+        match resolve_spec(&mut proposer, "x", 2).unwrap() {
+            ResolveOutcome::TranslateFailed { rounds, error } => {
+                assert_eq!(rounds, 2);
+                assert!(error.contains("no.such.skill"), "verbatim error preserved: {error}");
+            }
+            other => panic!("expected TranslateFailed, got {other:?}"),
+        }
+        assert_eq!(calls, 3, "1 initial attempt + 2 repair attempts");
+    }
+
+    #[test]
+    fn resolve_honors_no_coverage_sentinel() {
+        let mut proposer =
+            |_m: &[Value]| -> Result<String, String> { Ok("NO_COVERAGE: web scraping not available".to_string()) };
+        match resolve_spec(&mut proposer, "scrape a site", 3).unwrap() {
+            ResolveOutcome::NoCoverage { reason, rounds } => {
+                assert_eq!(rounds, 0);
+                assert!(reason.contains("web scraping"));
+            }
+            other => panic!("expected NoCoverage, got {other:?}"),
+        }
     }
 }
