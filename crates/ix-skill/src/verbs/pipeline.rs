@@ -77,6 +77,78 @@ pub fn dag(file: Option<&str>, format: Format) -> Result<(), String> {
     Ok(())
 }
 
+/// `ix pipeline schema` — emit the JSON Schema for a `PipelineSpec`.
+///
+/// This is the *target language* an NL→pipeline generator must produce. The
+/// `skill` enum is drawn live from `ix-registry` so the schema can only name
+/// real skills — a generator constrained to this schema can never emit an
+/// `UnknownSkill`. Kept INTERNAL + draft (`$id` is a `urn:`, not the public
+/// `https://ix.guitaralchemist.com/...` URL) until the shape is frozen; see
+/// `docs/plans/2026-06-06-ix-thinking-machine.md` (one-way doors).
+pub fn schema(format: Format) -> Result<(), String> {
+    output::emit(&build_schema(), format).map_err(|e| format!("{e}"))?;
+    Ok(())
+}
+
+/// Build the `PipelineSpec` JSON Schema as a `Value` (split out for testing).
+pub(crate) fn build_schema() -> Value {
+    let mut skills: Vec<&'static str> = ix_registry::all().map(|s| s.name).collect();
+    skills.sort_unstable();
+
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "urn:ix:pipeline:v1-draft",
+        "title": "IX PipelineSpec",
+        "description": "An ix.yaml pipeline: a DAG of skill stages. \
+            Inter-stage data flow uses {\"from\": \"stage_id[.dotted.key]\"} \
+            references anywhere inside a stage's args.",
+        "type": "object",
+        "required": ["stages"],
+        "additionalProperties": false,
+        "properties": {
+            "version": { "const": "1", "default": "1" },
+            "params": {
+                "type": "object",
+                "description": "Named parameter bag (string expansion only; \
+                    inert in the current executor — prefer inlining values)."
+            },
+            "stages": {
+                "type": "object",
+                "minProperties": 1,
+                "description": "Stages keyed by a unique id. Order is decided by \
+                    deps + from-refs, not by key order.",
+                "additionalProperties": { "$ref": "#/$defs/stage" }
+            }
+        },
+        "$defs": {
+            "stage": {
+                "type": "object",
+                "required": ["skill"],
+                "additionalProperties": false,
+                "properties": {
+                    "skill": {
+                        "type": "string",
+                        "description": "Dotted registered-skill name (see `ix list skills --schemas`).",
+                        "enum": skills
+                    },
+                    "args": {
+                        "type": "object",
+                        "description": "Static JSON input for the skill. May embed \
+                            {\"from\": \"upstream_stage[.key]\"} references."
+                    },
+                    "deps": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Explicit upstream stage ids. Refs found in \
+                            args are merged automatically; list any not expressed via `from`."
+                    },
+                    "cache": { "type": ["boolean", "null"] }
+                }
+            }
+        }
+    })
+}
+
 /// `ix pipeline run [-f FILE] [--json]` — execute the pipeline.
 ///
 /// When `stream_ndjson` is true, emits NDJSON events (`start`, `stage_start`,
@@ -161,4 +233,42 @@ fn emit_event(value: &Value) {
     let mut out = io::stdout().lock();
     let _ = serde_json::to_writer(&mut out, value);
     let _ = writeln!(out);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_skill_enum_matches_registry() {
+        let schema = build_schema();
+        let enum_vals = schema["$defs"]["stage"]["properties"]["skill"]["enum"]
+            .as_array()
+            .expect("skill enum is an array");
+        let from_schema: std::collections::BTreeSet<&str> =
+            enum_vals.iter().map(|v| v.as_str().unwrap()).collect();
+        let from_registry: std::collections::BTreeSet<&str> =
+            ix_registry::all().map(|s| s.name).collect();
+        assert_eq!(
+            from_schema, from_registry,
+            "pipeline schema skill enum must equal ix_registry::all()"
+        );
+    }
+
+    #[test]
+    fn schema_accepts_the_showcase_shape() {
+        // The one checked-in real spec must be expressible under the schema:
+        // its skills are in the enum, and `stages` is a non-empty object.
+        let schema = build_schema();
+        assert_eq!(schema["properties"]["stages"]["minProperties"], json!(1));
+        let enum_vals = schema["$defs"]["stage"]["properties"]["skill"]["enum"]
+            .as_array()
+            .unwrap();
+        for skill in ["stats", "fft", "number_theory", "governance.check"] {
+            assert!(
+                enum_vals.iter().any(|v| v == skill),
+                "showcase skill '{skill}' missing from schema enum"
+            );
+        }
+    }
 }

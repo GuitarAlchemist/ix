@@ -43,6 +43,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
+# `ix pipeline compile` — direct Anthropic Messages API call (MCP sampling is
+# deprecated + unsupported by Claude Code, so the proposer calls the provider
+# API directly). Blocking client; rustls so no system OpenSSL needed.
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+
 # stable-surface verb: parse crate-maturity.toml and hash the public API.
 toml = "0.8"
 blake3 = { workspace = true }
