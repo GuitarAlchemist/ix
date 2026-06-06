@@ -149,6 +149,23 @@ pub(crate) fn build_schema() -> Value {
     })
 }
 
+/// Build the natural-language action string the constitution checks for a
+/// pipeline stage. Deliberately based on the *requested operation* — the skill
+/// name, the stage's actual `args`, and its curated risk tags — and **not** the
+/// skill's capability docs. A skill's doc may enumerate operations it *can*
+/// perform (e.g. `cache`'s "set/get/delete/list"); the constitution's keyword
+/// scan would then falsely reject a benign stage whose doc merely mentions
+/// "delete". The args reflect what *this* stage does, so a genuinely
+/// irreversible request is still caught while a benign one passes.
+/// (Codex PR #77 P2.)
+fn governance_action(skill: &str, args: &Value, tags: &[&str]) -> String {
+    let args_str = serde_json::to_string(args).unwrap_or_default();
+    format!(
+        "execute skill '{skill}' with args {args_str} and governance tags [{}]",
+        tags.join(", ")
+    )
+}
+
 /// Fail-closed constitutional review of a spec before it executes. Every
 /// stage's skill must (a) carry governance tags and (b) pass
 /// `Constitution::check_action`. A missing constitution, an untagged skill, or
@@ -160,7 +177,9 @@ pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
     let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
     let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
         .map_err(|e| {
-            format!("cannot verify governance (constitution load failed: {e}) — refusing to execute")
+            format!(
+                "cannot verify governance (constitution load failed: {e}) — refusing to execute"
+            )
         })?;
 
     let mut cited: Vec<Value> = Vec::new();
@@ -174,10 +193,8 @@ pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
             ));
         }
         let action = format!(
-            "execute skill '{}' ({}) with governance tags [{}] as pipeline stage '{id}'",
-            stage.skill,
-            desc.doc,
-            desc.governance_tags.join(", ")
+            "{} as pipeline stage '{id}'",
+            governance_action(&stage.skill, &stage.args, desc.governance_tags)
         );
         let result = constitution.check_action(&action);
         if !result.compliant {
@@ -317,5 +334,56 @@ mod tests {
                 "showcase skill '{skill}' missing from schema enum"
             );
         }
+    }
+
+    fn default_constitution() -> ix_governance::Constitution {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../governance/demerzel/constitutions/default.constitution.md");
+        ix_governance::Constitution::load(&path).expect("load default constitution")
+    }
+
+    #[test]
+    fn governance_action_excludes_skill_docs() {
+        // Regression for Codex PR #77 P2: the constitutional action string must
+        // carry the requested args + tags, never the skill's capability docs
+        // (which may list "delete" and trip Article 3 on a benign stage).
+        let action = governance_action("cache", &json!({ "operation": "keys" }), &["safety"]);
+        assert!(
+            action.contains("\"operation\":\"keys\""),
+            "requested args must drive the check: {action}"
+        );
+        assert!(
+            !action.contains("delete"),
+            "capability-doc words must not leak into the action: {action}"
+        );
+    }
+
+    #[test]
+    fn benign_cache_stage_is_compliant() {
+        // The `cache` skill's docs mention "delete"; a benign `keys` operation
+        // must still pass the constitution. Pre-fix this falsely tripped
+        // Article 3 (Reversibility) and refused a legitimate compiled pipeline.
+        let c = default_constitution();
+        let action = governance_action("cache", &json!({ "operation": "keys" }), &["safety"]);
+        assert!(
+            c.check_action(&action).compliant,
+            "benign cache stage must be compliant: {action}"
+        );
+    }
+
+    #[test]
+    fn destructive_request_is_still_caught() {
+        // The fix must not neuter the gate: a stage that actually *requests* a
+        // delete is still non-compliant via Article 3.
+        let c = default_constitution();
+        let action = governance_action(
+            "cache",
+            &json!({ "operation": "delete", "key": "x" }),
+            &["safety"],
+        );
+        assert!(
+            !c.check_action(&action).compliant,
+            "a real delete request must be caught: {action}"
+        );
     }
 }

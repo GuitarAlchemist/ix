@@ -127,8 +127,7 @@ pub fn compile(
         Ok(gate) => {
             // Persist the compiled spec for inspection / `ix pipeline run`.
             let yaml = spec.to_yaml_string().map_err(|e| format!("{e}"))?;
-            std::fs::write(GEN_FILE, &yaml)
-                .map_err(|e| format!("writing {GEN_FILE}: {e}"))?;
+            std::fs::write(GEN_FILE, &yaml).map_err(|e| format!("writing {GEN_FILE}: {e}"))?;
 
             if !run_it {
                 return emit_result(
@@ -190,11 +189,19 @@ fn resolve_spec(
 
         if let Some(rest) = reply.trim().strip_prefix("NO_COVERAGE") {
             let reason = rest.trim_start_matches([':', ' ', '\n']).trim().to_string();
-            return Ok(ResolveOutcome::NoCoverage { reason, rounds: round });
+            return Ok(ResolveOutcome::NoCoverage {
+                reason,
+                rounds: round,
+            });
         }
 
         match parse_and_lower(&strip_fences(&reply)) {
-            Ok(spec) => return Ok(ResolveOutcome::Compiled { spec, rounds: round }),
+            Ok(spec) => {
+                return Ok(ResolveOutcome::Compiled {
+                    spec,
+                    rounds: round,
+                })
+            }
             Err(e) => {
                 last_error = e;
                 if round == max_rounds {
@@ -237,8 +244,8 @@ fn execute_and_narrate(
 ) -> Result<(), String> {
     let dag = lower(spec).map_err(|e| format!("re-lower: {e}"))?;
     let levels = dag.parallel_levels();
-    let result = execute(&dag, &Default::default(), &NoCache)
-        .map_err(|e| format!("execution: {e}"))?;
+    let result =
+        execute(&dag, &Default::default(), &NoCache).map_err(|e| format!("execution: {e}"))?;
 
     // ── Deterministic NL narration grounded in the typed DAG ─────────────
     let mut prose = String::new();
@@ -250,7 +257,11 @@ fn execute_and_narrate(
     ));
     for (i, level) in levels.iter().enumerate() {
         for id in level {
-            let skill = spec.stages.get(*id).map(|s| s.skill.as_str()).unwrap_or("?");
+            let skill = spec
+                .stages
+                .get(*id)
+                .map(|s| s.skill.as_str())
+                .unwrap_or("?");
             let out = result
                 .node_results
                 .get(*id)
@@ -329,9 +340,8 @@ fn call_anthropic(
 
 /// Skills callable from a pipeline stage (arity-1, single JSON arg).
 fn pipeline_callable_skills() -> Vec<&'static ix_registry::SkillDescriptor> {
-    let mut skills: Vec<&'static ix_registry::SkillDescriptor> = ix_registry::all()
-        .filter(|s| s.inputs.len() == 1)
-        .collect();
+    let mut skills: Vec<&'static ix_registry::SkillDescriptor> =
+        ix_registry::all().filter(|s| s.inputs.len() == 1).collect();
     skills.sort_by_key(|s| s.name);
     skills
 }
@@ -392,10 +402,10 @@ fn coverage_score(
 /// "compute"/"analyze"/"run") so content signal survives.
 fn content_terms(s: &str) -> String {
     const STOP: &[&str] = &[
-        "the", "and", "for", "with", "that", "this", "from", "into", "over", "are", "was",
-        "your", "you", "our", "their", "its", "it", "of", "to", "in", "on", "at", "by", "as",
-        "is", "be", "an", "or", "me", "my", "we", "us", "then", "them", "these", "those",
-        "some", "any", "all", "a", "i",
+        "the", "and", "for", "with", "that", "this", "from", "into", "over", "are", "was", "your",
+        "you", "our", "their", "its", "it", "of", "to", "in", "on", "at", "by", "as", "is", "be",
+        "an", "or", "me", "my", "we", "us", "then", "them", "these", "those", "some", "any", "all",
+        "a", "i",
     ];
     s.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
@@ -523,12 +533,16 @@ mod tests {
     fn coverage_ranks_in_domain_above_out_of_domain() {
         let skills = pipeline_callable_skills();
         assert!(!skills.is_empty(), "registry has pipeline-callable skills");
-        let (in_dom, in_top) =
-            coverage_score("compute the mean and standard deviation of these numbers", &skills);
+        let (in_dom, in_top) = coverage_score(
+            "compute the mean and standard deviation of these numbers",
+            &skills,
+        );
         let (out_dom, _) =
             coverage_score("teleport to the moon and bake a chocolate cake", &skills);
-        let (collision, ctop) =
-            coverage_score("scrape the front page of a news website and email me a summary", &skills);
+        let (collision, ctop) = coverage_score(
+            "scrape the front page of a news website and email me a summary",
+            &skills,
+        );
         eprintln!("coverage: in_domain={in_dom:.4} (top={in_top:?}) out_domain={out_dom:.4} lexical_collision={collision:.4} (top={ctop:?})");
         assert!(
             in_dom > out_dom,
@@ -540,7 +554,10 @@ mod tests {
             out_dom < 0.05,
             "stopword-stripped out-of-domain should be ~0, got {out_dom}"
         );
-        assert!(in_dom > 0.15, "in-domain should be clearly positive, got {in_dom}");
+        assert!(
+            in_dom > 0.15,
+            "in-domain should be clearly positive, got {in_dom}"
+        );
         // KNOWN LIMITATION (pinned): lexical coverage canNOT catch partial
         // content-word collisions — "summary of a website" collides with skill
         // docs ("summary statistics", "ingest…page"), scoring well above the
@@ -582,12 +599,18 @@ mod tests {
         let mut calls = 0usize;
         let mut proposer = |_m: &[Value]| -> Result<String, String> {
             calls += 1;
-            Ok("version: \"1\"\nstages:\n  s:\n    skill: no.such.skill\n    args: {}\n".to_string())
+            Ok(
+                "version: \"1\"\nstages:\n  s:\n    skill: no.such.skill\n    args: {}\n"
+                    .to_string(),
+            )
         };
         match resolve_spec(&mut proposer, "x", 2).unwrap() {
             ResolveOutcome::TranslateFailed { rounds, error } => {
                 assert_eq!(rounds, 2);
-                assert!(error.contains("no.such.skill"), "verbatim error preserved: {error}");
+                assert!(
+                    error.contains("no.such.skill"),
+                    "verbatim error preserved: {error}"
+                );
             }
             other => panic!("expected TranslateFailed, got {other:?}"),
         }
@@ -596,8 +619,9 @@ mod tests {
 
     #[test]
     fn resolve_honors_no_coverage_sentinel() {
-        let mut proposer =
-            |_m: &[Value]| -> Result<String, String> { Ok("NO_COVERAGE: web scraping not available".to_string()) };
+        let mut proposer = |_m: &[Value]| -> Result<String, String> {
+            Ok("NO_COVERAGE: web scraping not available".to_string())
+        };
         match resolve_spec(&mut proposer, "scrape a site", 3).unwrap() {
             ResolveOutcome::NoCoverage { reason, rounds } => {
                 assert_eq!(rounds, 0);
