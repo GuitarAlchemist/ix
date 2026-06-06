@@ -90,6 +90,30 @@ pub fn compile(
     for round in 0..=max_rounds {
         rounds_used = round;
         let reply = call_anthropic(&api_key, &model, &system_prompt, &messages)?;
+
+        // ── Semantic coverage (fail-closed LLM relevance) ────────────────
+        // The proposer is instructed to emit `NO_COVERAGE: <reason>` when the
+        // request needs a capability no catalog skill provides. This catches
+        // the lexical-collision cases the TF-IDF pre-gate cannot ("summary of
+        // a website" vs "summary statistics"). Routing role, not self-judge;
+        // fail-closed (a wrong NO_COVERAGE only over-refuses, never confabulates).
+        if let Some(rest) = reply.trim().strip_prefix("NO_COVERAGE") {
+            let reason = rest.trim_start_matches([':', ' ', '\n']).trim();
+            log_gap(sentence, "semantic-noncoverage", reason, round);
+            return emit_result(
+                format,
+                json!({
+                    "status": "out_of_domain",
+                    "sentence": sentence,
+                    "reason": reason,
+                    "detected_by": "llm-relevance",
+                    "rounds": round,
+                    "logged_to": gap_log_path(),
+                    "note": "No IX skill serves this request (semantic relevance) — refused instead of confabulating.",
+                }),
+            );
+        }
+
         let yaml = strip_fences(&reply);
 
         match parse_and_lower(&yaml) {
@@ -426,6 +450,12 @@ stages:
     format!(
         "You compile a natural-language request into a canonical IX pipeline \
          (`ix.yaml`), and emit ONLY the YAML — no prose, no markdown fences.\n\n\
+         COVERAGE FIRST: you may use ONLY skills from the catalog below. If the \
+         request requires a capability that NO catalog skill provides (e.g. web \
+         scraping, sending email, reading external files/URLs, network I/O, \
+         image generation), do NOT substitute unrelated skills to seem helpful. \
+         Instead reply with EXACTLY `NO_COVERAGE: <one line naming the missing \
+         capability>` and nothing else.\n\n\
          CRITICAL SHAPE: a PipelineSpec is a MAP of stages keyed by id (NOT a \
          list of steps). Each stage names a `skill` from the catalog and a JSON \
          `args` object. Express data flow with `{{\"from\": \"stage_id.key\"}}` \
