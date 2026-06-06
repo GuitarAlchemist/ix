@@ -42,7 +42,41 @@ pub fn compile(
         .map_err(|_| "ANTHROPIC_API_KEY not set (the proposer calls the Anthropic Messages API directly; MCP sampling is deprecated)".to_string())?;
     let model = std::env::var("IX_THINKER_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.into());
 
-    let catalog = pipeline_callable_catalog();
+    let skills = pipeline_callable_skills();
+
+    // ── Semantic-coverage gate (executable, pre-LLM) ─────────────────────
+    // A capable model will confabulate a structurally-valid spec from
+    // unrelated skills for an out-of-domain request (first dogfood finding,
+    // 2026-06-06). `lower()` + governance check STRUCTURE, not coverage, so
+    // we score intent↔catalog relevance with IX's own TF-IDF *before* calling
+    // the LLM, and log a capability gap instead of confabulating.
+    let cov_min: f64 = std::env::var("IX_THINKER_COVERAGE_MIN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.08);
+    let (cov_max, cov_top) = coverage_score(sentence, &skills);
+    if cov_max < cov_min {
+        log_gap(
+            sentence,
+            "coverage",
+            &format!("no IX skill covers this intent (max TF-IDF cosine {cov_max:.3} < {cov_min}); nearest: {cov_top:?}"),
+            0,
+        );
+        return emit_result(
+            format,
+            json!({
+                "status": "out_of_domain",
+                "sentence": sentence,
+                "coverage_max": cov_max,
+                "coverage_threshold": cov_min,
+                "nearest_skills": cov_top.iter().map(|(n, s)| json!({ "skill": n, "score": s })).collect::<Vec<_>>(),
+                "logged_to": gap_log_path(),
+                "note": "No IX skill plausibly serves this request — logged as a capability gap instead of confabulating a spec.",
+            }),
+        );
+    }
+
+    let catalog = catalog_value(&skills);
     let schema = build_schema();
     let system_prompt = build_system_prompt(&schema, &catalog);
 
@@ -287,13 +321,17 @@ fn call_anthropic(
 
 // ── Prompt construction ─────────────────────────────────────────────────
 
-/// Skills callable from a pipeline stage (arity-1, single JSON arg), with the
-/// doc, governance tags, and arg schema the proposer needs.
-fn pipeline_callable_catalog() -> Value {
+/// Skills callable from a pipeline stage (arity-1, single JSON arg).
+fn pipeline_callable_skills() -> Vec<&'static ix_registry::SkillDescriptor> {
     let mut skills: Vec<&'static ix_registry::SkillDescriptor> = ix_registry::all()
         .filter(|s| s.inputs.len() == 1)
         .collect();
     skills.sort_by_key(|s| s.name);
+    skills
+}
+
+/// The catalog the proposer sees: name, doc, governance tags, and arg schema.
+fn catalog_value(skills: &[&'static ix_registry::SkillDescriptor]) -> Value {
     let rows: Vec<Value> = skills
         .iter()
         .map(|s| {
@@ -306,6 +344,68 @@ fn pipeline_callable_catalog() -> Value {
         })
         .collect();
     json!(rows)
+}
+
+/// Executable semantic-coverage score: the max TF-IDF cosine between the
+/// request and any pipeline-callable skill's "name + doc". Dogfoods
+/// `ix-supervised`'s own `TfidfVectorizer` — deterministic, NOT an LLM judging
+/// its own output. Returns `(max_score, top-3 matches)` so a rejection is
+/// auditable rather than a silent block.
+fn coverage_score(
+    sentence: &str,
+    skills: &[&'static ix_registry::SkillDescriptor],
+) -> (f64, Vec<(String, f64)>) {
+    use ix_supervised::text::TfidfVectorizer;
+    // Strip stopwords first: raw lexical TF-IDF lets "the/and/to/a" match many
+    // skill docs and floats out-of-domain requests up to ~0.25 (measured). With
+    // stopwords gone, only CONTENT words count, so an out-of-domain query whose
+    // nouns/verbs appear in no skill doc collapses toward 0.
+    let corpus: Vec<String> = skills
+        .iter()
+        .map(|s| content_terms(&format!("{} {}", s.name.replace(['.', '_'], " "), s.doc)))
+        .collect();
+    let corpus_refs: Vec<&str> = corpus.iter().map(|s| s.as_str()).collect();
+    let query = content_terms(sentence);
+    let mut vectorizer = TfidfVectorizer::new();
+    let m = vectorizer.fit_transform(&corpus_refs); // n × vocab
+    let q = vectorizer.transform(&[query.as_str()]); // 1 × vocab
+    let qrow = q.row(0);
+    let mut scored: Vec<(String, f64)> = skills
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.name.to_string(), cosine(qrow, m.row(i))))
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let max = scored.first().map(|x| x.1).unwrap_or(0.0);
+    scored.truncate(3);
+    (max, scored)
+}
+
+/// Lowercase, split on non-alphanumerics, drop short tokens + English
+/// stopwords. The stopword set is deliberately generic (no domain verbs like
+/// "compute"/"analyze"/"run") so content signal survives.
+fn content_terms(s: &str) -> String {
+    const STOP: &[&str] = &[
+        "the", "and", "for", "with", "that", "this", "from", "into", "over", "are", "was",
+        "your", "you", "our", "their", "its", "it", "of", "to", "in", "on", "at", "by", "as",
+        "is", "be", "an", "or", "me", "my", "we", "us", "then", "them", "these", "those",
+        "some", "any", "all", "a", "i",
+    ];
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 3 && !STOP.contains(t))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn cosine(a: ndarray::ArrayView1<f64>, b: ndarray::ArrayView1<f64>) -> f64 {
+    let na = a.dot(&a).sqrt();
+    let nb = b.dot(&b).sqrt();
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        a.dot(&b) / (na * nb)
+    }
 }
 
 fn build_system_prompt(schema: &Value, catalog: &Value) -> String {
@@ -401,4 +501,43 @@ fn log_gap(sentence: &str, kind: &str, error: &str, rounds: u32) {
 
 fn emit_result(format: Format, payload: Value) -> Result<(), String> {
     output::emit(&payload, format).map_err(|e| format!("{e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coverage_ranks_in_domain_above_out_of_domain() {
+        let skills = pipeline_callable_skills();
+        assert!(!skills.is_empty(), "registry has pipeline-callable skills");
+        let (in_dom, in_top) =
+            coverage_score("compute the mean and standard deviation of these numbers", &skills);
+        let (out_dom, _) =
+            coverage_score("teleport to the moon and bake a chocolate cake", &skills);
+        let (collision, ctop) =
+            coverage_score("scrape the front page of a news website and email me a summary", &skills);
+        eprintln!("coverage: in_domain={in_dom:.4} (top={in_top:?}) out_domain={out_dom:.4} lexical_collision={collision:.4} (top={ctop:?})");
+        assert!(
+            in_dom > out_dom,
+            "in-domain {in_dom} must exceed out-of-domain {out_dom}"
+        );
+        // After stopword stripping, an out-of-domain query whose content words
+        // appear in no skill doc must collapse near zero.
+        assert!(
+            out_dom < 0.05,
+            "stopword-stripped out-of-domain should be ~0, got {out_dom}"
+        );
+        assert!(in_dom > 0.15, "in-domain should be clearly positive, got {in_dom}");
+        // KNOWN LIMITATION (pinned): lexical coverage canNOT catch partial
+        // content-word collisions — "summary of a website" collides with skill
+        // docs ("summary statistics", "ingest…page"), scoring well above the
+        // gate. The fix is semantic-embedding coverage, not a higher lexical
+        // threshold (which would false-block thin in-domain requests). Logged
+        // to state/thinking-machine/gaps.jsonl as the next increment.
+        assert!(
+            collision > 0.1,
+            "documents that lexical coverage misses the collision case; got {collision}"
+        );
+    }
 }
