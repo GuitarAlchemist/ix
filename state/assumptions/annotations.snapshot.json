@@ -14,6 +14,18 @@
       "test_binding": "dbscan_skill_executes_and_separates_clusters_from_noise"
     },
     {
+      "key": "sha256:dda80e531670cb3bd281d503a7a9516e5c7dcfed68cb8e95364c95f0e953ddaa",
+      "path": "crates/ix-agent/src/handlers.rs",
+      "line": 411,
+      "kind": "invariant",
+      "claim": "symmetric_eigen returns eigenvalues descending and column-major eigenvectors; the handler transposes so eigenvectors[k] is the unit eigenvector for eigenvalues[k]",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "skills::batch1::tests::eigen_skill_executes_on_symmetric_matrix",
+      "anchor_hash": "sha256:7778d50d92cd959ae968c8ff10f56b3370c5b3be12299121928bd0241c51bb99",
+      "test_binding": "eigen_skill_executes_on_symmetric_matrix"
+    },
+    {
       "key": "sha256:dd5f98b683ce720d99120636957b1c8fece736215d4b0ce424a6380c2e1b79e2",
       "path": "crates/ix-assumption-graph/src/graph.rs",
       "line": 171,
