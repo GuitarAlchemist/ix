@@ -141,6 +141,11 @@ enum ListNoun {
         domain: Option<String>,
         #[arg(long)]
         query: Option<String>,
+        /// Include per-skill arg json_schema, governance_tags, and a
+        /// pipeline-callable (arity-1) flag — the bulk catalog an NL→pipeline
+        /// generator needs in one call.
+        #[arg(long)]
+        schemas: bool,
     },
     /// Distinct domains across registered skills, with counts
     Domains,
@@ -221,6 +226,20 @@ enum PipelineNoun {
         #[arg(long)]
         file: Option<String>,
     },
+    /// Emit the PipelineSpec JSON Schema (skill enum drawn from the registry)
+    Schema,
+    /// Compile a natural-language request into a pipeline via the LLM proposer,
+    /// validate (lower), gate (governance), and optionally run + narrate.
+    Compile {
+        /// The natural-language request, e.g. "compute stats on some numbers then audit it".
+        sentence: String,
+        /// Max self-repair rounds when the generated spec fails validation.
+        #[arg(long, default_value_t = 3)]
+        max_rounds: u32,
+        /// Execute the compiled pipeline (default: compile + gate only).
+        #[arg(long)]
+        run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -258,9 +277,14 @@ fn dispatch(cli: Cli) -> i32 {
         },
 
         Verb::List { noun } => match noun {
-            ListNoun::Skills { domain, query } => try_or(verbs::list::skills(
+            ListNoun::Skills {
+                domain,
+                query,
+                schemas,
+            } => try_or(verbs::list::skills(
                 domain.as_deref(),
                 query.as_deref(),
+                schemas,
                 fmt,
             )),
             ListNoun::Domains => try_or(verbs::list::domains(fmt)),
@@ -321,6 +345,12 @@ fn dispatch(cli: Cli) -> i32 {
             PipelineNoun::Run { file, json } => {
                 try_or(verbs::pipeline::run(file.as_deref(), json, fmt))
             }
+            PipelineNoun::Schema => try_or(verbs::pipeline::schema(fmt)),
+            PipelineNoun::Compile {
+                sentence,
+                max_rounds,
+                run,
+            } => try_or(verbs::compile::compile(&sentence, max_rounds, run, fmt)),
         },
 
         Verb::Demo { noun } => match noun {

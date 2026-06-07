@@ -1979,6 +1979,110 @@ pub fn pipeline_compile_placeholder(_params: Value) -> Result<Value, String> {
     )
 }
 
+// ── ix_nl_to_pipeline — the "thinking machine" as an MCP tool ────────────
+//
+// Agent-native parity: any action a user can take at the CLI, an agent can
+// take through MCP. This wraps the canonical `ix pipeline compile` CLI (the
+// single source of truth — same coverage gate, governance gate, lower()
+// validation, bounded repair, narration) rather than reimplementing it.
+// Direct-API proposer; NO MCP sampling (deprecated, unsupported by Claude
+// Code). Extracting the core into a shared lib so this calls it in-process is
+// the `unify` follow-up; shelling the sibling binary keeps behavior identical
+// today with no circular ix-skill<->ix-agent dependency.
+
+/// `ix_nl_to_pipeline` handler — wraps `ix pipeline compile`.
+pub fn nl_to_pipeline(params: Value) -> Result<Value, String> {
+    let sentence = params
+        .get("sentence")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "ix_nl_to_pipeline: missing 'sentence' (string)".to_string())?;
+    let run = params.get("run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let max_rounds = params
+        .get("max_rounds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3);
+
+    let ix_bin = ix_cli_path();
+    let mut cmd = std::process::Command::new(&ix_bin);
+    cmd.args([
+        "--format",
+        "json",
+        "pipeline",
+        "compile",
+        sentence,
+        "--max-rounds",
+        &max_rounds.to_string(),
+    ]);
+    if run {
+        cmd.arg("--run");
+    }
+    // The shelled `ix` resolves the constitution from cwd or IX_GOVERNANCE_DIR.
+    // The MCP host's cwd is not guaranteed to be the repo root, so locate the
+    // governance dir relative to the binary and pass it explicitly — otherwise
+    // the fail-closed gate refuses every pipeline ("constitution load failed").
+    if std::env::var_os("IX_GOVERNANCE_DIR").is_none() {
+        if let Some(gov) = find_governance_dir(&ix_bin) {
+            cmd.env("IX_GOVERNANCE_DIR", gov);
+        }
+    }
+    let out = cmd.output().map_err(|e| {
+        format!(
+            "ix_nl_to_pipeline: failed to spawn `{}`: {e}",
+            ix_bin.display()
+        )
+    })?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "ix pipeline compile produced no output (status {}): {}",
+            out.status,
+            stderr.trim()
+        ));
+    }
+    serde_json::from_str::<Value>(trimmed).map_err(|e| {
+        format!("ix_nl_to_pipeline: expected JSON from `ix pipeline compile`, got: {trimmed} ({e})")
+    })
+}
+
+/// Walk up from a starting path looking for a `governance/demerzel` directory.
+/// Lets the MCP tool find the constitution regardless of the host's cwd.
+fn find_governance_dir(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut cur = start.parent();
+    while let Some(dir) = cur {
+        let cand = dir.join("governance").join("demerzel");
+        if cand.is_dir() {
+            return Some(cand);
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+/// Locate the sibling `ix` CLI binary (same target dir as this `ix-mcp`),
+/// falling back to `ix` on `PATH`.
+fn ix_cli_path() -> std::path::PathBuf {
+    let name = if cfg!(windows) { "ix.exe" } else { "ix" };
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // Sibling: production layout (target/<profile>/ix-mcp → .../ix).
+            let sib = dir.join(name);
+            if sib.is_file() {
+                return sib;
+            }
+            // Grandparent: test layout (target/<profile>/deps/<test> → .../ix).
+            if let Some(up) = dir.parent() {
+                let g = up.join(name);
+                if g.is_file() {
+                    return g;
+                }
+            }
+        }
+    }
+    std::path::PathBuf::from(name)
+}
+
 // ── ix_git_log ─────────────────────────────────────────────
 
 /// P1.1 — shell out to `git log` and return a normalized per-path

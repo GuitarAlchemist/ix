@@ -69,6 +69,7 @@ const EXPECTED: &[&str] = &[
     "ix_markov",
     "ix_ml_pipeline",
     "ix_ml_predict",
+    "ix_nl_to_pipeline",
     "ix_nn_forward",
     "ix_number_theory",
     "ix_optimize",
@@ -145,9 +146,11 @@ fn parity_expected_count() {
     // + ix_sentrux_annotate (2026-05-24, sentrux structural-rules bridge) = 71.
     // + ix_assumption_query + ix_assumption_belief_at (2026-05-31, temporal
     //   assumption graph Phase 4) = 73.
+    // + ix_nl_to_pipeline (2026-06-06, NL->pipeline "thinking machine" as an
+    //   MCP tool, agent-native parity with `ix pipeline compile`) = 76.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 75);
+    assert_eq!(EXPECTED.len(), 76);
 }
 
 #[test]
