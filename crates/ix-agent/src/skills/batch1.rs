@@ -264,6 +264,54 @@ pub fn dbscan(params: Value) -> Result<Value, String> {
     handlers::dbscan(params)
 }
 
+// --- ix_eigen --------------------------------------------------------------
+
+fn eigen_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "matrix": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } },
+                "description": "A real SYMMETRIC square matrix (row-major)"
+            }
+        },
+        "required": ["matrix"]
+    })
+}
+
+fn eigen_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "eigenvalues": {
+                "type": "array",
+                "items": { "type": "number" },
+                "description": "Eigenvalues in descending order"
+            },
+            "eigenvectors": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } },
+                "description": "Unit eigenvectors; eigenvectors[k] corresponds to eigenvalues[k]"
+            },
+            "n": { "type": "integer", "description": "Matrix dimension" }
+        }
+    })
+}
+
+/// Eigendecomposition of a real symmetric matrix via cyclic Jacobi rotations:
+/// returns eigenvalues in descending order and the matching unit eigenvectors.
+#[ix_skill(
+    domain = "math",
+    name = "eigen",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch1::eigen_schema",
+    output_schema_fn = "crate::skills::batch1::eigen_output_schema"
+)]
+pub fn eigen(params: Value) -> Result<Value, String> {
+    handlers::eigen(params)
+}
+
 // --- ix_linear_regression --------------------------------------------------
 
 fn linear_regression_schema() -> Value {
@@ -477,5 +525,87 @@ mod tests {
     fn dbscan_rejects_min_points_below_one() {
         let err = dbscan(json!({ "data": [[0.0, 0.0]], "eps": 1.0, "min_points": 0 })).unwrap_err();
         assert!(err.contains("min_points"), "got: {err}");
+    }
+
+    // Executes-test for `eigen`. Uses a 3x3 with DISTINCT eigenvalues, whose
+    // eigenvector matrix is NOT component-symmetric — so this test discriminates
+    // a wrong row/column transpose (a 2x2 like [[2,1],[1,2]] has V == V^T, so a
+    // missing transpose would pass identically — the over-claim a review caught).
+    // Asserts A·v_k = λ_k·v_k for EVERY k (binds both the per-index alignment and
+    // the transpose), plus descending order and unit norm.
+    #[test]
+    fn eigen_skill_executes_on_symmetric_matrix() {
+        let m = [[4.0, 1.0, 2.0], [1.0, 3.0, 0.5], [2.0, 0.5, 5.0]];
+        let out = eigen(json!({ "matrix": m })).expect("eigen runs");
+
+        let vals: Vec<f64> = out["eigenvalues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        assert_eq!(vals.len(), 3);
+        assert!(
+            vals[0] >= vals[1] && vals[1] >= vals[2],
+            "eigenvalues must be descending: {vals:?}"
+        );
+
+        let vecs: Vec<Vec<f64>> = out["eigenvectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                r.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_f64().unwrap())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(vecs.len(), 3, "one eigenvector per dimension");
+
+        for (k, vk) in vecs.iter().enumerate() {
+            let norm: f64 = vk.iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!(
+                (norm - 1.0).abs() < 1e-9,
+                "eigenvector {k} must be unit norm, got {norm}"
+            );
+            // A·v_k = λ_k·v_k. The rows of the eigenvector matrix are NOT
+            // eigenvectors of A, so a transposed/misaligned output fails here.
+            for (i, mrow) in m.iter().enumerate() {
+                let avi: f64 = (0..3).map(|j| mrow[j] * vk[j]).sum();
+                assert!(
+                    (avi - vals[k] * vk[i]).abs() < 1e-9,
+                    "A·v[{k}] = λ[{k}]·v[{k}] failed at row {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn eigen_skill_is_registered_and_pipeline_callable() {
+        let desc = ix_registry::all()
+            .find(|s| s.name == "eigen")
+            .expect("eigen skill registered in the capability registry");
+        assert_eq!(
+            desc.inputs.len(),
+            1,
+            "must be arity-1 to be pipeline-callable"
+        );
+    }
+
+    // Honest boundary: a non-square matrix is rejected with a clear error.
+    #[test]
+    fn eigen_rejects_non_square() {
+        let err = eigen(json!({ "matrix": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]] })).unwrap_err();
+        assert!(err.contains("square"), "got: {err}");
+    }
+
+    // Honest boundary: a non-symmetric matrix is rejected, not silently solved
+    // as if symmetric — the Jacobi solver would otherwise return wrong results.
+    #[test]
+    fn eigen_rejects_non_symmetric() {
+        let err = eigen(json!({ "matrix": [[1.0, 2.0], [3.0, 4.0]] })).unwrap_err();
+        assert!(err.contains("symmetric"), "got: {err}");
     }
 }

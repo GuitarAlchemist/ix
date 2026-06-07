@@ -65,6 +65,7 @@ const EXPECTED: &[&str] = &[
     "ix_grothendieck_path",
     "ix_hyperloglog",
     "ix_dbscan",
+    "ix_eigen",
     "ix_kmeans",
     "ix_linear_regression",
     "ix_pca",
@@ -157,9 +158,11 @@ fn parity_expected_count() {
     //   auto-exposed via the registry bridge) = 78.
     // + ix_dbscan (2026-06-07, density clustering — dogfood catalog-breadth fix;
     //   auto-exposed via the registry bridge) = 79.
+    // + ix_eigen (2026-06-07, symmetric eigendecomposition — dogfood
+    //   catalog-breadth fix; auto-exposed via the registry bridge) = 80.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 79);
+    assert_eq!(EXPECTED.len(), 80);
 }
 
 #[test]
@@ -290,10 +293,11 @@ fn parity_all_43_registry_backed() {
     // algorithm tools are registry-backed. ix_demo is manual.
     // + pca (2026-06-07, dogfood catalog-breadth fix) = 53.
     // + dbscan (2026-06-07, dogfood catalog-breadth fix) = 54.
+    // + eigen (2026-06-07, dogfood catalog-breadth fix) = 55.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 54,
-        "expected 54 registry skills, got {registry_count}"
+        registry_count, 55,
+        "expected 55 registry skills, got {registry_count}"
     );
 }
 
@@ -336,4 +340,11 @@ fn registry_backed_calls_dispatch_correctly() {
         .call("ix_number_theory", params)
         .expect("ix_number_theory via registry");
     assert_eq!(result["gcd"].as_u64(), Some(6));
+
+    // batch1: ix_eigen → eigen (exercises the MCP-name dispatch path for the new
+    // skill, not just the wrapper). [[2,1],[1,2]] has top eigenvalue 3.
+    let params = serde_json::json!({ "matrix": [[2.0, 1.0], [1.0, 2.0]] });
+    let result = reg.call("ix_eigen", params).expect("ix_eigen via registry");
+    let top = result["eigenvalues"][0].as_f64().expect("eigenvalues[0]");
+    assert!((top - 3.0).abs() < 1e-9, "top eigenvalue ~3, got {top}");
 }

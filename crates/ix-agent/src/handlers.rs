@@ -406,6 +406,63 @@ pub fn dbscan(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_eigen ────────────────────────────────────────────────
+
+// @ai:invariant symmetric_eigen returns eigenvalues descending and column-major eigenvectors; the handler transposes so eigenvectors[k] is the unit eigenvector for eigenvalues[k] [T:test conf:0.9 src:skills::batch1::tests::eigen_skill_executes_on_symmetric_matrix]
+pub fn eigen(params: Value) -> Result<Value, String> {
+    let rows = parse_f64_matrix(&params, "matrix")?;
+    let n = rows.len();
+    if n == 0 {
+        return Err("matrix must have ≥ 1 row".into());
+    }
+    if rows.iter().any(|r| r.len() != n) {
+        return Err(format!(
+            "matrix must be square; got {n} rows but a row has a different column count"
+        ));
+    }
+    // Be self-sufficient about non-finite entries rather than relying on the JSON
+    // parse layer (serde rejects NaN/inf today, but the symmetry check below is
+    // NOT NaN-safe — (NaN-NaN).abs() > tol is false — so guard explicitly).
+    if rows.iter().flatten().any(|x| !x.is_finite()) {
+        return Err("matrix entries must be finite (no NaN or infinity)".to_string());
+    }
+    // symmetric_eigen is the cyclic-Jacobi solver: it reads the matrix AS
+    // symmetric and would silently return wrong results for an asymmetric input.
+    // Reject asymmetry rather than mislead (honest boundary). The tolerance is
+    // RELATIVE to entry magnitude so a genuinely-symmetric large-scale matrix
+    // isn't falsely rejected on last-ULP rounding.
+    const SYM_EPS: f64 = 1e-9;
+    for (i, row_i) in rows.iter().enumerate() {
+        for (j, &aij) in row_i.iter().enumerate().skip(i + 1) {
+            let aji = rows[j][i];
+            let asym = (aij - aji).abs();
+            let tol = SYM_EPS * aij.abs().max(aji.abs()).max(1.0);
+            if asym > tol {
+                return Err(format!(
+                    "matrix must be symmetric (|A[{i}][{j}] - A[{j}][{i}]| = {asym} > {tol}); this is the symmetric Jacobi solver"
+                ));
+            }
+        }
+    }
+
+    let a = vecs_to_array2(&rows)?;
+    let (values, vectors) = ix_math::eigen::symmetric_eigen(&a)
+        .map_err(|e| format!("eigendecomposition failed: {e}"))?;
+
+    let eigenvalues: Vec<f64> = values.to_vec();
+    // Transpose column-major (vectors.column(k) is the k-th eigenvector) into a
+    // row-major list so eigenvectors[k] is the unit eigenvector for eigenvalues[k].
+    let eigenvectors: Vec<Vec<f64>> = (0..n)
+        .map(|k| (0..n).map(|i| vectors[[i, k]]).collect())
+        .collect();
+
+    Ok(json!({
+        "eigenvalues": eigenvalues,
+        "eigenvectors": eigenvectors,
+        "n": n,
+    }))
+}
+
 // ── ix_tsne ────────────────────────────────────────────────
 
 pub fn tsne(params: Value) -> Result<Value, String> {
