@@ -255,7 +255,12 @@ fn execute_and_narrate(
     gate: Value,
     format: Format,
 ) -> Result<(), String> {
-    let dag = lower(spec).map_err(|e| format!("re-lower: {e}"))?;
+    // Execution-time governance on RESOLVED args (PR #77 review P1): the same
+    // constitution-backed gate `ix pipeline run` uses, so executing a compiled
+    // pipeline cannot smuggle a destructive op through a `{"from"}` ref.
+    let gate_impl = crate::verbs::pipeline::ConstitutionGate::load()?;
+    let dag = ix_pipeline::lower::lower_with_gate(spec, gate_impl)
+        .map_err(|e| format!("re-lower: {e}"))?;
     let levels = dag.parallel_levels();
     let result =
         execute(&dag, &Default::default(), &NoCache).map_err(|e| format!("execution: {e}"))?;

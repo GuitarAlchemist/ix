@@ -31,7 +31,7 @@ Plus transport-agnostic introspection: `ix pipeline schema`,
 | D2 | **Canonical IR = `PipelineSpec`** (`ix.yaml`), deprecating System A's `{steps:[…]}` | **ONE-WAY** (needs sign-off to delete `{steps}`) | zero non-test callers of `ix_pipeline_run`'s `{steps}` executor for 14 days |
 | D3 | **Proposer home = `ix-skill` CLI verb** (not an MCP tool yet) | two-way | agent-native parity needed → add MCP-tool wrapper |
 | D4 | **Coverage = two-tier**: free lexical TF-IDF pre-filter + fail-closed LLM relevance (`NO_COVERAGE`) | two-way | lexical false-positives matter → replace pre-filter with real embeddings (ix-gpu cosine) |
-| D5 | **Governance gate in the CLI verbs** (`run`+`compile`), template-time only, not yet inside `ix-pipeline::execute()` | two-way | **NOW TRIGGERED** by the P1 below — a `{from}`-ref can hide a destructive op from the template-time scan; the durable fix is gating the *resolved* args in `ix-pipeline::execute()` (add an `ix-governance` dep to `ix-pipeline`; also covers MCP `ix_pipeline_run`) |
+| D5 | **Governance now gates RESOLVED args at execution time** via a trait-injected `ix_pipeline::gate::StageGate` (template-time `governance_gate` kept as a fail-fast pre-flight) | two-way | ✅ **RESOLVED** — the P1 `{from}`-ref bypass is closed: `lower_with_gate` consults the gate on post-resolution args before each skill runs. Design improvement vs. the original plan: a **trait seam** keeps `ix-pipeline` governance-agnostic (no `ix-governance` dep on the foundational crate; `ix-skill` injects `ConstitutionGate`). Any caller (incl. MCP `ix_pipeline_run`) gets enforcement by lowering with a gate |
 
 **One-way doors needing explicit sign-off before they harden:**
 - Publishing the `PipelineSpec` JSON Schema (`ix pipeline schema`) to a stable
@@ -55,15 +55,16 @@ Plus transport-agnostic introspection: `ix pipeline schema`,
 2. Lexical TF-IDF coverage misses partial content-word collisions (measured
    0.32 for a scrape/email request) → added fail-closed LLM relevance; logged
    "replace lexical with embeddings" as the next-level fix.
-3. **(Adversarial self-review, P1)** The governance gate is *template-time*: a
-   `{"from": "upstream"}` ref can supply a destructive operation that resolves
-   only at execution time, slipping past the substring scan. Bounded
-   exploitability, but structurally the gate never sees the resolved value.
-   Addressed this pass (removed the "unbypassable" overclaim; gate now surfaces
-   `unvetted_runtime_inputs`); **durable fix = the `unify` increment** (gate
-   resolved args in the executor). The loop found a real gap in the gate it
-   built. Also confirmed 3 P2s (UTF-8 panic in narration, missing HTTP timeout,
-   a fail-open comment labeled fail-closed) — all fixed.
+3. **(Adversarial self-review, P1)** The governance gate was *template-time*: a
+   `{"from": "upstream"}` ref could supply a destructive operation that resolves
+   only at execution time, slipping past the substring scan. First-pass
+   mitigation (#77): removed the "unbypassable" overclaim; gate surfaces
+   `unvetted_runtime_inputs`. **Durable fix now SHIPPED** (the `unify` PR): a
+   trait-injected `ix_pipeline::gate::StageGate` consulted on each stage's
+   *resolved* args before its skill runs (`lower_with_gate` + `ConstitutionGate`).
+   The loop found a real gap in the gate it built — and closed it. Also confirmed
+   3 P2s (UTF-8 panic in narration, missing HTTP timeout, a fail-open comment
+   labeled fail-closed) — all fixed in #77.
 
 ## Next increments (priority order)
 
@@ -71,9 +72,11 @@ Plus transport-agnostic introspection: `ix pipeline schema`,
    structural repair fires live. *(shipped)*
 2. ✅ **MCP-tool wrapper** — `ix_nl_to_pipeline` exposes `compile` as a tool
    (agent-native parity, live-verified). *(shipped)*
-3. **IR unification (`unify`)** — retarget + deprecate-with-shim
-   `ix_pipeline_compile` (`{steps}`); **gate the resolved args inside
-   `ix-pipeline::execute()`** (D5) — now carries the P1 security driver above,
-   not just coverage of the MCP path. ONE-WAY door (new `ix-governance` dep on
-   foundational `ix-pipeline`; deleting `{steps}`) → needs sign-off.
+3. **IR unification (`unify`)** — split into two halves:
+   - ✅ **Resolved-args governance** (the P1 security half) — *shipped* via the
+     `ix_pipeline::gate::StageGate` seam + `lower_with_gate` + `ConstitutionGate`
+     (D5). Trait injection avoided the foundational-crate dep entirely.
+   - ⏳ **Retire System A `{steps}`** (the cleanup half) — deferred to its **D2
+     trigger** (14-day zero-non-test-caller window) before deleting; premature
+     to delete now. ONE-WAY door → still needs sign-off when the window clears.
 4. **Embeddings coverage** — replace lexical pre-filter (D4).

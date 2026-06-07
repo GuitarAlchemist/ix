@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::dag::Dag;
 use crate::executor::{PipelineError, PipelineNode};
+use crate::gate::{allow_all, SharedGate};
 use crate::spec::{PipelineSpec, SpecError};
 
 /// Errors that can occur while lowering a spec to a DAG.
@@ -31,9 +32,22 @@ pub enum LowerError {
     Dag(String),
 }
 
-/// Lower a spec to an executable DAG. The resulting DAG can be handed to
-/// `executor::execute()`.
+/// Lower a spec to an executable DAG (no execution-time gate — every stage is
+/// allowed). The resulting DAG can be handed to `executor::execute()`.
 pub fn lower(spec: &PipelineSpec) -> Result<Dag<PipelineNode>, LowerError> {
+    lower_with_gate(spec, allow_all())
+}
+
+/// Like [`lower`], but each stage's compute closure consults `gate` on its
+/// **resolved** args (post-`{"from"}`-resolution) immediately before the skill
+/// runs. This is the seam where governance that must see real runtime values —
+/// not the spec template — is enforced; a `{"from": "upstream"}` ref that
+/// supplies a destructive operation is vetted here, after it resolves. See
+/// [`crate::gate`].
+pub fn lower_with_gate(
+    spec: &PipelineSpec,
+    gate: SharedGate,
+) -> Result<Dag<PipelineNode>, LowerError> {
     spec.validate_shape()?;
 
     // First pass: verify every skill exists and collect implicit deps from
@@ -81,10 +95,22 @@ pub fn lower(spec: &PipelineSpec) -> Result<Dag<PipelineNode>, LowerError> {
             input_map.insert(base.clone(), (base.clone(), "*".into()));
         }
 
+        // One Arc handle per node — the closure is `move` and the executor runs
+        // independent levels in parallel, so each closure owns its own clone.
+        let gate = gate.clone();
+
         let compute = Box::new(
             move |inputs: &HashMap<String, Value>| -> Result<Value, PipelineError> {
                 let resolved = resolve_from_refs(&args_template, inputs)
                     .map_err(|e| PipelineError::ComputeError(format!("{stage_id_for_err}: {e}")))?;
+
+                // Execution-time governance: the gate sees the RESOLVED args, so
+                // a `{"from"}` ref that supplied a destructive op is vetted here
+                // — the value the skill is about to run with, not the template.
+                gate.check(&stage_id_for_err, &skill_name, &resolved)
+                    .map_err(|e| {
+                        PipelineError::ComputeError(format!("{stage_id_for_err}: governance: {e}"))
+                    })?;
 
                 let desc = ix_registry::by_name(&skill_name).ok_or_else(|| {
                     PipelineError::ComputeError(format!(
