@@ -3,7 +3,7 @@
 use crate::output::{self, Format};
 use ix_pipeline::executor::{execute, NoCache};
 use ix_pipeline::lock::LockFile;
-use ix_pipeline::lower::lower;
+use ix_pipeline::lower::{lower, lower_with_gate};
 use ix_pipeline::spec::PipelineSpec;
 use serde_json::{json, Value};
 use std::io::{self, Write};
@@ -258,6 +258,54 @@ pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
     }))
 }
 
+/// A [`StageGate`](ix_pipeline::gate::StageGate) backed by the Demerzel
+/// constitution. Where `governance_gate` is the *template-time* pre-flight,
+/// this runs at *execution time* on each stage's RESOLVED args — so a
+/// `{"from"}` ref that supplied a destructive operation is finally vetted with
+/// the real value the skill is about to run with. The durable closure of the
+/// PR #77 review P1. Shares `governance_action` with the pre-flight so both
+/// speak the same constitutional vocabulary.
+pub(crate) struct ConstitutionGate {
+    constitution: ix_governance::Constitution,
+}
+
+impl ConstitutionGate {
+    /// Load the default constitution (honoring `IX_GOVERNANCE_DIR`). Fail-closed:
+    /// an unreadable constitution is an error, never a silent allow.
+    pub(crate) fn load() -> Result<std::sync::Arc<Self>, String> {
+        let gov_dir = std::env::var("IX_GOVERNANCE_DIR")
+            .unwrap_or_else(|_| "governance/demerzel".to_string());
+        let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
+        let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
+            .map_err(|e| {
+                format!(
+                    "cannot verify governance (constitution load failed: {e}) — refusing to execute"
+                )
+            })?;
+        Ok(std::sync::Arc::new(Self { constitution }))
+    }
+}
+
+impl ix_pipeline::gate::StageGate for ConstitutionGate {
+    fn check(&self, stage_id: &str, skill: &str, resolved_args: &Value) -> Result<(), String> {
+        let tags = ix_registry::by_name(skill)
+            .map(|d| d.governance_tags)
+            .unwrap_or(&[]);
+        let action = format!(
+            "{} as pipeline stage '{stage_id}'",
+            governance_action(skill, resolved_args, tags)
+        );
+        let result = self.constitution.check_action(&action);
+        if !result.compliant {
+            return Err(format!(
+                "skill '{skill}' is non-compliant on resolved args: {}",
+                result.warnings.join("; ")
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// `ix pipeline run [-f FILE] [--json]` — execute the pipeline.
 ///
 /// When `stream_ndjson` is true, emits NDJSON events (`start`, `stage_start`,
@@ -265,9 +313,15 @@ pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
 pub fn run(file: Option<&str>, stream_ndjson: bool, format: Format) -> Result<(), String> {
     let path: &str = file.unwrap_or(DEFAULT_FILE);
     let spec = PipelineSpec::from_file(path).map_err(|e| format!("loading {path}: {e}"))?;
-    let dag = lower(&spec).map_err(|e| format!("lowering {path}: {e}"))?;
-    // Fail-closed governance gate — a pipeline never executes unreviewed.
+    // Template-time pre-flight: fail fast on literal violations before ANY
+    // stage runs (prevents partial side effects from a multi-stage pipeline).
     governance_gate(&spec).map_err(|e| format!("governance gate: {e}"))?;
+    // Execution-time gate: lower WITH a constitution-backed StageGate so each
+    // stage's RESOLVED args (post-`{"from"}`-resolution) are vetted just before
+    // its skill runs — closes the template-only gate's ref blind spot (PR #77
+    // review P1). A `{"from"}` ref that supplies a destructive op is caught here.
+    let gate = ConstitutionGate::load().map_err(|e| format!("governance gate: {e}"))?;
+    let dag = lower_with_gate(&spec, gate).map_err(|e| format!("lowering {path}: {e}"))?;
     let levels = dag.parallel_levels();
     let total_stages = spec.stages.len();
 
@@ -431,6 +485,114 @@ mod tests {
         assert!(
             !c.check_action(&action).compliant,
             "a real delete request must be caught: {action}"
+        );
+    }
+
+    // ── Execution-time resolved-args gate (PR #77 review P1 closure) ─────
+    //
+    // A single literal end-to-end "{from}-ref resolves to delete → rejected"
+    // test isn't constructible: no registry skill emits a constitutional
+    // trigger word as output without a literal that an *earlier* gate already
+    // catches — which is exactly why the P1 is bounded. So closure is proven
+    // compositionally: (A) the gate receives RESOLVED args, (B) ConstitutionGate
+    // rejects a resolved destructive op, (C) a rejection aborts before the skill
+    // runs. A ∘ B ∘ C ⇒ a from-ref-supplied destructive op is caught at exec.
+
+    #[test]
+    fn resolved_gate_sees_post_resolution_args_not_the_template() {
+        use ix_pipeline::executor::{execute, NoCache};
+        use ix_pipeline::gate::StageGate;
+        use ix_pipeline::lower::lower_with_gate;
+        use std::sync::{Arc, Mutex};
+
+        struct Spy(Arc<Mutex<Vec<(String, Value)>>>);
+        impl StageGate for Spy {
+            fn check(&self, stage_id: &str, _skill: &str, resolved: &Value) -> Result<(), String> {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((stage_id.to_string(), resolved.clone()));
+                Ok(())
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let gate: Arc<dyn StageGate> = Arc::new(Spy(seen.clone()));
+
+        // `sink`'s data is a {from: "src.mean"} ref → resolves to src's mean (4.0).
+        let yaml = r#"
+version: "1"
+stages:
+  src:
+    skill: stats
+    args: { data: [2.0, 4.0, 6.0] }
+  sink:
+    skill: stats
+    args: { data: { from: "src.mean" } }
+"#;
+        let spec = PipelineSpec::from_yaml_str(yaml).expect("parse spec");
+        let dag = lower_with_gate(&spec, gate).expect("lower");
+        // Execution itself may error (a scalar isn't a valid stats input); we
+        // assert only what the gate SAW before `sink`'s skill ran.
+        let _ = execute(&dag, &Default::default(), &NoCache);
+
+        let recorded = seen.lock().unwrap();
+        let sink = recorded
+            .iter()
+            .find(|(id, _)| id == "sink")
+            .expect("gate was consulted for sink");
+        assert_eq!(
+            sink.1,
+            json!({ "data": 4.0 }),
+            "gate must see RESOLVED args (src.mean=4.0), not the {{from}} template: {:?}",
+            sink.1
+        );
+    }
+
+    #[test]
+    fn constitution_gate_rejects_resolved_destructive_op() {
+        use ix_pipeline::gate::StageGate;
+        let gate = ConstitutionGate {
+            constitution: default_constitution(),
+        };
+        assert!(
+            gate.check("s", "cache", &json!({ "operation": "delete", "key": "x" }))
+                .is_err(),
+            "a resolved delete must be rejected at execution time (Article 3)"
+        );
+        assert!(
+            gate.check("s", "cache", &json!({ "operation": "keys" }))
+                .is_ok(),
+            "a benign resolved op must pass"
+        );
+    }
+
+    #[test]
+    fn rejecting_gate_aborts_stage_before_skill_runs() {
+        use ix_pipeline::executor::{execute, NoCache};
+        use ix_pipeline::gate::StageGate;
+        use ix_pipeline::lower::lower_with_gate;
+        use std::sync::Arc;
+
+        struct DenyAll;
+        impl StageGate for DenyAll {
+            fn check(&self, stage_id: &str, _skill: &str, _r: &Value) -> Result<(), String> {
+                Err(format!("denied {stage_id}"))
+            }
+        }
+        let yaml = r#"
+version: "1"
+stages:
+  only:
+    skill: stats
+    args: { data: [1.0, 2.0, 3.0] }
+"#;
+        let spec = PipelineSpec::from_yaml_str(yaml).unwrap();
+        let dag = lower_with_gate(&spec, Arc::new(DenyAll)).unwrap();
+        let err = execute(&dag, &Default::default(), &NoCache).unwrap_err();
+        assert!(
+            format!("{err}").contains("governance: denied only"),
+            "a gate rejection must abort execution with the governance reason: {err}"
         );
     }
 
