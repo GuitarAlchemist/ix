@@ -298,6 +298,51 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_pca ────────────────────────────────────────────────
+
+pub fn pca(params: Value) -> Result<Value, String> {
+    use ix_unsupervised::traits::DimensionReducer;
+
+    let data_rows = parse_f64_matrix(&params, "data")?;
+    if data_rows.is_empty() {
+        return Err("data must have ≥ 1 row".into());
+    }
+    let n_features = data_rows[0].len();
+    let n_components = parse_usize(&params, "n_components")?;
+    if n_components < 1 {
+        return Err("n_components must be ≥ 1".into());
+    }
+    if n_components > n_features {
+        return Err(format!(
+            "n_components {n_components} exceeds the feature count {n_features}"
+        ));
+    }
+
+    let data = vecs_to_array2(&data_rows)?;
+
+    let mut pca = ix_unsupervised::pca::PCA::new(n_components);
+    let transformed = pca.fit_transform(&data);
+
+    let transformed_rows: Vec<Vec<f64>> = (0..transformed.nrows())
+        .map(|i| transformed.row(i).to_vec())
+        .collect();
+    let explained_variance_ratio: Vec<f64> = pca
+        .explained_variance_ratio()
+        .map(|v| v.to_vec())
+        .unwrap_or_default();
+    let components: Vec<Vec<f64>> = pca
+        .components()
+        .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
+        .unwrap_or_default();
+
+    Ok(json!({
+        "transformed": transformed_rows,
+        "explained_variance_ratio": explained_variance_ratio,
+        "components": components,
+        "n_components": n_components,
+    }))
+}
+
 // ── ix_tsne ────────────────────────────────────────────────
 
 pub fn tsne(params: Value) -> Result<Value, String> {
