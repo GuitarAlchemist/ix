@@ -41,7 +41,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Check @ai: annotations against the committed baseline
+      - name: "Check @ai: annotations against the committed baseline"
         run: |
           cargo run -p ix-assumption-graph --bin ix-assumption-graph-drift -- \
             --check state/assumptions/annotations.snapshot.json
