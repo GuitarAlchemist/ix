@@ -126,6 +126,40 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
     handlers::kmeans(params)
 }
 
+// --- ix_pca ----------------------------------------------------------------
+
+fn pca_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "data": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } },
+                "description": "Matrix where each row is an observation and each column a feature"
+            },
+            "n_components": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Number of principal components to keep"
+            }
+        },
+        "required": ["data", "n_components"]
+    })
+}
+
+/// Reduce dimensionality with Principal Component Analysis: project the data
+/// onto its top `n_components` principal axes and report the explained-variance
+/// ratio per component.
+#[ix_skill(
+    domain = "unsupervised",
+    name = "pca",
+    governance = "empirical,deterministic",
+    schema_fn = "crate::skills::batch1::pca_schema"
+)]
+pub fn pca(params: Value) -> Result<Value, String> {
+    handlers::pca(params)
+}
+
 // --- ix_linear_regression --------------------------------------------------
 
 fn linear_regression_schema() -> Value {
@@ -188,4 +222,66 @@ fn governance_belief_schema() -> Value {
 )]
 pub fn governance_belief(params: Value) -> Result<Value, String> {
     handlers::governance_belief(params)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Executes-test for the new `pca` skill: the catalog entry must EXECUTE,
+    // not merely register (no green-but-dead). Classic Lindsay-Smith 2D PCA
+    // example — its first principal component carries ~96% of the variance.
+    #[test]
+    fn pca_skill_executes_and_reduces_dimensions() {
+        let out = pca(json!({
+            "data": [
+                [2.5, 2.4], [0.5, 0.7], [2.2, 2.9], [1.9, 2.2], [3.1, 3.0],
+                [2.3, 2.7], [2.0, 1.6], [1.0, 1.1], [1.5, 1.6], [1.1, 0.9]
+            ],
+            "n_components": 1
+        }))
+        .expect("pca skill runs");
+
+        let transformed = out["transformed"].as_array().expect("transformed array");
+        assert_eq!(
+            transformed.len(),
+            10,
+            "one projected row per input observation"
+        );
+        assert_eq!(
+            transformed[0].as_array().unwrap().len(),
+            1,
+            "reduced from 2 features to 1 component"
+        );
+
+        let evr = out["explained_variance_ratio"].as_array().unwrap();
+        assert_eq!(evr.len(), 1);
+        assert!(
+            evr[0].as_f64().unwrap() > 0.9,
+            "the single retained PC should explain most of the variance, got {}",
+            evr[0].as_f64().unwrap()
+        );
+    }
+
+    // The skill must be registered AND pipeline-callable (arity-1), so the
+    // NL→pipeline proposer can actually see it (the dogfood gap this closes).
+    #[test]
+    fn pca_skill_is_registered_and_pipeline_callable() {
+        let desc = ix_registry::all()
+            .find(|s| s.name == "pca")
+            .expect("pca skill registered in the capability registry");
+        assert_eq!(
+            desc.inputs.len(),
+            1,
+            "must be arity-1 to be pipeline-callable"
+        );
+    }
+
+    // Honest boundary: more components than features is rejected, not silently
+    // clamped — the proposer/caller gets a clear error instead of a wrong shape.
+    #[test]
+    fn pca_rejects_too_many_components() {
+        let err = pca(json!({ "data": [[1.0, 2.0], [3.0, 4.0]], "n_components": 5 })).unwrap_err();
+        assert!(err.contains("exceeds the feature count"), "got: {err}");
+    }
 }

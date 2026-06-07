@@ -66,6 +66,7 @@ const EXPECTED: &[&str] = &[
     "ix_hyperloglog",
     "ix_kmeans",
     "ix_linear_regression",
+    "ix_pca",
     "ix_markov",
     "ix_ml_pipeline",
     "ix_ml_predict",
@@ -151,9 +152,11 @@ fn parity_expected_count() {
     //   MCP tool, agent-native parity with `ix pipeline compile`) = 76.
     // + ix_thinker_hits (2026-06-07, thinking-machine yield/guardrail ledger
     //   aggregate, agent-native parity with `ix pipeline hits`) = 77.
+    // + ix_pca (2026-06-07, standalone PCA — first dogfood catalog-breadth fix;
+    //   auto-exposed via the registry bridge) = 78.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 77);
+    assert_eq!(EXPECTED.len(), 78);
 }
 
 #[test]
@@ -282,10 +285,11 @@ fn parity_all_43_registry_backed() {
     // After batch1 (6) + batch2 (28) + batch3 (10+1 context.walk +
     // session.flywheel_export) + prime_radiant (2) migration, all 47
     // algorithm tools are registry-backed. ix_demo is manual.
+    // + pca (2026-06-07, dogfood catalog-breadth fix) = 53.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 52,
-        "expected 52 registry skills, got {registry_count}"
+        registry_count, 53,
+        "expected 53 registry skills, got {registry_count}"
     );
 }
 
