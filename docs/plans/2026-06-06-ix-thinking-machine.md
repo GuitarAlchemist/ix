@@ -156,7 +156,25 @@ drop below 0.90 (a gate that false-blocks real work is worse than useless).
      resolved-args-gated** — it executes `$step.field` substitution directly,
      bypassing `lower_with_gate`. Gating-or-retiring it is the open security
      follow-up.
-4. **Embeddings coverage** — replace lexical pre-filter (D4). Now *measurable*:
-   `hits.jsonl` + the coverage-baseline test give the before/after yield &
-   guardrail numbers the embedding sidecar must beat (e5-base, mean-top-3,
-   threshold ≈ 0.76 per `state/thinking-machine/embedding-sweep-results.md`).
+4. **Embeddings coverage** — replace lexical pre-filter (D4).
+   - ✅ **Runtime decided + spiked** — *in-process* fastembed-rs (`ort`/ONNX),
+     NOT a Python sidecar (deep-research 2026-06-07). Validation spike
+     (`embedding_sweep_english_models_over_probe_corpus`, feature-gated; results
+     in `state/thinking-machine/embedding-sweep-rust-results.md`) swept 4 built-in
+     English embedders over the 184 probes: **`bge-base-en-v1.5` wins — AUC 0.936,
+     OOD TNR 0.625 @ recall 0.99** (3.8× the TF-IDF baseline 0.163; near-miss
+     0.036 → **0.482**, the headline gap). multilingual-e5-base was *worse* than
+     TF-IDF; e5-base-v2 isn't needed. Windows ONNX build confirmed.
+   - ✅ **Wired in.** `verbs::embed_coverage::EmbeddingCoverage` (bge-base-en-v1.5,
+     mean-top-3 cosine, disk-cached catalog embeddings) is the coverage gate's
+     primary tier via the `score_coverage` dispatcher when the `embeddings`
+     feature is built; TF-IDF is the default + graceful fallback (model
+     unavailable / `IX_THINKER_DISABLE_EMBED` → TF-IDF). Threshold ≈ 0.45
+     (`IX_THINKER_EMBED_COVERAGE_MIN`). `hits.jsonl` records `detected_by` +
+     `coverage_max`, so the before/after is tracked automatically.
+     **Live-verified:** the near-miss "scrape a website and email a summary" —
+     which TF-IDF let through (0.324 > 0.08, the pinned known-limitation) — is now
+     refused by `embedding-bge-base-en` (0.44 < 0.45); in-domain data-bearing
+     requests still compile (recall intact). CI never builds ONNX (non-default
+     feature).
+   - ⏳ score→verdict refinement (kNN-distance / per-query calibration) — follow-up.
