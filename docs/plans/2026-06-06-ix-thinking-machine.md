@@ -97,6 +97,46 @@ drop below 0.90 (a gate that false-blocks real work is worse than useless).
    research's #1 open question) revealed the real target. The fail-open LLM tier
    is silently carrying the refusal load. This is the baseline the embedding
    gate must beat.
+5. **(RSI safe-loop research, 2026-06-07)** Deep research on safe bounded
+   self-improvement (AlphaEvolve / Darwin-Gödel Machine / SICA / PSV-Verus)
+   independently **validated IX's propose→executable-oracle→govern→human-merge
+   loop** — and flagged two gaps, both now **SHIPPED**:
+   - **Translation yield was instrumented only on the failure side** (gaps.jsonl).
+     A bare success denominator is Goodhart-bait (a loop maximizing "% compiled"
+     games it by confabulating OOD specs). Added `hits.jsonl` recording EVERY
+     terminal outcome and `ix pipeline hits` (+ `ix_thinker_hits` MCP tool)
+     emitting yield as a **metric paired with refusal guardrails**: a yield gain
+     alongside a *falling* coverage-refusal rate is gate-loosening, not progress.
+     Live-verified (2 requests → yield 0.5 / coverage-refusal 0.5).
+   - **The gate trusted the constitution without verifying it.** A silent edit to
+     `default.constitution.md` would move the goalposts undetected. Added a
+     sha256 **integrity pin** (`state/governance/constitution-pins.json`, in IX's
+     OWN tree — the constitution lives in the Demerzel submodule) checked at
+     gate-load; **fail-closed on mismatch**, `unpinned` surfaced (never silently
+     trusted). Live-verified (`constitution_integrity: verified`) + a CI bind
+     test + an end-to-end tamper test.
+   - **Adversarial self-review (4-lens, refute-by-default) caught a real P0 in the
+     security half it had just written:** a TOCTOU — the gate hashed the
+     constitution bytes, then *re-read the file* to parse it, so a file swap
+     between check and load would execute an unverified constitution (fail-OPEN).
+     Fixed by parsing the already-verified bytes (`Constitution::parse_str`, no
+     second read). The same pass flagged dark-outcome holes (operational errors
+     bypassing the ledger → no-dark-outcomes wrapper logging `error`) and
+     torn-line robustness (concurrent appends → reader skips + counts
+     `skipped_lines`, writer does one append write). 11 findings, all fixed or
+     documented. The loop found the gap in the gate it built — again.
+
+## One-way / two-way doors (this increment)
+
+- **`hits.jsonl` schema** — TWO-WAY. Append-only runtime ledger; fields can grow
+  additively. Revisit trigger: when the embedding gate lands, fold its score in.
+- **Constitution pin format** (`{"constitutions": {"<file>": "sha256:<hex>"}}`)
+  — TWO-WAY but **sticky**: changing the algo or path means re-pinning in lockstep
+  with any consumer. sha256 chosen for independent verifiability (`sha256sum` /
+  `Get-FileHash`). The friction of a deliberate re-pin on every legitimate
+  constitution change IS the tamper-evidence. Residual: an attacker who can edit
+  IX's tree could delete the pin entry → `unpinned` (visible in diff + verdict,
+  not a silent pass); a stricter "pin required" mode is a future option.
 
 ## Next increments (priority order)
 
@@ -116,4 +156,7 @@ drop below 0.90 (a gate that false-blocks real work is worse than useless).
      resolved-args-gated** — it executes `$step.field` substitution directly,
      bypassing `lower_with_gate`. Gating-or-retiring it is the open security
      follow-up.
-4. **Embeddings coverage** — replace lexical pre-filter (D4).
+4. **Embeddings coverage** — replace lexical pre-filter (D4). Now *measurable*:
+   `hits.jsonl` + the coverage-baseline test give the before/after yield &
+   guardrail numbers the embedding sidecar must beat (e5-base, mean-top-3,
+   threshold ≈ 0.76 per `state/thinking-machine/embedding-sweep-results.md`).

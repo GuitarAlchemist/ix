@@ -1,0 +1,7 @@
+{
+  "algo": "sha256",
+  "constitutions": {
+    "default.constitution.md": "sha256:8c6b002320f89b9968e04db406bc117db2619a53f3341c8c6885e72a992a3c8b"
+  },
+  "note": "Tamper-evidence integrity pins for the governance constitution the IX pipeline gate enforces (RSI safe-loop research 2026-06-07; reference_safe_rsi_loop_validated). Each value is `<algo>:<hex>` over the constitution file at governance/demerzel/constitutions/<name> (the file lives in the Demerzel SUBMODULE; this pin lives in IX's own tree so IX asserts which constitution it was reviewed against). The gate (crates/ix-skill governance_gate + ConstitutionGate::load) fails CLOSED on mismatch; a missing entry is reported as `unpinned` (never silently trusted). Regenerate ONLY for a deliberate, reviewed constitution change: PowerShell `(Get-FileHash -Algorithm SHA256 <file>).Hash.ToLower()` or `sha256sum <file>`. An undeclared edit (no re-pin) is exactly what this catches — both at runtime and in CI via the default_constitution_matches_committed_pin test."
+}
