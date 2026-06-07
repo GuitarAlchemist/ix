@@ -22,7 +22,7 @@ MSRV: Rust 1.80+ (due to wgpu 28).
 
 ## Conventions
 
-- Pure Rust; no external ML frameworks except `wgpu` for GPU compute.
+- **Pure Rust for IX's own algorithms** — implement the ML/math primitives from first principles; do NOT wrap external ML frameworks (`tch`/`candle`/`burn`/`ort`) to *provide* the algorithm catalog. `wgpu` is allowed for GPU compute. **Carve-out (inference-only tooling):** an external *pretrained* model MAY serve as a black-box feature extractor for *infrastructure* (e.g. the NL→pipeline coverage/routing gate's text embeddings) when it is (a) inference-only — never training or standing in for an IX algorithm, (b) isolated behind a sidecar / optional-dep boundary so the algorithm crates stay framework-free, (c) optional with a pure-Rust fallback, and (d) governed like any capability. A pretrained embedder that *routes* requests is tooling, not IX's from-scratch ML content. (Revised 2026-06-07 — the embeddings coverage front.)
 - CPU algorithms use `f64` and `ndarray::Array{1,2}<f64>`; GPU uses `f32` via WGPU shaders.
 - Each crate defines traits (`Regressor`, `Classifier`, `Clusterer`, `Optimizer`, etc.).
 - Builder pattern for algorithm configuration; seeded RNG for reproducibility.
