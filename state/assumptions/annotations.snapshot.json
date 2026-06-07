@@ -324,6 +324,30 @@
       "evidence": "data_search.rs:212",
       "anchor_hash": "sha256:f0a062f70cd5dfdc0cd70a308218e54dcc34bbf96c9f888a2f25c842535d89ad",
       "test_binding": null
+    },
+    {
+      "key": "sha256:6511bb88a56c682ef0cf5414b979950553c36152bf89adbf74a7d2413fce0a74",
+      "path": "crates/ix-skill/src/verbs/compile.rs",
+      "line": 1471,
+      "kind": "invariant",
+      "claim": "fixed-ref z-norm (E) is affine-identical to raw (A) on AUC/TNR/near-miss — a monotone affine map is rank- and ID-quantile-invariant",
+      "verdict": "T",
+      "certainty": "FormalProof",
+      "evidence": "ood_scoring_method_sweep_over_probe_corpus asserts e≡a",
+      "anchor_hash": "sha256:9e75859e9bc82dfccc6361fed830a820b3af0ab0d312e9fe702ff2797020c306",
+      "test_binding": null
+    },
+    {
+      "key": "sha256:cc19c55cbfe8379f7037d60faad7f46b7c4b67837dca48d7ad7b3cde620cf07e",
+      "path": "crates/ix-skill/src/verbs/compile.rs",
+      "line": 1472,
+      "kind": "assumption",
+      "claim": "on the 184-probe corpus + bge-base-en, raw mean-top-3 cosine dominates every per-query/margin/kNN calibration on AUC, so the gate keeps the raw threshold — CONDITIONAL on the corpus + embedder, re-run on change",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "ood_scoring_method_sweep_over_probe_corpus asserts a.0>={b,c,d}.0; state/thinking-machine/coverage-probes.jsonl",
+      "anchor_hash": "sha256:9e75859e9bc82dfccc6361fed830a820b3af0ab0d312e9fe702ff2797020c306",
+      "test_binding": null
     }
   ]
 }

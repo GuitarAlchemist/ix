@@ -1467,6 +1467,9 @@ mod tests {
     // sweep after changing the embedder or probe set, not automatically. It also
     // SKIPs (early return, zero assertions) if the probe corpus is absent. Treat
     // it as a decision record with a re-runnable guard, not an auto-firing alarm.
+    //
+    // @ai:invariant fixed-ref z-norm (E) is affine-identical to raw (A) on AUC/TNR/near-miss — a monotone affine map is rank- and ID-quantile-invariant [T:formal-proof conf:0.99 src:ood_scoring_method_sweep_over_probe_corpus asserts e≡a]
+    // @ai:assumption on the 184-probe corpus + bge-base-en, raw mean-top-3 cosine dominates every per-query/margin/kNN calibration on AUC, so the gate keeps the raw threshold — CONDITIONAL on the corpus + embedder, re-run on change [T:test conf:0.9 src:ood_scoring_method_sweep_over_probe_corpus asserts a.0>={b,c,d}.0; state/thinking-machine/coverage-probes.jsonl]
     #[cfg(feature = "embeddings")]
     #[test]
     fn ood_scoring_method_sweep_over_probe_corpus() {
