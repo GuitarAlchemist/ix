@@ -166,11 +166,48 @@ fn governance_action(skill: &str, args: &Value, tags: &[&str]) -> String {
     )
 }
 
+/// Collect `{"from": "ref"}` reference strings anywhere inside a stage's args,
+/// using the same single-key-object rule the executor applies
+/// (`ix_pipeline::lower::resolve_from_refs`). These resolve to upstream outputs
+/// at execution time, so a *template-time* gate cannot vet their values — it
+/// surfaces them in the verdict instead of pretending it checked them.
+fn collect_from_refs(args: &Value) -> Vec<String> {
+    fn walk(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::Object(map) => {
+                if map.len() == 1 {
+                    if let Some(Value::String(r)) = map.get("from") {
+                        out.push(r.clone());
+                        return; // a ref node has no further children to vet
+                    }
+                }
+                for child in map.values() {
+                    walk(child, out);
+                }
+            }
+            Value::Array(arr) => arr.iter().for_each(|c| walk(c, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(args, &mut out);
+    out
+}
+
 /// Fail-closed constitutional review of a spec before it executes. Every
 /// stage's skill must (a) carry governance tags and (b) pass
 /// `Constitution::check_action`. A missing constitution, an untagged skill, or
 /// any non-compliant stage → reject. Shared by `ix pipeline run` and
-/// `ix pipeline compile` so governance is unbypassable on the canonical path.
+/// `ix pipeline compile` so every compiled spec is reviewed on the canonical
+/// path.
+///
+/// SCOPE — this is a *template-time* gate: it inspects the spec as written. A
+/// stage arg supplied by a `{"from": "upstream[.key]"}` ref is only resolved at
+/// execution time, so its runtime value is NOT vetted here; such refs are
+/// surfaced in the verdict as `unvetted_runtime_inputs`. Gating the *resolved*
+/// args inside the executor is tracked as a gap (gaps.jsonl:
+/// governance-resolved-args) — the driver for pushing this check into
+/// `ix-pipeline::execute()`.
 pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
     let gov_dir =
         std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
@@ -183,6 +220,7 @@ pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
         })?;
 
     let mut cited: Vec<Value> = Vec::new();
+    let mut unvetted: Vec<Value> = Vec::new();
     for (id, stage) in &spec.stages {
         let desc = ix_registry::by_name(&stage.skill)
             .ok_or_else(|| format!("stage '{id}': skill '{}' not in registry", stage.skill))?;
@@ -207,8 +245,17 @@ pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
         for art in &result.relevant_articles {
             cited.push(json!({ "stage": id, "article": art.number }));
         }
+        // Surface runtime-resolved inputs the template-time gate could not vet.
+        let refs = collect_from_refs(&stage.args);
+        if !refs.is_empty() {
+            unvetted.push(json!({ "stage": id, "from_refs": refs }));
+        }
     }
-    Ok(json!({ "verdict": "compliant", "articles_cited": cited }))
+    Ok(json!({
+        "verdict": "compliant",
+        "articles_cited": cited,
+        "unvetted_runtime_inputs": unvetted,
+    }))
 }
 
 /// `ix pipeline run [-f FILE] [--json]` — execute the pipeline.
@@ -384,6 +431,26 @@ mod tests {
         assert!(
             !c.check_action(&action).compliant,
             "a real delete request must be caught: {action}"
+        );
+    }
+
+    #[test]
+    fn collect_from_refs_matches_executor_single_key_rule() {
+        // The gate surfaces {"from": "ref"} inputs it cannot vet at template
+        // time. Detection must mirror the executor (single-key {from:string});
+        // a multi-key object that happens to carry a `from` field is NOT a ref.
+        let args = json!({
+            "operation": { "from": "prep.op" },
+            "data": [ { "from": "src.values" }, 1, 2 ],
+            "not_a_ref": { "from": "x", "extra": 1 },
+            "plain": "delete"
+        });
+        let mut refs = collect_from_refs(&args);
+        refs.sort();
+        assert_eq!(
+            refs,
+            vec!["prep.op".to_string(), "src.values".to_string()],
+            "only single-key {{from:string}} nodes are refs; got {refs:?}"
         );
     }
 }

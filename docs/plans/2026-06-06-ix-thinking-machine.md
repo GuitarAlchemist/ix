@@ -3,7 +3,9 @@
 **Date:** 2026-06-06
 **Branch:** `feat/ix-thinking-machine-skeleton`
 **Brainstorm + panel:** `docs/brainstorms/2026-06-06-ix-thinking-machine-architecture.md`
-**Status:** walking skeleton shipped (4 commits); next increments listed below.
+**Status:** walking skeleton + MCP wrapper shipped; passed a 5-dimension
+adversarial self-review (1 P1 + 3 P2 confirmed, all addressed — see findings
+below). Next increments listed at the end.
 
 ## Problem
 
@@ -29,7 +31,7 @@ Plus transport-agnostic introspection: `ix pipeline schema`,
 | D2 | **Canonical IR = `PipelineSpec`** (`ix.yaml`), deprecating System A's `{steps:[…]}` | **ONE-WAY** (needs sign-off to delete `{steps}`) | zero non-test callers of `ix_pipeline_run`'s `{steps}` executor for 14 days |
 | D3 | **Proposer home = `ix-skill` CLI verb** (not an MCP tool yet) | two-way | agent-native parity needed → add MCP-tool wrapper |
 | D4 | **Coverage = two-tier**: free lexical TF-IDF pre-filter + fail-closed LLM relevance (`NO_COVERAGE`) | two-way | lexical false-positives matter → replace pre-filter with real embeddings (ix-gpu cosine) |
-| D5 | **Governance gate in the CLI verbs** (`run`+`compile`), not yet inside `ix-pipeline::execute()` | two-way | IR unification — add an `ix-governance` dep to `ix-pipeline` so the MCP `ix_pipeline_run` path is covered too |
+| D5 | **Governance gate in the CLI verbs** (`run`+`compile`), template-time only, not yet inside `ix-pipeline::execute()` | two-way | **NOW TRIGGERED** by the P1 below — a `{from}`-ref can hide a destructive op from the template-time scan; the durable fix is gating the *resolved* args in `ix-pipeline::execute()` (add an `ix-governance` dep to `ix-pipeline`; also covers MCP `ix_pipeline_run`) |
 
 **One-way doors needing explicit sign-off before they harden:**
 - Publishing the `PipelineSpec` JSON Schema (`ix pipeline schema`) to a stable
@@ -53,12 +55,25 @@ Plus transport-agnostic introspection: `ix pipeline schema`,
 2. Lexical TF-IDF coverage misses partial content-word collisions (measured
    0.32 for a scrape/email request) → added fail-closed LLM relevance; logged
    "replace lexical with embeddings" as the next-level fix.
+3. **(Adversarial self-review, P1)** The governance gate is *template-time*: a
+   `{"from": "upstream"}` ref can supply a destructive operation that resolves
+   only at execution time, slipping past the substring scan. Bounded
+   exploitability, but structurally the gate never sees the resolved value.
+   Addressed this pass (removed the "unbypassable" overclaim; gate now surfaces
+   `unvetted_runtime_inputs`); **durable fix = the `unify` increment** (gate
+   resolved args in the executor). The loop found a real gap in the gate it
+   built. Also confirmed 3 P2s (UTF-8 panic in narration, missing HTTP timeout,
+   a fail-open comment labeled fail-closed) — all fixed.
 
 ## Next increments (priority order)
 
-1. **Repair-loop proof** — deliberate-error test confirming the ≤3-round
-   structural repair fires live (wired but unproven).
-2. **MCP-tool wrapper** — expose `compile` as a tool (agent-native parity).
-3. **IR unification** — retarget + deprecate-with-shim `ix_pipeline_compile`
-   (`{steps}`); gate inside `ix-pipeline::execute()` (D5).
+1. ✅ **Repair-loop proof** — deliberate-error test confirming the ≤3-round
+   structural repair fires live. *(shipped)*
+2. ✅ **MCP-tool wrapper** — `ix_nl_to_pipeline` exposes `compile` as a tool
+   (agent-native parity, live-verified). *(shipped)*
+3. **IR unification (`unify`)** — retarget + deprecate-with-shim
+   `ix_pipeline_compile` (`{steps}`); **gate the resolved args inside
+   `ix-pipeline::execute()`** (D5) — now carries the P1 security driver above,
+   not just coverage of the MCP path. ONE-WAY door (new `ix-governance` dep on
+   foundational `ix-pipeline`; deleting `{steps}`) → needs sign-off.
 4. **Embeddings coverage** — replace lexical pre-filter (D4).

@@ -30,6 +30,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL: &str = "claude-opus-4-8";
 const GEN_FILE: &str = "ix.compiled.yaml";
+/// Hard cap on propose→repair rounds. Each round is a fresh blocking POST and
+/// `max_rounds` is caller-supplied (the MCP schema sets no maximum), so clamp
+/// it to bound total provider calls to `MAX_REPAIR_ROUNDS + 1`. (PR #77 review P2.)
+const MAX_REPAIR_ROUNDS: u32 = 5;
 
 /// `ix pipeline compile "<sentence>"` entry point.
 pub fn compile(
@@ -41,6 +45,8 @@ pub fn compile(
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| "ANTHROPIC_API_KEY not set (the proposer calls the Anthropic Messages API directly; MCP sampling is deprecated)".to_string())?;
     let model = std::env::var("IX_THINKER_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.into());
+    // Bound total provider calls regardless of caller-supplied value. (PR #77 review P2.)
+    let max_rounds = max_rounds.min(MAX_REPAIR_ROUNDS);
 
     let skills = pipeline_callable_skills();
 
@@ -88,9 +94,13 @@ pub fn compile(
     let (spec, rounds_used) = match resolve_spec(&mut proposer, sentence, max_rounds)? {
         ResolveOutcome::Compiled { spec, rounds } => (spec, rounds),
         ResolveOutcome::NoCoverage { reason, rounds } => {
-            // Fail-closed LLM relevance: the request needs a capability no
-            // catalog skill provides (catches lexical-collision cases the
-            // TF-IDF pre-gate cannot). Routing role, not self-judge.
+            // Best-effort LLM relevance (fail-OPEN): refuses only when the model
+            // voluntarily emits the NO_COVERAGE sentinel, catching lexical-
+            // collision cases the TF-IDF pre-gate cannot. A confabulated
+            // structurally-valid spec for an out-of-domain request still passes
+            // here (see gaps.jsonl + plan D4); real embeddings coverage is the
+            // durable fix. Routing role, not a truth oracle (LLM self-judge
+            // <25% TNR — cf. feedback_llm_judge_panel_failclosed).
             log_gap(sentence, "semantic-noncoverage", &reason, rounds);
             return emit_result(
                 format,
@@ -120,9 +130,12 @@ pub fn compile(
         }
     };
 
-    // ── Fail-closed governance gate (before any execution) ───────────────
-    // Shared with `ix pipeline run` so governance is unbypassable on the
-    // canonical execution path, not just the compile path.
+    // ── Fail-closed governance gate (template-time, before any execution) ─
+    // Shared with `ix pipeline run` so every compiled spec is reviewed on the
+    // canonical path. NOTE: this gate inspects the *unresolved* spec; a stage
+    // whose operation is supplied by a {"from": "upstream"} ref is only vetted
+    // at execution time once the ref resolves — resolved-value gating in the
+    // executor is tracked as a gap (see gaps.jsonl: governance-resolved-args).
     match crate::verbs::pipeline::governance_gate(&spec) {
         Ok(gate) => {
             // Persist the compiled spec for inspection / `ix pipeline run`.
@@ -303,7 +316,14 @@ fn call_anthropic(
         "system": system_prompt,
         "messages": messages,
     });
-    let client = reqwest::blocking::Client::new();
+    // Explicit timeouts: reqwest's default blocking client has none, so a
+    // stalled connection would hang the call (and the MCP handler that waits on
+    // the child `ix`) unboundedly. (PR #77 review P2.)
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("building HTTP client: {e}"))?;
     let resp = client
         .post(ANTHROPIC_URL)
         .header("x-api-key", api_key)
@@ -481,8 +501,14 @@ fn strip_fences(s: &str) -> String {
 /// Compact a stage output Value to a short one-line string for narration.
 fn compact(v: &Value) -> String {
     let s = v.to_string();
-    if s.len() > 80 {
-        format!("{}…", &s[..80])
+    // Truncate on a CHAR boundary. `s.len()`/`&s[..80]` are byte-indexed and
+    // panic when byte 80 splits a multibyte UTF-8 sequence — skill outputs carry
+    // non-ASCII (♭ ♯ … accents), so byte-slicing is a latent crash on the
+    // `--run` narration path. (PR #77 review P2.)
+    const MAX_CHARS: usize = 80;
+    if s.chars().count() > MAX_CHARS {
+        let head: String = s.chars().take(MAX_CHARS).collect();
+        format!("{head}…")
     } else {
         s
     }
@@ -629,5 +655,23 @@ mod tests {
             }
             other => panic!("expected NoCoverage, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn compact_truncates_on_char_boundary_without_panicking() {
+        // Regression for PR #77 review P2: a stage output whose JSON
+        // stringification puts a multibyte char straddling byte 80 must not
+        // panic (byte-indexed `&s[..80]` did). Build a string so the 80th byte
+        // lands inside a multibyte char: a leading `"` + 78 ASCII + '♭' means
+        // the '♭' occupies bytes 79..82, i.e. byte 80 is mid-char.
+        let s = format!("{}{}", "a".repeat(78), "♭♯…tail");
+        let v = Value::String(s);
+        assert!(
+            !v.to_string().is_char_boundary(80),
+            "test precondition: byte 80 must split a multibyte char"
+        );
+        let out = compact(&v); // must not panic
+        assert!(out.ends_with('…'), "truncated output is ellipsized: {out}");
+        assert!(out.chars().count() <= 81, "≤80 chars + ellipsis: {out}");
     }
 }
