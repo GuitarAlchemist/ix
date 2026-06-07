@@ -247,6 +247,15 @@ fn parse_and_lower(yaml: &str) -> Result<PipelineSpec, String> {
     Ok(spec)
 }
 
+/// A resolved-args `StageGate` rejection surfaces from `execute()` as a
+/// `ComputeError` carrying the `: governance: ` marker that `lower_with_gate`
+/// injects (see `ix_pipeline::lower`). This distinguishes it from an ordinary
+/// skill/execution failure so the caller emits a structured
+/// `governance_rejected` verdict instead of a bare stderr error. (Codex #78 P2.)
+fn is_resolved_governance_rejection(execute_err: &str) -> bool {
+    execute_err.contains(": governance: ")
+}
+
 /// Execute the lowered pipeline and narrate the run back in prose.
 fn execute_and_narrate(
     spec: &PipelineSpec,
@@ -262,8 +271,33 @@ fn execute_and_narrate(
     let dag = ix_pipeline::lower::lower_with_gate(spec, gate_impl)
         .map_err(|e| format!("re-lower: {e}"))?;
     let levels = dag.parallel_levels();
-    let result =
-        execute(&dag, &Default::default(), &NoCache).map_err(|e| format!("execution: {e}"))?;
+    let result = match execute(&dag, &Default::default(), &NoCache) {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = format!("{e}");
+            // A resolved-args StageGate rejection (e.g. a `{from}` ref resolved
+            // to a destructive op) must be reported with the SAME structured
+            // `governance_rejected` shape as the template-time gate — otherwise
+            // the JSON consumer (the `ix_nl_to_pipeline` MCP wrapper) sees empty
+            // stdout instead of a verdict. (Codex #78 P2.)
+            if is_resolved_governance_rejection(&msg) {
+                log_gap(sentence, "governance-resolved", &msg, rounds);
+                return emit_result(
+                    format,
+                    json!({
+                        "status": "governance_rejected",
+                        "sentence": sentence,
+                        "rounds": rounds,
+                        "reason": msg,
+                        "detected_by": "resolved-args-gate",
+                        "logged_to": gap_log_path(),
+                        "note": "fail-closed: a stage's resolved args were refused mid-execution.",
+                    }),
+                );
+            }
+            return Err(format!("execution: {msg}"));
+        }
+    };
 
     // ── Deterministic NL narration grounded in the typed DAG ─────────────
     let mut prose = String::new();
@@ -678,5 +712,41 @@ mod tests {
         let out = compact(&v); // must not panic
         assert!(out.ends_with('…'), "truncated output is ellipsized: {out}");
         assert!(out.chars().count() <= 81, "≤80 chars + ellipsis: {out}");
+    }
+
+    #[test]
+    fn resolved_governance_rejection_classified_from_real_executor_error() {
+        // Codex #78 P2: a `--run` resolved-args gate rejection must be reported
+        // as structured `governance_rejected` JSON, not a bare error. The
+        // classifier keys on the marker `lower_with_gate` injects — bind it to
+        // the REAL executor error so a marker change in ix-pipeline fails here.
+        use ix_pipeline::executor::{execute, NoCache};
+        use ix_pipeline::gate::StageGate;
+        use ix_pipeline::lower::lower_with_gate;
+        use std::sync::Arc;
+
+        struct Deny;
+        impl StageGate for Deny {
+            fn check(&self, id: &str, _s: &str, _r: &Value) -> Result<(), String> {
+                Err(format!("blocked {id}"))
+            }
+        }
+        let spec = PipelineSpec::from_yaml_str(
+            "version: \"1\"\nstages:\n  s:\n    skill: stats\n    args: { data: [1.0] }\n",
+        )
+        .unwrap();
+        let dag = lower_with_gate(&spec, Arc::new(Deny)).unwrap();
+        let err = format!(
+            "{}",
+            execute(&dag, &Default::default(), &NoCache).unwrap_err()
+        );
+        assert!(
+            is_resolved_governance_rejection(&err),
+            "a real gate rejection must classify as governance: {err}"
+        );
+        assert!(
+            !is_resolved_governance_rejection("s: stats: invalid input shape"),
+            "an ordinary execution error must NOT be misclassified as governance"
+        );
     }
 }

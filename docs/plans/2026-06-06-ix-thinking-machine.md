@@ -31,7 +31,7 @@ Plus transport-agnostic introspection: `ix pipeline schema`,
 | D2 | **Canonical IR = `PipelineSpec`** (`ix.yaml`), deprecating System A's `{steps:[…]}` | **ONE-WAY** (needs sign-off to delete `{steps}`) | zero non-test callers of `ix_pipeline_run`'s `{steps}` executor for 14 days |
 | D3 | **Proposer home = `ix-skill` CLI verb** (not an MCP tool yet) | two-way | agent-native parity needed → add MCP-tool wrapper |
 | D4 | **Coverage = two-tier**: free lexical TF-IDF pre-filter + fail-closed LLM relevance (`NO_COVERAGE`) | two-way | lexical false-positives matter → replace pre-filter with real embeddings (ix-gpu cosine) |
-| D5 | **Governance now gates RESOLVED args at execution time** via a trait-injected `ix_pipeline::gate::StageGate` (template-time `governance_gate` kept as a fail-fast pre-flight) | two-way | ✅ **RESOLVED** — the P1 `{from}`-ref bypass is closed: `lower_with_gate` consults the gate on post-resolution args before each skill runs. Design improvement vs. the original plan: a **trait seam** keeps `ix-pipeline` governance-agnostic (no `ix-governance` dep on the foundational crate; `ix-skill` injects `ConstitutionGate`). Any caller (incl. MCP `ix_pipeline_run`) gets enforcement by lowering with a gate |
+| D5 | **Governance now gates RESOLVED args at execution time** via a trait-injected `ix_pipeline::gate::StageGate` (template-time `governance_gate` kept as a fail-fast pre-flight) | two-way | ✅ **RESOLVED for the canonical `PipelineSpec` path** — the P1 `{from}`-ref bypass is closed: `lower_with_gate` consults the gate on post-resolution args before each skill runs. Design improvement vs. the original plan: a **trait seam** keeps `ix-pipeline` governance-agnostic (no `ix-governance` dep on the foundational crate; `ix-skill` injects `ConstitutionGate`). A caller is gated **iff it lowers with a gate** — `ix pipeline run` + `compile --run` do. ⚠️ The legacy System A MCP `ix_pipeline_run` (`{steps}` substitution in `ix-agent/src/tools.rs`) does NOT lower with a gate and stays ungated until `{steps}` retirement (D2) |
 
 **One-way doors needing explicit sign-off before they harden:**
 - Publishing the `PipelineSpec` JSON Schema (`ix pipeline schema`) to a stable
@@ -75,8 +75,13 @@ Plus transport-agnostic introspection: `ix pipeline schema`,
 3. **IR unification (`unify`)** — split into two halves:
    - ✅ **Resolved-args governance** (the P1 security half) — *shipped* via the
      `ix_pipeline::gate::StageGate` seam + `lower_with_gate` + `ConstitutionGate`
-     (D5). Trait injection avoided the foundational-crate dep entirely.
+     (D5) for the canonical `PipelineSpec` path (`ix pipeline run`, `compile
+     --run`). Trait injection avoided the foundational-crate dep entirely.
    - ⏳ **Retire System A `{steps}`** (the cleanup half) — deferred to its **D2
      trigger** (14-day zero-non-test-caller window) before deleting; premature
      to delete now. ONE-WAY door → still needs sign-off when the window clears.
+     **Until then the legacy MCP `ix_pipeline_run` (`{steps}`) is NOT
+     resolved-args-gated** — it executes `$step.field` substitution directly,
+     bypassing `lower_with_gate`. Gating-or-retiring it is the open security
+     follow-up.
 4. **Embeddings coverage** — replace lexical pre-filter (D4).
