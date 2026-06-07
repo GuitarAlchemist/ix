@@ -215,6 +215,12 @@ enum PipelineNoun {
         /// Stream NDJSON events to stdout while the pipeline runs
         #[arg(long)]
         json: bool,
+        /// Bind a run-time parameter referenced by `{param: "name"}` in the
+        /// spec. Repeatable. VALUE is parsed as JSON, or `@path` reads JSON from
+        /// a file; a bare unparseable word is taken as a string. Example:
+        /// --param dataset=@data.json --param k=3
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        param: Vec<String>,
     },
     /// Show execution-level DAG structure
     Dag {
@@ -239,6 +245,11 @@ enum PipelineNoun {
         /// Execute the compiled pipeline (default: compile + gate only).
         #[arg(long)]
         run: bool,
+        /// Bind a run-time parameter the proposer emitted for absent data
+        /// ({param: "name"}). Repeatable; same syntax as `pipeline run --param`.
+        /// Only meaningful with --run. e.g. --param dataset=@data.json
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        param: Vec<String>,
     },
     /// Aggregate the NL→pipeline translation ledger (hits.jsonl) into a yield
     /// metric paired with its refusal guardrails (Goodhart-resistant: a yield
@@ -346,15 +357,18 @@ fn dispatch(cli: Cli) -> i32 {
                 try_or(verbs::pipeline::validate(file.as_deref(), fmt))
             }
             PipelineNoun::Dag { file } => try_or(verbs::pipeline::dag(file.as_deref(), fmt)),
-            PipelineNoun::Run { file, json } => {
-                try_or(verbs::pipeline::run(file.as_deref(), json, fmt))
+            PipelineNoun::Run { file, json, param } => {
+                try_or(verbs::pipeline::run(file.as_deref(), json, &param, fmt))
             }
             PipelineNoun::Schema => try_or(verbs::pipeline::schema(fmt)),
             PipelineNoun::Compile {
                 sentence,
                 max_rounds,
                 run,
-            } => try_or(verbs::compile::compile(&sentence, max_rounds, run, fmt)),
+                param,
+            } => try_or(verbs::compile::compile(
+                &sentence, max_rounds, run, &param, fmt,
+            )),
             PipelineNoun::Hits => try_or(verbs::compile::hits(fmt)),
         },
 

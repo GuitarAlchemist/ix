@@ -50,9 +50,10 @@ pub fn compile(
     sentence: &str,
     max_rounds: u32,
     run_it: bool,
+    params: &[String],
     format: Format,
 ) -> Result<(), String> {
-    let outcome = compile_inner(sentence, max_rounds, run_it, format);
+    let outcome = compile_inner(sentence, max_rounds, run_it, params, format);
     if outcome.is_err() {
         // coverage_max is unknown/irrelevant for an operational error → NaN,
         // which serializes to JSON null (summarize_hits ignores the field).
@@ -65,6 +66,7 @@ fn compile_inner(
     sentence: &str,
     max_rounds: u32,
     run_it: bool,
+    params: &[String],
     format: Format,
 ) -> Result<(), String> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
@@ -182,11 +184,17 @@ fn compile_inner(
                         "stages": spec.stages.len(),
                         "governance": gate,
                         "path": GEN_FILE,
-                        "note": "governance PASS; spec written. Re-run with --run to execute.",
+                        // The {param} placeholders this template still needs at run
+                        // time — supply each with `--param NAME=<json|@file>`.
+                        "params_needed": ix_pipeline::lower::collect_param_names(&spec)
+                            .into_iter()
+                            .collect::<Vec<_>>(),
+                        "note": "governance PASS; spec written. Re-run with --run \
+                            (plus --param NAME=... for any params_needed) to execute.",
                     }),
                 );
             }
-            execute_and_narrate(&spec, sentence, rounds_used, cov_max, gate, format)
+            execute_and_narrate(&spec, params, sentence, rounds_used, cov_max, gate, format)
         }
         Err(rejection) => {
             log_gap(sentence, "governance", &rejection, rounds_used);
@@ -374,12 +382,24 @@ fn is_resolved_governance_rejection(execute_err: &str) -> bool {
 /// Execute the lowered pipeline and narrate the run back in prose.
 fn execute_and_narrate(
     spec: &PipelineSpec,
+    raw_params: &[String],
     sentence: &str,
     rounds: u32,
     coverage_max: f64,
     gate: Value,
     format: Format,
 ) -> Result<(), String> {
+    // Bind {param} placeholders BEFORE governance + execution — the compile --run
+    // path (and the ix_nl_to_pipeline MCP tool that spawns it) must honor the same
+    // no-unbound-{param} invariant as `ix pipeline run`. Binding first means an
+    // unbound {param} fails closed here, before ConstitutionGate or any skill runs
+    // (so this is testable without a governance dir or a live proposer). With no
+    // --param supplied, a {param} the proposer emitted for absent data is a clear
+    // "missing required param" error, not a {"param":...} blob handed to a skill.
+    let params = crate::verbs::pipeline::parse_params(raw_params)?;
+    let spec = ix_pipeline::lower::bind_params(spec, &params)
+        .map_err(|e| format!("binding params: {e}"))?;
+    let spec = &spec;
     // Execution-time governance on RESOLVED args (PR #77 review P1): the same
     // constitution-backed gate `ix pipeline run` uses, so executing a compiled
     // pipeline cannot smuggle a destructive op through a `{"from"}` ref.
@@ -678,6 +698,17 @@ stages:
          that stage's skill `output_schema` (shown in the catalog). Do NOT invent \
          field names. If a producing skill has no `output_schema`, reference its \
          whole output with `{{\"from\": \"stage_id\"}}` (no field).\n\n\
+         RUN-TIME DATA (params): if the request names its data only abstractly \
+         with no concrete values inline (e.g. \"this dataset\", \"the data\", \
+         \"these points\", \"the matrix\"), do NOT refuse for missing data. Set \
+         that argument to `{{\"param\": \"NAME\"}}` (a run-time placeholder; NAME \
+         a short snake_case id) and declare NAME in a top-level `params:` map with \
+         a `null` default — the value is supplied later via `--param NAME=...`. \
+         For example \"reduce this dataset with PCA\" becomes a `params: {{dataset: \
+         null}}` map plus a pca stage whose `data` arg is \
+         `{{\"param\": \"dataset\"}}`. Reserve NO_COVERAGE for a missing \
+         CAPABILITY (no catalog skill fits the intent), NEVER for merely-absent \
+         data that a `{{\"param\"}}` placeholder can carry.\n\n\
          JSON SCHEMA for the document you must emit:\n{}\n\n\
          SKILL CATALOG (pipeline-callable skills only):\n{}\n\n\
          EXAMPLE of a valid PipelineSpec:\n{}\n",
@@ -933,6 +964,55 @@ fn summarize_hits(path: &std::path::Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The proposer must be told to emit a {param} placeholder for absent data
+    // rather than refuse — the behavior change that closes the dominant
+    // (missing-data) refusal. We can't unit-test the LLM, so assert the
+    // instruction is present in the system prompt it receives.
+    #[test]
+    fn system_prompt_instructs_param_placeholders_for_absent_data() {
+        let prompt = build_system_prompt(&serde_json::json!({}), &serde_json::json!([]));
+        assert!(
+            prompt.contains("RUN-TIME DATA"),
+            "missing RUN-TIME DATA section"
+        );
+        assert!(
+            prompt.contains("{\"param\": \"NAME\"}"),
+            "missing {{param}} guidance"
+        );
+        assert!(
+            prompt.contains("NEVER for merely-absent data"),
+            "must steer NO_COVERAGE away from missing-data refusals"
+        );
+    }
+
+    // The compile --run path (and the ix_nl_to_pipeline MCP tool that spawns it)
+    // must honor the same no-unbound-{param} invariant as `ix pipeline run`: a
+    // {param} the proposer emitted for absent data, with no --param supplied, must
+    // FAIL CLOSED before governance/execution — never be passed to a skill as a
+    // literal {"param":...} blob. bind_params runs first in execute_and_narrate,
+    // so this needs no governance dir or live proposer.
+    #[test]
+    fn execute_and_narrate_fails_closed_on_unbound_param() {
+        let spec = PipelineSpec::from_yaml_str(
+            "version: \"1\"\nparams:\n  nums: null\nstages:\n  s:\n    skill: stats\n    args:\n      data: { param: nums }\n",
+        )
+        .unwrap();
+        let err = execute_and_narrate(
+            &spec,
+            &[],
+            "reduce this data",
+            0,
+            0.0,
+            json!({}),
+            Format::Json,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("missing required param 'nums'"),
+            "compile --run must fail closed on an unbound param, got: {err}"
+        );
+    }
 
     // ── output-ref validation (chain-of-evidence: a downstream stage may only
     //    reference fields its upstream skill actually emits) ──────────────────

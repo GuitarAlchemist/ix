@@ -3,7 +3,7 @@
 use crate::output::{self, Format};
 use ix_pipeline::executor::{execute, NoCache};
 use ix_pipeline::lock::LockFile;
-use ix_pipeline::lower::{lower, lower_with_gate};
+use ix_pipeline::lower::{bind_params, lower, lower_with_gate};
 use ix_pipeline::spec::PipelineSpec;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -110,8 +110,11 @@ pub(crate) fn build_schema() -> Value {
             "version": { "const": "1", "default": "1" },
             "params": {
                 "type": "object",
-                "description": "Named parameter bag (string expansion only; \
-                    inert in the current executor — prefer inlining values)."
+                "description": "Default values for {\"param\": \"NAME\"} \
+                    placeholders used in stage args, bound at run via \
+                    `--param NAME=...`. A null default means the value MUST be \
+                    supplied at run. Use this when the request's data is not \
+                    inline (e.g. \"reduce this dataset\")."
             },
             "stages": {
                 "type": "object",
@@ -134,8 +137,10 @@ pub(crate) fn build_schema() -> Value {
                     },
                     "args": {
                         "type": "object",
-                        "description": "Static JSON input for the skill. May embed \
-                            {\"from\": \"upstream_stage[.key]\"} references."
+                        "description": "JSON input for the skill. May embed \
+                            {\"from\": \"upstream_stage[.key]\"} references to an \
+                            upstream output, or {\"param\": \"NAME\"} placeholders \
+                            bound at run from the top-level `params`/`--param`."
                     },
                     "deps": {
                         "type": "array",
@@ -484,13 +489,53 @@ fn append_provenance(lock: &LockFile) {
     }
 }
 
-/// `ix pipeline run [-f FILE] [--json]` — execute the pipeline.
+/// Parse `--param NAME=VALUE` strings into a value map. VALUE is parsed as JSON;
+/// a leading `@` reads JSON from that file; a value that is not valid JSON is
+/// taken verbatim as a string (so `--param label=foo` works without quoting).
+pub(crate) fn parse_params(
+    raw: &[String],
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for entry in raw {
+        let (name, val) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("--param must be NAME=VALUE, got '{entry}'"))?;
+        if name.is_empty() {
+            return Err(format!("--param has an empty name: '{entry}'"));
+        }
+        let value = if let Some(file) = val.strip_prefix('@') {
+            let text = std::fs::read_to_string(file)
+                .map_err(|e| format!("--param {name}=@{file}: {e}"))?;
+            serde_json::from_str(&text)
+                .map_err(|e| format!("--param {name}=@{file}: not valid JSON: {e}"))?
+        } else {
+            serde_json::from_str(val).unwrap_or_else(|_| serde_json::Value::String(val.to_string()))
+        };
+        out.insert(name.to_string(), value);
+    }
+    Ok(out)
+}
+
+/// `ix pipeline run [-f FILE] [--json] [--param NAME=VALUE]...` — execute the
+/// pipeline.
 ///
 /// When `stream_ndjson` is true, emits NDJSON events (`start`, `stage_start`,
 /// `stage_complete`, `done`) to stdout in real time as the DAG runs.
-pub fn run(file: Option<&str>, stream_ndjson: bool, format: Format) -> Result<(), String> {
+pub fn run(
+    file: Option<&str>,
+    stream_ndjson: bool,
+    raw_params: &[String],
+    format: Format,
+) -> Result<(), String> {
     let path: &str = file.unwrap_or(DEFAULT_FILE);
     let spec = PipelineSpec::from_file(path).map_err(|e| format!("loading {path}: {e}"))?;
+    // Bind run-time `--param NAME=VALUE` values into `{param: "name"}` placeholders
+    // BEFORE the governance gate and lowering, so the gate vets the real resolved
+    // values and the executor (and ix.lock provenance) see concrete data, not the
+    // template. A referenced-but-unsupplied param fails here, before any stage runs.
+    let params = parse_params(raw_params)?;
+    let spec =
+        bind_params(&spec, &params).map_err(|e| format!("binding params for {path}: {e}"))?;
     // Template-time pre-flight: fail fast on literal violations before ANY
     // stage runs (prevents partial side effects from a multi-stage pipeline).
     governance_gate(&spec).map_err(|e| format!("governance gate: {e}"))?;
@@ -918,5 +963,39 @@ stages:
             .unwrap(),
             Some("sha256:deadbeef".to_string())
         );
+    }
+
+    // ---- --param parsing -------------------------------------------------
+
+    #[test]
+    fn parse_params_parses_json_and_falls_back_to_string() {
+        let p = parse_params(&[
+            "k=3".to_string(),
+            "data=[[1.0,2.0],[3.0,4.0]]".to_string(),
+            "label=hello".to_string(), // bare word, not valid JSON -> string
+        ])
+        .unwrap();
+        assert_eq!(p["k"], serde_json::json!(3));
+        assert_eq!(p["data"], serde_json::json!([[1.0, 2.0], [3.0, 4.0]]));
+        assert_eq!(p["label"], serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn parse_params_rejects_missing_equals() {
+        let err = parse_params(&["noequals".to_string()]).unwrap_err();
+        assert!(err.contains("NAME=VALUE"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_params_allows_equals_in_value() {
+        // split_once('=') keeps later '=' in the value (e.g. base64/expr).
+        let p = parse_params(&["expr=a=b".to_string()]).unwrap();
+        assert_eq!(p["expr"], serde_json::json!("a=b"));
+    }
+
+    #[test]
+    fn parse_params_at_file_missing_errors() {
+        let err = parse_params(&["data=@/no/such/file.json".to_string()]).unwrap_err();
+        assert!(err.contains("data=@"), "got: {err}");
     }
 }

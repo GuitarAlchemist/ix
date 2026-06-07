@@ -230,6 +230,18 @@
       "test_binding": null
     },
     {
+      "key": "sha256:5c3817bdf0d1cc6481638085ed38b29a164ed8eb74687a361deed0cd13f46620",
+      "path": "crates/ix-pipeline/src/lower.rs",
+      "line": 239,
+      "kind": "invariant",
+      "claim": "bind_params returns an unbound {param:\"X\"} (missing/null) as Err, never as a substituted spec — so a caller that binds before executing cannot pass an unbound placeholder to a skill",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "lower::tests::bind_params_missing_param_errors",
+      "anchor_hash": "sha256:2590c7049c54362049baf80499cb56bdecaefd7326c0670107e195cb0adfad71",
+      "test_binding": "bind_params_missing_param_errors"
+    },
+    {
       "key": "sha256:50cbdd5adf3ce6007ecff9300d4cf519473bb56be4c443688af4e5de43082c7b",
       "path": "crates/ix-search/src/astar.rs",
       "line": 75,
@@ -364,7 +376,7 @@
     {
       "key": "sha256:6511bb88a56c682ef0cf5414b979950553c36152bf89adbf74a7d2413fce0a74",
       "path": "crates/ix-skill/src/verbs/compile.rs",
-      "line": 1657,
+      "line": 1737,
       "kind": "invariant",
       "claim": "fixed-ref z-norm (E) is affine-identical to raw (A) on AUC/TNR/near-miss — a monotone affine map is rank- and ID-quantile-invariant",
       "verdict": "T",
@@ -376,7 +388,7 @@
     {
       "key": "sha256:cc19c55cbfe8379f7037d60faad7f46b7c4b67837dca48d7ad7b3cde620cf07e",
       "path": "crates/ix-skill/src/verbs/compile.rs",
-      "line": 1658,
+      "line": 1738,
       "kind": "assumption",
       "claim": "on the 184-probe corpus + bge-base-en, raw mean-top-3 cosine dominates every per-query/margin/kNN calibration on AUC, so the gate keeps the raw threshold — CONDITIONAL on the corpus + embedder, re-run on change",
       "verdict": "T",
