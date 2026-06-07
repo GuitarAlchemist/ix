@@ -767,7 +767,17 @@ mod tests {
 
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../state/thinking-machine/coverage-probes.jsonl");
-        let file = std::fs::File::open(&path).expect("probe corpus exists");
+        // The corpus is a workspace-level state/ artifact, not packaged inside
+        // the crate. In the normal workspace checkout it is always present; skip
+        // loudly (rather than panic) if the crate is tested in isolation outside
+        // the workspace tree. (Codex #79 P2.)
+        let Ok(file) = std::fs::File::open(&path) else {
+            eprintln!(
+                "SKIP coverage_baseline_tfidf: probe corpus not found at {} (crate tested outside the workspace)",
+                path.display()
+            );
+            return;
+        };
         let skills = pipeline_callable_skills();
         let threshold = 0.08_f64; // the live IX_THINKER_COVERAGE_MIN default
 
