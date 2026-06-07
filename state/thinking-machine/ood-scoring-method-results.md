@@ -72,10 +72,19 @@ recall floor from production's 0.99 to 0.97 trades recall for near-miss TNR
 (0.625 → 0.675 overall, 0.482 → 0.554 near-miss). That is a one-line threshold
 choice, deferred to a guarded A/B with a recall guardrail — not a code change.
 
-The sweep ships as a **regression guard**: the test asserts (1) raw dominates
+The sweep ships as a **re-runnable guard**: the test asserts (1) raw dominates
 B/C/D on AUC (A excluded from the comparison set — not a tautology), and (2) the
-fixed-reference equivalence E ≡ A. If a future embedder or probe set genuinely
-flips this, the test fails loudly and the keep-raw decision is revisited.
+fixed-reference equivalence E ≡ A on all three metrics (AUC/TNR/near). If a
+future embedder or probe set genuinely flips this, the test fails loudly and the
+keep-raw decision is revisited.
+
+**Enforcement caveat (not a CI gate).** The test is `#[cfg(feature = "embeddings")]`
+and CI builds/tests `--workspace` with no feature flags, so it **never runs in
+CI** (CI never pulls ONNX) and **skips** (early return, zero assertions) if the
+probe corpus is absent. "Fails loudly" means *when a human re-runs the sweep*
+after touching the embedder or probes — this is a decision record plus a manual /
+PR-time check, not an auto-firing alarm. Re-run:
+`cargo test -p ix-skill --features embeddings ood_scoring_method_sweep_over_probe_corpus -- --nocapture`.
 
 Reversibility: **two-way door** (the gate already runs raw cosine; this only
 records *not* adding a method). Revisit trigger: a new embedder, a materially

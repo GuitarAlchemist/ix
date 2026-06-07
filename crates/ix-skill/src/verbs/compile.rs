@@ -1459,6 +1459,14 @@ mod tests {
     // below). Net: keep the raw threshold; wire NO new scoring method. The only
     // real lever is the operating point (recall 0.97 → TNR 0.675/near 0.554 vs
     // production recall 0.99 → 0.625/0.482).
+    //
+    // ENFORCEMENT (be honest — this is NOT a CI gate): the test is feature-gated
+    // on `embeddings` (non-default), and CI builds/tests `--workspace` with no
+    // feature flags, so this NEVER runs in CI (CI never pulls ONNX). It is a
+    // MANUAL / PR-time check — "fails loudly" means when a human re-runs the
+    // sweep after changing the embedder or probe set, not automatically. It also
+    // SKIPs (early return, zero assertions) if the probe corpus is absent. Treat
+    // it as a decision record with a re-runnable guard, not an auto-firing alarm.
     #[cfg(feature = "embeddings")]
     #[test]
     fn ood_scoring_method_sweep_over_probe_corpus() {
@@ -1637,15 +1645,22 @@ mod tests {
             );
         }
         // Equivalence proof closing the adversarial reviewer's loophole: a FIXED
-        // in-domain reference z-norm (E) is a monotone affine map of raw, so its
-        // AUC is bit-identical. The "correct" per-query calibration the reviewer
+        // in-domain reference z-norm (E) is a monotone affine map of raw, so ALL
+        // THREE metrics are bit-identical — AUC is rank-invariant, and the
+        // ID-quantile threshold co-transforms so TNR and near-miss TNR refuse the
+        // exact same points. The "correct" per-query calibration the reviewer
         // proposed collapses to raw — hence NO fixed-reference calibration can
         // beat raw, and only the per-query variant (B) differs, and it loses.
+        // Assert all three (not just AUC) so the guard matches the claim.
         assert!(
-            (e.0 - a.0).abs() < 1e-9,
-            "fixed-ref z-norm AUC {:.6} != raw AUC {:.6} (must be affine-identical)",
+            (e.0 - a.0).abs() < 1e-9 && (e.1 - a.1).abs() < 1e-9 && (e.2 - a.2).abs() < 1e-9,
+            "fixed-ref z-norm (AUC {:.6} TNR {:.6} near {:.6}) != raw (AUC {:.6} TNR {:.6} near {:.6}); must be affine-identical",
             e.0,
-            a.0
+            e.1,
+            e.2,
+            a.0,
+            a.1,
+            a.2
         );
     }
 }
