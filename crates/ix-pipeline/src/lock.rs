@@ -75,7 +75,10 @@ pub struct LockedStage {
 pub struct InputBinding {
     /// The consumer arg name the reference appeared under.
     pub name: String,
-    /// Producing stage id (or `__input__:KEY` for a seed input).
+    /// The reference's stage token — the text before the first `.` in the
+    /// `{"from"}` target. For a producing stage this is its id (and
+    /// `upstream_output_hash` links to it); for a seed-input ref it is the seed
+    /// key and `upstream_output_hash` is empty (no producing stage this run).
     pub from_stage: String,
     /// Output key within the producer's output (`*` = whole output).
     pub from_key: String,
@@ -93,13 +96,21 @@ impl LockFile {
     /// those outputs (deterministic, identical to what ran), so no executor or
     /// closure changes are needed. `initial_inputs` are the seed values handed to
     /// `execute()` (empty for inline-data specs).
+    ///
+    /// CALLER CONTRACT: `initial_inputs` MUST be the same seed map passed to
+    /// `execute()` for this run. Re-resolution looks refs up against (those
+    /// seeds + stage outputs); if a caller seeds `execute()` but hands `from_run`
+    /// a different/empty map, a seed-backed ref fails to resolve and
+    /// `resolved_args_hash` silently falls back to the template hash. The sole
+    /// caller (`ix pipeline run`) passes one shared, empty map, so this holds today.
+    // @ai:assumption from_run's `initial_inputs` is the SAME seed map passed to execute() this run; else a seed-backed resolved_args_hash silently degrades to the template hash [U:uncertain conf:0.6 src:ix-skill pipeline.rs run() passes one shared empty map to both — unenforced precondition]
     pub fn from_run(
         spec: &PipelineSpec,
         result: &PipelineResult,
         initial_inputs: &std::collections::HashMap<String, Value>,
     ) -> Self {
-        // stage_id (and `__input__:KEY` seeds) -> output value, for re-resolution
-        // and upstream-hash linking.
+        // {stage_id -> output} (plus any seed inputs by their own keys), for
+        // re-resolving `{"from"}` refs and linking upstream output hashes.
         let mut outputs: std::collections::HashMap<String, Value> = initial_inputs.clone();
         for (id, r) in &result.node_results {
             outputs.insert(id.clone(), r.output.clone());
