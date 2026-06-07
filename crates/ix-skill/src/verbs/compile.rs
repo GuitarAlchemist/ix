@@ -277,7 +277,89 @@ fn resolve_spec(
 fn parse_and_lower(yaml: &str) -> Result<PipelineSpec, String> {
     let spec = PipelineSpec::from_yaml_str(yaml).map_err(|e| format!("parse/shape error: {e}"))?;
     lower(&spec).map_err(|e| format!("lowering error: {e}"))?;
+    validate_output_refs(&spec)?;
     Ok(spec)
+}
+
+/// Collect every full `{"from": "target"}` reference target string in `value`
+/// (a stage's args). Unlike `lower::collect_from_refs` — which records only the
+/// bare upstream stage id for dependency edges — this keeps the qualified
+/// `stage.field` form so we can check the field against the producer's schema.
+fn collect_full_refs(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if map.len() == 1 {
+                if let Some(Value::String(t)) = map.get("from") {
+                    out.push(t.clone());
+                    return;
+                }
+            }
+            for v in map.values() {
+                collect_full_refs(v, out);
+            }
+        }
+        Value::Array(items) => {
+            for v in items {
+                collect_full_refs(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Validate cross-stage `{"from": "stage.field"}` references against the
+/// producing skill's declared `output_schema`. A reference to a field the
+/// upstream skill does not emit is the silent break that makes a multi-stage
+/// spec compile but fail at `--run` (e.g. the proposer guessing `reduce.projected`
+/// when PCA emits `transformed`). Returning a descriptive `Err` lets the repair
+/// loop feed it back so the proposer self-corrects. Fail-OPEN: stages whose
+/// producing skill declares NO output schema (the default) are not validated, so
+/// this never regresses an existing pipeline.
+fn validate_output_refs(spec: &PipelineSpec) -> Result<(), String> {
+    let stage_skill: std::collections::BTreeMap<&str, &str> = spec
+        .stages
+        .iter()
+        .map(|(id, st)| (id.as_str(), st.skill.as_str()))
+        .collect();
+
+    let mut errors: Vec<String> = Vec::new();
+    for (stage_id, st) in &spec.stages {
+        let mut refs = Vec::new();
+        collect_full_refs(&st.args, &mut refs);
+        for target in refs {
+            // `lower` treats everything before the first '.' as the stage id.
+            let Some((up_stage, rest)) = target.split_once('.') else {
+                continue; // whole-output ref — nothing to validate
+            };
+            let field = rest.split('.').next().unwrap_or(rest);
+            // Unknown stage ids are caught by `lower`; don't double-report here.
+            let Some(up_skill) = stage_skill.get(up_stage) else {
+                continue;
+            };
+            let Some(desc) = ix_registry::by_name(up_skill) else {
+                continue;
+            };
+            let out_schema = (desc.output_schema)();
+            let Some(props) = out_schema.get("properties").and_then(|p| p.as_object()) else {
+                continue; // undeclared (Null) or schema without properties → skip
+            };
+            if !props.contains_key(field) {
+                let mut valid: Vec<&str> = props.keys().map(String::as_str).collect();
+                valid.sort_unstable();
+                errors.push(format!(
+                    "stage '{stage_id}' references `{up_stage}.{field}`, but skill '{up_skill}' \
+                     emits {valid:?} — use one of those field names (or `{{from: \"{up_stage}\"}}` \
+                     for the whole output)"
+                ));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("output-ref error: {}", errors.join("; ")))
+    }
 }
 
 /// A resolved-args `StageGate` rejection surfaces from `execute()` as a
@@ -443,17 +525,24 @@ pub(crate) fn pipeline_callable_skills() -> Vec<&'static ix_registry::SkillDescr
     skills
 }
 
-/// The catalog the proposer sees: name, doc, governance tags, and arg schema.
+/// The catalog the proposer sees: name, doc, governance tags, arg schema, and —
+/// when the skill declares one — its OUTPUT schema, so the proposer can write
+/// correct downstream `{"from": "stage.field"}` references instead of guessing.
 fn catalog_value(skills: &[&'static ix_registry::SkillDescriptor]) -> Value {
     let rows: Vec<Value> = skills
         .iter()
         .map(|s| {
-            json!({
+            let mut row = json!({
                 "name": s.name,
                 "doc": s.doc,
                 "governance_tags": s.governance_tags,
                 "args_schema": (s.json_schema)(),
-            })
+            });
+            let out = (s.output_schema)();
+            if !out.is_null() {
+                row["output_schema"] = out;
+            }
+            row
         })
         .collect();
     json!(rows)
@@ -584,6 +673,11 @@ stages:
          `args` object. Express data flow with `{{\"from\": \"stage_id.key\"}}` \
          inside args, and/or explicit `deps: [stage_id]`. Use ONLY skills that \
          appear in the catalog below, and match each skill's args_schema.\n\n\
+         OUTPUT REFERENCES: when you reference an upstream stage's output with \
+         `{{\"from\": \"stage_id.field\"}}`, `field` MUST be one of the keys in \
+         that stage's skill `output_schema` (shown in the catalog). Do NOT invent \
+         field names. If a producing skill has no `output_schema`, reference its \
+         whole output with `{{\"from\": \"stage_id\"}}` (no field).\n\n\
          JSON SCHEMA for the document you must emit:\n{}\n\n\
          SKILL CATALOG (pipeline-callable skills only):\n{}\n\n\
          EXAMPLE of a valid PipelineSpec:\n{}\n",
@@ -839,6 +933,98 @@ fn summarize_hits(path: &std::path::Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── output-ref validation (chain-of-evidence: a downstream stage may only
+    //    reference fields its upstream skill actually emits) ──────────────────
+
+    #[test]
+    fn output_ref_to_undeclared_field_is_rejected() {
+        // pca emits `transformed`, not `projected` — the exact PCA→kmeans guess
+        // the dogfood surfaced. This must be a repairable validation error.
+        let spec = PipelineSpec::from_yaml_str(
+            r#"version: "1"
+stages:
+  reduce:
+    skill: pca
+    args:
+      data: [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+      n_components: 1
+  cluster:
+    skill: kmeans
+    args:
+      data: { from: "reduce.projected" }
+      k: 2
+    deps: [reduce]"#,
+        )
+        .expect("spec parses");
+        let err = validate_output_refs(&spec).unwrap_err();
+        assert!(err.contains("reduce.projected"), "names the bad ref: {err}");
+        assert!(err.contains("transformed"), "lists the valid fields: {err}");
+    }
+
+    #[test]
+    fn output_ref_to_declared_field_is_accepted() {
+        let spec = PipelineSpec::from_yaml_str(
+            r#"version: "1"
+stages:
+  reduce:
+    skill: pca
+    args:
+      data: [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+      n_components: 1
+  cluster:
+    skill: kmeans
+    args:
+      data: { from: "reduce.transformed" }
+      k: 2
+    deps: [reduce]"#,
+        )
+        .expect("spec parses");
+        assert!(validate_output_refs(&spec).is_ok());
+    }
+
+    #[test]
+    fn output_ref_against_skill_without_schema_is_skipped() {
+        // `stats` declares no output_schema → fail-OPEN, never blocks (so this
+        // change can't regress an existing pipeline whose producer is undeclared).
+        let spec = PipelineSpec::from_yaml_str(
+            r#"version: "1"
+stages:
+  s:
+    skill: stats
+    args:
+      data: [1.0, 2.0, 3.0]
+  c:
+    skill: kmeans
+    args:
+      data: { from: "s.whatever_unknown" }
+      k: 1
+    deps: [s]"#,
+        )
+        .expect("spec parses");
+        assert!(validate_output_refs(&spec).is_ok());
+    }
+
+    #[test]
+    fn whole_output_ref_without_field_is_accepted() {
+        let spec = PipelineSpec::from_yaml_str(
+            r#"version: "1"
+stages:
+  reduce:
+    skill: pca
+    args:
+      data: [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+      n_components: 1
+  cluster:
+    skill: kmeans
+    args:
+      data: { from: "reduce" }
+      k: 2
+    deps: [reduce]"#,
+        )
+        .expect("spec parses");
+        assert!(validate_output_refs(&spec).is_ok());
+    }
 
     #[test]
     fn coverage_ranks_in_domain_above_out_of_domain() {
