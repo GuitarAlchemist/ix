@@ -115,12 +115,33 @@ fn kmeans_schema() -> Value {
     })
 }
 
+fn kmeans_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "labels": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "description": "Cluster index assigned to each input row"
+            },
+            "centroids": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } },
+                "description": "The k cluster-center vectors"
+            },
+            "inertia": { "type": "number", "description": "Sum of squared distances to centroids" },
+            "k": { "type": "integer", "description": "Number of clusters" }
+        }
+    })
+}
+
 /// Cluster points using K-Means.
 #[ix_skill(
     domain = "unsupervised",
     name = "kmeans",
     governance = "empirical",
-    schema_fn = "crate::skills::batch1::kmeans_schema"
+    schema_fn = "crate::skills::batch1::kmeans_schema",
+    output_schema_fn = "crate::skills::batch1::kmeans_output_schema"
 )]
 pub fn kmeans(params: Value) -> Result<Value, String> {
     handlers::kmeans(params)
@@ -147,6 +168,30 @@ fn pca_schema() -> Value {
     })
 }
 
+fn pca_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "transformed": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } },
+                "description": "Input projected onto the top n_components axes (one row per observation)"
+            },
+            "explained_variance_ratio": {
+                "type": "array",
+                "items": { "type": "number" },
+                "description": "Fraction of total variance carried by each component"
+            },
+            "components": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "number" } },
+                "description": "The principal-axis vectors (n_components rows)"
+            },
+            "n_components": { "type": "integer", "description": "Number of components kept" }
+        }
+    })
+}
+
 /// Reduce dimensionality with Principal Component Analysis: project the data
 /// onto its top `n_components` principal axes and report the explained-variance
 /// ratio per component.
@@ -154,7 +199,8 @@ fn pca_schema() -> Value {
     domain = "unsupervised",
     name = "pca",
     governance = "empirical,deterministic",
-    schema_fn = "crate::skills::batch1::pca_schema"
+    schema_fn = "crate::skills::batch1::pca_schema",
+    output_schema_fn = "crate::skills::batch1::pca_output_schema"
 )]
 pub fn pca(params: Value) -> Result<Value, String> {
     handlers::pca(params)

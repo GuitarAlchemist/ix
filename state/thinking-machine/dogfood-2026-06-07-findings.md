@@ -107,6 +107,40 @@ the registry bridge (parity 77→78, registry 52→53). Three executes-tests
    next fix: add each skill's output field names to the catalog (and/or validate
    cross-stage refs in `lower()`), so compositions execute, not just compile.
 
+---
+
+## Increment 2 (shipped same session): output schemas — compositions now EXECUTE
+
+Closed finding #2. Skills can now declare an **output schema**, the proposer is
+told the real field names, and wrong refs are caught as a repair signal:
+
+- **Macro + registry:** added optional `output_schema_fn` to `#[ix_skill]` →
+  additive `SkillDescriptor.output_schema` (default `Null` = undeclared; every
+  existing skill unaffected).
+- **Catalog:** `catalog_value` now exposes `output_schema` when declared; the
+  system prompt instructs the proposer to reference upstream outputs ONLY by
+  those declared field names (or `{from: "stage"}` for the whole output).
+- **Repairable validation:** `validate_output_refs` (in `parse_and_lower`, inside
+  the repair loop) rejects a `{from:"stage.field"}` whose `field` isn't in the
+  producer's declared output schema — fail-OPEN for skills without a schema, so
+  no existing pipeline regresses. 4 unit tests.
+- **Declared output schemas** for `pca` + `kmeans` (the first composition pair).
+- **On-theme bug fixed:** the `kmeans` handler *required* `max_iter` despite the
+  schema marking it optional (default 100) → any composition that omitted it
+  failed at `--run`. Now defaults to 100.
+
+**Verified end-to-end:** the proposer now emits `from: reduce.transformed` (the
+declared field, not the guessed `projected`); a hand-authored pca→kmeans spec
+**executes through `ix pipeline run`**, producing real cluster labels
+(`[1,0,1,1,1,1,1,0]`) — "compiled" is now "executable" for this composition.
+
+This is also the first link of the **chain-of-evidence** thread (producer→consumer
+field bindings are now provably valid). Next on that thread: per-run provenance
+record (`stage→skill→input refs→output hash`) + hexavalent certainty propagation.
+
+Remaining catalog primitives (still next-up): DBSCAN, eigendecomposition — and
+the structural data-binding follow-up (finding #1) is now the dominant refusal.
+
 Remaining catalog primitives (same pattern as `pca`, next passes): **DBSCAN**
 (`ix-unsupervised/src/dbscan.rs`), **eigendecomposition** (`ix-math/src/eigen.rs`
 + `svd.rs`). Each: arity-1 `#[ix_skill]` + handler + executes-test + parity bump

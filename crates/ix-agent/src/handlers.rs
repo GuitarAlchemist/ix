@@ -269,7 +269,13 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
 
     let data_rows = parse_f64_matrix(&params, "data")?;
     let k = parse_usize(&params, "k")?;
-    let max_iter = parse_usize(&params, "max_iter")?;
+    // `max_iter` is optional in the schema (default 100) — honor that default
+    // instead of erroring, so a composed stage that omits it still runs.
+    let max_iter = params
+        .get("max_iter")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(100);
 
     let data = vecs_to_array2(&data_rows)?;
 
