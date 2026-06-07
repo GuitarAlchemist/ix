@@ -33,8 +33,12 @@ pub struct PipelineSpec {
     #[serde(default = "default_version")]
     pub version: String,
 
-    /// Named parameter bag, substituted into stage args via `${params.NAME}`
-    /// (string expansion only; full templating deferred).
+    /// Named parameter bag: default values for `{"param": "NAME"}` object-refs in
+    /// stage args, bound at run time by `lower::bind_params` and overridable with
+    /// `ix pipeline run --param NAME=<json|@file>`. A `null` default means the
+    /// param MUST be supplied at run. This is how the NL compiler emits a spec for
+    /// a request whose data isn't inline ("reduce this dataset"). (A separate
+    /// `${params.NAME}` string-interpolation form is reserved, not yet built.)
     #[serde(default)]
     pub params: BTreeMap<String, Value>,
 

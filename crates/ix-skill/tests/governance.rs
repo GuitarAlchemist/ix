@@ -223,3 +223,55 @@ stages:
     assert!(lock_text.contains("output_hash: sha256:"));
     fs::remove_dir_all(&dir).ok();
 }
+
+// ---- run-time data binding (--param) ------------------------------------
+
+const PARAM_SPEC: &str = r#"version: "1"
+params:
+  nums: null
+stages:
+  s:
+    skill: stats
+    args:
+      data: { param: nums }
+"#;
+
+#[test]
+fn pipeline_run_binds_param_at_runtime() {
+    let dir = tempdir("param_bind");
+    fs::write(dir.join("ix.yaml"), PARAM_SPEC).unwrap();
+    // The spec leaves `data` as a {param: nums} placeholder; --param supplies it.
+    ix_in(&dir)
+        .args([
+            "--format",
+            "json",
+            "pipeline",
+            "run",
+            "--param",
+            "nums=[1.0, 2.0, 3.0]",
+        ])
+        .assert()
+        .success();
+    // The lock records the stage actually ran with bound (not placeholder) data.
+    let lock_text = fs::read_to_string(dir.join("ix.lock")).unwrap();
+    assert!(lock_text.contains("skill: stats"));
+    assert!(lock_text.contains("output_hash: sha256:"));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn pipeline_run_unbound_param_fails_closed() {
+    let dir = tempdir("param_missing");
+    fs::write(dir.join("ix.yaml"), PARAM_SPEC).unwrap();
+    // No --param: the placeholder is unbound, so the run must fail BEFORE any
+    // stage executes, with a clear message — not pass a {param} blob to `stats`.
+    let assert = ix_in(&dir).args(["pipeline", "run"]).assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("missing required param 'nums'"),
+        "expected a missing-param error, got: {stderr}"
+    );
+    // And it must NOT have produced a lock (nothing executed).
+    assert!(!dir.join("ix.lock").exists(), "no ix.lock on a failed bind");
+    fs::remove_dir_all(&dir).ok();
+}
