@@ -232,11 +232,22 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// Strip CR bytes so the pin is over the constitution's CONTENT, not its
+/// platform line-ending encoding. The gate reads raw file bytes, so a Windows
+/// (CRLF) checkout and a Linux/CI (LF) checkout of the *same* constitution would
+/// otherwise hash differently and a single committed pin could never match both.
+/// A CRLF↔LF flip is benign — only real content changes must trip tamper-
+/// evidence. (CI caught this: local CRLF hash ≠ committed LF-blob hash.)
+fn normalize_newlines(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().copied().filter(|&b| b != b'\r').collect()
+}
+
 /// Compare a loaded constitution's bytes against an expected `<algo>:<hex>` pin.
 /// Pure (no I/O) so the fail-closed branch is unit-testable. `expected = None`
 /// → `Unpinned`. A present-but-mismatched pin → `Err` (fail-CLOSED). Only
 /// `sha256:` pins are understood; an unknown algorithm prefix is a hard error,
-/// never a silent pass.
+/// never a silent pass. Hashes line-ending-normalized content so the pin is
+/// reproducible across platforms.
 fn check_pin(expected: Option<&str>, bytes: &[u8]) -> Result<PinStatus, String> {
     let Some(expected) = expected else {
         return Ok(PinStatus::Unpinned);
@@ -247,7 +258,7 @@ fn check_pin(expected: Option<&str>, bytes: &[u8]) -> Result<PinStatus, String> 
              (only sha256: is understood) — refusing to execute"
         ));
     };
-    let actual = sha256_hex(bytes);
+    let actual = sha256_hex(&normalize_newlines(bytes));
     if actual.eq_ignore_ascii_case(hex) {
         Ok(PinStatus::Verified)
     } else {
@@ -797,6 +808,23 @@ stages:
         );
         // No pin committed → Unpinned (reported, never silently trusted).
         assert_eq!(check_pin(None, bytes).unwrap(), PinStatus::Unpinned);
+    }
+
+    #[test]
+    fn check_pin_is_line_ending_independent() {
+        // The gate reads raw file bytes; a Windows (CRLF) and a Linux/CI (LF)
+        // checkout of the SAME constitution must verify against ONE committed
+        // pin. Regression for the CI failure where the local CRLF hash differed
+        // from the committed LF-blob hash.
+        let lf = b"Article 1: Truth\nArticle 2: Reversibility\n".to_vec();
+        let crlf = b"Article 1: Truth\r\nArticle 2: Reversibility\r\n".to_vec();
+        let pin = format!("sha256:{}", sha256_hex(&normalize_newlines(&lf)));
+        assert_eq!(check_pin(Some(&pin), &lf).unwrap(), PinStatus::Verified);
+        assert_eq!(
+            check_pin(Some(&pin), &crlf).unwrap(),
+            PinStatus::Verified,
+            "CRLF and LF of identical content must verify against the same pin"
+        );
     }
 
     #[test]
