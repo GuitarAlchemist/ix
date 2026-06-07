@@ -52,7 +52,11 @@ mean-top-3 cosine, threshold ≈ **0.45**, behind the `embeddings` Cargo feature
 (optional-dep boundary per the CLAUDE.md carve-out), with the pure-Rust TF-IDF
 gate as graceful fallback. Guardrail: in-domain recall must stay ≥ ~0.97.
 
-Open (next): the score→verdict *method* refinement (per-query calibration /
-kNN-distance OOD vs the fixed cosine threshold) remains the unsettled front —
-but the fixed mean-top-3 threshold already delivers a 3.8× TNR lift, so it ships
-first and the refinement is a follow-up.
+Resolved (next): the score→verdict *method* refinement (per-query calibration /
+kNN-distance OOD vs the fixed cosine threshold) was the unsettled front — now
+closed by `ood-scoring-method-results.md`. The A/B/C/D/E sweep + adversarial
+verification (`ww01cowgl`) found the **raw** mean-top-3 threshold is already
+optimal within the candidate family: per-query z-norm loses (AUC 0.698), and the
+only calibration that wouldn't hurt (fixed in-domain reference) is provably
+identical to raw. **Wire no new scoring method**; the only lever is the operating
+point. The 3.8× TNR lift is from the embedder, not from any scoring refinement.
