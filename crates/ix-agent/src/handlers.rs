@@ -269,13 +269,17 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
 
     let data_rows = parse_f64_matrix(&params, "data")?;
     let k = parse_usize(&params, "k")?;
-    // `max_iter` is optional in the schema (default 100) — honor that default
-    // instead of erroring, so a composed stage that omits it still runs.
-    let max_iter = params
-        .get("max_iter")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize)
-        .unwrap_or(100);
+    // `max_iter` is optional in the schema (default 100) — default ONLY when
+    // absent/null so a composed stage that omits it still runs; a present but
+    // malformed value (string/float/negative) is still rejected, not silently
+    // coerced to the default. (Codex #84 P2.)
+    let max_iter = match params.get("max_iter") {
+        None | Some(Value::Null) => 100,
+        Some(v) => v
+            .as_u64()
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'max_iter' must be a non-negative integer".to_string())?,
+    };
 
     let data = vecs_to_array2(&data_rows)?;
 
