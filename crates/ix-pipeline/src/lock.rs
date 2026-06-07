@@ -152,10 +152,17 @@ impl LockFile {
             &serde_json::to_value(spec).unwrap_or(Value::Null),
         ));
         let generated = current_iso_timestamp();
-        // Content+time run id: distinct per run, stable to re-parse. 16 hex chars
-        // of sha256 over (timestamp, spec hash, stage count) — drop the
-        // "sha256:" prefix so the id reads `run:<hex>`.
-        let run_digest = sha256_str(&format!("{generated}|{spec_hash}|{}", stages.len()));
+        // Distinct-per-run id: 16 hex chars of sha256 over (nanosecond clock,
+        // process-lifetime sequence, spec hash, stage count). The `generated`
+        // ISO string is only second-resolution, and on some platforms the clock
+        // is coarse (~15ms), so two runs of the SAME spec within that window
+        // would otherwise collide (Codex #85 P2) — the nanos + the monotonic
+        // counter guarantee uniqueness within a process and across the realistic
+        // multi-process case. (run_id is intentionally non-reproducible; only
+        // output_hash is deterministic.)
+        let nanos = now_nanos();
+        let seq = RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let run_digest = sha256_str(&format!("{nanos}|{seq}|{spec_hash}|{}", stages.len()));
         let run_hex = run_digest.strip_prefix("sha256:").unwrap_or(&run_digest);
         let run_id = format!("run:{}", &run_hex[..16.min(run_hex.len())]);
         LockFile {
@@ -281,6 +288,20 @@ fn sha256_str(s: &str) -> String {
 /// sha256 of a JSON value over its canonical form (key-sorted), `sha256:` prefixed.
 fn sha256_json(v: &Value) -> String {
     sha256_str(&canonicalize(v))
+}
+
+/// Process-lifetime monotonic counter — guarantees distinct `run_id`s even when
+/// two runs read an identical (coarse) clock value.
+static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Wall-clock nanoseconds since the Unix epoch (best-effort; 0 if the clock is
+/// before the epoch). Used only for `run_id` entropy, never for content hashes.
+fn now_nanos() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -516,6 +537,20 @@ mod tests {
         assert_eq!(a, b, "same value → same hash");
         assert_ne!(a, c, "changed value → changed hash");
         assert!(a.starts_with("sha256:"));
+    }
+
+    // Criterion 5 (Codex #85 P2): the same spec run twice → DISTINCT run_id,
+    // even though the deterministic content hashes are identical.
+    #[test]
+    fn v2_run_id_is_unique_per_run() {
+        let (spec, result) = two_stage_run();
+        let a = LockFile::from_run(&spec, &result, &HashMap::new());
+        let b = LockFile::from_run(&spec, &result, &HashMap::new());
+        assert_ne!(a.run_id, b.run_id, "two runs of one spec → distinct run_id");
+        assert_eq!(
+            a.stages["reduce"].output_hash, b.stages["reduce"].output_hash,
+            "but the content hash stays deterministic"
+        );
     }
 
     // Criterion 6: a v1 lock still deserializes (v2 fields default).
