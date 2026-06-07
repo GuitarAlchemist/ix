@@ -64,6 +64,7 @@ const EXPECTED: &[&str] = &[
     "ix_grothendieck_nearby",
     "ix_grothendieck_path",
     "ix_hyperloglog",
+    "ix_dbscan",
     "ix_kmeans",
     "ix_linear_regression",
     "ix_pca",
@@ -154,9 +155,11 @@ fn parity_expected_count() {
     //   aggregate, agent-native parity with `ix pipeline hits`) = 77.
     // + ix_pca (2026-06-07, standalone PCA — first dogfood catalog-breadth fix;
     //   auto-exposed via the registry bridge) = 78.
+    // + ix_dbscan (2026-06-07, density clustering — dogfood catalog-breadth fix;
+    //   auto-exposed via the registry bridge) = 79.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 78);
+    assert_eq!(EXPECTED.len(), 79);
 }
 
 #[test]
@@ -286,10 +289,11 @@ fn parity_all_43_registry_backed() {
     // session.flywheel_export) + prime_radiant (2) migration, all 47
     // algorithm tools are registry-backed. ix_demo is manual.
     // + pca (2026-06-07, dogfood catalog-breadth fix) = 53.
+    // + dbscan (2026-06-07, dogfood catalog-breadth fix) = 54.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 53,
-        "expected 53 registry skills, got {registry_count}"
+        registry_count, 54,
+        "expected 54 registry skills, got {registry_count}"
     );
 }
 

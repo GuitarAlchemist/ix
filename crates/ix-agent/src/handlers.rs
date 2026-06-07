@@ -353,6 +353,59 @@ pub fn pca(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_dbscan ────────────────────────────────────────────────
+
+// @ai:invariant DBSCAN labels noise as 0 and numbers clusters from 1, so n_noise counts label==0 and n_clusters counts distinct labels>0 [T:test conf:0.9 src:skills::batch1::tests::dbscan_skill_executes_and_separates_clusters_from_noise]
+pub fn dbscan(params: Value) -> Result<Value, String> {
+    use ix_unsupervised::traits::Clusterer;
+    use std::collections::BTreeSet;
+
+    let data_rows = parse_f64_matrix(&params, "data")?;
+    if data_rows.is_empty() {
+        return Err("data must have ≥ 1 row".into());
+    }
+    let eps = params.get("eps").and_then(|v| v.as_f64()).ok_or_else(|| {
+        "field 'eps' (the neighborhood radius) is required and must be a number".to_string()
+    })?;
+    if eps <= 0.0 {
+        return Err(format!("eps must be > 0, got {eps}"));
+    }
+    // min_points defaults to 4 (classic DBSCAN heuristic) only when absent/null;
+    // a present-but-malformed value is rejected, not silently coerced (cf. the
+    // kmeans max_iter fix, Codex #84 P2).
+    let min_points = match params.get("min_points") {
+        None | Some(Value::Null) => 4usize,
+        Some(v) => v
+            .as_u64()
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'min_points' must be a non-negative integer".to_string())?,
+    };
+    // Reject min_points < 1: with min_points=0 every point clears the core
+    // threshold (a point is its own neighbour), so nothing is ever noise and the
+    // skill's advertised "0 = noise" contract becomes unreachable.
+    if min_points < 1 {
+        return Err("min_points must be >= 1".to_string());
+    }
+
+    let data = vecs_to_array2(&data_rows)?;
+
+    let mut db = ix_unsupervised::dbscan::DBSCAN::new(eps, min_points);
+    let labels = db.fit_predict(&data);
+    let labels_vec: Vec<u64> = labels.iter().map(|&l| l as u64).collect();
+
+    let n_noise = labels_vec.iter().filter(|&&l| l == 0).count();
+    let distinct: BTreeSet<u64> = labels_vec.iter().copied().filter(|&l| l > 0).collect();
+    let n_clusters = distinct.len();
+
+    Ok(json!({
+        "labels": labels_vec,
+        "n_clusters": n_clusters,
+        "n_noise": n_noise,
+        "eps": eps,
+        "min_points": min_points,
+    }))
+}
+
 // ── ix_tsne ────────────────────────────────────────────────
 
 pub fn tsne(params: Value) -> Result<Value, String> {

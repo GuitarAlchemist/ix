@@ -2,6 +2,18 @@
   "schema": 1,
   "claims": [
     {
+      "key": "sha256:b12bceb2ebaca8148cafd9d9bfc685e19b5bd679822b7ec7b87cffa35c6e010d",
+      "path": "crates/ix-agent/src/handlers.rs",
+      "line": 358,
+      "kind": "invariant",
+      "claim": "DBSCAN labels noise as 0 and numbers clusters from 1, so n_noise counts label==0 and n_clusters counts distinct labels>0",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "skills::batch1::tests::dbscan_skill_executes_and_separates_clusters_from_noise",
+      "anchor_hash": "sha256:f3ebabf7e34968423cad116341e7d96fd067f0e339759795abd78bbc39b0cdf7",
+      "test_binding": "dbscan_skill_executes_and_separates_clusters_from_noise"
+    },
+    {
       "key": "sha256:dd5f98b683ce720d99120636957b1c8fece736215d4b0ce424a6380c2e1b79e2",
       "path": "crates/ix-assumption-graph/src/graph.rs",
       "line": 171,
