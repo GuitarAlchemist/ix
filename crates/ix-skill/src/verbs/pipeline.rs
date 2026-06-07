@@ -281,27 +281,51 @@ fn find_pins_file(const_path: &Path) -> Option<std::path::PathBuf> {
     cwd_default.is_file().then_some(cwd_default)
 }
 
-/// The committed `<algo>:<hex>` pin for a constitution filename, if any. A
-/// missing file/entry → `None` (Unpinned), never an error: absence is a
-/// reportable state, tampering is the failure.
-fn pin_for(filename: &str, const_path: &Path) -> Option<String> {
-    let pins_file = find_pins_file(const_path)?;
-    let txt = std::fs::read_to_string(pins_file).ok()?;
-    let pins: Value = serde_json::from_str(&txt).ok()?;
-    pins.get("constitutions")?
-        .get(filename)?
-        .as_str()
-        .map(|s| s.to_string())
+/// Extract the `<algo>:<hex>` pin for `filename` from already-read pin-file
+/// text. A genuinely missing `constitutions[filename]` entry → `Ok(None)`
+/// (Unpinned is legitimate — not every constitution must be pinned). But a
+/// MALFORMED file is an `Err` (fail-CLOSED): a present-but-corrupt pin must not
+/// silently degrade to "unpinned", or an attacker could *truncate* the pin file
+/// (rather than match it) to bypass the gate. (Codex #80 P2.) Pure for testing.
+fn pin_lookup(pins_text: &str, filename: &str) -> Result<Option<String>, String> {
+    let pins: Value = serde_json::from_str(pins_text).map_err(|e| {
+        format!(
+            "constitution pin file is present but malformed JSON: {e} — refusing to execute (fail-closed)"
+        )
+    })?;
+    Ok(pins
+        .get("constitutions")
+        .and_then(|c| c.get(filename))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// The committed `<algo>:<hex>` pin for a constitution filename. Distinguishes
+/// three cases: no pin file anywhere → `Ok(None)` (legitimately unpinned); pin
+/// file present but unreadable/malformed → `Err` (fail-CLOSED); file readable
+/// but no entry for this constitution → `Ok(None)` (legitimately unpinned).
+fn pin_for(filename: &str, const_path: &Path) -> Result<Option<String>, String> {
+    let Some(pins_file) = find_pins_file(const_path) else {
+        return Ok(None); // no pin file → unpinned (legitimately absent)
+    };
+    let txt = std::fs::read_to_string(&pins_file).map_err(|e| {
+        format!(
+            "constitution pin file present but unreadable ({}): {e} — refusing to execute (fail-closed)",
+            pins_file.display()
+        )
+    })?;
+    pin_lookup(&txt, filename)
 }
 
 /// Verify the constitution the gate is about to trust against its committed pin.
-/// Fail-CLOSED on mismatch; `Unpinned` when no pin is committed.
+/// Fail-CLOSED on mismatch OR on a present-but-corrupt pin file; `Unpinned` only
+/// when no pin is genuinely committed for this constitution.
 fn verify_constitution_pin(const_path: &Path, bytes: &[u8]) -> Result<PinStatus, String> {
     let filename = const_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    check_pin(pin_for(filename, const_path).as_deref(), bytes)
+    check_pin(pin_for(filename, const_path)?.as_deref(), bytes)
 }
 
 /// Load + integrity-check the constitution at `{gov_dir}/constitutions/
@@ -803,6 +827,40 @@ stages:
             check_pin(expected, &bytes).unwrap(),
             PinStatus::Verified,
             "committed pin must match the actual constitution — re-pin deliberately if the change is intended"
+        );
+    }
+
+    #[test]
+    fn pin_lookup_fails_closed_on_corrupt_file_but_not_on_missing_entry() {
+        // A present-but-corrupt pin file must ERROR (fail-closed): an attacker
+        // who can truncate the pin file must not be able to downgrade the gate
+        // to "unpinned". (Codex #80 P2.)
+        assert!(
+            pin_lookup("{\"constitutions\": {", "default.constitution.md").is_err(),
+            "malformed JSON must fail closed, not degrade to unpinned"
+        );
+        assert!(
+            pin_lookup("not json at all", "default.constitution.md").is_err(),
+            "garbage must fail closed"
+        );
+        // A well-formed file that simply has no entry for THIS constitution is a
+        // legitimate "unpinned" — not every constitution must be pinned.
+        assert_eq!(
+            pin_lookup(
+                "{\"constitutions\": {\"other.md\": \"sha256:abc\"}}",
+                "default.constitution.md"
+            )
+            .unwrap(),
+            None
+        );
+        // A present entry is returned verbatim.
+        assert_eq!(
+            pin_lookup(
+                "{\"constitutions\": {\"default.constitution.md\": \"sha256:deadbeef\"}}",
+                "default.constitution.md"
+            )
+            .unwrap(),
+            Some("sha256:deadbeef".to_string())
         );
     }
 }
