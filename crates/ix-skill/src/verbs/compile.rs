@@ -1540,7 +1540,7 @@ mod tests {
         let mean_top3 = |c: &[f64]| c.iter().take(3).sum::<f64>() / 3.0;
 
         // A: raw mean-top-3 (the production signal). B: per-query z-norm of
-        // mean-top-3 against the query's own 52-catalog-cosine distribution
+        // mean-top-3 against the query's own per-catalog cosine distribution
         // (calibration, catalog-only → runtime-cheap). C: top1−top2 margin.
         // D: A × kNN(10)-guidance to the in-domain QUERY set (NNGuide-style,
         // leave-one-out for in-domain probes; needs the in-domain reference).
