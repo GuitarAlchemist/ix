@@ -1705,6 +1705,17 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::nl_to_pipeline,
         });
+
+        self.tools.push(Tool {
+            name: "ix_thinker_hits",
+            description: "Aggregate the IX thinking-machine's translation ledger (state/thinking-machine/hits.jsonl) into a yield metric paired with its refusal guardrails. `yield_rate` is the metric (fraction of requests that produced a runnable spec); `coverage_refusal_rate` / `governance_refusal_rate` / `translate_fail_rate` are guardrails. A rising yield with a FALLING coverage-refusal rate is the signature of the gate being loosened or the proposer confabulating out-of-domain specs — the pair makes Goodhart-style gaming visible (instrumenting a bare success rate would hide it). Read-only; rates are over unlabeled production outcomes.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            handler: handlers::thinker_hits,
+        });
     }
 
     /// Advanced sub-group 3: catalog tools (code / grammar / RFC /

@@ -71,3 +71,9 @@ state/quality/ai-annotations-sentrux.jsonl
 # ix pipeline compile — generated artifacts (regenerated per run)
 ix.compiled.yaml
 ix.lock
+
+# ix "thinking machine" translation ledger — high-volume runtime instrumentation
+# (every NL→pipeline outcome). Read in aggregate via `ix pipeline hits`; the raw
+# rows are per-environment runtime data, not a committed artifact. (Contrast
+# gaps.jsonl, the curated dogfood BACKLOG, which IS tracked.)
+state/thinking-machine/hits.jsonl

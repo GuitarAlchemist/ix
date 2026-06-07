@@ -6,6 +6,7 @@ use ix_pipeline::lock::LockFile;
 use ix_pipeline::lower::{lower, lower_with_gate};
 use ix_pipeline::spec::PipelineSpec;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -194,6 +195,175 @@ fn collect_from_refs(args: &Value) -> Vec<String> {
     out
 }
 
+// ── Constitution tamper-evidence (RSI safe-loop research, 2026-06-07) ────────
+//
+// A silent edit to the constitution the gate enforces would change what counts
+// as a violation without anyone noticing — the gate would keep returning
+// "compliant" against moved goalposts. We hash the bytes actually loaded and
+// compare to a pin committed in IX's OWN tree (state/governance/, NOT the
+// Demerzel submodule: IX asserts which constitution it was reviewed against),
+// failing CLOSED on mismatch. sha256 so the pin is independently verifiable.
+// A legitimate constitution change is a deliberate governance act that re-pins;
+// an undeclared edit is exactly what this catches. (reference_safe_rsi_loop_validated)
+
+/// Result of checking a loaded constitution against its committed integrity pin.
+#[derive(Debug, PartialEq, Eq)]
+enum PinStatus {
+    /// Loaded bytes match the committed pin.
+    Verified,
+    /// No pin is committed for this constitution — cannot verify. Reported in
+    /// the verdict (never silently trusted) so the gap is visible.
+    Unpinned,
+}
+
+impl PinStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            PinStatus::Verified => "verified",
+            PinStatus::Unpinned => "unpinned",
+        }
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Strip CR bytes so the pin is over the constitution's CONTENT, not its
+/// platform line-ending encoding. The gate reads raw file bytes, so a Windows
+/// (CRLF) checkout and a Linux/CI (LF) checkout of the *same* constitution would
+/// otherwise hash differently and a single committed pin could never match both.
+/// A CRLF↔LF flip is benign — only real content changes must trip tamper-
+/// evidence. (CI caught this: local CRLF hash ≠ committed LF-blob hash.)
+fn normalize_newlines(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().copied().filter(|&b| b != b'\r').collect()
+}
+
+/// Compare a loaded constitution's bytes against an expected `<algo>:<hex>` pin.
+/// Pure (no I/O) so the fail-closed branch is unit-testable. `expected = None`
+/// → `Unpinned`. A present-but-mismatched pin → `Err` (fail-CLOSED). Only
+/// `sha256:` pins are understood; an unknown algorithm prefix is a hard error,
+/// never a silent pass. Hashes line-ending-normalized content so the pin is
+/// reproducible across platforms.
+fn check_pin(expected: Option<&str>, bytes: &[u8]) -> Result<PinStatus, String> {
+    let Some(expected) = expected else {
+        return Ok(PinStatus::Unpinned);
+    };
+    let Some(hex) = expected.strip_prefix("sha256:") else {
+        return Err(format!(
+            "constitution pin '{expected}' uses an unsupported algorithm \
+             (only sha256: is understood) — refusing to execute"
+        ));
+    };
+    let actual = sha256_hex(&normalize_newlines(bytes));
+    if actual.eq_ignore_ascii_case(hex) {
+        Ok(PinStatus::Verified)
+    } else {
+        Err(format!(
+            "constitution integrity check FAILED: pinned sha256:{hex}, loaded sha256:{actual}. \
+             The constitution was modified without updating its pin \
+             (state/governance/constitution-pins.json). Refusing to execute — \
+             re-pin deliberately if this change is intended."
+        ))
+    }
+}
+
+/// Locate the integrity-pin file. Resolution order: `IX_CONSTITUTION_PIN_FILE`
+/// override (tests/CI) → walk UP from the constitution toward the repo root
+/// where IX keeps `state/` (CWD-independent, so it works when the gate is
+/// reached with an absolute `IX_GOVERNANCE_DIR`, e.g. the MCP path) → finally
+/// the CWD-relative default (the common repo-root invocation).
+fn find_pins_file(const_path: &Path) -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("IX_CONSTITUTION_PIN_FILE") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    let mut dir = const_path.parent();
+    while let Some(d) = dir {
+        let candidate = d.join("state/governance/constitution-pins.json");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        dir = d.parent();
+    }
+    let cwd_default = std::path::PathBuf::from("state/governance/constitution-pins.json");
+    cwd_default.is_file().then_some(cwd_default)
+}
+
+/// Extract the `<algo>:<hex>` pin for `filename` from already-read pin-file
+/// text. A genuinely missing `constitutions[filename]` entry → `Ok(None)`
+/// (Unpinned is legitimate — not every constitution must be pinned). But a
+/// MALFORMED file is an `Err` (fail-CLOSED): a present-but-corrupt pin must not
+/// silently degrade to "unpinned", or an attacker could *truncate* the pin file
+/// (rather than match it) to bypass the gate. (Codex #80 P2.) Pure for testing.
+fn pin_lookup(pins_text: &str, filename: &str) -> Result<Option<String>, String> {
+    let pins: Value = serde_json::from_str(pins_text).map_err(|e| {
+        format!(
+            "constitution pin file is present but malformed JSON: {e} — refusing to execute (fail-closed)"
+        )
+    })?;
+    Ok(pins
+        .get("constitutions")
+        .and_then(|c| c.get(filename))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// The committed `<algo>:<hex>` pin for a constitution filename. Distinguishes
+/// three cases: no pin file anywhere → `Ok(None)` (legitimately unpinned); pin
+/// file present but unreadable/malformed → `Err` (fail-CLOSED); file readable
+/// but no entry for this constitution → `Ok(None)` (legitimately unpinned).
+fn pin_for(filename: &str, const_path: &Path) -> Result<Option<String>, String> {
+    let Some(pins_file) = find_pins_file(const_path) else {
+        return Ok(None); // no pin file → unpinned (legitimately absent)
+    };
+    let txt = std::fs::read_to_string(&pins_file).map_err(|e| {
+        format!(
+            "constitution pin file present but unreadable ({}): {e} — refusing to execute (fail-closed)",
+            pins_file.display()
+        )
+    })?;
+    pin_lookup(&txt, filename)
+}
+
+/// Verify the constitution the gate is about to trust against its committed pin.
+/// Fail-CLOSED on mismatch OR on a present-but-corrupt pin file; `Unpinned` only
+/// when no pin is genuinely committed for this constitution.
+fn verify_constitution_pin(const_path: &Path, bytes: &[u8]) -> Result<PinStatus, String> {
+    let filename = const_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    check_pin(pin_for(filename, const_path)?.as_deref(), bytes)
+}
+
+/// Load + integrity-check the constitution at `{gov_dir}/constitutions/
+/// default.constitution.md`. Returns the parsed constitution alongside its pin
+/// status, or a fail-closed error (unreadable, or tampered against its pin).
+/// Shared by the template-time `governance_gate` and the execution-time
+/// `ConstitutionGate` so both enforce the same tamper-evidence.
+fn load_checked_constitution() -> Result<(ix_governance::Constitution, PinStatus), String> {
+    let gov_dir =
+        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
+    let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
+    let bytes = std::fs::read(&const_path).map_err(|e| {
+        format!("cannot read constitution for integrity check ({const_path}): {e} — refusing to execute")
+    })?;
+    let status = verify_constitution_pin(Path::new(&const_path), &bytes)?;
+    // Parse the SAME bytes we just hashed — never re-read the file. A second
+    // `Constitution::load(path)` would open a time-of-check/time-of-use gap: an
+    // attacker could swap the file between the pin check and the load, so the
+    // verified bytes and the executed constitution would differ. (P0, review.)
+    let content = String::from_utf8(bytes)
+        .map_err(|e| format!("constitution is not valid UTF-8: {e} — refusing to execute"))?;
+    let constitution = ix_governance::Constitution::parse_str(&content).map_err(|e| {
+        format!("cannot verify governance (constitution parse failed: {e}) — refusing to execute")
+    })?;
+    Ok((constitution, status))
+}
+
 /// Fail-closed constitutional review of a spec before it executes. Every
 /// stage's skill must (a) carry governance tags and (b) pass
 /// `Constitution::check_action`. A missing constitution, an untagged skill, or
@@ -209,15 +379,7 @@ fn collect_from_refs(args: &Value) -> Vec<String> {
 /// governance-resolved-args) — the driver for pushing this check into
 /// `ix-pipeline::execute()`.
 pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
-    let gov_dir =
-        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
-    let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
-    let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
-        .map_err(|e| {
-            format!(
-                "cannot verify governance (constitution load failed: {e}) — refusing to execute"
-            )
-        })?;
+    let (constitution, integrity) = load_checked_constitution()?;
 
     let mut cited: Vec<Value> = Vec::new();
     let mut unvetted: Vec<Value> = Vec::new();
@@ -255,6 +417,7 @@ pub(crate) fn governance_gate(spec: &PipelineSpec) -> Result<Value, String> {
         "verdict": "compliant",
         "articles_cited": cited,
         "unvetted_runtime_inputs": unvetted,
+        "constitution_integrity": integrity.as_str(),
     }))
 }
 
@@ -270,18 +433,11 @@ pub(crate) struct ConstitutionGate {
 }
 
 impl ConstitutionGate {
-    /// Load the default constitution (honoring `IX_GOVERNANCE_DIR`). Fail-closed:
-    /// an unreadable constitution is an error, never a silent allow.
+    /// Load + integrity-check the default constitution (honoring
+    /// `IX_GOVERNANCE_DIR`). Fail-closed: an unreadable constitution OR one that
+    /// fails its committed integrity pin is an error, never a silent allow.
     pub(crate) fn load() -> Result<std::sync::Arc<Self>, String> {
-        let gov_dir = std::env::var("IX_GOVERNANCE_DIR")
-            .unwrap_or_else(|_| "governance/demerzel".to_string());
-        let const_path = format!("{gov_dir}/constitutions/default.constitution.md");
-        let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
-            .map_err(|e| {
-                format!(
-                    "cannot verify governance (constitution load failed: {e}) — refusing to execute"
-                )
-            })?;
+        let (constitution, _integrity) = load_checked_constitution()?;
         Ok(std::sync::Arc::new(Self { constitution }))
     }
 }
@@ -613,6 +769,126 @@ stages:
             refs,
             vec!["prep.op".to_string(), "src.values".to_string()],
             "only single-key {{from:string}} nodes are refs; got {refs:?}"
+        );
+    }
+
+    // ── Constitution tamper-evidence (integrity pin) ────────────────────────
+
+    #[test]
+    fn check_pin_verifies_match_and_fails_closed_on_tamper() {
+        let bytes = b"WE THE GOVERNED, in order to form a more perfect alignment...";
+        let good = format!("sha256:{}", sha256_hex(bytes));
+        assert_eq!(
+            check_pin(Some(&good), bytes).unwrap(),
+            PinStatus::Verified,
+            "matching bytes verify"
+        );
+        // A single flipped byte must fail CLOSED (Err), not pass.
+        assert!(
+            check_pin(
+                Some(&good),
+                b"WE THE GOVERNED, in order to form a more perfect alignment!"
+            )
+            .is_err(),
+            "tampered bytes must fail closed"
+        );
+        // Case-insensitive hex comparison.
+        assert_eq!(
+            check_pin(
+                Some(&good.to_uppercase().replace("SHA256:", "sha256:")),
+                bytes
+            )
+            .unwrap(),
+            PinStatus::Verified
+        );
+        // An unknown algorithm prefix is a hard error, never a silent pass.
+        assert!(
+            check_pin(Some("md5:abc123"), bytes).is_err(),
+            "unsupported algo must error, not silently allow"
+        );
+        // No pin committed → Unpinned (reported, never silently trusted).
+        assert_eq!(check_pin(None, bytes).unwrap(), PinStatus::Unpinned);
+    }
+
+    #[test]
+    fn check_pin_is_line_ending_independent() {
+        // The gate reads raw file bytes; a Windows (CRLF) and a Linux/CI (LF)
+        // checkout of the SAME constitution must verify against ONE committed
+        // pin. Regression for the CI failure where the local CRLF hash differed
+        // from the committed LF-blob hash.
+        let lf = b"Article 1: Truth\nArticle 2: Reversibility\n".to_vec();
+        let crlf = b"Article 1: Truth\r\nArticle 2: Reversibility\r\n".to_vec();
+        let pin = format!("sha256:{}", sha256_hex(&normalize_newlines(&lf)));
+        assert_eq!(check_pin(Some(&pin), &lf).unwrap(), PinStatus::Verified);
+        assert_eq!(
+            check_pin(Some(&pin), &crlf).unwrap(),
+            PinStatus::Verified,
+            "CRLF and LF of identical content must verify against the same pin"
+        );
+    }
+
+    #[test]
+    fn default_constitution_matches_committed_pin() {
+        // Binds the committed pin to the ACTUAL constitution file: editing the
+        // constitution without re-pinning fails HERE (in CI), beyond the
+        // runtime gate. The pin lives in IX's tree; the constitution in the
+        // Demerzel submodule — skip loudly if tested outside the workspace.
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let const_path = root.join("governance/demerzel/constitutions/default.constitution.md");
+        let pins_path = root.join("state/governance/constitution-pins.json");
+        let (Ok(bytes), Ok(pins_txt)) = (
+            std::fs::read(&const_path),
+            std::fs::read_to_string(&pins_path),
+        ) else {
+            eprintln!(
+                "SKIP default_constitution_matches_committed_pin: files absent (outside workspace)"
+            );
+            return;
+        };
+        let pins: Value = serde_json::from_str(&pins_txt).expect("pins file is valid JSON");
+        let expected = pins["constitutions"]["default.constitution.md"].as_str();
+        assert!(
+            expected.is_some(),
+            "default.constitution.md must carry a committed pin"
+        );
+        assert_eq!(
+            check_pin(expected, &bytes).unwrap(),
+            PinStatus::Verified,
+            "committed pin must match the actual constitution — re-pin deliberately if the change is intended"
+        );
+    }
+
+    #[test]
+    fn pin_lookup_fails_closed_on_corrupt_file_but_not_on_missing_entry() {
+        // A present-but-corrupt pin file must ERROR (fail-closed): an attacker
+        // who can truncate the pin file must not be able to downgrade the gate
+        // to "unpinned". (Codex #80 P2.)
+        assert!(
+            pin_lookup("{\"constitutions\": {", "default.constitution.md").is_err(),
+            "malformed JSON must fail closed, not degrade to unpinned"
+        );
+        assert!(
+            pin_lookup("not json at all", "default.constitution.md").is_err(),
+            "garbage must fail closed"
+        );
+        // A well-formed file that simply has no entry for THIS constitution is a
+        // legitimate "unpinned" — not every constitution must be pinned.
+        assert_eq!(
+            pin_lookup(
+                "{\"constitutions\": {\"other.md\": \"sha256:abc\"}}",
+                "default.constitution.md"
+            )
+            .unwrap(),
+            None
+        );
+        // A present entry is returned verbatim.
+        assert_eq!(
+            pin_lookup(
+                "{\"constitutions\": {\"default.constitution.md\": \"sha256:deadbeef\"}}",
+                "default.constitution.md"
+            )
+            .unwrap(),
+            Some("sha256:deadbeef".to_string())
         );
     }
 }

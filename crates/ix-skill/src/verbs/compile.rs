@@ -36,7 +36,32 @@ const GEN_FILE: &str = "ix.compiled.yaml";
 const MAX_REPAIR_ROUNDS: u32 = 5;
 
 /// `ix pipeline compile "<sentence>"` entry point.
+///
+/// Thin wrapper over [`compile_inner`] that guarantees **no dark outcomes**: a
+/// translation that began but ended in a propagated `Err` (missing key, spec
+/// serialization, disk write, an execution-time gate/lower/skill failure) is
+/// still a terminal outcome. We log it to the ledger as `"error"` so it counts
+/// in the yield denominator and can't silently inflate `yield_rate` by vanishing
+/// — then re-propagate the `Err` so the CLI still exits non-zero with the
+/// reason on stderr. The happy/refusal paths already logged via `emit_outcome`
+/// and returned `Ok`, so this only fires on un-instrumented errors. (Review P1:
+/// the metric+guardrail pair is only honest if the denominator is complete.)
 pub fn compile(
+    sentence: &str,
+    max_rounds: u32,
+    run_it: bool,
+    format: Format,
+) -> Result<(), String> {
+    let outcome = compile_inner(sentence, max_rounds, run_it, format);
+    if outcome.is_err() {
+        // coverage_max is unknown/irrelevant for an operational error → NaN,
+        // which serializes to JSON null (summarize_hits ignores the field).
+        log_hit(sentence, "error", Some("operational"), f64::NAN, 0, None);
+    }
+    outcome
+}
+
+fn compile_inner(
     sentence: &str,
     max_rounds: u32,
     run_it: bool,
@@ -68,10 +93,13 @@ pub fn compile(
             &format!("no IX skill covers this intent (max TF-IDF cosine {cov_max:.3} < {cov_min}); nearest: {cov_top:?}"),
             0,
         );
-        return emit_result(
+        return emit_outcome(
             format,
+            sentence,
+            cov_max,
             json!({
                 "status": "out_of_domain",
+                "detected_by": "tfidf-coverage",
                 "sentence": sentence,
                 "coverage_max": cov_max,
                 "coverage_threshold": cov_min,
@@ -102,8 +130,10 @@ pub fn compile(
             // durable fix. Routing role, not a truth oracle (LLM self-judge
             // <25% TNR — cf. feedback_llm_judge_panel_failclosed).
             log_gap(sentence, "semantic-noncoverage", &reason, rounds);
-            return emit_result(
+            return emit_outcome(
                 format,
+                sentence,
+                cov_max,
                 json!({
                     "status": "out_of_domain",
                     "sentence": sentence,
@@ -117,8 +147,10 @@ pub fn compile(
         }
         ResolveOutcome::TranslateFailed { error, rounds } => {
             log_gap(sentence, "translate", &error, rounds);
-            return emit_result(
+            return emit_outcome(
                 format,
+                sentence,
+                cov_max,
                 json!({
                     "status": "translate_failed",
                     "sentence": sentence,
@@ -143,8 +175,10 @@ pub fn compile(
             std::fs::write(GEN_FILE, &yaml).map_err(|e| format!("writing {GEN_FILE}: {e}"))?;
 
             if !run_it {
-                return emit_result(
+                return emit_outcome(
                     format,
+                    sentence,
+                    cov_max,
                     json!({
                         "status": "compiled",
                         "sentence": sentence,
@@ -156,14 +190,17 @@ pub fn compile(
                     }),
                 );
             }
-            execute_and_narrate(&spec, sentence, rounds_used, gate, format)
+            execute_and_narrate(&spec, sentence, rounds_used, cov_max, gate, format)
         }
         Err(rejection) => {
             log_gap(sentence, "governance", &rejection, rounds_used);
-            emit_result(
+            emit_outcome(
                 format,
+                sentence,
+                cov_max,
                 json!({
                     "status": "governance_rejected",
+                    "detected_by": "template-gate",
                     "sentence": sentence,
                     "rounds": rounds_used,
                     "reason": rejection,
@@ -261,6 +298,7 @@ fn execute_and_narrate(
     spec: &PipelineSpec,
     sentence: &str,
     rounds: u32,
+    coverage_max: f64,
     gate: Value,
     format: Format,
 ) -> Result<(), String> {
@@ -282,8 +320,10 @@ fn execute_and_narrate(
             // stdout instead of a verdict. (Codex #78 P2.)
             if is_resolved_governance_rejection(&msg) {
                 log_gap(sentence, "governance-resolved", &msg, rounds);
-                return emit_result(
+                return emit_outcome(
                     format,
+                    sentence,
+                    coverage_max,
                     json!({
                         "status": "governance_rejected",
                         "sentence": sentence,
@@ -327,8 +367,10 @@ fn execute_and_narrate(
         result.total_duration.as_millis()
     ));
 
-    emit_result(
+    emit_outcome(
         format,
+        sentence,
+        coverage_max,
         json!({
             "status": "ok",
             "sentence": sentence,
@@ -588,6 +630,180 @@ fn log_gap(sentence: &str, kind: &str, error: &str, rounds: u32) {
 
 fn emit_result(format: Format, payload: Value) -> Result<(), String> {
     output::emit(&payload, format).map_err(|e| format!("{e}"))
+}
+
+fn hits_log_path() -> String {
+    "state/thinking-machine/hits.jsonl".to_string()
+}
+
+/// Build one `hits.jsonl` row. Pure (timestamp injected) so the writer's shape
+/// stays unit-testable against the reader (`summarize_hits`).
+fn hit_row(
+    sentence: &str,
+    outcome: &str,
+    detected_by: Option<&str>,
+    coverage_max: f64,
+    rounds: u32,
+    stages: Option<usize>,
+    ts_ms: u128,
+) -> Value {
+    json!({
+        "ts_ms": ts_ms,
+        "sentence": sentence,
+        "outcome": outcome,
+        "detected_by": detected_by,
+        "coverage_max": coverage_max,
+        "rounds": rounds,
+        "stages": stages,
+    })
+}
+
+/// Append a translation-outcome row to the hits ledger. Where `gaps.jsonl`
+/// records only FAILURES, `hits.jsonl` records EVERY terminal outcome —
+/// success, refusal, and failure — so `summarize_hits` can report translation
+/// *yield* alongside its refusal *guardrails* as a pair. A bare success
+/// denominator would be Goodhart-bait: a loop maximizing "% compiled" games it
+/// by confabulating specs for out-of-domain requests. Pairing yield with the
+/// refusal rates makes that gaming visible (coverage-refusal collapses as yield
+/// is inflated). Best-effort: instrumentation must never block or fail a
+/// translation. (RSI safe-loop research 2026-06-07; the metric+guardrail PAIR
+/// discipline — reference_safe_rsi_loop_validated.)
+fn log_hit(
+    sentence: &str,
+    outcome: &str,
+    detected_by: Option<&str>,
+    coverage_max: f64,
+    rounds: u32,
+    stages: Option<usize>,
+) {
+    let dir = std::path::Path::new("state/thinking-machine");
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let row = hit_row(
+        sentence,
+        outcome,
+        detected_by,
+        coverage_max,
+        rounds,
+        stages,
+        ts,
+    );
+    if let Ok(mut line) = serde_json::to_string(&row) {
+        use std::io::Write;
+        line.push('\n');
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("hits.jsonl"))
+        {
+            // ONE write_all of the complete line+newline. On an O_APPEND handle
+            // a single write minimizes interleaving when two concurrent
+            // compile() processes append at once (vs writeln!'s separate
+            // content/newline writes, which can tear). The reader
+            // (summarize_hits) additionally tolerates any torn line. (Review P1.)
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
+/// The single choke point every terminal `compile` outcome flows through: log
+/// the hit (derived from the SAME payload the caller returns, so the instrument
+/// can't drift out of sync with the emitted verdict), then emit the result.
+fn emit_outcome(
+    format: Format,
+    sentence: &str,
+    coverage_max: f64,
+    payload: Value,
+) -> Result<(), String> {
+    let outcome = payload
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or("unknown");
+    let detected_by = payload.get("detected_by").and_then(|s| s.as_str());
+    let rounds = payload.get("rounds").and_then(|r| r.as_u64()).unwrap_or(0) as u32;
+    let stages = payload
+        .get("stages")
+        .and_then(|s| s.as_u64())
+        .map(|n| n as usize);
+    log_hit(sentence, outcome, detected_by, coverage_max, rounds, stages);
+    emit_result(format, payload)
+}
+
+/// `ix pipeline hits` — aggregate the translation ledger into a yield metric
+/// paired with its refusal guardrails. A rising yield with a FALLING coverage-
+/// refusal rate is the signature of the gate being loosened or the proposer
+/// confabulating — the pair surfaces it. Rates are over UNLABELED production
+/// outcomes (a drift signal); the calibrated, labelled version is the
+/// coverage-baseline test over the probe corpus.
+pub fn hits(format: Format) -> Result<(), String> {
+    let summary = summarize_hits(std::path::Path::new(&hits_log_path()))?;
+    emit_result(format, summary)
+}
+
+/// Read the hits ledger and compute the paired yield/guardrail summary.
+/// Split from the verb so it is testable over a fixture path.
+fn summarize_hits(path: &std::path::Path) -> Result<Value, String> {
+    use std::io::BufRead;
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => {
+            return Ok(json!({
+                "status": "no_hits",
+                "path": path.display().to_string(),
+                "note": "no translations recorded yet (hits.jsonl absent).",
+            }));
+        }
+    };
+    let mut by_outcome: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    let mut total = 0u32;
+    let mut skipped = 0u32;
+    for line in std::io::BufReader::new(file).lines() {
+        // Tolerate a torn/corrupt line (e.g. an interleaved append from a
+        // concurrent compile, or invalid UTF-8) — skip it rather than failing
+        // the whole query. "Best-effort instrumentation must never block": a
+        // single bad line must not crash `ix pipeline hits` or the
+        // ix_thinker_hits MCP tool. Skips are counted + surfaced. (Review P1.)
+        let Ok(line) = line else {
+            skipped += 1;
+            continue;
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            skipped += 1;
+            continue;
+        };
+        let outcome = row
+            .get("outcome")
+            .and_then(|s| s.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        *by_outcome.entry(outcome).or_insert(0) += 1;
+        total += 1;
+    }
+    let count = |k: &str| *by_outcome.get(k).unwrap_or(&0);
+    let yield_n = count("ok") + count("compiled");
+    let denom = total.max(1) as f64;
+    Ok(json!({
+        "status": "ok",
+        "path": path.display().to_string(),
+        "total": total,
+        "skipped_lines": skipped,
+        "by_outcome": by_outcome,
+        // METRIC (maximize): fraction of requests that produced a runnable spec.
+        "yield_rate": yield_n as f64 / denom,
+        // GUARDRAILS (must NOT collapse as yield climbs — Goodhart tripwires):
+        "coverage_refusal_rate": count("out_of_domain") as f64 / denom,
+        "governance_refusal_rate": count("governance_rejected") as f64 / denom,
+        "translate_fail_rate": count("translate_failed") as f64 / denom,
+        "note": "Paired instrument: yield_rate is the metric; the *_refusal_rate fields are guardrails. A yield gain paired with a coverage-refusal drop is gate-loosening/confabulation, not improvement. Rates over UNLABELED outcomes — the calibrated metric is the coverage-baseline test.",
+    }))
 }
 
 #[cfg(test)]
@@ -869,6 +1085,138 @@ mod tests {
         assert!(
             tnr < 0.50,
             "documents the baseline: the lexical pre-gate is a weak refuser (raise/flip this assertion when the embedding gate lands): TNR={tnr:.3}"
+        );
+    }
+
+    // ── hits.jsonl — translation yield instrumented as a metric+guardrail PAIR ──
+
+    /// Write rows in the EXACT shape `log_hit`/`hit_row` emit, so these tests
+    /// bind the writer's format to the reader (`summarize_hits`).
+    fn write_hits(rows: &[(&str, Option<&str>)]) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for (i, (outcome, detected_by)) in rows.iter().enumerate() {
+            let row = hit_row("req", outcome, *detected_by, 0.12, 0, None, i as u128);
+            writeln!(f, "{}", serde_json::to_string(&row).unwrap()).unwrap();
+        }
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn summarize_hits_reports_yield_paired_with_guardrails() {
+        // A healthy mix: 5 runnable (ok/compiled), 3 coverage refusals, 1
+        // governance refusal, 1 translate failure → 10 total.
+        let f = write_hits(&[
+            ("ok", None),
+            ("ok", None),
+            ("compiled", None),
+            ("compiled", None),
+            ("compiled", None),
+            ("out_of_domain", Some("tfidf-coverage")),
+            ("out_of_domain", Some("llm-relevance")),
+            ("out_of_domain", Some("tfidf-coverage")),
+            ("governance_rejected", Some("template-gate")),
+            ("translate_failed", None),
+        ]);
+        let s = summarize_hits(f.path()).unwrap();
+        assert_eq!(s["total"], 10);
+        assert_eq!(s["status"], "ok");
+        assert!(
+            (s["yield_rate"].as_f64().unwrap() - 0.5).abs() < 1e-9,
+            "5/10 runnable: {s}"
+        );
+        assert!(
+            (s["coverage_refusal_rate"].as_f64().unwrap() - 0.3).abs() < 1e-9,
+            "3/10 OOD: {s}"
+        );
+        assert!((s["governance_refusal_rate"].as_f64().unwrap() - 0.1).abs() < 1e-9);
+        assert!((s["translate_fail_rate"].as_f64().unwrap() - 0.1).abs() < 1e-9);
+        // by_outcome is the raw census the rates derive from.
+        assert_eq!(s["by_outcome"]["out_of_domain"], 3);
+        assert_eq!(s["by_outcome"]["compiled"], 3);
+    }
+
+    #[test]
+    fn summarize_hits_surfaces_confabulation_gaming() {
+        // The whole point of the PAIR: a loop that games "% compiled" by
+        // confabulating a spec for EVERY request (never refusing) shows a
+        // perfect yield_rate=1.0 AND a coverage_refusal_rate that has collapsed
+        // to 0.0 — the guardrail is the tripwire that exposes the gaming a bare
+        // success denominator would hide.
+        let gamed = write_hits(&[
+            ("ok", None),
+            ("compiled", None),
+            ("ok", None),
+            ("compiled", None),
+        ]);
+        let s = summarize_hits(gamed.path()).unwrap();
+        assert!(
+            (s["yield_rate"].as_f64().unwrap() - 1.0).abs() < 1e-9,
+            "gamed yield looks perfect: {s}"
+        );
+        assert_eq!(
+            s["coverage_refusal_rate"].as_f64().unwrap(),
+            0.0,
+            "guardrail collapsed to zero — the tripwire that catches confabulation: {s}"
+        );
+    }
+
+    #[test]
+    fn summarize_hits_absent_file_is_no_hits_not_error() {
+        let missing = std::path::Path::new("definitely/not/here/hits.jsonl");
+        let s = summarize_hits(missing).unwrap();
+        assert_eq!(
+            s["status"], "no_hits",
+            "absent ledger is a state, not an error: {s}"
+        );
+    }
+
+    #[test]
+    fn summarize_hits_skips_torn_lines_without_crashing() {
+        // Concurrent appends can interleave into a torn line. The reader must
+        // skip it (counting the skip) rather than fail the whole query — else a
+        // single bad line crashes `ix pipeline hits` / the MCP tool. (Review P1.)
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        let good =
+            |o: &str| serde_json::to_string(&hit_row("r", o, None, 0.1, 0, None, 0)).unwrap();
+        writeln!(f, "{}", good("ok")).unwrap();
+        writeln!(f, "{{\"ts_ms\":123,\"outcome\":\"compi").unwrap(); // torn mid-write
+        writeln!(f, "{}", good("out_of_domain")).unwrap();
+        writeln!(f, "not json at all").unwrap();
+        f.flush().unwrap();
+        let s = summarize_hits(f.path()).unwrap();
+        assert_eq!(
+            s["status"], "ok",
+            "a torn line must not fail the query: {s}"
+        );
+        assert_eq!(s["total"], 2, "only the 2 well-formed rows count: {s}");
+        assert_eq!(
+            s["skipped_lines"], 2,
+            "both torn lines are counted as skipped: {s}"
+        );
+    }
+
+    #[test]
+    fn summarize_hits_error_outcomes_dilute_yield_not_vanish() {
+        // The no-dark-outcomes guarantee: an operational error is logged as
+        // "error" and counts in the denominator, so it lowers yield_rate rather
+        // than silently inflating it by disappearing. (Review P1.)
+        let f = write_hits(&[
+            ("ok", None),
+            ("compiled", None),
+            ("error", Some("operational")),
+        ]);
+        let s = summarize_hits(f.path()).unwrap();
+        assert_eq!(s["total"], 3);
+        assert_eq!(
+            s["by_outcome"]["error"], 1,
+            "the error is visible in the census: {s}"
+        );
+        assert!(
+            (s["yield_rate"].as_f64().unwrap() - 2.0 / 3.0).abs() < 1e-9,
+            "error sits in the denominator, diluting yield (2/3), not vanishing: {s}"
         );
     }
 }

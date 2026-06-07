@@ -2046,6 +2046,43 @@ pub fn nl_to_pipeline(params: Value) -> Result<Value, String> {
     })
 }
 
+/// `ix_thinker_hits` handler — wraps the read-only `ix pipeline hits` CLI verb.
+/// Agent-native parity: a user can inspect the translation ledger's paired
+/// yield/guardrail summary at the CLI, so an agent can too. No args.
+///
+/// cwd note: the ledger path (`state/thinking-machine/hits.jsonl`) is resolved
+/// relative to the child's cwd — deliberately the SAME resolution `ix pipeline
+/// compile` uses when it WRITES hits (via `ix_nl_to_pipeline`), so a read here
+/// sees exactly the rows compiles in this process tree wrote. We do not pin a
+/// cwd: that would desync the reader from the writer. When no ledger exists the
+/// verb returns a structured `{"status":"no_hits"}` (never empty stdout), so the
+/// empty-output branch below fires only on a genuine spawn/exec failure.
+pub fn thinker_hits(_params: Value) -> Result<Value, String> {
+    let ix_bin = ix_cli_path();
+    let out = std::process::Command::new(&ix_bin)
+        .args(["--format", "json", "pipeline", "hits"])
+        .output()
+        .map_err(|e| {
+            format!(
+                "ix_thinker_hits: failed to spawn `{}`: {e}",
+                ix_bin.display()
+            )
+        })?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "ix pipeline hits produced no output (status {}): {}",
+            out.status,
+            stderr.trim()
+        ));
+    }
+    serde_json::from_str::<Value>(trimmed).map_err(|e| {
+        format!("ix_thinker_hits: expected JSON from `ix pipeline hits`, got: {trimmed} ({e})")
+    })
+}
+
 /// Walk up from a starting path looking for a `governance/demerzel` directory.
 /// Lets the MCP tool find the constitution regardless of the host's cwd.
 fn find_governance_dir(start: &std::path::Path) -> Option<std::path::PathBuf> {

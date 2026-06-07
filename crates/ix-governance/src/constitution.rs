@@ -53,6 +53,16 @@ impl Constitution {
         Self::parse(&content)
     }
 
+    /// Parse a constitution from markdown text already held in memory.
+    ///
+    /// Use this when the bytes have been obtained (and possibly integrity-
+    /// checked) by the caller, to avoid a second disk read of a file that was
+    /// just verified — re-reading would open a time-of-check/time-of-use gap
+    /// where the on-disk file could be swapped between verification and load.
+    pub fn parse_str(content: &str) -> Result<Self> {
+        Self::parse(content)
+    }
+
     /// Parse constitution markdown text.
     fn parse(content: &str) -> Result<Self> {
         // Extract version from "Version: X.Y.Z"

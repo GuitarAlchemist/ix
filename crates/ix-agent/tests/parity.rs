@@ -88,6 +88,7 @@ const EXPECTED: &[&str] = &[
     "ix_stats",
     "ix_supervised",
     "ix_tars_bridge",
+    "ix_thinker_hits",
     "ix_topo",
     "ix_trace_ingest",
     "ix_tsne",
@@ -148,9 +149,11 @@ fn parity_expected_count() {
     //   assumption graph Phase 4) = 73.
     // + ix_nl_to_pipeline (2026-06-06, NL->pipeline "thinking machine" as an
     //   MCP tool, agent-native parity with `ix pipeline compile`) = 76.
+    // + ix_thinker_hits (2026-06-07, thinking-machine yield/guardrail ledger
+    //   aggregate, agent-native parity with `ix pipeline hits`) = 77.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 76);
+    assert_eq!(EXPECTED.len(), 77);
 }
 
 #[test]

@@ -52,6 +52,12 @@ reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], def
 toml = "0.8"
 blake3 = { workspace = true }
 
+# Tamper-evidence pin for the governance constitution. sha256 over the in-tree
+# blake3 because the pin must be independently verifiable by a human/auditor
+# with standard tools (`sha256sum` / `Get-FileHash`). (RSI safe-loop research
+# 2026-06-07.)
+sha2 = "0.10"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

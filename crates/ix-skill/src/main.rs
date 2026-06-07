@@ -240,6 +240,10 @@ enum PipelineNoun {
         #[arg(long)]
         run: bool,
     },
+    /// Aggregate the NL→pipeline translation ledger (hits.jsonl) into a yield
+    /// metric paired with its refusal guardrails (Goodhart-resistant: a yield
+    /// gain alongside a coverage-refusal drop is gate-loosening, not progress).
+    Hits,
 }
 
 #[derive(Subcommand)]
@@ -351,6 +355,7 @@ fn dispatch(cli: Cli) -> i32 {
                 max_rounds,
                 run,
             } => try_or(verbs::compile::compile(&sentence, max_rounds, run, fmt)),
+            PipelineNoun::Hits => try_or(verbs::compile::hits(fmt)),
         },
 
         Verb::Demo { noun } => match noun {
