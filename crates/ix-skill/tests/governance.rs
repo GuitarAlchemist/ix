@@ -214,8 +214,12 @@ stages:
     let lock_path = dir.join("ix.lock");
     assert!(lock_path.is_file(), "ix.lock was not written");
     let lock_text = fs::read_to_string(&lock_path).unwrap();
-    assert!(lock_text.contains("schema: ix-lock/v1"));
+    assert!(lock_text.contains("schema: ix-lock/v2"));
     assert!(lock_text.contains("skill: stats"));
     assert!(lock_text.contains("args_hash: fnv1a64:"));
+    // ix-lock/v2 provenance fields (chain-of-evidence v1): the run carries a
+    // run id and the stage output is content-hashed.
+    assert!(lock_text.contains("run_id: run:"));
+    assert!(lock_text.contains("output_hash: sha256:"));
     fs::remove_dir_all(&dir).ok();
 }

@@ -462,6 +462,28 @@ impl ix_pipeline::gate::StageGate for ConstitutionGate {
     }
 }
 
+/// Append one provenance record (the v2 lock) to the durable, append-only
+/// `state/thinking-machine/provenance.jsonl` trail. Best-effort: any I/O error
+/// is swallowed so provenance logging never fails a pipeline run (same
+/// discipline as the hits.jsonl ledger). One `write_all` of line+newline keeps
+/// concurrent appends from interleaving mid-line.
+fn append_provenance(lock: &LockFile) {
+    use std::io::Write as _;
+    let path = Path::new("state/thinking-machine/provenance.jsonl");
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let mut line = lock.to_json_line();
+    line.push('\n');
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 /// `ix pipeline run [-f FILE] [--json]` — execute the pipeline.
 ///
 /// When `stream_ndjson` is true, emits NDJSON events (`start`, `stage_start`,
@@ -493,11 +515,12 @@ pub fn run(file: Option<&str>, stream_ndjson: bool, format: Format) -> Result<()
     // The current executor doesn't expose per-stage callbacks, so we emit
     // start+done around the whole run for phase 1. Per-stage events arrive
     // in a future iteration that adds a callback hook to `execute()`.
-    let result =
-        execute(&dag, &Default::default(), &NoCache).map_err(|e| format!("execution: {e}"))?;
+    let initial_inputs: std::collections::HashMap<String, serde_json::Value> =
+        std::collections::HashMap::new();
+    let result = execute(&dag, &initial_inputs, &NoCache).map_err(|e| format!("execution: {e}"))?;
 
-    // Write ix.lock alongside the spec (phase 1: write-only, no enforcement).
-    let lock = LockFile::from_run(&spec, &result);
+    // Write ix.lock (ix-lock/v2 provenance record) alongside the spec.
+    let lock = LockFile::from_run(&spec, &result, &initial_inputs);
     let lock_yaml = lock
         .to_yaml_string()
         .map_err(|e| format!("lock yaml: {e}"))?;
@@ -507,6 +530,11 @@ pub fn run(file: Option<&str>, stream_ndjson: bool, format: Format) -> Result<()
         .join("ix.lock");
     std::fs::write(&lock_path, &lock_yaml)
         .map_err(|e| format!("writing {}: {e}", lock_path.display()))?;
+
+    // Append the run to the durable provenance trail (best-effort, never blocks
+    // the run — same discipline as hits.jsonl). One JSON object per run, keyed
+    // by run_id. See docs/contracts/2026-06-07-provenance-record.contract.md.
+    append_provenance(&lock);
 
     if stream_ndjson {
         for (id, node_result) in &result.node_results {
