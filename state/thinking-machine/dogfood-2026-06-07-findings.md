@@ -145,3 +145,32 @@ Remaining catalog primitives (same pattern as `pca`, next passes): **DBSCAN**
 (`ix-unsupervised/src/dbscan.rs`), **eigendecomposition** (`ix-math/src/eigen.rs`
 + `svd.rs`). Each: arity-1 `#[ix_skill]` + handler + executes-test + parity bump
 + dogfood re-run.
+
+---
+
+## Increments 3 & 4 (shipped same session): catalog breadth + data-binding
+
+- **`dbscan`** (#87) — wrapped `ix-unsupervised` DBSCAN; an adversarial review of
+  the diff caught that `Clusterer::fit_predict`'s default re-derives labels via
+  `predict()`, which absorbs density-unreachable noise points → non-canonical
+  labels. Fixed at source (override `fit_predict` to return `fit()`'s canonical
+  labels; invisible to the stable-surface api_hash since it's a trait-method body).
+- **`eigen`** (#88) — wrapped `ix-math::symmetric_eigen`; validates square +
+  symmetric (the Jacobi solver silently mis-solves asymmetric input). Review
+  caught the executes-test couldn't distinguish a wrong eigenvector transpose
+  (2×2 with component-symmetric V); replaced with a discriminating 3×3, mutation-
+  proven.
+- **Data-binding via `{param}`** (#89) — closed finding #1, the dominant refusal.
+  Makes the dead `PipelineSpec.params` field live: `{"param":"NAME"}` placeholders
+  bound at run from `--param`, fail-closed on unbound across all three execution
+  sites (run / compile / editor). Two review passes (P0: compile path didn't bind).
+  **Live-verified:** `ix pipeline compile "reduce this dataset to 2 dimensions
+  with PCA"` now returns `status: compiled` + `params_needed: [dataset]` (was a
+  refusal), and `run --param dataset=[[...]]` executes the real PCA projection.
+
+Registry 52 → 55 (pca/dbscan/eigen). Gap rows in `gaps.jsonl` now CLOSED: the PCA
+family, eigenvalues, DBSCAN, and the "no inline data" refusals. Still OPEN (next
+catalog targets, same pattern): topological sort (DAG), random-forest feature
+importances, silhouette score, standalone gradient-descent on a user objective.
+**Next:** a fresh dogfood batch to re-measure the refusal rate now that the
+catalog is broader and `{param}` exists.
