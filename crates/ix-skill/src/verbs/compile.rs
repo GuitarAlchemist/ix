@@ -1432,4 +1432,238 @@ mod tests {
             "no English embedder out-refused the TF-IDF baseline (TNR 0.163) at recall≈0.99; best={best_name} {best_tnr:.3}"
         );
     }
+
+    // ── OOD SCORING-METHOD sweep (run: cargo test -p ix-skill --features
+    //    embeddings ood_scoring_method -- --nocapture) ────────────────────────
+    //
+    // The score→verdict refinement (deep-research 2026-06-07,
+    // reference_ood_scoring_method_research). The production gate thresholds RAW
+    // bge mean-top-3 cosine at a fixed 0.45. The research HYPOTHESIS was that raw
+    // global cosine is not cross-query comparable, so per-query calibration
+    // (z-norm / kNN-guidance) would lift NEAR-MISS OOD. This sweep is the
+    // executable oracle that tests that hypothesis over the 184 probes — each
+    // method calibrated ID-ONLY (threshold = 3rd percentile of in-domain scores
+    // → recall ≈ 0.97) so the comparison is apples-to-apples.
+    //
+    // RESULT (adversarially verified, workflow ww01cowgl, 2/3 sound): the
+    // hypothesis is OVERTURNED for THIS task. Raw mean-top-3 (A) wins outright
+    // (AUC 0.936 vs B 0.698 / C 0.770 / D 0.929). Mechanism: a coverage gate
+    // discriminates by ABSOLUTE cosine magnitude (an in-domain request sits close
+    // to *some* skill; a near-miss sits only moderately close to *all*) — the
+    // opposite of a ranking task. PER-QUERY z-norm (B) erases that magnitude by
+    // dividing out each query's own spread, and near-miss queries have the
+    // smallest spread, so B inflates exactly the cases it should reject. The only
+    // calibration that would NOT hurt is a FIXED in-domain reference z-norm (E) —
+    // but that is a monotone affine map of the raw score, so it is provably
+    // IDENTICAL to A in AUC and in any ID-quantile-calibrated TNR (asserted
+    // below). Net: keep the raw threshold; wire NO new scoring method. The only
+    // real lever is the operating point (recall 0.97 → TNR 0.675/near 0.554 vs
+    // production recall 0.99 → 0.625/0.482).
+    //
+    // ENFORCEMENT (be honest — this is NOT a CI gate): the test is feature-gated
+    // on `embeddings` (non-default), and CI builds/tests `--workspace` with no
+    // feature flags, so this NEVER runs in CI (CI never pulls ONNX). It is a
+    // MANUAL / PR-time check — "fails loudly" means when a human re-runs the
+    // sweep after changing the embedder or probe set, not automatically. It also
+    // SKIPs (early return, zero assertions) if the probe corpus is absent. Treat
+    // it as a decision record with a re-runnable guard, not an auto-firing alarm.
+    //
+    // @ai:invariant fixed-ref z-norm (E) is affine-identical to raw (A) on AUC/TNR/near-miss — a monotone affine map is rank- and ID-quantile-invariant [T:formal-proof conf:0.99 src:ood_scoring_method_sweep_over_probe_corpus asserts e≡a]
+    // @ai:assumption on the 184-probe corpus + bge-base-en, raw mean-top-3 cosine dominates every per-query/margin/kNN calibration on AUC, so the gate keeps the raw threshold — CONDITIONAL on the corpus + embedder, re-run on change [T:test conf:0.9 src:ood_scoring_method_sweep_over_probe_corpus asserts a.0>={b,c,d}.0; state/thinking-machine/coverage-probes.jsonl]
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn ood_scoring_method_sweep_over_probe_corpus() {
+        use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+        use std::cmp::Ordering::Equal;
+        use std::io::BufRead;
+
+        fn cos(a: &[f32], b: &[f32]) -> f64 {
+            let (mut d, mut na, mut nb) = (0.0f64, 0.0f64, 0.0f64);
+            for (x, y) in a.iter().zip(b) {
+                let (x, y) = (*x as f64, *y as f64);
+                d += x * y;
+                na += x * x;
+                nb += y * y;
+            }
+            if na == 0.0 || nb == 0.0 {
+                0.0
+            } else {
+                d / (na.sqrt() * nb.sqrt())
+            }
+        }
+
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../state/thinking-machine/coverage-probes.jsonl");
+        let Ok(file) = std::fs::File::open(&path) else {
+            eprintln!("SKIP ood_scoring: probe corpus not found");
+            return;
+        };
+        let mut sentences = Vec::new();
+        let mut labels: Vec<(bool, String)> = Vec::new();
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line.unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            let p: Value = serde_json::from_str(&line).unwrap();
+            sentences.push(p["sentence"].as_str().unwrap().to_string());
+            labels.push((
+                p["label"].as_str().unwrap() == "in_domain",
+                p["kind"].as_str().unwrap().to_string(),
+            ));
+        }
+        let n = sentences.len();
+        let instr = "Represent this sentence for searching relevant passages: ";
+        let skills = pipeline_callable_skills();
+        let docs: Vec<String> = skills
+            .iter()
+            .map(|s| format!("{} {}", s.name.replace(['.', '_'], " "), s.doc))
+            .collect();
+        let queries: Vec<String> = sentences.iter().map(|s| format!("{instr}{s}")).collect();
+        let mut model = TextEmbedding::try_new(
+            InitOptions::new(EmbeddingModel::BGEBaseENV15).with_show_download_progress(true),
+        )
+        .expect("load bge-base-en");
+        let cat = model.embed(docs, None).expect("embed catalog");
+        let qemb = model.embed(queries, None).expect("embed queries");
+
+        // Per-probe catalog cosines, sorted descending (for top-k + per-query stats).
+        let cat_cos: Vec<Vec<f64>> = qemb
+            .iter()
+            .map(|q| {
+                let mut c: Vec<f64> = cat.iter().map(|p| cos(q, p)).collect();
+                c.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Equal));
+                c
+            })
+            .collect();
+        let id_idx: Vec<usize> = (0..n).filter(|&i| labels[i].0).collect();
+        let mean_top3 = |c: &[f64]| c.iter().take(3).sum::<f64>() / 3.0;
+
+        // A: raw mean-top-3 (the production signal). B: per-query z-norm of
+        // mean-top-3 against the query's own 52-catalog-cosine distribution
+        // (calibration, catalog-only → runtime-cheap). C: top1−top2 margin.
+        // D: A × kNN(10)-guidance to the in-domain QUERY set (NNGuide-style,
+        // leave-one-out for in-domain probes; needs the in-domain reference).
+        // E: FIXED in-domain reference z-norm — (A − μ_id)/σ_id with μ_id, σ_id
+        // computed ONCE over in-domain scores. This is the calibration an
+        // adversarial reviewer (ww01cowgl) argued B *should* have been; being a
+        // monotone affine map of A it must score IDENTICAL AUC (asserted below) —
+        // which is precisely why no fixed-reference calibration can beat raw.
+        let score_a: Vec<f64> = cat_cos.iter().map(|c| mean_top3(c)).collect();
+        let score_b: Vec<f64> = cat_cos
+            .iter()
+            .map(|c| {
+                let mu = c.iter().sum::<f64>() / c.len() as f64;
+                let sd = (c.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / c.len() as f64)
+                    .sqrt()
+                    .max(1e-9);
+                (mean_top3(c) - mu) / sd
+            })
+            .collect();
+        let score_c: Vec<f64> = cat_cos
+            .iter()
+            .map(|c| c[0] - c.get(1).copied().unwrap_or(0.0))
+            .collect();
+        let k = 10usize;
+        let score_d: Vec<f64> = (0..n)
+            .map(|j| {
+                let mut g: Vec<f64> = id_idx
+                    .iter()
+                    .filter(|&&i| i != j) // leave-one-out
+                    .map(|&i| cos(&qemb[j], &qemb[i]))
+                    .collect();
+                g.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Equal));
+                let guide = g.iter().take(k).sum::<f64>() / k.min(g.len()).max(1) as f64;
+                score_a[j] * guide
+            })
+            .collect();
+        // E: fixed in-domain reference z-norm (constants computed once over the
+        // in-domain scores) — affine in A, so rank- and quantile-identical to it.
+        let id_a: Vec<f64> = id_idx.iter().map(|&i| score_a[i]).collect();
+        let mu_id = id_a.iter().sum::<f64>() / id_a.len() as f64;
+        let sd_id = (id_a.iter().map(|x| (x - mu_id).powi(2)).sum::<f64>() / id_a.len() as f64)
+            .sqrt()
+            .max(1e-9);
+        let score_e: Vec<f64> = score_a.iter().map(|s| (s - mu_id) / sd_id).collect();
+
+        let eval = |scores: &[f64], name: &str| -> (f64, f64, f64) {
+            let pos: Vec<f64> = (0..n).filter(|&i| labels[i].0).map(|i| scores[i]).collect();
+            let neg: Vec<(f64, &str)> = (0..n)
+                .filter(|&i| !labels[i].0)
+                .map(|i| (scores[i], labels[i].1.as_str()))
+                .collect();
+            let (mut wins, mut tot) = (0.0f64, 0.0f64);
+            for p in &pos {
+                for (ns, _) in &neg {
+                    tot += 1.0;
+                    if p > ns {
+                        wins += 1.0;
+                    } else if (p - ns).abs() < 1e-12 {
+                        wins += 0.5;
+                    }
+                }
+            }
+            let auc = if tot > 0.0 { wins / tot } else { 0.0 };
+            let mut ps = pos.clone();
+            ps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Equal));
+            let drop = ((1.0 - 0.97) * ps.len() as f64).floor() as usize;
+            let thr = ps[drop.min(ps.len().saturating_sub(1))];
+            let recall = pos.iter().filter(|s| **s >= thr).count() as f64 / pos.len().max(1) as f64;
+            let tnr = neg.iter().filter(|(s, _)| *s < thr).count() as f64 / neg.len().max(1) as f64;
+            let kt = |kind: &str| {
+                let t: Vec<f64> = neg
+                    .iter()
+                    .filter(|(_, k)| *k == kind)
+                    .map(|(s, _)| *s)
+                    .collect();
+                t.iter().filter(|s| **s < thr).count() as f64 / t.len().max(1) as f64
+            };
+            let (near, far) = (kt("near_miss_ood"), kt("far_ood"));
+            eprintln!("{name:20} AUC={auc:.3} thr={thr:+.3} recall={recall:.3} TNR={tnr:.3} near={near:.3} far={far:.3}");
+            (auc, tnr, near)
+        };
+
+        eprintln!(
+            "=== OOD scoring methods | bge-base-en | calibrated ID-only @ recall≥0.97 (n={n}) ==="
+        );
+        let a = eval(&score_a, "A raw-mean-top3");
+        let b = eval(&score_b, "B per-query-znorm");
+        let c = eval(&score_c, "C top1-top2-margin");
+        let d = eval(&score_d, "D raw×kNN-guide");
+        let e = eval(&score_e, "E fixed-ref-znorm");
+        eprintln!("(production gate: A @ fixed 0.45 = recall 0.99, TNR 0.625, near 0.482)");
+        eprintln!("DECISION: keep raw (A); wire no new scoring method.");
+
+        // Decision-encoding regression guard (NOT a tautology — A is excluded
+        // from the comparison set). Raw (A) must dominate every DISTINCT
+        // calibration on AUC. If a future embedder or probe set makes a
+        // calibrated method genuinely win, this fails loudly and the keep-raw
+        // decision must be revisited. (.0 = AUC, .1 = TNR, .2 = near-miss TNR.)
+        for (name, m) in [("B", b), ("C", c), ("D", d)] {
+            assert!(
+                a.0 + 1e-9 >= m.0,
+                "calibration {name} beat raw on AUC ({:.3} > {:.3}) — revisit keep-raw",
+                m.0,
+                a.0
+            );
+        }
+        // Equivalence proof closing the adversarial reviewer's loophole: a FIXED
+        // in-domain reference z-norm (E) is a monotone affine map of raw, so ALL
+        // THREE metrics are bit-identical — AUC is rank-invariant, and the
+        // ID-quantile threshold co-transforms so TNR and near-miss TNR refuse the
+        // exact same points. The "correct" per-query calibration the reviewer
+        // proposed collapses to raw — hence NO fixed-reference calibration can
+        // beat raw, and only the per-query variant (B) differs, and it loses.
+        // Assert all three (not just AUC) so the guard matches the claim.
+        assert!(
+            (e.0 - a.0).abs() < 1e-9 && (e.1 - a.1).abs() < 1e-9 && (e.2 - a.2).abs() < 1e-9,
+            "fixed-ref z-norm (AUC {:.6} TNR {:.6} near {:.6}) != raw (AUC {:.6} TNR {:.6} near {:.6}); must be affine-identical",
+            e.0,
+            e.1,
+            e.2,
+            a.0,
+            a.1,
+            a.2
+        );
+    }
 }

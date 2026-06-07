@@ -82,3 +82,9 @@ state/thinking-machine/hits.jsonl
 # regenerated from the skill catalog on demand; cwd-relative so it can appear at
 # the repo root or under a crate dir during tests.
 embed-cache/
+
+# fastembed-rs ONNX model download cache (feature `embeddings`) — model blobs are
+# hundreds of MB to multiple GB, fetched on first run; cwd-relative like
+# embed-cache/, so it can appear at repo root or under a crate dir during tests.
+# NEVER commit; regenerated on demand.
+.fastembed_cache/
