@@ -1219,4 +1219,187 @@ mod tests {
             "error sits in the denominator, diluting yield (2/3), not vanishing: {s}"
         );
     }
+
+    // ── Embedding-gate validation SPIKE: which English embedder beats TF-IDF?
+    //    (run: cargo test -p ix-skill --features embeddings embedding_sweep
+    //     -- --nocapture) ──────────────────────────────────────────────────
+    //
+    // Feature-gated so CI (`--workspace`, default features) never pulls ONNX.
+    // Proves fastembed-rs/ort builds + runs here, and sweeps several built-in
+    // English retrieval embedders — each with ITS correct query/passage prefix
+    // scheme — over the 184-probe corpus, reporting AUC + the operating point at
+    // in-domain recall ≥ 0.99 (same methodology as the Python sweep). Go/no-go:
+    // at least one must out-refuse the lexical baseline (recall 0.99 / TNR 0.163)
+    // at equal recall. First run downloads each model (~270–670 MB).
+    #[cfg(feature = "embeddings")]
+    #[test]
+    fn embedding_sweep_english_models_over_probe_corpus() {
+        use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+        use std::io::BufRead;
+
+        fn cosine_f32(a: &[f32], b: &[f32]) -> f64 {
+            let (mut dot, mut na, mut nb) = (0.0f64, 0.0f64, 0.0f64);
+            for (x, y) in a.iter().zip(b) {
+                let (x, y) = (*x as f64, *y as f64);
+                dot += x * y;
+                na += x * x;
+                nb += y * y;
+            }
+            if na == 0.0 || nb == 0.0 {
+                0.0
+            } else {
+                dot / (na.sqrt() * nb.sqrt())
+            }
+        }
+
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../state/thinking-machine/coverage-probes.jsonl");
+        let Ok(file) = std::fs::File::open(&path) else {
+            eprintln!(
+                "SKIP embedding_sweep: probe corpus not found at {}",
+                path.display()
+            );
+            return;
+        };
+        let mut sentences = Vec::new();
+        let mut labels: Vec<(bool, String)> = Vec::new(); // (is_in_domain, kind)
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line.unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            let p: Value = serde_json::from_str(&line).unwrap();
+            sentences.push(p["sentence"].as_str().unwrap().to_string());
+            labels.push((
+                p["label"].as_str().unwrap() == "in_domain",
+                p["kind"].as_str().unwrap().to_string(),
+            ));
+        }
+        let skills = pipeline_callable_skills();
+        let docs: Vec<String> = skills
+            .iter()
+            .map(|s| format!("{} {}", s.name.replace(['.', '_'], " "), s.doc))
+            .collect();
+
+        // Given per-query scores, compute AUC + the operating point at recall≥0.99.
+        let eval = |scores: &[f64]| -> (f64, f64, f64, f64, f64, f64) {
+            let pos: Vec<f64> = scores
+                .iter()
+                .zip(&labels)
+                .filter(|(_, (i, _))| *i)
+                .map(|(s, _)| *s)
+                .collect();
+            let neg: Vec<f64> = scores
+                .iter()
+                .zip(&labels)
+                .filter(|(_, (i, _))| !*i)
+                .map(|(s, _)| *s)
+                .collect();
+            let (mut wins, mut total) = (0.0f64, 0.0f64);
+            for p in &pos {
+                for n in &neg {
+                    total += 1.0;
+                    if p > n {
+                        wins += 1.0;
+                    } else if (p - n).abs() < 1e-12 {
+                        wins += 0.5;
+                    }
+                }
+            }
+            let auc = if total > 0.0 { wins / total } else { 0.0 };
+            let mut ps = pos.clone();
+            ps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let drop = ((1.0 - 0.99) * ps.len() as f64).floor() as usize;
+            let thr = ps[drop.min(ps.len().saturating_sub(1))];
+            let recall = pos.iter().filter(|s| **s >= thr).count() as f64 / pos.len().max(1) as f64;
+            let tnr = neg.iter().filter(|s| **s < thr).count() as f64 / neg.len().max(1) as f64;
+            let kt = |k: &str| -> f64 {
+                let t: Vec<f64> = scores
+                    .iter()
+                    .zip(&labels)
+                    .filter(|(_, (i, kk))| !*i && kk == k)
+                    .map(|(s, _)| *s)
+                    .collect();
+                t.iter().filter(|s| **s < thr).count() as f64 / t.len().max(1) as f64
+            };
+            (auc, thr, recall, tnr, kt("near_miss_ood"), kt("far_ood"))
+        };
+
+        // (name, model, query-prefix, passage-prefix). e5 uses query:/passage:;
+        // bge/mxbai/arctic use a query instruction + bare passages; gte uses none.
+        let instr = "Represent this sentence for searching relevant passages: ";
+        let configs: Vec<(&str, EmbeddingModel, String, String)> = vec![
+            (
+                "multilingual-e5-base",
+                EmbeddingModel::MultilingualE5Base,
+                "query: ".into(),
+                "passage: ".into(),
+            ),
+            (
+                "bge-base-en-v1.5",
+                EmbeddingModel::BGEBaseENV15,
+                instr.into(),
+                String::new(),
+            ),
+            (
+                "gte-base-en-v1.5",
+                EmbeddingModel::GTEBaseENV15,
+                String::new(),
+                String::new(),
+            ),
+            (
+                "snowflake-arctic-embed-m",
+                EmbeddingModel::SnowflakeArcticEmbedM,
+                instr.into(),
+                String::new(),
+            ),
+        ];
+
+        eprintln!(
+            "{:28} {:>5} {:>7} {:>6} {:>6} {:>6} {:>6}",
+            "model (mean-top-3 cosine)", "AUC", "thr", "recall", "TNR", "near", "far"
+        );
+        let (mut best_tnr, mut best_name) = (0.0f64, "none");
+        for (name, model_kind, qp, pp) in configs {
+            let mut model = match TextEmbedding::try_new(
+                InitOptions::new(model_kind).with_show_download_progress(true),
+            ) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("{name:28} load FAILED: {e}");
+                    continue;
+                }
+            };
+            let passages: Vec<String> = docs.iter().map(|d| format!("{pp}{d}")).collect();
+            let queries: Vec<String> = sentences.iter().map(|s| format!("{qp}{s}")).collect();
+            let cat = model.embed(passages, None).expect("embed catalog");
+            let qry = model.embed(queries, None).expect("embed queries");
+            let scores: Vec<f64> = qry
+                .iter()
+                .map(|q| {
+                    let mut c: Vec<f64> = cat.iter().map(|p| cosine_f32(q, p)).collect();
+                    c.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+                    c.iter().take(3).sum::<f64>() / 3.0
+                })
+                .collect();
+            let (auc, thr, recall, tnr, near, far) = eval(&scores);
+            eprintln!("{name:28} {auc:.3} {thr:.4} {recall:.3} {tnr:.3} {near:.3} {far:.3}");
+            if tnr > best_tnr {
+                best_tnr = tnr;
+                best_name = name;
+            }
+        }
+        eprintln!(
+            "{:28} {:>5} {:>7} {:>6} {:>6} {:>6} {:>6}",
+            "TF-IDF baseline", "~.78", "-", "0.990", "0.163", "0.036", "0.458"
+        );
+        eprintln!("BEST embedder: {best_name} @ TNR {best_tnr:.3} (recall≈0.99)");
+
+        // Go/no-go bar: at least one English embedder must out-refuse the lexical
+        // baseline at equal recall — else embeddings aren't worth the ONNX dep.
+        assert!(
+            best_tnr > 0.163,
+            "no English embedder out-refused the TF-IDF baseline (TNR 0.163) at recall≈0.99; best={best_name} {best_tnr:.3}"
+        );
+    }
 }
