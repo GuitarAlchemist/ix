@@ -81,16 +81,12 @@ fn compile_inner(
     // 2026-06-06). `lower()` + governance check STRUCTURE, not coverage, so
     // we score intent↔catalog relevance with IX's own TF-IDF *before* calling
     // the LLM, and log a capability gap instead of confabulating.
-    let cov_min: f64 = std::env::var("IX_THINKER_COVERAGE_MIN")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.08);
-    let (cov_max, cov_top) = coverage_score(sentence, &skills);
+    let (cov_max, cov_top, detector, cov_min) = score_coverage(sentence, &skills);
     if cov_max < cov_min {
         log_gap(
             sentence,
             "coverage",
-            &format!("no IX skill covers this intent (max TF-IDF cosine {cov_max:.3} < {cov_min}); nearest: {cov_top:?}"),
+            &format!("no IX skill covers this intent ({detector} score {cov_max:.3} < {cov_min}); nearest: {cov_top:?}"),
             0,
         );
         return emit_outcome(
@@ -99,7 +95,7 @@ fn compile_inner(
             cov_max,
             json!({
                 "status": "out_of_domain",
-                "detected_by": "tfidf-coverage",
+                "detected_by": detector,
                 "sentence": sentence,
                 "coverage_max": cov_max,
                 "coverage_threshold": cov_min,
@@ -440,7 +436,7 @@ fn call_anthropic(
 // ── Prompt construction ─────────────────────────────────────────────────
 
 /// Skills callable from a pipeline stage (arity-1, single JSON arg).
-fn pipeline_callable_skills() -> Vec<&'static ix_registry::SkillDescriptor> {
+pub(crate) fn pipeline_callable_skills() -> Vec<&'static ix_registry::SkillDescriptor> {
     let mut skills: Vec<&'static ix_registry::SkillDescriptor> =
         ix_registry::all().filter(|s| s.inputs.len() == 1).collect();
     skills.sort_by_key(|s| s.name);
@@ -461,6 +457,40 @@ fn catalog_value(skills: &[&'static ix_registry::SkillDescriptor]) -> Value {
         })
         .collect();
     json!(rows)
+}
+
+/// Coverage dispatcher: the in-process embedding scorer (bge-base-en-v1.5) when
+/// the `embeddings` feature is built AND the model loads, else the lexical
+/// TF-IDF pre-gate. The embedding tier raises OOD refusal ~4× at equal recall
+/// (`state/thinking-machine/embedding-sweep-rust-results.md`) but is OPTIONAL —
+/// TF-IDF is the always-available default + graceful fallback (set
+/// `IX_THINKER_DISABLE_EMBED` to force it). Thresholds: embedding ≈ 0.45
+/// (`IX_THINKER_EMBED_COVERAGE_MIN`), TF-IDF 0.08 (`IX_THINKER_COVERAGE_MIN`).
+/// Returns `(score, top-3 nearest, detector tag, threshold)`.
+fn score_coverage(
+    sentence: &str,
+    skills: &[&'static ix_registry::SkillDescriptor],
+) -> (f64, Vec<(String, f64)>, &'static str, f64) {
+    #[cfg(feature = "embeddings")]
+    {
+        if std::env::var_os("IX_THINKER_DISABLE_EMBED").is_none() {
+            if let Some(mut ec) = crate::verbs::embed_coverage::EmbeddingCoverage::load(skills) {
+                let (max, top) = ec.score(sentence);
+                let min: f64 = std::env::var("IX_THINKER_EMBED_COVERAGE_MIN")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.45);
+                return (max, top, "embedding-bge-base-en", min);
+            }
+            // model unavailable (offline / no ONNX) → fall through to TF-IDF.
+        }
+    }
+    let (max, top) = coverage_score(sentence, skills);
+    let min: f64 = std::env::var("IX_THINKER_COVERAGE_MIN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.08);
+    (max, top, "tfidf-coverage", min)
 }
 
 /// Executable semantic-coverage score: the max TF-IDF cosine between the

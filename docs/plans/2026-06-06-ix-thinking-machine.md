@@ -165,7 +165,16 @@ drop below 0.90 (a gate that false-blocks real work is worse than useless).
      OOD TNR 0.625 @ recall 0.99** (3.8× the TF-IDF baseline 0.163; near-miss
      0.036 → **0.482**, the headline gap). multilingual-e5-base was *worse* than
      TF-IDF; e5-base-v2 isn't needed. Windows ONNX build confirmed.
-   - ⏳ **Wire it in (next):** make bge-base-en-v1.5 the coverage gate's primary
-     tier (mean-top-3 cosine, threshold ≈ 0.45) behind the `embeddings` feature,
-     TF-IDF as graceful fallback; `hits.jsonl` tracks the before/after.
+   - ✅ **Wired in.** `verbs::embed_coverage::EmbeddingCoverage` (bge-base-en-v1.5,
+     mean-top-3 cosine, disk-cached catalog embeddings) is the coverage gate's
+     primary tier via the `score_coverage` dispatcher when the `embeddings`
+     feature is built; TF-IDF is the default + graceful fallback (model
+     unavailable / `IX_THINKER_DISABLE_EMBED` → TF-IDF). Threshold ≈ 0.45
+     (`IX_THINKER_EMBED_COVERAGE_MIN`). `hits.jsonl` records `detected_by` +
+     `coverage_max`, so the before/after is tracked automatically.
+     **Live-verified:** the near-miss "scrape a website and email a summary" —
+     which TF-IDF let through (0.324 > 0.08, the pinned known-limitation) — is now
+     refused by `embedding-bge-base-en` (0.44 < 0.45); in-domain data-bearing
+     requests still compile (recall intact). CI never builds ONNX (non-default
+     feature).
    - ⏳ score→verdict refinement (kNN-distance / per-query calibration) — follow-up.
