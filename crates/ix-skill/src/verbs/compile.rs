@@ -749,4 +749,126 @@ mod tests {
             "an ordinary execution error must NOT be misclassified as governance"
         );
     }
+
+    // ── Embeddings front (D4): baseline of the CURRENT lexical TF-IDF gate ──
+    //
+    // Measures the live `coverage_score` against the validated probe corpus
+    // (state/thinking-machine/coverage-probes.jsonl) at the production 0.08
+    // threshold. This is the instrument: it quantifies the gap an embedding
+    // gate must close — specifically that TF-IDF refuses far-OOD well but lets
+    // NEAR-MISS out-of-domain requests (shared content words) through. The
+    // asserted bounds lock that baseline; an embedding replacement is only
+    // worth shipping if it raises near_miss TNR without dropping in-domain
+    // recall below this line.
+    #[test]
+    fn coverage_baseline_tfidf_over_probe_corpus() {
+        use std::collections::BTreeMap;
+        use std::io::BufRead;
+
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../state/thinking-machine/coverage-probes.jsonl");
+        // The corpus is a workspace-level state/ artifact, not packaged inside
+        // the crate. In the normal workspace checkout it is always present; skip
+        // loudly (rather than panic) if the crate is tested in isolation outside
+        // the workspace tree. (Codex #79 P2.)
+        let Ok(file) = std::fs::File::open(&path) else {
+            eprintln!(
+                "SKIP coverage_baseline_tfidf: probe corpus not found at {} (crate tested outside the workspace)",
+                path.display()
+            );
+            return;
+        };
+        let skills = pipeline_callable_skills();
+        let threshold = 0.08_f64; // the live IX_THINKER_COVERAGE_MIN default
+
+        let (mut covered, mut false_reject) = (0u32, 0u32); // in_domain outcomes
+        let mut by_kind: BTreeMap<String, (u32, u32)> = BTreeMap::new(); // ood kind -> (refused, confabulated)
+        let (mut n_in, mut n_out) = (0u32, 0u32);
+
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line.unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            let p: Value = serde_json::from_str(&line).unwrap();
+            let sentence = p["sentence"].as_str().unwrap();
+            let label = p["label"].as_str().unwrap();
+            let kind = p["kind"].as_str().unwrap().to_string();
+            let (score, _) = coverage_score(sentence, &skills);
+            let predicted_in = score >= threshold;
+            if label == "in_domain" {
+                n_in += 1;
+                if predicted_in {
+                    covered += 1;
+                } else {
+                    false_reject += 1;
+                }
+            } else {
+                n_out += 1;
+                let e = by_kind.entry(kind).or_insert((0, 0));
+                if predicted_in {
+                    e.1 += 1; // confabulated: gate let an OOD request through
+                } else {
+                    e.0 += 1; // correctly refused
+                }
+            }
+        }
+
+        let recall = covered as f64 / n_in.max(1) as f64;
+        let (refused_total, confab_total): (u32, u32) = by_kind
+            .values()
+            .fold((0, 0), |(a, b), (c, f)| (a + c, b + f));
+        let tnr = refused_total as f64 / n_out.max(1) as f64;
+        let kind_tnr = |k: &str| -> f64 {
+            by_kind
+                .get(k)
+                .map(|(c, f)| *c as f64 / (*c + *f).max(1) as f64)
+                .unwrap_or(0.0)
+        };
+        let near = kind_tnr("near_miss_ood");
+        let far = kind_tnr("far_ood");
+
+        eprintln!(
+            "=== TF-IDF coverage baseline @ threshold {threshold} (n={}) ===",
+            n_in + n_out
+        );
+        eprintln!(
+            "in_domain   n={n_in:3} recall(pass)={recall:.3} false_reject={:.3}",
+            false_reject as f64 / n_in.max(1) as f64
+        );
+        eprintln!("out_domain  n={n_out:3} TNR(refuse)={tnr:.3} confabulated={confab_total}");
+        for (kind, (c, f)) in &by_kind {
+            eprintln!(
+                "  {kind:14} TNR={:.3} ({c} refused / {} total)",
+                *c as f64 / (*c + *f).max(1) as f64,
+                c + f
+            );
+        }
+        eprintln!("HEADLINE gap: far_ood TNR={far:.3}  vs  near_miss TNR={near:.3}");
+
+        // Corpus is real and non-trivial.
+        assert!(
+            n_in >= 80 && n_out >= 60,
+            "corpus has both classes: in={n_in} out={n_out}"
+        );
+        // Measured baseline (2026-06-07, threshold 0.08): recall≈0.99,
+        // overall TNR≈0.16, far_ood≈0.46, near_miss≈0.04 — the lexical pre-gate
+        // confabulates ~84% of out-of-domain requests. Guardrails (NOT targets):
+        // in-domain recall must stay high, and near-miss must remain the weakest
+        // slice (the embedding gate's primary target). The poor absolute TNR is
+        // recorded in the plan doc as the baseline the embedding work must beat;
+        // raise these into TNR targets once embeddings land.
+        assert!(
+            recall >= 0.90,
+            "in-domain recall must stay high — a coverage gate that false-blocks real work is worse than useless: recall={recall:.3}"
+        );
+        assert!(
+            near < far,
+            "near-miss OOD must be the weakest slice (the embedding gate's target): near={near:.3} far={far:.3}"
+        );
+        assert!(
+            tnr < 0.50,
+            "documents the baseline: the lexical pre-gate is a weak refuser (raise/flip this assertion when the embedding gate lands): TNR={tnr:.3}"
+        );
+    }
 }
