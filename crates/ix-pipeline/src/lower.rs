@@ -181,7 +181,10 @@ fn collect_from_refs(value: &Value, out: &mut BTreeSet<String>) {
 
 /// Clone `template` replacing every `{"from": "..."}` reference with the
 /// matching upstream output. Unknown references bubble up as `Err`.
-fn resolve_from_refs(template: &Value, inputs: &HashMap<String, Value>) -> Result<Value, String> {
+pub(crate) fn resolve_from_refs(
+    template: &Value,
+    inputs: &HashMap<String, Value>,
+) -> Result<Value, String> {
     match template {
         Value::Object(map) => {
             if let Some(Value::String(target)) = map.get("from") {
