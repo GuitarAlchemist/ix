@@ -18,8 +18,13 @@ use crate::{features, reference};
 pub fn stft_loss(a: &[f64], b: &[f64], window_size: usize, hop_size: usize) -> f64 {
     let sa = spectral::spectrogram(a, window_size, hop_size, false);
     let sb = spectral::spectrogram(b, window_size, hop_size, false);
-    let frames = sa.len().min(sb.len());
-    if frames == 0 {
+    // Iterate the UNION of frames/bins, treating a missing frame/bin as zero
+    // energy — so an unmatched tail (a long ring/noise in the longer signal that
+    // the other lacks) is penalized, not silently ignored. Comparing only the
+    // common prefix would under-score exactly the duration/decay errors this loss
+    // exists to catch.
+    let n_frames = sa.len().max(sb.len());
+    if n_frames == 0 {
         return 0.0;
     }
 
@@ -28,12 +33,15 @@ pub fn stft_loss(a: &[f64], b: &[f64], window_size: usize, hop_size: usize) -> f
     let mut sc_num = 0.0; // Σ (a-b)²
     let mut sc_den = 0.0; // Σ a²
     const EPS: f64 = 1e-7;
+    let empty: Vec<f64> = Vec::new();
 
-    for t in 0..frames {
-        let bins = sa[t].len().min(sb[t].len());
+    for t in 0..n_frames {
+        let fa = sa.get(t).unwrap_or(&empty);
+        let fb = sb.get(t).unwrap_or(&empty);
+        let bins = fa.len().max(fb.len());
         for k in 0..bins {
-            let x = sa[t][k];
-            let y = sb[t][k];
+            let x = fa.get(k).copied().unwrap_or(0.0);
+            let y = fb.get(k).copied().unwrap_or(0.0);
             log_mag_sum += ((x + EPS).ln() - (y + EPS).ln()).abs();
             sc_num += (x - y) * (x - y);
             sc_den += x * x;
@@ -374,6 +382,38 @@ mod tests {
             r.recommendation().contains("loop filter"),
             "recommendation should point at the kernel loop filter, got: {}",
             r.recommendation()
+        );
+    }
+
+    // Codex P2: a candidate that matches the target's prefix but has a long
+    // ringing tail the target lacks must be penalized for that tail — not scored
+    // ~0 by comparing only the common prefix.
+    #[test]
+    fn stft_loss_penalizes_unmatched_tail() {
+        let sr = 8000.0;
+        let n = 2048;
+        // target: a brief tone that goes silent after 50 ms.
+        let target: Vec<f64> = (0..n)
+            .map(|t| {
+                let tt = t as f64 / sr;
+                if tt < 0.05 {
+                    (2.0 * PI * 300.0 * tt).sin()
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        // candidate: same, but keeps ringing for another 2048 samples.
+        let mut candidate = target.clone();
+        for t in n..(n + 2048) {
+            candidate.push(0.5 * (2.0 * PI * 300.0 * t as f64 / sr).sin());
+        }
+        let with_tail = stft_loss(&target, &candidate, 256, 64);
+        let identical = stft_loss(&target, &target, 256, 64);
+        assert!(identical < 1e-9, "identical → 0");
+        assert!(
+            with_tail > 0.1,
+            "an unmatched ringing tail must add loss, got {with_tail}"
         );
     }
 }

@@ -110,6 +110,22 @@ impl TuneSession {
     /// `1 - spectral_score`; a clipped/silent guardrail failure is penalized to
     /// [`GUARDRAIL_FAIL_LOSS`] so the search avoids unusable renders.
     pub fn ingest(&mut self, result: &TuneResult) -> Result<(), String> {
+        // Reject a stale / out-of-order / wrong-session result before touching the
+        // optimizer: the JSON-on-disk exchange can leave an old `tune-result.json`
+        // behind, and applying losses for a different generation/session would
+        // silently corrupt the CMA-ES state.
+        if result.session_id != self.session_id {
+            return Err(format!(
+                "result session_id '{}' does not match this session '{}'",
+                result.session_id, self.session_id
+            ));
+        }
+        if result.iteration != self.iteration {
+            return Err(format!(
+                "stale result: iteration {} does not match the pending generation {}",
+                result.iteration, self.iteration
+            ));
+        }
         if result.scores.is_empty() {
             return Err("result has no scores".into());
         }
@@ -282,6 +298,39 @@ mod tests {
         assert_eq!(
             best, clean.params,
             "the clean render must win over the higher-scoring clipped one"
+        );
+    }
+
+    // Codex P2: a stale / wrong-session result must be rejected before it can
+    // corrupt the optimizer state (the on-disk exchange can leave an old file).
+    #[test]
+    fn ingest_rejects_stale_or_wrong_session_result() {
+        let mut session = TuneSession::new(cfg(11)).expect("session");
+        let req = session.next_request();
+        let score = |it: usize, sid: &str| TuneResult {
+            schema: RESULT_SCHEMA.into(),
+            session_id: sid.into(),
+            iteration: it,
+            reference: None,
+            scores: vec![CandidateScore {
+                id: req.candidates[0].id.clone(),
+                params: req.candidates[0].params.clone(),
+                spectral_score: 0.5,
+                features: None,
+                guardrail: None,
+            }],
+        };
+        assert!(
+            session.ingest(&score(0, "OTHER")).is_err(),
+            "wrong session_id must be rejected"
+        );
+        assert!(
+            session.ingest(&score(99, "test")).is_err(),
+            "stale iteration must be rejected"
+        );
+        assert!(
+            session.ingest(&score(0, "test")).is_ok(),
+            "the matching current-generation result is accepted"
         );
     }
 }
