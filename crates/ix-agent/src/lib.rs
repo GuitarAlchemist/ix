@@ -5,6 +5,7 @@
 //! reach into these modules to inspect the tool registry, drive the bridge
 //! between `ix-registry` and MCP, and call handlers directly.
 
+pub mod acoustic_tune;
 pub mod demo;
 pub mod flywheel;
 pub mod handlers;

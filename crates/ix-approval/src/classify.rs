@@ -78,6 +78,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_pca",
         "ix_dbscan",
         "ix_eigen",
+        "ix_analyze_reference",
+        "ix_spectral_distance",
         "ix_optimize",
         "ix_search",
         "ix_markov",
@@ -165,6 +167,8 @@ mod tests {
             "ix_pca",
             "ix_dbscan",
             "ix_eigen",
+            "ix_analyze_reference",
+            "ix_spectral_distance",
         ] {
             assert_eq!(
                 classify_action_kind(tool),
