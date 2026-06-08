@@ -66,6 +66,8 @@ const EXPECTED: &[&str] = &[
     "ix_hyperloglog",
     "ix_dbscan",
     "ix_eigen",
+    "ix_analyze_reference",
+    "ix_spectral_distance",
     "ix_kmeans",
     "ix_linear_regression",
     "ix_pca",
@@ -160,9 +162,12 @@ fn parity_expected_count() {
     //   auto-exposed via the registry bridge) = 79.
     // + ix_eigen (2026-06-07, symmetric eigendecomposition — dogfood
     //   catalog-breadth fix; auto-exposed via the registry bridge) = 80.
+    // + ix_analyze_reference + ix_spectral_distance (2026-06-07, ix-acoustic-tune
+    //   analysis skills — reference descriptor + decomposed spectral distance,
+    //   pipeline/NL/MCP-callable) = 82.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 80);
+    assert_eq!(EXPECTED.len(), 82);
 }
 
 #[test]
@@ -294,10 +299,12 @@ fn parity_all_43_registry_backed() {
     // + pca (2026-06-07, dogfood catalog-breadth fix) = 53.
     // + dbscan (2026-06-07, dogfood catalog-breadth fix) = 54.
     // + eigen (2026-06-07, dogfood catalog-breadth fix) = 55.
+    // + analyze_reference + spectral_distance (2026-06-07, ix-acoustic-tune
+    //   analysis skills) = 57.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 55,
-        "expected 55 registry skills, got {registry_count}"
+        registry_count, 57,
+        "expected 57 registry skills, got {registry_count}"
     );
 }
 

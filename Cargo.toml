@@ -73,6 +73,7 @@ members = [
     "crates/ix-ai-annotations",
     "crates/ix-sentrux-annotations",
     "crates/ix-assumption-graph",
+    "crates/ix-acoustic-tune",
 ]
 
 [workspace.package]
@@ -130,6 +131,7 @@ ix-graph = { path = "crates/ix-graph", version = "0.1.0" }
 ix-probabilistic = { path = "crates/ix-probabilistic", version = "0.1.0" }
 ix-io = { path = "crates/ix-io", version = "0.1.0" }
 ix-signal = { path = "crates/ix-signal", version = "0.1.0" }
+ix-acoustic-tune = { path = "crates/ix-acoustic-tune", version = "0.1.0" }
 ix-chaos = { path = "crates/ix-chaos", version = "0.1.0" }
 ix-game = { path = "crates/ix-game", version = "0.1.0" }
 ix-search = { path = "crates/ix-search", version = "0.1.0" }

@@ -1,0 +1,19 @@
+[package]
+name = "ix-acoustic-tune"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "science", "multimedia::audio"]
+keywords = ["audio", "dsp", "optimization", "cma-es", "sound-matching"]
+description = "Acoustic parameter auto-tuning: black-box optimizers (CMA-ES, ask/tell) + spectral features and losses for synth sound-matching. Experimental; generic pieces graduate to ix-optimize/ix-signal."
+
+[dependencies]
+ix-math = { workspace = true }
+ix-signal = { workspace = true }
+ndarray = { workspace = true }
+rand = { workspace = true }
+rand_distr = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
