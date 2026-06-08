@@ -2,6 +2,66 @@
   "schema": 1,
   "claims": [
     {
+      "key": "sha256:e09d6f2859387462f28bef1561b3583d4f71cbc47a94dc8a1d368c0d2db0611e",
+      "path": "crates/ix-acoustic-tune/src/cmaes.rs",
+      "line": 151,
+      "kind": "invariant",
+      "claim": "CMA-ES drives the distribution to the optimum of a smooth non-convex objective — verified by recovering the Rosenbrock valley minimum (1,1), which requires correct covariance adaptation to the curved valley",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "cmaes::tests::recovers_rosenbrock_minimum",
+      "anchor_hash": "sha256:7c56e7c1463ef27f3ce99de9b175133c3edf13f5a08871d3e98fe35ab7182d37",
+      "test_binding": "recovers_rosenbrock_minimum"
+    },
+    {
+      "key": "sha256:6776e9895bec067b764370596224ca5ac1128853fb5fc9de39da9c208a55c956",
+      "path": "crates/ix-acoustic-tune/src/cmaes.rs",
+      "line": 223,
+      "kind": "invariant",
+      "claim": "after tell, the distribution mean equals the weighted recombination Σ w_i·x_(i) of the μ best candidates — independent of the step-size σ update (uses sigma_old, not the post-update sigma)",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "cmaes::tests::mean_update_is_the_weighted_centroid_independent_of_sigma",
+      "anchor_hash": "sha256:c9670034826a5d710549c4f5919f8d09424678280ed5ce5ecc179f4f3592a826",
+      "test_binding": "mean_update_is_the_weighted_centroid_independent_of_sigma"
+    },
+    {
+      "key": "sha256:6b9bc9355c43626240fe2de5a7e309f6ec7278985c7a9f57deb484f55fca1451",
+      "path": "crates/ix-acoustic-tune/src/reference.rs",
+      "line": 58,
+      "kind": "invariant",
+      "claim": "band_decay_slope returns a more-negative slope for a band that decays faster, so per-band slopes capture the differential decay (highs vs lows) that a single averaged spectrum discards",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "reference::tests::per_band_decay_distinguishes_fast_from_slow_bands",
+      "anchor_hash": "sha256:f7a4ea90895924af9d33803e816e4e47500973a8e24a4fedfc4d423460767b0b",
+      "test_binding": "per_band_decay_distinguishes_fast_from_slow_bands"
+    },
+    {
+      "key": "sha256:9b5f79b4bd434a81b82e0774fdf480b0248cf215d8e99ecb234ca21b83a727e5",
+      "path": "crates/ix-acoustic-tune/src/reference.rs",
+      "line": 107,
+      "kind": "invariant",
+      "claim": "inharmonicity_b reads ≈0 for a perfectly harmonic signal and a clearly higher positive B for stretched (stiff-string) partials, so it distinguishes a natural inharmonic guitar tone from a synthetic perfectly-harmonic one",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "reference::tests::inharmonicity_separates_stretched_from_harmonic",
+      "anchor_hash": "sha256:9a1c6ec9c7455f0551563ac380087c1564ed726a3b2e09afc9e6b0247d17f040",
+      "test_binding": "inharmonicity_separates_stretched_from_harmonic"
+    },
+    {
+      "key": "sha256:410783deeec7eba509288e39740b17c7409ee57b436fc100d83e95f524dd2436",
+      "path": "crates/ix-acoustic-tune/src/spectral_loss.rs",
+      "line": 58,
+      "kind": "invariant",
+      "claim": "multi_resolution_stft_loss is 0 for identical signals and strictly larger for a more distant one, AND for signals shorter than the smallest STFT window it uses a non-zero time-domain RMS fallback (never a degenerate hann(2)=[0,0] STFT that would falsely score two different short signals as 0)",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "spectral_loss::tests::short_signals_get_a_meaningful_loss",
+      "anchor_hash": "sha256:d3620b943eddbe3dfcec4ecf52fcbe857f8b240d5e71e99c93755f165e448258",
+      "test_binding": "short_signals_get_a_meaningful_loss"
+    },
+    {
       "key": "sha256:b12bceb2ebaca8148cafd9d9bfc685e19b5bd679822b7ec7b87cffa35c6e010d",
       "path": "crates/ix-agent/src/handlers.rs",
       "line": 358,

@@ -73,6 +73,7 @@ members = [
     "crates/ix-ai-annotations",
     "crates/ix-sentrux-annotations",
     "crates/ix-assumption-graph",
+    "crates/ix-acoustic-tune",
 ]
 
 [workspace.package]
