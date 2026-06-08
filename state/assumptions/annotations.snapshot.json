@@ -52,7 +52,7 @@
     {
       "key": "sha256:410783deeec7eba509288e39740b17c7409ee57b436fc100d83e95f524dd2436",
       "path": "crates/ix-acoustic-tune/src/spectral_loss.rs",
-      "line": 58,
+      "line": 60,
       "kind": "invariant",
       "claim": "multi_resolution_stft_loss is 0 for identical signals and strictly larger for a more distant one, AND for signals shorter than the smallest STFT window it uses a non-zero time-domain RMS fallback (never a degenerate hann(2)=[0,0] STFT that would falsely score two different short signals as 0)",
       "verdict": "T",
@@ -60,6 +60,18 @@
       "evidence": "spectral_loss::tests::short_signals_get_a_meaningful_loss",
       "anchor_hash": "sha256:d3620b943eddbe3dfcec4ecf52fcbe857f8b240d5e71e99c93755f165e448258",
       "test_binding": "short_signals_get_a_meaningful_loss"
+    },
+    {
+      "key": "sha256:925e1a9dcb757eb52ebea1b5208455d6b291a4d55b9cd113c5bc46edeb968e78",
+      "path": "crates/ix-acoustic-tune/src/spectral_loss.rs",
+      "line": 176,
+      "kind": "invariant",
+      "claim": "layered_perceptual_loss is ~0 for identical signals and scores a candidate with the WRONG decay envelope (but a similar average spectrum) strictly worse than one with the right envelope — catching the naturalness gap a bare multi-resolution-STFT loss misses",
+      "verdict": "T",
+      "certainty": "Test",
+      "evidence": "spectral_loss::tests::layered_loss_catches_decay_that_mss_misses",
+      "anchor_hash": "sha256:a6bb2c776b1b1f422edf6dcc1501aead84bee8111e0de48f40f7d1ed260f4c9d",
+      "test_binding": "layered_loss_catches_decay_that_mss_misses"
     },
     {
       "key": "sha256:b12bceb2ebaca8148cafd9d9bfc685e19b5bd679822b7ec7b87cffa35c6e010d",
