@@ -8,6 +8,7 @@
 //! deferred, research-grade follow-up.
 
 use ix_signal::spectral;
+use serde::{Deserialize, Serialize};
 
 use crate::{features, reference};
 
@@ -187,6 +188,77 @@ pub fn layered_perceptual_loss(
     w.mss * mss + w.mel * mel + w.decay * decay + w.f0 * f0d + w.inharmonicity * inh
 }
 
+/// Per-term breakdown of the [`layered_perceptual_loss`] residual between a target
+/// and the best candidate — the diagnostic that decides the next lever:
+/// **retune** (cheap) vs **extend the synth kernel** (a reviewed code change).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResidualBreakdown {
+    pub mss: f64,
+    pub mel: f64,
+    pub decay: f64,
+    pub f0: f64,
+    pub inharmonicity: f64,
+    pub total: f64,
+    /// The largest weighted term — the bottleneck to address next.
+    pub dominant: String,
+}
+
+impl ResidualBreakdown {
+    /// Maps the dominant residual term to the recommended next move (the plan's
+    /// retune-vs-extend-kernel §2). A spread-out small residual ⇒ at model capacity.
+    pub fn recommendation(&self) -> &'static str {
+        match self.dominant.as_str() {
+            "decay" => "extend the GA kernel: a tunable/higher-order loop filter — per-band decay is unreachable by the single fixed one-pole",
+            "inharmonicity" => "extend the GA kernel: an all-pass cascade for true inharmonicity — the single dispersion all-pass only smears",
+            "f0" => "retune dispersion/tuning, or verify the rendered pitch",
+            "mel" | "mss" => "retune brightness/spectral params first; if it persists in the low-freq/body region, replace the synthetic body IR (commuted synthesis)",
+            _ => "near model capacity — tuning is the right tool",
+        }
+    }
+}
+
+/// Decompose the layered loss into its weighted per-term contributions, flagging
+/// the dominant one. Run on the best candidate after convergence to decide
+/// whether to keep tuning or extend the synth model (see
+/// [`ResidualBreakdown::recommendation`]).
+pub fn decompose_residual(
+    target: &[f64],
+    candidate: &[f64],
+    sample_rate: f64,
+    w: &LossWeights,
+) -> ResidualBreakdown {
+    let mss = w.mss * multi_resolution_stft_loss(target, candidate);
+    let mel = w.mel * mel_distance(target, candidate, sample_rate);
+    let decay = w.decay * decay_distance(target, candidate, sample_rate);
+    let (f0d, inh) = pitch_distance(target, candidate, sample_rate);
+    let f0 = w.f0 * f0d;
+    let inharmonicity = w.inharmonicity * inh;
+    let total = mss + mel + decay + f0 + inharmonicity;
+
+    let terms = [
+        ("mss", mss),
+        ("mel", mel),
+        ("decay", decay),
+        ("f0", f0),
+        ("inharmonicity", inharmonicity),
+    ];
+    let dominant = terms
+        .iter()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(n, _)| n.to_string())
+        .unwrap_or_default();
+
+    ResidualBreakdown {
+        mss,
+        mel,
+        decay,
+        f0,
+        inharmonicity,
+        total,
+        dominant,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,6 +347,33 @@ mod tests {
         assert!(
             decay_distance(&target, &no_decay, sr) > decay_distance(&target, &close, sr),
             "the per-band decay term must distinguish the wrong envelope"
+        );
+    }
+
+    // The residual diagnostic must point at the right lever: a wrong-decay
+    // candidate's residual is dominated by the decay term, recommending a kernel
+    // loop-filter extension (not more tuning).
+    #[test]
+    fn residual_dominant_term_points_at_the_wrong_decay() {
+        let sr = 8000.0;
+        let n = 8000;
+        let make = |decay: f64| -> Vec<f64> {
+            (0..n)
+                .map(|t| {
+                    let tt = t as f64 / sr;
+                    (-decay * tt).exp() * (2.0 * PI * 300.0 * tt).sin()
+                })
+                .collect()
+        };
+        let r = decompose_residual(&make(3.0), &make(0.0), sr, &LossWeights::default());
+        assert_eq!(
+            r.dominant, "decay",
+            "a wrong-decay candidate's residual must be decay-dominated, got {r:?}"
+        );
+        assert!(
+            r.recommendation().contains("loop filter"),
+            "recommendation should point at the kernel loop filter, got: {}",
+            r.recommendation()
         );
     }
 }
