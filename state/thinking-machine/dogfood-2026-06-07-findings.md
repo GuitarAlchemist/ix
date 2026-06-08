@@ -174,3 +174,106 @@ catalog targets, same pattern): topological sort (DAG), random-forest feature
 importances, silhouette score, standalone gradient-descent on a user objective.
 **Next:** a fresh dogfood batch to re-measure the refusal rate now that the
 catalog is broader and `{param}` exists.
+
+---
+
+## Re-measure (same session): yield 26% → 66%
+
+Split `hits.jsonl` by `ts_ms` (the `ix pipeline hits` cumulative mean blends
+pre/post and reads falsely low at 0.43 — see
+`docs/solutions/workflow-patterns/2026-06-07-dogfood-yield-before-after-measurement.md`):
+**pre-fix 11/42 = 26% → post-fix 21/32 = 66%** (in-domain ~87%),
+`translate_fail_rate` **0%** (no confabulation; topo-sort/shortest-path verified
+as real `ix_graph` ops, not hallucination). Remaining refusals are predominantly
+*correct*: OOD (haiku, booking, news/scrape) + honest boundaries (NN training,
+custom-objective GD) + governance correctly rejecting "delete the production
+database" (Article 3). Conclusion: the **structural** bottlenecks (catalog
+breadth + data binding) are resolved; only two genuine catalog gaps remained.
+
+## Increment 5 (same session): the last two genuine gaps closed
+
+Both remaining genuine gaps from the re-measure are now CLOSED — as **separate,
+cleanly-scoped** skills (the "separate concerns" steer), each a pure module with
+its own unit tests, **kept in `ix-agent` (beta)** so they don't grow a stable
+crate's public surface (the workspace shares one `0.1.0` version, so a `pub fn`
+in ix-unsupervised/ix-ensemble would trip the stable-surface gate — a multi-PR
+version dance for a purely additive change):
+
+- **`silhouette`** (`eval/silhouette.rs`) — clustering evaluation. Exact O(n²)
+  Rousseeuw silhouette; `data` socket + `labels` wired from a cluster stage via
+  `{from: "cluster.labels"}`. **Proven:** `kmeans → silhouette` compiles AND
+  executes → score **0.992** on well-separated clusters.
+- **`feature_importances`** (`eval/permutation_importance.rs`) — model
+  explainability. **Permutation importance** (model-agnostic; needs only the
+  RF's existing `predict()`, so no stable-crate surgery; inline splitmix64 PRNG,
+  no `rand` dep, reproducible via `seed`) — *not* Gini/MDI (which would require
+  exposing `DecisionTree` internals). **Proven:** `random_forest →
+  feature_importances` compiles AND executes → importances `[0.35, 0.0]`,
+  `ranking [0,1]`, correctly attributing the label-determining feature.
+
+Registry **55 → 57**. Each ships an executes-test, a genuine `@ai:invariant`
+(`::`-pathed `[T:test]` binding), READ_TOOLS classification, and parity/cli count
+bumps (EXPECTED 80→82). An adversarial 3-lens review (numerical-correctness vs
+sklearn / `@ai`-binding precision / schema↔handler field parity) returned
+**merge_ready, no P0/P1** — only P3 honesty nits (doc-comment sklearn-parity
+caveat + invariant prose narrowed to what the bound test discriminates), both
+applied.
+
+**Catalog status: complete-enough.** The structural arc (catalog breadth +
+data binding + the two demand-driven gaps) is closed. Remaining refusals are
+correct (OOD + honest boundaries). Next lever, if any, is incremental and
+demand-gated — not structural.
+
+---
+
+## Catalog-gap audit + signal/SVD/GMM batch (registry 57 → 63)
+
+Triggered by "do we have A\* and Q\*?" → a workspace-wide gap audit (7 parallel
+domain agents + adversarial verification). **120 user-meaningful algorithms
+surveyed: 39 exposed, 5 partial, 18 honest-boundary, 58 raw gaps, 15 confirmed
+high-value gaps.** Key findings:
+
+- **A\* is a gap, Q\* is an honest boundary.** `ix-search/astar.rs` (+ weighted/
+  greedy/bidirectional) and `qstar.rs` (A\* with a learned DQN Q-heuristic) both
+  exist, but the catalog's `search` skill is `search_info` (returns *docs*, not
+  execution); only `graph` (dijkstra/bfs/dfs/topo/pagerank) runs. A\* is
+  arity-1-feasible; **Q\* needs a user-supplied trained Q-function callback**, so
+  it can't be a clean data→result skill (like Q-learning, neural-ODE, arbitrary-
+  objective optimize — all correctly honest-boundary, not gaps).
+- **`ix-signal` was the single biggest hole** — an 11-module crate with only
+  `fft` exposed. Filled 4 modules this batch.
+
+Shipped 6 skills, all **pure wraps of already-`pub` library functions** (so —
+unlike silhouette/feature_importances — *zero* new code in the stable crates;
+the wrappers live in ix-agent/beta, stable-surface untouched):
+
+| skill | wraps | proof |
+|---|---|---|
+| `svd` | `ix-math::svd` | reconstructs U·diag(s)·Vᵀ; executed end-to-end (σ=[17.4,0.875,0.197], rank 3) |
+| `gmm` | `ix-unsupervised::GMM` | recovers 2 blobs; soft responsibilities sum to 1 |
+| `wavelet_denoise` | `ix-signal::wavelet` | reduces MSE-to-clean |
+| `fir_filter` | `ix-signal::filter` | lowpass cuts high-freq diff-energy |
+| `spectrogram` | `ix-signal::spectral` | tone localizes to bin 4 |
+| `autocorrelation` | `ix-signal::correlation` | period-4 signal peaks at lag 4 |
+
+All 6 live-compile via the proposer (with `{param}` binding). EXPECTED 82→88,
+registry 57→63, drift snapshot 41 claims.
+
+**Adversarial review caught 4 real P1s my power-of-two test inputs masked** (the
+value of the review over green CI):
+1. `spectrogram` — `rfft` zero-pads to next-pow2, so a non-pow2 `window_size`
+   miscalibrates the bins → now **rejected** (require power-of-two window).
+2. `wavelet_denoise` — Haar DWT drops samples when length isn't divisible by
+   `2^levels`, silently shortening the output → now **rejected** (length contract
+   holds for accepted input).
+3. `wavelet` `@ai:invariant` over-claimed unconditional length preservation →
+   narrowed to the enforced precondition.
+4. `gmm` responsibilities could sum to 0 on extreme-outlier underflow → **uniform
+   fallback** so every row is a valid distribution.
+
+Each fix ships a test encoding the reviewer's exact counterexample
+(`window_size=24`, `length-15`, far outlier `1e9`). The GMM responsibilities
+recompute was independently verified to match the library's private
+`gaussian_pdf` exactly. **Lesson (recorded):** signal/transform code tested only
+on power-of-two sizes hides padding/truncation bugs — always probe non-pow2 /
+non-divisible inputs (`docs/solutions/math-correctness/2026-06-07-power-of-two-test-masking.md`).

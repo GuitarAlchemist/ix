@@ -66,9 +66,17 @@ const EXPECTED: &[&str] = &[
     "ix_hyperloglog",
     "ix_dbscan",
     "ix_eigen",
+    "ix_feature_importances",
+    "ix_svd",
+    "ix_gmm",
+    "ix_wavelet_denoise",
+    "ix_fir_filter",
+    "ix_spectrogram",
+    "ix_autocorrelation",
     "ix_kmeans",
     "ix_linear_regression",
     "ix_pca",
+    "ix_silhouette",
     "ix_markov",
     "ix_ml_pipeline",
     "ix_ml_predict",
@@ -160,9 +168,16 @@ fn parity_expected_count() {
     //   auto-exposed via the registry bridge) = 79.
     // + ix_eigen (2026-06-07, symmetric eigendecomposition — dogfood
     //   catalog-breadth fix; auto-exposed via the registry bridge) = 80.
+    // + ix_silhouette (2026-06-07, clustering-quality metric — dogfood
+    //   remaining-gap fix; auto-exposed via the registry bridge) = 81.
+    // + ix_feature_importances (2026-06-07, permutation feature importance —
+    //   dogfood remaining-gap fix; auto-exposed via the registry bridge) = 82.
+    // + catalog-gap-audit batch (2026-06-07): ix_svd, ix_gmm, ix_wavelet_denoise,
+    //   ix_fir_filter, ix_spectrogram, ix_autocorrelation (wrapping existing
+    //   ix-math/ix-unsupervised/ix-signal algorithms) = 88.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 80);
+    assert_eq!(EXPECTED.len(), 88);
 }
 
 #[test]
@@ -294,10 +309,14 @@ fn parity_all_43_registry_backed() {
     // + pca (2026-06-07, dogfood catalog-breadth fix) = 53.
     // + dbscan (2026-06-07, dogfood catalog-breadth fix) = 54.
     // + eigen (2026-06-07, dogfood catalog-breadth fix) = 55.
+    // + silhouette (2026-06-07, dogfood remaining-gap fix) = 56.
+    // + feature_importances (2026-06-07, dogfood remaining-gap fix) = 57.
+    // + svd/gmm/wavelet_denoise/fir_filter/spectrogram/autocorrelation
+    //   (2026-06-07, catalog-gap-audit batch — wrapping existing algorithms) = 63.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 55,
-        "expected 55 registry skills, got {registry_count}"
+        registry_count, 63,
+        "expected 63 registry skills, got {registry_count}"
     );
 }
 
