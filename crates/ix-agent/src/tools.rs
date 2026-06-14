@@ -1871,6 +1871,29 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::git_log,
         });
+
+        self.tools.push(Tool {
+            name: "ix_git_churn",
+            description: "P1.3 — per-file change frequency over a window. Runs `git log --numstat` once and aggregates churn_count + lines_added + lines_deleted + last_changed per file, sorted by churn descending and truncated to `limit`. Pair with ix_git_log: log is 'how often does the repo change' (time series); churn is 'which files drive that change' (per-file ranking). Same hardening as ix_git_log (no shell concatenation, repo_root via `git -C`). Flat projections (paths/churn_counts/lines_added/lines_deleted) let pipeline $step.field substitution feed downstream stats/fft/kmeans tools directly.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Window size in days ending today. Default 30. Must be in 1..=3650."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of files in the ranked output. Default 50. Must be in 1..=10000. 'total_files' always reports the un-truncated count."
+                    },
+                    "repo_root": {
+                        "type": "string",
+                        "description": "Optional absolute path to a git repository root. Same semantics as ix_git_log."
+                    }
+                }
+            }),
+            handler: handlers::git_churn,
+        });
     }
 
     /// Advanced sub-group 4: pipeline discovery / execution helpers

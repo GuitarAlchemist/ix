@@ -3369,6 +3369,211 @@ fn extract_workspace_deps(
     out
 }
 
+// ── ix_git_churn ───────────────────────────────────────────
+
+/// P1.3 — shell out to `git log` and aggregate per-file change
+/// frequency ("churn") plus per-file lines-added / lines-deleted over
+/// a configurable window. Complements `ix_git_log` (which buckets
+/// commits into a time series) by surfacing *which files* drive that
+/// churn — the right input for refactor-priority heuristics and for
+/// adversarial-refactor-oracle's per-file risk scoring.
+///
+/// Input format:
+/// ```json
+/// {
+///   "since_days": 30,      // optional, default 30, in 1..=3650
+///   "limit": 50,           // optional, default 50, in 1..=10000
+///   "repo_root": "<abs path>"  // optional override (same semantics as ix_git_log)
+/// }
+/// ```
+///
+/// Output:
+/// ```json
+/// {
+///   "window_days": 30,
+///   "total_files": 17,
+///   "limit": 50,
+///   "files": [
+///     {
+///       "path": "crates/ix-agent/src/handlers.rs",
+///       "churn_count": 12,
+///       "lines_added": 480,
+///       "lines_deleted": 113,
+///       "last_changed": "2026-05-23"
+///     },
+///     ...
+///   ],
+///   // Flat projections for pipeline `$step.field` substitution.
+///   "paths": ["...", "..."],
+///   "churn_counts": [12.0, 9.0, ...],
+///   "lines_added": [480.0, 320.0, ...],
+///   "lines_deleted": [113.0, 88.0, ...]
+/// }
+/// ```
+///
+/// # Security
+///
+/// Uses the same hardening pattern as `ix_git_log`: every argument
+/// passed via `Command::arg()`, no shell concatenation. The optional
+/// `repo_root` is passed through `git -C` rather than spliced into a
+/// path string. Output paths come from git itself and are not
+/// echoed into any shell.
+pub fn git_churn(params: Value) -> Result<Value, String> {
+    use std::collections::BTreeMap;
+    use std::process::Command;
+
+    let since_days = params
+        .get("since_days")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30);
+    if since_days == 0 || since_days > 3650 {
+        return Err(format!(
+            "ix_git_churn: 'since_days' must be in 1..=3650, got {since_days}"
+        ));
+    }
+
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50);
+    if limit == 0 || limit > 10_000 {
+        return Err(format!(
+            "ix_git_churn: 'limit' must be in 1..=10000, got {limit}"
+        ));
+    }
+
+    let repo_root = params.get("repo_root").and_then(|v| v.as_str());
+
+    // Single `git log --numstat` pass: each commit contributes a
+    // header line `__C__|<sha>|<YYYY-MM-DD>` followed by one numstat
+    // line per file (`<added>\t<deleted>\t<path>`). Parsing both in
+    // one go lets us compute churn_count, lines_added, lines_deleted,
+    // and last_changed in O(n) without re-spawning git.
+    let since_arg = format!("--since={since_days} days ago");
+    let mut cmd = Command::new("git");
+    if let Some(root) = repo_root {
+        let safe_root = root.replace('\\', "/");
+        cmd.arg("-c")
+            .arg(format!("safe.directory={safe_root}"))
+            .arg("-C")
+            .arg(root);
+    }
+    let output = cmd
+        .arg("log")
+        .arg(&since_arg)
+        .arg("--numstat")
+        .arg("--format=__C__|%H|%ad")
+        .arg("--date=format:%Y-%m-%d")
+        .output()
+        .map_err(|e| format!("ix_git_churn: failed to spawn git: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "ix_git_churn: git exited with {:?}: {}",
+            output.status.code(),
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    struct Agg {
+        churn_count: u64,
+        lines_added: u64,
+        lines_deleted: u64,
+        last_changed: String, // YYYY-MM-DD, lexicographically sortable
+    }
+
+    let mut by_path: BTreeMap<String, Agg> = BTreeMap::new();
+    let mut current_date: Option<String> = None;
+
+    for line in stdout.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("__C__|") {
+            // Header: __C__|<sha>|<date>
+            let mut parts = rest.splitn(2, '|');
+            let _sha = parts.next().unwrap_or("");
+            let date = parts.next().unwrap_or("").trim();
+            current_date = if date.is_empty() {
+                None
+            } else {
+                Some(date.to_string())
+            };
+            continue;
+        }
+        // numstat line: `<added>\t<deleted>\t<path>`. Binary files use
+        // `-\t-\t<path>` — skip those for the additions/deletions
+        // tally but still count them as churn.
+        let mut cols = line.splitn(3, '\t');
+        let added_s = cols.next().unwrap_or("");
+        let deleted_s = cols.next().unwrap_or("");
+        let path = cols.next().unwrap_or("").trim();
+        if path.is_empty() {
+            continue;
+        }
+        let added: u64 = added_s.parse().unwrap_or(0);
+        let deleted: u64 = deleted_s.parse().unwrap_or(0);
+        let entry = by_path.entry(path.to_string()).or_insert_with(|| Agg {
+            churn_count: 0,
+            lines_added: 0,
+            lines_deleted: 0,
+            last_changed: String::new(),
+        });
+        entry.churn_count += 1;
+        entry.lines_added += added;
+        entry.lines_deleted += deleted;
+        if let Some(d) = &current_date {
+            if d.as_str() > entry.last_changed.as_str() {
+                entry.last_changed = d.clone();
+            }
+        }
+    }
+
+    let total_files = by_path.len();
+
+    // Sort descending by churn_count; break ties by path for
+    // determinism. Then truncate to `limit`.
+    let mut ranked: Vec<(String, Agg)> = by_path.into_iter().collect();
+    ranked.sort_by(|a, b| {
+        b.1.churn_count
+            .cmp(&a.1.churn_count)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    ranked.truncate(limit as usize);
+
+    let files: Vec<Value> = ranked
+        .iter()
+        .map(|(p, a)| {
+            json!({
+                "path": p,
+                "churn_count": a.churn_count,
+                "lines_added": a.lines_added,
+                "lines_deleted": a.lines_deleted,
+                "last_changed": a.last_changed,
+            })
+        })
+        .collect();
+
+    // Flat projections so pipeline `$step.field` substitution can
+    // feed downstream stats / fft / kmeans tools directly.
+    let paths_vec: Vec<String> = ranked.iter().map(|(p, _)| p.clone()).collect();
+    let churn_vec: Vec<f64> = ranked.iter().map(|(_, a)| a.churn_count as f64).collect();
+    let added_vec: Vec<f64> = ranked.iter().map(|(_, a)| a.lines_added as f64).collect();
+    let deleted_vec: Vec<f64> = ranked.iter().map(|(_, a)| a.lines_deleted as f64).collect();
+
+    Ok(json!({
+        "window_days": since_days,
+        "total_files": total_files,
+        "limit": limit,
+        "files": files,
+        "paths": paths_vec,
+        "churn_counts": churn_vec,
+        "lines_added": added_vec,
+        "lines_deleted": deleted_vec,
+    }))
+}
+
 // ── ix_pipeline_list ───────────────────────────────────────
 
 /// R1 companion to `ix_pipeline_run`: discover `pipeline.json` specs
