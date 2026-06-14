@@ -12,9 +12,9 @@ permissions:
 
 # Pinning: AGENT_BLACKBOX_REF is a 40-char commit SHA (not main), per install-audit
 # scoring. Bump the SHA in a dedicated PR when consuming a new agent-blackbox release.
-# Latest agent-blackbox main commit as of 2026-05-17.
+# Latest agent-blackbox main commit as of 2026-06-14 (case-insensitive harness-audit paths, #36).
 env:
-  AGENT_BLACKBOX_REF: "942f808d3290441ab7d47e78a6b05e0e5587441d"
+  AGENT_BLACKBOX_REF: "90ed651c73a296c13c9b4953754a2f4898ac4114"
   VERIFY_COMMAND: "pwsh scripts/verify.ps1"
   IX_BLAST_RADIUS_BUILD_COMMAND: ""
   IX_BLAST_RADIUS_COMMAND: ""
