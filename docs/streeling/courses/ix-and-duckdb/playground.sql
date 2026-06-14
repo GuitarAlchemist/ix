@@ -26,8 +26,9 @@ CREATE OR REPLACE VIEW voicing_analysis AS
   FROM read_json_auto('state/quality-snapshots/voicing-analysis/*.json', filename = true);
 
 -- The materialized quality-analytics DB (tables + quality_latest rollup), PR #101.
--- It's a regenerable, gitignored binary; rebuild first if missing:
---   duckdb state/quality/analytics/quality.duckdb < state/quality/analytics/build-views.sql
+-- It's a regenerable, gitignored binary; rebuild first if missing (build-views.sql
+-- uses globs relative to state/quality/, so run it FROM THERE):
+--   (cd state/quality && duckdb analytics/quality.duckdb < analytics/build-views.sql)
 -- Then uncomment to attach it read-only as schema `quality`:
 -- ATTACH 'state/quality/analytics/quality.duckdb' AS quality (READ_ONLY);
 
