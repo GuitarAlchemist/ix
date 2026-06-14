@@ -36,6 +36,17 @@ pub fn open_bench() -> duckdb::Result<Connection> {
     Ok(conn)
 }
 
+/// Open an existing on-disk DuckDB **read-only** (e.g. the materialized
+/// `state/quality/analytics/quality.duckdb`). The analyst lens never mutates the
+/// analytics DB — `build-views.sql` owns all writes.
+// @ai:invariant open_readonly opens an existing DuckDB file with no write access [T:manual conf:0.8]
+#[cfg(feature = "duck")]
+pub fn open_readonly(path: &str) -> duckdb::Result<Connection> {
+    use duckdb::{AccessMode, Config};
+    let config = Config::default().access_mode(AccessMode::ReadOnly)?;
+    Connection::open_with_flags(path, config)
+}
+
 #[cfg(all(test, feature = "duck"))]
 mod tests {
     use super::*;

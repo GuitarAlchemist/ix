@@ -31,5 +31,9 @@ duck = ["dep:duckdb", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray"]
 name = "yield_analysis"
 required-features = ["duck"]
 
+[[example]]
+name = "ix_quality_lens"
+required-features = ["duck"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
