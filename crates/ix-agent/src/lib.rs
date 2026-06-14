@@ -7,6 +7,7 @@
 
 pub mod acoustic_tune;
 pub mod demo;
+pub mod eval;
 pub mod flywheel;
 pub mod handlers;
 pub mod ml_pipeline;
