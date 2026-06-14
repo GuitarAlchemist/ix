@@ -1,0 +1,1871 @@
+{
+  "schemaVersion": "0.1",
+  "generatedAt": "2026-06-14T05:30:34.0597132Z",
+  "routerConfig": {
+    "minConfidence": 0.55,
+    "embedder": "nomic-embed-text"
+  },
+  "totalPrompts": 126,
+  "overall": {
+    "Total": 126,
+    "Correct": 89,
+    "UnmatchedFallthrough": 7,
+    "Accuracy": 0.7063492063492064,
+    "InScopeTotal": 110,
+    "InScopeCorrect": 83,
+    "InScopeAccuracy": 0.7545454545454545,
+    "OosTotal": 16,
+    "OosCorrectlyDeclined": 6,
+    "OosDeclineRate": 0.375,
+    "MeanInScopeMargin": 0.09518549037635873
+  },
+  "perIntent": {
+    "skill.beginnerchords": {
+      "Support": 7,
+      "TruePositives": 5,
+      "FalsePositives": 3,
+      "FalseNegatives": 2,
+      "Precision": 0.625,
+      "Recall": 0.7142857142857143,
+      "F1": 0.6666666666666666,
+      "Status": "measured"
+    },
+    "skill.chordinfo": {
+      "Support": 7,
+      "TruePositives": 4,
+      "FalsePositives": 2,
+      "FalseNegatives": 3,
+      "Precision": 0.6666666666666666,
+      "Recall": 0.5714285714285714,
+      "F1": 0.6153846153846153,
+      "Status": "measured"
+    },
+    "skill.chordsubstitution": {
+      "Support": 7,
+      "TruePositives": 6,
+      "FalsePositives": 1,
+      "FalseNegatives": 1,
+      "Precision": 0.8571428571428571,
+      "Recall": 0.8571428571428571,
+      "F1": 0.8571428571428571,
+      "Status": "measured"
+    },
+    "skill.circleoffifths": {
+      "Support": 6,
+      "TruePositives": 5,
+      "FalsePositives": 0,
+      "FalseNegatives": 1,
+      "Precision": 1,
+      "Recall": 0.8333333333333334,
+      "F1": 0.9090909090909091,
+      "Status": "measured"
+    },
+    "skill.commontones": {
+      "Support": 7,
+      "TruePositives": 5,
+      "FalsePositives": 1,
+      "FalseNegatives": 2,
+      "Precision": 0.8333333333333334,
+      "Recall": 0.7142857142857143,
+      "F1": 0.7692307692307692,
+      "Status": "measured"
+    },
+    "skill.diatonicchords": {
+      "Support": 7,
+      "TruePositives": 5,
+      "FalsePositives": 3,
+      "FalseNegatives": 2,
+      "Precision": 0.625,
+      "Recall": 0.7142857142857143,
+      "F1": 0.6666666666666666,
+      "Status": "measured"
+    },
+    "skill.genreessentials": {
+      "Support": 7,
+      "TruePositives": 3,
+      "FalsePositives": 2,
+      "FalseNegatives": 4,
+      "Precision": 0.6,
+      "Recall": 0.42857142857142855,
+      "F1": 0.5,
+      "Status": "measured"
+    },
+    "skill.interval": {
+      "Support": 7,
+      "TruePositives": 6,
+      "FalsePositives": 2,
+      "FalseNegatives": 1,
+      "Precision": 0.75,
+      "Recall": 0.8571428571428571,
+      "F1": 0.7999999999999999,
+      "Status": "measured"
+    },
+    "skill.keyidentification": {
+      "Support": 7,
+      "TruePositives": 6,
+      "FalsePositives": 2,
+      "FalseNegatives": 1,
+      "Precision": 0.75,
+      "Recall": 0.8571428571428571,
+      "F1": 0.7999999999999999,
+      "Status": "measured"
+    },
+    "skill.modes": {
+      "Support": 7,
+      "TruePositives": 7,
+      "FalsePositives": 3,
+      "FalseNegatives": 0,
+      "Precision": 0.7,
+      "Recall": 1,
+      "F1": 0.8235294117647058,
+      "Status": "measured"
+    },
+    "skill.practiceroutine": {
+      "Support": 7,
+      "TruePositives": 6,
+      "FalsePositives": 2,
+      "FalseNegatives": 1,
+      "Precision": 0.75,
+      "Recall": 0.8571428571428571,
+      "F1": 0.7999999999999999,
+      "Status": "measured"
+    },
+    "skill.progressioncompletion": {
+      "Support": 7,
+      "TruePositives": 3,
+      "FalsePositives": 0,
+      "FalseNegatives": 4,
+      "Precision": 1,
+      "Recall": 0.42857142857142855,
+      "F1": 0.6,
+      "Status": "measured"
+    },
+    "skill.progressionmood": {
+      "Support": 7,
+      "TruePositives": 7,
+      "FalsePositives": 3,
+      "FalseNegatives": 0,
+      "Precision": 0.7,
+      "Recall": 1,
+      "F1": 0.8235294117647058,
+      "Status": "measured"
+    },
+    "skill.scaleinfo": {
+      "Support": 7,
+      "TruePositives": 3,
+      "FalsePositives": 4,
+      "FalseNegatives": 4,
+      "Precision": 0.42857142857142855,
+      "Recall": 0.42857142857142855,
+      "F1": 0.42857142857142855,
+      "Status": "measured"
+    },
+    "skill.transpose": {
+      "Support": 7,
+      "TruePositives": 6,
+      "FalsePositives": 1,
+      "FalseNegatives": 1,
+      "Precision": 0.8571428571428571,
+      "Recall": 0.8571428571428571,
+      "F1": 0.8571428571428571,
+      "Status": "measured"
+    },
+    "skill.whatcanyoudo": {
+      "Support": 6,
+      "TruePositives": 6,
+      "FalsePositives": 0,
+      "FalseNegatives": 0,
+      "Precision": 1,
+      "Recall": 1,
+      "F1": 1,
+      "Status": "measured"
+    }
+  },
+  "prompts": [
+    {
+      "Id": "h-1",
+      "Prompt": "what notes make up a Bm7b5",
+      "Expected": "skill.chordinfo",
+      "Chosen": "skill.chordinfo",
+      "Confidence": 0.8243627,
+      "Margin": 0.031693876,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-2",
+      "Prompt": "Cm9 notes",
+      "Expected": "skill.chordinfo",
+      "Chosen": "skill.chordinfo",
+      "Confidence": 0.74337184,
+      "Margin": 0.07683247,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-3",
+      "Prompt": "how is a dominant 7 sharp 9 voiced on the top strings",
+      "Expected": "skill.chordinfo",
+      "Chosen": "skill.chordinfo",
+      "Confidence": 0.7633762,
+      "Margin": 0.10889548,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-4",
+      "Prompt": "is there an F# in a D major chord?",
+      "Expected": "skill.chordinfo",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 0.80546886,
+      "Margin": 0.01320231,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "boundary",
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-5",
+      "Prompt": "im trying to play a Gaug but idk what notes are in it",
+      "Expected": "skill.chordinfo",
+      "Chosen": "skill.chordinfo",
+      "Confidence": 0.6558268,
+      "Margin": 0.010124803,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational",
+        "lowercase"
+      ]
+    },
+    {
+      "Id": "h-6",
+      "Prompt": "E7 chords notes",
+      "Expected": "skill.chordinfo",
+      "Chosen": "skill.scaleinfo",
+      "Confidence": 0.7446331,
+      "Margin": 0.004039407,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "typo",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-7",
+      "Prompt": "what are the notes for A minor",
+      "Expected": "skill.chordinfo",
+      "Chosen": "skill.scaleinfo",
+      "Confidence": 0.79665387,
+      "Margin": 0.039481103,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "beginner-naive"
+      ]
+    },
+    {
+      "Id": "h-8",
+      "Prompt": "can you list the notes in Bb harmonic minor",
+      "Expected": "skill.scaleinfo",
+      "Chosen": "skill.scaleinfo",
+      "Confidence": 0.8394411,
+      "Margin": 0.0666818,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-9",
+      "Prompt": "g pentatonic minor scale notes",
+      "Expected": "skill.scaleinfo",
+      "Chosen": "skill.scaleinfo",
+      "Confidence": 0.7784452,
+      "Margin": 0.014875472,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "lowercase"
+      ]
+    },
+    {
+      "Id": "h-10",
+      "Prompt": "does melodic minor have a flat 7?",
+      "Expected": "skill.scaleinfo",
+      "Chosen": "skill.modes",
+      "Confidence": 0.7961289,
+      "Margin": 0.0118941665,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "boundary",
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-11",
+      "Prompt": "what the heck is the phrygian dominant scale made of",
+      "Expected": "skill.scaleinfo",
+      "Chosen": "skill.modes",
+      "Confidence": 0.851997,
+      "Margin": 0.21685326,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "conversational",
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-12",
+      "Prompt": "whats the half whole dimished scale in C",
+      "Expected": "skill.scaleinfo",
+      "Chosen": "skill.modes",
+      "Confidence": 0.7197798,
+      "Margin": 0.07177591,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "typo",
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-13",
+      "Prompt": "F# major scale",
+      "Expected": "skill.scaleinfo",
+      "Chosen": "skill.scaleinfo",
+      "Confidence": 0.96379584,
+      "Margin": 0.19712156,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short",
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-14",
+      "Prompt": "pitch collection for octatonic starting on C#",
+      "Expected": "skill.scaleinfo",
+      "Chosen": "skill.icvneighbors",
+      "Confidence": 0.63235414,
+      "Margin": 0.052332103,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-15",
+      "Prompt": "what is the 4th mode of the major scale",
+      "Expected": "skill.modes",
+      "Chosen": "skill.modes",
+      "Confidence": 0.8590646,
+      "Margin": 0.1431554,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-16",
+      "Prompt": "explain dorian to me like im 5",
+      "Expected": "skill.modes",
+      "Chosen": "skill.modes",
+      "Confidence": 0.87761873,
+      "Margin": 0.21666956,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational",
+        "lowercase"
+      ]
+    },
+    {
+      "Id": "h-17",
+      "Prompt": "mixolydian vs major",
+      "Expected": "skill.modes",
+      "Chosen": "skill.modes",
+      "Confidence": 0.85105205,
+      "Margin": 0.12090081,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-18",
+      "Prompt": "how do you play the aeolian mode",
+      "Expected": "skill.modes",
+      "Chosen": "skill.modes",
+      "Confidence": 0.81580096,
+      "Margin": 0.24801642,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-19",
+      "Prompt": "whats that spanish sounding mode called",
+      "Expected": "skill.modes",
+      "Chosen": "skill.modes",
+      "Confidence": 0.62953174,
+      "Margin": 0.0060052276,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "beginner-naive",
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-20",
+      "Prompt": "lydian mode",
+      "Expected": "skill.modes",
+      "Chosen": "skill.modes",
+      "Confidence": 0.87545544,
+      "Margin": 0.16008353,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short",
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-21",
+      "Prompt": "locrian mode formula",
+      "Expected": "skill.modes",
+      "Chosen": "skill.modes",
+      "Confidence": 0.7834129,
+      "Margin": 0.18478012,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-22",
+      "Prompt": "what is the distance between E and Bb",
+      "Expected": "skill.interval",
+      "Chosen": "skill.interval",
+      "Confidence": 0.7068983,
+      "Margin": 0.057738304,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-23",
+      "Prompt": "if I go from C to Ab what interval is that",
+      "Expected": "skill.interval",
+      "Chosen": "skill.interval",
+      "Confidence": 0.8209307,
+      "Margin": 0.14706743,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-24",
+      "Prompt": "A to D# interval",
+      "Expected": "skill.interval",
+      "Chosen": "skill.interval",
+      "Confidence": 0.7745615,
+      "Margin": 0.13673711,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-25",
+      "Prompt": "whats a perfect 5th up from G",
+      "Expected": "skill.interval",
+      "Chosen": "skill.interval",
+      "Confidence": 0.79350805,
+      "Margin": 0.16179138,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-26",
+      "Prompt": "minor 3rd of F",
+      "Expected": "skill.interval",
+      "Chosen": "skill.transpose",
+      "Confidence": 0.77689785,
+      "Margin": 0.012237072,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-27",
+      "Prompt": "is a tritone an augmented 4th or diminished 5th",
+      "Expected": "skill.interval",
+      "Chosen": "skill.interval",
+      "Confidence": 0.70829993,
+      "Margin": 0.051498473,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-28",
+      "Prompt": "how many frets is a major sixth",
+      "Expected": "skill.interval",
+      "Chosen": "skill.interval",
+      "Confidence": 0.88429886,
+      "Margin": 0.23276985,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "beginner-naive"
+      ]
+    },
+    {
+      "Id": "h-29",
+      "Prompt": "what can i play instead of a standard C major",
+      "Expected": "skill.chordsubstitution",
+      "Chosen": "skill.chordsubstitution",
+      "Confidence": 0.75002366,
+      "Margin": 0.005350709,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-30",
+      "Prompt": "tritone sub for Bb7",
+      "Expected": "skill.chordsubstitution",
+      "Chosen": "skill.chordsubstitution",
+      "Confidence": 0.8001134,
+      "Margin": 0.10232723,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "jargon",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-31",
+      "Prompt": "this Am - Dm - E7 is boring, how can i spice up the E7?",
+      "Expected": "skill.chordsubstitution",
+      "Chosen": "skill.chordsubstitution",
+      "Confidence": 0.68036944,
+      "Margin": 0.035330772,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-32",
+      "Prompt": "substitutions for Dm7",
+      "Expected": "skill.chordsubstitution",
+      "Chosen": "skill.chordsubstitution",
+      "Confidence": 0.9348167,
+      "Margin": 0.117590964,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-33",
+      "Prompt": "jazz chords to replace G7",
+      "Expected": "skill.chordsubstitution",
+      "Chosen": "skill.chordsubstitution",
+      "Confidence": 0.86454844,
+      "Margin": 0.059129715,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-34",
+      "Prompt": "chord subs for F#min",
+      "Expected": "skill.chordsubstitution",
+      "Chosen": "skill.chordinfo",
+      "Confidence": 0.7475543,
+      "Margin": 0.040923893,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "typo",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-35",
+      "Prompt": "easier chord to play instead of F barre",
+      "Expected": "skill.chordsubstitution",
+      "Chosen": "skill.chordsubstitution",
+      "Confidence": 0.775989,
+      "Margin": 0.045934796,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "beginner-naive",
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-36",
+      "Prompt": "what are the first chords i should learn on guitar",
+      "Expected": "skill.beginnerchords",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.96143234,
+      "Margin": 0.20072371,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard",
+        "beginner-naive"
+      ]
+    },
+    {
+      "Id": "h-37",
+      "Prompt": "my fingers hurt from barre chords, what are some easy ones",
+      "Expected": "skill.beginnerchords",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.76859665,
+      "Margin": 0.027237058,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-38",
+      "Prompt": "easy open chords",
+      "Expected": "skill.beginnerchords",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.86841595,
+      "Margin": 0.15174115,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-39",
+      "Prompt": "begginer guitar chords",
+      "Expected": "skill.beginnerchords",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.83018714,
+      "Margin": 0.048101723,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-40",
+      "Prompt": "what are the cowboy chords",
+      "Expected": "skill.beginnerchords",
+      "Chosen": "skill.genreessentials",
+      "Confidence": 0.7192964,
+      "Margin": 0.016554713,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "jargon",
+        "beginner-naive"
+      ]
+    },
+    {
+      "Id": "h-41",
+      "Prompt": "first chords to learn",
+      "Expected": "skill.beginnerchords",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.95273703,
+      "Margin": 0.21699989,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-42",
+      "Prompt": "easy acoustic chords to strum",
+      "Expected": "skill.beginnerchords",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.7314572,
+      "Margin": 0.067968905,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-43",
+      "Prompt": "how do I make this C F G progression sound more sad",
+      "Expected": "skill.progressionmood",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.78719926,
+      "Margin": 0.06490862,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-44",
+      "Prompt": "use modal interchange to darken a I IV V",
+      "Expected": "skill.progressionmood",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.7897214,
+      "Margin": 0.10506946,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-45",
+      "Prompt": "i want my song to sound mysterious, its just Am and G right now",
+      "Expected": "skill.progressionmood",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.697619,
+      "Margin": 0.05759573,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-46",
+      "Prompt": "make progression sound jazzy",
+      "Expected": "skill.progressionmood",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.8131567,
+      "Margin": 0.13247114,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-47",
+      "Prompt": "make this chord loop sound more uplifting",
+      "Expected": "skill.progressionmood",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.7260755,
+      "Margin": 0.099475205,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-48",
+      "Prompt": "darker chord progression",
+      "Expected": "skill.progressionmood",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.9280139,
+      "Margin": 0.21023375,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-49",
+      "Prompt": "how to make a prograssion sound happy",
+      "Expected": "skill.progressionmood",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.6338634,
+      "Margin": 0.13225323,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-50",
+      "Prompt": "can you explain the circle of fifths to me",
+      "Expected": "skill.circleoffifths",
+      "Chosen": "skill.circleoffifths",
+      "Confidence": 0.9796617,
+      "Margin": 0.27931488,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-51",
+      "Prompt": "circle of 5ths",
+      "Expected": "skill.circleoffifths",
+      "Chosen": "skill.circleoffifths",
+      "Confidence": 0.86390436,
+      "Margin": 0.14775395,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-52",
+      "Prompt": "how do I use the circle of fifths to find relative minors",
+      "Expected": "skill.circleoffifths",
+      "Chosen": "skill.circleoffifths",
+      "Confidence": 0.71924186,
+      "Margin": 0.011462569,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-53",
+      "Prompt": "cirle of fiths",
+      "Expected": "skill.circleoffifths",
+      "Chosen": null,
+      "Confidence": 0,
+      "Margin": null,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-54",
+      "Prompt": "what key is next to G on the circle",
+      "Expected": "skill.circleoffifths",
+      "Chosen": "skill.circleoffifths",
+      "Confidence": 0.83051234,
+      "Margin": 0.033075333,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-55",
+      "Prompt": "what is the counterclockwise movement on the circle of fourths",
+      "Expected": "skill.circleoffifths",
+      "Chosen": "skill.circleoffifths",
+      "Confidence": 0.726041,
+      "Margin": 0.10375428,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-56",
+      "Prompt": "what\u0027s a good 30 minute daily guitar practice routine",
+      "Expected": "skill.practiceroutine",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.7889526,
+      "Margin": 0.16958088,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-57",
+      "Prompt": "jazz guitar practice schedule",
+      "Expected": "skill.practiceroutine",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.7613018,
+      "Margin": 0.0630725,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-58",
+      "Prompt": "i only have an hour a day, how should i practice scales and chords",
+      "Expected": "skill.practiceroutine",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.7286587,
+      "Margin": 0.022393465,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-59",
+      "Prompt": "how to practice guitar everyday",
+      "Expected": "skill.practiceroutine",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.8121527,
+      "Margin": 0.19097018,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "beginner-naive"
+      ]
+    },
+    {
+      "Id": "h-60",
+      "Prompt": "good pratic routine for technique",
+      "Expected": "skill.practiceroutine",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.7020846,
+      "Margin": 0.06085694,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-61",
+      "Prompt": "how to memorize the fretboard faster",
+      "Expected": "skill.practiceroutine",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.57192,
+      "Margin": 0.012234628,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-62",
+      "Prompt": "daily practice plan",
+      "Expected": "skill.practiceroutine",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.7402272,
+      "Margin": 0.22680378,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-63",
+      "Prompt": "what scales do I need to know to play blues",
+      "Expected": "skill.genreessentials",
+      "Chosen": "skill.genreessentials",
+      "Confidence": 0.76180065,
+      "Margin": 0.13225996,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-64",
+      "Prompt": "neo soul chords",
+      "Expected": "skill.genreessentials",
+      "Chosen": "skill.genreessentials",
+      "Confidence": 0.6969158,
+      "Margin": 0.05622536,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-65",
+      "Prompt": "i really want to get into gypsy jazz, what are the main chords they use?",
+      "Expected": "skill.genreessentials",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.712447,
+      "Margin": 0.007955492,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-66",
+      "Prompt": "bossa nova harmonic vocabulary",
+      "Expected": "skill.genreessentials",
+      "Chosen": "skill.icvshortestpath",
+      "Confidence": 0.62528306,
+      "Margin": 0.015693724,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-67",
+      "Prompt": "esential scales for metal",
+      "Expected": "skill.genreessentials",
+      "Chosen": "skill.genreessentials",
+      "Confidence": 0.66062695,
+      "Margin": 0.03852123,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-68",
+      "Prompt": "what scale for country solos",
+      "Expected": "skill.genreessentials",
+      "Chosen": "skill.improvisation",
+      "Confidence": 0.75517786,
+      "Margin": 0.08943993,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-69",
+      "Prompt": "jazz chords to learn",
+      "Expected": "skill.genreessentials",
+      "Chosen": "skill.beginnerchords",
+      "Confidence": 0.8093224,
+      "Margin": 0.081270635,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-70",
+      "Prompt": "what kind of questions can i ask you",
+      "Expected": "skill.whatcanyoudo",
+      "Chosen": "skill.whatcanyoudo",
+      "Confidence": 0.84684014,
+      "Margin": 0.30834043,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-71",
+      "Prompt": "help commands",
+      "Expected": "skill.whatcanyoudo",
+      "Chosen": "skill.whatcanyoudo",
+      "Confidence": 0.5886634,
+      "Margin": 0.068314314,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-72",
+      "Prompt": "are you just a guitar bot or do you know piano stuff too?",
+      "Expected": "skill.whatcanyoudo",
+      "Chosen": "skill.whatcanyoudo",
+      "Confidence": 0.66192275,
+      "Margin": 0.004177153,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-73",
+      "Prompt": "what do you do",
+      "Expected": "skill.whatcanyoudo",
+      "Chosen": "skill.whatcanyoudo",
+      "Confidence": 0.73151493,
+      "Margin": 0.19056404,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "beginner-naive"
+      ]
+    },
+    {
+      "Id": "h-74",
+      "Prompt": "what can u do",
+      "Expected": "skill.whatcanyoudo",
+      "Chosen": "skill.whatcanyoudo",
+      "Confidence": 0.86124676,
+      "Margin": 0.34560847,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-75",
+      "Prompt": "features",
+      "Expected": "skill.whatcanyoudo",
+      "Chosen": "skill.whatcanyoudo",
+      "Confidence": 0.8364873,
+      "Margin": 0.2649207,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-76",
+      "Prompt": "transpose C Am F G to the key of D",
+      "Expected": "skill.transpose",
+      "Chosen": "skill.transpose",
+      "Confidence": 0.86947405,
+      "Margin": 0.050730586,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-77",
+      "Prompt": "this song is too high for my voice, can you move it down a whole step? It\u0027s currently in G",
+      "Expected": "skill.transpose",
+      "Chosen": "skill.transpose",
+      "Confidence": 0.75744677,
+      "Margin": 0.098044336,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-78",
+      "Prompt": "capo 2 transpose C G Am F",
+      "Expected": "skill.transpose",
+      "Chosen": "skill.transpose",
+      "Confidence": 0.8125673,
+      "Margin": 0.08665168,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-79",
+      "Prompt": "modulate a ii V I in Bb up a minor third",
+      "Expected": "skill.transpose",
+      "Chosen": "skill.interval",
+      "Confidence": 0.7548859,
+      "Margin": 0.03550279,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-80",
+      "Prompt": "what is Dm transposed up a perfect fourth",
+      "Expected": "skill.transpose",
+      "Chosen": "skill.transpose",
+      "Confidence": 0.78972447,
+      "Margin": 0.03334564,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-81",
+      "Prompt": "transpose to Eb",
+      "Expected": "skill.transpose",
+      "Chosen": "skill.transpose",
+      "Confidence": 0.84353137,
+      "Margin": 0.15847123,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-82",
+      "Prompt": "tranpose this progression to A",
+      "Expected": "skill.transpose",
+      "Chosen": "skill.transpose",
+      "Confidence": 0.8735217,
+      "Margin": 0.15046078,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-83",
+      "Prompt": "what notes do C major and E minor have in common",
+      "Expected": "skill.commontones",
+      "Chosen": "skill.commontones",
+      "Confidence": 0.8763821,
+      "Margin": 0.052156627,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-84",
+      "Prompt": "common tones G7 and Db7",
+      "Expected": "skill.commontones",
+      "Chosen": "skill.commontones",
+      "Confidence": 0.92582643,
+      "Margin": 0.15045744,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-85",
+      "Prompt": "if im switching from Am to F, are there any notes i can just hold down?",
+      "Expected": "skill.commontones",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 0.6218664,
+      "Margin": 0.020771801,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-86",
+      "Prompt": "shared pitch classes between CMaj7 and Am9",
+      "Expected": "skill.commontones",
+      "Chosen": "skill.commontones",
+      "Confidence": 0.81628704,
+      "Margin": 0.054750085,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-87",
+      "Prompt": "do F major and Bb major share any notes",
+      "Expected": "skill.commontones",
+      "Chosen": "skill.scaleinfo",
+      "Confidence": 0.7992452,
+      "Margin": 0.08206242,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-88",
+      "Prompt": "notes shared by D and Bm",
+      "Expected": "skill.commontones",
+      "Chosen": "skill.commontones",
+      "Confidence": 0.7427873,
+      "Margin": 0.04755336,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-89",
+      "Prompt": "common tones in c min and Eb maj",
+      "Expected": "skill.commontones",
+      "Chosen": "skill.commontones",
+      "Confidence": 0.6848838,
+      "Margin": 0.020510972,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-90",
+      "Prompt": "what are the chords in the key of A minor",
+      "Expected": "skill.diatonicchords",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 0.85320634,
+      "Margin": 0.07875317,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-91",
+      "Prompt": "diatonic chords F major",
+      "Expected": "skill.diatonicchords",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 1,
+      "Margin": 0.19788116,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment",
+        "short"
+      ]
+    },
+    {
+      "Id": "h-92",
+      "Prompt": "if im writing a song in E, what chords am i allowed to use",
+      "Expected": "skill.diatonicchords",
+      "Chosen": "skill.chordinfo",
+      "Confidence": 0.7309605,
+      "Margin": 0.014536202,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "conversational",
+        "beginner-naive"
+      ]
+    },
+    {
+      "Id": "h-93",
+      "Prompt": "harmonize the c# harmonic minor scale",
+      "Expected": "skill.diatonicchords",
+      "Chosen": "skill.scaleinfo",
+      "Confidence": 0.81635904,
+      "Margin": 0.05439937,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-94",
+      "Prompt": "what are the 7 chords of G major",
+      "Expected": "skill.diatonicchords",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 0.9831525,
+      "Margin": 0.21141797,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-95",
+      "Prompt": "chords in Bb",
+      "Expected": "skill.diatonicchords",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 0.91228974,
+      "Margin": 0.113508105,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-96",
+      "Prompt": "what chords r in the key of d",
+      "Expected": "skill.diatonicchords",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 0.88019776,
+      "Margin": 0.11275667,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo"
+      ]
+    },
+    {
+      "Id": "h-97",
+      "Prompt": "what key is Am F C G in",
+      "Expected": "skill.keyidentification",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 1,
+      "Margin": 0.24299449,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-98",
+      "Prompt": "key of D Bm G A",
+      "Expected": "skill.keyidentification",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 0.83466965,
+      "Margin": 0.08242893,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-99",
+      "Prompt": "im playing a loop that goes Em C D, but i dont know what key it is for my solo",
+      "Expected": "skill.keyidentification",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 0.7193977,
+      "Margin": 0.07083261,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-100",
+      "Prompt": "what tonal center implies a chord sequence of vi IV I V",
+      "Expected": "skill.keyidentification",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 0.71520525,
+      "Margin": 0.0048260093,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-101",
+      "Prompt": "does F G Am belong to C major?",
+      "Expected": "skill.keyidentification",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 0.803513,
+      "Margin": 0.0063485503,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-102",
+      "Prompt": "find key of progression",
+      "Expected": "skill.keyidentification",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 0.7491458,
+      "Margin": 0.032171667,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-103",
+      "Prompt": "what key is this: cmaj dmin emin fmaj",
+      "Expected": "skill.keyidentification",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 0.7913118,
+      "Margin": 0.07893103,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "typo",
+        "lowercase"
+      ]
+    },
+    {
+      "Id": "h-104",
+      "Prompt": "what chord should I play after C major and F major",
+      "Expected": "skill.progressioncompletion",
+      "Chosen": "skill.chordsubstitution",
+      "Confidence": 0.83235526,
+      "Margin": 0.020394802,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "standard"
+      ]
+    },
+    {
+      "Id": "h-105",
+      "Prompt": "next chord after Am G F",
+      "Expected": "skill.progressioncompletion",
+      "Chosen": "skill.progressioncompletion",
+      "Confidence": 0.92312855,
+      "Margin": 0.1563803,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-106",
+      "Prompt": "i have this cool riff going E to A to C#m but i dont know how to resolve it",
+      "Expected": "skill.progressioncompletion",
+      "Chosen": "skill.keyidentification",
+      "Confidence": 0.65282947,
+      "Margin": 0.02088523,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-107",
+      "Prompt": "good turnaround chord to lead back to the I from a vi",
+      "Expected": "skill.progressioncompletion",
+      "Chosen": "skill.diatonicchords",
+      "Confidence": 0.6534859,
+      "Margin": 0.033203125,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "jargon"
+      ]
+    },
+    {
+      "Id": "h-108",
+      "Prompt": "what can I put at the end of a blues progression?",
+      "Expected": "skill.progressioncompletion",
+      "Chosen": "skill.progressioncompletion",
+      "Confidence": 0.72146374,
+      "Margin": 0.0056431293,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-109",
+      "Prompt": "finish this chord progression",
+      "Expected": "skill.progressioncompletion",
+      "Chosen": "skill.progressioncompletion",
+      "Confidence": 0.8207025,
+      "Margin": 0.118804514,
+      "Correct": true,
+      "IsOos": false,
+      "Tags": [
+        "short"
+      ]
+    },
+    {
+      "Id": "h-110",
+      "Prompt": "what chord goes good after a Dm and G7",
+      "Expected": "skill.progressioncompletion",
+      "Chosen": "skill.commontones",
+      "Confidence": 0.7869165,
+      "Margin": 0.01891005,
+      "Correct": false,
+      "IsOos": false,
+      "Tags": [
+        "typo",
+        "conversational"
+      ]
+    },
+    {
+      "Id": "h-111",
+      "Prompt": "what\u0027s the weather like in nashville",
+      "Expected": "__none__",
+      "Chosen": null,
+      "Confidence": 0,
+      "Margin": null,
+      "Correct": true,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "non-music"
+      ]
+    },
+    {
+      "Id": "h-112",
+      "Prompt": "should i buy a strat or a telecaster",
+      "Expected": "__none__",
+      "Chosen": "skill.rememberthis",
+      "Confidence": 0.72753155,
+      "Margin": 0.21608227,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "gear"
+      ]
+    },
+    {
+      "Id": "h-113",
+      "Prompt": "best pedal for overdrive",
+      "Expected": "__none__",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.56794447,
+      "Margin": 0.012980878,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "gear",
+        "fragment"
+      ]
+    },
+    {
+      "Id": "h-114",
+      "Prompt": "what gauge strings does stevie ray vaughan use",
+      "Expected": "__none__",
+      "Chosen": "skill.genreessentials",
+      "Confidence": 0.5962035,
+      "Margin": 0.02356124,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "gear"
+      ]
+    },
+    {
+      "Id": "h-115",
+      "Prompt": "what is 5 * 8",
+      "Expected": "__none__",
+      "Chosen": "skill.interval",
+      "Confidence": 0.5762904,
+      "Margin": 0.0008197427,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "math"
+      ]
+    },
+    {
+      "Id": "h-116",
+      "Prompt": "how to write a python script for scraping",
+      "Expected": "__none__",
+      "Chosen": null,
+      "Confidence": 0,
+      "Margin": null,
+      "Correct": true,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "coding"
+      ]
+    },
+    {
+      "Id": "h-117",
+      "Prompt": "how are you doing today",
+      "Expected": "__none__",
+      "Chosen": "skill.practiceroutine",
+      "Confidence": 0.61168826,
+      "Margin": 0.1164397,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "chit-chat"
+      ]
+    },
+    {
+      "Id": "h-118",
+      "Prompt": "tell me a joke about drummers",
+      "Expected": "__none__",
+      "Chosen": "skill.capo",
+      "Confidence": 0.55609995,
+      "Margin": 0.008889258,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "chit-chat"
+      ]
+    },
+    {
+      "Id": "h-119",
+      "Prompt": "write some lyrics about a broken heart",
+      "Expected": "__none__",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.60785437,
+      "Margin": 0.101708114,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "songwriting"
+      ]
+    },
+    {
+      "Id": "h-120",
+      "Prompt": "can you give me the tabs for stairway to heaven",
+      "Expected": "__none__",
+      "Chosen": null,
+      "Confidence": 0,
+      "Margin": null,
+      "Correct": true,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "tabs",
+        "boundary"
+      ]
+    },
+    {
+      "Id": "h-121",
+      "Prompt": "who invented the acoustic guitar",
+      "Expected": "__none__",
+      "Chosen": null,
+      "Confidence": 0,
+      "Margin": null,
+      "Correct": true,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "history"
+      ]
+    },
+    {
+      "Id": "h-122",
+      "Prompt": "who is the lead singer of led zeppelin",
+      "Expected": "__none__",
+      "Chosen": null,
+      "Confidence": 0,
+      "Margin": null,
+      "Correct": true,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "trivia"
+      ]
+    },
+    {
+      "Id": "h-123",
+      "Prompt": "how do i book a gig at a local bar",
+      "Expected": "__none__",
+      "Chosen": null,
+      "Confidence": 0,
+      "Margin": null,
+      "Correct": true,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "booking"
+      ]
+    },
+    {
+      "Id": "h-124",
+      "Prompt": "what are the best amp settings for metal",
+      "Expected": "__none__",
+      "Chosen": "skill.progressionmood",
+      "Confidence": 0.610489,
+      "Margin": 0.01547879,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "gear",
+        "amps"
+      ]
+    },
+    {
+      "Id": "h-125",
+      "Prompt": "how do i EQ an acoustic guitar in logic pro",
+      "Expected": "__none__",
+      "Chosen": "skill.chordvoicings",
+      "Confidence": 0.56775206,
+      "Margin": 0.0004898906,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "production"
+      ]
+    },
+    {
+      "Id": "h-126",
+      "Prompt": "how to adjust the truss rod on my fender",
+      "Expected": "__none__",
+      "Chosen": "skill.rememberthis",
+      "Confidence": 0.55935687,
+      "Margin": 0.0013152361,
+      "Correct": false,
+      "IsOos": true,
+      "Tags": [
+        "oos",
+        "maintenance"
+      ]
+    }
+  ]
+}

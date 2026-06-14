@@ -1,0 +1,38 @@
+You are authoring an INDEPENDENT HELD-OUT TEST SET for evaluating a music-theory chatbot's intent router. This is a generalization test: your queries must be REALISTIC surface forms that a real guitarist would actually type — NOT paraphrases of the example prompts below. Vary register: short fragments, lowercase, missing punctuation, conversational, beginner-naive, jargon-heavy, typos occasionally. Avoid sounding like a template.
+
+The router classifies each user query into exactly ONE of these 16 in-scope intents (or declines as out-of-scope):
+
+1. skill.chordinfo — notes/intervals/quality of a named chord (e.g. "what notes are in Cmaj7")
+2. skill.scaleinfo — notes of a NAMED scale (e.g. "notes in A natural minor")
+3. skill.modes — modes of the major scale (Dorian, Lydian, etc.); listing or describing a mode
+4. skill.interval — the interval between two notes, or naming an interval (e.g. "interval from C to G")
+5. skill.chordsubstitution — substitute chords for a given chord (e.g. "tritone sub for G7")
+6. skill.beginnerchords — easy/first chords for beginners
+7. skill.progressionmood — TRANSFORM a progression to sound darker/brighter (modal interchange, borrowed chords) — NOT describing, but changing mood
+8. skill.circleoffifths — the circle of fifths; key relationships around it
+9. skill.practiceroutine — practice routine / practice plan suggestions
+10. skill.genreessentials — essential chords or scales FOR A GENRE (blues, jazz, country...)
+11. skill.whatcanyoudo — meta: what the assistant can do / its capabilities
+12. skill.transpose — transpose a chord or progression by an interval / to another key
+13. skill.commontones — common tones shared BETWEEN two chords
+14. skill.diatonicchords — the diatonic chords IN A KEY (e.g. "chords in the key of C")
+15. skill.keyidentification — identify the KEY of a given chord progression
+16. skill.progressioncompletion — suggest the NEXT chord to continue/finish a progression
+
+Plus OUT-OF-SCOPE (expectedIntentId = "__none__"): non-music queries (weather, code, math, general chit-chat, guitar GEAR/buying questions which the theory router should decline, etc.).
+
+REQUIREMENTS:
+- Produce 6-7 queries per in-scope intent (~100 total in-scope) + ~16 out-of-scope = ~115 total.
+- Deliberately include HARD / BOUNDARY cases that sit near two intents (e.g. chordinfo vs scaleinfo; modes vs scaleinfo; transpose vs progressioncompletion; diatonicchords vs keyidentification). These are the cases that break routers.
+- Each query gets ONE gold label = the single best intent id, or "__none__".
+- DO NOT reuse or lightly paraphrase the parenthetical examples above — invent fresh, natural phrasings.
+
+OUTPUT: a single JSON object, nothing else (no prose, no markdown fences). Exact schema:
+{
+  "version": "heldout-0b-1",
+  "authoredBy": "gemini",
+  "prompts": [
+    { "id": "h-1", "prompt": "<query text>", "expectedIntentId": "skill.chordinfo", "tags": ["boundary"] }
+  ]
+}
+Use sequential ids h-1, h-2, .... Tags are free-form hints like "boundary","beginner","jargon","typo","oos","short" — optional but helpful. Output ONLY the JSON.

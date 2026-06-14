@@ -6,6 +6,7 @@
 //! between `ix-registry` and MCP, and call handlers directly.
 
 pub mod demo;
+pub mod eval;
 pub mod flywheel;
 pub mod handlers;
 pub mod ml_pipeline;

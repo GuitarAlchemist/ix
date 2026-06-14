@@ -1,0 +1,85 @@
+{
+  "generated_for": "heldout-test (0b)",
+  "dim_used": 768,
+  "used_pca": false,
+  "tau": 0.36000000000000015,
+  "train_argmax_acc": 0.9628252788104089,
+  "dev_argmax_acc": 0.9096385542168675,
+  "test_inscope_argmax_acc": 0.9272727272727272,
+  "test_inscope_acc_with_tau": 0.8181818181818182,
+  "test_macro_f1": 0.8193629899512253,
+  "test_oos_decline_rate": 0.625,
+  "baseline_inscope_argmax_acc": 0.8181818181818182,
+  "baseline_inscope_acc_with_tau": 0.8181818181818182,
+  "baseline_macro_f1": 0.7770969226851578,
+  "baseline_oos_decline_rate": 0.5,
+  "delta_argmax_pp": 10.909090909090901,
+  "verdict": "PARTIAL — beats baseline on accuracy but a guardrail fails (see min-F1 / OOS)",
+  "per_intent_f1": [
+    [
+      "skill.beginnerchords",
+      0.8571428571428571
+    ],
+    [
+      "skill.chordinfo",
+      0.6
+    ],
+    [
+      "skill.chordsubstitution",
+      0.923076923076923
+    ],
+    [
+      "skill.circleoffifths",
+      0.9090909090909091
+    ],
+    [
+      "skill.commontones",
+      0.923076923076923
+    ],
+    [
+      "skill.diatonicchords",
+      0.7692307692307692
+    ],
+    [
+      "skill.genreessentials",
+      0.7692307692307692
+    ],
+    [
+      "skill.interval",
+      1.0
+    ],
+    [
+      "skill.keyidentification",
+      0.923076923076923
+    ],
+    [
+      "skill.modes",
+      1.0
+    ],
+    [
+      "skill.practiceroutine",
+      1.0
+    ],
+    [
+      "skill.progressioncompletion",
+      0.8333333333333333
+    ],
+    [
+      "skill.progressionmood",
+      0.923076923076923
+    ],
+    [
+      "skill.scaleinfo",
+      0.6666666666666666
+    ],
+    [
+      "skill.transpose",
+      0.923076923076923
+    ],
+    [
+      "skill.whatcanyoudo",
+      0.9090909090909091
+    ]
+  ],
+  "note": "Baseline = cosine-1NN over TRAIN (router core, no regex hints). Production also adds +~4pp regex hints; a true production baseline needs the C# RoutingEvalHarness on heldout-test.json."
+}

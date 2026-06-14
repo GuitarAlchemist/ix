@@ -409,6 +409,7 @@ mod tests {
                 description: format!("{name} shifted into a worse regime"),
             }),
             n_points: 12,
+            n_degraded: 0,
         }
     }
 

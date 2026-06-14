@@ -25,10 +25,14 @@ fn list_skills_returns_all_entries() {
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     let count = value["count"].as_u64().expect("count is number");
-    // 48 = batch1 (6) + batch2 (28) + batch3 (10 + context.walk +
-    // session.flywheel_export + fuzzy.eval) + prime_radiant (2).
+    // 63 = batch1 (6 + pca + dbscan + eigen + silhouette + feature_importances +
+    // svd + gmm + wavelet_denoise + fir_filter + spectrogram + autocorrelation,
+    // 2026-06-07 dogfood catalog-breadth + remaining-gap + gap-audit fixes) +
+    // batch2 (28) + batch3 (10 + context.walk + session.flywheel_export +
+    // fuzzy.eval) + prime_radiant (2) + assumption_graph (4: assumption.query +
+    // .belief_at + .drift + .claims).
     // If this drifts, update the assertion alongside the batch changes.
-    assert_eq!(count, 48, "expected 48 registry skills, got {count}");
+    assert_eq!(count, 63, "expected 63 registry skills, got {count}");
 }
 
 #[test]

@@ -19,6 +19,11 @@ use std::collections::HashSet;
 /// PC-set algebra tools backed by ix-bracelet.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
+    "ix_annotations_scan",
+    "ix_assumption_belief_at",
+    "ix_assumption_claims",
+    "ix_assumption_drift",
+    "ix_assumption_query",
     "ix_ast_query",
     "ix_autograd_run",
     "ix_bandit",
@@ -60,11 +65,23 @@ const EXPECTED: &[&str] = &[
     "ix_grothendieck_nearby",
     "ix_grothendieck_path",
     "ix_hyperloglog",
+    "ix_dbscan",
+    "ix_eigen",
+    "ix_feature_importances",
+    "ix_svd",
+    "ix_gmm",
+    "ix_wavelet_denoise",
+    "ix_fir_filter",
+    "ix_spectrogram",
+    "ix_autocorrelation",
     "ix_kmeans",
     "ix_linear_regression",
+    "ix_pca",
+    "ix_silhouette",
     "ix_markov",
     "ix_ml_pipeline",
     "ix_ml_predict",
+    "ix_nl_to_pipeline",
     "ix_nn_forward",
     "ix_number_theory",
     "ix_optimize",
@@ -78,10 +95,12 @@ const EXPECTED: &[&str] = &[
     "ix_rotation",
     "ix_search",
     "ix_sedenion",
+    "ix_sentrux_annotate",
     "ix_session_flywheel_export",
     "ix_stats",
     "ix_supervised",
     "ix_tars_bridge",
+    "ix_thinker_hits",
     "ix_topo",
     "ix_trace_ingest",
     "ix_tsne",
@@ -137,9 +156,31 @@ fn parity_expected_count() {
     // ix_grothendieck_delta + ix_grothendieck_nearby + ix_grothendieck_path +
     // ix_autoresearch_run = 68. + ix_tsne (2026-04-29) = 69.
     // + ix_voicings_payload (2026-05-02, voicings -> Prime Radiant Phase 1) = 70.
+    // + ix_sentrux_annotate (2026-05-24, sentrux structural-rules bridge) = 71.
+    // + ix_assumption_query + ix_assumption_belief_at (2026-05-31, temporal
+    //   assumption graph Phase 4) = 73.
+    // + ix_nl_to_pipeline (2026-06-06, NL->pipeline "thinking machine" as an
+    //   MCP tool, agent-native parity with `ix pipeline compile`) = 76.
+    // + ix_thinker_hits (2026-06-07, thinking-machine yield/guardrail ledger
+    //   aggregate, agent-native parity with `ix pipeline hits`) = 77.
+    // + ix_pca (2026-06-07, standalone PCA — first dogfood catalog-breadth fix;
+    //   auto-exposed via the registry bridge) = 78.
+    // + ix_dbscan (2026-06-07, density clustering — dogfood catalog-breadth fix;
+    //   auto-exposed via the registry bridge) = 79.
+    // + ix_eigen (2026-06-07, symmetric eigendecomposition — dogfood
+    //   catalog-breadth fix; auto-exposed via the registry bridge) = 80.
+    // + ix_silhouette (2026-06-07, clustering-quality metric — dogfood
+    //   remaining-gap fix; auto-exposed via the registry bridge) = 81.
+    // + ix_feature_importances (2026-06-07, permutation feature importance —
+    //   dogfood remaining-gap fix; auto-exposed via the registry bridge) = 82.
+    // + catalog-gap-audit batch (2026-06-07): ix_svd, ix_gmm, ix_wavelet_denoise,
+    //   ix_fir_filter, ix_spectrogram, ix_autocorrelation (wrapping existing
+    //   ix-math/ix-unsupervised/ix-signal algorithms) = 88.
+    // + ix_annotations_scan (2026-05-24, @ai annotation extract+reconcile scan,
+    //   agent-native parity with the ix-ai-annotations reconcile binary) = 89.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 70);
+    assert_eq!(EXPECTED.len(), 89);
 }
 
 #[test]
@@ -268,10 +309,17 @@ fn parity_all_43_registry_backed() {
     // After batch1 (6) + batch2 (28) + batch3 (10+1 context.walk +
     // session.flywheel_export) + prime_radiant (2) migration, all 47
     // algorithm tools are registry-backed. ix_demo is manual.
+    // + pca (2026-06-07, dogfood catalog-breadth fix) = 53.
+    // + dbscan (2026-06-07, dogfood catalog-breadth fix) = 54.
+    // + eigen (2026-06-07, dogfood catalog-breadth fix) = 55.
+    // + silhouette (2026-06-07, dogfood remaining-gap fix) = 56.
+    // + feature_importances (2026-06-07, dogfood remaining-gap fix) = 57.
+    // + svd/gmm/wavelet_denoise/fir_filter/spectrogram/autocorrelation
+    //   (2026-06-07, catalog-gap-audit batch — wrapping existing algorithms) = 63.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 48,
-        "expected 48 registry skills, got {registry_count}"
+        registry_count, 63,
+        "expected 63 registry skills, got {registry_count}"
     );
 }
 
@@ -314,4 +362,11 @@ fn registry_backed_calls_dispatch_correctly() {
         .call("ix_number_theory", params)
         .expect("ix_number_theory via registry");
     assert_eq!(result["gcd"].as_u64(), Some(6));
+
+    // batch1: ix_eigen → eigen (exercises the MCP-name dispatch path for the new
+    // skill, not just the wrapper). [[2,1],[1,2]] has top eigenvalue 3.
+    let params = serde_json::json!({ "matrix": [[2.0, 1.0], [1.0, 2.0]] });
+    let result = reg.call("ix_eigen", params).expect("ix_eigen via registry");
+    let top = result["eigenvalues"][0].as_f64().expect("eigenvalues[0]");
+    assert!((top - 3.0).abs() < 1e-9, "top eigenvalue ~3, got {top}");
 }

@@ -75,6 +75,17 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_fft",
         "ix_linear_regression",
         "ix_kmeans",
+        "ix_pca",
+        "ix_dbscan",
+        "ix_eigen",
+        "ix_silhouette",
+        "ix_feature_importances",
+        "ix_svd",
+        "ix_gmm",
+        "ix_wavelet_denoise",
+        "ix_fir_filter",
+        "ix_spectrogram",
+        "ix_autocorrelation",
         "ix_optimize",
         "ix_search",
         "ix_markov",
@@ -151,7 +162,26 @@ mod tests {
 
     #[test]
     fn read_tools_classify_as_read() {
-        for tool in &["ix_stats", "ix_context_walk", "ix_code_analyze", "ix_fft"] {
+        // ix_pca: pure deterministic ML compute (like ix_kmeans) — must classify
+        // as Read so the approval middleware doesn't block the new MCP tool /
+        // pipeline stage at Tier 3 (Codex P1 on #83: exposed-but-unusable).
+        for tool in &[
+            "ix_stats",
+            "ix_context_walk",
+            "ix_code_analyze",
+            "ix_fft",
+            "ix_pca",
+            "ix_dbscan",
+            "ix_eigen",
+            "ix_silhouette",
+            "ix_feature_importances",
+            "ix_svd",
+            "ix_gmm",
+            "ix_wavelet_denoise",
+            "ix_fir_filter",
+            "ix_spectrogram",
+            "ix_autocorrelation",
+        ] {
             assert_eq!(
                 classify_action_kind(tool),
                 ActionKind::Read,

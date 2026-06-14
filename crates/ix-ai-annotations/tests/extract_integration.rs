@@ -1,4 +1,4 @@
-use ix_ai_annotations::{extract_workspace, AnnotationKind, TruthValue};
+use ix_ai_annotations::{extract_workspace, AnnotationKind, TruthValue, SCHEMA_VERSION};
 use std::path::PathBuf;
 
 #[test]
@@ -46,7 +46,7 @@ fn fixture_dir_yields_expected_annotations() {
             "bad id: {}",
             a.id
         );
-        assert_eq!(a.schema_version, 1);
+        assert_eq!(a.schema_version, SCHEMA_VERSION);
     }
 }
 

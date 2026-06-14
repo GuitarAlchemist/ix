@@ -252,3 +252,69 @@ stages:
     assert!(value["stages"]["audit"]["output"].is_object());
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn run_fails_closed_when_governance_unverifiable() {
+    // A structurally valid pipeline must STILL refuse to execute when the
+    // constitution can't be loaded — the gate is fail-closed, not advisory.
+    let dir = tempdir("nogov");
+    fs::write(
+        dir.join("ix.yaml"),
+        "version: \"1\"\nstages:\n  s:\n    skill: stats\n    args: { data: [1.0, 2.0, 3.0] }\n",
+    )
+    .unwrap();
+    // Plain command: NO IX_GOVERNANCE_DIR, cwd is a tempdir with no
+    // governance/demerzel — so the constitution can't be found.
+    Command::cargo_bin("ix")
+        .expect("ix binary built")
+        .current_dir(&dir)
+        .env_remove("IX_GOVERNANCE_DIR")
+        .args(["pipeline", "run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("governance"));
+    // And no ix.lock should have been written (execution never happened).
+    assert!(!dir.join("ix.lock").is_file());
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn run_fails_closed_on_constitution_tamper() {
+    // End-to-end tamper-evidence: a constitution whose bytes do NOT match its
+    // committed integrity pin must refuse to execute through the real gate —
+    // the pin check fires BEFORE the constitution is even parsed, so a silently
+    // amended constitution can't move the goalposts. (RSI safe-loop research.)
+    let dir = tempdir("tamper");
+    fs::write(
+        dir.join("ix.yaml"),
+        "version: \"1\"\nstages:\n  s:\n    skill: stats\n    args: { data: [1.0, 2.0, 3.0] }\n",
+    )
+    .unwrap();
+    // A standalone governance dir with a constitution we control.
+    let gov = dir.join("gov");
+    fs::create_dir_all(gov.join("constitutions")).unwrap();
+    fs::write(
+        gov.join("constitutions/default.constitution.md"),
+        "AMENDED CONSTITUTION — bytes that were never pinned\n",
+    )
+    .unwrap();
+    // A pin asserting a DIFFERENT hash than the file → mismatch → fail closed.
+    let pin_file = dir.join("pins.json");
+    fs::write(
+        &pin_file,
+        r#"{"constitutions":{"default.constitution.md":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}"#,
+    )
+    .unwrap();
+    Command::cargo_bin("ix")
+        .expect("ix binary built")
+        .current_dir(&dir)
+        .env("IX_GOVERNANCE_DIR", &gov)
+        .env("IX_CONSTITUTION_PIN_FILE", &pin_file)
+        .args(["pipeline", "run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("integrity check FAILED"));
+    // Execution must never have happened.
+    assert!(!dir.join("ix.lock").is_file());
+    fs::remove_dir_all(&dir).ok();
+}

@@ -1,0 +1,22 @@
+# Standalone throwaway spike crate (Hermes Spike A — learned router head).
+# Detached from the parent workspace via the empty [workspace] table so it
+# builds independently and does NOT require editing the tracked root Cargo.toml.
+# Build:  cargo run --release --manifest-path crates/ix-router-spike/Cargo.toml
+[package]
+name = "ix-router-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "router-spike"
+path = "src/main.rs"
+
+[dependencies]
+ndarray = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ix-supervised = { path = "../ix-supervised" }
+ix-unsupervised = { path = "../ix-unsupervised" }
+
+[workspace]

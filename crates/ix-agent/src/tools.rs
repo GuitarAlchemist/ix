@@ -1680,6 +1680,42 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::pipeline_compile_placeholder,
         });
+
+        self.tools.push(Tool {
+            name: "ix_nl_to_pipeline",
+            description: "The IX \"thinking machine\": translate a natural-language request into a canonical PipelineSpec (ix.yaml), validate it with lower(), gate it through the Demerzel constitution (fail-closed), optionally execute it, and narrate the result back. Direct LLM-provider proposer with bounded self-repair and a two-tier coverage gate (refuses out-of-domain requests instead of confabulating). Prefer this over ix_pipeline_compile (which targets the legacy {steps:[…]} format via deprecated MCP sampling). Returns status one of: ok | compiled | out_of_domain | governance_rejected | translate_failed.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sentence": {
+                        "type": "string",
+                        "description": "Natural-language description of the analysis/pipeline you want"
+                    },
+                    "run": {
+                        "type": "boolean",
+                        "description": "Execute the compiled pipeline and narrate results (default false: compile + governance-gate only)"
+                    },
+                    "max_rounds": {
+                        "type": "integer",
+                        "description": "Max self-repair rounds when the generated spec fails validation (default 3)",
+                        "minimum": 0
+                    }
+                },
+                "required": ["sentence"]
+            }),
+            handler: handlers::nl_to_pipeline,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_thinker_hits",
+            description: "Aggregate the IX thinking-machine's translation ledger (state/thinking-machine/hits.jsonl) into a yield metric paired with its refusal guardrails. `yield_rate` is the metric (fraction of requests that produced a runnable spec); `coverage_refusal_rate` / `governance_refusal_rate` / `translate_fail_rate` are guardrails. A rising yield with a FALLING coverage-refusal rate is the signature of the gate being loosened or the proposer confabulating out-of-domain specs — the pair makes Goodhart-style gaming visible (instrumenting a bare success rate would hide it). Read-only; rates are over unlabeled production outcomes.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            handler: handlers::thinker_hits,
+        });
     }
 
     /// Advanced sub-group 3: catalog tools (code / grammar / RFC /
@@ -2637,6 +2673,68 @@ Example 2 — "cluster crates by complexity then classify":
                 "required": ["iterations"]
             }),
             handler: handlers::autoresearch_run,
+        });
+
+        // ── ix_sentrux_annotate ────────────────────────────────────
+        // Bridge that drives `sentrux.exe mcp` and converts each
+        // structural-rule violation into an ai-annotation-v1 record.
+        // Closes the claim -> verify -> promote/demote loop with sentrux
+        // as the machine ground-truth verifier (see PRs #54/#55/#56 and
+        // crate `ix-sentrux-annotations`).
+        //
+        // The `emit_untested` arg adds a second pass: sentrux `test_gaps`
+        // -> intersect with `@ai:business-value` files -> emit one
+        // `@ai:smell "no test coverage detected by sentrux"` per
+        // intersection file. Default off — without it, behavior is
+        // unchanged from PR #61.
+        self.tools.push(Tool {
+            name: "ix_sentrux_annotate",
+            description: "Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments. Set `emit_untested=true` to additionally call sentrux `test_gaps` and emit one untested-smell annotation per file in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workspace": {
+                        "type": "string",
+                        "description": "Repo root passed to sentrux's `scan` tool (default `.`)."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["sidecar", "inline", "dry-run"],
+                        "default": "dry-run",
+                        "description": "Emit mode. `sidecar` writes JSONL, `inline` patches sources, `dry-run` counts without writing."
+                    },
+                    "out": {
+                        "type": "string",
+                        "description": "Override sidecar output path (default `<workspace>/state/quality/ai-annotations-sentrux.jsonl`)."
+                    },
+                    "sentrux_exe": {
+                        "type": "string",
+                        "description": "Override sentrux binary path (default C:/Users/spare/bin/sentrux.exe)."
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 60,
+                        "description": "Timeout for the JSON-RPC handshake."
+                    },
+                    "emit_untested": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Additionally call sentrux `test_gaps` and emit `@ai:smell` annotations for files in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations). Off by default."
+                    },
+                    "untested_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 100,
+                        "description": "Top-N untested-file cap passed through to sentrux `test_gaps.limit`. Only meaningful when emit_untested=true."
+                    },
+                    "untested_out": {
+                        "type": "string",
+                        "description": "Override sidecar path for the untested-smell JSONL stream (default `<workspace>/state/quality/ai-annotations-sentrux-untested.jsonl`). Only meaningful when emit_untested=true."
+                    }
+                }
+            }),
+            handler: handlers::sentrux_annotate,
         });
     }
 }
