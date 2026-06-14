@@ -1,0 +1,26 @@
+[package]
+name = "ix-streeling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+categories = ["command-line-utilities"]
+keywords = ["learnings", "knowledge", "catalog", "streeling", "governance"]
+description = "Streeling University — generate the federated learnings catalog + campus index over the ecosystem's docs/solutions (and knowledge/plans/brainstorms). Plain Rust; DuckDB only reads the emitted catalog."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+walkdir = "2"
+anyhow = "1"
+
+[[bin]]
+name = "streeling"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = { workspace = true }

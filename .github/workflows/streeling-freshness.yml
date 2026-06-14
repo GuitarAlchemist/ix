@@ -1,0 +1,53 @@
+name: Streeling Freshness
+
+# Gate that the Streeling learnings catalog (state/streeling/catalog.jsonl) is fresh
+# relative to this repo's learning sources. Fails when a learning was added/changed
+# without regenerating the catalog — the green-but-dead guard.
+#
+# The check is REPO-SCOPED: CI checks out ix only, so it validates ix-origin records
+# and ignores records from sibling repos (ga/tars/Demerzel) it can't re-scan here.
+# When ix learnings change, regenerate locally and commit:
+#   cargo run -p ix-streeling -- catalog
+#   cargo run -p ix-streeling -- campus
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/solutions/**'
+      - 'state/knowledge/**'
+      - 'docs/plans/**'
+      - 'docs/brainstorms/**'
+      - 'state/streeling/catalog.jsonl'
+      - 'crates/ix-streeling/**'
+      - '.github/workflows/streeling-freshness.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/solutions/**'
+      - 'state/knowledge/**'
+      - 'docs/plans/**'
+      - 'docs/brainstorms/**'
+      - 'state/streeling/catalog.jsonl'
+      - 'crates/ix-streeling/**'
+      - '.github/workflows/streeling-freshness.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  freshness-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "Check the Streeling catalog is fresh (ix-scoped)"
+        run: cargo run -p ix-streeling -- check
