@@ -72,6 +72,15 @@ These rules complement (don't replace) the Collaboration discipline above. They 
 
 Before-merge addendum: scan Codex bot comments before any `gh pr merge` — see **Session-learned rules** below for the exact command and policy.
 
+## Tracer-bullets + vertical slices (aihero delta, 2026-06-14)
+
+Adopted from aihero.dev as the genuine *delta* over the rules above (complements Karpathy r2 simplicity + r4 goal-driven). Counters AI's "build the whole thing at once" failure mode:
+
+- **Tracer-bullet first.** For any non-trivial feature, build the smallest **end-to-end** slice that touches *every* layer, test it, get feedback, then expand — never build layers in isolation. aihero: "Context-window constraints make the discipline non-negotiable." (This session's spike was exactly this: held-out→train→head→eval→cross-validate as one thin slice before scaling.)
+- **Vertical, not horizontal, decomposition.** Each task/PR is a thin slice cutting through all integration layers (surfacing unknowns early), not a horizontal layer.
+
+Already covered by existing machinery — do NOT add duplicate skills: `/grill-me`→IDSD intent gate + `brainstorming`; `/to-prd`,`/to-issues`→`ce-plan` + `docs/plans`; `/tdd`→test discipline + `ce-work`; `/improve-codebase-architecture`→sentrux + `ix-code-*` + `simplify`/`code-review`.
+
 Self-improvement reflex: when the user corrects you, invoke `/correct` so the rule lands in this file's **Session-learned rules** section — Cherny's "most important loop" from the 2026 Sequoia talk.
 
 ## Session continuity (Cherny pattern)
@@ -97,3 +106,9 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
   **How to apply:** insert into the standard "ready to merge" checklist. If Codex P0/P1 are unresolved, do NOT merge; surface to the operator with the comment body and propose a fix. Priority parses from the `![P{0,1,2,3} Badge]` markdown shield at the start of `body`.
 
 - **2026-05-24** Before claiming an invariant, assumption, or hypothesis in code, attach an `@ai:` annotation with truth_value + certainty per `docs/contracts/2026-05-24-ai-annotation.contract.md`. Hexavalent T/P/U/D/F/C only; confidence per Demerzel thresholds. Example: `// @ai:invariant arr is sorted ascending [T:test conf:0.95 src:test_search.rs:42]`.
+
+- **2026-06-01 — `certainty := strength of live binding` (maintainability discipline).** This is how we keep code maintainable / understandable / explainable across all repos, and it makes the 2026-05-24 rule *enforceable* rather than aspirational. A claim is only as true as what it is bound to:
+  - test-bound → `T:test`; compiler/type-enforced → `T:formal-proof`; sentrux rule → `detected-by-sentrux`; **human-only with no executable check → cap at `P:assumed` and treat as perishable.** Don't write `[T]` without a binding.
+  - **Surface the holes.** Unenforced preconditions/assumptions are the maintainability killers — make them explicit as `@ai:assumption [U:uncertain]` rather than leaving them implicit (this session: sorted-input, A\* admissible-vs-consistent, mmap UB, `HashTable::new(0)` panic were all invisible until annotated).
+  - **Drift is the lint that makes it last.** `ix-assumption-graph-drift --check` (CI: `.github/workflows/assumption-drift.yml`) fails a PR when a claim's anchored code changed (`span_drifted`) or a cited test vanished (`broken_bindings`). Re-snapshot `state/assumptions/annotations.snapshot.json` when a claim legitimately changes. Agents check their own edits via the `ix_assumption_drift` / `ix_assumption_claims` MCP tools.
+  - **Process discipline:** annotate **one module at a time**, each pass must drive ≥1 real fix (or it doesn't ship — no green-but-dead inventory); declare intent + expectations before coding (IDSD); **never** mass-generate annotations or use an LLM panel as the drift oracle (≈96% TPR / <25% TNR — it rubber-stamps drift). `@ai:` markers are plain comments, so this applies to ga/tars/Demerzel too via the same extractor + the JSON-on-disk contract.

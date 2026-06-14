@@ -8,10 +8,13 @@ pub fn linear_search<T: PartialEq>(data: &[T], target: &T) -> Option<usize> {
 }
 
 /// Binary search — O(log n). Requires sorted data.
+// @ai:assumption `data` is sorted ascending — UNENFORCED; unsorted input silently returns a wrong index or None (same precondition for jump/exponential/interpolation search) [U:uncertain conf:0.6 src:data_search.rs:10]
+// @ai:invariant midpoint `low + (high - low) / 2` cannot overflow usize, unlike `(low + high) / 2` [T:formal-proof conf:0.9]
 pub fn binary_search(data: &[f64], target: f64) -> Option<usize> {
     let mut low = 0usize;
     let mut high = data.len();
 
+    // @ai:assumption distinct values are separated by more than the 1e-10 match epsilon; closer-spaced values make the returned index arbitrary [U:uncertain conf:0.5 src:data_search.rs:17]
     while low < high {
         let mid = low + (high - low) / 2;
         if (data[mid] - target).abs() < 1e-10 {
@@ -27,6 +30,7 @@ pub fn binary_search(data: &[f64], target: f64) -> Option<usize> {
 }
 
 /// Interpolation search — O(log log n) for uniformly distributed sorted data.
+// @ai:assumption inputs are ~uniformly distributed; non-uniform sorted data degrades this to O(n) — correctness holds, the complexity claim does not [P:assumed conf:0.6 src:data_search.rs:29]
 pub fn interpolation_search(data: &[f64], target: f64) -> Option<usize> {
     if data.is_empty() {
         return None;
@@ -143,7 +147,11 @@ pub struct HashTable {
 }
 
 impl HashTable {
+    // @ai:invariant the table always has >= 1 bucket, so hash() / load_factor() never divide by zero — new(0) is clamped [T:test conf:0.95 src:test_hash_table_zero_size_does_not_panic]
     pub fn new(size: usize) -> Self {
+        // Clamp to at least one bucket: hash() and load_factor() divide by
+        // `size`, so a zero-bucket table would panic on the first insert/get.
+        let size = size.max(1);
         Self {
             buckets: vec![Vec::new(); size],
             size,
@@ -210,6 +218,7 @@ impl HashTable {
 }
 
 /// Ternary search — find max of unimodal function on [lo, hi].
+// @ai:assumption `f` is unimodal over the lo..hi interval — UNENFORCED; a multimodal f makes ternary_search_max converge to a local feature, not the global max [U:uncertain conf:0.6 src:data_search.rs:212]
 pub fn ternary_search_max<F: Fn(f64) -> f64>(
     f: F,
     mut lo: f64,
@@ -275,6 +284,16 @@ mod tests {
         assert_eq!(ht.get("foo"), Some("bar"));
         assert_eq!(ht.get("missing"), None);
         assert_eq!(ht.len(), 2);
+    }
+
+    #[test]
+    fn test_hash_table_zero_size_does_not_panic() {
+        // new(0) must not create a zero-bucket table — hash() does `% size`,
+        // so a zero-bucket table would divide by zero on the first insert.
+        let mut ht = HashTable::new(0);
+        ht.insert("k".into(), "v".into());
+        assert_eq!(ht.get("k"), Some("v"));
+        assert!(ht.load_factor().is_finite());
     }
 
     #[test]

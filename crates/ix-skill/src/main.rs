@@ -141,6 +141,11 @@ enum ListNoun {
         domain: Option<String>,
         #[arg(long)]
         query: Option<String>,
+        /// Include per-skill arg json_schema, governance_tags, and a
+        /// pipeline-callable (arity-1) flag — the bulk catalog an NL→pipeline
+        /// generator needs in one call.
+        #[arg(long)]
+        schemas: bool,
     },
     /// Distinct domains across registered skills, with counts
     Domains,
@@ -210,6 +215,12 @@ enum PipelineNoun {
         /// Stream NDJSON events to stdout while the pipeline runs
         #[arg(long)]
         json: bool,
+        /// Bind a run-time parameter referenced by `{param: "name"}` in the
+        /// spec. Repeatable. VALUE is parsed as JSON, or `@path` reads JSON from
+        /// a file; a bare unparseable word is taken as a string. Example:
+        /// --param dataset=@data.json --param k=3
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        param: Vec<String>,
     },
     /// Show execution-level DAG structure
     Dag {
@@ -221,6 +232,29 @@ enum PipelineNoun {
         #[arg(long)]
         file: Option<String>,
     },
+    /// Emit the PipelineSpec JSON Schema (skill enum drawn from the registry)
+    Schema,
+    /// Compile a natural-language request into a pipeline via the LLM proposer,
+    /// validate (lower), gate (governance), and optionally run + narrate.
+    Compile {
+        /// The natural-language request, e.g. "compute stats on some numbers then audit it".
+        sentence: String,
+        /// Max self-repair rounds when the generated spec fails validation.
+        #[arg(long, default_value_t = 3)]
+        max_rounds: u32,
+        /// Execute the compiled pipeline (default: compile + gate only).
+        #[arg(long)]
+        run: bool,
+        /// Bind a run-time parameter the proposer emitted for absent data
+        /// ({param: "name"}). Repeatable; same syntax as `pipeline run --param`.
+        /// Only meaningful with --run. e.g. --param dataset=@data.json
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        param: Vec<String>,
+    },
+    /// Aggregate the NL→pipeline translation ledger (hits.jsonl) into a yield
+    /// metric paired with its refusal guardrails (Goodhart-resistant: a yield
+    /// gain alongside a coverage-refusal drop is gate-loosening, not progress).
+    Hits,
 }
 
 #[derive(Subcommand)]
@@ -258,9 +292,14 @@ fn dispatch(cli: Cli) -> i32 {
         },
 
         Verb::List { noun } => match noun {
-            ListNoun::Skills { domain, query } => try_or(verbs::list::skills(
+            ListNoun::Skills {
+                domain,
+                query,
+                schemas,
+            } => try_or(verbs::list::skills(
                 domain.as_deref(),
                 query.as_deref(),
+                schemas,
                 fmt,
             )),
             ListNoun::Domains => try_or(verbs::list::domains(fmt)),
@@ -318,9 +357,19 @@ fn dispatch(cli: Cli) -> i32 {
                 try_or(verbs::pipeline::validate(file.as_deref(), fmt))
             }
             PipelineNoun::Dag { file } => try_or(verbs::pipeline::dag(file.as_deref(), fmt)),
-            PipelineNoun::Run { file, json } => {
-                try_or(verbs::pipeline::run(file.as_deref(), json, fmt))
+            PipelineNoun::Run { file, json, param } => {
+                try_or(verbs::pipeline::run(file.as_deref(), json, &param, fmt))
             }
+            PipelineNoun::Schema => try_or(verbs::pipeline::schema(fmt)),
+            PipelineNoun::Compile {
+                sentence,
+                max_rounds,
+                run,
+                param,
+            } => try_or(verbs::compile::compile(
+                &sentence, max_rounds, run, &param, fmt,
+            )),
+            PipelineNoun::Hits => try_or(verbs::compile::hits(fmt)),
         },
 
         Verb::Demo { noun } => match noun {
