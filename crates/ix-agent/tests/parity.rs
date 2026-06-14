@@ -92,6 +92,7 @@ const EXPECTED: &[&str] = &[
     "ix_pipeline_compile",
     "ix_pipeline_list",
     "ix_pipeline_run",
+    "ix_quality_gate_history",
     "ix_random_forest",
     "ix_rfc_catalog",
     "ix_rotation",
@@ -182,9 +183,11 @@ fn parity_expected_count() {
     //   analysis skills — reference descriptor + decomposed spectral distance,
     //   pipeline/NL/MCP-callable) = 90.
     // + ix_git_churn (2026-05-24, per-file churn source adapter, P1.3) = 91.
+    // + ix_quality_gate_history (2026-05-24, quality-gate-ledger query tool,
+    //   agent-native parity with the sentrux_gate_writer binary) = 92.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 91);
+    assert_eq!(EXPECTED.len(), 92);
 }
 
 #[test]

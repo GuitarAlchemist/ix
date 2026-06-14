@@ -2086,6 +2086,47 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::governance_policy,
         });
+
+        // ── ix_quality_gate_history ───────────────────────────────────────
+        // Cross-repo quality-gate ledger query. Reads
+        // state/quality/gate-ledger.jsonl (v1 entries) and returns recent
+        // rows filtered by source / domain / since. See
+        // docs/contracts/2026-05-24-quality-gate-ledger.contract.md.
+        self.tools.push(Tool {
+            name: "ix_quality_gate_history",
+            description: "Query the unified quality-gate ledger (state/quality/gate-ledger.jsonl). Returns v1 entries filtered by source, domain, decision, and/or since-timestamp, sorted newest-first. Legacy v0 PR-shaped rows are excluded.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Producer id (e.g. 'ix-quality-trend', 'sentrux', 'chatbot-qa'). Omit for all."
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": "Domain measured (e.g. 'structural', 'chatbot', 'tests'). Omit for all."
+                    },
+                    "decision": {
+                        "type": "string",
+                        "enum": ["pass", "fail", "warn", "skip"],
+                        "description": "Filter by decision."
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "RFC3339 timestamp lower bound (inclusive). E.g. '2026-05-20T00:00:00Z'."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max rows to return (default 50)."
+                    },
+                    "ledger_path": {
+                        "type": "string",
+                        "description": "Override ledger path. Default: state/quality/gate-ledger.jsonl (repo-relative)."
+                    }
+                }
+            }),
+            handler: handlers::quality_gate_history,
+        });
     }
 
     /// Governance sub-group 2: federation discovery and trace ingest.

@@ -4254,6 +4254,78 @@ pub fn governance_policy(params: Value) -> Result<Value, String> {
     }
 }
 
+// ── ix_quality_gate_history ────────────────────────────────
+
+pub fn quality_gate_history(params: Value) -> Result<Value, String> {
+    use ix_quality_trend::{query_ledger, GateDecision, LedgerQuery};
+    use std::path::PathBuf;
+
+    let source = params
+        .get("source")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let domain = params
+        .get("domain")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let decision = match params.get("decision").and_then(|v| v.as_str()) {
+        Some("pass") => Some(GateDecision::Pass),
+        Some("fail") => Some(GateDecision::Fail),
+        Some("warn") => Some(GateDecision::Warn),
+        Some("skip") => Some(GateDecision::Skip),
+        Some(other) => return Err(format!("unknown decision '{}'", other)),
+        None => None,
+    };
+    let since = match params.get("since").and_then(|v| v.as_str()) {
+        Some(s) => Some(
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map_err(|e| format!("invalid `since` (RFC3339 expected): {}", e))?
+                .with_timezone(&chrono::Utc),
+        ),
+        None => None,
+    };
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .or(Some(50));
+
+    let path: PathBuf = params
+        .get("ledger_path")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("state/quality/gate-ledger.jsonl"));
+
+    let q = LedgerQuery {
+        source,
+        domain,
+        since,
+        decision,
+        limit,
+    };
+
+    let entries =
+        query_ledger(&path, &q).map_err(|e| format!("quality_gate_history failed: {}", e))?;
+
+    let rows: Vec<Value> = entries
+        .iter()
+        .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
+        .collect();
+
+    Ok(json!({
+        "ledger_path": path.display().to_string(),
+        "count": rows.len(),
+        "filters": {
+            "source": q.source,
+            "domain": q.domain,
+            "decision": params.get("decision").cloned().unwrap_or(Value::Null),
+            "since": params.get("since").cloned().unwrap_or(Value::Null),
+            "limit": q.limit,
+        },
+        "rows": rows,
+    }))
+}
+
 // ── ix_federation_discover ─────────────────────────────────
 
 pub fn federation_discover(params: Value) -> Result<Value, String> {
