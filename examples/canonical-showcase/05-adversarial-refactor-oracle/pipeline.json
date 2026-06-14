@@ -1,6 +1,6 @@
 {
   "$schema": "https://ix.guitaralchemist.com/schemas/pipeline-v1.json",
-  "description": "14-tool self-referential ecosystem forensics demo (LIVE DATA edition): ix analyses its own workspace using ix_cargo_deps + ix_git_log as source adapters, clusters crates by health profile, trains a random-forest classifier on the cluster labels, attacks it with FGSM along the synthetic refactor direction, searches for a 3-dim refactor vector via GA, and closes with a Demerzel governance audit. Every numeric input flows from the two source-adapter steps via $step.field references — no baked constants except the synthetic FGSM gradient and the logistic-map parameter (both blocked on expression-style substitution support). Compiled from a natural-language brief via ix_pipeline_compile. P1.1 + P1.2 graduation: self-referential in fact, not just in theory.",
+  "description": "16-step self-referential ecosystem forensics demo (LIVE DATA edition): ix analyses its own workspace using ix_cargo_deps + ix_git_log + ix_git_churn as source adapters, clusters crates by health profile, trains a random-forest classifier on the cluster labels, attacks it with FGSM along the synthetic refactor direction, searches for a 3-dim refactor vector via GA, and closes with a Demerzel governance audit. Every numeric input flows from the three source-adapter steps via $step.field references — no baked constants except the synthetic FGSM gradient and the logistic-map parameter (both blocked on expression-style substitution support). Compiled from a natural-language brief via ix_pipeline_compile. P1.1 + P1.2 + P1.3 graduation: self-referential in fact, not just in theory.",
   "name": "adversarial-refactor-oracle",
   "steps": [
     {
@@ -27,6 +27,19 @@
     },
     {
       "arguments": {
+        "limit": 50,
+        "repo_root": "C:\\Users\\spare\\source\\repos\\ix",
+        "since_days": 90
+      },
+      "asset_name": "refactor_oracle.git_churn",
+      "depends_on": [
+        "s00_cargo_deps"
+      ],
+      "id": "s01b_git_churn",
+      "tool": "ix_git_churn"
+    },
+    {
+      "arguments": {
         "data": "$s00_cargo_deps.sloc"
       },
       "asset_name": "refactor_oracle.baseline_sloc",
@@ -34,6 +47,17 @@
         "s00_cargo_deps"
       ],
       "id": "s02_baseline_sloc",
+      "tool": "ix_stats"
+    },
+    {
+      "arguments": {
+        "data": "$s01b_git_churn.churn_counts"
+      },
+      "asset_name": "refactor_oracle.baseline_churn",
+      "depends_on": [
+        "s01b_git_churn"
+      ],
+      "id": "s02b_baseline_churn",
       "tool": "ix_stats"
     },
     {
@@ -182,7 +206,7 @@
     {
       "arguments": {
         "action": "ship the GA-proposed refactor plan for the largest crate in the ix workspace",
-        "context": "Plan was derived from live workspace data via ix_cargo_deps (all crates, SLOC, file count, dep count, edge list) and ix_git_log (90-day commit cadence), validated by PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over real commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along a synthetic refactor direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
+        "context": "Plan was derived from live workspace data via ix_cargo_deps (all crates, SLOC, file count, dep count, edge list), ix_git_log (90-day commit cadence), and ix_git_churn (per-file change frequency + lines added/deleted), validated by PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over real commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along a synthetic refactor direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
       },
       "asset_name": "refactor_oracle.governance_audit",
       "depends_on": [
@@ -195,6 +219,7 @@
   "tools_used": [
     "ix_cargo_deps",
     "ix_git_log",
+    "ix_git_churn",
     "ix_stats",
     "ix_graph",
     "ix_topo",
@@ -206,5 +231,5 @@
     "ix_evolution",
     "ix_governance_check"
   ],
-  "version": "2.0"
+  "version": "2.1"
 }

@@ -27,6 +27,7 @@ ix-adversarial = { workspace = true }
 ix-grammar = { workspace = true }
 ix-probabilistic = { workspace = true }
 ix-signal = { workspace = true }
+ix-acoustic-tune = { workspace = true }
 ix-cache = { workspace = true }
 ix-pipeline = { workspace = true }
 ix-autograd = { workspace = true }

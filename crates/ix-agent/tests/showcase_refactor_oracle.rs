@@ -1,11 +1,11 @@
 //! Canonical showcase #05 — the Adversarial Refactor Oracle
 //! (live data edition).
 //!
-//! A 14-tool self-referential demo: ix analyses its own workspace
-//! using live data from ix_cargo_deps + ix_git_log (no baked
-//! constants), attacks a classifier trained on its own cluster
-//! labels, searches for refactor vectors via a GA, and audits
-//! the whole chain via Demerzel governance — all as a single
+//! A 16-step self-referential demo: ix analyses its own workspace
+//! using live data from ix_cargo_deps + ix_git_log + ix_git_churn
+//! (no baked constants), attacks a classifier trained on its own
+//! cluster labels, searches for refactor vectors via a GA, and
+//! audits the whole chain via Demerzel governance — all as a single
 //! `ix_pipeline_run` invocation.
 //!
 //! # Live vs baked
@@ -127,15 +127,16 @@ const LYAPUNOV_R: f64 = 3.78;
 // ---------------------------------------------------------------------------
 
 const ORACLE_BRIEF: &str = "Discover every crate in the ix workspace with ix_cargo_deps, \
-    pull the 90-day commit churn series for ix-agent via ix_git_log, then run the adversarial \
-    refactor audit on the live data: descriptive stats on SLOC, dep-graph centrality via \
-    PageRank, confirm the graph is a DAG, topological invariants of the 3-feature crate cloud, \
-    FFT of commit churn, logistic-map regime check, cluster into 3 health groups via k-means, \
-    train a random-forest classifier on the cluster labels, attack it with FGSM along the \
-    synthetic refactor direction, search for a 3-dim refactor vector via GA, and close with a \
-    Demerzel governance check on the refactor plan. Every numeric input must flow from the two \
-    source-adapter steps via $step.field references — no baked constants except the synthetic \
-    FGSM gradient.";
+    pull the 90-day commit churn series for ix-agent via ix_git_log, pull the per-file change \
+    frequency for the whole workspace via ix_git_churn, then run the adversarial refactor audit \
+    on the live data: descriptive stats on SLOC and on per-file churn counts, dep-graph \
+    centrality via PageRank, confirm the graph is a DAG, topological invariants of the 3-feature \
+    crate cloud, FFT of commit churn, logistic-map regime check, cluster into 3 health groups \
+    via k-means, train a random-forest classifier on the cluster labels, attack it with FGSM \
+    along the synthetic refactor direction, search for a 3-dim refactor vector via GA, and \
+    close with a Demerzel governance check on the refactor plan. Every numeric input must flow \
+    from the three source-adapter steps via $step.field references — no baked constants except \
+    the synthetic FGSM gradient.";
 
 fn canned_oracle_spec() -> Value {
     // `cargo test` runs with CWD = crates/ix-agent, but the source
@@ -156,13 +157,13 @@ fn canned_oracle_spec() -> Value {
     // regardless of where the process was launched.
     json!({
         "steps": [
-            // ─── Source adapters — the two steps that make this
+            // ─── Source adapters — the three steps that make this
             // self-referential in fact rather than in name. ─────
             {
                 "id": "s00_cargo_deps",
                 "tool": "ix_cargo_deps",
                 "asset_name": "refactor_oracle.cargo_deps",
-                "arguments": { "workspace_root": workspace_root }
+                "arguments": { "workspace_root": workspace_root.clone() }
             },
             {
                 "id": "s01_git_log",
@@ -173,17 +174,40 @@ fn canned_oracle_spec() -> Value {
                     "path": "crates/ix-agent",
                     "since_days": 90,
                     "bucket": "week",
+                    "repo_root": workspace_root.clone()
+                }
+            },
+            // P1.3 source adapter: per-file churn complements per-week
+            // commit cadence from s01_git_log. Feeds s02b for
+            // descriptive stats so the oracle reports both "how often
+            // does anything change" (s02) and "how concentrated is
+            // that change across files" (s02b).
+            {
+                "id": "s01b_git_churn",
+                "tool": "ix_git_churn",
+                "asset_name": "refactor_oracle.git_churn",
+                "depends_on": ["s00_cargo_deps"],
+                "arguments": {
+                    "since_days": 90,
+                    "limit": 50,
                     "repo_root": workspace_root
                 }
             },
             // ─── Live-data analysis — every argument below is a
-            // $step.field reference into the two source adapters. ─
+            // $step.field reference into the source adapters. ─
             {
                 "id": "s02_baseline_sloc",
                 "tool": "ix_stats",
                 "asset_name": "refactor_oracle.baseline_sloc",
                 "depends_on": ["s00_cargo_deps"],
                 "arguments": { "data": "$s00_cargo_deps.sloc" }
+            },
+            {
+                "id": "s02b_baseline_churn",
+                "tool": "ix_stats",
+                "asset_name": "refactor_oracle.baseline_churn",
+                "depends_on": ["s01b_git_churn"],
+                "arguments": { "data": "$s01b_git_churn.churn_counts" }
             },
             {
                 "id": "s03_dep_pagerank",
@@ -313,7 +337,7 @@ fn canned_oracle_spec() -> Value {
                 "depends_on": ["s12_refactor_search"],
                 "arguments": {
                     "action": "ship the GA-proposed refactor plan for the largest crate in the ix workspace",
-                    "context": "Plan was derived from live workspace data via ix_cargo_deps (all crates, SLOC, file count, dep count, edge list) and ix_git_log (90-day commit cadence), validated by PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over real commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along a synthetic refactor direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
+                    "context": "Plan was derived from live workspace data via ix_cargo_deps (all crates, SLOC, file count, dep count, edge list), ix_git_log (90-day commit cadence), and ix_git_churn (per-file change frequency + lines added/deleted), validated by PageRank + topological sort of the dep graph, topologically summarised via persistent homology + Betti numbers, frequency-analysed via FFT over real commit churn, regime-checked via the logistic-map Lyapunov exponent, clustered into 3 health profiles, classified by a random forest, attacked by FGSM along a synthetic refactor direction, and searched via GA. Every upstream step has an asset-backed cache key; see the pipeline lineage for the full audit chain."
                 }
             }
         ]
@@ -397,7 +421,7 @@ fn compiler_drives_oracle_from_natural_language_brief() {
     let result = reg
         .call_with_ctx(
             "ix_pipeline_compile",
-            json!({ "sentence": ORACLE_BRIEF, "max_steps": 14 }),
+            json!({ "sentence": ORACLE_BRIEF, "max_steps": 16 }),
             &ctx,
         )
         .expect("compile");
@@ -405,8 +429,8 @@ fn compiler_drives_oracle_from_natural_language_brief() {
     assert_eq!(result["status"], "ok", "compile failed: {result}");
     assert_eq!(
         result["spec"]["steps"].as_array().map(|a| a.len()),
-        Some(14),
-        "expected 14 steps (2 source adapters + 12 analysis)"
+        Some(16),
+        "expected 16 steps (3 source adapters + 13 analysis)"
     );
 }
 
@@ -433,11 +457,20 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
         .call_with_ctx("ix_pipeline_run", compiled["spec"].clone(), &ctx)
         .expect("run");
 
-    // All 14 steps must execute in topological order.
+    // All 16 steps must execute in topological order.
     let order = exec["execution_order"].as_array().expect("execution_order");
-    assert_eq!(order.len(), 14);
+    assert_eq!(order.len(), 16);
     assert_eq!(order[0], "s00_cargo_deps");
-    assert_eq!(order[13], "s13_governance_audit");
+    // s13_governance_audit is still the terminal step — kmeans/RF/FGSM/GA
+    // ordering is unchanged; the two new steps (s01b/s02b) are siblings
+    // of s01/s02 and bubble into the middle of the topological order.
+    assert!(
+        order
+            .iter()
+            .any(|v| v.as_str() == Some("s13_governance_audit")),
+        "s13_governance_audit must appear in the execution order"
+    );
+    assert_eq!(order[order.len() - 1], "s13_governance_audit");
 
     // Every step must have an asset-backed cache key (R2 Phase 1).
     let cache_keys = exec["cache_keys"].as_object().expect("cache_keys");
@@ -451,9 +484,9 @@ fn oracle_runs_end_to_end_and_produces_lineage_dag() {
         );
     }
 
-    // Lineage DAG (R2 Phase 2) must have 14 well-formed entries.
+    // Lineage DAG (R2 Phase 2) must have 16 well-formed entries.
     let lineage = exec["lineage"].as_object().expect("lineage");
-    assert_eq!(lineage.len(), 14);
+    assert_eq!(lineage.len(), 16);
     for (id, entry) in lineage {
         let deps = entry.get("depends_on").and_then(|v| v.as_array()).unwrap();
         let ups = entry
@@ -564,8 +597,8 @@ fn oracle_governance_check_can_consume_pipeline_lineage() {
         .expect("lineage_audit present when lineage was passed");
     assert_eq!(
         audit.get("step_count").and_then(|v| v.as_u64()),
-        Some(14),
-        "lineage_audit.step_count should be 14"
+        Some(16),
+        "lineage_audit.step_count should be 16"
     );
 }
 
@@ -612,7 +645,7 @@ fn run_refactor_oracle_with_narration() {
 
     println!("\n┌──────────────────────────────────────────────────────────────────────┐");
     println!("│     THE ADVERSARIAL REFACTOR ORACLE — LIVE DATA RUN                  │");
-    println!("│  14 ix tools chained on THIS repo's cargo + git state (P1.1 + P1.2)  │");
+    println!("│  16 steps chained on THIS repo's cargo + git state (P1.1 + P1.2 + P1.3) │");
     println!("└──────────────────────────────────────────────────────────────────────┘\n");
 
     // ─── Source adapters ───────────────────────────────────────────
@@ -874,11 +907,11 @@ fn dump_refactor_oracle_pipeline_json() {
     let mut wrapped = json!({
         "$schema": "https://ix.guitaralchemist.com/schemas/pipeline-v1.json",
         "name": "adversarial-refactor-oracle",
-        "description": "14-tool self-referential ecosystem forensics demo (LIVE DATA edition): ix analyses its own workspace using ix_cargo_deps + ix_git_log as source adapters, clusters crates by health profile, trains a random-forest classifier on the cluster labels, attacks it with FGSM along the synthetic refactor direction, searches for a 3-dim refactor vector via GA, and closes with a Demerzel governance audit. Every numeric input flows from the two source-adapter steps via $step.field references — no baked constants except the synthetic FGSM gradient and the logistic-map parameter (both blocked on expression-style substitution support). Compiled from a natural-language brief via ix_pipeline_compile. P1.1 + P1.2 graduation: self-referential in fact, not just in theory.",
-        "version": "2.0",
+        "description": "16-step self-referential ecosystem forensics demo (LIVE DATA edition): ix analyses its own workspace using ix_cargo_deps + ix_git_log + ix_git_churn as source adapters, clusters crates by health profile, trains a random-forest classifier on the cluster labels, attacks it with FGSM along the synthetic refactor direction, searches for a 3-dim refactor vector via GA, and closes with a Demerzel governance audit. Every numeric input flows from the three source-adapter steps via $step.field references — no baked constants except the synthetic FGSM gradient and the logistic-map parameter (both blocked on expression-style substitution support). Compiled from a natural-language brief via ix_pipeline_compile. P1.1 + P1.2 + P1.3 graduation: self-referential in fact, not just in theory.",
+        "version": "2.1",
         "tools_used": [
-            "ix_cargo_deps", "ix_git_log", "ix_stats", "ix_graph",
-            "ix_topo", "ix_fft", "ix_chaos_lyapunov", "ix_kmeans",
+            "ix_cargo_deps", "ix_git_log", "ix_git_churn", "ix_stats",
+            "ix_graph", "ix_topo", "ix_fft", "ix_chaos_lyapunov", "ix_kmeans",
             "ix_random_forest", "ix_adversarial_fgsm", "ix_evolution",
             "ix_governance_check"
         ]
