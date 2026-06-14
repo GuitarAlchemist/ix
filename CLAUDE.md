@@ -79,7 +79,7 @@ Adopted from aihero.dev as the genuine *delta* over the rules above (complements
 - **Tracer-bullet first.** For any non-trivial feature, build the smallest **end-to-end** slice that touches *every* layer, test it, get feedback, then expand — never build layers in isolation. aihero: "Context-window constraints make the discipline non-negotiable." (This session's spike was exactly this: held-out→train→head→eval→cross-validate as one thin slice before scaling.)
 - **Vertical, not horizontal, decomposition.** Each task/PR is a thin slice cutting through all integration layers (surfacing unknowns early), not a horizontal layer.
 
-Already covered by existing machinery — do NOT add duplicate skills: `/grill-me`→IDSD intent gate + `brainstorming`; `/to-prd`,`/to-issues`→`ce-plan` + `docs/plans`; `/tdd`→test discipline + `ce-work`; `/improve-codebase-architecture`→sentrux + `ix-code-*` + `simplify`/`code-review`.
+**2026-06-14 (reversal — operator decision):** the actual aihero skills are now INSTALLED (project-scoped, `.claude/skills/`, via `npx skills@latest add mattpocock/skills --copy`, MIT, Socket/Snyk-clean): `grill-with-docs`, `grill-me`, `to-prd`, `to-issues`, `tdd`, `improve-codebase-architecture` (+ `setup-matt-pocock-skills`). The earlier "do NOT add duplicate skills — already covered by internal machinery" stance is **superseded**: the operator wants the named, documented aihero workflow (a methodology a human can read and follow), not an opaque mapping onto internal tools. Use the aihero skills directly; the internal equivalents (`brainstorming`, `ce-plan`, `ce-work`, `simplify`/`code-review`, sentrux) still stand as the IX-native path. Run `/setup-matt-pocock-skills` once to wire the issue tracker (GitHub) + `CONTEXT.md` + docs location that `grill-with-docs`/`to-prd`/`to-issues` depend on.
 
 Self-improvement reflex: when the user corrects you, invoke `/correct` so the rule lands in this file's **Session-learned rules** section — Cherny's "most important loop" from the 2026 Sequoia talk.
 
@@ -112,3 +112,19 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
   - **Surface the holes.** Unenforced preconditions/assumptions are the maintainability killers — make them explicit as `@ai:assumption [U:uncertain]` rather than leaving them implicit (this session: sorted-input, A\* admissible-vs-consistent, mmap UB, `HashTable::new(0)` panic were all invisible until annotated).
   - **Drift is the lint that makes it last.** `ix-assumption-graph-drift --check` (CI: `.github/workflows/assumption-drift.yml`) fails a PR when a claim's anchored code changed (`span_drifted`) or a cited test vanished (`broken_bindings`). Re-snapshot `state/assumptions/annotations.snapshot.json` when a claim legitimately changes. Agents check their own edits via the `ix_assumption_drift` / `ix_assumption_claims` MCP tools.
   - **Process discipline:** annotate **one module at a time**, each pass must drive ≥1 real fix (or it doesn't ship — no green-but-dead inventory); declare intent + expectations before coding (IDSD); **never** mass-generate annotations or use an LLM panel as the drift oracle (≈96% TPR / <25% TNR — it rubber-stamps drift). `@ai:` markers are plain comments, so this applies to ga/tars/Demerzel too via the same extractor + the JSON-on-disk contract.
+
+## Agent skills
+
+Per-repo config for the installed aihero/mattpocock engineering skills (see the aihero-delta note above). Configured 2026-06-14 via `/setup-matt-pocock-skills`.
+
+### Issue tracker
+
+GitHub Issues on `GuitarAlchemist/ix`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical defaults (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (`/grill-with-docs` grows them lazily). See `docs/agents/domain.md`.
