@@ -112,3 +112,19 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
   - **Surface the holes.** Unenforced preconditions/assumptions are the maintainability killers — make them explicit as `@ai:assumption [U:uncertain]` rather than leaving them implicit (this session: sorted-input, A\* admissible-vs-consistent, mmap UB, `HashTable::new(0)` panic were all invisible until annotated).
   - **Drift is the lint that makes it last.** `ix-assumption-graph-drift --check` (CI: `.github/workflows/assumption-drift.yml`) fails a PR when a claim's anchored code changed (`span_drifted`) or a cited test vanished (`broken_bindings`). Re-snapshot `state/assumptions/annotations.snapshot.json` when a claim legitimately changes. Agents check their own edits via the `ix_assumption_drift` / `ix_assumption_claims` MCP tools.
   - **Process discipline:** annotate **one module at a time**, each pass must drive ≥1 real fix (or it doesn't ship — no green-but-dead inventory); declare intent + expectations before coding (IDSD); **never** mass-generate annotations or use an LLM panel as the drift oracle (≈96% TPR / <25% TNR — it rubber-stamps drift). `@ai:` markers are plain comments, so this applies to ga/tars/Demerzel too via the same extractor + the JSON-on-disk contract.
+
+## Agent skills
+
+Per-repo config for the installed aihero/mattpocock engineering skills (see the aihero-delta note above). Configured 2026-06-14 via `/setup-matt-pocock-skills`.
+
+### Issue tracker
+
+GitHub Issues on `GuitarAlchemist/ix`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical defaults (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (`/grill-with-docs` grows them lazily). See `docs/agents/domain.md`.
