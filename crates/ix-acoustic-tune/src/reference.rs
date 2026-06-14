@@ -160,6 +160,115 @@ pub fn inharmonicity_b(
     }
 }
 
+/// Jointly estimate `(f0, B)` from a signal's partial peaks — the **robust**
+/// inharmonicity estimator. [`inharmonicity_b`] holds `f0` fixed, so any pitch
+/// error (a synth's loop-filter detuning, vibrato, an imperfect `f0` guess) is
+/// absorbed into a spurious `B`; a few cents of `f0` error on the `k=1` partial
+/// alone can fabricate `B ≈ 1e-2`. This fits `f0` *and* `B` together, so the
+/// pitch error cancels out.
+///
+/// Linearizes `f_k = k·f0·√(1+B·k²)` as `(f_k/k)² = f0² + (f0²·B)·k²` and fits
+/// `Y=(f_k/k)²` against `X=k²` (magnitude-weighted least squares), iteratively
+/// dropping the single worst-residual partial when it exceeds 5× the median —
+/// so a spurious peak (a body mode, a polyphonic neighbour) cannot bend the fit.
+/// Returns `(f0, B)` with `B≥0`, or `None` if too few partials are resolvable.
+/// `window_size` should be a power of two and large enough to resolve `f0`
+/// (≥ ~`8·sample_rate/f0` for a clean bass-note fit).
+// @ai:invariant fit_inharmonicity recovers both f0 and B from stretched partials even when the f0 guess is several cents wrong, where fixed-f0 inharmonicity_b would report a large spurious B from the uncorrected pitch error [T:test conf:0.9 src:reference::tests::joint_fit_is_robust_to_a_wrong_f0_guess]
+pub fn fit_inharmonicity(
+    signal: &[f64],
+    sample_rate: f64,
+    f0_guess: f64,
+    n_partials: usize,
+    window_size: usize,
+) -> Option<(f64, f64)> {
+    if f0_guess <= 0.0 || sample_rate <= 0.0 || signal.len() < window_size || n_partials < 3 {
+        return None;
+    }
+    let start = (signal.len() - window_size) / 2;
+    let mags = features::magnitude_spectrum(&signal[start..start + window_size]);
+    let bin_hz = sample_rate / window_size as f64;
+    let search = ((f0_guess / bin_hz) * 0.4).ceil() as i64;
+
+    // Collect (k, f_k, magnitude) for each in-range partial peak.
+    let mut pts: Vec<(f64, f64, f64)> = Vec::new();
+    let mut max_mag = 0.0f64;
+    for k in 1..=n_partials {
+        let center = ((k as f64 * f0_guess) / bin_hz).round() as i64;
+        let lo = (center - search).max(1) as usize;
+        let hi = ((center + search) as usize).min(mags.len().saturating_sub(2));
+        if hi <= lo {
+            continue;
+        }
+        let (mut best_bin, mut best) = (lo, mags[lo]);
+        for (off, &m) in mags[lo..=hi].iter().enumerate() {
+            if m > best {
+                best = m;
+                best_bin = lo + off;
+            }
+        }
+        let f_k = (best_bin as f64 + parabolic_offset(&mags, best_bin)) * bin_hz;
+        max_mag = max_mag.max(best);
+        pts.push((k as f64, f_k, best));
+    }
+    let mut keep: Vec<usize> = (0..pts.len())
+        .filter(|&i| pts[i].2 >= 0.02 * max_mag)
+        .collect();
+    if keep.len() < 3 {
+        return None;
+    }
+
+    let (mut f0, mut b) = (f0_guess, 0.0);
+    for _ in 0..4 {
+        if keep.len() < 3 {
+            break;
+        }
+        // Magnitude-weighted linear regression Y = c0 + c1·X, X=k², Y=(f_k/k)².
+        let (mut sw, mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for &i in &keep {
+            let (k, f_k, w) = pts[i];
+            let x = k * k;
+            let y = (f_k / k).powi(2);
+            sw += w;
+            sx += w * x;
+            sy += w * y;
+            sxx += w * x * x;
+            sxy += w * x * y;
+        }
+        let denom = sw * sxx - sx * sx;
+        if denom.abs() < 1e-9 {
+            break;
+        }
+        let c1 = (sw * sxy - sx * sy) / denom;
+        let c0 = (sy - c1 * sx) / sw;
+        if c0 <= 0.0 {
+            break;
+        }
+        f0 = c0.sqrt();
+        b = (c1 / c0).max(0.0);
+        // Drop the single worst outlier if it dominates (spurious peak).
+        let mut worst = (usize::MAX, 0.0f64);
+        let mut resids: Vec<f64> = Vec::with_capacity(keep.len());
+        for &i in &keep {
+            let (k, f_k, _) = pts[i];
+            let pred = k * f0 * (1.0 + b * k * k).sqrt();
+            let r = (f_k - pred).abs();
+            resids.push(r);
+            if r > worst.1 {
+                worst = (i, r);
+            }
+        }
+        resids.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = resids[resids.len() / 2].max(1e-6);
+        if worst.1 > 5.0 * median && keep.len() > 4 {
+            keep.retain(|&i| i != worst.0);
+        } else {
+            break;
+        }
+    }
+    Some((f0, b))
+}
+
 /// Attack time: seconds from the onset (first short-time-RMS frame above 10 % of
 /// the peak) to the RMS-envelope peak — where the pick noise / onset burst lives.
 pub fn attack_seconds(signal: &[f64], sample_rate: f64, window: usize) -> f64 {
@@ -224,15 +333,27 @@ pub fn analyze(signal: &[f64], sample_rate: f64) -> ReferenceDescriptor {
     let mags = features::magnitude_spectrum(&frame);
     let fft_size = frame.len().max(1);
 
+    // Inharmonicity (and a refined f0) via the robust joint fit. It needs
+    // frequency resolution — a 1024-pt window cannot separate a 98 Hz note's
+    // partials (bin ≈ 47 Hz) — so grow a power-of-two window until the bin width
+    // is well under the partial spacing.
+    let (f0_refined, inharm) = f0
+        .and_then(|f| {
+            let mut w = DEFAULT_WINDOW;
+            while w * 2 <= signal.len() && (sample_rate / w as f64) > f / 8.0 {
+                w *= 2;
+            }
+            fit_inharmonicity(signal, sample_rate, f, 10, w)
+        })
+        .map_or((f0, 0.0), |(f, b)| (Some(f), b));
+
     ReferenceDescriptor {
-        f0_hz: f0,
+        f0_hz: f0_refined,
         centroid_hz: features::spectral_centroid(&mags, sample_rate, fft_size),
         rolloff_hz: features::spectral_rolloff(&mags, sample_rate, fft_size, 0.85),
         rms: features::rms(signal),
         attack_seconds: attack_seconds(signal, sample_rate, DEFAULT_HOP),
-        inharmonicity_b: f0
-            .map(|f| inharmonicity_b(signal, sample_rate, f, 8, DEFAULT_WINDOW))
-            .unwrap_or(0.0),
+        inharmonicity_b: inharm,
         band_decay_slopes: per_band_decay_slopes(signal, sample_rate, &band_edges),
         band_edges,
     }
@@ -297,6 +418,46 @@ mod tests {
         assert!(
             stretched > 0.001 && stretched > harmonic,
             "stretched partials should read a clearly higher B: {stretched} vs {harmonic}"
+        );
+    }
+
+    // The robust joint fit must recover BOTH f0 and B from stretched partials even
+    // when the f0 guess is wrong by tens of cents — where the fixed-f0
+    // inharmonicity_b folds that pitch error into a large spurious B.
+    #[test]
+    fn joint_fit_is_robust_to_a_wrong_f0_guess() {
+        let sr = 16000.0;
+        let n = 16384;
+        let f0 = 200.0;
+        let b_true = 1.5e-4;
+        let sig: Vec<f64> = (0..n)
+            .map(|t| {
+                let tt = t as f64 / sr;
+                (1..=8)
+                    .map(|k| {
+                        let fk = k as f64 * f0 * (1.0 + b_true * (k as f64).powi(2)).sqrt();
+                        (TAU * fk * tt).sin()
+                    })
+                    .sum::<f64>()
+            })
+            .collect();
+        // Guess f0 ~1.5 % (≈26 cents) low.
+        let guess = 197.0;
+        let (f0_fit, b_fit) = fit_inharmonicity(&sig, sr, guess, 8, 16384).expect("fit");
+        assert!(
+            (f0_fit - f0).abs() < 2.0,
+            "f0 should recover ≈200, got {f0_fit}"
+        );
+        assert!(
+            (b_fit - b_true).abs() < 0.5 * b_true,
+            "B should recover ≈{b_true}, got {b_fit}"
+        );
+        // The fixed-f0 estimator, given the SAME wrong guess, fabricates a large B
+        // from the k=1 pitch error — demonstrating why the joint fit is needed.
+        let b_fixed = inharmonicity_b(&sig, sr, guess, 8, 16384);
+        assert!(
+            b_fixed > 5.0 * b_true,
+            "fixed-f0 B should be inflated by the wrong guess: {b_fixed}"
         );
     }
 
