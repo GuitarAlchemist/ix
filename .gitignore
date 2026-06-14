@@ -97,3 +97,8 @@ embed-cache/
 
 # /teach generated courses (personal, regenerable)
 learning/
+
+# DuckDB quality-analytics DB — generated binary, rebuilt any time from
+# state/quality/analytics/build-views.sql. Only the SQL + README are tracked.
+state/quality/analytics/*.duckdb
+state/quality/analytics/*.duckdb.wal

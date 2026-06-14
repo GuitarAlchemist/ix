@@ -165,7 +165,20 @@ def load_corpus(
         sha = "sha256:" + _sha256_file(p)
         return data, sha, False
 
-    # Attempt msgpack (native optick.index format from ix-optick crate).
+    # OPTK v4 binary mmap index — the real state/voicings/optick.index format
+    # (magic "OPTK"). Stores the COMPACT similarity vectors directly, already
+    # pre-weighted by sqrt(partition weight) and L2-normalized, so they are
+    # returned as-is and main() skips the Phase-1 slice (the data is already the
+    # PHASE1_DIM compact, not the full OPTIC_TOTAL_DIM). Layout mirrors GA's
+    # Common/GA.Business.ML/Search/OptickIndexReader.cs.
+    with open(index_path, "rb") as f:
+        magic = f.read(4)
+    if magic == b"OPTK":
+        data = _load_optk(p)
+        sha = "sha256:" + _sha256_file(p)
+        return data, sha, False
+
+    # Attempt msgpack (a msgpack-serialized {"vectors": [...]} dump, if one is fed).
     try:
         import msgpack  # type: ignore[import-untyped]
         with open(index_path, "rb") as f:
@@ -178,6 +191,33 @@ def load_corpus(
         data = _synthetic_corpus(1_000, rng)
         sha = "sha256:" + hashlib.sha256(data.tobytes()).hexdigest()
         return data, sha, True
+
+
+def _load_optk(p: Path) -> np.ndarray:
+    """
+    Read the compact vectors from a GA OPTK v4 memory-mapped index.
+
+    Mirrors Common/GA.Business.ML/Search/OptickIndexReader.cs:
+      header: magic(4) version(4) header_size(4) schema_hash(4) endian(2) _r(2)
+              dim(4 @20) count(8 @24) ... vectors_off(8 @96) ...
+      body:   count * dim little-endian float32, contiguous from vectors_off.
+    Returns (count, dim) float32 — the pre-weighted, L2-normalized compact
+    similarity vectors (dim == PHASE1_DIM for v1.8).
+    """
+    raw = p.read_bytes()
+    if raw[:4] != b"OPTK":
+        raise ValueError(f"{p}: not an OPTK index (magic={raw[:4]!r})")
+    version = int.from_bytes(raw[4:8], "little")
+    if version != 4:
+        raise ValueError(f"{p}: unsupported OPTK version {version} (expected 4)")
+    dim = int.from_bytes(raw[20:24], "little")
+    count = int.from_bytes(raw[24:32], "little")
+    vectors_off = int.from_bytes(raw[96:104], "little")
+    n = count * dim
+    vecs = np.frombuffer(raw, dtype="<f4", count=n, offset=vectors_off)
+    if vecs.size != n:
+        raise ValueError(f"{p}: truncated vector block (want {n} floats, got {vecs.size})")
+    return vecs.reshape(count, dim).astype(np.float32, copy=False)
 
 
 def _sha256_file(p: Path) -> str:
@@ -526,11 +566,21 @@ def main() -> None:
 
     raw_data, index_sha, is_synthetic = load_corpus(args.index, rng)
     corpus_size = len(raw_data)
-    phase1_data = slice_phase1(raw_data)
+    if raw_data.shape[1] == OPTIC_TOTAL_DIM:
+        phase1_data = slice_phase1(raw_data)            # full 240-dim embeddings → 124 compact
+        source_note = f"phase1 slice of {OPTIC_TOTAL_DIM}"
+    elif raw_data.shape[1] == PHASE1_DIM:
+        phase1_data = raw_data                          # already compact (OPTK index / 124-dim dump)
+        source_note = "already-compact input"
+    else:
+        raise ValueError(
+            f"Corpus has {raw_data.shape[1]} dims; expected {OPTIC_TOTAL_DIM} (full) "
+            f"or {PHASE1_DIM} (compact)."
+        )
     assert phase1_data.shape[1] == PHASE1_DIM, (
         f"Expected {PHASE1_DIM} Phase 1 dims, got {phase1_data.shape[1]}"
     )
-    log.info("Corpus: %d voicings × %d dims (phase1 slice of %d)", corpus_size, PHASE1_DIM, OPTIC_TOTAL_DIM)
+    log.info("Corpus: %d voicings × %d dims (%s)", corpus_size, PHASE1_DIM, source_note)
 
     model, metrics = train(
         data=phase1_data,
