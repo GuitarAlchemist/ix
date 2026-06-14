@@ -1,0 +1,8 @@
+{
+  "algo": "sha256",
+  "normalization": "line-ending-normalized (CR bytes stripped) before hashing, so the pin is reproducible across Windows (CRLF) and Linux (LF) checkouts",
+  "constitutions": {
+    "default.constitution.md": "sha256:9c6330c76d048a47807c202224f5a10f259683b2ab0b8269f9b98c216df6e047"
+  },
+  "note": "Tamper-evidence integrity pins for the governance constitution the IX pipeline gate enforces (RSI safe-loop research 2026-06-07; reference_safe_rsi_loop_validated). Each value is `sha256:<hex>` over the LINE-ENDING-NORMALIZED content (CR stripped) of the constitution at governance/demerzel/constitutions/<name> (the file lives in the Demerzel SUBMODULE; this pin lives in IX's own tree so IX asserts which constitution it was reviewed against). The gate (crates/ix-skill governance_gate + ConstitutionGate::load) fails CLOSED on mismatch; a missing entry is reported as `unpinned` (never silently trusted); a present-but-corrupt pin file also fails closed. Regenerate ONLY for a deliberate, reviewed constitution change, normalizing line endings: `tr -d '\\r' < <file> | sha256sum` (or `git show HEAD:constitutions/<name> | tr -d '\\r' | sha256sum` for the committed blob). Do NOT use a raw `Get-FileHash` — it would hash CRLF on Windows and never match the LF blob CI sees. An undeclared edit (no re-pin) is exactly what this catches — both at runtime and in CI via default_constitution_matches_committed_pin."
+}

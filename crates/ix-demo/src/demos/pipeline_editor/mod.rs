@@ -494,6 +494,23 @@ impl PipelineEditor {
                 return;
             }
         };
+        // Bind {param} placeholders before lowering. The editor has no --param
+        // channel, so a spec with an unbound {param} fails closed here with a
+        // clear message rather than passing a {"param":...} blob to a skill.
+        let spec = match ix_pipeline::lower::bind_params(&spec, &Default::default()) {
+            Ok(s) => s,
+            Err(e) => {
+                self.yaml_run = Some(YamlRun {
+                    path: path.into(),
+                    stages: BTreeMap::new(),
+                    total_duration_ms: 0,
+                    cache_hits: 0,
+                    error: Some(format!("params: {e}")),
+                });
+                self.last_action = format!("run ix.yaml: {e}");
+                return;
+            }
+        };
         let dag = match lower(&spec) {
             Ok(d) => d,
             Err(e) => {
@@ -1116,6 +1133,46 @@ stages:
         let run = editor.yaml_run.as_ref().unwrap();
         assert!(run.error.is_some());
         assert!(run.error.as_ref().unwrap().contains("lower"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn run_yaml_fails_closed_on_unbound_param() {
+        // The editor has no --param channel, so a spec the NL compiler emitted
+        // for absent data ({param} placeholders) must fail closed BEFORE any
+        // stage runs — never pass a {"param":...} blob to the skill.
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "ix-editor-unbound-param-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ix_yaml = dir.join("ix.yaml");
+        std::fs::write(
+            &ix_yaml,
+            r#"version: "1"
+params:
+  nums: null
+stages:
+  s:
+    skill: stats
+    args:
+      data: { param: nums }
+"#,
+        )
+        .unwrap();
+
+        let mut editor = PipelineEditor::default();
+        editor.run_yaml(ix_yaml.to_str().unwrap());
+        let run = editor.yaml_run.as_ref().unwrap();
+        let err = run.error.as_ref().expect("unbound param must error");
+        assert!(
+            err.contains("missing required param 'nums'"),
+            "expected fail-closed missing-param, got: {err}"
+        );
+        assert_eq!(run.stages.len(), 0, "no stage may run on an unbound param");
 
         std::fs::remove_dir_all(&dir).ok();
     }

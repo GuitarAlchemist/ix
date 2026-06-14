@@ -15,5 +15,10 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = "0.12"
+# sha256 for the provenance record's content/integrity hashes (ix-lock/v2,
+# chain-of-evidence v1) — distinct from the FNV cache/template hashes; aligns
+# with the constitution-pin + ix-harness-signing (see
+# docs/contracts/2026-06-07-provenance-record.contract.md).
+sha2 = "0.10"
 ix-registry = { workspace = true }
 ix-types = { workspace = true }

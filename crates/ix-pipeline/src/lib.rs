@@ -7,6 +7,7 @@
 pub mod builder;
 pub mod dag;
 pub mod executor;
+pub mod gate;
 pub mod lock;
 pub mod lower;
 pub mod spec;
