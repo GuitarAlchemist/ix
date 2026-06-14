@@ -1,0 +1,184 @@
+{"sentence": "Compute the mean, median, standard deviation, min and max for this list of response times: 120, 95, 200, 150, 88.", "label": "in_domain", "kind": "in", "expected_skill": "stats"}
+{"sentence": "Here are 30 daily temperature readings â€” give me the average and the spread so I know how variable they are.", "label": "in_domain", "kind": "in", "expected_skill": "stats"}
+{"sentence": "I have square footage and sale price for 50 houses; fit a straight-line model so I can estimate price from size.", "label": "in_domain", "kind": "in", "expected_skill": "linear_regression"}
+{"sentence": "Find the best-fit line through these x/y points and tell me the slope and intercept.", "label": "in_domain", "kind": "in", "expected_skill": "linear_regression"}
+{"sentence": "Group these 200 customer points into natural segments â€” I don't have labels, just want to see clusters around 4 centers.", "label": "in_domain", "kind": "in", "expected_skill": "kmeans"}
+{"sentence": "Take this unlabeled set of 2D coordinates and split them into k groups by proximity to centroids.", "label": "in_domain", "kind": "in", "expected_skill": "kmeans"}
+{"sentence": "Train a classifier on this labeled dataset and report precision, recall, F1 and a confusion matrix.", "label": "in_domain", "kind": "in", "expected_skill": "supervised"}
+{"sentence": "Cross-validate a decision tree on my labeled samples with 5 folds and give me the per-fold accuracy.", "label": "in_domain", "kind": "in", "expected_skill": "supervised"}
+{"sentence": "Build me a bagged ensemble of decision trees to classify this tabular data and predict the test rows.", "label": "in_domain", "kind": "in", "expected_skill": "random_forest"}
+{"sentence": "I want a robust majority-vote forest classifier trained on bootstrap samples for my customer churn table.", "label": "in_domain", "kind": "in", "expected_skill": "random_forest"}
+{"sentence": "Use boosted trees that fit residuals sequentially to squeeze the highest accuracy out of this tabular multiclass problem.", "label": "in_domain", "kind": "in", "expected_skill": "gradient_boosting"}
+{"sentence": "Train a gradient-boosted classifier with a learning rate of 0.05 and give me class probabilities on the holdout set.", "label": "in_domain", "kind": "in", "expected_skill": "gradient_boosting"}
+{"sentence": "Here's iris.csv â€” load it, preprocess, train a model on the species column, and report accuracy end to end.", "label": "in_domain", "kind": "in", "expected_skill": "ml_pipeline"}
+{"sentence": "Run a complete pipeline on customers.csv targeting the churn column, auto-pick the model, and save it for later.", "label": "in_domain", "kind": "in", "expected_skill": "ml_pipeline"}
+{"sentence": "Load the churn model I trained earlier and predict labels for these two new customer rows.", "label": "in_domain", "kind": "in", "expected_skill": "ml_predict"}
+{"sentence": "Use my saved classifier to score this fresh batch of records without retraining.", "label": "in_domain", "kind": "in", "expected_skill": "ml_predict"}
+{"sentence": "Simulate an epsilon-greedy strategy over five arms with these true reward means and tell me which arm it converges to.", "label": "in_domain", "kind": "in", "expected_skill": "bandit"}
+{"sentence": "Compare UCB1 versus Thompson sampling on a 4-arm exploration-exploitation problem over 1000 rounds.", "label": "in_domain", "kind": "in", "expected_skill": "bandit"}
+{"sentence": "Minimize the Rastrigin function in 10 dimensions using a population-based genetic algorithm.", "label": "in_domain", "kind": "in", "expected_skill": "evolution"}
+{"sentence": "Use differential evolution to find the global minimum of Rosenbrock and compare it against a genetic algorithm.", "label": "in_domain", "kind": "in", "expected_skill": "evolution"}
+{"sentence": "Minimize the sphere function with Adam and tell me how many iterations until it converges.", "label": "in_domain", "kind": "in", "expected_skill": "optimize"}
+{"sentence": "I have a noisy multi-modal objective â€” run particle swarm or simulated annealing to find a good minimum.", "label": "in_domain", "kind": "in", "expected_skill": "optimize"}
+{"sentence": "Run a t-test to check whether the difference in means between my two groups is statistically significant and give me the p-value.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Make a bar chart of my monthly spending and export it as a PNG.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Set up and run a live A/B test on my website's checkout button and track real conversions for two weeks.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Optimize my delivery truck routes across the city using current live traffic to minimize total drive time.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Train an image classifier to recognize cats versus dogs from this folder of photos.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Forecast next quarter's sales with seasonal trends and confidence intervals on this time series.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Deploy my trained churn model as a REST API endpoint so my app can call it in production.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Recommend the best slot machine to play tonight at the casino to maximize my winnings.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "I have a recorded audio waveform sampled at 44.1 kHz â€” can you break it down into its frequency components so I can see which tones dominate?", "label": "in_domain", "kind": "in", "expected_skill": "fft"}
+{"sentence": "Take this array of 1024 sensor readings over time and give me the magnitude spectrum so I can spot any periodic vibration.", "label": "in_domain", "kind": "in", "expected_skill": "fft"}
+{"sentence": "How similar are these two embedding vectors? Give me the cosine similarity between [0.1, 0.4, 0.2] and [0.3, 0.1, 0.9].", "label": "in_domain", "kind": "in", "expected_skill": "distance"}
+{"sentence": "Compute the Euclidean and Manhattan distance between the point (3, 4, 5) and the point (1, 1, 1).", "label": "in_domain", "kind": "in", "expected_skill": "distance"}
+{"sentence": "Is 999983 a prime number, and if not what are its prime factors?", "label": "in_domain", "kind": "in", "expected_skill": "number_theory"}
+{"sentence": "What's the greatest common divisor of 462 and 1071, and the modular inverse of 7 mod 26?", "label": "in_domain", "kind": "in", "expected_skill": "number_theory"}
+{"sentence": "I have a quaternion (0.707, 0, 0.707, 0) â€” convert it to Euler angles for me.", "label": "in_domain", "kind": "in", "expected_skill": "rotation"}
+{"sentence": "Smoothly interpolate the camera orientation halfway between these two 3D orientations so the transition isn't jerky.", "label": "in_domain", "kind": "in", "expected_skill": "rotation"}
+{"sentence": "Multiply these two 16-dimensional hypercomplex numbers and give me the conjugate and norm of the result.", "label": "in_domain", "kind": "in", "expected_skill": "sedenion"}
+{"sentence": "Show me how octonion multiplication works for these two 8-tuples and verify the norm is multiplicative.", "label": "in_domain", "kind": "in", "expected_skill": "sedenion"}
+{"sentence": "Generate a Takagi blancmange curve and also give me the Morton code for the cell at grid coordinates (5, 9).", "label": "in_domain", "kind": "in", "expected_skill": "fractal"}
+{"sentence": "I need a space-filling Hilbert curve traversal order for a 16x16 grid so I can lay out my data with good locality.", "label": "in_domain", "kind": "in", "expected_skill": "fractal"}
+{"sentence": "For the logistic map with growth rate r = 3.9, estimate how fast nearby trajectories diverge so I know if it's chaotic.", "label": "in_domain", "kind": "in", "expected_skill": "chaos.lyapunov"}
+{"sentence": "Compute the maximal Lyapunov exponent for the logistic map at r = 3.7 to confirm whether it's in a chaotic regime.", "label": "in_domain", "kind": "in", "expected_skill": "chaos.lyapunov"}
+{"sentence": "Run an input vector through my dense layer with these weights and apply a softmax at the end to get the output activations.", "label": "in_domain", "kind": "in", "expected_skill": "nn.forward"}
+{"sentence": "Given my query, key and value matrices, compute the scaled dot-product attention output for this single transformer block.", "label": "in_domain", "kind": "in", "expected_skill": "nn.forward"}
+{"sentence": "Craft a small perturbation to this image that fools my classifier into the wrong label using the sign of the loss gradient.", "label": "in_domain", "kind": "in", "expected_skill": "adversarial.fgsm"}
+{"sentence": "Generate an FGSM adversarial example with epsilon 0.03 against my trained model so I can test its robustness.", "label": "in_domain", "kind": "in", "expected_skill": "adversarial.fgsm"}
+{"sentence": "Apply a low-pass Butterworth filter to my audio signal to remove the high-frequency hiss above 8 kHz.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Walk me to the nearest coffee shop and tell me the driving distance from my current location.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Generate a strong random prime-based RSA key pair I can use to encrypt my email.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Rotate this JPEG image 90 degrees clockwise and save it as a new file.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Draw a colorful Mandelbrot set zoom animation as a PNG so I can use it as a desktop wallpaper.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "My production microservice keeps throwing chaos under load â€” help me debug the intermittent crash and stabilize it.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Train a convolutional neural network from scratch on my image dataset until it converges and save the weights.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Set up a real-time firewall to block adversarial network intrusions hitting my server.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "I have a weighted road network between cities â€” find me the shortest route from Boston to Denver.", "label": "in_domain", "kind": "in", "expected_skill": "graph"}
+{"sentence": "Here's a set of web pages and the links between them; rank the pages by importance so I know which are most central.", "label": "in_domain", "kind": "in", "expected_skill": "graph"}
+{"sentence": "Can you give me an overview of how A* compares to plain BFS and DFS, including their time complexity?", "label": "in_domain", "kind": "in", "expected_skill": "search"}
+{"sentence": "Explain the tradeoffs between depth-first and breadth-first traversal for pathfinding and when to pick each.", "label": "in_domain", "kind": "in", "expected_skill": "search"}
+{"sentence": "I have a build with tasks that depend on each other â€” figure out the valid execution order, what can run in parallel, and the longest dependency chain.", "label": "in_domain", "kind": "in", "expected_skill": "pipeline"}
+{"sentence": "Given these stages and their prerequisites, tell me which ones form the critical path and what level each runs at.", "label": "in_domain", "kind": "in", "expected_skill": "pipeline"}
+{"sentence": "I have a point cloud sampled from some shape â€” count the holes and connected components by computing its Betti numbers.", "label": "in_domain", "kind": "in", "expected_skill": "topo"}
+{"sentence": "Run persistent homology on this set of 2D points and tell me what topological features persist across scales.", "label": "in_domain", "kind": "in", "expected_skill": "topo"}
+{"sentence": "I have a transition matrix for a weather model; compute the long-run probability of each state.", "label": "in_domain", "kind": "in", "expected_skill": "markov"}
+{"sentence": "Given this stochastic matrix, iterate until the state distribution settles and give me the steady-state vector.", "label": "in_domain", "kind": "in", "expected_skill": "markov"}
+{"sentence": "I have a sequence of dice-roll observations and a hidden-state model; tell me the single most likely sequence of hidden states that produced them.", "label": "in_domain", "kind": "in", "expected_skill": "viterbi"}
+{"sentence": "Decode the most probable underlying state path for this hidden Markov model given the emitted symbols.", "label": "in_domain", "kind": "in", "expected_skill": "viterbi"}
+{"sentence": "I want a memory-efficient way to test whether a URL has probably been seen before without storing all of them â€” false positives are fine.", "label": "in_domain", "kind": "in", "expected_skill": "bloom_filter"}
+{"sentence": "Build me a probabilistic set membership structure from this list of items and tell me the false positive rate.", "label": "in_domain", "kind": "in", "expected_skill": "bloom_filter"}
+{"sentence": "Estimate how many distinct visitors are in this huge log without keeping every one in memory.", "label": "in_domain", "kind": "in", "expected_skill": "hyperloglog"}
+{"sentence": "I have two cardinality sketches from different shards; merge them and give me the combined unique count.", "label": "in_domain", "kind": "in", "expected_skill": "hyperloglog"}
+{"sentence": "Store this value under the key 'session_token' so I can fetch it back later in memory.", "label": "in_domain", "kind": "in", "expected_skill": "cache"}
+{"sentence": "List all the keys I've stashed and then delete the one called 'temp_result'.", "label": "in_domain", "kind": "in", "expected_skill": "cache"}
+{"sentence": "Search Google for the fastest driving route from Boston to Denver and tell me the traffic right now.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Search the codebase for every function named 'parse_chord' and open the files that match.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Make a bar graph of my monthly spending and export it as a PNG.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Delete my user account and clear all my cached login sessions from the server.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Configure the network topology for my Kubernetes cluster and open the right firewall ports between nodes.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Set up a CI/CD pipeline that runs my tests and deploys to production on every push.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Write me a Markov-chain text generator that produces fake song lyrics in the style of Bob Dylan.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Increase the bloom and exposure on this photo so the highlights glow a bit more.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Cache these images on a CDN edge so my website loads faster for users in Europe.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "I have a set of production rules with fitness scores and starting proportions â€” simulate how they compete over time and tell me which ones survive as a stable strategy.", "label": "in_domain", "kind": "in", "expected_skill": "grammar.evolve"}
+{"sentence": "Run replicator dynamics on my grammar rules so the high-reward rules grow their share of the population and the weak ones die out, then report the evolutionarily stable set.", "label": "in_domain", "kind": "in", "expected_skill": "grammar.evolve"}
+{"sentence": "Given this EBNF grammar, use Monte Carlo tree search to find the best sentence it can derive within a few thousand iterations.", "label": "in_domain", "kind": "in", "expected_skill": "grammar.search"}
+{"sentence": "Search this context-free grammar for a high-scoring derivation path using MCTS with an exploration constant and a max depth.", "label": "in_domain", "kind": "in", "expected_skill": "grammar.search"}
+{"sentence": "Each of my grammar rules produced some good and some bad derivations â€” do a Bayesian update on their weights and then give me a softmax probability distribution over the rules.", "label": "in_domain", "kind": "in", "expected_skill": "grammar.weights"}
+{"sentence": "Update the Beta priors on these production rules from their success/failure counts and tell me the temperature-scaled selection probabilities.", "label": "in_domain", "kind": "in", "expected_skill": "grammar.weights"}
+{"sentence": "Here are the two payoff matrices for a two-player game â€” find the Nash equilibria, including any mixed-strategy ones.", "label": "in_domain", "kind": "in", "expected_skill": "game.nash"}
+{"sentence": "Solve this bimatrix game for its equilibrium strategy profiles and the expected payoff to each player.", "label": "in_domain", "kind": "in", "expected_skill": "game.nash"}
+{"sentence": "Check whether my Option/Maybe type actually satisfies the monad laws â€” left identity, right identity, and associativity.", "label": "in_domain", "kind": "in", "expected_skill": "category"}
+{"sentence": "Verify the free-forgetful adjunction for this structure and confirm the monad laws hold.", "label": "in_domain", "kind": "in", "expected_skill": "category"}
+{"sentence": "I have two hexavalent fuzzy distributions over the T/P/U/D/F/C truth values â€” combine them with a fuzzy AND and give me the renormalized result.", "label": "in_domain", "kind": "in", "expected_skill": "fuzzy.eval"}
+{"sentence": "Take the fuzzy negation of this six-valued belief distribution and also compute its information content.", "label": "in_domain", "kind": "in", "expected_skill": "fuzzy.eval"}
+{"sentence": "Proofread this paragraph and fix all the English grammar and punctuation mistakes.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Search Google for the rules of how to play backgammon and summarize them.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Recommend a strategy board game for four players that takes under an hour to play.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Categorize these customer support tickets into billing, technical, and account-related buckets.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Do a fuzzy match of these misspelled product names against my catalog and find the closest entries.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Weight the words in this document by TF-IDF so I can rank which terms are most important.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Help me evolve the game design for my mobile puzzle game so players stay engaged longer.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Write a context-free grammar from scratch that parses valid US phone numbers.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Before I let the agent delete those build artifacts, can you run it past the constitution and tell me if it's allowed?", "label": "in_domain", "kind": "in", "expected_skill": "governance.check"}
+{"sentence": "The bot wants to force-push to main â€” is that a constitutional violation or is it fine to proceed?", "label": "in_domain", "kind": "in", "expected_skill": "governance.check"}
+{"sentence": "I have a belief that the deploy is safe at 0.7 confidence with two supporting observations and one contradicting one â€” what action does the engine recommend?", "label": "in_domain", "kind": "in", "expected_skill": "governance.belief"}
+{"sentence": "Feed this uncertain proposition with its truth value into the Demerzel belief engine and tell me how it resolves the next step.", "label": "in_domain", "kind": "in", "expected_skill": "governance.belief"}
+{"sentence": "Scan the governance submodule and give me the full node-and-edge graph of all the personas, policies and constitutions so the 3D viewer can render it.", "label": "in_domain", "kind": "in", "expected_skill": "governance.graph"}
+{"sentence": "Build me the artifact graph of everything in the Demerzel governance folder right now.", "label": "in_domain", "kind": "in", "expected_skill": "governance.graph"}
+{"sentence": "I last pulled the governance graph at epoch 1717689600 â€” only re-send it if some artifact file changed since then, otherwise just tell me nothing's new.", "label": "in_domain", "kind": "in", "expected_skill": "governance.graph.rescan"}
+{"sentence": "Poll the governance artifacts every minute and only hand back a fresh graph when one of the files has actually been modified.", "label": "in_domain", "kind": "in", "expected_skill": "governance.graph.rescan"}
+{"sentence": "Load up the skeptical-auditor persona so the agent reviews this with that mindset.", "label": "in_domain", "kind": "in", "expected_skill": "governance.persona"}
+{"sentence": "Switch the agent into the kaizen-optimizer profile before it starts the refactor.", "label": "in_domain", "kind": "in", "expected_skill": "governance.persona"}
+{"sentence": "What are the confidence thresholds in the alignment policy before an action needs human escalation?", "label": "in_domain", "kind": "in", "expected_skill": "governance.policy"}
+{"sentence": "Tell me what triggers a rollback under the self-modification policy.", "label": "in_domain", "kind": "in", "expected_skill": "governance.policy"}
+{"sentence": "Draw a bar chart of my monthly cloud spending broken down by service.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Create a new persona profile page on our website with a bio and headshot for each team member.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Update our company privacy policy document to comply with the new data-retention law.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "I believe my coworker took credit for my work â€” help me decide whether to confront them or talk to HR.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Run a background check on this job candidate and verify their employment history.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Scan my hard drive for malware and quarantine anything suspicious.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Amend the third article of the US Constitution in my mock-government simulation and tell me the legal effect.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Given our belief-events log, what did we believe about the sorted-input invariant as of last Tuesday at noon?", "label": "in_domain", "kind": "in", "expected_skill": "assumption.belief_at"}
+{"sentence": "Replay the belief event log up to the 2026-05-01 timestamp and show me the truth value and opinion of each claim at that moment.", "label": "in_domain", "kind": "in", "expected_skill": "assumption.belief_at"}
+{"sentence": "List all the @ai: invariants and assumptions declared in crates/ix-optick/src/lib.rs before I start editing it.", "label": "in_domain", "kind": "in", "expected_skill": "assumption.claims"}
+{"sentence": "Show me the claims, verdicts, and evidence lines anchored under the ix-fuzzy directory so I know what invariants live there.", "label": "in_domain", "kind": "in", "expected_skill": "assumption.claims"}
+{"sentence": "Did any of our committed assumptions go stale after my last edit? Compare current annotations against the snapshot baseline.", "label": "in_domain", "kind": "in", "expected_skill": "assumption.drift"}
+{"sentence": "Before I commit, check whether any annotated code moved or whether a test cited by a claim has disappeared.", "label": "in_domain", "kind": "in", "expected_skill": "assumption.drift"}
+{"sentence": "Build the unified assumption graph for this workspace and give me the counts of claims by namespace, kind, and domain plus any contradictory ones.", "label": "in_domain", "kind": "in", "expected_skill": "assumption.query"}
+{"sentence": "Fold our research-claims file into the assumption graph and emit a node-and-edge payload I can render in Prime Radiant.", "label": "in_domain", "kind": "in", "expected_skill": "assumption.query"}
+{"sentence": "Compute the cyclomatic and cognitive complexity plus the maintainability index for this Rust source file.", "label": "in_domain", "kind": "in", "expected_skill": "code_analyze"}
+{"sentence": "How tangled is this Python function? Give me Halstead metrics and SLOC for the snippet I'm pasting.", "label": "in_domain", "kind": "in", "expected_skill": "code_analyze"}
+{"sentence": "Starting from ix_math::eigen::symmetric_eigen, walk the call graph and show me every function that calls into it.", "label": "in_domain", "kind": "in", "expected_skill": "context.walk"}
+{"sentence": "Give me the transitive callees and module siblings of this function in the workspace as a replayable context bundle.", "label": "in_domain", "kind": "in", "expected_skill": "context.walk"}
+{"sentence": "What do I personally believe about supply-side economics, and how has that opinion shifted over the past decade?", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Edit the @ai: annotation in this file to bump its certainty from P:assumed to T:test now that I've added a test.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "My car's transmission has drifted out of alignment over the last 5,000 miles â€” diagnose what's wrong.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Draw me a knowledge graph of philosophical assumptions in Kant's Critique of Pure Reason.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Refactor this overly complex function to lower its cyclomatic complexity and make it more maintainable.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Walk me through the call graph of this TypeScript React component so I understand who renders it.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Take a walk through my neighborhood and tell me which streets connect to Main Street.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Analyze the cognitive complexity of this legal contract and flag the hardest clauses to read.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Which repo in our ecosystem actually has a tool for computing Nash equilibria â€” is it ix, tars, or ga?", "label": "in_domain", "kind": "in", "expected_skill": "federation.discover"}
+{"sentence": "I need something that does grammar evolution somewhere in our stack â€” can you find which crate or MCP tool offers that?", "label": "in_domain", "kind": "in", "expected_skill": "federation.discover"}
+{"sentence": "Take these jazz chord voicings and turn them into numeric feature vectors I can feed into a clustering model.", "label": "in_domain", "kind": "in", "expected_skill": "ga_bridge"}
+{"sentence": "Convert this ii-V-I progression from the music engine into a feature matrix so I can train a classifier on harmonic patterns.", "label": "in_domain", "kind": "in", "expected_skill": "ga_bridge"}
+{"sentence": "Package up these ix analysis results as traces and patterns formatted so TARS can ingest them.", "label": "in_domain", "kind": "in", "expected_skill": "tars_bridge"}
+{"sentence": "Get the trace stats I just computed ready to hand off to TARS's pattern promotion pipeline.", "label": "in_domain", "kind": "in", "expected_skill": "tars_bridge"}
+{"sentence": "Load the GA trace files from my traces directory and give me mean, median, and p95 latency per event type plus the success rate.", "label": "in_domain", "kind": "in", "expected_skill": "trace.ingest"}
+{"sentence": "I have a folder of exported GA traces â€” can you summarize the event frequency distribution and failure correlation across them?", "label": "in_domain", "kind": "in", "expected_skill": "trace.ingest"}
+{"sentence": "Take my saved session log and turn it into a GA trace file so I can run the analysis pipeline on it.", "label": "in_domain", "kind": "in", "expected_skill": "session.flywheel_export"}
+{"sentence": "Close the self-improvement loop: export the agent's recorded session events into a trace artifact the ingest tool can read.", "label": "in_domain", "kind": "in", "expected_skill": "session.flywheel_export"}
+{"sentence": "Discover the best teamwork and collaboration capabilities of my coworkers across our company's departments.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Set up a federated login so users from our partner ecosystem can authenticate across all three of our apps.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Bridge our GA music app to a Spotify playlist so the chord progressions auto-export as audio tracks.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Generate playable guitar chord voicings for a Bb minor blues so I can practice them tonight.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Trace the network packet latency between our TARS server and the GA backend and tell me where the bottleneck is.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Ingest these CSV traces of customer support tickets and summarize the average resolution time per category.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Export my browser session cookies and login history so I can move them to a new machine.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Promote my best-performing TARS agent to lead the next sprint and assign it more tasks.", "label": "out_of_domain", "kind": "near_miss_ood", "expected_skill": ""}
+{"sentence": "Book me a window seat on a morning flight from Montreal to Tokyo next Thursday, returning the following Monday.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Translate this paragraph from English into Brazilian Portuguese and keep the friendly tone.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "What's the weather going to be like in Lisbon this weekend â€” should I pack a raincoat?", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Order a large pepperoni pizza with extra cheese and a side of garlic bread to my apartment.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Give me a quick recipe for a vegetarian lasagna I can make tonight with what's in my fridge.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Remind me to call my dentist tomorrow at 9am and reschedule my cleaning.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Summarize today's top international headlines in three bullet points.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Write a heartfelt birthday message for my grandmother who is turning ninety.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "What are some good stretches to loosen up tight hamstrings after a long run?", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Recommend three cozy mystery novels similar to the ones by Agatha Christie.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Help me draft a polite email asking my landlord to fix the leaking kitchen faucet.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "How do I get red wine out of a white cotton shirt before it sets?", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Plan a three-day itinerary for a family vacation in Costa Rica with kids who love beaches and wildlife.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "What's a good gift under fifty dollars for a coworker who loves gardening?", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Explain the offside rule in soccer to someone who has never watched a match.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Convert this brownie recipe from cups to grams so I can use my kitchen scale.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Suggest a name for my new orange tabby kitten that just joined the family.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Write a short bedtime story about a brave little turtle who wants to see the ocean.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "What's the best way to remove an oil stain from my driveway concrete?", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Give me a packing checklist for a week-long camping trip in the mountains in autumn.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "How long should I roast a whole chicken at 400 degrees so it comes out juicy?", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Recommend a relaxing instrumental playlist for studying and tell me where to find it.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "My houseplant's leaves are turning yellow â€” what am I doing wrong with watering it?", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}
+{"sentence": "Draft a two-week notice resignation letter that stays warm and professional.", "label": "out_of_domain", "kind": "far_ood", "expected_skill": ""}

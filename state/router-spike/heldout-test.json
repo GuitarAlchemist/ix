@@ -1,0 +1,763 @@
+{
+  "version": "heldout-0b-1",
+  "authoredBy": "gemini",
+  "prompts": [
+    {
+      "id": "h-1",
+      "prompt": "what notes make up a Bm7b5",
+      "expectedIntentId": "skill.chordinfo",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-2",
+      "prompt": "Cm9 notes",
+      "expectedIntentId": "skill.chordinfo",
+      "tags": ["fragment", "short"]
+    },
+    {
+      "id": "h-3",
+      "prompt": "how is a dominant 7 sharp 9 voiced on the top strings",
+      "expectedIntentId": "skill.chordinfo",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-4",
+      "prompt": "is there an F# in a D major chord?",
+      "expectedIntentId": "skill.chordinfo",
+      "tags": ["boundary", "conversational"]
+    },
+    {
+      "id": "h-5",
+      "prompt": "im trying to play a Gaug but idk what notes are in it",
+      "expectedIntentId": "skill.chordinfo",
+      "tags": ["conversational", "lowercase"]
+    },
+    {
+      "id": "h-6",
+      "prompt": "E7 chords notes",
+      "expectedIntentId": "skill.chordinfo",
+      "tags": ["typo", "short"]
+    },
+    {
+      "id": "h-7",
+      "prompt": "what are the notes for A minor",
+      "expectedIntentId": "skill.chordinfo",
+      "tags": ["beginner-naive"]
+    },
+    {
+      "id": "h-8",
+      "prompt": "can you list the notes in Bb harmonic minor",
+      "expectedIntentId": "skill.scaleinfo",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-9",
+      "prompt": "g pentatonic minor scale notes",
+      "expectedIntentId": "skill.scaleinfo",
+      "tags": ["fragment", "lowercase"]
+    },
+    {
+      "id": "h-10",
+      "prompt": "does melodic minor have a flat 7?",
+      "expectedIntentId": "skill.scaleinfo",
+      "tags": ["boundary", "jargon"]
+    },
+    {
+      "id": "h-11",
+      "prompt": "what the heck is the phrygian dominant scale made of",
+      "expectedIntentId": "skill.scaleinfo",
+      "tags": ["conversational", "boundary"]
+    },
+    {
+      "id": "h-12",
+      "prompt": "whats the half whole dimished scale in C",
+      "expectedIntentId": "skill.scaleinfo",
+      "tags": ["typo", "jargon"]
+    },
+    {
+      "id": "h-13",
+      "prompt": "F# major scale",
+      "expectedIntentId": "skill.scaleinfo",
+      "tags": ["short", "fragment"]
+    },
+    {
+      "id": "h-14",
+      "prompt": "pitch collection for octatonic starting on C#",
+      "expectedIntentId": "skill.scaleinfo",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-15",
+      "prompt": "what is the 4th mode of the major scale",
+      "expectedIntentId": "skill.modes",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-16",
+      "prompt": "explain dorian to me like im 5",
+      "expectedIntentId": "skill.modes",
+      "tags": ["conversational", "lowercase"]
+    },
+    {
+      "id": "h-17",
+      "prompt": "mixolydian vs major",
+      "expectedIntentId": "skill.modes",
+      "tags": ["fragment", "short"]
+    },
+    {
+      "id": "h-18",
+      "prompt": "how do you play the aeolian mode",
+      "expectedIntentId": "skill.modes",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-19",
+      "prompt": "whats that spanish sounding mode called",
+      "expectedIntentId": "skill.modes",
+      "tags": ["beginner-naive", "conversational"]
+    },
+    {
+      "id": "h-20",
+      "prompt": "lydian mode",
+      "expectedIntentId": "skill.modes",
+      "tags": ["short", "fragment"]
+    },
+    {
+      "id": "h-21",
+      "prompt": "locrian mode formula",
+      "expectedIntentId": "skill.modes",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-22",
+      "prompt": "what is the distance between E and Bb",
+      "expectedIntentId": "skill.interval",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-23",
+      "prompt": "if I go from C to Ab what interval is that",
+      "expectedIntentId": "skill.interval",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-24",
+      "prompt": "A to D# interval",
+      "expectedIntentId": "skill.interval",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-25",
+      "prompt": "whats a perfect 5th up from G",
+      "expectedIntentId": "skill.interval",
+      "tags": ["boundary", "short"]
+    },
+    {
+      "id": "h-26",
+      "prompt": "minor 3rd of F",
+      "expectedIntentId": "skill.interval",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-27",
+      "prompt": "is a tritone an augmented 4th or diminished 5th",
+      "expectedIntentId": "skill.interval",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-28",
+      "prompt": "how many frets is a major sixth",
+      "expectedIntentId": "skill.interval",
+      "tags": ["beginner-naive"]
+    },
+    {
+      "id": "h-29",
+      "prompt": "what can i play instead of a standard C major",
+      "expectedIntentId": "skill.chordsubstitution",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-30",
+      "prompt": "tritone sub for Bb7",
+      "expectedIntentId": "skill.chordsubstitution",
+      "tags": ["jargon", "short"]
+    },
+    {
+      "id": "h-31",
+      "prompt": "this Am - Dm - E7 is boring, how can i spice up the E7?",
+      "expectedIntentId": "skill.chordsubstitution",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-32",
+      "prompt": "substitutions for Dm7",
+      "expectedIntentId": "skill.chordsubstitution",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-33",
+      "prompt": "jazz chords to replace G7",
+      "expectedIntentId": "skill.chordsubstitution",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-34",
+      "prompt": "chord subs for F#min",
+      "expectedIntentId": "skill.chordsubstitution",
+      "tags": ["typo", "short"]
+    },
+    {
+      "id": "h-35",
+      "prompt": "easier chord to play instead of F barre",
+      "expectedIntentId": "skill.chordsubstitution",
+      "tags": ["beginner-naive", "boundary"]
+    },
+    {
+      "id": "h-36",
+      "prompt": "what are the first chords i should learn on guitar",
+      "expectedIntentId": "skill.beginnerchords",
+      "tags": ["standard", "beginner-naive"]
+    },
+    {
+      "id": "h-37",
+      "prompt": "my fingers hurt from barre chords, what are some easy ones",
+      "expectedIntentId": "skill.beginnerchords",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-38",
+      "prompt": "easy open chords",
+      "expectedIntentId": "skill.beginnerchords",
+      "tags": ["fragment", "short"]
+    },
+    {
+      "id": "h-39",
+      "prompt": "begginer guitar chords",
+      "expectedIntentId": "skill.beginnerchords",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-40",
+      "prompt": "what are the cowboy chords",
+      "expectedIntentId": "skill.beginnerchords",
+      "tags": ["jargon", "beginner-naive"]
+    },
+    {
+      "id": "h-41",
+      "prompt": "first chords to learn",
+      "expectedIntentId": "skill.beginnerchords",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-42",
+      "prompt": "easy acoustic chords to strum",
+      "expectedIntentId": "skill.beginnerchords",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-43",
+      "prompt": "how do I make this C F G progression sound more sad",
+      "expectedIntentId": "skill.progressionmood",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-44",
+      "prompt": "use modal interchange to darken a I IV V",
+      "expectedIntentId": "skill.progressionmood",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-45",
+      "prompt": "i want my song to sound mysterious, its just Am and G right now",
+      "expectedIntentId": "skill.progressionmood",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-46",
+      "prompt": "make progression sound jazzy",
+      "expectedIntentId": "skill.progressionmood",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-47",
+      "prompt": "make this chord loop sound more uplifting",
+      "expectedIntentId": "skill.progressionmood",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-48",
+      "prompt": "darker chord progression",
+      "expectedIntentId": "skill.progressionmood",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-49",
+      "prompt": "how to make a prograssion sound happy",
+      "expectedIntentId": "skill.progressionmood",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-50",
+      "prompt": "can you explain the circle of fifths to me",
+      "expectedIntentId": "skill.circleoffifths",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-51",
+      "prompt": "circle of 5ths",
+      "expectedIntentId": "skill.circleoffifths",
+      "tags": ["fragment", "short"]
+    },
+    {
+      "id": "h-52",
+      "prompt": "how do I use the circle of fifths to find relative minors",
+      "expectedIntentId": "skill.circleoffifths",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-53",
+      "prompt": "cirle of fiths",
+      "expectedIntentId": "skill.circleoffifths",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-54",
+      "prompt": "what key is next to G on the circle",
+      "expectedIntentId": "skill.circleoffifths",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-55",
+      "prompt": "what is the counterclockwise movement on the circle of fourths",
+      "expectedIntentId": "skill.circleoffifths",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-56",
+      "prompt": "what's a good 30 minute daily guitar practice routine",
+      "expectedIntentId": "skill.practiceroutine",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-57",
+      "prompt": "jazz guitar practice schedule",
+      "expectedIntentId": "skill.practiceroutine",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-58",
+      "prompt": "i only have an hour a day, how should i practice scales and chords",
+      "expectedIntentId": "skill.practiceroutine",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-59",
+      "prompt": "how to practice guitar everyday",
+      "expectedIntentId": "skill.practiceroutine",
+      "tags": ["beginner-naive"]
+    },
+    {
+      "id": "h-60",
+      "prompt": "good pratic routine for technique",
+      "expectedIntentId": "skill.practiceroutine",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-61",
+      "prompt": "how to memorize the fretboard faster",
+      "expectedIntentId": "skill.practiceroutine",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-62",
+      "prompt": "daily practice plan",
+      "expectedIntentId": "skill.practiceroutine",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-63",
+      "prompt": "what scales do I need to know to play blues",
+      "expectedIntentId": "skill.genreessentials",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-64",
+      "prompt": "neo soul chords",
+      "expectedIntentId": "skill.genreessentials",
+      "tags": ["fragment", "short"]
+    },
+    {
+      "id": "h-65",
+      "prompt": "i really want to get into gypsy jazz, what are the main chords they use?",
+      "expectedIntentId": "skill.genreessentials",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-66",
+      "prompt": "bossa nova harmonic vocabulary",
+      "expectedIntentId": "skill.genreessentials",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-67",
+      "prompt": "esential scales for metal",
+      "expectedIntentId": "skill.genreessentials",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-68",
+      "prompt": "what scale for country solos",
+      "expectedIntentId": "skill.genreessentials",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-69",
+      "prompt": "jazz chords to learn",
+      "expectedIntentId": "skill.genreessentials",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-70",
+      "prompt": "what kind of questions can i ask you",
+      "expectedIntentId": "skill.whatcanyoudo",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-71",
+      "prompt": "help commands",
+      "expectedIntentId": "skill.whatcanyoudo",
+      "tags": ["fragment", "short"]
+    },
+    {
+      "id": "h-72",
+      "prompt": "are you just a guitar bot or do you know piano stuff too?",
+      "expectedIntentId": "skill.whatcanyoudo",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-73",
+      "prompt": "what do you do",
+      "expectedIntentId": "skill.whatcanyoudo",
+      "tags": ["beginner-naive"]
+    },
+    {
+      "id": "h-74",
+      "prompt": "what can u do",
+      "expectedIntentId": "skill.whatcanyoudo",
+      "tags": ["typo", "short"]
+    },
+    {
+      "id": "h-75",
+      "prompt": "features",
+      "expectedIntentId": "skill.whatcanyoudo",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-76",
+      "prompt": "transpose C Am F G to the key of D",
+      "expectedIntentId": "skill.transpose",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-77",
+      "prompt": "this song is too high for my voice, can you move it down a whole step? It's currently in G",
+      "expectedIntentId": "skill.transpose",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-78",
+      "prompt": "capo 2 transpose C G Am F",
+      "expectedIntentId": "skill.transpose",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-79",
+      "prompt": "modulate a ii V I in Bb up a minor third",
+      "expectedIntentId": "skill.transpose",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-80",
+      "prompt": "what is Dm transposed up a perfect fourth",
+      "expectedIntentId": "skill.transpose",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-81",
+      "prompt": "transpose to Eb",
+      "expectedIntentId": "skill.transpose",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-82",
+      "prompt": "tranpose this progression to A",
+      "expectedIntentId": "skill.transpose",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-83",
+      "prompt": "what notes do C major and E minor have in common",
+      "expectedIntentId": "skill.commontones",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-84",
+      "prompt": "common tones G7 and Db7",
+      "expectedIntentId": "skill.commontones",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-85",
+      "prompt": "if im switching from Am to F, are there any notes i can just hold down?",
+      "expectedIntentId": "skill.commontones",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-86",
+      "prompt": "shared pitch classes between CMaj7 and Am9",
+      "expectedIntentId": "skill.commontones",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-87",
+      "prompt": "do F major and Bb major share any notes",
+      "expectedIntentId": "skill.commontones",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-88",
+      "prompt": "notes shared by D and Bm",
+      "expectedIntentId": "skill.commontones",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-89",
+      "prompt": "common tones in c min and Eb maj",
+      "expectedIntentId": "skill.commontones",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-90",
+      "prompt": "what are the chords in the key of A minor",
+      "expectedIntentId": "skill.diatonicchords",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-91",
+      "prompt": "diatonic chords F major",
+      "expectedIntentId": "skill.diatonicchords",
+      "tags": ["fragment", "short"]
+    },
+    {
+      "id": "h-92",
+      "prompt": "if im writing a song in E, what chords am i allowed to use",
+      "expectedIntentId": "skill.diatonicchords",
+      "tags": ["conversational", "beginner-naive"]
+    },
+    {
+      "id": "h-93",
+      "prompt": "harmonize the c# harmonic minor scale",
+      "expectedIntentId": "skill.diatonicchords",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-94",
+      "prompt": "what are the 7 chords of G major",
+      "expectedIntentId": "skill.diatonicchords",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-95",
+      "prompt": "chords in Bb",
+      "expectedIntentId": "skill.diatonicchords",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-96",
+      "prompt": "what chords r in the key of d",
+      "expectedIntentId": "skill.diatonicchords",
+      "tags": ["typo"]
+    },
+    {
+      "id": "h-97",
+      "prompt": "what key is Am F C G in",
+      "expectedIntentId": "skill.keyidentification",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-98",
+      "prompt": "key of D Bm G A",
+      "expectedIntentId": "skill.keyidentification",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-99",
+      "prompt": "im playing a loop that goes Em C D, but i dont know what key it is for my solo",
+      "expectedIntentId": "skill.keyidentification",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-100",
+      "prompt": "what tonal center implies a chord sequence of vi IV I V",
+      "expectedIntentId": "skill.keyidentification",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-101",
+      "prompt": "does F G Am belong to C major?",
+      "expectedIntentId": "skill.keyidentification",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-102",
+      "prompt": "find key of progression",
+      "expectedIntentId": "skill.keyidentification",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-103",
+      "prompt": "what key is this: cmaj dmin emin fmaj",
+      "expectedIntentId": "skill.keyidentification",
+      "tags": ["typo", "lowercase"]
+    },
+    {
+      "id": "h-104",
+      "prompt": "what chord should I play after C major and F major",
+      "expectedIntentId": "skill.progressioncompletion",
+      "tags": ["standard"]
+    },
+    {
+      "id": "h-105",
+      "prompt": "next chord after Am G F",
+      "expectedIntentId": "skill.progressioncompletion",
+      "tags": ["fragment"]
+    },
+    {
+      "id": "h-106",
+      "prompt": "i have this cool riff going E to A to C#m but i dont know how to resolve it",
+      "expectedIntentId": "skill.progressioncompletion",
+      "tags": ["conversational"]
+    },
+    {
+      "id": "h-107",
+      "prompt": "good turnaround chord to lead back to the I from a vi",
+      "expectedIntentId": "skill.progressioncompletion",
+      "tags": ["jargon"]
+    },
+    {
+      "id": "h-108",
+      "prompt": "what can I put at the end of a blues progression?",
+      "expectedIntentId": "skill.progressioncompletion",
+      "tags": ["boundary"]
+    },
+    {
+      "id": "h-109",
+      "prompt": "finish this chord progression",
+      "expectedIntentId": "skill.progressioncompletion",
+      "tags": ["short"]
+    },
+    {
+      "id": "h-110",
+      "prompt": "what chord goes good after a Dm and G7",
+      "expectedIntentId": "skill.progressioncompletion",
+      "tags": ["typo", "conversational"]
+    },
+    {
+      "id": "h-111",
+      "prompt": "what's the weather like in nashville",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "non-music"]
+    },
+    {
+      "id": "h-112",
+      "prompt": "should i buy a strat or a telecaster",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "gear"]
+    },
+    {
+      "id": "h-113",
+      "prompt": "best pedal for overdrive",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "gear", "fragment"]
+    },
+    {
+      "id": "h-114",
+      "prompt": "what gauge strings does stevie ray vaughan use",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "gear"]
+    },
+    {
+      "id": "h-115",
+      "prompt": "what is 5 * 8",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "math"]
+    },
+    {
+      "id": "h-116",
+      "prompt": "how to write a python script for scraping",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "coding"]
+    },
+    {
+      "id": "h-117",
+      "prompt": "how are you doing today",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "chit-chat"]
+    },
+    {
+      "id": "h-118",
+      "prompt": "tell me a joke about drummers",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "chit-chat"]
+    },
+    {
+      "id": "h-119",
+      "prompt": "write some lyrics about a broken heart",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "songwriting"]
+    },
+    {
+      "id": "h-120",
+      "prompt": "can you give me the tabs for stairway to heaven",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "tabs", "boundary"]
+    },
+    {
+      "id": "h-121",
+      "prompt": "who invented the acoustic guitar",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "history"]
+    },
+    {
+      "id": "h-122",
+      "prompt": "who is the lead singer of led zeppelin",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "trivia"]
+    },
+    {
+      "id": "h-123",
+      "prompt": "how do i book a gig at a local bar",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "booking"]
+    },
+    {
+      "id": "h-124",
+      "prompt": "what are the best amp settings for metal",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "gear", "amps"]
+    },
+    {
+      "id": "h-125",
+      "prompt": "how do i EQ an acoustic guitar in logic pro",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "production"]
+    },
+    {
+      "id": "h-126",
+      "prompt": "how to adjust the truss rod on my fender",
+      "expectedIntentId": "__none__",
+      "tags": ["oos", "maintenance"]
+    }
+  ]
+}
+

@@ -68,7 +68,12 @@ pub struct SearchResult<S: SearchState> {
 
 /// Standard A* search.
 ///
-/// `heuristic`: h(state) -> estimated cost to goal. Must be admissible (never overestimates).
+/// `heuristic`: h(state) -> estimated cost to goal. Because closed states are
+/// never reopened, optimality requires a **consistent** (monotone) heuristic,
+/// not merely an admissible one: a merely-admissible-but-inconsistent h can
+/// return a suboptimal path.
+// @ai:assumption heuristic is consistent/monotone — UNENFORCED; closed states are never reopened (astar.rs:140), so a merely-admissible-but-inconsistent h can return a suboptimal path [U:uncertain conf:0.6 src:astar.rs:140]
+// @ai:invariant for a consistent heuristic, astar returns a minimum-cost path [T:test conf:0.85 src:test_astar_finds_shortest]
 pub fn astar<S, H>(start: S, heuristic: H) -> Option<SearchResult<S>>
 where
     S: SearchState,
@@ -81,6 +86,7 @@ where
 ///
 /// Uses f(n) = g(n) + w * h(n). With w > 1, trades optimality for speed.
 /// Solution cost is at most w times the optimal cost.
+// @ai:invariant weighted_astar(w) with an admissible h returns a path costing at most w x the optimal [P:test conf:0.7 src:test_weighted_astar_faster]
 pub fn weighted_astar<S, H>(start: S, heuristic: H, weight: f64) -> Option<SearchResult<S>>
 where
     S: SearchState,
@@ -164,6 +170,7 @@ where
 }
 
 /// Greedy Best-First Search — uses only h(n), ignoring path cost.
+// @ai:invariant greedy_best_first reaches the goal but NOT necessarily by the optimal path — it uses only h, ignoring g [T:test conf:0.85 src:test_greedy_finds_path]
 pub fn greedy_best_first<S, H>(start: S, heuristic: H) -> Option<SearchResult<S>>
 where
     S: SearchState,
@@ -237,6 +244,7 @@ where
 }
 
 /// Uniform Cost Search (Dijkstra's) — A* with h = 0.
+// @ai:invariant uniform_cost_search is A* with h=0; since h=0 is trivially consistent, it inherits A*'s optimality (Dijkstra) [P:assumed conf:0.7 src:astar.rs:244]
 pub fn uniform_cost_search<S>(start: S) -> Option<SearchResult<S>>
 where
     S: SearchState,
