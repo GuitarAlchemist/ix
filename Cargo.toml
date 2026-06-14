@@ -75,6 +75,7 @@ members = [
     "crates/ix-quality-validate",
     "crates/ix-assumption-graph",
     "crates/ix-acoustic-tune",
+    "crates/ix-duck",
 ]
 
 [workspace.package]
