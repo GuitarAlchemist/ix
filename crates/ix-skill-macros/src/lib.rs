@@ -23,6 +23,10 @@
 //! - `schema_fn` — path to a user-defined `fn() -> serde_json::Value` that
 //!   returns a hand-written JSON schema (used when auto-derived schema is
 //!   insufficient, e.g. for composite MCP handlers)
+//! - `output_schema_fn` — path to a user-defined `fn() -> serde_json::Value`
+//!   returning the skill's OUTPUT JSON schema (the field names/types it emits),
+//!   so a pipeline proposer can write correct downstream `{"from":
+//!   "stage.field"}` references. Optional; defaults to `Null` (undeclared).
 //!
 //! # Requirements on the annotated fn
 //! - No generics (compile-error if generics present).
@@ -56,6 +60,7 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut governance: Vec<String> = Vec::new();
     let mut name_override: Option<String> = None;
     let mut schema_fn_path: Option<Path> = None;
+    let mut output_schema_fn_path: Option<Path> = None;
     for m in &metas {
         if let Meta::NameValue(nv) = m {
             let key = nv
@@ -80,6 +85,10 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
                     "name" => name_override = Some(s.value()),
                     "schema_fn" => match parse_str::<Path>(&s.value()) {
                         Ok(p) => schema_fn_path = Some(p),
+                        Err(e) => return e.to_compile_error().into(),
+                    },
+                    "output_schema_fn" => match parse_str::<Path>(&s.value()) {
+                        Ok(p) => output_schema_fn_path = Some(p),
                         Err(e) => return e.to_compile_error().into(),
                     },
                     _ => {}
@@ -203,6 +212,7 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
     // --- Identifiers for generated items -------------------------------------
     let adapter_ident = format_ident!("__ix_skill_adapter_{}", fn_name);
     let schema_ident = format_ident!("__ix_skill_schema_{}", fn_name);
+    let output_schema_ident = format_ident!("__ix_skill_output_schema_{}", fn_name);
     let static_ident = format_ident!("__IX_SKILL_{}", fn_name.to_string().to_uppercase());
     let crate_lit = crate_name.clone();
     let domain_lit = domain.clone();
@@ -210,6 +220,12 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
     let resolved_schema_fn = match &schema_fn_path {
         Some(p) => quote!(#p),
         None => quote!(#schema_ident),
+    };
+    // Output schema: the user-supplied `output_schema_fn` path, or a stub that
+    // returns `Null` (= "undeclared"; catalog omits it, ref-validation skips).
+    let resolved_output_schema_fn = match &output_schema_fn_path {
+        Some(p) => quote!(#p),
+        None => quote!(#output_schema_ident),
     };
 
     let expanded = quote! {
@@ -239,6 +255,14 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
             })
         }
 
+        // Default output-schema stub: `Null` means "this skill does not declare
+        // an output schema". Overridden by `output_schema_fn = "..."`.
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #output_schema_ident() -> ::serde_json::Value {
+            ::serde_json::Value::Null
+        }
+
         // Resolve which schema function the descriptor points at. If the user
         // supplied `schema_fn = "path::to::fn"` we use that; otherwise we use
         // the auto-generated stub above.
@@ -257,6 +281,7 @@ pub fn ix_skill(attr: TokenStream, item: TokenStream) -> TokenStream {
                 outputs: &[ #output_socket ],
                 governance_tags: &[ #(#gov_lits),* ],
                 json_schema: #resolved_schema_fn,
+                output_schema: #resolved_output_schema_fn,
                 fn_ptr: #adapter_ident,
             };
     };

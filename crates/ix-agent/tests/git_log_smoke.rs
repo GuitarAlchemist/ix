@@ -60,9 +60,11 @@ fn produces_90_day_series_for_ix_agent() {
 
     let total: f64 = series.iter().sum();
     let reported = result["commits"].as_u64().unwrap() as f64;
-    // series only contains commits that fell inside the window; the
-    // reported `commits` is the raw git log count, which for a 90-day
-    // window should match exactly.
+    // `commits` is the in-window count (== sum(series)), not the raw
+    // git log count. `--since="90 days ago"` is time-of-day relative
+    // and returns a superset spanning a partial extra calendar day;
+    // the series buckets exactly 90 calendar days. The handler reports
+    // the windowed count, so these match exactly by construction.
     assert!(
         (total - reported).abs() < 0.5,
         "series sum ({total}) should match reported commits ({reported})"

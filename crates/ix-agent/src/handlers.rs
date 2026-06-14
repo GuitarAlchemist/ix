@@ -269,7 +269,17 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
 
     let data_rows = parse_f64_matrix(&params, "data")?;
     let k = parse_usize(&params, "k")?;
-    let max_iter = parse_usize(&params, "max_iter")?;
+    // `max_iter` is optional in the schema (default 100) — default ONLY when
+    // absent/null so a composed stage that omits it still runs; a present but
+    // malformed value (string/float/negative) is still rejected, not silently
+    // coerced to the default. (Codex #84 P2.)
+    let max_iter = match params.get("max_iter") {
+        None | Some(Value::Null) => 100,
+        Some(v) => v
+            .as_u64()
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'max_iter' must be a non-negative integer".to_string())?,
+    };
 
     let data = vecs_to_array2(&data_rows)?;
 
@@ -295,6 +305,161 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
         "centroids": centroids,
         "inertia": inertia,
         "k": k,
+    }))
+}
+
+// ── ix_pca ────────────────────────────────────────────────
+
+pub fn pca(params: Value) -> Result<Value, String> {
+    use ix_unsupervised::traits::DimensionReducer;
+
+    let data_rows = parse_f64_matrix(&params, "data")?;
+    if data_rows.is_empty() {
+        return Err("data must have ≥ 1 row".into());
+    }
+    let n_features = data_rows[0].len();
+    let n_components = parse_usize(&params, "n_components")?;
+    if n_components < 1 {
+        return Err("n_components must be ≥ 1".into());
+    }
+    if n_components > n_features {
+        return Err(format!(
+            "n_components {n_components} exceeds the feature count {n_features}"
+        ));
+    }
+
+    let data = vecs_to_array2(&data_rows)?;
+
+    let mut pca = ix_unsupervised::pca::PCA::new(n_components);
+    let transformed = pca.fit_transform(&data);
+
+    let transformed_rows: Vec<Vec<f64>> = (0..transformed.nrows())
+        .map(|i| transformed.row(i).to_vec())
+        .collect();
+    let explained_variance_ratio: Vec<f64> = pca
+        .explained_variance_ratio()
+        .map(|v| v.to_vec())
+        .unwrap_or_default();
+    let components: Vec<Vec<f64>> = pca
+        .components()
+        .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
+        .unwrap_or_default();
+
+    Ok(json!({
+        "transformed": transformed_rows,
+        "explained_variance_ratio": explained_variance_ratio,
+        "components": components,
+        "n_components": n_components,
+    }))
+}
+
+// ── ix_dbscan ────────────────────────────────────────────────
+
+// @ai:invariant DBSCAN labels noise as 0 and numbers clusters from 1, so n_noise counts label==0 and n_clusters counts distinct labels>0 [T:test conf:0.9 src:skills::batch1::tests::dbscan_skill_executes_and_separates_clusters_from_noise]
+pub fn dbscan(params: Value) -> Result<Value, String> {
+    use ix_unsupervised::traits::Clusterer;
+    use std::collections::BTreeSet;
+
+    let data_rows = parse_f64_matrix(&params, "data")?;
+    if data_rows.is_empty() {
+        return Err("data must have ≥ 1 row".into());
+    }
+    let eps = params.get("eps").and_then(|v| v.as_f64()).ok_or_else(|| {
+        "field 'eps' (the neighborhood radius) is required and must be a number".to_string()
+    })?;
+    if eps <= 0.0 {
+        return Err(format!("eps must be > 0, got {eps}"));
+    }
+    // min_points defaults to 4 (classic DBSCAN heuristic) only when absent/null;
+    // a present-but-malformed value is rejected, not silently coerced (cf. the
+    // kmeans max_iter fix, Codex #84 P2).
+    let min_points = match params.get("min_points") {
+        None | Some(Value::Null) => 4usize,
+        Some(v) => v
+            .as_u64()
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'min_points' must be a non-negative integer".to_string())?,
+    };
+    // Reject min_points < 1: with min_points=0 every point clears the core
+    // threshold (a point is its own neighbour), so nothing is ever noise and the
+    // skill's advertised "0 = noise" contract becomes unreachable.
+    if min_points < 1 {
+        return Err("min_points must be >= 1".to_string());
+    }
+
+    let data = vecs_to_array2(&data_rows)?;
+
+    let mut db = ix_unsupervised::dbscan::DBSCAN::new(eps, min_points);
+    let labels = db.fit_predict(&data);
+    let labels_vec: Vec<u64> = labels.iter().map(|&l| l as u64).collect();
+
+    let n_noise = labels_vec.iter().filter(|&&l| l == 0).count();
+    let distinct: BTreeSet<u64> = labels_vec.iter().copied().filter(|&l| l > 0).collect();
+    let n_clusters = distinct.len();
+
+    Ok(json!({
+        "labels": labels_vec,
+        "n_clusters": n_clusters,
+        "n_noise": n_noise,
+        "eps": eps,
+        "min_points": min_points,
+    }))
+}
+
+// ── ix_eigen ────────────────────────────────────────────────
+
+// @ai:invariant symmetric_eigen returns eigenvalues descending and column-major eigenvectors; the handler transposes so eigenvectors[k] is the unit eigenvector for eigenvalues[k] [T:test conf:0.9 src:skills::batch1::tests::eigen_skill_executes_on_symmetric_matrix]
+pub fn eigen(params: Value) -> Result<Value, String> {
+    let rows = parse_f64_matrix(&params, "matrix")?;
+    let n = rows.len();
+    if n == 0 {
+        return Err("matrix must have ≥ 1 row".into());
+    }
+    if rows.iter().any(|r| r.len() != n) {
+        return Err(format!(
+            "matrix must be square; got {n} rows but a row has a different column count"
+        ));
+    }
+    // Be self-sufficient about non-finite entries rather than relying on the JSON
+    // parse layer (serde rejects NaN/inf today, but the symmetry check below is
+    // NOT NaN-safe — (NaN-NaN).abs() > tol is false — so guard explicitly).
+    if rows.iter().flatten().any(|x| !x.is_finite()) {
+        return Err("matrix entries must be finite (no NaN or infinity)".to_string());
+    }
+    // symmetric_eigen is the cyclic-Jacobi solver: it reads the matrix AS
+    // symmetric and would silently return wrong results for an asymmetric input.
+    // Reject asymmetry rather than mislead (honest boundary). The tolerance is
+    // RELATIVE to entry magnitude so a genuinely-symmetric large-scale matrix
+    // isn't falsely rejected on last-ULP rounding.
+    const SYM_EPS: f64 = 1e-9;
+    for (i, row_i) in rows.iter().enumerate() {
+        for (j, &aij) in row_i.iter().enumerate().skip(i + 1) {
+            let aji = rows[j][i];
+            let asym = (aij - aji).abs();
+            let tol = SYM_EPS * aij.abs().max(aji.abs()).max(1.0);
+            if asym > tol {
+                return Err(format!(
+                    "matrix must be symmetric (|A[{i}][{j}] - A[{j}][{i}]| = {asym} > {tol}); this is the symmetric Jacobi solver"
+                ));
+            }
+        }
+    }
+
+    let a = vecs_to_array2(&rows)?;
+    let (values, vectors) = ix_math::eigen::symmetric_eigen(&a)
+        .map_err(|e| format!("eigendecomposition failed: {e}"))?;
+
+    let eigenvalues: Vec<f64> = values.to_vec();
+    // Transpose column-major (vectors.column(k) is the k-th eigenvector) into a
+    // row-major list so eigenvectors[k] is the unit eigenvector for eigenvalues[k].
+    let eigenvectors: Vec<Vec<f64>> = (0..n)
+        .map(|k| (0..n).map(|i| vectors[[i, k]]).collect())
+        .collect();
+
+    Ok(json!({
+        "eigenvalues": eigenvalues,
+        "eigenvectors": eigenvectors,
+        "n": n,
     }))
 }
 
@@ -1979,6 +2144,147 @@ pub fn pipeline_compile_placeholder(_params: Value) -> Result<Value, String> {
     )
 }
 
+// ── ix_nl_to_pipeline — the "thinking machine" as an MCP tool ────────────
+//
+// Agent-native parity: any action a user can take at the CLI, an agent can
+// take through MCP. This wraps the canonical `ix pipeline compile` CLI (the
+// single source of truth — same coverage gate, governance gate, lower()
+// validation, bounded repair, narration) rather than reimplementing it.
+// Direct-API proposer; NO MCP sampling (deprecated, unsupported by Claude
+// Code). Extracting the core into a shared lib so this calls it in-process is
+// the `unify` follow-up; shelling the sibling binary keeps behavior identical
+// today with no circular ix-skill<->ix-agent dependency.
+
+/// `ix_nl_to_pipeline` handler — wraps `ix pipeline compile`.
+pub fn nl_to_pipeline(params: Value) -> Result<Value, String> {
+    let sentence = params
+        .get("sentence")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "ix_nl_to_pipeline: missing 'sentence' (string)".to_string())?;
+    let run = params.get("run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let max_rounds = params
+        .get("max_rounds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3);
+
+    let ix_bin = ix_cli_path();
+    let mut cmd = std::process::Command::new(&ix_bin);
+    cmd.args([
+        "--format",
+        "json",
+        "pipeline",
+        "compile",
+        sentence,
+        "--max-rounds",
+        &max_rounds.to_string(),
+    ]);
+    if run {
+        cmd.arg("--run");
+    }
+    // The shelled `ix` resolves the constitution from cwd or IX_GOVERNANCE_DIR.
+    // The MCP host's cwd is not guaranteed to be the repo root, so locate the
+    // governance dir relative to the binary and pass it explicitly — otherwise
+    // the fail-closed gate refuses every pipeline ("constitution load failed").
+    if std::env::var_os("IX_GOVERNANCE_DIR").is_none() {
+        if let Some(gov) = find_governance_dir(&ix_bin) {
+            cmd.env("IX_GOVERNANCE_DIR", gov);
+        }
+    }
+    let out = cmd.output().map_err(|e| {
+        format!(
+            "ix_nl_to_pipeline: failed to spawn `{}`: {e}",
+            ix_bin.display()
+        )
+    })?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "ix pipeline compile produced no output (status {}): {}",
+            out.status,
+            stderr.trim()
+        ));
+    }
+    serde_json::from_str::<Value>(trimmed).map_err(|e| {
+        format!("ix_nl_to_pipeline: expected JSON from `ix pipeline compile`, got: {trimmed} ({e})")
+    })
+}
+
+/// `ix_thinker_hits` handler — wraps the read-only `ix pipeline hits` CLI verb.
+/// Agent-native parity: a user can inspect the translation ledger's paired
+/// yield/guardrail summary at the CLI, so an agent can too. No args.
+///
+/// cwd note: the ledger path (`state/thinking-machine/hits.jsonl`) is resolved
+/// relative to the child's cwd — deliberately the SAME resolution `ix pipeline
+/// compile` uses when it WRITES hits (via `ix_nl_to_pipeline`), so a read here
+/// sees exactly the rows compiles in this process tree wrote. We do not pin a
+/// cwd: that would desync the reader from the writer. When no ledger exists the
+/// verb returns a structured `{"status":"no_hits"}` (never empty stdout), so the
+/// empty-output branch below fires only on a genuine spawn/exec failure.
+pub fn thinker_hits(_params: Value) -> Result<Value, String> {
+    let ix_bin = ix_cli_path();
+    let out = std::process::Command::new(&ix_bin)
+        .args(["--format", "json", "pipeline", "hits"])
+        .output()
+        .map_err(|e| {
+            format!(
+                "ix_thinker_hits: failed to spawn `{}`: {e}",
+                ix_bin.display()
+            )
+        })?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "ix pipeline hits produced no output (status {}): {}",
+            out.status,
+            stderr.trim()
+        ));
+    }
+    serde_json::from_str::<Value>(trimmed).map_err(|e| {
+        format!("ix_thinker_hits: expected JSON from `ix pipeline hits`, got: {trimmed} ({e})")
+    })
+}
+
+/// Walk up from a starting path looking for a `governance/demerzel` directory.
+/// Lets the MCP tool find the constitution regardless of the host's cwd.
+fn find_governance_dir(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut cur = start.parent();
+    while let Some(dir) = cur {
+        let cand = dir.join("governance").join("demerzel");
+        if cand.is_dir() {
+            return Some(cand);
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+/// Locate the sibling `ix` CLI binary (same target dir as this `ix-mcp`),
+/// falling back to `ix` on `PATH`.
+fn ix_cli_path() -> std::path::PathBuf {
+    let name = if cfg!(windows) { "ix.exe" } else { "ix" };
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // Sibling: production layout (target/<profile>/ix-mcp → .../ix).
+            let sib = dir.join(name);
+            if sib.is_file() {
+                return sib;
+            }
+            // Grandparent: test layout (target/<profile>/deps/<test> → .../ix).
+            if let Some(up) = dir.parent() {
+                let g = up.join(name);
+                if g.is_file() {
+                    return g;
+                }
+            }
+        }
+    }
+    std::path::PathBuf::from(name)
+}
+
 // ── ix_git_log ─────────────────────────────────────────────
 
 /// P1.1 — shell out to `git log` and return a normalized per-path
@@ -2094,7 +2400,6 @@ pub fn git_log(params: Value) -> Result<Value, String> {
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .collect();
-    let total_commits = raw_dates.len();
 
     // Bucket the commits into a dense per-day or per-week series.
     let (n_buckets, bucket_size_days) = match bucket {
@@ -2129,13 +2434,22 @@ pub fn git_log(params: Value) -> Result<Value, String> {
         }
     }
 
+    // `commits` is the count of commits that actually fall inside the
+    // reported window, i.e. `sum(series)` — NOT the raw `git log` line
+    // count. They differ at the boundary: `--since="N days ago"` is
+    // time-of-day relative, so git returns a *superset* spanning a
+    // partial extra calendar day, while the series buckets exactly N
+    // calendar days. Reporting the in-window count keeps `commits ==
+    // sum(series)` true by construction, in every timezone.
+    let windowed_commits = series.iter().sum::<f64>().round() as u64;
+
     Ok(json!({
         "path": path,
         "since_days": since_days,
         "bucket": bucket,
         "window_days": since_days,
         "n_buckets": n_buckets,
-        "commits": total_commits,
+        "commits": windowed_commits,
         "series": series,
         "dates": dates,
     }))

@@ -89,6 +89,7 @@ pub struct HexObservation {
     /// Hexavalent value the source is asserting.
     pub variant: Hexavalent,
     /// Confidence weight in `(0.0, 1.0]`.
+    // @ai:assumption weight stays in the range 0-exclusive..1-inclusive; unenforced at construction and in merge, so a negative or over-unit weight silently skews the derived distribution [U:uncertain conf:0.5 src:no-validation]
     pub weight: f64,
     /// Optional audit-trail evidence string. Not used by the merge.
     pub evidence: Option<String>,
@@ -114,6 +115,7 @@ impl HexObservation {
     /// split correctly: the aspect is the text after the LAST `::`,
     /// not the first. See `demerzel/logic/harness-cargo.md` §"Worked
     /// example" for the motivating case.
+    // @ai:invariant action_and_aspect splits on the LAST `::`, so Rust test names with module paths (a::b::c::aspect) parse with aspect = the final segment [T:test conf:0.9 src:action_and_aspect_handles_deep_module_paths_in_test_names]
     pub fn action_and_aspect(&self) -> (&str, &str) {
         match self.claim_key.rfind("::") {
             Some(idx) => (&self.claim_key[..idx], &self.claim_key[idx + 2..]),
@@ -159,6 +161,7 @@ pub struct MergedState {
 ///
 /// The multiplier is applied to `min(weight_a, weight_b)` to
 /// compute the synthesized observation's weight.
+// @ai:invariant belnap_weight is symmetric — belnap_weight(a,b) == belnap_weight(b,a) [T:test conf:0.95 src:belnap_table_matches_spec]
 pub fn belnap_weight(a: Hexavalent, b: Hexavalent) -> Option<f64> {
     use Hexavalent::*;
     // Normalize order — the table is symmetric across the diagonal.
@@ -231,6 +234,9 @@ fn synthesis_diagnosis_id(
 ///
 /// `current_round` and `staleness_k` may be `None` to skip the
 /// staleness step (useful in tests and for full-history merges).
+// @ai:invariant merge is commutative — merge(A,B) == merge(B,A) modulo ordering [T:test conf:0.95 src:proof_commutativity]
+// @ai:invariant merge is associative — content-derived synthesis ids (not a running counter) are what let re-merges collapse [T:test conf:0.95 src:proof_associativity]
+// @ai:invariant merge is idempotent — merge(A union A) == merge(A) [T:test conf:0.95 src:proof_idempotence]
 pub fn merge(
     observations: &[HexObservation],
     current_round: Option<u32>,
@@ -276,6 +282,7 @@ pub fn merge(
         }
         for (i, a) in obs_list.iter().enumerate() {
             for b in obs_list.iter().skip(i + 1) {
+                // @ai:invariant contradictions synthesize only ACROSS sources — same-source self-disagreement is skipped; this is the independence guard ix-assumption-graph's fusion relies on [T:test conf:0.9 src:same_source_cross_aspect_is_not_meta_conflict]
                 if a.source == b.source {
                     // Same source disagreeing with itself is not a
                     // cross-source contradiction — skip.
