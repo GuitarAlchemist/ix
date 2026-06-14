@@ -7,6 +7,132 @@ use thiserror::Error;
 
 use crate::invariant::{Invariant, InvariantStatus};
 
+/// Canonical dashboard envelope read by the GA dev dashboard
+/// (`/test#dev/summary`) and any other consumer of structural-quality
+/// snapshots. The envelope wraps the underlying [`Firings`] data
+/// additively — the existing `exemplars` and `fired` fields are flattened
+/// at the top level so legacy readers still parse correctly.
+///
+/// See `ga/state/quality/ga-harness/last.json` for the reference shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FiringsEnvelope {
+    /// Logical domain — always `"invariants"` for this producer.
+    pub domain: String,
+    /// RFC3339 UTC timestamp of when the snapshot was emitted.
+    pub emitted_at: String,
+    /// Headline metric name — always `"invariant_pass_ratio"`.
+    pub metric_name: String,
+    /// Headline metric value in `[0.0, 1.0]`: fraction of invariants
+    /// that fired on at least one exemplar (i.e. non-orphan invariants).
+    pub metric_value: f64,
+    /// `"ok"` | `"warn"` | `"error"`. See [`OracleStatus`] mapping.
+    pub oracle_status: String,
+    /// Short human-readable summary.
+    pub summary: String,
+    /// Failing-invariant details, capped at 50 entries. Empty when all
+    /// invariants fired at least once.
+    pub problems: Vec<Problem>,
+    /// Underlying firings data — preserved verbatim for the existing
+    /// `ix-invariant-coverage` consumer that ingests `{exemplars, fired}`.
+    #[serde(flatten)]
+    pub firings: Firings,
+}
+
+/// One failing invariant surfaced in the envelope's `problems` array.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Problem {
+    /// Stable identifier (e.g. `"invariant-18"`).
+    pub name: String,
+    /// Human-readable explanation of why the invariant is failing.
+    pub message: String,
+}
+
+impl FiringsEnvelope {
+    /// Wrap a [`Firings`] payload with the canonical envelope.
+    ///
+    /// Status mapping:
+    /// - all invariants fired on ≥1 exemplar (no orphans) → `"ok"`
+    /// - any invariant has zero firings (orphaned) → `"warn"`
+    /// - producer-detected catastrophe (currently unused — callers map
+    ///   their own error paths to `"error"` via [`FiringsEnvelope::error`])
+    ///   → `"error"`
+    pub fn wrap(firings: Firings, emitted_at: String) -> Self {
+        let total = firings.fired.len() as f64;
+        let (passed, problems) = if total == 0.0 {
+            (0.0, Vec::new())
+        } else {
+            let mut problems: Vec<Problem> = Vec::new();
+            let mut passed = 0u64;
+            for (id, hits) in &firings.fired {
+                if hits.is_empty() {
+                    if problems.len() < 50 {
+                        problems.push(Problem {
+                            name: format!("invariant-{id}"),
+                            message: format!(
+                                "invariant {id} did not fire on any exemplar (orphan)"
+                            ),
+                        });
+                    }
+                } else {
+                    passed += 1;
+                }
+            }
+            (passed as f64, problems)
+        };
+
+        let metric_value = if total == 0.0 { 0.0 } else { passed / total };
+        let (oracle_status, summary) = if total == 0.0 {
+            ("warn".to_string(), "no invariants evaluated".to_string())
+        } else if problems.is_empty() {
+            (
+                "ok".to_string(),
+                format!("{} of {} invariants passing", passed as u64, total as u64),
+            )
+        } else {
+            (
+                "warn".to_string(),
+                format!(
+                    "{} of {} invariants passing ({} orphaned)",
+                    passed as u64,
+                    total as u64,
+                    problems.len()
+                ),
+            )
+        };
+
+        Self {
+            domain: "invariants".to_string(),
+            emitted_at,
+            metric_name: "invariant_pass_ratio".to_string(),
+            metric_value,
+            oracle_status,
+            summary,
+            problems,
+            firings,
+        }
+    }
+
+    /// Build a catastrophic-error envelope when the producer can't run.
+    /// `metric_value` is set to `0.0` and the `firings` field is the
+    /// empty default so the JSON shape is stable for downstream readers.
+    pub fn error(message: impl Into<String>, emitted_at: String) -> Self {
+        let msg = message.into();
+        Self {
+            domain: "invariants".to_string(),
+            emitted_at,
+            metric_name: "invariant_pass_ratio".to_string(),
+            metric_value: 0.0,
+            oracle_status: "error".to_string(),
+            summary: msg.clone(),
+            problems: vec![Problem {
+                name: "producer-error".to_string(),
+                message: msg,
+            }],
+            firings: Firings::default(),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("io: {0}")]
@@ -350,5 +476,121 @@ mod tests {
         let firings = Firings::default();
         let m = CoverageMatrix::new(invs, firings);
         assert_eq!(m.report().verdict, OptimalityVerdict::NoEvidence);
+    }
+
+    #[test]
+    fn envelope_wrap_all_passing_is_ok() {
+        let mut fired = BTreeMap::new();
+        fired.insert(1, ["a"].into_iter().map(String::from).collect());
+        fired.insert(2, ["a", "b"].into_iter().map(String::from).collect());
+        let firings = Firings {
+            exemplars: vec![ex("a"), ex("b")],
+            fired,
+        };
+        let env = FiringsEnvelope::wrap(firings, "2026-05-24T08:00:00Z".to_string());
+        assert_eq!(env.domain, "invariants");
+        assert_eq!(env.metric_name, "invariant_pass_ratio");
+        assert_eq!(env.metric_value, 1.0);
+        assert_eq!(env.oracle_status, "ok");
+        assert!(env.problems.is_empty());
+        assert_eq!(env.summary, "2 of 2 invariants passing");
+        // Underlying firings preserved.
+        assert_eq!(env.firings.exemplars.len(), 2);
+        assert_eq!(env.firings.fired.len(), 2);
+    }
+
+    #[test]
+    fn envelope_wrap_orphan_invariant_is_warn() {
+        let mut fired = BTreeMap::new();
+        fired.insert(1, ["a"].into_iter().map(String::from).collect());
+        fired.insert(2, BTreeSet::new()); // orphan
+        let firings = Firings {
+            exemplars: vec![ex("a")],
+            fired,
+        };
+        let env = FiringsEnvelope::wrap(firings, "2026-05-24T08:00:00Z".to_string());
+        assert_eq!(env.oracle_status, "warn");
+        assert_eq!(env.metric_value, 0.5);
+        assert_eq!(env.problems.len(), 1);
+        assert_eq!(env.problems[0].name, "invariant-2");
+    }
+
+    #[test]
+    fn envelope_serializes_envelope_fields_at_root_with_firings_flattened() {
+        let mut fired = BTreeMap::new();
+        fired.insert(7, ["x"].into_iter().map(String::from).collect());
+        let firings = Firings {
+            exemplars: vec![ex("x")],
+            fired,
+        };
+        let env = FiringsEnvelope::wrap(firings, "2026-05-24T08:00:00Z".to_string());
+        let json = serde_json::to_value(&env).expect("serializes");
+        let obj = json.as_object().expect("object");
+        // Envelope fields at root.
+        assert_eq!(
+            obj.get("domain").and_then(|v| v.as_str()),
+            Some("invariants")
+        );
+        assert_eq!(
+            obj.get("metric_name").and_then(|v| v.as_str()),
+            Some("invariant_pass_ratio")
+        );
+        assert!(obj.contains_key("metric_value"));
+        assert_eq!(
+            obj.get("oracle_status").and_then(|v| v.as_str()),
+            Some("ok")
+        );
+        assert!(obj.contains_key("summary"));
+        assert!(obj.contains_key("problems"));
+        assert!(obj.contains_key("emitted_at"));
+        // Original firings fields flattened to root — back-compat with legacy
+        // consumers that read `{exemplars, fired}` directly.
+        assert!(obj.contains_key("exemplars"));
+        assert!(obj.contains_key("fired"));
+    }
+
+    #[test]
+    fn envelope_round_trip_preserves_firings_for_legacy_consumer() {
+        let mut fired = BTreeMap::new();
+        fired.insert(3, ["a", "b"].into_iter().map(String::from).collect());
+        let firings = Firings {
+            exemplars: vec![ex("a"), ex("b")],
+            fired,
+        };
+        let env = FiringsEnvelope::wrap(firings, "2026-05-24T08:00:00Z".to_string());
+        let json = serde_json::to_string(&env).expect("ser");
+        // Legacy consumer (ix-invariant-coverage) deserializes into `Firings`,
+        // ignoring the additional envelope fields.
+        let parsed: Firings = serde_json::from_str(&json).expect("de");
+        assert_eq!(parsed.exemplars.len(), 2);
+        assert_eq!(parsed.fired.len(), 1);
+        assert_eq!(parsed.fired[&3].len(), 2);
+    }
+
+    #[test]
+    fn envelope_problem_list_caps_at_50() {
+        let mut fired = BTreeMap::new();
+        for i in 0..60u32 {
+            fired.insert(i, BTreeSet::new()); // every one is orphaned
+        }
+        let firings = Firings {
+            exemplars: vec![ex("a")],
+            fired,
+        };
+        let env = FiringsEnvelope::wrap(firings, "2026-05-24T08:00:00Z".to_string());
+        assert_eq!(env.problems.len(), 50);
+        assert_eq!(env.oracle_status, "warn");
+    }
+
+    #[test]
+    fn envelope_error_constructor_yields_error_status() {
+        let env = FiringsEnvelope::error(
+            "producer crashed".to_string(),
+            "2026-05-24T08:00:00Z".to_string(),
+        );
+        assert_eq!(env.oracle_status, "error");
+        assert_eq!(env.metric_value, 0.0);
+        assert_eq!(env.problems.len(), 1);
+        assert_eq!(env.problems[0].name, "producer-error");
     }
 }

@@ -18,7 +18,9 @@ pub mod types;
 pub mod walker;
 
 pub use parser::{parse_line, ParsedMarker};
-pub use types::{Annotation, AnnotationKind, Certainty, Source, Location, TruthValue, SCHEMA_VERSION};
+pub use types::{
+    Annotation, AnnotationKind, Certainty, Location, Source, TruthValue, SCHEMA_VERSION,
+};
 pub use walker::extract;
 
 use std::path::Path;

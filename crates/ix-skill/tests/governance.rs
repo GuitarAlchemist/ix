@@ -214,8 +214,64 @@ stages:
     let lock_path = dir.join("ix.lock");
     assert!(lock_path.is_file(), "ix.lock was not written");
     let lock_text = fs::read_to_string(&lock_path).unwrap();
-    assert!(lock_text.contains("schema: ix-lock/v1"));
+    assert!(lock_text.contains("schema: ix-lock/v2"));
     assert!(lock_text.contains("skill: stats"));
     assert!(lock_text.contains("args_hash: fnv1a64:"));
+    // ix-lock/v2 provenance fields (chain-of-evidence v1): the run carries a
+    // run id and the stage output is content-hashed.
+    assert!(lock_text.contains("run_id: run:"));
+    assert!(lock_text.contains("output_hash: sha256:"));
+    fs::remove_dir_all(&dir).ok();
+}
+
+// ---- run-time data binding (--param) ------------------------------------
+
+const PARAM_SPEC: &str = r#"version: "1"
+params:
+  nums: null
+stages:
+  s:
+    skill: stats
+    args:
+      data: { param: nums }
+"#;
+
+#[test]
+fn pipeline_run_binds_param_at_runtime() {
+    let dir = tempdir("param_bind");
+    fs::write(dir.join("ix.yaml"), PARAM_SPEC).unwrap();
+    // The spec leaves `data` as a {param: nums} placeholder; --param supplies it.
+    ix_in(&dir)
+        .args([
+            "--format",
+            "json",
+            "pipeline",
+            "run",
+            "--param",
+            "nums=[1.0, 2.0, 3.0]",
+        ])
+        .assert()
+        .success();
+    // The lock records the stage actually ran with bound (not placeholder) data.
+    let lock_text = fs::read_to_string(dir.join("ix.lock")).unwrap();
+    assert!(lock_text.contains("skill: stats"));
+    assert!(lock_text.contains("output_hash: sha256:"));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn pipeline_run_unbound_param_fails_closed() {
+    let dir = tempdir("param_missing");
+    fs::write(dir.join("ix.yaml"), PARAM_SPEC).unwrap();
+    // No --param: the placeholder is unbound, so the run must fail BEFORE any
+    // stage executes, with a clear message — not pass a {param} blob to `stats`.
+    let assert = ix_in(&dir).args(["pipeline", "run"]).assert().failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("missing required param 'nums'"),
+        "expected a missing-param error, got: {stderr}"
+    );
+    // And it must NOT have produced a lock (nothing executed).
+    assert!(!dir.join("ix.lock").exists(), "no ix.lock on a failed bind");
     fs::remove_dir_all(&dir).ok();
 }

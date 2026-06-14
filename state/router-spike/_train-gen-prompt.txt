@@ -1,0 +1,44 @@
+Generate a SYNTHETIC TRAINING SET for a music-theory chatbot intent classifier. Output realistic, DIVERSE queries a real guitarist would type, each labeled with exactly one intent. This data trains a classifier, so maximize surface-form diversity WITHIN each intent (vary phrasing, length, register: short fragments, lowercase, conversational, beginner-naive, jargon-heavy, occasional typos, different keys/chords/notes).
+
+The 16 in-scope intents (generate 30 queries EACH = 480 total):
+
+1. skill.chordinfo — notes/intervals/quality of a NAMED chord (e.g. spelling Cmaj7, what's in a Dm7b5)
+2. skill.scaleinfo — notes of a NAMED scale (major, harmonic/melodic minor, pentatonic, modes-as-scales, exotic)
+3. skill.modes — modes of the major scale (Dorian/Phrygian/Lydian/Mixolydian/Aeolian/Locrian): listing/describing/comparing a mode
+4. skill.interval — the interval between two notes, or naming/identifying an interval
+5. skill.chordsubstitution — substitute chords for a given chord (tritone sub, relative, secondary dominant)
+6. skill.beginnerchords — easy/first chords for beginners; open chords
+7. skill.progressionmood — TRANSFORM a progression to sound darker/brighter/sadder/jazzier (modal interchange, borrowed chords). NOT describing — changing mood.
+8. skill.circleoffifths — the circle of fifths/fourths; key relationships around it
+9. skill.practiceroutine — practice routine / practice plan / how to practice
+10. skill.genreessentials — essential chords or scales FOR A GENRE (blues, jazz, metal, country, funk, bossa...)
+11. skill.whatcanyoudo — meta: what the assistant can do / its capabilities / help
+12. skill.transpose — transpose a chord or progression by an interval / to another key / capo math
+13. skill.commontones — common tones SHARED BETWEEN two chords
+14. skill.diatonicchords — the diatonic chords IN A KEY (e.g. chords in the key of C, harmonize a scale)
+15. skill.keyidentification — identify the KEY of a given chord progression
+16. skill.progressioncompletion — suggest the NEXT chord to continue/finish/resolve a progression
+
+CRITICAL — include HARD NEGATIVES: within each intent's 30, include several near-boundary phrasings that a weak router would misroute to a NEIGHBORING intent. Key confusable pairs to deliberately stress:
+- chordinfo vs scaleinfo (bare "notes in X" where X is chord-or-scale ambiguous — DISAMBIGUATE clearly in the prompt so the label is unambiguous)
+- modes vs scaleinfo
+- transpose vs progressioncompletion vs keyidentification
+- diatonicchords vs keyidentification
+- chordsubstitution vs progressioncompletion vs beginnerchords
+- commontones vs interval
+Make the gold label UNAMBIGUOUS for each generated query — if a query is genuinely ambiguous, rephrase it so one intent clearly wins.
+
+Also generate 40 OUT-OF-SCOPE queries (non-music-theory: gear/buying, amp/pedal settings, tabs requests, recording/DAW, history/trivia, chit-chat, weather, math, coding, booking gigs, guitar maintenance) — these calibrate the decline threshold.
+
+OUTPUT: a single JSON object, nothing else (no prose, no markdown fences). Exact schema:
+{
+  "version": "train-0b-1",
+  "authoredBy": "codex-gpt5.5",
+  "inScope": [
+    { "intentId": "skill.chordinfo", "prompts": ["query 1", "query 2", "... 30 total"] },
+    { "intentId": "skill.scaleinfo", "prompts": [...] }
+    // ... all 16 intents
+  ],
+  "outOfScope": ["oos query 1", "... 40 total"]
+}
+Output ONLY the JSON. Ensure it is valid and complete (all 16 intents, 30 each, 40 OOS).
