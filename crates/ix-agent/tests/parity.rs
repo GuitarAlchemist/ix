@@ -19,6 +19,7 @@ use std::collections::HashSet;
 /// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
+    "ix_annotations_scan",
     "ix_assumption_belief_at",
     "ix_assumption_claims",
     "ix_assumption_drift",
@@ -185,9 +186,11 @@ fn parity_expected_count() {
     // + ix_git_churn (2026-05-24, per-file churn source adapter, P1.3) = 91.
     // + ix_quality_gate_history (2026-05-24, quality-gate-ledger query tool,
     //   agent-native parity with the sentrux_gate_writer binary) = 92.
+    // + ix_annotations_scan (2026-05-24, @ai annotation extract+reconcile scan,
+    //   agent-native parity with the ix-ai-annotations reconcile binary) = 93.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 92);
+    assert_eq!(EXPECTED.len(), 93);
 }
 
 #[test]

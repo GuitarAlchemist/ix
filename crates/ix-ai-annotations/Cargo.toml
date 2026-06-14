@@ -28,3 +28,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "ix-ai-annotations"
 path = "src/bin/extract.rs"
+
+[[bin]]
+name = "ix-ai-annotations-reconcile"
+path = "src/bin/reconcile.rs"

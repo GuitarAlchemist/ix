@@ -14,12 +14,15 @@
 //! NOT supported in v1.
 
 pub mod parser;
+pub mod reconciler;
 pub mod types;
 pub mod walker;
 
 pub use parser::{parse_line, ParsedMarker};
+pub use reconciler::{reconcile, ReconcilerConfig, ReconciliationReport};
 pub use types::{
-    Annotation, AnnotationKind, Certainty, Location, Source, TruthValue, SCHEMA_VERSION,
+    Annotation, AnnotationKind, Certainty, Location, Reconciliation, Source, TruthValue,
+    SCHEMA_VERSION,
 };
 pub use walker::extract;
 

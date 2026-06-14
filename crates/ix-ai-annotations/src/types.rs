@@ -13,7 +13,7 @@ pub const SCHEMA_VERSION: u32 = 2;
 
 /// Hexavalent truth value, aligned with
 /// `governance/demerzel/schemas/hexavalent-distribution.schema.json`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TruthValue {
     /// True — verified with evidence.
     T,
@@ -86,7 +86,7 @@ impl Certainty {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AnnotationKind {
     Invariant,
