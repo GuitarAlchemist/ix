@@ -13,7 +13,7 @@ ix's **real** on-disk catalogs. Built with `/teach`; committed here as instituti
 ## Lessons
 1. [SQL over files — and why ix leans on DuckDB](./lessons/01-sql-over-files.md)
 2. [A folder of daily files → one time-series table (`glob` + `filename`)](./lessons/02-glob-filename-timeseries.md)
-3. _next:_ `union_by_name` + `CREATE TABLE AS` — materializing the portable `quality.duckdb`
+3. [Materializing the portable `quality.duckdb` (`union_by_name` + `CREATE TABLE AS`)](./lessons/03-materialize-quality-duckdb.md) — **capstone**
 
 ## Play along — a DuckDB session in a separate terminal
 
@@ -35,4 +35,5 @@ SELECT day, round(pass_pct,1) FROM chatbot_qa ORDER BY day;
 `state/quality/analytics/` (gitignored binary; rebuild with its `build-views.sql`).
 
 ## Progress
-- 2026-06-14: Lessons 1–2 delivered. Next: Lesson 3 (materialization / `quality.duckdb`).
+- 2026-06-14: Lessons 1–3 delivered (capstone reached — can read any `build-views.sql`).
+  Possible extensions: a Rust-lens lesson (`ix-duck` UDFs), or the cross-repo SAE-parity deep-dive.
