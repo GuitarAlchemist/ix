@@ -26,10 +26,16 @@ pub enum TrendDirection {
 }
 
 /// One observation in a time-indexed series.
+///
+/// `degraded` is `true` when the point was produced by a carry-forward from a
+/// last-known-good value (the upstream snapshot reported `degraded:true` and
+/// the original measurement was unavailable). Aggregators count these
+/// separately so reports can flag synthetic continuity.
 #[derive(Debug, Clone)]
 pub struct Point {
     pub date: NaiveDate,
     pub value: f64,
+    pub degraded: bool,
 }
 
 /// A named, dated time series of scalar measurements, with semantic direction
@@ -56,8 +62,25 @@ impl MetricSeries {
         }
     }
 
+    /// Append a real (non-degraded) observation.
     pub fn push(&mut self, date: NaiveDate, value: f64) {
-        self.points.push(Point { date, value });
+        self.points.push(Point {
+            date,
+            value,
+            degraded: false,
+        });
+    }
+
+    /// Append a carry-forward observation from a degraded snapshot.
+    ///
+    /// The value is included in rollup statistics but counted in `n_degraded`
+    /// so reports can surface how much of a trend is synthetic.
+    pub fn push_degraded(&mut self, date: NaiveDate, value: f64) {
+        self.points.push(Point {
+            date,
+            value,
+            degraded: true,
+        });
     }
 
     pub fn with(mut self, date: NaiveDate, value: Option<f64>) -> Self {
@@ -152,7 +175,13 @@ pub struct MetricTrend {
     pub sparkline: String,
     pub regression: Option<RegressionFlag>,
     pub drift: Option<DriftFlag>,
+    /// Total points in the series (real + degraded carry-forwards).
     pub n_points: usize,
+    /// Subset of `n_points` that came from degraded snapshots via
+    /// last-known-good carry-forward. When this exceeds the real count
+    /// (`n_points - n_degraded`), the trend is mostly synthetic.
+    #[serde(default)]
+    pub n_degraded: usize,
 }
 
 /// Indicator that a metric has moved in the "wrong" direction by more than the
@@ -216,6 +245,8 @@ pub fn compute_trend(series: &MetricSeries, regression_threshold_pct: f64) -> Me
     );
     let drift = drift_flag(series);
 
+    let n_degraded = series.points.iter().filter(|p| p.degraded).count();
+
     MetricTrend {
         name: series.name.clone(),
         unit: series.unit.clone(),
@@ -231,6 +262,7 @@ pub fn compute_trend(series: &MetricSeries, regression_threshold_pct: f64) -> Me
         regression,
         drift,
         n_points: series.points.len(),
+        n_degraded,
     }
 }
 
