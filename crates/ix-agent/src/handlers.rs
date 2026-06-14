@@ -2400,7 +2400,6 @@ pub fn git_log(params: Value) -> Result<Value, String> {
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .collect();
-    let total_commits = raw_dates.len();
 
     // Bucket the commits into a dense per-day or per-week series.
     let (n_buckets, bucket_size_days) = match bucket {
@@ -2435,13 +2434,22 @@ pub fn git_log(params: Value) -> Result<Value, String> {
         }
     }
 
+    // `commits` is the count of commits that actually fall inside the
+    // reported window, i.e. `sum(series)` — NOT the raw `git log` line
+    // count. They differ at the boundary: `--since="N days ago"` is
+    // time-of-day relative, so git returns a *superset* spanning a
+    // partial extra calendar day, while the series buckets exactly N
+    // calendar days. Reporting the in-window count keeps `commits ==
+    // sum(series)` true by construction, in every timezone.
+    let windowed_commits = series.iter().sum::<f64>().round() as u64;
+
     Ok(json!({
         "path": path,
         "since_days": since_days,
         "bucket": bucket,
         "window_days": since_days,
         "n_buckets": n_buckets,
-        "commits": total_commits,
+        "commits": windowed_commits,
         "series": series,
         "dates": dates,
     }))
