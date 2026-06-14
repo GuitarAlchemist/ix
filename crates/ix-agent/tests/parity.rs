@@ -74,6 +74,8 @@ const EXPECTED: &[&str] = &[
     "ix_fir_filter",
     "ix_spectrogram",
     "ix_autocorrelation",
+    "ix_analyze_reference",
+    "ix_spectral_distance",
     "ix_kmeans",
     "ix_linear_regression",
     "ix_pca",
@@ -176,10 +178,13 @@ fn parity_expected_count() {
     // + catalog-gap-audit batch (2026-06-07): ix_svd, ix_gmm, ix_wavelet_denoise,
     //   ix_fir_filter, ix_spectrogram, ix_autocorrelation (wrapping existing
     //   ix-math/ix-unsupervised/ix-signal algorithms) = 88.
-    // + ix_git_churn (2026-05-24, per-file churn source adapter, P1.3) = 89.
+    // + ix_analyze_reference + ix_spectral_distance (2026-06-07, ix-acoustic-tune
+    //   analysis skills — reference descriptor + decomposed spectral distance,
+    //   pipeline/NL/MCP-callable) = 90.
+    // + ix_git_churn (2026-05-24, per-file churn source adapter, P1.3) = 91.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 89);
+    assert_eq!(EXPECTED.len(), 91);
 }
 
 #[test]
@@ -315,10 +320,12 @@ fn parity_all_43_registry_backed() {
     // + feature_importances (2026-06-07, dogfood remaining-gap fix) = 57.
     // + svd/gmm/wavelet_denoise/fir_filter/spectrogram/autocorrelation
     //   (2026-06-07, catalog-gap-audit batch — wrapping existing algorithms) = 63.
+    // + analyze_reference + spectral_distance (2026-06-07, ix-acoustic-tune
+    //   analysis skills) = 65.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 63,
-        "expected 63 registry skills, got {registry_count}"
+        registry_count, 65,
+        "expected 65 registry skills, got {registry_count}"
     );
 }
 

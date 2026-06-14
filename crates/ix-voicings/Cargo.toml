@@ -30,3 +30,7 @@ rand_chacha = { workspace = true }
 [[bin]]
 name = "ix-voicings"
 path = "src/main.rs"
+
+[[bin]]
+name = "fit-splats"
+path = "src/bin/fit_splats.rs"

@@ -357,8 +357,15 @@ fn chatbot_metrics(
     );
 
     for snap in series {
-        if let Some(p) = snap.data.pass_pct {
-            overall.push(snap.date, p);
+        // Overall pass rate: honor degraded snapshots via last-known-good
+        // carry-forward. Without this, the trend tab silently shows n=0 while
+        // the dashboard tile renders DEGRADED — two lies about the same JSON.
+        if let Some((value, is_degraded)) = snap.data.effective_pass_pct() {
+            if is_degraded {
+                overall.push_degraded(snap.date, value);
+            } else {
+                overall.push(snap.date, value);
+            }
         }
         if let Some(ms) = snap.data.avg_response_ms {
             latency.push(snap.date, ms as f64);
@@ -540,23 +547,35 @@ fn render_section(out: &mut String, title: &str, trends: &[MetricTrend], snapsho
     writeln!(out).unwrap();
     writeln!(
         out,
-        "| Metric | Latest | Δ vs prev | Δ vs 7d | Drift | 30d avg | n | Sparkline |"
+        "| Metric | Latest | Δ vs prev | Δ vs 7d | Drift | 30d avg | n | n_degraded | Sparkline |"
     )
     .unwrap();
-    writeln!(out, "|---|---|---|---|---|---|---|---|").unwrap();
+    writeln!(out, "|---|---|---|---|---|---|---|---|---|").unwrap();
 
     for t in trends {
+        // Surface synthetic-continuity warning when carry-forwards outnumber
+        // real measurements. The ⚠️ prefix in the metric name is a single
+        // glance signal that the row's trend numbers came mostly from
+        // last-known-good values, not fresh data.
+        let n_real = t.n_points.saturating_sub(t.n_degraded);
+        let synthetic_hint = if t.n_degraded > 0 && t.n_degraded > n_real {
+            " ⚠️"
+        } else {
+            ""
+        };
         writeln!(
             out,
-            "| {} {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} {}{} | {} | {} | {} | {} | {} | {} | {} | {} |",
             t.marker(),
             t.name,
+            synthetic_hint,
             fmt_value(t.latest, &t.unit),
             fmt_delta(t.delta_vs_previous_pct),
             fmt_delta(t.delta_vs_7d_pct),
             fmt_drift(t),
             fmt_value(t.avg_30d, &t.unit),
             t.n_points,
+            t.n_degraded,
             if t.sparkline.is_empty() {
                 "—".into()
             } else {
@@ -747,6 +766,138 @@ mod tests {
         assert!(summary
             .all_trends()
             .any(|trend| trend.regression.is_some() || trend.drift.is_some()));
+    }
+
+    // ------------------------------------------------------------------
+    // Degraded-snapshot rollup tests — ensures the trend report stops
+    // silently dropping `degraded:true` chatbot snapshots.
+    // ------------------------------------------------------------------
+
+    use crate::snapshot::ChatbotQaSnapshot;
+
+    fn cb_snap(date: &str, pass_pct: Option<f64>) -> DatedSnapshot<ChatbotQaSnapshot> {
+        DatedSnapshot {
+            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            path: format!("/tmp/{date}.json").into(),
+            data: ChatbotQaSnapshot {
+                pass_pct,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn cb_degraded(date: &str, last_known_good: Option<f64>) -> DatedSnapshot<ChatbotQaSnapshot> {
+        DatedSnapshot {
+            date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            path: format!("/tmp/{date}.json").into(),
+            data: ChatbotQaSnapshot {
+                pass_pct: None,
+                degraded: Some(true),
+                last_known_good_pass_pct: last_known_good,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn find_chatbot_overall(set: &SnapshotSet) -> crate::trend::MetricTrend {
+        let summary = summarize(set, 5.0);
+        summary
+            .chatbot_trends
+            .iter()
+            .find(|t| t.name == "Chatbot · overall pass rate")
+            .cloned()
+            .expect("overall pass-rate trend missing")
+    }
+
+    #[test]
+    fn all_real_day_counts_each_snapshot_with_no_degraded() {
+        // Scenario 1: 3 non-degraded snapshots. n=3, n_degraded=0,
+        // avg uses all three values.
+        let mut set = SnapshotSet::default();
+        set.chatbot.push(cb_snap("2026-05-20", Some(0.90)));
+        set.chatbot.push(cb_snap("2026-05-21", Some(0.85)));
+        set.chatbot.push(cb_snap("2026-05-22", Some(0.95)));
+
+        let trend = find_chatbot_overall(&set);
+        assert_eq!(trend.n_points, 3);
+        assert_eq!(trend.n_degraded, 0);
+        // 7-day rolling average over all three points.
+        let avg = trend.avg_7d.unwrap();
+        assert!((avg - 0.90).abs() < 1e-9, "avg_7d={avg}");
+    }
+
+    #[test]
+    fn all_degraded_day_carries_last_known_good_and_warns() {
+        // Scenario 2: 3 degraded snapshots, all carry 0.80. n=3, n_degraded=3,
+        // avg=0.80, ⚠️ hint appears in the rendered output.
+        let mut set = SnapshotSet::default();
+        set.chatbot.push(cb_degraded("2026-05-20", Some(0.80)));
+        set.chatbot.push(cb_degraded("2026-05-21", Some(0.80)));
+        set.chatbot.push(cb_degraded("2026-05-22", Some(0.80)));
+
+        let trend = find_chatbot_overall(&set);
+        assert_eq!(trend.n_points, 3);
+        assert_eq!(trend.n_degraded, 3);
+        assert!((trend.avg_7d.unwrap() - 0.80).abs() < 1e-9);
+
+        let md = render(&set, Path::new("/tmp"), 5.0);
+        assert!(
+            md.contains("⚠️"),
+            "expected synthetic-trend warning in rendered output:\n{md}"
+        );
+        assert!(md.contains("n_degraded"));
+    }
+
+    #[test]
+    fn mixed_day_mixes_real_and_carried_in_rollup() {
+        // Scenario 3: 2 real (0.9, 0.85) + 1 degraded carrying 0.80.
+        // n=3, n_degraded=1, avg=mean(0.9,0.85,0.80)=0.85.
+        let mut set = SnapshotSet::default();
+        set.chatbot.push(cb_snap("2026-05-20", Some(0.90)));
+        set.chatbot.push(cb_snap("2026-05-21", Some(0.85)));
+        set.chatbot.push(cb_degraded("2026-05-22", Some(0.80)));
+
+        let trend = find_chatbot_overall(&set);
+        assert_eq!(trend.n_points, 3);
+        assert_eq!(trend.n_degraded, 1);
+        let avg = trend.avg_7d.unwrap();
+        assert!(
+            (avg - 0.85).abs() < 1e-9,
+            "expected avg=0.85 over [0.9,0.85,0.80], got {avg}"
+        );
+
+        // n_degraded (1) is NOT greater than n_real (2), so the ⚠️ hint
+        // should NOT appear — only n_degraded column shows up.
+        let md = render(&set, Path::new("/tmp"), 5.0);
+        assert!(md.contains("n_degraded"));
+    }
+
+    #[test]
+    fn degraded_without_last_known_good_is_still_skipped() {
+        // Scenario 4: 1 degraded snapshot, no carry value → treated as null,
+        // no contribution to rollup. Producer-side bug: doesn't lie for them.
+        let mut set = SnapshotSet::default();
+        set.chatbot.push(cb_degraded("2026-05-20", None));
+
+        let trend = find_chatbot_overall(&set);
+        assert_eq!(trend.n_points, 0);
+        assert_eq!(trend.n_degraded, 0);
+        assert!(trend.latest.is_none());
+    }
+
+    #[test]
+    fn non_degraded_day_output_is_unchanged_modulo_new_column() {
+        // Back-compat sanity: a snapshot set with no degraded entries should
+        // produce trend numbers identical to before this PR. Only the new
+        // n_degraded column header / value is added (which is always 0).
+        let mut set = SnapshotSet::default();
+        set.chatbot.push(cb_snap("2026-05-20", Some(0.90)));
+        set.chatbot.push(cb_snap("2026-05-21", Some(0.92)));
+
+        let trend = find_chatbot_overall(&set);
+        assert_eq!(trend.n_points, 2);
+        assert_eq!(trend.n_degraded, 0);
+        assert_eq!(trend.latest, Some(0.92));
     }
 
     #[test]

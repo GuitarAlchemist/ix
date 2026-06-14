@@ -11,6 +11,7 @@
 //! matching entries from `tools.rs`. The 43-tool parity test enforces that
 //! every tool remains reachable during the transition.
 
+pub mod acoustic_tune;
 pub mod assumption_graph;
 pub mod batch1;
 pub mod batch2;

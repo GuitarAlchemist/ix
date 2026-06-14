@@ -86,6 +86,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_fir_filter",
         "ix_spectrogram",
         "ix_autocorrelation",
+        "ix_analyze_reference",
+        "ix_spectral_distance",
         "ix_optimize",
         "ix_search",
         "ix_markov",
@@ -181,6 +183,8 @@ mod tests {
             "ix_fir_filter",
             "ix_spectrogram",
             "ix_autocorrelation",
+            "ix_analyze_reference",
+            "ix_spectral_distance",
         ] {
             assert_eq!(
                 classify_action_kind(tool),
