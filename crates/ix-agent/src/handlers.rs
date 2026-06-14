@@ -269,7 +269,17 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
 
     let data_rows = parse_f64_matrix(&params, "data")?;
     let k = parse_usize(&params, "k")?;
-    let max_iter = parse_usize(&params, "max_iter")?;
+    // `max_iter` is optional in the schema (default 100) — default ONLY when
+    // absent/null so a composed stage that omits it still runs; a present but
+    // malformed value (string/float/negative) is still rejected, not silently
+    // coerced to the default. (Codex #84 P2.)
+    let max_iter = match params.get("max_iter") {
+        None | Some(Value::Null) => 100,
+        Some(v) => v
+            .as_u64()
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'max_iter' must be a non-negative integer".to_string())?,
+    };
 
     let data = vecs_to_array2(&data_rows)?;
 
@@ -295,6 +305,161 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
         "centroids": centroids,
         "inertia": inertia,
         "k": k,
+    }))
+}
+
+// ── ix_pca ────────────────────────────────────────────────
+
+pub fn pca(params: Value) -> Result<Value, String> {
+    use ix_unsupervised::traits::DimensionReducer;
+
+    let data_rows = parse_f64_matrix(&params, "data")?;
+    if data_rows.is_empty() {
+        return Err("data must have ≥ 1 row".into());
+    }
+    let n_features = data_rows[0].len();
+    let n_components = parse_usize(&params, "n_components")?;
+    if n_components < 1 {
+        return Err("n_components must be ≥ 1".into());
+    }
+    if n_components > n_features {
+        return Err(format!(
+            "n_components {n_components} exceeds the feature count {n_features}"
+        ));
+    }
+
+    let data = vecs_to_array2(&data_rows)?;
+
+    let mut pca = ix_unsupervised::pca::PCA::new(n_components);
+    let transformed = pca.fit_transform(&data);
+
+    let transformed_rows: Vec<Vec<f64>> = (0..transformed.nrows())
+        .map(|i| transformed.row(i).to_vec())
+        .collect();
+    let explained_variance_ratio: Vec<f64> = pca
+        .explained_variance_ratio()
+        .map(|v| v.to_vec())
+        .unwrap_or_default();
+    let components: Vec<Vec<f64>> = pca
+        .components()
+        .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
+        .unwrap_or_default();
+
+    Ok(json!({
+        "transformed": transformed_rows,
+        "explained_variance_ratio": explained_variance_ratio,
+        "components": components,
+        "n_components": n_components,
+    }))
+}
+
+// ── ix_dbscan ────────────────────────────────────────────────
+
+// @ai:invariant DBSCAN labels noise as 0 and numbers clusters from 1, so n_noise counts label==0 and n_clusters counts distinct labels>0 [T:test conf:0.9 src:skills::batch1::tests::dbscan_skill_executes_and_separates_clusters_from_noise]
+pub fn dbscan(params: Value) -> Result<Value, String> {
+    use ix_unsupervised::traits::Clusterer;
+    use std::collections::BTreeSet;
+
+    let data_rows = parse_f64_matrix(&params, "data")?;
+    if data_rows.is_empty() {
+        return Err("data must have ≥ 1 row".into());
+    }
+    let eps = params.get("eps").and_then(|v| v.as_f64()).ok_or_else(|| {
+        "field 'eps' (the neighborhood radius) is required and must be a number".to_string()
+    })?;
+    if eps <= 0.0 {
+        return Err(format!("eps must be > 0, got {eps}"));
+    }
+    // min_points defaults to 4 (classic DBSCAN heuristic) only when absent/null;
+    // a present-but-malformed value is rejected, not silently coerced (cf. the
+    // kmeans max_iter fix, Codex #84 P2).
+    let min_points = match params.get("min_points") {
+        None | Some(Value::Null) => 4usize,
+        Some(v) => v
+            .as_u64()
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'min_points' must be a non-negative integer".to_string())?,
+    };
+    // Reject min_points < 1: with min_points=0 every point clears the core
+    // threshold (a point is its own neighbour), so nothing is ever noise and the
+    // skill's advertised "0 = noise" contract becomes unreachable.
+    if min_points < 1 {
+        return Err("min_points must be >= 1".to_string());
+    }
+
+    let data = vecs_to_array2(&data_rows)?;
+
+    let mut db = ix_unsupervised::dbscan::DBSCAN::new(eps, min_points);
+    let labels = db.fit_predict(&data);
+    let labels_vec: Vec<u64> = labels.iter().map(|&l| l as u64).collect();
+
+    let n_noise = labels_vec.iter().filter(|&&l| l == 0).count();
+    let distinct: BTreeSet<u64> = labels_vec.iter().copied().filter(|&l| l > 0).collect();
+    let n_clusters = distinct.len();
+
+    Ok(json!({
+        "labels": labels_vec,
+        "n_clusters": n_clusters,
+        "n_noise": n_noise,
+        "eps": eps,
+        "min_points": min_points,
+    }))
+}
+
+// ── ix_eigen ────────────────────────────────────────────────
+
+// @ai:invariant symmetric_eigen returns eigenvalues descending and column-major eigenvectors; the handler transposes so eigenvectors[k] is the unit eigenvector for eigenvalues[k] [T:test conf:0.9 src:skills::batch1::tests::eigen_skill_executes_on_symmetric_matrix]
+pub fn eigen(params: Value) -> Result<Value, String> {
+    let rows = parse_f64_matrix(&params, "matrix")?;
+    let n = rows.len();
+    if n == 0 {
+        return Err("matrix must have ≥ 1 row".into());
+    }
+    if rows.iter().any(|r| r.len() != n) {
+        return Err(format!(
+            "matrix must be square; got {n} rows but a row has a different column count"
+        ));
+    }
+    // Be self-sufficient about non-finite entries rather than relying on the JSON
+    // parse layer (serde rejects NaN/inf today, but the symmetry check below is
+    // NOT NaN-safe — (NaN-NaN).abs() > tol is false — so guard explicitly).
+    if rows.iter().flatten().any(|x| !x.is_finite()) {
+        return Err("matrix entries must be finite (no NaN or infinity)".to_string());
+    }
+    // symmetric_eigen is the cyclic-Jacobi solver: it reads the matrix AS
+    // symmetric and would silently return wrong results for an asymmetric input.
+    // Reject asymmetry rather than mislead (honest boundary). The tolerance is
+    // RELATIVE to entry magnitude so a genuinely-symmetric large-scale matrix
+    // isn't falsely rejected on last-ULP rounding.
+    const SYM_EPS: f64 = 1e-9;
+    for (i, row_i) in rows.iter().enumerate() {
+        for (j, &aij) in row_i.iter().enumerate().skip(i + 1) {
+            let aji = rows[j][i];
+            let asym = (aij - aji).abs();
+            let tol = SYM_EPS * aij.abs().max(aji.abs()).max(1.0);
+            if asym > tol {
+                return Err(format!(
+                    "matrix must be symmetric (|A[{i}][{j}] - A[{j}][{i}]| = {asym} > {tol}); this is the symmetric Jacobi solver"
+                ));
+            }
+        }
+    }
+
+    let a = vecs_to_array2(&rows)?;
+    let (values, vectors) = ix_math::eigen::symmetric_eigen(&a)
+        .map_err(|e| format!("eigendecomposition failed: {e}"))?;
+
+    let eigenvalues: Vec<f64> = values.to_vec();
+    // Transpose column-major (vectors.column(k) is the k-th eigenvector) into a
+    // row-major list so eigenvectors[k] is the unit eigenvector for eigenvalues[k].
+    let eigenvectors: Vec<Vec<f64>> = (0..n)
+        .map(|k| (0..n).map(|i| vectors[[i, k]]).collect())
+        .collect();
+
+    Ok(json!({
+        "eigenvalues": eigenvalues,
+        "eigenvectors": eigenvectors,
+        "n": n,
     }))
 }
 
@@ -1979,6 +2144,147 @@ pub fn pipeline_compile_placeholder(_params: Value) -> Result<Value, String> {
     )
 }
 
+// ── ix_nl_to_pipeline — the "thinking machine" as an MCP tool ────────────
+//
+// Agent-native parity: any action a user can take at the CLI, an agent can
+// take through MCP. This wraps the canonical `ix pipeline compile` CLI (the
+// single source of truth — same coverage gate, governance gate, lower()
+// validation, bounded repair, narration) rather than reimplementing it.
+// Direct-API proposer; NO MCP sampling (deprecated, unsupported by Claude
+// Code). Extracting the core into a shared lib so this calls it in-process is
+// the `unify` follow-up; shelling the sibling binary keeps behavior identical
+// today with no circular ix-skill<->ix-agent dependency.
+
+/// `ix_nl_to_pipeline` handler — wraps `ix pipeline compile`.
+pub fn nl_to_pipeline(params: Value) -> Result<Value, String> {
+    let sentence = params
+        .get("sentence")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "ix_nl_to_pipeline: missing 'sentence' (string)".to_string())?;
+    let run = params.get("run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let max_rounds = params
+        .get("max_rounds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3);
+
+    let ix_bin = ix_cli_path();
+    let mut cmd = std::process::Command::new(&ix_bin);
+    cmd.args([
+        "--format",
+        "json",
+        "pipeline",
+        "compile",
+        sentence,
+        "--max-rounds",
+        &max_rounds.to_string(),
+    ]);
+    if run {
+        cmd.arg("--run");
+    }
+    // The shelled `ix` resolves the constitution from cwd or IX_GOVERNANCE_DIR.
+    // The MCP host's cwd is not guaranteed to be the repo root, so locate the
+    // governance dir relative to the binary and pass it explicitly — otherwise
+    // the fail-closed gate refuses every pipeline ("constitution load failed").
+    if std::env::var_os("IX_GOVERNANCE_DIR").is_none() {
+        if let Some(gov) = find_governance_dir(&ix_bin) {
+            cmd.env("IX_GOVERNANCE_DIR", gov);
+        }
+    }
+    let out = cmd.output().map_err(|e| {
+        format!(
+            "ix_nl_to_pipeline: failed to spawn `{}`: {e}",
+            ix_bin.display()
+        )
+    })?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "ix pipeline compile produced no output (status {}): {}",
+            out.status,
+            stderr.trim()
+        ));
+    }
+    serde_json::from_str::<Value>(trimmed).map_err(|e| {
+        format!("ix_nl_to_pipeline: expected JSON from `ix pipeline compile`, got: {trimmed} ({e})")
+    })
+}
+
+/// `ix_thinker_hits` handler — wraps the read-only `ix pipeline hits` CLI verb.
+/// Agent-native parity: a user can inspect the translation ledger's paired
+/// yield/guardrail summary at the CLI, so an agent can too. No args.
+///
+/// cwd note: the ledger path (`state/thinking-machine/hits.jsonl`) is resolved
+/// relative to the child's cwd — deliberately the SAME resolution `ix pipeline
+/// compile` uses when it WRITES hits (via `ix_nl_to_pipeline`), so a read here
+/// sees exactly the rows compiles in this process tree wrote. We do not pin a
+/// cwd: that would desync the reader from the writer. When no ledger exists the
+/// verb returns a structured `{"status":"no_hits"}` (never empty stdout), so the
+/// empty-output branch below fires only on a genuine spawn/exec failure.
+pub fn thinker_hits(_params: Value) -> Result<Value, String> {
+    let ix_bin = ix_cli_path();
+    let out = std::process::Command::new(&ix_bin)
+        .args(["--format", "json", "pipeline", "hits"])
+        .output()
+        .map_err(|e| {
+            format!(
+                "ix_thinker_hits: failed to spawn `{}`: {e}",
+                ix_bin.display()
+            )
+        })?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "ix pipeline hits produced no output (status {}): {}",
+            out.status,
+            stderr.trim()
+        ));
+    }
+    serde_json::from_str::<Value>(trimmed).map_err(|e| {
+        format!("ix_thinker_hits: expected JSON from `ix pipeline hits`, got: {trimmed} ({e})")
+    })
+}
+
+/// Walk up from a starting path looking for a `governance/demerzel` directory.
+/// Lets the MCP tool find the constitution regardless of the host's cwd.
+fn find_governance_dir(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut cur = start.parent();
+    while let Some(dir) = cur {
+        let cand = dir.join("governance").join("demerzel");
+        if cand.is_dir() {
+            return Some(cand);
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+/// Locate the sibling `ix` CLI binary (same target dir as this `ix-mcp`),
+/// falling back to `ix` on `PATH`.
+fn ix_cli_path() -> std::path::PathBuf {
+    let name = if cfg!(windows) { "ix.exe" } else { "ix" };
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // Sibling: production layout (target/<profile>/ix-mcp → .../ix).
+            let sib = dir.join(name);
+            if sib.is_file() {
+                return sib;
+            }
+            // Grandparent: test layout (target/<profile>/deps/<test> → .../ix).
+            if let Some(up) = dir.parent() {
+                let g = up.join(name);
+                if g.is_file() {
+                    return g;
+                }
+            }
+        }
+    }
+    std::path::PathBuf::from(name)
+}
+
 // ── ix_git_log ─────────────────────────────────────────────
 
 /// P1.1 — shell out to `git log` and return a normalized per-path
@@ -2094,7 +2400,6 @@ pub fn git_log(params: Value) -> Result<Value, String> {
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .collect();
-    let total_commits = raw_dates.len();
 
     // Bucket the commits into a dense per-day or per-week series.
     let (n_buckets, bucket_size_days) = match bucket {
@@ -2129,13 +2434,22 @@ pub fn git_log(params: Value) -> Result<Value, String> {
         }
     }
 
+    // `commits` is the count of commits that actually fall inside the
+    // reported window, i.e. `sum(series)` — NOT the raw `git log` line
+    // count. They differ at the boundary: `--since="N days ago"` is
+    // time-of-day relative, so git returns a *superset* spanning a
+    // partial extra calendar day, while the series buckets exactly N
+    // calendar days. Reporting the in-window count keeps `commits ==
+    // sum(series)` true by construction, in every timezone.
+    let windowed_commits = series.iter().sum::<f64>().round() as u64;
+
     Ok(json!({
         "path": path,
         "since_days": since_days,
         "bucket": bucket,
         "window_days": since_days,
         "n_buckets": n_buckets,
-        "commits": total_commits,
+        "commits": windowed_commits,
         "series": series,
         "dates": dates,
     }))
@@ -5295,6 +5609,221 @@ pub fn voicings_payload(params: Value) -> Result<Value, String> {
         "default_spread": default_spread,
         "default_point_size": default_point_size,
     }))
+}
+
+/// `ix_sentrux_annotate` — drive the sentrux MCP bridge and emit
+/// `ai-annotation-v1` records (one per structural-rule violation).
+///
+/// Supported params:
+/// - `workspace` (string, optional, default `.`) — repo root to scan
+/// - `mode` (string, optional, `sidecar`|`inline`|`dry-run`, default `dry-run`)
+/// - `out` (string, optional) — override sidecar JSONL output path
+/// - `sentrux_exe` (string, optional) — override sentrux binary path
+/// - `timeout_secs` (number, optional, default 60)
+/// - `emit_untested` (bool, optional, default false) — additionally call
+///   sentrux `test_gaps` and emit `@ai:smell "no test coverage detected by
+///   sentrux"` for each file in the intersection of (untested files) ∩
+///   (files carrying `@ai:business-value` annotations)
+/// - `untested_limit` (integer, optional, default 100) — `top-N` cap
+///   passed through to `test_gaps.limit`
+/// - `untested_out` (string, optional) — override sidecar path for the
+///   untested-smell JSONL stream
+///
+/// Returns the parsed violations + emitted-annotation counts so the
+/// caller can show a summary without re-reading the sidecar file. When
+/// `emit_untested=true`, the response also carries an `untested` object
+/// with `total_untested`, `business_value_paths`, `intersection`, and
+/// `written` keys.
+pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
+    use ix_sentrux_annotations::{
+        convert::violation_to_annotation,
+        emit_inline, emit_sidecar,
+        mcp_bridge::{run_sentrux_check, run_sentrux_test_gaps, SentruxConfig},
+        untested::{business_value_paths_from_workspace, untested_high_value_annotations},
+        DEFAULT_SENTRUX_EXE, DEFAULT_UNTESTED_SIDECAR_PATH,
+    };
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    let workspace = PathBuf::from(
+        params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("."),
+    );
+    let mode = params
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("dry-run");
+    let sentrux_exe = params
+        .get("sentrux_exe")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_SENTRUX_EXE));
+    let timeout_secs = params
+        .get("timeout_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(60);
+    let emit_untested = params
+        .get("emit_untested")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let untested_limit: u32 = params
+        .get("untested_limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(u32::MAX as u64) as u32)
+        .unwrap_or(100);
+
+    // Reject unknown modes up-front so the error surfaces even when
+    // sentrux isn't installed — keeps the contract tight for callers.
+    if !matches!(mode, "sidecar" | "inline" | "dry-run") {
+        return Err(format!(
+            "unknown mode '{mode}'; expected sidecar|inline|dry-run"
+        ));
+    }
+
+    let cfg = SentruxConfig {
+        sentrux_exe,
+        workspace: workspace.clone(),
+        timeout: Duration::from_secs(timeout_secs),
+    };
+    let report = run_sentrux_check(&cfg).map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut annotations = Vec::new();
+    for v in &report.violations {
+        annotations.extend(violation_to_annotation(&workspace, v, &now));
+    }
+
+    let (written, skipped, mode_used) = match mode {
+        "sidecar" => {
+            let out = params
+                .get("out")
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from);
+            let outcome = emit_sidecar(&workspace, &annotations, out.as_deref())
+                .map_err(|e| e.to_string())?;
+            (outcome.written, outcome.skipped, "sidecar")
+        }
+        "inline" => {
+            let outcome =
+                emit_inline(&workspace, &annotations, false).map_err(|e| e.to_string())?;
+            (outcome.written, outcome.skipped, "inline")
+        }
+        // dry-run was validated above
+        _ => (annotations.len(), 0, "dry-run"),
+    };
+
+    // Additive untested-emit pass (opt-in via emit_untested=true). We
+    // always write the untested sidecar as a SIDECAR-mode JSONL stream —
+    // inline patching of every untested file doesn't make sense (the
+    // smell is whole-file, not line-local). Dry-run still suppresses
+    // the on-disk write.
+    let untested_section = if emit_untested {
+        let gaps = run_sentrux_test_gaps(&cfg, untested_limit).map_err(|e| e.to_string())?;
+        let bv_paths = business_value_paths_from_workspace(&workspace);
+        let untested_annos = untested_high_value_annotations(&gaps.untested_files, &bv_paths, &now);
+
+        let untested_written = if mode == "dry-run" {
+            untested_annos.len()
+        } else {
+            let out_path = params
+                .get("untested_out")
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| workspace.join(DEFAULT_UNTESTED_SIDECAR_PATH));
+            let outcome = emit_sidecar(&workspace, &untested_annos, Some(&out_path))
+                .map_err(|e| e.to_string())?;
+            outcome.written
+        };
+
+        Some(json!({
+            "total_untested": gaps.untested_files.len(),
+            "business_value_paths": bv_paths.len(),
+            "intersection": untested_annos.len(),
+            "written": untested_written,
+            "aggregate": {
+                "source_files": gaps.source_files,
+                "test_files": gaps.test_files,
+                "tested": gaps.tested,
+                "untested": gaps.untested,
+                "coverage_score": gaps.coverage_score,
+            }
+        }))
+    } else {
+        None
+    };
+
+    let mut response = json!({
+        "schema": "ix_sentrux_annotate.v1",
+        "violations": report.violations.len(),
+        "annotations": annotations.len(),
+        "written": written,
+        "skipped": skipped,
+        "mode": mode_used,
+        "sentrux_summary": report.summary,
+        "rules_checked": report.rules_checked,
+        "pass": report.pass,
+    });
+    if let Some(u) = untested_section {
+        response["untested"] = u;
+    }
+    Ok(response)
+}
+
+#[cfg(test)]
+mod sentrux_annotate_tests {
+    use super::*;
+
+    #[test]
+    fn errors_when_sentrux_exe_missing() {
+        let out = sentrux_annotate(json!({
+            "workspace": ".",
+            "sentrux_exe": "C:/nonexistent/sentrux.exe",
+            "mode": "dry-run",
+        }));
+        let err = out.expect_err("must error when sentrux missing");
+        assert!(err.contains("sentrux binary not found"), "got error: {err}");
+    }
+
+    #[test]
+    fn rejects_unknown_mode() {
+        // Mode validation now fires up-front, before the sentrux call,
+        // so the unknown-mode error surfaces deterministically.
+        let out = sentrux_annotate(json!({
+            "workspace": ".",
+            "sentrux_exe": "C:/nonexistent/sentrux.exe",
+            "mode": "bogus",
+        }));
+        let err = out.expect_err("must error");
+        assert!(
+            err.contains("unknown mode"),
+            "expected mode-validation error first, got: {err}"
+        );
+    }
+
+    #[test]
+    fn emit_untested_accepted_in_schema() {
+        // The handler should accept `emit_untested=true` (and its
+        // companion args) without rejecting them as unknown. We can't
+        // exercise the full path here because sentrux.exe must be present
+        // for that — but we CAN prove the arg parsing doesn't bail out
+        // before reaching the sentrux call.
+        let out = sentrux_annotate(json!({
+            "workspace": ".",
+            "sentrux_exe": "C:/nonexistent/sentrux.exe",
+            "mode": "dry-run",
+            "emit_untested": true,
+            "untested_limit": 50,
+            "untested_out": "/tmp/whatever.jsonl",
+        }));
+        let err = out.expect_err("must error (sentrux missing)");
+        // The handler reached the sentrux-bridge call — meaning the
+        // emit_untested/untested_limit/untested_out args were accepted.
+        assert!(
+            err.contains("sentrux binary not found"),
+            "expected SentruxMissing, got: {err}"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/GuitarAlchemist/ix/contracts/ai-annotation-v1.json",
+  "$id": "https://github.com/GuitarAlchemist/ix/contracts/ai-annotation-v2.json",
   "title": "AI Source-Code Annotation",
-  "description": "An in-source, line-local, agent-authored claim about code: an invariant, assumption, hypothesis, contract, smell, decision, or hint. Carries hexavalent truth value (T/P/U/D/F/C) and certainty marker. Aligned with governance/demerzel/schemas/hexavalent-distribution.schema.json.",
+  "description": "An in-source, line-local, agent-authored claim about code: an invariant, assumption, hypothesis, contract, smell, decision, hint, business-value, or hot-path. Carries hexavalent truth value (T/P/U/D/F/C) and certainty marker. Aligned with governance/demerzel/schemas/hexavalent-distribution.schema.json.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,7 @@
     "updated_at"
   ],
   "properties": {
-    "schema_version": { "type": "integer", "const": 1 },
+    "schema_version": { "type": "integer", "enum": [1, 2] },
     "id": {
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$",
@@ -27,7 +27,7 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["invariant", "assumption", "hypothesis", "contract", "smell", "decision", "hint"]
+      "enum": ["invariant", "assumption", "hypothesis", "contract", "smell", "decision", "hint", "business-value", "hot-path"]
     },
     "claim": {
       "type": "string",
@@ -49,9 +49,10 @@
         "assumed",
         "uncertain",
         "inferred",
-        "dismissed"
+        "dismissed",
+        "detected-by-sentrux"
       ],
-      "description": "How the truth value was reached."
+      "description": "How the truth value was reached. `detected-by-sentrux` marks annotations produced by the sentrux structural-rules engine (see ix-sentrux-annotations)."
     },
     "confidence": {
       "type": "number",
@@ -66,7 +67,7 @@
       "properties": {
         "author": {
           "type": "string",
-          "enum": ["claude", "codex", "gemini", "junie", "auggie", "human", "auto"]
+          "enum": ["claude", "codex", "gemini", "junie", "auggie", "human", "auto", "sentrux", "product-owner", "telemetry"]
         },
         "model": {
           "type": "string",

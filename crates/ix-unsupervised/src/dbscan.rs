@@ -138,6 +138,20 @@ impl Clusterer for DBSCAN {
 
         result
     }
+
+    /// Override the `Clusterer` default (`fit(x); predict(x)`). For DBSCAN that
+    /// default is subtly wrong on the training data: `predict` re-assigns each
+    /// point to the nearest non-noise neighbour within `eps` — border points
+    /// included — so a density-unreachable point adjacent to a border point gets
+    /// absorbed into the cluster and noise is undercounted. The canonical labels
+    /// are the ones `fit` already computed (proper core/border/noise), so return
+    /// those directly.
+    fn fit_predict(&mut self, x: &Array2<f64>) -> Array1<usize> {
+        self.fit(x);
+        self.labels
+            .clone()
+            .expect("fit always sets labels before returning")
+    }
 }
 
 #[cfg(test)]
@@ -263,5 +277,33 @@ mod tests {
                 "All dense points should share a cluster"
             );
         }
+    }
+
+    // Regression for the fit_predict override: on the training data, fit_predict
+    // must return fit()'s CANONICAL labels, not predict()'s re-derivation.
+    // predict() assigns any point to the nearest non-noise neighbour within eps —
+    // which includes border points — so a density-unreachable point hanging off a
+    // border point would be silently absorbed (and noise undercounted). Here the
+    // far point (2.2,0) is within eps of the border (1.3,0) only, so canonical
+    // DBSCAN labels it noise; the default fit()+predict() would absorb it.
+    #[test]
+    fn fit_predict_returns_canonical_fit_labels_not_predict() {
+        let x = array![
+            [0.0, 0.0],
+            [0.2, 0.0],
+            [0.4, 0.0],
+            [0.2, 0.2], // dense core blob (each is a core point at min_points=4)
+            [1.3, 0.0], // border: within eps of a core, but < 4 neighbours
+            [2.2, 0.0]  // within eps of the border ONLY → canonical noise
+        ];
+        let mut db = DBSCAN::new(1.0, 4);
+        let labels = db.fit_predict(&x).to_vec();
+        assert_eq!(
+            labels[5], 0,
+            "border-adjacent unreachable point must stay noise"
+        );
+        assert!(labels[0] > 0 && labels[..4].iter().all(|&l| l == labels[0]));
+        // fit_predict must agree with fit()'s stored labels exactly.
+        assert_eq!(labels, db.labels.clone().unwrap().to_vec());
     }
 }

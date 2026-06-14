@@ -1,0 +1,47 @@
+name: Assumption Drift
+
+# Gate that the workspace's @ai: annotations still match reality. Fails when a
+# claim's annotated code changed (span drift) or a claim cites a test that no
+# longer exists (broken binding) — i.e. when an annotation may now be lying.
+#
+# Adding new annotations does NOT fail this job (they show as "added"); only
+# drift in existing claims does. When a claim legitimately changes, re-run
+#   cargo run -p ix-assumption-graph --bin ix-assumption-graph-drift -- \
+#     --snapshot state/assumptions/annotations.snapshot.json
+# and commit the updated baseline.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'state/assumptions/annotations.snapshot.json'
+      - '.github/workflows/assumption-drift.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'state/assumptions/annotations.snapshot.json'
+      - '.github/workflows/assumption-drift.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "Check @ai: annotations against the committed baseline"
+        run: |
+          cargo run -p ix-assumption-graph --bin ix-assumption-graph-drift -- \
+            --check state/assumptions/annotations.snapshot.json
