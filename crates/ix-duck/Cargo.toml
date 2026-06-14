@@ -13,7 +13,12 @@ description = "In-process DuckDB analyst bench over IX telemetry, with IX algori
 # `cargo build --workspace` never pulls it. `json` enables read_json_auto over our
 # JSONL telemetry; `vscalar` enables scalar UDF registration (VScalar trait).
 # Build/run locally with `--features duck`. (Two-way door — optional dep; see docs/DUCKDB.md.)
-duckdb = { version = "1", features = ["bundled", "json", "vscalar"], optional = true }
+#
+# Pinned to an exact tested release: duckdb-rs + its arrow deps require a newer
+# toolchain than the workspace MSRV (1.80). That is acceptable because the `duck`
+# feature is opt-in and never built by the default/CI path — but we pin so the
+# feature can't silently float onto a release needing an even newer rustc.
+duckdb = { version = "=1.10503.1", features = ["bundled", "json", "vscalar"], optional = true }
 ix-math = { workspace = true, optional = true }
 ix-unsupervised = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }

@@ -26,6 +26,9 @@ fn list_double() -> LogicalTypeHandle {
 ///
 /// Reads the per-row `(offset, length)` entries *before* borrowing the child
 /// buffer so the child slice and the entry lookups never alias the same vector.
+/// `cap` is `max(offset + length)`, so every `all[o..o + l]` slice is in bounds
+/// by construction — a malformed entry cannot index past the child buffer.
+// @ai:assumption list inputs are non-NULL; a NULL list row is read as its raw (offset,length) and yields a numeric result rather than SQL NULL. True for IX embedding telemetry. Proper NULL->NULL passthrough (validity mask + null output) is the Phase-4 follow-up. [U:uncertain conf:0.6 src:docs/plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md]
 fn read_list_col(input: &mut DataChunkHandle, col: usize, n: usize) -> Vec<Vec<f64>> {
     let lv = input.list_vector(col);
     let entries: Vec<(usize, usize)> = (0..n).map(|i| lv.get_entry(i)).collect();
