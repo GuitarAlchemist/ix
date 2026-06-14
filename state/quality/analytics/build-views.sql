@@ -19,88 +19,54 @@
 --   * The day is parsed from the filename / dir via regexp_extract on the
 --     canonical YYYY-MM-DD stem convention.
 
--- optick-sae: the cross-repo CONTRACT OUTPUT ix produces for GA's consumer side
--- (state/quality/optick-sae/<date>/optick-sae-artifact.json, per
--- ga/docs/contracts/2026-05-02-optick-sae-artifact.contract.md). Columns are the
--- flattened contract shape so producer (ix) and consumer (GA) have SQL parity
--- over the same fields. No artifact is emitted on disk yet, so — exactly like
--- GA's pr_grades — this starts as an explicit empty table with the contract
--- schema. The moment a state/quality/optick-sae/<date>/optick-sae-artifact.json
--- lands, swap the body for the commented read below and re-run:
---
---   CREATE OR REPLACE TABLE optick_sae AS
---   SELECT
---       regexp_extract(filename, '([0-9]{4}-[0-9]{2}-[0-9]{2})', 1) AS day,
---       artifact_id, schema_version, trained_at, trainer, trainer_version,
---       input.optick_index_path        AS input_optick_index_path,
---       input.optick_index_sha         AS input_optick_index_sha,
---       input.optick_dim               AS input_optick_dim,
---       input.compact_training_dim     AS input_compact_training_dim,
---       input.schema_version           AS input_schema_version,
---       input.corpus_size              AS input_corpus_size,
---       input.partitions_used          AS input_partitions_used,
---       model.kind                     AS model_kind,
---       model.dict_size                AS model_dict_size,
---       model.k_sparse                 AS model_k_sparse,
---       model.training.epochs          AS model_epochs,
---       model.training.batch_size      AS model_batch_size,
---       model.training.lr              AS model_lr,
---       model.training.seed            AS model_seed,
---       model.training.loss_final      AS model_loss_final,
---       model.training.sparsity_actual_mean AS model_sparsity_actual_mean,
---       metrics.reconstruction_mse     AS reconstruction_mse,
---       metrics.reconstruction_r2      AS reconstruction_r2,
---       metrics.active_features_per_voicing_p50 AS active_features_p50,
---       metrics.active_features_per_voicing_p95 AS active_features_p95,
---       metrics.dead_features_pct      AS dead_features_pct,
---       metrics.feature_partition_purity_mean AS purity_mean,
---       metrics.feature_partition_purity_p10  AS purity_p10,
---       features_summary.total         AS features_total,
---       features_summary.alive         AS features_alive,
---       features_summary.high_frequency_count AS features_high_freq,
---       features_summary.low_frequency_count  AS features_low_freq,
---       links.supersedes               AS links_supersedes,
---       narrative
---   FROM read_json_auto('optick-sae/*/optick-sae-artifact.json',
---                       filename = true, union_by_name = true)
---   ORDER BY day;
-CREATE OR REPLACE TABLE optick_sae (
-    day                          VARCHAR,
-    artifact_id                  VARCHAR,
-    schema_version               BIGINT,
-    trained_at                   VARCHAR,
-    trainer                      VARCHAR,
-    trainer_version              VARCHAR,
-    input_optick_index_path      VARCHAR,
-    input_optick_index_sha       VARCHAR,
-    input_optick_dim             BIGINT,
-    input_compact_training_dim   BIGINT,
-    input_schema_version         VARCHAR,
-    input_corpus_size            BIGINT,
-    input_partitions_used        VARCHAR[],
-    model_kind                   VARCHAR,
-    model_dict_size              BIGINT,
-    model_k_sparse               BIGINT,
-    model_epochs                 BIGINT,
-    model_batch_size             BIGINT,
-    model_lr                     DOUBLE,
-    model_seed                   BIGINT,
-    model_loss_final             DOUBLE,
-    model_sparsity_actual_mean   DOUBLE,
-    reconstruction_mse           DOUBLE,
-    reconstruction_r2            DOUBLE,
-    active_features_p50          BIGINT,
-    active_features_p95          BIGINT,
-    dead_features_pct            DOUBLE,
-    purity_mean                  DOUBLE,
-    purity_p10                   DOUBLE,
-    features_total               BIGINT,
-    features_alive               BIGINT,
-    features_high_freq           BIGINT,
-    features_low_freq            BIGINT,
-    links_supersedes             VARCHAR,
-    narrative                    VARCHAR
-);
+-- optick-sae: the cross-repo CONTRACT OUTPUT ix produces. By design the emitter
+-- (crates/ix-optick-sae, required --output arg) writes the artifact into the GA
+-- repo tree — its own help says "state/quality/optick-sae/<YYYY-MM-DD>/ in the GA
+-- repo" — which is the consumer side. So the artifacts live in the sibling GA
+-- clone, not here; ix's own state/quality/optick-sae/ is empty by design. We read
+-- them across the documented ../ga peer-clone boundary so ix has SQL parity with
+-- GA over the same flattened columns. The gitignored *-local trainer runs (on the
+-- GA side) are excluded. Requires a GA sibling clone at ../../../ga relative to
+-- this state/quality dir (the standard layout per ga/CLAUDE.md "Cross-repo
+-- contracts"); without it the read fails fast with a clear "No files found"
+-- naming the expected GA path.
+CREATE OR REPLACE TABLE optick_sae AS
+SELECT
+    regexp_extract(filename, '([0-9]{4}-[0-9]{2}-[0-9]{2})', 1) AS day,
+    artifact_id, schema_version, trained_at, trainer, trainer_version,
+    input.optick_index_path        AS input_optick_index_path,
+    input.optick_index_sha         AS input_optick_index_sha,
+    input.optick_dim               AS input_optick_dim,
+    input.compact_training_dim     AS input_compact_training_dim,
+    input.schema_version           AS input_schema_version,
+    input.corpus_size              AS input_corpus_size,
+    input.partitions_used          AS input_partitions_used,
+    model.kind                     AS model_kind,
+    model.dict_size                AS model_dict_size,
+    model.k_sparse                 AS model_k_sparse,
+    model.training.epochs          AS model_epochs,
+    model.training.batch_size      AS model_batch_size,
+    model.training.lr              AS model_lr,
+    model.training.seed            AS model_seed,
+    model.training.loss_final      AS model_loss_final,
+    model.training.sparsity_actual_mean AS model_sparsity_actual_mean,
+    metrics.reconstruction_mse     AS reconstruction_mse,
+    metrics.reconstruction_r2      AS reconstruction_r2,
+    metrics.active_features_per_voicing_p50 AS active_features_p50,
+    metrics.active_features_per_voicing_p95 AS active_features_p95,
+    metrics.dead_features_pct      AS dead_features_pct,
+    metrics.feature_partition_purity_mean AS purity_mean,
+    metrics.feature_partition_purity_p10  AS purity_p10,
+    features_summary.total         AS features_total,
+    features_summary.alive         AS features_alive,
+    features_summary.high_frequency_count AS features_high_freq,
+    features_summary.low_frequency_count  AS features_low_freq,
+    links.supersedes               AS links_supersedes,
+    narrative
+FROM read_json_auto('../../../ga/state/quality/optick-sae/*/optick-sae-artifact.json',
+                    filename = true, union_by_name = true)
+WHERE filename NOT LIKE '%-local%'                                   -- exclude gitignored local trainer runs
+ORDER BY day;
 
 -- ix-harness: repo-level Agent Blackbox readiness (last.json is the current run;
 -- emitted by scripts/verify.ps1). Single-file source, no date in the name — the
