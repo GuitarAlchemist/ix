@@ -43,9 +43,32 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
+# `ix pipeline compile` — direct Anthropic Messages API call (MCP sampling is
+# deprecated + unsupported by Claude Code, so the proposer calls the provider
+# API directly). Blocking client; rustls so no system OpenSSL needed.
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+
 # stable-surface verb: parse crate-maturity.toml and hash the public API.
 toml = "0.8"
 blake3 = { workspace = true }
+
+# Tamper-evidence pin for the governance constitution. sha256 over the in-tree
+# blake3 because the pin must be independently verifiable by a human/auditor
+# with standard tools (`sha256sum` / `Get-FileHash`). (RSI safe-loop research
+# 2026-06-07.)
+sha2 = "0.10"
+
+# Embedding coverage gate (OPTIONAL, feature-gated): in-process fastembed-rs on
+# ONNX Runtime — inference-only pretrained tooling behind an optional-dep
+# boundary per the CLAUDE.md ML-framework carve-out. The pure-Rust TF-IDF gate
+# stays the default + graceful fallback. Deliberately NOT in default features,
+# so `cargo {build,test,clippy} --workspace` (the CI path) never pulls ONNX.
+# Build/run the spike locally with `--features embeddings`.
+fastembed = { version = "5", optional = true }
+
+[features]
+# Enables the in-process embedding coverage scorer + its offline ROC-sweep test.
+embeddings = ["dep:fastembed"]
 
 [dev-dependencies]
 assert_cmd = "2"
