@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/GuitarAlchemist/ix/docs/contracts/streeling-learning.schema.json",
+  "title": "Streeling Learning Record",
+  "description": "One normalized learning artifact in the Streeling catalog (state/streeling/catalog.jsonl). Contract v0.1 (draft).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "repo", "kind", "category", "title", "path"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1.0" },
+    "id": { "type": "string", "description": "Stable key: {repo}:{path}" },
+    "repo": { "type": "string", "enum": ["ix", "ga", "tars", "Demerzel"] },
+    "kind": { "type": "string", "enum": ["solution", "knowledge", "plan", "brainstorm"] },
+    "category": { "type": "string" },
+    "title": { "type": "string" },
+    "date": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "symptom": { "type": "string" },
+    "root_cause": { "type": "string" },
+    "path": { "type": "string", "description": "Repo-relative, POSIX separators" }
+  }
+}
