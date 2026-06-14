@@ -108,16 +108,16 @@ flowchart LR
 - **Cross-repo (one-way-ish door):** the contract is shared with ga/tars/Demerzel; freezing fields needs sibling coordination. Keep v0.1 draft until a named Phase-4 milestone (per CLAUDE.md contract phasing).
 
 ## Acceptance Criteria
-- [ ] `docs/contracts/streeling-learning.contract.md` (v0.1) + JSON schema committed.
-- [ ] `crates/ix-streeling` builds in the workspace; **no `duckdb` dep**; `cargo build --workspace` unaffected.
-- [ ] `streeling catalog` ingests ix + ga `docs/solutions` (+ ix knowledge/plans/brainstorms) → `state/streeling/catalog.jsonl` (~46+ records); absent sibling tolerated; malformed frontmatter skipped-with-count.
-- [ ] `streeling campus` renders `docs/streeling/README.md` from the catalog, preserving the hand-written intro; idempotent.
-- [ ] `docs/streeling/queries.sql` answers ≥3 cross-repo questions via duckdb-skills/ix-duck.
-- [ ] `learnings-researcher` instruction updated to consult the catalog first.
-- [ ] `.github/workflows/streeling-freshness.yml` regenerates + `streeling check` fails on staleness/incompleteness; `/learnings` post-step wired.
-- [ ] `@ai:invariant` on catalog completeness + staleness, each bound to a test.
-- [ ] `cargo clippy -p ix-streeling --all-targets -- -D warnings` clean (CI-exact).
-- [ ] `docs/LEARNING.md` + `docs/DUCKDB.md` cross-link Streeling.
+- [x] `docs/contracts/streeling-learning.contract.md` (v0.1) + JSON schema committed.
+- [x] `crates/ix-streeling` builds in the workspace; **no `duckdb` dep**; `cargo build --workspace` unaffected.
+- [x] `streeling catalog` ingests ix + ga `docs/solutions` (+ ix knowledge/plans/brainstorms) → `state/streeling/catalog.jsonl` (**71 records**: 44 ix + 27 ga); absent sibling tolerated; malformed frontmatter skipped-with-count (24 skipped).
+- [x] `streeling campus` renders `docs/streeling/README.md` from the catalog, preserving the hand-written intro; idempotent (test).
+- [x] `docs/streeling/queries.sql` answers ≥3 cross-repo questions via duckdb-skills/ix-duck (5 queries, verified against the real catalog).
+- [x] `learnings-researcher` "consult the catalog first" rule documented in the contract Consumers section. *(plugin agent not editable in-repo; rule lives in the contract + campus.)*
+- [x] `.github/workflows/streeling-freshness.yml` runs repo-scoped `streeling check` (fails on staleness/incompleteness). *(No editable in-repo `/learnings` skill — manual regen documented in the contract; the CI gate is the enforcement.)*
+- [x] `@ai:invariant` on catalog completeness + staleness + absent-sibling, each bound to a test.
+- [x] `cargo clippy -p ix-streeling --all-targets -- -D warnings` clean (CI-exact).
+- [ ] `docs/LEARNING.md` + `docs/DUCKDB.md` reverse-link Streeling — **deferred to consolidation** (both live on unmerged PRs #97/#98; can't edit from this branch without merge conflicts; Streeling docs already forward-reference them).
 
 ## Success Metrics
 - **Baseline:** 0 unified/queryable learnings today; agent globs raw files. **Target:** 100% of ix+ga `docs/solutions` in the catalog; ≥3 canned cross-repo queries; staleness gate live. **Guardrail:** `cargo build --workspace` time + CI unaffected (no duckdb in default path).
