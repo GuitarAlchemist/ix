@@ -1,0 +1,35 @@
+[package]
+name = "ix-duck"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "In-process DuckDB analyst bench over IX telemetry, with IX algorithms as SQL UDFs (optional `duck` feature)."
+
+[dependencies]
+# OPTIONAL, feature-gated: in-process DuckDB. The `bundled` feature compiles DuckDB
+# (C++) from source, so this is deliberately NOT in default features — the CI path
+# `cargo build --workspace` never pulls it. `json` enables read_json_auto over our
+# JSONL telemetry; `vscalar` enables scalar UDF registration (VScalar trait).
+# Build/run locally with `--features duck`. (Two-way door — optional dep; see docs/DUCKDB.md.)
+#
+# Pinned to an exact tested release: duckdb-rs + its arrow deps require a newer
+# toolchain than the workspace MSRV (1.80). That is acceptable because the `duck`
+# feature is opt-in and never built by the default/CI path — but we pin so the
+# feature can't silently float onto a release needing an even newer rustc.
+duckdb = { version = "=1.10503.1", features = ["bundled", "json", "vscalar"], optional = true }
+ix-math = { workspace = true, optional = true }
+ix-unsupervised = { workspace = true, optional = true }
+ndarray = { workspace = true, optional = true }
+
+[features]
+# In-process DuckDB bench + IX UDFs. Off by default so the workspace/CI build stays clean.
+duck = ["dep:duckdb", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray"]
+
+[[example]]
+name = "yield_analysis"
+required-features = ["duck"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
