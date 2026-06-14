@@ -290,7 +290,7 @@ pub fn query(path: &Path, q: &LedgerQuery) -> Result<Vec<GateLedgerEntry>, Ledge
         })
         .collect();
 
-    matches.sort_by(|a, b| b.run_at.cmp(&a.run_at));
+    matches.sort_by_key(|e| std::cmp::Reverse(e.run_at));
     if let Some(n) = q.limit {
         matches.truncate(n);
     }
