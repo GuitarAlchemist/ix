@@ -70,5 +70,47 @@ mod tests {
             )
             .unwrap();
         assert!((avg - 0.6).abs() < 1e-9, "compiled yield should be 0.6, got {avg}");
+
+        // UDFs are registered + callable from SQL.
+        let sim: f64 = conn
+            .query_row("SELECT ix_cosine([1.0, 0.0]::DOUBLE[], [1.0, 0.0]::DOUBLE[])", [], |r| r.get(0))
+            .unwrap();
+        assert!((sim - 1.0).abs() < 1e-12, "ix_cosine should be registered, got {sim}");
+    }
+
+    #[test]
+    fn ix_cosine_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        let same: f64 = conn
+            .query_row("SELECT ix_cosine([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[])", [], |r| r.get(0))
+            .unwrap();
+        assert!((same - 1.0).abs() < 1e-12, "identical → 1.0, got {same}");
+
+        let orth: f64 = conn
+            .query_row("SELECT ix_cosine([1.0,0.0]::DOUBLE[], [0.0,1.0]::DOUBLE[])", [], |r| r.get(0))
+            .unwrap();
+        assert!(orth.abs() < 1e-12, "orthogonal → 0.0, got {orth}");
+
+        // Dimension mismatch surfaces as a SQL error, not a panic.
+        let err = conn.query_row(
+            "SELECT ix_cosine([1.0,0.0]::DOUBLE[], [1.0]::DOUBLE[])",
+            [],
+            |r| r.get::<_, f64>(0),
+        );
+        assert!(err.is_err(), "dimension mismatch should be a SQL error");
+    }
+
+    #[test]
+    fn ix_euclidean_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        let d: f64 = conn
+            .query_row("SELECT ix_euclidean([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[])", [], |r| r.get(0))
+            .unwrap();
+        assert!((d - 5.0).abs() < 1e-12, "3-4-5 triangle → 5.0, got {d}");
+
+        let z: f64 = conn
+            .query_row("SELECT ix_euclidean([1.0,2.0]::DOUBLE[], [1.0,2.0]::DOUBLE[])", [], |r| r.get(0))
+            .unwrap();
+        assert!(z.abs() < 1e-12, "equal vectors → 0.0, got {z}");
     }
 }
