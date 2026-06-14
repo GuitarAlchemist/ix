@@ -1871,6 +1871,29 @@ Example 2 — "cluster crates by complexity then classify":
             }),
             handler: handlers::git_log,
         });
+
+        self.tools.push(Tool {
+            name: "ix_git_churn",
+            description: "P1.3 — per-file change frequency over a window. Runs `git log --numstat` once and aggregates churn_count + lines_added + lines_deleted + last_changed per file, sorted by churn descending and truncated to `limit`. Pair with ix_git_log: log is 'how often does the repo change' (time series); churn is 'which files drive that change' (per-file ranking). Same hardening as ix_git_log (no shell concatenation, repo_root via `git -C`). Flat projections (paths/churn_counts/lines_added/lines_deleted) let pipeline $step.field substitution feed downstream stats/fft/kmeans tools directly.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Window size in days ending today. Default 30. Must be in 1..=3650."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of files in the ranked output. Default 50. Must be in 1..=10000. 'total_files' always reports the un-truncated count."
+                    },
+                    "repo_root": {
+                        "type": "string",
+                        "description": "Optional absolute path to a git repository root. Same semantics as ix_git_log."
+                    }
+                }
+            }),
+            handler: handlers::git_churn,
+        });
     }
 
     /// Advanced sub-group 4: pipeline discovery / execution helpers
@@ -2062,6 +2085,47 @@ Example 2 — "cluster crates by complexity then classify":
                 "required": ["policy"]
             }),
             handler: handlers::governance_policy,
+        });
+
+        // ── ix_quality_gate_history ───────────────────────────────────────
+        // Cross-repo quality-gate ledger query. Reads
+        // state/quality/gate-ledger.jsonl (v1 entries) and returns recent
+        // rows filtered by source / domain / since. See
+        // docs/contracts/2026-05-24-quality-gate-ledger.contract.md.
+        self.tools.push(Tool {
+            name: "ix_quality_gate_history",
+            description: "Query the unified quality-gate ledger (state/quality/gate-ledger.jsonl). Returns v1 entries filtered by source, domain, decision, and/or since-timestamp, sorted newest-first. Legacy v0 PR-shaped rows are excluded.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Producer id (e.g. 'ix-quality-trend', 'sentrux', 'chatbot-qa'). Omit for all."
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": "Domain measured (e.g. 'structural', 'chatbot', 'tests'). Omit for all."
+                    },
+                    "decision": {
+                        "type": "string",
+                        "enum": ["pass", "fail", "warn", "skip"],
+                        "description": "Filter by decision."
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": "RFC3339 timestamp lower bound (inclusive). E.g. '2026-05-20T00:00:00Z'."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max rows to return (default 50)."
+                    },
+                    "ledger_path": {
+                        "type": "string",
+                        "description": "Override ledger path. Default: state/quality/gate-ledger.jsonl (repo-relative)."
+                    }
+                }
+            }),
+            handler: handlers::quality_gate_history,
         });
     }
 

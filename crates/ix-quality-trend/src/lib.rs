@@ -29,10 +29,15 @@
 //! See [`load_with`] and [`LoadOptions`] for the strict / quiet / manifest
 //! switches.
 
+pub mod gate_ledger;
 pub mod report;
 pub mod snapshot;
 pub mod trend;
 
+pub use gate_ledger::{
+    append_entry, query as query_ledger, read_ledger, EvidenceKind, GateDecision, GateEvidence,
+    GateLedgerEntry, GateMetric, LedgerError, LedgerLine, LedgerQuery, MetricTrendDir, OperatorAck,
+};
 pub use report::{
     build_health_artifact, is_key_metric_name, QualityAlert, QualityHealthArtifact,
     QualityHealthStatus, QualityTrendSummary,

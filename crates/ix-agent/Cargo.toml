@@ -27,6 +27,7 @@ ix-adversarial = { workspace = true }
 ix-grammar = { workspace = true }
 ix-probabilistic = { workspace = true }
 ix-signal = { workspace = true }
+ix-acoustic-tune = { workspace = true }
 ix-cache = { workspace = true }
 ix-pipeline = { workspace = true }
 ix-autograd = { workspace = true }
@@ -55,9 +56,9 @@ ix-session = { workspace = true }
 ix-fuzzy = { workspace = true }
 ix-bracelet = { workspace = true }
 ix-autoresearch = { workspace = true }
+ix-quality-trend = { workspace = true }
 ix-sentrux-annotations = { workspace = true }
 ix-assumption-graph = { workspace = true }
-chrono = { workspace = true }
 ix-optick = { path = "../ix-optick" }
 ix-types = { workspace = true }
 ix-registry = { workspace = true }
@@ -66,6 +67,7 @@ linkme = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+chrono = { workspace = true }
 ndarray = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }

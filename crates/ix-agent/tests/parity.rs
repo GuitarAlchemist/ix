@@ -1,4 +1,4 @@
-//! 64-tool parity test — protects the MCP surface during the manual→registry
+//! 72-tool parity test — protects the MCP surface during the manual→registry
 //! migration and any subsequent additions.
 //!
 //! Every tool name in `EXPECTED` must remain reachable through
@@ -10,13 +10,13 @@
 use ix_agent::tools::ToolRegistry;
 use std::collections::HashSet;
 
-/// The 67 MCP tools exposed by ix-agent. The first 48 are registry-backed,
+/// The 72 MCP tools exposed by ix-agent. The first 48 are registry-backed,
 /// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
 /// ServerContext-routed surface), plus the 4 pipeline tools added during
 /// the R1/R2/R7-Week-2/NL-compiler work: ix_pipeline_run, ix_pipeline_list,
-/// ix_autograd_run, ix_pipeline_compile, plus the P1.1/P1.2 source
-/// adapters ix_git_log + ix_cargo_deps, plus the 3 ix_grothendieck_*
-/// PC-set algebra tools backed by ix-bracelet.
+/// ix_autograd_run, ix_pipeline_compile, plus the P1.1/P1.2/P1.3 source
+/// adapters ix_git_log + ix_cargo_deps + ix_git_churn, plus the 3
+/// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet.
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_annotations_scan",
@@ -47,6 +47,7 @@ const EXPECTED: &[&str] = &[
     "ix_fuzzy_eval",
     "ix_ga_bridge",
     "ix_game_nash",
+    "ix_git_churn",
     "ix_git_log",
     "ix_governance_belief",
     "ix_governance_check",
@@ -74,6 +75,8 @@ const EXPECTED: &[&str] = &[
     "ix_fir_filter",
     "ix_spectrogram",
     "ix_autocorrelation",
+    "ix_analyze_reference",
+    "ix_spectral_distance",
     "ix_kmeans",
     "ix_linear_regression",
     "ix_pca",
@@ -90,6 +93,7 @@ const EXPECTED: &[&str] = &[
     "ix_pipeline_compile",
     "ix_pipeline_list",
     "ix_pipeline_run",
+    "ix_quality_gate_history",
     "ix_random_forest",
     "ix_rfc_catalog",
     "ix_rotation",
@@ -176,11 +180,17 @@ fn parity_expected_count() {
     // + catalog-gap-audit batch (2026-06-07): ix_svd, ix_gmm, ix_wavelet_denoise,
     //   ix_fir_filter, ix_spectrogram, ix_autocorrelation (wrapping existing
     //   ix-math/ix-unsupervised/ix-signal algorithms) = 88.
+    // + ix_analyze_reference + ix_spectral_distance (2026-06-07, ix-acoustic-tune
+    //   analysis skills — reference descriptor + decomposed spectral distance,
+    //   pipeline/NL/MCP-callable) = 90.
+    // + ix_git_churn (2026-05-24, per-file churn source adapter, P1.3) = 91.
+    // + ix_quality_gate_history (2026-05-24, quality-gate-ledger query tool,
+    //   agent-native parity with the sentrux_gate_writer binary) = 92.
     // + ix_annotations_scan (2026-05-24, @ai annotation extract+reconcile scan,
-    //   agent-native parity with the ix-ai-annotations reconcile binary) = 89.
+    //   agent-native parity with the ix-ai-annotations reconcile binary) = 93.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 89);
+    assert_eq!(EXPECTED.len(), 93);
 }
 
 #[test]
@@ -316,10 +326,12 @@ fn parity_all_43_registry_backed() {
     // + feature_importances (2026-06-07, dogfood remaining-gap fix) = 57.
     // + svd/gmm/wavelet_denoise/fir_filter/spectrogram/autocorrelation
     //   (2026-06-07, catalog-gap-audit batch — wrapping existing algorithms) = 63.
+    // + analyze_reference + spectral_distance (2026-06-07, ix-acoustic-tune
+    //   analysis skills) = 65.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 63,
-        "expected 63 registry skills, got {registry_count}"
+        registry_count, 65,
+        "expected 65 registry skills, got {registry_count}"
     );
 }
 

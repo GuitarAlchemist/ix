@@ -51,6 +51,7 @@ ix-fractal        = "experimental"
 ix-number-theory  = "experimental"
 ix-gpu            = "experimental"
 memristive-markov = "experimental"
+ix-acoustic-tune  = "experimental"
 
 # --- Internal tier ------------------------------------------------------
 ix-skill                  = "internal"
