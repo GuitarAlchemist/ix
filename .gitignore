@@ -94,3 +94,6 @@ embed-cache/
 # embed-cache/, so it can appear at repo root or under a crate dir during tests.
 # NEVER commit; regenerated on demand.
 .fastembed_cache/
+
+# /teach generated courses (personal, regenerable)
+learning/
