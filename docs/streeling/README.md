@@ -11,9 +11,9 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 ## Enrollment
 
-- **71** learnings total
+- **72** learnings total
   - `ga`: 27
-  - `ix`: 44
+  - `ix`: 45
 
 ## Faculties
 
@@ -69,7 +69,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [LDA non-symmetric deflation produces duplicated or wrong discriminants · `ix`](../../docs/solutions/math-correctness/lda-non-symmetric-deflation.md)
 - [Sedenion log(-1) principal value needs pi on an imaginary axis · `ix`](../../docs/solutions/math-correctness/sedenion-log-negative-reals.md)
 
-### plan (16)
+### plan (17)
 
 - [feat: Add quaternions, dual quaternions, Plücker coordinates, primes, and fractal curves · `ix`](../../docs/plans/2026-03-13-002-feat-tars-math-phase1-quaternions-primes-fractals-plan.md)
 - [feat: ix Full Vision — Math Crates + Demo + MCP + Infrastructure · `ix`](../../docs/plans/2026-03-14-001-feat-full-vision-math-demo-mcp-infra-plan.md)
@@ -86,6 +86,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [2026-05-04-chatbot-autonomy-action-layer · `ix`](../../docs/plans/2026-05-04-chatbot-autonomy-action-layer.md)
 - [2026-05-09-cluster-degeneracy · `ix`](../../docs/plans/2026-05-09-cluster-degeneracy.md)
 - [2026-05-24-traceability-tree-validation-plan · `ix`](../../docs/plans/2026-05-24-traceability-tree-validation-plan.md)
+- [ix-duck — in-process DuckDB analyst bench + IX UDFs (Tier 1) · `ix`](../../docs/plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md)
 - [Streeling University v1 — federated learnings hub (Campus + Registrar) · `ix`](../../docs/plans/2026-06-14-002-feat-streeling-university-plan.md)
 
 ### runtime-errors (2)
