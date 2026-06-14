@@ -1,0 +1,74 @@
+//! `ix-duck` — an in-process DuckDB "analyst bench" over IX telemetry, with IX
+//! algorithms exposed as SQL UDFs.
+//!
+//! DuckDB here is the analyst's bench — **not** a production engine and **not** a
+//! source of truth (see `docs/DUCKDB.md`). All DuckDB code lives behind the optional
+//! `duck` feature, which pulls a bundled (C++) DuckDB build; the default workspace /
+//! CI build never compiles it.
+//!
+//! ```no_run
+//! # #[cfg(feature = "duck")]
+//! # fn demo() -> duckdb::Result<()> {
+//! let conn = ix_duck::open_bench()?;
+//! let yield_: Option<f64> = conn.query_row(
+//!     "SELECT avg(coverage_max) FROM read_json_auto('state/thinking-machine/hits.jsonl')",
+//!     [], |r| r.get(0))?;
+//! println!("blended yield = {yield_:?}");
+//! # Ok(())
+//! # }
+//! ```
+
+#[cfg(feature = "duck")]
+mod udf;
+
+#[cfg(feature = "duck")]
+pub use duckdb::{Connection, Result};
+
+/// Open an in-memory DuckDB connection with every IX UDF registered.
+///
+/// In-memory only — the bench holds no state across calls. Point queries at the
+/// on-disk telemetry via `read_json_auto('…')` / `read_parquet('…')`.
+// @ai:invariant open_bench returns an in-memory DuckDB connection on which every IX UDF is registered and callable from SQL [T:test conf:0.9 src:ix_duck::tests::open_bench_reads_jsonl_and_registers_udfs]
+#[cfg(feature = "duck")]
+pub fn open_bench() -> duckdb::Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    udf::register_all(&conn)?;
+    Ok(conn)
+}
+
+#[cfg(all(test, feature = "duck"))]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Write a tiny JSONL fixture and return its DuckDB-safe path string.
+    fn fixture(dir: &std::path::Path) -> String {
+        let p = dir.join("hits.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        writeln!(f, r#"{{"outcome":"compiled","coverage_max":0.5}}"#).unwrap();
+        writeln!(f, r#"{{"outcome":"compiled","coverage_max":0.7}}"#).unwrap();
+        writeln!(f, r#"{{"outcome":"out_of_domain","coverage_max":0.1}}"#).unwrap();
+        p.to_string_lossy().replace('\\', "/")
+    }
+
+    #[test]
+    fn open_bench_reads_jsonl_and_registers_udfs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path());
+        let conn = open_bench().unwrap();
+
+        let n: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM read_json_auto('{path}')"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 3, "read_json_auto should see all 3 rows");
+
+        let avg: f64 = conn
+            .query_row(
+                &format!("SELECT avg(coverage_max) FROM read_json_auto('{path}') WHERE outcome='compiled'"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((avg - 0.6).abs() < 1e-9, "compiled yield should be 0.6, got {avg}");
+    }
+}
