@@ -72,6 +72,15 @@ These rules complement (don't replace) the Collaboration discipline above. They 
 
 Before-merge addendum: scan Codex bot comments before any `gh pr merge` — see **Session-learned rules** below for the exact command and policy.
 
+## Tracer-bullets + vertical slices (aihero delta, 2026-06-14)
+
+Adopted from aihero.dev as the genuine *delta* over the rules above (complements Karpathy r2 simplicity + r4 goal-driven). Counters AI's "build the whole thing at once" failure mode:
+
+- **Tracer-bullet first.** For any non-trivial feature, build the smallest **end-to-end** slice that touches *every* layer, test it, get feedback, then expand — never build layers in isolation. aihero: "Context-window constraints make the discipline non-negotiable." (This session's spike was exactly this: held-out→train→head→eval→cross-validate as one thin slice before scaling.)
+- **Vertical, not horizontal, decomposition.** Each task/PR is a thin slice cutting through all integration layers (surfacing unknowns early), not a horizontal layer.
+
+Already covered by existing machinery — do NOT add duplicate skills: `/grill-me`→IDSD intent gate + `brainstorming`; `/to-prd`,`/to-issues`→`ce-plan` + `docs/plans`; `/tdd`→test discipline + `ce-work`; `/improve-codebase-architecture`→sentrux + `ix-code-*` + `simplify`/`code-review`.
+
 Self-improvement reflex: when the user corrects you, invoke `/correct` so the rule lands in this file's **Session-learned rules** section — Cherny's "most important loop" from the 2026 Sequoia talk.
 
 ## Session continuity (Cherny pattern)

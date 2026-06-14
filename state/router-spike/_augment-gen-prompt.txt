@@ -1,0 +1,30 @@
+Generate ADDITIONAL TRAINING prompts (not a test set) for a music-theory chatbot intent classifier. Goal: strengthen weak/under-covered intents and teach boundary rules. Maximize diversity of phrasing (jargon, exotic terms, slang, conversational, typos). These must be FRESH, natural prompts — do not produce generic templates.
+
+Produce prompts for these intents with the given counts, honoring the BOUNDARY RULES:
+
+- skill.scaleinfo (20): notes/spelling of NAMED scales, especially EXOTIC/less-common ones and degree questions. Cover: phrygian dominant, octatonic / diminished (half-whole & whole-half), whole tone, lydian dominant, altered/super-locrian, hungarian minor, double harmonic, bebop, pentatonic variants. Include "does the X scale have a b7 / #4 / natural 6", "pitch collection of X", "what notes make up X scale". A mode named as a SCALE (e.g. "G phrygian dominant scale") belongs here, NOT skill.modes.
+
+- skill.diatonicchords (10): BUILDING chords from a key/scale. CRUCIAL boundary: "harmonize the X scale", "what chords come from X", "triads built on the X scale", "seventh chords in the key of X" — these are diatonicchords, NOT scaleinfo, even though they mention a scale.
+
+- skill.keyidentification (8): identify the KEY/tonal center of a progression, including JARGON: "what tonal center does vi IV I V imply", "what key do these roman numerals suggest", roman-numeral and figured phrasings.
+
+- skill.chordinfo (8): notes/quality of a NAMED chord, including "is there a <note> in a <chord>", "does <chord> contain <note>", which-note-is-the-Nth-of-a-chord. A bare chord name (not scale) belongs here.
+
+- skill.beginnerchords (6): easy/first chords, including SLANG: "cowboy chords", "open chords", "campfire chords", "first chords to learn".
+
+- skill.genreessentials (6): essential chords/scales FOR A GENRE (country, jazz, blues, funk, metal, bossa). "what scale for <genre> solos", "<genre> chords to learn" belong here (genre-conditioned), NOT scaleinfo/beginnerchords.
+
+OUTPUT: a single JSON object, nothing else (no prose, no markdown fences):
+{
+  "version": "augment-0b-1",
+  "authoredBy": "codex-gpt5.5",
+  "inScope": [
+    { "intentId": "skill.scaleinfo", "prompts": ["...20..."] },
+    { "intentId": "skill.diatonicchords", "prompts": ["...10..."] },
+    { "intentId": "skill.keyidentification", "prompts": ["...8..."] },
+    { "intentId": "skill.chordinfo", "prompts": ["...8..."] },
+    { "intentId": "skill.beginnerchords", "prompts": ["...6..."] },
+    { "intentId": "skill.genreessentials", "prompts": ["...6..."] }
+  ]
+}
+Output ONLY the JSON, valid and complete.
