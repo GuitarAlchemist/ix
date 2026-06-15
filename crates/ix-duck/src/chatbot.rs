@@ -13,10 +13,41 @@
 //! expectation) vs the run's `response.agentId`. `response_length` is a *soft* band
 //! only — measured to drift on correct answers, so it never hard-fails.
 
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use duckdb::Connection;
 use serde::Serialize;
+
+/// Errors from the flight recorder: corpus I/O (fail-closed) vs DuckDB.
+#[derive(Debug)]
+pub enum ChatbotError {
+    /// A corpus directory existed but could not be read (permissions, broken mount, …).
+    /// Surfaced — never silently treated as an absent corpus — per the contract's
+    /// fail-closed read-error semantics.
+    Io(std::io::Error),
+    Duck(duckdb::Error),
+}
+
+impl std::fmt::Display for ChatbotError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChatbotError::Io(e) => write!(f, "corpus I/O error: {e}"),
+            ChatbotError::Duck(e) => write!(f, "duckdb error: {e}"),
+        }
+    }
+}
+impl std::error::Error for ChatbotError {}
+impl From<std::io::Error> for ChatbotError {
+    fn from(e: std::io::Error) -> Self {
+        ChatbotError::Io(e)
+    }
+}
+impl From<duckdb::Error> for ChatbotError {
+    fn from(e: duckdb::Error) -> Self {
+        ChatbotError::Duck(e)
+    }
+}
 
 /// Result of the canonical-diff gate over a corpus.
 #[derive(Debug, Clone, Serialize)]
@@ -60,40 +91,47 @@ fn golden_traces_dir(corpus_dir: &Path) -> PathBuf {
 
 /// Enumerate files matching `golden-traces/*/<leaf>` (e.g. `run-1.json`,
 /// `_signature.json`). Explicit enumeration (vs a wildcard handed to DuckDB) makes
-/// the "absent/empty corpus → skip" path real and keeps untrusted input bounded.
-fn collect(corpus_dir: &Path, predicate: impl Fn(&str) -> bool) -> Vec<PathBuf> {
+/// the "absent corpus → skip" path real and keeps untrusted input bounded.
+///
+/// Fail-closed: an absent `golden-traces` dir (`NotFound`) returns an empty list
+/// (→ skipped), but any *other* I/O error on a present corpus (permissions, broken
+/// mount) is propagated — never silently treated as absent.
+fn collect(
+    corpus_dir: &Path,
+    predicate: impl Fn(&str) -> bool,
+) -> Result<Vec<PathBuf>, ChatbotError> {
     let mut out = Vec::new();
     let gt = golden_traces_dir(corpus_dir);
-    let Ok(prompts) = std::fs::read_dir(&gt) else {
-        return out; // absent corpus → empty
+    let prompts = match std::fs::read_dir(&gt) {
+        Ok(p) => p,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(out), // absent → skip
+        Err(e) => return Err(e.into()),                              // present but unreadable → fail
     };
-    for prompt in prompts.flatten() {
-        let p = prompt.path();
+    for prompt in prompts {
+        let p = prompt?.path();
         if !p.is_dir() {
             continue;
         }
-        if let Ok(files) = std::fs::read_dir(&p) {
-            for f in files.flatten() {
-                let fp = f.path();
-                if fp
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(&predicate)
-                {
-                    out.push(fp);
-                }
+        for f in std::fs::read_dir(&p)? {
+            let fp = f?.path();
+            if fp
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(&predicate)
+            {
+                out.push(fp);
             }
         }
     }
     out.sort();
-    out
+    Ok(out)
 }
 
-fn run_files(corpus_dir: &Path) -> Vec<PathBuf> {
+fn run_files(corpus_dir: &Path) -> Result<Vec<PathBuf>, ChatbotError> {
     collect(corpus_dir, |n| n.starts_with("run-") && n.ends_with(".json"))
 }
 
-fn signature_files(corpus_dir: &Path) -> Vec<PathBuf> {
+fn signature_files(corpus_dir: &Path) -> Result<Vec<PathBuf>, ChatbotError> {
     collect(corpus_dir, |n| n == "_signature.json")
 }
 
@@ -115,8 +153,8 @@ fn sql_list(paths: &[PathBuf]) -> String {
 /// Build the `chatbot_traces` table (one row per `run-*.json`). Returns the row
 /// count; 0 when the corpus is absent/empty (graceful-degrade).
 // @ai:invariant build_traces creates chatbot_traces with one row per golden-trace run file [T:test conf:0.9 src:ix_duck::chatbot::tests::traces_row_per_run]
-pub fn build_traces(conn: &Connection, corpus_dir: &Path) -> duckdb::Result<usize> {
-    let files = run_files(corpus_dir);
+pub fn build_traces(conn: &Connection, corpus_dir: &Path) -> Result<usize, ChatbotError> {
+    let files = run_files(corpus_dir)?;
     if files.is_empty() {
         conn.execute_batch(
             "CREATE OR REPLACE TABLE chatbot_traces (
@@ -210,8 +248,8 @@ pub fn routing_method_share(conn: &Connection) -> duckdb::Result<Vec<(String, i6
 /// Build `chatbot_signatures(prompt_id, expected_agent)` from each `_signature.json`'s
 /// `orchestration.answer` step. UNNEST (not a list-lambda) so it is stable across
 /// DuckDB versions. Prompts with no such step are absent → expected NULL → degraded.
-fn build_signatures(conn: &Connection, corpus_dir: &Path) -> duckdb::Result<()> {
-    let files = signature_files(corpus_dir);
+fn build_signatures(conn: &Connection, corpus_dir: &Path) -> Result<(), ChatbotError> {
+    let files = signature_files(corpus_dir)?;
     if files.is_empty() {
         conn.execute_batch(
             "CREATE OR REPLACE TABLE chatbot_signatures (prompt_id VARCHAR, expected_agent VARCHAR);",
@@ -233,7 +271,10 @@ fn build_signatures(conn: &Connection, corpus_dir: &Path) -> duckdb::Result<()> 
 /// agent, and classify the result by failure *fingerprint* (a single clean
 /// heterogeneous flip fails; a homogeneous collapse warns as `degraded`).
 // @ai:invariant check_regressions flags a run whose response.agentId differs from its canonical expected agent [T:test conf:0.9 src:ix_duck::chatbot::tests::diff_flags_agent_drift]
-pub fn check_regressions(conn: &Connection, corpus_dir: &Path) -> duckdb::Result<GateReport> {
+pub fn check_regressions(
+    conn: &Connection,
+    corpus_dir: &Path,
+) -> Result<GateReport, ChatbotError> {
     let prompts_checked = build_traces(conn, corpus_dir)?;
     build_signatures(conn, corpus_dir)?;
 
@@ -399,7 +440,7 @@ mod tests {
     fn traces_row_per_run() {
         let conn = crate::open_bench().unwrap();
         let n = build_traces(&conn, &fixtures()).unwrap();
-        let files = run_files(&fixtures()).len();
+        let files = run_files(&fixtures()).unwrap().len();
         assert!(files >= 3, "need a real multi-prompt fixture corpus, found {files}");
         assert_eq!(n, files, "one chatbot_traces row per run file");
     }
@@ -429,7 +470,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         copy_corpus(dir.path());
         // Flip exactly one prompt's routed agent → a single clean heterogeneous flip.
-        let runs = run_files(dir.path());
+        let runs = run_files(dir.path()).unwrap();
         set_agent(&runs[0], "skill.WRONG_AGENT");
 
         let conn = crate::open_bench().unwrap();
@@ -444,7 +485,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         copy_corpus(dir.path());
         // Collapse every prompt to the same fallback agent → backend/env symptom.
-        for run in run_files(dir.path()) {
+        for run in run_files(dir.path()).unwrap() {
             set_agent(&run, "skill.fallback");
         }
         let conn = crate::open_bench().unwrap();
@@ -460,6 +501,19 @@ mod tests {
         assert_eq!(report.status, "skipped");
         assert_eq!(report.prompts_checked, 0);
         assert_eq!(exit_code(&report.status), 0);
+    }
+
+    #[test]
+    fn present_but_unreadable_corpus_fails_closed() {
+        // golden-traces exists but is a FILE, not a dir → read_dir errors with a kind
+        // other than NotFound. Must surface as an error, never a silent `skipped` pass.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("golden-traces"), b"not a directory").unwrap();
+        let conn = crate::open_bench().unwrap();
+        assert!(
+            check_regressions(&conn, dir.path()).is_err(),
+            "a present-but-unreadable corpus must fail closed, not skip"
+        );
     }
 
     #[test]

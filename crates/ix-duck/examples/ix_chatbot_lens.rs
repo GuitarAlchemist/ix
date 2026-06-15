@@ -27,7 +27,7 @@ fn default_corpus() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("../ga/state/quality/chatbot-qa"))
 }
 
-fn main() -> duckdb::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "lens".to_string());
     let corpus = args.next().map(PathBuf::from).unwrap_or_else(default_corpus);
