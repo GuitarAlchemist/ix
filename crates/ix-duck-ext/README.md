@@ -48,6 +48,17 @@ SELECT ix_cosine([1,0]::DOUBLE[], [1,0]::DOUBLE[]);    -- 1.0
 SELECT ix_euclidean([0,0]::DOUBLE[], [3,4]::DOUBLE[]); -- 5.0
 ```
 
+### One-word launch (`ix-duck.ps1`)
+
+Skips the `-unsigned` flag and manual `LOAD` (and builds the extension if missing):
+
+```powershell
+pwsh ix-duck.ps1                       # interactive CLI, ix_* ready
+pwsh ix-duck.ps1 -Ui                   # browser UI at http://localhost:4213
+pwsh ix-duck.ps1 -Database work.duckdb # open/persist a database file
+pwsh ix-duck.ps1 -Sql "SELECT ix_cosine([1,0]::DOUBLE[],[1,0]::DOUBLE[])"
+```
+
 ## How it works (and why it's not version-locked)
 
 Built via DuckDB's **C Extension API** (`C_STRUCT` ABI) through duckdb-rs's
