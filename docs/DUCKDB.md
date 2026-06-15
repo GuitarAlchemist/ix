@@ -114,3 +114,22 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
 > Phase 4 / v1.1). The MVP yield-split needs **no** custom UDF (pure SQL). See the plan's "Key Technical Finding".
 
 → Next: `/ce-work docs/plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md`
+
+## Chatbot flight recorder (Slice A/B) — a worked application
+
+`ix_duck::chatbot` (example `ix_chatbot_lens`) is the canonical "SQL over our files"
+application: it reads GA's per-run golden-traces (`../ga/state/quality/chatbot-qa`) into a
+`chatbot_traces` table (Slice A — weak-intent / ungrounded / latency / routing-share queries)
+and runs a canonical-diff **regression gate** on the routed agent (Slice B), emitting the
+`chatbot-trace-regression` contract.
+
+```bash
+cargo run -p ix-duck --features duck --example ix_chatbot_lens             # lens over live ../ga
+cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check    # the gate
+```
+
+The hard gate runs hermetically over vendored fixtures in CI (`ix-duck-chatbot.yml`); the live
+corpus is checked nightly (advisory). See
+[`docs/plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md`](plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md)
+and [`docs/contracts/chatbot-trace-regression.contract.md`](contracts/chatbot-trace-regression.contract.md).
+Lessons: [`docs/solutions/feature-implementations/2026-06-14-duckdb-signature-unnest-over-lambda.md`](solutions/feature-implementations/2026-06-14-duckdb-signature-unnest-over-lambda.md).
