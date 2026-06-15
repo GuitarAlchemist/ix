@@ -59,6 +59,11 @@ pwsh ix-duck.ps1 -Database work.duckdb # open/persist a database file
 pwsh ix-duck.ps1 -Sql "SELECT ix_cosine([1,0]::DOUBLE[],[1,0]::DOUBLE[])"
 ```
 
+`examples.sql` has ready-made demos (kNN over a table, cosine ranking, PCA→2-D
+scatter, silhouette) — open it in the UI and run cells top to bottom. It also
+shows the `SET VARIABLE` + `getvariable()` bridge for feeding a table-built set
+into the table functions (whose args must be constant).
+
 ## How it works (and why it's not version-locked)
 
 Built via DuckDB's **C Extension API** (`C_STRUCT` ABI) through duckdb-rs's
