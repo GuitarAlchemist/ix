@@ -86,6 +86,7 @@ pub fn geomean(reach: u8, impact: u8, confidence: u8) -> f64 {
 }
 
 /// `round(geomean)` clamped to `[1,5]`.
+// @ai:invariant stars = round(geomean(reach,impact,confidence)) clamped to 1..=5 [T:test conf:0.95 src:ix-value::model::tests::stars_geomean_rounds_and_clamps]
 pub fn stars(reach: u8, impact: u8, confidence: u8) -> u8 {
     geomean(reach, impact, confidence).round().clamp(1.0, 5.0) as u8
 }

@@ -97,6 +97,7 @@ fn rollup_record(repo: &str, rs: Option<&RepoScore>, items: &[ValueRecord]) -> O
 }
 
 /// Ingest every configured root. Records are returned sorted by `id` for stable output.
+// @ai:invariant ingest emits one record per valid item plus a repo rollup per scanned manifest; absent manifests are reported, not fatal [T:test conf:0.9 src:ix-value::tests::ingest_produces_items_and_explicit_rollup]
 pub fn ingest(roots: &[SourceRoot]) -> IngestReport {
     let mut report = IngestReport::default();
     for sr in roots {

@@ -11,9 +11,9 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 ## Enrollment
 
-- **75** learnings total
+- **77** learnings total
   - `ga`: 27
-  - `ix`: 48
+  - `ix`: 50
 
 ## Faculties
 
@@ -21,7 +21,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 - Extract chatbot orchestration into GA.Business.Core.Orchestration and wire GaApi to ProductionOrchestrator with agent metadata · `ga` — `docs/solutions/architecture/orchestration-library-extraction-gachatbot.md`
 
-### brainstorm (12)
+### brainstorm (13)
 
 - [comprehensive-ml-documentation · `ix`](../../docs/brainstorms/2026-03-12-comprehensive-docs-brainstorm.md)
 - [tars-math-concepts · `ix`](../../docs/brainstorms/2026-03-13-tars-math-concepts-brainstorm.md)
@@ -33,6 +33,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [memory-system-decision · `ix`](../../docs/brainstorms/2026-04-09-memory-system-decision.md)
 - [tars-v1-inspirations · `ix`](../../docs/brainstorms/2026-04-09-tars-v1-inspirations.md)
 - [ix-autoresearch · `ix`](../../docs/brainstorms/2026-04-26-ix-autoresearch-brainstorm.md)
+- [business-value-scorecard · `ix`](../../docs/brainstorms/2026-06-14-business-value-scorecard-brainstorm.md)
 - [chatbot-duckdb-leverage · `ix`](../../docs/brainstorms/2026-06-14-chatbot-duckdb-leverage-brainstorm.md)
 - [streeling-university · `ix`](../../docs/brainstorms/2026-06-14-streeling-university-brainstorm.md)
 
@@ -74,7 +75,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [LDA non-symmetric deflation produces duplicated or wrong discriminants · `ix`](../../docs/solutions/math-correctness/lda-non-symmetric-deflation.md)
 - [Sedenion log(-1) principal value needs pi on an imaginary axis · `ix`](../../docs/solutions/math-correctness/sedenion-log-negative-reals.md)
 
-### plan (18)
+### plan (19)
 
 - [feat: Add quaternions, dual quaternions, Plücker coordinates, primes, and fractal curves · `ix`](../../docs/plans/2026-03-13-002-feat-tars-math-phase1-quaternions-primes-fractals-plan.md)
 - [feat: ix Full Vision — Math Crates + Demo + MCP + Infrastructure · `ix`](../../docs/plans/2026-03-14-001-feat-full-vision-math-demo-mcp-infra-plan.md)
@@ -93,6 +94,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [2026-05-24-traceability-tree-validation-plan · `ix`](../../docs/plans/2026-05-24-traceability-tree-validation-plan.md)
 - [ix-duck — in-process DuckDB analyst bench + IX UDFs (Tier 1) · `ix`](../../docs/plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md)
 - [Streeling University v1 — federated learnings hub (Campus + Registrar) · `ix`](../../docs/plans/2026-06-14-002-feat-streeling-university-plan.md)
+- [Business-Value Scorecard — RICE stars for demos + repos · `ix`](../../docs/plans/2026-06-14-003-feat-business-value-scorecard-plan.md)
 - [Chatbot DuckDB flight recorder (ix-duck cross-repo analyzer + regression gate) · `ix`](../../docs/plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md)
 
 ### runtime-errors (2)
