@@ -1,0 +1,58 @@
+name: chatbot trace regression (nightly, advisory)
+
+# Runs the chatbot regression gate over the LIVE GA corpus by checking out the
+# GuitarAlchemist/ga sibling read-only. ADVISORY: schedule/dispatch only — it never
+# gates a merge (the hermetic ix-duck-chatbot workflow does that). A red run here is
+# an alert that the live corpus drifted from its canonicals; the emitted contract is
+# uploaded as an artifact for QualityLens / dashboards to consume.
+#
+# Schedule-only (no fork-PR trigger) → no untrusted-PR code path. GA is public, so
+# the checkout needs no token. Reads only; never writes the GA tree.
+
+on:
+  schedule:
+    - cron: '23 6 * * *' # daily 06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout GA sibling (read-only, public)
+        uses: actions/checkout@v4
+        with:
+          repository: GuitarAlchemist/ga
+          path: ga-sibling
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ix-duck-duck
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build chatbot lens (duck feature)
+        run: cargo build -p ix-duck --features duck --example ix_chatbot_lens
+
+      - name: Check live GA corpus (advisory; nonzero on real regression)
+        run: cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check ga-sibling/state/quality/chatbot-qa
+
+      - name: Upload regression contract
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatbot-trace-regressions
+          path: state/quality/analytics/chatbot-trace-regressions.json
+          if-no-files-found: warn

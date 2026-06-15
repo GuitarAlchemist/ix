@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-05-16T04:55:23Z",
+  "promptId": "notes-in-c-major",
+  "prompt": "notes in c major",
+  "category": "case-variants",
+  "runIndex": 1,
+  "response": {
+    "naturalLanguageAnswer": "The C major scale has 7 notes: **C \u00e2\u20ac\u201c D \u00e2\u20ac\u201c E \u00e2\u20ac\u201c F \u00e2\u20ac\u201c G \u00e2\u20ac\u201c A \u00e2\u20ac\u201c B**. Relative minor: A minor.",
+    "agentId": "skill.scaleinfo",
+    "confidence": 0.9475369,
+    "routingMethod": "orchestrator-skill-semantic",
+    "grounding": null,
+    "elapsedMs": 59,
+    "traceId": "1b99f5dc12563072224205a1c41ba6d0"
+  }
+}

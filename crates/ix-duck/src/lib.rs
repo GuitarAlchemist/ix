@@ -21,6 +21,11 @@
 #[cfg(feature = "duck")]
 mod udf;
 
+/// Chatbot flight recorder — GA golden-trace warehouse (Slice A) + canonical-diff
+/// regression gate (Slice B). See `docs/plans/2026-06-14-004-…-flight-recorder-plan.md`.
+#[cfg(feature = "duck")]
+pub mod chatbot;
+
 #[cfg(feature = "duck")]
 pub use duckdb::{Connection, Result};
 

@@ -22,10 +22,14 @@ duckdb = { version = "=1.10503.1", features = ["bundled", "json", "vscalar"], op
 ix-math = { workspace = true, optional = true }
 ix-unsupervised = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
+# Chatbot flight recorder (Slice A/B): the regression gate serializes a JSON contract.
+serde = { workspace = true, features = ["derive"], optional = true }
+serde_json = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
 
 [features]
 # In-process DuckDB bench + IX UDFs. Off by default so the workspace/CI build stays clean.
-duck = ["dep:duckdb", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray"]
+duck = ["dep:duckdb", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray", "dep:serde", "dep:serde_json", "dep:chrono"]
 
 [[example]]
 name = "yield_analysis"
@@ -33,6 +37,10 @@ required-features = ["duck"]
 
 [[example]]
 name = "ix_quality_lens"
+required-features = ["duck"]
+
+[[example]]
+name = "ix_chatbot_lens"
 required-features = ["duck"]
 
 [dev-dependencies]

@@ -1,0 +1,56 @@
+name: ix-duck chatbot gate
+
+# Hard, hermetic gate for the chatbot flight recorder (ix-duck `duck` feature).
+# Runs ONLY over vendored fixtures (crates/ix-duck/tests/fixtures) so it is fully
+# ix-owned and merge-blocking without depending on the GA sibling. This is also the
+# only place CI compiles the `duck` feature (bundled DuckDB), so it de-risks all
+# ix-duck code — the default `cargo build --workspace` never pulls duckdb.
+#
+# Path-filtered (the bundled C++ build is heavy) + rust-cache with a shared key so
+# the rarely-triggered job isn't perpetually cold. The live-GA corpus is checked by
+# the separate, non-blocking chatbot-trace-regression-nightly workflow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/ix-duck/**'
+      - '.github/workflows/ix-duck-chatbot.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/ix-duck/**'
+      - '.github/workflows/ix-duck-chatbot.yml'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  chatbot-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ix-duck-duck
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Clippy (duck feature)
+        run: cargo clippy -p ix-duck --all-targets --features duck -- -D warnings
+
+      - name: Test (duck feature)
+        run: cargo test -p ix-duck --features duck
+
+      - name: Hard gate over vendored fixtures (must pass; nonzero on regression)
+        run: cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check crates/ix-duck/tests/fixtures/chatbot-qa
