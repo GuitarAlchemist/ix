@@ -1,0 +1,64 @@
+# ix-duck-ext
+
+A **loadable DuckDB extension** exposing IX algorithms as SQL UDFs. The
+`LOAD`-able sibling of the in-process [`ix-duck`](../ix-duck) bench: it reuses the
+exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
+`ix.duckdb_extension` that **any `duckdb.exe` can load** — no embedding host.
+
+## Functions
+
+### Scalar
+
+| UDF | Signature | Notes |
+|---|---|---|
+| `ix_cosine` | `(DOUBLE[], DOUBLE[]) -> DOUBLE` | Cosine similarity in [-1, 1]. Dimension mismatch → SQL error. |
+| `ix_euclidean` | `(DOUBLE[], DOUBLE[]) -> DOUBLE` | L2 distance. Primitive for kNN / OOD: `ORDER BY ix_euclidean(q, r) LIMIT k`. |
+
+### Table
+
+| UDF | Signature | Notes |
+|---|---|---|
+| `ix_pca_project` | `(json_vectors VARCHAR, n_components BIGINT) -> TABLE(row BIGINT, coords DOUBLE[])` | Fits PCA over the input set, returns each vector's projection. Wraps `ix_unsupervised::pca::PCA`. |
+| `ix_silhouette` | `(json_vectors VARCHAR, json_labels VARCHAR) -> TABLE(row BIGINT, label BIGINT, silhouette DOUBLE)` | Per-point silhouette for a clustering. Mean: `SELECT avg(silhouette) FROM ix_silhouette(...)`. |
+
+Scalars wrap `ix_math::distance` directly; the PCA table function wraps
+`ix_unsupervised` — no reimplementation, identical numbers to the in-process bench.
+Table functions take a whole set as a JSON param (2-D number array; labels a 1-D int
+array), so one SQL call processes the set:
+`SELECT * FROM ix_pca_project('[[1,2,3],[4,5,6]]', 2);`
+
+## Build
+
+```powershell
+pwsh crates/ix-duck-ext/build.ps1              # → ix.duckdb_extension
+pwsh crates/ix-duck-ext/build.ps1 -SmokeTest   # also LOAD into duckdb.exe and assert
+```
+
+Requires `cargo`, `python` (for the metadata footer), and `duckdb.exe` on PATH.
+This crate is **excluded** from the ix workspace, so `cargo build --workspace`
+never compiles it (preserving the "default/CI build never pulls DuckDB" invariant).
+
+## Use
+
+```sql
+-- Unsigned local extensions need the flag (startup config):
+--   duckdb -unsigned     OR     SET allow_unsigned_extensions=true; at launch
+LOAD 'C:/path/to/ix.duckdb_extension';
+SELECT ix_cosine([1,0]::DOUBLE[], [1,0]::DOUBLE[]);    -- 1.0
+SELECT ix_euclidean([0,0]::DOUBLE[], [3,4]::DOUBLE[]); -- 5.0
+```
+
+## How it works (and why it's not version-locked)
+
+Built via DuckDB's **C Extension API** (`C_STRUCT` ABI) through duckdb-rs's
+`loadable-extension` feature + `#[duckdb_entrypoint_c_api]`. DuckDB passes a struct
+of function pointers at `LOAD` time rather than the extension linking a specific
+engine, so one artifact loads into any engine **≥ the declared `min_duckdb_version`**
+(`v1.0.0` here) — verified loading into the v1.5.3 CLI. No bundled DuckDB, no C++
+build.
+
+A raw cdylib will not `LOAD` ("metadata at the end of the file is invalid"); DuckDB
+requires a 512-byte footer, appended by `append_extension_metadata.py` (vendored
+from `duckdb/extension-ci-tools`, MIT). `build.ps1` wires the whole chain.
+
+Provenance / design: GA `docs/plans/2026-06-15-tools-ix-duckdb-loadable-extension-plan.md`.

@@ -1,5 +1,10 @@
 [workspace]
 resolver = "2"
+# ix-duck-ext is a loadable DuckDB C-API extension (cdylib). It is deliberately
+# EXCLUDED, not a member: as a member it would drag duckdb + arrow into every
+# `cargo build --workspace`, breaking the invariant that the default/CI build
+# never compiles DuckDB. Build it explicitly via crates/ix-duck-ext/build.ps1.
+exclude = ["crates/ix-duck-ext"]
 members = [
     "crates/ix-math",
     "crates/ix-optimize",
