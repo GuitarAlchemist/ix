@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-05-16T04:54:27Z",
+  "promptId": "are-0146-and-0137-z-related",
+  "prompt": "Are 0146 and 0137 z-related",
+  "category": "operations",
+  "runIndex": 1,
+  "response": {
+    "naturalLanguageAnswer": "[0,1,4,6] and [0,1,3,7] are Z-related: they share ICV <1 1 1 1 1 1> but have different prime forms.",
+    "agentId": "algebra",
+    "confidence": 0.9941786,
+    "routingMethod": "ix-algebra",
+    "grounding": {
+      "source": "ix-compatible",
+      "revision": "7b02a56",
+      "queryType": "z-relation",
+      "facts": {
+        "left": "[0,1,4,6]",
+        "right": "[0,1,3,7]",
+        "leftIcv": "<1 1 1 1 1 1>",
+        "rightIcv": "<1 1 1 1 1 1>",
+        "zRelated": "True"
+      }
+    },
+    "elapsedMs": 93,
+    "traceId": "0a67968c805e12c3c2bc616c0d7cd29b"
+  }
+}

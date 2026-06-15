@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-05-16T04:56:00Z",
+  "promptId": "common-tones-between-g7-and-dm7",
+  "prompt": "Common tones between G7 and Dm7",
+  "category": "operations",
+  "runIndex": 1,
+  "response": {
+    "naturalLanguageAnswer": "**G7 and Dm7** share **2 common tones**:\r\n\r\n| Note | Role in G7 | Role in Dm7 |\r\n|------|------------|-------------|\r\n| **D** | Perfect 5th | Root |\r\n| **F** | Minor 7th | Minor 3rd |\r\n\r\n---\r\n\r\n### What this means in practice\r\n\r\nThese two tones are harmonically significant in a **ii\u00e2\u20ac\u201cV context** (Dm7 \u00e2\u2020\u2019 G7 in C major). Notice:\r\n\r\n- **F** is the most tension-loaded note in G7 (the \u00e2\u2122\u00ad7 that wants to resolve down to E), and it's also the defining minor colour of Dm7 (its minor 3rd). Keeping it *stationary* across the chord change is a silky voice-leading move.\r\n- **D** is the root of Dm7 and the stable 5th of G7 \u00e2\u20ac\u201d another easy hold or common-tone pedal point.\r\n\r\nSince Dm7 is the **ii chord** and G7 is the **V chord** in C major, these shared tones are exactly what makes the ii\u00e2\u20ac\u201cV transition so smooth \u00e2\u20ac\u201d you can voice-lead with minimal motion and let the *non-shared* notes (B and F# in G7's tritone) do all the harmonic heavy lifting.",
+    "agentId": "skill.commontones",
+    "confidence": 0.9,
+    "routingMethod": "orchestrator-skill-semantic",
+    "grounding": {
+      "source": "ga.dsl",
+      "revision": "registered",
+      "queryType": "domain.commonTones",
+      "facts": null
+    },
+    "elapsedMs": 10138,
+    "traceId": "a467859a706c8c8afd69df3ca54ef594"
+  }
+}
