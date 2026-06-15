@@ -77,6 +77,7 @@ members = [
     "crates/ix-acoustic-tune",
     "crates/ix-duck",
     "crates/ix-streeling",
+    "crates/ix-value",
 ]
 
 [workspace.package]
