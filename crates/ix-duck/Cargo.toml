@@ -8,17 +8,19 @@ repository.workspace = true
 description = "In-process DuckDB analyst bench over IX telemetry, with IX algorithms as SQL UDFs (optional `duck` feature)."
 
 [dependencies]
-# OPTIONAL, feature-gated: in-process DuckDB. The `bundled` feature compiles DuckDB
-# (C++) from source, so this is deliberately NOT in default features — the CI path
-# `cargo build --workspace` never pulls it. `json` enables read_json_auto over our
-# JSONL telemetry; `vscalar` enables scalar UDF registration (VScalar trait).
-# Build/run locally with `--features duck`. (Two-way door — optional dep; see docs/DUCKDB.md.)
+# OPTIONAL, feature-gated DuckDB. Features are routed through THIS crate's own
+# `udf` / `duck` features (below), NOT hardcoded here, so the loadable C-API
+# extension (ix-duck-ext) can pull the UDF surface WITHOUT a bundled engine:
+#   * `udf`  → duckdb/vscalar (+ vtab) only — pure-Rust, no C++ build. Compiles
+#              into the cdylib extension and registers ix_cosine/ix_euclidean.
+#   * `duck` → adds duckdb/bundled + json for the in-process analyst bench.
+# Deliberately NOT in default features — `cargo build --workspace` never pulls it.
 #
 # Pinned to an exact tested release: duckdb-rs + its arrow deps require a newer
-# toolchain than the workspace MSRV (1.80). That is acceptable because the `duck`
-# feature is opt-in and never built by the default/CI path — but we pin so the
+# toolchain than the workspace MSRV (1.80). That is acceptable because these
+# features are opt-in and never built by the default/CI path — but we pin so the
 # feature can't silently float onto a release needing an even newer rustc.
-duckdb = { version = "=1.10503.1", features = ["bundled", "json", "vscalar"], optional = true }
+duckdb = { version = "=1.10503.1", default-features = false, optional = true }
 ix-math = { workspace = true, optional = true }
 ix-unsupervised = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
@@ -28,8 +30,15 @@ serde_json = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 
 [features]
-# In-process DuckDB bench + IX UDFs. Off by default so the workspace/CI build stays clean.
-duck = ["dep:duckdb", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray", "dep:serde", "dep:serde_json", "dep:chrono"]
+# UDF-only surface: the IX scalar + table UDFs registrable on any DuckDB
+# connection. `duckdb/vscalar` implies vtab(-arrow) (covers both scalar and table
+# functions), so no bundled engine is pulled — this is the feature the loadable
+# C-API extension (ix-duck-ext) depends on. ix-unsupervised (PCA) + serde_json
+# (JSON params) are needed by the table functions.
+udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray", "dep:serde_json"]
+# Full in-process DuckDB bench: UDFs + a bundled (C++) engine + json read + the
+# chatbot flight recorder. Off by default so the workspace/CI build stays clean.
+duck = ["udf", "duckdb/bundled", "duckdb/json", "dep:serde", "dep:chrono"]
 
 [[example]]
 name = "yield_analysis"

@@ -5,9 +5,8 @@
 //! reimplementation). `ix_euclidean` is the primitive for the kNN-distance / OOD
 //! SQL recipe (`ORDER BY ix_euclidean(q, r) LIMIT k`).
 //!
-//! Set-relative operations (`ix_pca_project`, `ix_silhouette`) are table functions,
-//! deferred to a follow-up plan — see
-//! docs/plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md.
+//! Set-relative operations (`ix_pca_project`, `ix_silhouette`) are table functions
+//! in the sibling `tablefn` module; [`register_all`] registers both surfaces.
 
 use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vscalar::{ScalarFunctionSignature, VScalar};
@@ -35,7 +34,10 @@ fn read_list_col(input: &mut DataChunkHandle, col: usize, n: usize) -> Vec<Vec<f
     let cap = entries.iter().map(|(o, l)| o + l).max().unwrap_or(0);
     let child = lv.child(cap);
     let all = unsafe { child.as_slice_with_len::<f64>(cap) };
-    entries.iter().map(|&(o, l)| all[o..o + l].to_vec()).collect()
+    entries
+        .iter()
+        .map(|&(o, l)| all[o..o + l].to_vec())
+        .collect()
 }
 
 /// Shared row-wise driver: read two `LIST<DOUBLE>` columns, apply `metric`
@@ -107,9 +109,11 @@ impl VScalar for IxEuclidean {
     }
 }
 
-/// Register every IX UDF on `conn`.
+/// Register every IX UDF on `conn` — scalar (`ix_cosine`, `ix_euclidean`) and
+/// table (`ix_pca_project`, `ix_silhouette`) functions.
 pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     conn.register_scalar_function::<IxCosine>("ix_cosine")?;
     conn.register_scalar_function::<IxEuclidean>("ix_euclidean")?;
+    crate::tablefn::register(conn)?;
     Ok(())
 }

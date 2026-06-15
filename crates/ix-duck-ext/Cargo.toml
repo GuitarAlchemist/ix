@@ -1,0 +1,27 @@
+# ix-duck-ext — loadable DuckDB C-API extension exposing IX UDFs.
+#
+# EXCLUDED from the ix workspace (see root Cargo.toml): building it must not be
+# part of `cargo build --workspace`. Build explicitly with build.ps1, which
+# compiles this cdylib, appends the DuckDB metadata footer, and emits
+# `ix.duckdb_extension`. Loadable into any duckdb.exe >= the C API min version
+# via:  duckdb -unsigned -c "LOAD 'ix.duckdb_extension'; SELECT ix_cosine(...);"
+#
+# Fields are hardcoded (not `*.workspace`) because excluded crates do not inherit
+# workspace package metadata.
+[package]
+name = "ix-duck-ext"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Loadable DuckDB C-API extension exposing IX algorithms (ix_cosine, ix_euclidean) as SQL UDFs."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# loadable-extension => C-API (C_STRUCT) path: binds DuckDB function pointers at
+# LOAD time, no bundled engine, engine-version-tolerant (declares min_duckdb_version).
+duckdb = { version = "=1.10503.1", default-features = false, features = ["loadable-extension"] }
+# The UDF surface, sans bundled engine (ix-duck's `udf` feature => duckdb/vscalar).
+ix-duck = { path = "../ix-duck", default-features = false, features = ["udf"] }
