@@ -133,3 +133,17 @@ corpus is checked nightly (advisory). See
 [`docs/plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md`](plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md)
 and [`docs/contracts/chatbot-trace-regression.contract.md`](contracts/chatbot-trace-regression.contract.md).
 Lessons: [`docs/solutions/feature-implementations/2026-06-14-duckdb-signature-unnest-over-lambda.md`](solutions/feature-implementations/2026-06-14-duckdb-signature-unnest-over-lambda.md).
+
+## Business-value scorecard — a second registrar payload
+
+`ix-value` federates per-repo `state/value/manifest.json` (RICE) into
+`state/value/catalog.jsonl` — the same federation shape as Streeling, a different payload.
+DuckDB reads the catalog directly for the demo/repo leaderboards:
+
+```bash
+duckdb -c ".read docs/value/queries.sql"   # top demos, repo leaderboard, low-confidence/high-impact
+```
+
+See [`docs/contracts/business-value.contract.md`](contracts/business-value.contract.md),
+`crates/ix-value`, and `docs/plans/2026-06-14-003-feat-business-value-scorecard-plan.md`.
+The stars render on the GA dashboard via a separate ga PR (`/dev-data/value` + `<StarRating>`).

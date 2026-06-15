@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "business-value-manifest-v0.1",
+  "title": "Business-Value Manifest",
+  "description": "Hand-authored per-repo RICE value declaration (state/value/manifest.json). v0.1 draft — consumers MUST ignore unknown keys.",
+  "type": "object",
+  "required": ["repo", "items"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1.0" },
+    "repo": { "type": "string", "description": "Originating repo (ix, ga, tars, Demerzel)." },
+    "items": { "type": "array", "items": { "$ref": "#/definitions/item" } },
+    "repo_score": { "$ref": "#/definitions/repoScore" }
+  },
+  "definitions": {
+    "axis": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "item": {
+      "type": "object",
+      "required": ["id", "title", "reach", "impact", "confidence"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "description": "Stable id, e.g. 'demo/prime-radiant'." },
+        "kind": { "enum": ["demo", "epic"], "default": "demo" },
+        "title": { "type": "string" },
+        "reach": { "$ref": "#/definitions/axis" },
+        "impact": { "$ref": "#/definitions/axis" },
+        "confidence": { "$ref": "#/definitions/axis" },
+        "rationale": { "type": "string" }
+      }
+    },
+    "repoScore": {
+      "type": "object",
+      "required": ["reach", "impact", "confidence"],
+      "additionalProperties": true,
+      "properties": {
+        "reach": { "$ref": "#/definitions/axis" },
+        "impact": { "$ref": "#/definitions/axis" },
+        "confidence": { "$ref": "#/definitions/axis" },
+        "rationale": { "type": "string" }
+      }
+    }
+  }
+}

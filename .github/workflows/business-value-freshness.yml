@@ -1,0 +1,49 @@
+name: Business-Value Freshness
+
+# Gate that the value catalog (state/value/catalog.jsonl) is fresh relative to the
+# repo's value manifest. Fails when a manifest changed without regenerating the
+# catalog — the green-but-dead guard. Mirrors streeling-freshness.yml.
+#
+# REPO-SCOPED: CI checks out ix only, so it validates ix-origin records and ignores
+# sibling records (ga/tars/Demerzel) it can't re-scan here. Regenerate locally and
+# commit when the ix manifest changes:
+#   cargo run -p ix-value -- catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'state/value/manifest.json'
+      - 'state/value/catalog.jsonl'
+      - 'crates/ix-value/**'
+      - '.github/workflows/business-value-freshness.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'state/value/manifest.json'
+      - 'state/value/catalog.jsonl'
+      - 'crates/ix-value/**'
+      - '.github/workflows/business-value-freshness.yml'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  freshness-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "Check the value catalog is fresh (ix-scoped)"
+        run: cargo run -p ix-value -- check

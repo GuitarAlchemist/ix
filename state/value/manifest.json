@@ -1,0 +1,57 @@
+{
+  "schema_version": "0.1.0",
+  "repo": "ix",
+  "items": [
+    {
+      "id": "crate/ix-optick",
+      "kind": "demo",
+      "title": "OPTIC-K voicing search",
+      "reach": 4,
+      "impact": 5,
+      "confidence": 4,
+      "rationale": "Production voicing-search index consumed by ga (optick.index); the highest-traffic ix↔ga contract."
+    },
+    {
+      "id": "governance/demerzel",
+      "kind": "demo",
+      "title": "Demerzel governance",
+      "reach": 3,
+      "impact": 4,
+      "confidence": 3,
+      "rationale": "Constitution + personas govern all agent actions ecosystem-wide; impact high but adoption/usage unmeasured."
+    },
+    {
+      "id": "crate/ix-agent",
+      "kind": "demo",
+      "title": "ix-agent MCP server",
+      "reach": 4,
+      "impact": 4,
+      "confidence": 3,
+      "rationale": "Exposes ix algorithms as MCP tools to the federation; broad reach, no per-tool usage telemetry yet."
+    },
+    {
+      "id": "crate/ix-streeling",
+      "kind": "demo",
+      "title": "Streeling learnings catalog",
+      "reach": 3,
+      "impact": 3,
+      "confidence": 4,
+      "rationale": "Shipped + drift-gated; backs the learnings-researcher. Confirmed live, modest reach."
+    },
+    {
+      "id": "crate/ix-duck",
+      "kind": "demo",
+      "title": "DuckDB chatbot flight recorder",
+      "reach": 3,
+      "impact": 4,
+      "confidence": 3,
+      "rationale": "Just shipped; makes chatbot regressions answerable. Value reasoned, adoption not yet observed."
+    }
+  ],
+  "repo_score": {
+    "reach": 4,
+    "impact": 5,
+    "confidence": 3,
+    "rationale": "Foundational ML + governance crates underpinning the ecosystem; impact high, but most surfaces lack usage telemetry (confidence capped)."
+  }
+}
