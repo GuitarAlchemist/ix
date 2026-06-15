@@ -23,25 +23,31 @@ pub enum Kind {
 }
 
 /// One hand-authored value item in a repo's manifest.
+///
+/// Axes are deserialized as `i64` (not `u8`) on purpose: an out-of-range typo
+/// like `-1` or `999` must fail the *per-item* `axes_valid` skip/count path, not
+/// abort decoding of the whole manifest (which would erase every valid sibling
+/// item). Validation narrows to `1..=5` before any scoring.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Item {
     pub id: String,
     #[serde(default)]
     pub kind: Kind,
     pub title: String,
-    pub reach: u8,
-    pub impact: u8,
-    pub confidence: u8,
+    pub reach: i64,
+    pub impact: i64,
+    pub confidence: i64,
     #[serde(default)]
     pub rationale: Option<String>,
 }
 
 /// An optional explicit repo-level RICE declaration (else rolled up from items).
+/// Axes are `i64` for the same reason as [`Item`] — tolerant validation.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepoScore {
-    pub reach: u8,
-    pub impact: u8,
-    pub confidence: u8,
+    pub reach: i64,
+    pub impact: i64,
+    pub confidence: i64,
     #[serde(default)]
     pub rationale: Option<String>,
 }
@@ -96,8 +102,10 @@ pub fn score01(reach: u8, impact: u8, confidence: u8) -> f64 {
     (geomean(reach, impact, confidence) / 5.0).clamp(0.0, 1.0)
 }
 
-/// Whether all three axes are in the valid `1..=5` range.
-pub fn axes_valid(reach: u8, impact: u8, confidence: u8) -> bool {
+/// Whether all three axes are in the valid `1..=5` range. Takes `i64` so an
+/// out-of-`u8` typo (`-1`, `999`) is rejected here as an invalid item rather
+/// than aborting deserialization of the whole manifest.
+pub fn axes_valid(reach: i64, impact: i64, confidence: i64) -> bool {
     (1..=5).contains(&reach) && (1..=5).contains(&impact) && (1..=5).contains(&confidence)
 }
 
@@ -128,5 +136,8 @@ mod tests {
         assert!(axes_valid(1, 5, 3));
         assert!(!axes_valid(0, 5, 3));
         assert!(!axes_valid(5, 6, 3));
+        // Out-of-`u8` typos are rejected here, not at deserialization time.
+        assert!(!axes_valid(-1, 5, 3));
+        assert!(!axes_valid(999, 5, 3));
     }
 }

@@ -34,18 +34,21 @@ pub struct IngestReport {
     pub roots_missing: Vec<String>,
 }
 
+/// Build one item record. Precondition: `axes_valid(item.*)` already passed, so
+/// the `as u8` narrowing is lossless (axes are in `1..=5`).
 fn item_record(repo: &str, item: &Item) -> ValueRecord {
+    let (r, i, c) = (item.reach as u8, item.impact as u8, item.confidence as u8);
     ValueRecord {
         schema_version: SCHEMA_VERSION.to_string(),
         id: item.id.clone(),
         repo: repo.to_string(),
         kind: item.kind,
         title: item.title.clone(),
-        reach: item.reach,
-        impact: item.impact,
-        confidence: item.confidence,
-        stars: stars(item.reach, item.impact, item.confidence),
-        score01: score01(item.reach, item.impact, item.confidence),
+        reach: r,
+        impact: i,
+        confidence: c,
+        stars: stars(r, i, c),
+        score01: score01(r, i, c),
         rationale: item.rationale.clone(),
     }
 }
@@ -55,14 +58,11 @@ fn item_record(repo: &str, item: &Item) -> ValueRecord {
 /// trigger). Returns `None` when there is nothing to roll up.
 fn rollup_record(repo: &str, rs: Option<&RepoScore>, items: &[ValueRecord]) -> Option<ValueRecord> {
     let (reach, impact, confidence, stars_v, score, rationale) = match rs {
-        Some(rs) if axes_valid(rs.reach, rs.impact, rs.confidence) => (
-            rs.reach,
-            rs.impact,
-            rs.confidence,
-            stars(rs.reach, rs.impact, rs.confidence),
-            score01(rs.reach, rs.impact, rs.confidence),
-            rs.rationale.clone(),
-        ),
+        // Precondition: axes_valid passed, so `as u8` is lossless (1..=5).
+        Some(rs) if axes_valid(rs.reach, rs.impact, rs.confidence) => {
+            let (r, i, c) = (rs.reach as u8, rs.impact as u8, rs.confidence as u8);
+            (r, i, c, stars(r, i, c), score01(r, i, c), rs.rationale.clone())
+        }
         _ => {
             if items.is_empty() {
                 return None;
@@ -118,6 +118,17 @@ pub fn ingest(roots: &[SourceRoot]) -> IngestReport {
 
         let mut repo_items: Vec<ValueRecord> = Vec::new();
         for item in &manifest.items {
+            // `repo` is a generated-only kind (the rollup row). A hand-authored
+            // item declaring it would surface as a phantom repo in the DuckDB
+            // `WHERE kind='repo'` leaderboard — skip it.
+            if item.kind == Kind::Repo {
+                eprintln!(
+                    "ix-value: skipping {}:{} — items may not declare kind 'repo' (generated only)",
+                    manifest.repo, item.id
+                );
+                report.skipped += 1;
+                continue;
+            }
             if !axes_valid(item.reach, item.impact, item.confidence) {
                 eprintln!(
                     "ix-value: skipping {}:{} — axes out of range 1..=5 (r={},i={},c={})",

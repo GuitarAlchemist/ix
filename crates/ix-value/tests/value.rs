@@ -73,6 +73,47 @@ fn out_of_range_item_is_skipped() {
 }
 
 #[test]
+fn out_of_u8_axis_skips_only_that_item_not_the_repo() {
+    // A `999`/`-1` typo must NOT abort decoding the whole manifest (which would
+    // erase the valid sibling item). Axes deserialize as i64 → per-item skip.
+    let dir = tempfile::tempdir().unwrap();
+    write_manifest(
+        dir.path(),
+        r#"{"repo": "ix", "items": [
+            {"id": "ok", "title": "OK", "reach": 3, "impact": 3, "confidence": 3},
+            {"id": "huge", "title": "Huge", "reach": 999, "impact": 3, "confidence": 3},
+            {"id": "neg", "title": "Neg", "reach": -1, "impact": 3, "confidence": 3}
+        ]}"#,
+    );
+    let rep = ingest_one("ix", dir.path());
+    assert_eq!(rep.roots_seen, vec!["ix".to_string()], "manifest still parsed");
+    assert_eq!(rep.skipped, 2, "both out-of-range items skipped");
+    assert!(rep.records.iter().any(|r| r.id == "ok"), "valid item survives");
+    assert!(rep.records.iter().all(|r| r.id != "huge" && r.id != "neg"));
+}
+
+#[test]
+fn item_declaring_repo_kind_is_skipped() {
+    // `kind: "repo"` on a hand-authored item would surface as a phantom repo in
+    // the DuckDB `WHERE kind='repo'` leaderboard — must be skipped.
+    let dir = tempfile::tempdir().unwrap();
+    write_manifest(
+        dir.path(),
+        r#"{"repo": "ix", "items": [
+            {"id": "ok", "kind": "demo", "title": "OK", "reach": 3, "impact": 3, "confidence": 3},
+            {"id": "sneaky", "kind": "repo", "title": "Sneaky", "reach": 5, "impact": 5, "confidence": 5}
+        ]}"#,
+    );
+    let rep = ingest_one("ix", dir.path());
+    assert_eq!(rep.skipped, 1, "the kind:repo item is skipped");
+    // Exactly one repo row — the generated rollup, id == repo name.
+    let repo_rows: Vec<_> = rep.records.iter().filter(|r| r.kind == Kind::Repo).collect();
+    assert_eq!(repo_rows.len(), 1);
+    assert_eq!(repo_rows[0].id, "ix");
+    assert!(rep.records.iter().all(|r| r.id != "sneaky"));
+}
+
+#[test]
 fn malformed_manifest_is_skipped_not_fatal() {
     let dir = tempfile::tempdir().unwrap();
     write_manifest(dir.path(), "{ this is not json");
