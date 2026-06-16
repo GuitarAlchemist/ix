@@ -22,6 +22,7 @@
 //!       cargo run -p ix-gpu --example flash_assign_spike --release -- 200000 128 64
 //!       (args: N points, K centroids, D dims)
 
+use ix_gpu::assign::nearest_centroid_cpu;
 use ix_gpu::context::GpuContext;
 use std::time::Instant;
 use wgpu::*;
@@ -116,30 +117,8 @@ fn argmin_rows(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
-// ── CPU reference (the correctness oracle) ──────────────────────────────────────
-
-fn assign_cpu(points: &[f32], centroids: &[f32], n: usize, k: usize, d: usize) -> Vec<u32> {
-    let mut out = vec![0u32; n];
-    for (p, slot) in out.iter_mut().enumerate() {
-        let pb = p * d;
-        let mut best = f32::MAX;
-        let mut best_k = 0u32;
-        for c in 0..k {
-            let cb = c * d;
-            let mut dist = 0.0f32;
-            for i in 0..d {
-                let diff = points[pb + i] - centroids[cb + i];
-                dist += diff * diff;
-            }
-            if dist < best {
-                best = dist;
-                best_k = c as u32;
-            }
-        }
-        *slot = best_k;
-    }
-    out
-}
+// CPU correctness oracle: `ix_gpu::assign::nearest_centroid_cpu` (in the library so
+// `cargo test --workspace` runs its tests).
 
 // ── GPU plumbing ────────────────────────────────────────────────────────────────
 
@@ -271,14 +250,14 @@ fn main() {
     let points = gen(1, n * d);
     let centroids = gen(7, k * d);
 
-    let cpu = assign_cpu(&points, &centroids, n, k, d);
+    let cpu = nearest_centroid_cpu(&points, &centroids, n, k, d);
 
     let ctx = match GpuContext::new() {
         Ok(c) => c,
         Err(e) => {
             println!("No GPU adapter ({e}). CPU-only on this box:");
             let cpu_ms = time_ms(reps, || {
-                std::hint::black_box(assign_cpu(&points, &centroids, n, k, d));
+                std::hint::black_box(nearest_centroid_cpu(&points, &centroids, n, k, d));
             });
             println!("  CPU assign: {cpu_ms:.2} ms");
             println!("\n(Run on a GPU box to compare materialized vs fused.)");
@@ -298,8 +277,12 @@ fn main() {
     let fused_ok = fused == cpu;
     println!("Correctness vs CPU oracle:  materialized={mat_ok}  fused={fused_ok}");
     if !mat_ok || !fused_ok {
-        let mism = fused.iter().zip(&cpu).filter(|(a, b)| a != b).count();
-        println!("  ⚠ fused mismatches: {mism}/{n} (ties on equal distances are acceptable noise)");
+        // Hard-fail: never report a performance conclusion for incorrect results.
+        let mat_mism = mat.iter().zip(&cpu).filter(|(a, b)| a != b).count();
+        let fused_mism = fused.iter().zip(&cpu).filter(|(a, b)| a != b).count();
+        eprintln!("  ✗ mismatches vs oracle — materialized: {mat_mism}/{n}, fused: {fused_mism}/{n}");
+        eprintln!("  Refusing to benchmark incorrect kernels.");
+        std::process::exit(1);
     }
 
     // Timing.
@@ -319,25 +302,5 @@ fn main() {
     println!("  → intermediate memory avoided: {spill_mb:.1} MB");
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cpu_assign_picks_nearest_centroid() {
-        // 2 points, 2 centroids, 2-D. p0 near c0=(0,0); p1 near c1=(10,10).
-        let points = vec![0.1, 0.0, 9.9, 10.0];
-        let centroids = vec![0.0, 0.0, 10.0, 10.0];
-        let a = assign_cpu(&points, &centroids, 2, 2, 2);
-        assert_eq!(a, vec![0, 1]);
-    }
-
-    #[test]
-    fn cpu_assign_ties_take_lowest_index() {
-        // Point equidistant from both centroids → argmin keeps the first (strict <).
-        let points = vec![5.0, 0.0];
-        let centroids = vec![0.0, 0.0, 10.0, 0.0];
-        let a = assign_cpu(&points, &centroids, 1, 2, 2);
-        assert_eq!(a, vec![0]);
-    }
-}
+// Oracle tests live in the library (`ix_gpu::assign`), so `cargo test --workspace`
+// actually runs them — example-local `#[cfg(test)]` modules are only built, not run.
