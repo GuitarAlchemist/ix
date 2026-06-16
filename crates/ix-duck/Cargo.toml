@@ -38,7 +38,7 @@ chrono = { workspace = true, optional = true }
 udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray", "dep:serde_json"]
 # Full in-process DuckDB bench: UDFs + a bundled (C++) engine + json read + the
 # chatbot flight recorder. Off by default so the workspace/CI build stays clean.
-duck = ["udf", "duckdb/bundled", "duckdb/json", "dep:serde", "dep:chrono"]
+duck = ["udf", "duckdb/bundled", "duckdb/json", "duckdb/parquet", "dep:serde", "dep:chrono"]
 
 [[example]]
 name = "yield_analysis"
@@ -50,6 +50,10 @@ required-features = ["duck"]
 
 [[example]]
 name = "ix_chatbot_lens"
+required-features = ["duck"]
+
+[[example]]
+name = "ix_voicing_lens"
 required-features = ["duck"]
 
 [dev-dependencies]

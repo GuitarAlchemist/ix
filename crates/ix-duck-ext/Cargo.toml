@@ -25,3 +25,5 @@ crate-type = ["cdylib"]
 duckdb = { version = "=1.10503.1", default-features = false, features = ["loadable-extension"] }
 # The UDF surface, sans bundled engine (ix-duck's `udf` feature => duckdb/vscalar).
 ix-duck = { path = "../ix-duck", default-features = false, features = ["udf"] }
+# Tier-3 OPTIC-K table function: read the production voicing index mmap directly.
+ix-optick = { path = "../ix-optick" }
