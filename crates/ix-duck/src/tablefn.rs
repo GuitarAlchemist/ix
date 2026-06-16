@@ -380,8 +380,10 @@ impl VTab for IxDbscan {
             .to_string()
             .parse::<f64>()
             .map_err(|e| format!("eps must be a number: {e}"))?;
-        if eps <= 0.0 || eps.is_nan() {
-            return Err("eps must be > 0".into());
+        // Reject non-finite (NaN, ±∞): +∞ would put every point within range and
+        // silently collapse the dataset into one cluster.
+        if !eps.is_finite() || eps <= 0.0 {
+            return Err("eps must be a finite number > 0".into());
         }
         let min_points = bind.get_parameter(2).to_int64();
         if min_points < 1 {
@@ -726,6 +728,16 @@ mod tests {
                 .get::<_, i64>(0))
                 .is_err(),
             "eps=0 must be a SQL error"
+        );
+        // eps must be finite — +∞ would collapse everything into one cluster.
+        assert!(
+            conn.query_row(
+                "SELECT cluster FROM ix_dbscan('[[0,0],[1,1]]', 'inf'::DOUBLE, 2)",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .is_err(),
+            "eps=+inf must be a SQL error"
         );
     }
 }
