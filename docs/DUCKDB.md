@@ -201,3 +201,26 @@ CI root-cause search, faculties by size, recent learnings, free-text topic looku
 ```bash
 duckdb -c ".read docs/streeling/queries.sql"
 ```
+
+## Pipelines — composition, not execution
+
+SQL is the *composition* layer for the IX UDFs — that's how you build a "pipeline"
+on the analyst's bench. It is deliberately **not** the governed `ix-pipeline` DAG
+engine (`PipelineSpec` → `lower_with_gate` → `execute`, with `StageGate`/Demerzel +
+provenance); that runs in the CLI / agent, the production path. Embedding it in a
+UDF would run governance with no agent/audit context (green-but-dead) and break the
+analyst-bench↔production-engine boundary in the TL;DR. So:
+
+- **Scalar UDFs** (`ix_cosine`, `ix_ndcg`, `ix_forte_number`, …) chain freely over
+  columns → true single-query SQL pipelines.
+- **Table UDFs** (`ix_kmeans`, `ix_silhouette`, `ix_pca_project`, `ix_optick_scan`,
+  …) take only **constant** params (DuckDB forbids lateral-join column args), so one
+  table-fn's output can't directly feed another's input. Bridge with
+  `SET VARIABLE` + `getvariable()` (materialize → constant).
+
+Worked, verified recipes (retrieval-quality, cluster→score, reduce→cluster→score,
+music set-class histogram, Tier-3 index QA): [`docs/duck/pipelines.sql`](duck/pipelines.sql).
+
+```bash
+duckdb -unsigned -c "LOAD 'crates/ix-duck-ext/ix.duckdb_extension';" < docs/duck/pipelines.sql
+```
