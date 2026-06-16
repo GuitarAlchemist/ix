@@ -39,6 +39,7 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   - `ix_pca_project(json_vectors, k)` — dimensionality reduction ✅ (table fn)
   - `ix_silhouette(json_vectors, json_labels)` — clustering quality ✅ (table fn)
   - `ix_dbscan(json_vectors, eps, min_points)` — density clustering labels ✅ (table fn; `0` = noise/OOD; composes with `ix_silhouette`)
+  - `ix_kmeans(json_vectors, k)` / `ix_gmm(json_vectors, k)` — centroid / mixture clustering labels ✅ (table fn; labels `0..k-1`, deterministic; complete the cluster→`ix_silhouette` loop)
 
 - **Crate structure:** new `crates/ix-duck` (library only), `duckdb` as an **optional dep** behind a
   `duck` cargo feature. Mirrors the established `fastembed`/`embeddings` pattern in `ix-skill`
