@@ -52,5 +52,9 @@ required-features = ["duck"]
 name = "ix_chatbot_lens"
 required-features = ["duck"]
 
+[[example]]
+name = "ix_voicing_lens"
+required-features = ["duck"]
+
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -17,8 +17,8 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
 |------|------|--------|
 | **0** | Install `duckdb/duckdb-skills` (official, MIT, local) → ad-hoc CLI over our JSONL/Parquet | ✅ **DONE + PROVEN** (2026-06-14) |
 | **1** | `ix-duck` crate: embed `duckdb-rs` in-process, register IX algorithms as SQL UDFs (in-memory, no server) | ✅ **DONE** (Phases 1–3: `open_bench`, `ix_cosine`/`ix_euclidean`, yield-split example) |
-| **2** | GA emits an analyzable slice (voicing embeddings + metadata + search telemetry) as Parquet under a versioned on-disk contract | deferred (not in v1) |
-| **3** | Real `ix_optick` DuckDB extension: OPTIC-K mmap as a table function + voicing-distance UDF | demand-gated, **one-way door, needs sign-off** |
+| **2** | GA emits an analyzable slice (voicing embeddings + metadata + search telemetry) as Parquet under a versioned on-disk contract | 🟡 **contract drafted + lens** (2026-06-16): telemetry half live in `ix_voicing_lens`; embeddings/metadata Parquet pending GA export. See `docs/contracts/2026-06-16-ga-voicing-analysis-parquet.contract.md` |
+| **3** | Real `ix_optick` DuckDB extension: OPTIC-K mmap as a table function + voicing-distance UDF | **one-way door — plan written, sign-off pending** (`docs/plans/2026-06-16-001-feat-ix-optick-duckdb-extension-plan.md`; recommendation: stay at Tier 2) |
 
 ## v1 scope (locked 2026-06-14)
 
@@ -165,3 +165,29 @@ duckdb -c ".read docs/value/queries.sql"   # top demos, repo leaderboard, low-co
 See [`docs/contracts/business-value.contract.md`](contracts/business-value.contract.md),
 `crates/ix-value`, and `docs/plans/2026-06-14-003-feat-business-value-scorecard-plan.md`.
 The stars render on the GA dashboard via a separate ga PR (`/dev-data/value` + `<StarRating>`).
+
+## Voicing analysis lens (Tier 2) — telemetry now, embeddings pending
+
+`ix_voicing_lens` is the Tier-2 analyst's bench over GA's voicing artifacts. The
+**search-telemetry** half runs today over `../ga/state/telemetry/voicing-search/*.jsonl`
+(coverage gaps = zero-result queries, latency p50/p95, most-repeated misses). The
+**embeddings + metadata** half reads `state/voicings/analysis/voicings.parquet` once GA
+exports it (the production `optick.index` is a binary mmap, not DuckDB-readable) — until
+then it degrades to a one-line hint. When the Parquet lands, the vector UDFs
+(`ix_pca_project`/`ix_kdist`/`ix_silhouette`) compose over `embedding`.
+
+```bash
+cargo run -p ix-duck --features duck --example ix_voicing_lens   # GA_ROOT or ../ga
+```
+
+See [`docs/contracts/2026-06-16-ga-voicing-analysis-parquet.contract.md`](contracts/2026-06-16-ga-voicing-analysis-parquet.contract.md).
+
+## Streeling registrar lens — learnings corpus
+
+`docs/streeling/queries.sql` runs over `state/streeling/catalog.jsonl` (the federated
+learnings/plans/brainstorms catalog from `ix-streeling`): enrollment by repo/kind,
+CI root-cause search, faculties by size, recent learnings, free-text topic lookup.
+
+```bash
+duckdb -c ".read docs/streeling/queries.sql"
+```
