@@ -23,6 +23,9 @@ description = "In-process DuckDB analyst bench over IX telemetry, with IX algori
 duckdb = { version = "=1.10503.1", default-features = false, optional = true }
 ix-math = { workspace = true, optional = true }
 ix-unsupervised = { workspace = true, optional = true }
+ix-bracelet = { workspace = true, optional = true }
+ix-graph = { workspace = true, optional = true }
+ix-signal = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
 # Chatbot flight recorder (Slice A/B): the regression gate serializes a JSON contract.
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -35,7 +38,7 @@ chrono = { workspace = true, optional = true }
 # functions), so no bundled engine is pulled — this is the feature the loadable
 # C-API extension (ix-duck-ext) depends on. ix-unsupervised (PCA) + serde_json
 # (JSON params) are needed by the table functions.
-udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ndarray", "dep:serde_json"]
+udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ix-bracelet", "dep:ix-graph", "dep:ix-signal", "dep:ndarray", "dep:serde_json"]
 # Full in-process DuckDB bench: UDFs + a bundled (C++) engine + json read + the
 # chatbot flight recorder. Off by default so the workspace/CI build stays clean.
 duck = ["udf", "duckdb/bundled", "duckdb/json", "duckdb/parquet", "dep:serde", "dep:chrono"]

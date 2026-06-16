@@ -29,6 +29,16 @@ pub mod udf;
 #[cfg(feature = "udf")]
 mod tablefn;
 
+/// Music set-theory scalar UDFs over pitch-class sets (ix_forte_number, ix_icv,
+/// ix_prime_form, ix_classify_triad), registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod bracelet;
+
+/// Graph (ix_pagerank, ix_shortest_path) + signal (ix_rfft, ix_autocorrelation)
+/// table functions over JSON edge-lists / series, registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod graphsig;
+
 /// Chatbot flight recorder — GA golden-trace warehouse (Slice A) + canonical-diff
 /// regression gate (Slice B). See `docs/plans/2026-06-14-004-…-flight-recorder-plan.md`.
 #[cfg(feature = "duck")]
