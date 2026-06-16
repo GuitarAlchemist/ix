@@ -40,6 +40,9 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   - `ix_silhouette(json_vectors, json_labels)` — clustering quality ✅ (table fn)
   - `ix_dbscan(json_vectors, eps, min_points)` — density clustering labels ✅ (table fn; `0` = noise/OOD; composes with `ix_silhouette`)
   - `ix_kmeans(json_vectors, k)` / `ix_gmm(json_vectors, k)` — centroid / mixture clustering labels ✅ (table fn; labels `0..k-1`, deterministic; complete the cluster→`ix_silhouette` loop)
+  - `ix_forte_number` / `ix_icv` / `ix_prime_form` / `ix_classify_triad(notes)` — music set-theory ✅ (scalar over `BIGINT[]` notes mod 12; wraps `ix-bracelet`; makes the voicing corpus queryable by set-class)
+  - `ix_pagerank(edges, damping, iters)` / `ix_shortest_path(edges, src, dst)` — graph analytics ✅ (table fn over a JSON edge list; wraps `ix-graph`; DuckDB has no graph algos)
+  - `ix_rfft(series)` / `ix_autocorrelation(series)` — signal ✅ (table fn over a JSON series; wraps `ix-signal`; FFT magnitude spectrum / two-sided autocorrelation)
 
 - **Crate structure:** new `crates/ix-duck` (library only), `duckdb` as an **optional dep** behind a
   `duck` cargo feature. Mirrors the established `fastembed`/`embeddings` pattern in `ix-skill`
