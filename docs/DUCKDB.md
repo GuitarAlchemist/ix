@@ -96,6 +96,21 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   get NL→SQL from Claude Code directly and the `duckdb-skills` `query` skill, so it's largely redundant.
   Revisit only if in-DuckDB NL querying becomes a recurring need AND the Node/network/license caveats are acceptable.
 
+- **`duckle`** (`SouravRoy-ETL/duckle`, MIT/Apache-2.0, evaluated 2026-06-15) — a local-first **visual
+  drag-and-drop ETL/ELT studio** (Tauri desktop app, Rust + React) that compiles a pipeline graph to SQL
+  and runs it on DuckDB; bundles llama.cpp for an NL→pipeline assistant and ships its own MCP server.
+  **Skip for IX's analyst-bench / CI / production paths.** Architecturally aligned with IX (Rust,
+  local-first, no telemetry, git-able plain-text workspace) but alignment ≠ need — its three differentiated
+  value props are each orthogonal or redundant here: (1) *visual pipeline authoring* contradicts
+  pipelines-as-governed-code (`ix-pipeline::dag::Dag` under the Demerzel constitution) and can't run in a
+  hermetic CI gate, which is the whole point of `ix-duck`'s committed SQL; (2) *290+ connectors* are
+  irrelevant when our data is local JSONL/Parquet we already emit; (3) *Duckie NL→pipeline + MCP server*
+  duplicate Claude Code + `duckdb-skills` + `ix-agent` (same reason `acp` is parked). As a *local
+  exploration* tool it overlaps **DuckDB UI** (already adopted, far lighter — no Tauri app, no bundled
+  65 MB LLM). Optional as a personal visual scratchpad only. Revisit trigger: a non-engineer needs to
+  author ETL over GA/ix artifacts visually (none today), or a connector-breadth wall our own emitters
+  can't cover. Two-way door.
+
 ## One-way-door log
 
 - A **published** DuckDB extension (Tier 3 `ix_optick`) is a one-way door — loadable artifact,
