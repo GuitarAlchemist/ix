@@ -1,18 +1,36 @@
 ---
-title: "Tier 3 — published `ix_optick` DuckDB extension"
+title: "Tier 3 — `ix_optick` DuckDB loadable extension"
 type: feat
-status: needs-sign-off
+status: completed
 date: 2026-06-16
 relates: docs/DUCKDB.md (Tier 3), docs/contracts/2026-06-16-ga-voicing-analysis-parquet.contract.md
 door: one-way
 ---
 
-# Tier 3 — published `ix_optick` DuckDB extension
+# Tier 3 — `ix_optick` DuckDB loadable extension
 
-> **STOP / sign-off gate.** This is a **one-way door** (CLAUDE.md "log one-way doors";
-> `docs/DUCKDB.md` one-way-door log). It is a **plan only** — no code is to be written
-> until the operator signs off. Tiers 0–2 are two-way doors and need no sign-off; this
-> one does, because it ships a loadable, signed, versioned public artifact.
+> **Sign-off:** operator approved the build (2026-06-16). **Status: BUILT + VALIDATED.**
+>
+> Reality found during the build (correcting this plan's first draft): the loadable
+> C-API **harness already existed** (`crates/ix-duck-ext`, prior session) — a
+> `LOAD`-able `ix.duckdb_extension` exposing `ix_cosine`/`ix_euclidean` with the
+> 512-byte metadata footer (`append_extension_metadata.py`). So the hard, irreversible
+> part of the one-way door was already paid. This work added the **differentiated
+> Tier-3 capability**: the OPTIC-K production mmap as a SQL table function.
+>
+> **Built:** `ix_optick_scan(index_path) → TABLE(voicing, instrument, embedding DOUBLE[])`
+> (`crates/ix-duck-ext/src/optick.rs`, wraps `ix_optick::OptickIndex`). Validated by
+> `LOAD` into the real DuckDB v1.5.3 CLI against GA's production
+> `optick.index`: **313,047 voicings, dim 124**; `ix_euclidean` composes over two
+> scanned embeddings (voicing 0↔1 = 1.1168). The rebuild also refreshed the artifact
+> to the full current UDF surface (now incl. `ix_kdist`/`ix_dbscan`).
+>
+> **`ix_voicing_distance` was deliberately NOT built** — it's redundant: voicing
+> distance = `ix_euclidean(a.embedding, b.embedding)` over `ix_optick_scan` rows.
+>
+> Build/validate: `pwsh crates/ix-duck-ext/build.ps1 -SmokeTest`. The crate stays
+> **excluded from the workspace** (root `Cargo.toml`), so default/CI `cargo build
+> --workspace` never compiles DuckDB — Tier 3 is out-of-band by design.
 
 ## What it would be
 
@@ -42,9 +60,14 @@ Versus what we already have: Tiers 0–2 read **derived files** (JSONL/Parquet) 
 
 **Default to C (stay at Tier 2) unless a concrete need forces Tier 3.** The only thing Tier 3 buys over Tier 2 is querying the live mmap without an export — and we have no use case that needs sub-rebuild freshness for *analytics* (the production *search* path already uses the mmap directly via GA). Build Tier 3 only when: (a) an analytics consumer demonstrably needs always-current embeddings AND (b) the Parquet export proves too stale/expensive — neither true today.
 
-## Decision needed
+## Decision (resolved 2026-06-16)
 
-- [ ] **Sign off to build** (pick A or B, accept the one-way-door cost + CI matrix), **or**
-- [ ] **Decline / defer** — stay at Tier 2 (recommended), revisit on the trigger above.
+- [x] **Signed off to build.** Approach **B** (Rust loadable extension via duckdb-rs) —
+      the harness already used it, so no new C toolchain. `ix_optick_scan` shipped and
+      validated against the production index.
 
-Until a box is checked, this stays `status: needs-sign-off` and no extension code is written.
+Remaining (not blocking; out-of-band, demand-gated):
+- **Signed distribution** to other machines needs a version-matched `duckdb.exe` +
+  DuckDB's signing infra (the footer is appended locally for `-unsigned` LOAD today).
+  Cross-platform builds (linux/macos/arm) are a CI-matrix follow-up if we ever publish.
+- These are the only parts of the one-way door still open; the local capability is done.

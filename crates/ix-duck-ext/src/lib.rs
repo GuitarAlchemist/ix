@@ -21,6 +21,8 @@
 use duckdb::{duckdb_entrypoint_c_api, Connection, Result};
 use std::error::Error;
 
+mod optick;
+
 /// Extension entrypoint. The macro generates the C-API `ix_init_c_api` symbol
 /// DuckDB calls on `LOAD`; `ext_name` must match the metadata footer's name and
 /// the `ix.duckdb_extension` filename stem.
@@ -28,5 +30,7 @@ use std::error::Error;
 pub fn ix_extension_init(con: Connection) -> Result<(), Box<dyn Error>> {
     // Same registration the in-process bench uses — single source of truth.
     ix_duck::udf::register_all(&con)?;
+    // Tier-3: OPTIC-K production index (mmap) as a SQL table function.
+    con.register_table_function::<optick::IxOptickScan>("ix_optick_scan")?;
     Ok(())
 }

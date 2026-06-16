@@ -20,6 +20,9 @@ exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
 |---|---|---|
 | `ix_pca_project` | `(json_vectors VARCHAR, n_components BIGINT) -> TABLE(row BIGINT, coords DOUBLE[])` | Fits PCA over the input set, returns each vector's projection. Wraps `ix_unsupervised::pca::PCA`. |
 | `ix_silhouette` | `(json_vectors VARCHAR, json_labels VARCHAR) -> TABLE(row BIGINT, label BIGINT, silhouette DOUBLE)` | Per-point silhouette for a clustering. Mean: `SELECT avg(silhouette) FROM ix_silhouette(...)`. |
+| `ix_kdist` | `(json_vectors VARCHAR, k BIGINT) -> TABLE(row BIGINT, kdist DOUBLE)` | Mean distance to the `k` nearest neighbours (leave-one-out) — the OOD / local-outlier signal. |
+| `ix_dbscan` | `(json_vectors VARCHAR, eps DOUBLE, min_points BIGINT) -> TABLE(row BIGINT, cluster BIGINT)` | Density clustering labels; `0` = noise. Composes with `ix_silhouette`. |
+| `ix_optick_scan` | `(index_path VARCHAR) -> TABLE(voicing BIGINT, instrument VARCHAR, embedding DOUBLE[])` | **Tier 3:** the production OPTIC-K `optick.index` mmap as a table — no Parquet export. Wraps `ix_optick::OptickIndex`. Voicing distance = `ix_euclidean` over two rows. |
 
 Scalars wrap `ix_math::distance` directly; the PCA table function wraps
 `ix_unsupervised` — no reimplementation, identical numbers to the in-process bench.
@@ -46,6 +49,14 @@ never compiles it (preserving the "default/CI build never pulls DuckDB" invarian
 LOAD 'C:/path/to/ix.duckdb_extension';
 SELECT ix_cosine([1,0]::DOUBLE[], [1,0]::DOUBLE[]);    -- 1.0
 SELECT ix_euclidean([0,0]::DOUBLE[], [3,4]::DOUBLE[]); -- 5.0
+
+-- Tier 3: query the production OPTIC-K index (mmap) directly.
+SELECT count(*), any_value(len(embedding)) AS dim
+FROM ix_optick_scan('C:/path/to/ga/state/voicings/optick.index');   -- 313047 | 124
+-- Voicing distance composes from ix_euclidean (no dedicated UDF):
+SELECT ix_euclidean(a.embedding, b.embedding)
+FROM ix_optick_scan('…/optick.index') a, ix_optick_scan('…/optick.index') b
+WHERE a.voicing = 0 AND b.voicing = 1;
 ```
 
 ### One-word launch (`ix-duck.ps1`)

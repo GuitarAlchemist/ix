@@ -18,7 +18,7 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
 | **0** | Install `duckdb/duckdb-skills` (official, MIT, local) → ad-hoc CLI over our JSONL/Parquet | ✅ **DONE + PROVEN** (2026-06-14) |
 | **1** | `ix-duck` crate: embed `duckdb-rs` in-process, register IX algorithms as SQL UDFs (in-memory, no server) | ✅ **DONE** (Phases 1–3: `open_bench`, `ix_cosine`/`ix_euclidean`, yield-split example) |
 | **2** | GA emits an analyzable slice (voicing embeddings + metadata + search telemetry) as Parquet under a versioned on-disk contract | 🟡 **contract drafted + lens** (2026-06-16): telemetry half live in `ix_voicing_lens`; embeddings/metadata Parquet pending GA export. See `docs/contracts/2026-06-16-ga-voicing-analysis-parquet.contract.md` |
-| **3** | Real `ix_optick` DuckDB extension: OPTIC-K mmap as a table function + voicing-distance UDF | **one-way door — plan written, sign-off pending** (`docs/plans/2026-06-16-001-feat-ix-optick-duckdb-extension-plan.md`; recommendation: stay at Tier 2) |
+| **3** | Real `ix_optick` DuckDB extension: OPTIC-K mmap as a table function + voicing-distance UDF | ✅ **BUILT** (2026-06-16, signed off): `crates/ix-duck-ext` LOAD-able `ix.duckdb_extension` exposes the full UDF surface + `ix_optick_scan(index_path)` over the production mmap (validated: 313k voicings, dim 124). Voicing-distance composes from `ix_euclidean`. Workspace-excluded (out-of-band). Signed cross-platform distribution = open follow-up. See `docs/plans/2026-06-16-001-feat-ix-optick-duckdb-extension-plan.md` |
 
 ## v1 scope (locked 2026-06-14)
 
@@ -118,6 +118,9 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
 - A **published** DuckDB extension (Tier 3 `ix_optick`) is a one-way door — loadable artifact,
   per-platform builds + signing, public API surface, community Rust-extension path still experimental.
   Requires a plan doc + explicit sign-off before building (per CLAUDE.md "log one-way doors").
+  **Update 2026-06-16:** signed off + built *locally* (`crates/ix-duck-ext`, `-unsigned` LOAD); the
+  still-open one-way-door parts are **signed cross-platform distribution** (version-matched engines +
+  DuckDB signing infra) — do those only on a deliberate publish decision.
 - Keeping `duckdb` an **optional dep** (Tier 1) is a two-way door. Making it a core dep of a stable
   crate would not be — don't.
 
