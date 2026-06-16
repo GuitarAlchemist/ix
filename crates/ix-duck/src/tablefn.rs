@@ -64,7 +64,7 @@ pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
 
 /// Parse a JSON 2-D number array into a rectangular `(n_samples, n_features)` matrix.
 /// Errors (empty, ragged, non-JSON) surface as SQL errors, not panics.
-fn parse_matrix(json: &str) -> Result<Array2<f64>, Box<dyn std::error::Error>> {
+pub(crate) fn parse_matrix(json: &str) -> Result<Array2<f64>, Box<dyn std::error::Error>> {
     let rows: Vec<Vec<f64>> =
         serde_json::from_str(json).map_err(|e| format!("expected a JSON 2-D number array: {e}"))?;
     if rows.is_empty() {

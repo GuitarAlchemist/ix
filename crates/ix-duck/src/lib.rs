@@ -39,6 +39,11 @@ mod bracelet;
 #[cfg(feature = "udf")]
 mod graphsig;
 
+/// ML-evaluation UDFs — ranking metrics (ix_ndcg, …), ix_classification_report,
+/// ix_knn_leakage — registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod eval;
+
 /// Chatbot flight recorder — GA golden-trace warehouse (Slice A) + canonical-diff
 /// regression gate (Slice B). See `docs/plans/2026-06-14-004-…-flight-recorder-plan.md`.
 #[cfg(feature = "duck")]

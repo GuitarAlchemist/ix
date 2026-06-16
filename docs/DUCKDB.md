@@ -43,6 +43,9 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   - `ix_forte_number` / `ix_icv` / `ix_prime_form` / `ix_classify_triad(notes)` — music set-theory ✅ (scalar over `BIGINT[]` notes mod 12; wraps `ix-bracelet`; makes the voicing corpus queryable by set-class)
   - `ix_pagerank(edges, damping, iters)` / `ix_shortest_path(edges, src, dst)` — graph analytics ✅ (table fn over a JSON edge list; wraps `ix-graph`; DuckDB has no graph algos)
   - `ix_rfft(series)` / `ix_autocorrelation(series)` — signal ✅ (table fn over a JSON series; wraps `ix-signal`; FFT magnitude spectrum / two-sided autocorrelation)
+  - `ix_ndcg(rels,k)` / `ix_reciprocal_rank(rels)` / `ix_precision_at_k(rels,k)` / `ix_recall_at_k(rels,k,total)` — IR ranking metrics ✅ (scalar over a `DOUBLE[]` relevance list; powers the GA retrieval/routing oracles — `avg(ix_reciprocal_rank)` = MRR)
+  - `ix_classification_report(predicted_json, actual_json)` — per-class precision/recall/f1/support ✅ (table fn; wraps `ix-supervised::metrics`; GA routing per-intent eval)
+  - `ix_knn_leakage(vectors_json, labels_json, k)` — embedding separability/leakage ✅ (table fn; mean k-NN label agreement vs `random_baseline`; the lightweight form of GA's embeddings diagnostic)
 
 - **Crate structure:** new `crates/ix-duck` (library only), `duckdb` as an **optional dep** behind a
   `duck` cargo feature. Mirrors the established `fastembed`/`embeddings` pattern in `ix-skill`
@@ -197,4 +200,27 @@ CI root-cause search, faculties by size, recent learnings, free-text topic looku
 
 ```bash
 duckdb -c ".read docs/streeling/queries.sql"
+```
+
+## Pipelines — composition, not execution
+
+SQL is the *composition* layer for the IX UDFs — that's how you build a "pipeline"
+on the analyst's bench. It is deliberately **not** the governed `ix-pipeline` DAG
+engine (`PipelineSpec` → `lower_with_gate` → `execute`, with `StageGate`/Demerzel +
+provenance); that runs in the CLI / agent, the production path. Embedding it in a
+UDF would run governance with no agent/audit context (green-but-dead) and break the
+analyst-bench↔production-engine boundary in the TL;DR. So:
+
+- **Scalar UDFs** (`ix_cosine`, `ix_ndcg`, `ix_forte_number`, …) chain freely over
+  columns → true single-query SQL pipelines.
+- **Table UDFs** (`ix_kmeans`, `ix_silhouette`, `ix_pca_project`, `ix_optick_scan`,
+  …) take only **constant** params (DuckDB forbids lateral-join column args), so one
+  table-fn's output can't directly feed another's input. Bridge with
+  `SET VARIABLE` + `getvariable()` (materialize → constant).
+
+Worked, verified recipes (retrieval-quality, cluster→score, reduce→cluster→score,
+music set-class histogram, Tier-3 index QA): [`docs/duck/pipelines.sql`](duck/pipelines.sql).
+
+```bash
+duckdb -unsigned -c "LOAD 'crates/ix-duck-ext/ix.duckdb_extension';" < docs/duck/pipelines.sql
 ```
