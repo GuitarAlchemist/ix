@@ -7,7 +7,7 @@
 //!    - `ix_reciprocal_rank(rels)`    — 1/(rank of first relevant); `avg` ⇒ MRR.
 //!    - `ix_precision_at_k(rels, k)`  — relevant in top-k / k.
 //!    - `ix_recall_at_k(rels, k, total_relevant)` — relevant in top-k / total.
-//!    Wraps `ix_supervised::ranking`.
+//!    (IR metrics implemented locally — see the note by the fns below.)
 //! B. `ix_classification_report(predicted_json, actual_json)` → `TABLE(label,
 //!    precision, recall, f1, support)` — per-class one-vs-rest. Wraps
 //!    `ix_supervised::metrics`. (Routing eval per-intent P/R/F1.)
@@ -26,8 +26,33 @@ use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
 use duckdb::Connection;
 use ix_math::distance::euclidean;
 use ix_supervised::metrics::{f1_score, precision, recall};
-use ix_supervised::ranking::{ndcg_at_k, precision_at_k, recall_at_k, reciprocal_rank};
 use ndarray::Array1;
+
+// IR / ranking metrics over a ranked relevance list (`rel > 0` = relevant). Kept
+// local (not in ix-supervised) because that crate is Stable-tier and additive API
+// there trips the stable-surface gate; promote to a dedicated crate if another IX
+// consumer needs them. `mean` over queries gives the aggregate (MRR = mean RR).
+fn dcg_at_k(rels: &[f64], k: usize) -> f64 {
+    rels.iter().take(k).enumerate().map(|(i, &r)| r / ((i + 2) as f64).log2()).sum()
+}
+fn ndcg_at_k(rels: &[f64], k: usize) -> f64 {
+    let dcg = dcg_at_k(rels, k);
+    let mut ideal = rels.to_vec();
+    ideal.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let idcg = dcg_at_k(&ideal, k);
+    if idcg <= 0.0 { 0.0 } else { dcg / idcg }
+}
+fn reciprocal_rank(rels: &[f64]) -> f64 {
+    rels.iter().position(|&r| r > 0.0).map(|i| 1.0 / (i + 1) as f64).unwrap_or(0.0)
+}
+fn precision_at_k(rels: &[f64], k: usize) -> f64 {
+    if k == 0 { return 0.0; }
+    rels.iter().take(k).filter(|&&r| r > 0.0).count() as f64 / k as f64
+}
+fn recall_at_k(rels: &[f64], k: usize, total_relevant: usize) -> f64 {
+    if total_relevant == 0 { return 0.0; }
+    rels.iter().take(k).filter(|&&r| r > 0.0).count() as f64 / total_relevant as f64
+}
 
 use crate::tablefn::parse_matrix;
 use crate::udf::read_list_col;
@@ -228,7 +253,7 @@ impl VTab for IxKnnLeakage {
     type InitData = CursorInit;
     type BindData = LeakBind;
 
-    // @ai:invariant ix_knn_leakage = mean fraction of each point's k nearest neighbours sharing its label; well-separated labels -> leakage ~1 >> random_baseline (1/n_classes) [T:test conf:0.8 src:ix_duck::eval::tests::knn_leakage_separated_labels]
+    // @ai:invariant ix_knn_leakage = mean fraction of each point's k nearest neighbours sharing its label; well-separated labels -> leakage ~1 >> random_baseline (expected leave-one-out label agreement Σ c(c-1)/(n(n-1))) [T:test conf:0.8 src:ix_duck::eval::tests::knn_leakage_separated_labels]
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
         let x = parse_matrix(&bind.get_parameter(0).to_string())?;
         let labels = parse_labels(&bind.get_parameter(1).to_string(), "labels")?;
@@ -255,10 +280,18 @@ impl VTab for IxKnnLeakage {
             let same = d.iter().take(k).filter(|&&(_, j)| labels[j] == labels[i]).count();
             agree += same as f64 / k as f64;
         }
-        let n_classes = labels.iter().collect::<BTreeSet<_>>().len().max(1);
+        // Chance-level neighbour agreement under leave-one-out random sampling:
+        // Σ_c count_c·(count_c−1) / (n·(n−1)). Correctly 0 for all-unique labels
+        // and reflects class imbalance (not the naive 1/n_classes).
+        let mut counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        for &l in &labels {
+            *counts.entry(l).or_insert(0) += 1;
+        }
+        let baseline =
+            counts.values().map(|&c| (c * c.saturating_sub(1)) as f64).sum::<f64>() / (n as f64 * (n - 1) as f64);
         bind.add_result_column("leakage", double());
         bind.add_result_column("random_baseline", double());
-        Ok(LeakBind { leakage: agree / n as f64, baseline: 1.0 / n_classes as f64 })
+        Ok(LeakBind { leakage: agree / n as f64, baseline })
     }
     fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
         Ok(CursorInit { cursor: AtomicUsize::new(0) })
@@ -365,6 +398,7 @@ mod tests {
             )
             .unwrap();
         assert!(leak > 0.9, "separated labels → high leakage, got {leak}");
-        assert!((base - 0.5).abs() < 1e-9, "2 classes → baseline 0.5");
+        // 2 classes of size 2, n=4: Σ c(c-1)/(n(n-1)) = (2+2)/12 = 1/3.
+        assert!((base - 1.0 / 3.0).abs() < 1e-9, "leave-one-out chance baseline = 1/3, got {base}");
     }
 }

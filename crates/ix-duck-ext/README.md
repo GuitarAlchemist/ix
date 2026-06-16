@@ -17,7 +17,7 @@ exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
 | `ix_icv` | `(BIGINT[]) -> VARCHAR` | Interval-class vector, e.g. `"<0,0,1,1,1,0>"`. |
 | `ix_prime_form` | `(BIGINT[]) -> VARCHAR` | Bracelet prime form, e.g. `"[0,3,7]"`. |
 | `ix_classify_triad` | `(BIGINT[]) -> VARCHAR` | `"<root> major\|minor"`, or NULL if not a consonant triad. |
-| `ix_ndcg` | `(DOUBLE[], BIGINT) -> DOUBLE` | nDCG@k of a ranked relevance list. Wraps `ix-supervised::ranking`. |
+| `ix_ndcg` | `(DOUBLE[], BIGINT) -> DOUBLE` | nDCG@k of a ranked relevance list. |
 | `ix_reciprocal_rank` | `(DOUBLE[]) -> DOUBLE` | 1/(rank of first relevant); `avg(...)` ⇒ MRR. |
 | `ix_precision_at_k` | `(DOUBLE[], BIGINT) -> DOUBLE` | relevant in top-k / k. |
 | `ix_recall_at_k` | `(DOUBLE[], BIGINT, BIGINT) -> DOUBLE` | relevant in top-k / total_relevant. |
