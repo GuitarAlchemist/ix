@@ -18,6 +18,11 @@
 //!     do **not** `UNION` the query in SQL, which reorders and de-duplicates so the
 //!     positional `row` no longer identifies it. `k` is capped at `n_vectors - 1`.
 //!     Wraps `ix_math::distance::euclidean`.
+//! - `ix_dbscan(json_vectors VARCHAR, eps DOUBLE, min_points BIGINT)`
+//!     → `TABLE(row BIGINT, cluster BIGINT)`. Density-based clustering: each point's
+//!     cluster id (1, 2, …), or `0` for **noise** (no dense neighbourhood — the
+//!     outlier / OOD bucket). Composes with `ix_silhouette` for cluster quality:
+//!     feed these labels in. Wraps `ix_unsupervised::dbscan::DBSCAN`.
 //!
 //! A whole set enters in one SQL call as JSON scalar params (a 2-D number array
 //! for vectors, a 1-D int array for labels):
@@ -34,8 +39,9 @@ use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
 use duckdb::Connection;
 use ix_math::distance::euclidean;
+use ix_unsupervised::dbscan::DBSCAN;
 use ix_unsupervised::pca::PCA;
-use ix_unsupervised::traits::DimensionReducer;
+use ix_unsupervised::traits::{Clusterer, DimensionReducer};
 use ndarray::{Array1, Array2};
 
 /// Register every IX table function on `conn`.
@@ -43,6 +49,7 @@ pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxPcaProject>("ix_pca_project")?;
     conn.register_table_function::<IxSilhouette>("ix_silhouette")?;
     conn.register_table_function::<IxKdist>("ix_kdist")?;
+    conn.register_table_function::<IxDbscan>("ix_dbscan")?;
     Ok(())
 }
 
@@ -347,6 +354,96 @@ impl VTab for IxKdist {
     }
 }
 
+// ── ix_dbscan ────────────────────────────────────────────────────────────────────
+
+#[repr(C)]
+struct DbscanBind {
+    /// Per-point cluster id: 0 = noise, clusters 1, 2, …
+    clusters: Vec<i64>,
+}
+#[repr(C)]
+struct DbscanInit {
+    cursor: AtomicUsize,
+}
+
+struct IxDbscan;
+
+impl VTab for IxDbscan {
+    type InitData = DbscanInit;
+    type BindData = DbscanBind;
+
+    // @ai:invariant ix_dbscan emits one row per point with its DBSCAN cluster id (0 = noise); two well-separated dense blobs yield exactly two non-noise clusters [T:test conf:0.85 src:ix_duck::tablefn::tests::dbscan_finds_two_clusters_and_noise]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let x = parse_matrix(&bind.get_parameter(0).to_string())?;
+        let eps = bind
+            .get_parameter(1)
+            .to_string()
+            .parse::<f64>()
+            .map_err(|e| format!("eps must be a number: {e}"))?;
+        if eps <= 0.0 || eps.is_nan() {
+            return Err("eps must be > 0".into());
+        }
+        let min_points = bind.get_parameter(2).to_int64();
+        if min_points < 1 {
+            return Err("min_points must be >= 1".into());
+        }
+        let mut model = DBSCAN::new(eps, min_points as usize);
+        let labels = model.fit_predict(&x); // 0 = noise, clusters 1, 2, …
+        let clusters: Vec<i64> = labels.iter().map(|&l| l as i64).collect();
+        bind.add_result_column("row", LogicalTypeHandle::from(LogicalTypeId::Bigint));
+        bind.add_result_column("cluster", LogicalTypeHandle::from(LogicalTypeId::Bigint));
+        Ok(DbscanBind { clusters })
+    }
+
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(DbscanInit {
+            cursor: AtomicUsize::new(0),
+        })
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bind = func.get_bind_data();
+        let init = func.get_init_data();
+        let n = bind.clusters.len();
+        let start = init.cursor.load(Ordering::Relaxed);
+        if start >= n {
+            output.set_len(0);
+            return Ok(());
+        }
+        let cap = output.flat_vector(0).capacity();
+        let rows = (n - start).min(cap);
+
+        {
+            let mut v = output.flat_vector(0);
+            let s = unsafe { v.as_mut_slice_with_len::<i64>(rows) };
+            for (i, slot) in s.iter_mut().enumerate().take(rows) {
+                *slot = (start + i) as i64;
+            }
+        }
+        {
+            let mut v = output.flat_vector(1);
+            let s = unsafe { v.as_mut_slice_with_len::<i64>(rows) };
+            for (i, slot) in s.iter_mut().enumerate().take(rows) {
+                *slot = bind.clusters[start + i];
+            }
+        }
+        output.set_len(rows);
+        init.cursor.store(start + rows, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+        ])
+    }
+}
+
 /// Per-point kNN-distance: the mean Euclidean distance to each point's `k` nearest
 /// neighbours within the set (leave-one-out). Mean-of-k (not the k-th alone) is the
 /// robust form — a single spurious neighbour can't swing the score. Brute-force
@@ -554,5 +651,81 @@ mod tests {
             })
             .is_err();
         assert!(err, "a single vector must be a SQL error, not a panic");
+    }
+
+    #[test]
+    fn dbscan_finds_two_clusters_and_noise() {
+        let conn = open_bench().unwrap();
+        // Two tight blobs (rows 0-2 near origin, rows 3-5 near (10,10)) plus a lone
+        // outlier far away (row 6). eps=2, min_points=2 → two clusters + noise.
+        let pts = "[[0,0],[0,1],[1,0],[10,10],[10,11],[11,10],[50,50]]";
+        let n_clusters: i64 = conn
+            .query_row(
+                &format!("SELECT count(DISTINCT cluster) FROM ix_dbscan('{pts}', 2.0, 2) WHERE cluster <> 0"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_clusters, 2, "two dense blobs → two non-noise clusters");
+
+        // The lone far point (row 6) is noise (cluster 0).
+        let outlier_cluster: i64 = conn
+            .query_row(
+                &format!("SELECT cluster FROM ix_dbscan('{pts}', 2.0, 2) WHERE row = 6"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(outlier_cluster, 0, "the isolated point is labelled noise");
+
+        let n: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM ix_dbscan('{pts}', 2.0, 2)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 7, "one row per point");
+    }
+
+    #[test]
+    fn dbscan_composes_with_silhouette() {
+        // The point of pairing the two: cluster with dbscan, score with silhouette.
+        // DuckDB table functions take only *literal* params (no lateral-join columns),
+        // so composition is two steps: materialize dbscan's labels, then pass them as a
+        // JSON literal to ix_silhouette. Two well-separated blobs → high silhouette.
+        let conn = open_bench().unwrap();
+        let pts = "[[0,0],[0,1],[10,10],[10,11]]";
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT cluster FROM ix_dbscan('{pts}', 2.0, 2) ORDER BY row"
+            ))
+            .unwrap();
+        let labels: Vec<i64> = stmt
+            .query_map([], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        let labels_json = serde_json::to_string(&labels).unwrap();
+        let avg: f64 = conn
+            .query_row(
+                &format!("SELECT avg(silhouette) FROM ix_silhouette('{pts}', '{labels_json}')"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(avg > 0.8, "well-separated dbscan clusters → high silhouette, got {avg}");
+    }
+
+    #[test]
+    fn dbscan_rejects_bad_params() {
+        let conn = open_bench().unwrap();
+        // eps must be > 0.
+        assert!(
+            conn.query_row("SELECT cluster FROM ix_dbscan('[[0,0],[1,1]]', 0.0, 2)", [], |r| r
+                .get::<_, i64>(0))
+                .is_err(),
+            "eps=0 must be a SQL error"
+        );
     }
 }
