@@ -13,8 +13,11 @@
 //!     Euclidean distance to a point's `k` nearest neighbours within the set
 //!     (leave-one-out). The OOD / local-outlier signal — higher `kdist` means a
 //!     point sits further from the rest of the corpus. To score a *query* against
-//!     an in-domain reference, UNION the query as the last row and read its
-//!     `kdist`. `k` is capped at `n_vectors - 1`. Wraps `ix_math::distance::euclidean`.
+//!     an in-domain reference, append the query as the **last element of the JSON
+//!     vectors array** (its `row` is then `n_vectors - 1`) and select that row —
+//!     do **not** `UNION` the query in SQL, which reorders and de-duplicates so the
+//!     positional `row` no longer identifies it. `k` is capped at `n_vectors - 1`.
+//!     Wraps `ix_math::distance::euclidean`.
 //!
 //! A whole set enters in one SQL call as JSON scalar params (a 2-D number array
 //! for vectors, a 1-D int array for labels):
