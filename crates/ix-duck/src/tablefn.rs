@@ -23,6 +23,11 @@
 //!     cluster id (1, 2, …), or `0` for **noise** (no dense neighbourhood — the
 //!     outlier / OOD bucket). Composes with `ix_silhouette` for cluster quality:
 //!     feed these labels in. Wraps `ix_unsupervised::dbscan::DBSCAN`.
+//! - `ix_kmeans(json_vectors VARCHAR, k BIGINT)` / `ix_gmm(json_vectors VARCHAR, k BIGINT)`
+//!     → `TABLE(row BIGINT, cluster BIGINT)`. Centroid (k-means) / Gaussian-mixture
+//!     cluster labels `0..k-1`. `k` is capped at the sample count; deterministic
+//!     (seed 42). The centroid/mixture complement to `ix_dbscan`'s density labels —
+//!     all three feed `ix_silhouette`. Wrap `ix_unsupervised::{kmeans,gmm}`.
 //!
 //! A whole set enters in one SQL call as JSON scalar params (a 2-D number array
 //! for vectors, a 1-D int array for labels):
@@ -40,6 +45,8 @@ use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
 use duckdb::Connection;
 use ix_math::distance::euclidean;
 use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::gmm::GMM;
+use ix_unsupervised::kmeans::KMeans;
 use ix_unsupervised::pca::PCA;
 use ix_unsupervised::traits::{Clusterer, DimensionReducer};
 use ndarray::{Array1, Array2};
@@ -50,6 +57,8 @@ pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxSilhouette>("ix_silhouette")?;
     conn.register_table_function::<IxKdist>("ix_kdist")?;
     conn.register_table_function::<IxDbscan>("ix_dbscan")?;
+    conn.register_table_function::<IxKmeans>("ix_kmeans")?;
+    conn.register_table_function::<IxGmm>("ix_gmm")?;
     Ok(())
 }
 
@@ -446,6 +455,126 @@ impl VTab for IxDbscan {
     }
 }
 
+// ── ix_kmeans / ix_gmm (centroid / mixture cluster labels) ─────────────────────────
+//
+// Both produce per-point labels `0..k-1` for a `(json_vectors, k)` call, so they share
+// the output shape (row, cluster), the streaming `func`, and the bind preamble — only
+// the algorithm differs. Deterministic (the wrapped estimators default to seed 42).
+
+#[repr(C)]
+struct LabelBind {
+    clusters: Vec<i64>,
+}
+#[repr(C)]
+struct LabelInit {
+    cursor: AtomicUsize,
+}
+
+/// Shared bind preamble: parse the matrix, validate `k`, declare the (row, cluster)
+/// columns, and return the matrix + `k` capped at the sample count.
+fn cluster_k_bind(bind: &BindInfo) -> Result<(Array2<f64>, usize), Box<dyn std::error::Error>> {
+    let x = parse_matrix(&bind.get_parameter(0).to_string())?;
+    let k_req = bind.get_parameter(1).to_int64();
+    if k_req < 1 {
+        return Err("k must be >= 1".into());
+    }
+    let k = (k_req as usize).min(x.nrows());
+    bind.add_result_column("row", LogicalTypeHandle::from(LogicalTypeId::Bigint));
+    bind.add_result_column("cluster", LogicalTypeHandle::from(LogicalTypeId::Bigint));
+    Ok((x, k))
+}
+
+/// Shared streaming `func` for label table functions (row index + cluster id).
+fn emit_label_rows(
+    clusters: &[i64],
+    init: &LabelInit,
+    output: &mut DataChunkHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let n = clusters.len();
+    let start = init.cursor.load(Ordering::Relaxed);
+    if start >= n {
+        output.set_len(0);
+        return Ok(());
+    }
+    let cap = output.flat_vector(0).capacity();
+    let rows = (n - start).min(cap);
+    {
+        let mut v = output.flat_vector(0);
+        let s = unsafe { v.as_mut_slice_with_len::<i64>(rows) };
+        for (i, slot) in s.iter_mut().enumerate().take(rows) {
+            *slot = (start + i) as i64;
+        }
+    }
+    {
+        let mut v = output.flat_vector(1);
+        let s = unsafe { v.as_mut_slice_with_len::<i64>(rows) };
+        for (i, slot) in s.iter_mut().enumerate().take(rows) {
+            *slot = clusters[start + i];
+        }
+    }
+    output.set_len(rows);
+    init.cursor.store(start + rows, Ordering::Relaxed);
+    Ok(())
+}
+
+struct IxKmeans;
+
+impl VTab for IxKmeans {
+    type InitData = LabelInit;
+    type BindData = LabelBind;
+
+    // @ai:invariant ix_kmeans emits one row per point with its k-means cluster id 0..k-1 (k capped at sample count, deterministic seed); two separated blobs get two distinct labels [T:test conf:0.85 src:ix_duck::tablefn::tests::kmeans_separates_two_blobs]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (x, k) = cluster_k_bind(bind)?;
+        let labels = KMeans::new(k).fit_predict(&x);
+        Ok(LabelBind { clusters: labels.iter().map(|&l| l as i64).collect() })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(LabelInit { cursor: AtomicUsize::new(0) })
+    }
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        emit_label_rows(&func.get_bind_data().clusters, func.get_init_data(), output)
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+        ])
+    }
+}
+
+struct IxGmm;
+
+impl VTab for IxGmm {
+    type InitData = LabelInit;
+    type BindData = LabelBind;
+
+    // @ai:invariant ix_gmm emits one row per point with its Gaussian-mixture component id 0..k-1 (k capped at sample count, deterministic seed); two separated blobs get two distinct labels [T:test conf:0.85 src:ix_duck::tablefn::tests::gmm_separates_two_blobs]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (x, k) = cluster_k_bind(bind)?;
+        let labels = GMM::new(k).fit_predict(&x);
+        Ok(LabelBind { clusters: labels.iter().map(|&l| l as i64).collect() })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(LabelInit { cursor: AtomicUsize::new(0) })
+    }
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        emit_label_rows(&func.get_bind_data().clusters, func.get_init_data(), output)
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+        ])
+    }
+}
+
 /// Per-point kNN-distance: the mean Euclidean distance to each point's `k` nearest
 /// neighbours within the set (leave-one-out). Mean-of-k (not the k-th alone) is the
 /// robust form — a single spurious neighbour can't swing the score. Brute-force
@@ -738,6 +867,70 @@ mod tests {
             )
             .is_err(),
             "eps=+inf must be a SQL error"
+        );
+    }
+
+    // Two tight, far-apart blobs (rows 0-1 near origin, rows 2-3 near (10,10)) →
+    // a 2-cluster model must put each blob in its own cluster (label values are
+    // arbitrary, so assert the two blobs differ and there are exactly 2 clusters).
+    const TWO_BLOBS: &str = "[[0,0],[0,1],[10,10],[10,11]]";
+
+    #[test]
+    fn kmeans_separates_two_blobs() {
+        let conn = open_bench().unwrap();
+        let n_clusters: i64 = conn
+            .query_row(
+                &format!("SELECT count(DISTINCT cluster) FROM ix_kmeans('{TWO_BLOBS}', 2)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_clusters, 2, "k=2 over two blobs → two clusters");
+        // row 0 and row 2 are in different blobs → different labels.
+        let same: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT (SELECT cluster FROM ix_kmeans('{TWO_BLOBS}', 2) WHERE row=0) \
+                          = (SELECT cluster FROM ix_kmeans('{TWO_BLOBS}', 2) WHERE row=2)"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!same, "points in different blobs land in different clusters");
+        let n: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM ix_kmeans('{TWO_BLOBS}', 2)"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 4, "one row per point");
+    }
+
+    #[test]
+    fn gmm_separates_two_blobs() {
+        let conn = open_bench().unwrap();
+        let n_clusters: i64 = conn
+            .query_row(
+                &format!("SELECT count(DISTINCT cluster) FROM ix_gmm('{TWO_BLOBS}', 2)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_clusters, 2, "k=2 over two blobs → two components");
+    }
+
+    #[test]
+    fn kmeans_caps_k_at_sample_count_and_rejects_zero() {
+        let conn = open_bench().unwrap();
+        // k=9 over 2 points → capped at 2, still one row per point, no panic.
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM ix_kmeans('[[0,0],[9,9]]', 9)", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2);
+        // k < 1 is a SQL error.
+        assert!(
+            conn.query_row("SELECT cluster FROM ix_kmeans('[[0,0],[1,1]]', 0)", [], |r| r
+                .get::<_, i64>(0))
+                .is_err(),
+            "k=0 must be a SQL error"
         );
     }
 }

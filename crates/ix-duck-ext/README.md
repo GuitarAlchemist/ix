@@ -22,6 +22,8 @@ exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
 | `ix_silhouette` | `(json_vectors VARCHAR, json_labels VARCHAR) -> TABLE(row BIGINT, label BIGINT, silhouette DOUBLE)` | Per-point silhouette for a clustering. Mean: `SELECT avg(silhouette) FROM ix_silhouette(...)`. |
 | `ix_kdist` | `(json_vectors VARCHAR, k BIGINT) -> TABLE(row BIGINT, kdist DOUBLE)` | Mean distance to the `k` nearest neighbours (leave-one-out) — the OOD / local-outlier signal. |
 | `ix_dbscan` | `(json_vectors VARCHAR, eps DOUBLE, min_points BIGINT) -> TABLE(row BIGINT, cluster BIGINT)` | Density clustering labels; `0` = noise. Composes with `ix_silhouette`. |
+| `ix_kmeans` | `(json_vectors VARCHAR, k BIGINT) -> TABLE(row BIGINT, cluster BIGINT)` | Centroid (k-means) labels `0..k-1`, deterministic (`k` capped at sample count). |
+| `ix_gmm` | `(json_vectors VARCHAR, k BIGINT) -> TABLE(row BIGINT, cluster BIGINT)` | Gaussian-mixture component labels `0..k-1` — soft-assignment counterpart to `ix_kmeans`. |
 | `ix_optick_scan` | `(index_path VARCHAR) -> TABLE(voicing BIGINT, instrument VARCHAR, embedding DOUBLE[])` | **Tier 3:** the production OPTIC-K `optick.index` mmap as a table — no Parquet export. Wraps `ix_optick::OptickIndex`. Voicing distance = `ix_euclidean` over two rows. |
 
 Scalars wrap `ix_math::distance` directly; the PCA table function wraps
