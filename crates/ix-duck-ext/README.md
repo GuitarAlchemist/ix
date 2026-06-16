@@ -46,6 +46,38 @@ Table functions take a whole set as a JSON param (2-D number array; labels a 1-D
 array), so one SQL call processes the set:
 `SELECT * FROM ix_pca_project('[[1,2,3],[4,5,6]]', 2);`
 
+### Probabilistic sketches
+
+DuckDB has `approx_count_distinct` (a HyperLogLog) and uses Bloom filters
+internally for joins, but exposes none of them as **queryable, persistable,
+mergeable** objects. These do: each sketch is a portable column value — build once
+(scalar over a `BIGINT[]`, paired with `list()`), store the JSON blob, then probe
+cheaply or merge across partitions / repos. (duckdb-rs has no aggregate-UDF API, so
+each structure is a **build → probe/merge** triad of scalars. Wraps `ix-probabilistic`.)
+
+| structure | build | query | combine |
+|---|---|---|---|
+| **Bloom** (set membership) | `ix_bloom_build(items BIGINT[], capacity BIGINT, fp_rate DOUBLE) -> VARCHAR` | `ix_bloom_contains(sketch VARCHAR, item BIGINT) -> BOOLEAN` | `ix_bloom_union(a VARCHAR, b VARCHAR) -> VARCHAR` |
+| **HyperLogLog** (cardinality) | `ix_hll_build(items BIGINT[], precision BIGINT) -> VARCHAR` | `ix_hll_count(sketch VARCHAR) -> BIGINT` | `ix_hll_merge(a VARCHAR, b VARCHAR) -> VARCHAR` |
+| **Count-Min** (frequency) | `ix_cms_build(items BIGINT[], epsilon DOUBLE, delta DOUBLE) -> VARCHAR` | `ix_cms_estimate(sketch VARCHAR, item BIGINT) -> BIGINT` | `ix_cms_merge(a VARCHAR, b VARCHAR) -> VARCHAR` |
+| **Cuckoo** (membership + delete) | `ix_cuckoo_build(items BIGINT[], capacity BIGINT) -> VARCHAR` | `ix_cuckoo_contains(sketch VARCHAR, item BIGINT) -> BOOLEAN` | `ix_cuckoo_remove(sketch VARCHAR, item BIGINT) -> VARCHAR` |
+
+```sql
+-- Build a Bloom filter over a column, then probe a whole other column against it:
+SELECT q.id
+FROM queries q, (SELECT ix_bloom_build(list(seen_id), 100000, 0.01) AS bf FROM history) h
+WHERE ix_bloom_contains(h.bf, q.id);
+
+-- Distinct-count without a GROUP BY DISTINCT scan; merge two partitions' sketches:
+SELECT ix_hll_count(ix_hll_merge(part_a.s, part_b.s)) AS approx_distinct ...;
+```
+
+Items are `BIGINT` so build-vs-probe hashing is identical. **Text keys** bridge
+through DuckDB's deterministic `hash()` (mask to 63 bits — `hash()` is `UBIGINT` and
+overflows `BIGINT`): `ix_bloom_contains(bf, (hash(q) & 9223372036854775807)::BIGINT)`.
+Blobs are JSON and portable: `ix-probabilistic` hashes with a fixed-seed
+`DefaultHasher`, so a blob probes identically on any machine (same Rust std version).
+
 ## Build
 
 ```powershell

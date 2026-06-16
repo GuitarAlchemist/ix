@@ -3,11 +3,15 @@
 //! Use case for agents: estimate unique queries, unique skills used,
 //! unique error types — without storing all values.
 
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// HyperLogLog cardinality estimator.
-#[derive(Debug, Clone)]
+///
+/// `serde`-serializable so the sketch can be persisted/merged as a portable blob
+/// (see the `ix-duck` `ix_hll_*` SQL UDFs).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyperLogLog {
     registers: Vec<u8>,
     precision: usize,   // p: number of bits for bucket index

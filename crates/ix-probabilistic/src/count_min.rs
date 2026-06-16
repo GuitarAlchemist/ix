@@ -3,11 +3,15 @@
 //! Use case for agents: track how often each skill is invoked,
 //! estimate query frequencies for caching decisions — all in O(1) space.
 
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// Count-Min Sketch for frequency estimation.
-#[derive(Debug, Clone)]
+///
+/// `serde`-serializable so the sketch can be persisted/merged as a portable blob
+/// (see the `ix-duck` `ix_cms_*` SQL UDFs).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CountMinSketch {
     table: Vec<Vec<u64>>,
     width: usize,

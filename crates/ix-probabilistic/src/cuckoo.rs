@@ -3,11 +3,15 @@
 //! Use case for agents: track active sessions, skill availability,
 //! or active tool registrations with the ability to remove entries.
 
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// A Cuckoo Filter supporting insert, lookup, and delete.
-#[derive(Debug, Clone)]
+///
+/// `serde`-serializable so the filter can be persisted as a portable blob (see
+/// the `ix-duck` `ix_cuckoo_*` SQL UDFs — `remove` is its differentiator vs Bloom).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CuckooFilter {
     buckets: Vec<Vec<u16>>, // Each bucket holds up to BUCKET_SIZE fingerprints
     num_buckets: usize,

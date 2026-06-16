@@ -46,6 +46,7 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   - `ix_ndcg(rels,k)` / `ix_reciprocal_rank(rels)` / `ix_precision_at_k(rels,k)` / `ix_recall_at_k(rels,k,total)` — IR ranking metrics ✅ (scalar over a `DOUBLE[]` relevance list; powers the GA retrieval/routing oracles — `avg(ix_reciprocal_rank)` = MRR)
   - `ix_classification_report(predicted_json, actual_json)` — per-class precision/recall/f1/support ✅ (table fn; wraps `ix-supervised::metrics`; GA routing per-intent eval)
   - `ix_knn_leakage(vectors_json, labels_json, k)` — embedding separability/leakage ✅ (table fn; mean k-NN label agreement vs `random_baseline`; the lightweight form of GA's embeddings diagnostic)
+  - `ix_bloom_*` / `ix_hll_*` / `ix_cms_*` / `ix_cuckoo_*` — probabilistic sketches ✅ (scalar **build → probe/merge** triads over `BIGINT[]` items; wraps `ix-probabilistic`; sketches are portable JSON blobs — set membership / cardinality / frequency / membership-with-delete that DuckDB exposes none of). Items are `BIGINT`; text keys bridge via `(hash(x) & 9223372036854775807)::BIGINT`. See `crates/ix-duck-ext/README.md` → *Probabilistic sketches*.
 
 - **Crate structure:** new `crates/ix-duck` (library only), `duckdb` as an **optional dep** behind a
   `duck` cargo feature. Mirrors the established `fastembed`/`embeddings` pattern in `ix-skill`

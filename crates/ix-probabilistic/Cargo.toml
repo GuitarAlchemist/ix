@@ -11,4 +11,4 @@ description = "Probabilistic data structures: Bloom filters, Count-Min Sketch, H
 
 [dependencies]
 thiserror = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }

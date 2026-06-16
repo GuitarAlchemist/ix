@@ -7,11 +7,17 @@
 //! Use case for agents: quickly check "has this query been seen before?"
 //! or "does this skill exist?" without loading full data.
 
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// A Bloom filter.
-#[derive(Debug, Clone)]
+///
+/// Serialization (`serde`) lets the filter round-trip to a portable blob — e.g.
+/// the `ix-duck` `ix_bloom_*` SQL UDFs persist it as a column value. Hashing uses
+/// `DefaultHasher` (fixed seed), so a serialized filter probes identically on any
+/// machine running the same Rust std version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BloomFilter {
     bits: Vec<bool>,
     num_hashes: usize,
