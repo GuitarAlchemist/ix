@@ -13,6 +13,10 @@ exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
 |---|---|---|
 | `ix_cosine` | `(DOUBLE[], DOUBLE[]) -> DOUBLE` | Cosine similarity in [-1, 1]. Dimension mismatch → SQL error. |
 | `ix_euclidean` | `(DOUBLE[], DOUBLE[]) -> DOUBLE` | L2 distance. Primitive for kNN / OOD: `ORDER BY ix_euclidean(q, r) LIMIT k`. |
+| `ix_forte_number` | `(BIGINT[]) -> VARCHAR` | Forte set-class of the notes (mod 12), e.g. `"3-11"`; NULL if unclassifiable. Wraps `ix-bracelet`. |
+| `ix_icv` | `(BIGINT[]) -> VARCHAR` | Interval-class vector, e.g. `"<0,0,1,1,1,0>"`. |
+| `ix_prime_form` | `(BIGINT[]) -> VARCHAR` | Bracelet prime form, e.g. `"[0,3,7]"`. |
+| `ix_classify_triad` | `(BIGINT[]) -> VARCHAR` | `"<root> major\|minor"`, or NULL if not a consonant triad. |
 
 ### Table
 
@@ -25,6 +29,10 @@ exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
 | `ix_kmeans` | `(json_vectors VARCHAR, k BIGINT) -> TABLE(row BIGINT, cluster BIGINT)` | Centroid (k-means) labels `0..k-1`, deterministic (`k` capped at sample count). |
 | `ix_gmm` | `(json_vectors VARCHAR, k BIGINT) -> TABLE(row BIGINT, cluster BIGINT)` | Gaussian-mixture component labels `0..k-1` — soft-assignment counterpart to `ix_kmeans`. |
 | `ix_optick_scan` | `(index_path VARCHAR) -> TABLE(voicing BIGINT, instrument VARCHAR, embedding DOUBLE[])` | **Tier 3:** the production OPTIC-K `optick.index` mmap as a table — no Parquet export. Wraps `ix_optick::OptickIndex`. Voicing distance = `ix_euclidean` over two rows. |
+| `ix_pagerank` | `(edges_json VARCHAR, damping DOUBLE, iterations BIGINT) -> TABLE(node BIGINT, rank DOUBLE)` | PageRank over a JSON edge list `[[from,to(,w)],…]`. Wraps `ix-graph`. |
+| `ix_shortest_path` | `(edges_json VARCHAR, src BIGINT, dst BIGINT) -> TABLE(step BIGINT, node BIGINT)` | Dijkstra path src→dst (empty if unreachable). |
+| `ix_rfft` | `(series_json VARCHAR) -> TABLE(bin BIGINT, magnitude DOUBLE)` | Real-FFT magnitude spectrum of a JSON number series. Wraps `ix-signal`. |
+| `ix_autocorrelation` | `(series_json VARCHAR) -> TABLE(lag BIGINT, value DOUBLE)` | Two-sided normalized autocorrelation; lag 0 = 1.0 peak. |
 
 Scalars wrap `ix_math::distance` directly; the PCA table function wraps
 `ix_unsupervised` — no reimplementation, identical numbers to the in-process bench.

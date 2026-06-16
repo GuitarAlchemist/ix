@@ -115,5 +115,7 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     conn.register_scalar_function::<IxCosine>("ix_cosine")?;
     conn.register_scalar_function::<IxEuclidean>("ix_euclidean")?;
     crate::tablefn::register(conn)?;
+    crate::bracelet::register(conn)?;
+    crate::graphsig::register(conn)?;
     Ok(())
 }
