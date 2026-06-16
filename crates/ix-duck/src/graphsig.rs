@@ -117,6 +117,11 @@ fn parse_graph(json: &str) -> Result<(Graph, usize), Box<dyn std::error::Error>>
     let mut g = Graph::with_nodes(max_id + 1);
     for e in &edges {
         let w = if e.len() >= 3 { e[2] } else { 1.0 };
+        // Dijkstra (ix_shortest_path) and PageRank require non-negative weights; a
+        // negative weight gives wrong paths and a negative cycle never settles.
+        if w < 0.0 || w.is_nan() {
+            return Err("edge weights must be finite and non-negative".into());
+        }
         g.add_edge(e[0] as usize, e[1] as usize, w);
     }
     Ok((g, max_id + 1))
@@ -134,7 +139,7 @@ impl VTab for IxPagerank {
     type InitData = Cursor;
     type BindData = RowsF64;
 
-    // @ai:invariant ix_pagerank emits one (node,rank) per graph node from ix_graph pagerank; ranks are positive and sum to ~1 [T:test conf:0.8 src:ix_duck::graphsig::tests::pagerank_ranks_sum_to_one]
+    // @ai:invariant ix_pagerank emits one (node,rank) per graph node from ix_graph pagerank, normalized to sum to 1 (so dangling-node mass leakage doesn't break the probability-distribution contract) [T:test conf:0.8 src:ix_duck::graphsig::tests::pagerank_normalized_even_with_sink]
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
         let (g, n) = parse_graph(&bind.get_parameter(0).to_string())?;
         let damping = bind.get_parameter(1).to_string().parse::<f64>().unwrap_or(0.85);
@@ -148,6 +153,15 @@ impl VTab for IxPagerank {
         let pr = g.pagerank(damping, iters as usize);
         let mut rows: Vec<(i64, f64)> = (0..n).map(|i| (i as i64, *pr.get(&i).unwrap_or(&0.0))).collect();
         rows.sort_by_key(|r| r.0);
+        // ix-graph's pagerank doesn't redistribute dangling-node (sink) mass, so the
+        // raw vector can sum below 1. Normalize to a proper distribution at the UDF
+        // boundary so downstream SQL comparing/aggregating ranks stays sound.
+        let total: f64 = rows.iter().map(|r| r.1).sum();
+        if total > 0.0 {
+            for r in &mut rows {
+                r.1 /= total;
+            }
+        }
         two_cols(bind, "node", LogicalTypeId::Bigint, "rank", LogicalTypeId::Double);
         Ok(RowsF64 { rows })
     }
@@ -277,9 +291,9 @@ mod tests {
     use crate::open_bench;
 
     #[test]
-    fn pagerank_ranks_sum_to_one() {
+    fn pagerank_normalized_even_with_sink() {
         let conn = open_bench().unwrap();
-        // 3-cycle 0->1->2->0; symmetric → equal ranks summing to ~1.
+        // 3-cycle → ranks sum to ~1.
         let (n, total): (i64, f64) = conn
             .query_row(
                 "SELECT count(*), sum(rank) FROM ix_pagerank('[[0,1],[1,2],[2,0]]', 0.85, 100)",
@@ -289,6 +303,24 @@ mod tests {
             .unwrap();
         assert_eq!(n, 3, "one row per node");
         assert!((total - 1.0).abs() < 1e-6, "pageranks sum to ~1, got {total}");
+        // Sink graph 0->1 (node 1 dangling): ix-graph leaks mass, but the UDF
+        // normalizes → still a valid distribution summing to 1.
+        let sink_total: f64 = conn
+            .query_row("SELECT sum(rank) FROM ix_pagerank('[[0,1]]', 0.85, 100)", [], |r| r.get(0))
+            .unwrap();
+        assert!((sink_total - 1.0).abs() < 1e-6, "normalized despite the sink, got {sink_total}");
+    }
+
+    #[test]
+    fn graph_rejects_negative_weights() {
+        let conn = open_bench().unwrap();
+        // Negative weights break Dijkstra/PageRank — must be a SQL error, not a hang.
+        assert!(
+            conn.query_row("SELECT node FROM ix_pagerank('[[0,1,-1.0]]', 0.85, 10)", [], |r| r
+                .get::<_, i64>(0))
+                .is_err(),
+            "negative edge weight must be a SQL error"
+        );
     }
 
     #[test]
