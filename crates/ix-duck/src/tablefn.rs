@@ -8,6 +8,13 @@
 //!     → `TABLE(row BIGINT, label BIGINT, silhouette DOUBLE)`. Per-point silhouette
 //!     coefficient for the given clustering. Mean score:
 //!     `SELECT avg(silhouette) FROM ix_silhouette(...)`.
+//! - `ix_kdist(json_vectors VARCHAR, k BIGINT)`
+//!     → `TABLE(row BIGINT, kdist DOUBLE)`. Per-point kNN-distance: the mean
+//!     Euclidean distance to a point's `k` nearest neighbours within the set
+//!     (leave-one-out). The OOD / local-outlier signal — higher `kdist` means a
+//!     point sits further from the rest of the corpus. To score a *query* against
+//!     an in-domain reference, UNION the query as the last row and read its
+//!     `kdist`. `k` is capped at `n_vectors - 1`. Wraps `ix_math::distance::euclidean`.
 //!
 //! A whole set enters in one SQL call as JSON scalar params (a 2-D number array
 //! for vectors, a 1-D int array for labels):
@@ -32,6 +39,7 @@ use ndarray::{Array1, Array2};
 pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxPcaProject>("ix_pca_project")?;
     conn.register_table_function::<IxSilhouette>("ix_silhouette")?;
+    conn.register_table_function::<IxKdist>("ix_kdist")?;
     Ok(())
 }
 
@@ -252,6 +260,113 @@ impl VTab for IxSilhouette {
     }
 }
 
+// ── ix_kdist ───────────────────────────────────────────────────────────────────
+
+#[repr(C)]
+struct KdistBind {
+    /// Per-point mean distance to its `k` nearest neighbours.
+    kdist: Vec<f64>,
+}
+#[repr(C)]
+struct KdistInit {
+    cursor: AtomicUsize,
+}
+
+struct IxKdist;
+
+impl VTab for IxKdist {
+    type InitData = KdistInit;
+    type BindData = KdistBind;
+
+    // @ai:invariant ix_kdist emits one row per point with the mean Euclidean distance to its k nearest neighbours (leave-one-out); an isolated outlier has the largest kdist [T:test conf:0.85 src:ix_duck::tablefn::tests::kdist_outlier_has_largest_distance]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let x = parse_matrix(&bind.get_parameter(0).to_string())?;
+        let k_req = bind.get_parameter(1).to_int64();
+        if k_req < 1 {
+            return Err("k must be >= 1".into());
+        }
+        let n = x.nrows();
+        if n < 2 {
+            return Err("ix_kdist needs at least 2 vectors (kNN-distance is leave-one-out)".into());
+        }
+        let k = (k_req as usize).min(n - 1);
+        let kdist = kdist_per_point(&x, k)?;
+        bind.add_result_column("row", LogicalTypeHandle::from(LogicalTypeId::Bigint));
+        bind.add_result_column("kdist", LogicalTypeHandle::from(LogicalTypeId::Double));
+        Ok(KdistBind { kdist })
+    }
+
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(KdistInit {
+            cursor: AtomicUsize::new(0),
+        })
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bind = func.get_bind_data();
+        let init = func.get_init_data();
+        let n = bind.kdist.len();
+        let start = init.cursor.load(Ordering::Relaxed);
+        if start >= n {
+            output.set_len(0);
+            return Ok(());
+        }
+        let cap = output.flat_vector(0).capacity();
+        let rows = (n - start).min(cap);
+
+        {
+            let mut v = output.flat_vector(0);
+            let s = unsafe { v.as_mut_slice_with_len::<i64>(rows) };
+            for (i, slot) in s.iter_mut().enumerate().take(rows) {
+                *slot = (start + i) as i64;
+            }
+        }
+        {
+            let mut v = output.flat_vector(1);
+            let s = unsafe { v.as_mut_slice_with_len::<f64>(rows) };
+            for (i, slot) in s.iter_mut().enumerate().take(rows) {
+                *slot = bind.kdist[start + i];
+            }
+        }
+        output.set_len(rows);
+        init.cursor.store(start + rows, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+        ])
+    }
+}
+
+/// Per-point kNN-distance: the mean Euclidean distance to each point's `k` nearest
+/// neighbours within the set (leave-one-out). Mean-of-k (not the k-th alone) is the
+/// robust form — a single spurious neighbour can't swing the score. Brute-force
+/// `O(n²)` over `ix_math::distance::euclidean`; fine at analyst-bench scale (this is
+/// not the production voicing-search path — `optick.index` owns that).
+fn kdist_per_point(x: &Array2<f64>, k: usize) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
+    let n = x.nrows();
+    let pts: Vec<Array1<f64>> = (0..n).map(|i| x.row(i).to_owned()).collect();
+    let mut out = vec![0.0; n];
+    for i in 0..n {
+        let mut dists: Vec<f64> = Vec::with_capacity(n - 1);
+        for j in 0..n {
+            if j != i {
+                dists.push(euclidean(&pts[i], &pts[j])?);
+            }
+        }
+        dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let kk = k.min(dists.len()).max(1);
+        out[i] = dists[..kk].iter().sum::<f64>() / kk as f64;
+    }
+    Ok(out)
+}
+
 /// Per-point silhouette coefficient `s(i) = (b - a) / max(a, b)`, where `a` is the
 /// mean intra-cluster distance and `b` the mean distance to the nearest other
 /// cluster. `s = 0` when the point's cluster is a singleton or is the only cluster
@@ -385,5 +500,56 @@ mod tests {
             avg.abs() < 1e-12,
             "single cluster → silhouette 0, got {avg}"
         );
+    }
+
+    #[test]
+    fn kdist_outlier_has_largest_distance() {
+        let conn = open_bench().unwrap();
+        // Three tight points + one far outlier. With k=1, the outlier's nearest
+        // neighbour is far, so it must have the largest kdist → it's row 3.
+        let outlier_row: i64 = conn
+            .query_row(
+                "SELECT row FROM ix_kdist('[[0,0],[0,1],[1,0],[10,10]]', 1) ORDER BY kdist DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(outlier_row, 3, "the isolated point has the largest kdist");
+
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM ix_kdist('[[0,0],[0,1],[1,0],[10,10]]', 1)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 4, "one row per point");
+    }
+
+    #[test]
+    fn kdist_caps_k_at_n_minus_one_and_computes_mean() {
+        let conn = open_bench().unwrap();
+        // Two points sqrt(2) apart; ask for k=5 → capped at 1. Each point's only
+        // neighbour is the other, so kdist == sqrt(2) for both.
+        let d: f64 = conn
+            .query_row(
+                "SELECT kdist FROM ix_kdist('[[0,0],[1,1]]', 5) LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((d - 2.0_f64.sqrt()).abs() < 1e-9, "k capped at n-1; kdist = sqrt(2), got {d}");
+    }
+
+    #[test]
+    fn kdist_rejects_single_vector() {
+        let conn = open_bench().unwrap();
+        // kNN-distance is leave-one-out → needs >= 2 vectors.
+        let err = conn
+            .query_row("SELECT kdist FROM ix_kdist('[[1,2,3]]', 1)", [], |r| {
+                r.get::<_, f64>(0)
+            })
+            .is_err();
+        assert!(err, "a single vector must be a SQL error, not a panic");
     }
 }

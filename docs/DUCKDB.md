@@ -32,11 +32,12 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   GROUP BY pre;
   ```
 
-- **Initial UDF set** (the differentiated value — things DuckDB can't do natively; it already has avg/stddev/percentile):
-  - `ix_cosine(a, b)` — vector similarity
-  - `ix_kdist(v, k)` — kNN-distance (OOD signal)
-  - `ix_pca_project(v, k)` — dimensionality reduction
-  - `ix_silhouette(points, labels)` — clustering quality
+- **Initial UDF set** (the differentiated value — things DuckDB can't do natively; it already has avg/stddev/percentile) — **all shipped** (2026-06-16):
+  - `ix_cosine(a, b)` — vector similarity ✅ (scalar UDF)
+  - `ix_euclidean(a, b)` — distance ✅ (scalar UDF; the kNN-distance primitive)
+  - `ix_kdist(json_vectors, k)` — kNN-distance / OOD signal ✅ (table fn; mean dist to `k` nearest neighbours, leave-one-out)
+  - `ix_pca_project(json_vectors, k)` — dimensionality reduction ✅ (table fn)
+  - `ix_silhouette(json_vectors, json_labels)` — clustering quality ✅ (table fn)
 
 - **Crate structure:** new `crates/ix-duck` (library only), `duckdb` as an **optional dep** behind a
   `duck` cargo feature. Mirrors the established `fastembed`/`embeddings` pattern in `ix-skill`
@@ -124,9 +125,10 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
 **Plan:** [`docs/plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md`](plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md)
 (Tier 1: crate skeleton, `ix_cosine`/`ix_euclidean` scalar UDFs, yield-split example, tests, feature wiring).
 
-> ⚠️ **Plan finding:** duckdb-rs `VScalar` is *row-wise*. Only `ix_cosine` is a true scalar UDF;
-> `ix_pca_project`/`ix_silhouette`/`ix_kdist` are set-relative → table functions / SQL recipes (staged to
-> Phase 4 / v1.1). The MVP yield-split needs **no** custom UDF (pure SQL). See the plan's "Key Technical Finding".
+> ⚠️ **Plan finding (resolved):** duckdb-rs `VScalar` is *row-wise*, so `ix_cosine`/`ix_euclidean` are
+> true scalar UDFs while the set-relative ones (`ix_pca_project`/`ix_silhouette`/`ix_kdist`) ship as
+> **table functions** (`VTab`) — all now landed in `crates/ix-duck/src/{udf,tablefn}.rs`. The MVP
+> yield-split needs **no** custom UDF (pure SQL). See the plan's "Key Technical Finding".
 
 → Next: `/ce-work docs/plans/2026-06-14-001-feat-ix-duck-duckdb-udfs-plan.md`
 
