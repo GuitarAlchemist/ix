@@ -17,6 +17,10 @@ exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
 | `ix_icv` | `(BIGINT[]) -> VARCHAR` | Interval-class vector, e.g. `"<0,0,1,1,1,0>"`. |
 | `ix_prime_form` | `(BIGINT[]) -> VARCHAR` | Bracelet prime form, e.g. `"[0,3,7]"`. |
 | `ix_classify_triad` | `(BIGINT[]) -> VARCHAR` | `"<root> major\|minor"`, or NULL if not a consonant triad. |
+| `ix_ndcg` | `(DOUBLE[], BIGINT) -> DOUBLE` | nDCG@k of a ranked relevance list. Wraps `ix-supervised::ranking`. |
+| `ix_reciprocal_rank` | `(DOUBLE[]) -> DOUBLE` | 1/(rank of first relevant); `avg(...)` ⇒ MRR. |
+| `ix_precision_at_k` | `(DOUBLE[], BIGINT) -> DOUBLE` | relevant in top-k / k. |
+| `ix_recall_at_k` | `(DOUBLE[], BIGINT, BIGINT) -> DOUBLE` | relevant in top-k / total_relevant. |
 
 ### Table
 
@@ -33,6 +37,8 @@ exact same registration (`ix_duck::udf::register_all`) but ships as a standalone
 | `ix_shortest_path` | `(edges_json VARCHAR, src BIGINT, dst BIGINT) -> TABLE(step BIGINT, node BIGINT)` | Dijkstra path src→dst (empty if unreachable). |
 | `ix_rfft` | `(series_json VARCHAR) -> TABLE(bin BIGINT, magnitude DOUBLE)` | Real-FFT magnitude spectrum of a JSON number series. Wraps `ix-signal`. |
 | `ix_autocorrelation` | `(series_json VARCHAR) -> TABLE(lag BIGINT, value DOUBLE)` | Two-sided normalized autocorrelation; lag 0 = 1.0 peak. |
+| `ix_classification_report` | `(predicted_json VARCHAR, actual_json VARCHAR) -> TABLE(label BIGINT, precision DOUBLE, recall DOUBLE, f1 DOUBLE, support BIGINT)` | Per-class one-vs-rest metrics. Wraps `ix-supervised::metrics`. |
+| `ix_knn_leakage` | `(vectors_json VARCHAR, labels_json VARCHAR, k BIGINT) -> TABLE(leakage DOUBLE, random_baseline DOUBLE)` | Mean k-NN label agreement — embedding separability/leakage vs the random baseline. |
 
 Scalars wrap `ix_math::distance` directly; the PCA table function wraps
 `ix_unsupervised` — no reimplementation, identical numbers to the in-process bench.

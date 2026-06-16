@@ -8,6 +8,7 @@ pub mod linear_regression;
 pub mod logistic_regression;
 pub mod metrics;
 pub mod naive_bayes;
+pub mod ranking;
 pub mod resampling;
 pub mod serialization;
 pub mod svm;

@@ -43,6 +43,9 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   - `ix_forte_number` / `ix_icv` / `ix_prime_form` / `ix_classify_triad(notes)` — music set-theory ✅ (scalar over `BIGINT[]` notes mod 12; wraps `ix-bracelet`; makes the voicing corpus queryable by set-class)
   - `ix_pagerank(edges, damping, iters)` / `ix_shortest_path(edges, src, dst)` — graph analytics ✅ (table fn over a JSON edge list; wraps `ix-graph`; DuckDB has no graph algos)
   - `ix_rfft(series)` / `ix_autocorrelation(series)` — signal ✅ (table fn over a JSON series; wraps `ix-signal`; FFT magnitude spectrum / two-sided autocorrelation)
+  - `ix_ndcg(rels,k)` / `ix_reciprocal_rank(rels)` / `ix_precision_at_k(rels,k)` / `ix_recall_at_k(rels,k,total)` — IR ranking metrics ✅ (scalar over a `DOUBLE[]` relevance list; wraps new `ix-supervised::ranking`; powers the GA retrieval/routing oracles — `avg(ix_reciprocal_rank)` = MRR)
+  - `ix_classification_report(predicted_json, actual_json)` — per-class precision/recall/f1/support ✅ (table fn; wraps `ix-supervised::metrics`; GA routing per-intent eval)
+  - `ix_knn_leakage(vectors_json, labels_json, k)` — embedding separability/leakage ✅ (table fn; mean k-NN label agreement vs `random_baseline`; the lightweight form of GA's embeddings diagnostic)
 
 - **Crate structure:** new `crates/ix-duck` (library only), `duckdb` as an **optional dep** behind a
   `duck` cargo feature. Mirrors the established `fastembed`/`embeddings` pattern in `ix-skill`
