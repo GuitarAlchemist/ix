@@ -3,11 +3,15 @@
 //! Use case for agents: estimate unique queries, unique skills used,
 //! unique error types — without storing all values.
 
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// HyperLogLog cardinality estimator.
-#[derive(Debug, Clone)]
+///
+/// `serde`-serializable so the sketch can be persisted/merged as a portable blob
+/// (see the `ix-duck` `ix_hll_*` SQL UDFs).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyperLogLog {
     registers: Vec<u8>,
     precision: usize,   // p: number of bits for bucket index
@@ -49,8 +53,17 @@ impl HyperLogLog {
         self.registers[bucket] = self.registers[bucket].max(leading_zeros);
     }
 
-    /// Estimate the number of distinct items.
+    /// Whether the registers match the declared bucket count. A deserialized blob
+    /// may violate this; guarding keeps `count`/`merge` total (no NaN / panic).
+    fn consistent(&self) -> bool {
+        self.num_buckets > 0 && self.registers.len() == self.num_buckets
+    }
+
+    /// Estimate the number of distinct items. A degenerate sketch returns 0.0.
     pub fn count(&self) -> f64 {
+        if !self.consistent() {
+            return 0.0;
+        }
         let m = self.num_buckets as f64;
         let alpha = match self.num_buckets {
             16 => 0.673,
@@ -82,6 +95,9 @@ impl HyperLogLog {
     pub fn merge(&mut self, other: &Self) -> Result<(), &'static str> {
         if self.precision != other.precision {
             return Err("HyperLogLog instances must have same precision");
+        }
+        if !self.consistent() || !other.consistent() {
+            return Err("HyperLogLog instances are structurally inconsistent");
         }
         for (i, &r) in other.registers.iter().enumerate() {
             self.registers[i] = self.registers[i].max(r);
@@ -153,6 +169,17 @@ mod tests {
             "Merged estimate {} too far from 1000",
             estimate
         );
+    }
+
+    #[test]
+    fn test_hll_degenerate_blob_no_panic() {
+        // num_buckets 0 / empty registers must not produce a panic or NaN count.
+        let hll: HyperLogLog =
+            serde_json::from_str(r#"{"registers":[],"precision":0,"num_buckets":0}"#).unwrap();
+        assert_eq!(hll.count(), 0.0);
+        // merging an inconsistent sketch is rejected, not panicked.
+        let mut ok = HyperLogLog::new(10);
+        assert!(ok.merge(&hll).is_err());
     }
 
     #[test]

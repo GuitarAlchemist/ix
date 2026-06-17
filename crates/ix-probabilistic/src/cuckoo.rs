@@ -3,11 +3,15 @@
 //! Use case for agents: track active sessions, skill availability,
 //! or active tool registrations with the ability to remove entries.
 
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// A Cuckoo Filter supporting insert, lookup, and delete.
-#[derive(Debug, Clone)]
+///
+/// `serde`-serializable so the filter can be persisted as a portable blob (see
+/// the `ix-duck` `ix_cuckoo_*` SQL UDFs — `remove` is its differentiator vs Bloom).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CuckooFilter {
     buckets: Vec<Vec<u16>>, // Each bucket holds up to BUCKET_SIZE fingerprints
     num_buckets: usize,
@@ -71,14 +75,32 @@ impl CuckooFilter {
         false // Filter is too full
     }
 
-    /// Check if an item might be in the filter.
+    /// Whether the buckets match the declared bucket count. A deserialized blob
+    /// may violate this; guarding keeps `contains`/`remove` total (no `% 0` /
+    /// out-of-bounds panic).
+    fn consistent(&self) -> bool {
+        self.num_buckets > 0 && self.buckets.len() == self.num_buckets
+    }
+
+    /// Check if an item might be in the filter. A degenerate filter returns false.
     pub fn contains<T: Hash>(&self, item: &T) -> bool {
+        if !self.consistent() {
+            return false;
+        }
         let (fp, i1, i2) = self.indices(item);
         self.buckets[i1].contains(&fp) || self.buckets[i2].contains(&fp)
     }
 
     /// Remove an item. Returns true if found and removed.
+    ///
+    /// Cuckoo deletion is only safe for items known to have been inserted: a
+    /// never-inserted key that shares a bucket+fingerprint with a real entry will
+    /// evict that real entry (a fingerprint collision). Callers must not delete
+    /// keys they did not add.
     pub fn remove<T: Hash>(&mut self, item: &T) -> bool {
+        if !self.consistent() {
+            return false;
+        }
         let (fp, i1, i2) = self.indices(item);
 
         if let Some(pos) = self.buckets[i1].iter().position(|&f| f == fp) {
@@ -160,6 +182,16 @@ mod tests {
         assert!(cf.remove(&"hello"));
         assert!(!cf.contains(&"hello"));
         assert_eq!(cf.len(), 0);
+    }
+
+    #[test]
+    fn test_cuckoo_degenerate_blob_no_panic() {
+        // num_buckets 0 / empty buckets must not panic on contains/remove (`% 0`).
+        let mut cf: CuckooFilter =
+            serde_json::from_str(r#"{"buckets":[],"num_buckets":0,"max_kicks":500,"count":0}"#)
+                .unwrap();
+        assert!(!cf.contains(&"x"));
+        assert!(!cf.remove(&"x"));
     }
 
     #[test]

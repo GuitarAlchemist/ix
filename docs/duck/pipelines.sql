@@ -70,3 +70,24 @@ ORDER BY n DESC;
 -- SELECT instrument, count(*) AS voicings, any_value(len(embedding)) AS dim
 -- FROM ix_optick_scan('C:/Users/you/source/repos/ga/state/voicings/optick.index')
 -- GROUP BY instrument;
+
+-- ── Pipeline 6: probabilistic sketches (build → blob → probe / merge) ─────────
+-- Portable sketches as column values — things DuckDB exposes natively for none of:
+-- set membership (Bloom), cardinality (HLL), frequency (Count-Min), delete (Cuckoo).
+-- Build is a scalar over list(); the JSON blob then probes/merges cheaply.
+
+-- 6a. Bloom: which candidates are NOT already in the seen-set (one filter, scanned).
+WITH seen(id) AS (VALUES (1),(2),(3),(5),(8)),
+     cand(id) AS (VALUES (2),(4),(8),(9)),
+     filt AS (SELECT ix_bloom_build(list(id), 1000, 0.01) AS bf FROM seen)
+SELECT cand.id,
+       ix_bloom_contains(filt.bf, cand.id) AS probably_seen
+FROM cand, filt
+ORDER BY cand.id;
+
+-- 6b. HyperLogLog: approx distinct count, and merge two partitions' sketches into
+-- one cardinality estimate — without re-scanning either partition (~p=14, <1% err).
+SET VARIABLE hll_a = (SELECT ix_hll_build(list(r), 14) FROM range(0, 700)   t(r));
+SET VARIABLE hll_b = (SELECT ix_hll_build(list(r), 14) FROM range(300, 1000) t(r));
+SELECT ix_hll_count(getvariable('hll_a'))                                AS distinct_a,   -- ~700
+       ix_hll_count(ix_hll_merge(getvariable('hll_a'), getvariable('hll_b'))) AS distinct_union; -- ~1000 (overlap 300..700 counted once)

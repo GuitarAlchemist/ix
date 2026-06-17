@@ -7,11 +7,17 @@
 //! Use case for agents: quickly check "has this query been seen before?"
 //! or "does this skill exist?" without loading full data.
 
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// A Bloom filter.
-#[derive(Debug, Clone)]
+///
+/// Serialization (`serde`) lets the filter round-trip to a portable blob — e.g.
+/// the `ix-duck` `ix_bloom_*` SQL UDFs persist it as a column value. Hashing uses
+/// `DefaultHasher` (fixed seed), so a serialized filter probes identically on any
+/// machine running the same Rust std version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BloomFilter {
     bits: Vec<bool>,
     num_hashes: usize,
@@ -52,9 +58,21 @@ impl BloomFilter {
         self.count += 1;
     }
 
+    /// Whether the internal arrays are self-consistent. A filter built via the
+    /// constructors always is, but one *deserialized* from an untrusted blob may
+    /// not be — guarding keeps query methods total (no `% 0` / out-of-bounds panic).
+    fn consistent(&self) -> bool {
+        self.size > 0 && self.num_hashes > 0 && self.bits.len() == self.size
+    }
+
     /// Check if an item *might* be in the set.
     /// Returns false = definitely not in set, true = probably in set.
+    /// A structurally-degenerate filter (e.g. from a malformed blob) returns false
+    /// rather than panicking.
     pub fn contains<T: Hash>(&self, item: &T) -> bool {
+        if !self.consistent() {
+            return false;
+        }
         (0..self.num_hashes).all(|i| {
             let idx = self.hash_index(item, i);
             self.bits[idx]
@@ -173,6 +191,18 @@ mod tests {
         for i in 0..100 {
             assert!(bf.contains(&i), "False negative for {}", i);
         }
+    }
+
+    #[test]
+    fn test_bloom_degenerate_blob_no_panic() {
+        // A malformed blob (size 0, empty bits) must not panic on probe (`% 0`).
+        let bf: BloomFilter =
+            serde_json::from_str(r#"{"bits":[],"num_hashes":1,"size":0,"count":0}"#).unwrap();
+        assert!(!bf.contains(&"anything"));
+        // size > 0 but bits shorter than size would index out of bounds.
+        let bf2: BloomFilter =
+            serde_json::from_str(r#"{"bits":[true],"num_hashes":2,"size":8,"count":1}"#).unwrap();
+        assert!(!bf2.contains(&42));
     }
 
     #[test]
