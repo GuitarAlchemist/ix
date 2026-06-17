@@ -1,0 +1,216 @@
+//! Out-of-domain (OOD) query lens over GA chatbot **query embeddings**.
+//!
+//! Reads `state/quality/query-embeddings/YYYY-MM-DD.jsonl` — one row per routed
+//! query, carrying the *exact* vector the router scored — into `query_embeddings`,
+//! then scores each query by its **mean top-k cosine to its nearest neighbours**
+//! (leave-one-out kNN density). A query that sits far from all others scores low →
+//! out-of-domain. This is the raw-cosine method IX's ROC sweep validated; per-query
+//! z-norm is deliberately NOT applied (it divides out the magnitude the gate keys on
+//! — see `reference_ood_scoring_method_research`).
+//!
+//! ⚠ Contract B is **proposed, not yet ratified** by GA (the router currently embeds
+//! in-process and discards the vector — nothing is persisted). This module + its
+//! fixtures encode the proposed shape so the lens lights up the moment GA emits; if
+//! ratification changes a field, adjust here. Absent directory → empty (never error).
+
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+
+use duckdb::Connection;
+
+/// Errors from the OOD lens: directory I/O vs DuckDB.
+#[derive(Debug)]
+pub enum OodError {
+    Io(std::io::Error),
+    Duck(duckdb::Error),
+}
+impl std::fmt::Display for OodError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OodError::Io(e) => write!(f, "query-embeddings I/O error: {e}"),
+            OodError::Duck(e) => write!(f, "duckdb error: {e}"),
+        }
+    }
+}
+impl std::error::Error for OodError {}
+impl From<std::io::Error> for OodError {
+    fn from(e: std::io::Error) -> Self {
+        OodError::Io(e)
+    }
+}
+impl From<duckdb::Error> for OodError {
+    fn from(e: duckdb::Error) -> Self {
+        OodError::Duck(e)
+    }
+}
+
+/// `*.jsonl` files in `dir` (sorted). Absent dir → empty (skip); other errors surfaced.
+fn embedding_files(dir: &Path) -> Result<Vec<PathBuf>, OodError> {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut out = Vec::new();
+    for entry in rd {
+        let p = entry?.path();
+        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
+            if n.ends_with(".jsonl") {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// DuckDB list literal of POSIX-slashed, quote-escaped paths.
+fn sql_list(paths: &[PathBuf]) -> String {
+    let items: Vec<String> = paths
+        .iter()
+        .map(|p| {
+            format!(
+                "'{}'",
+                p.to_string_lossy().replace('\\', "/").replace('\'', "''")
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(", "))
+}
+
+const COLS: &str = "query_id VARCHAR, ts VARCHAR, day VARCHAR, query_text VARCHAR, \
+                    intent VARCHAR, route_method VARCHAR, route_confidence DOUBLE, \
+                    embedder VARCHAR, dim BIGINT, embedding DOUBLE[]";
+
+/// Build `query_embeddings` (one row per routed query). Returns the row count;
+/// 0 when the directory is absent/empty.
+// @ai:invariant build_query_embeddings creates query_embeddings with one row per JSONL line, embedding as DOUBLE[] [T:test conf:0.9 src:ix_duck::ood::tests::rows_one_per_query]
+pub fn build_query_embeddings(conn: &Connection, dir: &Path) -> Result<usize, OodError> {
+    let files = embedding_files(dir)?;
+    if files.is_empty() {
+        conn.execute_batch(&format!(
+            "CREATE OR REPLACE TABLE query_embeddings ({COLS});"
+        ))?;
+        return Ok(0);
+    }
+    let list = sql_list(&files);
+    conn.execute_batch(&format!(
+        "CREATE OR REPLACE TABLE query_embeddings AS
+         SELECT query_id::VARCHAR        AS query_id,
+                ts::VARCHAR              AS ts,
+                (ts::VARCHAR)[1:10]      AS day,
+                query_text::VARCHAR      AS query_text,
+                intent::VARCHAR          AS intent,
+                route_method::VARCHAR    AS route_method,
+                TRY_CAST(route_confidence AS DOUBLE) AS route_confidence,
+                embedder::VARCHAR        AS embedder,
+                TRY_CAST(dim AS BIGINT)  AS dim,
+                embedding::DOUBLE[]      AS embedding
+         FROM read_json_auto({list}, union_by_name=true, sample_size=-1);"
+    ))?;
+    let n: i64 = conn.query_row("SELECT count(*) FROM query_embeddings", [], |r| r.get(0))?;
+    Ok(n as usize)
+}
+
+/// Mean top-`k` cosine to nearest neighbours, per query (leave-one-out).
+/// `(query_id, intent, score)` ascending — most out-of-domain first. Needs ≥2 rows
+/// (a query is scored against the others); fewer → empty. Uses the registered
+/// `ix_cosine` UDF, so dimensions must be uniform (mismatch surfaces as a SQL error).
+pub fn ood_scores(conn: &Connection, k: i64) -> duckdb::Result<Vec<(String, String, f64)>> {
+    let mut stmt = conn.prepare(
+        "WITH pairs AS (
+             SELECT a.query_id, a.intent,
+                    ix_cosine(a.embedding, b.embedding) AS sim
+             FROM query_embeddings a JOIN query_embeddings b ON a.query_id <> b.query_id
+         ),
+         ranked AS (
+             SELECT query_id, intent, sim,
+                    row_number() OVER (PARTITION BY query_id ORDER BY sim DESC) AS rn
+             FROM pairs
+         )
+         SELECT query_id, any_value(intent) AS intent, avg(sim) AS score
+         FROM ranked WHERE rn <= ?
+         GROUP BY query_id ORDER BY score",
+    )?;
+    stmt.query_map([k], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect()
+}
+
+/// Queries whose mean top-`k` cosine falls **below** `threshold` — the OOD flags.
+/// `(query_id, intent, score)` ascending.
+pub fn flag_ood(
+    conn: &Connection,
+    k: i64,
+    threshold: f64,
+) -> duckdb::Result<Vec<(String, String, f64)>> {
+    Ok(ood_scores(conn, k)?
+        .into_iter()
+        .filter(|(_, _, s)| *s < threshold)
+        .collect())
+}
+
+#[cfg(all(test, feature = "duck"))]
+mod tests {
+    use super::*;
+
+    fn fixtures() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/query-embeddings")
+    }
+
+    #[test]
+    fn rows_one_per_query() {
+        let conn = crate::open_bench().unwrap();
+        let n = build_query_embeddings(&conn, &fixtures()).unwrap();
+        // 4 in-domain (clustered) + 1 out-of-domain (orthogonal) = 5.
+        assert_eq!(n, 5);
+    }
+
+    #[test]
+    fn ood_query_scores_lowest() {
+        let conn = crate::open_bench().unwrap();
+        build_query_embeddings(&conn, &fixtures()).unwrap();
+        let scores = ood_scores(&conn, 3).unwrap();
+        assert_eq!(scores.len(), 5);
+        // The orthogonal query sits farthest from the in-domain cluster → lowest score.
+        assert_eq!(scores[0].0, "q-oos", "most-OOD query ranks first");
+        assert!(
+            scores[0].2 < scores[1].2,
+            "OOS score strictly below the cluster"
+        );
+    }
+
+    #[test]
+    fn flag_ood_catches_only_the_outlier() {
+        let conn = crate::open_bench().unwrap();
+        build_query_embeddings(&conn, &fixtures()).unwrap();
+        let flagged = flag_ood(&conn, 3, 0.5).unwrap();
+        assert_eq!(flagged.len(), 1, "only the orthogonal query is below 0.5");
+        assert_eq!(flagged[0].0, "q-oos");
+    }
+
+    #[test]
+    fn absent_dir_degrades_to_empty() {
+        let conn = crate::open_bench().unwrap();
+        let n = build_query_embeddings(&conn, Path::new("/no/such/dir")).unwrap();
+        assert_eq!(n, 0);
+        assert!(ood_scores(&conn, 3).unwrap().is_empty());
+        assert!(flag_ood(&conn, 3, 1.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn single_row_has_no_neighbours() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("2026-06-16.jsonl"),
+            "{\"query_id\":\"q1\",\"ts\":\"2026-06-16T00:00:00Z\",\"query_text\":\"x\",\"intent\":\"i\",\"route_method\":\"embedding\",\"route_confidence\":0.9,\"embedder\":\"bge-base-en-v1.5\",\"dim\":3,\"embedding\":[1.0,0.0,0.0]}\n",
+        )
+        .unwrap();
+        let conn = crate::open_bench().unwrap();
+        let n = build_query_embeddings(&conn, dir.path()).unwrap();
+        assert_eq!(n, 1);
+        assert!(
+            ood_scores(&conn, 3).unwrap().is_empty(),
+            "no neighbours to score against"
+        );
+    }
+}

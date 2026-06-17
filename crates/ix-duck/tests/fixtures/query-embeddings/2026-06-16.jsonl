@@ -1,0 +1,5 @@
+{"query_id":"q-a","ts":"2026-06-16T12:00:00Z","query_text":"are 0146 and 0137 z-related?","intent":"zrelation","route_method":"embedding","route_confidence":0.91,"embedder":"bge-base-en-v1.5","dim":3,"embedding":[1.0,0.0,0.0]}
+{"query_id":"q-b","ts":"2026-06-16T12:01:00Z","query_text":"is set 0148 z-related to anything?","intent":"zrelation","route_method":"embedding","route_confidence":0.88,"embedder":"bge-base-en-v1.5","dim":3,"embedding":[0.9,0.1,0.0]}
+{"query_id":"q-c","ts":"2026-06-16T12:02:00Z","query_text":"interval class vector of 0137","intent":"icv","route_method":"embedding","route_confidence":0.86,"embedder":"bge-base-en-v1.5","dim":3,"embedding":[0.95,0.05,0.0]}
+{"query_id":"q-d","ts":"2026-06-16T12:03:00Z","query_text":"prime form of 0146","intent":"primeform","route_method":"embedding","route_confidence":0.84,"embedder":"bge-base-en-v1.5","dim":3,"embedding":[0.92,0.08,0.0]}
+{"query_id":"q-oos","ts":"2026-06-16T12:04:00Z","query_text":"what's the weather in Paris tomorrow","intent":"unknown","route_method":"fallback","route_confidence":0.20,"embedder":"bge-base-en-v1.5","dim":3,"embedding":[0.0,0.0,1.0]}

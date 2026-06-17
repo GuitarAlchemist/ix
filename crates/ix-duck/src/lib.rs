@@ -66,6 +66,17 @@ pub mod chatbot;
 #[cfg(feature = "duck")]
 pub mod routing;
 
+/// AFK / self-improvement loop-iteration lens over GA's
+/// `state/quality/loops/*.iterations.jsonl` — failure-signature clustering
+/// (recurring worst-items, oscillating loops, artifact churn, convergence).
+#[cfg(feature = "duck")]
+pub mod loops;
+
+/// Out-of-domain query lens over GA chatbot query embeddings (Contract B, proposed):
+/// mean top-k cosine to nearest neighbours flags out-of-domain queries.
+#[cfg(feature = "duck")]
+pub mod ood;
+
 #[cfg(feature = "duck")]
 pub use duckdb::{Connection, Result};
 
