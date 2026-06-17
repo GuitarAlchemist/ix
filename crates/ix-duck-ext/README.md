@@ -87,6 +87,36 @@ Two caveats:
   fingerprint) with a real entry can evict that entry — an inherent property of
   Cuckoo filters, not a bug. Don't run deletes on keys outside the inserted set.
 
+### Code analysis (SQL over a codebase, incl. tree-sitter)
+
+Pair with DuckDB's `read_text('crates/**/*.rs')` (rows of `filename, content`) and
+these scalar UDFs give you SQL over an entire codebase — wraps `ix-code`.
+
+| tier | UDF | returns |
+|---|---|---|
+| **A** | `ix_code_complexity(source VARCHAR, language VARCHAR) -> DOUBLE` | file-scope cyclomatic complexity |
+| **A** | `ix_code_metrics(source VARCHAR, language VARCHAR) -> VARCHAR` | JSON `FileMetrics` (complexity + Halstead + SLOC, per function) |
+| **A** | `ix_code_smells(source VARCHAR, language VARCHAR) -> VARCHAR` | JSON `[{name,line,severity,message}]` |
+| **B** | `ix_semantic_metrics(source VARCHAR, language VARCHAR) -> VARCHAR` | JSON — parse_quality, AST node count, nesting, error-handling density, unsafe blocks, call graph |
+| **B** | `ix_ast_query(source VARCHAR, language VARCHAR, query VARCHAR) -> VARCHAR` | JSON `[{capture,text,start_line,end_line,start_col}]` for a tree-sitter S-expression query |
+
+```sql
+-- Rank a codebase by complexity (Tier A — no tree-sitter):
+SELECT filename, ix_code_complexity(content, filename) AS cc
+FROM read_text('crates/**/*.rs') ORDER BY cc DESC LIMIT 20;
+
+-- Find every function definition via a tree-sitter query (Tier B):
+SELECT filename, ix_ast_query(content, 'rust', '(function_item name:(identifier) @fn)') AS fns
+FROM read_text('crates/ix-duck/src/*.rs');
+```
+
+The `language` arg is flexible — an extension (`'rs'`), a path/filename (so
+`read_text`'s `filename` column works directly), or a name (`'rust'`); an
+unrecognised value is a SQL error. Tier A is keyword-based and always present.
+**Tier B** (`ix_ast_query`, `ix_semantic_metrics`) needs the `code-semantic`
+cargo feature (enabled in this extension's build) — it pulls C-compiled
+tree-sitter grammars (Rust/C#/TS/JS/F#); other languages return `parse_quality 0`.
+
 ## Build
 
 ```powershell
@@ -94,7 +124,8 @@ pwsh crates/ix-duck-ext/build.ps1              # → ix.duckdb_extension
 pwsh crates/ix-duck-ext/build.ps1 -SmokeTest   # also LOAD into duckdb.exe and assert
 ```
 
-Requires `cargo`, `python` (for the metadata footer), and `duckdb.exe` on PATH.
+Requires `cargo`, `python` (for the metadata footer), `duckdb.exe` on PATH, and a
+C compiler (the `code-semantic` tree-sitter grammars build from C).
 This crate is **excluded** from the ix workspace, so `cargo build --workspace`
 never compiles it (preserving the "default/CI build never pulls DuckDB" invariant).
 
