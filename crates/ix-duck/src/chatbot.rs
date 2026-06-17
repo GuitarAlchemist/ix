@@ -380,11 +380,12 @@ fn parse_pcs(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Parse a 6-entry ICV written `"<1 1 1 1 1 1>"` or `"<1,1,1,1,1,1>"` (space- or
-/// comma-separated). `None` if it is not exactly 6 parseable numbers (i.e. malformed),
-/// so the caller can distinguish "malformed claim" from "matches".
+/// Parse a 6-entry ICV. Tolerant of the formats IX/GA have used across versions:
+/// angle or square brackets, space- or comma-separated (`"<1 1 1 1 1 1>"`,
+/// `"<1,1,1,1,1,1>"`, `"[1, 1, 1, 1, 1, 1]"`). `None` if it is not exactly 6
+/// parseable numbers (i.e. malformed), so the caller distinguishes malformed from match.
 fn parse_icv(s: &str) -> Option<[u32; 6]> {
-    let inner = s.trim().trim_start_matches('<').trim_end_matches('>');
+    let inner = s.trim().trim_matches(|c| matches!(c, '<' | '>' | '[' | ']'));
     let toks: Vec<&str> = inner.split([' ', ',', '\t']).filter(|t| !t.is_empty()).collect();
     let nums: Vec<u32> = toks.iter().filter_map(|t| t.trim().parse().ok()).collect();
     (nums.len() == toks.len()).then_some(()).and(<[u32; 6]>::try_from(nums).ok())
@@ -707,6 +708,8 @@ mod tests {
         // Both space- and comma-separated ICV formats parse to the same value.
         assert_eq!(parse_icv("<1 1 1 1 1 1>"), Some([1, 1, 1, 1, 1, 1]));
         assert_eq!(parse_icv("<1,1,1,1,1,1>"), Some([1, 1, 1, 1, 1, 1]));
+        // Square-bracket form (a format IX/GA have used) also parses.
+        assert_eq!(parse_icv("[1, 1, 1, 1, 1, 1]"), Some([1, 1, 1, 1, 1, 1]));
         // A correct comma-form claim validates (no problems).
         let (valid, detail) =
             validate_zrelation("[0,1,4,6]", "[0,1,3,7]", Some("<1,1,1,1,1,1>"), None, Some("True"));
