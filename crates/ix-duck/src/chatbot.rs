@@ -380,11 +380,26 @@ fn parse_pcs(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Parse `"<1 1 1 1 1 1>"` into a 6-entry ICV. `None` unless exactly 6 numbers.
+/// Parse a 6-entry ICV. Tolerant of the formats IX/GA have used across versions:
+/// angle or square brackets, space- or comma-separated (`"<1 1 1 1 1 1>"`,
+/// `"<1,1,1,1,1,1>"`, `"[1, 1, 1, 1, 1, 1]"`). `None` if it is not exactly 6
+/// parseable numbers (i.e. malformed), so the caller distinguishes malformed from match.
 fn parse_icv(s: &str) -> Option<[u32; 6]> {
-    let inner = s.trim().trim_start_matches('<').trim_end_matches('>');
-    let nums: Vec<u32> = inner.split_whitespace().filter_map(|t| t.parse().ok()).collect();
-    <[u32; 6]>::try_from(nums).ok()
+    let inner = s.trim().trim_matches(|c| matches!(c, '<' | '>' | '[' | ']'));
+    let toks: Vec<&str> = inner.split([' ', ',', '\t']).filter(|t| !t.is_empty()).collect();
+    let nums: Vec<u32> = toks.iter().filter_map(|t| t.trim().parse().ok()).collect();
+    (nums.len() == toks.len()).then_some(()).and(<[u32; 6]>::try_from(nums).ok())
+}
+
+/// Check a claimed ICV against the IX-computed one, pushing a problem for a
+/// mismatch *or* a malformed claim (never silently skipped).
+fn check_icv(claim: Option<&str>, ix: [u32; 6], label: &str, problems: &mut Vec<String>) {
+    let Some(c) = claim else { return };
+    match parse_icv(c) {
+        Some(p) if p == ix => {}
+        Some(p) => problems.push(format!("{label} claim {p:?} != IX {ix:?}")),
+        None => problems.push(format!("{label} claim malformed: {c:?}")),
+    }
 }
 
 /// Recompute a z-relation grounding fact in IX and check the chatbot's claim.
@@ -409,20 +424,14 @@ fn validate_zrelation(
     let ix_zrelated = ix_li == ix_ri && pf_l != pf_r;
 
     let mut problems = Vec::new();
-    if let Some(c) = claim_left_icv.and_then(parse_icv) {
-        if c != ix_li {
-            problems.push(format!("leftIcv claim {c:?} != IX {ix_li:?}"));
-        }
-    }
-    if let Some(c) = claim_right_icv.and_then(parse_icv) {
-        if c != ix_ri {
-            problems.push(format!("rightIcv claim {c:?} != IX {ix_ri:?}"));
-        }
-    }
+    check_icv(claim_left_icv, ix_li, "leftIcv", &mut problems);
+    check_icv(claim_right_icv, ix_ri, "rightIcv", &mut problems);
     if let Some(c) = claim_zrelated {
-        let claimed = c.eq_ignore_ascii_case("true");
-        if claimed != ix_zrelated {
-            problems.push(format!("zRelated claim {claimed} != IX {ix_zrelated}"));
+        match c.trim().to_ascii_lowercase().as_str() {
+            "true" if !ix_zrelated => problems.push("zRelated claim true != IX false".into()),
+            "false" if ix_zrelated => problems.push("zRelated claim false != IX true".into()),
+            "true" | "false" => {}
+            other => problems.push(format!("zRelated claim malformed: {other:?}")),
         }
     }
     if problems.is_empty() {
@@ -692,6 +701,31 @@ mod tests {
             .unwrap();
         assert_eq!(zr.validation, "invalid", "a flipped zRelated claim must be caught");
         assert!(zr.detail.contains("zRelated"), "detail names the field: {}", zr.detail);
+    }
+
+    #[test]
+    fn zrelation_accepts_comma_separated_icv() {
+        // Both space- and comma-separated ICV formats parse to the same value.
+        assert_eq!(parse_icv("<1 1 1 1 1 1>"), Some([1, 1, 1, 1, 1, 1]));
+        assert_eq!(parse_icv("<1,1,1,1,1,1>"), Some([1, 1, 1, 1, 1, 1]));
+        // Square-bracket form (a format IX/GA have used) also parses.
+        assert_eq!(parse_icv("[1, 1, 1, 1, 1, 1]"), Some([1, 1, 1, 1, 1, 1]));
+        // A correct comma-form claim validates (no problems).
+        let (valid, detail) =
+            validate_zrelation("[0,1,4,6]", "[0,1,3,7]", Some("<1,1,1,1,1,1>"), None, Some("True"));
+        assert!(valid, "comma ICV should validate: {detail}");
+    }
+
+    #[test]
+    fn zrelation_flags_malformed_claims() {
+        // Malformed ICV → flagged, not silently skipped.
+        let (valid, detail) =
+            validate_zrelation("[0,1,4,6]", "[0,1,3,7]", Some("<oops>"), None, Some("True"));
+        assert!(!valid && detail.contains("malformed"), "malformed ICV: {detail}");
+        // Malformed zRelated → flagged, not coerced to false.
+        let (valid, detail) =
+            validate_zrelation("[0,1,4,6]", "[0,1,3,7]", None, None, Some("maybe"));
+        assert!(!valid && detail.contains("malformed"), "malformed zRelated: {detail}");
     }
 
     #[test]
