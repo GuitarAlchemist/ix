@@ -131,7 +131,7 @@ pub fn ood_scores(conn: &Connection, k: i64) -> duckdb::Result<Vec<(String, Stri
                     row_number() OVER (PARTITION BY query_id ORDER BY sim DESC) AS rn
              FROM pairs
          )
-         SELECT query_id, any_value(intent) AS intent, avg(sim) AS score
+         SELECT query_id, coalesce(any_value(intent), '(declined)') AS intent, avg(sim) AS score
          FROM ranked WHERE rn <= ?
          GROUP BY query_id ORDER BY score",
     )?;
@@ -214,6 +214,28 @@ mod tests {
         assert!(
             ood_scores(&conn, 3).unwrap().is_empty(),
             "no neighbours to score against"
+        );
+    }
+
+    /// Contract B emits a null `intent` when the router declines — that row must
+    /// still score (not raise a DuckDB conversion error).
+    #[test]
+    fn null_intent_does_not_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("2026-06-16.jsonl"),
+            "{\"query_id\":\"q1\",\"ts\":\"2026-06-16T00:00:00Z\",\"query_text\":\"x\",\"intent\":null,\"route_method\":\"fallback\",\"route_confidence\":0.2,\"embedder\":\"bge-large\",\"dim\":3,\"embedding\":[0.0,0.0,1.0]}\n\
+             {\"query_id\":\"q2\",\"ts\":\"2026-06-16T00:01:00Z\",\"query_text\":\"y\",\"intent\":\"icv\",\"route_method\":\"embedding\",\"route_confidence\":0.9,\"embedder\":\"bge-large\",\"dim\":3,\"embedding\":[1.0,0.0,0.0]}\n",
+        )
+        .unwrap();
+        let conn = crate::open_bench().unwrap();
+        build_query_embeddings(&conn, dir.path()).unwrap();
+        let scores = ood_scores(&conn, 3).unwrap();
+        assert_eq!(scores.len(), 2, "both rows scored despite the null intent");
+        let declined = scores.iter().find(|(id, _, _)| id == "q1").unwrap();
+        assert_eq!(
+            declined.1, "(declined)",
+            "null intent surfaces as a label, not an error"
         );
     }
 }

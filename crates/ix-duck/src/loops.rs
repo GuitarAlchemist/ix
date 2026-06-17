@@ -189,20 +189,21 @@ pub struct LoopSummary {
 
 /// Per-loop convergence summary, most iterations first.
 pub fn loop_summary(conn: &Connection) -> duckdb::Result<Vec<LoopSummary>> {
+    // Aggregate once per loop (no join → no row multiplication), then pull the final
+    // verdict via a correlated lookup on the max iteration.
     let mut stmt = conn.prepare(&format!(
-        "WITH last AS (
-             SELECT loop_id, verdict,
-                    row_number() OVER (PARTITION BY loop_id ORDER BY iteration DESC) AS rn
+        "WITH agg AS (
+             SELECT loop_id, any_value(domain) AS domain, count(*) AS iterations,
+                    coalesce(sum(metric_delta), 0) AS net_delta, max(iteration) AS last_iter
              FROM loop_iterations WHERE {REAL}
+             GROUP BY loop_id
          )
-         SELECT i.loop_id, any_value(i.domain) AS domain, count(*) AS iterations,
-                coalesce(sum(i.metric_delta), 0) AS net_delta,
-                any_value(l.verdict) FILTER (WHERE l.rn = 1) AS final_verdict
-         FROM loop_iterations i
-         JOIN last l USING (loop_id)
-         WHERE {REAL}
-         GROUP BY i.loop_id
-         ORDER BY iterations DESC, i.loop_id"
+         SELECT a.loop_id, a.domain, a.iterations, a.net_delta,
+                (SELECT i.verdict FROM loop_iterations i
+                 WHERE i.loop_id = a.loop_id AND i.iteration = a.last_iter
+                 LIMIT 1) AS final_verdict
+         FROM agg a
+         ORDER BY a.iterations DESC, a.loop_id"
     ))?;
     stmt.query_map([], |r| {
         Ok(LoopSummary {
@@ -264,9 +265,16 @@ mod tests {
             .iter()
             .find(|s| s.loop_id == "chatbot-improving")
             .unwrap();
+        // Exact values — guards against row-multiplication (a cartesian join would
+        // report iterations=9 and net_delta=0.18 for this 3-row loop).
+        assert_eq!(
+            improving.iterations, 3,
+            "one row per iteration, not multiplied"
+        );
         assert!(
-            improving.net_delta > 0.0,
-            "improving loop has positive net delta"
+            (improving.net_delta - 0.06).abs() < 1e-9,
+            "net delta = 0.02+0.03+0.01, got {}",
+            improving.net_delta
         );
     }
 
