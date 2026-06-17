@@ -158,6 +158,14 @@ cargo run -p ix-duck --features duck --example ix_chatbot_lens             # len
 cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check    # the gate
 ```
 
+**Grounding-quality lens** (`grounding_report`/`grounding_summary`, also in the `lens` output)
+adds the signal GA lacks: grounding is stored present/absent only. This measures **coverage**
+(facts present) and, for `ix-compatible` algebra facts, **correctness** — IX recomputes the ICV
+and z-relation and flags any *hallucinated* fact (a cited result that is actually wrong);
+`ga.dsl`/unsupported query-types are `unvalidated`, never falsely "wrong". On the live corpus
+today this exposes that only **1/45 traces carry IX-checkable facts** (that one validates) — a
+sharper read than the coarse ungrounded count.
+
 The hard gate runs hermetically over vendored fixtures in CI (`ix-duck-chatbot.yml`); the live
 corpus is checked nightly (advisory). See
 [`docs/plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md`](plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md)

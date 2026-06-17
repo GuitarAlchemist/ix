@@ -243,6 +243,206 @@ pub fn routing_method_share(conn: &Connection) -> duckdb::Result<Vec<(String, i6
     Ok(rows)
 }
 
+// ---- Grounding quality lens -----------------------------------------------
+//
+// The chatbot stores `response.grounding` as present/absent only. This lens adds
+// two missing signals: COVERAGE (are facts present?) and, for `ix-compatible`
+// algebra facts, CORRECTNESS — IX recomputes the fact and checks the claim, so a
+// *hallucinated* grounding (a cited fact that is actually wrong) is caught. Facts
+// from other sources / query types are `unvalidated` (no oracle yet — not "wrong").
+
+use ix_bracelet::grothendieck::icv;
+use ix_bracelet::pc_set::PcSet;
+use ix_bracelet::prime_form::bracelet_prime_form;
+
+/// Per-trace grounding assessment.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundingAssessment {
+    pub prompt_id: String,
+    pub category: String,
+    /// `ix-compatible` | `ga.dsl` | `none` | …
+    pub source: String,
+    pub query_type: String,
+    /// Structured facts present and non-null.
+    pub grounded: bool,
+    /// `valid` | `invalid` | `unvalidated` | `no_facts`.
+    pub validation: String,
+    /// For `invalid`, the specific mismatch(es) IX found.
+    pub detail: String,
+}
+
+/// Build `chatbot_grounding` (one row per run file) projecting the grounding source,
+/// query type, a `grounded` flag, and the z-relation fact fields (NULL otherwise).
+/// Reads via `to_json` + `json_extract` so a heterogeneous `facts` bag never errors.
+pub fn build_grounding(conn: &Connection, corpus_dir: &Path) -> Result<usize, ChatbotError> {
+    let cols = "prompt_id VARCHAR, category VARCHAR, source VARCHAR, query_type VARCHAR, \
+                grounded BOOLEAN, zr_left VARCHAR, zr_right VARCHAR, zr_left_icv VARCHAR, \
+                zr_right_icv VARCHAR, zr_related VARCHAR";
+    let files = run_files(corpus_dir)?;
+    if files.is_empty() {
+        conn.execute_batch(&format!("CREATE OR REPLACE TABLE chatbot_grounding ({cols});"))?;
+        return Ok(0);
+    }
+    let list = sql_list(&files);
+    conn.execute_batch(&format!(
+        "CREATE OR REPLACE TABLE chatbot_grounding AS
+         WITH g AS (
+             SELECT promptId AS prompt_id, category, to_json(response.grounding) AS gj
+             FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1)
+         )
+         SELECT prompt_id, category,
+                coalesce(json_extract_string(gj, '$.source'), 'none')     AS source,
+                coalesce(json_extract_string(gj, '$.queryType'), '')      AS query_type,
+                (json_extract(gj, '$.facts')::VARCHAR IS NOT NULL
+                 AND json_extract(gj, '$.facts')::VARCHAR <> 'null')      AS grounded,
+                json_extract_string(gj, '$.facts.left')     AS zr_left,
+                json_extract_string(gj, '$.facts.right')    AS zr_right,
+                json_extract_string(gj, '$.facts.leftIcv')  AS zr_left_icv,
+                json_extract_string(gj, '$.facts.rightIcv') AS zr_right_icv,
+                json_extract_string(gj, '$.facts.zRelated') AS zr_related
+         FROM g;"
+    ))?;
+    let n: i64 = conn.query_row("SELECT count(*) FROM chatbot_grounding", [], |r| r.get(0))?;
+    Ok(n as usize)
+}
+
+/// Assess each trace's grounding: coverage + IX correctness validation of
+/// `ix-compatible` z-relation facts. Builds the table first (graceful-degrade).
+pub fn grounding_report(
+    conn: &Connection,
+    corpus_dir: &Path,
+) -> Result<Vec<GroundingAssessment>, ChatbotError> {
+    build_grounding(conn, corpus_dir)?;
+    let mut stmt = conn.prepare(
+        "SELECT prompt_id, category, source, query_type, grounded,
+                zr_left, zr_right, zr_left_icv, zr_right_icv, zr_related
+         FROM chatbot_grounding ORDER BY prompt_id",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, bool>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?,
+                r.get::<_, Option<String>>(8)?,
+                r.get::<_, Option<String>>(9)?,
+            ))
+        })?
+        .collect::<duckdb::Result<Vec<_>>>()?;
+
+    let assessed = rows
+        .into_iter()
+        .map(|(prompt_id, category, source, query_type, grounded, l, r, li, ri, zr)| {
+            let (validation, detail) = if !grounded {
+                ("no_facts".to_string(), String::new())
+            } else if source == "ix-compatible" && query_type == "z-relation" {
+                match (l.as_deref(), r.as_deref()) {
+                    (Some(left), Some(right)) => {
+                        let (valid, detail) = validate_zrelation(
+                            left,
+                            right,
+                            li.as_deref(),
+                            ri.as_deref(),
+                            zr.as_deref(),
+                        );
+                        ((if valid { "valid" } else { "invalid" }).to_string(), detail)
+                    }
+                    _ => ("unvalidated".to_string(), "missing z-relation operands".to_string()),
+                }
+            } else {
+                ("unvalidated".to_string(), String::new())
+            };
+            GroundingAssessment {
+                prompt_id,
+                category,
+                source,
+                query_type,
+                grounded,
+                validation,
+                detail,
+            }
+        })
+        .collect();
+    Ok(assessed)
+}
+
+/// Parse `"[0,1,4,6]"` into pitch classes (mod 12). `None` if any token is non-numeric.
+fn parse_pcs(s: &str) -> Option<Vec<u8>> {
+    let inner = s.trim().trim_start_matches('[').trim_end_matches(']');
+    inner
+        .split(',')
+        .map(|t| t.trim().parse::<i64>().ok().map(|v| v.rem_euclid(12) as u8))
+        .collect()
+}
+
+/// Parse `"<1 1 1 1 1 1>"` into a 6-entry ICV. `None` unless exactly 6 numbers.
+fn parse_icv(s: &str) -> Option<[u32; 6]> {
+    let inner = s.trim().trim_start_matches('<').trim_end_matches('>');
+    let nums: Vec<u32> = inner.split_whitespace().filter_map(|t| t.parse().ok()).collect();
+    <[u32; 6]>::try_from(nums).ok()
+}
+
+/// Recompute a z-relation grounding fact in IX and check the chatbot's claim.
+/// Two sets are Z-related iff they share an ICV but have different prime forms.
+/// Returns `(valid, detail)`; `detail` names every mismatch found.
+fn validate_zrelation(
+    left: &str,
+    right: &str,
+    claim_left_icv: Option<&str>,
+    claim_right_icv: Option<&str>,
+    claim_zrelated: Option<&str>,
+) -> (bool, String) {
+    let (Some(lp), Some(rp)) = (parse_pcs(left), parse_pcs(right)) else {
+        return (false, format!("unparseable pc-sets ({left}, {right})"));
+    };
+    let la = PcSet::from_pcs(lp.iter().copied());
+    let ra = PcSet::from_pcs(rp.iter().copied());
+    let ix_li = icv(la).data;
+    let ix_ri = icv(ra).data;
+    let pf_l: Vec<String> = bracelet_prime_form(la).iter_pcs().map(|p| p.to_string()).collect();
+    let pf_r: Vec<String> = bracelet_prime_form(ra).iter_pcs().map(|p| p.to_string()).collect();
+    let ix_zrelated = ix_li == ix_ri && pf_l != pf_r;
+
+    let mut problems = Vec::new();
+    if let Some(c) = claim_left_icv.and_then(parse_icv) {
+        if c != ix_li {
+            problems.push(format!("leftIcv claim {c:?} != IX {ix_li:?}"));
+        }
+    }
+    if let Some(c) = claim_right_icv.and_then(parse_icv) {
+        if c != ix_ri {
+            problems.push(format!("rightIcv claim {c:?} != IX {ix_ri:?}"));
+        }
+    }
+    if let Some(c) = claim_zrelated {
+        let claimed = c.eq_ignore_ascii_case("true");
+        if claimed != ix_zrelated {
+            problems.push(format!("zRelated claim {claimed} != IX {ix_zrelated}"));
+        }
+    }
+    if problems.is_empty() {
+        (true, String::new())
+    } else {
+        (false, problems.join("; "))
+    }
+}
+
+/// `(grounded, total, valid, invalid, unvalidated)` over a set of assessments —
+/// the headline grounding-quality summary (`invalid` = hallucinated facts).
+pub fn grounding_summary(a: &[GroundingAssessment]) -> (usize, usize, usize, usize, usize) {
+    let total = a.len();
+    let grounded = a.iter().filter(|x| x.grounded).count();
+    let valid = a.iter().filter(|x| x.validation == "valid").count();
+    let invalid = a.iter().filter(|x| x.validation == "invalid").count();
+    let unvalidated = a.iter().filter(|x| x.validation == "unvalidated").count();
+    (grounded, total, valid, invalid, unvalidated)
+}
+
 // ---- Slice B: canonical-diff gate -----------------------------------------
 
 /// Build `chatbot_signatures(prompt_id, expected_agent)` from each `_signature.json`'s
@@ -455,6 +655,56 @@ mod tests {
         let _ = weak_intents(&conn, 0.7).unwrap();
         let _ = latency_outliers(&conn, 5).unwrap();
         assert!(!routing_method_share(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn grounding_validates_correct_zrelation() {
+        // The are-0146 trace cites a correct z-relation; IX recomputation confirms it.
+        let conn = crate::open_bench().unwrap();
+        let report = grounding_report(&conn, &fixtures()).unwrap();
+        let zr = report
+            .iter()
+            .find(|a| a.prompt_id == "are-0146-and-0137-z-related")
+            .expect("z-relation trace present in fixtures");
+        assert_eq!(zr.source, "ix-compatible");
+        assert!(zr.grounded);
+        assert_eq!(zr.validation, "valid", "IX should confirm the fact; detail: {}", zr.detail);
+    }
+
+    #[test]
+    fn grounding_flags_hallucinated_fact() {
+        // Flip the (true) z-relation claim to False → IX must catch the lie.
+        let dir = tempfile::tempdir().unwrap();
+        copy_corpus(dir.path());
+        let run = dir
+            .path()
+            .join("golden-traces/are-0146-and-0137-z-related/run-1.json");
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&run).unwrap()).unwrap();
+        v["response"]["grounding"]["facts"]["zRelated"] = serde_json::Value::String("False".into());
+        fs::write(&run, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+
+        let conn = crate::open_bench().unwrap();
+        let report = grounding_report(&conn, dir.path()).unwrap();
+        let zr = report
+            .iter()
+            .find(|a| a.prompt_id == "are-0146-and-0137-z-related")
+            .unwrap();
+        assert_eq!(zr.validation, "invalid", "a flipped zRelated claim must be caught");
+        assert!(zr.detail.contains("zRelated"), "detail names the field: {}", zr.detail);
+    }
+
+    #[test]
+    fn grounding_dsl_facts_are_no_facts_not_invalid() {
+        // ga.dsl common-tones has facts:null → no_facts, never "invalid".
+        let conn = crate::open_bench().unwrap();
+        let report = grounding_report(&conn, &fixtures()).unwrap();
+        let ct = report
+            .iter()
+            .find(|a| a.prompt_id == "common-tones-between-g7-and-dm7")
+            .unwrap();
+        assert!(!ct.grounded);
+        assert_eq!(ct.validation, "no_facts");
     }
 
     #[test]
