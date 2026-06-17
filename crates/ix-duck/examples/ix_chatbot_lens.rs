@@ -73,6 +73,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let a = a.unwrap_or_else(|| "<none>".into());
                 println!("  {ms:>6}ms  {a:<24}  {p}");
             }
+
+            let g = chatbot::grounding_report(&conn, &corpus)?;
+            let (grounded, gtotal, valid, invalid, unvalidated) = chatbot::grounding_summary(&g);
+            println!("\ngrounding quality:");
+            println!(
+                "  coverage: {grounded}/{gtotal} have facts  |  IX-validated: {valid} valid, \
+                 {invalid} INVALID, {unvalidated} unvalidated"
+            );
+            for a in g.iter().filter(|a| a.validation == "invalid") {
+                println!("  HALLUCINATED FACT  {}  ({}): {}", a.prompt_id, a.query_type, a.detail);
+            }
         }
         "check" => {
             let report = chatbot::check_regressions(&conn, &corpus)?;

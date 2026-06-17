@@ -158,6 +158,25 @@ cargo run -p ix-duck --features duck --example ix_chatbot_lens             # len
 cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check    # the gate
 ```
 
+**Grounding-quality lens** (`grounding_report`/`grounding_summary`, also in the `lens` output)
+adds the signal GA lacks: grounding is stored present/absent only. This measures **coverage**
+(facts present) and, for `ix-compatible` algebra facts, **correctness** — IX recomputes the ICV
+and z-relation and flags any *hallucinated* fact (a cited result that is actually wrong);
+`ga.dsl`/unsupported query-types are `unvalidated`, never falsely "wrong". On the live corpus
+today this exposes that only **1/45 traces carry IX-checkable facts** (that one validates) — a
+sharper read than the coarse ungrounded count.
+
+**Routing-quality trend lens** (`ix_duck::routing`, example `ix_routing_lens`) reads GA's dated
+`routing-eval-*.json` into `routing_evals` (run × intent) + `routing_overall`. GA materialises
+only top-line accuracy daily; this surfaces the actionable maintain signal — *which intents are
+weak and which regressed run-over-run*. On the live corpus today: weakest are `skill.scaleinfo`
+(F1 0.80), `skill.diatonicchords` (0.88), `skill.circleoffifths` / `skill.progressioncompletion`
+(0.889). (Dotted intent keys are read via JSON-Pointer paths — JSONPath would mis-split the dot.)
+
+```bash
+cargo run -p ix-duck --features duck --example ix_routing_lens                 # trend over live ../ga
+```
+
 The hard gate runs hermetically over vendored fixtures in CI (`ix-duck-chatbot.yml`); the live
 corpus is checked nightly (advisory). See
 [`docs/plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md`](plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md)

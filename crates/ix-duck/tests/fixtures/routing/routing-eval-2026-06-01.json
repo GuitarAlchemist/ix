@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "0.1",
+  "generatedAt": "2026-06-01T10:00:00Z",
+  "routerConfig": { "minConfidence": 0.55, "embedder": "nomic-embed-text" },
+  "totalPrompts": 30,
+  "overall": {
+    "Total": 30,
+    "Correct": 28,
+    "Accuracy": 0.9333333333333333,
+    "InScopeTotal": 28,
+    "InScopeCorrect": 27,
+    "InScopeAccuracy": 0.9642857142857143,
+    "OosTotal": 2,
+    "OosCorrectlyDeclined": 2,
+    "OosDeclineRate": 1.0,
+    "MeanInScopeMargin": 0.19
+  },
+  "perIntent": {
+    "skill.chordinfo": { "Support": 10, "TruePositives": 10, "FalsePositives": 0, "FalseNegatives": 0, "Precision": 1.0, "Recall": 1.0, "F1": 1.0, "Status": "measured" },
+    "skill.scaleinfo": { "Support": 10, "TruePositives": 9, "FalsePositives": 1, "FalseNegatives": 1, "Precision": 0.9, "Recall": 0.9, "F1": 0.9, "Status": "measured" },
+    "skill.modes": { "Support": 10, "TruePositives": 10, "FalsePositives": 0, "FalseNegatives": 0, "Precision": 1.0, "Recall": 1.0, "F1": 1.0, "Status": "measured" }
+  }
+}

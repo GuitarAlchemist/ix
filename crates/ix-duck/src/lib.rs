@@ -61,6 +61,11 @@ mod code;
 #[cfg(feature = "duck")]
 pub mod chatbot;
 
+/// Routing-quality trend lens over GA's `routing-eval-*.json` — per-intent F1
+/// trend, weakest intents, and run-over-run regressions.
+#[cfg(feature = "duck")]
+pub mod routing;
+
 #[cfg(feature = "duck")]
 pub use duckdb::{Connection, Result};
 

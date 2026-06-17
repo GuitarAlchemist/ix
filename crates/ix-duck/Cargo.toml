@@ -64,6 +64,10 @@ name = "ix_chatbot_lens"
 required-features = ["duck"]
 
 [[example]]
+name = "ix_routing_lens"
+required-features = ["duck"]
+
+[[example]]
 name = "ix_voicing_lens"
 required-features = ["duck"]
 
