@@ -159,7 +159,7 @@ impl VScalar for IxBloomBuild {
 struct IxBloomContains;
 impl VScalar for IxBloomContains {
     type State = ();
-    // @ai:invariant ix_bloom_contains deserializes the blob and returns BloomFilter::contains(item); every inserted item -> true (no false negatives); malformed blob -> SQL error [T:test conf:0.9 src:ix_duck::sketch::tests::bloom_roundtrip_no_false_negative]
+    // @ai:invariant ix_bloom_contains deserializes the blob and returns BloomFilter::contains(item); every inserted item -> true (no false negatives); non-JSON blob -> SQL error; structurally-degenerate filter -> false (never panics) [T:test conf:0.9 src:ix_duck::sketch::tests::bloom_degenerate_blob_no_panic]
     unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let sketches = read_varchar_col(input, 0, n);
@@ -426,7 +426,7 @@ impl VScalar for IxCuckooContains {
 struct IxCuckooRemove;
 impl VScalar for IxCuckooRemove {
     type State = ();
-    // @ai:invariant ix_cuckoo_remove returns a new blob with item deleted (CuckooFilter::remove — the deletion the Bloom filter can't do); removing an absent item is a no-op [T:test conf:0.85 src:ix_duck::sketch::tests::cuckoo_build_contains_remove]
+    // @ai:invariant ix_cuckoo_remove returns a new blob with item deleted (CuckooFilter::remove — the deletion the Bloom filter can't do); SAFE ONLY for previously-inserted keys: a never-inserted key colliding on bucket+fingerprint with a real entry can evict it (inherent Cuckoo behavior) [T:test conf:0.85 src:ix_duck::sketch::tests::cuckoo_build_contains_remove]
     unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let sketches = read_varchar_col(input, 0, n);
@@ -484,6 +484,15 @@ mod tests {
         // Every inserted item must probe true (Bloom has no false negatives).
         assert!(b("SELECT ix_bloom_contains(ix_bloom_build([10, 20, 30], 100, 0.01), 20)"));
         assert!(b("SELECT ix_bloom_contains(ix_bloom_build([10, 20, 30], 100, 0.01), 30)"));
+    }
+
+    #[test]
+    fn bloom_degenerate_blob_no_panic() {
+        // A hand-crafted/file-sourced blob with size 0 must not panic the FFI
+        // callback (`% 0`) — the probe safely returns false.
+        assert!(!b(
+            r#"SELECT ix_bloom_contains('{"bits":[],"num_hashes":1,"size":0,"count":0}', 5)"#
+        ));
     }
 
     #[test]

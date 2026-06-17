@@ -78,6 +78,15 @@ overflows `BIGINT`): `ix_bloom_contains(bf, (hash(q) & 9223372036854775807)::BIG
 Blobs are JSON and portable: `ix-probabilistic` hashes with a fixed-seed
 `DefaultHasher`, so a blob probes identically on any machine (same Rust std version).
 
+Two caveats:
+- **Blob trust.** A non-JSON blob is a SQL error; a structurally-degenerate blob
+  (e.g. mismatched array lengths) probes to a safe empty result rather than
+  panicking, so a corrupt column never crashes the query.
+- **`ix_cuckoo_remove` is safe only for keys you inserted.** Cuckoo deletion works
+  on fingerprints, so removing a never-inserted key that collides (bucket +
+  fingerprint) with a real entry can evict that entry — an inherent property of
+  Cuckoo filters, not a bug. Don't run deletes on keys outside the inserted set.
+
 ## Build
 
 ```powershell

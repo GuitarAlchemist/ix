@@ -51,8 +51,21 @@ impl CountMinSketch {
         }
     }
 
-    /// Estimate the frequency of an item (always >= true count).
+    /// Whether the table matches the declared dimensions. A deserialized blob may
+    /// violate this; guarding keeps `estimate`/`merge`/`total_count` total.
+    fn consistent(&self) -> bool {
+        self.width > 0
+            && self.depth > 0
+            && self.table.len() == self.depth
+            && self.table.iter().all(|row| row.len() == self.width)
+    }
+
+    /// Estimate the frequency of an item (always >= true count). A degenerate
+    /// sketch returns 0.
     pub fn estimate<T: Hash>(&self, item: &T) -> u64 {
+        if !self.consistent() {
+            return 0;
+        }
         (0..self.depth)
             .map(|row| {
                 let col = self.hash_index(item, row);
@@ -64,14 +77,17 @@ impl CountMinSketch {
 
     /// Total count of all items.
     pub fn total_count(&self) -> u64 {
-        // Sum of any single row equals total count
-        self.table[0].iter().sum()
+        // Sum of any single row equals total count.
+        self.table.first().map(|row| row.iter().sum()).unwrap_or(0)
     }
 
     /// Merge another sketch (must have same dimensions).
     pub fn merge(&mut self, other: &Self) -> Result<(), &'static str> {
         if self.width != other.width || self.depth != other.depth {
             return Err("Sketches must have same dimensions");
+        }
+        if !self.consistent() || !other.consistent() {
+            return Err("Sketches are structurally inconsistent");
         }
         for row in 0..self.depth {
             for col in 0..self.width {
@@ -128,6 +144,15 @@ mod tests {
         assert!(rare_est >= 10);
         // Overcount should be bounded
         assert!(freq_est < 1050, "Overcount too high: {}", freq_est);
+    }
+
+    #[test]
+    fn test_count_min_degenerate_blob_no_panic() {
+        // width 0 / empty table must not panic on estimate (`% 0`) or total_count.
+        let cms: CountMinSketch =
+            serde_json::from_str(r#"{"table":[],"width":0,"depth":0}"#).unwrap();
+        assert_eq!(cms.estimate(&"x"), 0);
+        assert_eq!(cms.total_count(), 0);
     }
 
     #[test]
