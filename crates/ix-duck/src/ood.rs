@@ -8,10 +8,13 @@
 //! z-norm is deliberately NOT applied (it divides out the magnitude the gate keys on
 //! — see `reference_ood_scoring_method_research`).
 //!
-//! ⚠ Contract B is **proposed, not yet ratified** by GA (the router currently embeds
-//! in-process and discards the vector — nothing is persisted). This module + its
-//! fixtures encode the proposed shape so the lens lights up the moment GA emits; if
-//! ratification changes a field, adjust here. Absent directory → empty (never error).
+//! Contract B **RATIFIED 2026-06-16**: GA's `QueryEmbeddingLog.cs` (ga #425) emits
+//! snake_case keys (`[JsonPropertyName]`) matching this lens byte-for-byte —
+//! `query_id, ts, query_text, intent, route_method, route_confidence, embedder, dim,
+//! embedding`. `intent` is nullable (router declined); `embedder`/`dim` are dynamic
+//! (today bge-large @ 1024) — the lens reads them per-row and is dimension-agnostic.
+//! Producer is default-on; first rows land when the chatbot routes a live query.
+//! Absent/empty directory → empty (never error).
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};

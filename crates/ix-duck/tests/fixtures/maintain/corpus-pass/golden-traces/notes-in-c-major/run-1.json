@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-16T00:00:00Z",
+  "promptId": "notes-in-c-major",
+  "prompt": "notes in c major",
+  "category": "case-variants",
+  "runIndex": 1,
+  "response": {
+    "naturalLanguageAnswer": "The C major scale has 7 notes.",
+    "agentId": "skill.scaleinfo",
+    "confidence": 0.95,
+    "routingMethod": "orchestrator-skill-semantic",
+    "grounding": null,
+    "elapsedMs": 59,
+    "traceId": "pass0001"
+  }
+}

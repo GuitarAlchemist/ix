@@ -190,15 +190,15 @@ self-improvement signal. Two inputs, both graceful-degrade:
   into `loop_iterations`, then surfaces **failure clustering**: `recurring_worst_items` (what
   keeps failing), `oscillating_loops` (improve↔regress thrash, not convergence), `artifact_churn`,
   and `loop_summary`. Seed/test domains are excluded so a fresh checkout reads as "no signal".
-  *Contract A is firm* (schema pinned by GA's `_fixtures/loop-iterations.sample.jsonl`); the lens
-  is **dormant until a real loop run writes rows** — today GA's dir is seed-only.
+  *Contract A ratified* — writer is GA's `Scripts/loop-record.ps1` (ga #424); schema pinned by
+  `_fixtures/loop-iterations.sample.jsonl`. The lens is **dormant until a real loop run writes
+  rows** (the next `/auto-optimize` or AFK cycle) — today GA's dir is seed-only.
 - `ood` reads `state/quality/query-embeddings/*.jsonl` into `query_embeddings` and flags
   out-of-domain queries by **mean top-k cosine to nearest neighbours** (the raw-cosine method the
   ROC sweep validated — *not* per-query z-norm). Uses the registered `ix_cosine` UDF.
-  *Contract B is proposed, not ratified* — the router embeds in-process and discards the vector,
-  so nothing is persisted yet; the module + fixtures encode the proposed shape so it lights up the
-  moment GA emits. Cross-repo brief: have GA wire the existing ledger writer (A) and ratify +
-  emit per-query vectors (B).
+  *Contract B ratified 2026-06-16* — GA's `QueryEmbeddingLog.cs` (ga #425, default-on) emits
+  snake_case keys matching the lens byte-for-byte; `embedder`/`dim` dynamic (bge-large @ 1024).
+  Both producers are on GA `main`; first rows land on the next live query (B) / loop run (A).
 
 ```bash
 cargo run -p ix-duck --features duck --example ix_maintain_lens                # loops + ood over live ../ga

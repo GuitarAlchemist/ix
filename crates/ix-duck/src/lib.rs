@@ -77,6 +77,11 @@ pub mod loops;
 #[cfg(feature = "duck")]
 pub mod ood;
 
+/// `maintain-gate` — fail-closed RSI evaluation oracle fusing the maintain lenses
+/// into one hexavalent verdict (metric↑ ∧ guardrail held ∧ …), never an average.
+#[cfg(feature = "duck")]
+pub mod maintain;
+
 #[cfg(feature = "duck")]
 pub use duckdb::{Connection, Result};
 
