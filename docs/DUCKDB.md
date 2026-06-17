@@ -47,6 +47,7 @@ data. Integration is by **format contract** (clean stable-schema JSONL/Parquet),
   - `ix_classification_report(predicted_json, actual_json)` — per-class precision/recall/f1/support ✅ (table fn; wraps `ix-supervised::metrics`; GA routing per-intent eval)
   - `ix_knn_leakage(vectors_json, labels_json, k)` — embedding separability/leakage ✅ (table fn; mean k-NN label agreement vs `random_baseline`; the lightweight form of GA's embeddings diagnostic)
   - `ix_bloom_*` / `ix_hll_*` / `ix_cms_*` / `ix_cuckoo_*` — probabilistic sketches ✅ (scalar **build → probe/merge** triads over `BIGINT[]` items; wraps `ix-probabilistic`; sketches are portable JSON blobs — set membership / cardinality / frequency / membership-with-delete that DuckDB exposes none of). Items are `BIGINT`; text keys bridge via `(hash(x) & 9223372036854775807)::BIGINT`. See `crates/ix-duck-ext/README.md` → *Probabilistic sketches*.
+  - `ix_code_complexity` / `ix_code_metrics` / `ix_code_smells` (Tier A) + `ix_semantic_metrics` / `ix_ast_query` (Tier B, `code-semantic` feature) — code analysis ✅ (scalar over a source-`VARCHAR` column; pair with `read_text('**/*.rs')` for SQL over a whole codebase; wraps `ix-code`. Tier B is real **tree-sitter** AST queries / semantic metrics — C-compiled grammars for Rust/C#/TS/JS/F#). See `crates/ix-duck-ext/README.md` → *Code analysis*.
 
 - **Crate structure:** new `crates/ix-duck` (library only), `duckdb` as an **optional dep** behind a
   `duck` cargo feature. Mirrors the established `fastembed`/`embeddings` pattern in `ix-skill`

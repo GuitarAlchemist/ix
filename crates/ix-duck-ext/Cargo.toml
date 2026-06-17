@@ -24,6 +24,8 @@ crate-type = ["cdylib"]
 # LOAD time, no bundled engine, engine-version-tolerant (declares min_duckdb_version).
 duckdb = { version = "=1.10503.1", default-features = false, features = ["loadable-extension"] }
 # The UDF surface, sans bundled engine (ix-duck's `udf` feature => duckdb/vscalar).
-ix-duck = { path = "../ix-duck", default-features = false, features = ["udf"] }
+# `code-semantic` adds the tree-sitter code-analysis UDFs (ix_ast_query, …) — it
+# pulls C-compiled grammars, hence opt-in, but the shipped extension carries them.
+ix-duck = { path = "../ix-duck", default-features = false, features = ["udf", "code-semantic"] }
 # Tier-3 OPTIC-K table function: read the production voicing index mmap directly.
 ix-optick = { path = "../ix-optick" }

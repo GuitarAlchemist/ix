@@ -91,3 +91,21 @@ SET VARIABLE hll_a = (SELECT ix_hll_build(list(r), 14) FROM range(0, 700)   t(r)
 SET VARIABLE hll_b = (SELECT ix_hll_build(list(r), 14) FROM range(300, 1000) t(r));
 SELECT ix_hll_count(getvariable('hll_a'))                                AS distinct_a,   -- ~700
        ix_hll_count(ix_hll_merge(getvariable('hll_a'), getvariable('hll_b'))) AS distinct_union; -- ~1000 (overlap 300..700 counted once)
+
+-- ── Pipeline 7: SQL over a codebase (ix-code; Tier B needs code-semantic) ─────
+-- read_text() yields (filename, content) rows; the scalar ix_code_* / ix_ast_query
+-- UDFs then analyse each file. Nothing else does code analysis in SQL.
+
+-- 7a. Complexity hot-spots across the crate (Tier A — no tree-sitter).
+SELECT filename, round(ix_code_complexity(content, filename), 0) AS cyclomatic
+FROM read_text('crates/ix-duck/src/*.rs')
+ORDER BY cyclomatic DESC
+LIMIT 5;
+
+-- 7b. Tree-sitter AST query: count function definitions per file (Tier B).
+SELECT regexp_replace(filename, '.*[\\/]', '') AS file,
+       len(from_json(ix_ast_query(content, 'rust',
+            '(function_item name:(identifier) @fn)'), '["json"]')) AS fn_defs
+FROM read_text('crates/ix-duck/src/*.rs')
+ORDER BY fn_defs DESC
+LIMIT 5;
