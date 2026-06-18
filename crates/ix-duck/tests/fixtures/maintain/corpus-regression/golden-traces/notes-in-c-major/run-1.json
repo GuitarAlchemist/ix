@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-16T00:00:00Z",
+  "promptId": "notes-in-c-major",
+  "prompt": "notes in c major",
+  "category": "case-variants",
+  "runIndex": 1,
+  "response": {
+    "naturalLanguageAnswer": "Here is a chord.",
+    "agentId": "skill.chordinfo",
+    "confidence": 0.61,
+    "routingMethod": "orchestrator-skill-semantic",
+    "grounding": null,
+    "elapsedMs": 71,
+    "traceId": "regress01"
+  }
+}
