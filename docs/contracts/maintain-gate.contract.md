@@ -95,10 +95,23 @@ propose-merge, 1 → reject + revert, 2 → human escalate.
   v2; write-isolation of the ledgers from the proposing agent is a Phase-3 precondition
   for the gate going *authoritative*.
 
-## Known limitation (Phase 1 → fixed in Phase 3)
-The soft lenses (convergence, drift) aggregate over the **whole** ledger / embedding
-history, not just the iteration under evaluation. Scoping them needs the
-iteration-correlation key (`loop_id` / `commit_sha`, never wall-clock) — Phase 3.
+## Iteration correlation + provenance (Phase 3a)
+When the gate is given an iteration scope (`loop_id` + `commit_sha` + the loop's repo):
+- **Convergence is scoped** to that `loop_id` (no longer whole-ledger).
+- **`commit_sha` is externally verified** against real git state — hex-validated, then
+  `git cat-file -e <sha>^{commit}` (exists) + `git status --porcelain` (clean) — **and**
+  a recorded loop row must exist for the exact `(loop_id, commit_sha)` pair (verifying
+  the commit alone is not enough: a clean-but-unrelated commit for a loop with earlier
+  improving rows would otherwise be scored as that loop). A forged/absent sha, a dirty
+  worktree, **or no matching loop row** fail-closes to **U** *before any lens verdict*
+  (the key is minted by the judged loop, so it gets the same external-derivation
+  discipline as the metric). Surfaced as a `provenance` signal + an
+  `iteration-commit:<loop_id>` evidence entry (`hash: "git:<sha>"`).
+
+**Still whole-history (deferred):** drift scoping per-iteration awaits a query→loop tag
+in Contract B; until then drift stays corpus-level advisory. **Still Phase 3b:** the
+verdict is *advisory* — write-isolation of the ledgers from the proposing agent (and
+therefore any authoritative auto-revert) is not yet enforced.
 
 ## Locked-field discipline
 Changing `status`/`decision` value sets or the exit-code mapping after Phase-4 freeze
