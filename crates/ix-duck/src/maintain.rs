@@ -311,6 +311,32 @@ pub fn evaluate(
         .as_ref()
         .map(|s| verify_commit(s.repo_dir, s.commit_sha));
 
+    // Build the loop ledger once — both the key match and the convergence lens use it.
+    let loops_built = match inputs.loops_dir {
+        Some(dir) => {
+            crate::loops::build_loop_iterations(conn, dir)?;
+            true
+        }
+        None => false,
+    };
+
+    // Correlation: a scope must match a REAL recorded row for (loop_id, commit_sha).
+    // Verifying the commit exists in git is NOT enough — a clean but unrelated commit
+    // for a loop with earlier improving rows would otherwise be scored as that loop and
+    // wrongly return T (Codex P1). Parameterised query — `loop_id` is caller-supplied.
+    let key_matched = match (&inputs.iteration, loops_built) {
+        (Some(scope), true) => {
+            let n: i64 = conn.query_row(
+                "SELECT count(*) FROM loop_iterations WHERE loop_id = ? AND commit_sha = ?",
+                duckdb::params![scope.loop_id, scope.commit_sha],
+                |r| r.get(0),
+            )?;
+            Some(n > 0)
+        }
+        (Some(_), false) => Some(false), // scope given but no ledger to match against
+        (None, _) => None,
+    };
+
     // --- convergence lens (loops) + drift lens (ood) ---
     // Phase 3a: convergence is scoped to the iteration's `loop_id` when a scope is
     // given (Phase 1 aggregated the whole ledger). Drift scoping awaits a query→loop
@@ -319,25 +345,23 @@ pub fn evaluate(
     // A supplied-but-empty/dormant lens is *unknown* (None), NOT a positive signal:
     // reading "no data" as converging / in-distribution would be a green light from
     // no evidence — the opposite of fail-closed (and, when required, must escalate).
-    let converging = match inputs.loops_dir {
-        Some(dir) => {
-            crate::loops::build_loop_iterations(conn, dir)?;
-            let summaries = crate::loops::loop_summary(conn)?; // excludes seed/test rows
-            match &inputs.iteration {
-                Some(scope) => {
-                    if summaries.iter().any(|s| s.loop_id == scope.loop_id) {
-                        // This loop is converging iff it is not in the oscillating set.
-                        let osc = crate::loops::oscillating_loops(conn)?;
-                        Some(!osc.iter().any(|(id, _, _)| id == scope.loop_id))
-                    } else {
-                        None // no real rows for this loop yet
-                    }
+    let converging = if loops_built {
+        let summaries = crate::loops::loop_summary(conn)?; // excludes seed/test rows
+        match &inputs.iteration {
+            Some(scope) => {
+                if summaries.iter().any(|s| s.loop_id == scope.loop_id) {
+                    // This loop is converging iff it is not in the oscillating set.
+                    let osc = crate::loops::oscillating_loops(conn)?;
+                    Some(!osc.iter().any(|(id, _, _)| id == scope.loop_id))
+                } else {
+                    None // no real rows for this loop yet
                 }
-                None if summaries.is_empty() => None,
-                None => Some(crate::loops::oscillating_loops(conn)?.is_empty()),
             }
+            None if summaries.is_empty() => None,
+            None => Some(crate::loops::oscillating_loops(conn)?.is_empty()),
         }
-        None => None,
+    } else {
+        None
     };
     let drifting = match inputs.query_embeddings_dir {
         Some(dir) => {
@@ -370,31 +394,40 @@ pub fn evaluate(
             None => "no query embeddings (advisory)".into(),
         },
     });
-    if let Some(c) = trust {
+    // Provenance is trusted only if the commit is real + clean AND a recorded loop row
+    // exists for (loop_id, commit_sha) — verifying the commit alone is not enough.
+    let provenance_fail: Option<&str> = match (&inputs.iteration, trust) {
+        (Some(_), Some(c)) if !c.exists => {
+            Some("commit_sha is not a real commit (untrusted/forged)")
+        }
+        (Some(_), Some(c)) if !c.clean => Some("worktree dirty at commit_sha (untrusted WIP)"),
+        (Some(_), _) if key_matched != Some(true) => {
+            Some("no recorded loop row for this loop_id/commit_sha")
+        }
+        _ => None,
+    };
+    if inputs.iteration.is_some() {
         signals.push(Signal {
             lens: "provenance".into(),
-            ok: Some(c.exists && c.clean),
-            detail: match (c.exists, c.clean) {
-                (true, true) => "iteration commit verified, worktree clean".into(),
-                (false, _) => "commit_sha NOT a real commit — untrusted/forged".into(),
-                (true, false) => "commit exists but worktree dirty — untrusted WIP".into(),
-            },
+            ok: Some(provenance_fail.is_none()),
+            detail: provenance_fail
+                .unwrap_or("iteration commit verified, worktree clean, loop row matched")
+                .to_string(),
         });
     }
 
     // --- conjunction → hexavalent status (fail-closed) ---
-    // Untrusted iteration provenance escalates before any lens verdict — a forged or
-    // dirty correlation key means we cannot attribute the evidence to a real iteration.
-    let untrusted = trust.map(|c| !(c.exists && c.clean)).unwrap_or(false);
+    // Untrusted iteration provenance escalates before any lens verdict — a forged,
+    // dirty, or unmatched correlation key means we cannot attribute the evidence to a
+    // real iteration.
     // A required-but-dormant lens escalates next.
     let dormant_required =
         (cfg.require_loops && converging.is_none()) || (cfg.require_ood && drifting.is_none());
-    let (status, decision, reason) = if untrusted {
+    let (status, decision, reason) = if let Some(why) = provenance_fail {
         (
             "U",
             "escalate",
-            "iteration provenance untrusted (commit_sha absent/invalid or worktree dirty)"
-                .to_string(),
+            format!("iteration provenance untrusted: {why}"),
         )
     } else if dormant_required {
         (
@@ -795,18 +828,49 @@ mod tests {
         (dir, sha)
     }
 
+    /// A loops ledger whose rows carry `sha` as their commit (so both git-verify and
+    /// the (loop_id, commit_sha) match succeed). `l-good` converges, `l-osc` oscillates.
+    fn loops_with_sha(sha: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let row = |lid: &str, it: i32, v: &str, before: f64, after: f64| {
+            format!(
+                "{{\"loop_id\":\"{lid}\",\"domain\":\"chatbot\",\"iteration\":{it},\"ts\":\"2026-06-18T00:0{it}:00Z\",\"oracle_status\":\"ok\",\"metric_name\":\"p\",\"metric_before\":{before},\"metric_after\":{after},\"metric_delta\":{},\"verdict\":\"{v}\",\"worst_item\":\"x\",\"artifact_edited\":\"a.cs\",\"commit_sha\":\"{sha}\",\"roundtrip_passed\":true}}\n",
+                after - before
+            )
+        };
+        std::fs::write(
+            dir.path().join("good.iterations.jsonl"),
+            format!(
+                "{}{}",
+                row("l-good", 1, "improved", 0.80, 0.90),
+                row("l-good", 2, "improved", 0.90, 0.95)
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("osc.iterations.jsonl"),
+            format!(
+                "{}{}",
+                row("l-osc", 1, "improved", 0.90, 0.92),
+                row("l-osc", 2, "regressed", 0.92, 0.88)
+            ),
+        )
+        .unwrap();
+        dir
+    }
+
     #[test]
     fn scoped_convergence_with_verified_commit() {
         let conn = crate::open_bench().unwrap();
         let hits = fx("hits_up.jsonl");
         let corpus = fx("corpus-pass");
-        let loops = lens_fx("loops"); // has chatbot-improving (converging) + chatbot-oscillating
         let (repo, sha) = temp_git_repo();
+        let loops = loops_with_sha(&sha); // rows carry the real commit → verify + match both pass
         let eval = |loop_id: &str| {
             let i = MaintainInputs {
                 hits_path: &hits,
                 corpus_dir: &corpus,
-                loops_dir: Some(&loops),
+                loops_dir: Some(loops.path()),
                 query_embeddings_dir: None,
                 iteration: Some(IterationScope {
                     loop_id,
@@ -817,14 +881,44 @@ mod tests {
             };
             evaluate(&conn, &MaintainConfig::default(), &i).unwrap()
         };
-        // Scope targets the converging loop → T (verified commit, scoped convergence).
-        let t = eval("chatbot-improving");
+        // Scope targets the converging loop → T (verified commit, matched row, scoped).
+        let t = eval("l-good");
         assert_eq!(t.status, "T", "{}", t.reason);
         assert_eq!(t.converging, Some(true));
-        // Same ledger, scope the oscillating loop → D. Proves per-iteration scoping.
-        let d = eval("chatbot-oscillating");
+        // Same ledger + commit, scope the oscillating loop → D. Proves per-iteration scoping.
+        let d = eval("l-osc");
         assert_eq!(d.status, "D", "{}", d.reason);
         assert_eq!(d.converging, Some(false));
+    }
+
+    #[test]
+    fn real_commit_without_matching_row_escalates() {
+        // Codex P1: a real, clean commit whose sha matches NO loop row must NOT be
+        // scored against that loop's earlier rows — it escalates to U.
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let (repo, sha) = temp_git_repo(); // real clean commit
+        let loops = lens_fx("loops"); // rows carry "aaa1111"… — NOT `sha`
+        let i = MaintainInputs {
+            hits_path: &hits,
+            corpus_dir: &corpus,
+            loops_dir: Some(&loops),
+            query_embeddings_dir: None,
+            iteration: Some(IterationScope {
+                loop_id: "chatbot-improving",
+                commit_sha: &sha,
+                repo_dir: repo.path(),
+            }),
+            run_at: "2026-06-18T00:00:00Z",
+        };
+        let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
+        assert_eq!(v.status, "U", "{}", v.reason);
+        assert!(
+            v.reason.contains("no recorded loop row"),
+            "reason: {}",
+            v.reason
+        );
     }
 
     #[test]
