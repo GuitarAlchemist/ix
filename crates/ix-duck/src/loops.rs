@@ -182,8 +182,11 @@ pub struct LoopSummary {
     pub loop_id: String,
     pub domain: String,
     pub iterations: i64,
-    /// Sum of per-iteration metric deltas (net movement over the run).
-    pub net_delta: f64,
+    /// Sum of per-iteration metric deltas (net movement over the run). `None` when no
+    /// iteration recorded a delta (all unmeasured, e.g. oracle couldn't run) — distinct
+    /// from a *measured* net of `0.0`. (Absence is not zero — the defect class swept out
+    /// of `routing`/`chatbot`.)
+    pub net_delta: Option<f64>,
     pub final_verdict: String,
 }
 
@@ -194,7 +197,7 @@ pub fn loop_summary(conn: &Connection) -> duckdb::Result<Vec<LoopSummary>> {
     let mut stmt = conn.prepare(&format!(
         "WITH agg AS (
              SELECT loop_id, any_value(domain) AS domain, count(*) AS iterations,
-                    coalesce(sum(metric_delta), 0) AS net_delta, max(iteration) AS last_iter
+                    sum(metric_delta) AS net_delta, max(iteration) AS last_iter
              FROM loop_iterations WHERE {REAL}
              GROUP BY loop_id
          )
@@ -272,10 +275,33 @@ mod tests {
             "one row per iteration, not multiplied"
         );
         assert!(
-            (improving.net_delta - 0.06).abs() < 1e-9,
-            "net delta = 0.02+0.03+0.01, got {}",
+            (improving.net_delta.unwrap() - 0.06).abs() < 1e-9,
+            "net delta = 0.02+0.03+0.01, got {:?}",
             improving.net_delta
         );
+    }
+
+    #[test]
+    fn net_delta_none_when_all_deltas_unmeasured() {
+        // A loop whose iterations all recorded a null metric_delta (oracle couldn't run)
+        // has net_delta = None — "unmeasured", not a measured net of 0.0.
+        let dir = tempfile::tempdir().unwrap();
+        let row = |it: i32| {
+            format!(
+                "{{\"loop_id\":\"l-x\",\"domain\":\"chatbot\",\"iteration\":{it},\"ts\":\"2026-06-18T00:0{it}:00Z\",\"oracle_status\":\"couldnt_run\",\"metric_name\":\"p\",\"metric_before\":null,\"metric_after\":null,\"metric_delta\":null,\"verdict\":\"couldnt_run\",\"worst_item\":\"x\",\"artifact_edited\":\"a\",\"commit_sha\":\"c\",\"roundtrip_passed\":false}}\n"
+            )
+        };
+        std::fs::write(
+            dir.path().join("x.iterations.jsonl"),
+            format!("{}{}", row(1), row(2)),
+        )
+        .unwrap();
+        let conn = crate::open_bench().unwrap();
+        build_loop_iterations(&conn, dir.path()).unwrap();
+        let sum = loop_summary(&conn).unwrap();
+        assert_eq!(sum.len(), 1);
+        assert_eq!(sum[0].iterations, 2);
+        assert_eq!(sum[0].net_delta, None, "all-null deltas → None, not 0.0");
     }
 
     #[test]
