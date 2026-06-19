@@ -18,16 +18,20 @@ fn default_hits() -> PathBuf {
     PathBuf::from("state/thinking-machine/hits.jsonl")
 }
 
-fn default_corpus() -> PathBuf {
+fn ga_quality() -> PathBuf {
     if let Ok(root) = std::env::var("GA_ROOT") {
-        return PathBuf::from(root).join("state/quality/chatbot-qa");
+        return PathBuf::from(root).join("state/quality");
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     let ix_root = cwd.canonicalize().unwrap_or(cwd);
     ix_root
         .parent()
-        .map(|p| p.join("ga/state/quality/chatbot-qa"))
-        .unwrap_or_else(|| PathBuf::from("../ga/state/quality/chatbot-qa"))
+        .map(|p| p.join("ga/state/quality"))
+        .unwrap_or_else(|| PathBuf::from("../ga/state/quality"))
+}
+
+fn default_corpus() -> PathBuf {
+    ga_quality().join("chatbot-qa")
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -46,9 +50,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let conn = ix_duck::open_bench()?;
     let run_at = chrono::Utc::now().to_rfc3339();
+    // Phase 1: also consult the convergence + drift lenses (advisory — absent dirs
+    // degrade to "no data", never block).
+    let loops_dir = ga_quality().join("loops");
+    let emb_dir = ga_quality().join("query-embeddings");
     let inputs = MaintainInputs {
         hits_path: &hits,
         corpus_dir: &corpus,
+        loops_dir: Some(&loops_dir),
+        query_embeddings_dir: Some(&emb_dir),
         run_at: &run_at,
     };
     let verdict = maintain::evaluate(&conn, &MaintainConfig::default(), &inputs)?;

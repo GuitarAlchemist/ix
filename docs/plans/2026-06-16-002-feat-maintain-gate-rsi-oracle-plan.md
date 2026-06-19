@@ -126,20 +126,23 @@ reimplemented**:
 
 ## Implementation phases
 
-### Phase 0 — Tracer bullet (the vertical slice)
+### Phase 0 — Tracer bullet (the vertical slice) ✅ shipped (#119)
 The smallest end-to-end that touches every layer, per aihero discipline:
 `evaluate()` fusing **only two** lenses (yield metric ∧ chatbot guardrail) →
-`MaintainVerdict` → `write_contract` → `exit_code`, tested against:
-- [ ] a **pass** fixture (metric↑, guardrail held) → **T**
-- [ ] a **reward-hack** fixture (metric↑, guardrail broke) → **C**, exit 1
+`MaintainVerdict` → `append_to_ledger` → `exit_code`, tested against:
+- [x] a **pass** fixture (metric↑, guardrail held) → **T**
+- [x] a **reward-hack** fixture (metric↑, guardrail broke) → **C**, exit 1
 This proves the anti-Goodhart conjunction before scaling.
 
-### Phase 1 — Add convergence + drift
-- [ ] Fold in `loops` (converging) and `ood` (drifting) signals.
-- [ ] Graceful-degrade: dormant lens (absent data) → that signal is **U**, which
-      caps the overall verdict at **U** (escalate), never silently ACCEPT.
-- [ ] `require_loops`/`require_ood` config: when false, a dormant lens is advisory
-      not blocking (so the gate is usable today over the live lenses only).
+### Phase 1 — Add convergence + drift ✅ shipped
+- [x] Fold in `loops` (converging) and `ood` (drifting) signals — the two soft
+      lenses downgrade an otherwise-clean accept: oscillating → **D** (escalate),
+      drifting → **P** (accept w/ flag). Makes D/P reachable (Phase 0 was T/C/F/U).
+- [x] Graceful-degrade: a *required* dormant lens caps the verdict at **U**
+      (escalate), never silent ACCEPT; an *advisory* dormant lens is a no-op signal.
+- [x] `require_loops`/`require_ood` config: default false (advisory) so the gate is
+      usable over the live lenses today; `ood_k`/`ood_threshold` added. Verified
+      end-to-end over live `../ga` (T accept, all four signals green).
 
 ### Phase 2 — Contract + tamper-evidence
 - [ ] `docs/contracts/maintain-gate.contract.md` + JSON schema (v0.1 draft).
