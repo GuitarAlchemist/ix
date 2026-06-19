@@ -115,16 +115,30 @@ pub fn build_query_embeddings(conn: &Connection, dir: &Path) -> Result<usize, Oo
     Ok(n as usize)
 }
 
-/// Mean top-`k` cosine to nearest neighbours, per query (leave-one-out).
-/// `(query_id, intent, score)` ascending — most out-of-domain first. Needs ≥2 rows
-/// (a query is scored against the others); fewer → empty. Uses the registered
-/// `ix_cosine` UDF, so dimensions must be uniform (mismatch surfaces as a SQL error).
+/// Mean top-`k` cosine to nearest neighbours, per **distinct** query embedding
+/// (leave-one-out). `(query_id, intent, score)` ascending — most out-of-domain first.
+///
+/// **Deduplicated by embedding first** (verified on real Contract-B data: a 263-row day
+/// held only 51 distinct queries — 5.2× replay). A query repeated more than `k` times is
+/// otherwise its *own* nearest neighbours at cosine 1.0 → scores ~1.0 and **never flags**,
+/// even when genuinely out-of-domain. Scoring over distinct embeddings makes the score
+/// "distance to the distinct corpus" — the correct OOD question — and collapses the O(n²)
+/// pair join to the distinct set (≈26× fewer pairs on that day). Each distinct embedding
+/// keeps a representative `query_id`/`intent`.
+///
+/// Needs ≥2 **distinct** embeddings; fewer → empty. Uses the registered `ix_cosine` UDF,
+/// so dimensions must be uniform (mismatch surfaces as a SQL error).
+// @ai:invariant ood_scores dedups by embedding before scoring, so a query repeated >k times is not masked by its own copies — a duplicated out-of-domain query is still flagged [T:test conf:0.9 src:ix_duck::ood::tests::duplicates_dont_mask_ood]
 pub fn ood_scores(conn: &Connection, k: i64) -> duckdb::Result<Vec<(String, String, f64)>> {
     let mut stmt = conn.prepare(
-        "WITH pairs AS (
+        "WITH distinct_q AS (
+             SELECT any_value(query_id) AS query_id, any_value(intent) AS intent, embedding
+             FROM query_embeddings GROUP BY embedding
+         ),
+         pairs AS (
              SELECT a.query_id, a.intent,
                     ix_cosine(a.embedding, b.embedding) AS sim
-             FROM query_embeddings a JOIN query_embeddings b ON a.query_id <> b.query_id
+             FROM distinct_q a JOIN distinct_q b ON a.query_id <> b.query_id
          ),
          ranked AS (
              SELECT query_id, intent, sim,
@@ -236,6 +250,50 @@ mod tests {
         assert_eq!(
             declined.1, "(declined)",
             "null intent surfaces as a label, not an error"
+        );
+    }
+
+    /// A genuinely OOD query repeated more than `k` times would, without dedup, be its own
+    /// nearest neighbours at cosine 1.0 and score ~1.0 — never flagging. Dedup-by-embedding
+    /// fixes that: it is scored against the *distinct* corpus and flagged.
+    #[test]
+    fn duplicates_dont_mask_ood() {
+        let dir = tempfile::tempdir().unwrap();
+        let row = |id: &str, e: &str| {
+            format!(
+                "{{\"query_id\":\"{id}\",\"ts\":\"2026-06-16T00:00:00Z\",\"query_text\":\"{id}\",\"intent\":\"i\",\"route_method\":\"embedding\",\"route_confidence\":0.9,\"embedder\":\"x\",\"dim\":3,\"embedding\":{e}}}\n"
+            )
+        };
+        let mut s = String::new();
+        // 4 distinct in-domain queries, tightly clustered near [1,0,0].
+        s.push_str(&row("a0", "[1.0,0.0,0.0]"));
+        s.push_str(&row("a1", "[0.99,0.1,0.0]"));
+        s.push_str(&row("a2", "[0.98,0.0,0.1]"));
+        s.push_str(&row("a3", "[0.97,0.1,0.1]"));
+        // One OOD query (orthogonal) repeated 4× — would self-mask without dedup.
+        for i in 0..4 {
+            s.push_str(&row(&format!("b{i}"), "[0.0,0.0,1.0]"));
+        }
+        std::fs::write(dir.path().join("2026-06-16.jsonl"), s).unwrap();
+
+        let conn = crate::open_bench().unwrap();
+        let total = build_query_embeddings(&conn, dir.path()).unwrap();
+        assert_eq!(total, 8, "8 raw rows loaded");
+
+        let scores = ood_scores(&conn, 3).unwrap();
+        assert_eq!(
+            scores.len(),
+            5,
+            "scored over 5 DISTINCT embeddings, not 8 raw rows"
+        );
+
+        // The duplicated OOD query is flagged despite its 4 identical copies.
+        let flagged = flag_ood(&conn, 3, 0.5).unwrap();
+        assert_eq!(flagged.len(), 1, "duplicated OOD query no longer masked");
+        assert!(
+            flagged[0].0.starts_with('b'),
+            "the flagged query is the orthogonal one, got {}",
+            flagged[0].0
         );
     }
 }
