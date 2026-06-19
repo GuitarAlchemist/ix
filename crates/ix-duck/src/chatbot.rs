@@ -166,18 +166,27 @@ pub fn build_traces(conn: &Connection, corpus_dir: &Path) -> Result<usize, Chatb
     }
     let list = sql_list(&files);
     conn.execute_batch(&format!(
+        // Read `response.*` via `json_extract(to_json(response), …)` rather than struct-field
+        // access: a subfield absent from EVERY trace file would otherwise be a bind-time
+        // error ("Could not find key"), since struct field access binds against the inferred
+        // type. This mirrors the `facts` handling below and hardens the guardrail lens
+        // against trace-schema evolution. A missing subfield → SQL NULL, never a crash.
         "CREATE OR REPLACE TABLE chatbot_traces AS
-         SELECT promptId                                AS prompt_id,
-                prompt,
-                category,
-                response.agentId                        AS agent_id,
-                TRY_CAST(response.confidence AS DOUBLE) AS routing_confidence,
-                response.routingMethod                  AS routing_method,
-                response.grounding IS NOT NULL          AS grounding_present,
-                length(response.naturalLanguageAnswer)  AS response_length,
-                TRY_CAST(response.elapsedMs AS BIGINT)  AS elapsed_ms,
-                recordedAt                              AS recorded_at
-         FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1);"
+         WITH raw AS (
+             SELECT promptId AS prompt_id, prompt, category, recordedAt AS recorded_at,
+                    to_json(response) AS rj
+             FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1)
+         )
+         SELECT prompt_id, prompt, category,
+                json_extract_string(rj, '$.agentId')                       AS agent_id,
+                TRY_CAST(json_extract(rj, '$.confidence') AS DOUBLE)       AS routing_confidence,
+                json_extract_string(rj, '$.routingMethod')                 AS routing_method,
+                (json_extract(rj, '$.grounding') IS NOT NULL
+                 AND json_extract(rj, '$.grounding')::VARCHAR <> 'null')   AS grounding_present,
+                length(json_extract_string(rj, '$.naturalLanguageAnswer')) AS response_length,
+                TRY_CAST(json_extract(rj, '$.elapsedMs') AS BIGINT)        AS elapsed_ms,
+                recorded_at
+         FROM raw;"
     ))?;
     let n: i64 = conn.query_row("SELECT count(*) FROM chatbot_traces", [], |r| r.get(0))?;
     Ok(n as usize)
@@ -287,7 +296,8 @@ pub fn build_grounding(conn: &Connection, corpus_dir: &Path) -> Result<usize, Ch
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE chatbot_grounding AS
          WITH g AS (
-             SELECT promptId AS prompt_id, category, to_json(response.grounding) AS gj
+             SELECT promptId AS prompt_id, category,
+                    json_extract(to_json(response), '$.grounding') AS gj
              FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1)
          )
          SELECT prompt_id, category,
@@ -468,10 +478,11 @@ fn build_signatures(conn: &Connection, corpus_dir: &Path) -> Result<(), ChatbotE
     let list = sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE chatbot_signatures AS
-         SELECT t.promptId AS prompt_id, step.agentId AS expected_agent
+         SELECT t.promptId AS prompt_id,
+                json_extract_string(to_json(step), '$.agentId') AS expected_agent
          FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1) t,
               UNNEST(t.steps) AS u(step)
-         WHERE step.name = 'orchestration.answer';"
+         WHERE json_extract_string(to_json(step), '$.name') = 'orchestration.answer';"
     ))?;
     Ok(())
 }
@@ -652,6 +663,36 @@ mod tests {
         let files = run_files(&fixtures()).unwrap().len();
         assert!(files >= 3, "need a real multi-prompt fixture corpus, found {files}");
         assert_eq!(n, files, "one chatbot_traces row per run file");
+    }
+
+    /// A trace whose `response` object lacks subfields (trace-schema drift) must BUILD.
+    /// With struct-field access this bind-errored ("Could not find key …"); via
+    /// `json_extract(to_json(response), …)` the missing fields read as NULL. Guards the
+    /// guardrail lens against GA renaming/removing a `response` subfield.
+    #[test]
+    fn response_missing_subfields_builds_as_null() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = dir.path().join("golden-traces/q1/run-1.json");
+        fs::create_dir_all(run.parent().unwrap()).unwrap();
+        // `response` carries only agentId — no confidence/routingMethod/grounding/answer/elapsedMs.
+        fs::write(
+            &run,
+            r#"{"promptId":"q1","prompt":"p","category":"c",
+                "response":{"agentId":"skill.x"},"recordedAt":"2026-06-19T00:00:00Z"}"#,
+        )
+        .unwrap();
+        let conn = crate::open_bench().unwrap();
+        let n = build_traces(&conn, dir.path()).unwrap(); // struct-field access would Err here
+        assert_eq!(n, 1, "the trace builds despite the sparse response");
+        let (agent, conf): (String, Option<f64>) = conn
+            .query_row(
+                "SELECT agent_id, routing_confidence FROM chatbot_traces",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(agent, "skill.x");
+        assert_eq!(conf, None, "absent confidence reads as NULL, not a crash or 0");
     }
 
     #[test]

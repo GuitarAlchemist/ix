@@ -43,9 +43,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("\n  per-loop convergence:");
         for s in loops::loop_summary(&conn)? {
+            let net = s
+                .net_delta
+                .map(|d| format!("{d:+.3}"))
+                .unwrap_or_else(|| "—".into());
             println!(
-                "    {:<22} {:<10} iters={:<3} net={:+.3}  {}",
-                s.loop_id, s.domain, s.iterations, s.net_delta, s.final_verdict
+                "    {:<22} {:<10} iters={:<3} net={net:>7}  {}",
+                s.loop_id, s.domain, s.iterations, s.final_verdict
             );
         }
         println!("\n  recurring worst-items (≥2):");
