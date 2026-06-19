@@ -215,4 +215,38 @@ mod tests {
             .unwrap();
         assert!(z.abs() < 1e-12, "equal vectors → 0.0, got {z}");
     }
+
+    #[test]
+    fn ix_cosine_passes_null_through() {
+        let conn = open_bench().unwrap();
+        // A NULL list argument yields SQL NULL, not a spurious number.
+        let n: Option<f64> = conn
+            .query_row(
+                "SELECT ix_cosine(NULL::DOUBLE[], [1.0,2.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, None, "NULL arg → SQL NULL");
+
+        // In a mixed chunk, non-NULL rows still compute while the NULL row stays NULL.
+        let mut stmt = conn
+            .prepare(
+                "SELECT ix_cosine(a, b) FROM (VALUES \
+                   (1, [1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[]), \
+                   (2, NULL::DOUBLE[],          [1.0,2.0,3.0]::DOUBLE[]), \
+                   (3, [1.0,0.0]::DOUBLE[],     [0.0,1.0]::DOUBLE[]) \
+                 ) t(i,a,b) ORDER BY i",
+            )
+            .unwrap();
+        let rows: Vec<Option<f64>> = stmt
+            .query_map([], |r| r.get::<_, Option<f64>>(0))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert!((rows[0].unwrap() - 1.0).abs() < 1e-12, "identical → 1.0");
+        assert_eq!(rows[1], None, "NULL row stays NULL in a mixed chunk");
+        assert!(rows[2].unwrap().abs() < 1e-12, "orthogonal → 0.0");
+    }
 }
