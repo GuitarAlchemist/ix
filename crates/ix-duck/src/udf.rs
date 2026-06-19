@@ -145,6 +145,7 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     crate::tablefn::register(conn)?;
     crate::bracelet::register(conn)?;
     crate::graphsig::register(conn)?;
+    crate::grothendieck::register(conn)?;
     crate::eval::register(conn)?;
     crate::sketch::register(conn)?;
     crate::code::register(conn)?;
