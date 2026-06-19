@@ -144,11 +144,16 @@ This proves the anti-Goodhart conjunction before scaling.
       usable over the live lenses today; `ood_k`/`ood_threshold` added. Verified
       end-to-end over live `../ga` (T accept, all four signals green).
 
-### Phase 2 — Contract + tamper-evidence
-- [ ] `docs/contracts/maintain-gate.contract.md` + JSON schema (v0.1 draft).
-- [ ] Append-only ledger write + `baseline_ref` capture.
-- [ ] `ix_maintain_gate` example: `gate` (verdict + exit code) and `explain`
-      (per-signal breakdown).
+### Phase 2 — Contract + tamper-evidence ✅ shipped
+- [x] `docs/contracts/maintain-gate.contract.md` + `maintain-gate.schema.json`
+      (draft-07, v0.1 draft; live verdict validates via `jsonschema`).
+- [x] Append-only ledger write (`append_to_ledger`) + evidence provenance
+      (FNV-hashed metric + guardrail-baseline) — input provenance > verdict provenance.
+- [x] `ix_maintain_gate` example prints the per-signal breakdown + verdict + exit code.
+- [x] `verdict_conforms_to_contract` test binds the emitted JSON to the contract
+      (required keys + status/decision enums) so code/contract drift fails a test.
+- Deferred to Phase 3 (with the first reader, per the chatbot-contract precedent):
+  the `provenance{}`/freeze machinery + constitution checksum (v2).
 
 ### Phase 3 — Wire consumers
 - [ ] Demerzel governance reads the verdict (existing governance-check path or a
