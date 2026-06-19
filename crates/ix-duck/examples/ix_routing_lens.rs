@@ -38,10 +38,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("{n} (run × intent) rows\n");
 
-    println!("overall trend (oldest→newest):");
+    println!("overall trend (oldest→newest; — = not recorded in that run):");
     println!("  {:<12} {:>9} {:>12} {:>8}", "day", "accuracy", "oos_decline", "margin");
+    let fmt = |v: Option<f64>| v.map(|x| format!("{x:.3}")).unwrap_or_else(|| "—".to_string());
     for (day, acc, oos, margin) in routing::overall_trend(&conn)? {
-        println!("  {day:<12} {acc:>9.3} {oos:>12.3} {margin:>8.3}");
+        println!(
+            "  {day:<12} {:>9} {:>12} {:>8}",
+            fmt(acc),
+            fmt(oos),
+            fmt(margin)
+        );
     }
 
     println!("\nweakest intents (latest run, F1 < 0.9):");
