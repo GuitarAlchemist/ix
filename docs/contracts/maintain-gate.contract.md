@@ -99,14 +99,20 @@ propose-merge, 1 → reject + revert, 2 → human escalate.
 When the gate is given an iteration scope (`loop_id` + `commit_sha` + the loop's repo):
 - **Convergence is scoped** to that `loop_id` (no longer whole-ledger).
 - **`commit_sha` is externally verified** against real git state — hex-validated, then
-  `git cat-file -e <sha>^{commit}` (exists) + `git status --porcelain` (clean) — **and**
-  a recorded loop row must exist for the exact `(loop_id, commit_sha)` pair (verifying
-  the commit alone is not enough: a clean-but-unrelated commit for a loop with earlier
-  improving rows would otherwise be scored as that loop). A forged/absent sha, a dirty
-  worktree, **or no matching loop row** fail-closes to **U** *before any lens verdict*
-  (the key is minted by the judged loop, so it gets the same external-derivation
-  discipline as the metric). Surfaced as a `provenance` signal + an
-  `iteration-commit:<loop_id>` evidence entry (`hash: "git:<sha>"`).
+  `git cat-file -e <sha>^{commit}` (exists) + `git status --porcelain --untracked-files=no`
+  (no *tracked*-file WIP) — **and** a recorded loop row must exist for the exact
+  `(loop_id, commit_sha)` pair (verifying the commit alone is not enough: a
+  clean-but-unrelated commit for a loop with earlier improving rows would otherwise be
+  scored as that loop). The check distinguishes four outcomes, three of which
+  fail-close to **U** *before any lens verdict*: git could not run (`could not verify
+  commit_sha (git unavailable)` — a missing-git environment is never misreported as
+  forgery), the sha is malformed/absent (`untrusted/forged`), or **tracked** files carry
+  uncommitted edits (`uncommitted WIP not captured by commit_sha`). **Untracked files are
+  deliberately ignored** — a shared multi-agent tree is full of other agents' untracked
+  WIP, which would otherwise spuriously escalate a valid iteration. A missing matching
+  loop row also fail-closes to **U**. (The key is minted by the judged loop, so it gets
+  the same external-derivation discipline as the metric.) Surfaced as a `provenance`
+  signal + an `iteration-commit:<loop_id>` evidence entry (`hash: "git:<sha>"`).
 
 **Still whole-history (deferred):** drift scoping per-iteration awaits a query→loop tag
 in Contract B; until then drift stays corpus-level advisory. **Still Phase 3b:** the

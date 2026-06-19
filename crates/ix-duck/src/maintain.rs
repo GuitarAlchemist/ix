@@ -142,43 +142,82 @@ pub struct MaintainInputs<'a> {
     pub run_at: &'a str,
 }
 
-/// Result of externally verifying an iteration's `commit_sha` against git.
-#[derive(Debug, Clone, Copy)]
-struct CommitCheck {
-    /// The sha is a real commit object in the repo.
-    exists: bool,
-    /// The repo worktree is clean (the change is a committed state, not a dirty WIP).
-    clean: bool,
+/// Outcome of externally verifying an iteration's `commit_sha` against real git state.
+/// Distinguishes "git could not answer" from "git says forged" so the gate never reports
+/// a missing-git environment as a forgery alarm, and ignores other agents' untracked WIP
+/// so a shared tree doesn't spuriously fail a valid iteration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CommitCheck {
+    /// git could not be run at all (not installed / repo error) — we cannot decide.
+    Unverifiable,
+    /// The sha is malformed, or git ran and it is not a real commit object (forged/wrong).
+    NotACommit,
+    /// The commit is real, but TRACKED files have uncommitted edits — the metric may
+    /// reflect work not captured by the sha. (Untracked files are deliberately ignored:
+    /// a multi-agent tree is full of other agents' untracked WIP, which is not ours.)
+    DirtyTracked,
+    /// The commit is real and no tracked files are modified.
+    Verified,
 }
 
 /// Verify `sha` against real git state in `repo_dir` — the anti-forgery check for the
 /// correlation key. Hex-validates first (so a `sha` like `--help` can't reach git as a
-/// flag), then `git cat-file -e <sha>^{commit}` (exists) + `git status --porcelain`
-/// (clean). Any failure → not-trusted (caller fail-closes to U).
+/// flag), then `git cat-file -e <sha>^{commit}` (exists). When the commit is real,
+/// `git status --porcelain --untracked-files=no` decides clean-vs-dirty over *tracked*
+/// files only. A git invocation that fails to *run* (vs answers "no") is `Unverifiable`,
+/// not `NotACommit` — so a missing-git environment is never misreported as forgery.
 fn verify_commit(repo_dir: &Path, sha: &str) -> CommitCheck {
     use std::process::Command;
     let hex = !sha.is_empty() && sha.len() <= 64 && sha.bytes().all(|b| b.is_ascii_hexdigit());
     if !hex {
-        return CommitCheck {
-            exists: false,
-            clean: false,
-        };
+        return CommitCheck::NotACommit;
     }
-    let exists = Command::new("git")
+    // Does the commit object exist? `Err` = git couldn't run (≠ "forged").
+    match Command::new("git")
         .arg("-C")
         .arg(repo_dir)
         .args(["cat-file", "-e", &format!("{sha}^{{commit}}")])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let clean = Command::new("git")
+    {
+        Err(_) => return CommitCheck::Unverifiable,
+        Ok(o) if !o.status.success() => return CommitCheck::NotACommit,
+        Ok(_) => {}
+    }
+    // Commit is real. Are TRACKED files modified? `--untracked-files=no` excludes other
+    // agents' untracked WIP, so a shared tree doesn't spuriously fail a valid iteration.
+    match Command::new("git")
         .arg("-C")
         .arg(repo_dir)
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "--untracked-files=no"])
         .output()
-        .map(|o| o.status.success() && o.stdout.is_empty())
-        .unwrap_or(false);
-    CommitCheck { exists, clean }
+    {
+        Ok(o) if o.status.success() && o.stdout.is_empty() => CommitCheck::Verified,
+        Ok(o) if o.status.success() => CommitCheck::DirtyTracked,
+        _ => CommitCheck::Unverifiable,
+    }
+}
+
+/// Why (if at all) an iteration's correlation key can't be trusted — `None` means
+/// trusted: the commit is real, clean of tracked WIP, and a recorded loop row matches the
+/// exact `(loop_id, commit_sha)`. Verifying the commit alone is insufficient: a clean but
+/// unrelated commit for a loop with earlier improving rows would otherwise be scored as
+/// that loop (Codex P1). The key is minted by the judged loop, so it earns the same
+/// external-derivation discipline as the metric.
+fn provenance_failure(
+    iteration: Option<&IterationScope>,
+    trust: Option<CommitCheck>,
+    key_matched: Option<bool>,
+) -> Option<&'static str> {
+    iteration?; // no scope → nothing to verify
+    match trust {
+        Some(CommitCheck::Unverifiable) => Some("could not verify commit_sha (git unavailable)"),
+        Some(CommitCheck::NotACommit) => Some("commit_sha is not a real commit (untrusted/forged)"),
+        Some(CommitCheck::DirtyTracked) => {
+            Some("tracked files modified — uncommitted WIP not captured by commit_sha")
+        }
+        _ if key_matched != Some(true) => Some("no recorded loop row for this loop_id/commit_sha"),
+        _ => None,
+    }
 }
 
 /// Provenance of one piece of evidence — what the verdict was computed from, hashed
@@ -394,24 +433,15 @@ pub fn evaluate(
             None => "no query embeddings (advisory)".into(),
         },
     });
-    // Provenance is trusted only if the commit is real + clean AND a recorded loop row
-    // exists for (loop_id, commit_sha) — verifying the commit alone is not enough.
-    let provenance_fail: Option<&str> = match (&inputs.iteration, trust) {
-        (Some(_), Some(c)) if !c.exists => {
-            Some("commit_sha is not a real commit (untrusted/forged)")
-        }
-        (Some(_), Some(c)) if !c.clean => Some("worktree dirty at commit_sha (untrusted WIP)"),
-        (Some(_), _) if key_matched != Some(true) => {
-            Some("no recorded loop row for this loop_id/commit_sha")
-        }
-        _ => None,
-    };
+    // Provenance is trusted only if the commit is real + clean of tracked WIP AND a
+    // recorded loop row exists for (loop_id, commit_sha) — see `provenance_failure`.
+    let provenance_fail = provenance_failure(inputs.iteration.as_ref(), trust, key_matched);
     if inputs.iteration.is_some() {
         signals.push(Signal {
             lens: "provenance".into(),
             ok: Some(provenance_fail.is_none()),
             detail: provenance_fail
-                .unwrap_or("iteration commit verified, worktree clean, loop row matched")
+                .unwrap_or("iteration commit verified, no tracked WIP, loop row matched")
                 .to_string(),
         });
     }
@@ -946,6 +976,68 @@ mod tests {
         assert!(
             v.reason.contains("provenance"),
             "reason names the cause: {}",
+            v.reason
+        );
+    }
+
+    #[test]
+    fn untracked_files_dont_break_provenance() {
+        // A shared multi-agent tree (GA) is full of other agents' UNTRACKED WIP; that
+        // must NOT fail-close a valid iteration. Only uncommitted edits to TRACKED files
+        // count as dirty. Without this the gate would spuriously escalate in practice.
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let (repo, sha) = temp_git_repo();
+        std::fs::write(repo.path().join("other-agent-scratch.md"), "wip").unwrap(); // untracked
+        let loops = loops_with_sha(&sha);
+        let i = MaintainInputs {
+            hits_path: &hits,
+            corpus_dir: &corpus,
+            loops_dir: Some(loops.path()),
+            query_embeddings_dir: None,
+            iteration: Some(IterationScope {
+                loop_id: "l-good",
+                commit_sha: &sha,
+                repo_dir: repo.path(),
+            }),
+            run_at: "2026-06-18T00:00:00Z",
+        };
+        let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
+        assert_eq!(
+            v.status, "T",
+            "untracked WIP must not break provenance: {}",
+            v.reason
+        );
+    }
+
+    #[test]
+    fn tracked_modification_is_untrusted() {
+        // A genuine uncommitted edit to a TRACKED file means the metric may reflect work
+        // not captured by the sha → fail-closed to U (the security property still holds).
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let (repo, sha) = temp_git_repo();
+        std::fs::write(repo.path().join("f.txt"), "modified").unwrap(); // tracked → now dirty
+        let loops = loops_with_sha(&sha);
+        let i = MaintainInputs {
+            hits_path: &hits,
+            corpus_dir: &corpus,
+            loops_dir: Some(loops.path()),
+            query_embeddings_dir: None,
+            iteration: Some(IterationScope {
+                loop_id: "l-good",
+                commit_sha: &sha,
+                repo_dir: repo.path(),
+            }),
+            run_at: "2026-06-18T00:00:00Z",
+        };
+        let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
+        assert_eq!(v.status, "U", "{}", v.reason);
+        assert!(
+            v.reason.contains("tracked"),
+            "reason names tracked WIP: {}",
             v.reason
         );
     }
