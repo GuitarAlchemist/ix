@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use ix_duck::maintain::{self, MaintainConfig, MaintainInputs};
+use ix_duck::maintain::{self, IterationScope, MaintainConfig, MaintainInputs};
 
 fn default_hits() -> PathBuf {
     PathBuf::from("state/thinking-machine/hits.jsonl")
@@ -41,6 +41,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .next()
         .map(PathBuf::from)
         .unwrap_or_else(default_corpus);
+    // Optional Phase-3a iteration correlation: <loop_id> <commit_sha>.
+    let loop_id = args.next();
+    let commit_sha = args.next();
     for p in [&hits, &corpus] {
         if p.to_string_lossy().contains("://") {
             eprintln!("refusing non-local path: {}", p.display());
@@ -54,11 +57,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // degrade to "no data", never block).
     let loops_dir = ga_quality().join("loops");
     let emb_dir = ga_quality().join("query-embeddings");
+    let ga_root = ga_quality()
+        .parent()
+        .and_then(|p| p.parent())
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let iteration = match (&loop_id, &commit_sha) {
+        (Some(l), Some(c)) => Some(IterationScope {
+            loop_id: l,
+            commit_sha: c,
+            repo_dir: &ga_root,
+        }),
+        _ => None,
+    };
     let inputs = MaintainInputs {
         hits_path: &hits,
         corpus_dir: &corpus,
         loops_dir: Some(&loops_dir),
         query_embeddings_dir: Some(&emb_dir),
+        iteration,
         run_at: &run_at,
     };
     let verdict = maintain::evaluate(&conn, &MaintainConfig::default(), &inputs)?;

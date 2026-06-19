@@ -1,4 +1,11 @@
-//! `maintain-gate` — a fail-closed RSI evaluation oracle (Phase 1).
+//! `maintain-gate` — a fail-closed RSI evaluation oracle (Phase 3a).
+//!
+//! When given an [`IterationScope`] (`loop_id` + `commit_sha`), the gate **externally
+//! verifies** the commit against real git state and **scopes** convergence to that
+//! loop — an unverified/forged or dirty correlation key fail-closes to **U** before
+//! any lens verdict (the key is minted by the loop being judged, so it gets the same
+//! external-derivation discipline as the metric). Without a scope it behaves as
+//! Phase 1 (whole-history advisory).
 //!
 //! Fuses the DuckDB+IX maintain lenses into ONE hexavalent verdict (T/P/U/D/F/C)
 //! per self-improvement iteration:
@@ -109,6 +116,18 @@ impl Default for MaintainConfig {
     }
 }
 
+/// Correlates the verdict to a specific loop iteration, and lets the gate
+/// **externally verify** the iteration's provenance. The `commit_sha` is minted
+/// GA-side by the loop being judged, so the gate trusts it only after checking it
+/// against real git state (Phase-3 panel: an unverified key is as forgeable as the
+/// self-declared metric we already rejected).
+pub struct IterationScope<'a> {
+    pub loop_id: &'a str,
+    pub commit_sha: &'a str,
+    /// Repo to verify `commit_sha` against (the loop's own repo).
+    pub repo_dir: &'a Path,
+}
+
 /// What the gate reads for one iteration. The metric source is externally derived
 /// (harness-written `hits.jsonl`), never a delta declared by the proposing agent.
 pub struct MaintainInputs<'a> {
@@ -118,7 +137,48 @@ pub struct MaintainInputs<'a> {
     pub loops_dir: Option<&'a Path>,
     /// Query-embeddings dir (drift lens). `None` = lens not consulted.
     pub query_embeddings_dir: Option<&'a Path>,
+    /// Iteration correlation + provenance. `None` = whole-history (Phase-1 behaviour).
+    pub iteration: Option<IterationScope<'a>>,
     pub run_at: &'a str,
+}
+
+/// Result of externally verifying an iteration's `commit_sha` against git.
+#[derive(Debug, Clone, Copy)]
+struct CommitCheck {
+    /// The sha is a real commit object in the repo.
+    exists: bool,
+    /// The repo worktree is clean (the change is a committed state, not a dirty WIP).
+    clean: bool,
+}
+
+/// Verify `sha` against real git state in `repo_dir` — the anti-forgery check for the
+/// correlation key. Hex-validates first (so a `sha` like `--help` can't reach git as a
+/// flag), then `git cat-file -e <sha>^{commit}` (exists) + `git status --porcelain`
+/// (clean). Any failure → not-trusted (caller fail-closes to U).
+fn verify_commit(repo_dir: &Path, sha: &str) -> CommitCheck {
+    use std::process::Command;
+    let hex = !sha.is_empty() && sha.len() <= 64 && sha.bytes().all(|b| b.is_ascii_hexdigit());
+    if !hex {
+        return CommitCheck {
+            exists: false,
+            clean: false,
+        };
+    }
+    let exists = Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["cat-file", "-e", &format!("{sha}^{{commit}}")])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let clean = Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["status", "--porcelain"])
+        .output()
+        .map(|o| o.status.success() && o.stdout.is_empty())
+        .unwrap_or(false);
+    CommitCheck { exists, clean }
 }
 
 /// Provenance of one piece of evidence — what the verdict was computed from, hashed
@@ -245,11 +305,16 @@ pub fn evaluate(
             ),
         },
     ];
+    // --- iteration provenance (Phase 3a): verify the correlation key against git ---
+    let trust = inputs
+        .iteration
+        .as_ref()
+        .map(|s| verify_commit(s.repo_dir, s.commit_sha));
+
     // --- convergence lens (loops) + drift lens (ood) ---
-    // KNOWN LIMITATION (Phase 1): the soft lenses aggregate over the *whole* ledger /
-    // embedding history, not just the iteration under evaluation. Scoping them to the
-    // current iteration needs the iteration-correlation key (loop_id / commit_sha,
-    // never wall-clock) the panel logged for Phase 3 — deferred there, not half-built.
+    // Phase 3a: convergence is scoped to the iteration's `loop_id` when a scope is
+    // given (Phase 1 aggregated the whole ledger). Drift scoping awaits a query→loop
+    // tag in Contract B — until then drift stays corpus-level advisory (documented).
     //
     // A supplied-but-empty/dormant lens is *unknown* (None), NOT a positive signal:
     // reading "no data" as converging / in-distribution would be a green light from
@@ -257,11 +322,19 @@ pub fn evaluate(
     let converging = match inputs.loops_dir {
         Some(dir) => {
             crate::loops::build_loop_iterations(conn, dir)?;
-            // loop_summary excludes seed/test rows → empty means no real iterations yet.
-            if crate::loops::loop_summary(conn)?.is_empty() {
-                None
-            } else {
-                Some(crate::loops::oscillating_loops(conn)?.is_empty())
+            let summaries = crate::loops::loop_summary(conn)?; // excludes seed/test rows
+            match &inputs.iteration {
+                Some(scope) => {
+                    if summaries.iter().any(|s| s.loop_id == scope.loop_id) {
+                        // This loop is converging iff it is not in the oscillating set.
+                        let osc = crate::loops::oscillating_loops(conn)?;
+                        Some(!osc.iter().any(|(id, _, _)| id == scope.loop_id))
+                    } else {
+                        None // no real rows for this loop yet
+                    }
+                }
+                None if summaries.is_empty() => None,
+                None => Some(crate::loops::oscillating_loops(conn)?.is_empty()),
             }
         }
         None => None,
@@ -297,12 +370,33 @@ pub fn evaluate(
             None => "no query embeddings (advisory)".into(),
         },
     });
+    if let Some(c) = trust {
+        signals.push(Signal {
+            lens: "provenance".into(),
+            ok: Some(c.exists && c.clean),
+            detail: match (c.exists, c.clean) {
+                (true, true) => "iteration commit verified, worktree clean".into(),
+                (false, _) => "commit_sha NOT a real commit — untrusted/forged".into(),
+                (true, false) => "commit exists but worktree dirty — untrusted WIP".into(),
+            },
+        });
+    }
 
     // --- conjunction → hexavalent status (fail-closed) ---
-    // A required-but-dormant lens escalates before anything else.
+    // Untrusted iteration provenance escalates before any lens verdict — a forged or
+    // dirty correlation key means we cannot attribute the evidence to a real iteration.
+    let untrusted = trust.map(|c| !(c.exists && c.clean)).unwrap_or(false);
+    // A required-but-dormant lens escalates next.
     let dormant_required =
         (cfg.require_loops && converging.is_none()) || (cfg.require_ood && drifting.is_none());
-    let (status, decision, reason) = if dormant_required {
+    let (status, decision, reason) = if untrusted {
+        (
+            "U",
+            "escalate",
+            "iteration provenance untrusted (commit_sha absent/invalid or worktree dirty)"
+                .to_string(),
+        )
+    } else if dormant_required {
         (
             "U",
             "escalate",
@@ -359,7 +453,7 @@ pub fn evaluate(
     };
 
     // --- evidence provenance (hash the inputs, not just the verdict) ---
-    let evidence = vec![
+    let mut evidence = vec![
         Evidence {
             kind: "metric".into(),
             source: inputs.hits_path.to_string_lossy().into_owned(),
@@ -371,6 +465,14 @@ pub fn evaluate(
             hash: report.baseline_ref.clone(),
         },
     ];
+    // The correlation key IS provenance — it ties this verdict to a verified commit.
+    if let Some(scope) = &inputs.iteration {
+        evidence.push(Evidence {
+            kind: format!("iteration-commit:{}", scope.loop_id),
+            source: scope.repo_dir.to_string_lossy().into_owned(),
+            hash: format!("git:{}", scope.commit_sha),
+        });
+    }
 
     Ok(MaintainVerdict {
         schema_version: "maintain-gate.v0.1".into(),
@@ -428,6 +530,7 @@ mod tests {
             corpus_dir: corpus,
             loops_dir: None,
             query_embeddings_dir: None,
+            iteration: None,
             run_at: "2026-06-16T00:00:00Z",
         }
     }
@@ -524,6 +627,7 @@ mod tests {
             corpus_dir: &corpus,
             loops_dir: Some(&loops),
             query_embeddings_dir: None,
+            iteration: None,
             run_at: "2026-06-16T00:00:00Z",
         };
         let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
@@ -545,6 +649,7 @@ mod tests {
             corpus_dir: &corpus,
             loops_dir: None,
             query_embeddings_dir: Some(&emb),
+            iteration: None,
             run_at: "2026-06-16T00:00:00Z",
         };
         let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
@@ -571,6 +676,7 @@ mod tests {
             corpus_dir: &corpus,
             loops_dir: Some(dir.path()),
             query_embeddings_dir: None,
+            iteration: None,
             run_at: "2026-06-16T00:00:00Z",
         };
         let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
@@ -597,6 +703,7 @@ mod tests {
                 corpus_dir: &corpus,
                 loops_dir: Some(dir.path()),
                 query_embeddings_dir: None,
+                iteration: None,
                 run_at: "2026-06-16T00:00:00Z",
             };
             evaluate(&conn, cfg, &i).unwrap()
@@ -653,6 +760,100 @@ mod tests {
                 assert!(e.get(k).is_some(), "evidence entry needs `{k}`");
             }
         }
+    }
+
+    /// A throwaway git repo with one clean commit; returns (dir, HEAD sha).
+    fn temp_git_repo() -> (tempfile::TempDir, String) {
+        use std::process::Command;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().to_path_buf();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(&p)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(p.join("f.txt"), "x").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ]);
+        let sha = String::from_utf8(git(&["rev-parse", "HEAD"]).stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        (dir, sha)
+    }
+
+    #[test]
+    fn scoped_convergence_with_verified_commit() {
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let loops = lens_fx("loops"); // has chatbot-improving (converging) + chatbot-oscillating
+        let (repo, sha) = temp_git_repo();
+        let eval = |loop_id: &str| {
+            let i = MaintainInputs {
+                hits_path: &hits,
+                corpus_dir: &corpus,
+                loops_dir: Some(&loops),
+                query_embeddings_dir: None,
+                iteration: Some(IterationScope {
+                    loop_id,
+                    commit_sha: &sha,
+                    repo_dir: repo.path(),
+                }),
+                run_at: "2026-06-18T00:00:00Z",
+            };
+            evaluate(&conn, &MaintainConfig::default(), &i).unwrap()
+        };
+        // Scope targets the converging loop → T (verified commit, scoped convergence).
+        let t = eval("chatbot-improving");
+        assert_eq!(t.status, "T", "{}", t.reason);
+        assert_eq!(t.converging, Some(true));
+        // Same ledger, scope the oscillating loop → D. Proves per-iteration scoping.
+        let d = eval("chatbot-oscillating");
+        assert_eq!(d.status, "D", "{}", d.reason);
+        assert_eq!(d.converging, Some(false));
+    }
+
+    #[test]
+    fn untrusted_commit_escalates() {
+        // A well-formed but non-existent sha → provenance untrusted → U, regardless of lenses.
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let loops = lens_fx("loops");
+        let (repo, _sha) = temp_git_repo();
+        let i = MaintainInputs {
+            hits_path: &hits,
+            corpus_dir: &corpus,
+            loops_dir: Some(&loops),
+            query_embeddings_dir: None,
+            iteration: Some(IterationScope {
+                loop_id: "chatbot-improving",
+                commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                repo_dir: repo.path(),
+            }),
+            run_at: "2026-06-18T00:00:00Z",
+        };
+        let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
+        assert_eq!(v.status, "U", "{}", v.reason);
+        assert!(
+            v.reason.contains("provenance"),
+            "reason names the cause: {}",
+            v.reason
+        );
     }
 
     #[test]
