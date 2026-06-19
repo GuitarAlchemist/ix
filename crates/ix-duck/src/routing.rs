@@ -105,10 +105,10 @@ pub fn build_routing_evals(conn: &Connection, quality_dir: &Path) -> Result<usiz
          FROM keyed;
          CREATE OR REPLACE TABLE routing_overall AS
          SELECT generatedAt::VARCHAR AS generated_at, (generatedAt::VARCHAR)[1:10] AS day,
-                TRY_CAST(overall.Accuracy AS DOUBLE)           AS accuracy,
-                TRY_CAST(overall.InScopeAccuracy AS DOUBLE)    AS in_scope_accuracy,
-                TRY_CAST(overall.OosDeclineRate AS DOUBLE)     AS oos_decline_rate,
-                TRY_CAST(overall.MeanInScopeMargin AS DOUBLE)  AS mean_in_scope_margin
+                TRY_CAST(json_extract(to_json(overall), '$.Accuracy') AS DOUBLE)          AS accuracy,
+                TRY_CAST(json_extract(to_json(overall), '$.InScopeAccuracy') AS DOUBLE)   AS in_scope_accuracy,
+                TRY_CAST(json_extract(to_json(overall), '$.OosDeclineRate') AS DOUBLE)    AS oos_decline_rate,
+                TRY_CAST(json_extract(to_json(overall), '$.MeanInScopeMargin') AS DOUBLE) AS mean_in_scope_margin
          FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1);"
     ))?;
     let n: i64 = conn.query_row("SELECT count(*) FROM routing_evals", [], |r| r.get(0))?;
@@ -151,13 +151,22 @@ pub fn intent_regressions(conn: &Connection) -> duckdb::Result<Vec<(String, f64,
         .collect()
 }
 
-/// Overall accuracy / OOS-decline / margin trend, oldest→newest:
-/// `(day, accuracy, oos_decline_rate, mean_in_scope_margin)`.
-pub fn overall_trend(conn: &Connection) -> duckdb::Result<Vec<(String, f64, f64, f64)>> {
+/// One row of [`overall_trend`]: `(day, accuracy, oos_decline_rate, mean_in_scope_margin)`.
+/// Each metric is `Option` because an eval file predating a metric carries `None` for it.
+pub type TrendRow = (String, Option<f64>, Option<f64>, Option<f64>);
+
+/// Overall accuracy / OOS-decline / margin trend, oldest→newest. Each metric is `None`
+/// when the eval file predates that field — the `InScope`/OOS metrics were added on
+/// 2026-05-30, so older `overall` objects carry only `Accuracy`. A *missing* metric must
+/// read as **absent**, not `0.0`: coalescing to zero renders "not measured" identically to
+/// a real zero and fabricates a trend (e.g. OOS-decline `0.000 → 0.875` looks like an
+/// improvement that never happened — it was simply unrecorded before). The build reads
+/// these via `json_extract` (not struct-field access), so a corpus where the field is
+/// absent from *every* file yields `NULL` rather than a bind-time error.
+// @ai:invariant overall_trend surfaces a metric absent from an older eval file as None, never 0.0, so a missing metric cannot be read as a genuine zero [T:test conf:0.9 src:ix_duck::routing::tests::missing_metric_reads_as_none_not_zero]
+pub fn overall_trend(conn: &Connection) -> duckdb::Result<Vec<TrendRow>> {
     let mut stmt = conn.prepare(
-        "SELECT day,
-                coalesce(accuracy, 0), coalesce(oos_decline_rate, 0),
-                coalesce(mean_in_scope_margin, 0)
+        "SELECT day, accuracy, oos_decline_rate, mean_in_scope_margin
          FROM routing_overall ORDER BY generated_at",
     )?;
     stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
@@ -210,8 +219,37 @@ mod tests {
         build_routing_evals(&conn, &fixtures()).unwrap();
         let trend = overall_trend(&conn).unwrap();
         assert_eq!(trend.len(), 2);
-        // OOS decline rate fell 1.0 → 0.5 (a real maintain signal).
-        assert!((trend[0].2 - 1.0).abs() < 1e-9 && (trend[1].2 - 0.5).abs() < 1e-9);
+        // OOS decline rate fell 1.0 → 0.5 (a real maintain signal); both runs record it.
+        assert!(
+            (trend[0].2.unwrap() - 1.0).abs() < 1e-9 && (trend[1].2.unwrap() - 0.5).abs() < 1e-9
+        );
+    }
+
+    /// An eval file predating the 2026-05-30 schema has no OOS/margin fields. A corpus of
+    /// only such files would, with struct-field access, fail at bind time
+    /// ("Could not find key"); via `json_extract` it builds, and the absent metrics read as
+    /// `None` (not measured), NOT `0.0` — else a missing metric fakes a trend (the real-data
+    /// bug: oos_decline showed 0.000→0.875, an "improvement" that was just the field being
+    /// added). Guards both the crash and the false-zero.
+    #[test]
+    fn missing_metric_reads_as_none_not_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("routing-eval-2026-05-11.json"),
+            r#"{"generatedAt":"2026-05-11T00:00:00Z","schemaVersion":"1","totalPrompts":2,
+                "overall":{"Accuracy":0.875,"Correct":7,"Total":8,"UnmatchedFallthrough":0},
+                "perIntent":{"skill.scaleinfo":{"Support":2,"Precision":0.9,"Recall":0.9,"F1":0.9,"Status":"ok"}},
+                "prompts":[]}"#,
+        )
+        .unwrap();
+        let conn = crate::open_bench().unwrap();
+        build_routing_evals(&conn, dir.path()).unwrap();
+        let trend = overall_trend(&conn).unwrap();
+        assert_eq!(trend.len(), 1);
+        let (_, acc, oos, margin) = &trend[0];
+        assert_eq!(*acc, Some(0.875), "accuracy is present");
+        assert_eq!(*oos, None, "absent OOS-decline must be None, not 0.0");
+        assert_eq!(*margin, None, "absent margin must be None, not 0.0");
     }
 
     #[test]
