@@ -246,17 +246,34 @@ pub fn evaluate(
         },
     ];
     // --- convergence lens (loops) + drift lens (ood) ---
+    // KNOWN LIMITATION (Phase 1): the soft lenses aggregate over the *whole* ledger /
+    // embedding history, not just the iteration under evaluation. Scoping them to the
+    // current iteration needs the iteration-correlation key (loop_id / commit_sha,
+    // never wall-clock) the panel logged for Phase 3 — deferred there, not half-built.
+    //
+    // A supplied-but-empty/dormant lens is *unknown* (None), NOT a positive signal:
+    // reading "no data" as converging / in-distribution would be a green light from
+    // no evidence — the opposite of fail-closed (and, when required, must escalate).
     let converging = match inputs.loops_dir {
         Some(dir) => {
             crate::loops::build_loop_iterations(conn, dir)?;
-            Some(crate::loops::oscillating_loops(conn)?.is_empty())
+            // loop_summary excludes seed/test rows → empty means no real iterations yet.
+            if crate::loops::loop_summary(conn)?.is_empty() {
+                None
+            } else {
+                Some(crate::loops::oscillating_loops(conn)?.is_empty())
+            }
         }
         None => None,
     };
     let drifting = match inputs.query_embeddings_dir {
         Some(dir) => {
-            crate::ood::build_query_embeddings(conn, dir)?;
-            Some(!crate::ood::flag_ood(conn, cfg.ood_k, cfg.ood_threshold)?.is_empty())
+            // Need ≥2 queries to score nearest-neighbour density; fewer → unknown.
+            if crate::ood::build_query_embeddings(conn, dir)? < 2 {
+                None
+            } else {
+                Some(!crate::ood::flag_ood(conn, cfg.ood_k, cfg.ood_threshold)?.is_empty())
+            }
         }
         None => None,
     };
@@ -559,6 +576,50 @@ mod tests {
         let v = evaluate(&conn, &MaintainConfig::default(), &i).unwrap();
         assert_eq!(v.status, "T", "{}", v.reason);
         assert_eq!(v.converging, Some(true));
+    }
+
+    #[test]
+    fn dormant_lens_is_unknown_not_a_green_light() {
+        // A supplied loops dir with only the seed row → converging is unknown (None),
+        // not Some(true). Advisory → verdict still T; but required → escalates to U.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("__seed__.iterations.jsonl"),
+            "{\"loop_id\":\"__seed__\",\"domain\":\"__seed__\",\"iteration\":0,\"ts\":\"1970-01-01T00:00:00Z\",\"oracle_status\":\"ok\",\"metric_name\":\"none\",\"metric_before\":0.0,\"metric_after\":0.0,\"metric_delta\":0.0,\"verdict\":\"improved\",\"worst_item\":\"none\",\"artifact_edited\":\"none\",\"commit_sha\":\"none\",\"roundtrip_passed\":false}\n",
+        )
+        .unwrap();
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let mk = |cfg: &MaintainConfig| {
+            let i = MaintainInputs {
+                hits_path: &hits,
+                corpus_dir: &corpus,
+                loops_dir: Some(dir.path()),
+                query_embeddings_dir: None,
+                run_at: "2026-06-16T00:00:00Z",
+            };
+            evaluate(&conn, cfg, &i).unwrap()
+        };
+        let advisory = mk(&MaintainConfig::default());
+        assert_eq!(
+            advisory.converging, None,
+            "seed-only is unknown, not converging"
+        );
+        assert_eq!(
+            advisory.status, "T",
+            "advisory dormant lens doesn't block: {}",
+            advisory.reason
+        );
+        let required = mk(&MaintainConfig {
+            require_loops: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            required.status, "U",
+            "required dormant lens escalates: {}",
+            required.reason
+        );
     }
 
     #[test]

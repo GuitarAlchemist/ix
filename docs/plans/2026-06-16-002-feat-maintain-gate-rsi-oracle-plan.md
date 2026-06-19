@@ -155,6 +155,10 @@ This proves the anti-Goodhart conjunction before scaling.
       new MCP tool — **open question**, see below).
 - [ ] Document the loop integration: an RSI loop calls `gate` after each iteration;
       exit 1 → reject + revert, exit 2 → human escalate, exit 0 → propose-merge.
+- [ ] **Scope soft lenses to the current iteration** via the iteration-correlation
+      key (loop_id / commit_sha, never wall-clock). Phase 1 aggregates convergence +
+      drift over the *whole* history (known limitation, flagged in `maintain.rs`);
+      this is where it gets fixed, alongside the same key the panel required.
 
 ### Phase 4 — Freeze (one-way door)
 - [ ] Freeze contract schema + exit-code semantics only here. Log sign-off.
