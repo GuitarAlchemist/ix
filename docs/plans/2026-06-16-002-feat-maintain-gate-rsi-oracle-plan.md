@@ -155,15 +155,40 @@ This proves the anti-Goodhart conjunction before scaling.
 - Deferred to Phase 3 (with the first reader, per the chatbot-contract precedent):
   the `provenance{}`/freeze machinery + constitution checksum (v2).
 
-### Phase 3 — Wire consumers
-- [ ] Demerzel governance reads the verdict (existing governance-check path or a
-      new MCP tool — **open question**, see below).
-- [ ] Document the loop integration: an RSI loop calls `gate` after each iteration;
-      exit 1 → reject + revert, exit 2 → human escalate, exit 0 → propose-merge.
-- [ ] **Scope soft lenses to the current iteration** via the iteration-correlation
-      key (loop_id / commit_sha, never wall-clock). Phase 1 aggregates convergence +
-      drift over the *whole* history (known limitation, flagged in `maintain.rs`);
-      this is where it gets fixed, alongside the same key the panel required.
+### Phase 3 — Wire consumers  ⚠ RE-SCOPED (panel 2026-06-18, Codex + architecture-strategist, unanimous **No-Go as scoped**)
+
+The original single Phase 3 co-scoped write-isolation with authoritative auto-revert,
+over a loop that has **never produced a real iteration row**. Both reviewers
+independently rejected this: it's governance-over-nothing (`feedback_sentinels_void`),
+it validates the only genuinely new code (iteration-correlation) on synthetic shapes
+(`feedback_tests_must_use_real_data_shapes`), and shipping authority before enforced
+write-isolation is the exact DGM failure mode the gate exists to prevent. Split into:
+
+#### Phase 3a — Make the pixel right: one real iteration + advisory consumption
+- [ ] **Drive ONE real, non-sentinel GA `/auto-optimize` iteration row** through the
+      live loop path (the gating prerequisite — *do this first*). Cross-repo / GA-side;
+      cannot be fabricated.
+- [ ] Extend the gate inputs with `loop_id` + `commit_sha`; **fail-closed on absent,
+      duplicate, dirty-worktree, stale, or non-matching keys**, and **verify
+      `commit_sha` ix-side against actual git state** (an unverified key minted by the
+      judged loop is as forgeable as the self-declared metric we already rejected).
+- [ ] Scope the soft lenses (convergence, drift) to that iteration via the key —
+      fixes the Phase-1 whole-history limitation, validated against the real row.
+- [ ] **Advisory consumption only:** GA loop calls the ix gate CLI *synchronously*
+      after writing the row + running the executable oracles; verdict → JSON-on-disk;
+      Demerzel reads it via its existing governance pipeline; **block unattended
+      promotion on U/D/F/C, but NO auto-revert.** (Q1 disk-first, Q2 loop-owned sync
+      call, Q3 advisory — all unanimous.)
+
+#### Phase 3b — Authority (separate, gated on enforced write-isolation)
+- [ ] Real isolation boundary (harness-owned writer + read-only proposer view;
+      hash-chained / signed rows). Post-hoc hashing is audit evidence, **not**
+      isolation. This is the *primary deliverable*, not a checkbox.
+- [ ] Only then: authoritative behaviour (auto-revert on F/C). MCP tool only if a
+      second consumer demands it.
+
+**Go condition (flips No-Go → Go):** one genuine `/auto-optimize` iteration row exists
+and the ix gate has consumed that exact `loop_id`/`commit_sha` advisory end-to-end.
 
 ### Phase 4 — Freeze (one-way door)
 - [ ] Freeze contract schema + exit-code semantics only here. Log sign-off.
