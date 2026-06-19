@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "maintain-gate-verdict-v0.1",
+  "title": "maintain-gate verdict",
+  "description": "One fail-closed RSI evaluation verdict per self-improvement iteration, fusing the DuckDB+IX maintain lenses. Producer: ix-duck ix_maintain_gate. Append-only at state/thinking-machine/maintain-gate.jsonl. v0.1 draft — consumers MUST ignore unknown keys.",
+  "type": "object",
+  "required": ["schema_version", "run_at", "status", "decision", "signals", "evidence", "reason"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "type": "string", "const": "maintain-gate.v0.1" },
+    "run_at": { "type": "string", "format": "date-time", "description": "RFC3339 timestamp." },
+    "status": {
+      "type": "string",
+      "enum": ["T", "P", "U", "D", "F", "C"],
+      "description": "Hexavalent: T accept | P accept-w/-flag | U escalate | D escalate(disputed) | F reject | C reject+alarm(reward-hack)."
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["accept", "reject", "escalate"],
+      "description": "Coarse action: T/P->accept, F/C->reject, U/D->escalate. Exit code: accept=0, reject=1, escalate=2."
+    },
+    "metric_delta": {
+      "type": "number",
+      "description": "Externally-derived yield delta (later half - earlier half, split by ts_ms). Omitted if unknown. NEVER an agent-declared delta."
+    },
+    "metric_up": { "type": "boolean", "description": "metric_delta >= min_metric_delta. Omitted if unknown." },
+    "guardrail_held": { "type": "boolean", "description": "Chatbot regression gate: pass=true, regression=false. Omitted if inconclusive." },
+    "converging": { "type": "boolean", "description": "Loops not oscillating. Omitted if the lens was not consulted or is dormant (no real data)." },
+    "drifting": { "type": "boolean", "description": "Queries out-of-distribution. Omitted if not consulted or <2 queries." },
+    "signals": {
+      "type": "array",
+      "description": "One entry per lens consulted.",
+      "items": { "$ref": "#/definitions/signal" }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Input provenance — the inputs the verdict was computed from, content-hashed so an audit can detect a swapped input.",
+      "items": { "$ref": "#/definitions/evidence" }
+    },
+    "reason": { "type": "string", "description": "Human-readable one-line justification." }
+  },
+  "definitions": {
+    "signal": {
+      "type": "object",
+      "required": ["lens", "detail"],
+      "additionalProperties": true,
+      "properties": {
+        "lens": { "type": "string", "description": "metric | guardrail | convergence | drift." },
+        "ok": {
+          "type": ["boolean", "null"],
+          "description": "true=healthy, false=failed, null=no signal (a required null caps the verdict at U)."
+        },
+        "detail": { "type": "string" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind", "source", "hash"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "type": "string", "description": "e.g. metric | guardrail-baseline." },
+        "source": { "type": "string", "description": "Path/identifier of the evidence input." },
+        "hash": { "type": "string", "description": "Content hash (e.g. fnv1a64:...) or 'absent'." }
+      }
+    }
+  }
+}

@@ -622,6 +622,39 @@ mod tests {
         );
     }
 
+    /// Binds the emitted verdict to `docs/contracts/maintain-gate.contract.md`: the
+    /// required keys + the status enum must match the schema, so code/contract drift
+    /// is caught here rather than by a consumer.
+    #[test]
+    fn verdict_conforms_to_contract() {
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let v = evaluate(&conn, &MaintainConfig::default(), &inputs(&hits, &corpus)).unwrap();
+        let j: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&v).unwrap()).unwrap();
+        for key in [
+            "schema_version",
+            "run_at",
+            "status",
+            "decision",
+            "signals",
+            "evidence",
+            "reason",
+        ] {
+            assert!(j.get(key).is_some(), "contract requires key `{key}`");
+        }
+        assert_eq!(j["schema_version"], "maintain-gate.v0.1");
+        assert!(["T", "P", "U", "D", "F", "C"].contains(&j["status"].as_str().unwrap()));
+        assert!(["accept", "reject", "escalate"].contains(&j["decision"].as_str().unwrap()));
+        // Each evidence entry carries provenance (kind/source/hash).
+        for e in j["evidence"].as_array().unwrap() {
+            for k in ["kind", "source", "hash"] {
+                assert!(e.get(k).is_some(), "evidence entry needs `{k}`");
+            }
+        }
+    }
+
     #[test]
     fn ledger_append_is_additive() {
         let conn = crate::open_bench().unwrap();
