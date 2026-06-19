@@ -193,6 +193,26 @@ and the ix gate has consumed that exact `loop_id`/`commit_sha` advisory end-to-e
 ### Phase 4 — Freeze (one-way door)
 - [ ] Freeze contract schema + exit-code semantics only here. Log sign-off.
 
+**APoSD interface checklist (resolve BEFORE freeze — these are freeze-blockers, not
+bugs today).** From an *A Philosophy of Software Design* pass on the `MaintainVerdict`
+surface (2026-06-19). The wire format is the one-way door, so its consistency/typing
+hazards are cheapest to fix now and most expensive after a Demerzel consumer depends on
+both representations:
+- [ ] **P1 — Single source of truth for the decision.** `status` (T/P/U/D/F/C),
+  `decision` (accept/reject/escalate), and `exit_code(status)` encode the same fact three
+  times; `metric_up`/`converging`/`drifting` duplicate `signals[]`. Declare `status`
+  authoritative and make `decision`/`exit_code` formally *derived* (method or
+  documented-as-derived), so the two can never disagree on the wire.
+- [ ] **P1 — Type the status.** Replace `status: String` / `decision: String` with a
+  serialized `enum Status { T, P, U, D, F, C }` so illegal states are unrepresentable at
+  compile time (the `verdict_conforms_to_contract` runtime check then becomes redundant).
+- [ ] **P2 — `run_at` is output metadata, not input.** Move it out of `MaintainInputs`
+  (it isn't computed from); stamp it at the output step. Make `schema_version` a `const`.
+- [x] **Affirmed deep/minimal (no change):** `Evidence`, `Signal` (incl. `ok: Option<bool>`
+  tri-state), `IterationScope`; `evaluate` is single-responsibility and one-sentence
+  describable. (Implementation rough edges — multi-agent-safe provenance + the
+  `provenance_failure` extraction — were addressed in #123, separate from the freeze.)
+
 ## Instrument before you ship
 
 - **Baseline:** none today (no fused verdict exists).
