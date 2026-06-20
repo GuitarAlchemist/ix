@@ -648,6 +648,102 @@ pub fn maintain_trend(
     })
 }
 
+/// One lens verdict, flattened for the scorecard snapshot — the tri-state `ok` of a
+/// [`Signal`] rendered as a coarse `"ok" | "bad" | "unknown"` string so a dashboard reads
+/// it without re-encoding `Option<bool>`.
+#[derive(Debug, Clone, Serialize)]
+pub struct SnapshotSignal {
+    pub lens: String,
+    pub status: String,
+    pub detail: String,
+}
+
+/// A **current-verdict** snapshot in the `ga/state/quality` scorecard shape: the latest
+/// hexavalent maintain verdict plus a [`maintain_trend`] rollup, so a dashboard reads ONE
+/// file instead of re-deriving the verdict from the append-only ledger. Carries a freshness
+/// `timestamp` (a stale snapshot must never read as green) and a coarse `oracle_status`
+/// alongside the raw hexavalent `status` (richer than the scorecard's three states).
+///
+/// Phase A writes this to the IX tree (**formats-not-coupling** — no GA-tree write here);
+/// Phase B federates it into `ga/state/quality`. Advisory until Phase 3b.
+#[derive(Debug, Clone, Serialize)]
+pub struct VerdictSnapshot {
+    pub schema_version: String,
+    /// Freshness — RFC3339 (mirrors `run_at`). Consumers compare this so stale never reads green.
+    pub timestamp: String,
+    /// Scorecard oracle status: `ok | warn | error`, mapped from the hexavalent verdict.
+    pub oracle_status: String,
+    /// The raw hexavalent verdict (T/P/U/D/F/C) — richer than `oracle_status`.
+    pub status: String,
+    /// `accept | reject | escalate`.
+    pub decision: String,
+    /// Scorecard metric: the externally-derived yield delta (`0.0` when no metric evidence —
+    /// the verdict's own `signals`/`oracle_status` carry the "no evidence" nuance).
+    pub metric_value: f64,
+    pub summary: String,
+    /// Per-signal lens verdicts (metric / guardrail / convergence / drift / provenance).
+    pub signals: Vec<SnapshotSignal>,
+    /// Convergence rollup over the append-only verdict ledger (reuses [`maintain_trend`]).
+    pub maintain_trend: TrendSummary,
+}
+
+/// Map the hexavalent verdict to the scorecard's coarse oracle status: accept→`ok`,
+/// accept-with-flags / escalate→`warn`, reject→`error`.
+fn oracle_status(hex: &str) -> &'static str {
+    match hex {
+        "T" => "ok",
+        "P" | "U" | "D" => "warn",
+        "F" | "C" => "error",
+        _ => "warn",
+    }
+}
+
+/// Build a scorecard-shaped [`VerdictSnapshot`] from a fused verdict + a ledger trend rollup.
+/// Pure (no I/O): the caller supplies the trend (via [`maintain_trend`]) and writes the
+/// result with [`write_snapshot_atomic`].
+// @ai:invariant build_snapshot carries the latest hexavalent verdict in a scorecard-shaped envelope (timestamp + oracle_status + metric_value + per-signal) plus a maintain_trend rollup [T:test conf:0.9 src:ix_duck::maintain::tests::snapshot_is_scorecard_shaped]
+pub fn build_snapshot(verdict: &MaintainVerdict, trend: &TrendSummary) -> VerdictSnapshot {
+    let signals = verdict
+        .signals
+        .iter()
+        .map(|s| SnapshotSignal {
+            lens: s.lens.clone(),
+            status: match s.ok {
+                Some(true) => "ok",
+                Some(false) => "bad",
+                None => "unknown",
+            }
+            .to_string(),
+            detail: s.detail.clone(),
+        })
+        .collect();
+    VerdictSnapshot {
+        schema_version: "maintain-verdict-snapshot.v0.1".into(),
+        timestamp: verdict.run_at.clone(),
+        oracle_status: oracle_status(&verdict.status).into(),
+        status: verdict.status.clone(),
+        decision: verdict.decision.clone(),
+        metric_value: verdict.metric_delta.unwrap_or(0.0),
+        summary: verdict.reason.clone(),
+        signals,
+        maintain_trend: trend.clone(),
+    }
+}
+
+/// Write the snapshot **atomically** (temp file in the same dir + rename) so a concurrent
+/// reader never sees a half-written scorecard. `rename` is atomic on the same filesystem and
+/// replaces an existing target on both Unix and Windows.
+pub fn write_snapshot_atomic(snapshot: &VerdictSnapshot, path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(snapshot).map_err(std::io::Error::other)?;
+    // Temp lives beside the target so the rename stays on one filesystem (atomic).
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json.as_bytes())?;
+    std::fs::rename(&tmp, path)
+}
+
 #[cfg(all(test, feature = "duck"))]
 mod tests {
     use super::*;
@@ -687,6 +783,57 @@ mod tests {
         assert_eq!(v.decision, "accept");
         assert_eq!(exit_code(&v.status), 0);
         assert!(v.metric_delta.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn snapshot_is_scorecard_shaped() {
+        let conn = crate::open_bench().unwrap();
+        let hits = fx("hits_up.jsonl");
+        let corpus = fx("corpus-pass");
+        let v = evaluate(&conn, &MaintainConfig::default(), &inputs(&hits, &corpus)).unwrap();
+        assert_eq!(v.status, "T", "precondition: a clean accept");
+
+        let trend = TrendSummary {
+            total: 3,
+            accepts: 2,
+            ..Default::default()
+        };
+        let snap = build_snapshot(&v, &trend);
+
+        // Scorecard envelope: freshness timestamp mirrors run_at, coarse oracle status maps
+        // from the hexavalent verdict, and the raw hexavalent verdict is preserved.
+        assert_eq!(snap.timestamp, v.run_at, "freshness stamp = run_at");
+        assert_eq!(snap.oracle_status, "ok", "T maps to ok");
+        assert_eq!(snap.status, "T");
+        assert_eq!(snap.decision, "accept");
+        assert!(snap.metric_value > 0.0, "metric carried into scorecard");
+        assert!(!snap.summary.is_empty());
+        // Per-signal lens verdicts are carried (metric + guardrail at minimum).
+        assert!(snap.signals.iter().any(|s| s.lens == "metric" && s.status == "ok"));
+        assert!(snap.signals.iter().any(|s| s.lens == "guardrail"));
+        // The maintain_trend rollup rides along.
+        assert_eq!(snap.maintain_trend.total, 3);
+
+        // A reject maps to the error oracle state (stale/red never reads green).
+        let vr = evaluate(
+            &conn,
+            &MaintainConfig::default(),
+            &inputs(&hits, &fx("corpus-regression")),
+        )
+        .unwrap();
+        assert_eq!(vr.status, "C");
+        assert_eq!(build_snapshot(&vr, &trend).oracle_status, "error");
+
+        // Atomic write round-trips (into a fresh, not-yet-existing subdir) and the bytes
+        // parse as the scorecard JSON.
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("maintain-verdict").join("last.json");
+        write_snapshot_atomic(&snap, &out).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+        assert_eq!(parsed["oracle_status"], "ok");
+        assert_eq!(parsed["status"], "T");
+        assert!(parsed["timestamp"].is_string());
     }
 
     #[test]
