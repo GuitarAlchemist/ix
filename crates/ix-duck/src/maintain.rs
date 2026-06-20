@@ -42,6 +42,7 @@ use duckdb::Connection;
 use serde::Serialize;
 
 use crate::chatbot;
+use crate::source;
 
 /// Errors from the maintain gate.
 #[derive(Debug)]
@@ -49,8 +50,10 @@ pub enum MaintainError {
     Io(std::io::Error),
     Duck(duckdb::Error),
     Chatbot(chatbot::ChatbotError),
-    Loops(crate::loops::LoopError),
-    Ood(crate::ood::OodError),
+    /// Any artifact-source lens error. The convergence (loops) and drift (ood) lenses now
+    /// share [`source::SourceError`], so they collapse into one variant — distinct
+    /// `From<source::SourceError>` impls per lens would be a conflicting-impl error.
+    Source(source::SourceError),
 }
 impl std::fmt::Display for MaintainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -58,8 +61,7 @@ impl std::fmt::Display for MaintainError {
             MaintainError::Io(e) => write!(f, "maintain I/O error: {e}"),
             MaintainError::Duck(e) => write!(f, "duckdb error: {e}"),
             MaintainError::Chatbot(e) => write!(f, "guardrail lens error: {e}"),
-            MaintainError::Loops(e) => write!(f, "convergence lens error: {e}"),
-            MaintainError::Ood(e) => write!(f, "drift lens error: {e}"),
+            MaintainError::Source(e) => write!(f, "lens error: {e}"),
         }
     }
 }
@@ -79,14 +81,9 @@ impl From<chatbot::ChatbotError> for MaintainError {
         MaintainError::Chatbot(e)
     }
 }
-impl From<crate::loops::LoopError> for MaintainError {
-    fn from(e: crate::loops::LoopError) -> Self {
-        MaintainError::Loops(e)
-    }
-}
-impl From<crate::ood::OodError> for MaintainError {
-    fn from(e: crate::ood::OodError) -> Self {
-        MaintainError::Ood(e)
+impl From<source::SourceError> for MaintainError {
+    fn from(e: source::SourceError) -> Self {
+        MaintainError::Source(e)
     }
 }
 

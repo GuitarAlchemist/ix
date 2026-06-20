@@ -13,110 +13,50 @@
 //! analyses below exclude seed/test domains so a fresh checkout reads as "no signal"
 //! rather than a phantom. Absent directory → empty tables (never an error).
 
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use duckdb::Connection;
 
-/// Errors from the loop lens: directory I/O vs DuckDB.
-#[derive(Debug)]
-pub enum LoopError {
-    Io(std::io::Error),
-    Duck(duckdb::Error),
-}
-impl std::fmt::Display for LoopError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LoopError::Io(e) => write!(f, "loop-iterations I/O error: {e}"),
-            LoopError::Duck(e) => write!(f, "duckdb error: {e}"),
-        }
-    }
-}
-impl std::error::Error for LoopError {}
-impl From<std::io::Error> for LoopError {
-    fn from(e: std::io::Error) -> Self {
-        LoopError::Io(e)
-    }
-}
-impl From<duckdb::Error> for LoopError {
-    fn from(e: duckdb::Error) -> Self {
-        LoopError::Duck(e)
-    }
-}
+use crate::source::{self, Col, Files};
 
-/// `*.iterations.jsonl` files in `loops_dir` (sorted). Absent dir → empty (skip);
-/// any other read error on a present dir → surfaced.
-fn ledger_files(loops_dir: &Path) -> Result<Vec<PathBuf>, LoopError> {
-    let rd = match std::fs::read_dir(loops_dir) {
-        Ok(r) => r,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let mut out = Vec::new();
-    for entry in rd {
-        let p = entry?.path();
-        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
-            if n.ends_with(".iterations.jsonl") {
-                out.push(p);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
-}
+/// Errors from the loop lens — the shared artifact-source error
+/// ([`crate::source::SourceError`]); aliased so the lens's public API keeps its name.
+pub type LoopError = source::SourceError;
 
-/// DuckDB list literal of POSIX-slashed, quote-escaped paths.
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| {
-            format!(
-                "'{}'",
-                p.to_string_lossy().replace('\\', "/").replace('\'', "''")
-            )
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
-}
+/// `loop_iterations` column spec. Every field is top-level in GA's JSONL row, so each is a
+/// flat [`Col::direct`] projection (`TRY_CAST` for numerics/booleans → NULL, never an error,
+/// on a bad/absent value). The deep artifact-source path owns the safe read + empty-fallback.
+const LOOP_SPEC: &[Col] = &[
+    Col::direct("loop_id", "VARCHAR", "loop_id::VARCHAR"),
+    Col::direct("domain", "VARCHAR", "domain::VARCHAR"),
+    Col::direct("iteration", "BIGINT", "TRY_CAST(iteration AS BIGINT)"),
+    Col::direct("ts", "VARCHAR", "ts::VARCHAR"),
+    Col::direct("oracle_status", "VARCHAR", "oracle_status::VARCHAR"),
+    Col::direct("metric_name", "VARCHAR", "metric_name::VARCHAR"),
+    Col::direct("metric_before", "DOUBLE", "TRY_CAST(metric_before AS DOUBLE)"),
+    Col::direct("metric_after", "DOUBLE", "TRY_CAST(metric_after AS DOUBLE)"),
+    Col::direct("metric_delta", "DOUBLE", "TRY_CAST(metric_delta AS DOUBLE)"),
+    Col::direct("verdict", "VARCHAR", "verdict::VARCHAR"),
+    Col::direct("worst_item", "VARCHAR", "worst_item::VARCHAR"),
+    Col::direct("artifact_edited", "VARCHAR", "artifact_edited::VARCHAR"),
+    Col::direct("commit_sha", "VARCHAR", "commit_sha::VARCHAR"),
+    Col::direct("roundtrip_passed", "BOOLEAN", "TRY_CAST(roundtrip_passed AS BOOLEAN)"),
+];
 
-const COLS: &str = "loop_id VARCHAR, domain VARCHAR, iteration BIGINT, ts VARCHAR, \
-                    oracle_status VARCHAR, metric_name VARCHAR, metric_before DOUBLE, \
-                    metric_after DOUBLE, metric_delta DOUBLE, verdict VARCHAR, \
-                    worst_item VARCHAR, artifact_edited VARCHAR, commit_sha VARCHAR, \
-                    roundtrip_passed BOOLEAN";
+fn is_iterations_jsonl(name: &str) -> bool {
+    name.ends_with(".iterations.jsonl")
+}
 
 /// Build `loop_iterations` (one row per loop × iteration). Returns the row count
 /// (including any seed/test rows); 0 when the directory is absent/empty.
 // @ai:invariant build_loop_iterations creates loop_iterations with one row per JSONL line across every *.iterations.jsonl in loops_dir [T:test conf:0.9 src:ix_duck::loops::tests::rows_one_per_iteration]
 pub fn build_loop_iterations(conn: &Connection, loops_dir: &Path) -> Result<usize, LoopError> {
-    let files = ledger_files(loops_dir)?;
-    if files.is_empty() {
-        conn.execute_batch(&format!(
-            "CREATE OR REPLACE TABLE loop_iterations ({COLS});"
-        ))?;
-        return Ok(0);
-    }
-    let list = sql_list(&files);
-    conn.execute_batch(&format!(
-        "CREATE OR REPLACE TABLE loop_iterations AS
-         SELECT loop_id::VARCHAR              AS loop_id,
-                domain::VARCHAR               AS domain,
-                TRY_CAST(iteration AS BIGINT) AS iteration,
-                ts::VARCHAR                   AS ts,
-                oracle_status::VARCHAR        AS oracle_status,
-                metric_name::VARCHAR          AS metric_name,
-                TRY_CAST(metric_before AS DOUBLE) AS metric_before,
-                TRY_CAST(metric_after  AS DOUBLE) AS metric_after,
-                TRY_CAST(metric_delta  AS DOUBLE) AS metric_delta,
-                verdict::VARCHAR              AS verdict,
-                worst_item::VARCHAR           AS worst_item,
-                artifact_edited::VARCHAR      AS artifact_edited,
-                commit_sha::VARCHAR           AS commit_sha,
-                TRY_CAST(roundtrip_passed AS BOOLEAN) AS roundtrip_passed
-         FROM read_json_auto({list}, union_by_name=true, sample_size=-1);"
-    ))?;
-    let n: i64 = conn.query_row("SELECT count(*) FROM loop_iterations", [], |r| r.get(0))?;
-    Ok(n as usize)
+    source::materialize(
+        conn,
+        "loop_iterations",
+        Files { dir: loops_dir, matches: is_iterations_jsonl },
+        LOOP_SPEC,
+    )
 }
 
 /// Real (non-seed, non-test) rows only — the predicate every analysis shares so a
@@ -223,6 +163,7 @@ pub fn loop_summary(conn: &Connection) -> duckdb::Result<Vec<LoopSummary>> {
 #[cfg(all(test, feature = "duck"))]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn fixtures() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/loops")
