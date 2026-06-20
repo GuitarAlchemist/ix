@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("state/quality/maintain-verdict/last.json"));
+        .unwrap_or_else(|| PathBuf::from("state/quality/maintain-gate/last.json"));
 
     let ga = ga_root();
     let ga_quality = ga.join("state/quality");

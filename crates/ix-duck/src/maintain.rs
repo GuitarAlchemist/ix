@@ -658,30 +658,43 @@ pub struct SnapshotSignal {
     pub detail: String,
 }
 
-/// A **current-verdict** snapshot in the `ga/state/quality` scorecard shape: the latest
-/// hexavalent maintain verdict plus a [`maintain_trend`] rollup, so a dashboard reads ONE
-/// file instead of re-deriving the verdict from the append-only ledger. Carries a freshness
-/// `timestamp` (a stale snapshot must never read as green) and a coarse `oracle_status`
-/// alongside the raw hexavalent `status` (richer than the scorecard's three states).
+/// A **current-verdict** snapshot in GA's canonical dashboard-envelope shape
+/// (`ga/docs/contracts/quality-snapshot.schema.json`): the GA-required envelope fields
+/// (`domain`/`emitted_at`/`metric_name`/`metric_value`/`oracle_status`/`summary`) PLUS the
+/// maintain-specific fused verdict (`advisory`/`status`/`decision`/`signals`/`maintain_trend`),
+/// carried as additive pass-through fields the envelope permits. Holds the latest hexavalent
+/// verdict plus a [`maintain_trend`] rollup, so a dashboard reads ONE file instead of
+/// re-deriving the verdict from the append-only ledger. `emitted_at` is the freshness stamp (a
+/// stale snapshot must never read green); `oracle_status` is the coarse traffic-light, `status`
+/// the richer hexavalent verdict.
 ///
 /// Phase A writes this to the IX tree (**formats-not-coupling** — no GA-tree write here);
-/// Phase B federates it into `ga/state/quality`. Advisory until Phase 3b.
+/// Phase B federates it into `ga/state/quality/maintain-gate`. **Advisory until Phase 3b**.
 #[derive(Debug, Clone, Serialize)]
 pub struct VerdictSnapshot {
     pub schema_version: String,
-    /// Freshness — RFC3339 (mirrors `run_at`). Consumers compare this so stale never reads green.
-    pub timestamp: String,
-    /// Scorecard oracle status: `ok | warn | error`, mapped from the hexavalent verdict.
-    pub oracle_status: String,
-    /// The raw hexavalent verdict (T/P/U/D/F/C) — richer than `oracle_status`.
-    pub status: String,
-    /// `accept | reject | escalate`.
-    pub decision: String,
-    /// Scorecard metric: the externally-derived yield delta (`0.0` when no metric evidence —
-    /// the verdict's own `signals`/`oracle_status` carry the "no evidence" nuance).
+    /// Producer slug — the GA envelope `domain` (lower-kebab). Matches the registry domain + dir.
+    pub domain: String,
+    /// Freshness — RFC3339 (mirrors `run_at`). The GA envelope's `emitted_at`; consumers compare
+    /// it so stale never reads green.
+    pub emitted_at: String,
+    /// Headline metric identifier (GA envelope `metric_name`).
+    pub metric_name: String,
+    /// Headline metric value (GA envelope) — the externally-derived yield delta (`0.0` when no
+    /// metric evidence; the `signals`/`oracle_status` carry the "no evidence" nuance).
     pub metric_value: f64,
+    /// Traffic-light state: `ok | warn | error`, mapped from the hexavalent verdict (GA envelope).
+    pub oracle_status: String,
+    /// One-line human summary (GA envelope).
     pub summary: String,
-    /// Per-signal lens verdicts (metric / guardrail / convergence / drift / provenance).
+    /// Non-binding marker — `true` until IX Phase-3b makes the verdict gating (maintain-specific).
+    pub advisory: bool,
+    /// The raw hexavalent verdict (T/P/U/D/F/C) — richer than `oracle_status` (maintain-specific).
+    pub status: String,
+    /// `accept | reject | escalate` (maintain-specific).
+    pub decision: String,
+    /// Per-signal lens verdicts — locked sub-signal keys (metric / guardrail / convergence /
+    /// drift / provenance). The GA-readable cross-signal contract surface.
     pub signals: Vec<SnapshotSignal>,
     /// Convergence rollup over the append-only verdict ledger (reuses [`maintain_trend`]).
     pub maintain_trend: TrendSummary,
@@ -698,10 +711,10 @@ fn oracle_status(hex: &str) -> &'static str {
     }
 }
 
-/// Build a scorecard-shaped [`VerdictSnapshot`] from a fused verdict + a ledger trend rollup.
+/// Build a GA-envelope-shaped [`VerdictSnapshot`] from a fused verdict + a ledger trend rollup.
 /// Pure (no I/O): the caller supplies the trend (via [`maintain_trend`]) and writes the
 /// result with [`write_snapshot_atomic`].
-// @ai:invariant build_snapshot carries the latest hexavalent verdict in a scorecard-shaped envelope (timestamp + oracle_status + metric_value + per-signal) plus a maintain_trend rollup [T:test conf:0.9 src:ix_duck::maintain::tests::snapshot_is_scorecard_shaped]
+// @ai:invariant build_snapshot emits GA's canonical dashboard envelope (domain + emitted_at + metric_name + metric_value + oracle_status + summary) plus the maintain verdict (advisory + hexavalent status + per-signal + maintain_trend) [T:test conf:0.9 src:ix_duck::maintain::tests::snapshot_is_scorecard_shaped]
 pub fn build_snapshot(verdict: &MaintainVerdict, trend: &TrendSummary) -> VerdictSnapshot {
     let signals = verdict
         .signals
@@ -719,12 +732,15 @@ pub fn build_snapshot(verdict: &MaintainVerdict, trend: &TrendSummary) -> Verdic
         .collect();
     VerdictSnapshot {
         schema_version: "maintain-verdict-snapshot.v0.1".into(),
-        timestamp: verdict.run_at.clone(),
+        domain: "maintain-gate".into(),
+        emitted_at: verdict.run_at.clone(),
+        metric_name: "maintain_yield_delta".into(),
+        metric_value: verdict.metric_delta.unwrap_or(0.0),
         oracle_status: oracle_status(&verdict.status).into(),
+        summary: verdict.reason.clone(),
+        advisory: true,
         status: verdict.status.clone(),
         decision: verdict.decision.clone(),
-        metric_value: verdict.metric_delta.unwrap_or(0.0),
-        summary: verdict.reason.clone(),
         signals,
         maintain_trend: trend.clone(),
     }
@@ -800,14 +816,18 @@ mod tests {
         };
         let snap = build_snapshot(&v, &trend);
 
-        // Scorecard envelope: freshness timestamp mirrors run_at, coarse oracle status maps
-        // from the hexavalent verdict, and the raw hexavalent verdict is preserved.
-        assert_eq!(snap.timestamp, v.run_at, "freshness stamp = run_at");
+        // GA envelope required fields: domain/emitted_at/metric_name/metric_value/oracle_status/
+        // summary. emitted_at is the freshness stamp; oracle_status maps from the hexavalent verdict.
+        assert_eq!(snap.domain, "maintain-gate");
+        assert_eq!(snap.emitted_at, v.run_at, "freshness stamp = run_at");
+        assert_eq!(snap.metric_name, "maintain_yield_delta");
+        assert!(snap.metric_value > 0.0, "headline metric carried");
         assert_eq!(snap.oracle_status, "ok", "T maps to ok");
+        assert!(!snap.summary.is_empty());
+        // Maintain-specific: advisory marker + raw hexavalent verdict + decision.
+        assert!(snap.advisory, "non-binding until Phase-3b");
         assert_eq!(snap.status, "T");
         assert_eq!(snap.decision, "accept");
-        assert!(snap.metric_value > 0.0, "metric carried into scorecard");
-        assert!(!snap.summary.is_empty());
         // Per-signal lens verdicts are carried (metric + guardrail at minimum).
         assert!(snap.signals.iter().any(|s| s.lens == "metric" && s.status == "ok"));
         assert!(snap.signals.iter().any(|s| s.lens == "guardrail"));
@@ -824,16 +844,18 @@ mod tests {
         assert_eq!(vr.status, "C");
         assert_eq!(build_snapshot(&vr, &trend).oracle_status, "error");
 
-        // Atomic write round-trips (into a fresh, not-yet-existing subdir) and the bytes
-        // parse as the scorecard JSON.
+        // Atomic write round-trips (into a fresh, not-yet-existing subdir) and the bytes parse
+        // as the GA envelope (required fields present).
         let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("maintain-verdict").join("last.json");
+        let out = dir.path().join("maintain-gate").join("last.json");
         write_snapshot_atomic(&snap, &out).unwrap();
         let parsed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+        assert_eq!(parsed["domain"], "maintain-gate");
         assert_eq!(parsed["oracle_status"], "ok");
         assert_eq!(parsed["status"], "T");
-        assert!(parsed["timestamp"].is_string());
+        assert!(parsed["emitted_at"].is_string());
+        assert!(parsed["metric_name"].is_string());
     }
 
     #[test]
