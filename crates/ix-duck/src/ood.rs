@@ -126,14 +126,24 @@ pub fn build_query_embeddings(conn: &Connection, dir: &Path) -> Result<usize, Oo
 /// pair join to the distinct set (≈26× fewer pairs on that day). Each distinct embedding
 /// keeps a representative `query_id`/`intent`.
 ///
-/// Needs ≥2 **distinct** embeddings; fewer → empty. Uses the registered `ix_cosine` UDF,
-/// so dimensions must be uniform (mismatch surfaces as a SQL error).
+/// Needs ≥2 **distinct** embeddings; fewer → empty. `ix_cosine` requires equal-length
+/// vectors, so scoring is restricted to embeddings of the **modal (most common)
+/// dimension**: a mixed-dimension corpus (e.g. a stale 4-dim row beside live 1024-dim
+/// ones) **degrades to the dominant dimension** instead of erroring, and off-dimension
+/// rows are excluded from scoring. A drift lens must never crash the gate on dirty data.
 // @ai:invariant ood_scores dedups by embedding before scoring, so a query repeated >k times is not masked by its own copies — a duplicated out-of-domain query is still flagged [T:test conf:0.9 src:ix_duck::ood::tests::duplicates_dont_mask_ood]
+// @ai:invariant ood_scores restricts scoring to the modal embedding dimension, so a mixed-dimension corpus degrades to the dominant dimension rather than raising a dimension-mismatch SQL error [T:test conf:0.9 src:ix_duck::ood::tests::mixed_dimensions_degrade_to_modal]
 pub fn ood_scores(conn: &Connection, k: i64) -> duckdb::Result<Vec<(String, String, f64)>> {
     let mut stmt = conn.prepare(
-        "WITH distinct_q AS (
+        "WITH modal AS (
+             SELECT len(embedding) AS d FROM query_embeddings
+             GROUP BY 1 ORDER BY count(*) DESC, d LIMIT 1
+         ),
+         distinct_q AS (
              SELECT any_value(query_id) AS query_id, any_value(intent) AS intent, embedding
-             FROM query_embeddings GROUP BY embedding
+             FROM query_embeddings
+             WHERE len(embedding) = (SELECT d FROM modal)
+             GROUP BY embedding
          ),
          pairs AS (
              SELECT a.query_id, a.intent,
@@ -294,6 +304,44 @@ mod tests {
             flagged[0].0.starts_with('b'),
             "the flagged query is the orthogonal one, got {}",
             flagged[0].0
+        );
+    }
+
+    /// A stale row carrying a *different* embedding dimension must NOT crash the lens
+    /// (`ix_cosine` would raise a dimension-mismatch SQL error): it is excluded and the
+    /// modal-dimension corpus scores normally. This is the drift-lens robustness fix —
+    /// a dirty `query-embeddings` dir degrades to advisory rather than failing the gate.
+    #[test]
+    fn mixed_dimensions_degrade_to_modal() {
+        let dir = tempfile::tempdir().unwrap();
+        let row = |id: &str, e: &str| {
+            format!(
+                "{{\"query_id\":\"{id}\",\"ts\":\"2026-06-20T00:00:00Z\",\"query_text\":\"{id}\",\"intent\":\"i\",\"route_method\":\"embedding\",\"route_confidence\":0.9,\"embedder\":\"x\",\"dim\":3,\"embedding\":{e}}}\n"
+            )
+        };
+        let mut s = String::new();
+        // 3 in-domain 3-dim queries (the modal dimension).
+        s.push_str(&row("a0", "[1.0,0.0,0.0]"));
+        s.push_str(&row("a1", "[0.99,0.1,0.0]"));
+        s.push_str(&row("a2", "[0.98,0.0,0.1]"));
+        // One stray row of a DIFFERENT dimension (4-dim) — would crash ix_cosine if scored.
+        s.push_str(&row("bad", "[0.0,0.0,0.0,1.0]"));
+        std::fs::write(dir.path().join("2026-06-20.jsonl"), s).unwrap();
+
+        let conn = crate::open_bench().unwrap();
+        let total = build_query_embeddings(&conn, dir.path()).unwrap();
+        assert_eq!(total, 4, "all 4 rows loaded, including the off-dimension one");
+
+        // No dimension-mismatch error; only the 3 modal-dimension rows are scored.
+        let scores = ood_scores(&conn, 3).unwrap();
+        assert_eq!(
+            scores.len(),
+            3,
+            "scored the modal (3-dim) corpus, excluding the 4-dim row"
+        );
+        assert!(
+            !scores.iter().any(|(id, _, _)| id == "bad"),
+            "the off-dimension row is excluded from scoring"
         );
     }
 }
