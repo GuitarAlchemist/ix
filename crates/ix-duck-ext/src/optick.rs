@@ -3,14 +3,27 @@
 //!
 //! `optick.index` is the search engine's mmap, not DuckDB-readable; this opens it
 //! read-only via `ix_optick::OptickIndex` (once, in `bind`) and streams one row per
-//! voicing: `(voicing BIGINT, instrument VARCHAR, embedding DOUBLE[])`. Voicing
-//! distance needs no dedicated UDF — compose the already-registered `ix_euclidean`
-//! over two scanned embeddings:
+//! voicing: `(voicing BIGINT, instrument VARCHAR, embedding DOUBLE[], midi_notes BIGINT[])`.
+//!
+//! Voicing distance needs no dedicated UDF — compose the already-registered
+//! `ix_euclidean` over two scanned embeddings:
 //!
 //! ```sql
 //! SELECT ix_euclidean(a.embedding, b.embedding)
 //! FROM ix_optick_scan('…/optick.index') a, ix_optick_scan('…/optick.index') b
 //! WHERE a.voicing = 100 AND b.voicing = 200;
+//! ```
+//!
+//! `midi_notes` (the decoded voicing pitches) makes the corpus crunchable by the
+//! set-theory UDFs without any export — e.g. realization density per set class, or
+//! voice-leading cost to a target chord:
+//!
+//! ```sql
+//! SELECT ix_forte_number(midi_notes) AS set_class, count(*) AS voicings
+//! FROM ix_optick_scan('…/optick.index') GROUP BY 1 ORDER BY voicings DESC;
+//!
+//! SELECT voicing, ix_icv_l1(midi_notes, [0,4,7,11]) AS cost
+//! FROM ix_optick_scan('…/optick.index') ORDER BY cost LIMIT 20;
 //! ```
 
 use std::ffi::CString;
@@ -44,6 +57,10 @@ impl VTab for IxOptickScan {
         bind.add_result_column(
             "embedding",
             LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Double)),
+        );
+        bind.add_result_column(
+            "midi_notes",
+            LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Bigint)),
         );
         Ok(OptickScanBind { index })
     }
@@ -106,6 +123,36 @@ impl VTab for IxOptickScan {
             lv.set_len(total);
             for i in 0..rows {
                 lv.set_entry(i, i * dim, dim);
+            }
+        }
+        // col 3: midi_notes (LIST<BIGINT>) — decoded from the msgpack metadata per
+        // voicing (variable length, unlike the fixed-dim embedding). A row whose
+        // metadata fails to decode yields an empty list rather than aborting the scan.
+        {
+            let per_row: Vec<Vec<i64>> = (0..rows)
+                .map(|i| {
+                    bind.index
+                        .metadata(start + i)
+                        .map(|m| m.midi_notes.iter().map(|&x| x as i64).collect())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let total: usize = per_row.iter().map(Vec::len).sum();
+            let mut lv = output.list_vector(3);
+            {
+                let mut child = lv.child(total);
+                let cslice = unsafe { child.as_mut_slice_with_len::<i64>(total) };
+                let mut off = 0usize;
+                for notes in &per_row {
+                    cslice[off..off + notes.len()].copy_from_slice(notes);
+                    off += notes.len();
+                }
+            }
+            lv.set_len(total);
+            let mut off = 0usize;
+            for (i, notes) in per_row.iter().enumerate() {
+                lv.set_entry(i, off, notes.len());
+                off += notes.len();
             }
         }
         output.set_len(rows);

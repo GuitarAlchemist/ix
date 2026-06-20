@@ -45,6 +45,13 @@ mod serial;
 #[cfg(feature = "udf")]
 mod graphsig;
 
+/// Grothendieck-style operations: ICV group delta / nearby / harmonic path over
+/// PC-sets (ix_grothendieck_delta, ix_icv_l1, ix_z_related, ix_grothendieck_nearby,
+/// ix_grothendieck_path) + graph K-theory (ix_k0, ix_k1). Registered by
+/// [`udf::register_all`]. Pure wraps of ix-bracelet + ix-ktheory.
+#[cfg(feature = "udf")]
+mod grothendieck;
+
 /// ML-evaluation UDFs — ranking metrics (ix_ndcg, …), ix_classification_report,
 /// ix_knn_leakage — registered by [`udf::register_all`].
 #[cfg(feature = "udf")]
