@@ -16,103 +16,47 @@
 //! Producer is default-on; first rows land when the chatbot routes a live query.
 //! Absent/empty directory → empty (never error).
 
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use duckdb::Connection;
 
-/// Errors from the OOD lens: directory I/O vs DuckDB.
-#[derive(Debug)]
-pub enum OodError {
-    Io(std::io::Error),
-    Duck(duckdb::Error),
-}
-impl std::fmt::Display for OodError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OodError::Io(e) => write!(f, "query-embeddings I/O error: {e}"),
-            OodError::Duck(e) => write!(f, "duckdb error: {e}"),
-        }
-    }
-}
-impl std::error::Error for OodError {}
-impl From<std::io::Error> for OodError {
-    fn from(e: std::io::Error) -> Self {
-        OodError::Io(e)
-    }
-}
-impl From<duckdb::Error> for OodError {
-    fn from(e: duckdb::Error) -> Self {
-        OodError::Duck(e)
-    }
-}
+use crate::source::{self, Col, Files};
 
-/// `*.jsonl` files in `dir` (sorted). Absent dir → empty (skip); other errors surfaced.
-fn embedding_files(dir: &Path) -> Result<Vec<PathBuf>, OodError> {
-    let rd = match std::fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let mut out = Vec::new();
-    for entry in rd {
-        let p = entry?.path();
-        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
-            if n.ends_with(".jsonl") {
-                out.push(p);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
-}
+/// Errors from the OOD lens — the shared artifact-source error
+/// ([`crate::source::SourceError`]); aliased so the lens's public API keeps its name.
+pub type OodError = source::SourceError;
 
-/// DuckDB list literal of POSIX-slashed, quote-escaped paths.
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| {
-            format!(
-                "'{}'",
-                p.to_string_lossy().replace('\\', "/").replace('\'', "''")
-            )
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
-}
+/// `query_embeddings` column spec. Every field (including the `embedding DOUBLE[]` vector and
+/// the derived `day` slice) is a flat [`Col::direct`] projection; the deep artifact-source
+/// path owns the safe read + empty-fallback. `intent` is nullable per Contract B — the direct
+/// `intent::VARCHAR` cast yields NULL on a JSON null, not an error.
+const EMBEDDING_SPEC: &[Col] = &[
+    Col::direct("query_id", "VARCHAR", "query_id::VARCHAR"),
+    Col::direct("ts", "VARCHAR", "ts::VARCHAR"),
+    Col::direct("day", "VARCHAR", "(ts::VARCHAR)[1:10]"),
+    Col::direct("query_text", "VARCHAR", "query_text::VARCHAR"),
+    Col::direct("intent", "VARCHAR", "intent::VARCHAR"),
+    Col::direct("route_method", "VARCHAR", "route_method::VARCHAR"),
+    Col::direct("route_confidence", "DOUBLE", "TRY_CAST(route_confidence AS DOUBLE)"),
+    Col::direct("embedder", "VARCHAR", "embedder::VARCHAR"),
+    Col::direct("dim", "BIGINT", "TRY_CAST(dim AS BIGINT)"),
+    Col::direct("embedding", "DOUBLE[]", "embedding::DOUBLE[]"),
+];
 
-const COLS: &str = "query_id VARCHAR, ts VARCHAR, day VARCHAR, query_text VARCHAR, \
-                    intent VARCHAR, route_method VARCHAR, route_confidence DOUBLE, \
-                    embedder VARCHAR, dim BIGINT, embedding DOUBLE[]";
+fn is_jsonl(name: &str) -> bool {
+    name.ends_with(".jsonl")
+}
 
 /// Build `query_embeddings` (one row per routed query). Returns the row count;
 /// 0 when the directory is absent/empty.
 // @ai:invariant build_query_embeddings creates query_embeddings with one row per JSONL line, embedding as DOUBLE[] [T:test conf:0.9 src:ix_duck::ood::tests::rows_one_per_query]
 pub fn build_query_embeddings(conn: &Connection, dir: &Path) -> Result<usize, OodError> {
-    let files = embedding_files(dir)?;
-    if files.is_empty() {
-        conn.execute_batch(&format!(
-            "CREATE OR REPLACE TABLE query_embeddings ({COLS});"
-        ))?;
-        return Ok(0);
-    }
-    let list = sql_list(&files);
-    conn.execute_batch(&format!(
-        "CREATE OR REPLACE TABLE query_embeddings AS
-         SELECT query_id::VARCHAR        AS query_id,
-                ts::VARCHAR              AS ts,
-                (ts::VARCHAR)[1:10]      AS day,
-                query_text::VARCHAR      AS query_text,
-                intent::VARCHAR          AS intent,
-                route_method::VARCHAR    AS route_method,
-                TRY_CAST(route_confidence AS DOUBLE) AS route_confidence,
-                embedder::VARCHAR        AS embedder,
-                TRY_CAST(dim AS BIGINT)  AS dim,
-                embedding::DOUBLE[]      AS embedding
-         FROM read_json_auto({list}, union_by_name=true, sample_size=-1);"
-    ))?;
-    let n: i64 = conn.query_row("SELECT count(*) FROM query_embeddings", [], |r| r.get(0))?;
-    Ok(n as usize)
+    source::materialize(
+        conn,
+        "query_embeddings",
+        Files { dir, matches: is_jsonl },
+        EMBEDDING_SPEC,
+    )
 }
 
 /// Mean top-`k` cosine to nearest neighbours, per **distinct** query embedding
@@ -169,6 +113,7 @@ pub fn flag_ood(
 #[cfg(all(test, feature = "duck"))]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn fixtures() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/query-embeddings")
