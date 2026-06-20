@@ -37,6 +37,19 @@ contracts (see `docs/contracts/`), not runtime coupling.
   (learnings), and the in-flight **business-value scorecard**.
 - **OPTIC-K** — the mmap voicing index schema (`ix-voicings`/`ix-optick`) consumed
   by `ga`. **Voicing** = a fingered chord shape (music-domain, lives in `ga`).
+- **Analyst's bench** — the in-process, in-memory DuckDB layer (`ix-duck`) over the
+  JSONL/Parquet IX and `ga` already emit. Not a production engine, not a source of
+  truth (see `docs/DUCKDB.md`).
+- **Lens** — a read-only analyst module on the bench (`ix_duck::{chatbot, routing,
+  loops, ood, maintain}`) that turns a GA artifact set into a queryable signal. A lens
+  owns *analytics*, not ingest.
+- **Artifact source** (`ix_duck::source`) — the deep module a **lens** reads through:
+  given a file selector + a flat **column spec**, it materializes a GA-emitted JSON
+  artifact set into a bench table, owning file selection, the `read_json_auto` flags,
+  the empty-fallback (typed schema, 0 rows), and the **safe projection**
+  (`json_extract(to_json(obj),'$.f')` / `TRY_CAST`, never struct-field access, never
+  `coalesce(...,0)`). The seam that makes the absence-as-zero / struct-bind-crash
+  defect class non-recurring (see `docs/solutions/.../2026-06-19-duckdb-absence-as-zero-and-struct-bind-crash.md`).
 
 ## Conventions
 
