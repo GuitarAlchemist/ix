@@ -4,7 +4,13 @@
 //! set the exit code (accept=0, reject=1, escalate=2).
 //!
 //!   cargo run -p ix-duck --features duck --example ix_maintain_gate -- <hits.jsonl> <corpus-dir>
-//!   cargo run -p ix-duck --features duck --example ix_maintain_gate           # defaults below
+//!   cargo run -p ix-duck --features duck --example ix_maintain_gate -- --json …   # machine-readable
+//!   cargo run -p ix-duck --features duck --example ix_maintain_gate              # defaults below
+//!
+//! `--json` (first arg) emits the `MaintainVerdict` as one JSON object to **stdout**
+//! and nothing else — the machine-readable *seam* an MCP wrapper or the IXQL executor
+//! (`mcp_tool_output → when verdict.status == "T"`) consumes. See
+//! `docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md`. Human-readable is the default.
 //!
 //! Defaults: metric ← `state/thinking-machine/hits.jsonl` (IX-local, harness-written);
 //! guardrail ← `../ga/state/quality/chatbot-qa`. Verdict appended to
@@ -35,7 +41,13 @@ fn default_corpus() -> PathBuf {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    // `--json` (first token) → emit ONLY the verdict JSON to stdout (the callable seam).
+    let json = argv.first().map(|s| s == "--json").unwrap_or(false);
+    if json {
+        argv.remove(0);
+    }
+    let mut args = argv.into_iter();
     let hits = args.next().map(PathBuf::from).unwrap_or_else(default_hits);
     let corpus = args
         .next()
@@ -80,35 +92,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let verdict = maintain::evaluate(&conn, &MaintainConfig::default(), &inputs)?;
 
-    println!(
-        "maintain-gate verdict: {} ({})",
-        verdict.status, verdict.decision
-    );
-    println!("  reason: {}", verdict.reason);
-    println!("  metric: {}", hits.display());
-    println!("  guardrail: {}", corpus.display());
-    println!("\n  signals:");
-    for s in &verdict.signals {
-        let mark = match s.ok {
-            Some(true) => "ok ",
-            Some(false) => "BAD",
-            None => " ? ",
-        };
-        println!("    [{mark}] {:<10} {}", s.lens, s.detail);
-    }
-    println!("\n  evidence:");
-    for e in &verdict.evidence {
-        println!("    {:<18} {}  ({})", e.kind, e.hash, e.source);
+    if json {
+        // The seam: one verdict object on stdout, nothing else (pipe-friendly).
+        println!("{}", serde_json::to_string(&verdict)?);
+    } else {
+        println!(
+            "maintain-gate verdict: {} ({})",
+            verdict.status, verdict.decision
+        );
+        println!("  reason: {}", verdict.reason);
+        println!("  metric: {}", hits.display());
+        println!("  guardrail: {}", corpus.display());
+        println!("\n  signals:");
+        for s in &verdict.signals {
+            let mark = match s.ok {
+                Some(true) => "ok ",
+                Some(false) => "BAD",
+                None => " ? ",
+            };
+            println!("    [{mark}] {:<10} {}", s.lens, s.detail);
+        }
+        println!("\n  evidence:");
+        for e in &verdict.evidence {
+            println!("    {:<18} {}  ({})", e.kind, e.hash, e.source);
+        }
     }
 
     let ledger = PathBuf::from("state/thinking-machine/maintain-gate.jsonl");
-    if let Err(e) = maintain::append_to_ledger(&verdict, &ledger) {
-        eprintln!(
+    match maintain::append_to_ledger(&verdict, &ledger) {
+        // In --json mode stdout stays pure verdict JSON; the ledger note goes to stderr.
+        Ok(()) if json => eprintln!("appended to {}", ledger.display()),
+        Ok(()) => println!("\n  → appended to {}", ledger.display()),
+        Err(e) => eprintln!(
             "warning: could not append to ledger {}: {e}",
             ledger.display()
-        );
-    } else {
-        println!("\n  → appended to {}", ledger.display());
+        ),
     }
 
     std::process::exit(maintain::exit_code(&verdict.status));
