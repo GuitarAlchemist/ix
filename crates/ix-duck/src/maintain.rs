@@ -578,9 +578,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn fx(rel: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/maintain")
-            .join(rel)
+        crate::telemetry::fixture("maintain").join(rel)
     }
 
     fn inputs<'a>(hits: &'a Path, corpus: &'a Path) -> MaintainInputs<'a> {
@@ -596,9 +594,7 @@ mod tests {
 
     /// Path to a sibling lens fixture dir (loops / query-embeddings live one level up).
     fn lens_fx(rel: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures")
-            .join(rel)
+        crate::telemetry::fixture(rel)
     }
 
     #[test]

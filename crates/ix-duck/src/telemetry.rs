@@ -100,6 +100,16 @@ pub(crate) fn fnv1a64(bytes: impl IntoIterator<Item = u8>) -> String {
     format!("fnv1a64:{h:016x}")
 }
 
+/// Path to a vendored test-fixture directory: `<crate>/tests/fixtures/<sub>`. The one
+/// place the `CARGO_MANIFEST_DIR`/`tests/fixtures` layout is encoded, shared by every
+/// lens's test module (was five copies).
+#[cfg(test)]
+pub(crate) fn fixture(sub: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(sub)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

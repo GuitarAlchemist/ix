@@ -613,7 +613,7 @@ mod tests {
     use std::fs;
 
     fn fixtures() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chatbot-qa")
+        crate::telemetry::fixture("chatbot-qa")
     }
 
     /// Copy the fixtures corpus into a tempdir so a test can mutate it.

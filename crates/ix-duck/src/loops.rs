@@ -34,11 +34,8 @@ impl std::fmt::Display for LoopError {
     }
 }
 impl std::error::Error for LoopError {}
-impl From<std::io::Error> for LoopError {
-    fn from(e: std::io::Error) -> Self {
-        LoopError::Io(e)
-    }
-}
+// The `Io` variant is populated via `From<LensError>` (telemetry::collect_dir owns all
+// file I/O); there is no bare `io::Error` producer in this module, so no `From<io::Error>`.
 impl From<duckdb::Error> for LoopError {
     fn from(e: duckdb::Error) -> Self {
         LoopError::Duck(e)
@@ -206,7 +203,7 @@ mod tests {
     use super::*;
 
     fn fixtures() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/loops")
+        crate::telemetry::fixture("loops")
     }
 
     #[test]

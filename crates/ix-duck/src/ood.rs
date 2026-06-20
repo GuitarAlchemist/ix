@@ -37,11 +37,8 @@ impl std::fmt::Display for OodError {
     }
 }
 impl std::error::Error for OodError {}
-impl From<std::io::Error> for OodError {
-    fn from(e: std::io::Error) -> Self {
-        OodError::Io(e)
-    }
-}
+// The `Io` variant is populated via `From<LensError>` (telemetry::collect_dir owns all
+// file I/O); there is no bare `io::Error` producer in this module, so no `From<io::Error>`.
 impl From<duckdb::Error> for OodError {
     fn from(e: duckdb::Error) -> Self {
         OodError::Duck(e)
@@ -152,7 +149,7 @@ mod tests {
     use super::*;
 
     fn fixtures() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/query-embeddings")
+        crate::telemetry::fixture("query-embeddings")
     }
 
     #[test]
