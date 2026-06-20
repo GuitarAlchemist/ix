@@ -5,7 +5,8 @@
 schema + exit-code semantics **freeze only at the named Phase-4 milestone**
 (`docs/plans/2026-06-16-002-feat-maintain-gate-rsi-oracle-plan.md`).
 **Producer:** `ix-duck` — `ix_duck::maintain::evaluate` (CLI: `ix_maintain_gate`).
-**Consumer:** none yet (intended: Demerzel governance + the bounded-RSI loop, read-only).
+**Consumer:** `ix_duck::maintain::maintain_trend` (convergence-trend read side, below);
+intended further: Demerzel governance + the bounded-RSI loop, read-only.
 **Location:** `state/thinking-machine/maintain-gate.jsonl` (**ix-side**, append-only,
 gitignored / regenerable). One verdict per line. Never written into a sibling tree.
 
@@ -118,6 +119,20 @@ When the gate is given an iteration scope (`loop_id` + `commit_sha` + the loop's
 in Contract B; until then drift stays corpus-level advisory. **Still Phase 3b:** the
 verdict is *advisory* — write-isolation of the ledgers from the proposing agent (and
 therefore any authoritative auto-revert) is not yet enforced.
+
+## Convergence trend (read side — the "trend table")
+
+The append-only ledger doubles as the governance **trend table**: the same JSONL is read
+back by `ix-duck` (`ix_duck::maintain::maintain_trend`, via `read_json_auto`) to summarise
+convergence — `total`, `accepts`/`rejects`/`escalates`, `reward_hacks` (`status == "C"`),
+the hexavalent `by_status` distribution, and the `latest_status` (by `run_at`). An absent
+ledger reads as an empty summary (degrade, never error).
+
+This is the read side of the IXQL↔DuckDB convergence loop
+(`docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md`): a Demerzel/IXQL pipeline appends
+verdicts here; `ix-duck` aggregates them so the loop can ask "are we converging?" in one
+query. No new schema — the trend table **is** this verdict ledger, so the locked-field
+discipline below covers both the per-verdict and the trend consumers.
 
 ## Locked-field discipline
 Changing `status`/`decision` value sets or the exit-code mapping after Phase-4 freeze
