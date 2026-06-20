@@ -1,6 +1,7 @@
 ---
 name: ix-pipeline
 description: DAG pipeline orchestration with parallel execution and caching
+disable-model-invocation: true
 ---
 
 # Pipeline

@@ -1,6 +1,7 @@
 ---
 name: ix-dynamics
 description: Dynamical systems — inverse kinematics, Lie groups/algebras, neural ODEs
+disable-model-invocation: true
 ---
 
 # Dynamics

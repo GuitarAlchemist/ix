@@ -1,6 +1,7 @@
 ---
 name: ix-category
 description: Category theory primitives — monad laws verification, free-forgetful adjunction
+disable-model-invocation: true
 ---
 
 # Category Theory

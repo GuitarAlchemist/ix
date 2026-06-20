@@ -1,6 +1,7 @@
 ---
 name: ix-cluster
 description: Cluster data using K-Means or DBSCAN
+disable-model-invocation: true
 ---
 
 # Cluster

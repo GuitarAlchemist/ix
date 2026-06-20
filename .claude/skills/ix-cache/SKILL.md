@@ -1,6 +1,7 @@
 ---
 name: ix-cache
 description: Embedded Redis-like cache with TTL, LRU, pub/sub, and RESP protocol
+disable-model-invocation: true
 ---
 
 # Cache

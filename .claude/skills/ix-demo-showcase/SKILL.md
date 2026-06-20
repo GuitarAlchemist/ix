@@ -1,6 +1,7 @@
 ---
 name: ix-demo-showcase
 description: Run ix real-world demo scenarios with optional multi-AI commentary via Octopus. Chains multiple ix MCP tools through curated narratives — chaos detection, governance, FinOps, sprint prediction.
+disable-model-invocation: true
 ---
 
 # ix Demo Showcase

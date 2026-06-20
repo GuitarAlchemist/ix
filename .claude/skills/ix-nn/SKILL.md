@@ -1,6 +1,7 @@
 ---
 name: ix-nn
 description: Neural networks — trainable transformers with GPU attention, dense layers, backprop, loss functions, positional encodings
+disable-model-invocation: true
 ---
 
 # Neural Networks

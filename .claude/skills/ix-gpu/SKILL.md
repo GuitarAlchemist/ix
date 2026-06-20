@@ -1,6 +1,7 @@
 ---
 name: ix-gpu
 description: GPU compute via WGPU — cosine similarity, matrix multiply, batch vector search
+disable-model-invocation: true
 ---
 
 # GPU Compute

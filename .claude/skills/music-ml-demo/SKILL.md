@@ -1,6 +1,7 @@
 ---
 name: music-ml-demo
 description: Concrete, runnable examples combining GA music theory tools with ix ML algorithms for chord clustering, harmonic analysis, and scale recommendation
+disable-model-invocation: true
 ---
 
 # Music ML Analysis — Runnable Examples

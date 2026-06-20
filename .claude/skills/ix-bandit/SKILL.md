@@ -1,6 +1,7 @@
 ---
 name: ix-bandit
 description: Multi-armed bandit simulation — epsilon-greedy, UCB1, Thompson sampling
+disable-model-invocation: true
 ---
 
 # Multi-Armed Bandits

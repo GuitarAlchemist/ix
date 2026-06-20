@@ -1,6 +1,7 @@
 ---
 name: ix-adversarial
 description: Test model robustness with adversarial attacks and defenses
+disable-model-invocation: true
 ---
 
 # Adversarial ML

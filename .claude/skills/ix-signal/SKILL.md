@@ -1,6 +1,7 @@
 ---
 name: ix-signal
 description: Signal processing — FFT, filtering, wavelets, Kalman, spectral analysis
+disable-model-invocation: true
 ---
 
 # Signal Processing

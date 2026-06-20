@@ -1,6 +1,7 @@
 ---
 name: ix-optimize
 description: Optimize a function using SGD, Adam, PSO, or simulated annealing
+disable-model-invocation: true
 ---
 
 # Optimize

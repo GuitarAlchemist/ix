@@ -1,6 +1,7 @@
 ---
 name: ix-evolution
 description: Evolutionary optimization — genetic algorithm, differential evolution
+disable-model-invocation: true
 ---
 
 # Evolutionary Optimization

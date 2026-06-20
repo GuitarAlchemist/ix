@@ -1,6 +1,7 @@
 ---
 name: ix-search
 description: Search and pathfinding with A*, Q*, MCTS, minimax, BFS/DFS
+disable-model-invocation: true
 ---
 
 # Search

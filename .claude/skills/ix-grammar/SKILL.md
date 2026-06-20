@@ -1,6 +1,7 @@
 ---
 name: ix-grammar
 description: Formal grammars — weighted CFGs, grammar evolution, constrained generation
+disable-model-invocation: true
 ---
 
 # Grammar

@@ -1,6 +1,7 @@
 ---
 name: ix-benchmark
 description: Benchmark and compare ix algorithm performance
+disable-model-invocation: true
 ---
 
 # Benchmark

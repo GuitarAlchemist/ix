@@ -1,6 +1,7 @@
 ---
 name: ix-game
 description: Game theory — Nash equilibria, Shapley value, auctions, evolutionary dynamics
+disable-model-invocation: true
 ---
 
 # Game Theory
