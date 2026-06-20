@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use duckdb::Connection;
 use serde::Serialize;
 
+use crate::telemetry;
+
 /// Errors from the flight recorder: corpus I/O (fail-closed) vs DuckDB.
 #[derive(Debug)]
 pub enum ChatbotError {
@@ -135,19 +137,6 @@ fn signature_files(corpus_dir: &Path) -> Result<Vec<PathBuf>, ChatbotError> {
     collect(corpus_dir, |n| n == "_signature.json")
 }
 
-/// Render a slice of paths as a DuckDB list literal `['p1', 'p2', …]`, POSIX-slashed
-/// and single-quote-escaped (paths never contain `://`, validated by the caller).
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| {
-            let s = p.to_string_lossy().replace('\\', "/").replace('\'', "''");
-            format!("'{s}'")
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
-}
-
 // ---- Slice A: trace warehouse ---------------------------------------------
 
 /// Build the `chatbot_traces` table (one row per `run-*.json`). Returns the row
@@ -164,7 +153,7 @@ pub fn build_traces(conn: &Connection, corpus_dir: &Path) -> Result<usize, Chatb
         )?;
         return Ok(0);
     }
-    let list = sql_list(&files);
+    let list = telemetry::sql_list(&files);
     conn.execute_batch(&format!(
         // Read `response.*` via `json_extract(to_json(response), …)` rather than struct-field
         // access: a subfield absent from EVERY trace file would otherwise be a bind-time
@@ -292,7 +281,7 @@ pub fn build_grounding(conn: &Connection, corpus_dir: &Path) -> Result<usize, Ch
         conn.execute_batch(&format!("CREATE OR REPLACE TABLE chatbot_grounding ({cols});"))?;
         return Ok(0);
     }
-    let list = sql_list(&files);
+    let list = telemetry::sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE chatbot_grounding AS
          WITH g AS (
@@ -475,7 +464,7 @@ fn build_signatures(conn: &Connection, corpus_dir: &Path) -> Result<(), ChatbotE
         )?;
         return Ok(());
     }
-    let list = sql_list(&files);
+    let list = telemetry::sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE chatbot_signatures AS
          SELECT t.promptId AS prompt_id,
@@ -586,14 +575,16 @@ fn baseline_hash(conn: &Connection) -> duckdb::Result<String> {
     let pairs = stmt
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<duckdb::Result<Vec<_>>>()?;
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for (k, v) in pairs {
-        for b in k.bytes().chain(b"=".iter().copied()).chain(v.bytes()).chain(b";".iter().copied()) {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    Ok(format!("fnv1a64:{h:016x}"))
+    // Flatten the sorted (key, value) baseline into `k=v;` bytes and hash once via the
+    // shared evidence primitive — byte-comparable with `maintain`'s file hash.
+    let bytes = pairs.into_iter().flat_map(|(k, v)| {
+        k.into_bytes()
+            .into_iter()
+            .chain(std::iter::once(b'='))
+            .chain(v.into_bytes())
+            .chain(std::iter::once(b';'))
+    });
+    Ok(telemetry::fnv1a64(bytes))
 }
 
 /// Map a gate status to a process exit code: `regression` → 1, all else → 0.

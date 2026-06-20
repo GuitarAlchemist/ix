@@ -13,10 +13,11 @@
 //! analyses below exclude seed/test domains so a fresh checkout reads as "no signal"
 //! rather than a phantom. Absent directory → empty tables (never an error).
 
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use duckdb::Connection;
+
+use crate::telemetry::{self, LensError};
 
 /// Errors from the loop lens: directory I/O vs DuckDB.
 #[derive(Debug)]
@@ -43,40 +44,20 @@ impl From<duckdb::Error> for LoopError {
         LoopError::Duck(e)
     }
 }
-
-/// `*.iterations.jsonl` files in `loops_dir` (sorted). Absent dir → empty (skip);
-/// any other read error on a present dir → surfaced.
-fn ledger_files(loops_dir: &Path) -> Result<Vec<PathBuf>, LoopError> {
-    let rd = match std::fs::read_dir(loops_dir) {
-        Ok(r) => r,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let mut out = Vec::new();
-    for entry in rd {
-        let p = entry?.path();
-        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
-            if n.ends_with(".iterations.jsonl") {
-                out.push(p);
-            }
+impl From<LensError> for LoopError {
+    fn from(e: LensError) -> Self {
+        match e {
+            LensError::Io(e) => LoopError::Io(e),
+            LensError::Duck(e) => LoopError::Duck(e),
         }
     }
-    out.sort();
-    Ok(out)
 }
 
-/// DuckDB list literal of POSIX-slashed, quote-escaped paths.
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| {
-            format!(
-                "'{}'",
-                p.to_string_lossy().replace('\\', "/").replace('\'', "''")
-            )
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
+/// `*.iterations.jsonl` files in `loops_dir` (sorted). Absent dir → empty (skip);
+/// any other read error on a present dir → surfaced — the graceful-degrade contract
+/// lives in [`telemetry::collect_dir`].
+fn ledger_files(loops_dir: &Path) -> Result<Vec<PathBuf>, LoopError> {
+    telemetry::collect_dir(loops_dir, |n| n.ends_with(".iterations.jsonl")).map_err(Into::into)
 }
 
 const COLS: &str = "loop_id VARCHAR, domain VARCHAR, iteration BIGINT, ts VARCHAR, \
@@ -96,7 +77,7 @@ pub fn build_loop_iterations(conn: &Connection, loops_dir: &Path) -> Result<usiz
         ))?;
         return Ok(0);
     }
-    let list = sql_list(&files);
+    let list = telemetry::sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE loop_iterations AS
          SELECT loop_id::VARCHAR              AS loop_id,

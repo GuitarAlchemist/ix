@@ -11,10 +11,11 @@
 //! intent keys (`skill.scaleinfo`) are extracted via JSON-Pointer paths
 //! (`/key/field`) — JSONPath's `$.` would mis-split the dot into nesting.
 
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use duckdb::Connection;
+
+use crate::telemetry::{self, LensError};
 
 /// Errors from the routing lens: directory I/O vs DuckDB.
 #[derive(Debug)]
@@ -41,35 +42,23 @@ impl From<duckdb::Error> for RoutingError {
         RoutingError::Duck(e)
     }
 }
-
-/// `routing-eval-*.json` files in `quality_dir` (sorted). Absent dir → empty (skip);
-/// any other read error on a present dir → surfaced.
-fn eval_files(quality_dir: &Path) -> Result<Vec<PathBuf>, RoutingError> {
-    let rd = match std::fs::read_dir(quality_dir) {
-        Ok(r) => r,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let mut out = Vec::new();
-    for entry in rd {
-        let p = entry?.path();
-        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
-            if n.starts_with("routing-eval-") && n.ends_with(".json") {
-                out.push(p);
-            }
+impl From<LensError> for RoutingError {
+    fn from(e: LensError) -> Self {
+        match e {
+            LensError::Io(e) => RoutingError::Io(e),
+            LensError::Duck(e) => RoutingError::Duck(e),
         }
     }
-    out.sort();
-    Ok(out)
 }
 
-/// DuckDB list literal of POSIX-slashed, quote-escaped paths.
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| format!("'{}'", p.to_string_lossy().replace('\\', "/").replace('\'', "''")))
-        .collect();
-    format!("[{}]", items.join(", "))
+/// `routing-eval-*.json` files in `quality_dir` (sorted). Absent dir → empty (skip);
+/// any other read error on a present dir → surfaced — the graceful-degrade contract
+/// lives in [`telemetry::collect_dir`].
+fn eval_files(quality_dir: &Path) -> Result<Vec<PathBuf>, RoutingError> {
+    telemetry::collect_dir(quality_dir, |n| {
+        n.starts_with("routing-eval-") && n.ends_with(".json")
+    })
+    .map_err(Into::into)
 }
 
 /// Build `routing_evals` (run × intent) and `routing_overall` (run). Returns the
@@ -88,7 +77,7 @@ pub fn build_routing_evals(conn: &Connection, quality_dir: &Path) -> Result<usiz
         ))?;
         return Ok(0);
     }
-    let list = sql_list(&files);
+    let list = telemetry::sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE routing_evals AS
          WITH raw AS (

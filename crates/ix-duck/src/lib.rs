@@ -56,6 +56,12 @@ mod sketch;
 #[cfg(feature = "udf")]
 mod code;
 
+/// Shared telemetry-ingestion plumbing for the lenses — the one graceful-degrade
+/// scanner (`collect_dir`), `sql_list`, and the `fnv1a64` evidence hash. Private:
+/// each lens keeps its own public `*Error`. See `docs/adr/0002-defer-lens-trait-in-ix-duck.md`.
+#[cfg(feature = "duck")]
+mod telemetry;
+
 /// Chatbot flight recorder — GA golden-trace warehouse (Slice A) + canonical-diff
 /// regression gate (Slice B). See `docs/plans/2026-06-14-004-…-flight-recorder-plan.md`.
 #[cfg(feature = "duck")]

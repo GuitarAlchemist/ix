@@ -16,10 +16,11 @@
 //! Producer is default-on; first rows land when the chatbot routes a live query.
 //! Absent/empty directory → empty (never error).
 
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use duckdb::Connection;
+
+use crate::telemetry::{self, LensError};
 
 /// Errors from the OOD lens: directory I/O vs DuckDB.
 #[derive(Debug)]
@@ -46,39 +47,19 @@ impl From<duckdb::Error> for OodError {
         OodError::Duck(e)
     }
 }
-
-/// `*.jsonl` files in `dir` (sorted). Absent dir → empty (skip); other errors surfaced.
-fn embedding_files(dir: &Path) -> Result<Vec<PathBuf>, OodError> {
-    let rd = match std::fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let mut out = Vec::new();
-    for entry in rd {
-        let p = entry?.path();
-        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
-            if n.ends_with(".jsonl") {
-                out.push(p);
-            }
+impl From<LensError> for OodError {
+    fn from(e: LensError) -> Self {
+        match e {
+            LensError::Io(e) => OodError::Io(e),
+            LensError::Duck(e) => OodError::Duck(e),
         }
     }
-    out.sort();
-    Ok(out)
 }
 
-/// DuckDB list literal of POSIX-slashed, quote-escaped paths.
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| {
-            format!(
-                "'{}'",
-                p.to_string_lossy().replace('\\', "/").replace('\'', "''")
-            )
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
+/// `*.jsonl` files in `dir` (sorted). Absent dir → empty (skip); other errors
+/// surfaced — the graceful-degrade contract lives in [`telemetry::collect_dir`].
+fn embedding_files(dir: &Path) -> Result<Vec<PathBuf>, OodError> {
+    telemetry::collect_dir(dir, |n| n.ends_with(".jsonl")).map_err(Into::into)
 }
 
 const COLS: &str = "query_id VARCHAR, ts VARCHAR, day VARCHAR, query_text VARCHAR, \
@@ -96,7 +77,7 @@ pub fn build_query_embeddings(conn: &Connection, dir: &Path) -> Result<usize, Oo
         ))?;
         return Ok(0);
     }
-    let list = sql_list(&files);
+    let list = telemetry::sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE query_embeddings AS
          SELECT query_id::VARCHAR        AS query_id,
