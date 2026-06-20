@@ -34,6 +34,12 @@ mod tablefn;
 #[cfg(feature = "udf")]
 mod bracelet;
 
+/// Twelve-tone serialism scalar UDFs over ordered rows (ix_row_retrograde,
+/// ix_row_invert, ix_row_transpose, ix_row_matrix, ix_row_combinatoriality),
+/// registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod serial;
+
 /// Graph (ix_pagerank, ix_shortest_path) + signal (ix_rfft, ix_autocorrelation)
 /// table functions over JSON edge-lists / series, registered by [`udf::register_all`].
 #[cfg(feature = "udf")]
