@@ -375,6 +375,28 @@ cargo run --example bloom_filter
 
 Topics: linear algebra, optimization, supervised/unsupervised learning, neural networks, reinforcement learning, game theory, signal processing, chaos theory, adversarial ML, GPU computing, and more.
 
+## DuckDB Integration (analyst bench)
+
+`ix-duck` is an **in-process DuckDB "analyst bench"** — *not* a production engine and *not* a source of truth (see [`docs/DUCKDB.md`](docs/DUCKDB.md)). It does two things:
+
+1. **IX algorithms as SQL UDFs.** Call IX primitives directly from SQL — `ix_cosine` / `ix_euclidean`, `ix_pca_project` / `ix_kmeans` / `ix_dbscan` / `ix_silhouette`, ranking metrics (`ix_ndcg`, …), probabilistic sketches (`ix_bloom_*`, `ix_hll_*`, `ix_cms_*`, `ix_cuckoo_*`), music set-theory (`ix_forte_number`, `ix_icv`, `ix_prime_form`, the twelve-tone serialism + Grothendieck UDFs), graph/signal (`ix_pagerank`, `ix_rfft`), and code metrics (`ix_code_complexity`, `ix_ast_query`).
+2. **Lenses over ecosystem telemetry.** Read-only analyzers over the sibling repos' `state/quality/**` JSON-on-disk artifacts (cross-repo by **format contract, not runtime coupling**), each graceful-degrading when a directory is absent:
+
+| Lens | Reads | Surfaces |
+|---|---|---|
+| `chatbot` | GA golden-traces | flight recorder + **canonical-diff regression gate** (routed-agent drift) |
+| `routing` | GA `routing-eval-*.json` | per-intent F1 trend, weakest intents, run-over-run regressions |
+| `ood` | GA query embeddings | out-of-domain queries (mean top-k cosine) |
+| `loops` | AFK loop iterations | failure clustering — recurring worst-items, oscillating loops |
+| `maintain` | all of the above + `hits.jsonl` | the **maintain-gate**: one hexavalent (T/P/U/D/F/C) RSI verdict (metric↑ ∧ guardrail held ∧ converging ∧ in-distribution, never an average) |
+
+The shared **`telemetry` ingestion seam** concentrates the *absent → skip / unreadable → fail-closed* contract every lens depends on. DuckDB code lives behind the optional **`duck`** feature (a bundled C++ build); the default `cargo build --workspace` and CI never compile it. Exposed to agents through the feature-gated `ix_maintain_gate` MCP tool. IXQL (Demerzel's governance DSL) and `ix-duck` are complementary layers joined only by the file-format contract — see [`docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md`](docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md).
+
+```bash
+# the analyst bench, with every IX UDF registered:
+cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check ../ga/state/quality/chatbot-qa
+```
+
 ## Architecture
 
 ix is a Rust workspace of **77 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
