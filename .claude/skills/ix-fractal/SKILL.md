@@ -1,6 +1,7 @@
 ---
 name: ix-fractal
 description: Fractal generation — Takagi curves, space-filling curves, Morton codes
+disable-model-invocation: true
 ---
 
 # Fractals

@@ -1,6 +1,7 @@
 ---
 name: ix-ml-builder
 description: Build ephemeral or persistent ML pipelines — auto-detects task type, selects models, handles preprocessing, evaluation, and caching
+disable-model-invocation: true
 ---
 
 # ML Pipeline Builder

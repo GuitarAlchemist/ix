@@ -1,6 +1,7 @@
 ---
 name: ix-supervised
 description: Supervised learning — regression, classification, evaluation metrics, cross-validation, confusion matrix, ROC/AUC, SMOTE resampling
+disable-model-invocation: true
 ---
 
 # Supervised Learning

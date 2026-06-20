@@ -1,6 +1,7 @@
 ---
 name: ix-random-forest
 description: Random forest and gradient boosted trees — ensemble classifiers for tabular data
+disable-model-invocation: true
 ---
 
 # Ensemble Methods

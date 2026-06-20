@@ -1,6 +1,7 @@
 ---
 name: ix-ktheory
 description: Algebraic K-theory for graphs — Grothendieck K0/K1, Mayer-Vietoris sequences
+disable-model-invocation: true
 ---
 
 # K-Theory

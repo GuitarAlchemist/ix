@@ -1,6 +1,7 @@
 ---
 name: ix-number-theory
 description: Number theory — prime sieving, primality tests, modular arithmetic
+disable-model-invocation: true
 ---
 
 # Number Theory

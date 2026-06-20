@@ -1,6 +1,7 @@
 ---
 name: ix-chaos
 description: Chaos theory analysis — Lyapunov exponents, bifurcation, attractors, fractals
+disable-model-invocation: true
 ---
 
 # Chaos Analysis

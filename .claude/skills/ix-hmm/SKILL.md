@@ -1,6 +1,7 @@
 ---
 name: ix-hmm
 description: Hidden Markov Model analysis — Viterbi, Baum-Welch, forward-backward
+disable-model-invocation: true
 ---
 
 # HMM Analysis

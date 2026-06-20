@@ -1,6 +1,7 @@
 ---
 name: ix-sedenion
 description: Hypercomplex algebra — sedenion/octonion multiplication, Cayley-Dickson construction
+disable-model-invocation: true
 ---
 
 # Hypercomplex Algebra

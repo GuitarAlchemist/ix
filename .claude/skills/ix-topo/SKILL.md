@@ -1,6 +1,7 @@
 ---
 name: ix-topo
 description: Topological data analysis — persistent homology, Betti numbers, point cloud topology
+disable-model-invocation: true
 ---
 
 # Topological Data Analysis

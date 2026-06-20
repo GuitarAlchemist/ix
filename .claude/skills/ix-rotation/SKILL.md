@@ -1,6 +1,7 @@
 ---
 name: ix-rotation
 description: 3D rotation operations — quaternions, SLERP, Euler angles, rotation matrices
+disable-model-invocation: true
 ---
 
 # 3D Rotations
