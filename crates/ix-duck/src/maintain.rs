@@ -573,6 +573,81 @@ pub fn append_to_ledger(verdict: &MaintainVerdict, path: &Path) -> std::io::Resu
     writeln!(f, "{line}")
 }
 
+/// A convergence summary over the verdict ledger — the **read side** of the maintain-gate
+/// "trend table" (the same `state/thinking-machine/maintain-gate.jsonl` the gate appends to,
+/// schema `maintain-gate.contract.md`). `ix-duck` reads it via `read_json_auto`, so a
+/// Demerzel / IXQL convergence loop can ask "are we converging?" in one query rather than
+/// re-deriving it from raw verdicts.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TrendSummary {
+    pub total: i64,
+    pub accepts: i64,
+    pub rejects: i64,
+    pub escalates: i64,
+    /// `status == "C"`: metric improved while a held capability regressed (reward-hack).
+    pub reward_hacks: i64,
+    /// `(status, count)` descending — the hexavalent verdict distribution.
+    pub by_status: Vec<(String, i64)>,
+    /// The most recent verdict's status (by `run_at`), if any.
+    pub latest_status: Option<String>,
+}
+
+/// Aggregate the append-only verdict ledger into a [`TrendSummary`] (the convergence-trend
+/// read side of opportunity #3 in `docs/adr/0001-…`). An absent ledger → an empty summary
+/// (degrade, never error) — the convergence loop reads "no data yet".
+// @ai:invariant maintain_trend aggregates the verdict ledger by decision/status and reads an absent ledger as an empty summary rather than erroring [T:test conf:0.9 src:ix_duck::maintain::tests::maintain_trend_aggregates_the_ledger]
+pub fn maintain_trend(
+    conn: &Connection,
+    ledger_path: &Path,
+) -> Result<TrendSummary, MaintainError> {
+    if !ledger_path.exists() {
+        return Ok(TrendSummary::default());
+    }
+    let p = ledger_path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace('\'', "''");
+    let src = format!("read_json_auto('{p}', union_by_name=true)");
+    let (total, accepts, rejects, escalates, reward_hacks): (i64, i64, i64, i64, i64) = conn
+        .query_row(
+            &format!(
+                "SELECT count(*),
+                        count(*) FILTER (WHERE decision = 'accept'),
+                        count(*) FILTER (WHERE decision = 'reject'),
+                        count(*) FILTER (WHERE decision = 'escalate'),
+                        count(*) FILTER (WHERE status = 'C')
+                 FROM {src}"
+            ),
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+    let by_status: Vec<(String, i64)> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT status, count(*) FROM {src} GROUP BY status ORDER BY count(*) DESC, status"
+        ))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<duckdb::Result<_>>()?;
+        rows
+    };
+    let latest_status: Option<String> = conn
+        .query_row(
+            &format!("SELECT status FROM {src} ORDER BY run_at DESC LIMIT 1"),
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    Ok(TrendSummary {
+        total,
+        accepts,
+        rejects,
+        escalates,
+        reward_hacks,
+        by_status,
+        latest_status,
+    })
+}
+
 #[cfg(all(test, feature = "duck"))]
 mod tests {
     use super::*;
@@ -1055,5 +1130,48 @@ mod tests {
             2,
             "append-only: two writes = two lines"
         );
+    }
+
+    #[test]
+    fn maintain_trend_aggregates_the_ledger() {
+        let conn = crate::open_bench().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("maintain-gate.jsonl");
+        let line = |run_at: &str, status: &str, decision: &str| {
+            format!(
+                "{{\"schema_version\":\"maintain-gate.v0.1\",\"run_at\":\"{run_at}\",\"status\":\"{status}\",\"decision\":\"{decision}\",\"signals\":[],\"evidence\":[],\"reason\":\"x\"}}\n"
+            )
+        };
+        let body = format!(
+            "{}{}{}{}{}",
+            line("2026-06-18T00:00:00Z", "T", "accept"),
+            line("2026-06-18T00:01:00Z", "T", "accept"),
+            line("2026-06-18T00:02:00Z", "C", "reject"),
+            line("2026-06-18T00:03:00Z", "F", "reject"),
+            line("2026-06-18T00:04:00Z", "U", "escalate"),
+        );
+        std::fs::write(&ledger, body).unwrap();
+
+        let t = maintain_trend(&conn, &ledger).unwrap();
+        assert_eq!(t.total, 5);
+        assert_eq!(t.accepts, 2);
+        assert_eq!(t.rejects, 2);
+        assert_eq!(t.escalates, 1);
+        assert_eq!(t.reward_hacks, 1, "one status=C reward-hack");
+        assert_eq!(t.latest_status.as_deref(), Some("U"), "latest by run_at");
+        assert_eq!(
+            t.by_status.iter().find(|(s, _)| s == "T").map(|(_, c)| *c),
+            Some(2),
+            "T appears twice"
+        );
+    }
+
+    #[test]
+    fn maintain_trend_absent_ledger_is_empty() {
+        let conn = crate::open_bench().unwrap();
+        let t = maintain_trend(&conn, Path::new("/no/such/ledger.jsonl")).unwrap();
+        assert_eq!(t.total, 0);
+        assert!(t.by_status.is_empty());
+        assert_eq!(t.latest_status, None);
     }
 }
