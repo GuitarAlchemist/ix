@@ -1,0 +1,63 @@
+name: maintain gate (nightly, advisory)
+
+# Scheduled maintain-gate PRODUCER (Phase A). Runs the DuckDB+IX maintain gate over the
+# LIVE GuitarAlchemist/ga sibling (checked out read-only) and emits a current-verdict
+# SNAPSHOT in the ga/state/quality scorecard shape (latest hexavalent verdict + a
+# maintain_trend rollup). ADVISORY until Phase 3b: schedule/dispatch only, it never gates
+# a merge. The snapshot is uploaded as an artifact; Phase B federates it into ga/state/quality.
+#
+# formats-not-coupling: this workflow writes ONLY the IX tree (no GA-tree write).
+# Schedule-only (no fork-PR trigger) → no untrusted-PR code path. GA is public → no token.
+# absent-ga → the producer skips (exit 0); ga present + read error → fail-closed (nonzero).
+
+on:
+  schedule:
+    - cron: '37 6 * * *' # daily 06:37 UTC (offset from the 06:23 chatbot nightly)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  produce-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout GA sibling (read-only, public)
+        uses: actions/checkout@v4
+        with:
+          repository: GuitarAlchemist/ga
+          path: ga-sibling
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ix-duck-duck
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build maintain producer (duck feature, bundled engine)
+        run: cargo build -p ix-duck --features duck --example ix_maintain_snapshot
+
+      - name: Produce verdict snapshot over live GA telemetry
+        # GA_ROOT points the producer at the sibling checkout. absent-ga → exit 0;
+        # ga present + lens read error → fail-closed nonzero (the step then fails).
+        env:
+          GA_ROOT: ${{ github.workspace }}/ga-sibling
+        run: cargo run -p ix-duck --features duck --example ix_maintain_snapshot
+
+      - name: Upload verdict snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintain-verdict-snapshot
+          path: state/quality/maintain-gate/last.json
+          if-no-files-found: warn
