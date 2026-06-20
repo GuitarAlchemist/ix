@@ -6,7 +6,7 @@
 
 A Rust workspace of composable ML/math algorithms and AI governance, designed to be exposed as **Claude Code skills** via an MCP server and CLI. Part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem (ix + [tars](https://github.com/GuitarAlchemist/tars) + [ga](https://github.com/GuitarAlchemist/ga) + [Demerzel](https://github.com/GuitarAlchemist/Demerzel)).
 
-65 crates. 68 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+77 crates. 93 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -95,7 +95,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 |-------|------|-------|
 | ix-nn | Beta | Transformers, backprop — complex but actively developed |
 | ix-pipeline | Beta | DAG executor — critical infrastructure, API stabilizing |
-| ix-agent | Beta | MCP server (68 tools) — production-facing integration point |
+| ix-agent | Beta | MCP server (93 tools) — production-facing integration point |
 | ix-governance | Beta | Demerzel governance bridge — consumed by ga/tars |
 | ix-io | Beta | I/O utilities (CSV, JSON, TCP, WebSocket) |
 | ix-grammar | Beta | Earley, CYK parsers, EBNF/ABNF parsers, ~30-entry grammar catalog |
@@ -119,6 +119,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | ix-number-theory | Experimental | Prime sieving, elliptic curves |
 | ix-gpu | Experimental | WGPU compute shaders (Vulkan/DX12/Metal) |
 | memristive-markov | Experimental | Research prototype |
+| ix-acoustic-tune | Experimental | Acoustic auto-tuning: CMA-ES / ask-tell optimizers + spectral features and losses for synth sound-matching |
 
 ### Internal Crates
 
@@ -155,9 +156,43 @@ The 16 crates below were added during the agent-harness and pipeline work. They 
 | ix-sentinel | Internal | Governed reactive reasoner — autonomous session-level monitor |
 | ix-session | Internal | Session log, event stream, trace flywheel export |
 
+### Music, voicings & OPTIC-K crates
+
+Music set-theory and the GA voicing-index (OPTIC-K) pipeline. Internal-tier — consumed by `ga` / the analyst tooling, not direct downstream deps.
+
+| Crate | Tier | Notes |
+|-------|------|-------|
+| ix-bracelet | Internal | Dihedral group D₁₂ operator algebra on 12-bit pitch-class sets: unified Tₙ/TₙI action, bracelet prime forms, twelve-tone serialism |
+| ix-voicings | Internal | Voicings study pipeline: enumerate + featurize chord voicings from the GA FretboardVoicingsCLI |
+| ix-optick | Internal | Memory-mapped OPTIC-K index reader with brute-force cosine search |
+| ix-optick-invariants | Internal | Corpus-reading invariant checker for the OPTIC-K mmap index |
+| ix-optick-sae | Internal | OPTIC-K Sparse Autoencoder orchestrator (Python SAE trainer + artifact validation) |
+| ix-embedding-diagnostics | Internal | Baseline diagnostics for OPTIC-K voicing embeddings — leak detection, retrieval consistency, topology |
+| ga-chatbot | Internal | Domain-specific voicing chatbot MCP server with a deterministic QA harness |
+
+### Governance-instrumentation & analyst crates
+
+| Crate | Tier | Notes |
+|-------|------|-------|
+| ix-duck | Internal | In-process DuckDB analyst bench over IX telemetry, with IX algorithms as SQL UDFs (optional `duck` feature) |
+| ix-manifold | Internal | Pure-Rust manifold learning: t-SNE for 2D/3D embedding visualization |
+| ix-sanitize | Internal | Injection-regex stripper + source-envelope wrapper + Confidential/Unknown verdict gate for governance pipelines |
+| ix-ai-annotations | Internal | Extracts in-source `@ai:` semantic annotations (hexavalent T/P/U/D/F/C) and emits the ai-annotation contract stream |
+| ix-assumption-graph | Internal | Graph of assumptions from `@ai:` annotations + contradiction detection (temporal assumption graph, Phase 1) |
+| ix-sentrux-annotations | Internal | Bridge converting sentrux structural-rule violations into ai-annotation records |
+| ix-blast-radius | Internal | Path-based blast-radius analyzer matching the `qa-verdict.blast_radius` contract |
+| ix-autoresearch | Internal | Karpathy-style edit-eval-iterate kernel + target adapters for IX subsystems |
+| ix-quality-trend | Internal | Aggregates quality snapshots over time into an executive markdown trend report |
+| ix-invariant-coverage | Internal | Measures invariant-catalog optimality: rank, redundancy, orphans, coverage gaps |
+| ix-quality-validate | Internal | CI validator: every `state/quality/*.json` against the dashboard-envelope schema |
+| ix-streeling | Internal | Streeling University — federated learnings catalog + campus index over the ecosystem's docs |
+| ix-value | Internal | Business-Value Scorecard — federate per-repo value manifests into a RICE→stars catalog |
+
+(A loadable DuckDB C-API extension, `ix-duck-ext`, lives under `crates/` but is **workspace-excluded** so the default build never compiles DuckDB — build it explicitly via its `build.ps1`.)
+
 ### MCP Tool Surface
 
-`ix-agent` exposes **68 MCP tools** covering core math, supervised / unsupervised ML, neural networks + autograd, signal + chaos, graph + topology, adversarial + evolution, game theory, probabilistic data structures, grammar, governance, federation, source adapters (`ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog`, `ix_ast_query`, `ix_code_smells`), OPTIC-K voicing search, and pipeline orchestration (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_pipeline_list`).
+`ix-agent` exposes **93 MCP tools** covering core math, supervised / unsupervised ML, neural networks + autograd, signal + chaos, graph + topology, adversarial + evolution, game theory, probabilistic data structures, grammar, governance, federation, source adapters (`ix_git_log`, `ix_cargo_deps`, `ix_code_analyze`, `ix_code_catalog`, `ix_ast_query`, `ix_code_smells`), OPTIC-K voicing search, and pipeline orchestration (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_pipeline_list`).
 
 See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for the full categorized inventory and [`crates/ix-agent/src/tools.rs`](crates/ix-agent/src/tools.rs) for the authoritative schemas.
 
@@ -248,7 +283,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 ### Integration
 | Crate | Description |
 |-------|-------------|
-| **ix-agent** | MCP server: 68 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
+| **ix-agent** | MCP server: 93 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
 | **ix-skill** | CLI binary for direct command-line access to all algorithms |
 | **ix-demo** | egui desktop app with 22+ interactive demo tabs including governance explorer |
 
@@ -340,9 +375,31 @@ cargo run --example bloom_filter
 
 Topics: linear algebra, optimization, supervised/unsupervised learning, neural networks, reinforcement learning, game theory, signal processing, chaos theory, adversarial ML, GPU computing, and more.
 
+## DuckDB Integration (analyst bench)
+
+`ix-duck` is an **in-process DuckDB "analyst bench"** — *not* a production engine and *not* a source of truth (see [`docs/DUCKDB.md`](docs/DUCKDB.md)). It does two things:
+
+1. **IX algorithms as SQL UDFs.** Call IX primitives directly from SQL — `ix_cosine` / `ix_euclidean`, `ix_pca_project` / `ix_kmeans` / `ix_dbscan` / `ix_silhouette`, ranking metrics (`ix_ndcg`, …), probabilistic sketches (`ix_bloom_*`, `ix_hll_*`, `ix_cms_*`, `ix_cuckoo_*`), music set-theory (`ix_forte_number`, `ix_icv`, `ix_prime_form`, the twelve-tone serialism + Grothendieck UDFs), graph/signal (`ix_pagerank`, `ix_rfft`), and code metrics (`ix_code_complexity`, `ix_ast_query`).
+2. **Lenses over ecosystem telemetry.** Read-only analyzers over the sibling repos' `state/quality/**` JSON-on-disk artifacts (cross-repo by **format contract, not runtime coupling**), each graceful-degrading when a directory is absent:
+
+| Lens | Reads | Surfaces |
+|---|---|---|
+| `chatbot` | GA golden-traces | flight recorder + **canonical-diff regression gate** (routed-agent drift) |
+| `routing` | GA `routing-eval-*.json` | per-intent F1 trend, weakest intents, run-over-run regressions |
+| `ood` | GA query embeddings | out-of-domain queries (mean top-k cosine) |
+| `loops` | AFK loop iterations | failure clustering — recurring worst-items, oscillating loops |
+| `maintain` | all of the above + `hits.jsonl` | the **maintain-gate**: one hexavalent (T/P/U/D/F/C) RSI verdict (metric↑ ∧ guardrail held ∧ converging ∧ in-distribution, never an average) |
+
+The shared **`telemetry` ingestion seam** concentrates the *absent → skip / unreadable → fail-closed* contract every lens depends on. DuckDB code lives behind the optional **`duck`** feature (a bundled C++ build); the default `cargo build --workspace` and CI never compile it. Exposed to agents through the feature-gated `ix_maintain_gate` MCP tool. IXQL (Demerzel's governance DSL) and `ix-duck` are complementary layers joined only by the file-format contract — see [`docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md`](docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md).
+
+```bash
+# the analyst bench, with every IX UDF registered:
+cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check ../ga/state/quality/chatbot-qa
+```
+
 ## Architecture
 
-ix is a Rust workspace of **65 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
+ix is a Rust workspace of **77 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
 
 ```
 ix/
@@ -358,7 +415,7 @@ ix/
 │   └── canonical-showcase/# 5 reproducible demo pipelines + roadmap + findings
 ├── governance/
 │   └── demerzel/          # Git submodule: constitution + personas + policies
-└── crates/                # 65 crates — see maturity tables above
+└── crates/                # 77 crates — see maturity tables above
 ```
 
 For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.

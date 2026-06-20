@@ -1,8 +1,8 @@
 # ix — ML Algorithms + Governance for Claude Code Skills
 
-Rust workspace (32 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
+Rust workspace (77 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
 
-**Crate map**: see `README.md` for the full list of 32 crates grouped by domain.
+**Crate map**: see `README.md` for the full list of 77 crates grouped by domain.
 
 ## Build
 
