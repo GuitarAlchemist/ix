@@ -69,6 +69,12 @@ mod sketch;
 #[cfg(feature = "udf")]
 mod code;
 
+/// Artifact source — the deep module every lens reads through: safe materialization of
+/// a GA-emitted JSON artifact set into a bench table (file selection + read_json_auto
+/// flags + the json_extract projection + empty-fallback). See `CONTEXT.md` → "Artifact source".
+#[cfg(feature = "duck")]
+pub mod source;
+
 /// Chatbot flight recorder — GA golden-trace warehouse (Slice A) + canonical-diff
 /// regression gate (Slice B). See `docs/plans/2026-06-14-004-…-flight-recorder-plan.md`.
 #[cfg(feature = "duck")]

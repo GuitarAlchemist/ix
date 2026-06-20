@@ -11,89 +11,65 @@
 //! intent keys (`skill.scaleinfo`) are extracted via JSON-Pointer paths
 //! (`/key/field`) — JSONPath's `$.` would mis-split the dot into nesting.
 
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use duckdb::Connection;
 
-/// Errors from the routing lens: directory I/O vs DuckDB.
-#[derive(Debug)]
-pub enum RoutingError {
-    Io(std::io::Error),
-    Duck(duckdb::Error),
-}
-impl std::fmt::Display for RoutingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RoutingError::Io(e) => write!(f, "routing-eval I/O error: {e}"),
-            RoutingError::Duck(e) => write!(f, "duckdb error: {e}"),
-        }
-    }
-}
-impl std::error::Error for RoutingError {}
-impl From<std::io::Error> for RoutingError {
-    fn from(e: std::io::Error) -> Self {
-        RoutingError::Io(e)
-    }
-}
-impl From<duckdb::Error> for RoutingError {
-    fn from(e: duckdb::Error) -> Self {
-        RoutingError::Duck(e)
-    }
+use crate::source::{self, Col, Files};
+
+/// Errors from the routing lens — the shared artifact-source error
+/// ([`crate::source::SourceError`]); aliased so the lens's public API keeps its name.
+pub type RoutingError = source::SourceError;
+
+fn is_routing_eval(name: &str) -> bool {
+    name.starts_with("routing-eval-") && name.ends_with(".json")
 }
 
-/// `routing-eval-*.json` files in `quality_dir` (sorted). Absent dir → empty (skip);
-/// any other read error on a present dir → surfaced.
-fn eval_files(quality_dir: &Path) -> Result<Vec<PathBuf>, RoutingError> {
-    let rd = match std::fs::read_dir(quality_dir) {
-        Ok(r) => r,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let mut out = Vec::new();
-    for entry in rd {
-        let p = entry?.path();
-        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
-            if n.starts_with("routing-eval-") && n.ends_with(".json") {
-                out.push(p);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-/// DuckDB list literal of POSIX-slashed, quote-escaped paths.
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| format!("'{}'", p.to_string_lossy().replace('\\', "/").replace('\'', "''")))
-        .collect();
-    format!("[{}]", items.join(", "))
-}
+/// `routing_overall` column spec — the flat top-line metrics. The InScope/OOS/margin
+/// metrics were added 2026-05-30, so older eval files lack them; reading each via
+/// [`Col::extract`] (json_extract, not struct-field access) yields `NULL` on
+/// whole-corpus absence rather than a bind error or a fabricated zero.
+const OVERALL_SPEC: &[Col] = &[
+    Col::direct("generated_at", "VARCHAR", "generatedAt::VARCHAR"),
+    Col::direct("day", "VARCHAR", "(generatedAt::VARCHAR)[1:10]"),
+    Col::extract("accuracy", "DOUBLE", "overall", "$.Accuracy"),
+    Col::extract("in_scope_accuracy", "DOUBLE", "overall", "$.InScopeAccuracy"),
+    Col::extract("oos_decline_rate", "DOUBLE", "overall", "$.OosDeclineRate"),
+    Col::extract("mean_in_scope_margin", "DOUBLE", "overall", "$.MeanInScopeMargin"),
+];
 
 /// Build `routing_evals` (run × intent) and `routing_overall` (run). Returns the
 /// per-intent row count; 0 when the directory is absent/empty.
 // @ai:invariant build_routing_evals creates routing_evals with one row per (run, intent) parsed from each routing-eval-*.json perIntent map [T:test conf:0.9 src:ix_duck::routing::tests::evals_row_per_run_intent]
 pub fn build_routing_evals(conn: &Connection, quality_dir: &Path) -> Result<usize, RoutingError> {
-    let intent_cols = "generated_at VARCHAR, day VARCHAR, intent VARCHAR, support BIGINT, \
-                       precision DOUBLE, recall DOUBLE, f1 DOUBLE, status VARCHAR";
-    let overall_cols = "generated_at VARCHAR, day VARCHAR, accuracy DOUBLE, \
-                        in_scope_accuracy DOUBLE, oos_decline_rate DOUBLE, mean_in_scope_margin DOUBLE";
-    let files = eval_files(quality_dir)?;
+    let files = source::select_files(Files { dir: quality_dir, matches: is_routing_eval })?;
+    // routing_overall is a flat projection → the deep artifact-source path owns the safe
+    // read + empty-fallback (it can't drift back into struct-access / coalesce-0).
+    source::materialize_files(conn, "routing_overall", &files, OVERALL_SPEC)?;
+    // routing_evals is a map-explode (one row per perIntent key) — not a flat spec — so it
+    // keeps a custom SELECT, but still reuses the shared file list + read flags.
+    build_routing_evals_table(conn, &files)?;
+    let n: i64 = conn.query_row("SELECT count(*) FROM routing_evals", [], |r| r.get(0))?;
+    Ok(n as usize)
+}
+
+/// The `perIntent` map-explode (custom shape — out of scope for the flat [`Col`] spec —
+/// but shares [`source::READ_FLAGS`] + [`source::sql_list`]). Dotted intent keys use
+/// JSON-Pointer (`/key/field`); JSONPath's `$.` would mis-split the dot into nesting.
+fn build_routing_evals_table(conn: &Connection, files: &[PathBuf]) -> Result<(), RoutingError> {
+    let cols = "generated_at VARCHAR, day VARCHAR, intent VARCHAR, support BIGINT, \
+                precision DOUBLE, recall DOUBLE, f1 DOUBLE, status VARCHAR";
     if files.is_empty() {
-        conn.execute_batch(&format!(
-            "CREATE OR REPLACE TABLE routing_evals ({intent_cols});
-             CREATE OR REPLACE TABLE routing_overall ({overall_cols});"
-        ))?;
-        return Ok(0);
+        conn.execute_batch(&format!("CREATE OR REPLACE TABLE routing_evals ({cols});"))?;
+        return Ok(());
     }
-    let list = sql_list(&files);
+    let list = source::sql_list(files);
+    let flags = source::READ_FLAGS;
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE routing_evals AS
          WITH raw AS (
              SELECT generatedAt::VARCHAR AS generated_at, to_json(perIntent) AS pi
-             FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1)
+             FROM read_json_auto({list}, {flags})
          ),
          keyed AS (SELECT generated_at, pi, unnest(json_keys(pi)) AS intent FROM raw)
          SELECT generated_at, generated_at[1:10] AS day, intent,
@@ -102,17 +78,9 @@ pub fn build_routing_evals(conn: &Connection, quality_dir: &Path) -> Result<usiz
                 json_extract(pi, '/' || intent || '/Recall')::DOUBLE    AS recall,
                 json_extract(pi, '/' || intent || '/F1')::DOUBLE        AS f1,
                 json_extract_string(pi, '/' || intent || '/Status')     AS status
-         FROM keyed;
-         CREATE OR REPLACE TABLE routing_overall AS
-         SELECT generatedAt::VARCHAR AS generated_at, (generatedAt::VARCHAR)[1:10] AS day,
-                TRY_CAST(json_extract(to_json(overall), '$.Accuracy') AS DOUBLE)          AS accuracy,
-                TRY_CAST(json_extract(to_json(overall), '$.InScopeAccuracy') AS DOUBLE)   AS in_scope_accuracy,
-                TRY_CAST(json_extract(to_json(overall), '$.OosDeclineRate') AS DOUBLE)    AS oos_decline_rate,
-                TRY_CAST(json_extract(to_json(overall), '$.MeanInScopeMargin') AS DOUBLE) AS mean_in_scope_margin
-         FROM read_json_auto({list}, filename=true, union_by_name=true, sample_size=-1);"
+         FROM keyed;"
     ))?;
-    let n: i64 = conn.query_row("SELECT count(*) FROM routing_evals", [], |r| r.get(0))?;
-    Ok(n as usize)
+    Ok(())
 }
 
 /// Weakest intents in the **latest** run: `(intent, f1, support)` with `f1 < threshold`.
