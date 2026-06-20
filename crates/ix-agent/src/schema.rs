@@ -61,6 +61,55 @@ impl Prop {
         p.0.insert("items".into(), Self::typed("object").build());
         p
     }
+    /// `[string]` — an array of strings.
+    pub(crate) fn str_array() -> Self {
+        let mut p = Self::typed("array");
+        p.0.insert("items".into(), Self::string().build());
+        p
+    }
+    /// `[<item>]` — an array whose `items` follow an arbitrary prop schema (e.g. an
+    /// array of typed objects). Covers the shapes the fixed `*_array` helpers don't.
+    pub(crate) fn array_of(item: Prop) -> Self {
+        let mut p = Self::typed("array");
+        p.0.insert("items".into(), item.build());
+        p
+    }
+    /// A free-form `{"type":"object"}` with no declared properties.
+    pub(crate) fn object_any() -> Self {
+        Self::typed("object")
+    }
+    /// A bare `{"type":"array"}` with no declared `items`.
+    pub(crate) fn array_any() -> Self {
+        Self::typed("array")
+    }
+    /// An unconstrained `{}` schema — any JSON value (used for pass-through params).
+    pub(crate) fn any() -> Self {
+        Prop(Map::new())
+    }
+    /// A nested object property: `{"type":"object","properties":{…}[,"required":[…]]}`.
+    /// `required` is omitted when empty (matching literals that declare properties
+    /// without a required block).
+    pub(crate) fn object(props: Vec<(&str, Prop)>, required: &[&str]) -> Self {
+        let mut properties = Map::new();
+        for (name, prop) in props {
+            properties.insert(name.into(), prop.build());
+        }
+        let mut m = Map::new();
+        m.insert("type".into(), Value::String("object".into()));
+        m.insert("properties".into(), Value::Object(properties));
+        if !required.is_empty() {
+            m.insert(
+                "required".into(),
+                Value::Array(
+                    required
+                        .iter()
+                        .map(|s| Value::String((*s).into()))
+                        .collect(),
+                ),
+            );
+        }
+        Prop(m)
+    }
 
     pub(crate) fn desc(mut self, d: &str) -> Self {
         self.0.insert("description".into(), Value::String(d.into()));
@@ -112,18 +161,22 @@ impl Prop {
 }
 
 /// An object schema with `required` fields — the standard MCP tool input schema.
+/// `required` is omitted when empty (a `required: []` block is meaningless and some
+/// hand-written literals declared properties without one).
 pub(crate) fn object(props: Vec<(&str, Prop)>, required: &[&str]) -> Value {
     let mut schema = build_object(props);
-    if let Value::Object(m) = &mut schema {
-        m.insert(
-            "required".into(),
-            Value::Array(
-                required
-                    .iter()
-                    .map(|s| Value::String((*s).into()))
-                    .collect(),
-            ),
-        );
+    if !required.is_empty() {
+        if let Value::Object(m) = &mut schema {
+            m.insert(
+                "required".into(),
+                Value::Array(
+                    required
+                        .iter()
+                        .map(|s| Value::String((*s).into()))
+                        .collect(),
+                ),
+            );
+        }
     }
     schema
 }
@@ -245,5 +298,62 @@ mod tests {
             out,
             json!({ "type": "object", "properties": { "n": { "type": "integer", "description": "count" } } })
         );
+    }
+
+    #[test]
+    fn nested_objects_str_arrays_and_array_of() {
+        // A nested object WITH required, an array-of-typed-object, a nested object
+        // WITHOUT required (required omitted), a string array, and a free-form object —
+        // the shapes batch2/batch3 carry.
+        let built = object(
+            vec![
+                (
+                    "rules",
+                    Prop::array_of(Prop::object(
+                        vec![
+                            ("id", Prop::string()),
+                            ("weight", Prop::number()),
+                            ("level", Prop::integer()),
+                        ],
+                        &["id"],
+                    )),
+                ),
+                (
+                    "observation",
+                    Prop::object(
+                        vec![("rule_id", Prop::string()), ("success", Prop::boolean())],
+                        &["rule_id", "success"],
+                    ),
+                ),
+                (
+                    "split",
+                    Prop::object(
+                        vec![("test_ratio", Prop::number()), ("seed", Prop::integer())],
+                        &[],
+                    ),
+                ),
+                ("tags", Prop::str_array().desc("labels")),
+                ("model_params", Prop::object_any()),
+            ],
+            &["rules"],
+        );
+        let literal = json!({
+            "type": "object",
+            "properties": {
+                "rules": {"type": "array", "items": {"type": "object", "properties": {
+                    "id": {"type": "string"}, "weight": {"type": "number"}, "level": {"type": "integer"}
+                }, "required": ["id"]}},
+                "observation": {"type": "object", "properties": {
+                    "rule_id": {"type": "string"}, "success": {"type": "boolean"}
+                }, "required": ["rule_id", "success"]},
+                "split": {"type": "object", "properties": {
+                    "test_ratio": {"type": "number"}, "seed": {"type": "integer"}
+                }},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "labels"},
+                "model_params": {"type": "object"}
+            },
+            "required": ["rules"]
+        });
+        assert_eq!(built, literal);
     }
 }

@@ -5,26 +5,29 @@
 //! so their schemas are denser than batch1/batch2's primitives.
 
 use crate::handlers;
+use crate::schema::{object, Prop};
 use ix_skill_macros::ix_skill;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 // ---- pipeline ------------------------------------------------------------
 fn pipeline_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["info"]},
-            "steps": {
-                "type": "array",
-                "items": {"type": "object", "properties": {
-                    "id": {"type": "string"},
-                    "description": {"type": "string"},
-                    "depends_on": {"type": "array", "items": {"type": "string"}}
-                }, "required": ["id"]}
-            }
-        },
-        "required": ["operation", "steps"]
-    })
+    object(
+        vec![
+            ("operation", Prop::string().enum_of(&["info"])),
+            (
+                "steps",
+                Prop::array_of(Prop::object(
+                    vec![
+                        ("id", Prop::string()),
+                        ("description", Prop::string()),
+                        ("depends_on", Prop::str_array()),
+                    ],
+                    &["id"],
+                )),
+            ),
+        ],
+        &["operation", "steps"],
+    )
 }
 /// DAG pipeline analysis: toposort, parallel levels, critical path.
 #[ix_skill(
@@ -39,15 +42,14 @@ pub fn pipeline(p: Value) -> Result<Value, String> {
 
 // ---- cache ---------------------------------------------------------------
 fn cache_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["set", "get", "delete", "keys"]},
-            "key": {"type": "string"},
-            "value": {}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            ("operation", Prop::string().enum_of(&["set", "get", "delete", "keys"])),
+            ("key", Prop::string()),
+            ("value", Prop::any()),
+        ],
+        &["operation"],
+    )
 }
 /// In-memory cache: set/get/delete/list operations.
 #[ix_skill(
@@ -62,13 +64,10 @@ pub fn cache(p: Value) -> Result<Value, String> {
 
 // ---- federation.discover -------------------------------------------------
 fn federation_discover_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "domain": {"type": "string"},
-            "query": {"type": "string"}
-        }
-    })
+    object(
+        vec![("domain", Prop::string()), ("query", Prop::string())],
+        &[],
+    )
 }
 /// Discover capabilities across ix / tars / ga ecosystems.
 #[ix_skill(
@@ -83,12 +82,7 @@ pub fn federation_discover(p: Value) -> Result<Value, String> {
 
 // ---- trace.ingest --------------------------------------------------------
 fn trace_ingest_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "dir": {"type": "string"}
-        }
-    })
+    object(vec![("dir", Prop::string())], &[])
 }
 /// Ingest GA trace files and compute summary statistics.
 #[ix_skill(
@@ -103,30 +97,30 @@ pub fn trace_ingest(p: Value) -> Result<Value, String> {
 
 // ---- fuzzy.eval (primitive #5) -----------------------------------------
 fn fuzzy_eval_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["info", "not", "and", "or"]},
-            "distribution": {
-                "type": "object",
-                "properties": {
-                    "T": {"type": "number"}, "P": {"type": "number"},
-                    "U": {"type": "number"}, "D": {"type": "number"},
-                    "F": {"type": "number"}, "C": {"type": "number"}
-                }
-            },
-            "other": {
-                "type": "object",
-                "description": "Second distribution for and/or",
-                "properties": {
-                    "T": {"type": "number"}, "P": {"type": "number"},
-                    "U": {"type": "number"}, "D": {"type": "number"},
-                    "F": {"type": "number"}, "C": {"type": "number"}
-                }
-            }
-        },
-        "required": ["distribution"]
-    })
+    let distribution = || {
+        Prop::object(
+            vec![
+                ("T", Prop::number()),
+                ("P", Prop::number()),
+                ("U", Prop::number()),
+                ("D", Prop::number()),
+                ("F", Prop::number()),
+                ("C", Prop::number()),
+            ],
+            &[],
+        )
+    };
+    object(
+        vec![
+            ("operation", Prop::string().enum_of(&["info", "not", "and", "or"])),
+            ("distribution", distribution()),
+            (
+                "other",
+                distribution().desc("Second distribution for and/or"),
+            ),
+        ],
+        &["distribution"],
+    )
 }
 /// Evaluate hexavalent fuzzy distribution ops: info / not / and / or.
 #[ix_skill(
@@ -141,15 +135,20 @@ pub fn fuzzy_eval(p: Value) -> Result<Value, String> {
 
 // ---- session.flywheel_export (primitive #6) -----------------------------
 fn session_flywheel_export_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "session_log": {"type": "string", "description": "Path to the JSONL session log"},
-            "trace_dir":   {"type": "string", "description": "Destination directory (default ~/.ga/traces)"},
-            "trace_id":    {"type": "string", "description": "Explicit trace id (default: log filename stem)"}
-        },
-        "required": ["session_log"]
-    })
+    object(
+        vec![
+            ("session_log", Prop::string().desc("Path to the JSONL session log")),
+            (
+                "trace_dir",
+                Prop::string().desc("Destination directory (default ~/.ga/traces)"),
+            ),
+            (
+                "trace_id",
+                Prop::string().desc("Explicit trace id (default: log filename stem)"),
+            ),
+        ],
+        &["session_log"],
+    )
 }
 /// Convert a persisted SessionLog to a GA trace file consumable by ix_trace_ingest.
 #[ix_skill(
@@ -164,36 +163,50 @@ pub fn session_flywheel_export(p: Value) -> Result<Value, String> {
 
 // ---- ml_pipeline ---------------------------------------------------------
 fn ml_pipeline_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "source": {"type": "object", "properties": {
-                "type": {"type": "string", "enum": ["csv", "json", "inline"]},
-                "path": {"type": "string"},
-                "data": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-                "has_header": {"type": "boolean"},
-                "target_column": {}
-            }, "required": ["type"]},
-            "task": {"type": "string", "enum": ["classify", "regress", "cluster", "auto"]},
-            "model": {"type": "string"},
-            "model_params": {"type": "object"},
-            "preprocess": {"type": "object", "properties": {
-                "normalize": {"type": "boolean"},
-                "drop_nan": {"type": "boolean"},
-                "pca_components": {"type": "integer"}
-            }},
-            "split": {"type": "object", "properties": {
-                "test_ratio": {"type": "number"},
-                "seed": {"type": "integer"}
-            }},
-            "persist": {"type": "boolean"},
-            "persist_key": {"type": "string"},
-            "return_predictions": {"type": "boolean"},
-            "max_rows": {"type": "integer"},
-            "max_features": {"type": "integer"}
-        },
-        "required": ["source"]
-    })
+    object(
+        vec![
+            (
+                "source",
+                Prop::object(
+                    vec![
+                        ("type", Prop::string().enum_of(&["csv", "json", "inline"])),
+                        ("path", Prop::string()),
+                        ("data", Prop::num_matrix()),
+                        ("has_header", Prop::boolean()),
+                        ("target_column", Prop::any()),
+                    ],
+                    &["type"],
+                ),
+            ),
+            ("task", Prop::string().enum_of(&["classify", "regress", "cluster", "auto"])),
+            ("model", Prop::string()),
+            ("model_params", Prop::object_any()),
+            (
+                "preprocess",
+                Prop::object(
+                    vec![
+                        ("normalize", Prop::boolean()),
+                        ("drop_nan", Prop::boolean()),
+                        ("pca_components", Prop::integer()),
+                    ],
+                    &[],
+                ),
+            ),
+            (
+                "split",
+                Prop::object(
+                    vec![("test_ratio", Prop::number()), ("seed", Prop::integer())],
+                    &[],
+                ),
+            ),
+            ("persist", Prop::boolean()),
+            ("persist_key", Prop::string()),
+            ("return_predictions", Prop::boolean()),
+            ("max_rows", Prop::integer()),
+            ("max_features", Prop::integer()),
+        ],
+        &["source"],
+    )
 }
 /// End-to-end ML pipeline: load → preprocess → train → evaluate → persist.
 #[ix_skill(
@@ -208,14 +221,13 @@ pub fn ml_pipeline(p: Value) -> Result<Value, String> {
 
 // ---- ml_predict ----------------------------------------------------------
 fn ml_predict_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "persist_key": {"type": "string"},
-            "data": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}
-        },
-        "required": ["persist_key", "data"]
-    })
+    object(
+        vec![
+            ("persist_key", Prop::string()),
+            ("data", Prop::num_matrix()),
+        ],
+        &["persist_key", "data"],
+    )
 }
 /// Predict using a previously-persisted ML model (by persist_key).
 #[ix_skill(
@@ -230,14 +242,29 @@ pub fn ml_predict(p: Value) -> Result<Value, String> {
 
 // ---- code_analyze --------------------------------------------------------
 fn code_analyze_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "source": {"type": "string"},
-            "language": {"type": "string", "enum": ["rust", "python", "javascript", "typescript", "cpp", "java", "go", "csharp", "fsharp", "php", "ruby"]},
-            "path": {"type": "string"}
-        }
-    })
+    object(
+        vec![
+            ("source", Prop::string()),
+            (
+                "language",
+                Prop::string().enum_of(&[
+                    "rust",
+                    "python",
+                    "javascript",
+                    "typescript",
+                    "cpp",
+                    "java",
+                    "go",
+                    "csharp",
+                    "fsharp",
+                    "php",
+                    "ruby",
+                ]),
+            ),
+            ("path", Prop::string()),
+        ],
+        &[],
+    )
 }
 /// Code complexity analysis: cyclomatic, cognitive, Halstead, SLOC, MI.
 #[ix_skill(
@@ -252,15 +279,17 @@ pub fn code_analyze(p: Value) -> Result<Value, String> {
 
 // ---- tars_bridge ---------------------------------------------------------
 fn tars_bridge_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "action": {"type": "string", "enum": ["prepare_traces", "prepare_patterns", "export_grammar"]},
-            "trace_dir": {"type": "string"},
-            "min_frequency": {"type": "integer"}
-        },
-        "required": ["action"]
-    })
+    object(
+        vec![
+            (
+                "action",
+                Prop::string().enum_of(&["prepare_traces", "prepare_patterns", "export_grammar"]),
+            ),
+            ("trace_dir", Prop::string()),
+            ("min_frequency", Prop::integer()),
+        ],
+        &["action"],
+    )
 }
 /// Prepare ix results for TARS ingestion (traces / patterns / grammar).
 #[ix_skill(
@@ -275,15 +304,22 @@ pub fn tars_bridge(p: Value) -> Result<Value, String> {
 
 // ---- ga_bridge -----------------------------------------------------------
 fn ga_bridge_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "action": {"type": "string", "enum": ["chord_features", "progression_features", "scale_features", "workflow_guide"]},
-            "chords": {"type": "array", "items": {"type": "string"}},
-            "progression": {"type": "string"}
-        },
-        "required": ["action"]
-    })
+    object(
+        vec![
+            (
+                "action",
+                Prop::string().enum_of(&[
+                    "chord_features",
+                    "progression_features",
+                    "scale_features",
+                    "workflow_guide",
+                ]),
+            ),
+            ("chords", Prop::str_array()),
+            ("progression", Prop::string()),
+        ],
+        &["action"],
+    )
 }
 /// Convert GA music theory data into ML-ready feature matrices.
 #[ix_skill(
@@ -308,42 +344,65 @@ pub fn ga_bridge(p: Value) -> Result<Value, String> {
 // A future optimization can introduce a shared index cache at the
 // ix-agent level.
 fn context_walk_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "Fully-qualified free-function path to walk from, e.g. \"ix_math::eigen::symmetric_eigen\""
-            },
-            "strategy": {
-                "type": "string",
-                "enum": ["callers", "callees", "siblings", "cochange",
-                         "callers_transitive", "callees_transitive",
-                         "module_siblings", "git_cochange"],
-                "description": "Walk strategy. Short and long names accepted."
-            },
-            "strategy_params": {
-                "type": "object",
-                "properties": {
-                    "max_depth": {"type": "integer", "minimum": 1, "maximum": 64, "default": 3},
-                    "min_commits_shared": {"type": "integer", "minimum": 1, "default": 2}
-                }
-            },
-            "budget": {
-                "type": "object",
-                "properties": {
-                    "max_nodes": {"type": "integer", "minimum": 1, "default": 1024},
-                    "max_edges": {"type": "integer", "minimum": 1, "default": 4096},
-                    "timeout_ms": {"type": "integer", "minimum": 1, "default": 30000}
-                }
-            },
-            "workspace_root": {
-                "type": "string",
-                "description": "Optional absolute path to the workspace root. Defaults to the current working directory."
-            }
-        },
-        "required": ["target", "strategy"]
-    })
+    object(
+        vec![
+            (
+                "target",
+                Prop::string().desc(
+                    "Fully-qualified free-function path to walk from, e.g. \"ix_math::eigen::symmetric_eigen\"",
+                ),
+            ),
+            (
+                "strategy",
+                Prop::string()
+                    .enum_of(&[
+                        "callers",
+                        "callees",
+                        "siblings",
+                        "cochange",
+                        "callers_transitive",
+                        "callees_transitive",
+                        "module_siblings",
+                        "git_cochange",
+                    ])
+                    .desc("Walk strategy. Short and long names accepted."),
+            ),
+            (
+                "strategy_params",
+                Prop::object(
+                    vec![
+                        (
+                            "max_depth",
+                            Prop::integer().minimum(1).maximum(64).default(3),
+                        ),
+                        (
+                            "min_commits_shared",
+                            Prop::integer().minimum(1).default(2),
+                        ),
+                    ],
+                    &[],
+                ),
+            ),
+            (
+                "budget",
+                Prop::object(
+                    vec![
+                        ("max_nodes", Prop::integer().minimum(1).default(1024)),
+                        ("max_edges", Prop::integer().minimum(1).default(4096)),
+                        ("timeout_ms", Prop::integer().minimum(1).default(30000)),
+                    ],
+                    &[],
+                ),
+            ),
+            (
+                "workspace_root",
+                Prop::string().desc(
+                    "Optional absolute path to the workspace root. Defaults to the current working directory.",
+                ),
+            ),
+        ],
+        &["target", "strategy"],
+    )
 }
 
 /// Deterministic structural context DAG walker over a Rust workspace.
