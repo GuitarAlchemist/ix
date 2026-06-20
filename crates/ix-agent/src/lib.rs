@@ -17,6 +17,10 @@ pub mod maintain_gate;
 pub mod ml_pipeline;
 pub mod projection;
 pub mod registry_bridge;
+/// A small JSON-Schema builder DSL for MCP tool input/output schemas — collapses the
+/// repeated `json!({...})` property shapes used across `tools.rs` + the `#[ix_skill]`
+/// `schema_fn`s. See `schema.rs`.
+mod schema;
 pub mod scopes;
 pub mod server_context;
 pub mod skills;
