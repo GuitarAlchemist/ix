@@ -12,21 +12,21 @@
 //! are complex nested shapes that gain little from registry migration.
 
 use crate::handlers;
+use crate::schema::{object, Prop};
 use ix_skill_macros::ix_skill;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 // ---- optimize ------------------------------------------------------------
 fn optimize_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "function": {"type": "string", "enum": ["sphere", "rosenbrock", "rastrigin"]},
-            "dimensions": {"type": "integer", "minimum": 1},
-            "method": {"type": "string", "enum": ["sgd", "adam", "pso", "annealing"]},
-            "max_iter": {"type": "integer", "minimum": 1}
-        },
-        "required": ["function", "dimensions", "method", "max_iter"]
-    })
+    object(
+        vec![
+            ("function", Prop::string().enum_of(&["sphere", "rosenbrock", "rastrigin"])),
+            ("dimensions", Prop::integer().minimum(1)),
+            ("method", Prop::string().enum_of(&["sgd", "adam", "pso", "annealing"])),
+            ("max_iter", Prop::integer().minimum(1)),
+        ],
+        &["function", "dimensions", "method", "max_iter"],
+    )
 }
 /// Minimize a benchmark function via SGD / Adam / PSO / simulated annealing.
 #[ix_skill(
@@ -41,14 +41,13 @@ pub fn optimize(p: Value) -> Result<Value, String> {
 
 // ---- markov --------------------------------------------------------------
 fn markov_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "transition_matrix": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "steps": {"type": "integer", "minimum": 1}
-        },
-        "required": ["transition_matrix", "steps"]
-    })
+    object(
+        vec![
+            ("transition_matrix", Prop::num_matrix()),
+            ("steps", Prop::integer().minimum(1)),
+        ],
+        &["transition_matrix", "steps"],
+    )
 }
 /// Markov chain stationary distribution via power iteration.
 #[ix_skill(
@@ -63,16 +62,15 @@ pub fn markov(p: Value) -> Result<Value, String> {
 
 // ---- viterbi -------------------------------------------------------------
 fn viterbi_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "initial": {"type": "array", "items": {"type": "number"}},
-            "transition": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "emission": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "observations": {"type": "array", "items": {"type": "integer"}}
-        },
-        "required": ["initial", "transition", "emission", "observations"]
-    })
+    object(
+        vec![
+            ("initial", Prop::num_array()),
+            ("transition", Prop::num_matrix()),
+            ("emission", Prop::num_matrix()),
+            ("observations", Prop::int_array()),
+        ],
+        &["initial", "transition", "emission", "observations"],
+    )
 }
 /// HMM Viterbi decoding — most-likely hidden state sequence.
 #[ix_skill(
@@ -87,14 +85,13 @@ pub fn viterbi(p: Value) -> Result<Value, String> {
 
 // ---- search --------------------------------------------------------------
 fn search_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "algorithm": {"type": "string", "enum": ["astar", "bfs", "dfs"]},
-            "description": {"type": "boolean"}
-        },
-        "required": ["algorithm"]
-    })
+    object(
+        vec![
+            ("algorithm", Prop::string().enum_of(&["astar", "bfs", "dfs"])),
+            ("description", Prop::boolean()),
+        ],
+        &["algorithm"],
+    )
 }
 /// Search algorithm catalog (A*, BFS, DFS): descriptions and complexity.
 #[ix_skill(
@@ -109,14 +106,13 @@ pub fn search(p: Value) -> Result<Value, String> {
 
 // ---- game.nash -----------------------------------------------------------
 fn game_nash_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "payoff_a": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "payoff_b": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}
-        },
-        "required": ["payoff_a", "payoff_b"]
-    })
+    object(
+        vec![
+            ("payoff_a", Prop::num_matrix()),
+            ("payoff_b", Prop::num_matrix()),
+        ],
+        &["payoff_a", "payoff_b"],
+    )
 }
 /// Nash equilibria of a 2-player bimatrix game via support enumeration.
 #[ix_skill(
@@ -131,15 +127,14 @@ pub fn game_nash(p: Value) -> Result<Value, String> {
 
 // ---- chaos.lyapunov ------------------------------------------------------
 fn chaos_lyapunov_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "map": {"type": "string", "enum": ["logistic"]},
-            "parameter": {"type": "number"},
-            "iterations": {"type": "integer", "minimum": 1}
-        },
-        "required": ["map", "parameter", "iterations"]
-    })
+    object(
+        vec![
+            ("map", Prop::string().enum_of(&["logistic"])),
+            ("parameter", Prop::number()),
+            ("iterations", Prop::integer().minimum(1)),
+        ],
+        &["map", "parameter", "iterations"],
+    )
 }
 /// Maximal Lyapunov exponent of the logistic map at parameter r.
 #[ix_skill(
@@ -154,15 +149,14 @@ pub fn chaos_lyapunov(p: Value) -> Result<Value, String> {
 
 // ---- adversarial.fgsm ----------------------------------------------------
 fn adversarial_fgsm_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "input": {"type": "array", "items": {"type": "number"}},
-            "gradient": {"type": "array", "items": {"type": "number"}},
-            "epsilon": {"type": "number"}
-        },
-        "required": ["input", "gradient", "epsilon"]
-    })
+    object(
+        vec![
+            ("input", Prop::num_array()),
+            ("gradient", Prop::num_array()),
+            ("epsilon", Prop::number()),
+        ],
+        &["input", "gradient", "epsilon"],
+    )
 }
 /// Fast Gradient Sign Method adversarial perturbation.
 #[ix_skill(
@@ -177,16 +171,15 @@ pub fn adversarial_fgsm(p: Value) -> Result<Value, String> {
 
 // ---- bloom_filter --------------------------------------------------------
 fn bloom_filter_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["create", "check"]},
-            "items": {"type": "array", "items": {"type": "string"}},
-            "query": {"type": "string"},
-            "false_positive_rate": {"type": "number", "minimum": 0, "maximum": 1}
-        },
-        "required": ["items", "false_positive_rate"]
-    })
+    object(
+        vec![
+            ("operation", Prop::string().enum_of(&["create", "check"])),
+            ("items", Prop::str_array()),
+            ("query", Prop::string()),
+            ("false_positive_rate", Prop::number().minimum(0).maximum(1)),
+        ],
+        &["items", "false_positive_rate"],
+    )
 }
 /// Bloom filter: probabilistic set membership.
 #[ix_skill(
@@ -201,20 +194,33 @@ pub fn bloom_filter(p: Value) -> Result<Value, String> {
 
 // ---- grammar.weights -----------------------------------------------------
 fn grammar_weights_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "rules": {"type": "array", "items": {"type": "object", "properties": {
-                "id": {"type": "string"}, "alpha": {"type": "number"}, "beta": {"type": "number"},
-                "weight": {"type": "number"}, "level": {"type": "integer"}, "source": {"type": "string"}
-            }, "required": ["id"]}},
-            "observation": {"type": "object", "properties": {
-                "rule_id": {"type": "string"}, "success": {"type": "boolean"}
-            }, "required": ["rule_id", "success"]},
-            "temperature": {"type": "number", "minimum": 0}
-        },
-        "required": ["rules"]
-    })
+    object(
+        vec![
+            (
+                "rules",
+                Prop::array_of(Prop::object(
+                    vec![
+                        ("id", Prop::string()),
+                        ("alpha", Prop::number()),
+                        ("beta", Prop::number()),
+                        ("weight", Prop::number()),
+                        ("level", Prop::integer()),
+                        ("source", Prop::string()),
+                    ],
+                    &["id"],
+                )),
+            ),
+            (
+                "observation",
+                Prop::object(
+                    vec![("rule_id", Prop::string()), ("success", Prop::boolean())],
+                    &["rule_id", "success"],
+                ),
+            ),
+            ("temperature", Prop::number().minimum(0)),
+        ],
+        &["rules"],
+    )
 }
 /// Bayesian (Beta-Binomial) update + softmax query of grammar rule weights.
 #[ix_skill(
@@ -229,19 +235,26 @@ pub fn grammar_weights(p: Value) -> Result<Value, String> {
 
 // ---- grammar.evolve ------------------------------------------------------
 fn grammar_evolve_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "species": {"type": "array", "items": {"type": "object", "properties": {
-                "id": {"type": "string"}, "proportion": {"type": "number"},
-                "fitness": {"type": "number"}, "is_stable": {"type": "boolean"}
-            }, "required": ["id", "proportion", "fitness"]}},
-            "steps": {"type": "integer", "minimum": 1},
-            "dt": {"type": "number", "minimum": 0},
-            "prune_threshold": {"type": "number", "minimum": 0}
-        },
-        "required": ["species", "steps"]
-    })
+    object(
+        vec![
+            (
+                "species",
+                Prop::array_of(Prop::object(
+                    vec![
+                        ("id", Prop::string()),
+                        ("proportion", Prop::number()),
+                        ("fitness", Prop::number()),
+                        ("is_stable", Prop::boolean()),
+                    ],
+                    &["id", "proportion", "fitness"],
+                )),
+            ),
+            ("steps", Prop::integer().minimum(1)),
+            ("dt", Prop::number().minimum(0)),
+            ("prune_threshold", Prop::number().minimum(0)),
+        ],
+        &["species", "steps"],
+    )
 }
 /// Grammar rule competition via replicator dynamics.
 #[ix_skill(
@@ -256,17 +269,16 @@ pub fn grammar_evolve(p: Value) -> Result<Value, String> {
 
 // ---- grammar.search ------------------------------------------------------
 fn grammar_search_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "grammar_ebnf": {"type": "string"},
-            "max_iterations": {"type": "integer", "minimum": 1},
-            "exploration": {"type": "number", "minimum": 0},
-            "max_depth": {"type": "integer", "minimum": 1},
-            "seed": {"type": "integer", "minimum": 0}
-        },
-        "required": ["grammar_ebnf"]
-    })
+    object(
+        vec![
+            ("grammar_ebnf", Prop::string()),
+            ("max_iterations", Prop::integer().minimum(1)),
+            ("exploration", Prop::number().minimum(0)),
+            ("max_depth", Prop::integer().minimum(1)),
+            ("seed", Prop::integer().minimum(0)),
+        ],
+        &["grammar_ebnf"],
+    )
 }
 /// Grammar-guided MCTS derivation search.
 #[ix_skill(
@@ -281,21 +293,32 @@ pub fn grammar_search(p: Value) -> Result<Value, String> {
 
 // ---- rotation ------------------------------------------------------------
 fn rotation_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["quaternion", "slerp", "euler_to_quat", "quat_to_euler", "rotate_point", "rotation_matrix"]},
-            "axis": {"type": "array", "items": {"type": "number"}},
-            "angle": {"type": "number"},
-            "axis2": {"type": "array", "items": {"type": "number"}},
-            "angle2": {"type": "number"},
-            "t": {"type": "number"},
-            "roll": {"type": "number"}, "pitch": {"type": "number"}, "yaw": {"type": "number"},
-            "point": {"type": "array", "items": {"type": "number"}},
-            "quaternion": {"type": "array", "items": {"type": "number"}}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&[
+                    "quaternion",
+                    "slerp",
+                    "euler_to_quat",
+                    "quat_to_euler",
+                    "rotate_point",
+                    "rotation_matrix",
+                ]),
+            ),
+            ("axis", Prop::num_array()),
+            ("angle", Prop::number()),
+            ("axis2", Prop::num_array()),
+            ("angle2", Prop::number()),
+            ("t", Prop::number()),
+            ("roll", Prop::number()),
+            ("pitch", Prop::number()),
+            ("yaw", Prop::number()),
+            ("point", Prop::num_array()),
+            ("quaternion", Prop::num_array()),
+        ],
+        &["operation"],
+    )
 }
 /// 3D rotation ops: quaternions, SLERP, Euler conversions, rotation matrices.
 #[ix_skill(
@@ -310,17 +333,30 @@ pub fn rotation(p: Value) -> Result<Value, String> {
 
 // ---- number_theory -------------------------------------------------------
 fn number_theory_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["sieve", "is_prime", "mod_pow", "gcd", "lcm", "mod_inverse", "prime_gaps"]},
-            "limit": {"type": "integer", "minimum": 2},
-            "n": {"type": "integer"}, "base": {"type": "integer"},
-            "exp": {"type": "integer"}, "modulus": {"type": "integer"},
-            "a": {"type": "integer"}, "b": {"type": "integer"}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&[
+                    "sieve",
+                    "is_prime",
+                    "mod_pow",
+                    "gcd",
+                    "lcm",
+                    "mod_inverse",
+                    "prime_gaps",
+                ]),
+            ),
+            ("limit", Prop::integer().minimum(2)),
+            ("n", Prop::integer()),
+            ("base", Prop::integer()),
+            ("exp", Prop::integer()),
+            ("modulus", Prop::integer()),
+            ("a", Prop::integer()),
+            ("b", Prop::integer()),
+        ],
+        &["operation"],
+    )
 }
 /// Number theory: primes, modular arithmetic, gcd/lcm.
 #[ix_skill(
@@ -335,17 +371,21 @@ pub fn number_theory(p: Value) -> Result<Value, String> {
 
 // ---- fractal -------------------------------------------------------------
 fn fractal_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["takagi", "hilbert", "peano", "morton_encode", "morton_decode"]},
-            "n_points": {"type": "integer", "minimum": 2},
-            "terms": {"type": "integer", "minimum": 1},
-            "order": {"type": "integer", "minimum": 1},
-            "x": {"type": "integer"}, "y": {"type": "integer"}, "z": {"type": "integer"}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&["takagi", "hilbert", "peano", "morton_encode", "morton_decode"]),
+            ),
+            ("n_points", Prop::integer().minimum(2)),
+            ("terms", Prop::integer().minimum(1)),
+            ("order", Prop::integer().minimum(1)),
+            ("x", Prop::integer()),
+            ("y", Prop::integer()),
+            ("z", Prop::integer()),
+        ],
+        &["operation"],
+    )
 }
 /// Fractals: Takagi curve, Hilbert/Peano curves, Morton encoding.
 #[ix_skill(
@@ -360,15 +400,17 @@ pub fn fractal(p: Value) -> Result<Value, String> {
 
 // ---- sedenion ------------------------------------------------------------
 fn sedenion_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["multiply", "conjugate", "norm", "cayley_dickson_multiply"]},
-            "a": {"type": "array", "items": {"type": "number"}},
-            "b": {"type": "array", "items": {"type": "number"}}
-        },
-        "required": ["operation", "a"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&["multiply", "conjugate", "norm", "cayley_dickson_multiply"]),
+            ),
+            ("a", Prop::num_array()),
+            ("b", Prop::num_array()),
+        ],
+        &["operation", "a"],
+    )
 }
 /// Sedenion / octonion algebra: multiplication, conjugate, norm, Cayley-Dickson.
 #[ix_skill(
@@ -383,18 +425,20 @@ pub fn sedenion(p: Value) -> Result<Value, String> {
 
 // ---- topo ----------------------------------------------------------------
 fn topo_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["persistence", "betti_at_radius", "betti_curve"]},
-            "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "max_dim": {"type": "integer", "minimum": 0},
-            "max_radius": {"type": "number"},
-            "radius": {"type": "number"},
-            "n_steps": {"type": "integer"}
-        },
-        "required": ["operation", "points"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&["persistence", "betti_at_radius", "betti_curve"]),
+            ),
+            ("points", Prop::num_matrix()),
+            ("max_dim", Prop::integer().minimum(0)),
+            ("max_radius", Prop::number()),
+            ("radius", Prop::number()),
+            ("n_steps", Prop::integer()),
+        ],
+        &["operation", "points"],
+    )
 }
 /// Topological data analysis: persistent homology + Betti numbers.
 #[ix_skill(
@@ -409,16 +453,15 @@ pub fn topo(p: Value) -> Result<Value, String> {
 
 // ---- category ------------------------------------------------------------
 fn category_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["monad_laws", "free_forgetful"]},
-            "monad": {"type": "string", "enum": ["option", "result"]},
-            "value": {"type": "integer"},
-            "elements": {"type": "array", "items": {"type": "integer"}}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            ("operation", Prop::string().enum_of(&["monad_laws", "free_forgetful"])),
+            ("monad", Prop::string().enum_of(&["option", "result"])),
+            ("value", Prop::integer()),
+            ("elements", Prop::int_array()),
+        ],
+        &["operation"],
+    )
 }
 /// Category theory: verify monad laws; free-forgetful adjunction.
 #[ix_skill(
@@ -433,18 +476,27 @@ pub fn category(p: Value) -> Result<Value, String> {
 
 // ---- nn.forward ----------------------------------------------------------
 fn nn_forward_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["dense_forward", "mse_loss", "bce_loss", "sinusoidal_encoding", "attention"]},
-            "input": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "target": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "output_size": {"type": "integer"},
-            "max_len": {"type": "integer"}, "d_model": {"type": "integer"},
-            "seed": {"type": "integer"}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&[
+                    "dense_forward",
+                    "mse_loss",
+                    "bce_loss",
+                    "sinusoidal_encoding",
+                    "attention",
+                ]),
+            ),
+            ("input", Prop::num_matrix()),
+            ("target", Prop::num_matrix()),
+            ("output_size", Prop::integer()),
+            ("max_len", Prop::integer()),
+            ("d_model", Prop::integer()),
+            ("seed", Prop::integer()),
+        ],
+        &["operation"],
+    )
 }
 /// Neural network forward pass: dense / loss / attention / positional encoding.
 #[ix_skill(
@@ -459,17 +511,19 @@ pub fn nn_forward(p: Value) -> Result<Value, String> {
 
 // ---- bandit --------------------------------------------------------------
 fn bandit_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "algorithm": {"type": "string", "enum": ["epsilon_greedy", "ucb1", "thompson"]},
-            "n_arms": {"type": "integer", "minimum": 1},
-            "true_means": {"type": "array", "items": {"type": "number"}},
-            "rounds": {"type": "integer", "minimum": 1},
-            "epsilon": {"type": "number"}
-        },
-        "required": ["algorithm", "true_means", "rounds"]
-    })
+    object(
+        vec![
+            (
+                "algorithm",
+                Prop::string().enum_of(&["epsilon_greedy", "ucb1", "thompson"]),
+            ),
+            ("n_arms", Prop::integer().minimum(1)),
+            ("true_means", Prop::num_array()),
+            ("rounds", Prop::integer().minimum(1)),
+            ("epsilon", Prop::number()),
+        ],
+        &["algorithm", "true_means", "rounds"],
+    )
 }
 /// Multi-armed bandit simulation (epsilon-greedy / UCB1 / Thompson).
 #[ix_skill(
@@ -484,18 +538,17 @@ pub fn bandit(p: Value) -> Result<Value, String> {
 
 // ---- evolution -----------------------------------------------------------
 fn evolution_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "algorithm": {"type": "string", "enum": ["genetic", "differential"]},
-            "function": {"type": "string", "enum": ["sphere", "rosenbrock", "rastrigin"]},
-            "dimensions": {"type": "integer", "minimum": 1},
-            "generations": {"type": "integer", "minimum": 1},
-            "population_size": {"type": "integer"},
-            "mutation_rate": {"type": "number"}
-        },
-        "required": ["algorithm", "function", "dimensions", "generations"]
-    })
+    object(
+        vec![
+            ("algorithm", Prop::string().enum_of(&["genetic", "differential"])),
+            ("function", Prop::string().enum_of(&["sphere", "rosenbrock", "rastrigin"])),
+            ("dimensions", Prop::integer().minimum(1)),
+            ("generations", Prop::integer().minimum(1)),
+            ("population_size", Prop::integer()),
+            ("mutation_rate", Prop::number()),
+        ],
+        &["algorithm", "function", "dimensions", "generations"],
+    )
 }
 /// Evolutionary optimization: genetic algorithm / differential evolution.
 #[ix_skill(
@@ -510,17 +563,16 @@ pub fn evolution(p: Value) -> Result<Value, String> {
 
 // ---- random_forest -------------------------------------------------------
 fn random_forest_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "x_train": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "y_train": {"type": "array", "items": {"type": "integer"}},
-            "x_test": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "n_trees": {"type": "integer", "minimum": 1},
-            "max_depth": {"type": "integer", "minimum": 1}
-        },
-        "required": ["x_train", "y_train", "x_test"]
-    })
+    object(
+        vec![
+            ("x_train", Prop::num_matrix()),
+            ("y_train", Prop::int_array()),
+            ("x_test", Prop::num_matrix()),
+            ("n_trees", Prop::integer().minimum(1)),
+            ("max_depth", Prop::integer().minimum(1)),
+        ],
+        &["x_train", "y_train", "x_test"],
+    )
 }
 /// Random forest classifier: train and predict.
 #[ix_skill(
@@ -535,18 +587,17 @@ pub fn random_forest(p: Value) -> Result<Value, String> {
 
 // ---- gradient_boosting ---------------------------------------------------
 fn gradient_boosting_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "x_train": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "y_train": {"type": "array", "items": {"type": "integer"}},
-            "x_test": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "n_estimators": {"type": "integer", "minimum": 1},
-            "learning_rate": {"type": "number", "minimum": 0.001},
-            "max_depth": {"type": "integer", "minimum": 1}
-        },
-        "required": ["x_train", "y_train", "x_test"]
-    })
+    object(
+        vec![
+            ("x_train", Prop::num_matrix()),
+            ("y_train", Prop::int_array()),
+            ("x_test", Prop::num_matrix()),
+            ("n_estimators", Prop::integer().minimum(1)),
+            ("learning_rate", Prop::number().minimum(0.001)),
+            ("max_depth", Prop::integer().minimum(1)),
+        ],
+        &["x_train", "y_train", "x_test"],
+    )
 }
 /// Gradient boosted trees classifier (binary + multiclass).
 #[ix_skill(
@@ -561,24 +612,42 @@ pub fn gradient_boosting(p: Value) -> Result<Value, String> {
 
 // ---- supervised ----------------------------------------------------------
 fn supervised_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["linear_regression", "logistic_regression", "svm", "knn", "naive_bayes", "decision_tree", "metrics", "cross_validate", "confusion_matrix", "roc_auc"]},
-            "x_train": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "y_train": {"type": "array", "items": {"type": "number"}},
-            "x_test": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "k": {"type": "integer"}, "c": {"type": "number"},
-            "max_depth": {"type": "integer"},
-            "y_true": {"type": "array", "items": {"type": "number"}},
-            "y_pred": {"type": "array", "items": {"type": "number"}},
-            "y_scores": {"type": "array", "items": {"type": "number"}},
-            "metric_type": {"type": "string", "enum": ["mse", "accuracy"]},
-            "model": {"type": "string", "enum": ["knn", "decision_tree", "naive_bayes", "logistic_regression"]},
-            "n_classes": {"type": "integer"}, "seed": {"type": "integer"}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&[
+                    "linear_regression",
+                    "logistic_regression",
+                    "svm",
+                    "knn",
+                    "naive_bayes",
+                    "decision_tree",
+                    "metrics",
+                    "cross_validate",
+                    "confusion_matrix",
+                    "roc_auc",
+                ]),
+            ),
+            ("x_train", Prop::num_matrix()),
+            ("y_train", Prop::num_array()),
+            ("x_test", Prop::num_matrix()),
+            ("k", Prop::integer()),
+            ("c", Prop::number()),
+            ("max_depth", Prop::integer()),
+            ("y_true", Prop::num_array()),
+            ("y_pred", Prop::num_array()),
+            ("y_scores", Prop::num_array()),
+            ("metric_type", Prop::string().enum_of(&["mse", "accuracy"])),
+            (
+                "model",
+                Prop::string().enum_of(&["knn", "decision_tree", "naive_bayes", "logistic_regression"]),
+            ),
+            ("n_classes", Prop::integer()),
+            ("seed", Prop::integer()),
+        ],
+        &["operation"],
+    )
 }
 /// Supervised learning dispatcher: train / predict / metrics / cross-validate.
 #[ix_skill(
@@ -593,18 +662,29 @@ pub fn supervised(p: Value) -> Result<Value, String> {
 
 // ---- graph ---------------------------------------------------------------
 fn graph_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["dijkstra", "shortest_path", "pagerank", "bfs", "dfs", "topological_sort"]},
-            "n_nodes": {"type": "integer"},
-            "edges": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-            "directed": {"type": "boolean"},
-            "source": {"type": "integer"}, "target": {"type": "integer"},
-            "damping": {"type": "number"}, "iterations": {"type": "integer"}
-        },
-        "required": ["operation", "n_nodes", "edges"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string().enum_of(&[
+                    "dijkstra",
+                    "shortest_path",
+                    "pagerank",
+                    "bfs",
+                    "dfs",
+                    "topological_sort",
+                ]),
+            ),
+            ("n_nodes", Prop::integer()),
+            ("edges", Prop::num_matrix()),
+            ("directed", Prop::boolean()),
+            ("source", Prop::integer()),
+            ("target", Prop::integer()),
+            ("damping", Prop::number()),
+            ("iterations", Prop::integer()),
+        ],
+        &["operation", "n_nodes", "edges"],
+    )
 }
 /// Graph algorithms: Dijkstra, PageRank, BFS/DFS, topological sort.
 #[ix_skill(
@@ -619,16 +699,15 @@ pub fn graph(p: Value) -> Result<Value, String> {
 
 // ---- hyperloglog ---------------------------------------------------------
 fn hyperloglog_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {"type": "string", "enum": ["estimate", "merge"]},
-            "items": {"type": "array"},
-            "sets": {"type": "array", "items": {"type": "array"}},
-            "precision": {"type": "integer", "minimum": 4, "maximum": 18}
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            ("operation", Prop::string().enum_of(&["estimate", "merge"])),
+            ("items", Prop::array_any()),
+            ("sets", Prop::array_of(Prop::array_any())),
+            ("precision", Prop::integer().minimum(4).maximum(18)),
+        ],
+        &["operation"],
+    )
 }
 /// HyperLogLog cardinality estimation.
 #[ix_skill(
@@ -643,14 +722,10 @@ pub fn hyperloglog(p: Value) -> Result<Value, String> {
 
 // ---- governance.check ----------------------------------------------------
 fn governance_check_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "action": {"type": "string"},
-            "context": {"type": "string"}
-        },
-        "required": ["action"]
-    })
+    object(
+        vec![("action", Prop::string()), ("context", Prop::string())],
+        &["action"],
+    )
 }
 /// Check a proposed action against the Demerzel constitution.
 #[ix_skill(
@@ -665,13 +740,19 @@ pub fn governance_check(p: Value) -> Result<Value, String> {
 
 // ---- governance.persona --------------------------------------------------
 fn governance_persona_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "persona": {"type": "string", "enum": ["default", "kaizen-optimizer", "reflective-architect", "skeptical-auditor", "system-integrator"]}
-        },
-        "required": ["persona"]
-    })
+    object(
+        vec![(
+            "persona",
+            Prop::string().enum_of(&[
+                "default",
+                "kaizen-optimizer",
+                "reflective-architect",
+                "skeptical-auditor",
+                "system-integrator",
+            ]),
+        )],
+        &["persona"],
+    )
 }
 /// Load a Demerzel persona by name.
 #[ix_skill(
@@ -686,14 +767,16 @@ pub fn governance_persona(p: Value) -> Result<Value, String> {
 
 // ---- governance.policy ---------------------------------------------------
 fn governance_policy_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "policy": {"type": "string", "enum": ["alignment", "rollback", "self-modification"]},
-            "query": {"type": "string", "enum": ["thresholds", "triggers", "allowed"]}
-        },
-        "required": ["policy"]
-    })
+    object(
+        vec![
+            (
+                "policy",
+                Prop::string().enum_of(&["alignment", "rollback", "self-modification"]),
+            ),
+            ("query", Prop::string().enum_of(&["thresholds", "triggers", "allowed"])),
+        ],
+        &["policy"],
+    )
 }
 /// Query Demerzel governance policies.
 #[ix_skill(
