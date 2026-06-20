@@ -37,6 +37,7 @@ pub mod features;
 pub mod reference;
 pub mod session;
 pub mod spectral_loss;
+pub mod transforms;
 
 use ndarray::Array1;
 
