@@ -73,6 +73,16 @@ rand = { workspace = true }
 rand_distr = { workspace = true }
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
 blake3 = "1.5"
+# Optional: the maintain-gate MCP tool wraps ix_duck::maintain::evaluate, which needs the
+# bundled-DuckDB (`duck`) feature. Heavy native (C++) dep, so it is OFF by default — the
+# default agent build and `--workspace` CI never compile DuckDB. See
+# docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md.
+ix-duck = { workspace = true, optional = true, features = ["duck"] }
+
+[features]
+# Exposes the `ix_maintain_gate` MCP tool (governance verdict as a callable). Opt-in:
+# `cargo build -p ix-agent --features maintain-gate`.
+maintain-gate = ["dep:ix-duck"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

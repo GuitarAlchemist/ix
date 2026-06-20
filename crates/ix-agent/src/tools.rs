@@ -2465,6 +2465,34 @@ Example 2 — "cluster crates by complexity then classify":
             handler: crate::demo::ix_demo,
         });
 
+        // Governance verdict as a callable (ADR-0001). Feature-gated: pulls bundled DuckDB
+        // via ix-duck, so it is absent from the default agent surface (and the parity test).
+        #[cfg(feature = "maintain-gate")]
+        self.tools.push(Tool {
+            name: "ix_maintain_gate",
+            description: "Evaluate one self-improvement iteration against the maintain-gate \
+                          (the hexavalent T/P/U/D/F/C RSI oracle): fuse the externally-derived \
+                          yield metric, the chatbot guardrail, and the convergence/drift lenses \
+                          into one verdict. Returns the MaintainVerdict JSON (status, decision, \
+                          signals, evidence, reason). Read-only — does not append to the ledger. \
+                          Advisory until Phase-3b ledger write-isolation.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hits_path": { "type": "string", "description": "Externally-derived hits.jsonl (the yield metric source)." },
+                    "corpus_dir": { "type": "string", "description": "Chatbot guardrail baseline dir (chatbot-qa)." },
+                    "loops_dir": { "type": "string", "description": "Optional loop-iteration ledger dir (convergence lens)." },
+                    "query_embeddings_dir": { "type": "string", "description": "Optional query-embeddings dir (drift lens)." },
+                    "loop_id": { "type": "string", "description": "Optional iteration scope: loop id (needs commit_sha + repo_dir)." },
+                    "commit_sha": { "type": "string", "description": "Optional iteration scope: commit to verify against git." },
+                    "repo_dir": { "type": "string", "description": "Optional iteration scope: repo to verify commit_sha in." },
+                    "run_at": { "type": "string", "description": "Optional RFC3339 timestamp; defaults to now." }
+                },
+                "required": ["hits_path", "corpus_dir"]
+            }),
+            handler: crate::maintain_gate::ix_maintain_gate,
+        });
+
         self.tools.push(Tool {
             name: "ix_explain_algorithm",
             description: "Recommend an ix algorithm for a described problem. Designed to \
