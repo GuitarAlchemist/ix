@@ -113,6 +113,18 @@ const EXPECTED: &[&str] = &[
     "ix_voicings_payload",
 ];
 
+/// `EXPECTED` plus any feature-gated tools present in this build. The `maintain-gate`
+/// feature adds `ix_maintain_gate` (pulls bundled DuckDB; off in the default/CI build), so
+/// both the default surface (93) and the `--features maintain-gate` surface (94) stay green.
+fn expected() -> Vec<&'static str> {
+    // `mut` is only used when the feature adds a tool; allow the default-build no-op.
+    #[allow(unused_mut)]
+    let mut v = EXPECTED.to_vec();
+    #[cfg(feature = "maintain-gate")]
+    v.push("ix_maintain_gate");
+    v
+}
+
 fn exposed_names() -> HashSet<String> {
     let reg = ToolRegistry::new();
     let list = reg.list();
@@ -127,24 +139,25 @@ fn exposed_names() -> HashSet<String> {
 #[test]
 fn parity_all_64_tools_reachable() {
     let exposed = exposed_names();
-    let missing: Vec<&&str> = EXPECTED.iter().filter(|n| !exposed.contains(**n)).collect();
+    let exp = expected();
+    let missing: Vec<&&str> = exp.iter().filter(|n| !exposed.contains(**n)).collect();
     assert!(
         missing.is_empty(),
         "Tools vanished after migration: {:?}",
         missing
     );
-    // Stricter: the tool list should have EXACTLY the 43 expected names — not
-    // more (no duplicates from naming mismatches) and not fewer. If this drifts
-    // past 43, a migration is producing a name that doesn't match the original.
+    // Stricter: the tool list should have EXACTLY the expected names — not more (no
+    // duplicates from naming mismatches) and not fewer. `expected()` includes any
+    // feature-gated tools present in this build, so both surfaces stay exact.
     assert_eq!(
         exposed.len(),
-        EXPECTED.len(),
+        exp.len(),
         "expected exactly {} tools, got {} — names diverged from originals: extras={:?}",
-        EXPECTED.len(),
+        exp.len(),
         exposed.len(),
         exposed
             .iter()
-            .filter(|n| !EXPECTED.contains(&n.as_str()))
+            .filter(|n| !exp.contains(&n.as_str()))
             .collect::<Vec<_>>()
     );
 }
@@ -381,4 +394,30 @@ fn registry_backed_calls_dispatch_correctly() {
     let result = reg.call("ix_eigen", params).expect("ix_eigen via registry");
     let top = result["eigenvalues"][0].as_f64().expect("eigenvalues[0]");
     assert!((top - 3.0).abs() < 1e-9, "top eigenvalue ~3, got {top}");
+}
+
+/// End-to-end: the feature-gated `ix_maintain_gate` tool dispatches through the manual
+/// `handler` path and returns a verdict. Only the two hard lenses are exercised (no
+/// loops/embeddings dirs) so the gate is deterministic and avoids touching live ga state.
+#[cfg(feature = "maintain-gate")]
+#[test]
+fn maintain_gate_tool_returns_a_verdict() {
+    let here = env!("CARGO_MANIFEST_DIR");
+    let fx = format!("{here}/../ix-duck/tests/fixtures/maintain");
+    let reg = ToolRegistry::new();
+    let args = serde_json::json!({
+        "hits_path": format!("{fx}/hits_up.jsonl"),
+        "corpus_dir": format!("{fx}/corpus-pass"),
+        "run_at": "2026-06-20T00:00:00Z"
+    });
+    let v = reg
+        .call("ix_maintain_gate", args)
+        .expect("ix_maintain_gate should dispatch and run");
+    assert_eq!(
+        v["status"], "T",
+        "metric up + guardrail held → T; got {v:?}"
+    );
+    assert_eq!(v["decision"], "accept");
+    // A missing required arg is a clean error, not a panic.
+    assert!(reg.call("ix_maintain_gate", serde_json::json!({})).is_err());
 }

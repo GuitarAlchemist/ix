@@ -10,6 +10,10 @@ pub mod demo;
 pub mod eval;
 pub mod flywheel;
 pub mod handlers;
+/// `ix_maintain_gate` MCP tool (governance verdict via ix-duck). Feature-gated — pulls
+/// bundled DuckDB; off by default. See docs/adr/0001-ixql-duckdb-integration-via-mcp-seam.md.
+#[cfg(feature = "maintain-gate")]
+pub mod maintain_gate;
 pub mod ml_pipeline;
 pub mod projection;
 pub mod registry_bridge;
