@@ -80,14 +80,24 @@ jobs:
           LATEST=${{ steps.check.outputs.latest }}
           BRANCH="chore/update-demerzel-$(date +%Y%m%d)"
 
-          git checkout -b "$BRANCH"
+          git checkout -B "$BRANCH"
           git commit -m "chore: update Demerzel submodule ($BEHIND commits)"
-          git push origin "$BRANCH"
+          # Bot-owned dated branch: a same-day re-run must REPLACE it, not hit a
+          # non-fast-forward rejection (the prior "failed to push some refs" failure).
+          # Force-push is safe — nothing but this job writes this branch.
+          git push --force origin "$BRANCH"
 
           # Get recent commit messages for PR body
           cd governance/demerzel
           CHANGES=$(git log --oneline "$CURRENT..$LATEST" | head -15)
           cd ../..
+
+          # Idempotent: if a PR for this branch is already open, the force-push above
+          # refreshed it — creating another would error. Skip cleanly.
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')" ]; then
+            echo "PR already open for $BRANCH; force-push refreshed it."
+            exit 0
+          fi
 
           gh pr create \
             --title "chore: update Demerzel submodule ($BEHIND commits behind)" \
