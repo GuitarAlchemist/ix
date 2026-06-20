@@ -5,23 +5,20 @@
 //! Each wrapper carries its hand-written JSON schema via `schema_fn = ...`.
 
 use crate::handlers;
+use crate::schema::{object, output, Prop};
 use ix_skill_macros::ix_skill;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 // --- ix_stats --------------------------------------------------------------
 
 fn stats_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "data": {
-                "type": "array",
-                "items": { "type": "number" },
-                "description": "List of numbers to compute statistics on"
-            }
-        },
-        "required": ["data"]
-    })
+    object(
+        vec![(
+            "data",
+            Prop::num_array().desc("List of numbers to compute statistics on"),
+        )],
+        &["data"],
+    )
 }
 
 /// Compute statistics (mean, std, min, max, median) on a list of numbers.
@@ -38,19 +35,19 @@ pub fn stats(params: Value) -> Result<Value, String> {
 // --- ix_distance -----------------------------------------------------------
 
 fn distance_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "a": { "type": "array", "items": { "type": "number" }, "description": "First vector" },
-            "b": { "type": "array", "items": { "type": "number" }, "description": "Second vector" },
-            "metric": {
-                "type": "string",
-                "enum": ["euclidean", "cosine", "manhattan"],
-                "description": "Distance metric"
-            }
-        },
-        "required": ["a", "b", "metric"]
-    })
+    object(
+        vec![
+            ("a", Prop::num_array().desc("First vector")),
+            ("b", Prop::num_array().desc("Second vector")),
+            (
+                "metric",
+                Prop::string()
+                    .enum_of(&["euclidean", "cosine", "manhattan"])
+                    .desc("Distance metric"),
+            ),
+        ],
+        &["a", "b", "metric"],
+    )
 }
 
 /// Compute distance between two vectors (euclidean, cosine, or manhattan).
@@ -67,22 +64,21 @@ pub fn distance(params: Value) -> Result<Value, String> {
 // --- ix_fft ----------------------------------------------------------------
 
 fn fft_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "signal": {
-                "type": "array",
-                "items": { "type": "number" },
-                "description": "Real-valued input signal (length must be power of 2)"
-            },
-            "inverse": {
-                "type": "boolean",
-                "description": "If true, compute the inverse FFT",
-                "default": false
-            }
-        },
-        "required": ["signal"]
-    })
+    object(
+        vec![
+            (
+                "signal",
+                Prop::num_array().desc("Real-valued input signal (length must be power of 2)"),
+            ),
+            (
+                "inverse",
+                Prop::boolean()
+                    .default(false)
+                    .desc("If true, compute the inverse FFT"),
+            ),
+        ],
+        &["signal"],
+    )
 }
 
 /// Compute the Fast Fourier Transform of a real-valued signal.
@@ -99,40 +95,39 @@ pub fn fft(params: Value) -> Result<Value, String> {
 // --- ix_kmeans -------------------------------------------------------------
 
 fn kmeans_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "data": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Matrix where each row is a data point"
-            },
-            "k": { "type": "integer", "minimum": 1, "description": "Number of clusters" },
-            "max_iter": { "type": "integer", "default": 100, "description": "Max iterations" },
-            "seed": { "type": "integer", "default": 42, "description": "RNG seed" }
-        },
-        "required": ["data", "k"]
-    })
+    object(
+        vec![
+            (
+                "data",
+                Prop::num_matrix().desc("Matrix where each row is a data point"),
+            ),
+            ("k", Prop::integer().minimum(1).desc("Number of clusters")),
+            (
+                "max_iter",
+                Prop::integer().default(100).desc("Max iterations"),
+            ),
+            ("seed", Prop::integer().default(42).desc("RNG seed")),
+        ],
+        &["data", "k"],
+    )
 }
 
 fn kmeans_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "labels": {
-                "type": "array",
-                "items": { "type": "integer" },
-                "description": "Cluster index assigned to each input row"
-            },
-            "centroids": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "The k cluster-center vectors"
-            },
-            "inertia": { "type": "number", "description": "Sum of squared distances to centroids" },
-            "k": { "type": "integer", "description": "Number of clusters" }
-        }
-    })
+    output(vec![
+        (
+            "labels",
+            Prop::int_array().desc("Cluster index assigned to each input row"),
+        ),
+        (
+            "centroids",
+            Prop::num_matrix().desc("The k cluster-center vectors"),
+        ),
+        (
+            "inertia",
+            Prop::number().desc("Sum of squared distances to centroids"),
+        ),
+        ("k", Prop::integer().desc("Number of clusters")),
+    ])
 }
 
 /// Cluster points using K-Means.
@@ -150,46 +145,44 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
 // --- ix_pca ----------------------------------------------------------------
 
 fn pca_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "data": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Matrix where each row is an observation and each column a feature"
-            },
-            "n_components": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Number of principal components to keep"
-            }
-        },
-        "required": ["data", "n_components"]
-    })
+    object(
+        vec![
+            (
+                "data",
+                Prop::num_matrix()
+                    .desc("Matrix where each row is an observation and each column a feature"),
+            ),
+            (
+                "n_components",
+                Prop::integer()
+                    .minimum(1)
+                    .desc("Number of principal components to keep"),
+            ),
+        ],
+        &["data", "n_components"],
+    )
 }
 
 fn pca_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "transformed": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Input projected onto the top n_components axes (one row per observation)"
-            },
-            "explained_variance_ratio": {
-                "type": "array",
-                "items": { "type": "number" },
-                "description": "Fraction of total variance carried by each component"
-            },
-            "components": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "The principal-axis vectors (n_components rows)"
-            },
-            "n_components": { "type": "integer", "description": "Number of components kept" }
-        }
-    })
+    output(vec![
+        (
+            "transformed",
+            Prop::num_matrix()
+                .desc("Input projected onto the top n_components axes (one row per observation)"),
+        ),
+        (
+            "explained_variance_ratio",
+            Prop::num_array().desc("Fraction of total variance carried by each component"),
+        ),
+        (
+            "components",
+            Prop::num_matrix().desc("The principal-axis vectors (n_components rows)"),
+        ),
+        (
+            "n_components",
+            Prop::integer().desc("Number of components kept"),
+        ),
+    ])
 }
 
 /// Reduce dimensionality with Principal Component Analysis: project the data
@@ -209,45 +202,46 @@ pub fn pca(params: Value) -> Result<Value, String> {
 // --- ix_dbscan -------------------------------------------------------------
 
 fn dbscan_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "data": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Matrix where each row is a data point"
-            },
-            "eps": {
-                "type": "number",
-                "exclusiveMinimum": 0,
-                "description": "Neighborhood radius: two points are neighbors when within this Euclidean distance"
-            },
-            "min_points": {
-                "type": "integer",
-                "minimum": 1,
-                "default": 4,
-                "description": "Minimum neighbors (including the point itself) for a core point; defaults to 4 when omitted"
-            }
-        },
-        "required": ["data", "eps"]
-    })
+    object(
+        vec![
+            ("data", Prop::num_matrix().desc("Matrix where each row is a data point")),
+            (
+                "eps",
+                Prop::number().exclusive_min(0).desc(
+                    "Neighborhood radius: two points are neighbors when within this Euclidean distance",
+                ),
+            ),
+            (
+                "min_points",
+                Prop::integer().minimum(1).default(4).desc(
+                    "Minimum neighbors (including the point itself) for a core point; defaults to 4 when omitted",
+                ),
+            ),
+        ],
+        &["data", "eps"],
+    )
 }
 
 fn dbscan_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "labels": {
-                "type": "array",
-                "items": { "type": "integer" },
-                "description": "Cluster id per input row; 0 = noise, clusters numbered from 1"
-            },
-            "n_clusters": { "type": "integer", "description": "Number of clusters found (noise excluded)" },
-            "n_noise": { "type": "integer", "description": "Number of points labeled noise (label 0)" },
-            "eps": { "type": "number", "description": "Neighborhood radius used" },
-            "min_points": { "type": "integer", "description": "Core-point threshold used" }
-        }
-    })
+    output(vec![
+        (
+            "labels",
+            Prop::int_array().desc("Cluster id per input row; 0 = noise, clusters numbered from 1"),
+        ),
+        (
+            "n_clusters",
+            Prop::integer().desc("Number of clusters found (noise excluded)"),
+        ),
+        (
+            "n_noise",
+            Prop::integer().desc("Number of points labeled noise (label 0)"),
+        ),
+        ("eps", Prop::number().desc("Neighborhood radius used")),
+        (
+            "min_points",
+            Prop::integer().desc("Core-point threshold used"),
+        ),
+    ])
 }
 
 /// Cluster points by density with DBSCAN. Unlike k-means there is no preset
@@ -267,36 +261,28 @@ pub fn dbscan(params: Value) -> Result<Value, String> {
 // --- ix_eigen --------------------------------------------------------------
 
 fn eigen_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "matrix": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "A real SYMMETRIC square matrix (row-major)"
-            }
-        },
-        "required": ["matrix"]
-    })
+    object(
+        vec![(
+            "matrix",
+            Prop::num_matrix().desc("A real SYMMETRIC square matrix (row-major)"),
+        )],
+        &["matrix"],
+    )
 }
 
 fn eigen_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "eigenvalues": {
-                "type": "array",
-                "items": { "type": "number" },
-                "description": "Eigenvalues in descending order"
-            },
-            "eigenvectors": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Unit eigenvectors; eigenvectors[k] corresponds to eigenvalues[k]"
-            },
-            "n": { "type": "integer", "description": "Matrix dimension" }
-        }
-    })
+    output(vec![
+        (
+            "eigenvalues",
+            Prop::num_array().desc("Eigenvalues in descending order"),
+        ),
+        (
+            "eigenvectors",
+            Prop::num_matrix()
+                .desc("Unit eigenvectors; eigenvectors[k] corresponds to eigenvalues[k]"),
+        ),
+        ("n", Prop::integer().desc("Matrix dimension")),
+    ])
 }
 
 /// Eigendecomposition of a real symmetric matrix via cyclic Jacobi rotations:
@@ -315,36 +301,32 @@ pub fn eigen(params: Value) -> Result<Value, String> {
 // --- ix_silhouette ---------------------------------------------------------
 
 fn silhouette_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "data": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Matrix where each row is the point that was clustered"
-            },
-            "labels": {
-                "type": "array",
-                "items": { "type": "integer", "minimum": 0 },
-                "description": "Cluster id per row — e.g. wire the `labels` output of kmeans/dbscan via {from: \"<stage>.labels\"}"
-            }
-        },
-        "required": ["data", "labels"]
-    })
+    object(
+        vec![
+            (
+                "data",
+                Prop::num_matrix().desc("Matrix where each row is the point that was clustered"),
+            ),
+            (
+                "labels",
+                Prop::int_array().item_minimum(0).desc(
+                    "Cluster id per row — e.g. wire the `labels` output of kmeans/dbscan via {from: \"<stage>.labels\"}",
+                ),
+            ),
+        ],
+        &["data", "labels"],
+    )
 }
 
 fn silhouette_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "score": {
-                "type": "number",
-                "description": "Mean silhouette coefficient in [-1,1]; higher = denser, better-separated clusters. 0.0 when undefined (<2 samples or <2 clusters)"
-            },
-            "n_clusters": { "type": "integer", "description": "Number of distinct cluster ids" },
-            "n_samples": { "type": "integer", "description": "Number of rows scored" }
-        }
-    })
+    output(vec![
+        (
+            "score",
+            Prop::number().desc("Mean silhouette coefficient in [-1,1]; higher = denser, better-separated clusters. 0.0 when undefined (<2 samples or <2 clusters)"),
+        ),
+        ("n_clusters", Prop::integer().desc("Number of distinct cluster ids")),
+        ("n_samples", Prop::integer().desc("Number of rows scored")),
+    ])
 }
 
 /// Silhouette score: evaluate a clustering's quality from the data and its
@@ -364,46 +346,61 @@ pub fn silhouette(params: Value) -> Result<Value, String> {
 // --- ix_feature_importances ------------------------------------------------
 
 fn feature_importances_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "data": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Feature matrix (each row an observation)"
-            },
-            "labels": {
-                "type": "array",
-                "items": { "type": "integer", "minimum": 0 },
-                "description": "Class label per row"
-            },
-            "n_trees": { "type": "integer", "minimum": 1, "default": 100, "description": "Trees in the random forest fitted to score importances" },
-            "max_depth": { "type": "integer", "minimum": 1, "default": 8, "description": "Maximum tree depth" },
-            "n_repeats": { "type": "integer", "minimum": 1, "default": 5, "description": "Permutation repeats per feature (averaged)" },
-            "seed": { "type": "integer", "minimum": 0, "default": 42, "description": "RNG seed — makes the importances reproducible" }
-        },
-        "required": ["data", "labels"]
-    })
+    object(
+        vec![
+            (
+                "data",
+                Prop::num_matrix().desc("Feature matrix (each row an observation)"),
+            ),
+            (
+                "labels",
+                Prop::int_array()
+                    .item_minimum(0)
+                    .desc("Class label per row"),
+            ),
+            (
+                "n_trees",
+                Prop::integer()
+                    .minimum(1)
+                    .default(100)
+                    .desc("Trees in the random forest fitted to score importances"),
+            ),
+            (
+                "max_depth",
+                Prop::integer()
+                    .minimum(1)
+                    .default(8)
+                    .desc("Maximum tree depth"),
+            ),
+            (
+                "n_repeats",
+                Prop::integer()
+                    .minimum(1)
+                    .default(5)
+                    .desc("Permutation repeats per feature (averaged)"),
+            ),
+            (
+                "seed",
+                Prop::integer()
+                    .minimum(0)
+                    .default(42)
+                    .desc("RNG seed — makes the importances reproducible"),
+            ),
+        ],
+        &["data", "labels"],
+    )
 }
 
 fn feature_importances_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "importances": {
-                "type": "array",
-                "items": { "type": "number" },
-                "description": "Permutation importance per feature: the mean drop in accuracy when that feature's column is scrambled"
-            },
-            "ranking": {
-                "type": "array",
-                "items": { "type": "integer" },
-                "description": "Feature indices ordered most→least important"
-            },
-            "method": { "type": "string", "description": "Always 'permutation' (model-agnostic; not Gini/MDI)" },
-            "n_features": { "type": "integer", "description": "Number of feature columns" }
-        }
-    })
+    output(vec![
+        (
+            "importances",
+            Prop::num_array().desc("Permutation importance per feature: the mean drop in accuracy when that feature's column is scrambled"),
+        ),
+        ("ranking", Prop::int_array().desc("Feature indices ordered most→least important")),
+        ("method", Prop::string().desc("Always 'permutation' (model-agnostic; not Gini/MDI)")),
+        ("n_features", Prop::integer().desc("Number of feature columns")),
+    ])
 }
 
 /// Feature importances: fit a random forest to (data, labels) and report each
@@ -424,29 +421,35 @@ pub fn feature_importances(params: Value) -> Result<Value, String> {
 // --- ix_svd ----------------------------------------------------------------
 
 fn svd_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "matrix": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "A real m×n matrix (row-major); m and n may differ"
-            }
-        },
-        "required": ["matrix"]
-    })
+    object(
+        vec![(
+            "matrix",
+            Prop::num_matrix().desc("A real m×n matrix (row-major); m and n may differ"),
+        )],
+        &["matrix"],
+    )
 }
 
 fn svd_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "u": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Left singular vectors as columns (m×k)" },
-            "singular_values": { "type": "array", "items": { "type": "number" }, "description": "Singular values in descending order (length k)" },
-            "v": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Right singular vectors as columns (n×k)" },
-            "rank": { "type": "integer", "description": "Numerical rank (singular values above a magnitude-relative tolerance)" }
-        }
-    })
+    output(vec![
+        (
+            "u",
+            Prop::num_matrix().desc("Left singular vectors as columns (m×k)"),
+        ),
+        (
+            "singular_values",
+            Prop::num_array().desc("Singular values in descending order (length k)"),
+        ),
+        (
+            "v",
+            Prop::num_matrix().desc("Right singular vectors as columns (n×k)"),
+        ),
+        (
+            "rank",
+            Prop::integer()
+                .desc("Numerical rank (singular values above a magnitude-relative tolerance)"),
+        ),
+    ])
 }
 
 /// Singular Value Decomposition: factor a real matrix into U·diag(s)·Vᵀ,
@@ -466,34 +469,55 @@ pub fn svd(params: Value) -> Result<Value, String> {
 // --- ix_gmm ----------------------------------------------------------------
 
 fn gmm_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "data": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Matrix where each row is a data point"
-            },
-            "k": { "type": "integer", "minimum": 1, "description": "Number of mixture components" },
-            "max_iter": { "type": "integer", "minimum": 1, "default": 100, "description": "Max EM iterations" },
-            "seed": { "type": "integer", "minimum": 0, "default": 42, "description": "RNG seed (reproducible init)" }
-        },
-        "required": ["data", "k"]
-    })
+    object(
+        vec![
+            (
+                "data",
+                Prop::num_matrix().desc("Matrix where each row is a data point"),
+            ),
+            (
+                "k",
+                Prop::integer()
+                    .minimum(1)
+                    .desc("Number of mixture components"),
+            ),
+            (
+                "max_iter",
+                Prop::integer()
+                    .minimum(1)
+                    .default(100)
+                    .desc("Max EM iterations"),
+            ),
+            (
+                "seed",
+                Prop::integer()
+                    .minimum(0)
+                    .default(42)
+                    .desc("RNG seed (reproducible init)"),
+            ),
+        ],
+        &["data", "k"],
+    )
 }
 
 fn gmm_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "labels": { "type": "array", "items": { "type": "integer" }, "description": "Hard cluster id per row (argmax responsibility)" },
-            "means": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Component means (k×d)" },
-            "weights": { "type": "array", "items": { "type": "number" }, "description": "Mixture weights (k)" },
-            "covariances": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Diagonal covariances per component (k×d)" },
-            "responsibilities": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Soft assignment P(component|point) (n×k); each row sums to 1" },
-            "k": { "type": "integer", "description": "Number of components" }
-        }
-    })
+    output(vec![
+        (
+            "labels",
+            Prop::int_array().desc("Hard cluster id per row (argmax responsibility)"),
+        ),
+        ("means", Prop::num_matrix().desc("Component means (k×d)")),
+        ("weights", Prop::num_array().desc("Mixture weights (k)")),
+        (
+            "covariances",
+            Prop::num_matrix().desc("Diagonal covariances per component (k×d)"),
+        ),
+        (
+            "responsibilities",
+            Prop::num_matrix().desc("Soft assignment P(component|point) (n×k); each row sums to 1"),
+        ),
+        ("k", Prop::integer().desc("Number of components")),
+    ])
 }
 
 /// Gaussian Mixture Model (diagonal covariance, EM): soft clustering that, unlike
@@ -513,26 +537,31 @@ pub fn gmm(params: Value) -> Result<Value, String> {
 // --- ix_wavelet_denoise ----------------------------------------------------
 
 fn wavelet_denoise_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "signal": { "type": "array", "items": { "type": "number" }, "description": "Real-valued input signal; length must be divisible by 2^levels (Haar DWT round-trips exactly)" },
-            "levels": { "type": "integer", "minimum": 1, "default": 3, "description": "Number of Haar DWT decomposition levels" },
-            "threshold": { "type": "number", "minimum": 0, "default": 0.1, "description": "Soft-threshold applied to detail coefficients (in signal units)" }
-        },
-        "required": ["signal"]
-    })
+    object(
+        vec![
+            (
+                "signal",
+                Prop::num_array().desc("Real-valued input signal; length must be divisible by 2^levels (Haar DWT round-trips exactly)"),
+            ),
+            ("levels", Prop::integer().minimum(1).default(3).desc("Number of Haar DWT decomposition levels")),
+            (
+                "threshold",
+                Prop::number().minimum(0).default(0.1).desc("Soft-threshold applied to detail coefficients (in signal units)"),
+            ),
+        ],
+        &["signal"],
+    )
 }
 
 fn wavelet_denoise_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "denoised": { "type": "array", "items": { "type": "number" }, "description": "Denoised signal, same length as the input" },
-            "levels": { "type": "integer" },
-            "threshold": { "type": "number" }
-        }
-    })
+    output(vec![
+        (
+            "denoised",
+            Prop::num_array().desc("Denoised signal, same length as the input"),
+        ),
+        ("levels", Prop::integer()),
+        ("threshold", Prop::number()),
+    ])
 }
 
 /// Wavelet denoising: Haar DWT → soft-threshold the detail coefficients →
@@ -551,29 +580,53 @@ pub fn wavelet_denoise(params: Value) -> Result<Value, String> {
 // --- ix_fir_filter ---------------------------------------------------------
 
 fn fir_filter_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "signal": { "type": "array", "items": { "type": "number" }, "description": "Real-valued input signal" },
-            "kind": { "type": "string", "enum": ["lowpass", "highpass", "bandpass"], "description": "Filter type" },
-            "cutoff": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.5, "description": "Normalized cutoff frequency (fraction of sample rate) for lowpass/highpass" },
-            "low_cutoff": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.5, "description": "Lower normalized cutoff (bandpass)" },
-            "high_cutoff": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.5, "description": "Upper normalized cutoff (bandpass)" },
-            "order": { "type": "integer", "minimum": 1, "default": 32, "description": "Filter order (number of taps ≈ order+1)" }
-        },
-        "required": ["signal", "kind"]
-    })
+    object(
+        vec![
+            ("signal", Prop::num_array().desc("Real-valued input signal")),
+            (
+                "kind",
+                Prop::string()
+                    .enum_of(&["lowpass", "highpass", "bandpass"])
+                    .desc("Filter type"),
+            ),
+            (
+                "cutoff",
+                Prop::number().exclusive_min(0).exclusive_max(0.5).desc(
+                    "Normalized cutoff frequency (fraction of sample rate) for lowpass/highpass",
+                ),
+            ),
+            (
+                "low_cutoff",
+                Prop::number()
+                    .exclusive_min(0)
+                    .exclusive_max(0.5)
+                    .desc("Lower normalized cutoff (bandpass)"),
+            ),
+            (
+                "high_cutoff",
+                Prop::number()
+                    .exclusive_min(0)
+                    .exclusive_max(0.5)
+                    .desc("Upper normalized cutoff (bandpass)"),
+            ),
+            (
+                "order",
+                Prop::integer()
+                    .minimum(1)
+                    .default(32)
+                    .desc("Filter order (number of taps ≈ order+1)"),
+            ),
+        ],
+        &["signal", "kind"],
+    )
 }
 
 fn fir_filter_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "filtered": { "type": "array", "items": { "type": "number" }, "description": "Filtered signal" },
-            "kind": { "type": "string" },
-            "order": { "type": "integer" }
-        }
-    })
+    output(vec![
+        ("filtered", Prop::num_array().desc("Filtered signal")),
+        ("kind", Prop::string()),
+        ("order", Prop::integer()),
+    ])
 }
 
 /// FIR filter (windowed-sinc): low-pass, high-pass, or band-pass a signal at a
@@ -592,30 +645,47 @@ pub fn fir_filter(params: Value) -> Result<Value, String> {
 // --- ix_spectrogram --------------------------------------------------------
 
 fn spectrogram_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "signal": { "type": "array", "items": { "type": "number" }, "description": "Real-valued input signal" },
-            "window_size": { "type": "integer", "minimum": 2, "description": "STFT window length (samples); MUST be a power of two (radix-2 FFT)" },
-            "hop_size": { "type": "integer", "minimum": 1, "description": "Step between frames (samples); defaults to window_size/2" },
-            "db": { "type": "boolean", "default": false, "description": "Return magnitudes in decibels" }
-        },
-        "required": ["signal", "window_size"]
-    })
+    object(
+        vec![
+            ("signal", Prop::num_array().desc("Real-valued input signal")),
+            (
+                "window_size",
+                Prop::integer()
+                    .minimum(2)
+                    .desc("STFT window length (samples); MUST be a power of two (radix-2 FFT)"),
+            ),
+            (
+                "hop_size",
+                Prop::integer()
+                    .minimum(1)
+                    .desc("Step between frames (samples); defaults to window_size/2"),
+            ),
+            (
+                "db",
+                Prop::boolean()
+                    .default(false)
+                    .desc("Return magnitudes in decibels"),
+            ),
+        ],
+        &["signal", "window_size"],
+    )
 }
 
 fn spectrogram_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "spectrogram": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Magnitude matrix: n_frames rows × n_bins cols" },
-            "n_frames": { "type": "integer", "description": "Number of time frames" },
-            "n_bins": { "type": "integer", "description": "Frequency bins = window_size/2 + 1" },
-            "window_size": { "type": "integer" },
-            "hop_size": { "type": "integer" },
-            "db": { "type": "boolean" }
-        }
-    })
+    output(vec![
+        (
+            "spectrogram",
+            Prop::num_matrix().desc("Magnitude matrix: n_frames rows × n_bins cols"),
+        ),
+        ("n_frames", Prop::integer().desc("Number of time frames")),
+        (
+            "n_bins",
+            Prop::integer().desc("Frequency bins = window_size/2 + 1"),
+        ),
+        ("window_size", Prop::integer()),
+        ("hop_size", Prop::integer()),
+        ("db", Prop::boolean()),
+    ])
 }
 
 /// Spectrogram (STFT magnitude): time–frequency representation of a signal via a
@@ -634,23 +704,20 @@ pub fn spectrogram(params: Value) -> Result<Value, String> {
 // --- ix_autocorrelation ----------------------------------------------------
 
 fn autocorrelation_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "signal": { "type": "array", "items": { "type": "number" }, "description": "Real-valued input series" }
-        },
-        "required": ["signal"]
-    })
+    object(
+        vec![("signal", Prop::num_array().desc("Real-valued input series"))],
+        &["signal"],
+    )
 }
 
 fn autocorrelation_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "autocorrelation": { "type": "array", "items": { "type": "number" }, "description": "One-sided normalized ACF, lag 0..n-1; acf[0]=1.0. A peak at lag L indicates periodicity with period L" },
-            "n_lags": { "type": "integer", "description": "Number of lags returned (= signal length)" }
-        }
-    })
+    output(vec![
+        (
+            "autocorrelation",
+            Prop::num_array().desc("One-sided normalized ACF, lag 0..n-1; acf[0]=1.0. A peak at lag L indicates periodicity with period L"),
+        ),
+        ("n_lags", Prop::integer().desc("Number of lags returned (= signal length)")),
+    ])
 }
 
 /// Autocorrelation: normalized self-similarity of a series at each lag. A peak at
@@ -669,22 +736,16 @@ pub fn autocorrelation(params: Value) -> Result<Value, String> {
 // --- ix_linear_regression --------------------------------------------------
 
 fn linear_regression_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "X": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Feature matrix (each row an observation)"
-            },
-            "y": {
-                "type": "array",
-                "items": { "type": "number" },
-                "description": "Target vector"
-            }
-        },
-        "required": ["X", "y"]
-    })
+    object(
+        vec![
+            (
+                "X",
+                Prop::num_matrix().desc("Feature matrix (each row an observation)"),
+            ),
+            ("y", Prop::num_array().desc("Target vector")),
+        ],
+        &["X", "y"],
+    )
 }
 
 /// Fit an ordinary least-squares linear regression model.
@@ -701,21 +762,24 @@ pub fn linear_regression(params: Value) -> Result<Value, String> {
 // --- ix_governance_belief --------------------------------------------------
 
 fn governance_belief_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "proposition": { "type": "string", "description": "Belief proposition text" },
-            "truth_value": {
-                "type": "string",
-                "enum": ["T", "F", "U", "C"],
-                "description": "Tetravalent truth (legacy). Hexavalent values P/D supported when present."
-            },
-            "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-            "supporting": { "type": "array", "items": { "type": "object" } },
-            "contradicting": { "type": "array", "items": { "type": "object" } }
-        },
-        "required": ["proposition", "truth_value", "confidence"]
-    })
+    object(
+        vec![
+            (
+                "proposition",
+                Prop::string().desc("Belief proposition text"),
+            ),
+            (
+                "truth_value",
+                Prop::string().enum_of(&["T", "F", "U", "C"]).desc(
+                    "Tetravalent truth (legacy). Hexavalent values P/D supported when present.",
+                ),
+            ),
+            ("confidence", Prop::number().minimum(0.0).maximum(1.0)),
+            ("supporting", Prop::obj_array()),
+            ("contradicting", Prop::obj_array()),
+        ],
+        &["proposition", "truth_value", "confidence"],
+    )
 }
 
 /// Query the Demerzel belief engine with a belief state and receive a
@@ -733,6 +797,7 @@ pub fn governance_belief(params: Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     // Executes-test for the new `pca` skill: the catalog entry must EXECUTE,
     // not merely register (no green-but-dead). Classic Lindsay-Smith 2D PCA
