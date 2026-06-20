@@ -68,6 +68,20 @@ impl PcSet {
         let mask = self.0;
         (0u8..12).filter(move |k| (mask >> k) & 1 == 1)
     }
+
+    /// The `Z/12` complement: every pitch class **not** in `self`. A hexachord and its
+    /// complement are the two halves of the aggregate (the basis of combinatoriality).
+    #[inline]
+    pub const fn complement(self) -> Self {
+        Self((!self.0) & MASK12)
+    }
+
+    /// Multiplicative transform `Mₘ`: maps each pitch class `x ↦ (m · x) mod 12`. `M5` is
+    /// the circle-of-fourths transform, `M7` the circle-of-fifths, `M11 = I₀` (inversion).
+    /// For `m` coprime to 12 (1, 5, 7, 11) this is a bijection; otherwise the image collapses.
+    pub fn multiply(self, m: u8) -> Self {
+        Self::from_pcs(self.iter_pcs().map(|x| (x * (m % 12)) % 12))
+    }
 }
 
 impl fmt::Display for PcSet {
@@ -128,6 +142,37 @@ mod tests {
 
         let pcs: Vec<u8> = PcSet::from_pcs([7, 0, 4]).iter_pcs().collect();
         assert_eq!(pcs, vec![0, 4, 7]);
+    }
+
+    #[test]
+    fn complement_is_z12_negation() {
+        let s = PcSet::from_pcs([0, 4, 7]);
+        let c = s.complement();
+        assert_eq!(c, PcSet::from_pcs([1, 2, 3, 5, 6, 8, 9, 10, 11]));
+        // Involution; complement of complement is the original.
+        assert_eq!(c.complement(), s);
+        // A set and its complement partition the aggregate.
+        assert_eq!(s.cardinality() + c.cardinality(), 12);
+        assert_eq!(PcSet::empty().complement(), PcSet::chromatic());
+    }
+
+    #[test]
+    fn multiply_m5_m7_m11() {
+        // M7 (circle of fifths) on {0,1,2} -> {0,7,2}.
+        assert_eq!(
+            PcSet::from_pcs([0, 1, 2]).multiply(7),
+            PcSet::from_pcs([0, 7, 2])
+        );
+        // M5 (circle of fourths) on {0,1,2} -> {0,5,10}.
+        assert_eq!(
+            PcSet::from_pcs([0, 1, 2]).multiply(5),
+            PcSet::from_pcs([0, 5, 10])
+        );
+        // M11 == inversion about 0: {0,1,2} -> {0,11,10}.
+        assert_eq!(
+            PcSet::from_pcs([0, 1, 2]).multiply(11),
+            PcSet::from_pcs([0, 11, 10])
+        );
     }
 
     #[test]

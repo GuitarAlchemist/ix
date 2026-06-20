@@ -16,6 +16,7 @@ pub mod neo_riemannian;
 pub mod orbit;
 pub mod pc_set;
 pub mod prime_form;
+pub mod serial;
 
 pub use action::Action;
 pub use dihedral::{DihedralElement, Group};
@@ -27,3 +28,4 @@ pub use neo_riemannian::{classify_triad, h, l, n, p, r, s, TriadKind};
 pub use orbit::{all_prime_forms, orbit, orbit_unique};
 pub use pc_set::PcSet;
 pub use prime_form::{bracelet_prime_form, necklace_prime_form};
+pub use serial::{RowForm, SerialError, ToneRow};
