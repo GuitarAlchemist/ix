@@ -113,7 +113,9 @@ fn parse_adjacency(json: &str) -> Result<Array2<f64>, Box<dyn std::error::Error>
     let mut adj = Array2::<f64>::zeros((n, n));
     for e in &edges {
         let w = if e.len() >= 3 { e[2] } else { 1.0 };
-        adj[[e[0] as usize, e[1] as usize]] = w;
+        // Accumulate parallel edges (same convention as ix_pagerank's Graph::add_edge,
+        // which pushes each edge) so a repeated pair counts as multiplicity, not last-wins.
+        adj[[e[0] as usize, e[1] as usize]] += w;
     }
     Ok(adj)
 }
