@@ -91,6 +91,24 @@ fn parse_f64_matrix_to_ndarray(val: &Value, field: &str) -> Result<Array2<f64>, 
     vecs_to_array2(&rows)
 }
 
+/// Optional `usize` field with a default. Byte-faithful to the inline
+/// `params.get(field).and_then(|v| v.as_u64()).unwrap_or(default) as usize`
+/// idiom: an absent field *or* a present-but-non-`u64` value (float,
+/// negative, string) both fall back to `default` — this never errors.
+fn parse_usize_opt(val: &Value, field: &str, default: usize) -> usize {
+    val.get(field)
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(default)
+}
+
+/// Optional `f64` field with a default. Byte-faithful to the inline
+/// `params.get(field).and_then(|v| v.as_f64()).unwrap_or(default)` idiom:
+/// absent or non-numeric falls back to `default`; never errors.
+fn parse_f64_opt(val: &Value, field: &str, default: f64) -> f64 {
+    val.get(field).and_then(|v| v.as_f64()).unwrap_or(default)
+}
+
 fn parse_str<'a>(val: &'a Value, field: &str) -> Result<&'a str, String> {
     val.get(field)
         .and_then(|v| v.as_str())
@@ -723,7 +741,7 @@ pub fn wavelet_denoise(params: Value) -> Result<Value, String> {
     if signal.is_empty() {
         return Err("signal must not be empty".into());
     }
-    let levels = params.get("levels").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+    let levels = parse_usize_opt(&params, "levels", 3);
     if levels < 1 {
         return Err("levels must be ≥ 1".into());
     }
@@ -764,7 +782,7 @@ pub fn fir_filter(params: Value) -> Result<Value, String> {
         return Err("signal must not be empty".into());
     }
     let kind = parse_str(&params, "kind")?;
-    let order = params.get("order").and_then(|v| v.as_u64()).unwrap_or(32) as usize;
+    let order = parse_usize_opt(&params, "order", 32);
     if order < 1 {
         return Err("order must be ≥ 1".into());
     }
@@ -891,15 +909,9 @@ pub fn tsne(params: Value) -> Result<Value, String> {
     if data_rows.len() < 2 {
         return Err("data must have ≥ 2 rows".into());
     }
-    let perplexity = params
-        .get("perplexity")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(30.0);
-    let n_iter = params.get("n_iter").and_then(|v| v.as_u64()).unwrap_or(500) as usize;
-    let target_dim = params
-        .get("target_dim")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(2) as usize;
+    let perplexity = parse_f64_opt(&params, "perplexity", 30.0);
+    let n_iter = parse_usize_opt(&params, "n_iter", 500);
+    let target_dim = parse_usize_opt(&params, "target_dim", 2);
     let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let data = vecs_to_array2(&data_rows)?;
@@ -976,17 +988,11 @@ pub fn viterbi(params: Value) -> Result<Value, String> {
     let initial_data = parse_f64_array(&params, "initial")?;
     let transition_rows = parse_f64_matrix(&params, "transition")?;
     let emission_rows = parse_f64_matrix(&params, "emission")?;
-    let observations: Vec<usize> = params
-        .get("observations")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "Missing or invalid field 'observations'".to_string())?
-        .iter()
-        .map(|v| {
-            v.as_u64()
-                .ok_or_else(|| "Non-integer in observations".to_string())
-                .map(|n| n as usize)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    // Routed through parse_usize_array (was an inline re-impl). Behavior is
+    // equivalent on the happy path and on a missing field; the non-integer
+    // error message is normalized to the helper's canonical, field-naming
+    // form ("Non-integer (or negative) value in 'observations'").
+    let observations = parse_usize_array(&params, "observations")?;
 
     let initial = vec_to_array1(&initial_data);
     let transition = vecs_to_array2(&transition_rows)?;
@@ -1198,13 +1204,10 @@ pub fn grammar_weights(params: Value) -> Result<Value, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let alpha = r.get("alpha").and_then(|v| v.as_f64()).unwrap_or(1.0);
-            let beta = r.get("beta").and_then(|v| v.as_f64()).unwrap_or(1.0);
-            let weight = r
-                .get("weight")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(alpha / (alpha + beta));
-            let level = r.get("level").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let alpha = parse_f64_opt(r, "alpha", 1.0);
+            let beta = parse_f64_opt(r, "beta", 1.0);
+            let weight = parse_f64_opt(r, "weight", alpha / (alpha + beta));
+            let level = parse_usize_opt(r, "level", 0);
             let source = r
                 .get("source")
                 .and_then(|v| v.as_str())
@@ -1290,8 +1293,8 @@ pub fn grammar_evolve(params: Value) -> Result<Value, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let proportion = s.get("proportion").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let fitness = s.get("fitness").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let proportion = parse_f64_opt(s, "proportion", 0.0);
+            let fitness = parse_f64_opt(s, "fitness", 0.0);
             let is_stable = s
                 .get("is_stable")
                 .and_then(|v| v.as_bool())
@@ -1306,11 +1309,8 @@ pub fn grammar_evolve(params: Value) -> Result<Value, String> {
         .collect();
 
     let steps = parse_usize(&params, "steps")?;
-    let dt = params.get("dt").and_then(|v| v.as_f64()).unwrap_or(0.05);
-    let prune_threshold = params
-        .get("prune_threshold")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(1e-6);
+    let dt = parse_f64_opt(&params, "dt", 0.05);
+    let prune_threshold = parse_f64_opt(&params, "prune_threshold", 1e-6);
 
     let result = simulate(&species, steps, dt, prune_threshold);
 
@@ -1674,11 +1674,8 @@ pub fn topo(params: Value) -> Result<Value, String> {
     let op = parse_str(&params, "operation")?;
     let points_raw = parse_f64_matrix(&params, "points")?;
 
-    let max_dim = params.get("max_dim").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-    let max_radius = params
-        .get("max_radius")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(2.0);
+    let max_dim = parse_usize_opt(&params, "max_dim", 1);
+    let max_radius = parse_f64_opt(&params, "max_radius", 2.0);
 
     match op {
         "persistence" => {
@@ -1707,7 +1704,7 @@ pub fn topo(params: Value) -> Result<Value, String> {
             Ok(json!({ "betti_numbers": betti, "radius": radius }))
         }
         "betti_curve" => {
-            let n_steps = params.get("n_steps").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let n_steps = parse_usize_opt(&params, "n_steps", 50);
             let curve = ix_topo::pointcloud::betti_curve(&points_raw, max_dim, n_steps);
             let curve_json: Vec<Value> = curve
                 .iter()
@@ -1983,28 +1980,17 @@ pub fn random_forest(params: Value) -> Result<Value, String> {
     use ix_ensemble::traits::EnsembleClassifier;
 
     let x_train_rows = parse_f64_matrix(&params, "x_train")?;
-    let y_train_raw: Vec<usize> = params
-        .get("y_train")
-        .and_then(|v| v.as_array())
-        .ok_or("Missing 'y_train'")?
-        .iter()
-        .map(|v| {
-            v.as_u64()
-                .ok_or("Non-integer in y_train")
-                .map(|n| n as usize)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    // Routed through parse_usize_array (was an inline re-impl). Error strings
+    // are normalized to the helper's canonical field-naming form.
+    let y_train_raw = parse_usize_array(&params, "y_train")?;
     let x_test_rows = parse_f64_matrix(&params, "x_test")?;
 
     let x_train = vecs_to_array2(&x_train_rows)?;
     let y_train = Array1::from_vec(y_train_raw);
     let x_test = vecs_to_array2(&x_test_rows)?;
 
-    let n_trees = params.get("n_trees").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-    let max_depth = params
-        .get("max_depth")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5) as usize;
+    let n_trees = parse_usize_opt(&params, "n_trees", 10);
+    let max_depth = parse_usize_opt(&params, "max_depth", 5);
 
     let mut rf = ix_ensemble::random_forest::RandomForest::new(n_trees, max_depth).with_seed(42);
     rf.fit(&x_train, &y_train);
@@ -2029,31 +2015,17 @@ pub fn gradient_boosting(params: Value) -> Result<Value, String> {
     use ix_ensemble::traits::EnsembleClassifier;
 
     let x_train_rows = parse_f64_matrix(&params, "x_train")?;
-    let y_train_raw: Vec<usize> = params
-        .get("y_train")
-        .and_then(|v| v.as_array())
-        .ok_or("Missing 'y_train'")?
-        .iter()
-        .map(|v| {
-            v.as_u64()
-                .ok_or("Non-integer in y_train")
-                .map(|n| n as usize)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    // Routed through parse_usize_array (was an inline re-impl). Error strings
+    // are normalized to the helper's canonical field-naming form.
+    let y_train_raw = parse_usize_array(&params, "y_train")?;
     let x_test_rows = parse_f64_matrix(&params, "x_test")?;
 
     let x_train = vecs_to_array2(&x_train_rows)?;
     let y_train = Array1::from_vec(y_train_raw);
     let x_test = vecs_to_array2(&x_test_rows)?;
 
-    let n_estimators = params
-        .get("n_estimators")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
-    let learning_rate = params
-        .get("learning_rate")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.1);
+    let n_estimators = parse_usize_opt(&params, "n_estimators", 50);
+    let learning_rate = parse_f64_opt(&params, "learning_rate", 0.1);
 
     let mut gbc = GradientBoostedClassifier::new(n_estimators, learning_rate);
     gbc.fit(&x_train, &y_train);
@@ -2118,7 +2090,7 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                     }))
                 }
                 "svm" => {
-                    let c = params.get("c").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    let c = parse_f64_opt(&params, "c", 1.0);
                     let mut model = LinearSVM::new(c);
                     let y: Array1<usize> =
                         Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
@@ -2127,7 +2099,7 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                     Ok(json!({ "predictions": preds.to_vec(), "algorithm": "svm", "c": c }))
                 }
                 "knn" => {
-                    let k = params.get("k").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+                    let k = parse_usize_opt(&params, "k", 3);
                     let mut model = KNN::new(k);
                     let y: Array1<usize> =
                         Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
@@ -2149,10 +2121,7 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                     Ok(json!({ "predictions": preds.to_vec(), "algorithm": "naive_bayes" }))
                 }
                 "decision_tree" => {
-                    let max_depth = params
-                        .get("max_depth")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(5) as usize;
+                    let max_depth = parse_usize_opt(&params, "max_depth", 5);
                     let mut model = DecisionTree::new(max_depth);
                     let y: Array1<usize> =
                         Array1::from_vec(y_train_raw.iter().map(|v| *v as usize).collect());
@@ -2186,7 +2155,7 @@ pub fn supervised(params: Value) -> Result<Value, String> {
                         Array1::from_vec(y_true_raw.iter().map(|v| *v as usize).collect());
                     let yp: Array1<usize> =
                         Array1::from_vec(y_pred_raw.iter().map(|v| *v as usize).collect());
-                    let class = params.get("class").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+                    let class = parse_usize_opt(&params, "class", 1);
                     Ok(json!({
                         "accuracy": metrics::accuracy(&yt, &yp),
                         "precision": metrics::precision(&yt, &yp, class),
@@ -2253,7 +2222,9 @@ pub fn supervised(params: Value) -> Result<Value, String> {
             let x = parse_f64_matrix_to_ndarray(&params, "x_train")?;
             let y_raw = parse_f64_array(&params, "y_train")?;
             let y: Array1<usize> = Array1::from_vec(y_raw.iter().map(|v| *v as usize).collect());
-            let k = params.get("k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            let k = parse_usize_opt(&params, "k", 5);
+            // `seed` stays inline: it is consumed as a raw u64 (not usize), so
+            // it does not match the parse_usize_opt signature.
             let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
             let model = params
                 .get("model")
@@ -2262,11 +2233,11 @@ pub fn supervised(params: Value) -> Result<Value, String> {
 
             let scores = match model {
                 "knn" => {
-                    let knn_k = params.get("knn_k").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+                    let knn_k = parse_usize_opt(&params, "knn_k", 3);
                     cross_val_score(&x, &y, || KNN::new(knn_k), k, seed)
                 }
                 "decision_tree" => {
-                    let max_depth = params.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                    let max_depth = parse_usize_opt(&params, "max_depth", 5);
                     cross_val_score(&x, &y, || DecisionTree::new(max_depth), k, seed)
                 }
                 "naive_bayes" => {
@@ -2418,11 +2389,8 @@ pub fn graph_ops(params: Value) -> Result<Value, String> {
                     }
                 }
                 "pagerank" => {
-                    let damping = params.get("damping").and_then(|v| v.as_f64()).unwrap_or(0.85);
-                    let iters = params
-                        .get("iterations")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(100) as usize;
+                    let damping = parse_f64_opt(&params, "damping", 0.85);
+                    let iters = parse_usize_opt(&params, "iterations", 100);
                     let ranks = g.pagerank(damping, iters);
                     let rank_map: serde_json::Map<String, Value> = ranks
                         .iter()
