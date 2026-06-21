@@ -8,6 +8,8 @@
 //!   Dijkstra path src→dst; empty if unreachable).
 //! - `ix_connected_components(edges)` → `TABLE(node, component)` — weakly-connected
 //!   component id per node (edge direction ignored).
+//! - `ix_centrality(edges, kind)` → `TABLE(node, score)` — undirected centrality,
+//!   `kind` ∈ `degree | closeness | eigenvector | betweenness`.
 //! - `ix_viterbi(initial, transition, emission, observations)` → `TABLE(step, state)` —
 //!   most-likely hidden-state path of an HMM (initial 1-D, transition/emission 2-D
 //!   JSON matrices, observations a 1-D int array).
@@ -313,6 +315,48 @@ impl VTab for IxConnectedComponents {
     }
 }
 
+// ── ix_centrality ────────────────────────────────────────────────────────────────
+
+struct IxCentrality;
+impl VTab for IxCentrality {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_centrality emits (node,score) for the named undirected centrality (degree|closeness|eigenvector|betweenness) via ix_graph; in a star the hub scores strictly highest on every measure; an unknown kind -> SQL error [T:test conf:0.8 src:ix_duck::graphsig::tests::centrality_hub_dominates]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (g, n) = parse_graph(&bind.get_parameter(0).to_string())?;
+        let kind = bind.get_parameter(1).to_string().to_lowercase();
+        let scores = match kind.as_str() {
+            "degree" => g.degree_centrality(),
+            "closeness" => g.closeness_centrality(),
+            "eigenvector" => g.eigenvector_centrality(100),
+            "betweenness" => g.betweenness_centrality(),
+            other => {
+                return Err(format!(
+                    "unknown centrality kind '{other}' (expected degree|closeness|eigenvector|betweenness)"
+                )
+                .into())
+            }
+        };
+        let rows: Vec<(i64, f64)> = (0..n).map(|i| (i as i64, scores[i])).collect();
+        two_cols(bind, "node", LogicalTypeId::Bigint, "score", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
 // ── ix_viterbi ───────────────────────────────────────────────────────────────────
 
 struct IxViterbi;
@@ -366,6 +410,7 @@ pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxPagerank>("ix_pagerank")?;
     conn.register_table_function::<IxShortestPath>("ix_shortest_path")?;
     conn.register_table_function::<IxConnectedComponents>("ix_connected_components")?;
+    conn.register_table_function::<IxCentrality>("ix_centrality")?;
     conn.register_table_function::<IxViterbi>("ix_viterbi")?;
     conn.register_table_function::<IxRfft>("ix_rfft")?;
     conn.register_table_function::<IxAutocorrelation>("ix_autocorrelation")?;
@@ -446,6 +491,34 @@ mod tests {
             )
             .unwrap();
         assert!(!cross, "0 and 2 are in different components");
+    }
+
+    #[test]
+    fn centrality_hub_dominates() {
+        let conn = open_bench().unwrap();
+        // Star: hub 0 joined to leaves 1,2,3. The hub is the top-scoring node for
+        // every centrality measure.
+        let star = "[[0,1],[0,2],[0,3]]";
+        for kind in ["degree", "closeness", "eigenvector", "betweenness"] {
+            let top: i64 = conn
+                .query_row(
+                    &format!("SELECT node FROM ix_centrality('{star}', '{kind}') ORDER BY score DESC, node LIMIT 1"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(top, 0, "hub is the top {kind}-centrality node");
+        }
+        // An unknown kind is a SQL error, not a panic.
+        assert!(
+            conn.query_row(
+                &format!("SELECT node FROM ix_centrality('{star}', 'pagerank')"),
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .is_err(),
+            "unknown centrality kind must be a SQL error"
+        );
     }
 
     #[test]
