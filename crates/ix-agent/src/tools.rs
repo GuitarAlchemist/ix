@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::handlers;
 use crate::registry_bridge;
+use crate::schema::{object, object_with_additional, Prop};
 
 /// Strip a ```json ... ``` (or plain ``` ... ```) markdown code fence
 /// from an LLM response. The LLM is told not to emit fences, but in
@@ -103,42 +104,78 @@ pub struct Tool {
 /// cyclomatic metric stayed above 20 after the P0.1 register_all
 /// decomposition.
 fn schema_ix_supervised() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "operation": {
-                "type": "string",
-                "enum": ["linear_regression", "logistic_regression", "svm", "knn", "naive_bayes", "decision_tree", "metrics", "cross_validate", "confusion_matrix", "roc_auc"],
-                "description": "Algorithm, 'metrics' for evaluation, 'cross_validate' for k-fold CV, 'confusion_matrix' for confusion matrix, 'roc_auc' for ROC/AUC"
-            },
-            "x_train": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Training features matrix"
-            },
-            "y_train": {
-                "type": "array",
-                "items": { "type": "number" },
-                "description": "Training labels (class indices for classification, values for regression)"
-            },
-            "x_test": {
-                "type": "array",
-                "items": { "type": "array", "items": { "type": "number" } },
-                "description": "Test features matrix"
-            },
-            "k": { "type": "integer", "description": "K for KNN (default 3), or number of CV folds (default 5)" },
-            "c": { "type": "number", "description": "Regularization for SVM (default 1.0)" },
-            "max_depth": { "type": "integer", "description": "Max depth for decision tree (default 5)" },
-            "y_true": { "type": "array", "items": { "type": "number" }, "description": "True labels (for metrics/confusion_matrix)" },
-            "y_pred": { "type": "array", "items": { "type": "number" }, "description": "Predicted labels (for metrics/confusion_matrix)" },
-            "y_scores": { "type": "array", "items": { "type": "number" }, "description": "Predicted probabilities for positive class (for roc_auc)" },
-            "metric_type": { "type": "string", "enum": ["mse", "accuracy"], "description": "Metric type: 'mse' for regression, 'accuracy' for classification" },
-            "model": { "type": "string", "enum": ["knn", "decision_tree", "naive_bayes", "logistic_regression"], "description": "Model for cross_validate (default 'decision_tree')" },
-            "n_classes": { "type": "integer", "description": "Number of classes (for confusion_matrix, auto-detected if omitted)" },
-            "seed": { "type": "integer", "description": "Random seed for cross-validation (default 42)" }
-        },
-        "required": ["operation"]
-    })
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string()
+                    .enum_of(&[
+                        "linear_regression",
+                        "logistic_regression",
+                        "svm",
+                        "knn",
+                        "naive_bayes",
+                        "decision_tree",
+                        "metrics",
+                        "cross_validate",
+                        "confusion_matrix",
+                        "roc_auc",
+                    ])
+                    .desc("Algorithm, 'metrics' for evaluation, 'cross_validate' for k-fold CV, 'confusion_matrix' for confusion matrix, 'roc_auc' for ROC/AUC"),
+            ),
+            ("x_train", Prop::num_matrix().desc("Training features matrix")),
+            (
+                "y_train",
+                Prop::num_array().desc(
+                    "Training labels (class indices for classification, values for regression)",
+                ),
+            ),
+            ("x_test", Prop::num_matrix().desc("Test features matrix")),
+            (
+                "k",
+                Prop::integer().desc("K for KNN (default 3), or number of CV folds (default 5)"),
+            ),
+            ("c", Prop::number().desc("Regularization for SVM (default 1.0)")),
+            (
+                "max_depth",
+                Prop::integer().desc("Max depth for decision tree (default 5)"),
+            ),
+            (
+                "y_true",
+                Prop::num_array().desc("True labels (for metrics/confusion_matrix)"),
+            ),
+            (
+                "y_pred",
+                Prop::num_array().desc("Predicted labels (for metrics/confusion_matrix)"),
+            ),
+            (
+                "y_scores",
+                Prop::num_array().desc("Predicted probabilities for positive class (for roc_auc)"),
+            ),
+            (
+                "metric_type",
+                Prop::string()
+                    .enum_of(&["mse", "accuracy"])
+                    .desc("Metric type: 'mse' for regression, 'accuracy' for classification"),
+            ),
+            (
+                "model",
+                Prop::string()
+                    .enum_of(&["knn", "decision_tree", "naive_bayes", "logistic_regression"])
+                    .desc("Model for cross_validate (default 'decision_tree')"),
+            ),
+            (
+                "n_classes",
+                Prop::integer()
+                    .desc("Number of classes (for confusion_matrix, auto-detected if omitted)"),
+            ),
+            (
+                "seed",
+                Prop::integer().desc("Random seed for cross-validation (default 42)"),
+            ),
+        ],
+        &["operation"],
+    )
 }
 
 /// JSON schema for `ix_grammar_weights`. Extracted from
@@ -146,117 +183,115 @@ fn schema_ix_supervised() -> Value {
 /// `schema_ix_supervised`: the nested rule / observation objects
 /// dominated that method's cyclomatic count.
 fn schema_ix_grammar_weights() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "rules": {
-                "type": "array",
-                "description": "Grammar rules with weights",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id":     { "type": "string" },
-                        "alpha":  { "type": "number" },
-                        "beta":   { "type": "number" },
-                        "weight": { "type": "number" },
-                        "level":  { "type": "integer" },
-                        "source": { "type": "string" }
-                    },
-                    "required": ["id"]
-                }
-            },
-            "observation": {
-                "type": "object",
-                "description": "Optional: apply a Bayesian update to one rule",
-                "properties": {
-                    "rule_id": { "type": "string" },
-                    "success": { "type": "boolean" }
-                },
-                "required": ["rule_id", "success"]
-            },
-            "temperature": {
-                "type": "number",
-                "description": "Softmax temperature (default 1.0)",
-                "minimum": 0
-            }
-        },
-        "required": ["rules"]
-    })
+    object(
+        vec![
+            (
+                "rules",
+                Prop::array_of(Prop::object(
+                    vec![
+                        ("id", Prop::string()),
+                        ("alpha", Prop::number()),
+                        ("beta", Prop::number()),
+                        ("weight", Prop::number()),
+                        ("level", Prop::integer()),
+                        ("source", Prop::string()),
+                    ],
+                    &["id"],
+                ))
+                .desc("Grammar rules with weights"),
+            ),
+            (
+                "observation",
+                Prop::object(
+                    vec![
+                        ("rule_id", Prop::string()),
+                        ("success", Prop::boolean()),
+                    ],
+                    &["rule_id", "success"],
+                )
+                .desc("Optional: apply a Bayesian update to one rule"),
+            ),
+            (
+                "temperature",
+                Prop::number().desc("Softmax temperature (default 1.0)").minimum(0),
+            ),
+        ],
+        &["rules"],
+    )
 }
 
 /// JSON schema for `ix_grammar_evolve`. Extracted from
 /// `register_core_symbolic`.
 fn schema_ix_grammar_evolve() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "species": {
-                "type": "array",
-                "description": "Initial grammar species",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id":          { "type": "string" },
-                        "proportion":  { "type": "number" },
-                        "fitness":     { "type": "number" },
-                        "is_stable":   { "type": "boolean" }
-                    },
-                    "required": ["id", "proportion", "fitness"]
-                }
-            },
-            "steps": {
-                "type": "integer",
-                "description": "Number of simulation steps",
-                "minimum": 1
-            },
-            "dt": {
-                "type": "number",
-                "description": "Time step (default 0.05)",
-                "minimum": 0
-            },
-            "prune_threshold": {
-                "type": "number",
-                "description": "Proportion below which species are pruned (default 1e-6)",
-                "minimum": 0
-            }
-        },
-        "required": ["species", "steps"]
-    })
+    object(
+        vec![
+            (
+                "species",
+                Prop::array_of(Prop::object(
+                    vec![
+                        ("id", Prop::string()),
+                        ("proportion", Prop::number()),
+                        ("fitness", Prop::number()),
+                        ("is_stable", Prop::boolean()),
+                    ],
+                    &["id", "proportion", "fitness"],
+                ))
+                .desc("Initial grammar species"),
+            ),
+            (
+                "steps",
+                Prop::integer().desc("Number of simulation steps").minimum(1),
+            ),
+            (
+                "dt",
+                Prop::number().desc("Time step (default 0.05)").minimum(0),
+            ),
+            (
+                "prune_threshold",
+                Prop::number()
+                    .desc("Proportion below which species are pruned (default 1e-6)")
+                    .minimum(0),
+            ),
+        ],
+        &["species", "steps"],
+    )
 }
 
 /// JSON schema for `ix_grammar_search`. Extracted from
 /// `register_core_symbolic`.
 fn schema_ix_grammar_search() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "grammar_ebnf": {
-                "type": "string",
-                "description": "Grammar in EBNF notation (one rule per line: name ::= alt | alt)"
-            },
-            "max_iterations": {
-                "type": "integer",
-                "description": "MCTS iterations (default 500)",
-                "minimum": 1
-            },
-            "exploration": {
-                "type": "number",
-                "description": "UCB1 exploration constant (default 1.41)",
-                "minimum": 0
-            },
-            "max_depth": {
-                "type": "integer",
-                "description": "Max grammar expansion depth (default 20)",
-                "minimum": 1
-            },
-            "seed": {
-                "type": "integer",
-                "description": "RNG seed for reproducibility (default 42)",
-                "minimum": 0
-            }
-        },
-        "required": ["grammar_ebnf"]
-    })
+    object(
+        vec![
+            (
+                "grammar_ebnf",
+                Prop::string()
+                    .desc("Grammar in EBNF notation (one rule per line: name ::= alt | alt)"),
+            ),
+            (
+                "max_iterations",
+                Prop::integer().desc("MCTS iterations (default 500)").minimum(1),
+            ),
+            (
+                "exploration",
+                Prop::number()
+                    .desc("UCB1 exploration constant (default 1.41)")
+                    .minimum(0),
+            ),
+            (
+                "max_depth",
+                Prop::integer()
+                    .desc("Max grammar expansion depth (default 20)")
+                    .minimum(1),
+            ),
+            (
+                "seed",
+                Prop::integer()
+                    .desc("RNG seed for reproducibility (default 42)")
+                    .minimum(0),
+            ),
+        ],
+        &["grammar_ebnf"],
+    )
 }
 
 /// Registry of all available tools.
@@ -841,201 +876,170 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_stats",
             description: "Compute statistics (mean, std, min, max, median) on a list of numbers.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "data": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "List of numbers to compute statistics on"
-                    }
-                },
-                "required": ["data"]
-            }),
+            input_schema: object(
+                vec![(
+                    "data",
+                    Prop::num_array().desc("List of numbers to compute statistics on"),
+                )],
+                &["data"],
+            ),
             handler: handlers::stats,
         });
 
         self.tools.push(Tool {
             name: "ix_distance",
             description: "Compute distance between two vectors (euclidean, cosine, or manhattan).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "a": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "First vector"
-                    },
-                    "b": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "Second vector"
-                    },
-                    "metric": {
-                        "type": "string",
-                        "enum": ["euclidean", "cosine", "manhattan"],
-                        "description": "Distance metric to use"
-                    }
-                },
-                "required": ["a", "b", "metric"]
-            }),
+            input_schema: object(
+                vec![
+                    ("a", Prop::num_array().desc("First vector")),
+                    ("b", Prop::num_array().desc("Second vector")),
+                    (
+                        "metric",
+                        Prop::string()
+                            .enum_of(&["euclidean", "cosine", "manhattan"])
+                            .desc("Distance metric to use"),
+                    ),
+                ],
+                &["a", "b", "metric"],
+            ),
             handler: handlers::distance,
         });
 
         self.tools.push(Tool {
             name: "ix_optimize",
             description: "Minimize a benchmark function (sphere, rosenbrock, rastrigin) using SGD, Adam, PSO, or simulated annealing.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "function": {
-                        "type": "string",
-                        "enum": ["sphere", "rosenbrock", "rastrigin"],
-                        "description": "Benchmark function to minimize"
-                    },
-                    "dimensions": {
-                        "type": "integer",
-                        "description": "Number of dimensions",
-                        "minimum": 1
-                    },
-                    "method": {
-                        "type": "string",
-                        "enum": ["sgd", "adam", "pso", "annealing"],
-                        "description": "Optimization method"
-                    },
-                    "max_iter": {
-                        "type": "integer",
-                        "description": "Maximum iterations",
-                        "minimum": 1
-                    }
-                },
-                "required": ["function", "dimensions", "method", "max_iter"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "function",
+                        Prop::string()
+                            .enum_of(&["sphere", "rosenbrock", "rastrigin"])
+                            .desc("Benchmark function to minimize"),
+                    ),
+                    (
+                        "dimensions",
+                        Prop::integer().desc("Number of dimensions").minimum(1),
+                    ),
+                    (
+                        "method",
+                        Prop::string()
+                            .enum_of(&["sgd", "adam", "pso", "annealing"])
+                            .desc("Optimization method"),
+                    ),
+                    (
+                        "max_iter",
+                        Prop::integer().desc("Maximum iterations").minimum(1),
+                    ),
+                ],
+                &["function", "dimensions", "method", "max_iter"],
+            ),
             handler: handlers::optimize,
         });
 
         self.tools.push(Tool {
             name: "ix_linear_regression",
             description: "Fit ordinary least squares linear regression and return weights, bias, and predictions.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "x": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Feature matrix (rows=samples, cols=features)"
-                    },
-                    "y": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "Target values"
-                    }
-                },
-                "required": ["x", "y"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "x",
+                        Prop::num_matrix().desc("Feature matrix (rows=samples, cols=features)"),
+                    ),
+                    ("y", Prop::num_array().desc("Target values")),
+                ],
+                &["x", "y"],
+            ),
             handler: handlers::linear_regression,
         });
 
         self.tools.push(Tool {
             name: "ix_kmeans",
             description: "K-Means clustering with K-Means++ initialization.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "data": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Data matrix (rows=samples, cols=features)"
-                    },
-                    "k": {
-                        "type": "integer",
-                        "description": "Number of clusters",
-                        "minimum": 1
-                    },
-                    "max_iter": {
-                        "type": "integer",
-                        "description": "Maximum iterations",
-                        "minimum": 1
-                    }
-                },
-                "required": ["data", "k", "max_iter"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "data",
+                        Prop::num_matrix().desc("Data matrix (rows=samples, cols=features)"),
+                    ),
+                    ("k", Prop::integer().desc("Number of clusters").minimum(1)),
+                    (
+                        "max_iter",
+                        Prop::integer().desc("Maximum iterations").minimum(1),
+                    ),
+                ],
+                &["data", "k", "max_iter"],
+            ),
             handler: handlers::kmeans,
         });
 
         self.tools.push(Tool {
             name: "ix_tsne",
             description: "t-SNE dimensionality reduction (van der Maaten & Hinton 2008). Project a high-dim matrix to 2D or 3D for visualization. O(n²); keep n ≤ ~5000.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "data": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Data matrix (rows=samples, cols=features)"
-                    },
-                    "perplexity": {
-                        "type": "number",
-                        "description": "Perplexity (default 30). Must be < (n-1)/3.",
-                        "minimum": 1
-                    },
-                    "n_iter": {
-                        "type": "integer",
-                        "description": "Iterations (default 500)",
-                        "minimum": 50
-                    },
-                    "target_dim": {
-                        "type": "integer",
-                        "description": "Output dimension (default 2)",
-                        "minimum": 1,
-                        "maximum": 3
-                    },
-                    "seed": {
-                        "type": "integer",
-                        "description": "RNG seed for determinism (default 0)"
-                    }
-                },
-                "required": ["data"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "data",
+                        Prop::num_matrix().desc("Data matrix (rows=samples, cols=features)"),
+                    ),
+                    (
+                        "perplexity",
+                        Prop::number()
+                            .desc("Perplexity (default 30). Must be < (n-1)/3.")
+                            .minimum(1),
+                    ),
+                    (
+                        "n_iter",
+                        Prop::integer().desc("Iterations (default 500)").minimum(50),
+                    ),
+                    (
+                        "target_dim",
+                        Prop::integer()
+                            .desc("Output dimension (default 2)")
+                            .minimum(1)
+                            .maximum(3),
+                    ),
+                    (
+                        "seed",
+                        Prop::integer().desc("RNG seed for determinism (default 0)"),
+                    ),
+                ],
+                &["data"],
+            ),
             handler: handlers::tsne,
         });
 
         self.tools.push(Tool {
             name: "ix_fft",
             description: "Compute the Fast Fourier Transform of a real-valued signal. Returns frequency bins and magnitudes.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "signal": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "Real-valued signal samples"
-                    }
-                },
-                "required": ["signal"]
-            }),
+            input_schema: object(
+                vec![(
+                    "signal",
+                    Prop::num_array().desc("Real-valued signal samples"),
+                )],
+                &["signal"],
+            ),
             handler: handlers::fft,
         });
 
         self.tools.push(Tool {
             name: "ix_markov",
             description: "Analyze a Markov chain: compute stationary distribution after a number of steps.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "transition_matrix": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Row-stochastic transition matrix (rows sum to 1)"
-                    },
-                    "steps": {
-                        "type": "integer",
-                        "description": "Number of power-iteration steps for stationary distribution",
-                        "minimum": 1
-                    }
-                },
-                "required": ["transition_matrix", "steps"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "transition_matrix",
+                        Prop::num_matrix()
+                            .desc("Row-stochastic transition matrix (rows sum to 1)"),
+                    ),
+                    (
+                        "steps",
+                        Prop::integer()
+                            .desc("Number of power-iteration steps for stationary distribution")
+                            .minimum(1),
+                    ),
+                ],
+                &["transition_matrix", "steps"],
+            ),
             handler: handlers::markov,
         });
     }
@@ -1046,53 +1050,49 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_viterbi",
             description: "HMM Viterbi decoding: find the most likely hidden state sequence given observations.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "initial": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "Initial state distribution (sums to 1)"
-                    },
-                    "transition": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "State transition matrix (row-stochastic)"
-                    },
-                    "emission": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Emission probability matrix (row-stochastic)"
-                    },
-                    "observations": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Observation sequence (indices into emission columns)"
-                    }
-                },
-                "required": ["initial", "transition", "emission", "observations"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "initial",
+                        Prop::num_array().desc("Initial state distribution (sums to 1)"),
+                    ),
+                    (
+                        "transition",
+                        Prop::num_matrix().desc("State transition matrix (row-stochastic)"),
+                    ),
+                    (
+                        "emission",
+                        Prop::num_matrix().desc("Emission probability matrix (row-stochastic)"),
+                    ),
+                    (
+                        "observations",
+                        Prop::int_array()
+                            .desc("Observation sequence (indices into emission columns)"),
+                    ),
+                ],
+                &["initial", "transition", "emission", "observations"],
+            ),
             handler: handlers::viterbi,
         });
 
         self.tools.push(Tool {
             name: "ix_search",
             description: "Get information about search algorithms (A*, BFS, DFS) including descriptions and complexity.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "enum": ["astar", "bfs", "dfs"],
-                        "description": "Search algorithm to describe"
-                    },
-                    "description": {
-                        "type": "boolean",
-                        "description": "Whether to include a description"
-                    }
-                },
-                "required": ["algorithm"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "algorithm",
+                        Prop::string()
+                            .enum_of(&["astar", "bfs", "dfs"])
+                            .desc("Search algorithm to describe"),
+                    ),
+                    (
+                        "description",
+                        Prop::boolean().desc("Whether to include a description"),
+                    ),
+                ],
+                &["algorithm"],
+            ),
             handler: handlers::search_info,
         });
 
@@ -1100,106 +1100,86 @@ Example 2 — "cluster crates by complexity then classify":
             name: "ix_game_nash",
             description:
                 "Find Nash equilibria of a 2-player bimatrix game via support enumeration.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "payoff_a": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Player A payoff matrix"
-                    },
-                    "payoff_b": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Player B payoff matrix"
-                    }
-                },
-                "required": ["payoff_a", "payoff_b"]
-            }),
+            input_schema: object(
+                vec![
+                    ("payoff_a", Prop::num_matrix().desc("Player A payoff matrix")),
+                    ("payoff_b", Prop::num_matrix().desc("Player B payoff matrix")),
+                ],
+                &["payoff_a", "payoff_b"],
+            ),
             handler: handlers::game_nash,
         });
 
         self.tools.push(Tool {
             name: "ix_chaos_lyapunov",
             description: "Compute the maximal Lyapunov exponent of the logistic map for a given parameter r.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "map": {
-                        "type": "string",
-                        "enum": ["logistic"],
-                        "description": "Map type (currently only 'logistic')"
-                    },
-                    "parameter": {
-                        "type": "number",
-                        "description": "Map parameter (r for logistic map, 0 < r <= 4)"
-                    },
-                    "iterations": {
-                        "type": "integer",
-                        "description": "Number of iterations for Lyapunov computation",
-                        "minimum": 1
-                    }
-                },
-                "required": ["map", "parameter", "iterations"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "map",
+                        Prop::string()
+                            .enum_of(&["logistic"])
+                            .desc("Map type (currently only 'logistic')"),
+                    ),
+                    (
+                        "parameter",
+                        Prop::number().desc("Map parameter (r for logistic map, 0 < r <= 4)"),
+                    ),
+                    (
+                        "iterations",
+                        Prop::integer()
+                            .desc("Number of iterations for Lyapunov computation")
+                            .minimum(1),
+                    ),
+                ],
+                &["map", "parameter", "iterations"],
+            ),
             handler: handlers::chaos_lyapunov,
         });
 
         self.tools.push(Tool {
             name: "ix_adversarial_fgsm",
             description: "Fast Gradient Sign Method: compute adversarial perturbation of an input given its loss gradient.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "input": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "Original input vector"
-                    },
-                    "gradient": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "Loss gradient w.r.t. input"
-                    },
-                    "epsilon": {
-                        "type": "number",
-                        "description": "Perturbation magnitude"
-                    }
-                },
-                "required": ["input", "gradient", "epsilon"]
-            }),
+            input_schema: object(
+                vec![
+                    ("input", Prop::num_array().desc("Original input vector")),
+                    ("gradient", Prop::num_array().desc("Loss gradient w.r.t. input")),
+                    ("epsilon", Prop::number().desc("Perturbation magnitude")),
+                ],
+                &["input", "gradient", "epsilon"],
+            ),
             handler: handlers::adversarial_fgsm,
         });
 
         self.tools.push(Tool {
             name: "ix_bloom_filter",
             description: "Create a Bloom filter from items and check membership. Returns whether query items are (probably) in the set.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["create", "check"],
-                        "description": "Operation: 'create' inserts items, 'check' tests membership"
-                    },
-                    "items": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Items to insert into the Bloom filter"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Item to check membership for (used with 'check')"
-                    },
-                    "false_positive_rate": {
-                        "type": "number",
-                        "description": "Desired false positive rate (e.g. 0.01)",
-                        "minimum": 0,
-                        "maximum": 1
-                    }
-                },
-                "required": ["items", "false_positive_rate"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&["create", "check"])
+                            .desc("Operation: 'create' inserts items, 'check' tests membership"),
+                    ),
+                    (
+                        "items",
+                        Prop::str_array().desc("Items to insert into the Bloom filter"),
+                    ),
+                    (
+                        "query",
+                        Prop::string().desc("Item to check membership for (used with 'check')"),
+                    ),
+                    (
+                        "false_positive_rate",
+                        Prop::number()
+                            .desc("Desired false positive rate (e.g. 0.01)")
+                            .minimum(0)
+                            .maximum(1),
+                    ),
+                ],
+                &["items", "false_positive_rate"],
+            ),
             handler: handlers::bloom_filter,
         });
     }
@@ -1237,93 +1217,148 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_rotation",
             description: "3D rotation operations: quaternion from axis-angle, SLERP interpolation, Euler angle conversion, rotation matrix.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["quaternion", "slerp", "euler_to_quat", "quat_to_euler", "rotate_point", "rotation_matrix"],
-                        "description": "Rotation operation to perform"
-                    },
-                    "axis": { "type": "array", "items": { "type": "number" }, "description": "Rotation axis [x,y,z]" },
-                    "angle": { "type": "number", "description": "Rotation angle in radians" },
-                    "axis2": { "type": "array", "items": { "type": "number" }, "description": "Second rotation axis (for SLERP)" },
-                    "angle2": { "type": "number", "description": "Second angle (for SLERP)" },
-                    "t": { "type": "number", "description": "Interpolation parameter 0..1 (for SLERP)" },
-                    "roll": { "type": "number", "description": "Roll in radians (for Euler)" },
-                    "pitch": { "type": "number", "description": "Pitch in radians (for Euler)" },
-                    "yaw": { "type": "number", "description": "Yaw in radians (for Euler)" },
-                    "point": { "type": "array", "items": { "type": "number" }, "description": "Point [x,y,z] to rotate" },
-                    "quaternion": { "type": "array", "items": { "type": "number" }, "description": "Quaternion [w,x,y,z]" }
-                },
-                "required": ["operation"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&[
+                                "quaternion",
+                                "slerp",
+                                "euler_to_quat",
+                                "quat_to_euler",
+                                "rotate_point",
+                                "rotation_matrix",
+                            ])
+                            .desc("Rotation operation to perform"),
+                    ),
+                    ("axis", Prop::num_array().desc("Rotation axis [x,y,z]")),
+                    ("angle", Prop::number().desc("Rotation angle in radians")),
+                    (
+                        "axis2",
+                        Prop::num_array().desc("Second rotation axis (for SLERP)"),
+                    ),
+                    ("angle2", Prop::number().desc("Second angle (for SLERP)")),
+                    (
+                        "t",
+                        Prop::number().desc("Interpolation parameter 0..1 (for SLERP)"),
+                    ),
+                    ("roll", Prop::number().desc("Roll in radians (for Euler)")),
+                    ("pitch", Prop::number().desc("Pitch in radians (for Euler)")),
+                    ("yaw", Prop::number().desc("Yaw in radians (for Euler)")),
+                    ("point", Prop::num_array().desc("Point [x,y,z] to rotate")),
+                    (
+                        "quaternion",
+                        Prop::num_array().desc("Quaternion [w,x,y,z]"),
+                    ),
+                ],
+                &["operation"],
+            ),
             handler: handlers::rotation,
         });
 
         self.tools.push(Tool {
             name: "ix_number_theory",
             description: "Number theory: prime sieve, primality testing, modular arithmetic (mod_pow, gcd, lcm, mod_inverse).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["sieve", "is_prime", "mod_pow", "gcd", "lcm", "mod_inverse", "prime_gaps"],
-                        "description": "Number theory operation"
-                    },
-                    "limit": { "type": "integer", "description": "Upper limit for sieve", "minimum": 2 },
-                    "n": { "type": "integer", "description": "Number to test for primality" },
-                    "base": { "type": "integer", "description": "Base for mod_pow" },
-                    "exp": { "type": "integer", "description": "Exponent for mod_pow" },
-                    "modulus": { "type": "integer", "description": "Modulus for mod_pow/mod_inverse" },
-                    "a": { "type": "integer", "description": "First number for gcd/lcm" },
-                    "b": { "type": "integer", "description": "Second number for gcd/lcm" }
-                },
-                "required": ["operation"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&[
+                                "sieve",
+                                "is_prime",
+                                "mod_pow",
+                                "gcd",
+                                "lcm",
+                                "mod_inverse",
+                                "prime_gaps",
+                            ])
+                            .desc("Number theory operation"),
+                    ),
+                    (
+                        "limit",
+                        Prop::integer().desc("Upper limit for sieve").minimum(2),
+                    ),
+                    ("n", Prop::integer().desc("Number to test for primality")),
+                    ("base", Prop::integer().desc("Base for mod_pow")),
+                    ("exp", Prop::integer().desc("Exponent for mod_pow")),
+                    (
+                        "modulus",
+                        Prop::integer().desc("Modulus for mod_pow/mod_inverse"),
+                    ),
+                    ("a", Prop::integer().desc("First number for gcd/lcm")),
+                    ("b", Prop::integer().desc("Second number for gcd/lcm")),
+                ],
+                &["operation"],
+            ),
             handler: handlers::number_theory,
         });
 
         self.tools.push(Tool {
             name: "ix_fractal",
             description: "Generate fractal data: Takagi curve, Hilbert/Peano space-filling curves, Morton encoding.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["takagi", "hilbert", "peano", "morton_encode", "morton_decode"],
-                        "description": "Fractal operation"
-                    },
-                    "n_points": { "type": "integer", "description": "Number of points for Takagi curve", "minimum": 2 },
-                    "terms": { "type": "integer", "description": "Number of terms for Takagi", "minimum": 1 },
-                    "order": { "type": "integer", "description": "Order for space-filling curves", "minimum": 1 },
-                    "x": { "type": "integer", "description": "X coordinate for Morton encode" },
-                    "y": { "type": "integer", "description": "Y coordinate for Morton encode" },
-                    "z": { "type": "integer", "description": "Z-order value for Morton decode" }
-                },
-                "required": ["operation"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&[
+                                "takagi",
+                                "hilbert",
+                                "peano",
+                                "morton_encode",
+                                "morton_decode",
+                            ])
+                            .desc("Fractal operation"),
+                    ),
+                    (
+                        "n_points",
+                        Prop::integer()
+                            .desc("Number of points for Takagi curve")
+                            .minimum(2),
+                    ),
+                    (
+                        "terms",
+                        Prop::integer().desc("Number of terms for Takagi").minimum(1),
+                    ),
+                    (
+                        "order",
+                        Prop::integer()
+                            .desc("Order for space-filling curves")
+                            .minimum(1),
+                    ),
+                    ("x", Prop::integer().desc("X coordinate for Morton encode")),
+                    ("y", Prop::integer().desc("Y coordinate for Morton encode")),
+                    ("z", Prop::integer().desc("Z-order value for Morton decode")),
+                ],
+                &["operation"],
+            ),
             handler: handlers::fractal,
         });
 
         self.tools.push(Tool {
             name: "ix_sedenion",
             description: "Hypercomplex algebra: sedenion/octonion multiplication, conjugate, norm, Cayley-Dickson construction.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["multiply", "conjugate", "norm", "cayley_dickson_multiply"],
-                        "description": "Sedenion operation"
-                    },
-                    "a": { "type": "array", "items": { "type": "number" }, "description": "First element components (16 for sedenion)" },
-                    "b": { "type": "array", "items": { "type": "number" }, "description": "Second element components (for multiply)" }
-                },
-                "required": ["operation", "a"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&["multiply", "conjugate", "norm", "cayley_dickson_multiply"])
+                            .desc("Sedenion operation"),
+                    ),
+                    (
+                        "a",
+                        Prop::num_array().desc("First element components (16 for sedenion)"),
+                    ),
+                    (
+                        "b",
+                        Prop::num_array().desc("Second element components (for multiply)"),
+                    ),
+                ],
+                &["operation", "a"],
+            ),
             handler: handlers::sedenion,
         });
     }
@@ -1335,195 +1370,255 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_topo",
             description: "Topological data analysis: persistent homology, Betti numbers, Betti curves from point clouds.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["persistence", "betti_at_radius", "betti_curve"],
-                        "description": "TDA operation"
-                    },
-                    "points": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Point cloud (rows=points, cols=dimensions)"
-                    },
-                    "max_dim": { "type": "integer", "description": "Maximum homology dimension (default 1)", "minimum": 0 },
-                    "max_radius": { "type": "number", "description": "Maximum filtration radius (default 2.0)" },
-                    "radius": { "type": "number", "description": "Radius for betti_at_radius" },
-                    "n_steps": { "type": "integer", "description": "Number of steps for betti_curve (default 50)" }
-                },
-                "required": ["operation", "points"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&["persistence", "betti_at_radius", "betti_curve"])
+                            .desc("TDA operation"),
+                    ),
+                    (
+                        "points",
+                        Prop::num_matrix().desc("Point cloud (rows=points, cols=dimensions)"),
+                    ),
+                    (
+                        "max_dim",
+                        Prop::integer()
+                            .desc("Maximum homology dimension (default 1)")
+                            .minimum(0),
+                    ),
+                    (
+                        "max_radius",
+                        Prop::number().desc("Maximum filtration radius (default 2.0)"),
+                    ),
+                    ("radius", Prop::number().desc("Radius for betti_at_radius")),
+                    (
+                        "n_steps",
+                        Prop::integer().desc("Number of steps for betti_curve (default 50)"),
+                    ),
+                ],
+                &["operation", "points"],
+            ),
             handler: handlers::topo,
         });
 
         self.tools.push(Tool {
             name: "ix_category",
             description: "Category theory: verify monad laws for Option/Result monads with sample functions.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["monad_laws", "free_forgetful"],
-                        "description": "Category theory operation"
-                    },
-                    "monad": {
-                        "type": "string",
-                        "enum": ["option", "result"],
-                        "description": "Which monad to verify laws for"
-                    },
-                    "value": { "type": "integer", "description": "Value to test monad laws with" },
-                    "elements": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Elements for free-forgetful adjunction"
-                    }
-                },
-                "required": ["operation"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&["monad_laws", "free_forgetful"])
+                            .desc("Category theory operation"),
+                    ),
+                    (
+                        "monad",
+                        Prop::string()
+                            .enum_of(&["option", "result"])
+                            .desc("Which monad to verify laws for"),
+                    ),
+                    (
+                        "value",
+                        Prop::integer().desc("Value to test monad laws with"),
+                    ),
+                    (
+                        "elements",
+                        Prop::int_array().desc("Elements for free-forgetful adjunction"),
+                    ),
+                ],
+                &["operation"],
+            ),
             handler: handlers::category,
         });
 
         self.tools.push(Tool {
             name: "ix_nn_forward",
             description: "Neural network forward pass: dense layer, MSE/BCE loss, attention, positional encodings.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["dense_forward", "mse_loss", "bce_loss", "sinusoidal_encoding", "attention"],
-                        "description": "Neural network operation"
-                    },
-                    "input": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Input matrix (rows=batch, cols=features)"
-                    },
-                    "target": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Target matrix (for loss computation)"
-                    },
-                    "output_size": { "type": "integer", "description": "Output size for dense layer" },
-                    "max_len": { "type": "integer", "description": "Max sequence length for positional encoding" },
-                    "d_model": { "type": "integer", "description": "Model dimension for positional encoding" },
-                    "seed": { "type": "integer", "description": "RNG seed (default 42)" }
-                },
-                "required": ["operation"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&[
+                                "dense_forward",
+                                "mse_loss",
+                                "bce_loss",
+                                "sinusoidal_encoding",
+                                "attention",
+                            ])
+                            .desc("Neural network operation"),
+                    ),
+                    (
+                        "input",
+                        Prop::num_matrix().desc("Input matrix (rows=batch, cols=features)"),
+                    ),
+                    (
+                        "target",
+                        Prop::num_matrix().desc("Target matrix (for loss computation)"),
+                    ),
+                    (
+                        "output_size",
+                        Prop::integer().desc("Output size for dense layer"),
+                    ),
+                    (
+                        "max_len",
+                        Prop::integer().desc("Max sequence length for positional encoding"),
+                    ),
+                    (
+                        "d_model",
+                        Prop::integer().desc("Model dimension for positional encoding"),
+                    ),
+                    ("seed", Prop::integer().desc("RNG seed (default 42)")),
+                ],
+                &["operation"],
+            ),
             handler: handlers::nn_forward,
         });
 
         self.tools.push(Tool {
             name: "ix_bandit",
             description: "Multi-armed bandit simulation: run epsilon-greedy, UCB1, or Thompson sampling for N rounds.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "enum": ["epsilon_greedy", "ucb1", "thompson"],
-                        "description": "Bandit algorithm"
-                    },
-                    "n_arms": { "type": "integer", "description": "Number of arms", "minimum": 1 },
-                    "true_means": {
-                        "type": "array",
-                        "items": { "type": "number" },
-                        "description": "True mean rewards for each arm (for simulation)"
-                    },
-                    "rounds": { "type": "integer", "description": "Number of rounds to simulate", "minimum": 1 },
-                    "epsilon": { "type": "number", "description": "Epsilon for epsilon-greedy (default 0.1)" }
-                },
-                "required": ["algorithm", "true_means", "rounds"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "algorithm",
+                        Prop::string()
+                            .enum_of(&["epsilon_greedy", "ucb1", "thompson"])
+                            .desc("Bandit algorithm"),
+                    ),
+                    (
+                        "n_arms",
+                        Prop::integer().desc("Number of arms").minimum(1),
+                    ),
+                    (
+                        "true_means",
+                        Prop::num_array().desc("True mean rewards for each arm (for simulation)"),
+                    ),
+                    (
+                        "rounds",
+                        Prop::integer().desc("Number of rounds to simulate").minimum(1),
+                    ),
+                    (
+                        "epsilon",
+                        Prop::number().desc("Epsilon for epsilon-greedy (default 0.1)"),
+                    ),
+                ],
+                &["algorithm", "true_means", "rounds"],
+            ),
             handler: handlers::bandit,
         });
 
         self.tools.push(Tool {
             name: "ix_evolution",
             description: "Evolutionary optimization: genetic algorithm or differential evolution on benchmark functions.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "enum": ["genetic", "differential"],
-                        "description": "Evolution algorithm"
-                    },
-                    "function": {
-                        "type": "string",
-                        "enum": ["sphere", "rosenbrock", "rastrigin"],
-                        "description": "Benchmark function to minimize"
-                    },
-                    "dimensions": { "type": "integer", "description": "Number of dimensions", "minimum": 1 },
-                    "generations": { "type": "integer", "description": "Number of generations", "minimum": 1 },
-                    "population_size": { "type": "integer", "description": "Population size (default 50)" },
-                    "mutation_rate": { "type": "number", "description": "Mutation rate for GA (default 0.1)" }
-                },
-                "required": ["algorithm", "function", "dimensions", "generations"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "algorithm",
+                        Prop::string()
+                            .enum_of(&["genetic", "differential"])
+                            .desc("Evolution algorithm"),
+                    ),
+                    (
+                        "function",
+                        Prop::string()
+                            .enum_of(&["sphere", "rosenbrock", "rastrigin"])
+                            .desc("Benchmark function to minimize"),
+                    ),
+                    (
+                        "dimensions",
+                        Prop::integer().desc("Number of dimensions").minimum(1),
+                    ),
+                    (
+                        "generations",
+                        Prop::integer().desc("Number of generations").minimum(1),
+                    ),
+                    (
+                        "population_size",
+                        Prop::integer().desc("Population size (default 50)"),
+                    ),
+                    (
+                        "mutation_rate",
+                        Prop::number().desc("Mutation rate for GA (default 0.1)"),
+                    ),
+                ],
+                &["algorithm", "function", "dimensions", "generations"],
+            ),
             handler: handlers::evolution,
         });
 
         self.tools.push(Tool {
             name: "ix_random_forest",
             description: "Random forest classifier: train on data and predict class labels with probability estimates.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "x_train": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Training feature matrix"
-                    },
-                    "y_train": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Training labels (class indices)"
-                    },
-                    "x_test": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Test feature matrix to predict"
-                    },
-                    "n_trees": { "type": "integer", "description": "Number of trees (default 10)", "minimum": 1 },
-                    "max_depth": { "type": "integer", "description": "Max tree depth (default 5)", "minimum": 1 }
-                },
-                "required": ["x_train", "y_train", "x_test"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "x_train",
+                        Prop::num_matrix().desc("Training feature matrix"),
+                    ),
+                    (
+                        "y_train",
+                        Prop::int_array().desc("Training labels (class indices)"),
+                    ),
+                    (
+                        "x_test",
+                        Prop::num_matrix().desc("Test feature matrix to predict"),
+                    ),
+                    (
+                        "n_trees",
+                        Prop::integer().desc("Number of trees (default 10)").minimum(1),
+                    ),
+                    (
+                        "max_depth",
+                        Prop::integer().desc("Max tree depth (default 5)").minimum(1),
+                    ),
+                ],
+                &["x_train", "y_train", "x_test"],
+            ),
             handler: handlers::random_forest,
         });
 
         self.tools.push(Tool {
             name: "ix_gradient_boosting",
             description: "Gradient boosted trees classifier: train on data and predict class labels with probability estimates. Supports binary and multiclass classification.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "x_train": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Training feature matrix"
-                    },
-                    "y_train": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Training labels (class indices)"
-                    },
-                    "x_test": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Test feature matrix to predict"
-                    },
-                    "n_estimators": { "type": "integer", "description": "Number of boosting rounds (default 50)", "minimum": 1 },
-                    "learning_rate": { "type": "number", "description": "Step size shrinkage (default 0.1)", "minimum": 0.001 },
-                    "max_depth": { "type": "integer", "description": "Max weak learner depth (default 3)", "minimum": 1 }
-                },
-                "required": ["x_train", "y_train", "x_test"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "x_train",
+                        Prop::num_matrix().desc("Training feature matrix"),
+                    ),
+                    (
+                        "y_train",
+                        Prop::int_array().desc("Training labels (class indices)"),
+                    ),
+                    (
+                        "x_test",
+                        Prop::num_matrix().desc("Test feature matrix to predict"),
+                    ),
+                    (
+                        "n_estimators",
+                        Prop::integer()
+                            .desc("Number of boosting rounds (default 50)")
+                            .minimum(1),
+                    ),
+                    (
+                        "learning_rate",
+                        Prop::number()
+                            .desc("Step size shrinkage (default 0.1)")
+                            .minimum(0.001),
+                    ),
+                    (
+                        "max_depth",
+                        Prop::integer()
+                            .desc("Max weak learner depth (default 3)")
+                            .minimum(1),
+                    ),
+                ],
+                &["x_train", "y_train", "x_test"],
+            ),
             handler: handlers::gradient_boosting,
         });
     }
@@ -1552,55 +1647,86 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_graph",
             description: "Graph algorithms: Dijkstra shortest path, BFS, DFS, PageRank, topological sort on weighted directed/undirected graphs.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["dijkstra", "shortest_path", "pagerank", "bfs", "dfs", "topological_sort"],
-                        "description": "Graph algorithm"
-                    },
-                    "n_nodes": { "type": "integer", "description": "Number of nodes in the graph" },
-                    "edges": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "Edges as [from, to, weight] triples"
-                    },
-                    "directed": { "type": "boolean", "description": "Whether graph is directed (default true)" },
-                    "source": { "type": "integer", "description": "Source node for path/traversal algorithms" },
-                    "target": { "type": "integer", "description": "Target node for shortest_path" },
-                    "damping": { "type": "number", "description": "Damping factor for PageRank (default 0.85)" },
-                    "iterations": { "type": "integer", "description": "Iterations for PageRank (default 100)" }
-                },
-                "required": ["operation", "n_nodes", "edges"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&[
+                                "dijkstra",
+                                "shortest_path",
+                                "pagerank",
+                                "bfs",
+                                "dfs",
+                                "topological_sort",
+                            ])
+                            .desc("Graph algorithm"),
+                    ),
+                    (
+                        "n_nodes",
+                        Prop::integer().desc("Number of nodes in the graph"),
+                    ),
+                    (
+                        "edges",
+                        Prop::num_matrix().desc("Edges as [from, to, weight] triples"),
+                    ),
+                    (
+                        "directed",
+                        Prop::boolean().desc("Whether graph is directed (default true)"),
+                    ),
+                    (
+                        "source",
+                        Prop::integer().desc("Source node for path/traversal algorithms"),
+                    ),
+                    (
+                        "target",
+                        Prop::integer().desc("Target node for shortest_path"),
+                    ),
+                    (
+                        "damping",
+                        Prop::number().desc("Damping factor for PageRank (default 0.85)"),
+                    ),
+                    (
+                        "iterations",
+                        Prop::integer().desc("Iterations for PageRank (default 100)"),
+                    ),
+                ],
+                &["operation", "n_nodes", "edges"],
+            ),
             handler: handlers::graph_ops,
         });
 
         self.tools.push(Tool {
             name: "ix_hyperloglog",
             description: "HyperLogLog cardinality estimation: estimate unique item count with configurable precision, or merge multiple sketches.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["estimate", "merge"],
-                        "description": "'estimate' for single set, 'merge' for union of multiple sets"
-                    },
-                    "items": {
-                        "type": "array",
-                        "description": "Items to count (strings or numbers) — for 'estimate'"
-                    },
-                    "sets": {
-                        "type": "array",
-                        "items": { "type": "array" },
-                        "description": "Array of item arrays — for 'merge'"
-                    },
-                    "precision": { "type": "integer", "description": "HLL precision 4-18 (default 14, ~0.81% error)", "minimum": 4, "maximum": 18 }
-                },
-                "required": ["operation"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&["estimate", "merge"])
+                            .desc("'estimate' for single set, 'merge' for union of multiple sets"),
+                    ),
+                    (
+                        "items",
+                        Prop::array_any()
+                            .desc("Items to count (strings or numbers) — for 'estimate'"),
+                    ),
+                    (
+                        "sets",
+                        Prop::array_of(Prop::array_any())
+                            .desc("Array of item arrays — for 'merge'"),
+                    ),
+                    (
+                        "precision",
+                        Prop::integer()
+                            .desc("HLL precision 4-18 (default 14, ~0.81% error)")
+                            .minimum(4)
+                            .maximum(18),
+                    ),
+                ],
+                &["operation"],
+            ),
             handler: handlers::hyperloglog,
         });
     }
@@ -1611,109 +1737,130 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_autograd_run",
             description: "R7 Week 2: run a differentiable tool (LinearRegressionTool, StatsVarianceTool) end-to-end, returning forward outputs AND per-input gradients in a single MCP call. Inputs are nested f64 arrays; shape is inferred from nesting depth. Used for pipeline-level gradient descent where the caller maintains an Adam/SGD loop outside the MCP boundary.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "tool": {
-                        "type": "string",
-                        "enum": ["linear_regression", "stats_variance"],
-                        "description": "Name of the differentiable tool to run"
-                    },
-                    "inputs": {
-                        "type": "object",
-                        "description": "Map of input name → nested f64 array (1-D, 2-D, or scalar). For linear_regression: x, w, b, y. For stats_variance: x.",
-                        "additionalProperties": true
-                    }
-                },
-                "required": ["tool", "inputs"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "tool",
+                        Prop::string()
+                            .enum_of(&["linear_regression", "stats_variance"])
+                            .desc("Name of the differentiable tool to run"),
+                    ),
+                    (
+                        "inputs",
+                        Prop::object_any()
+                            .desc("Map of input name → nested f64 array (1-D, 2-D, or scalar). For linear_regression: x, w, b, y. For stats_variance: x.")
+                            .additional_properties(true),
+                    ),
+                ],
+                &["tool", "inputs"],
+            ),
             handler: handlers::autograd_run,
         });
 
         self.tools.push(Tool {
             name: "ix_pipeline_run",
             description: "Execute a DAG pipeline end-to-end: topologically sorts steps, dispatches each step's tool with substituted upstream references, and returns per-step results + durations. Replaces hand-chaining of MCP calls. Reference upstream outputs in step arguments via the string `\"$step_id.field\"`. Handled by ToolRegistry::call_with_ctx; this entry exists only for tools/list discovery.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": { "type": "string", "description": "Step identifier, used for cross-step references" },
-                                "tool": { "type": "string", "description": "Name of the MCP tool to invoke, e.g. 'ix_stats'" },
-                                "arguments": { "type": "object", "description": "Arguments to pass to the tool; may contain $step_id.field references" },
-                                "depends_on": { "type": "array", "items": { "type": "string" }, "description": "IDs of prerequisite steps that must complete before this one" }
-                            },
-                            "required": ["id", "tool"]
-                        },
-                        "description": "Ordered or unordered set of pipeline steps; execution order is derived from depends_on"
-                    }
-                },
-                "required": ["steps"]
-            }),
+            input_schema: object(
+                vec![(
+                    "steps",
+                    Prop::array_of(Prop::object(
+                        vec![
+                            (
+                                "id",
+                                Prop::string()
+                                    .desc("Step identifier, used for cross-step references"),
+                            ),
+                            (
+                                "tool",
+                                Prop::string()
+                                    .desc("Name of the MCP tool to invoke, e.g. 'ix_stats'"),
+                            ),
+                            (
+                                "arguments",
+                                Prop::object_any().desc(
+                                    "Arguments to pass to the tool; may contain $step_id.field references",
+                                ),
+                            ),
+                            (
+                                "depends_on",
+                                Prop::str_array().desc(
+                                    "IDs of prerequisite steps that must complete before this one",
+                                ),
+                            ),
+                        ],
+                        &["id", "tool"],
+                    ))
+                    .desc(
+                        "Ordered or unordered set of pipeline steps; execution order is derived from depends_on",
+                    ),
+                )],
+                &["steps"],
+            ),
             handler: handlers::pipeline_run_placeholder,
         });
 
         self.tools.push(Tool {
             name: "ix_pipeline_compile",
             description: "Compile a natural-language sentence into a pipeline.json DAG via MCP sampling. The handler asks the client's LLM to emit a JSON {steps: [...]} spec using only registered ix tools, then validates the result against the registry (unknown tools, duplicate ids, unresolved depends_on, cycles). Returns status 'ok' when the spec is safe to pass directly to ix_pipeline_run. Handled by ToolRegistry::call_with_ctx; this entry exists only for tools/list discovery.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "sentence": {
-                        "type": "string",
-                        "description": "Natural-language description of the analysis you want to run"
-                    },
-                    "max_steps": {
-                        "type": "integer",
-                        "description": "Upper bound on the number of steps the compiler is allowed to emit. Default 12."
-                    },
-                    "context": {
-                        "type": "object",
-                        "description": "Optional free-form context hints (data bindings, preferred tools, etc.) forwarded to the LLM prompt",
-                        "additionalProperties": true
-                    }
-                },
-                "required": ["sentence"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "sentence",
+                        Prop::string()
+                            .desc("Natural-language description of the analysis you want to run"),
+                    ),
+                    (
+                        "max_steps",
+                        Prop::integer().desc(
+                            "Upper bound on the number of steps the compiler is allowed to emit. Default 12.",
+                        ),
+                    ),
+                    (
+                        "context",
+                        Prop::object_any()
+                            .desc("Optional free-form context hints (data bindings, preferred tools, etc.) forwarded to the LLM prompt")
+                            .additional_properties(true),
+                    ),
+                ],
+                &["sentence"],
+            ),
             handler: handlers::pipeline_compile_placeholder,
         });
 
         self.tools.push(Tool {
             name: "ix_nl_to_pipeline",
             description: "The IX \"thinking machine\": translate a natural-language request into a canonical PipelineSpec (ix.yaml), validate it with lower(), gate it through the Demerzel constitution (fail-closed), optionally execute it, and narrate the result back. Direct LLM-provider proposer with bounded self-repair and a two-tier coverage gate (refuses out-of-domain requests instead of confabulating). Prefer this over ix_pipeline_compile (which targets the legacy {steps:[…]} format via deprecated MCP sampling). Returns status one of: ok | compiled | out_of_domain | governance_rejected | translate_failed.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "sentence": {
-                        "type": "string",
-                        "description": "Natural-language description of the analysis/pipeline you want"
-                    },
-                    "run": {
-                        "type": "boolean",
-                        "description": "Execute the compiled pipeline and narrate results (default false: compile + governance-gate only)"
-                    },
-                    "max_rounds": {
-                        "type": "integer",
-                        "description": "Max self-repair rounds when the generated spec fails validation (default 3)",
-                        "minimum": 0
-                    }
-                },
-                "required": ["sentence"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "sentence",
+                        Prop::string()
+                            .desc("Natural-language description of the analysis/pipeline you want"),
+                    ),
+                    (
+                        "run",
+                        Prop::boolean().desc(
+                            "Execute the compiled pipeline and narrate results (default false: compile + governance-gate only)",
+                        ),
+                    ),
+                    (
+                        "max_rounds",
+                        Prop::integer()
+                            .desc(
+                                "Max self-repair rounds when the generated spec fails validation (default 3)",
+                            )
+                            .minimum(0),
+                    ),
+                ],
+                &["sentence"],
+            ),
             handler: handlers::nl_to_pipeline,
         });
 
         self.tools.push(Tool {
             name: "ix_thinker_hits",
             description: "Aggregate the IX thinking-machine's translation ledger (state/thinking-machine/hits.jsonl) into a yield metric paired with its refusal guardrails. `yield_rate` is the metric (fraction of requests that produced a runnable spec); `coverage_refusal_rate` / `governance_refusal_rate` / `translate_fail_rate` are guardrails. A rising yield with a FALLING coverage-refusal rate is the signature of the gate being loosened or the proposer confabulating out-of-domain specs — the pair makes Goodhart-style gaming visible (instrumenting a bare success rate would hide it). Read-only; rates are over unlabeled production outcomes.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-            }),
+            input_schema: object_with_additional(vec![], &[], false),
             handler: handlers::thinker_hits,
         });
     }
@@ -1724,174 +1871,172 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_catalog_list",
             description: "Meta-tool: list every registered ix catalog (code_analysis, grammar, rfc, ...) with its name, scope, and entry count. Use this to discover what catalogs ix exposes before issuing a specific ix_*_catalog query.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
+            input_schema: object(vec![], &[]),
             handler: handlers::catalog_list,
         });
 
         self.tools.push(Tool {
             name: "ix_grammar_catalog",
             description: "Query a curated catalog of ~30 real-world grammar sources across EBNF, ABNF, PEG, ANTLR G4, W3C EBNF, and BNF notations. Covers programming languages (Python, Go, ECMAScript, Rust, C11, ...), data formats (JSON, TOML, YAML, SQL-2016, GraphQL), IETF protocols (HTTP, TLS, DNS, SMTP, IMAP, OAuth, WebSockets), and meta-grammars (ABNF, ISO 14977 EBNF). Filter by language, format, or topic.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "language": {
-                        "type": "string",
-                        "description": "Case-insensitive language filter (e.g. 'python', 'http'). Meta-entries with language='many' always pass."
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["ebnf", "w3c_ebnf", "abnf", "peg", "antlr_g4", "bnf"],
-                        "description": "Filter by grammar notation format."
-                    },
-                    "topic": {
-                        "type": "string",
-                        "description": "Case-insensitive substring match against topic tags (e.g. 'web', 'protocol', 'meta')."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "language",
+                        Prop::string().desc("Case-insensitive language filter (e.g. 'python', 'http'). Meta-entries with language='many' always pass."),
+                    ),
+                    (
+                        "format",
+                        Prop::string()
+                            .enum_of(&["ebnf", "w3c_ebnf", "abnf", "peg", "antlr_g4", "bnf"])
+                            .desc("Filter by grammar notation format."),
+                    ),
+                    (
+                        "topic",
+                        Prop::string().desc("Case-insensitive substring match against topic tags (e.g. 'web', 'protocol', 'meta')."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::grammar_catalog,
         });
 
         self.tools.push(Tool {
             name: "ix_rfc_catalog",
             description: "Query a curated catalog of ~70 IETF RFCs covering the modern internet stack: IP, TCP/QUIC, HTTP/1.1/2/3, TLS 1.3, DNS+DNSSEC, SMTP/IMAP, OAuth/JOSE/JWT, SSH, SIP/RTP, JSON/CBOR/UUID, ABNF, and BCPs. Includes the obsolescence graph — passing current_standard=true filters out obsoleted entries, and obsolescence_chain=N walks both directions from the seed RFC (useful for 'what replaced RFC 2616' questions).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "number": {
-                        "type": "integer",
-                        "description": "Exact RFC number lookup (e.g. 9110)."
-                    },
-                    "topic": {
-                        "type": "string",
-                        "description": "Topic substring (e.g. 'http', 'dns', 'tls', 'auth'). Case-insensitive."
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": [
-                            "internet_standard",
-                            "proposed_standard",
-                            "draft_standard",
-                            "experimental",
-                            "informational",
-                            "obsoleted"
-                        ],
-                        "description": "Filter by publication status."
-                    },
-                    "current_standard": {
-                        "type": "boolean",
-                        "description": "When true, excludes obsoleted entries. Combine with topic to get 'the current spec for X'."
-                    },
-                    "obsolescence_chain": {
-                        "type": "integer",
-                        "description": "Return the complete obsolescence chain (walked in both directions) for this RFC number. Overrides other filters."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "number",
+                        Prop::integer().desc("Exact RFC number lookup (e.g. 9110)."),
+                    ),
+                    (
+                        "topic",
+                        Prop::string().desc("Topic substring (e.g. 'http', 'dns', 'tls', 'auth'). Case-insensitive."),
+                    ),
+                    (
+                        "status",
+                        Prop::string()
+                            .enum_of(&[
+                                "internet_standard",
+                                "proposed_standard",
+                                "draft_standard",
+                                "experimental",
+                                "informational",
+                                "obsoleted",
+                            ])
+                            .desc("Filter by publication status."),
+                    ),
+                    (
+                        "current_standard",
+                        Prop::boolean().desc("When true, excludes obsoleted entries. Combine with topic to get 'the current spec for X'."),
+                    ),
+                    (
+                        "obsolescence_chain",
+                        Prop::integer().desc("Return the complete obsolescence chain (walked in both directions) for this RFC number. Overrides other filters."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::rfc_catalog,
         });
 
         self.tools.push(Tool {
             name: "ix_code_catalog",
             description: "Query a curated catalog of external mathematical tools for analysing programming-language repositories (static analysers, formal verifiers, safety / memory checkers, statistical + behavioural analysis tools, documentation generators, and numeric libraries). Filter by language, category, or technique substring. Use this to route users to the right specialist rather than over-stretching ix_code_analyze.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "language": {
-                        "type": "string",
-                        "description": "Case-insensitive language filter (e.g. 'rust', 'python'). Language-agnostic tools are always included."
-                    },
-                    "category": {
-                        "type": "string",
-                        "enum": [
-                            "static_analysis",
-                            "formal_verification",
-                            "safety_memory",
-                            "statistical_analysis",
-                            "documentation",
-                            "numeric_library",
-                            "ml_framework",
-                            "fuzzing",
-                            "supply_chain"
-                        ],
-                        "description": "One of nine categories; omit to include all."
-                    },
-                    "technique": {
-                        "type": "string",
-                        "description": "Substring match against the 'technique' field (e.g. 'cyclomatic', 'abstract interpretation', 'model checking')."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "language",
+                        Prop::string().desc("Case-insensitive language filter (e.g. 'rust', 'python'). Language-agnostic tools are always included."),
+                    ),
+                    (
+                        "category",
+                        Prop::string()
+                            .enum_of(&[
+                                "static_analysis",
+                                "formal_verification",
+                                "safety_memory",
+                                "statistical_analysis",
+                                "documentation",
+                                "numeric_library",
+                                "ml_framework",
+                                "fuzzing",
+                                "supply_chain",
+                            ])
+                            .desc("One of nine categories; omit to include all."),
+                    ),
+                    (
+                        "technique",
+                        Prop::string().desc("Substring match against the 'technique' field (e.g. 'cyclomatic', 'abstract interpretation', 'model checking')."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::code_catalog,
         });
 
         self.tools.push(Tool {
             name: "ix_cargo_deps",
             description: "P1.2 — walk a Rust workspace, parse every crates/<name>/Cargo.toml for intra-workspace ix-* dependencies, and emit a {nodes, edges, n_nodes} structure that ix_graph can consume directly. Each node records {id, name, sloc, file_count, dep_count}. Edges are [from_id, to_id, 1.0] triples. Default workspace_root is the process CWD.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "workspace_root": {
-                        "type": "string",
-                        "description": "Absolute or relative path to the workspace root (the directory containing 'crates/'). Defaults to the process CWD."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![(
+                    "workspace_root",
+                    Prop::string().desc("Absolute or relative path to the workspace root (the directory containing 'crates/'). Defaults to the process CWD."),
+                )],
+                &[],
+            ),
             handler: handlers::cargo_deps,
         });
 
         self.tools.push(Tool {
             name: "ix_git_log",
             description: "P1.1 — shell out to `git log` on a repo-internal path and return a normalized commit cadence time series. Buckets commits into per-day or per-week dense arrays so downstream tools (ix_fft, ix_stats, ix_chaos_lyapunov) can consume the output directly. Every argument is passed through Command::arg(), not shell concatenation, and 'path' is whitelist-validated to reject '..', absolute prefixes, and shell metacharacters.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Relative repo-internal path to scope the git log to (e.g. 'crates/ix-agent'). Must not contain '..', absolute prefixes, or shell metacharacters."
-                    },
-                    "since_days": {
-                        "type": "integer",
-                        "description": "Window size in days ending today. Default 90. Must be in 1..=3650."
-                    },
-                    "bucket": {
-                        "type": "string",
-                        "enum": ["day", "week"],
-                        "description": "Bucket size for the output time series. Default 'day'."
-                    },
-                    "repo_root": {
-                        "type": "string",
-                        "description": "Optional absolute path to a git repository root. When provided, git runs as if invoked from that directory via `git -C <root>`. Use this when the MCP server's CWD is not the repo root."
-                    }
-                },
-                "required": ["path"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "path",
+                        Prop::string().desc("Relative repo-internal path to scope the git log to (e.g. 'crates/ix-agent'). Must not contain '..', absolute prefixes, or shell metacharacters."),
+                    ),
+                    (
+                        "since_days",
+                        Prop::integer().desc("Window size in days ending today. Default 90. Must be in 1..=3650."),
+                    ),
+                    (
+                        "bucket",
+                        Prop::string()
+                            .enum_of(&["day", "week"])
+                            .desc("Bucket size for the output time series. Default 'day'."),
+                    ),
+                    (
+                        "repo_root",
+                        Prop::string().desc("Optional absolute path to a git repository root. When provided, git runs as if invoked from that directory via `git -C <root>`. Use this when the MCP server's CWD is not the repo root."),
+                    ),
+                ],
+                &["path"],
+            ),
             handler: handlers::git_log,
         });
 
         self.tools.push(Tool {
             name: "ix_git_churn",
             description: "P1.3 — per-file change frequency over a window. Runs `git log --numstat` once and aggregates churn_count + lines_added + lines_deleted + last_changed per file, sorted by churn descending and truncated to `limit`. Pair with ix_git_log: log is 'how often does the repo change' (time series); churn is 'which files drive that change' (per-file ranking). Same hardening as ix_git_log (no shell concatenation, repo_root via `git -C`). Flat projections (paths/churn_counts/lines_added/lines_deleted) let pipeline $step.field substitution feed downstream stats/fft/kmeans tools directly.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "since_days": {
-                        "type": "integer",
-                        "description": "Window size in days ending today. Default 30. Must be in 1..=3650."
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of files in the ranked output. Default 50. Must be in 1..=10000. 'total_files' always reports the un-truncated count."
-                    },
-                    "repo_root": {
-                        "type": "string",
-                        "description": "Optional absolute path to a git repository root. Same semantics as ix_git_log."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "since_days",
+                        Prop::integer().desc("Window size in days ending today. Default 30. Must be in 1..=3650."),
+                    ),
+                    (
+                        "limit",
+                        Prop::integer().desc("Maximum number of files in the ranked output. Default 50. Must be in 1..=10000. 'total_files' always reports the un-truncated count."),
+                    ),
+                    (
+                        "repo_root",
+                        Prop::string().desc("Optional absolute path to a git repository root. Same semantics as ix_git_log."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::git_churn,
         });
     }
@@ -1902,69 +2047,71 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_pipeline_list",
             description: "Discover canonical-showcase pipeline.json specs under a directory (default 'examples/canonical-showcase'). Returns metadata for each spec — name, description, step count, and the list of tools it uses. Companion to ix_pipeline_run for pipeline browsing.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "root": {
-                        "type": "string",
-                        "description": "Directory to scan for '<subdir>/pipeline.json' specs. Relative paths resolve against CWD. Default: 'examples/canonical-showcase'."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![(
+                    "root",
+                    Prop::string().desc("Directory to scan for '<subdir>/pipeline.json' specs. Relative paths resolve against CWD. Default: 'examples/canonical-showcase'."),
+                )],
+                &[],
+            ),
             handler: handlers::pipeline_list,
         });
 
         self.tools.push(Tool {
             name: "ix_pipeline",
             description: "DAG pipeline analysis: define steps with dependencies, get topological order, parallel execution levels, and critical path info.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["info"],
-                        "description": "Pipeline operation"
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": { "type": "string", "description": "Step identifier" },
-                                "description": { "type": "string", "description": "Step description" },
-                                "depends_on": { "type": "array", "items": { "type": "string" }, "description": "IDs of prerequisite steps" }
-                            },
-                            "required": ["id"]
-                        },
-                        "description": "Pipeline step definitions"
-                    }
-                },
-                "required": ["operation", "steps"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string().enum_of(&["info"]).desc("Pipeline operation"),
+                    ),
+                    (
+                        "steps",
+                        Prop::array_of(Prop::object(
+                            vec![
+                                ("id", Prop::string().desc("Step identifier")),
+                                (
+                                    "description",
+                                    Prop::string().desc("Step description"),
+                                ),
+                                (
+                                    "depends_on",
+                                    Prop::str_array().desc("IDs of prerequisite steps"),
+                                ),
+                            ],
+                            &["id"],
+                        ))
+                        .desc("Pipeline step definitions"),
+                    ),
+                ],
+                &["operation", "steps"],
+            ),
             handler: handlers::pipeline_exec,
         });
 
         self.tools.push(Tool {
             name: "ix_cache",
             description: "In-memory cache operations: set, get, delete, or list keys.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["set", "get", "delete", "keys"],
-                        "description": "Cache operation to perform"
-                    },
-                    "key": {
-                        "type": "string",
-                        "description": "Cache key (required for set/get/delete)"
-                    },
-                    "value": {
-                        "description": "Value to store (required for set, any JSON value)"
-                    }
-                },
-                "required": ["operation"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&["set", "get", "delete", "keys"])
+                            .desc("Cache operation to perform"),
+                    ),
+                    (
+                        "key",
+                        Prop::string().desc("Cache key (required for set/get/delete)"),
+                    ),
+                    (
+                        "value",
+                        Prop::any().desc("Value to store (required for set, any JSON value)"),
+                    ),
+                ],
+                &["operation"],
+            ),
             handler: handlers::cache_op,
         });
     }
@@ -1986,104 +2133,108 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_governance_check",
             description: "Check a proposed action against the Demerzel constitution for compliance. Optionally accepts a 'lineage' object emitted by ix_pipeline_run to record upstream provenance alongside the verdict (R2 Phase 2 audit trail).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "The proposed action to check for compliance"
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": "Optional context for the action"
-                    },
-                    "lineage": {
-                        "type": "object",
-                        "description": "Optional lineage map emitted by ix_pipeline_run. When provided, the response includes a 'lineage_audit' summary with step-by-step provenance (tool, asset_name, cache_key, upstream_cache_keys) so auditors can trace which assets fed into the decision.",
-                        "additionalProperties": true
-                    }
-                },
-                "required": ["action"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "action",
+                        Prop::string().desc("The proposed action to check for compliance"),
+                    ),
+                    (
+                        "context",
+                        Prop::string().desc("Optional context for the action"),
+                    ),
+                    (
+                        "lineage",
+                        Prop::object_any()
+                            .desc("Optional lineage map emitted by ix_pipeline_run. When provided, the response includes a 'lineage_audit' summary with step-by-step provenance (tool, asset_name, cache_key, upstream_cache_keys) so auditors can trace which assets fed into the decision.")
+                            .additional_properties(true),
+                    ),
+                ],
+                &["action"],
+            ),
             handler: handlers::governance_check,
         });
 
         self.tools.push(Tool {
             name: "ix_governance_persona",
             description: "Load a Demerzel persona by name — returns capabilities, constraints, voice, interaction patterns",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "persona": {
-                        "type": "string",
-                        "enum": ["default", "kaizen-optimizer", "reflective-architect", "skeptical-auditor", "system-integrator"],
-                        "description": "Persona name to load"
-                    }
-                },
-                "required": ["persona"]
-            }),
+            input_schema: object(
+                vec![(
+                    "persona",
+                    Prop::string()
+                        .enum_of(&[
+                            "default",
+                            "kaizen-optimizer",
+                            "reflective-architect",
+                            "skeptical-auditor",
+                            "system-integrator",
+                        ])
+                        .desc("Persona name to load"),
+                )],
+                &["persona"],
+            ),
             handler: handlers::governance_persona,
         });
 
         self.tools.push(Tool {
             name: "ix_governance_belief",
             description: "Manage beliefs with tetravalent logic (True/False/Unknown/Contradictory)",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["create", "update", "resolve"],
-                        "description": "Belief operation"
-                    },
-                    "proposition": {
-                        "type": "string",
-                        "description": "The proposition to evaluate"
-                    },
-                    "truth_value": {
-                        "type": "string",
-                        "enum": ["T", "F", "U", "C"],
-                        "description": "Initial truth value (True/False/Unknown/Contradictory)"
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "description": "Confidence level 0.0–1.0"
-                    },
-                    "supporting": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Supporting evidence claims"
-                    },
-                    "contradicting": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Contradicting evidence claims"
-                    }
-                },
-                "required": ["operation", "proposition"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "operation",
+                        Prop::string()
+                            .enum_of(&["create", "update", "resolve"])
+                            .desc("Belief operation"),
+                    ),
+                    (
+                        "proposition",
+                        Prop::string().desc("The proposition to evaluate"),
+                    ),
+                    (
+                        "truth_value",
+                        Prop::string()
+                            .enum_of(&["T", "F", "U", "C"])
+                            .desc("Initial truth value (True/False/Unknown/Contradictory)"),
+                    ),
+                    (
+                        "confidence",
+                        Prop::number().desc("Confidence level 0.0–1.0"),
+                    ),
+                    (
+                        "supporting",
+                        Prop::str_array().desc("Supporting evidence claims"),
+                    ),
+                    (
+                        "contradicting",
+                        Prop::str_array().desc("Contradicting evidence claims"),
+                    ),
+                ],
+                &["operation", "proposition"],
+            ),
             handler: handlers::governance_belief,
         });
 
         self.tools.push(Tool {
             name: "ix_governance_policy",
             description: "Query Demerzel governance policies — alignment thresholds, rollback triggers, self-modification rules",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "policy": {
-                        "type": "string",
-                        "enum": ["alignment", "rollback", "self-modification"],
-                        "description": "Policy to query"
-                    },
-                    "query": {
-                        "type": "string",
-                        "enum": ["thresholds", "triggers", "allowed"],
-                        "description": "What aspect of the policy to query"
-                    }
-                },
-                "required": ["policy"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "policy",
+                        Prop::string()
+                            .enum_of(&["alignment", "rollback", "self-modification"])
+                            .desc("Policy to query"),
+                    ),
+                    (
+                        "query",
+                        Prop::string()
+                            .enum_of(&["thresholds", "triggers", "allowed"])
+                            .desc("What aspect of the policy to query"),
+                    ),
+                ],
+                &["policy"],
+            ),
             handler: handlers::governance_policy,
         });
 
@@ -2095,36 +2246,37 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_quality_gate_history",
             description: "Query the unified quality-gate ledger (state/quality/gate-ledger.jsonl). Returns v1 entries filtered by source, domain, decision, and/or since-timestamp, sorted newest-first. Legacy v0 PR-shaped rows are excluded.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "string",
-                        "description": "Producer id (e.g. 'ix-quality-trend', 'sentrux', 'chatbot-qa'). Omit for all."
-                    },
-                    "domain": {
-                        "type": "string",
-                        "description": "Domain measured (e.g. 'structural', 'chatbot', 'tests'). Omit for all."
-                    },
-                    "decision": {
-                        "type": "string",
-                        "enum": ["pass", "fail", "warn", "skip"],
-                        "description": "Filter by decision."
-                    },
-                    "since": {
-                        "type": "string",
-                        "description": "RFC3339 timestamp lower bound (inclusive). E.g. '2026-05-20T00:00:00Z'."
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max rows to return (default 50)."
-                    },
-                    "ledger_path": {
-                        "type": "string",
-                        "description": "Override ledger path. Default: state/quality/gate-ledger.jsonl (repo-relative)."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "source",
+                        Prop::string().desc("Producer id (e.g. 'ix-quality-trend', 'sentrux', 'chatbot-qa'). Omit for all."),
+                    ),
+                    (
+                        "domain",
+                        Prop::string().desc("Domain measured (e.g. 'structural', 'chatbot', 'tests'). Omit for all."),
+                    ),
+                    (
+                        "decision",
+                        Prop::string()
+                            .enum_of(&["pass", "fail", "warn", "skip"])
+                            .desc("Filter by decision."),
+                    ),
+                    (
+                        "since",
+                        Prop::string().desc("RFC3339 timestamp lower bound (inclusive). E.g. '2026-05-20T00:00:00Z'."),
+                    ),
+                    (
+                        "limit",
+                        Prop::integer().desc("Max rows to return (default 50)."),
+                    ),
+                    (
+                        "ledger_path",
+                        Prop::string().desc("Override ledger path. Default: state/quality/gate-ledger.jsonl (repo-relative)."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::quality_gate_history,
         });
     }
@@ -2135,34 +2287,32 @@ Example 2 — "cluster crates by complexity then classify":
             name: "ix_federation_discover",
             description:
                 "Discover capabilities across the GuitarAlchemist ecosystem (ix, tars, ga)",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "domain": {
-                        "type": "string",
-                        "description": "Filter by domain (e.g. 'math', 'grammar', 'music-theory')"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Free-text search across tool names and descriptions"
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "domain",
+                        Prop::string().desc("Filter by domain (e.g. 'math', 'grammar', 'music-theory')"),
+                    ),
+                    (
+                        "query",
+                        Prop::string().desc("Free-text search across tool names and descriptions"),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::federation_discover,
         });
 
         self.tools.push(Tool {
             name: "ix_trace_ingest",
             description: "Ingest GA trace files from a directory and compute statistics (counts, durations, percentiles, event breakdowns)",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "dir": {
-                        "type": "string",
-                        "description": "Path to trace directory (default: ~/.ga/traces/)"
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![(
+                    "dir",
+                    Prop::string().desc("Path to trace directory (default: ~/.ga/traces/)"),
+                )],
+                &[],
+            ),
             handler: handlers::trace_ingest,
         });
     }
@@ -2173,94 +2323,128 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_ml_pipeline",
             description: "End-to-end ML pipeline: load data, preprocess, train a model, evaluate metrics, and optionally persist. Supports classification (KNN, decision tree, random forest), regression (linear), and clustering (K-Means). Set task/model to 'auto' for automatic selection.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "object",
-                        "description": "Data source configuration",
-                        "properties": {
-                            "type": {
-                                "type": "string",
-                                "enum": ["csv", "json", "inline"],
-                                "description": "Source type"
-                            },
-                            "path": {
-                                "type": "string",
-                                "description": "File path (for csv/json)"
-                            },
-                            "data": {
-                                "type": "array",
-                                "items": { "type": "array", "items": { "type": "number" } },
-                                "description": "Inline data as array of rows (for type=inline)"
-                            },
-                            "has_header": {
-                                "type": "boolean",
-                                "description": "Whether CSV has a header row (default: true)"
-                            },
-                            "target_column": {
-                                "description": "Target column: integer index or string name. Omit for unsupervised tasks."
-                            }
-                        },
-                        "required": ["type"]
-                    },
-                    "task": {
-                        "type": "string",
-                        "enum": ["classify", "regress", "cluster", "auto"],
-                        "description": "ML task (default: auto)"
-                    },
-                    "model": {
-                        "type": "string",
-                        "description": "Model name: knn, decision_tree, random_forest, linear_regression, kmeans, or 'auto'"
-                    },
-                    "model_params": {
-                        "type": "object",
-                        "description": "Model hyperparameters (e.g. {\"k\": 5} for KNN, {\"max_depth\": 10} for decision tree)"
-                    },
-                    "preprocess": {
-                        "type": "object",
-                        "properties": {
-                            "normalize": { "type": "boolean", "description": "Z-score normalize features (default: false)" },
-                            "drop_nan": { "type": "boolean", "description": "Drop rows with NaN (default: true)" },
-                            "pca_components": { "type": "integer", "description": "Reduce to N principal components" }
-                        }
-                    },
-                    "split": {
-                        "type": "object",
-                        "properties": {
-                            "test_ratio": { "type": "number", "description": "Fraction for test set (default: 0.2)" },
-                            "seed": { "type": "integer", "description": "Random seed (default: 42)" }
-                        }
-                    },
-                    "persist": { "type": "boolean", "description": "Save trained model to cache (default: false)" },
-                    "persist_key": { "type": "string", "description": "Cache key for persisted model" },
-                    "return_predictions": { "type": "boolean", "description": "Include predictions in response (default: false)" },
-                    "max_rows": { "type": "integer", "description": "Max rows allowed (default: 50000)" },
-                    "max_features": { "type": "integer", "description": "Max feature columns allowed (default: 500)" }
-                },
-                "required": ["source"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "source",
+                        Prop::object(
+                            vec![
+                                (
+                                    "type",
+                                    Prop::string()
+                                        .enum_of(&["csv", "json", "inline"])
+                                        .desc("Source type"),
+                                ),
+                                ("path", Prop::string().desc("File path (for csv/json)")),
+                                (
+                                    "data",
+                                    Prop::num_matrix()
+                                        .desc("Inline data as array of rows (for type=inline)"),
+                                ),
+                                (
+                                    "has_header",
+                                    Prop::boolean()
+                                        .desc("Whether CSV has a header row (default: true)"),
+                                ),
+                                (
+                                    "target_column",
+                                    Prop::any().desc("Target column: integer index or string name. Omit for unsupervised tasks."),
+                                ),
+                            ],
+                            &["type"],
+                        )
+                        .desc("Data source configuration"),
+                    ),
+                    (
+                        "task",
+                        Prop::string()
+                            .enum_of(&["classify", "regress", "cluster", "auto"])
+                            .desc("ML task (default: auto)"),
+                    ),
+                    (
+                        "model",
+                        Prop::string().desc("Model name: knn, decision_tree, random_forest, linear_regression, kmeans, or 'auto'"),
+                    ),
+                    (
+                        "model_params",
+                        Prop::object_any().desc("Model hyperparameters (e.g. {\"k\": 5} for KNN, {\"max_depth\": 10} for decision tree)"),
+                    ),
+                    (
+                        "preprocess",
+                        Prop::object(
+                            vec![
+                                (
+                                    "normalize",
+                                    Prop::boolean()
+                                        .desc("Z-score normalize features (default: false)"),
+                                ),
+                                (
+                                    "drop_nan",
+                                    Prop::boolean().desc("Drop rows with NaN (default: true)"),
+                                ),
+                                (
+                                    "pca_components",
+                                    Prop::integer().desc("Reduce to N principal components"),
+                                ),
+                            ],
+                            &[],
+                        ),
+                    ),
+                    (
+                        "split",
+                        Prop::object(
+                            vec![
+                                (
+                                    "test_ratio",
+                                    Prop::number().desc("Fraction for test set (default: 0.2)"),
+                                ),
+                                ("seed", Prop::integer().desc("Random seed (default: 42)")),
+                            ],
+                            &[],
+                        ),
+                    ),
+                    (
+                        "persist",
+                        Prop::boolean().desc("Save trained model to cache (default: false)"),
+                    ),
+                    (
+                        "persist_key",
+                        Prop::string().desc("Cache key for persisted model"),
+                    ),
+                    (
+                        "return_predictions",
+                        Prop::boolean().desc("Include predictions in response (default: false)"),
+                    ),
+                    (
+                        "max_rows",
+                        Prop::integer().desc("Max rows allowed (default: 50000)"),
+                    ),
+                    (
+                        "max_features",
+                        Prop::integer().desc("Max feature columns allowed (default: 500)"),
+                    ),
+                ],
+                &["source"],
+            ),
             handler: handlers::ml_pipeline,
         });
 
         self.tools.push(Tool {
             name: "ix_ml_predict",
             description: "Run predictions using a previously persisted ML model. Provide the persist_key from a prior ix_ml_pipeline call and new data rows.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "persist_key": {
-                        "type": "string",
-                        "description": "The persist_key used when the model was saved"
-                    },
-                    "data": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "number" } },
-                        "description": "New data rows (each row is a feature vector)"
-                    }
-                },
-                "required": ["persist_key", "data"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "persist_key",
+                        Prop::string().desc("The persist_key used when the model was saved"),
+                    ),
+                    (
+                        "data",
+                        Prop::num_matrix().desc("New data rows (each row is a feature vector)"),
+                    ),
+                ],
+                &["persist_key", "data"],
+            ),
             handler: handlers::ml_predict,
         });
 
@@ -2269,24 +2453,35 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_code_analyze",
             description: "Analyze source code for complexity metrics (cyclomatic, cognitive, Halstead, SLOC, maintainability index). Supports Rust, Python, JS, TS, C/C++, Java, Go, C#, F#. Returns file-level and per-function metrics with ML-ready feature vectors.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "string",
-                        "description": "Source code string to analyze"
-                    },
-                    "language": {
-                        "type": "string",
-                        "enum": ["rust", "python", "javascript", "typescript", "cpp", "java", "go", "csharp", "fsharp"],
-                        "description": "Programming language"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "File path to analyze (alternative to source+language). Language auto-detected from extension."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "source",
+                        Prop::string().desc("Source code string to analyze"),
+                    ),
+                    (
+                        "language",
+                        Prop::string()
+                            .enum_of(&[
+                                "rust",
+                                "python",
+                                "javascript",
+                                "typescript",
+                                "cpp",
+                                "java",
+                                "go",
+                                "csharp",
+                                "fsharp",
+                            ])
+                            .desc("Programming language"),
+                    ),
+                    (
+                        "path",
+                        Prop::string().desc("File path to analyze (alternative to source+language). Language auto-detected from extension."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::code_analyze,
         });
 
@@ -2295,24 +2490,23 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_annotations_scan",
             description: "Scan a workspace for in-source @ai: annotations (invariant, assumption, hypothesis, contract, smell, decision, hint) with hexavalent truth values (T/P/U/D/F/C) and certainty markers. Runs the extractor + reconciler: matches annotations against test files, promotes contradictory same-line claims to C, flags stale ones, and emits weighted multi-source aggregates. See docs/contracts/2026-05-24-ai-annotation.contract.md.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "workspace": {
-                        "type": "string",
-                        "description": "Workspace root to scan. Default: current directory."
-                    },
-                    "stale_days": {
-                        "type": "integer",
-                        "description": "Days after annotation update_at before file mtime flips the stale bit. Default: 7."
-                    },
-                    "test_files": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Optional explicit list of test files (workspace-relative). If omitted, auto-discovered."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "workspace",
+                        Prop::string().desc("Workspace root to scan. Default: current directory."),
+                    ),
+                    (
+                        "stale_days",
+                        Prop::integer().desc("Days after annotation update_at before file mtime flips the stale bit. Default: 7."),
+                    ),
+                    (
+                        "test_files",
+                        Prop::str_array().desc("Optional explicit list of test files (workspace-relative). If omitted, auto-discovered."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::annotations_scan,
         });
     }
@@ -2323,30 +2517,29 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_optick_search",
             description: "Search the OPTIC-K voicing index by embedding similarity. Memory-mapped brute-force cosine search over 228-dim musical embeddings. Returns top-k most similar voicings with diagrams and metadata.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "array",
-                        "items": {"type": "number"},
-                        "description": "228-dim query embedding vector (will be L2-normalized internally)"
-                    },
-                    "instrument": {
-                        "type": "string",
-                        "enum": ["guitar", "bass", "ukulele"],
-                        "description": "Optional instrument filter"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of results to return (default: 10)"
-                    },
-                    "index_path": {
-                        "type": "string",
-                        "description": "Path to optick.index file (default: state/voicings/optick.index)"
-                    }
-                },
-                "required": ["query"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "query",
+                        Prop::num_array().desc("228-dim query embedding vector (will be L2-normalized internally)"),
+                    ),
+                    (
+                        "instrument",
+                        Prop::string()
+                            .enum_of(&["guitar", "bass", "ukulele"])
+                            .desc("Optional instrument filter"),
+                    ),
+                    (
+                        "top_k",
+                        Prop::integer().desc("Number of results to return (default: 10)"),
+                    ),
+                    (
+                        "index_path",
+                        Prop::string().desc("Path to optick.index file (default: state/voicings/optick.index)"),
+                    ),
+                ],
+                &["query"],
+            ),
             handler: handlers::optick_search,
         });
 
@@ -2383,25 +2576,25 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_tars_bridge",
             description: "Cross-repo bridge to TARS. Prepares ix analysis results (trace stats, pattern data, grammar weights) in the format TARS expects for ingestion. Returns structured payload ready for TARS tools (ingest_ga_traces, run_promotion_pipeline).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["prepare_traces", "prepare_patterns", "export_grammar"],
-                        "description": "Bridge action: prepare_traces (format trace stats for TARS), prepare_patterns (format discovered patterns for promotion), export_grammar (export current grammar weights)"
-                    },
-                    "trace_dir": {
-                        "type": "string",
-                        "description": "Trace directory (default: ~/.ga/traces/)"
-                    },
-                    "min_frequency": {
-                        "type": "integer",
-                        "description": "Minimum pattern frequency for promotion (default: 3)"
-                    }
-                },
-                "required": ["action"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "action",
+                        Prop::string()
+                            .enum_of(&["prepare_traces", "prepare_patterns", "export_grammar"])
+                            .desc("Bridge action: prepare_traces (format trace stats for TARS), prepare_patterns (format discovered patterns for promotion), export_grammar (export current grammar weights)"),
+                    ),
+                    (
+                        "trace_dir",
+                        Prop::string().desc("Trace directory (default: ~/.ga/traces/)"),
+                    ),
+                    (
+                        "min_frequency",
+                        Prop::integer().desc("Minimum pattern frequency for promotion (default: 3)"),
+                    ),
+                ],
+                &["action"],
+            ),
             handler: handlers::tars_bridge,
         });
 
@@ -2410,26 +2603,30 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_ga_bridge",
             description: "Cross-repo bridge to GA. Converts GA music theory data into ML-ready feature matrices for ix pipelines. Provides data format specifications and example workflows for GA→ix analysis chains.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["chord_features", "progression_features", "scale_features", "workflow_guide"],
-                        "description": "Bridge action: chord_features (chord→interval vector), progression_features (progression→feature matrix), scale_features (scale→binary pitch class set), workflow_guide (show GA→ix workflow examples)"
-                    },
-                    "chords": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Chord symbols to convert (e.g. ['Cmaj7', 'Am7', 'Dm7', 'G7'])"
-                    },
-                    "progression": {
-                        "type": "string",
-                        "description": "Chord progression string (e.g. 'C Am F G')"
-                    }
-                },
-                "required": ["action"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "action",
+                        Prop::string()
+                            .enum_of(&[
+                                "chord_features",
+                                "progression_features",
+                                "scale_features",
+                                "workflow_guide",
+                            ])
+                            .desc("Bridge action: chord_features (chord→interval vector), progression_features (progression→feature matrix), scale_features (scale→binary pitch class set), workflow_guide (show GA→ix workflow examples)"),
+                    ),
+                    (
+                        "chords",
+                        Prop::str_array().desc("Chord symbols to convert (e.g. ['Cmaj7', 'Am7', 'Dm7', 'G7'])"),
+                    ),
+                    (
+                        "progression",
+                        Prop::string().desc("Chord progression string (e.g. 'C Am F G')"),
+                    ),
+                ],
+                &["action"],
+            ),
             handler: handlers::ga_bridge,
         });
 
@@ -2476,20 +2673,43 @@ Example 2 — "cluster crates by complexity then classify":
                           into one verdict. Returns the MaintainVerdict JSON (status, decision, \
                           signals, evidence, reason). Read-only — does not append to the ledger. \
                           Advisory until Phase-3b ledger write-isolation.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "hits_path": { "type": "string", "description": "Externally-derived hits.jsonl (the yield metric source)." },
-                    "corpus_dir": { "type": "string", "description": "Chatbot guardrail baseline dir (chatbot-qa)." },
-                    "loops_dir": { "type": "string", "description": "Optional loop-iteration ledger dir (convergence lens)." },
-                    "query_embeddings_dir": { "type": "string", "description": "Optional query-embeddings dir (drift lens)." },
-                    "loop_id": { "type": "string", "description": "Optional iteration scope: loop id (needs commit_sha + repo_dir)." },
-                    "commit_sha": { "type": "string", "description": "Optional iteration scope: commit to verify against git." },
-                    "repo_dir": { "type": "string", "description": "Optional iteration scope: repo to verify commit_sha in." },
-                    "run_at": { "type": "string", "description": "Optional RFC3339 timestamp; defaults to now." }
-                },
-                "required": ["hits_path", "corpus_dir"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "hits_path",
+                        Prop::string().desc("Externally-derived hits.jsonl (the yield metric source)."),
+                    ),
+                    (
+                        "corpus_dir",
+                        Prop::string().desc("Chatbot guardrail baseline dir (chatbot-qa)."),
+                    ),
+                    (
+                        "loops_dir",
+                        Prop::string().desc("Optional loop-iteration ledger dir (convergence lens)."),
+                    ),
+                    (
+                        "query_embeddings_dir",
+                        Prop::string().desc("Optional query-embeddings dir (drift lens)."),
+                    ),
+                    (
+                        "loop_id",
+                        Prop::string().desc("Optional iteration scope: loop id (needs commit_sha + repo_dir)."),
+                    ),
+                    (
+                        "commit_sha",
+                        Prop::string().desc("Optional iteration scope: commit to verify against git."),
+                    ),
+                    (
+                        "repo_dir",
+                        Prop::string().desc("Optional iteration scope: repo to verify commit_sha in."),
+                    ),
+                    (
+                        "run_at",
+                        Prop::string().desc("Optional RFC3339 timestamp; defaults to now."),
+                    ),
+                ],
+                &["hits_path", "corpus_dir"],
+            ),
             handler: crate::maintain_gate::ix_maintain_gate,
         });
 
@@ -2502,16 +2722,13 @@ Example 2 — "cluster crates by complexity then classify":
                           for now this returns a curated static algorithm catalog the \
                           calling LLM can pick from. Contract is stable — the sampling \
                           upgrade will be a drop-in swap.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "problem": {
-                        "type": "string",
-                        "description": "Natural-language description of the problem, data shape, scale, and constraints (e.g. '10,000 noisy 2D points, find clusters, unknown k')."
-                    }
-                },
-                "required": ["problem"]
-            }),
+            input_schema: object(
+                vec![(
+                    "problem",
+                    Prop::string().desc("Natural-language description of the problem, data shape, scale, and constraints (e.g. '10,000 noisy 2D points, find clusters, unknown k')."),
+                )],
+                &["problem"],
+            ),
             handler: handlers::explain_algorithm,
         });
 
@@ -2527,27 +2744,29 @@ Example 2 — "cluster crates by complexity then classify":
                           self-improvement statistics. Requires an installed SessionLog \
                           (set IX_SESSION_LOG env var or call install_session_log). \
                           Exercises all 7 harness primitives in one call.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "focus": {
-                        "type": "string",
-                        "description": "Optional free-text hint describing what the triage should focus on (e.g. 'unblock the stats investigation')"
-                    },
-                    "max_actions": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 8,
-                        "default": 3,
-                        "description": "Maximum number of actions the LLM may propose in the plan"
-                    },
-                    "learn": {
-                        "type": "boolean",
-                        "default": true,
-                        "description": "If true, export the session log via the flywheel and invoke ix_trace_ingest on the result after dispatch"
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "focus",
+                        Prop::string().desc("Optional free-text hint describing what the triage should focus on (e.g. 'unblock the stats investigation')"),
+                    ),
+                    (
+                        "max_actions",
+                        Prop::integer()
+                            .minimum(1)
+                            .maximum(8)
+                            .default(3)
+                            .desc("Maximum number of actions the LLM may propose in the plan"),
+                    ),
+                    (
+                        "learn",
+                        Prop::boolean()
+                            .default(true)
+                            .desc("If true, export the session log via the flywheel and invoke ix_trace_ingest on the result after dispatch"),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::triage_session,
         });
 
@@ -2560,30 +2779,32 @@ Example 2 — "cluster crates by complexity then classify":
                           method declarations, detect patterns, or extract any syntactic construct \
                           by writing a tree-sitter query (e.g. \"(function_item name: (identifier) \
                           @fn.name)\").",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Tree-sitter S-expression query string, e.g. \
-                                       \"(function_item name: (identifier) @fn.name)\""
-                    },
-                    "source": {
-                        "type": "string",
-                        "description": "Source code to query (alternative to 'path')"
-                    },
-                    "language": {
-                        "type": "string",
-                        "enum": ["rust", "csharp", "typescript", "javascript", "fsharp"],
-                        "description": "Language (required when using 'source')"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "File path to query; language auto-detected from extension"
-                    }
-                },
-                "required": ["query"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "query",
+                        Prop::string().desc(
+                            "Tree-sitter S-expression query string, e.g. \
+                             \"(function_item name: (identifier) @fn.name)\"",
+                        ),
+                    ),
+                    (
+                        "source",
+                        Prop::string().desc("Source code to query (alternative to 'path')"),
+                    ),
+                    (
+                        "language",
+                        Prop::string()
+                            .enum_of(&["rust", "csharp", "typescript", "javascript", "fsharp"])
+                            .desc("Language (required when using 'source')"),
+                    ),
+                    (
+                        "path",
+                        Prop::string().desc("File path to query; language auto-detected from extension"),
+                    ),
+                ],
+                &["query"],
+            ),
             handler: handlers::ast_query,
         });
 
@@ -2595,175 +2816,182 @@ Example 2 — "cluster crates by complexity then classify":
                           long lines, language-specific patterns) with AST-based checks (deep \
                           nesting, excessive unsafe/any usage). Supports Rust, C#, TypeScript, \
                           JavaScript, F#, and 6 more languages for lexical checks.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "string",
-                        "description": "Inline source code to analyse"
-                    },
-                    "language": {
-                        "type": "string",
-                        "enum": ["rust", "python", "javascript", "typescript", "cpp", "java",
-                                 "go", "csharp", "fsharp", "php", "ruby"],
-                        "description": "Language (required with 'source')"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Path to a single source file"
-                    },
-                    "dir": {
-                        "type": "string",
-                        "description": "Path to a directory; scans all recognised source files recursively"
-                    },
-                    "max_file_kb": {
-                        "type": "integer",
-                        "default": 256,
-                        "description": "Skip files larger than this many kilobytes (dir mode only)"
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "source",
+                        Prop::string().desc("Inline source code to analyse"),
+                    ),
+                    (
+                        "language",
+                        Prop::string()
+                            .enum_of(&[
+                                "rust", "python", "javascript", "typescript", "cpp", "java", "go",
+                                "csharp", "fsharp", "php", "ruby",
+                            ])
+                            .desc("Language (required with 'source')"),
+                    ),
+                    (
+                        "path",
+                        Prop::string().desc("Path to a single source file"),
+                    ),
+                    (
+                        "dir",
+                        Prop::string().desc("Path to a directory; scans all recognised source files recursively"),
+                    ),
+                    (
+                        "max_file_kb",
+                        Prop::integer()
+                            .default(256)
+                            .desc("Skip files larger than this many kilobytes (dir mode only)"),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::code_smells,
         });
 
         self.tools.push(Tool {
             name: "ix_grothendieck_delta",
             description: "Compute the signed Grothendieck ICV delta between two pitch-class sets (target − source in ℤ⁶). Returns the 6-component delta, L1/L2 norms, and both source/target ICVs. PC-sets are arrays of pitch classes 0..11 (values reduced mod 12).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Source PC-set as an array of pitch classes (0..11)"
-                    },
-                    "target": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Target PC-set as an array of pitch classes (0..11)"
-                    }
-                },
-                "required": ["source", "target"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "source",
+                        Prop::int_array().desc("Source PC-set as an array of pitch classes (0..11)"),
+                    ),
+                    (
+                        "target",
+                        Prop::int_array().desc("Target PC-set as an array of pitch classes (0..11)"),
+                    ),
+                ],
+                &["source", "target"],
+            ),
             handler: handlers::grothendieck_delta,
         });
 
         self.tools.push(Tool {
             name: "ix_grothendieck_nearby",
             description: "Find pitch-class sets within an L1 Grothendieck-distance budget of the source ICV. Orbit-aware — uses the 224 D₁₂ prime-form representatives for ~18× fewer ICV computations than a brute-force 4096-set scan. Results are sorted by ascending cost.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Source PC-set as an array of pitch classes (0..11)"
-                    },
-                    "max_l1": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "description": "Maximum L1 norm of the ICV delta (0 returns the source orbit only)"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Optional cap on the number of returned (set, delta, cost) triples after sorting by cost"
-                    }
-                },
-                "required": ["source", "max_l1"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "source",
+                        Prop::int_array().desc("Source PC-set as an array of pitch classes (0..11)"),
+                    ),
+                    (
+                        "max_l1",
+                        Prop::integer()
+                            .minimum(0)
+                            .desc("Maximum L1 norm of the ICV delta (0 returns the source orbit only)"),
+                    ),
+                    (
+                        "limit",
+                        Prop::integer()
+                            .minimum(1)
+                            .desc("Optional cap on the number of returned (set, delta, cost) triples after sorting by cost"),
+                    ),
+                ],
+                &["source", "max_l1"],
+            ),
             handler: handlers::grothendieck_nearby,
         });
 
         self.tools.push(Tool {
             name: "ix_grothendieck_path",
             description: "Find the shortest harmonic path between two PC-sets of equal cardinality using A* (admissible heuristic L1(δ)/2). Drop-in replacement for GA's BFS FindShortestPath: same path output, fewer nodes expanded. Returns an empty path when no route exists within max_steps.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Source PC-set as an array of pitch classes (0..11)"
-                    },
-                    "target": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "Target PC-set as an array of pitch classes (0..11). Must have the same cardinality as source."
-                    },
-                    "max_steps": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "default": 5,
-                        "description": "Maximum number of edges in the path (matches GA's path.Count >= maxSteps + 1 cutoff)"
-                    }
-                },
-                "required": ["source", "target"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "source",
+                        Prop::int_array().desc("Source PC-set as an array of pitch classes (0..11)"),
+                    ),
+                    (
+                        "target",
+                        Prop::int_array().desc("Target PC-set as an array of pitch classes (0..11). Must have the same cardinality as source."),
+                    ),
+                    (
+                        "max_steps",
+                        Prop::integer()
+                            .minimum(0)
+                            .default(5)
+                            .desc("Maximum number of edges in the path (matches GA's path.Count >= maxSteps + 1 cutoff)"),
+                    ),
+                ],
+                &["source", "target"],
+            ),
             handler: handlers::grothendieck_path,
         });
 
         self.tools.push(Tool {
             name: "ix_autoresearch_run",
             description: "Run a Karpathy-style edit-eval-iterate loop against an IX subsystem. v1 ships only the 'grammar' target (smoke test). Iterations are capped at 10000 over MCP; use the CLI binary `ix-autoresearch run` for larger runs. Returns the run id, best reward, log path, and a cost ledger.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "enum": ["grammar"],
-                        "default": "grammar",
-                        "description": "Adapter to invoke. Only 'grammar' in v1; Phase 4/5 add 'chatbot' and 'optick'."
-                    },
-                    "iterations": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 10000,
-                        "description": "Number of perturb→eval→decide cycles (MCP cap is 10000)."
-                    },
-                    "strategy": {
-                        "type": "string",
-                        "enum": ["greedy", "sa", "random"],
-                        "default": "greedy",
-                        "description": "Acceptance strategy. 'sa' = simulated annealing; pair with 'initial_temperature' + 'cooling_rate'."
-                    },
-                    "initial_temperature": {
-                        "type": "number",
-                        "exclusiveMinimum": 0,
-                        "description": "SA initial temperature; omit to trigger Ben-Ameur 2004 calibration on first 10 random samples."
-                    },
-                    "cooling_rate": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "default": 0.95,
-                        "description": "SA geometric cooling rate (T_{n+1} = cooling_rate · T_n)."
-                    },
-                    "soft_seconds": {
-                        "type": "number",
-                        "exclusiveMinimum": 0,
-                        "default": 300,
-                        "description": "Per-iteration soft deadline (eval honors as a hint)."
-                    },
-                    "hard_seconds": {
-                        "type": "number",
-                        "exclusiveMinimum": 0,
-                        "description": "Optional per-iteration hard timeout (kernel watchdog kills the worker)."
-                    },
-                    "seed": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "default": 42,
-                        "description": "Deterministic RNG seed."
-                    },
-                    "state_dir": {
-                        "type": "string",
-                        "default": "state/autoresearch",
-                        "description": "Root for runs/ and milestones/ subdirs."
-                    }
-                },
-                "required": ["iterations"]
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "target",
+                        Prop::string()
+                            .enum_of(&["grammar"])
+                            .default("grammar")
+                            .desc("Adapter to invoke. Only 'grammar' in v1; Phase 4/5 add 'chatbot' and 'optick'."),
+                    ),
+                    (
+                        "iterations",
+                        Prop::integer()
+                            .minimum(1)
+                            .maximum(10000)
+                            .desc("Number of perturb→eval→decide cycles (MCP cap is 10000)."),
+                    ),
+                    (
+                        "strategy",
+                        Prop::string()
+                            .enum_of(&["greedy", "sa", "random"])
+                            .default("greedy")
+                            .desc("Acceptance strategy. 'sa' = simulated annealing; pair with 'initial_temperature' + 'cooling_rate'."),
+                    ),
+                    (
+                        "initial_temperature",
+                        Prop::number()
+                            .exclusive_min(0)
+                            .desc("SA initial temperature; omit to trigger Ben-Ameur 2004 calibration on first 10 random samples."),
+                    ),
+                    (
+                        "cooling_rate",
+                        Prop::number()
+                            .minimum(0.0)
+                            .maximum(1.0)
+                            .default(0.95)
+                            .desc("SA geometric cooling rate (T_{n+1} = cooling_rate · T_n)."),
+                    ),
+                    (
+                        "soft_seconds",
+                        Prop::number()
+                            .exclusive_min(0)
+                            .default(300)
+                            .desc("Per-iteration soft deadline (eval honors as a hint)."),
+                    ),
+                    (
+                        "hard_seconds",
+                        Prop::number()
+                            .exclusive_min(0)
+                            .desc("Optional per-iteration hard timeout (kernel watchdog kills the worker)."),
+                    ),
+                    (
+                        "seed",
+                        Prop::integer()
+                            .minimum(0)
+                            .default(42)
+                            .desc("Deterministic RNG seed."),
+                    ),
+                    (
+                        "state_dir",
+                        Prop::string()
+                            .default("state/autoresearch")
+                            .desc("Root for runs/ and milestones/ subdirs."),
+                    ),
+                ],
+                &["iterations"],
+            ),
             handler: handlers::autoresearch_run,
         });
 
@@ -2782,50 +3010,54 @@ Example 2 — "cluster crates by complexity then classify":
         self.tools.push(Tool {
             name: "ix_sentrux_annotate",
             description: "Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments. Set `emit_untested=true` to additionally call sentrux `test_gaps` and emit one untested-smell annotation per file in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "workspace": {
-                        "type": "string",
-                        "description": "Repo root passed to sentrux's `scan` tool (default `.`)."
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["sidecar", "inline", "dry-run"],
-                        "default": "dry-run",
-                        "description": "Emit mode. `sidecar` writes JSONL, `inline` patches sources, `dry-run` counts without writing."
-                    },
-                    "out": {
-                        "type": "string",
-                        "description": "Override sidecar output path (default `<workspace>/state/quality/ai-annotations-sentrux.jsonl`)."
-                    },
-                    "sentrux_exe": {
-                        "type": "string",
-                        "description": "Override sentrux binary path (default C:/Users/spare/bin/sentrux.exe)."
-                    },
-                    "timeout_secs": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 60,
-                        "description": "Timeout for the JSON-RPC handshake."
-                    },
-                    "emit_untested": {
-                        "type": "boolean",
-                        "default": false,
-                        "description": "Additionally call sentrux `test_gaps` and emit `@ai:smell` annotations for files in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations). Off by default."
-                    },
-                    "untested_limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 100,
-                        "description": "Top-N untested-file cap passed through to sentrux `test_gaps.limit`. Only meaningful when emit_untested=true."
-                    },
-                    "untested_out": {
-                        "type": "string",
-                        "description": "Override sidecar path for the untested-smell JSONL stream (default `<workspace>/state/quality/ai-annotations-sentrux-untested.jsonl`). Only meaningful when emit_untested=true."
-                    }
-                }
-            }),
+            input_schema: object(
+                vec![
+                    (
+                        "workspace",
+                        Prop::string().desc("Repo root passed to sentrux's `scan` tool (default `.`)."),
+                    ),
+                    (
+                        "mode",
+                        Prop::string()
+                            .enum_of(&["sidecar", "inline", "dry-run"])
+                            .default("dry-run")
+                            .desc("Emit mode. `sidecar` writes JSONL, `inline` patches sources, `dry-run` counts without writing."),
+                    ),
+                    (
+                        "out",
+                        Prop::string().desc("Override sidecar output path (default `<workspace>/state/quality/ai-annotations-sentrux.jsonl`)."),
+                    ),
+                    (
+                        "sentrux_exe",
+                        Prop::string().desc("Override sentrux binary path (default C:/Users/spare/bin/sentrux.exe)."),
+                    ),
+                    (
+                        "timeout_secs",
+                        Prop::integer()
+                            .minimum(1)
+                            .default(60)
+                            .desc("Timeout for the JSON-RPC handshake."),
+                    ),
+                    (
+                        "emit_untested",
+                        Prop::boolean()
+                            .default(false)
+                            .desc("Additionally call sentrux `test_gaps` and emit `@ai:smell` annotations for files in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations). Off by default."),
+                    ),
+                    (
+                        "untested_limit",
+                        Prop::integer()
+                            .minimum(1)
+                            .default(100)
+                            .desc("Top-N untested-file cap passed through to sentrux `test_gaps.limit`. Only meaningful when emit_untested=true."),
+                    ),
+                    (
+                        "untested_out",
+                        Prop::string().desc("Override sidecar path for the untested-smell JSONL stream (default `<workspace>/state/quality/ai-annotations-sentrux-untested.jsonl`). Only meaningful when emit_untested=true."),
+                    ),
+                ],
+                &[],
+            ),
             handler: handlers::sentrux_annotate,
         });
     }

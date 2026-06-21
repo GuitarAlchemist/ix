@@ -147,6 +147,14 @@ impl Prop {
         );
         self
     }
+    /// Set `additionalProperties` on an object schema. Pass `false` to forbid
+    /// extra keys, `true` to allow free-form extras, or a sub-schema `Value` to
+    /// constrain them. Takes `impl Into<Value>` so `true`/`false` emit a JSON
+    /// bool, matching the hand-written `"additionalProperties": true` literals.
+    pub(crate) fn additional_properties(mut self, v: impl Into<Value>) -> Self {
+        self.0.insert("additionalProperties".into(), v.into());
+        self
+    }
     /// Set a `minimum` on the array's `items` (e.g. integer labels `>= 0`).
     pub(crate) fn item_minimum(mut self, v: impl Into<Value>) -> Self {
         if let Some(Value::Object(items)) = self.0.get_mut("items") {
@@ -184,6 +192,23 @@ pub(crate) fn object(props: Vec<(&str, Prop)>, required: &[&str]) -> Value {
 /// An object schema with no `required` block — used for output schemas.
 pub(crate) fn output(props: Vec<(&str, Prop)>) -> Value {
     build_object(props)
+}
+
+/// A top-level object schema carrying an explicit `additionalProperties` flag
+/// (and, like [`object`], a `required` block when non-empty). The one
+/// hand-written tool that forbids extra keys (`{"properties":{},
+/// "additionalProperties":false}`) needs this at the schema root, where the
+/// per-`Prop` `.additional_properties` setter can't reach.
+pub(crate) fn object_with_additional(
+    props: Vec<(&str, Prop)>,
+    required: &[&str],
+    additional: impl Into<Value>,
+) -> Value {
+    let mut schema = object(props, required);
+    if let Value::Object(m) = &mut schema {
+        m.insert("additionalProperties".into(), additional.into());
+    }
+    schema
 }
 
 fn build_object(props: Vec<(&str, Prop)>) -> Value {
@@ -297,6 +322,40 @@ mod tests {
         assert_eq!(
             out,
             json!({ "type": "object", "properties": { "n": { "type": "integer", "description": "count" } } })
+        );
+    }
+
+    #[test]
+    fn additional_properties_bool_matches_literal() {
+        // The 4 tools.rs sites: a free-form object with `additionalProperties:true`
+        // (+ description), and an empty-properties object with `:false`.
+        let built = object(
+            vec![(
+                "inputs",
+                Prop::object_any()
+                    .desc("Map of input name to value")
+                    .additional_properties(true),
+            )],
+            &["inputs"],
+        );
+        let literal = json!({
+            "type": "object",
+            "properties": {
+                "inputs": {
+                    "type": "object",
+                    "description": "Map of input name to value",
+                    "additionalProperties": true
+                }
+            },
+            "required": ["inputs"]
+        });
+        assert_eq!(built, literal);
+
+        // Empty-properties top-level object that forbids extra keys.
+        let no_args = object_with_additional(vec![], &[], false);
+        assert_eq!(
+            no_args,
+            json!({ "type": "object", "properties": {}, "additionalProperties": false })
         );
     }
 
