@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use duckdb::Connection;
 use serde::Serialize;
 
+use crate::source::{self, Files};
+
 /// Errors from the flight recorder: corpus I/O (fail-closed) vs DuckDB.
 #[derive(Debug)]
 pub enum ChatbotError {
@@ -46,6 +48,17 @@ impl From<std::io::Error> for ChatbotError {
 impl From<duckdb::Error> for ChatbotError {
     fn from(e: duckdb::Error) -> Self {
         ChatbotError::Duck(e)
+    }
+}
+/// The shared artifact-source error maps onto the lens's own fail-closed taxonomy,
+/// so the public `ChatbotError` surface is unchanged while enumeration goes through
+/// [`source::select_files`].
+impl From<source::SourceError> for ChatbotError {
+    fn from(e: source::SourceError) -> Self {
+        match e {
+            source::SourceError::Io(e) => ChatbotError::Io(e),
+            source::SourceError::Duck(e) => ChatbotError::Duck(e),
+        }
     }
 }
 
@@ -84,6 +97,12 @@ pub struct Regression {
 }
 
 // ---- corpus enumeration ---------------------------------------------------
+//
+// The chatbot corpus is one level deeper than the flat lenses: a
+// `golden-traces/<promptId>/<leaf>` tree, not a single dir of dated files. So the
+// traversal stays here (resolving prompt subdirs), but the per-dir listing,
+// sorting, escaping and SQL-list building all route through `source` — there is no
+// chatbot-private `sql_list` or per-file match loop anymore.
 
 fn golden_traces_dir(corpus_dir: &Path) -> PathBuf {
     corpus_dir.join("golden-traces")
@@ -93,12 +112,16 @@ fn golden_traces_dir(corpus_dir: &Path) -> PathBuf {
 /// `_signature.json`). Explicit enumeration (vs a wildcard handed to DuckDB) makes
 /// the "absent corpus → skip" path real and keeps untrusted input bounded.
 ///
+/// The nested traversal (resolving each prompt subdir) is the chatbot-specific bit;
+/// the per-dir listing + sort + match runs through [`source::select_files`], so the
+/// list-building and escaping live in one place across all lenses.
+///
 /// Fail-closed: an absent `golden-traces` dir (`NotFound`) returns an empty list
 /// (→ skipped), but any *other* I/O error on a present corpus (permissions, broken
 /// mount) is propagated — never silently treated as absent.
 fn collect(
     corpus_dir: &Path,
-    predicate: impl Fn(&str) -> bool,
+    matches: fn(&str) -> bool,
 ) -> Result<Vec<PathBuf>, ChatbotError> {
     let mut out = Vec::new();
     let gt = golden_traces_dir(corpus_dir);
@@ -112,16 +135,10 @@ fn collect(
         if !p.is_dir() {
             continue;
         }
-        for f in std::fs::read_dir(&p)? {
-            let fp = f?.path();
-            if fp
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(&predicate)
-            {
-                out.push(fp);
-            }
-        }
+        // Per-prompt-dir listing goes through the shared selector (filter + per-dir
+        // sort live in `source`); we concatenate and re-sort the union below so the
+        // overall ordering is identical to the old flat `out.sort()`.
+        out.extend(source::select_files(Files { dir: &p, matches })?);
     }
     out.sort();
     Ok(out)
@@ -133,19 +150,6 @@ fn run_files(corpus_dir: &Path) -> Result<Vec<PathBuf>, ChatbotError> {
 
 fn signature_files(corpus_dir: &Path) -> Result<Vec<PathBuf>, ChatbotError> {
     collect(corpus_dir, |n| n == "_signature.json")
-}
-
-/// Render a slice of paths as a DuckDB list literal `['p1', 'p2', …]`, POSIX-slashed
-/// and single-quote-escaped (paths never contain `://`, validated by the caller).
-fn sql_list(paths: &[PathBuf]) -> String {
-    let items: Vec<String> = paths
-        .iter()
-        .map(|p| {
-            let s = p.to_string_lossy().replace('\\', "/").replace('\'', "''");
-            format!("'{s}'")
-        })
-        .collect();
-    format!("[{}]", items.join(", "))
 }
 
 // ---- Slice A: trace warehouse ---------------------------------------------
@@ -164,7 +168,7 @@ pub fn build_traces(conn: &Connection, corpus_dir: &Path) -> Result<usize, Chatb
         )?;
         return Ok(0);
     }
-    let list = sql_list(&files);
+    let list = source::sql_list(&files);
     conn.execute_batch(&format!(
         // Read `response.*` via `json_extract(to_json(response), …)` rather than struct-field
         // access: a subfield absent from EVERY trace file would otherwise be a bind-time
@@ -292,7 +296,7 @@ pub fn build_grounding(conn: &Connection, corpus_dir: &Path) -> Result<usize, Ch
         conn.execute_batch(&format!("CREATE OR REPLACE TABLE chatbot_grounding ({cols});"))?;
         return Ok(0);
     }
-    let list = sql_list(&files);
+    let list = source::sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE chatbot_grounding AS
          WITH g AS (
@@ -475,7 +479,7 @@ fn build_signatures(conn: &Connection, corpus_dir: &Path) -> Result<(), ChatbotE
         )?;
         return Ok(());
     }
-    let list = sql_list(&files);
+    let list = source::sql_list(&files);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE chatbot_signatures AS
          SELECT t.promptId AS prompt_id,

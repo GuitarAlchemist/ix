@@ -17,7 +17,7 @@ use std::path::Path;
 
 use duckdb::Connection;
 
-use crate::source::{self, Col, Files};
+use crate::source::{self, ArtifactLens, Col};
 
 /// Errors from the loop lens — the shared artifact-source error
 /// ([`crate::source::SourceError`]); aliased so the lens's public API keeps its name.
@@ -47,16 +47,19 @@ fn is_iterations_jsonl(name: &str) -> bool {
     name.ends_with(".iterations.jsonl")
 }
 
+/// The loop lens is a flat artifact lens: a dir of `*.iterations.jsonl` → the
+/// `loop_iterations` table via [`LOOP_SPEC`].
+const LENS: ArtifactLens = ArtifactLens {
+    table: "loop_iterations",
+    matches: is_iterations_jsonl,
+    spec: LOOP_SPEC,
+};
+
 /// Build `loop_iterations` (one row per loop × iteration). Returns the row count
 /// (including any seed/test rows); 0 when the directory is absent/empty.
 // @ai:invariant build_loop_iterations creates loop_iterations with one row per JSONL line across every *.iterations.jsonl in loops_dir [T:test conf:0.9 src:ix_duck::loops::tests::rows_one_per_iteration]
 pub fn build_loop_iterations(conn: &Connection, loops_dir: &Path) -> Result<usize, LoopError> {
-    source::materialize(
-        conn,
-        "loop_iterations",
-        Files { dir: loops_dir, matches: is_iterations_jsonl },
-        LOOP_SPEC,
-    )
+    LENS.materialize(conn, loops_dir)
 }
 
 /// Real (non-seed, non-test) rows only — the predicate every analysis shares so a

@@ -42,6 +42,11 @@ const OVERALL_SPEC: &[Col] = &[
 /// per-intent row count; 0 when the directory is absent/empty.
 // @ai:invariant build_routing_evals creates routing_evals with one row per (run, intent) parsed from each routing-eval-*.json perIntent map [T:test conf:0.9 src:ix_duck::routing::tests::evals_row_per_run_intent]
 pub fn build_routing_evals(conn: &Connection, quality_dir: &Path) -> Result<usize, RoutingError> {
+    // Interface stays explicit here (not an `ArtifactLens`) because this lens emits TWO
+    // tables from ONE directory read: the flat `routing_overall` AND the `perIntent`
+    // map-explode share a single `select_files` enumeration. An `ArtifactLens` would
+    // re-read the dir per table; selecting once and feeding both via `materialize_files`
+    // is the correct shape.
     let files = source::select_files(Files { dir: quality_dir, matches: is_routing_eval })?;
     // routing_overall is a flat projection → the deep artifact-source path owns the safe
     // read + empty-fallback (it can't drift back into struct-access / coalesce-0).
