@@ -113,6 +113,12 @@ pub mod ood;
 #[cfg(feature = "duck")]
 pub mod maintain;
 
+/// Pipeline mesh — compose N IX pipelines over many streams and correlate them
+/// (smooth → ix_pearson → ix_connected_components → ix_centrality). The substrate
+/// decided in `docs/adr/0004-duckdb-sql-pipeline-mesh.md`.
+#[cfg(feature = "duck")]
+pub mod mesh;
+
 #[cfg(feature = "duck")]
 pub use duckdb::{Connection, Result};
 

@@ -43,6 +43,13 @@ contracts (see `docs/contracts/`), not runtime coupling.
 - **Lens** — a read-only analyst module on the bench (`ix_duck::{chatbot, routing,
   loops, ood, maintain}`) that turns a GA artifact set into a queryable signal. A lens
   owns *analytics*, not ingest.
+- **Pipeline mesh** (`ix_duck::mesh`) — composing **N IX "pipelines"** (each a named
+  SQL view/macro over a stream, built from IX UDFs) and correlating their outputs N×N
+  to find which streams move together (clusters) and which one leads (centrality). The
+  canonical shape is `condition → ix_pearson → ix_connected_components → ix_centrality`.
+  DuckDB SQL is the composition language, **not** IXQL (which is spec-only and stays
+  complementary — see `docs/adr/0004-duckdb-sql-pipeline-mesh.md` + ADR-0001). Advisory
+  analysis only; betweenness/degree (not eigenvector) is the hub lens on bipartite meshes.
 - **Artifact source** (`ix_duck::source`) — the deep module a **lens** reads through:
   given a file selector + a flat **column spec**, it materializes a GA-emitted JSON
   artifact set into a bench table, owning file selection, the `read_json_auto` flags,
