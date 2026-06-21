@@ -39,7 +39,7 @@ cargo run -p ix-agent
 
 | Crate | Tier | Notes |
 |-------|------|-------|
-| ix-math | Stable | Core linear algebra, statistics, activations — everything depends on this |
+| ix-math | Beta | Core linear algebra, statistics, activations — everything depends on this. Demoted from Stable 2026-06-21 while the new `inference` surface (two-sample tests, divergences, moments) settles |
 | ix-optimize | Stable | SGD, Adam, PSO, simulated annealing |
 | ix-supervised | Stable | Regression, trees, KNN, SVM, metrics |
 | ix-ensemble | Stable | Random forest, gradient boosted trees |
