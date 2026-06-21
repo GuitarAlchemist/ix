@@ -43,6 +43,25 @@ contracts (see `docs/contracts/`), not runtime coupling.
 - **Lens** — a read-only analyst module on the bench (`ix_duck::{chatbot, routing,
   loops, ood, maintain}`) that turns a GA artifact set into a queryable signal. A lens
   owns *analytics*, not ingest.
+- **Topological fingerprint** — the *static* per-instrument Betti numbers (β₀ = connected
+  components, β₁ = loops) of an embedding sample at a fixed filtration radius, computed daily
+  by `ix-embedding-diagnostics` (via `ix_topo::pointcloud::betti_at_radius`) and retained in
+  `state/quality-snapshots/embeddings/*.json`. Answers *"what shape does the embedding space
+  have today?"* — one snapshot, no time axis.
+- **Topological drift** — the *change* in an embedding space's shape between two points in time,
+  measured as the `bottleneck_distance` / `wasserstein_distance` between their persistence
+  diagrams (both in `ix-topo`, neither yet called by the diagnostic). Distinct from a
+  **topological fingerprint** (static) and from **distributional drift** (the OOD lens /
+  `ix_two_sample`, which sees a moment/quantile shift but not a shape change — a hole closing or
+  clusters merging). An unproven signal: whether β₀-drift carries information the existing
+  `leak_detection` metric misses is a measure-first question against the retained β₀ history.
+- **Pipeline mesh** (`ix_duck::mesh`) — composing **N IX "pipelines"** (each a named
+  SQL view/macro over a stream, built from IX UDFs) and correlating their outputs N×N
+  to find which streams move together (clusters) and which one leads (centrality). The
+  canonical shape is `condition → ix_pearson → ix_connected_components → ix_centrality`.
+  DuckDB SQL is the composition language, **not** IXQL (which is spec-only and stays
+  complementary — see `docs/adr/0004-duckdb-sql-pipeline-mesh.md` + ADR-0001). Advisory
+  analysis only; betweenness/degree (not eigenvector) is the hub lens on bipartite meshes.
 - **Artifact source** (`ix_duck::source`) — the deep module a **lens** reads through:
   given a file selector + a flat **column spec**, it materializes a GA-emitted JSON
   artifact set into a bench table, owning file selection, the `read_json_auto` flags,
