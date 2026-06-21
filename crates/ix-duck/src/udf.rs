@@ -6,6 +6,8 @@
 //! reimplementation). `ix_euclidean` is the primitive for the kNN-distance / OOD
 //! SQL recipe (`ORDER BY ix_euclidean(q, r) LIMIT k`); `ix_cosine_distance`
 //! (= 1 − cosine_similarity) is the metric-space companion for the same recipe.
+//! `ix_minkowski(a, b, p)` adds a third scalar exponent (p=1 → manhattan, p=2 →
+//! euclidean) and so has its own invoke path.
 //!
 //! Set-relative operations (`ix_pca_project`, `ix_silhouette`) are table functions
 //! in the sibling `tablefn` module; [`register_all`] registers both surfaces.
@@ -14,7 +16,9 @@ use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vscalar::{ScalarFunctionSignature, VScalar};
 use duckdb::vtab::arrow::WritableVector;
 use duckdb::Connection;
-use ix_math::distance::{chebyshev, cosine_distance, cosine_similarity, euclidean, manhattan};
+use ix_math::distance::{
+    chebyshev, cosine_distance, cosine_similarity, euclidean, manhattan, minkowski,
+};
 use ix_math::error::MathError;
 use ndarray::Array1;
 
@@ -209,6 +213,66 @@ impl VScalar for IxCosineDistance {
     }
 }
 
+/// `ix_minkowski(a DOUBLE[], b DOUBLE[], p DOUBLE) -> DOUBLE` — the Lᵖ family.
+/// `p = 1` reduces to manhattan, `p = 2` to euclidean. Unlike the 2-arg metrics
+/// this reads a third (scalar `DOUBLE`) argument, so it has its own invoke path.
+struct IxMinkowski;
+
+impl VScalar for IxMinkowski {
+    type State = ();
+
+    // @ai:invariant ix_minkowski(a,b,p) returns ix_math minkowski Lᵖ distance; p=1 equals ix_manhattan, p=2 equals ix_euclidean; a NULL list or NULL p yields SQL NULL; dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_minkowski_matches_ix_math]
+    unsafe fn invoke(
+        _: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let n = input.len();
+        let a_null = null_mask(input, 0, n);
+        let b_null = null_mask(input, 1, n);
+        let p_null = null_mask(input, 2, n);
+        let a = read_list_col(input, 0, n);
+        let b = read_list_col(input, 1, n);
+        // The `p` exponent is a flat DOUBLE column (one value per row).
+        let p_vals: Vec<f64> = {
+            let pv = input.flat_vector(2);
+            let s = pv.as_slice_with_len::<f64>(n);
+            s[..n].to_vec()
+        };
+        let mut out = output.flat_vector();
+        {
+            let out_slice = out.as_mut_slice_with_len::<f64>(n);
+            for i in 0..n {
+                if a_null[i] || b_null[i] || p_null[i] {
+                    out_slice[i] = 0.0; // placeholder; row flagged NULL below
+                    continue;
+                }
+                let av = Array1::from_vec(a[i].clone());
+                let bv = Array1::from_vec(b[i].clone());
+                out_slice[i] =
+                    minkowski(&av, &bv, p_vals[i]).map_err(|e| format!("ix_minkowski: {e}"))?;
+            }
+        }
+        for i in 0..n {
+            if a_null[i] || b_null[i] || p_null[i] {
+                out.set_null(i);
+            }
+        }
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![
+                list_double(),
+                list_double(),
+                LogicalTypeHandle::from(LogicalTypeId::Double),
+            ],
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        )]
+    }
+}
+
 /// Register every IX UDF on `conn` — scalar (`ix_cosine`, `ix_euclidean`,
 /// `ix_manhattan`, `ix_chebyshev`, `ix_cosine_distance`) and table
 /// (`ix_pca_project`, `ix_silhouette`) functions.
@@ -218,6 +282,7 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     conn.register_scalar_function::<IxManhattan>("ix_manhattan")?;
     conn.register_scalar_function::<IxChebyshev>("ix_chebyshev")?;
     conn.register_scalar_function::<IxCosineDistance>("ix_cosine_distance")?;
+    conn.register_scalar_function::<IxMinkowski>("ix_minkowski")?;
     crate::tablefn::register(conn)?;
     crate::bracelet::register(conn)?;
     crate::serial::register(conn)?;

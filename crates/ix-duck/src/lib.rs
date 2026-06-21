@@ -294,6 +294,38 @@ mod tests {
     }
 
     #[test]
+    fn ix_minkowski_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        // p=1 → manhattan (|3|+|4| = 7)
+        let m1: f64 = conn
+            .query_row(
+                "SELECT ix_minkowski([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[], 1.0)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((m1 - 7.0).abs() < 1e-12, "p=1 → manhattan 7.0, got {m1}");
+
+        // p=2 → euclidean (3-4-5 → 5)
+        let m2: f64 = conn
+            .query_row(
+                "SELECT ix_minkowski([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[], 2.0)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((m2 - 5.0).abs() < 1e-12, "p=2 → euclidean 5.0, got {m2}");
+
+        // Dimension mismatch surfaces as a SQL error, not a panic.
+        let err = conn.query_row(
+            "SELECT ix_minkowski([1.0,0.0]::DOUBLE[], [1.0]::DOUBLE[], 2.0)",
+            [],
+            |r| r.get::<_, f64>(0),
+        );
+        assert!(err.is_err(), "dimension mismatch should be a SQL error");
+    }
+
+    #[test]
     fn ix_cosine_passes_null_through() {
         let conn = open_bench().unwrap();
         // A NULL list argument yields SQL NULL, not a spurious number.
