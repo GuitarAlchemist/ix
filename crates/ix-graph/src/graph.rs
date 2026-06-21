@@ -215,6 +215,48 @@ impl Graph {
 
         rank
     }
+
+    /// Weakly-connected components: returns each node's component id, indexed by
+    /// node (`result[node]`). Edge direction is ignored, so two nodes share an id
+    /// iff one is reachable from the other along edges in either direction. Ids are
+    /// assigned `0, 1, …` in increasing node order (the smallest node in a component
+    /// fixes its id), so the count of distinct ids is the number of components.
+    pub fn connected_components(&self) -> Vec<usize> {
+        let n = self.node_count;
+        // Undirected adjacency view built from the directed adjacency list.
+        let mut undirected: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (&u, edges) in &self.adjacency {
+            if u >= n {
+                continue;
+            }
+            for &(v, _) in edges {
+                if v >= n {
+                    continue;
+                }
+                undirected[u].push(v);
+                undirected[v].push(u);
+            }
+        }
+        let mut comp = vec![usize::MAX; n];
+        let mut next_id = 0;
+        for start in 0..n {
+            if comp[start] != usize::MAX {
+                continue;
+            }
+            comp[start] = next_id;
+            let mut queue = VecDeque::from([start]);
+            while let Some(node) = queue.pop_front() {
+                for &nb in &undirected[node] {
+                    if comp[nb] == usize::MAX {
+                        comp[nb] = next_id;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+            next_id += 1;
+        }
+        comp
+    }
 }
 
 impl Default for Graph {
@@ -262,6 +304,30 @@ mod tests {
         assert_eq!(dist[&0], 0);
         assert_eq!(dist[&1], 1);
         assert_eq!(dist[&3], 2);
+    }
+
+    #[test]
+    fn test_connected_components() {
+        // Two components: {0,1,2} (a directed chain — direction ignored) and {3,4}.
+        // Node 5 is isolated → its own component. Three components total.
+        let mut g = Graph::with_nodes(6);
+        g.add_edge(0, 1, 1.0);
+        g.add_edge(1, 2, 1.0);
+        g.add_edge(3, 4, 1.0);
+
+        let comp = g.connected_components();
+        assert_eq!(comp.len(), 6, "one id per node");
+        // Same component within {0,1,2} and within {3,4}.
+        assert_eq!(comp[0], comp[1]);
+        assert_eq!(comp[1], comp[2]);
+        assert_eq!(comp[3], comp[4]);
+        // Different components across the three groups.
+        assert_ne!(comp[0], comp[3]);
+        assert_ne!(comp[0], comp[5]);
+        assert_ne!(comp[3], comp[5]);
+
+        let distinct: std::collections::HashSet<_> = comp.iter().collect();
+        assert_eq!(distinct.len(), 3, "exactly three weakly-connected components");
     }
 
     #[test]

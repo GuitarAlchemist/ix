@@ -6,6 +6,8 @@
 //! - `ix_pagerank(edges, damping DOUBLE, iterations BIGINT)` → `TABLE(node, rank)`.
 //! - `ix_shortest_path(edges, src BIGINT, dst BIGINT)` → `TABLE(step, node)` (the
 //!   Dijkstra path src→dst; empty if unreachable).
+//! - `ix_connected_components(edges)` → `TABLE(node, component)` — weakly-connected
+//!   component id per node (edge direction ignored).
 //!
 //! Signal (`ix-signal`), input = a JSON number array (the series):
 //! - `ix_rfft(series)` → `TABLE(bin, magnitude)` — real FFT magnitude spectrum.
@@ -277,10 +279,38 @@ impl VTab for IxAutocorrelation {
     }
 }
 
+// ── ix_connected_components ──────────────────────────────────────────────────────
+
+struct IxConnectedComponents;
+impl VTab for IxConnectedComponents {
+    type InitData = Cursor;
+    type BindData = RowsI64;
+
+    // @ai:invariant ix_connected_components emits (node,component) for the weakly-connected components of the edge-list graph via ix_graph connected_components; two disjoint subgraphs get distinct component ids, an isolated node is its own component [T:test conf:0.8 src:ix_duck::graphsig::tests::connected_components_finds_islands]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (g, n) = parse_graph(&bind.get_parameter(0).to_string())?;
+        let comp = g.connected_components();
+        let rows: Vec<(i64, i64)> = (0..n).map(|i| (i as i64, comp[i] as i64)).collect();
+        two_cols(bind, "node", LogicalTypeId::Bigint, "component", LogicalTypeId::Bigint);
+        Ok(RowsI64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_i64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    }
+}
+
 /// Register the graph + signal table functions.
 pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxPagerank>("ix_pagerank")?;
     conn.register_table_function::<IxShortestPath>("ix_shortest_path")?;
+    conn.register_table_function::<IxConnectedComponents>("ix_connected_components")?;
     conn.register_table_function::<IxRfft>("ix_rfft")?;
     conn.register_table_function::<IxAutocorrelation>("ix_autocorrelation")?;
     Ok(())
@@ -321,6 +351,45 @@ mod tests {
                 .is_err(),
             "negative edge weight must be a SQL error"
         );
+    }
+
+    #[test]
+    fn connected_components_finds_islands() {
+        let conn = open_bench().unwrap();
+        // Two disjoint edges: {0–1} and {2–3} → two components (4 nodes).
+        let edges = "[[0,1],[2,3]]";
+        let n_comp: i64 = conn
+            .query_row(
+                &format!("SELECT count(DISTINCT component) FROM ix_connected_components('{edges}')"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_comp, 2, "two disjoint edges → two components");
+
+        // Nodes 0 and 1 share a component; 0 and 2 do not.
+        let same: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT (SELECT component FROM ix_connected_components('{edges}') WHERE node=0) \
+                          = (SELECT component FROM ix_connected_components('{edges}') WHERE node=1)"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(same, "0 and 1 are connected");
+        let cross: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT (SELECT component FROM ix_connected_components('{edges}') WHERE node=0) \
+                          = (SELECT component FROM ix_connected_components('{edges}') WHERE node=2)"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!cross, "0 and 2 are in different components");
     }
 
     #[test]
