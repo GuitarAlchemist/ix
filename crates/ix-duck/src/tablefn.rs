@@ -28,6 +28,11 @@
 //!     cluster labels `0..k-1`. `k` is capped at the sample count; deterministic
 //!     (seed 42). The centroid/mixture complement to `ix_dbscan`'s density labels —
 //!     all three feed `ix_silhouette`. Wrap `ix_unsupervised::{kmeans,gmm}`.
+//! - `ix_tsne_project(json_vectors VARCHAR, n_components BIGINT, perplexity DOUBLE)` /
+//!   `ix_mds_project(json_vectors VARCHAR, n_components BIGINT)`
+//!     → `TABLE(row BIGINT, coords DOUBLE[])`, the non-linear (t-SNE, seed 42) and
+//!     distance-preserving (classical MDS) companions to `ix_pca_project`. Wrap
+//!     `ix_unsupervised::{tsne::TSNE, mds::classical_mds}` — no reimplementation.
 //!
 //! A whole set enters in one SQL call as JSON scalar params (a 2-D number array
 //! for vectors, a 1-D int array for labels):
@@ -47,8 +52,10 @@ use ix_math::distance::euclidean;
 use ix_unsupervised::dbscan::DBSCAN;
 use ix_unsupervised::gmm::GMM;
 use ix_unsupervised::kmeans::KMeans;
+use ix_unsupervised::mds::{classical_mds, pairwise_euclidean};
 use ix_unsupervised::pca::PCA;
 use ix_unsupervised::traits::{Clusterer, DimensionReducer};
+use ix_unsupervised::tsne::TSNE;
 use ndarray::{Array1, Array2};
 
 /// Register every IX table function on `conn`.
@@ -59,6 +66,8 @@ pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxDbscan>("ix_dbscan")?;
     conn.register_table_function::<IxKmeans>("ix_kmeans")?;
     conn.register_table_function::<IxGmm>("ix_gmm")?;
+    conn.register_table_function::<IxTsneProject>("ix_tsne_project")?;
+    conn.register_table_function::<IxMdsProject>("ix_mds_project")?;
     Ok(())
 }
 
@@ -176,6 +185,173 @@ impl VTab for IxPcaProject {
         output.set_len(rows);
         init.cursor.store(start + rows, Ordering::Relaxed);
         Ok(())
+    }
+
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+        ])
+    }
+}
+
+// ── ix_tsne_project / ix_mds_project (DimensionReducer companions to PCA) ──────
+//
+// All three project a (json_vectors, k[, …]) call to TABLE(row BIGINT, coords DOUBLE[]),
+// so they share the streaming `func` (row index + a length-`k` coords list per row).
+// Only the projection differs: PCA (linear, above), t-SNE (non-linear, perplexity),
+// classical MDS (distance-preserving). Both new estimators are seeded for determinism.
+
+#[repr(C)]
+struct ProjectBind {
+    /// Projected coordinates: one inner Vec (length `k`) per input row.
+    projected: Vec<Vec<f64>>,
+    k: usize,
+}
+#[repr(C)]
+struct ProjectInit {
+    cursor: AtomicUsize,
+}
+
+/// Shared streaming `func` for projection table functions: emit `row` (BIGINT) and
+/// `coords` (LIST<DOUBLE>, length `k`) in output-vector-sized chunks via the cursor.
+fn emit_coord_rows(
+    projected: &[Vec<f64>],
+    k: usize,
+    cursor: &AtomicUsize,
+    output: &mut DataChunkHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let n = projected.len();
+    let start = cursor.load(Ordering::Relaxed);
+    if start >= n {
+        output.set_len(0);
+        return Ok(());
+    }
+    let cap = output.flat_vector(0).capacity();
+    let rows = (n - start).min(cap);
+
+    // col 0: row index (BIGINT)
+    {
+        let mut idx_vec = output.flat_vector(0);
+        let slice = unsafe { idx_vec.as_mut_slice_with_len::<i64>(rows) };
+        for (i, s) in slice.iter_mut().enumerate().take(rows) {
+            *s = (start + i) as i64;
+        }
+    }
+    // col 1: coords (LIST<DOUBLE>)
+    {
+        let total = rows * k;
+        let flat: Vec<f64> = (0..rows)
+            .flat_map(|i| projected[start + i].iter().copied())
+            .collect();
+        let mut lv = output.list_vector(1);
+        {
+            let mut child = lv.child(total);
+            let cslice = unsafe { child.as_mut_slice_with_len::<f64>(total) };
+            cslice[..total].copy_from_slice(&flat);
+        }
+        lv.set_len(total);
+        for i in 0..rows {
+            lv.set_entry(i, i * k, k);
+        }
+    }
+    output.set_len(rows);
+    cursor.store(start + rows, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Declare the shared (row, coords) result columns and turn an `(n_samples, k)`
+/// coordinate matrix into the row-wise `ProjectBind`.
+fn project_bind(bind: &BindInfo, projected_mat: Array2<f64>, k: usize) -> ProjectBind {
+    let projected: Vec<Vec<f64>> = (0..projected_mat.nrows())
+        .map(|r| projected_mat.row(r).to_vec())
+        .collect();
+    bind.add_result_column("row", LogicalTypeHandle::from(LogicalTypeId::Bigint));
+    bind.add_result_column(
+        "coords",
+        LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Double)),
+    );
+    ProjectBind { projected, k }
+}
+
+struct IxTsneProject;
+
+impl VTab for IxTsneProject {
+    type InitData = ProjectInit;
+    type BindData = ProjectBind;
+
+    // @ai:invariant ix_tsne_project fits ix_unsupervised TSNE (seed 42, given perplexity) over the JSON input vectors and emits one row per input with its min(n_components, n_features)-D embedding; deterministic for fixed seed [T:test conf:0.8 src:ix_duck::tablefn::tests::tsne_project_shape_and_deterministic]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let x = parse_matrix(&bind.get_parameter(0).to_string())?;
+        let k_req = bind.get_parameter(1).to_int64();
+        if k_req < 1 {
+            return Err("n_components must be >= 1".into());
+        }
+        let perplexity = bind.get_parameter(2).to_string().parse::<f64>().ok();
+        let perplexity = match perplexity {
+            Some(p) if p.is_finite() && p > 0.0 => p,
+            _ => return Err("perplexity must be a finite number > 0".into()),
+        };
+        // t-SNE's perplexity must stay below the sample count (it is a soft neighbour
+        // count); cap it so tiny analyst-bench inputs don't blow up the affinities.
+        let perplexity = perplexity.min((x.nrows() as f64 - 1.0).max(1.0));
+        let k = (k_req as usize).min(x.ncols());
+        let mut tsne = TSNE::new(k).with_perplexity(perplexity).with_seed(42);
+        let projected_mat = tsne.fit_transform(&x);
+        Ok(project_bind(bind, projected_mat, k))
+    }
+
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(ProjectInit { cursor: AtomicUsize::new(0) })
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bind = func.get_bind_data();
+        emit_coord_rows(&bind.projected, bind.k, &func.get_init_data().cursor, output)
+    }
+
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        ])
+    }
+}
+
+struct IxMdsProject;
+
+impl VTab for IxMdsProject {
+    type InitData = ProjectInit;
+    type BindData = ProjectBind;
+
+    // @ai:invariant ix_mds_project runs classical (distance-preserving) MDS over the pairwise Euclidean distances of the JSON input vectors and emits one row per input with its min(n_components, n_features)-D embedding; well-separated points stay separated [T:test conf:0.8 src:ix_duck::tablefn::tests::mds_project_preserves_separation]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let x = parse_matrix(&bind.get_parameter(0).to_string())?;
+        let k_req = bind.get_parameter(1).to_int64();
+        if k_req < 1 {
+            return Err("n_components must be >= 1".into());
+        }
+        let k = (k_req as usize).min(x.ncols());
+        let distances = pairwise_euclidean(&x);
+        let projected_mat =
+            classical_mds(&distances, k).map_err(|e| format!("ix_mds_project: {e}"))?;
+        Ok(project_bind(bind, projected_mat, k))
+    }
+
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(ProjectInit { cursor: AtomicUsize::new(0) })
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bind = func.get_bind_data();
+        emit_coord_rows(&bind.projected, bind.k, &func.get_init_data().cursor, output)
     }
 
     fn parameters() -> Option<Vec<LogicalTypeHandle>> {
@@ -689,6 +865,101 @@ mod tests {
             )
             .unwrap();
         assert_eq!(dim, 2, "n_components capped at n_features");
+    }
+
+    #[test]
+    fn tsne_project_shape_and_deterministic() {
+        let conn = open_bench().unwrap();
+        let pts = "[[0,0],[0,1],[1,0],[10,10],[10,11],[11,10]]";
+        // one row per input; coords length == n_components.
+        let n: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM ix_tsne_project('{pts}', 1, 2.0)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 6, "one row per input vector");
+        let dim: i64 = conn
+            .query_row(
+                &format!("SELECT len(coords) FROM ix_tsne_project('{pts}', 1, 2.0) LIMIT 1"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dim, 1, "coords length == n_components");
+
+        // Seeded (42) → deterministic: row 0's coord is identical across two runs.
+        let a: f64 = conn
+            .query_row(
+                &format!("SELECT coords[1] FROM ix_tsne_project('{pts}', 1, 2.0) WHERE row=0"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let b: f64 = conn
+            .query_row(
+                &format!("SELECT coords[1] FROM ix_tsne_project('{pts}', 1, 2.0) WHERE row=0"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((a - b).abs() < 1e-12, "seed 42 → deterministic embedding");
+    }
+
+    #[test]
+    fn tsne_project_rejects_bad_perplexity() {
+        let conn = open_bench().unwrap();
+        assert!(
+            conn.query_row(
+                "SELECT coords[1] FROM ix_tsne_project('[[0,0],[1,1]]', 1, 0.0)",
+                [],
+                |r| r.get::<_, f64>(0)
+            )
+            .is_err(),
+            "perplexity=0 must be a SQL error"
+        );
+    }
+
+    #[test]
+    fn mds_project_preserves_separation() {
+        let conn = open_bench().unwrap();
+        // Two tight clusters far apart; 1-D classical MDS must keep them apart.
+        let pts = "[[0,0],[0,1],[10,10],[10,11]]";
+        let n: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM ix_mds_project('{pts}', 1)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 4, "one row per input vector");
+
+        // |coord(row0) − coord(row2)| (cross-cluster) ≫ |coord(row0) − coord(row1)| (within).
+        let cross: f64 = conn
+            .query_row(
+                &format!(
+                    "SELECT abs((SELECT coords[1] FROM ix_mds_project('{pts}',1) WHERE row=0) \
+                              - (SELECT coords[1] FROM ix_mds_project('{pts}',1) WHERE row=2))"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let within: f64 = conn
+            .query_row(
+                &format!(
+                    "SELECT abs((SELECT coords[1] FROM ix_mds_project('{pts}',1) WHERE row=0) \
+                              - (SELECT coords[1] FROM ix_mds_project('{pts}',1) WHERE row=1))"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            cross > within * 3.0,
+            "cross-cluster MDS distance dominates within-cluster (cross={cross}, within={within})"
+        );
     }
 
     #[test]
