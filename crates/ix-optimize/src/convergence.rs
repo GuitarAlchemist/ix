@@ -1,17 +1,8 @@
 //! Convergence criteria for optimization loops.
-
-/// Convergence criteria configuration.
-#[derive(Debug, Clone)]
-pub struct ConvergenceCriteria {
-    pub max_iterations: usize,
-    pub tolerance: f64,
-}
-
-impl Default for ConvergenceCriteria {
-    fn default() -> Self {
-        Self {
-            max_iterations: 1000,
-            tolerance: 1e-6,
-        }
-    }
-}
+//!
+//! The criterion itself now lives in [`ix_math::convergence`] — the one home
+//! shared by the optimizers here and the iterative learners in `ix-unsupervised`.
+//! This alias preserves the historical `ix_optimize::convergence::ConvergenceCriteria`
+//! path (struct-literal construction with `max_iterations` / `tolerance` fields
+//! still works, since they are the same public fields).
+pub use ix_math::convergence::Convergence as ConvergenceCriteria;

@@ -6,6 +6,7 @@
 pub mod activation;
 pub mod bsp;
 pub mod calculus;
+pub mod convergence;
 pub mod distance;
 pub mod dual_quaternion;
 pub mod eigen;

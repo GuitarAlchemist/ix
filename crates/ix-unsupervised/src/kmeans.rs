@@ -22,6 +22,8 @@ pub struct KMeansState {
 pub struct KMeans {
     pub k: usize,
     pub max_iterations: usize,
+    /// Convergence tolerance on the squared centroid shift between iterations.
+    pub tolerance: f64,
     pub seed: u64,
     pub centroids: Option<Array2<f64>>,
 }
@@ -31,6 +33,7 @@ impl KMeans {
         Self {
             k,
             max_iterations: 300,
+            tolerance: 1e-10,
             seed: 42,
             centroids: None,
         }
@@ -38,6 +41,12 @@ impl KMeans {
 
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
+        self
+    }
+
+    /// Builder: set the convergence tolerance on the squared centroid shift.
+    pub fn with_tolerance(mut self, tolerance: f64) -> Self {
+        self.tolerance = tolerance;
         self
     }
 
@@ -67,6 +76,7 @@ impl KMeans {
         Self {
             k,
             max_iterations: 300,
+            tolerance: 1e-10,
             seed: 42,
             centroids: Some(centroids),
         }
@@ -115,6 +125,8 @@ impl KMeans {
 impl Clusterer for KMeans {
     fn fit(&mut self, x: &Array2<f64>) {
         let mut rng = StdRng::seed_from_u64(self.seed);
+        let convergence =
+            ix_math::convergence::Convergence::new(self.max_iterations, self.tolerance);
         let n = x.nrows();
         let mut centroids = self.init_centroids(x, &mut rng);
 
@@ -140,10 +152,10 @@ impl Clusterer for KMeans {
                 }
             }
 
-            // Check convergence
+            // Check convergence (squared centroid shift below tolerance).
             let diff = (&new_centroids - &centroids).mapv(|v| v * v).sum();
             centroids = new_centroids;
-            if diff < 1e-10 {
+            if convergence.converged(diff) {
                 break;
             }
         }

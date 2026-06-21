@@ -34,7 +34,7 @@
 //!     [2.0, 4.0, 6.0],
 //!     [3.0, 6.0, 9.0],
 //! ];
-//! let mut nmf = NonNegativeMatrixFactorization::new(1).with_max_iter(200);
+//! let mut nmf = NonNegativeMatrixFactorization::new(1).with_max_iterations(200);
 //! let w = nmf.fit_transform(&v).unwrap();
 //! assert_eq!(w.ncols(), 1);
 //! ```
@@ -51,9 +51,9 @@ pub struct NonNegativeMatrixFactorization {
     /// Number of components in the factorization.
     pub n_components: usize,
     /// Maximum iterations.
-    pub max_iter: usize,
+    pub max_iterations: usize,
     /// Convergence tolerance on the Frobenius reconstruction error.
-    pub tol: f64,
+    pub tolerance: f64,
     /// Small epsilon added to denominators to avoid division by zero.
     pub eps: f64,
     /// RNG seed for initialization.
@@ -71,8 +71,8 @@ impl NonNegativeMatrixFactorization {
     pub fn new(n_components: usize) -> Self {
         Self {
             n_components,
-            max_iter: 200,
-            tol: 1e-4,
+            max_iterations: 200,
+            tolerance: 1e-4,
             eps: 1e-10,
             seed: 42,
             components: None,
@@ -82,14 +82,14 @@ impl NonNegativeMatrixFactorization {
     }
 
     /// Builder: set maximum iterations.
-    pub fn with_max_iter(mut self, max_iter: usize) -> Self {
-        self.max_iter = max_iter;
+    pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
+        self.max_iterations = max_iterations;
         self
     }
 
     /// Builder: set convergence tolerance.
-    pub fn with_tol(mut self, tol: f64) -> Self {
-        self.tol = tol;
+    pub fn with_tolerance(mut self, tolerance: f64) -> Self {
+        self.tolerance = tolerance;
         self
     }
 
@@ -140,8 +140,10 @@ impl NonNegativeMatrixFactorization {
         let mut prev_err = initial_err;
         let mut final_err = initial_err;
         let mut n_iter = 0;
+        let convergence =
+            ix_math::convergence::Convergence::new(self.max_iterations, self.tolerance);
 
-        for iter in 0..self.max_iter {
+        for iter in 0..self.max_iterations {
             n_iter = iter + 1;
 
             // H update: H = H * (W^T V) / (W^T W H + eps)
@@ -160,10 +162,10 @@ impl NonNegativeMatrixFactorization {
                 *w_ij *= v_ht[[i, j]] / denom;
             }
 
-            if iter % 5 == 0 || iter == self.max_iter - 1 {
+            if iter % 5 == 0 || iter == self.max_iterations - 1 {
                 let err = frobenius_distance(v, &w.dot(&h));
                 final_err = err;
-                if (prev_err - err).abs() < self.tol {
+                if convergence.converged((prev_err - err).abs()) {
                     break;
                 }
                 prev_err = err;
@@ -256,7 +258,7 @@ mod tests {
     fn test_nmf_rank_one_matrix() {
         // Outer product of two non-negative vectors is rank-1
         let v = array![[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [3.0, 6.0, 9.0],];
-        let mut nmf = NonNegativeMatrixFactorization::new(1).with_max_iter(500);
+        let mut nmf = NonNegativeMatrixFactorization::new(1).with_max_iterations(500);
         let w = nmf.fit_transform(&v).unwrap();
         assert_eq!(w.nrows(), 3);
         assert_eq!(w.ncols(), 1);
@@ -268,7 +270,7 @@ mod tests {
     #[test]
     fn test_nmf_non_negative_output() {
         let v = array![[1.0, 0.0, 2.0], [0.0, 3.0, 1.0], [2.0, 1.0, 0.0],];
-        let mut nmf = NonNegativeMatrixFactorization::new(2).with_max_iter(200);
+        let mut nmf = NonNegativeMatrixFactorization::new(2).with_max_iterations(200);
         let w = nmf.fit_transform(&v).unwrap();
         // All entries should be non-negative
         assert!(w.iter().all(|&x| x >= 0.0));
@@ -304,7 +306,7 @@ mod tests {
             [2.0, 1.0, 0.0, 0.0],
             [1.0, 2.0, 3.0, 2.0],
         ];
-        let mut nmf = NonNegativeMatrixFactorization::new(2).with_max_iter(200);
+        let mut nmf = NonNegativeMatrixFactorization::new(2).with_max_iterations(200);
         nmf.fit_transform(&v_train).unwrap();
 
         let v_new = array![[1.0, 1.0, 1.0, 1.0], [2.0, 0.0, 2.0, 0.0]];
@@ -322,7 +324,7 @@ mod tests {
             [2.0, 1.0, 0.0],
             [1.0, 2.0, 1.0],
         ];
-        let mut nmf = NonNegativeMatrixFactorization::new(2).with_max_iter(300);
+        let mut nmf = NonNegativeMatrixFactorization::new(2).with_max_iterations(300);
         let _w = nmf.fit_transform(&v).unwrap();
         let err = nmf.reconstruction_err.unwrap();
         let total_mag = total(&v);
