@@ -321,8 +321,15 @@ impl Graph {
         out
     }
 
-    /// Eigenvector centrality (undirected) by power iteration on the adjacency
-    /// matrix, L2-normalized. Indexed by node.
+    /// Eigenvector centrality (undirected) by power iteration on the **shifted**
+    /// adjacency `A + I`, L2-normalized. Indexed by node.
+    ///
+    /// The `+ I` shift (each node sees itself) is load-bearing: a raw `A·x` iteration
+    /// oscillates on *bipartite* graphs (a star, any path) because `A` has eigenvalues
+    /// `±λ`, so even iteration counts return a near-uniform vector that mislabels hubs
+    /// and leaves as equal. `A + I` has strictly positive eigenvalues `λ + 1`, so power
+    /// iteration converges to the Perron vector — which ranks nodes identically to `A`
+    /// on connected graphs while remaining stable on bipartite ones.
     pub fn eigenvector_centrality(&self, iterations: usize) -> Vec<f64> {
         let n = self.node_count;
         if n == 0 {
@@ -331,7 +338,8 @@ impl Graph {
         let adj = self.undirected_adjacency();
         let mut x = vec![1.0 / (n as f64).sqrt(); n];
         for _ in 0..iterations {
-            let mut next = vec![0.0; n];
+            // next = (A + I)·x — start each node at its own value, then add neighbours.
+            let mut next = x.clone();
             for (v, nb) in adj.iter().enumerate() {
                 for &w in nb {
                     next[v] += x[w];
@@ -339,7 +347,7 @@ impl Graph {
             }
             let norm: f64 = next.iter().map(|v| v * v).sum::<f64>().sqrt();
             if norm <= f64::EPSILON {
-                break; // no edges → leave the previous estimate
+                break; // degenerate → leave the previous estimate
             }
             for v in &mut next {
                 *v /= norm;
@@ -483,7 +491,16 @@ mod tests {
         assert!(clo[0] > clo[1], "hub is closest to everything");
 
         let eig = g.eigenvector_centrality(100);
-        assert!(eig[0] > eig[1], "hub has the highest eigenvector centrality");
+        // A+I shift converges to the Perron vector: hub/leaf ratio is √3 ≈ 1.73 on a
+        // 3-leaf star. Assert a real gap (the pre-fix bipartite oscillation returned
+        // hub ≈ leaf, passing a bare `>` only by float luck).
+        assert!(
+            eig[0] > 1.5 * eig[1],
+            "hub eigenvector centrality dominates leaves: {} vs {}",
+            eig[0],
+            eig[1]
+        );
+        assert!((eig[1] - eig[2]).abs() < 1e-9 && (eig[2] - eig[3]).abs() < 1e-9, "leaves tie");
 
         let bc = g.betweenness_centrality();
         // Every shortest path between two leaves passes through the hub → bc[0] > 0,
