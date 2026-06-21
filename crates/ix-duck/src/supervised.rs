@@ -107,11 +107,24 @@ impl VScalar for IxLinregFit {
                 )
                 .into());
             }
-            let mut model = LinearRegression::new();
-            model.fit(&x, &Array1::from_vec(y));
-            let state = model
-                .save_state()
-                .ok_or("ix_linreg_fit: model did not fit")?;
+            // LinearRegression::fit solves the normal equation with `.expect("X^T X
+            // is singular")`, which PANICS on collinear/underdetermined data (duplicated
+            // features, fewer rows than parameters). A panic must not unwind through the
+            // DuckDB FFI boundary (UB) — catch it and surface a SQL error instead.
+            let fit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut model = LinearRegression::new();
+                model.fit(&x, &Array1::from_vec(y));
+                model.save_state()
+            }));
+            let state = match fit {
+                Ok(Some(s)) => s,
+                Ok(None) => return Err("ix_linreg_fit: model did not fit".into()),
+                Err(_) => {
+                    return Err("ix_linreg_fit: singular/underdetermined training data \
+                                (XᵀX not invertible — collinear features or too few rows)"
+                        .into())
+                }
+            };
             out.push(serde_json::to_string(&state)?);
         }
         write_varchar(output, &out)
@@ -264,6 +277,19 @@ mod tests {
             .is_err(),
             "y shorter than x must be a SQL error"
         );
+    }
+
+    #[test]
+    fn linreg_fit_singular_is_sql_error_not_panic() {
+        let conn = open_bench().unwrap();
+        // Collinear features (col2 = 2·col1) make XᵀX singular → fit() would panic;
+        // the UDF must catch it and return a SQL error (Codex #164 P2).
+        let err = conn.query_row(
+            "SELECT ix_linreg_fit('[[1,2],[2,4],[3,6]]', '[3,6,9]')",
+            [],
+            |r| r.get::<_, String>(0),
+        );
+        assert!(err.is_err(), "singular training data must be a SQL error, not a panic");
     }
 
     #[test]

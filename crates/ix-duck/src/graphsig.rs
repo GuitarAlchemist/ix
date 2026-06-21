@@ -310,10 +310,24 @@ impl VTab for IxWaveletDenoise {
         }
         // Cap the decomposition depth at floor(log2(n)) so a short series is never
         // over-decomposed (each level halves the signal).
-        let max_levels = ((series.len() as f64).log2().floor() as usize).max(1);
+        let n_in = series.len();
+        let max_levels = ((n_in as f64).log2().floor() as usize).max(1);
         let levels = (levels_req as usize).min(max_levels);
-        let rows: Vec<(i64, f64)> = wavelet_denoise(&series, levels, threshold)
+        // The Haar transform halves the length at each level and drops an unmatched
+        // tail sample for non-multiples of 2^levels — which would silently lose rows
+        // and break the one-row-per-input contract. Edge-pad up to a multiple of
+        // 2^levels, denoise, then truncate back to the original length.
+        let step = 1usize << levels;
+        let padded_len = n_in.div_ceil(step) * step;
+        let mut padded = series.clone();
+        if padded_len > n_in {
+            let last = *series.last().unwrap();
+            padded.resize(padded_len, last);
+        }
+        let denoised = wavelet_denoise(&padded, levels, threshold);
+        let rows: Vec<(i64, f64)> = denoised
             .iter()
+            .take(n_in)
             .enumerate()
             .map(|(i, &v)| (i as i64, v))
             .collect();
@@ -510,6 +524,24 @@ mod tests {
             .unwrap();
         assert_eq!(n, 8, "denoised series keeps the input length");
         assert!(var < 25.0, "large threshold reduces variance below raw 25, got {var}");
+    }
+
+    #[test]
+    fn wavelet_denoise_preserves_odd_length() {
+        let conn = open_bench().unwrap();
+        // Odd / non-power-of-two input must still emit one row per sample (Codex #164
+        // P2 — Haar drops the unmatched tail without padding).
+        for series in ["[1,2,3,4,5]", "[1,2,3]", "[10,20,30,40,50,60,70]"] {
+            let want = series.matches(',').count() as i64 + 1;
+            let n: i64 = conn
+                .query_row(
+                    &format!("SELECT count(*) FROM ix_wavelet_denoise('{series}', 2, 0.1)"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, want, "{series}: one row per input sample");
+        }
     }
 
     #[test]

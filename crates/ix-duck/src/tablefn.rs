@@ -328,14 +328,20 @@ impl VTab for IxMdsProject {
     type InitData = ProjectInit;
     type BindData = ProjectBind;
 
-    // @ai:invariant ix_mds_project runs classical (distance-preserving) MDS over the pairwise Euclidean distances of the JSON input vectors and emits one row per input with its min(n_components, n_features)-D embedding; well-separated points stay separated [T:test conf:0.8 src:ix_duck::tablefn::tests::mds_project_preserves_separation]
+    // @ai:invariant ix_mds_project runs classical (distance-preserving) MDS over the pairwise Euclidean distances of the JSON input vectors and emits one row per input with its min(n_components, n_features, n_samples-1)-D embedding; well-separated points stay separated [T:test conf:0.8 src:ix_duck::tablefn::tests::mds_project_preserves_separation]
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
         let x = parse_matrix(&bind.get_parameter(0).to_string())?;
         let k_req = bind.get_parameter(1).to_int64();
         if k_req < 1 {
             return Err("n_components must be >= 1".into());
         }
-        let k = (k_req as usize).min(x.ncols());
+        if x.nrows() < 2 {
+            return Err("ix_mds_project needs at least 2 vectors".into());
+        }
+        // classical_mds rejects k >= n_samples, so cap by n_samples-1 too — not just
+        // feature count — or a small/wide slice like ('[[0,0],[1,1]]', 2) would error
+        // despite the advertised "caps the requested dimension" contract.
+        let k = (k_req as usize).min(x.ncols()).min(x.nrows() - 1);
         let distances = pairwise_euclidean(&x);
         let projected_mat =
             classical_mds(&distances, k).map_err(|e| format!("ix_mds_project: {e}"))?;
@@ -918,6 +924,28 @@ mod tests {
             )
             .is_err(),
             "perplexity=0 must be a SQL error"
+        );
+    }
+
+    #[test]
+    fn mds_project_caps_components_at_n_minus_one() {
+        let conn = open_bench().unwrap();
+        // 2 samples, 2 features, k=2: classical_mds rejects k>=n, so the cap must drop
+        // k to n-1=1 rather than erroring (Codex #164 P2).
+        let dim: i64 = conn
+            .query_row(
+                "SELECT len(coords) FROM ix_mds_project('[[0,0],[1,1]]', 2) LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dim, 1, "k capped at n_samples-1");
+        // A single vector has no pairwise distances → clean SQL error, not a panic.
+        assert!(
+            conn.query_row("SELECT coords[1] FROM ix_mds_project('[[1,2,3]]', 1)", [], |r| r
+                .get::<_, f64>(0))
+                .is_err(),
+            "single vector must be a SQL error"
         );
     }
 
