@@ -39,7 +39,7 @@ cargo run -p ix-agent
 
 | Crate | Tier | Notes |
 |-------|------|-------|
-| ix-math | Stable | Core linear algebra, statistics, activations — everything depends on this |
+| ix-math | Beta | Core linear algebra, statistics, activations — everything depends on this. Demoted from Stable 2026-06-21 while the new `inference` surface (two-sample tests, divergences, moments) settles |
 | ix-optimize | Stable | SGD, Adam, PSO, simulated annealing |
 | ix-supervised | Stable | Regression, trees, KNN, SVM, metrics |
 | ix-ensemble | Stable | Random forest, gradient boosted trees |
@@ -86,7 +86,7 @@ SAME PR that introduces the change:
    yet auto-detect it. Use the demotion path for the CI to go green, then
    restore the tier in a follow-up release PR.)
 
-The current 12 Stable crates (see table above) cover the safe-to-consume
+The current 10 Stable crates (see table above) cover the safe-to-consume
 subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 
 ### Beta Crates

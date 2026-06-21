@@ -69,6 +69,12 @@ mod sketch;
 #[cfg(feature = "udf")]
 mod code;
 
+/// Statistical-inference UDFs over `ix-math::inference` — distribution-shape
+/// scalars (ix_skewness/ix_kurtosis/ix_mad/ix_quantile/ix_entropy/ix_kl/ix_js)
+/// and the two-sample test table fn ix_two_sample. Registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod inference;
+
 /// Supervised fit/predict UDFs over `ix-supervised` — `ix_linreg_fit`/`_predict`
 /// and `ix_logistic_fit`/`_predict`, models round-tripped as JSON `VARCHAR` blobs.
 /// Registered by [`udf::register_all`].
