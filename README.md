@@ -86,7 +86,7 @@ SAME PR that introduces the change:
    yet auto-detect it. Use the demotion path for the CI to go green, then
    restore the tier in a follow-up release PR.)
 
-The current 12 Stable crates (see table above) cover the safe-to-consume
+The current 10 Stable crates (see table above) cover the safe-to-consume
 subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 
 ### Beta Crates

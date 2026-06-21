@@ -10,6 +10,7 @@
 //! | `ix_quantile(x, q)` | the `q`-quantile (numpy linear) |
 //! | `ix_entropy(p)` | Shannon entropy in nats |
 //! | `ix_kl(p, q)` / `ix_js(p, q)` | KL / Jensen–Shannon divergence |
+//! | `ix_pearson(a, b)` | Pearson correlation in [−1, 1] (the mesh's pairwise primitive) |
 //!
 //! And the regression-gate primitive, a table function over two JSON samples:
 //! `ix_two_sample(a_json, b_json, kind)` → `TABLE(statistic, p_value)`, `kind` ∈
@@ -29,7 +30,7 @@ use duckdb::Connection;
 use ix_math::error::MathError;
 use ix_math::inference::{
     iqr as _iqr, js_divergence, kl_divergence, ks_two_sample, kurtosis, mad, mann_whitney_u,
-    quantile, shannon_entropy, skewness, welch_t_test, TestResult,
+    pearson, quantile, shannon_entropy, skewness, welch_t_test, TestResult,
 };
 
 use crate::udf::read_list_col;
@@ -155,6 +156,20 @@ impl VScalar for IxKl {
     }
 }
 
+/// `ix_pearson(a DOUBLE[], b DOUBLE[]) -> DOUBLE` — Pearson correlation in [−1, 1].
+/// The pairwise primitive for a correlation mesh over many streams.
+struct IxPearson;
+impl VScalar for IxPearson {
+    type State = ();
+    // @ai:invariant ix_pearson wraps ix_math::inference::pearson; perfectly correlated -> 1, anti-correlated -> -1, a constant or length-mismatched arg -> SQL error [T:test conf:0.85 src:ix_duck::inference::tests::pearson_scalar]
+    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+        invoke_binary(input, output, "ix_pearson", pearson)
+    }
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        binary_sig()
+    }
+}
+
 /// `ix_js(p DOUBLE[], q DOUBLE[]) -> DOUBLE` — Jensen–Shannon divergence (nats).
 struct IxJs;
 impl VScalar for IxJs {
@@ -254,6 +269,7 @@ pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_scalar_function::<IxQuantile>("ix_quantile")?;
     conn.register_scalar_function::<IxKl>("ix_kl")?;
     conn.register_scalar_function::<IxJs>("ix_js")?;
+    conn.register_scalar_function::<IxPearson>("ix_pearson")?;
     conn.register_table_function::<IxTwoSample>("ix_two_sample")?;
     Ok(())
 }
@@ -319,6 +335,28 @@ mod tests {
             .query_row("SELECT ix_js([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[])", [], |r| r.get(0))
             .unwrap();
         assert!(js.abs() < 1e-9, "JS of equal distributions = 0, got {js}");
+    }
+
+    #[test]
+    fn pearson_scalar() {
+        let conn = open_bench().unwrap();
+        let r: f64 = conn
+            .query_row(
+                "SELECT ix_pearson([1.0,2.0,3.0,4.0]::DOUBLE[], [2.0,4.0,6.0,8.0]::DOUBLE[])",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((r - 1.0).abs() < 1e-9, "perfectly correlated → 1, got {r}");
+        assert!(
+            conn.query_row(
+                "SELECT ix_pearson([1.0,1.0,1.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[])",
+                [],
+                |row| row.get::<_, f64>(0)
+            )
+            .is_err(),
+            "constant arg must be a SQL error"
+        );
     }
 
     #[test]
