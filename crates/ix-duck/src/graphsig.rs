@@ -17,6 +17,11 @@
 //! Signal (`ix-signal`), input = a JSON number array (the series):
 //! - `ix_rfft(series)` → `TABLE(bin, magnitude)` — real FFT magnitude spectrum.
 //! - `ix_autocorrelation(series)` → `TABLE(lag, value)`.
+//! - `ix_wavelet_denoise(series, levels BIGINT, threshold DOUBLE)` → `TABLE(i, value)` —
+//!   soft-thresholded series (same length as input).
+//! - `ix_kalman_smooth(series, process_noise DOUBLE, measurement_noise DOUBLE)` →
+//!   `TABLE(i, value)` — constant-velocity 1-D Kalman position estimate (dt=1).
+//! - `ix_dct(series)` → `TABLE(k, coefficient)` — DCT-II coefficients.
 //!
 //! All wrap the real IX crates — no DSP/graph math reimplemented here.
 
@@ -28,7 +33,10 @@ use duckdb::Connection;
 use ix_graph::graph::Graph;
 use ix_graph::hmm::HiddenMarkovModel;
 use ix_signal::correlation::autocorrelation;
+use ix_signal::dct::dct2;
 use ix_signal::fft::rfft;
+use ix_signal::kalman::constant_velocity_1d;
+use ix_signal::wavelet::wavelet_denoise;
 use ndarray::Array1;
 
 use crate::tablefn::parse_matrix;
@@ -288,6 +296,148 @@ impl VTab for IxAutocorrelation {
     }
 }
 
+// ── ix_wavelet_denoise ─────────────────────────────────────────────────────────
+
+struct IxWaveletDenoise;
+impl VTab for IxWaveletDenoise {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_wavelet_denoise emits (i,value) for the wavelet soft-thresholded series via ix_signal wavelet_denoise (same length as input); a larger threshold removes more high-frequency energy, so output variance does not exceed the input's [T:test conf:0.8 src:ix_duck::graphsig::tests::wavelet_denoise_reduces_variance]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let series = parse_series(&bind.get_parameter(0).to_string())?;
+        let levels_req = bind.get_parameter(1).to_int64();
+        if levels_req < 1 {
+            return Err("levels must be >= 1".into());
+        }
+        let threshold = bind
+            .get_parameter(2)
+            .to_string()
+            .parse::<f64>()
+            .map_err(|e| format!("threshold must be a number: {e}"))?;
+        if !threshold.is_finite() || threshold < 0.0 {
+            return Err("threshold must be finite and >= 0".into());
+        }
+        // Cap the decomposition depth at floor(log2(n)) so a short series is never
+        // over-decomposed (each level halves the signal).
+        let n_in = series.len();
+        let max_levels = ((n_in as f64).log2().floor() as usize).max(1);
+        let levels = (levels_req as usize).min(max_levels);
+        // The Haar transform halves the length at each level and drops an unmatched
+        // tail sample for non-multiples of 2^levels — which would silently lose rows
+        // and break the one-row-per-input contract. Edge-pad up to a multiple of
+        // 2^levels, denoise, then truncate back to the original length.
+        let step = 1usize << levels;
+        let padded_len = n_in.div_ceil(step) * step;
+        let mut padded = series.clone();
+        if padded_len > n_in {
+            let last = *series.last().unwrap();
+            padded.resize(padded_len, last);
+        }
+        let rows: Vec<(i64, f64)> = wavelet_denoise(&padded, levels, threshold)
+            .iter()
+            .take(n_in)
+            .enumerate()
+            .map(|(i, &v)| (i as i64, v))
+            .collect();
+        two_cols(bind, "i", LogicalTypeId::Bigint, "value", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        ])
+    }
+}
+
+// ── ix_kalman_smooth ───────────────────────────────────────────────────────────
+
+struct IxKalmanSmooth;
+impl VTab for IxKalmanSmooth {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_kalman_smooth emits (i,value) where value is the filtered position of a constant-velocity 1-D Kalman filter (ix_signal, dt=1) over the series; fed a constant-velocity ramp it locks onto the trajectory, so the final estimate converges to the final measurement [T:test conf:0.8 src:ix_duck::graphsig::tests::kalman_smooth_tracks_ramp]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let series = parse_series(&bind.get_parameter(0).to_string())?;
+        let process_noise = parse_pos_finite(&bind.get_parameter(1).to_string(), "process_noise")?;
+        let measurement_noise =
+            parse_pos_finite(&bind.get_parameter(2).to_string(), "measurement_noise")?;
+        // dt = 1: telemetry samples are an evenly-spaced unit-step sequence.
+        let mut kf = constant_velocity_1d(process_noise, measurement_noise, 1.0);
+        let measurements: Vec<Array1<f64>> =
+            series.iter().map(|&z| Array1::from_vec(vec![z])).collect();
+        // state = [position, velocity]; the smoothed signal is the position estimate.
+        let rows: Vec<(i64, f64)> = kf
+            .filter(&measurements)
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (i as i64, s[0]))
+            .collect();
+        two_cols(bind, "i", LogicalTypeId::Bigint, "value", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        ])
+    }
+}
+
+/// Parse a positive, finite `f64` parameter (Kalman noise covariances must be > 0).
+fn parse_pos_finite(s: &str, name: &str) -> Result<f64, Box<dyn std::error::Error>> {
+    let v: f64 = s.parse().map_err(|e| format!("{name} must be a number: {e}"))?;
+    if !v.is_finite() || v <= 0.0 {
+        return Err(format!("{name} must be a finite number > 0").into());
+    }
+    Ok(v)
+}
+
+// ── ix_dct ─────────────────────────────────────────────────────────────────────
+
+struct IxDct;
+impl VTab for IxDct {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_dct emits (k,coefficient) for the DCT-II of the series via ix_signal dct2 (same length as input); a constant signal concentrates all energy in the k=0 (DC) coefficient [T:test conf:0.8 src:ix_duck::graphsig::tests::dct_constant_concentrates_at_dc]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let series = parse_series(&bind.get_parameter(0).to_string())?;
+        let rows: Vec<(i64, f64)> =
+            dct2(&series).iter().enumerate().map(|(i, &v)| (i as i64, v)).collect();
+        two_cols(bind, "k", LogicalTypeId::Bigint, "coefficient", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    }
+}
+
 // ── ix_connected_components ──────────────────────────────────────────────────────
 
 struct IxConnectedComponents;
@@ -414,6 +564,9 @@ pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxViterbi>("ix_viterbi")?;
     conn.register_table_function::<IxRfft>("ix_rfft")?;
     conn.register_table_function::<IxAutocorrelation>("ix_autocorrelation")?;
+    conn.register_table_function::<IxWaveletDenoise>("ix_wavelet_denoise")?;
+    conn.register_table_function::<IxKalmanSmooth>("ix_kalman_smooth")?;
+    conn.register_table_function::<IxDct>("ix_dct")?;
     Ok(())
 }
 
@@ -457,7 +610,6 @@ mod tests {
     #[test]
     fn connected_components_finds_islands() {
         let conn = open_bench().unwrap();
-        // Two disjoint edges: {0–1} and {2–3} → two components (4 nodes).
         let edges = "[[0,1],[2,3]]";
         let n_comp: i64 = conn
             .query_row(
@@ -467,8 +619,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n_comp, 2, "two disjoint edges → two components");
-
-        // Nodes 0 and 1 share a component; 0 and 2 do not.
         let same: bool = conn
             .query_row(
                 &format!(
@@ -496,8 +646,6 @@ mod tests {
     #[test]
     fn centrality_hub_dominates() {
         let conn = open_bench().unwrap();
-        // Star: hub 0 joined to leaves 1,2,3. The hub is the top-scoring node for
-        // every centrality measure.
         let star = "[[0,1],[0,2],[0,3]]";
         for kind in ["degree", "closeness", "eigenvector", "betweenness"] {
             let top: i64 = conn
@@ -509,7 +657,6 @@ mod tests {
                 .unwrap();
             assert_eq!(top, 0, "hub is the top {kind}-centrality node");
         }
-        // An unknown kind is a SQL error, not a panic.
         assert!(
             conn.query_row(
                 &format!("SELECT node FROM ix_centrality('{star}', 'pagerank')"),
@@ -524,8 +671,6 @@ mod tests {
     #[test]
     fn viterbi_decodes_biased_hmm() {
         let conn = open_bench().unwrap();
-        // 2-state HMM whose emissions strongly couple state i to symbol i, so the
-        // most-likely path tracks the observed symbols: obs [0,0,1,1] → states [0,0,1,1].
         let init = "[0.5,0.5]";
         let trans = "[[0.7,0.3],[0.3,0.7]]";
         let emis = "[[0.9,0.1],[0.1,0.9]]";
@@ -544,8 +689,6 @@ mod tests {
     #[test]
     fn viterbi_rejects_non_stochastic() {
         let conn = open_bench().unwrap();
-        // Emission row 0 = [0.5,0.1] sums to 0.6 ≠ 1 → HMM construction must fail as a
-        // SQL error, not a panic.
         assert!(
             conn.query_row(
                 "SELECT state FROM ix_viterbi('[0.5,0.5]','[[0.7,0.3],[0.3,0.7]]','[[0.5,0.1],[0.1,0.9]]','[0]')",
@@ -585,6 +728,98 @@ mod tests {
             )
             .unwrap();
         assert_eq!(peak_bin, 1, "one-cycle tone peaks at bin 1");
+    }
+
+    #[test]
+    fn wavelet_denoise_reduces_variance() {
+        let conn = open_bench().unwrap();
+        // High-frequency square wave around mean 5 (raw var_pop = 25). A large
+        // threshold kills the detail coefficients → the denoised series collapses
+        // toward the mean, so its variance must not exceed the raw series'.
+        let noisy = "[10,0,10,0,10,0,10,0]";
+        let (n, var): (i64, f64) = conn
+            .query_row(
+                &format!("SELECT count(*), var_pop(value) FROM ix_wavelet_denoise('{noisy}', 3, 50.0)"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(n, 8, "denoised series keeps the input length");
+        assert!(var < 25.0, "large threshold reduces variance below raw 25, got {var}");
+    }
+
+    #[test]
+    fn wavelet_denoise_preserves_odd_length() {
+        let conn = open_bench().unwrap();
+        // Odd / non-power-of-two input must still emit one row per sample (Codex #164
+        // P2 — Haar drops the unmatched tail without padding).
+        for series in ["[1,2,3,4,5]", "[1,2,3]", "[10,20,30,40,50,60,70]"] {
+            let want = series.matches(',').count() as i64 + 1;
+            let n: i64 = conn
+                .query_row(
+                    &format!("SELECT count(*) FROM ix_wavelet_denoise('{series}', 2, 0.1)"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, want, "{series}: one row per input sample");
+        }
+    }
+
+    #[test]
+    fn kalman_smooth_tracks_ramp() {
+        let conn = open_bench().unwrap();
+        // A clean constant-velocity ramp 0..7 is exactly the filter's motion model;
+        // from a cold start [0,0] it locks on, so the final estimate lands near the
+        // final measurement (7). One estimate per measurement.
+        let ramp = "[0,1,2,3,4,5,6,7]";
+        let n: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM ix_kalman_smooth('{ramp}', 0.01, 0.5)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 8, "one filtered estimate per measurement");
+        let last: f64 = conn
+            .query_row(
+                &format!("SELECT value FROM ix_kalman_smooth('{ramp}', 0.01, 0.5) WHERE i=7"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            (5.0..=9.0).contains(&last),
+            "filter tracks the ramp to ~7, got {last}"
+        );
+    }
+
+    #[test]
+    fn kalman_smooth_rejects_nonpositive_noise() {
+        let conn = open_bench().unwrap();
+        assert!(
+            conn.query_row(
+                "SELECT value FROM ix_kalman_smooth('[1,2,3]', 0.0, 1.0)",
+                [],
+                |r| r.get::<_, f64>(0)
+            )
+            .is_err(),
+            "process_noise=0 must be a SQL error"
+        );
+    }
+
+    #[test]
+    fn dct_constant_concentrates_at_dc() {
+        let conn = open_bench().unwrap();
+        // A constant signal has all its energy in the DC (k=0) coefficient.
+        let dc_bin: i64 = conn
+            .query_row(
+                "SELECT k FROM ix_dct('[1,1,1,1,1,1,1,1]') ORDER BY abs(coefficient) DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dc_bin, 0, "constant signal → energy at the k=0 DC coefficient");
     }
 
     #[test]
