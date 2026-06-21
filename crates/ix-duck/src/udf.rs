@@ -85,7 +85,7 @@ fn invoke_pairwise(
 
 /// Per-row NULL mask of a `LIST` column. A list vector's validity mask is on the
 /// vector itself, so a `FlatVector` view of the same column pointer reads it.
-fn null_mask(input: &DataChunkHandle, col: usize, n: usize) -> Vec<bool> {
+pub(crate) fn null_mask(input: &DataChunkHandle, col: usize, n: usize) -> Vec<bool> {
     let v = input.flat_vector(col);
     (0..n).map(|i| v.row_is_null(i as u64)).collect()
 }

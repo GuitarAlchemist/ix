@@ -194,6 +194,19 @@ pub fn js_divergence(p: &[f64], q: &[f64]) -> Result<f64, MathError> {
 
 // ── two-sample tests ───────────────────────────────────────────────────────────
 
+/// Reject non-finite (NaN / ±∞) values up front. The two-sample tests sort and
+/// merge with `partial_cmp` fallbacks that misbehave on NaN — in particular the KS
+/// merge can pick `v = NaN` and, since `NaN != NaN`, never advance, **hanging** the
+/// caller. A regression gate fed NaN telemetry must error, not spin.
+fn reject_non_finite(a: &[f64], b: &[f64]) -> Result<(), MathError> {
+    if a.iter().chain(b).any(|v| !v.is_finite()) {
+        return Err(MathError::InvalidParameter(
+            "samples must be finite (no NaN/∞); filter missing values first".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Two-sample Kolmogorov–Smirnov test. Statistic `D = supₓ |F_a(x) − F_b(x)|`;
 /// p-value from the asymptotic Kolmogorov distribution with the Stephens
 /// small-sample correction (SciPy's `method='asymp'`).
@@ -201,6 +214,7 @@ pub fn ks_two_sample(a: &[f64], b: &[f64]) -> Result<TestResult, MathError> {
     if a.is_empty() || b.is_empty() {
         return Err(MathError::EmptyInput);
     }
+    reject_non_finite(a, b)?;
     let mut sa = a.to_vec();
     let mut sb = b.to_vec();
     sa.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
@@ -240,6 +254,7 @@ pub fn mann_whitney_u(a: &[f64], b: &[f64]) -> Result<TestResult, MathError> {
     if a.is_empty() || b.is_empty() {
         return Err(MathError::EmptyInput);
     }
+    reject_non_finite(a, b)?;
     let (n1, n2) = (a.len() as f64, b.len() as f64);
     // Average ranks over the pooled sample, recording tie-group sizes.
     let mut pooled: Vec<(f64, bool)> = a.iter().map(|&v| (v, true)).collect();
@@ -293,6 +308,7 @@ pub fn mann_whitney_u(a: &[f64], b: &[f64]) -> Result<TestResult, MathError> {
 /// `ttest_ind(equal_var=False)`. Statistic `t`, two-sided p-value from the
 /// Student-t distribution with Welch–Satterthwaite degrees of freedom.
 pub fn welch_t_test(a: &[f64], b: &[f64]) -> Result<TestResult, MathError> {
+    reject_non_finite(a, b)?;
     if a.len() < 2 || b.len() < 2 {
         return Err(MathError::InvalidParameter(
             "Welch's t-test needs at least 2 observations per sample".into(),
@@ -342,23 +358,33 @@ fn normal_sf(z: f64) -> f64 {
     0.5 * (1.0 - erf(z / std::f64::consts::SQRT_2))
 }
 
-/// Survival function of the Kolmogorov distribution:
-/// `Q(t) = 2 Σ_{k≥1} (−1)^{k−1} e^{−2k²t²}`.
+/// Survival function of the Kolmogorov distribution
+/// `Q(t) = 2 Σ_{k≥1} (−1)^{k−1} e^{−2k²t²}`, via the Numerical Recipes `probks`
+/// convergence logic. Crucially: for **small** `t` the alternating series converges
+/// only conditionally and term-by-term truncation is numerically wrong (it would
+/// report a tiny KS statistic as significant); when the terms don't shrink we fall
+/// through to `Q ≈ 1`, which is the correct small-`t` limit.
 fn kolmogorov_sf(t: f64) -> f64 {
     if t <= 0.0 {
         return 1.0;
     }
+    const EPS1: f64 = 1e-3;
+    const EPS2: f64 = 1e-8;
+    let a2 = -2.0 * t * t;
+    let mut fac = 2.0; // the leading 2× is folded into the alternating factor
     let mut sum = 0.0;
-    let mut sign = 1.0;
+    let mut termbf = 0.0;
     for k in 1..=100 {
-        let term = sign * (-2.0 * (k * k) as f64 * t * t).exp();
+        let term = fac * (a2 * (k * k) as f64).exp();
         sum += term;
-        if term.abs() < 1e-12 {
-            break;
+        // Converged: the term is negligible vs the previous one or the running sum.
+        if term.abs() <= EPS1 * termbf || term.abs() <= EPS2 * sum {
+            return sum.clamp(0.0, 1.0);
         }
-        sign = -sign;
+        fac = -fac;
+        termbf = term.abs();
     }
-    (2.0 * sum).clamp(0.0, 1.0)
+    1.0 // did not converge (small t) → survival ≈ 1
 }
 
 /// Natural log of the gamma function (Lanczos approximation, g = 7).
@@ -522,6 +548,26 @@ mod tests {
         let diff = ks_two_sample(&[0., 1., 2.], &[10., 11., 12.]).unwrap();
         assert!((diff.statistic - 1.0).abs() < TOL);
         assert!(diff.p_value < 0.2, "clearly different → small p, got {}", diff.p_value);
+    }
+
+    #[test]
+    fn two_sample_tests_reject_non_finite() {
+        // A NaN must error promptly — never hang the KS merge (Codex P1).
+        assert!(ks_two_sample(&[1., f64::NAN, 3.], &[1., 2., 3.]).is_err());
+        assert!(mann_whitney_u(&[1., 2.], &[f64::INFINITY, 4.]).is_err());
+        assert!(welch_t_test(&[1., 2., 3.], &[1., 2., f64::NAN]).is_err());
+    }
+
+    #[test]
+    fn ks_small_statistic_is_not_significant() {
+        // Large samples differing by a single rank → tiny D, huge n: the p-value must
+        // stay ≈ 1, not be reported significant (Codex P2 — small-t Kolmogorov).
+        let a: Vec<f64> = (0..400).map(|i| i as f64).collect();
+        let mut b = a.clone();
+        *b.last_mut().unwrap() += 0.5; // shift one point a hair
+        let r = ks_two_sample(&a, &b).unwrap();
+        assert!(r.statistic < 0.01, "D should be tiny, got {}", r.statistic);
+        assert!(r.p_value > 0.9, "tiny D over n=400 → p≈1, got {}", r.p_value);
     }
 
     #[test]

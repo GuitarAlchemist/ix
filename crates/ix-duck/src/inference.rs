@@ -32,7 +32,7 @@ use ix_math::inference::{
     quantile, shannon_entropy, skewness, welch_t_test, TestResult,
 };
 
-use crate::udf::read_list_col;
+use crate::udf::{null_mask, read_list_col};
 
 type Res = Result<(), Box<dyn std::error::Error>>;
 
@@ -43,7 +43,8 @@ fn double() -> LogicalTypeHandle {
     LogicalTypeHandle::from(LogicalTypeId::Double)
 }
 
-/// Shared driver for `LIST<DOUBLE> -> DOUBLE` scalars.
+/// Shared driver for `LIST<DOUBLE> -> DOUBLE` scalars. A NULL list argument yields
+/// SQL NULL (matching `ix_cosine` et al.), never an `EmptyInput` error.
 fn invoke_unary(
     input: &mut DataChunkHandle,
     output: &mut dyn WritableVector,
@@ -51,16 +52,29 @@ fn invoke_unary(
     f: impl Fn(&[f64]) -> Result<f64, MathError>,
 ) -> Res {
     let n = input.len();
+    let a_null = null_mask(input, 0, n);
     let a = read_list_col(input, 0, n);
     let mut out = output.flat_vector();
-    let slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
-    for i in 0..n {
-        slice[i] = f(&a[i]).map_err(|e| format!("{name}: {e}"))?;
+    {
+        let slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
+        for i in 0..n {
+            if a_null[i] {
+                slice[i] = 0.0; // placeholder; flagged NULL below
+                continue;
+            }
+            slice[i] = f(&a[i]).map_err(|e| format!("{name}: {e}"))?;
+        }
+    }
+    for (i, &an) in a_null.iter().enumerate() {
+        if an {
+            out.set_null(i);
+        }
     }
     Ok(())
 }
 
-/// Shared driver for `(LIST<DOUBLE>, LIST<DOUBLE>) -> DOUBLE` scalars.
+/// Shared driver for `(LIST<DOUBLE>, LIST<DOUBLE>) -> DOUBLE` scalars. A NULL on
+/// either side yields SQL NULL, never an error.
 fn invoke_binary(
     input: &mut DataChunkHandle,
     output: &mut dyn WritableVector,
@@ -68,12 +82,25 @@ fn invoke_binary(
     f: impl Fn(&[f64], &[f64]) -> Result<f64, MathError>,
 ) -> Res {
     let n = input.len();
+    let a_null = null_mask(input, 0, n);
+    let b_null = null_mask(input, 1, n);
     let a = read_list_col(input, 0, n);
     let b = read_list_col(input, 1, n);
     let mut out = output.flat_vector();
-    let slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
-    for i in 0..n {
-        slice[i] = f(&a[i], &b[i]).map_err(|e| format!("{name}: {e}"))?;
+    {
+        let slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
+        for i in 0..n {
+            if a_null[i] || b_null[i] {
+                slice[i] = 0.0;
+                continue;
+            }
+            slice[i] = f(&a[i], &b[i]).map_err(|e| format!("{name}: {e}"))?;
+        }
+    }
+    for (i, (&an, &bn)) in a_null.iter().zip(&b_null).enumerate() {
+        if an || bn {
+            out.set_null(i);
+        }
     }
     Ok(())
 }
@@ -122,15 +149,28 @@ impl VScalar for IxQuantile {
     // @ai:invariant ix_quantile(x,q) wraps ix_math::inference::quantile; q=0.5 is the median, q outside [0,1] -> SQL error [T:test conf:0.85 src:ix_duck::inference::tests::quantile_scalar]
     unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
+        let a_null = null_mask(input, 0, n);
+        let q_null = null_mask(input, 1, n);
         let a = read_list_col(input, 0, n);
         let qs: Vec<f64> = {
             let v = input.flat_vector(1);
             v.as_slice_with_len::<f64>(n)[..n].to_vec()
         };
         let mut out = output.flat_vector();
-        let slice = out.as_mut_slice_with_len::<f64>(n);
+        {
+            let slice = out.as_mut_slice_with_len::<f64>(n);
+            for i in 0..n {
+                if a_null[i] || q_null[i] {
+                    slice[i] = 0.0;
+                    continue;
+                }
+                slice[i] = quantile(&a[i], qs[i]).map_err(|e| format!("ix_quantile: {e}"))?;
+            }
+        }
         for i in 0..n {
-            slice[i] = quantile(&a[i], qs[i]).map_err(|e| format!("ix_quantile: {e}"))?;
+            if a_null[i] || q_null[i] {
+                out.set_null(i);
+            }
         }
         Ok(())
     }
@@ -289,6 +329,22 @@ mod tests {
                 .is_err(),
             "zero-variance skewness must be a SQL error"
         );
+    }
+
+    #[test]
+    fn inference_scalars_pass_null_through() {
+        let conn = open_bench().unwrap();
+        // A NULL list arg yields SQL NULL, not an EmptyInput error (Codex P2).
+        for sql in [
+            "SELECT ix_mad(NULL::DOUBLE[])",
+            "SELECT ix_skewness(NULL::DOUBLE[])",
+            "SELECT ix_entropy(NULL::DOUBLE[])",
+            "SELECT ix_quantile(NULL::DOUBLE[], 0.5)",
+            "SELECT ix_kl(NULL::DOUBLE[], [0.5,0.5]::DOUBLE[])",
+        ] {
+            let v: Option<f64> = conn.query_row(sql, [], |r| r.get(0)).unwrap();
+            assert_eq!(v, None, "{sql} → SQL NULL");
+        }
     }
 
     #[test]
