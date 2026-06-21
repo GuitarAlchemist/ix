@@ -236,6 +236,64 @@ mod tests {
     }
 
     #[test]
+    fn ix_manhattan_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        let d: f64 = conn
+            .query_row(
+                "SELECT ix_manhattan([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((d - 7.0).abs() < 1e-12, "|3|+|4| → 7.0, got {d}");
+
+        // Dimension mismatch surfaces as a SQL error, not a panic.
+        let err = conn.query_row(
+            "SELECT ix_manhattan([1.0,0.0]::DOUBLE[], [1.0]::DOUBLE[])",
+            [],
+            |r| r.get::<_, f64>(0),
+        );
+        assert!(err.is_err(), "dimension mismatch should be a SQL error");
+    }
+
+    #[test]
+    fn ix_chebyshev_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        let d: f64 = conn
+            .query_row(
+                "SELECT ix_chebyshev([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((d - 4.0).abs() < 1e-12, "max(|3|,|4|) → 4.0, got {d}");
+    }
+
+    #[test]
+    fn ix_cosine_distance_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        // identical → 0.0
+        let same: f64 = conn
+            .query_row(
+                "SELECT ix_cosine_distance([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(same.abs() < 1e-12, "identical → 0.0, got {same}");
+
+        // orthogonal → 1.0
+        let orth: f64 = conn
+            .query_row(
+                "SELECT ix_cosine_distance([1.0,0.0]::DOUBLE[], [0.0,1.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((orth - 1.0).abs() < 1e-12, "orthogonal → 1.0, got {orth}");
+    }
+
+    #[test]
     fn ix_cosine_passes_null_through() {
         let conn = open_bench().unwrap();
         // A NULL list argument yields SQL NULL, not a spurious number.

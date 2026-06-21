@@ -1,9 +1,11 @@
 //! IX algorithms exposed as DuckDB scalar UDFs (via the `VScalar` trait).
 //!
-//! `ix_cosine(a, b)` and `ix_euclidean(a, b)` take two `DOUBLE[]` (LIST<DOUBLE>)
+//! The pairwise distance UDFs (`ix_cosine`, `ix_euclidean`, `ix_manhattan`,
+//! `ix_chebyshev`, `ix_cosine_distance`) each take two `DOUBLE[]` (LIST<DOUBLE>)
 //! and return a `DOUBLE`, wrapping the real `ix_math::distance` functions (no
 //! reimplementation). `ix_euclidean` is the primitive for the kNN-distance / OOD
-//! SQL recipe (`ORDER BY ix_euclidean(q, r) LIMIT k`).
+//! SQL recipe (`ORDER BY ix_euclidean(q, r) LIMIT k`); `ix_cosine_distance`
+//! (= 1 − cosine_similarity) is the metric-space companion for the same recipe.
 //!
 //! Set-relative operations (`ix_pca_project`, `ix_silhouette`) are table functions
 //! in the sibling `tablefn` module; [`register_all`] registers both surfaces.
@@ -12,7 +14,7 @@ use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vscalar::{ScalarFunctionSignature, VScalar};
 use duckdb::vtab::arrow::WritableVector;
 use duckdb::Connection;
-use ix_math::distance::{cosine_similarity, euclidean};
+use ix_math::distance::{chebyshev, cosine_distance, cosine_similarity, euclidean, manhattan};
 use ix_math::error::MathError;
 use ndarray::Array1;
 
@@ -137,11 +139,85 @@ impl VScalar for IxEuclidean {
     }
 }
 
-/// Register every IX UDF on `conn` — scalar (`ix_cosine`, `ix_euclidean`) and
-/// table (`ix_pca_project`, `ix_silhouette`) functions.
+/// `ix_manhattan(a DOUBLE[], b DOUBLE[]) -> DOUBLE` — L1 (city-block) distance.
+struct IxManhattan;
+
+impl VScalar for IxManhattan {
+    type State = ();
+
+    // @ai:invariant ix_manhattan returns ix_math manhattan L1 distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_manhattan_matches_ix_math]
+    unsafe fn invoke(
+        _: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        invoke_pairwise(input, output, "ix_manhattan", manhattan)
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![list_double(), list_double()],
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        )]
+    }
+}
+
+/// `ix_chebyshev(a DOUBLE[], b DOUBLE[]) -> DOUBLE` — L∞ (max-coordinate) distance.
+struct IxChebyshev;
+
+impl VScalar for IxChebyshev {
+    type State = ();
+
+    // @ai:invariant ix_chebyshev returns ix_math chebyshev L∞ distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_chebyshev_matches_ix_math]
+    unsafe fn invoke(
+        _: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        invoke_pairwise(input, output, "ix_chebyshev", chebyshev)
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![list_double(), list_double()],
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        )]
+    }
+}
+
+/// `ix_cosine_distance(a DOUBLE[], b DOUBLE[]) -> DOUBLE` — `1 − cosine_similarity`,
+/// in `[0, 2]`. The metric-space companion to `ix_cosine` for kNN-distance / OOD.
+struct IxCosineDistance;
+
+impl VScalar for IxCosineDistance {
+    type State = ();
+
+    // @ai:invariant ix_cosine_distance returns ix_math cosine_distance (1 − cosine_similarity) of its two DOUBLE[] args; identical vectors -> 0.0, orthogonal -> 1.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_cosine_distance_matches_ix_math]
+    unsafe fn invoke(
+        _: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        invoke_pairwise(input, output, "ix_cosine_distance", cosine_distance)
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![list_double(), list_double()],
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        )]
+    }
+}
+
+/// Register every IX UDF on `conn` — scalar (`ix_cosine`, `ix_euclidean`,
+/// `ix_manhattan`, `ix_chebyshev`, `ix_cosine_distance`) and table
+/// (`ix_pca_project`, `ix_silhouette`) functions.
 pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     conn.register_scalar_function::<IxCosine>("ix_cosine")?;
     conn.register_scalar_function::<IxEuclidean>("ix_euclidean")?;
+    conn.register_scalar_function::<IxManhattan>("ix_manhattan")?;
+    conn.register_scalar_function::<IxChebyshev>("ix_chebyshev")?;
+    conn.register_scalar_function::<IxCosineDistance>("ix_cosine_distance")?;
     crate::tablefn::register(conn)?;
     crate::bracelet::register(conn)?;
     crate::serial::register(conn)?;
