@@ -20,7 +20,7 @@ use std::path::Path;
 
 use duckdb::Connection;
 
-use crate::source::{self, Col, Files};
+use crate::source::{self, ArtifactLens, Col};
 
 /// Errors from the OOD lens — the shared artifact-source error
 /// ([`crate::source::SourceError`]); aliased so the lens's public API keeps its name.
@@ -47,16 +47,19 @@ fn is_jsonl(name: &str) -> bool {
     name.ends_with(".jsonl")
 }
 
+/// The OOD lens is a flat artifact lens: a dir of `*.jsonl` query-embedding logs →
+/// the `query_embeddings` table via [`EMBEDDING_SPEC`].
+const LENS: ArtifactLens = ArtifactLens {
+    table: "query_embeddings",
+    matches: is_jsonl,
+    spec: EMBEDDING_SPEC,
+};
+
 /// Build `query_embeddings` (one row per routed query). Returns the row count;
 /// 0 when the directory is absent/empty.
 // @ai:invariant build_query_embeddings creates query_embeddings with one row per JSONL line, embedding as DOUBLE[] [T:test conf:0.9 src:ix_duck::ood::tests::rows_one_per_query]
 pub fn build_query_embeddings(conn: &Connection, dir: &Path) -> Result<usize, OodError> {
-    source::materialize(
-        conn,
-        "query_embeddings",
-        Files { dir, matches: is_jsonl },
-        EMBEDDING_SPEC,
-    )
+    LENS.materialize(conn, dir)
 }
 
 /// Mean top-`k` cosine to nearest neighbours, per **distinct** query embedding

@@ -188,6 +188,34 @@ pub fn materialize(
     materialize_files(conn, table, &files, spec)
 }
 
+/// A flat artifact lens: the *whole* shape of "read a dir of matching files → project a
+/// fixed set of columns → a named table" captured as one value, so a lens declares it
+/// once as a `const` and the read path is a single `.materialize(conn, dir)` call.
+///
+/// This makes the implicit lens shape — directory + file predicate + column spec →
+/// table — explicit and reusable. The flat lenses (`loops`, `ood`) and routing's
+/// top-line `routing_overall` are exactly this. Lenses whose projection isn't flat
+/// keep a bespoke `SELECT` (routing's `perIntent` map-explode, chatbot's nested
+/// `golden-traces` + grounding/signature shapes) and reuse [`select_files`] /
+/// [`sql_list`] / [`READ_FLAGS`] directly instead.
+#[derive(Clone, Copy)]
+pub struct ArtifactLens {
+    /// The DuckDB table this lens materializes into.
+    pub table: &'static str,
+    /// Filename predicate selecting the artifact files inside the lens directory.
+    pub matches: fn(&str) -> bool,
+    /// The flat column projection (owns the absence-as-NULL-safe read invariant).
+    pub spec: &'static [Col],
+}
+
+impl ArtifactLens {
+    /// Materialize the lens's table from `dir`. Absent/empty dir → an empty table with
+    /// the declared schema (graceful degrade). Returns the row count.
+    pub fn materialize(&self, conn: &Connection, dir: &Path) -> Result<usize, SourceError> {
+        materialize(conn, self.table, Files { dir, matches: self.matches }, self.spec)
+    }
+}
+
 #[cfg(all(test, feature = "duck"))]
 mod tests {
     use super::*;
