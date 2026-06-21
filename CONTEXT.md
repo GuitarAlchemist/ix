@@ -27,7 +27,16 @@ contracts (see `docs/contracts/`), not runtime coupling.
   Demerzel constitution (`governance/demerzel`). The **Galactic Protocol** is the
   cross-repo contract layer; **Prime Radiant** is the 3D governance-graph viz.
 - **Hexavalent logic** — truth values are **T / P / U / D / F / C** (not just
-  true/false/unknown/contradictory). Used in `@ai:` annotations and belief state.
+  true/false/unknown/contradictory; `D` is **Doubtful** — evidence *leans false*,
+  the symmetric mirror of `P` Probable — never "Disputed"). Used in `@ai:`
+  annotations and belief state. The **canonical deep type** is
+  `ix_types::Hexavalent`: it owns the *one* truth-table algebra
+  (`and`/`or`/`not`/`implies`/`xor`/`equiv`, with `or` De Morgan-derived from
+  `and` so the two can't drift) plus `polarity`/`conflicts`/`weighted`. The two
+  wire-contract enums — `ix_ai_annotations::TruthValue` (the `T/P/U/D/F/C`
+  annotation-schema form) and `ix_governance::TruthValue` (the governance/MCP
+  `"True"`-named form) — are **adapters** that delegate their algebra to it; they
+  exist only because their serialized wire formats genuinely differ.
 - **`@ai:` annotation** — an inline claim marker (`@ai:invariant`/`assumption`/…)
   with a truth_value + certainty, where **`certainty := strength of live binding`**
   (test-bound → `T:test`; human-only → cap at `P:assumed`). Drift-gated in CI.

@@ -21,7 +21,7 @@ mod truth_value_serde {
             TruthValue::True => "T",
             TruthValue::Probable => "P",
             TruthValue::Unknown => "U",
-            TruthValue::Disputed => "D",
+            TruthValue::Doubtful => "D",
             TruthValue::False => "F",
             TruthValue::Contradictory => "C",
         };
@@ -37,7 +37,7 @@ mod truth_value_serde {
             "T" => Ok(TruthValue::True),
             "P" => Ok(TruthValue::Probable),
             "U" => Ok(TruthValue::Unknown),
-            "D" => Ok(TruthValue::Disputed),
+            "D" => Ok(TruthValue::Doubtful),
             "F" => Ok(TruthValue::False),
             "C" => Ok(TruthValue::Contradictory),
             other => Err(serde::de::Error::custom(format!(

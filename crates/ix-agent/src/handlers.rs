@@ -4051,7 +4051,7 @@ pub fn governance_belief(params: Value) -> Result<Value, String> {
             "T" => Ok(ix_governance::TruthValue::True),
             "P" => Ok(ix_governance::TruthValue::Probable),
             "U" => Ok(ix_governance::TruthValue::Unknown),
-            "D" => Ok(ix_governance::TruthValue::Disputed),
+            "D" => Ok(ix_governance::TruthValue::Doubtful),
             "F" => Ok(ix_governance::TruthValue::False),
             "C" => Ok(ix_governance::TruthValue::Contradictory),
             _ => Err(format!(

@@ -1,86 +1,43 @@
-//! The hexavalent **truth-value algebra** (CONTEXT.md: T / P / U / D / F / C).
+//! The hexavalent **truth-value algebra** (CONTEXT.md: T / P / U / D / F / C),
+//! as seen by `ix-ai-annotations`.
 //!
-//! This is the one place that encodes what the six truth values *mean* in
-//! relation to each other: their evidential [`Polarity`], when two of them
-//! [`conflicts`], and how a set of them resolves under confidence-weighted
-//! voting ([`weighted`]). It lives beside [`TruthValue`](crate::types::TruthValue)
-//! so the semantics travel with the type.
-//!
-//! Both consumers consult this module rather than re-encoding the order:
-//! `ix-ai-annotations`'s reconciler (weighted voting) and `ix-assumption-graph`'s
-//! contradiction derivation (polarity conflict). Each keeps its own *grouping*
-//! and *output*; only the algebra is shared.
+//! The algebra itself — what the six values *mean* in relation to each other —
+//! now lives on the canonical [`ix_types::Hexavalent`]. This module is a thin
+//! **adapter**: it keeps the historical `ix_ai_annotations::truth::{polarity,
+//! conflicts, weighted}` surface (consumed by the reconciler's weighted voting
+//! and `ix-assumption-graph`'s contradiction derivation) and forwards each call
+//! to the one canonical implementation, translating the wire-contract
+//! [`TruthValue`](crate::types::TruthValue) at the boundary. There is no second
+//! truth table here to drift from the first.
 
 use crate::types::TruthValue;
 
-/// A truth value's evidential direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Polarity {
-    /// Leans true: `T` (True) or `P` (Probable).
-    Positive,
-    /// Leans false: `D` (Doubtful) or `F` (False).
-    Negative,
-    /// No evidential direction: `U` (Unknown).
-    Neutral,
-    /// Already contradictory: `C` — flagged at the source, not re-derived pairwise.
-    Contradictory,
-}
+/// A truth value's evidential direction. Re-exported from the canonical
+/// [`ix_types::Polarity`] so there is a single definition.
+pub use ix_types::Polarity;
 
-/// Map a hexavalent truth value to its evidential polarity.
-// @ai:invariant every TruthValue maps to exactly one Polarity (total match) [T:formal-proof conf:0.95 src:exhaustive match, compiler-checked]
+/// Map a hexavalent truth value to its evidential [`Polarity`] (delegates to
+/// [`ix_types::Hexavalent::polarity`]).
 pub fn polarity(tv: TruthValue) -> Polarity {
-    match tv {
-        TruthValue::T | TruthValue::P => Polarity::Positive,
-        TruthValue::D | TruthValue::F => Polarity::Negative,
-        TruthValue::U => Polarity::Neutral,
-        TruthValue::C => Polarity::Contradictory,
-    }
+    ix_types::Hexavalent::from(tv).polarity()
 }
 
-/// Two truth values conflict iff one leans true and the other leans false.
-// @ai:invariant conflicts() is symmetric: conflicts(a,b) == conflicts(b,a) [T:test conf:0.95 src:ix-ai-annotations::truth::tests::conflicts_is_symmetric]
+/// Two truth values conflict iff one leans true and the other leans false
+/// (delegates to [`ix_types::Hexavalent::conflicts`]).
+// @ai:invariant conflicts() is symmetric: conflicts(a,b) == conflicts(b,a) [T:test conf:0.95 src:ix_types::hexavalent_tests::polarity_and_conflicts]
 pub fn conflicts(a: TruthValue, b: TruthValue) -> bool {
-    matches!(
-        (polarity(a), polarity(b)),
-        (Polarity::Positive, Polarity::Negative) | (Polarity::Negative, Polarity::Positive)
-    )
+    ix_types::Hexavalent::from(a).conflicts(ix_types::Hexavalent::from(b))
 }
 
-/// Confidence-weighted hexavalent voting over `(truth_value, confidence)` pairs.
-/// Returns `(argmax_truth_value, avg_confidence)`: the value with the greatest
-/// summed confidence, and the mean confidence across all votes.
-///
-/// Ties break by an **escalation-favoring** order `C > U > F > D > T > P`, so an
-/// unresolved or contradictory reading wins over a confident-but-tied positive.
-// @ai:invariant weighted() tie-break order is C > U > F > D > T > P (escalation-favoring) [T:test conf:0.9 src:ix-ai-annotations::truth::tests::weighted_tie_breaks_toward_escalation]
+/// Confidence-weighted hexavalent voting over `(truth_value, confidence)` pairs
+/// (delegates to [`ix_types::weighted`], translating the wire enum at the
+/// boundary). Returns `(argmax_truth_value, avg_confidence)`; ties break by the
+/// escalation-favoring order `C > U > F > D > T > P`.
 pub fn weighted(votes: &[(TruthValue, f64)]) -> (TruthValue, f64) {
-    use std::collections::HashMap;
-    // No evidence → Unknown. (Unreachable from the reconciler, which only votes
-    // over groups of ≥2; guarded so the escalation tie-break can't pick C here.)
-    if votes.is_empty() {
-        return (TruthValue::U, 0.0);
-    }
-    let mut buckets: HashMap<TruthValue, f64> = HashMap::new();
-    let mut total = 0.0;
-    for (tv, conf) in votes {
-        *buckets.entry(*tv).or_insert(0.0) += *conf;
-        total += *conf;
-    }
-    let avg = total / votes.len() as f64;
-    let order = [
-        TruthValue::C,
-        TruthValue::U,
-        TruthValue::F,
-        TruthValue::D,
-        TruthValue::T,
-        TruthValue::P,
-    ];
-    let max_weight = buckets.values().copied().fold(0.0_f64, f64::max);
-    let winner = order
-        .into_iter()
-        .find(|tv| buckets.get(tv).copied().unwrap_or(0.0) == max_weight)
-        .unwrap_or(TruthValue::U);
-    (winner, avg)
+    let hex: Vec<(ix_types::Hexavalent, f64)> =
+        votes.iter().map(|&(tv, c)| (tv.into(), c)).collect();
+    let (winner, avg) = ix_types::weighted(&hex);
+    (winner.into(), avg)
 }
 
 #[cfg(test)]
