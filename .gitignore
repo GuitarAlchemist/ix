@@ -107,3 +107,7 @@ state/quality/analytics/*.duckdb.wal
 # (ix-duck, duck feature). Regenerable artifact; only the contract doc/schema is tracked.
 state/quality/analytics/chatbot-trace-regressions.json
 state/quality/analytics/chatbot-trace-regressions.json.tmp
+
+# Session handoff scratch — briefs + raw multi-provider CLI dumps (_codex-*.out,
+# _gemini-*.out). Ephemeral, can be hundreds of KB; not tracked.
+state/handoffs/
