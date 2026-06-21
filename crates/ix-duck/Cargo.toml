@@ -92,5 +92,9 @@ required-features = ["duck"]
 name = "ix_grothendieck_lens"
 required-features = ["duck"]
 
+[[example]]
+name = "ix_mesh_correlate"
+required-features = ["duck"]
+
 [dev-dependencies]
 tempfile = { workspace = true }

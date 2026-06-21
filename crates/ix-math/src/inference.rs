@@ -121,6 +121,36 @@ pub fn zscore(x: &[f64]) -> Result<Vec<f64>, MathError> {
     Ok(x.iter().map(|v| (v - mu) / sigma).collect())
 }
 
+/// Pearson product-moment correlation `r ∈ [−1, 1]` between two equal-length,
+/// non-constant samples. `r = Σ(aᵢ−ā)(bᵢ−b̄) / √(Σ(aᵢ−ā)² · Σ(bᵢ−b̄)²)`. The
+/// pairwise primitive for a correlation mesh over many streams.
+pub fn pearson(a: &[f64], b: &[f64]) -> Result<f64, MathError> {
+    if a.len() != b.len() {
+        return Err(MathError::DimensionMismatch {
+            expected: a.len(),
+            got: b.len(),
+        });
+    }
+    if a.is_empty() {
+        return Err(MathError::EmptyInput);
+    }
+    let (ma, mb) = (mean(a), mean(b));
+    let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+    for (&ai, &bi) in a.iter().zip(b) {
+        let (da, db) = (ai - ma, bi - mb);
+        cov += da * db;
+        va += da * da;
+        vb += db * db;
+    }
+    let denom = (va * vb).sqrt();
+    if denom <= 0.0 {
+        return Err(MathError::InvalidParameter(
+            "Pearson correlation is undefined when a sample is constant".into(),
+        ));
+    }
+    Ok((cov / denom).clamp(-1.0, 1.0))
+}
+
 // ── divergences over probability vectors ───────────────────────────────────────
 
 /// Normalize a non-negative vector to sum 1. Errors on negatives or all-zero.
@@ -521,6 +551,18 @@ mod tests {
         assert!((z[0] + 2.0_f64.sqrt()).abs() < TOL);
         assert!(z[2].abs() < TOL);
         assert!((z.iter().sum::<f64>()).abs() < TOL, "z-scores sum to 0");
+    }
+
+    #[test]
+    fn pearson_correlation() {
+        // Perfect positive / negative / independent.
+        assert!((pearson(&[1., 2., 3., 4.], &[2., 4., 6., 8.]).unwrap() - 1.0).abs() < TOL);
+        assert!((pearson(&[1., 2., 3., 4.], &[8., 6., 4., 2.]).unwrap() + 1.0).abs() < TOL);
+        // numpy.corrcoef([1,2,3,4,5],[2,1,4,3,6])[0,1] = 10/√148 ≈ 0.821995
+        let expected = 10.0 / 148.0_f64.sqrt();
+        assert!((pearson(&[1., 2., 3., 4., 5.], &[2., 1., 4., 3., 6.]).unwrap() - expected).abs() < TOL);
+        assert!(pearson(&[1., 1., 1.], &[1., 2., 3.]).is_err(), "constant sample is undefined");
+        assert!(pearson(&[1., 2.], &[1.]).is_err(), "length mismatch errors");
     }
 
     #[test]
