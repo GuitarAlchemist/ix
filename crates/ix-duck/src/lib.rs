@@ -69,6 +69,12 @@ mod sketch;
 #[cfg(feature = "udf")]
 mod code;
 
+/// Supervised fit/predict UDFs over `ix-supervised` — `ix_linreg_fit`/`_predict`
+/// and `ix_logistic_fit`/`_predict`, models round-tripped as JSON `VARCHAR` blobs.
+/// Registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod supervised;
+
 /// Artifact source — the deep module every lens reads through: safe materialization of
 /// a GA-emitted JSON artifact set into a bench table (file selection + read_json_auto
 /// flags + the json_extract projection + empty-fallback). See `CONTEXT.md` → "Artifact source".
