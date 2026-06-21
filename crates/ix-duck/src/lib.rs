@@ -69,6 +69,12 @@ mod sketch;
 #[cfg(feature = "udf")]
 mod code;
 
+/// Supervised fit/predict UDFs over `ix-supervised` — `ix_linreg_fit`/`_predict`
+/// and `ix_logistic_fit`/`_predict`, models round-tripped as JSON `VARCHAR` blobs.
+/// Registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod supervised;
+
 /// Artifact source — the deep module every lens reads through: safe materialization of
 /// a GA-emitted JSON artifact set into a bench table (file selection + read_json_auto
 /// flags + the json_extract projection + empty-fallback). See `CONTEXT.md` → "Artifact source".
@@ -233,6 +239,96 @@ mod tests {
             )
             .unwrap();
         assert!(z.abs() < 1e-12, "equal vectors → 0.0, got {z}");
+    }
+
+    #[test]
+    fn ix_manhattan_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        let d: f64 = conn
+            .query_row(
+                "SELECT ix_manhattan([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((d - 7.0).abs() < 1e-12, "|3|+|4| → 7.0, got {d}");
+
+        // Dimension mismatch surfaces as a SQL error, not a panic.
+        let err = conn.query_row(
+            "SELECT ix_manhattan([1.0,0.0]::DOUBLE[], [1.0]::DOUBLE[])",
+            [],
+            |r| r.get::<_, f64>(0),
+        );
+        assert!(err.is_err(), "dimension mismatch should be a SQL error");
+    }
+
+    #[test]
+    fn ix_chebyshev_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        let d: f64 = conn
+            .query_row(
+                "SELECT ix_chebyshev([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((d - 4.0).abs() < 1e-12, "max(|3|,|4|) → 4.0, got {d}");
+    }
+
+    #[test]
+    fn ix_cosine_distance_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        // identical → 0.0
+        let same: f64 = conn
+            .query_row(
+                "SELECT ix_cosine_distance([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(same.abs() < 1e-12, "identical → 0.0, got {same}");
+
+        // orthogonal → 1.0
+        let orth: f64 = conn
+            .query_row(
+                "SELECT ix_cosine_distance([1.0,0.0]::DOUBLE[], [0.0,1.0]::DOUBLE[])",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((orth - 1.0).abs() < 1e-12, "orthogonal → 1.0, got {orth}");
+    }
+
+    #[test]
+    fn ix_minkowski_matches_ix_math() {
+        let conn = open_bench().unwrap();
+        // p=1 → manhattan (|3|+|4| = 7)
+        let m1: f64 = conn
+            .query_row(
+                "SELECT ix_minkowski([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[], 1.0)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((m1 - 7.0).abs() < 1e-12, "p=1 → manhattan 7.0, got {m1}");
+
+        // p=2 → euclidean (3-4-5 → 5)
+        let m2: f64 = conn
+            .query_row(
+                "SELECT ix_minkowski([0.0,0.0]::DOUBLE[], [3.0,4.0]::DOUBLE[], 2.0)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((m2 - 5.0).abs() < 1e-12, "p=2 → euclidean 5.0, got {m2}");
+
+        // Dimension mismatch surfaces as a SQL error, not a panic.
+        let err = conn.query_row(
+            "SELECT ix_minkowski([1.0,0.0]::DOUBLE[], [1.0]::DOUBLE[], 2.0)",
+            [],
+            |r| r.get::<_, f64>(0),
+        );
+        assert!(err.is_err(), "dimension mismatch should be a SQL error");
     }
 
     #[test]
