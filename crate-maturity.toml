@@ -13,14 +13,13 @@
 # that breaks the public API. See README.md "Stability contract" for the flow.
 
 [crates]
-# --- Stable tier (12 crates, guarded by CI) -----------------------------
+# --- Stable tier (11 crates, guarded by CI) -----------------------------
 ix-math          = "stable"
 ix-optimize      = "stable"
 ix-supervised    = "stable"
 ix-ensemble      = "stable"
 ix-unsupervised  = "stable"
 ix-search        = "stable"
-ix-graph         = "stable"
 ix-signal        = "stable"
 ix-cache         = "stable"
 ix-probabilistic = "stable"
@@ -28,6 +27,7 @@ ix-game          = "stable"
 ix-rl            = "stable"
 
 # --- Beta tier ----------------------------------------------------------
+ix-graph       = "beta"   # demoted from stable 2026-06-21 (new components + centrality surface)
 ix-nn          = "beta"
 ix-pipeline    = "beta"
 ix-agent       = "beta"
