@@ -3,24 +3,13 @@
 //! missing (not fatal); a malformed manifest or an out-of-range item is
 //! skipped-and-counted, never fatal (cf. `ix-streeling`).
 
-use crate::model::{axes_valid, score01, stars, Item, Kind, Manifest, RepoScore, ValueRecord, SCHEMA_VERSION};
-use std::path::PathBuf;
+use crate::model::{
+    axes_valid, score01, stars, Item, Kind, Manifest, RepoScore, ValueRecord, SCHEMA_VERSION,
+};
 
-/// A repo to scan for a value manifest.
-pub struct SourceRoot {
-    pub repo: String,
-    pub root: PathBuf,
-}
-
-impl SourceRoot {
-    pub fn new(repo: impl Into<String>, root: impl Into<PathBuf>) -> Self {
-        Self { repo: repo.into(), root: root.into() }
-    }
-
-    fn manifest_path(&self) -> PathBuf {
-        self.root.join("state/value/manifest.json")
-    }
-}
+// A repo to scan for a value manifest — the registrar's shared root type,
+// re-exported so callers keep using `ix_value::ingest::SourceRoot`.
+pub use ix_registrar::SourceRoot;
 
 /// Outcome of an ingest pass.
 #[derive(Debug, Default)]
@@ -61,7 +50,14 @@ fn rollup_record(repo: &str, rs: Option<&RepoScore>, items: &[ValueRecord]) -> O
         // Precondition: axes_valid passed, so `as u8` is lossless (1..=5).
         Some(rs) if axes_valid(rs.reach, rs.impact, rs.confidence) => {
             let (r, i, c) = (rs.reach as u8, rs.impact as u8, rs.confidence as u8);
-            (r, i, c, stars(r, i, c), score01(r, i, c), rs.rationale.clone())
+            (
+                r,
+                i,
+                c,
+                stars(r, i, c),
+                score01(r, i, c),
+                rs.rationale.clone(),
+            )
         }
         _ => {
             if items.is_empty() {
@@ -77,7 +73,10 @@ fn rollup_record(repo: &str, rs: Option<&RepoScore>, items: &[ValueRecord]) -> O
                 round_axis(|r| r.confidence as f64),
                 (score * 5.0).round().clamp(1.0, 5.0) as u8,
                 score,
-                Some(format!("rolled up from {} item(s) (mean score)", items.len())),
+                Some(format!(
+                    "rolled up from {} item(s) (mean score)",
+                    items.len()
+                )),
             )
         }
     };
@@ -101,7 +100,7 @@ fn rollup_record(repo: &str, rs: Option<&RepoScore>, items: &[ValueRecord]) -> O
 pub fn ingest(roots: &[SourceRoot]) -> IngestReport {
     let mut report = IngestReport::default();
     for sr in roots {
-        let path = sr.manifest_path();
+        let path = sr.root.join("state/value/manifest.json");
         let Ok(raw) = std::fs::read_to_string(&path) else {
             report.roots_missing.push(sr.repo.clone());
             continue;
@@ -109,7 +108,10 @@ pub fn ingest(roots: &[SourceRoot]) -> IngestReport {
         let manifest: Manifest = match serde_json::from_str(&raw) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("ix-value: skipping {} — malformed manifest: {e}", path.display());
+                eprintln!(
+                    "ix-value: skipping {} — malformed manifest: {e}",
+                    path.display()
+                );
                 report.roots_missing.push(sr.repo.clone());
                 continue;
             }
@@ -139,7 +141,8 @@ pub fn ingest(roots: &[SourceRoot]) -> IngestReport {
             }
             repo_items.push(item_record(&manifest.repo, item));
         }
-        if let Some(roll) = rollup_record(&manifest.repo, manifest.repo_score.as_ref(), &repo_items) {
+        if let Some(roll) = rollup_record(&manifest.repo, manifest.repo_score.as_ref(), &repo_items)
+        {
             report.records.push(roll);
         }
         report.records.append(&mut repo_items);
