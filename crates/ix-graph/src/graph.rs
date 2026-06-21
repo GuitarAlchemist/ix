@@ -215,6 +215,192 @@ impl Graph {
 
         rank
     }
+
+    /// Weakly-connected components: returns each node's component id, indexed by
+    /// node (`result[node]`). Edge direction is ignored, so two nodes share an id
+    /// iff one is reachable from the other along edges in either direction. Ids are
+    /// assigned `0, 1, …` in increasing node order (the smallest node in a component
+    /// fixes its id), so the count of distinct ids is the number of components.
+    pub fn connected_components(&self) -> Vec<usize> {
+        let n = self.node_count;
+        // Undirected adjacency view built from the directed adjacency list.
+        let mut undirected: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (&u, edges) in &self.adjacency {
+            if u >= n {
+                continue;
+            }
+            for &(v, _) in edges {
+                if v >= n {
+                    continue;
+                }
+                undirected[u].push(v);
+                undirected[v].push(u);
+            }
+        }
+        let mut comp = vec![usize::MAX; n];
+        let mut next_id = 0;
+        for start in 0..n {
+            if comp[start] != usize::MAX {
+                continue;
+            }
+            comp[start] = next_id;
+            let mut queue = VecDeque::from([start]);
+            while let Some(node) = queue.pop_front() {
+                for &nb in &undirected[node] {
+                    if comp[nb] == usize::MAX {
+                        comp[nb] = next_id;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+            next_id += 1;
+        }
+        comp
+    }
+
+    /// Undirected adjacency view (deduplicated neighbour sets), built from the
+    /// directed adjacency list. Shared by the centrality measures, which treat the
+    /// graph as undirected.
+    fn undirected_adjacency(&self) -> Vec<Vec<usize>> {
+        let n = self.node_count;
+        let mut sets: Vec<HashSet<usize>> = vec![HashSet::new(); n];
+        for (&u, edges) in &self.adjacency {
+            if u >= n {
+                continue;
+            }
+            for &(v, _) in edges {
+                if v >= n || v == u {
+                    continue;
+                }
+                sets[u].insert(v);
+                sets[v].insert(u);
+            }
+        }
+        sets.into_iter().map(|s| s.into_iter().collect()).collect()
+    }
+
+    /// Degree centrality (undirected): each node's neighbour count normalized by the
+    /// maximum possible (`n − 1`). Indexed by node.
+    pub fn degree_centrality(&self) -> Vec<f64> {
+        let n = self.node_count;
+        let adj = self.undirected_adjacency();
+        let denom = (n as f64 - 1.0).max(1.0);
+        adj.iter().map(|nb| nb.len() as f64 / denom).collect()
+    }
+
+    /// Closeness centrality (undirected, unweighted, Wasserman–Faust form for
+    /// possibly-disconnected graphs): for node `v` with `r` other reachable nodes at
+    /// total hop-distance `d`, `C(v) = r² / ((n − 1) · d)`. Indexed by node.
+    pub fn closeness_centrality(&self) -> Vec<f64> {
+        let n = self.node_count;
+        let adj = self.undirected_adjacency();
+        let denom = (n as f64 - 1.0).max(1.0);
+        let mut out = vec![0.0; n];
+        for s in 0..n {
+            // BFS hop distances from s over the undirected view.
+            let mut dist = vec![-1i64; n];
+            dist[s] = 0;
+            let mut q = VecDeque::from([s]);
+            while let Some(v) = q.pop_front() {
+                for &w in &adj[v] {
+                    if dist[w] < 0 {
+                        dist[w] = dist[v] + 1;
+                        q.push_back(w);
+                    }
+                }
+            }
+            let (mut r, mut sumd) = (0.0, 0.0);
+            for (i, &d) in dist.iter().enumerate() {
+                if i != s && d > 0 {
+                    r += 1.0;
+                    sumd += d as f64;
+                }
+            }
+            out[s] = if sumd > 0.0 { (r * r) / (denom * sumd) } else { 0.0 };
+        }
+        out
+    }
+
+    /// Eigenvector centrality (undirected) by power iteration on the **shifted**
+    /// adjacency `A + I`, L2-normalized. Indexed by node.
+    ///
+    /// The `+ I` shift (each node sees itself) is load-bearing: a raw `A·x` iteration
+    /// oscillates on *bipartite* graphs (a star, any path) because `A` has eigenvalues
+    /// `±λ`, so even iteration counts return a near-uniform vector that mislabels hubs
+    /// and leaves as equal. `A + I` has strictly positive eigenvalues `λ + 1`, so power
+    /// iteration converges to the Perron vector — which ranks nodes identically to `A`
+    /// on connected graphs while remaining stable on bipartite ones.
+    pub fn eigenvector_centrality(&self, iterations: usize) -> Vec<f64> {
+        let n = self.node_count;
+        if n == 0 {
+            return Vec::new();
+        }
+        let adj = self.undirected_adjacency();
+        let mut x = vec![1.0 / (n as f64).sqrt(); n];
+        for _ in 0..iterations {
+            // next = (A + I)·x — start each node at its own value, then add neighbours.
+            let mut next = x.clone();
+            for (v, nb) in adj.iter().enumerate() {
+                for &w in nb {
+                    next[v] += x[w];
+                }
+            }
+            let norm: f64 = next.iter().map(|v| v * v).sum::<f64>().sqrt();
+            if norm <= f64::EPSILON {
+                break; // degenerate → leave the previous estimate
+            }
+            for v in &mut next {
+                *v /= norm;
+            }
+            x = next;
+        }
+        x
+    }
+
+    /// Betweenness centrality (undirected, unweighted) via Brandes' algorithm: the
+    /// fraction of shortest paths through each node, halved to undo the
+    /// each-pair-counted-twice double count. Indexed by node.
+    pub fn betweenness_centrality(&self) -> Vec<f64> {
+        let n = self.node_count;
+        let adj = self.undirected_adjacency();
+        let mut bc = vec![0.0; n];
+        for s in 0..n {
+            let mut stack: Vec<usize> = Vec::new();
+            let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n];
+            let mut sigma = vec![0.0; n];
+            sigma[s] = 1.0;
+            let mut dist = vec![-1i64; n];
+            dist[s] = 0;
+            let mut q = VecDeque::from([s]);
+            while let Some(v) = q.pop_front() {
+                stack.push(v);
+                for &w in &adj[v] {
+                    if dist[w] < 0 {
+                        dist[w] = dist[v] + 1;
+                        q.push_back(w);
+                    }
+                    if dist[w] == dist[v] + 1 {
+                        sigma[w] += sigma[v];
+                        preds[w].push(v);
+                    }
+                }
+            }
+            let mut delta = vec![0.0; n];
+            while let Some(w) = stack.pop() {
+                for &v in &preds[w] {
+                    delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w]);
+                }
+                if w != s {
+                    bc[w] += delta[w];
+                }
+            }
+        }
+        // Undirected: each shortest path is counted from both endpoints.
+        for v in &mut bc {
+            *v /= 2.0;
+        }
+        bc
+    }
 }
 
 impl Default for Graph {
@@ -262,6 +448,76 @@ mod tests {
         assert_eq!(dist[&0], 0);
         assert_eq!(dist[&1], 1);
         assert_eq!(dist[&3], 2);
+    }
+
+    #[test]
+    fn test_connected_components() {
+        // Two components: {0,1,2} (a directed chain — direction ignored) and {3,4}.
+        // Node 5 is isolated → its own component. Three components total.
+        let mut g = Graph::with_nodes(6);
+        g.add_edge(0, 1, 1.0);
+        g.add_edge(1, 2, 1.0);
+        g.add_edge(3, 4, 1.0);
+
+        let comp = g.connected_components();
+        assert_eq!(comp.len(), 6, "one id per node");
+        // Same component within {0,1,2} and within {3,4}.
+        assert_eq!(comp[0], comp[1]);
+        assert_eq!(comp[1], comp[2]);
+        assert_eq!(comp[3], comp[4]);
+        // Different components across the three groups.
+        assert_ne!(comp[0], comp[3]);
+        assert_ne!(comp[0], comp[5]);
+        assert_ne!(comp[3], comp[5]);
+
+        let distinct: std::collections::HashSet<_> = comp.iter().collect();
+        assert_eq!(distinct.len(), 3, "exactly three weakly-connected components");
+    }
+
+    #[test]
+    fn test_centrality_star_center_dominates() {
+        // Star: center 0 joined to leaves 1,2,3 (undirected). The hub must score
+        // strictly highest on every centrality measure; leaves tie.
+        let mut g = Graph::with_nodes(4);
+        g.add_undirected_edge(0, 1, 1.0);
+        g.add_undirected_edge(0, 2, 1.0);
+        g.add_undirected_edge(0, 3, 1.0);
+
+        let deg = g.degree_centrality();
+        assert!((deg[0] - 1.0).abs() < 1e-12, "hub degree centrality = 3/3 = 1");
+        assert!(deg[0] > deg[1] && (deg[1] - deg[2]).abs() < 1e-12);
+
+        let clo = g.closeness_centrality();
+        assert!(clo[0] > clo[1], "hub is closest to everything");
+
+        let eig = g.eigenvector_centrality(100);
+        // A+I shift converges to the Perron vector: hub/leaf ratio is √3 ≈ 1.73 on a
+        // 3-leaf star. Assert a real gap (the pre-fix bipartite oscillation returned
+        // hub ≈ leaf, passing a bare `>` only by float luck).
+        assert!(
+            eig[0] > 1.5 * eig[1],
+            "hub eigenvector centrality dominates leaves: {} vs {}",
+            eig[0],
+            eig[1]
+        );
+        assert!((eig[1] - eig[2]).abs() < 1e-9 && (eig[2] - eig[3]).abs() < 1e-9, "leaves tie");
+
+        let bc = g.betweenness_centrality();
+        // Every shortest path between two leaves passes through the hub → bc[0] > 0,
+        // leaves lie on no one else's path → 0.
+        assert!(bc[0] > 0.0, "hub has positive betweenness, got {}", bc[0]);
+        assert!(bc[1].abs() < 1e-12, "a leaf has zero betweenness, got {}", bc[1]);
+    }
+
+    #[test]
+    fn test_betweenness_path_middle_dominates() {
+        // Path 0-1-2: only the middle node 1 lies on the 0↔2 shortest path.
+        let mut g = Graph::with_nodes(3);
+        g.add_undirected_edge(0, 1, 1.0);
+        g.add_undirected_edge(1, 2, 1.0);
+        let bc = g.betweenness_centrality();
+        assert!((bc[1] - 1.0).abs() < 1e-12, "middle node betweenness = 1, got {}", bc[1]);
+        assert!(bc[0].abs() < 1e-12 && bc[2].abs() < 1e-12, "endpoints have zero betweenness");
     }
 
     #[test]
