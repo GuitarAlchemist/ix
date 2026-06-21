@@ -75,6 +75,12 @@ mod code;
 #[cfg(feature = "udf")]
 mod supervised;
 
+/// Statistical-inference UDFs over `ix-math::inference` — distribution-shape
+/// scalars (ix_skewness/ix_kurtosis/ix_mad/ix_quantile/ix_entropy/ix_kl/ix_js)
+/// and the two-sample test table fn ix_two_sample. Registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod inference;
+
 /// Artifact source — the deep module every lens reads through: safe materialization of
 /// a GA-emitted JSON artifact set into a bench table (file selection + read_json_auto
 /// flags + the json_extract projection + empty-fallback). See `CONTEXT.md` → "Artifact source".
