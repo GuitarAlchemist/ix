@@ -44,6 +44,25 @@ use serde::Serialize;
 use crate::chatbot;
 use crate::source;
 
+mod evidence;
+mod git;
+mod hash;
+mod ledger;
+mod lens_runner;
+mod provenance;
+mod verdict_fusion;
+
+use evidence::build_evidence;
+use lens_runner::LensResults;
+use verdict_fusion::{fuse, Decided};
+
+// Re-export the ledger's public surface so external callers (examples, ix-agent) keep
+// reaching it at the stable `ix_duck::maintain::*` path after the decomposition.
+pub use ledger::{
+    append_to_ledger, build_snapshot, maintain_trend, write_snapshot_atomic, SnapshotSignal,
+    TrendSummary, VerdictLedger, VerdictSnapshot,
+};
+
 /// Errors from the maintain gate.
 #[derive(Debug)]
 pub enum MaintainError {
@@ -139,84 +158,6 @@ pub struct MaintainInputs<'a> {
     pub run_at: &'a str,
 }
 
-/// Outcome of externally verifying an iteration's `commit_sha` against real git state.
-/// Distinguishes "git could not answer" from "git says forged" so the gate never reports
-/// a missing-git environment as a forgery alarm, and ignores other agents' untracked WIP
-/// so a shared tree doesn't spuriously fail a valid iteration.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum CommitCheck {
-    /// git could not be run at all (not installed / repo error) — we cannot decide.
-    Unverifiable,
-    /// The sha is malformed, or git ran and it is not a real commit object (forged/wrong).
-    NotACommit,
-    /// The commit is real, but TRACKED files have uncommitted edits — the metric may
-    /// reflect work not captured by the sha. (Untracked files are deliberately ignored:
-    /// a multi-agent tree is full of other agents' untracked WIP, which is not ours.)
-    DirtyTracked,
-    /// The commit is real and no tracked files are modified.
-    Verified,
-}
-
-/// Verify `sha` against real git state in `repo_dir` — the anti-forgery check for the
-/// correlation key. Hex-validates first (so a `sha` like `--help` can't reach git as a
-/// flag), then `git cat-file -e <sha>^{commit}` (exists). When the commit is real,
-/// `git status --porcelain --untracked-files=no` decides clean-vs-dirty over *tracked*
-/// files only. A git invocation that fails to *run* (vs answers "no") is `Unverifiable`,
-/// not `NotACommit` — so a missing-git environment is never misreported as forgery.
-fn verify_commit(repo_dir: &Path, sha: &str) -> CommitCheck {
-    use std::process::Command;
-    let hex = !sha.is_empty() && sha.len() <= 64 && sha.bytes().all(|b| b.is_ascii_hexdigit());
-    if !hex {
-        return CommitCheck::NotACommit;
-    }
-    // Does the commit object exist? `Err` = git couldn't run (≠ "forged").
-    match Command::new("git")
-        .arg("-C")
-        .arg(repo_dir)
-        .args(["cat-file", "-e", &format!("{sha}^{{commit}}")])
-        .output()
-    {
-        Err(_) => return CommitCheck::Unverifiable,
-        Ok(o) if !o.status.success() => return CommitCheck::NotACommit,
-        Ok(_) => {}
-    }
-    // Commit is real. Are TRACKED files modified? `--untracked-files=no` excludes other
-    // agents' untracked WIP, so a shared tree doesn't spuriously fail a valid iteration.
-    match Command::new("git")
-        .arg("-C")
-        .arg(repo_dir)
-        .args(["status", "--porcelain", "--untracked-files=no"])
-        .output()
-    {
-        Ok(o) if o.status.success() && o.stdout.is_empty() => CommitCheck::Verified,
-        Ok(o) if o.status.success() => CommitCheck::DirtyTracked,
-        _ => CommitCheck::Unverifiable,
-    }
-}
-
-/// Why (if at all) an iteration's correlation key can't be trusted — `None` means
-/// trusted: the commit is real, clean of tracked WIP, and a recorded loop row matches the
-/// exact `(loop_id, commit_sha)`. Verifying the commit alone is insufficient: a clean but
-/// unrelated commit for a loop with earlier improving rows would otherwise be scored as
-/// that loop (Codex P1). The key is minted by the judged loop, so it earns the same
-/// external-derivation discipline as the metric.
-fn provenance_failure(
-    iteration: Option<&IterationScope>,
-    trust: Option<CommitCheck>,
-    key_matched: Option<bool>,
-) -> Option<&'static str> {
-    iteration?; // no scope → nothing to verify
-    match trust {
-        Some(CommitCheck::Unverifiable) => Some("could not verify commit_sha (git unavailable)"),
-        Some(CommitCheck::NotACommit) => Some("commit_sha is not a real commit (untrusted/forged)"),
-        Some(CommitCheck::DirtyTracked) => {
-            Some("tracked files modified — uncommitted WIP not captured by commit_sha")
-        }
-        _ if key_matched != Some(true) => Some("no recorded loop row for this loop_id/commit_sha"),
-        _ => None,
-    }
-}
-
 /// Provenance of one piece of evidence — what the verdict was computed from, hashed
 /// so a later audit can detect a swapped input (input provenance > verdict provenance).
 #[derive(Debug, Clone, Serialize)]
@@ -262,277 +203,46 @@ pub struct MaintainVerdict {
     pub reason: String,
 }
 
-/// FNV-1a 64-bit hash of a file's bytes — stable across platforms; `None` if absent.
-fn fnv1a64_file(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    Some(format!("fnv1a64:{h:016x}"))
-}
-
-/// Yield delta from an externally-derived `hits.jsonl`: mean `coverage_max` over
-/// `compiled` rows in the later half minus the earlier half, split at the median
-/// `ts_ms`. `None` if the file is absent/empty or a half has no compiled rows
-/// (split by ts, NOT the cumulative mean — the blended mean hides pre/post).
-fn metric_delta(conn: &Connection, hits_path: &Path) -> Result<Option<f64>, MaintainError> {
-    if !hits_path.exists() {
-        return Ok(None);
-    }
-    let p = hits_path
-        .to_string_lossy()
-        .replace('\\', "/")
-        .replace('\'', "''");
-    let (before, after): (Option<f64>, Option<f64>) = conn.query_row(
-        &format!(
-            "WITH rows AS (SELECT ts_ms, outcome, coverage_max FROM read_json_auto('{p}')),
-                  m AS (SELECT median(ts_ms) AS mid FROM rows)
-             SELECT avg(coverage_max) FILTER (WHERE outcome='compiled' AND ts_ms <  (SELECT mid FROM m)),
-                    avg(coverage_max) FILTER (WHERE outcome='compiled' AND ts_ms >= (SELECT mid FROM m))
-             FROM rows"
-        ),
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    Ok(match (before, after) {
-        (Some(b), Some(a)) => Some(a - b),
-        _ => None,
-    })
-}
-
 /// Evaluate one iteration: fuse metric ∧ guardrail into a hexavalent verdict.
+///
+/// A thin orchestrator: [`lens_runner::run`] does the I/O (every lens + provenance, over
+/// `conn`), [`verdict_fusion::fuse`] is the pure hexavalent state machine, and
+/// [`evidence::build_evidence`] hashes the inputs. This function only marshals between them.
 // @ai:invariant evaluate returns C (reject) when metric improved while the guardrail regressed — the reward-hack signature is never averaged away [T:test conf:0.95 src:ix_duck::maintain::tests::reward_hack_is_contradiction]
 pub fn evaluate(
     conn: &Connection,
     cfg: &MaintainConfig,
     inputs: &MaintainInputs,
 ) -> Result<MaintainVerdict, MaintainError> {
-    // --- metric lens (externally derived) ---
-    let delta = metric_delta(conn, inputs.hits_path)?;
-    let metric_up = delta.map(|d| d >= cfg.min_metric_delta);
-
-    // --- guardrail lens ---
-    let report = chatbot::check_regressions(conn, inputs.corpus_dir)?;
-    // pass → held; regression → broke; degraded/skipped → no signal (caps at U).
-    let guardrail_held = match report.status.as_str() {
-        "pass" => Some(true),
-        "regression" => Some(false),
-        _ => None,
-    };
-
-    let mut signals = vec![
-        Signal {
-            lens: "metric".into(),
-            ok: metric_up,
-            detail: match delta {
-                Some(d) => format!("yield delta {d:+.4}"),
-                None => "no externally-derived metric evidence".into(),
-            },
-        },
-        Signal {
-            lens: "guardrail".into(),
-            ok: guardrail_held,
-            detail: format!(
-                "chatbot gate: {} ({} regression(s))",
-                report.status,
-                report.regressions.len()
-            ),
-        },
-    ];
-    // --- iteration provenance (Phase 3a): verify the correlation key against git ---
-    let trust = inputs
-        .iteration
-        .as_ref()
-        .map(|s| verify_commit(s.repo_dir, s.commit_sha));
-
-    // Build the loop ledger once — both the key match and the convergence lens use it.
-    let loops_built = match inputs.loops_dir {
-        Some(dir) => {
-            crate::loops::build_loop_iterations(conn, dir)?;
-            true
-        }
-        None => false,
-    };
-
-    // Correlation: a scope must match a REAL recorded row for (loop_id, commit_sha).
-    // Verifying the commit exists in git is NOT enough — a clean but unrelated commit
-    // for a loop with earlier improving rows would otherwise be scored as that loop and
-    // wrongly return T (Codex P1). Parameterised query — `loop_id` is caller-supplied.
-    let key_matched = match (&inputs.iteration, loops_built) {
-        (Some(scope), true) => {
-            let n: i64 = conn.query_row(
-                "SELECT count(*) FROM loop_iterations WHERE loop_id = ? AND commit_sha = ?",
-                duckdb::params![scope.loop_id, scope.commit_sha],
-                |r| r.get(0),
-            )?;
-            Some(n > 0)
-        }
-        (Some(_), false) => Some(false), // scope given but no ledger to match against
-        (None, _) => None,
-    };
-
-    // --- convergence lens (loops) + drift lens (ood) ---
-    // Phase 3a: convergence is scoped to the iteration's `loop_id` when a scope is
-    // given (Phase 1 aggregated the whole ledger). Drift scoping awaits a query→loop
-    // tag in Contract B — until then drift stays corpus-level advisory (documented).
-    //
-    // A supplied-but-empty/dormant lens is *unknown* (None), NOT a positive signal:
-    // reading "no data" as converging / in-distribution would be a green light from
-    // no evidence — the opposite of fail-closed (and, when required, must escalate).
-    let converging = if loops_built {
-        let summaries = crate::loops::loop_summary(conn)?; // excludes seed/test rows
-        match &inputs.iteration {
-            Some(scope) => {
-                if summaries.iter().any(|s| s.loop_id == scope.loop_id) {
-                    // This loop is converging iff it is not in the oscillating set.
-                    let osc = crate::loops::oscillating_loops(conn)?;
-                    Some(!osc.iter().any(|(id, _, _)| id == scope.loop_id))
-                } else {
-                    None // no real rows for this loop yet
-                }
-            }
-            None if summaries.is_empty() => None,
-            None => Some(crate::loops::oscillating_loops(conn)?.is_empty()),
-        }
-    } else {
-        None
-    };
-    let drifting = match inputs.query_embeddings_dir {
-        Some(dir) => {
-            // Need ≥2 queries to score nearest-neighbour density; fewer → unknown.
-            if crate::ood::build_query_embeddings(conn, dir)? < 2 {
-                None
-            } else {
-                Some(!crate::ood::flag_ood(conn, cfg.ood_k, cfg.ood_threshold)?.is_empty())
-            }
-        }
-        None => None,
-    };
-    signals.push(Signal {
-        lens: "convergence".into(),
-        ok: converging,
-        detail: match converging {
-            Some(true) => "loops converging (no oscillation)".into(),
-            Some(false) => "loops OSCILLATING — thrash, not convergence".into(),
-            None if cfg.require_loops => "required but loop ledger dormant".into(),
-            None => "no loop data (advisory)".into(),
-        },
-    });
-    signals.push(Signal {
-        lens: "drift".into(),
-        ok: drifting.map(|d| !d),
-        detail: match drifting {
-            Some(true) => "queries DRIFTING out-of-distribution".into(),
-            Some(false) => "queries in-distribution".into(),
-            None if cfg.require_ood => "required but embedding sink dormant".into(),
-            None => "no query embeddings (advisory)".into(),
-        },
-    });
-    // Provenance is trusted only if the commit is real + clean of tracked WIP AND a
-    // recorded loop row exists for (loop_id, commit_sha) — see `provenance_failure`.
-    let provenance_fail = provenance_failure(inputs.iteration.as_ref(), trust, key_matched);
-    if inputs.iteration.is_some() {
-        signals.push(Signal {
-            lens: "provenance".into(),
-            ok: Some(provenance_fail.is_none()),
-            detail: provenance_fail
-                .unwrap_or("iteration commit verified, no tracked WIP, loop row matched")
-                .to_string(),
-        });
-    }
+    let LensResults {
+        delta,
+        metric_up,
+        report,
+        guardrail_held,
+        converging,
+        drifting,
+        provenance_fail,
+        signals,
+    } = lens_runner::run(conn, cfg, inputs)?;
 
     // --- conjunction → hexavalent status (fail-closed) ---
-    // Untrusted iteration provenance escalates before any lens verdict — a forged,
-    // dirty, or unmatched correlation key means we cannot attribute the evidence to a
-    // real iteration.
-    // A required-but-dormant lens escalates next.
+    // The hexavalent state machine is a PURE function (`verdict_fusion::fuse`): untrusted
+    // provenance escalates before any lens verdict, then a required-but-dormant lens, then
+    // the hard conjunction over (metric_up, guardrail_held) with soft-lens downgrades.
     let dormant_required =
         (cfg.require_loops && converging.is_none()) || (cfg.require_ood && drifting.is_none());
-    let (status, decision, reason) = if let Some(why) = provenance_fail {
-        (
-            "U",
-            "escalate",
-            format!("iteration provenance untrusted: {why}"),
-        )
-    } else if dormant_required {
-        (
-            "U",
-            "escalate",
-            "a required lens is dormant (no signal)".to_string(),
-        )
-    } else {
-        match (metric_up, guardrail_held) {
-            (None, _) => (
-                "U",
-                "escalate",
-                "metric evidence missing — cannot decide".to_string(),
-            ),
-            (_, None) => (
-                "U",
-                "escalate",
-                format!("guardrail inconclusive ({})", report.status),
-            ),
-            (Some(true), Some(false)) => (
-                "C",
-                "reject",
-                "REWARD-HACK: metric improved while a held capability regressed".to_string(),
-            ),
-            (Some(false), Some(false)) => (
-                "F",
-                "reject",
-                "no improvement and guardrail regressed".to_string(),
-            ),
-            (Some(false), Some(true)) => ("F", "reject", "no metric improvement".to_string()),
-            // Hard conjunction holds — the soft lenses can downgrade an accept.
-            (Some(true), Some(true)) => {
-                if converging == Some(false) {
-                    (
-                        "D",
-                        "escalate",
-                        "metric improved but the loop is oscillating (not converging)".to_string(),
-                    )
-                } else if drifting == Some(true) {
-                    (
-                        "P",
-                        "accept",
-                        "metric improved and guardrail held, but queries are drifting \
-                         out-of-distribution"
-                            .to_string(),
-                    )
-                } else {
-                    (
-                        "T",
-                        "accept",
-                        "metric improved and guardrail held".to_string(),
-                    )
-                }
-            }
-        }
-    };
+    let (status, decision, reason) = fuse(&Decided {
+        metric_up,
+        guardrail_held,
+        converging,
+        drifting,
+        provenance_fail,
+        dormant_required,
+        guardrail_report_status: &report.status,
+    });
 
     // --- evidence provenance (hash the inputs, not just the verdict) ---
-    let mut evidence = vec![
-        Evidence {
-            kind: "metric".into(),
-            source: inputs.hits_path.to_string_lossy().into_owned(),
-            hash: fnv1a64_file(inputs.hits_path).unwrap_or_else(|| "absent".into()),
-        },
-        Evidence {
-            kind: "guardrail-baseline".into(),
-            source: inputs.corpus_dir.to_string_lossy().into_owned(),
-            hash: report.baseline_ref.clone(),
-        },
-    ];
-    // The correlation key IS provenance — it ties this verdict to a verified commit.
-    if let Some(scope) = &inputs.iteration {
-        evidence.push(Evidence {
-            kind: format!("iteration-commit:{}", scope.loop_id),
-            source: scope.repo_dir.to_string_lossy().into_owned(),
-            hash: format!("git:{}", scope.commit_sha),
-        });
-    }
+    let evidence = build_evidence(inputs, &report);
 
     Ok(MaintainVerdict {
         schema_version: "maintain-gate.v0.1".into(),
@@ -557,207 +267,6 @@ pub fn exit_code(status: &str) -> i32 {
         "F" | "C" => 1,
         _ => 2, // U | D | anything unexpected → escalate
     }
-}
-
-/// Append the verdict as one JSON line to a tamper-evident, append-only ledger.
-pub fn append_to_ledger(verdict: &MaintainVerdict, path: &Path) -> std::io::Result<()> {
-    use std::io::Write;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let line = serde_json::to_string(verdict).map_err(std::io::Error::other)?;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(f, "{line}")
-}
-
-/// A convergence summary over the verdict ledger — the **read side** of the maintain-gate
-/// "trend table" (the same `state/thinking-machine/maintain-gate.jsonl` the gate appends to,
-/// schema `maintain-gate.contract.md`). `ix-duck` reads it via `read_json_auto`, so a
-/// Demerzel / IXQL convergence loop can ask "are we converging?" in one query rather than
-/// re-deriving it from raw verdicts.
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct TrendSummary {
-    pub total: i64,
-    pub accepts: i64,
-    pub rejects: i64,
-    pub escalates: i64,
-    /// `status == "C"`: metric improved while a held capability regressed (reward-hack).
-    pub reward_hacks: i64,
-    /// `(status, count)` descending — the hexavalent verdict distribution.
-    pub by_status: Vec<(String, i64)>,
-    /// The most recent verdict's status (by `run_at`), if any.
-    pub latest_status: Option<String>,
-}
-
-/// Aggregate the append-only verdict ledger into a [`TrendSummary`] (the convergence-trend
-/// read side of opportunity #3 in `docs/adr/0001-…`). An absent ledger → an empty summary
-/// (degrade, never error) — the convergence loop reads "no data yet".
-// @ai:invariant maintain_trend aggregates the verdict ledger by decision/status and reads an absent ledger as an empty summary rather than erroring [T:test conf:0.9 src:ix_duck::maintain::tests::maintain_trend_aggregates_the_ledger]
-pub fn maintain_trend(
-    conn: &Connection,
-    ledger_path: &Path,
-) -> Result<TrendSummary, MaintainError> {
-    if !ledger_path.exists() {
-        return Ok(TrendSummary::default());
-    }
-    let p = ledger_path
-        .to_string_lossy()
-        .replace('\\', "/")
-        .replace('\'', "''");
-    let src = format!("read_json_auto('{p}', union_by_name=true)");
-    let (total, accepts, rejects, escalates, reward_hacks): (i64, i64, i64, i64, i64) = conn
-        .query_row(
-            &format!(
-                "SELECT count(*),
-                        count(*) FILTER (WHERE decision = 'accept'),
-                        count(*) FILTER (WHERE decision = 'reject'),
-                        count(*) FILTER (WHERE decision = 'escalate'),
-                        count(*) FILTER (WHERE status = 'C')
-                 FROM {src}"
-            ),
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-        )?;
-    let by_status: Vec<(String, i64)> = {
-        let mut stmt = conn.prepare(&format!(
-            "SELECT status, count(*) FROM {src} GROUP BY status ORDER BY count(*) DESC, status"
-        ))?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<duckdb::Result<_>>()?;
-        rows
-    };
-    let latest_status: Option<String> = conn
-        .query_row(
-            &format!("SELECT status FROM {src} ORDER BY run_at DESC LIMIT 1"),
-            [],
-            |r| r.get(0),
-        )
-        .ok();
-    Ok(TrendSummary {
-        total,
-        accepts,
-        rejects,
-        escalates,
-        reward_hacks,
-        by_status,
-        latest_status,
-    })
-}
-
-/// One lens verdict, flattened for the scorecard snapshot — the tri-state `ok` of a
-/// [`Signal`] rendered as a coarse `"ok" | "bad" | "unknown"` string so a dashboard reads
-/// it without re-encoding `Option<bool>`.
-#[derive(Debug, Clone, Serialize)]
-pub struct SnapshotSignal {
-    pub lens: String,
-    pub status: String,
-    pub detail: String,
-}
-
-/// A **current-verdict** snapshot in GA's canonical dashboard-envelope shape
-/// (`ga/docs/contracts/quality-snapshot.schema.json`): the GA-required envelope fields
-/// (`domain`/`emitted_at`/`metric_name`/`metric_value`/`oracle_status`/`summary`) PLUS the
-/// maintain-specific fused verdict (`advisory`/`status`/`decision`/`signals`/`maintain_trend`),
-/// carried as additive pass-through fields the envelope permits. Holds the latest hexavalent
-/// verdict plus a [`maintain_trend`] rollup, so a dashboard reads ONE file instead of
-/// re-deriving the verdict from the append-only ledger. `emitted_at` is the freshness stamp (a
-/// stale snapshot must never read green); `oracle_status` is the coarse traffic-light, `status`
-/// the richer hexavalent verdict.
-///
-/// Phase A writes this to the IX tree (**formats-not-coupling** — no GA-tree write here);
-/// Phase B federates it into `ga/state/quality/maintain-gate`. **Advisory until Phase 3b**.
-#[derive(Debug, Clone, Serialize)]
-pub struct VerdictSnapshot {
-    pub schema_version: String,
-    /// Producer slug — the GA envelope `domain` (lower-kebab). Matches the registry domain + dir.
-    pub domain: String,
-    /// Freshness — RFC3339 (mirrors `run_at`). The GA envelope's `emitted_at`; consumers compare
-    /// it so stale never reads green.
-    pub emitted_at: String,
-    /// Headline metric identifier (GA envelope `metric_name`).
-    pub metric_name: String,
-    /// Headline metric value (GA envelope) — the externally-derived yield delta (`0.0` when no
-    /// metric evidence; the `signals`/`oracle_status` carry the "no evidence" nuance).
-    pub metric_value: f64,
-    /// Traffic-light state: `ok | warn | error`, mapped from the hexavalent verdict (GA envelope).
-    pub oracle_status: String,
-    /// One-line human summary (GA envelope).
-    pub summary: String,
-    /// Non-binding marker — `true` until IX Phase-3b makes the verdict gating (maintain-specific).
-    pub advisory: bool,
-    /// The raw hexavalent verdict (T/P/U/D/F/C) — richer than `oracle_status` (maintain-specific).
-    pub status: String,
-    /// `accept | reject | escalate` (maintain-specific).
-    pub decision: String,
-    /// Per-signal lens verdicts — locked sub-signal keys (metric / guardrail / convergence /
-    /// drift / provenance). The GA-readable cross-signal contract surface.
-    pub signals: Vec<SnapshotSignal>,
-    /// Convergence rollup over the append-only verdict ledger (reuses [`maintain_trend`]).
-    pub maintain_trend: TrendSummary,
-}
-
-/// Map the hexavalent verdict to the scorecard's coarse oracle status: accept→`ok`,
-/// accept-with-flags / escalate→`warn`, reject→`error`.
-fn oracle_status(hex: &str) -> &'static str {
-    match hex {
-        "T" => "ok",
-        "P" | "U" | "D" => "warn",
-        "F" | "C" => "error",
-        _ => "warn",
-    }
-}
-
-/// Build a GA-envelope-shaped [`VerdictSnapshot`] from a fused verdict + a ledger trend rollup.
-/// Pure (no I/O): the caller supplies the trend (via [`maintain_trend`]) and writes the
-/// result with [`write_snapshot_atomic`].
-// @ai:invariant build_snapshot emits GA's canonical dashboard envelope (domain + emitted_at + metric_name + metric_value + oracle_status + summary) plus the maintain verdict (advisory + hexavalent status + per-signal + maintain_trend) [T:test conf:0.9 src:ix_duck::maintain::tests::snapshot_is_scorecard_shaped]
-pub fn build_snapshot(verdict: &MaintainVerdict, trend: &TrendSummary) -> VerdictSnapshot {
-    let signals = verdict
-        .signals
-        .iter()
-        .map(|s| SnapshotSignal {
-            lens: s.lens.clone(),
-            status: match s.ok {
-                Some(true) => "ok",
-                Some(false) => "bad",
-                None => "unknown",
-            }
-            .to_string(),
-            detail: s.detail.clone(),
-        })
-        .collect();
-    VerdictSnapshot {
-        schema_version: "maintain-verdict-snapshot.v0.1".into(),
-        domain: "maintain-gate".into(),
-        emitted_at: verdict.run_at.clone(),
-        metric_name: "maintain_yield_delta".into(),
-        metric_value: verdict.metric_delta.unwrap_or(0.0),
-        oracle_status: oracle_status(&verdict.status).into(),
-        summary: verdict.reason.clone(),
-        advisory: true,
-        status: verdict.status.clone(),
-        decision: verdict.decision.clone(),
-        signals,
-        maintain_trend: trend.clone(),
-    }
-}
-
-/// Write the snapshot **atomically** (temp file in the same dir + rename) so a concurrent
-/// reader never sees a half-written scorecard. `rename` is atomic on the same filesystem and
-/// replaces an existing target on both Unix and Windows.
-pub fn write_snapshot_atomic(snapshot: &VerdictSnapshot, path: &Path) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(snapshot).map_err(std::io::Error::other)?;
-    // Temp lives beside the target so the rename stays on one filesystem (atomic).
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json.as_bytes())?;
-    std::fs::rename(&tmp, path)
 }
 
 #[cfg(all(test, feature = "duck"))]
