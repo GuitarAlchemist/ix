@@ -45,7 +45,7 @@ cargo run -p ix-agent
 | ix-ensemble | Stable | Random forest, gradient boosted trees |
 | ix-unsupervised | Stable | KMeans, DBSCAN, PCA, t-SNE, GMM |
 | ix-search | Stable | A*, MCTS, minimax, BFS/DFS |
-| ix-graph | Stable | Markov chains, HMM/Viterbi, agent routing |
+| ix-graph | Beta | Markov chains, HMM/Viterbi, agent routing, components + centrality. Demoted from Stable 2026-06-21 while the new components/centrality surface settles |
 | ix-signal | Stable | FFT, wavelets, Kalman, spectral analysis |
 | ix-cache | Stable | Embedded in-process cache (TTL, LRU, pub/sub) — promoted 2026-05-02 |
 | ix-probabilistic | Stable | Bloom, HLL, Count-Min, Cuckoo — promoted 2026-05-02 |
@@ -86,7 +86,7 @@ SAME PR that introduces the change:
    yet auto-detect it. Use the demotion path for the CI to go green, then
    restore the tier in a follow-up release PR.)
 
-The current 12 Stable crates (see table above) cover the safe-to-consume
+The current 10 Stable crates (see table above) cover the safe-to-consume
 subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 
 ### Beta Crates

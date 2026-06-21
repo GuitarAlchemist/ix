@@ -6,6 +6,13 @@
 //! - `ix_pagerank(edges, damping DOUBLE, iterations BIGINT)` → `TABLE(node, rank)`.
 //! - `ix_shortest_path(edges, src BIGINT, dst BIGINT)` → `TABLE(step, node)` (the
 //!   Dijkstra path src→dst; empty if unreachable).
+//! - `ix_connected_components(edges)` → `TABLE(node, component)` — weakly-connected
+//!   component id per node (edge direction ignored).
+//! - `ix_centrality(edges, kind)` → `TABLE(node, score)` — undirected centrality,
+//!   `kind` ∈ `degree | closeness | eigenvector | betweenness`.
+//! - `ix_viterbi(initial, transition, emission, observations)` → `TABLE(step, state)` —
+//!   most-likely hidden-state path of an HMM (initial 1-D, transition/emission 2-D
+//!   JSON matrices, observations a 1-D int array).
 //!
 //! Signal (`ix-signal`), input = a JSON number array (the series):
 //! - `ix_rfft(series)` → `TABLE(bin, magnitude)` — real FFT magnitude spectrum.
@@ -19,8 +26,12 @@ use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
 use duckdb::Connection;
 use ix_graph::graph::Graph;
+use ix_graph::hmm::HiddenMarkovModel;
 use ix_signal::correlation::autocorrelation;
 use ix_signal::fft::rfft;
+use ndarray::Array1;
+
+use crate::tablefn::parse_matrix;
 
 // ── shared output plumbing ────────────────────────────────────────────────────
 
@@ -277,10 +288,130 @@ impl VTab for IxAutocorrelation {
     }
 }
 
+// ── ix_connected_components ──────────────────────────────────────────────────────
+
+struct IxConnectedComponents;
+impl VTab for IxConnectedComponents {
+    type InitData = Cursor;
+    type BindData = RowsI64;
+
+    // @ai:invariant ix_connected_components emits (node,component) for the weakly-connected components of the edge-list graph via ix_graph connected_components; two disjoint subgraphs get distinct component ids, an isolated node is its own component [T:test conf:0.8 src:ix_duck::graphsig::tests::connected_components_finds_islands]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (g, n) = parse_graph(&bind.get_parameter(0).to_string())?;
+        let comp = g.connected_components();
+        let rows: Vec<(i64, i64)> = (0..n).map(|i| (i as i64, comp[i] as i64)).collect();
+        two_cols(bind, "node", LogicalTypeId::Bigint, "component", LogicalTypeId::Bigint);
+        Ok(RowsI64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_i64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    }
+}
+
+// ── ix_centrality ────────────────────────────────────────────────────────────────
+
+struct IxCentrality;
+impl VTab for IxCentrality {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_centrality emits (node,score) for the named undirected centrality (degree|closeness|eigenvector|betweenness) via ix_graph; in a star the hub scores strictly highest on every measure; an unknown kind -> SQL error [T:test conf:0.8 src:ix_duck::graphsig::tests::centrality_hub_dominates]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (g, n) = parse_graph(&bind.get_parameter(0).to_string())?;
+        let kind = bind.get_parameter(1).to_string().to_lowercase();
+        let scores = match kind.as_str() {
+            "degree" => g.degree_centrality(),
+            "closeness" => g.closeness_centrality(),
+            "eigenvector" => g.eigenvector_centrality(100),
+            "betweenness" => g.betweenness_centrality(),
+            other => {
+                return Err(format!(
+                    "unknown centrality kind '{other}' (expected degree|closeness|eigenvector|betweenness)"
+                )
+                .into())
+            }
+        };
+        let rows: Vec<(i64, f64)> = (0..n).map(|i| (i as i64, scores[i])).collect();
+        two_cols(bind, "node", LogicalTypeId::Bigint, "score", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
+// ── ix_viterbi ───────────────────────────────────────────────────────────────────
+
+struct IxViterbi;
+impl VTab for IxViterbi {
+    type InitData = Cursor;
+    type BindData = RowsI64;
+
+    // @ai:invariant ix_viterbi emits the most-likely hidden-state path as (step,state) from ix_graph HMM viterbi given the initial/transition/emission/observations JSON; a near-deterministic HMM recovers the generating state sequence; a non-stochastic matrix or out-of-range observation -> SQL error (no panic) [T:test conf:0.8 src:ix_duck::graphsig::tests::viterbi_decodes_biased_hmm]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let initial: Vec<f64> = serde_json::from_str(&bind.get_parameter(0).to_string())
+            .map_err(|e| format!("initial must be a JSON number array: {e}"))?;
+        let transition = parse_matrix(&bind.get_parameter(1).to_string())?;
+        let emission = parse_matrix(&bind.get_parameter(2).to_string())?;
+        let obs: Vec<i64> = serde_json::from_str(&bind.get_parameter(3).to_string())
+            .map_err(|e| format!("observations must be a JSON int array: {e}"))?;
+        if obs.iter().any(|&o| o < 0) {
+            return Err("observation symbols must be non-negative".into());
+        }
+        let hmm = HiddenMarkovModel::new(Array1::from_vec(initial), transition, emission)
+            .map_err(|e| format!("ix_viterbi: {e}"))?;
+        let m = hmm.n_observations();
+        if obs.iter().any(|&o| o as usize >= m) {
+            return Err(format!("ix_viterbi: observation symbol out of range 0..{m}").into());
+        }
+        let observations: Vec<usize> = obs.iter().map(|&o| o as usize).collect();
+        let (path, _log_prob) = hmm.viterbi(&observations);
+        let rows: Vec<(i64, i64)> =
+            path.iter().enumerate().map(|(i, &s)| (i as i64, s as i64)).collect();
+        two_cols(bind, "step", LogicalTypeId::Bigint, "state", LogicalTypeId::Bigint);
+        Ok(RowsI64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_i64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
 /// Register the graph + signal table functions.
 pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxPagerank>("ix_pagerank")?;
     conn.register_table_function::<IxShortestPath>("ix_shortest_path")?;
+    conn.register_table_function::<IxConnectedComponents>("ix_connected_components")?;
+    conn.register_table_function::<IxCentrality>("ix_centrality")?;
+    conn.register_table_function::<IxViterbi>("ix_viterbi")?;
     conn.register_table_function::<IxRfft>("ix_rfft")?;
     conn.register_table_function::<IxAutocorrelation>("ix_autocorrelation")?;
     Ok(())
@@ -320,6 +451,109 @@ mod tests {
                 .get::<_, i64>(0))
                 .is_err(),
             "negative edge weight must be a SQL error"
+        );
+    }
+
+    #[test]
+    fn connected_components_finds_islands() {
+        let conn = open_bench().unwrap();
+        // Two disjoint edges: {0–1} and {2–3} → two components (4 nodes).
+        let edges = "[[0,1],[2,3]]";
+        let n_comp: i64 = conn
+            .query_row(
+                &format!("SELECT count(DISTINCT component) FROM ix_connected_components('{edges}')"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_comp, 2, "two disjoint edges → two components");
+
+        // Nodes 0 and 1 share a component; 0 and 2 do not.
+        let same: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT (SELECT component FROM ix_connected_components('{edges}') WHERE node=0) \
+                          = (SELECT component FROM ix_connected_components('{edges}') WHERE node=1)"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(same, "0 and 1 are connected");
+        let cross: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT (SELECT component FROM ix_connected_components('{edges}') WHERE node=0) \
+                          = (SELECT component FROM ix_connected_components('{edges}') WHERE node=2)"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!cross, "0 and 2 are in different components");
+    }
+
+    #[test]
+    fn centrality_hub_dominates() {
+        let conn = open_bench().unwrap();
+        // Star: hub 0 joined to leaves 1,2,3. The hub is the top-scoring node for
+        // every centrality measure.
+        let star = "[[0,1],[0,2],[0,3]]";
+        for kind in ["degree", "closeness", "eigenvector", "betweenness"] {
+            let top: i64 = conn
+                .query_row(
+                    &format!("SELECT node FROM ix_centrality('{star}', '{kind}') ORDER BY score DESC, node LIMIT 1"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(top, 0, "hub is the top {kind}-centrality node");
+        }
+        // An unknown kind is a SQL error, not a panic.
+        assert!(
+            conn.query_row(
+                &format!("SELECT node FROM ix_centrality('{star}', 'pagerank')"),
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .is_err(),
+            "unknown centrality kind must be a SQL error"
+        );
+    }
+
+    #[test]
+    fn viterbi_decodes_biased_hmm() {
+        let conn = open_bench().unwrap();
+        // 2-state HMM whose emissions strongly couple state i to symbol i, so the
+        // most-likely path tracks the observed symbols: obs [0,0,1,1] → states [0,0,1,1].
+        let init = "[0.5,0.5]";
+        let trans = "[[0.7,0.3],[0.3,0.7]]";
+        let emis = "[[0.9,0.1],[0.1,0.9]]";
+        let obs = "[0,0,1,1]";
+        let path: Vec<i64> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT state FROM ix_viterbi('{init}','{trans}','{emis}','{obs}') ORDER BY step"
+                ))
+                .unwrap();
+            stmt.query_map([], |r| r.get::<_, i64>(0)).unwrap().map(|x| x.unwrap()).collect()
+        };
+        assert_eq!(path, vec![0, 0, 1, 1], "biased HMM decodes states matching the symbols");
+    }
+
+    #[test]
+    fn viterbi_rejects_non_stochastic() {
+        let conn = open_bench().unwrap();
+        // Emission row 0 = [0.5,0.1] sums to 0.6 ≠ 1 → HMM construction must fail as a
+        // SQL error, not a panic.
+        assert!(
+            conn.query_row(
+                "SELECT state FROM ix_viterbi('[0.5,0.5]','[[0.7,0.3],[0.3,0.7]]','[[0.5,0.1],[0.1,0.9]]','[0]')",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .is_err(),
+            "non-stochastic emission matrix must be a SQL error"
         );
     }
 
