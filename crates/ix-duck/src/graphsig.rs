@@ -8,6 +8,9 @@
 //!   Dijkstra path src→dst; empty if unreachable).
 //! - `ix_connected_components(edges)` → `TABLE(node, component)` — weakly-connected
 //!   component id per node (edge direction ignored).
+//! - `ix_viterbi(initial, transition, emission, observations)` → `TABLE(step, state)` —
+//!   most-likely hidden-state path of an HMM (initial 1-D, transition/emission 2-D
+//!   JSON matrices, observations a 1-D int array).
 //!
 //! Signal (`ix-signal`), input = a JSON number array (the series):
 //! - `ix_rfft(series)` → `TABLE(bin, magnitude)` — real FFT magnitude spectrum.
@@ -21,8 +24,12 @@ use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
 use duckdb::Connection;
 use ix_graph::graph::Graph;
+use ix_graph::hmm::HiddenMarkovModel;
 use ix_signal::correlation::autocorrelation;
 use ix_signal::fft::rfft;
+use ndarray::Array1;
+
+use crate::tablefn::parse_matrix;
 
 // ── shared output plumbing ────────────────────────────────────────────────────
 
@@ -306,11 +313,60 @@ impl VTab for IxConnectedComponents {
     }
 }
 
+// ── ix_viterbi ───────────────────────────────────────────────────────────────────
+
+struct IxViterbi;
+impl VTab for IxViterbi {
+    type InitData = Cursor;
+    type BindData = RowsI64;
+
+    // @ai:invariant ix_viterbi emits the most-likely hidden-state path as (step,state) from ix_graph HMM viterbi given the initial/transition/emission/observations JSON; a near-deterministic HMM recovers the generating state sequence; a non-stochastic matrix or out-of-range observation -> SQL error (no panic) [T:test conf:0.8 src:ix_duck::graphsig::tests::viterbi_decodes_biased_hmm]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let initial: Vec<f64> = serde_json::from_str(&bind.get_parameter(0).to_string())
+            .map_err(|e| format!("initial must be a JSON number array: {e}"))?;
+        let transition = parse_matrix(&bind.get_parameter(1).to_string())?;
+        let emission = parse_matrix(&bind.get_parameter(2).to_string())?;
+        let obs: Vec<i64> = serde_json::from_str(&bind.get_parameter(3).to_string())
+            .map_err(|e| format!("observations must be a JSON int array: {e}"))?;
+        if obs.iter().any(|&o| o < 0) {
+            return Err("observation symbols must be non-negative".into());
+        }
+        let hmm = HiddenMarkovModel::new(Array1::from_vec(initial), transition, emission)
+            .map_err(|e| format!("ix_viterbi: {e}"))?;
+        let m = hmm.n_observations();
+        if obs.iter().any(|&o| o as usize >= m) {
+            return Err(format!("ix_viterbi: observation symbol out of range 0..{m}").into());
+        }
+        let observations: Vec<usize> = obs.iter().map(|&o| o as usize).collect();
+        let (path, _log_prob) = hmm.viterbi(&observations);
+        let rows: Vec<(i64, i64)> =
+            path.iter().enumerate().map(|(i, &s)| (i as i64, s as i64)).collect();
+        two_cols(bind, "step", LogicalTypeId::Bigint, "state", LogicalTypeId::Bigint);
+        Ok(RowsI64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_i64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
 /// Register the graph + signal table functions.
 pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxPagerank>("ix_pagerank")?;
     conn.register_table_function::<IxShortestPath>("ix_shortest_path")?;
     conn.register_table_function::<IxConnectedComponents>("ix_connected_components")?;
+    conn.register_table_function::<IxViterbi>("ix_viterbi")?;
     conn.register_table_function::<IxRfft>("ix_rfft")?;
     conn.register_table_function::<IxAutocorrelation>("ix_autocorrelation")?;
     Ok(())
@@ -390,6 +446,42 @@ mod tests {
             )
             .unwrap();
         assert!(!cross, "0 and 2 are in different components");
+    }
+
+    #[test]
+    fn viterbi_decodes_biased_hmm() {
+        let conn = open_bench().unwrap();
+        // 2-state HMM whose emissions strongly couple state i to symbol i, so the
+        // most-likely path tracks the observed symbols: obs [0,0,1,1] → states [0,0,1,1].
+        let init = "[0.5,0.5]";
+        let trans = "[[0.7,0.3],[0.3,0.7]]";
+        let emis = "[[0.9,0.1],[0.1,0.9]]";
+        let obs = "[0,0,1,1]";
+        let path: Vec<i64> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT state FROM ix_viterbi('{init}','{trans}','{emis}','{obs}') ORDER BY step"
+                ))
+                .unwrap();
+            stmt.query_map([], |r| r.get::<_, i64>(0)).unwrap().map(|x| x.unwrap()).collect()
+        };
+        assert_eq!(path, vec![0, 0, 1, 1], "biased HMM decodes states matching the symbols");
+    }
+
+    #[test]
+    fn viterbi_rejects_non_stochastic() {
+        let conn = open_bench().unwrap();
+        // Emission row 0 = [0.5,0.1] sums to 0.6 ≠ 1 → HMM construction must fail as a
+        // SQL error, not a panic.
+        assert!(
+            conn.query_row(
+                "SELECT state FROM ix_viterbi('[0.5,0.5]','[[0.7,0.3],[0.3,0.7]]','[[0.5,0.1],[0.1,0.9]]','[0]')",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .is_err(),
+            "non-stochastic emission matrix must be a SQL error"
+        );
     }
 
     #[test]
