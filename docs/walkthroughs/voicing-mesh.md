@@ -15,8 +15,13 @@ cargo run -p ix-duck --example ix_voicing_mesh --features duck
 
 ## The question
 
-> **Which chord set-classes occupy the same fretboard regions, and which set-class
-> is the structural hub of the guitar's voicing geometry?**
+> **Which chord set-classes behave alike along the neck, and which set-class is the
+> structural hub of that geometry?**
+
+The demo answers this for **two axes**, one mesh each:
+
+- **Position** (`minFret`) — *where* on the neck a set-class's voicings sit.
+- **Stretch** (`fretSpan`) — *how ergonomically wide* its shapes are (a difficulty lens).
 
 The corpus (`state/voicings/raw/guitar.jsonl`, ~667 k fingerings, of which 558 k are
 classifiable into 136 Forte set-classes) is read directly with `read_json_auto` — no
@@ -39,7 +44,7 @@ This is the maximal-scope shape of ADR-0004: a graph of **~460 operators** whose
 - The **operator graph** is reified as an `ix_pipeline::dag::Dag` and printed:
 
   ```text
-  read_json_auto ─▶ ix_forte_number (annotate) ─▶ GROUP BY minFret (bin)   [shared head]
+  read_json_auto ─▶ ix_forte_number (annotate) ─▶ GROUP BY <axis> (bin)    [shared head]
     ─▶ profile:k ─▶ normalize:k ─▶ residual:k ─▶ smooth:k                    [×120 streams]
                          └────────▶ common-mode ────────┘                    [barrier]
     ─▶ ix_pearson (N×N) ─▶ |r| ≥ τ ─▶ ix_connected_components ─▶ ix_centrality [shared tail]
@@ -76,20 +81,37 @@ question actually asks.
 > This is the tracer-bullet discipline working as intended: build the thinnest
 > end-to-end slice first, let it surface the unknown, then scale.
 
-## The finding
+## The findings
 
-At `τ = 0.8` over the 114 best-supported set-classes (≥ 1000 voicings each, so every
-fret bin is populated and a sparse profile can't fake a bridge):
+Over the best-supported set-classes (≥ 1000 voicings each, so every bin is populated
+and a sparse profile can't fake a bridge), the two axes give **different hubs** — the
+geometry of *where* chords sit is not the geometry of *how wide* they stretch:
 
-- The set-classes form **one connected fretboard-geometry web** — no isolated chord
-  families; they are all positionally inter-related.
-- **5-29 is the structural hub** — betweenness **≈ 112**, about 3.5× the runner-up,
-  and well-supported (8 568 voicings), so it is not a sparse-profile artifact. It is
-  the set-class whose fretboard-position residual most bridges the others.
+| Axis | Streams | Structural hub (τ = 0.8) | Betweenness |
+|---|---|---|---|
+| **Position** (`minFret`) | 114 | **5-29** | ≈ 112 (3.5× runner-up) |
+| **Stretch** (`fretSpan`) | 120 | **2-3** | ≈ 185 (2.2× runner-up) |
 
-The operating lever is the `|r|` threshold `τ` (ADR-0004): at `τ = 0.4` the de-trended
-mesh is still one near-complete clique with degenerate betweenness ties; raising `τ`
-sharpens the hub.
+Both hubs are well-supported (5-29: 8 568 voicings; 2-3: 2 024), so neither is a
+sparse-profile artifact — each is the set-class whose residual most bridges the others
+on that axis.
+
+### The τ-sweep: one web fracturing into named regions
+
+The `|r|` threshold `τ` is the operating lever (ADR-0004). At `τ = 0.8` each axis is a
+single connected web; raising `τ` fractures it, and the demo names each surviving
+region by the fret-band its members *distinctively over-index on* (the argmax of their
+mean residual — what the mesh actually clustered on, not the raw peak, which is "open"
+for almost every set-class):
+
+```text
+POSITION:  τ=0.80 → 1 region   τ=0.90 → 2   τ=0.95 → 3   τ=0.98 → 3
+STRETCH:   τ=0.80 → 1 region   τ=0.90 → 3   τ=0.95 → 3   τ=0.98 → 5
+```
+
+On the stretch axis the split is the more interesting: a dominant **wide-band** region
+peels off small **moderate-band** regions (e.g. `{3-10, 4-9, 6-33, 6-32}`), i.e.
+clusters of set-classes that prefer a moderate stretch where the bulk prefer wide.
 
 ## Scope and caveats
 
