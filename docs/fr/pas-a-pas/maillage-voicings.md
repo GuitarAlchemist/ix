@@ -23,6 +23,13 @@ Le corpus (`state/voicings/raw/guitar.jsonl`, ~667 k doigtés, dont 558 k sont
 classables en 136 set-classes de Forte) est lu directement avec `read_json_auto` —
 sans étape d'ingestion ni base de données séparée.
 
+> **Disponibilité du corpus.** Le dump brut complet est exclu de git (110 Mo) : il
+> n'existe que sur une machine ayant exécuté `ix-voicings`. Sur un dépôt fraîchement
+> cloné, la démo bascule automatiquement sur l'échantillon suivi de 500 voicings
+> (`state/voicings/guitar-corpus.json`, même schéma) et réduit ses seuils en
+> conséquence — elle s'exécute donc toujours, mais le résultat-phare du pivot 5-29
+> ci-dessous nécessite le corpus complet. Pour le produire : `cargo run -p ix-voicings`.
+
 ## Un maillage « à deux couches »
 
 C'est la forme la plus complète d'ADR-0004 : un graphe de **~460 opérateurs** dont les

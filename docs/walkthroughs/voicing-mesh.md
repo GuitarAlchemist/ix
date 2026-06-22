@@ -22,6 +22,12 @@ The corpus (`state/voicings/raw/guitar.jsonl`, ~667 k fingerings, of which 558 k
 classifiable into 136 Forte set-classes) is read directly with `read_json_auto` — no
 ingest step, no separate database.
 
+> **Corpus availability.** The full raw dump is gitignored (110 MB), so it exists only
+> on a machine that has run `ix-voicings`. On a fresh checkout the demo automatically
+> falls back to the tracked 500-voicing sample (`state/voicings/guitar-corpus.json`,
+> same schema) and scales its thresholds down — so it always runs, but the headline
+> 5-29 hub result below needs the full corpus. To produce it: `cargo run -p ix-voicings`.
+
 ## The mesh is "both layered"
 
 This is the maximal-scope shape of ADR-0004: a graph of **~460 operators** whose

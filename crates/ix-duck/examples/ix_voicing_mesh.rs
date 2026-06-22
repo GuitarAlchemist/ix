@@ -38,29 +38,50 @@ use ix_pipeline::dag::Dag;
 
 /// Fret-position axis: `minFret` 0..FRETS-1 (the aligned vector index).
 const FRETS: usize = 18;
-/// A set-class needs at least this many voicings to be a stream — high enough that
-/// every fret bin is populated, so a sparse profile can't fake a bridge.
-const MIN_SUPPORT: f64 = 1000.0;
-/// Cap the mesh at the top-K most-supported set-classes. The corpus has ~130
-/// classifiable set-classes; this comfortably yields a 100+ stream mesh.
-const TOP_K: usize = 120;
 /// `|r|` edge threshold. At 0.4 the de-trended mesh is one giant clique; a stricter
 /// operating point carves out distinct fretboard regions (ADR-0004: the lever is τ).
 const THRESHOLD: f64 = 0.8;
 /// Print the full N×N matrix only for a small (tracer-bullet) mesh.
 const FULL_MATRIX_MAX: usize = 12;
 
-const CORPUS: &str = "state/voicings/raw/guitar.jsonl";
+/// The full GA CLI dump (~667 k fingerings) — gitignored (110 MB), so present only on
+/// a machine that has run `ix-voicings`. Yields the headline 100+ stream / 5-29-hub run.
+const CORPUS_FULL: &str = "state/voicings/raw/guitar.jsonl";
+/// A tracked 500-voicing sample (same schema) so the demo runs on a fresh checkout.
+/// Smaller N → the structure is real but the exact hub differs from the full corpus.
+const CORPUS_SAMPLE: &str = "state/voicings/guitar-corpus.json";
+
+/// Per-corpus parameters: a set-class needs `min_support` voicings to be a stream
+/// (so every fret bin is populated and a sparse profile can't fake a bridge), and the
+/// mesh keeps the top `top_k` by support. Scaled to the corpus so the sample still runs.
+struct Params {
+    min_support: f64,
+    top_k: usize,
+}
 
 fn main() -> ix_duck::Result<()> {
     let conn = open_bench()?;
+
+    // Prefer the full corpus; fall back to the tracked sample on a fresh checkout.
+    let (corpus, params, full) = if std::path::Path::new(CORPUS_FULL).exists() {
+        (CORPUS_FULL, Params { min_support: 1000.0, top_k: 120 }, true)
+    } else {
+        (CORPUS_SAMPLE, Params { min_support: 2.0, top_k: 24 }, false)
+    };
+    if !full {
+        println!(
+            "note: full corpus '{CORPUS_FULL}' not found (gitignored, 110 MB) — using the \
+             tracked {CORPUS_SAMPLE} sample.\n      Run `cargo run -p ix-voicings` to dump the \
+             full corpus and reproduce the 100+ stream / 5-29-hub result.\n"
+        );
+    }
 
     // ── annotate + bin: one pass over the corpus → (set-class, fret) → count ──────
     // ix_forte_number(midiNotes) is the per-row annotate operator; GROUP BY is the bin.
     let sql = format!(
         "WITH annotated AS (
             SELECT ix_forte_number(midiNotes) AS sc, minFret AS fret
-            FROM read_json_auto('{CORPUS}')
+            FROM read_json_auto('{corpus}')
          )
          SELECT sc, fret, count(*) AS n
          FROM annotated
@@ -87,7 +108,7 @@ fn main() -> ix_duck::Result<()> {
     let total_voicings: f64 = profiles.values().flat_map(|v| v.iter()).sum();
     println!(
         "corpus: {} → {} distinct set-classes, {:.0} classifiable voicings over frets 0..{}\n",
-        CORPUS,
+        corpus,
         profiles.len(),
         total_voicings,
         FRETS - 1
@@ -100,7 +121,7 @@ fn main() -> ix_duck::Result<()> {
             let support: f64 = v.iter().sum();
             (sc, v, support)
         })
-        .filter(|(_, _, support)| *support >= MIN_SUPPORT)
+        .filter(|(_, _, support)| *support >= params.min_support)
         .collect();
 
     // ── common-mode removal (the load-bearing pipeline stage) ────────────────────
@@ -133,7 +154,7 @@ fn main() -> ix_duck::Result<()> {
         .map(|((sc, _, support), dist)| (sc.clone(), residual(dist), *support))
         .collect();
     ranked.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
-    ranked.truncate(TOP_K);
+    ranked.truncate(params.top_k);
 
     let streams: Vec<(String, Vec<f64>)> = ranked
         .iter()
@@ -141,9 +162,10 @@ fn main() -> ix_duck::Result<()> {
         .collect();
 
     println!(
-        "{} streams (top set-classes by support, ≥{MIN_SUPPORT:.0} voicings) over a {FRETS}-fret \
+        "{} streams (top set-classes by support, ≥{:.0} voicings) over a {FRETS}-fret \
          axis, common-mode removed:",
-        streams.len()
+        streams.len(),
+        params.min_support
     );
     for (sc, _, support) in &ranked {
         println!("   {sc:>6}  ({support:.0} voicings)");
