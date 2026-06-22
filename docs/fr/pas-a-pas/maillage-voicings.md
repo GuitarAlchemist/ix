@@ -15,9 +15,14 @@ cargo run -p ix-duck --example ix_voicing_mesh --features duck
 
 ## La question
 
-> **Quelles classes d'ensembles (set-classes) d'accords occupent les mêmes régions du
-> manche, et quelle set-class est le pivot structurel de la géométrie des voicings de
-> la guitare ?**
+> **Quelles classes d'ensembles (set-classes) d'accords se comportent de la même façon
+> le long du manche, et quelle set-class est le pivot structurel de cette géométrie ?**
+
+La démo répond à cette question pour **deux axes**, un maillage chacun :
+
+- **Position** (`minFret`) — *où* sur le manche se situent les voicings d'une set-class.
+- **Écart** (`fretSpan`) — *à quel point* ses formes s'étirent (une lentille de
+  difficulté ergonomique).
 
 Le corpus (`state/voicings/raw/guitar.jsonl`, ~667 k doigtés, dont 558 k sont
 classables en 136 set-classes de Forte) est lu directement avec `read_json_auto` —
@@ -42,7 +47,7 @@ C'est la forme la plus complète d'ADR-0004 : un graphe de **~460 opérateurs** 
   affiché :
 
   ```text
-  read_json_auto ─▶ ix_forte_number (annoter) ─▶ GROUP BY minFret (regrouper)  [tête partagée]
+  read_json_auto ─▶ ix_forte_number (annoter) ─▶ GROUP BY <axe> (regrouper)    [tête partagée]
     ─▶ profile:k ─▶ normalize:k ─▶ residual:k ─▶ smooth:k                        [×120 flux]
                          └────────▶ mode-commun ────────┘                        [barrière]
     ─▶ ix_pearson (N×N) ─▶ |r| ≥ τ ─▶ ix_connected_components ─▶ ix_centrality   [queue partagée]
@@ -83,22 +88,39 @@ précisément ce que demande la question.
 > d'abord la tranche de bout en bout la plus fine, la laisser révéler l'inconnu, puis
 > passer à l'échelle.
 
-## Le résultat
+## Les résultats
 
-À `τ = 0,8` sur les 114 set-classes les mieux supportées (≥ 1000 voicings chacune,
-afin que chaque case de frette soit peuplée et qu'un profil clairsemé ne puisse pas
-simuler un pont) :
+Sur les set-classes les mieux supportées (≥ 1000 voicings chacune, afin que chaque
+case soit peuplée et qu'un profil clairsemé ne puisse pas simuler un pont), les deux
+axes donnent des **pivots différents** — la géométrie de *où* se situent les accords
+n'est pas celle de *à quel point* ils s'étirent :
 
-- Les set-classes forment **une seule toile connexe de géométrie du manche** — aucune
-  famille d'accords isolée ; elles sont toutes interreliées en position.
-- **5-29 est le pivot structurel** — betweenness **≈ 112**, soit environ 3,5× le
-  deuxième, et bien supportée (8 568 voicings) : ce n'est donc pas un artefact de
-  profil clairsemé. C'est la set-class dont le résidu de position sur le manche fait le
-  plus le pont entre les autres.
+| Axe | Flux | Pivot structurel (τ = 0,8) | Betweenness |
+|---|---|---|---|
+| **Position** (`minFret`) | 114 | **5-29** | ≈ 112 (3,5× le deuxième) |
+| **Écart** (`fretSpan`) | 120 | **2-3** | ≈ 185 (2,2× le deuxième) |
 
-Le levier de réglage est le seuil `|r|` noté `τ` (ADR-0004) : à `τ = 0,4`, le maillage
-détendancé reste une clique quasi complète avec des égalités de betweenness
-dégénérées ; augmenter `τ` affine le pivot.
+Les deux pivots sont bien supportés (5-29 : 8 568 voicings ; 2-3 : 2 024) : aucun
+n'est un artefact de profil clairsemé — chacun est la set-class dont le résidu fait le
+plus le pont entre les autres sur cet axe.
+
+### Le balayage de τ : une toile qui se fracture en régions nommées
+
+Le seuil `|r|` noté `τ` est le levier de réglage (ADR-0004). À `τ = 0,8`, chaque axe
+est une seule toile connexe ; augmenter `τ` la fracture, et la démo nomme chaque région
+survivante par la bande de frettes que ses membres *surreprésentent de façon distinctive*
+(l'argmax de leur résidu moyen — ce que le maillage a réellement regroupé, et non le
+pic brut, qui vaut « open » pour presque toutes les set-classes) :
+
+```text
+POSITION :  τ=0,80 → 1 région   τ=0,90 → 2   τ=0,95 → 3   τ=0,98 → 3
+ÉCART :     τ=0,80 → 1 région   τ=0,90 → 3   τ=0,95 → 3   τ=0,98 → 5
+```
+
+Sur l'axe de l'écart, la fracture est la plus parlante : une région **wide** (large)
+dominante détache de petites régions **moderate** (modérée) — p. ex.
+`{3-10, 4-9, 6-33, 6-32}` —, c.-à-d. des grappes de set-classes qui préfèrent un
+écart modéré là où la masse préfère un écart large.
 
 ## Portée et réserves
 
