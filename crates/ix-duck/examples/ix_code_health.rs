@@ -98,6 +98,16 @@ fn main() -> ix_duck::Result<()> {
         .iter()
         .map(|c| churn(&c.name) as f64 / (c.sloc / 1000.0).max(0.1))
         .collect();
+    // Without a usable git checkout (no `git`, or a shallow clone), `churn()` returns 0
+    // for every crate → a constant vector, on which Pearson is undefined and the
+    // permutation test is meaningless. Skip the validation with a clear note (Codex P2).
+    if churn_per_kloc.iter().all(|&c| c == churn_per_kloc[0]) {
+        println!(
+            "\nvalidation skipped — churn is constant across crates (no usable git history; \
+             run from a full clone with `git` on PATH)."
+        );
+        return Ok(());
+    }
     println!("\nvalidation — does code-health predict git churn (commits/KLOC)? [{NULLS} permutation nulls]");
     for (label, pred) in [
         ("mean cyclomatic", crates.iter().map(|c| c.mean_cc).collect::<Vec<_>>()),
