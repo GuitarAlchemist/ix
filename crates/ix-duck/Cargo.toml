@@ -109,6 +109,10 @@ name = "ix_voicing_similarity"
 required-features = ["duck"]
 
 [[example]]
+name = "ix_code_health"
+required-features = ["duck"]
+
+[[example]]
 name = "ix_dev_rhythm"
 required-features = ["duck"]
 
