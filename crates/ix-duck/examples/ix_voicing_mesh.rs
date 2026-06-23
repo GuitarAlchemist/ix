@@ -29,6 +29,12 @@
 //! The `|r|` threshold τ is the operating lever (ADR-0004): a τ-sweep shows the single
 //! web at τ = 0.8 fracturing into named fret-band regions as τ rises.
 //!
+//! **The betweenness leaders this prints are raw mesh output, not validated claims.** A
+//! null model (per-bin shuffle, 1 000 nulls — see `docs/walkthroughs/voicing-mesh.md` →
+//! *Validation*) shows the **position** structure is real (p = 0.001) but the **stretch**
+//! leader is an artifact (real betweenness sits *below* the null median). Treat the
+//! stretch axis as a negative result and any single "hub" as advisory.
+//!
 //! Run: `cargo run -p ix-duck --example ix_voicing_mesh --features duck`
 
 use std::collections::BTreeMap;
@@ -237,13 +243,18 @@ fn run_axis(conn: &ix_duck::Connection, corpus: &str, params: &Params, axis: Axi
         println!("   {band:>9}-band region ({} set-classes): {{ {} }}", region.len(), members.join(", "));
     }
 
-    // ── hub at the headline τ ────────────────────────────────────────────────────
-    println!("\nix_centrality ({:?}) — top hub set-classes at τ = {THRESHOLD}:", cfg.centrality);
+    // ── betweenness leaders at the headline τ (raw output — see the null-model
+    //    validation in docs/walkthroughs/voicing-mesh.md before treating as a claim) ─
+    println!("\nix_centrality ({:?}) — top betweenness set-classes at τ = {THRESHOLD}:", cfg.centrality);
     for &(i, score) in mesh.centrality.iter().take(6) {
         let s = &ranked[i];
         println!("   {:>6}: betweenness {score:>8.1}  ({:.0} voicings, peaks in {}-band)", s.name, s.support, axis.band(s.peak_bin));
     }
-    println!("▶ structural hub on the {} axis: {}", col, mesh.lead_name().unwrap_or("?"));
+    let caveat = match axis {
+        Axis::Position => "validated as real structure (null-model p = 0.001), though the single-leader identity is fragile",
+        Axis::Stretch => "NOT significant — within the null-model range (p = 0.98); treat as a negative result",
+    };
+    println!("▶ betweenness leader on the {col} axis: {}  [{caveat}]", mesh.lead_name().unwrap_or("?"));
     Ok(())
 }
 

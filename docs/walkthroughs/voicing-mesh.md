@@ -81,20 +81,21 @@ question actually asks.
 > This is the tracer-bullet discipline working as intended: build the thinnest
 > end-to-end slice first, let it surface the unknown, then scale.
 
-## The findings
+## The raw mesh output
 
-Over the best-supported set-classes (≥ 1000 voicings each, so every bin is populated
-and a sparse profile can't fake a bridge), the two axes give **different hubs** — the
-geometry of *where* chords sit is not the geometry of *how wide* they stretch:
+Over the best-supported set-classes (≥ 1000 voicings each), the two axes report
+**different** betweenness-leading set-classes — suggesting the geometry of *where*
+chords sit differs from the geometry of *how wide* they stretch:
 
-| Axis | Streams | Structural hub (τ = 0.8) | Betweenness |
+| Axis | Streams | Betweenness-leader (τ = 0.8) | Betweenness |
 |---|---|---|---|
 | **Position** (`minFret`) | 114 | **5-29** | ≈ 112 (3.5× runner-up) |
 | **Stretch** (`fretSpan`) | 120 | **2-3** | ≈ 185 (2.2× runner-up) |
 
-Both hubs are well-supported (5-29: 8 568 voicings; 2-3: 2 024), so neither is a
-sparse-profile artifact — each is the set-class whose residual most bridges the others
-on that axis.
+These are the mesh's *raw* outputs, not yet conclusions. Both leaders are well-supported
+(5-29: 8 568 voicings; 2-3: 2 024), so neither is a *sparse-profile* artifact — but
+"well-supported" is not "significant". The **Validation** section below subjects both to
+a null model, and only one survives.
 
 ### The τ-sweep: one web fracturing into named regions
 
@@ -112,6 +113,40 @@ STRETCH:   τ=0.80 → 1 region   τ=0.90 → 3   τ=0.95 → 3   τ=0.98 → 5
 On the stretch axis the split is the more interesting: a dominant **wide-band** region
 peels off small **moderate-band** regions (e.g. `{3-10, 4-9, 6-33, 6-32}`), i.e.
 clusters of set-classes that prefer a moderate stretch where the bulk prefer wide.
+
+## Validation (null model)
+
+A betweenness "hub" is only meaningful if the real data's hub-concentration exceeds what
+the pipeline manufactures from structureless input. We test each axis against **1 000
+null meshes**, each built by **shuffling every bin's counts across set-classes** — a
+permutation that *keeps* the realistic common-mode trend (low frets / wide spans are
+crowded) but *destroys* any genuine per-set-class co-variation. The same pipeline
+(normalize → common-mode removal → |Pearson| → τ = 0.8 → betweenness) runs on real and
+null alike; the statistic is the top betweenness score, and `p` is the fraction of nulls
+that match or beat the real value.
+
+| Axis | Real top betweenness | Null (mean / 95th / max) | `p`(real ≤ null) | Verdict |
+|---|---|---|---|---|
+| **Position** | 119.9 | 0.1 / 0 / 5.0 | **0.001** | ✅ **signal** |
+| **Stretch** | 122.1 | 258 / 455 / 788 | **0.98** | ❌ **artifact** |
+
+Three honest conclusions:
+
+1. **Position structure is real.** Shuffling collapses betweenness to ≈ 0 (the null graph
+   has no bridges), while the real positional residuals form a genuine cluster-and-bridge
+   backbone (betweenness ≈ 120, `p` = 0.001). Guitar voicing set-classes really do have
+   **non-random positional co-variation**.
+2. **The single-hub *identity* is fragile.** A validation run without the wavelet-smoothing
+   stage (and using networkx betweenness) names **4-17**, not 5-29, with the top two nearly
+   tied. So *"there is real positional structure"* is supported; *"5-29 is **the** hub"* is
+   **overclaimed** — the named leader shifts with small pipeline changes.
+3. **The stretch result is an artifact.** Real stretch betweenness sits *below* the null
+   median (`p` = 0.98): with only 5 `fretSpan` bins the residual space is too coarse to
+   carry signal, and random data produces *more* hub structure than the real corpus. The
+   `2-3` stretch "hub" does **not** survive — treat it as noise.
+
+The lesson generalises: **this mesh, like any correlation method, needs a null model before
+its hubs become claims.** The position finding clears that bar; the stretch finding does not.
 
 ## Scope and caveats
 
