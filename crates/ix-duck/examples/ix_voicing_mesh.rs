@@ -29,11 +29,12 @@
 //! The `|r|` threshold τ is the operating lever (ADR-0004): a τ-sweep shows the single
 //! web at τ = 0.8 fracturing into named fret-band regions as τ rises.
 //!
-//! **The betweenness leaders this prints are raw mesh output, not validated claims.** A
-//! null model (per-bin shuffle, 1 000 nulls — see `docs/walkthroughs/voicing-mesh.md` →
-//! *Validation*) shows the **position** structure is real (p = 0.001) but the **stretch**
-//! leader is an artifact (real betweenness sits *below* the null median). Treat the
-//! stretch axis as a negative result and any single "hub" as advisory.
+//! **The betweenness leaders this prints are raw mesh output, not validated claims.** The
+//! companion `ix_voicing_mesh_nullcheck` example runs a null model (per-bin shuffle, 500
+//! nulls — see `docs/walkthroughs/voicing-mesh.md` → *Validation*): the **position**
+//! structure is real (p = 0.002) but the **stretch** leader is an artifact (real
+//! betweenness sits *below* the null median, p = 0.996). Treat the stretch axis as a
+//! negative result and any single "hub" as advisory.
 //!
 //! Run: `cargo run -p ix-duck --example ix_voicing_mesh --features duck`
 
@@ -251,8 +252,8 @@ fn run_axis(conn: &ix_duck::Connection, corpus: &str, params: &Params, axis: Axi
         println!("   {:>6}: betweenness {score:>8.1}  ({:.0} voicings, peaks in {}-band)", s.name, s.support, axis.band(s.peak_bin));
     }
     let caveat = match axis {
-        Axis::Position => "validated as real structure (null-model p = 0.001), though the single-leader identity is fragile",
-        Axis::Stretch => "NOT significant — within the null-model range (p = 0.98); treat as a negative result",
+        Axis::Position => "validated as real structure (null-model p = 0.002), though the single-leader identity is fragile",
+        Axis::Stretch => "NOT significant — within the null-model range (p = 0.996); treat as a negative result",
     };
     println!("▶ betweenness leader on the {col} axis: {}  [{caveat}]", mesh.lead_name().unwrap_or("?"));
     Ok(())

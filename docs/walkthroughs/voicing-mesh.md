@@ -117,31 +117,35 @@ clusters of set-classes that prefer a moderate stretch where the bulk prefer wid
 ## Validation (null model)
 
 A betweenness "hub" is only meaningful if the real data's hub-concentration exceeds what
-the pipeline manufactures from structureless input. We test each axis against **1 000
-null meshes**, each built by **shuffling every bin's counts across set-classes** — a
+the pipeline manufactures from structureless input. We test each axis against **500 null
+meshes**, each built by **shuffling every bin's counts across set-classes** — a
 permutation that *keeps* the realistic common-mode trend (low frets / wide spans are
 crowded) but *destroys* any genuine per-set-class co-variation. The same pipeline
 (normalize → common-mode removal → |Pearson| → τ = 0.8 → betweenness) runs on real and
 null alike; the statistic is the top betweenness score, and `p` is the fraction of nulls
-that match or beat the real value.
+that match or beat the real value. Reproduce with:
+
+```bash
+cargo run -p ix-duck --example ix_voicing_mesh_nullcheck --features duck
+```
 
 | Axis | Real top betweenness | Null (mean / 95th / max) | `p`(real ≤ null) | Verdict |
 |---|---|---|---|---|
-| **Position** | 119.9 | 0.1 / 0 / 5.0 | **0.001** | ✅ **signal** |
-| **Stretch** | 122.1 | 258 / 455 / 788 | **0.98** | ❌ **artifact** |
+| **Position** | 119.9 | 0.1 / 1.0 / 3.0 | **0.002** | ✅ **signal** |
+| **Stretch** | 122.1 | 259 / 458 / 805 | **0.996** | ❌ **artifact** |
 
 Three honest conclusions:
 
 1. **Position structure is real.** Shuffling collapses betweenness to ≈ 0 (the null graph
    has no bridges), while the real positional residuals form a genuine cluster-and-bridge
-   backbone (betweenness ≈ 120, `p` = 0.001). Guitar voicing set-classes really do have
+   backbone (betweenness ≈ 120, `p` = 0.002). Guitar voicing set-classes really do have
    **non-random positional co-variation**.
-2. **The single-hub *identity* is fragile.** A validation run without the wavelet-smoothing
-   stage (and using networkx betweenness) names **4-17**, not 5-29, with the top two nearly
-   tied. So *"there is real positional structure"* is supported; *"5-29 is **the** hub"* is
-   **overclaimed** — the named leader shifts with small pipeline changes.
+2. **The single-hub *identity* is fragile.** The harness (which omits the wavelet-smoothing
+   stage) names **4-17**, not 5-29, with the top two nearly tied. So *"there is real
+   positional structure"* is supported; *"5-29 is **the** hub"* is **overclaimed** — the
+   named leader shifts with small pipeline changes.
 3. **The stretch result is an artifact.** Real stretch betweenness sits *below* the null
-   median (`p` = 0.98): with only 5 `fretSpan` bins the residual space is too coarse to
+   median (`p` = 0.996): with only 5 `fretSpan` bins the residual space is too coarse to
    carry signal, and random data produces *more* hub structure than the real corpus. The
    `2-3` stretch "hub" does **not** survive — treat it as noise.
 

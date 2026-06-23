@@ -127,32 +127,35 @@ dominante détache de petites régions **moderate** (modérée) — p. ex.
 
 Un « pivot » de betweenness n'a de sens que si la concentration observée dans les vraies
 données dépasse ce que le pipeline fabrique à partir d'une entrée sans structure. On teste
-chaque axe contre **1 000 maillages nuls**, chacun construit en **permutant les comptes de
+chaque axe contre **500 maillages nuls**, chacun construit en **permutant les comptes de
 chaque case (bin) entre les set-classes** — une permutation qui *conserve* la tendance de
 mode commun (les frettes basses / les grands écarts sont surpeuplés) mais *détruit* toute
 co-variation propre à chaque set-class. Le même pipeline (normaliser → suppression du mode
 commun → |Pearson| → τ = 0,8 → betweenness) tourne sur le réel et le nul ; la statistique
 est le betweenness de tête, et `p` est la fraction de nuls qui égalent ou dépassent la
-valeur réelle.
+valeur réelle. Reproduire avec :
+
+```bash
+cargo run -p ix-duck --example ix_voicing_mesh_nullcheck --features duck
+```
 
 | Axe | Betweenness réel de tête | Nul (moyenne / 95e / max) | `p`(réel ≤ nul) | Verdict |
 |---|---|---|---|---|
-| **Position** | 119,9 | 0,1 / 0 / 5,0 | **0,001** | ✅ **signal** |
-| **Écart** | 122,1 | 258 / 455 / 788 | **0,98** | ❌ **artefact** |
+| **Position** | 119,9 | 0,1 / 1,0 / 3,0 | **0,002** | ✅ **signal** |
+| **Écart** | 122,1 | 259 / 458 / 805 | **0,996** | ❌ **artefact** |
 
 Trois conclusions honnêtes :
 
 1. **La structure de position est réelle.** La permutation effondre le betweenness à ≈ 0
    (le graphe nul n'a aucun pont), tandis que les résidus de position réels forment un
-   véritable squelette de grappes-et-ponts (betweenness ≈ 120, `p` = 0,001). Les set-classes
+   véritable squelette de grappes-et-ponts (betweenness ≈ 120, `p` = 0,002). Les set-classes
    de voicings de guitare ont bel et bien une **co-variation de position non aléatoire**.
-2. **L'*identité* du pivot unique est fragile.** Une exécution de validation sans l'étape de
-   lissage par ondelettes (et avec le betweenness de networkx) désigne **4-17**, et non 5-29,
-   les deux premiers étant quasi à égalité. Donc *« il existe une vraie structure de position »*
-   est étayé ; *« 5-29 est **le** pivot »* est **surévalué** — la tête désignée bouge selon de
-   petits changements de pipeline.
+2. **L'*identité* du pivot unique est fragile.** Le harnais (qui omet l'étape de lissage par
+   ondelettes) désigne **4-17**, et non 5-29, les deux premiers étant quasi à égalité. Donc
+   *« il existe une vraie structure de position »* est étayé ; *« 5-29 est **le** pivot »* est
+   **surévalué** — la tête désignée bouge selon de petits changements de pipeline.
 3. **Le résultat de l'écart est un artefact.** Le betweenness réel de l'écart est *en dessous*
-   de la médiane nulle (`p` = 0,98) : avec seulement 5 cases de `fretSpan`, l'espace des
+   de la médiane nulle (`p` = 0,996) : avec seulement 5 cases de `fretSpan`, l'espace des
    résidus est trop grossier pour porter un signal, et les données aléatoires produisent *plus*
    de structure de pivot que le corpus réel. Le « pivot » `2-3` de l'écart ne survit **pas** —
    à traiter comme du bruit.

@@ -100,6 +100,10 @@ required-features = ["duck"]
 name = "ix_voicing_mesh"
 required-features = ["duck"]
 
+[[example]]
+name = "ix_voicing_mesh_nullcheck"
+required-features = ["duck"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 # For the ix_voicing_mesh example's operator-DAG reification (ADR-0004 "both layered").
