@@ -44,6 +44,18 @@ fn main() -> ix_duck::Result<()> {
     println!("IX dev rhythm — {} commits over {} types", seq.len(), m);
     println!("   commit-type counts: {}", fmt_counts(&marg));
 
+    // A shallow / single-commit checkout has no transitions: `seq.windows(2)` is empty,
+    // so the accuracy divisor is zero and every downstream statistic is NaN. Bail with a
+    // clear note rather than print garbage (Codex P2).
+    if seq.len() < 30 {
+        println!(
+            "\ninsufficient git history ({} commits) — this demo needs a full checkout. \
+             Run from a complete clone (not a shallow / `--depth 1` one).",
+            seq.len()
+        );
+        return Ok(());
+    }
+
     // ── 1. Markov chain + stationary distribution ────────────────────────────────
     let trans = transition_matrix(&seq, m);
     let chain = MarkovChain::new(trans.clone()).expect("row-stochastic");
