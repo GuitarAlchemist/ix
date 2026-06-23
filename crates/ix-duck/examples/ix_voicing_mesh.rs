@@ -29,6 +29,13 @@
 //! The `|r|` threshold τ is the operating lever (ADR-0004): a τ-sweep shows the single
 //! web at τ = 0.8 fracturing into named fret-band regions as τ rises.
 //!
+//! **The betweenness leaders this prints are raw mesh output, not validated claims.** The
+//! companion `ix_voicing_mesh_nullcheck` example runs a null model (per-bin shuffle, 500
+//! nulls — see `docs/walkthroughs/voicing-mesh.md` → *Validation*): the **position**
+//! structure is real (p = 0.002) but the **stretch** leader is an artifact (real
+//! betweenness sits *below* the null median, p = 0.996). Treat the stretch axis as a
+//! negative result and any single "hub" as advisory.
+//!
 //! Run: `cargo run -p ix-duck --example ix_voicing_mesh --features duck`
 
 use std::collections::BTreeMap;
@@ -119,14 +126,15 @@ fn main() -> ix_duck::Result<()> {
     }
 
     for axis in [Axis::Position, Axis::Stretch] {
-        run_axis(&conn, corpus, &params, axis)?;
+        run_axis(&conn, corpus, &params, axis, full)?;
     }
     Ok(())
 }
 
 /// Run the full mesh for one axis: annotate → bin → common-mode → streams → DAG →
-/// mesh → τ-sweep → named regions → hub.
-fn run_axis(conn: &ix_duck::Connection, corpus: &str, params: &Params, axis: Axis) -> ix_duck::Result<()> {
+/// mesh → τ-sweep → named regions → hub. `full` gates the null-model verdicts, whose
+/// p-values are only valid for the full-corpus mesh (not the sample fallback).
+fn run_axis(conn: &ix_duck::Connection, corpus: &str, params: &Params, axis: Axis, full: bool) -> ix_duck::Result<()> {
     let (bins, col) = (axis.bins(), axis.column());
     println!("\n══════════════════════════════════════════════════════════════════════");
     println!("AXIS: {}", axis.title());
@@ -237,13 +245,21 @@ fn run_axis(conn: &ix_duck::Connection, corpus: &str, params: &Params, axis: Axi
         println!("   {band:>9}-band region ({} set-classes): {{ {} }}", region.len(), members.join(", "));
     }
 
-    // ── hub at the headline τ ────────────────────────────────────────────────────
-    println!("\nix_centrality ({:?}) — top hub set-classes at τ = {THRESHOLD}:", cfg.centrality);
+    // ── betweenness leaders at the headline τ (raw output — see the null-model
+    //    validation in docs/walkthroughs/voicing-mesh.md before treating as a claim) ─
+    println!("\nix_centrality ({:?}) — top betweenness set-classes at τ = {THRESHOLD}:", cfg.centrality);
     for &(i, score) in mesh.centrality.iter().take(6) {
         let s = &ranked[i];
         println!("   {:>6}: betweenness {score:>8.1}  ({:.0} voicings, peaks in {}-band)", s.name, s.support, axis.band(s.peak_bin));
     }
-    println!("▶ structural hub on the {} axis: {}", col, mesh.lead_name().unwrap_or("?"));
+    // The null-model p-values are for the full-corpus mesh (114/120 streams). Don't
+    // attach them to the sample fallback, whose ~24-stream mesh wasn't validated.
+    let caveat = match (full, axis) {
+        (true, Axis::Position) => "validated as real structure (null-model p = 0.002), though the single-leader identity is fragile",
+        (true, Axis::Stretch) => "NOT significant — within the null-model range (p = 0.996); treat as a negative result",
+        (false, _) => "sample run — not validated; the null model needs the full corpus (see ix_voicing_mesh_nullcheck)",
+    };
+    println!("▶ betweenness leader on the {col} axis: {}  [{caveat}]", mesh.lead_name().unwrap_or("?"));
     Ok(())
 }
 

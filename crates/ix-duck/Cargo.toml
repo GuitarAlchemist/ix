@@ -101,6 +101,10 @@ name = "ix_voicing_mesh"
 required-features = ["duck"]
 
 [[example]]
+name = "ix_voicing_mesh_nullcheck"
+required-features = ["duck"]
+
+[[example]]
 name = "ix_voicing_similarity"
 required-features = ["duck"]
 
