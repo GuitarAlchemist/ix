@@ -88,21 +88,22 @@ précisément ce que demande la question.
 > d'abord la tranche de bout en bout la plus fine, la laisser révéler l'inconnu, puis
 > passer à l'échelle.
 
-## Les résultats
+## La sortie brute du maillage
 
-Sur les set-classes les mieux supportées (≥ 1000 voicings chacune, afin que chaque
-case soit peuplée et qu'un profil clairsemé ne puisse pas simuler un pont), les deux
-axes donnent des **pivots différents** — la géométrie de *où* se situent les accords
-n'est pas celle de *à quel point* ils s'étirent :
+Sur les set-classes les mieux supportées (≥ 1000 voicings chacune), les deux axes
+rapportent des **set-classes de tête (betweenness) différentes** — ce qui suggère que la
+géométrie de *où* se situent les accords diffère de celle de *à quel point* ils
+s'étirent :
 
-| Axe | Flux | Pivot structurel (τ = 0,8) | Betweenness |
+| Axe | Flux | Tête betweenness (τ = 0,8) | Betweenness |
 |---|---|---|---|
 | **Position** (`minFret`) | 114 | **5-29** | ≈ 112 (3,5× le deuxième) |
 | **Écart** (`fretSpan`) | 120 | **2-3** | ≈ 185 (2,2× le deuxième) |
 
-Les deux pivots sont bien supportés (5-29 : 8 568 voicings ; 2-3 : 2 024) : aucun
-n'est un artefact de profil clairsemé — chacun est la set-class dont le résidu fait le
-plus le pont entre les autres sur cet axe.
+Ce sont les sorties *brutes* du maillage, pas encore des conclusions. Les deux têtes sont
+bien supportées (5-29 : 8 568 voicings ; 2-3 : 2 024) : aucune n'est un artefact de
+*profil clairsemé* — mais « bien supporté » n'est pas « significatif ». La section
+**Validation** ci-dessous les soumet à un modèle nul, et une seule survit.
 
 ### Le balayage de τ : une toile qui se fracture en régions nommées
 
@@ -121,6 +122,47 @@ Sur l'axe de l'écart, la fracture est la plus parlante : une région **wide** (
 dominante détache de petites régions **moderate** (modérée) — p. ex.
 `{3-10, 4-9, 6-33, 6-32}` —, c.-à-d. des grappes de set-classes qui préfèrent un
 écart modéré là où la masse préfère un écart large.
+
+## Validation (modèle nul)
+
+Un « pivot » de betweenness n'a de sens que si la concentration observée dans les vraies
+données dépasse ce que le pipeline fabrique à partir d'une entrée sans structure. On teste
+chaque axe contre **500 maillages nuls**, chacun construit en **permutant les comptes de
+chaque case (bin) entre les set-classes** — une permutation qui *conserve* la tendance de
+mode commun (les frettes basses / les grands écarts sont surpeuplés) mais *détruit* toute
+co-variation propre à chaque set-class. Le même pipeline (normaliser → suppression du mode
+commun → |Pearson| → τ = 0,8 → betweenness) tourne sur le réel et le nul ; la statistique
+est le betweenness de tête, et `p` est la fraction de nuls qui égalent ou dépassent la
+valeur réelle. Reproduire avec :
+
+```bash
+cargo run -p ix-duck --example ix_voicing_mesh_nullcheck --features duck
+```
+
+| Axe | Betweenness réel de tête | Nul (moyenne / 95e / max) | `p`(réel ≤ nul) | Verdict |
+|---|---|---|---|---|
+| **Position** | 119,9 | 0,1 / 1,0 / 3,0 | **0,002** | ✅ **signal** |
+| **Écart** | 122,1 | 259 / 458 / 805 | **0,996** | ❌ **artefact** |
+
+Trois conclusions honnêtes :
+
+1. **La structure de position est réelle.** La permutation effondre le betweenness à ≈ 0
+   (le graphe nul n'a aucun pont), tandis que les résidus de position réels forment un
+   véritable squelette de grappes-et-ponts (betweenness ≈ 120, `p` = 0,002). Les set-classes
+   de voicings de guitare ont bel et bien une **co-variation de position non aléatoire**.
+2. **L'*identité* du pivot unique est fragile.** Le harnais (qui omet l'étape de lissage par
+   ondelettes) désigne **4-17**, et non 5-29, les deux premiers étant quasi à égalité. Donc
+   *« il existe une vraie structure de position »* est étayé ; *« 5-29 est **le** pivot »* est
+   **surévalué** — la tête désignée bouge selon de petits changements de pipeline.
+3. **Le résultat de l'écart est un artefact.** Le betweenness réel de l'écart est *en dessous*
+   de la médiane nulle (`p` = 0,996) : avec seulement 5 cases de `fretSpan`, l'espace des
+   résidus est trop grossier pour porter un signal, et les données aléatoires produisent *plus*
+   de structure de pivot que le corpus réel. Le « pivot » `2-3` de l'écart ne survit **pas** —
+   à traiter comme du bruit.
+
+La leçon se généralise : **ce maillage, comme toute méthode de corrélation, exige un modèle
+nul avant que ses pivots ne deviennent des affirmations.** Le résultat de position passe ce
+seuil ; celui de l'écart, non.
 
 ## Portée et réserves
 
