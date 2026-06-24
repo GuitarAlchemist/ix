@@ -30,6 +30,7 @@ ix-graph = { workspace = true, optional = true }
 ix-signal = { workspace = true, optional = true }
 ix-probabilistic = { workspace = true, optional = true }
 ix-code = { workspace = true, optional = true }
+ix-types = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
 # Chatbot flight recorder (Slice A/B): the regression gate serializes a JSON contract.
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -42,7 +43,7 @@ chrono = { workspace = true, optional = true }
 # functions), so no bundled engine is pulled — this is the feature the loadable
 # C-API extension (ix-duck-ext) depends on. ix-unsupervised (PCA) + serde_json
 # (JSON params) are needed by the table functions.
-udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ix-supervised", "dep:ix-bracelet", "dep:ix-ktheory", "dep:ix-graph", "dep:ix-signal", "dep:ix-probabilistic", "dep:ix-code", "dep:ndarray", "dep:serde_json"]
+udf = ["dep:duckdb", "duckdb/vscalar", "dep:ix-math", "dep:ix-unsupervised", "dep:ix-supervised", "dep:ix-bracelet", "dep:ix-ktheory", "dep:ix-graph", "dep:ix-signal", "dep:ix-probabilistic", "dep:ix-code", "dep:ix-types", "dep:ndarray", "dep:serde_json"]
 # Tier B code analysis: adds tree-sitter AST queries + semantic metrics
 # (ix_ast_query, ix_semantic_metrics) by enabling ix-code's `semantic` feature.
 # Separate because it pulls C-compiled tree-sitter grammars; Tier A
