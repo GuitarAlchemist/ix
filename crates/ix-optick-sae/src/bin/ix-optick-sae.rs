@@ -52,7 +52,7 @@ struct TrainArgs {
     k_sparse: u32,
 
     /// Training epochs.
-    #[arg(long, default_value_t = 100)]
+    #[arg(long, default_value_t = 50)]
     epochs: u32,
 
     /// Mini-batch size.
@@ -82,6 +82,21 @@ struct TrainArgs {
     /// Override to point at a venv: `--python-bin .venv/bin/python`.
     #[arg(long, default_value_t = default_python_bin().to_string())]
     python_bin: String,
+
+    /// Weight on AuxK ghost-grad auxiliary loss (0 = disabled).
+    /// Empirical baseline: 0.10 keeps dead_features_pct ≤ 30% on real 313k-voicing corpus.
+    /// The Anthropic default of 0.03 is too weak for this corpus.
+    #[arg(long, default_value_t = 0.10)]
+    aux_alpha: f64,
+
+    /// Top-k_aux features from the dead-feature pool per batch (AuxK ghost grads).
+    #[arg(long, default_value_t = 64)]
+    aux_k: u32,
+
+    /// artifact_id this run supersedes (written to links.supersedes in the artifact).
+    /// Set to the canonical 2026-05-04 baseline ID for production runs.
+    #[arg(long)]
+    supersedes: Option<String>,
 }
 
 fn main() {
@@ -114,6 +129,9 @@ fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
         seed: args.seed,
         held_out_pct: args.held_out_pct,
         retry_note: None,
+        aux_alpha: args.aux_alpha,
+        aux_k: args.aux_k,
+        supersedes: args.supersedes.clone(),
     };
 
     match run_python_trainer(&args.python_script, &config, &args.python_bin) {

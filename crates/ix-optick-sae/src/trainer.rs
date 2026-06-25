@@ -14,6 +14,14 @@ pub struct TrainConfig {
     pub seed: u64,
     pub held_out_pct: f64,
     pub retry_note: Option<String>,
+    /// Weight on AuxK ghost-grad auxiliary loss. 0.0 disables ghost grads.
+    /// Empirically, 0.10 is required to keep dead_features_pct ≤ 30% on
+    /// the real 313k-voicing corpus; the Anthropic default of 0.03 is too weak.
+    pub aux_alpha: f64,
+    /// Top-k_aux features drawn from the dead-feature pool each batch.
+    pub aux_k: u32,
+    /// artifact_id this run supersedes, embedded in links.supersedes.
+    pub supersedes: Option<String>,
 }
 
 /// Platform-appropriate default Python interpreter name.
@@ -92,10 +100,17 @@ pub fn run_python_trainer(
         .arg("--seed")
         .arg(config.seed.to_string())
         .arg("--held-out-pct")
-        .arg(config.held_out_pct.to_string());
+        .arg(config.held_out_pct.to_string())
+        .arg("--aux-alpha")
+        .arg(config.aux_alpha.to_string())
+        .arg("--aux-k")
+        .arg(config.aux_k.to_string());
 
     if let Some(note) = &config.retry_note {
         cmd.arg("--retry-note").arg(note);
+    }
+    if let Some(supersedes) = &config.supersedes {
+        cmd.arg("--supersedes").arg(supersedes);
     }
 
     // Inherit stdout/stderr so training progress appears in the terminal.
