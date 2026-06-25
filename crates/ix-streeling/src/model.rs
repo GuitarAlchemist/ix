@@ -67,3 +67,17 @@ impl LearningRecord {
         format!("{repo}:{path}")
     }
 }
+
+impl ix_registrar::Record for LearningRecord {
+    // The id is already globally unique (`"{repo}:{path}"`), so it is both the
+    // dedup key and the reported id.
+    fn dedup_key(&self) -> String {
+        self.id.clone()
+    }
+    fn report_id(&self) -> String {
+        self.id.clone()
+    }
+    fn repo(&self) -> &str {
+        &self.repo
+    }
+}

@@ -10,6 +10,7 @@ keywords = ["learnings", "knowledge", "catalog", "streeling", "governance"]
 description = "Streeling University — generate the federated learnings catalog + campus index over the ecosystem's docs/solutions (and knowledge/plans/brainstorms). Plain Rust; DuckDB only reads the emitted catalog."
 
 [dependencies]
+ix-registrar = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

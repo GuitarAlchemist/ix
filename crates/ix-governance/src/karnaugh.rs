@@ -292,7 +292,7 @@ impl KarnaughMap {
             TruthValue::True => 0,
             TruthValue::Probable => 1,
             TruthValue::Unknown => 2,
-            TruthValue::Disputed => 3,
+            TruthValue::Doubtful => 3,
             TruthValue::False => 4,
             TruthValue::Contradictory => 5,
         }
@@ -303,7 +303,7 @@ impl KarnaughMap {
             0 => TruthValue::True,
             1 => TruthValue::Probable,
             2 => TruthValue::Unknown,
-            3 => TruthValue::Disputed,
+            3 => TruthValue::Doubtful,
             4 => TruthValue::False,
             _ => TruthValue::Contradictory,
         }
@@ -484,7 +484,7 @@ mod tests {
         kmap.set(&[Contradictory], True);
 
         let matches = kmap.cells_matching(True);
-        // True and Contradictory are set to True; Probable and Disputed default to Unknown
+        // True and Contradictory are set to True; Probable and Doubtful default to Unknown
         assert_eq!(matches.len(), 2);
     }
 
@@ -510,7 +510,7 @@ mod tests {
             kmap.set(&[a, Probable], False);
             kmap.set(&[a, False], False);
             kmap.set(&[a, Unknown], False);
-            kmap.set(&[a, Disputed], False);
+            kmap.set(&[a, Doubtful], False);
             kmap.set(&[a, Contradictory], False);
         }
 

@@ -8,7 +8,12 @@ use ix_ai_annotations::{Annotation, TruthValue};
 use ix_pipeline::dag::Dag;
 use serde::Serialize;
 
-use crate::node::{polarity, AssumptionNode, Polarity, ResearchClaim};
+use crate::node::{AssumptionNode, ResearchClaim};
+
+// The pairwise-conflict predicate is part of the hexavalent truth-value algebra,
+// owned by `ix-ai-annotations`. Re-exported so callers keep using
+// `ix_assumption_graph::{conflicts}` / `graph::conflicts`.
+pub use ix_ai_annotations::truth::conflicts;
 
 /// Errors raised while building the graph.
 #[derive(Debug, thiserror::Error)]
@@ -164,16 +169,6 @@ pub(crate) fn production_annotations(workspace: &Path) -> Result<Vec<Annotation>
             !ignored
         })
         .collect())
-}
-
-/// Two truth values conflict iff one leans true and the other leans false.
-///
-// @ai:invariant conflicts() is symmetric: conflicts(a,b) == conflicts(b,a) [T:test conf:0.95 src:graph.rs::tests::conflicts_is_symmetric]
-pub fn conflicts(a: TruthValue, b: TruthValue) -> bool {
-    matches!(
-        (polarity(a), polarity(b)),
-        (Polarity::Positive, Polarity::Negative) | (Polarity::Negative, Polarity::Positive)
-    )
 }
 
 /// Collapse whitespace and case so trivially-different claim spellings group together.

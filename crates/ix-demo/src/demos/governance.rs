@@ -356,7 +356,7 @@ fn tv_radio(ui: &mut egui::Ui, val: &mut TruthValue, id_prefix: &str) {
     ui.radio_value(val, TruthValue::True, "T");
     ui.radio_value(val, TruthValue::Probable, "P");
     ui.radio_value(val, TruthValue::Unknown, "U");
-    ui.radio_value(val, TruthValue::Disputed, "D");
+    ui.radio_value(val, TruthValue::Doubtful, "D");
     ui.radio_value(val, TruthValue::False, "F");
     ui.radio_value(val, TruthValue::Contradictory, "C");
 }
@@ -366,7 +366,7 @@ fn truth_table_grid(ui: &mut egui::Ui, id: &str, op: fn(TruthValue, TruthValue) 
         TruthValue::True,
         TruthValue::Probable,
         TruthValue::Unknown,
-        TruthValue::Disputed,
+        TruthValue::Doubtful,
         TruthValue::False,
         TruthValue::Contradictory,
     ];
@@ -388,7 +388,7 @@ fn truth_table_grid(ui: &mut egui::Ui, id: &str, op: fn(TruthValue, TruthValue) 
                     TruthValue::True => egui::Color32::from_rgb(80, 180, 80),
                     TruthValue::Probable => egui::Color32::from_rgb(130, 200, 100),
                     TruthValue::Unknown => egui::Color32::from_rgb(180, 180, 80),
-                    TruthValue::Disputed => egui::Color32::from_rgb(220, 140, 60),
+                    TruthValue::Doubtful => egui::Color32::from_rgb(220, 140, 60),
                     TruthValue::False => egui::Color32::from_rgb(200, 80, 80),
                     TruthValue::Contradictory => egui::Color32::from_rgb(180, 80, 180),
                 };

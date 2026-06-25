@@ -84,6 +84,20 @@ pub struct ValueRecord {
     pub rationale: Option<String>,
 }
 
+impl ix_registrar::Record for ValueRecord {
+    // Item ids are bare (not repo-prefixed), so scope the dedup key by repo to
+    // avoid cross-repo id collisions. The reported id stays the bare id.
+    fn dedup_key(&self) -> String {
+        format!("{}\u{1}{}", self.repo, self.id)
+    }
+    fn report_id(&self) -> String {
+        self.id.clone()
+    }
+    fn repo(&self) -> &str {
+        &self.repo
+    }
+}
+
 /// Geometric mean of the three RICE axes. Geomean (not arithmetic) so the weakest
 /// axis dominates — a low Confidence caps the score (`certainty := strength of
 /// live binding`, applied to value).
@@ -117,9 +131,9 @@ mod tests {
     fn stars_geomean_rounds_and_clamps() {
         // The plan's worked case.
         assert_eq!(stars(4, 5, 3), 4); // geomean 3.91 → 4
-        // Low-confidence cap: arithmetic mean (5+5+1)/3 = 3.67 → 4, but geomean
-        // 2.92 → 3. (The plan's "(5,5,1)→2" example was a miscalculation — 2 would
-        // require harmonic mean; the locked rubric is geometric.)
+                                       // Low-confidence cap: arithmetic mean (5+5+1)/3 = 3.67 → 4, but geomean
+                                       // 2.92 → 3. (The plan's "(5,5,1)→2" example was a miscalculation — 2 would
+                                       // require harmonic mean; the locked rubric is geometric.)
         assert_eq!(stars(5, 5, 1), 3);
         assert_eq!(stars(5, 5, 5), 5);
         assert_eq!(stars(1, 1, 1), 1);

@@ -10,6 +10,7 @@ keywords = ["business-value", "rice", "scorecard", "catalog", "governance"]
 description = "Business-Value Scorecard — federate per-repo state/value/manifest.json into state/value/catalog.jsonl (RICE→stars). Plain Rust; DuckDB only reads the emitted catalog. Mirrors ix-streeling."
 
 [dependencies]
+ix-registrar = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
