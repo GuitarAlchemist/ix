@@ -81,6 +81,11 @@ mod inference;
 #[cfg(feature = "udf")]
 mod supervised;
 
+/// Epistemic SQL — hexavalent-logic scalar UDFs over `ix-types::Hexavalent`
+/// (`ix_hex_consensus`). Registered by [`udf::register_all`].
+#[cfg(feature = "udf")]
+mod hexavalent;
+
 /// Artifact source — the deep module every lens reads through: safe materialization of
 /// a GA-emitted JSON artifact set into a bench table (file selection + read_json_auto
 /// flags + the json_extract projection + empty-fallback). See `CONTEXT.md` → "Artifact source".

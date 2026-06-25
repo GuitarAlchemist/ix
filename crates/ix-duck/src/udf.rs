@@ -293,5 +293,6 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     crate::code::register(conn)?;
     crate::inference::register(conn)?;
     crate::supervised::register(conn)?;
+    crate::hexavalent::register(conn)?;
     Ok(())
 }
