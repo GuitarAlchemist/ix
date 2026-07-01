@@ -5,20 +5,12 @@
 
 use crate::model::{Kind, LearningRecord, SCHEMA_VERSION};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
 
-/// A repo to scan for learnings.
-pub struct SourceRoot {
-    pub repo: String,
-    pub root: PathBuf,
-}
-
-impl SourceRoot {
-    pub fn new(repo: impl Into<String>, root: impl Into<PathBuf>) -> Self {
-        Self { repo: repo.into(), root: root.into() }
-    }
-}
+// A repo to scan for learnings — the registrar's shared root type, re-exported so
+// callers keep using `ix_streeling::ingest::SourceRoot`.
+pub use ix_registrar::SourceRoot;
 
 /// ix scans all four stores; sibling repos scan `docs/solutions` only in v1
 /// (tars/Demerzel native stores need adapters — fast-follow, see the plan).
@@ -67,7 +59,9 @@ struct Frontmatter {
 /// Extract the YAML frontmatter block delimited by leading `---` fences.
 fn split_frontmatter(content: &str) -> Option<&str> {
     let rest = content.strip_prefix("---")?;
-    let rest = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n'))?;
+    let rest = rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))?;
     let end = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
     Some(&rest[..end])
 }
@@ -75,7 +69,9 @@ fn split_frontmatter(content: &str) -> Option<&str> {
 fn date_to_string(v: &serde_yaml::Value) -> Option<String> {
     match v {
         serde_yaml::Value::String(s) => Some(s.clone()),
-        other => serde_yaml::to_string(other).ok().map(|s| s.trim().to_string()),
+        other => serde_yaml::to_string(other)
+            .ok()
+            .map(|s| s.trim().to_string()),
     }
 }
 
@@ -94,7 +90,9 @@ fn parse_file(repo: &str, root: &Path, file: &Path, kind: Kind) -> Option<Learni
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let title = fm.title.or(fm.topic).unwrap_or(stem);
-    let category = fm.category.unwrap_or_else(|| kind.default_category().to_string());
+    let category = fm
+        .category
+        .unwrap_or_else(|| kind.default_category().to_string());
     Some(LearningRecord {
         schema_version: SCHEMA_VERSION.to_string(),
         id: LearningRecord::make_id(repo, &rel),

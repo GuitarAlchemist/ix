@@ -216,31 +216,11 @@ impl From<ResearchClaim> for AssumptionNode {
     }
 }
 
-/// Evidential polarity of a hexavalent truth value — the axis along which two
-/// claims about the same thing can contradict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Polarity {
-    /// Leans true: `T` (True) or `P` (Probable).
-    Positive,
-    /// Leans false: `D` (Doubtful) or `F` (False).
-    Negative,
-    /// No evidential direction: `U` (Unknown).
-    Neutral,
-    /// Already contradictory: `C` — flagged at the source, not re-derived pairwise.
-    Contradictory,
-}
-
-/// Map a hexavalent truth value to its evidential polarity.
-///
-// @ai:invariant every TruthValue maps to exactly one Polarity (total match) [T:formal-proof conf:0.95 src:exhaustive match, compiler-checked]
-pub fn polarity(tv: TruthValue) -> Polarity {
-    match tv {
-        TruthValue::T | TruthValue::P => Polarity::Positive,
-        TruthValue::D | TruthValue::F => Polarity::Negative,
-        TruthValue::U => Polarity::Neutral,
-        TruthValue::C => Polarity::Contradictory,
-    }
-}
+// The hexavalent truth-value algebra — evidential polarity of a value, the axis
+// along which two claims about the same thing can contradict — lives in
+// `ix-ai-annotations` beside `TruthValue` itself. Re-exported here so callers keep
+// using `ix_assumption_graph::node::{Polarity, polarity}` (and the crate root).
+pub use ix_ai_annotations::truth::{polarity, Polarity};
 
 #[cfg(test)]
 mod tests {

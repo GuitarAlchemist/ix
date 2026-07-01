@@ -8,12 +8,19 @@ use std::ops::Not;
 /// intermediate values:
 ///
 /// - **Probable (P)**: evidence leans true but is not conclusive.
-/// - **Disputed (D)**: credible evidence on both sides, actively contested
-///   (epistemic disagreement — unlike Contradictory which is logical).
+/// - **Doubtful (D)**: evidence leans false but is not conclusive — the
+///   symmetric mirror of Probable (distinct from Contradictory, which is a
+///   logical inconsistency, not a mere lean).
 ///
 /// Ordering on the "truth axis": T > P > U > D > F.
 /// C (Contradictory) is orthogonal — it indicates a logical inconsistency
 /// that cannot resolve with more evidence.
+///
+/// This enum is the **governance wire adapter** (its `Display`/`"D"` symbols
+/// flow through the `ix_governance_belief` MCP tool). Its *algebra*
+/// (`and`/`or`/`not`/`implies`/`xor`/`equiv`) delegates to the canonical
+/// [`ix_types::Hexavalent`] so there is exactly one hexavalent truth table in
+/// the workspace — see [`TruthValue::to_hex`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TruthValue {
     /// Verified with sufficient evidence.
@@ -22,8 +29,8 @@ pub enum TruthValue {
     Probable,
     /// Insufficient evidence to determine.
     Unknown,
-    /// Credible evidence on both sides, actively contested (epistemic).
-    Disputed,
+    /// Evidence leans false but not conclusive (mirror of Probable).
+    Doubtful,
     /// Refuted with sufficient evidence.
     False,
     /// Evidence supports both True and False (logical inconsistency).
@@ -32,109 +39,69 @@ pub enum TruthValue {
 
 impl fmt::Display for TruthValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TruthValue::True => write!(f, "T"),
-            TruthValue::Probable => write!(f, "P"),
-            TruthValue::Unknown => write!(f, "U"),
-            TruthValue::Disputed => write!(f, "D"),
-            TruthValue::False => write!(f, "F"),
-            TruthValue::Contradictory => write!(f, "C"),
-        }
+        f.write_str(self.to_hex().as_str())
     }
 }
 
 impl Not for TruthValue {
     type Output = Self;
 
-    /// Hexavalent NOT: T↔F, P↔D, U→U, C→C.
+    /// Hexavalent NOT: T↔F, P↔D, U→U, C→C (delegates to canonical).
     fn not(self) -> Self {
-        match self {
-            TruthValue::True => TruthValue::False,
-            TruthValue::Probable => TruthValue::Disputed,
-            TruthValue::Unknown => TruthValue::Unknown,
-            TruthValue::Disputed => TruthValue::Probable,
-            TruthValue::False => TruthValue::True,
-            TruthValue::Contradictory => TruthValue::Contradictory,
-        }
+        Self::from_hex(self.to_hex().not())
     }
 }
 
 impl TruthValue {
-    /// Hexavalent AND truth table.
-    ///
-    /// Design principles:
-    /// - F absorbs everything (F AND x = F).
-    /// - C absorbs everything except F (logical inconsistency propagates).
-    /// - T is the identity (T AND x = x).
-    /// - P AND P = P (probable stays probable).
-    /// - P AND U = U (unknown weakens probable).
-    /// - P AND D = D (dispute weakens probable).
-    /// - D AND D = D, D AND U = U.
+    /// Lower this governance wire value to the canonical [`ix_types::Hexavalent`]
+    /// (lossless, total). The algebra lives there; this enum is the adapter.
+    pub const fn to_hex(self) -> ix_types::Hexavalent {
+        match self {
+            TruthValue::True => ix_types::Hexavalent::True,
+            TruthValue::Probable => ix_types::Hexavalent::Probable,
+            TruthValue::Unknown => ix_types::Hexavalent::Unknown,
+            TruthValue::Doubtful => ix_types::Hexavalent::Doubtful,
+            TruthValue::False => ix_types::Hexavalent::False,
+            TruthValue::Contradictory => ix_types::Hexavalent::Contradictory,
+        }
+    }
+
+    /// Lift a canonical [`ix_types::Hexavalent`] back to this wire enum.
+    pub const fn from_hex(h: ix_types::Hexavalent) -> Self {
+        match h {
+            ix_types::Hexavalent::True => TruthValue::True,
+            ix_types::Hexavalent::Probable => TruthValue::Probable,
+            ix_types::Hexavalent::Unknown => TruthValue::Unknown,
+            ix_types::Hexavalent::Doubtful => TruthValue::Doubtful,
+            ix_types::Hexavalent::False => TruthValue::False,
+            ix_types::Hexavalent::Contradictory => TruthValue::Contradictory,
+        }
+    }
+
+    /// Hexavalent AND (delegates to [`ix_types::Hexavalent::and`]).
     pub fn and(self, other: Self) -> Self {
-        use TruthValue::*;
-        match (self, other) {
-            // F absorbs everything
-            (False, _) | (_, False) => False,
-            // C absorbs everything except F
-            (Contradictory, _) | (_, Contradictory) => Contradictory,
-            // T is identity
-            (True, x) | (x, True) => x,
-            // P interactions
-            (Probable, Probable) => Probable,
-            (Probable, Unknown) | (Unknown, Probable) => Unknown,
-            (Probable, Disputed) | (Disputed, Probable) => Disputed,
-            // D interactions
-            (Disputed, Disputed) => Disputed,
-            (Disputed, Unknown) | (Unknown, Disputed) => Unknown,
-            // U with U
-            (Unknown, Unknown) => Unknown,
-        }
+        Self::from_hex(self.to_hex().and(other.to_hex()))
     }
 
-    /// Hexavalent OR truth table.
-    ///
-    /// Design principles:
-    /// - T absorbs everything (T OR x = T).
-    /// - C absorbs everything except T (logical inconsistency propagates).
-    /// - F is the identity (F OR x = x).
-    /// - P OR P = P (probable stays probable).
-    /// - P OR U = P (probable strengthens unknown).
-    /// - P OR D = U (dispute + probable = unresolved).
-    /// - D OR D = D, D OR U = U.
+    /// Hexavalent OR (delegates to [`ix_types::Hexavalent::or`], the De
+    /// Morgan-derived canonical table).
     pub fn or(self, other: Self) -> Self {
-        use TruthValue::*;
-        match (self, other) {
-            // T absorbs everything
-            (True, _) | (_, True) => True,
-            // C absorbs everything except T
-            (Contradictory, _) | (_, Contradictory) => Contradictory,
-            // F is identity
-            (False, x) | (x, False) => x,
-            // P interactions
-            (Probable, Probable) => Probable,
-            (Probable, Unknown) | (Unknown, Probable) => Probable,
-            (Probable, Disputed) | (Disputed, Probable) => Unknown,
-            // D interactions
-            (Disputed, Disputed) => Disputed,
-            (Disputed, Unknown) | (Unknown, Disputed) => Unknown,
-            // U with U
-            (Unknown, Unknown) => Unknown,
-        }
+        Self::from_hex(self.to_hex().or(other.to_hex()))
     }
 
-    /// Hexavalent implication: A -> B = (NOT A) OR B.
+    /// Hexavalent implication: A -> B = (NOT A) OR B (delegates).
     pub fn implies(self, other: Self) -> Self {
-        (!self).or(other)
+        Self::from_hex(self.to_hex().implies(other.to_hex()))
     }
 
-    /// Hexavalent XOR: XOR(A, B) = (A OR B) AND NOT(A AND B).
+    /// Hexavalent XOR (delegates to [`ix_types::Hexavalent::xor`]).
     pub fn xor(self, other: Self) -> Self {
-        self.or(other).and(!(self.and(other)))
+        Self::from_hex(self.to_hex().xor(other.to_hex()))
     }
 
-    /// Hexavalent equivalence: A <-> B = (A -> B) AND (B -> A).
+    /// Hexavalent equivalence: A <-> B = (A -> B) AND (B -> A) (delegates).
     pub fn equiv(self, other: Self) -> Self {
-        self.implies(other).and(other.implies(self))
+        Self::from_hex(self.to_hex().equiv(other.to_hex()))
     }
 
     /// Returns true if this value is definite (True or False).
@@ -153,7 +120,7 @@ impl TruthValue {
             TruthValue::True,
             TruthValue::Probable,
             TruthValue::Unknown,
-            TruthValue::Disputed,
+            TruthValue::Doubtful,
             TruthValue::False,
             TruthValue::Contradictory,
         ]
@@ -237,7 +204,7 @@ impl BeliefState {
             TruthValue::True => ResolvedAction::Proceed,
             TruthValue::Probable => ResolvedAction::ProceedWithCaveat,
             TruthValue::Unknown => ResolvedAction::GatherEvidence,
-            TruthValue::Disputed => ResolvedAction::LikelyDoNotProceed,
+            TruthValue::Doubtful => ResolvedAction::LikelyDoNotProceed,
             TruthValue::False => ResolvedAction::DoNotProceed,
             TruthValue::Contradictory => ResolvedAction::Escalate,
         }
@@ -266,91 +233,60 @@ mod tests {
     use super::*;
     use TruthValue::*;
 
-    // ── NOT truth table (original 4 + hexavalent extensions) ─────────
-    #[test]
-    fn not_true() {
-        assert_eq!(!True, False);
-    }
-    #[test]
-    fn not_false() {
-        assert_eq!(!False, True);
-    }
-    #[test]
-    fn not_unknown() {
-        assert_eq!(!Unknown, Unknown);
-    }
-    #[test]
-    fn not_contradictory() {
-        assert_eq!(!Contradictory, Contradictory);
-    }
+    // The full 6×6 AND/OR conformance tables live once, on the canonical
+    // `ix_types::Hexavalent` (see `ix_types::hexavalent_tests`). These tests
+    // cover only what is governance-specific: the wire mapping, the
+    // BeliefState/ResolvedAction behaviour, and the guarantee that this
+    // adapter's algebra *is* the canonical one (no second truth table).
 
-    // ── AND truth table (original 4×4 subset — backward compat) ─────
+    // ── Display / wire symbol ────────────────────────────────────────
     #[test]
-    fn and_truth_table() {
-        let expected: [[TruthValue; 4]; 4] = [
-            // T AND {T,F,U,C}
-            [True, False, Unknown, Contradictory],
-            // F AND {T,F,U,C}
-            [False, False, False, False],
-            // U AND {T,F,U,C}
-            [Unknown, False, Unknown, Contradictory],
-            // C AND {T,F,U,C}
-            [Contradictory, False, Contradictory, Contradictory],
-        ];
-        let values = [True, False, Unknown, Contradictory];
-        for (i, &a) in values.iter().enumerate() {
-            for (j, &b) in values.iter().enumerate() {
-                assert_eq!(
-                    a.and(b),
-                    expected[i][j],
-                    "AND({}, {}) should be {} but got {}",
-                    a,
-                    b,
-                    expected[i][j],
-                    a.and(b)
-                );
-            }
-        }
-    }
-
-    // ── OR truth table (original 4×4 subset — backward compat) ──────
-    #[test]
-    fn or_truth_table() {
-        let expected: [[TruthValue; 4]; 4] = [
-            // T OR {T,F,U,C}
-            [True, True, True, True],
-            // F OR {T,F,U,C}
-            [True, False, Unknown, Contradictory],
-            // U OR {T,F,U,C}
-            [True, Unknown, Unknown, Contradictory],
-            // C OR {T,F,U,C}
-            [True, Contradictory, Contradictory, Contradictory],
-        ];
-        let values = [True, False, Unknown, Contradictory];
-        for (i, &a) in values.iter().enumerate() {
-            for (j, &b) in values.iter().enumerate() {
-                assert_eq!(
-                    a.or(b),
-                    expected[i][j],
-                    "OR({}, {}) should be {} but got {}",
-                    a,
-                    b,
-                    expected[i][j],
-                    a.or(b)
-                );
-            }
-        }
-    }
-
-    // ── Display ──────────────────────────────────────────────────────
-    #[test]
-    fn display() {
+    fn display_uses_single_letter_symbols() {
         assert_eq!(format!("{}", True), "T");
         assert_eq!(format!("{}", Probable), "P");
         assert_eq!(format!("{}", Unknown), "U");
-        assert_eq!(format!("{}", Disputed), "D");
+        assert_eq!(format!("{}", Doubtful), "D");
         assert_eq!(format!("{}", False), "F");
         assert_eq!(format!("{}", Contradictory), "C");
+    }
+
+    // ── Algebra delegates to the canonical ix_types::Hexavalent ──────
+    #[test]
+    fn algebra_matches_canonical_for_every_pair() {
+        for &a in TruthValue::all().iter() {
+            for &b in TruthValue::all().iter() {
+                assert_eq!(a.and(b).to_hex(), a.to_hex().and(b.to_hex()));
+                assert_eq!(a.or(b).to_hex(), a.to_hex().or(b.to_hex()));
+                assert_eq!(a.implies(b).to_hex(), a.to_hex().implies(b.to_hex()));
+            }
+            assert_eq!((!a).to_hex(), a.to_hex().not());
+        }
+    }
+
+    /// Regression guard for the drift this unification fixed: the old
+    /// hand-written governance OR table gave `P∨U = P` and `P∨D = U`; the
+    /// canonical De Morgan table gives `P∨U = U` and `P∨D = P`.
+    #[test]
+    fn or_table_is_the_canonical_de_morgan_one() {
+        assert_eq!(Probable.or(Unknown), Unknown);
+        assert_eq!(Probable.or(Doubtful), Probable);
+        assert_eq!(!Probable, Doubtful);
+        assert_eq!(!Doubtful, Probable);
+    }
+
+    #[test]
+    fn not_is_an_involution() {
+        for &v in TruthValue::all().iter() {
+            assert_eq!(!!v, v, "!!{v} should be {v}");
+        }
+    }
+
+    #[test]
+    fn all_returns_six_in_canonical_order() {
+        assert_eq!(
+            TruthValue::all(),
+            [True, Probable, Unknown, Doubtful, False, Contradictory]
+        );
     }
 
     // ── BeliefState ──────────────────────────────────────────────────
@@ -407,18 +343,26 @@ mod tests {
     }
 
     #[test]
-    fn belief_resolve() {
+    fn belief_resolve_covers_all_six() {
         assert_eq!(
             BeliefState::new("x", True, 0.9).resolve(),
             ResolvedAction::Proceed
         );
         assert_eq!(
-            BeliefState::new("x", False, 0.9).resolve(),
-            ResolvedAction::DoNotProceed
+            BeliefState::new("x", Probable, 0.8).resolve(),
+            ResolvedAction::ProceedWithCaveat
         );
         assert_eq!(
             BeliefState::new("x", Unknown, 0.5).resolve(),
             ResolvedAction::GatherEvidence
+        );
+        assert_eq!(
+            BeliefState::new("x", Doubtful, 0.5).resolve(),
+            ResolvedAction::LikelyDoNotProceed
+        );
+        assert_eq!(
+            BeliefState::new("x", False, 0.9).resolve(),
+            ResolvedAction::DoNotProceed
         );
         assert_eq!(
             BeliefState::new("x", Contradictory, 0.6).resolve(),
@@ -426,142 +370,14 @@ mod tests {
         );
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // Hexavalent extension tests (P and D)
-    // ══════════════════════════════════════════════════════════════════
-
+    /// Serde derive round-trips by variant name (now `Doubtful`, formerly
+    /// `Disputed`). The single-letter wire form is a separate concern
+    /// (see `feedback`'s custom serializer + the `Display` impl).
     #[test]
-    fn hexavalent_not() {
-        assert_eq!(!Probable, Disputed);
-        assert_eq!(!Disputed, Probable);
-    }
-
-    /// Full 6x6 AND truth table covering all P and D combinations.
-    #[test]
-    fn hexavalent_and_truth_table() {
-        // Columns: T, P, U, D, F, C
-        let expected: [[TruthValue; 6]; 6] = [
-            // T AND {T, P, U, D, F, C}
-            [True, Probable, Unknown, Disputed, False, Contradictory],
-            // P AND {T, P, U, D, F, C}
-            [Probable, Probable, Unknown, Disputed, False, Contradictory],
-            // U AND {T, P, U, D, F, C}
-            [Unknown, Unknown, Unknown, Unknown, False, Contradictory],
-            // D AND {T, P, U, D, F, C}
-            [Disputed, Disputed, Unknown, Disputed, False, Contradictory],
-            // F AND {T, P, U, D, F, C}
-            [False, False, False, False, False, False],
-            // C AND {T, P, U, D, F, C}
-            [
-                Contradictory,
-                Contradictory,
-                Contradictory,
-                Contradictory,
-                False,
-                Contradictory,
-            ],
-        ];
-        let values = TruthValue::all();
-        for (i, &a) in values.iter().enumerate() {
-            for (j, &b) in values.iter().enumerate() {
-                assert_eq!(
-                    a.and(b),
-                    expected[i][j],
-                    "AND({}, {}) should be {} but got {}",
-                    a,
-                    b,
-                    expected[i][j],
-                    a.and(b)
-                );
-            }
-        }
-    }
-
-    /// Full 6x6 OR truth table covering all P and D combinations.
-    #[test]
-    fn hexavalent_or_truth_table() {
-        // Columns: T, P, U, D, F, C
-        let expected: [[TruthValue; 6]; 6] = [
-            // T OR {T, P, U, D, F, C}
-            [True, True, True, True, True, True],
-            // P OR {T, P, U, D, F, C}
-            [True, Probable, Probable, Unknown, Probable, Contradictory],
-            // U OR {T, P, U, D, F, C}
-            [True, Probable, Unknown, Unknown, Unknown, Contradictory],
-            // D OR {T, P, U, D, F, C}
-            [True, Unknown, Unknown, Disputed, Disputed, Contradictory],
-            // F OR {T, P, U, D, F, C}
-            [True, Probable, Unknown, Disputed, False, Contradictory],
-            // C OR {T, P, U, D, F, C}
-            [
-                True,
-                Contradictory,
-                Contradictory,
-                Contradictory,
-                Contradictory,
-                Contradictory,
-            ],
-        ];
-        let values = TruthValue::all();
-        for (i, &a) in values.iter().enumerate() {
-            for (j, &b) in values.iter().enumerate() {
-                assert_eq!(
-                    a.or(b),
-                    expected[i][j],
-                    "OR({}, {}) should be {} but got {}",
-                    a,
-                    b,
-                    expected[i][j],
-                    a.or(b)
-                );
-            }
-        }
-    }
-
-    /// P resolves to ProceedWithCaveat, D resolves to LikelyDoNotProceed.
-    #[test]
-    fn hexavalent_resolve() {
-        assert_eq!(
-            BeliefState::new("x", Probable, 0.8).resolve(),
-            ResolvedAction::ProceedWithCaveat
-        );
-        assert_eq!(
-            BeliefState::new("x", Disputed, 0.5).resolve(),
-            ResolvedAction::LikelyDoNotProceed
-        );
-    }
-
-    /// Serde round-trip for P and D values.
-    #[test]
-    fn hexavalent_serde_roundtrip() {
-        let p = Probable;
-        let d = Disputed;
-        let p_json = serde_json::to_string(&p).unwrap();
-        let d_json = serde_json::to_string(&d).unwrap();
-        assert_eq!(p_json, "\"Probable\"");
-        assert_eq!(d_json, "\"Disputed\"");
-        let p_back: TruthValue = serde_json::from_str(&p_json).unwrap();
-        let d_back: TruthValue = serde_json::from_str(&d_json).unwrap();
-        assert_eq!(p_back, Probable);
-        assert_eq!(d_back, Disputed);
-    }
-
-    /// Verify all() returns 6 values in canonical order.
-    #[test]
-    fn hexavalent_all_returns_six() {
-        let all = TruthValue::all();
-        assert_eq!(all.len(), 6);
-        assert_eq!(
-            all,
-            [True, Probable, Unknown, Disputed, False, Contradictory]
-        );
-    }
-
-    /// NOT is an involution: !!x == x for all 6 values.
-    #[test]
-    fn hexavalent_not_involution() {
-        for &v in TruthValue::all().iter() {
-            assert_eq!(!!v, v, "!!{} should be {}", v, v);
-        }
+    fn serde_derive_round_trips_by_variant_name() {
+        assert_eq!(serde_json::to_string(&Probable).unwrap(), "\"Probable\"");
+        assert_eq!(serde_json::to_string(&Doubtful).unwrap(), "\"Doubtful\"");
+        let back: TruthValue = serde_json::from_str("\"Doubtful\"").unwrap();
+        assert_eq!(back, Doubtful);
     }
 }
