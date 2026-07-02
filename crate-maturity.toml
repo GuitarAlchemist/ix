@@ -17,10 +17,8 @@
 # ix-math + ix-graph demoted to beta 2026-06-21 (see Beta tier): each grew its
 # public surface (inference; components/centrality) — per the stable-surface flow
 # the tier moves with the API change. Re-promote once the surfaces settle.
-ix-optimize      = "stable"
 ix-supervised    = "stable"
 ix-ensemble      = "stable"
-ix-unsupervised  = "stable"
 ix-search        = "stable"
 ix-signal        = "stable"
 ix-cache         = "stable"
@@ -30,6 +28,8 @@ ix-rl            = "stable"
 
 # --- Beta tier ----------------------------------------------------------
 ix-math        = "beta"   # demoted from stable 2026-06-21 (new inference surface)
+ix-optimize      = "beta"  # demoted 2026-07-02: ConvergenceCriteria collapsed to ix_math::Convergence re-export (#155); re-promote once settled
+ix-unsupervised  = "beta"  # demoted 2026-07-02: kmeans/gmm/nmf adopt shared Convergence, nmf max_iter/tol renames (#155); re-promote once settled
 ix-graph       = "beta"   # demoted from stable 2026-06-21 (new components + centrality surface)
 ix-nn          = "beta"
 ix-pipeline    = "beta"

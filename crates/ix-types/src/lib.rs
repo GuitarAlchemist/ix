@@ -236,6 +236,12 @@ pub fn weighted(votes: &[(Hexavalent, f64)]) -> (Hexavalent, f64) {
         total += *conf;
     }
     let avg = total / votes.len() as f64;
+    // All-zero confidence carries no evidence: without this guard the argmax
+    // scan below would match the first tie-break entry (`C`) at weight 0.0 and
+    // report Contradictory from votes that assert nothing.
+    if total == 0.0 {
+        return (Hexavalent::Unknown, 0.0);
+    }
     let order = [
         Hexavalent::Contradictory,
         Hexavalent::Unknown,
@@ -518,5 +524,8 @@ mod hexavalent_tests {
         assert_eq!(weighted(&[(Contradictory, 0.5), (Unknown, 0.5)]).0, Contradictory);
         // Empty → Unknown.
         assert_eq!(weighted(&[]), (Unknown, 0.0));
+        // All-zero confidence asserts nothing → Unknown, never Contradictory.
+        assert_eq!(weighted(&[(True, 0.0), (False, 0.0)]), (Unknown, 0.0));
+        assert_eq!(weighted(&[(True, 0.0)]), (Unknown, 0.0));
     }
 }
