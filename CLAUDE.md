@@ -99,6 +99,13 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
 - **2026-05-24 — `@ai:` annotations.** Before claiming an invariant/assumption/hypothesis in code, attach an `@ai:` annotation with hexavalent truth_value + certainty per `docs/contracts/2026-05-24-ai-annotation.contract.md` (e.g. `// @ai:invariant arr is sorted ascending [T:test conf:0.95 src:test_search.rs:42]`).
 - **2026-06-01 — `certainty := strength of live binding`.** Don't write `[T]` without a binding (test/compiler/sentrux); cap human-only claims at `P:assumed`; surface unenforced assumptions as `@ai:assumption [U:uncertain]`; drift-gated by `.github/workflows/assumption-drift.yml`. Annotate one module at a time, each pass driving ≥1 real fix; **never** mass-generate or use an LLM panel as the drift oracle.
 
+- **2026-06-20 — Documentation Hygiene (Single-Context Rule).** Prevent loose, unindexed markdown files and enforce single-context directory conventions:
+  - All domain terminology changes must go to the central glossary at [CONTEXT.md](file:///c:/Users/spare/source/repos/ix/CONTEXT.md).
+  - All high-impact architectural decisions must go to [docs/adr/](file:///c:/Users/spare/source/repos/ix/docs/adr/) following [domain.md](file:///c:/Users/spare/source/repos/ix/docs/agents/domain.md).
+  - All developer/session learnings must go to [docs/solutions/](file:///c:/Users/spare/source/repos/ix/docs/solutions/) via `/learnings`.
+  - All session-specific planning must use `/digest` (written to `state/digests/latest.md`) instead of generating loose `.md` files in the repo.
+  - Run the `ix-streeling` indexer after document changes to maintain [catalog.jsonl](file:///c:/Users/spare/source/repos/ix/state/streeling/catalog.jsonl).
+
 ## Agent skills
 
 Per-repo config for the installed aihero/mattpocock engineering skills (see the aihero-delta note above). Configured 2026-06-14 via `/setup-matt-pocock-skills`.
