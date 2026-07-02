@@ -82,6 +82,7 @@ const EXPECTED: &[&str] = &[
     "ix_pca",
     "ix_silhouette",
     "ix_markov",
+    "ix_mesh_correlate",
     "ix_ml_pipeline",
     "ix_ml_predict",
     "ix_nl_to_pipeline",
@@ -201,9 +202,11 @@ fn parity_expected_count() {
     //   agent-native parity with the sentrux_gate_writer binary) = 92.
     // + ix_annotations_scan (2026-05-24, @ai annotation extract+reconcile scan,
     //   agent-native parity with the ix-ai-annotations reconcile binary) = 93.
+    // + mesh_correlate (2026-06-23, correlation-mesh fan-in for executable pipeline
+    //   meshes — |Pearson|≥τ graph → betweenness + components) = 94.
     // If this drifts, update both EXPECTED and this assertion in the
     // same commit.
-    assert_eq!(EXPECTED.len(), 93);
+    assert_eq!(EXPECTED.len(), 94);
 }
 
 #[test]
@@ -314,6 +317,7 @@ fn parity_batch2_tools_are_registry_backed() {
         "gradient_boosting",
         "supervised",
         "graph",
+        "mesh_correlate",
         "hyperloglog",
         "governance.check",
         "governance.persona",
@@ -343,8 +347,8 @@ fn parity_all_43_registry_backed() {
     //   analysis skills) = 65.
     let registry_count = ix_registry::count();
     assert_eq!(
-        registry_count, 65,
-        "expected 65 registry skills, got {registry_count}"
+        registry_count, 66,
+        "expected 66 registry skills, got {registry_count}"
     );
 }
 

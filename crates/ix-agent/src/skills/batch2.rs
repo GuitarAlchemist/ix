@@ -697,6 +697,29 @@ pub fn graph(p: Value) -> Result<Value, String> {
     handlers::graph_ops(p)
 }
 
+// ---- mesh_correlate ------------------------------------------------------
+fn mesh_correlate_schema() -> Value {
+    object(
+        vec![
+            ("series", Prop::num_matrix().desc("N equal-length real series (one row each)")),
+            ("threshold", Prop::number().desc("|Pearson r| edge threshold (default 0.5)")),
+        ],
+        &["series"],
+    )
+}
+/// Correlation-mesh fan-in: |Pearson| ≥ threshold graph over N series → betweenness
+/// centrality + connected components + the hub. The pipeline-mesh aggregation as a single
+/// node (the thresholding a spec can't do at build time).
+#[ix_skill(
+    domain = "graph",
+    name = "mesh_correlate",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch2::mesh_correlate_schema"
+)]
+pub fn mesh_correlate(p: Value) -> Result<Value, String> {
+    handlers::mesh_correlate(p)
+}
+
 // ---- hyperloglog ---------------------------------------------------------
 fn hyperloglog_schema() -> Value {
     object(
@@ -787,4 +810,28 @@ fn governance_policy_schema() -> Value {
 )]
 pub fn governance_policy(p: Value) -> Result<Value, String> {
     handlers::governance_policy(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn mesh_correlate_finds_hub() {
+        // Hub-and-spoke: orthogonal spokes p,q,r (mutually uncorrelated) + a hub
+        // h = p+q+r correlated with each. Under |r| >= 0.4, h connects to all three
+        // spokes while the spokes don't connect to each other → h is the betweenness hub.
+        let p = [2.0, -2.0, 0.0, 0.0, 0.0, 0.0];
+        let q = [0.0, 0.0, 2.0, -2.0, 0.0, 0.0];
+        let r = [0.0, 0.0, 0.0, 0.0, 2.0, -2.0];
+        let h: Vec<f64> = (0..6).map(|i| p[i] + q[i] + r[i]).collect();
+        let out = mesh_correlate(json!({
+            "series": [h, p, q, r],   // hub at index 0
+            "threshold": 0.4
+        }))
+        .expect("mesh_correlate");
+        assert_eq!(out["hub"], json!(0), "the hub (index 0) must rank highest by betweenness");
+        assert_eq!(out["n_streams"], json!(4));
+    }
 }
