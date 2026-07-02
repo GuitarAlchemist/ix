@@ -116,6 +116,8 @@ impl Clusterer for GMM {
         let mut weights = Array1::from_elem(self.k, 1.0 / self.k as f64);
 
         let mut prev_ll = f64::NEG_INFINITY;
+        let convergence =
+            ix_math::convergence::Convergence::new(self.max_iterations, self.tolerance);
 
         for _ in 0..self.max_iterations {
             // E-step: compute responsibilities
@@ -179,7 +181,7 @@ impl Clusterer for GMM {
             self.weights = Some(weights.clone());
 
             let ll = self.log_likelihood(x);
-            if (ll - prev_ll).abs() < self.tolerance {
+            if convergence.converged((ll - prev_ll).abs()) {
                 break;
             }
             prev_ll = ll;

@@ -159,7 +159,9 @@ fn find_test_match(a: &Annotation, cfg: &ReconcilerConfig) -> Option<String> {
         let test_str = test_path.to_string_lossy().to_lowercase();
         // Must reference the same basename OR live under tests/ for the same parent dir.
         let path_match = test_str.contains(&basename)
-            || (test_str.contains("tests/") || test_str.contains("tests\\") || test_str.contains("/tests/"));
+            || (test_str.contains("tests/")
+                || test_str.contains("tests\\")
+                || test_str.contains("/tests/"));
         if !path_match {
             continue;
         }
@@ -197,7 +199,9 @@ fn apply_staleness(annotations: &mut [Annotation], cfg: &ReconcilerConfig) {
     let threshold = chrono::Duration::days(cfg.stale_threshold_days);
     for a in annotations.iter_mut() {
         let abs = cfg.workspace.join(&a.location.path);
-        let Ok(meta) = fs::metadata(&abs) else { continue };
+        let Ok(meta) = fs::metadata(&abs) else {
+            continue;
+        };
         let Ok(mtime) = meta.modified() else { continue };
         let mtime_dt = system_time_to_utc(mtime);
         let Ok(updated) = chrono::DateTime::parse_from_rfc3339(&a.updated_at) else {
@@ -211,9 +215,7 @@ fn apply_staleness(annotations: &mut [Annotation], cfg: &ReconcilerConfig) {
 }
 
 fn system_time_to_utc(t: SystemTime) -> chrono::DateTime<chrono::Utc> {
-    let dur = t
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
+    let dur = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     chrono::DateTime::<chrono::Utc>::from_timestamp(dur.as_secs() as i64, dur.subsec_nanos())
         .unwrap_or_else(chrono::Utc::now)
 }
@@ -248,8 +250,7 @@ fn synthesize_contradictions_and_weighted(annotations: &[Annotation]) -> Vec<Ann
                 kind
             );
             let now = chrono::Utc::now().to_rfc3339();
-            let id =
-                crate::types::annotation_id(&path, line, AnnotationKind::Decision, &claim);
+            let id = crate::types::annotation_id(&path, line, AnnotationKind::Decision, &claim);
             let weighted = weighted_truth(members.iter().copied());
             let mut promoted_to_c_from: Vec<TruthValue> = distinct.into_iter().copied().collect();
             promoted_to_c_from.sort_by_key(|t| t.as_str());
@@ -291,8 +292,7 @@ fn synthesize_contradictions_and_weighted(annotations: &[Annotation]) -> Vec<Ann
                 path,
                 line
             );
-            let id =
-                crate::types::annotation_id(&path, line, AnnotationKind::Decision, &claim);
+            let id = crate::types::annotation_id(&path, line, AnnotationKind::Decision, &claim);
             synthesized.push(Annotation {
                 schema_version: crate::types::SCHEMA_VERSION,
                 id,
@@ -326,33 +326,12 @@ fn synthesize_contradictions_and_weighted(annotations: &[Annotation]) -> Vec<Ann
     synthesized
 }
 
-/// Confidence-weighted hexavalent voting. Returns `(argmax_truth_value, avg_confidence)`.
-/// Tie-break order matches Demerzel: C > U > T > F (P/D pull toward T/F respectively).
+/// Confidence-weighted hexavalent voting over a set of annotations. Delegates the
+/// truth-value algebra (argmax + escalation-favoring tie-break) to
+/// [`crate::truth::weighted`]; this just projects annotations to `(value, confidence)`.
 fn weighted_truth<'a, I: Iterator<Item = &'a Annotation>>(it: I) -> (TruthValue, f64) {
-    let mut buckets: HashMap<TruthValue, f64> = HashMap::new();
-    let mut total = 0.0;
-    let mut count = 0;
-    for a in it {
-        *buckets.entry(a.truth_value).or_insert(0.0) += a.confidence;
-        total += a.confidence;
-        count += 1;
-    }
-    let avg = if count > 0 { total / count as f64 } else { 0.0 };
-    // Tie-break: C > U > F > D > T > P (escalation-favoring)
-    let order = [
-        TruthValue::C,
-        TruthValue::U,
-        TruthValue::F,
-        TruthValue::D,
-        TruthValue::T,
-        TruthValue::P,
-    ];
-    let max_weight = buckets.values().copied().fold(0.0_f64, f64::max);
-    let winner = order
-        .into_iter()
-        .find(|tv| buckets.get(tv).copied().unwrap_or(0.0) == max_weight)
-        .unwrap_or(TruthValue::U);
-    (winner, avg)
+    let votes: Vec<(TruthValue, f64)> = it.map(|a| (a.truth_value, a.confidence)).collect();
+    crate::truth::weighted(&votes)
 }
 
 #[cfg(test)]
@@ -397,8 +376,22 @@ mod tests {
     #[test]
     fn contradictory_pair_promotes_to_c() {
         let anns = vec![
-            fake("a.rs", 1, AnnotationKind::Invariant, TruthValue::T, 0.9, "claude"),
-            fake("a.rs", 1, AnnotationKind::Invariant, TruthValue::F, 0.7, "codex"),
+            fake(
+                "a.rs",
+                1,
+                AnnotationKind::Invariant,
+                TruthValue::T,
+                0.9,
+                "claude",
+            ),
+            fake(
+                "a.rs",
+                1,
+                AnnotationKind::Invariant,
+                TruthValue::F,
+                0.7,
+                "codex",
+            ),
         ];
         let cfg = ReconcilerConfig::new(".");
         let report = reconcile(anns, &cfg);
@@ -415,8 +408,22 @@ mod tests {
     #[test]
     fn consistent_pair_weighted_aggregate() {
         let anns = vec![
-            fake("b.rs", 1, AnnotationKind::Invariant, TruthValue::T, 0.9, "claude"),
-            fake("b.rs", 1, AnnotationKind::Invariant, TruthValue::T, 0.7, "codex"),
+            fake(
+                "b.rs",
+                1,
+                AnnotationKind::Invariant,
+                TruthValue::T,
+                0.9,
+                "claude",
+            ),
+            fake(
+                "b.rs",
+                1,
+                AnnotationKind::Invariant,
+                TruthValue::T,
+                0.7,
+                "codex",
+            ),
         ];
         let cfg = ReconcilerConfig::new(".");
         let report = reconcile(anns, &cfg);
@@ -424,18 +431,29 @@ mod tests {
             .annotations
             .iter()
             .find(|a| {
-                a.kind == AnnotationKind::Decision
-                    && a.claim.starts_with("[reconciler] weighted")
+                a.kind == AnnotationKind::Decision && a.claim.starts_with("[reconciler] weighted")
             })
             .expect("weighted synth present");
         assert_eq!(synth.truth_value, TruthValue::T);
-        let conf = synth.reconciliation.as_ref().unwrap().weighted_confidence.unwrap();
+        let conf = synth
+            .reconciliation
+            .as_ref()
+            .unwrap()
+            .weighted_confidence
+            .unwrap();
         assert!((conf - 0.8).abs() < 1e-9);
     }
 
     #[test]
     fn solo_annotation_no_synthesis() {
-        let anns = vec![fake("c.rs", 1, AnnotationKind::Invariant, TruthValue::T, 0.9, "claude")];
+        let anns = vec![fake(
+            "c.rs",
+            1,
+            AnnotationKind::Invariant,
+            TruthValue::T,
+            0.9,
+            "claude",
+        )];
         let cfg = ReconcilerConfig::new(".");
         let report = reconcile(anns, &cfg);
         assert_eq!(report.total_annotations, 1);
@@ -444,8 +462,22 @@ mod tests {
     #[test]
     fn weighted_truth_tiebreak_prefers_c() {
         let anns = [
-            fake("d.rs", 1, AnnotationKind::Invariant, TruthValue::T, 0.5, "claude"),
-            fake("d.rs", 1, AnnotationKind::Invariant, TruthValue::C, 0.5, "codex"),
+            fake(
+                "d.rs",
+                1,
+                AnnotationKind::Invariant,
+                TruthValue::T,
+                0.5,
+                "claude",
+            ),
+            fake(
+                "d.rs",
+                1,
+                AnnotationKind::Invariant,
+                TruthValue::C,
+                0.5,
+                "codex",
+            ),
         ];
         let (w, _) = weighted_truth(anns.iter());
         assert_eq!(w, TruthValue::C);
@@ -454,7 +486,14 @@ mod tests {
     #[test]
     fn report_counts_truth_values() {
         let anns = vec![
-            fake("e.rs", 1, AnnotationKind::Invariant, TruthValue::T, 0.9, "x"),
+            fake(
+                "e.rs",
+                1,
+                AnnotationKind::Invariant,
+                TruthValue::T,
+                0.9,
+                "x",
+            ),
             fake("e.rs", 2, AnnotationKind::Hint, TruthValue::U, 0.5, "y"),
         ];
         let cfg = ReconcilerConfig::new(".");

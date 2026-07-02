@@ -125,6 +125,12 @@ impl Hexavalent {
         matches!(self, Hexavalent::True | Hexavalent::False)
     }
 
+    /// Is this value *not* definite (P, U, D, C)? The complement of
+    /// [`is_definite`](Hexavalent::is_definite).
+    pub const fn is_indefinite(self) -> bool {
+        !self.is_definite()
+    }
+
     /// Does this value carry evidential direction (P, D, T, F)?
     pub const fn is_directed(self) -> bool {
         matches!(
@@ -132,6 +138,124 @@ impl Hexavalent {
             Hexavalent::True | Hexavalent::Probable | Hexavalent::Doubtful | Hexavalent::False
         )
     }
+
+    /// Parse from the single-letter wire symbol (`T`/`P`/`U`/`D`/`F`/`C`).
+    pub const fn from_char(c: char) -> Option<Self> {
+        Some(match c {
+            'T' => Hexavalent::True,
+            'P' => Hexavalent::Probable,
+            'U' => Hexavalent::Unknown,
+            'D' => Hexavalent::Doubtful,
+            'F' => Hexavalent::False,
+            'C' => Hexavalent::Contradictory,
+            _ => return None,
+        })
+    }
+
+    /// Single-letter symbol as a `&'static str` (`"T"`/`"P"`/…). Mirrors
+    /// [`symbol`](Hexavalent::symbol) for callers that want a string slice.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Hexavalent::True => "T",
+            Hexavalent::Probable => "P",
+            Hexavalent::Unknown => "U",
+            Hexavalent::Doubtful => "D",
+            Hexavalent::False => "F",
+            Hexavalent::Contradictory => "C",
+        }
+    }
+
+    /// Hexavalent implication: `a → b = (¬a) ∨ b`.
+    pub const fn implies(self, other: Self) -> Self {
+        self.not().or(other)
+    }
+
+    /// Hexavalent XOR: `a ⊕ b = (a ∨ b) ∧ ¬(a ∧ b)`.
+    pub const fn xor(self, other: Self) -> Self {
+        self.or(other).and(self.and(other).not())
+    }
+
+    /// Hexavalent equivalence: `a ↔ b = (a → b) ∧ (b → a)`.
+    pub const fn equiv(self, other: Self) -> Self {
+        self.implies(other).and(other.implies(self))
+    }
+
+    /// This value's evidential [`Polarity`] — the direction of evidence,
+    /// independent of sufficiency. `T`/`P` lean positive, `D`/`F` lean
+    /// negative, `U` is neutral, `C` is already contradictory.
+    pub const fn polarity(self) -> Polarity {
+        match self {
+            Hexavalent::True | Hexavalent::Probable => Polarity::Positive,
+            Hexavalent::Doubtful | Hexavalent::False => Polarity::Negative,
+            Hexavalent::Unknown => Polarity::Neutral,
+            Hexavalent::Contradictory => Polarity::Contradictory,
+        }
+    }
+
+    /// Two values *conflict* iff one leans true and the other leans false.
+    /// Neutral (`U`) and already-contradictory (`C`) never pairwise-conflict.
+    pub const fn conflicts(self, other: Self) -> bool {
+        matches!(
+            (self.polarity(), other.polarity()),
+            (Polarity::Positive, Polarity::Negative) | (Polarity::Negative, Polarity::Positive)
+        )
+    }
+}
+
+/// A truth value's evidential direction — the sign of the evidence, separated
+/// from its sufficiency. Used by contradiction detection and confidence-weighted
+/// voting (see [`weighted`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum Polarity {
+    /// Leans true: `T` (True) or `P` (Probable).
+    Positive,
+    /// Leans false: `D` (Doubtful) or `F` (False).
+    Negative,
+    /// No evidential direction: `U` (Unknown).
+    Neutral,
+    /// Already contradictory: `C` — flagged at the source, not re-derived pairwise.
+    Contradictory,
+}
+
+/// Confidence-weighted hexavalent vote over `(value, confidence)` pairs.
+///
+/// Returns `(argmax_value, avg_confidence)`: the value carrying the greatest
+/// summed confidence, and the mean confidence across all votes. Ties break by an
+/// **escalation-favoring** order `C > U > F > D > T > P`, so an unresolved or
+/// contradictory reading wins over a confident-but-tied positive. Empty input
+/// resolves to `U` (no evidence).
+pub fn weighted(votes: &[(Hexavalent, f64)]) -> (Hexavalent, f64) {
+    use std::collections::HashMap;
+    if votes.is_empty() {
+        return (Hexavalent::Unknown, 0.0);
+    }
+    let mut buckets: HashMap<Hexavalent, f64> = HashMap::new();
+    let mut total = 0.0;
+    for (tv, conf) in votes {
+        *buckets.entry(*tv).or_insert(0.0) += *conf;
+        total += *conf;
+    }
+    let avg = total / votes.len() as f64;
+    // All-zero confidence carries no evidence: without this guard the argmax
+    // scan below would match the first tie-break entry (`C`) at weight 0.0 and
+    // report Contradictory from votes that assert nothing.
+    if total == 0.0 {
+        return (Hexavalent::Unknown, 0.0);
+    }
+    let order = [
+        Hexavalent::Contradictory,
+        Hexavalent::Unknown,
+        Hexavalent::False,
+        Hexavalent::Doubtful,
+        Hexavalent::True,
+        Hexavalent::Probable,
+    ];
+    let max_weight = buckets.values().copied().fold(0.0_f64, f64::max);
+    let winner = order
+        .into_iter()
+        .find(|tv| buckets.get(tv).copied().unwrap_or(0.0) == max_weight)
+        .unwrap_or(Hexavalent::Unknown);
+    (winner, avg)
 }
 
 impl std::fmt::Display for Hexavalent {
@@ -284,5 +408,124 @@ impl IxMatrix {
 impl From<Array2<f64>> for IxMatrix {
     fn from(a: Array2<f64>) -> Self {
         Self(a)
+    }
+}
+
+#[cfg(test)]
+mod hexavalent_tests {
+    use super::Hexavalent::*;
+    use super::{weighted, Hexavalent, Polarity};
+
+    /// Canonical 6×6 AND table (rows/cols in lattice order T,P,U,D,F,C).
+    /// F is absorbing; T is identity; C absorbs everything except F.
+    #[test]
+    fn and_truth_table() {
+        let expected: [[Hexavalent; 6]; 6] = [
+            [True, Probable, Unknown, Doubtful, False, Contradictory],
+            [Probable, Probable, Unknown, Doubtful, False, Contradictory],
+            [Unknown, Unknown, Unknown, Unknown, False, Contradictory],
+            [Doubtful, Doubtful, Unknown, Doubtful, False, Contradictory],
+            [False, False, False, False, False, False],
+            [Contradictory, Contradictory, Contradictory, Contradictory, False, Contradictory],
+        ];
+        for (i, &a) in Hexavalent::all().iter().enumerate() {
+            for (j, &b) in Hexavalent::all().iter().enumerate() {
+                assert_eq!(a.and(b), expected[i][j], "AND({a}, {b})");
+            }
+        }
+    }
+
+    /// Canonical 6×6 OR table — derived from AND via De Morgan, so it can never
+    /// silently drift from AND. Note the De Morgan results at the P/D cells
+    /// (`P∨U = U`, `P∨D = P`) that a hand-written table historically got wrong.
+    #[test]
+    fn or_truth_table() {
+        let expected: [[Hexavalent; 6]; 6] = [
+            [True, True, True, True, True, True],
+            [True, Probable, Unknown, Probable, Probable, Contradictory],
+            [True, Unknown, Unknown, Unknown, Unknown, Contradictory],
+            [True, Probable, Unknown, Doubtful, Doubtful, Contradictory],
+            [True, Probable, Unknown, Doubtful, False, Contradictory],
+            [True, Contradictory, Contradictory, Contradictory, Contradictory, Contradictory],
+        ];
+        for (i, &a) in Hexavalent::all().iter().enumerate() {
+            for (j, &b) in Hexavalent::all().iter().enumerate() {
+                assert_eq!(a.or(b), expected[i][j], "OR({a}, {b})");
+            }
+        }
+    }
+
+    #[test]
+    fn not_is_an_involution() {
+        for &v in Hexavalent::all().iter() {
+            assert_eq!(v.not().not(), v, "¬¬{v}");
+        }
+    }
+
+    #[test]
+    fn and_or_are_commutative() {
+        for &a in Hexavalent::all().iter() {
+            for &b in Hexavalent::all().iter() {
+                assert_eq!(a.and(b), b.and(a), "AND comm {a},{b}");
+                assert_eq!(a.or(b), b.or(a), "OR comm {a},{b}");
+            }
+        }
+    }
+
+    #[test]
+    fn implies_xor_equiv_on_classical_subset() {
+        // Classical T/F/U cases the governance Karnaugh minimizer relies on.
+        assert_eq!(True.implies(False), False);
+        assert_eq!(False.implies(True), True);
+        assert_eq!(Unknown.implies(False), Unknown);
+        assert_eq!(True.xor(False), True);
+        assert_eq!(False.xor(False), False);
+        assert_eq!(True.equiv(False), False);
+        assert_eq!(Unknown.equiv(Unknown), Unknown);
+    }
+
+    #[test]
+    fn from_char_round_trips_symbol() {
+        for &v in Hexavalent::all().iter() {
+            assert_eq!(Hexavalent::from_char(v.symbol()), Some(v));
+            assert_eq!(v.as_str(), &v.symbol().to_string());
+        }
+        assert_eq!(Hexavalent::from_char('Z'), None);
+    }
+
+    #[test]
+    fn polarity_and_conflicts() {
+        assert_eq!(True.polarity(), Polarity::Positive);
+        assert_eq!(Probable.polarity(), Polarity::Positive);
+        assert_eq!(Doubtful.polarity(), Polarity::Negative);
+        assert_eq!(Unknown.polarity(), Polarity::Neutral);
+        assert_eq!(Contradictory.polarity(), Polarity::Contradictory);
+        assert!(True.conflicts(False));
+        assert!(Probable.conflicts(Doubtful));
+        assert!(!Probable.conflicts(True));
+        assert!(!Unknown.conflicts(False));
+        assert!(!Contradictory.conflicts(True));
+        // Symmetric.
+        for &a in Hexavalent::all().iter() {
+            for &b in Hexavalent::all().iter() {
+                assert_eq!(a.conflicts(b), b.conflicts(a));
+            }
+        }
+    }
+
+    #[test]
+    fn weighted_picks_argmax_and_breaks_toward_escalation() {
+        let (tv, avg) = weighted(&[(True, 0.9), (True, 0.8), (False, 0.5)]);
+        assert_eq!(tv, True);
+        assert!((avg - (2.2 / 3.0)).abs() < 1e-9);
+        // Tie T vs F → escalation order prefers F.
+        assert_eq!(weighted(&[(True, 0.5), (False, 0.5)]).0, False);
+        // C beats everything on a tie.
+        assert_eq!(weighted(&[(Contradictory, 0.5), (Unknown, 0.5)]).0, Contradictory);
+        // Empty → Unknown.
+        assert_eq!(weighted(&[]), (Unknown, 0.0));
+        // All-zero confidence asserts nothing → Unknown, never Contradictory.
+        assert_eq!(weighted(&[(True, 0.0), (False, 0.0)]), (Unknown, 0.0));
+        assert_eq!(weighted(&[(True, 0.0)]), (Unknown, 0.0));
     }
 }

@@ -10,6 +10,7 @@ keywords = ["annotations", "hexavalent", "governance", "ai", "static-analysis"]
 description = "Extracts in-source AI-authored semantic annotations (@ai:invariant, @ai:assumption, etc.) with hexavalent truth values (T/P/U/D/F/C) and certainty markers. Emits the ai-annotation contract JSONL stream consumed by the reconciler and the GA dashboard."
 
 [dependencies]
+ix-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }

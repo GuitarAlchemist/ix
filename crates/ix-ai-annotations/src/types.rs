@@ -54,6 +54,35 @@ impl TruthValue {
     }
 }
 
+// This wire-contract enum (pinned to `ai-annotation.schema.json`) is a thin
+// adapter over the canonical [`ix_types::Hexavalent`]. The conversions are
+// lossless and total — the algebra itself lives on `Hexavalent` (see `truth`).
+impl From<TruthValue> for ix_types::Hexavalent {
+    fn from(tv: TruthValue) -> Self {
+        match tv {
+            TruthValue::T => ix_types::Hexavalent::True,
+            TruthValue::P => ix_types::Hexavalent::Probable,
+            TruthValue::U => ix_types::Hexavalent::Unknown,
+            TruthValue::D => ix_types::Hexavalent::Doubtful,
+            TruthValue::F => ix_types::Hexavalent::False,
+            TruthValue::C => ix_types::Hexavalent::Contradictory,
+        }
+    }
+}
+
+impl From<ix_types::Hexavalent> for TruthValue {
+    fn from(h: ix_types::Hexavalent) -> Self {
+        match h {
+            ix_types::Hexavalent::True => TruthValue::T,
+            ix_types::Hexavalent::Probable => TruthValue::P,
+            ix_types::Hexavalent::Unknown => TruthValue::U,
+            ix_types::Hexavalent::Doubtful => TruthValue::D,
+            ix_types::Hexavalent::False => TruthValue::F,
+            ix_types::Hexavalent::Contradictory => TruthValue::C,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Certainty {
