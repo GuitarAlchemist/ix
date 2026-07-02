@@ -6,10 +6,22 @@
 //! - `ix_pagerank(edges, damping DOUBLE, iterations BIGINT)` → `TABLE(node, rank)`.
 //! - `ix_shortest_path(edges, src BIGINT, dst BIGINT)` → `TABLE(step, node)` (the
 //!   Dijkstra path src→dst; empty if unreachable).
+//! - `ix_connected_components(edges)` → `TABLE(node, component)` — weakly-connected
+//!   component id per node (edge direction ignored).
+//! - `ix_centrality(edges, kind)` → `TABLE(node, score)` — undirected centrality,
+//!   `kind` ∈ `degree | closeness | eigenvector | betweenness`.
+//! - `ix_viterbi(initial, transition, emission, observations)` → `TABLE(step, state)` —
+//!   most-likely hidden-state path of an HMM (initial 1-D, transition/emission 2-D
+//!   JSON matrices, observations a 1-D int array).
 //!
 //! Signal (`ix-signal`), input = a JSON number array (the series):
 //! - `ix_rfft(series)` → `TABLE(bin, magnitude)` — real FFT magnitude spectrum.
 //! - `ix_autocorrelation(series)` → `TABLE(lag, value)`.
+//! - `ix_wavelet_denoise(series, levels BIGINT, threshold DOUBLE)` → `TABLE(i, value)` —
+//!   soft-thresholded series (same length as input).
+//! - `ix_kalman_smooth(series, process_noise DOUBLE, measurement_noise DOUBLE)` →
+//!   `TABLE(i, value)` — constant-velocity 1-D Kalman position estimate (dt=1).
+//! - `ix_dct(series)` → `TABLE(k, coefficient)` — DCT-II coefficients.
 //!
 //! All wrap the real IX crates — no DSP/graph math reimplemented here.
 
@@ -19,8 +31,15 @@ use duckdb::core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId};
 use duckdb::vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab};
 use duckdb::Connection;
 use ix_graph::graph::Graph;
+use ix_graph::hmm::HiddenMarkovModel;
 use ix_signal::correlation::autocorrelation;
+use ix_signal::dct::dct2;
 use ix_signal::fft::rfft;
+use ix_signal::kalman::constant_velocity_1d;
+use ix_signal::wavelet::wavelet_denoise;
+use ndarray::Array1;
+
+use crate::tablefn::parse_matrix;
 
 // ── shared output plumbing ────────────────────────────────────────────────────
 
@@ -277,12 +296,277 @@ impl VTab for IxAutocorrelation {
     }
 }
 
+// ── ix_wavelet_denoise ─────────────────────────────────────────────────────────
+
+struct IxWaveletDenoise;
+impl VTab for IxWaveletDenoise {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_wavelet_denoise emits (i,value) for the wavelet soft-thresholded series via ix_signal wavelet_denoise (same length as input); a larger threshold removes more high-frequency energy, so output variance does not exceed the input's [T:test conf:0.8 src:ix_duck::graphsig::tests::wavelet_denoise_reduces_variance]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let series = parse_series(&bind.get_parameter(0).to_string())?;
+        let levels_req = bind.get_parameter(1).to_int64();
+        if levels_req < 1 {
+            return Err("levels must be >= 1".into());
+        }
+        let threshold = bind
+            .get_parameter(2)
+            .to_string()
+            .parse::<f64>()
+            .map_err(|e| format!("threshold must be a number: {e}"))?;
+        if !threshold.is_finite() || threshold < 0.0 {
+            return Err("threshold must be finite and >= 0".into());
+        }
+        // Cap the decomposition depth at floor(log2(n)) so a short series is never
+        // over-decomposed (each level halves the signal).
+        let n_in = series.len();
+        let max_levels = ((n_in as f64).log2().floor() as usize).max(1);
+        let levels = (levels_req as usize).min(max_levels);
+        // The Haar transform halves the length at each level and drops an unmatched
+        // tail sample for non-multiples of 2^levels — which would silently lose rows
+        // and break the one-row-per-input contract. Edge-pad up to a multiple of
+        // 2^levels, denoise, then truncate back to the original length.
+        let step = 1usize << levels;
+        let padded_len = n_in.div_ceil(step) * step;
+        let mut padded = series.clone();
+        if padded_len > n_in {
+            let last = *series.last().unwrap();
+            padded.resize(padded_len, last);
+        }
+        let rows: Vec<(i64, f64)> = wavelet_denoise(&padded, levels, threshold)
+            .iter()
+            .take(n_in)
+            .enumerate()
+            .map(|(i, &v)| (i as i64, v))
+            .collect();
+        two_cols(bind, "i", LogicalTypeId::Bigint, "value", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        ])
+    }
+}
+
+// ── ix_kalman_smooth ───────────────────────────────────────────────────────────
+
+struct IxKalmanSmooth;
+impl VTab for IxKalmanSmooth {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_kalman_smooth emits (i,value) where value is the filtered position of a constant-velocity 1-D Kalman filter (ix_signal, dt=1) over the series; fed a constant-velocity ramp it locks onto the trajectory, so the final estimate converges to the final measurement [T:test conf:0.8 src:ix_duck::graphsig::tests::kalman_smooth_tracks_ramp]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let series = parse_series(&bind.get_parameter(0).to_string())?;
+        let process_noise = parse_pos_finite(&bind.get_parameter(1).to_string(), "process_noise")?;
+        let measurement_noise =
+            parse_pos_finite(&bind.get_parameter(2).to_string(), "measurement_noise")?;
+        // dt = 1: telemetry samples are an evenly-spaced unit-step sequence.
+        let mut kf = constant_velocity_1d(process_noise, measurement_noise, 1.0);
+        let measurements: Vec<Array1<f64>> =
+            series.iter().map(|&z| Array1::from_vec(vec![z])).collect();
+        // state = [position, velocity]; the smoothed signal is the position estimate.
+        let rows: Vec<(i64, f64)> = kf
+            .filter(&measurements)
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (i as i64, s[0]))
+            .collect();
+        two_cols(bind, "i", LogicalTypeId::Bigint, "value", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+            LogicalTypeHandle::from(LogicalTypeId::Double),
+        ])
+    }
+}
+
+/// Parse a positive, finite `f64` parameter (Kalman noise covariances must be > 0).
+fn parse_pos_finite(s: &str, name: &str) -> Result<f64, Box<dyn std::error::Error>> {
+    let v: f64 = s.parse().map_err(|e| format!("{name} must be a number: {e}"))?;
+    if !v.is_finite() || v <= 0.0 {
+        return Err(format!("{name} must be a finite number > 0").into());
+    }
+    Ok(v)
+}
+
+// ── ix_dct ─────────────────────────────────────────────────────────────────────
+
+struct IxDct;
+impl VTab for IxDct {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_dct emits (k,coefficient) for the DCT-II of the series via ix_signal dct2 (same length as input); a constant signal concentrates all energy in the k=0 (DC) coefficient [T:test conf:0.8 src:ix_duck::graphsig::tests::dct_constant_concentrates_at_dc]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let series = parse_series(&bind.get_parameter(0).to_string())?;
+        let rows: Vec<(i64, f64)> =
+            dct2(&series).iter().enumerate().map(|(i, &v)| (i as i64, v)).collect();
+        two_cols(bind, "k", LogicalTypeId::Bigint, "coefficient", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    }
+}
+
+// ── ix_connected_components ──────────────────────────────────────────────────────
+
+struct IxConnectedComponents;
+impl VTab for IxConnectedComponents {
+    type InitData = Cursor;
+    type BindData = RowsI64;
+
+    // @ai:invariant ix_connected_components emits (node,component) for the weakly-connected components of the edge-list graph via ix_graph connected_components; two disjoint subgraphs get distinct component ids, an isolated node is its own component [T:test conf:0.8 src:ix_duck::graphsig::tests::connected_components_finds_islands]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (g, n) = parse_graph(&bind.get_parameter(0).to_string())?;
+        let comp = g.connected_components();
+        let rows: Vec<(i64, i64)> = (0..n).map(|i| (i as i64, comp[i] as i64)).collect();
+        two_cols(bind, "node", LogicalTypeId::Bigint, "component", LogicalTypeId::Bigint);
+        Ok(RowsI64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_i64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    }
+}
+
+// ── ix_centrality ────────────────────────────────────────────────────────────────
+
+struct IxCentrality;
+impl VTab for IxCentrality {
+    type InitData = Cursor;
+    type BindData = RowsF64;
+
+    // @ai:invariant ix_centrality emits (node,score) for the named undirected centrality (degree|closeness|eigenvector|betweenness) via ix_graph; in a star the hub scores strictly highest on every measure; an unknown kind -> SQL error [T:test conf:0.8 src:ix_duck::graphsig::tests::centrality_hub_dominates]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let (g, n) = parse_graph(&bind.get_parameter(0).to_string())?;
+        let kind = bind.get_parameter(1).to_string().to_lowercase();
+        let scores = match kind.as_str() {
+            "degree" => g.degree_centrality(),
+            "closeness" => g.closeness_centrality(),
+            "eigenvector" => g.eigenvector_centrality(100),
+            "betweenness" => g.betweenness_centrality(),
+            other => {
+                return Err(format!(
+                    "unknown centrality kind '{other}' (expected degree|closeness|eigenvector|betweenness)"
+                )
+                .into())
+            }
+        };
+        let rows: Vec<(i64, f64)> = (0..n).map(|i| (i as i64, scores[i])).collect();
+        two_cols(bind, "node", LogicalTypeId::Bigint, "score", LogicalTypeId::Double);
+        Ok(RowsF64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_f64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
+// ── ix_viterbi ───────────────────────────────────────────────────────────────────
+
+struct IxViterbi;
+impl VTab for IxViterbi {
+    type InitData = Cursor;
+    type BindData = RowsI64;
+
+    // @ai:invariant ix_viterbi emits the most-likely hidden-state path as (step,state) from ix_graph HMM viterbi given the initial/transition/emission/observations JSON; a near-deterministic HMM recovers the generating state sequence; a non-stochastic matrix or out-of-range observation -> SQL error (no panic) [T:test conf:0.8 src:ix_duck::graphsig::tests::viterbi_decodes_biased_hmm]
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
+        let initial: Vec<f64> = serde_json::from_str(&bind.get_parameter(0).to_string())
+            .map_err(|e| format!("initial must be a JSON number array: {e}"))?;
+        let transition = parse_matrix(&bind.get_parameter(1).to_string())?;
+        let emission = parse_matrix(&bind.get_parameter(2).to_string())?;
+        let obs: Vec<i64> = serde_json::from_str(&bind.get_parameter(3).to_string())
+            .map_err(|e| format!("observations must be a JSON int array: {e}"))?;
+        if obs.iter().any(|&o| o < 0) {
+            return Err("observation symbols must be non-negative".into());
+        }
+        let hmm = HiddenMarkovModel::new(Array1::from_vec(initial), transition, emission)
+            .map_err(|e| format!("ix_viterbi: {e}"))?;
+        let m = hmm.n_observations();
+        if obs.iter().any(|&o| o as usize >= m) {
+            return Err(format!("ix_viterbi: observation symbol out of range 0..{m}").into());
+        }
+        let observations: Vec<usize> = obs.iter().map(|&o| o as usize).collect();
+        let (path, _log_prob) = hmm.viterbi(&observations);
+        let rows: Vec<(i64, i64)> =
+            path.iter().enumerate().map(|(i, &s)| (i as i64, s as i64)).collect();
+        two_cols(bind, "step", LogicalTypeId::Bigint, "state", LogicalTypeId::Bigint);
+        Ok(RowsI64 { rows })
+    }
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
+        Ok(new_cursor())
+    }
+    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
+        emit_i64(&func.get_bind_data().rows, func.get_init_data(), output);
+        Ok(())
+    }
+    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+        Some(vec![
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        ])
+    }
+}
+
 /// Register the graph + signal table functions.
 pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
     conn.register_table_function::<IxPagerank>("ix_pagerank")?;
     conn.register_table_function::<IxShortestPath>("ix_shortest_path")?;
+    conn.register_table_function::<IxConnectedComponents>("ix_connected_components")?;
+    conn.register_table_function::<IxCentrality>("ix_centrality")?;
+    conn.register_table_function::<IxViterbi>("ix_viterbi")?;
     conn.register_table_function::<IxRfft>("ix_rfft")?;
     conn.register_table_function::<IxAutocorrelation>("ix_autocorrelation")?;
+    conn.register_table_function::<IxWaveletDenoise>("ix_wavelet_denoise")?;
+    conn.register_table_function::<IxKalmanSmooth>("ix_kalman_smooth")?;
+    conn.register_table_function::<IxDct>("ix_dct")?;
     Ok(())
 }
 
@@ -324,6 +608,99 @@ mod tests {
     }
 
     #[test]
+    fn connected_components_finds_islands() {
+        let conn = open_bench().unwrap();
+        let edges = "[[0,1],[2,3]]";
+        let n_comp: i64 = conn
+            .query_row(
+                &format!("SELECT count(DISTINCT component) FROM ix_connected_components('{edges}')"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_comp, 2, "two disjoint edges → two components");
+        let same: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT (SELECT component FROM ix_connected_components('{edges}') WHERE node=0) \
+                          = (SELECT component FROM ix_connected_components('{edges}') WHERE node=1)"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(same, "0 and 1 are connected");
+        let cross: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT (SELECT component FROM ix_connected_components('{edges}') WHERE node=0) \
+                          = (SELECT component FROM ix_connected_components('{edges}') WHERE node=2)"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!cross, "0 and 2 are in different components");
+    }
+
+    #[test]
+    fn centrality_hub_dominates() {
+        let conn = open_bench().unwrap();
+        let star = "[[0,1],[0,2],[0,3]]";
+        for kind in ["degree", "closeness", "eigenvector", "betweenness"] {
+            let top: i64 = conn
+                .query_row(
+                    &format!("SELECT node FROM ix_centrality('{star}', '{kind}') ORDER BY score DESC, node LIMIT 1"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(top, 0, "hub is the top {kind}-centrality node");
+        }
+        assert!(
+            conn.query_row(
+                &format!("SELECT node FROM ix_centrality('{star}', 'pagerank')"),
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .is_err(),
+            "unknown centrality kind must be a SQL error"
+        );
+    }
+
+    #[test]
+    fn viterbi_decodes_biased_hmm() {
+        let conn = open_bench().unwrap();
+        let init = "[0.5,0.5]";
+        let trans = "[[0.7,0.3],[0.3,0.7]]";
+        let emis = "[[0.9,0.1],[0.1,0.9]]";
+        let obs = "[0,0,1,1]";
+        let path: Vec<i64> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT state FROM ix_viterbi('{init}','{trans}','{emis}','{obs}') ORDER BY step"
+                ))
+                .unwrap();
+            stmt.query_map([], |r| r.get::<_, i64>(0)).unwrap().map(|x| x.unwrap()).collect()
+        };
+        assert_eq!(path, vec![0, 0, 1, 1], "biased HMM decodes states matching the symbols");
+    }
+
+    #[test]
+    fn viterbi_rejects_non_stochastic() {
+        let conn = open_bench().unwrap();
+        assert!(
+            conn.query_row(
+                "SELECT state FROM ix_viterbi('[0.5,0.5]','[[0.7,0.3],[0.3,0.7]]','[[0.5,0.1],[0.1,0.9]]','[0]')",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .is_err(),
+            "non-stochastic emission matrix must be a SQL error"
+        );
+    }
+
+    #[test]
     fn shortest_path_orders_nodes() {
         let conn = open_bench().unwrap();
         // 0->1->2->3 chain; path 0..3 visits 0,1,2,3 in order.
@@ -351,6 +728,98 @@ mod tests {
             )
             .unwrap();
         assert_eq!(peak_bin, 1, "one-cycle tone peaks at bin 1");
+    }
+
+    #[test]
+    fn wavelet_denoise_reduces_variance() {
+        let conn = open_bench().unwrap();
+        // High-frequency square wave around mean 5 (raw var_pop = 25). A large
+        // threshold kills the detail coefficients → the denoised series collapses
+        // toward the mean, so its variance must not exceed the raw series'.
+        let noisy = "[10,0,10,0,10,0,10,0]";
+        let (n, var): (i64, f64) = conn
+            .query_row(
+                &format!("SELECT count(*), var_pop(value) FROM ix_wavelet_denoise('{noisy}', 3, 50.0)"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(n, 8, "denoised series keeps the input length");
+        assert!(var < 25.0, "large threshold reduces variance below raw 25, got {var}");
+    }
+
+    #[test]
+    fn wavelet_denoise_preserves_odd_length() {
+        let conn = open_bench().unwrap();
+        // Odd / non-power-of-two input must still emit one row per sample (Codex #164
+        // P2 — Haar drops the unmatched tail without padding).
+        for series in ["[1,2,3,4,5]", "[1,2,3]", "[10,20,30,40,50,60,70]"] {
+            let want = series.matches(',').count() as i64 + 1;
+            let n: i64 = conn
+                .query_row(
+                    &format!("SELECT count(*) FROM ix_wavelet_denoise('{series}', 2, 0.1)"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, want, "{series}: one row per input sample");
+        }
+    }
+
+    #[test]
+    fn kalman_smooth_tracks_ramp() {
+        let conn = open_bench().unwrap();
+        // A clean constant-velocity ramp 0..7 is exactly the filter's motion model;
+        // from a cold start [0,0] it locks on, so the final estimate lands near the
+        // final measurement (7). One estimate per measurement.
+        let ramp = "[0,1,2,3,4,5,6,7]";
+        let n: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM ix_kalman_smooth('{ramp}', 0.01, 0.5)"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 8, "one filtered estimate per measurement");
+        let last: f64 = conn
+            .query_row(
+                &format!("SELECT value FROM ix_kalman_smooth('{ramp}', 0.01, 0.5) WHERE i=7"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            (5.0..=9.0).contains(&last),
+            "filter tracks the ramp to ~7, got {last}"
+        );
+    }
+
+    #[test]
+    fn kalman_smooth_rejects_nonpositive_noise() {
+        let conn = open_bench().unwrap();
+        assert!(
+            conn.query_row(
+                "SELECT value FROM ix_kalman_smooth('[1,2,3]', 0.0, 1.0)",
+                [],
+                |r| r.get::<_, f64>(0)
+            )
+            .is_err(),
+            "process_noise=0 must be a SQL error"
+        );
+    }
+
+    #[test]
+    fn dct_constant_concentrates_at_dc() {
+        let conn = open_bench().unwrap();
+        // A constant signal has all its energy in the DC (k=0) coefficient.
+        let dc_bin: i64 = conn
+            .query_row(
+                "SELECT k FROM ix_dct('[1,1,1,1,1,1,1,1]') ORDER BY abs(coefficient) DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dc_bin, 0, "constant signal → energy at the k=0 DC coefficient");
     }
 
     #[test]

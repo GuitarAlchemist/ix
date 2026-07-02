@@ -902,6 +902,50 @@ pub fn autocorrelation(params: Value) -> Result<Value, String> {
     }))
 }
 
+// @ai:invariant mesh_correlate builds the |Pearson| >= threshold graph over N equal-length series and returns betweenness centrality + connected components; a hub-and-spoke input (one stream correlated with several mutually-uncorrelated others) ranks the hub highest [T:test conf:0.85 src:skills::batch2::tests::mesh_correlate_finds_hub]
+pub fn mesh_correlate(params: Value) -> Result<Value, String> {
+    use ix_graph::graph::Graph;
+    let series = parse_f64_matrix(&params, "series")?;
+    let threshold = parse_f64_opt(&params, "threshold", 0.5);
+    let n = series.len();
+    if n < 2 {
+        return Err("mesh_correlate: need at least 2 series".into());
+    }
+    // Pairwise Pearson → threshold edges → graph. The thresholding happens here at run
+    // time (a pipeline spec can't threshold edges at build time), which is exactly why
+    // this fan-in is a skill: it turns N stream features into one correlation graph.
+    let mut corr = vec![vec![0.0f64; n]; n];
+    let mut g = Graph::with_nodes(n);
+    for i in 0..n {
+        corr[i][i] = 1.0;
+        for j in (i + 1)..n {
+            // A constant series makes Pearson undefined → treat as r = 0 (no edge).
+            let r = ix_math::inference::pearson(&series[i], &series[j]).unwrap_or(0.0);
+            corr[i][j] = r;
+            corr[j][i] = r;
+            if r.abs() >= threshold {
+                g.add_undirected_edge(i, j, 1.0);
+            }
+        }
+    }
+    let centrality = g.betweenness_centrality();
+    let components = g.connected_components();
+    let hub = centrality
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    Ok(json!({
+        "correlation": corr,
+        "centrality": centrality,
+        "components": components,
+        "hub": hub,
+        "threshold": threshold,
+        "n_streams": n,
+    }))
+}
+
 // ── ix_tsne ────────────────────────────────────────────────
 
 pub fn tsne(params: Value) -> Result<Value, String> {

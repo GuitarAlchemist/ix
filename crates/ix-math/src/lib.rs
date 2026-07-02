@@ -13,6 +13,7 @@ pub mod eigen;
 pub mod error;
 pub mod geometric_space;
 pub mod hyperbolic;
+pub mod inference;
 pub mod linalg;
 pub mod plucker;
 pub mod poincare_hierarchy;
