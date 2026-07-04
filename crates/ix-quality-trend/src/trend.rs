@@ -167,6 +167,12 @@ pub struct MetricTrend {
     pub direction: TrendDirection,
     pub latest: Option<f64>,
     pub latest_date: Option<NaiveDate>,
+    /// Date of the newest REAL (non-carry-forward) observation. A producer
+    /// that keeps emitting `degraded:true` carry-forwards refreshes
+    /// `latest_date` daily while the underlying value stays frozen — staleness
+    /// checks must use this field instead (ix#226 review).
+    #[serde(default)]
+    pub latest_real_date: Option<NaiveDate>,
     pub previous: Option<f64>,
     pub avg_7d: Option<f64>,
     pub avg_30d: Option<f64>,
@@ -246,6 +252,12 @@ pub fn compute_trend(series: &MetricSeries, regression_threshold_pct: f64) -> Me
     let drift = drift_flag(series);
 
     let n_degraded = series.points.iter().filter(|p| p.degraded).count();
+    let latest_real_date = series
+        .points
+        .iter()
+        .filter(|p| !p.degraded)
+        .map(|p| p.date)
+        .max();
 
     MetricTrend {
         name: series.name.clone(),
@@ -253,6 +265,7 @@ pub fn compute_trend(series: &MetricSeries, regression_threshold_pct: f64) -> Me
         direction: series.direction,
         latest,
         latest_date: latest_point.map(|p| p.date),
+        latest_real_date,
         previous,
         avg_7d,
         avg_30d,
