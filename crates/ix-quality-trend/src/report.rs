@@ -50,7 +50,19 @@ pub struct QualityAlert {
     pub regression: Option<String>,
     pub drift: Option<String>,
     pub drift_since: Option<NaiveDate>,
+    /// Set when the metric's newest snapshot is older than the staleness
+    /// window: the feed is dead, so the values behind `regression`/`drift`
+    /// describe old data, not the current system. Stale alerts are capped at
+    /// `Warning` — a dead sensor must not masquerade as a live regression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<String>,
 }
+
+/// A feed whose newest snapshot is older than this many days is reported as
+/// stale instead of letting its last value drive regression/drift verdicts
+/// (observed 2026-07-03: a chatbot-qa feed dead since 2026-06-19 read as a
+/// "7.69% pass rate" collapse and turned the nightly gate critical — ix#225).
+pub const DEFAULT_STALE_AFTER_DAYS: i64 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualityHealthArtifact {
@@ -60,6 +72,10 @@ pub struct QualityHealthArtifact {
     pub total_metrics: usize,
     pub regressions: usize,
     pub drifts: usize,
+    /// Number of tracked metrics whose newest snapshot is older than the
+    /// staleness window (dead feeds), whether or not they carry alerts.
+    #[serde(default)]
+    pub stale_feeds: usize,
     pub key_metric_alerts: Vec<QualityAlert>,
     pub all_alerts: Vec<QualityAlert>,
 }
@@ -76,14 +92,48 @@ pub fn build_health_artifact(
     summary: &QualityTrendSummary,
     regression_threshold_pct: f64,
 ) -> QualityHealthArtifact {
+    build_health_artifact_as_of(
+        summary,
+        regression_threshold_pct,
+        Utc::now().date_naive(),
+        DEFAULT_STALE_AFTER_DAYS,
+    )
+}
+
+/// Deterministic core of [`build_health_artifact`]: `as_of` is the evaluation
+/// date (CI: today) and `stale_after_days` the staleness window.
+pub fn build_health_artifact_as_of(
+    summary: &QualityTrendSummary,
+    regression_threshold_pct: f64,
+    as_of: NaiveDate,
+    stale_after_days: i64,
+) -> QualityHealthArtifact {
+    let stale_note = |trend: &MetricTrend| -> Option<String> {
+        let last = trend.latest_date?;
+        let age = (as_of - last).num_days();
+        (age > stale_after_days).then(|| {
+            format!(
+                "stale feed: last snapshot {last} ({age} days old as of {as_of}) — \
+                 values describe old data, not the current system; severity capped at warning"
+            )
+        })
+    };
+
     let all_alerts: Vec<QualityAlert> = summary
         .all_trends()
         .filter_map(|trend| {
-            if trend.regression.is_none() && trend.drift.is_none() {
+            let stale = stale_note(trend);
+            let has_signal = trend.regression.is_some() || trend.drift.is_some();
+            // A stale KEY-metric feed alerts even without regression/drift:
+            // sensor death on a key metric is itself a warning condition.
+            let dead_key_feed = stale.is_some() && is_key_metric_name(&trend.name);
+            if !has_signal && !dead_key_feed {
                 return None;
             }
 
-            let status = if is_key_metric_name(&trend.name) && trend.drift.is_some() {
+            let status = if stale.is_some() {
+                QualityHealthStatus::Warning
+            } else if is_key_metric_name(&trend.name) && trend.drift.is_some() {
                 QualityHealthStatus::Critical
             } else {
                 QualityHealthStatus::Warning
@@ -95,6 +145,7 @@ pub fn build_health_artifact(
                 regression: trend.regression.as_ref().map(|r| r.description.clone()),
                 drift: trend.drift.as_ref().map(|d| d.description.clone()),
                 drift_since: trend.drift.as_ref().map(|d| d.since),
+                stale,
             })
         })
         .collect();
@@ -116,7 +167,7 @@ pub fn build_health_artifact(
     };
 
     QualityHealthArtifact {
-        generated_on: Utc::now().date_naive(),
+        generated_on: as_of,
         regression_threshold_pct,
         status,
         total_metrics: summary.all_trends().count(),
@@ -127,6 +178,10 @@ pub fn build_health_artifact(
         drifts: summary
             .all_trends()
             .filter(|trend| trend.drift.is_some())
+            .count(),
+        stale_feeds: summary
+            .all_trends()
+            .filter(|trend| stale_note(trend).is_some())
             .count(),
         key_metric_alerts,
         all_alerts,
@@ -167,6 +222,13 @@ pub fn render(set: &SnapshotSet, snapshots_dir: &Path, regression_threshold_pct:
     let chatbot_trends = &summary.chatbot_trends;
 
     render_headline(&mut out, embedding_trends, voicing_trends, chatbot_trends);
+    render_stale_feeds(
+        &mut out,
+        embedding_trends,
+        voicing_trends,
+        chatbot_trends,
+        today,
+    );
     render_regressions(&mut out, embedding_trends, voicing_trends, chatbot_trends);
     render_drift(&mut out, embedding_trends, voicing_trends, chatbot_trends);
 
@@ -473,6 +535,49 @@ fn headline_picks<'a>(
 
 fn find<'a>(trends: &'a [MetricTrend], name: &str) -> Option<&'a MetricTrend> {
     trends.iter().find(|t| t.name == name)
+}
+
+fn render_stale_feeds(
+    out: &mut String,
+    emb: &[MetricTrend],
+    voi: &[MetricTrend],
+    cha: &[MetricTrend],
+    today: NaiveDate,
+) {
+    let stale: Vec<(&MetricTrend, i64)> = emb
+        .iter()
+        .chain(voi.iter())
+        .chain(cha.iter())
+        .filter_map(|t| {
+            let last = t.latest_date?;
+            let age = (today - last).num_days();
+            (age > DEFAULT_STALE_AFTER_DAYS).then_some((t, age))
+        })
+        .collect();
+    if stale.is_empty() {
+        return;
+    }
+
+    writeln!(out, "## Stale feeds").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "_The metrics below have produced no snapshot for more than \
+         {DEFAULT_STALE_AFTER_DAYS} days. Their \"Latest\" values describe old data, not the \
+         current system — fix the producer before reading their regressions/drifts as real._"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    for (t, age) in stale {
+        writeln!(
+            out,
+            "- **{}** — last snapshot {} ({age} days old)",
+            t.name,
+            t.latest_date.expect("filtered on Some above"),
+        )
+        .unwrap();
+    }
+    writeln!(out).unwrap();
 }
 
 fn render_regressions(
@@ -917,11 +1022,85 @@ mod tests {
         }
 
         let summary = summarize(&set, 5.0);
-        let artifact = build_health_artifact(&summary, 5.0);
+        // Evaluate as-of the day after the newest snapshot: the feed is live,
+        // so key-metric drift escalates to critical (pre-staleness behavior).
+        let artifact = build_health_artifact_as_of(
+            &summary,
+            5.0,
+            NaiveDate::from_ymd_opt(2026, 4, 11).unwrap(),
+            DEFAULT_STALE_AFTER_DAYS,
+        );
         assert_eq!(artifact.status, QualityHealthStatus::Critical);
         assert!(artifact
             .key_metric_alerts
             .iter()
             .any(|alert| alert.metric == "Embeddings · STRUCTURE leak accuracy"));
+    }
+
+    #[test]
+    fn stale_key_metric_drift_is_downgraded_to_warning() {
+        // Same drifting key-metric series as above, but evaluated three months
+        // later: the feed is dead, so the drift must NOT read as critical
+        // (ix#225 — a chatbot-qa feed dead since June masqueraded as a live
+        // pass-rate collapse and turned the nightly gate red).
+        let mut set = SnapshotSet::default();
+        for day in 1..=10 {
+            let accuracy = if day <= 5 { 0.40 } else { 0.78 };
+            let snap: EmbeddingsSnapshot = serde_json::from_str(&format!(
+                r#"{{"leak_detection":{{"by_partition":[{{"partition":"STRUCTURE","accuracy_mean":{accuracy}}}]}}}}"#
+            ))
+            .unwrap();
+            set.embeddings.push(DatedSnapshot {
+                date: NaiveDate::from_ymd_opt(2026, 4, day).unwrap(),
+                path: format!("/tmp/{day}.json").into(),
+                data: snap,
+            });
+        }
+
+        let summary = summarize(&set, 5.0);
+        let artifact = build_health_artifact_as_of(
+            &summary,
+            5.0,
+            NaiveDate::from_ymd_opt(2026, 7, 3).unwrap(),
+            DEFAULT_STALE_AFTER_DAYS,
+        );
+        assert_eq!(artifact.status, QualityHealthStatus::Warning);
+        assert!(artifact.stale_feeds >= 1);
+        let alert = artifact
+            .key_metric_alerts
+            .iter()
+            .find(|a| a.metric == "Embeddings · STRUCTURE leak accuracy")
+            .expect("stale key metric still alerts");
+        assert_eq!(alert.status, QualityHealthStatus::Warning);
+        let stale = alert.stale.as_deref().expect("alert carries stale note");
+        assert!(
+            stale.contains("2026-04-10"),
+            "stale note names the last snapshot: {stale}"
+        );
+    }
+
+    #[test]
+    fn stale_key_metric_without_signal_still_warns() {
+        // A key-metric feed that died while healthy (no regression, no drift)
+        // must still surface: sensor death is a warning condition on its own.
+        let mut set = SnapshotSet::default();
+        set.chatbot.push(cb_snap("2026-06-18", Some(0.90)));
+        set.chatbot.push(cb_snap("2026-06-19", Some(0.90)));
+
+        let summary = summarize(&set, 5.0);
+        let artifact = build_health_artifact_as_of(
+            &summary,
+            5.0,
+            NaiveDate::from_ymd_opt(2026, 7, 3).unwrap(),
+            DEFAULT_STALE_AFTER_DAYS,
+        );
+        assert_eq!(artifact.status, QualityHealthStatus::Warning);
+        let alert = artifact
+            .key_metric_alerts
+            .iter()
+            .find(|a| a.metric == "Chatbot · overall pass rate")
+            .expect("dead key-metric feed alerts without regression/drift");
+        assert!(alert.stale.is_some());
+        assert!(alert.regression.is_none() && alert.drift.is_none());
     }
 }
