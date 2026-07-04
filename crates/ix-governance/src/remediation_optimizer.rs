@@ -392,6 +392,7 @@ mod tests {
             direction: TrendDirection::HigherIsBetter,
             latest: Some(70.0),
             latest_date: Some(Utc::now().date_naive()),
+            latest_real_date: Some(Utc::now().date_naive()),
             previous: Some(95.0),
             avg_7d: Some(90.0),
             avg_30d: Some(92.0),
