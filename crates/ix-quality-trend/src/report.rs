@@ -109,14 +109,27 @@ pub fn build_health_artifact_as_of(
     stale_after_days: i64,
 ) -> QualityHealthArtifact {
     let stale_note = |trend: &MetricTrend| -> Option<String> {
-        let last = trend.latest_date?;
-        let age = (as_of - last).num_days();
-        (age > stale_after_days).then(|| {
-            format!(
-                "stale feed: last snapshot {last} ({age} days old as of {as_of}) — \
-                 values describe old data, not the current system; severity capped at warning"
-            )
-        })
+        // Freshness is measured on the newest REAL observation: a producer
+        // that keeps emitting degraded carry-forward snapshots refreshes
+        // latest_date daily while the value stays frozen (Codex review,
+        // ix#226) — those must read as stale too.
+        match (trend.latest_real_date, trend.latest_date) {
+            (Some(last), _) => {
+                let age = (as_of - last).num_days();
+                (age > stale_after_days).then(|| {
+                    format!(
+                        "stale feed: last real observation {last} ({age} days old as of {as_of}) — \
+                         values describe old data, not the current system; severity capped at warning"
+                    )
+                })
+            }
+            (None, Some(_)) => Some(
+                "stale feed: series contains only degraded carry-forwards (no real \
+                 observation at all); severity capped at warning"
+                    .to_string(),
+            ),
+            (None, None) => None,
+        }
     };
 
     let all_alerts: Vec<QualityAlert> = summary
@@ -544,14 +557,19 @@ fn render_stale_feeds(
     cha: &[MetricTrend],
     today: NaiveDate,
 ) {
-    let stale: Vec<(&MetricTrend, i64)> = emb
+    // Same rule as the health artifact: freshness = newest REAL observation
+    // (degraded carry-forwards refresh latest_date without fresh data).
+    let stale: Vec<(&MetricTrend, Option<i64>)> = emb
         .iter()
         .chain(voi.iter())
         .chain(cha.iter())
-        .filter_map(|t| {
-            let last = t.latest_date?;
-            let age = (today - last).num_days();
-            (age > DEFAULT_STALE_AFTER_DAYS).then_some((t, age))
+        .filter_map(|t| match (t.latest_real_date, t.latest_date) {
+            (Some(last), _) => {
+                let age = (today - last).num_days();
+                (age > DEFAULT_STALE_AFTER_DAYS).then_some((t, Some(age)))
+            }
+            (None, Some(_)) => Some((t, None)),
+            (None, None) => None,
         })
         .collect();
     if stale.is_empty() {
@@ -562,20 +580,31 @@ fn render_stale_feeds(
     writeln!(out).unwrap();
     writeln!(
         out,
-        "_The metrics below have produced no snapshot for more than \
+        "_The metrics below have produced no real observation for more than \
          {DEFAULT_STALE_AFTER_DAYS} days. Their \"Latest\" values describe old data, not the \
          current system — fix the producer before reading their regressions/drifts as real._"
     )
     .unwrap();
     writeln!(out).unwrap();
     for (t, age) in stale {
-        writeln!(
-            out,
-            "- **{}** — last snapshot {} ({age} days old)",
-            t.name,
-            t.latest_date.expect("filtered on Some above"),
-        )
-        .unwrap();
+        match (age, t.latest_real_date) {
+            (Some(age), Some(last)) => {
+                writeln!(
+                    out,
+                    "- **{}** — last real observation {last} ({age} days old)",
+                    t.name,
+                )
+                .unwrap();
+            }
+            _ => {
+                writeln!(
+                    out,
+                    "- **{}** — only degraded carry-forwards, no real observation",
+                    t.name,
+                )
+                .unwrap();
+            }
+        }
     }
     writeln!(out).unwrap();
 }
@@ -1077,6 +1106,43 @@ mod tests {
             stale.contains("2026-04-10"),
             "stale note names the last snapshot: {stale}"
         );
+    }
+
+    #[test]
+    fn daily_degraded_carry_forwards_still_read_as_stale() {
+        // Codex review case (ix#226): the producer keeps emitting
+        // degraded:true carry-forward snapshots every day, so latest_date is
+        // always fresh while the underlying value froze weeks ago. Freshness
+        // must follow the newest REAL observation.
+        let mut set = SnapshotSet::default();
+        set.chatbot.push(cb_snap("2026-06-18", Some(0.90)));
+        set.chatbot.push(cb_snap("2026-06-19", Some(0.90)));
+        for day in 20..=30 {
+            set.chatbot
+                .push(cb_degraded(&format!("2026-06-{day}"), Some(0.90)));
+        }
+        set.chatbot.push(cb_degraded("2026-07-01", Some(0.90)));
+        set.chatbot.push(cb_degraded("2026-07-02", Some(0.90)));
+
+        let summary = summarize(&set, 5.0);
+        let artifact = build_health_artifact_as_of(
+            &summary,
+            5.0,
+            NaiveDate::from_ymd_opt(2026, 7, 3).unwrap(),
+            DEFAULT_STALE_AFTER_DAYS,
+        );
+        let alert = artifact
+            .key_metric_alerts
+            .iter()
+            .find(|a| a.metric == "Chatbot · overall pass rate")
+            .expect("carry-forward-only feed alerts as stale");
+        assert_eq!(alert.status, QualityHealthStatus::Warning);
+        let stale = alert.stale.as_deref().expect("stale note present");
+        assert!(
+            stale.contains("2026-06-19"),
+            "stale note anchors on the last REAL observation: {stale}"
+        );
+        assert_ne!(artifact.status, QualityHealthStatus::Critical);
     }
 
     #[test]
