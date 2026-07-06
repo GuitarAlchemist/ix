@@ -19,6 +19,8 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 ix-signal = { workspace = true }
 ix-optick = { workspace = true }
+ix-ensemble = { workspace = true }
+ndarray = { workspace = true }
 rmp-serde = "1"
 
 [dev-dependencies]
