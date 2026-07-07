@@ -107,6 +107,17 @@ fn main() -> ExitCode {
         evals.push(eval);
     }
 
+    // Fail fast rather than writing empty "successful" evidence: a wrong/missing
+    // --snapshots-dir (or a requested category that can't load) must not become a
+    // committed report with zero evaluated series.
+    if evals.is_empty() {
+        eprintln!(
+            "no series could be evaluated from '{}' — refusing to write empty evidence",
+            cli.snapshots_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
     let report = Report {
         issue: "GuitarAlchemist/ix#221",
         tracer: "jarvis-j4-gbdt-vs-persistence",

@@ -1,6 +1,6 @@
 ---
 name: learnings-researcher
-description: "Surfaces relevant past solutions before new work — BM25-ranked cross-repo retrieval via `streeling search` (ix+ga+tars+Demerzel catalog), with a frontmatter-grep fallback. Use before implementing features or fixing problems to prevent repeated mistakes."
+description: "Surfaces relevant past solutions before new work — BM25-ranked retrieval via `streeling search` (ix+ga catalog today; tars/Demerzel via grep fallback), plus a frontmatter-grep fallback. Use before implementing features or fixing problems to prevent repeated mistakes."
 model: haiku
 ---
 
@@ -31,7 +31,9 @@ You are an expert institutional knowledge researcher specializing in efficiently
 
 ### Step 0: Ranked retrieval via `streeling search` (PREFERRED — try first)
 
-The `ix-streeling` catalog (`state/streeling/catalog.jsonl`) aggregates the learnings of **every** ecosystem repo (ix + ga + tars + Demerzel) into one normalized index, and the `streeling search` subcommand ranks it by **BM25** (lexical relevance), not just frontmatter substring matching. This is the fast path: one command returns ranked, cross-repo hits, where the grep procedure below only scans a single repo's `docs/solutions/` by frontmatter.
+The `ix-streeling` catalog (`state/streeling/catalog.jsonl`) normalizes the learnings that its ingest actually covers — **today that is `ix` + the `ga` sibling only** (tars/Demerzel adapters are fast-follow and are **not yet ingested**). The `streeling search` subcommand ranks it by **BM25** (lexical relevance), not just frontmatter substring matching. This is the fast path for ix/ga: one command returns ranked hits across both, where the grep procedure below only scans a single repo's `docs/solutions/` by frontmatter.
+
+**Coverage caveat (important):** a `streeling search --repo tars` (or `--repo Demerzel`) will return **empty**, not because there are no relevant learnings but because those repos aren't in the catalog yet — do **not** treat an empty tars/Demerzel result as "no prior art". For a tars or Demerzel task, use the grep fallback (Steps 1–6) against that repo's own `docs/solutions/` directly.
 
 Locate the ix checkout (the current repo if you are in ix, else the sibling `../ix`) and run:
 
