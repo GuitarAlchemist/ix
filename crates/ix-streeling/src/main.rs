@@ -31,8 +31,9 @@ enum Cmd {
     Check,
     /// BM25 full-text search over the catalog; frontmatter is a hard pre-filter.
     Search {
-        /// Query terms (BM25-ranked within the pre-filtered set).
-        #[arg(required = true, num_args = 1..)]
+        /// Query terms (BM25-ranked within the pre-filtered set). Omit when using
+        /// `--eval`, which drives its own queries from the labeled set.
+        #[arg(num_args = 0..)]
         query: Vec<String>,
         /// Restrict to one repo (ix, ga, tars, Demerzel).
         #[arg(long)]
@@ -49,6 +50,18 @@ enum Cmd {
         /// Number of hits to return.
         #[arg(long = "top-k", default_value_t = 5)]
         top_k: usize,
+        /// Run the recall@k / MRR eval over a labeled `(query, expected_id)`
+        /// JSONL set instead of a single query, writing a JSON report under
+        /// `state/quality/streeling-retrieval/<date>.json`.
+        #[arg(long)]
+        eval: Option<PathBuf>,
+        /// The `k` for recall@k in `--eval` mode.
+        #[arg(long, default_value_t = 5)]
+        k: usize,
+        /// Date stamp (`YYYY-MM-DD`) for the `--eval` report + filename; defaults
+        /// to today (UTC). Pass explicitly for a deterministic/testable run.
+        #[arg(long)]
+        now: Option<String>,
     },
 }
 
@@ -133,12 +146,52 @@ fn main() -> Result<()> {
             category,
             tags,
             top_k,
+            eval,
+            k,
+            now,
         } => {
             let path = catalog_path(&cli.repo_root);
             let raw = std::fs::read_to_string(&path).with_context(|| {
                 format!("read {} (run `streeling catalog` first)", path.display())
             })?;
             let records = from_jsonl(&raw);
+
+            if let Some(eval_path) = eval {
+                // --eval: measure recall@k / MRR over the labeled set and write a
+                // committed, re-runnable baseline report.
+                let eval_raw = std::fs::read_to_string(&eval_path)
+                    .with_context(|| format!("read eval set {}", eval_path.display()))?;
+                let mut pairs = Vec::new();
+                for (i, line) in eval_raw.lines().enumerate() {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    let pair: search::EvalPair = serde_json::from_str(line)
+                        .with_context(|| format!("parse eval pair on line {}", i + 1))?;
+                    pairs.push(pair);
+                }
+                let now = now.unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+                let report = search::evaluate(&records, &pairs, k, &now);
+                eprintln!(
+                    "retrieval-eval: recall@{}={:.3} mrr={:.3} ({} queries)",
+                    report.k, report.recall_at_k, report.mrr, report.n_queries
+                );
+                let out = cli
+                    .repo_root
+                    .join(format!("state/quality/streeling-retrieval/{now}.json"));
+                if let Some(p) = out.parent() {
+                    std::fs::create_dir_all(p)?;
+                }
+                let json = serde_json::to_string_pretty(&report)?;
+                std::fs::write(&out, format!("{json}\n"))
+                    .with_context(|| format!("write {}", out.display()))?;
+                eprintln!("retrieval-eval: wrote {}", out.display());
+                return Ok(());
+            }
+
+            if query.is_empty() {
+                anyhow::bail!("provide a query, or use --eval <pairs.jsonl>");
+            }
             let kind = kind.as_deref().map(parse_kind).transpose()?;
             let filter = search::SearchFilter {
                 repo,

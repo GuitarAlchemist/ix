@@ -11,6 +11,7 @@
 //! "hybrid vector retrieval earns its keep" only at 500–5,000 notes).
 
 use crate::model::{Kind, LearningRecord};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// Okapi BM25 term-frequency saturation.
@@ -22,15 +23,20 @@ const B: f64 = 0.75;
 /// eligible only if it matches **every** provided constraint (`None` / empty
 /// means "don't constrain on this field"). String matches are ASCII
 /// case-insensitive; every requested tag must be present.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SearchFilter {
     /// Restrict to one originating repo (`ix`, `ga`, `tars`, `Demerzel`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     /// Restrict to one artifact kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<Kind>,
     /// Restrict to one category / faculty.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     /// Record must contain every one of these tags.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 }
 
@@ -158,6 +164,111 @@ pub fn search<'a>(
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(top_k);
     scored
+}
+
+/// One labeled ground-truth pair from a `retrieval-eval.jsonl` fixture: a
+/// natural-language `query` and the `expected_id` (`"{repo}:{path}"`) of the
+/// prior doc it should retrieve, with an optional frontmatter `filter` applied
+/// exactly as a live `streeling search` call would.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalPair {
+    /// Natural-language query — a paraphrase of the target doc's symptom/title.
+    pub query: String,
+    /// Ground-truth id the query should retrieve (`"{repo}:{path}"`).
+    pub expected_id: String,
+    /// Frontmatter pre-filter to apply for this query (default: none).
+    #[serde(default)]
+    pub filter: SearchFilter,
+}
+
+/// Per-query outcome in an [`EvalReport`].
+#[derive(Debug, Clone, Serialize)]
+pub struct PerQuery {
+    pub query: String,
+    pub expected_id: String,
+    /// 1-based rank of `expected_id` in the ranked hit list, or `null` if the
+    /// target never surfaced (missed).
+    pub found_rank: Option<usize>,
+    pub filter: SearchFilter,
+}
+
+/// A committed, re-runnable retrieval-quality report — recall@k + MRR over a
+/// labeled eval set, plus per-query detail for auditing regressions.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalReport {
+    /// Report schema tag (`streeling-retrieval-eval-v1`).
+    pub schema: String,
+    /// Date/timestamp the run was stamped with (caller-supplied for determinism).
+    pub generated_at: String,
+    /// The `k` used for recall@k.
+    pub k: usize,
+    pub n_queries: usize,
+    /// Fraction of queries whose target landed at rank ≤ k.
+    pub recall_at_k: f64,
+    /// Mean reciprocal rank (1/rank, or 0 for a miss), averaged over all queries.
+    pub mrr: f64,
+    pub per_query: Vec<PerQuery>,
+}
+
+/// The retrieval depth scanned per query when locating the expected id. Ranks
+/// beyond this are treated as misses (`found_rank = None`); kept well above any
+/// realistic `k` so MRR is not truncated at the recall cutoff.
+const EVAL_SCAN_DEPTH: usize = 50;
+
+/// Run the recall@k / MRR measurement of [`search`] over a labeled eval set.
+///
+/// For each pair, runs `search` with that pair's filter, finds the 1-based rank
+/// of `expected_id` in the ranked hits (scanning up to [`EVAL_SCAN_DEPTH`]),
+/// then aggregates **recall@k** (share of targets at rank ≤ `k`) and **MRR**
+/// (mean of `1/rank`, 0 for a miss). `generated_at` is caller-supplied so the
+/// run is deterministic/testable — this function never reads the clock.
+pub fn evaluate(
+    records: &[LearningRecord],
+    pairs: &[EvalPair],
+    k: usize,
+    generated_at: &str,
+) -> EvalReport {
+    let scan_depth = EVAL_SCAN_DEPTH.max(k);
+    let mut per_query = Vec::with_capacity(pairs.len());
+    let mut hits_at_k = 0usize;
+    let mut reciprocal_sum = 0.0;
+
+    for pair in pairs {
+        let hits = search(records, &pair.query, &pair.filter, scan_depth);
+        let found_rank = hits
+            .iter()
+            .position(|(r, _)| r.id == pair.expected_id)
+            .map(|i| i + 1);
+        if let Some(rank) = found_rank {
+            if rank <= k {
+                hits_at_k += 1;
+            }
+            reciprocal_sum += 1.0 / rank as f64;
+        }
+        per_query.push(PerQuery {
+            query: pair.query.clone(),
+            expected_id: pair.expected_id.clone(),
+            found_rank,
+            filter: pair.filter.clone(),
+        });
+    }
+
+    let n = pairs.len();
+    let (recall_at_k, mrr) = if n == 0 {
+        (0.0, 0.0)
+    } else {
+        (hits_at_k as f64 / n as f64, reciprocal_sum / n as f64)
+    };
+
+    EvalReport {
+        schema: "streeling-retrieval-eval-v1".to_string(),
+        generated_at: generated_at.to_string(),
+        k,
+        n_queries: n,
+        recall_at_k,
+        mrr,
+        per_query,
+    }
 }
 
 #[cfg(test)]
@@ -371,5 +482,77 @@ mod tests {
         let corpus = corpus();
         assert!(search(&corpus, "", &SearchFilter::default(), 5).is_empty());
         assert!(search(&corpus, "zzzznonexistenttoken", &SearchFilter::default(), 5).is_empty());
+    }
+
+    #[test]
+    fn evaluate_computes_recall_and_mrr() {
+        let corpus = corpus();
+        // One pair whose target is retrievable at rank 1 (contributes 1.0 to MRR
+        // and hits recall@k) and one deliberate miss (no query-term overlap AND a
+        // non-existent id) that must contribute 0 to both.
+        let pairs = vec![
+            EvalPair {
+                query: "windows application control blocked cargo test os error 4551".to_string(),
+                expected_id:
+                    "ix:docs/solutions/build-errors/windows-app-control-blocks-cargo-test-binaries.md"
+                        .to_string(),
+                filter: SearchFilter::default(),
+            },
+            EvalPair {
+                query: "zzzznonexistenttoken".to_string(),
+                expected_id: "ix:does/not/exist.md".to_string(),
+                filter: SearchFilter::default(),
+            },
+        ];
+
+        let report = evaluate(&corpus, &pairs, 5, "2026-07-07");
+
+        assert_eq!(report.schema, "streeling-retrieval-eval-v1");
+        assert_eq!(report.generated_at, "2026-07-07");
+        assert_eq!(report.k, 5);
+        assert_eq!(report.n_queries, 2);
+        assert_eq!(report.per_query[0].found_rank, Some(1));
+        assert_eq!(report.per_query[1].found_rank, None);
+        // recall@5 = 1 hit / 2 queries; MRR = (1/1 + 0) / 2.
+        assert!((report.recall_at_k - 0.5).abs() < 1e-9, "recall {}", report.recall_at_k);
+        assert!((report.mrr - 0.5).abs() < 1e-9, "mrr {}", report.mrr);
+    }
+
+    #[test]
+    fn evaluate_over_labeled_fixture_is_perfect() {
+        // The whole hermetic labeled set should be recall@1 = 1.0, MRR = 1.0.
+        let corpus = corpus();
+        let pairs: Vec<EvalPair> = labeled()
+            .into_iter()
+            .map(|(q, id)| EvalPair {
+                query: q.to_string(),
+                expected_id: id.to_string(),
+                filter: SearchFilter::default(),
+            })
+            .collect();
+        let report = evaluate(&corpus, &pairs, 1, "2026-07-07");
+        assert_eq!(report.recall_at_k, 1.0, "recall@1 over labeled fixture");
+        assert!((report.mrr - 1.0).abs() < 1e-9, "MRR over labeled fixture = {}", report.mrr);
+    }
+
+    #[test]
+    fn committed_fixture_parses_and_is_well_formed() {
+        // The committed eval fixture must deserialize and every expected_id must
+        // look like a "{repo}:{path}" id — guards against fixture bit-rot.
+        let raw = include_str!("../tests/fixtures/retrieval-eval.jsonl");
+        let pairs: Vec<EvalPair> = raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<EvalPair>(l).expect("fixture line parses"))
+            .collect();
+        assert!(pairs.len() >= 8, "expected ≥8 labeled pairs, got {}", pairs.len());
+        for p in &pairs {
+            assert!(!p.query.trim().is_empty(), "empty query in fixture");
+            assert!(
+                p.expected_id.contains(':') && p.expected_id.contains('/'),
+                "expected_id {:?} is not a repo:path id",
+                p.expected_id
+            );
+        }
     }
 }
