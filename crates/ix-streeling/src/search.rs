@@ -275,6 +275,9 @@ pub fn evaluate(
 mod tests {
     use super::*;
 
+    // Test-corpus constructor mirrors LearningRecord's fields 1:1; the arg count
+    // is inherent to the record shape, not a design smell.
+    #[allow(clippy::too_many_arguments)]
     fn rec(
         id: &str,
         repo: &str,
