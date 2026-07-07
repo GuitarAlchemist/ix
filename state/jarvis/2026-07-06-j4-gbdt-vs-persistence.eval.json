@@ -1,0 +1,100 @@
+{
+  "issue": "GuitarAlchemist/ix#221",
+  "tracer": "jarvis-j4-gbdt-vs-persistence",
+  "generated_by": "ix-quality-trend/examples/gbdt_vs_persistence.rs",
+  "snapshots_dir": "/home/user/ga/state/quality",
+  "baseline": "persistence (last value carries forward == always predict Flat)",
+  "model": "ix_ensemble::GradientBoostedClassifier over 6 recency features",
+  "evals": [
+    {
+      "category": "chatbot-qa",
+      "metric": "pass_pct",
+      "verdict": "paused-insufficient-data",
+      "n_snapshots_seen": 25,
+      "n_real": 2,
+      "n_carried_or_degraded": 23,
+      "n_distinct_values": 3,
+      "n_steps": 24,
+      "n_transition_events": 3,
+      "eps": 0.8631000000000001,
+      "feature_names": [
+        "last_value",
+        "last_delta",
+        "flat_run_len",
+        "steps_since_change",
+        "last_direction_sign",
+        "last_was_real"
+      ],
+      "train_len": 16,
+      "test_len": 7,
+      "persistence_accuracy": null,
+      "gbdt_accuracy": null,
+      "persistence_correct": null,
+      "gbdt_correct": null,
+      "gbdt_beats_persistence": null,
+      "notes": [
+        "PAUSED (n_real=2 < 8). Series too thin/degenerate to train/evaluate a learned transition model against persistence."
+      ]
+    },
+    {
+      "category": "embeddings",
+      "metric": "leak_detection_full_classifier_accuracy",
+      "verdict": "paused-insufficient-data",
+      "n_snapshots_seen": 35,
+      "n_real": 3,
+      "n_carried_or_degraded": 32,
+      "n_distinct_values": 4,
+      "n_steps": 34,
+      "n_transition_events": 2,
+      "eps": 0.0008374999999999988,
+      "feature_names": [
+        "last_value",
+        "last_delta",
+        "flat_run_len",
+        "steps_since_change",
+        "last_direction_sign",
+        "last_was_real"
+      ],
+      "train_len": 23,
+      "test_len": 10,
+      "persistence_accuracy": null,
+      "gbdt_accuracy": null,
+      "persistence_correct": null,
+      "gbdt_correct": null,
+      "gbdt_beats_persistence": null,
+      "notes": [
+        "PAUSED (n_real=3 < 8; transitions=2 < 3). Series too thin/degenerate to train/evaluate a learned transition model against persistence."
+      ]
+    },
+    {
+      "category": "voicing-analysis",
+      "metric": "voicing_analysis_avg_pass_rate",
+      "verdict": "paused-insufficient-data",
+      "n_snapshots_seen": 38,
+      "n_real": 38,
+      "n_carried_or_degraded": 0,
+      "n_distinct_values": 1,
+      "n_steps": 37,
+      "n_transition_events": 0,
+      "eps": 1e-9,
+      "feature_names": [
+        "last_value",
+        "last_delta",
+        "flat_run_len",
+        "steps_since_change",
+        "last_direction_sign",
+        "last_was_real"
+      ],
+      "train_len": 25,
+      "test_len": 11,
+      "persistence_accuracy": null,
+      "gbdt_accuracy": null,
+      "persistence_correct": null,
+      "gbdt_correct": null,
+      "gbdt_beats_persistence": null,
+      "notes": [
+        "PAUSED (transitions=0 < 3). Series too thin/degenerate to train/evaluate a learned transition model against persistence."
+      ]
+    }
+  ]
+}

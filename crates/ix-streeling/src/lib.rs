@@ -15,6 +15,7 @@ pub mod campus;
 pub mod check;
 pub mod ingest;
 pub mod model;
+pub mod search;
 
 // Shared federation surface, provided by the registrar deep module. Re-exported
 // at the historical paths so callers keep using `ix_streeling::{default_roots,

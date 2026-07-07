@@ -29,6 +29,7 @@
 //! See [`load_with`] and [`LoadOptions`] for the strict / quiet / manifest
 //! switches.
 
+pub mod forecast;
 pub mod gate_ledger;
 pub mod report;
 pub mod snapshot;
