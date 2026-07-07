@@ -6,7 +6,9 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ix_streeling::{campus, check, default_roots, from_jsonl, ingest::ingest, to_jsonl};
+use ix_streeling::{
+    campus, check, default_roots, from_jsonl, ingest::ingest, model::Kind, search, to_jsonl,
+};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -27,6 +29,37 @@ enum Cmd {
     Campus,
     /// Fail if the committed catalog is stale relative to the sources.
     Check,
+    /// BM25 full-text search over the catalog; frontmatter is a hard pre-filter.
+    Search {
+        /// Query terms (BM25-ranked within the pre-filtered set).
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+        /// Restrict to one repo (ix, ga, tars, Demerzel).
+        #[arg(long)]
+        repo: Option<String>,
+        /// Restrict to one kind (solution, knowledge, plan, brainstorm).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Restrict to one category / faculty.
+        #[arg(long)]
+        category: Option<String>,
+        /// Require this tag (repeatable; a record must contain every one).
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Number of hits to return.
+        #[arg(long = "top-k", default_value_t = 5)]
+        top_k: usize,
+    },
+}
+
+fn parse_kind(s: &str) -> Result<Kind> {
+    match s.to_ascii_lowercase().as_str() {
+        "solution" => Ok(Kind::Solution),
+        "knowledge" => Ok(Kind::Knowledge),
+        "plan" => Ok(Kind::Plan),
+        "brainstorm" => Ok(Kind::Brainstorm),
+        other => anyhow::bail!("unknown kind {other:?} (expected solution|knowledge|plan|brainstorm)"),
+    }
 }
 
 fn catalog_path(root: &Path) -> PathBuf {
@@ -91,6 +124,35 @@ fn main() -> Result<()> {
                     eprintln!("  changed ({}): {:?}", d.changed.len(), d.changed);
                 }
                 std::process::exit(1);
+            }
+        }
+        Cmd::Search {
+            query,
+            repo,
+            kind,
+            category,
+            tags,
+            top_k,
+        } => {
+            let path = catalog_path(&cli.repo_root);
+            let raw = std::fs::read_to_string(&path).with_context(|| {
+                format!("read {} (run `streeling catalog` first)", path.display())
+            })?;
+            let records = from_jsonl(&raw);
+            let kind = kind.as_deref().map(parse_kind).transpose()?;
+            let filter = search::SearchFilter {
+                repo,
+                kind,
+                category,
+                tags,
+            };
+            let q = query.join(" ");
+            let hits = search::search(&records, &q, &filter, top_k);
+            if hits.is_empty() {
+                eprintln!("search: no matches for {q:?}");
+            }
+            for (r, score) in hits {
+                println!("{score:.4}  {}  ({})", r.id, r.title);
             }
         }
     }
