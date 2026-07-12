@@ -38,7 +38,10 @@ fi
 if [[ "$TOOL_NAME" == "Bash" ]]; then
 
     # ── BLOCK: Catastrophic operations (Article 3: Reversibility) ──────────
-    if [[ "$COMMAND" =~ rm\ -rf\ / ]] || [[ "$COMMAND" =~ rm\ -rf\ \* ]]; then
+    # Anchored to root ("/", "/*") or bare wildcard only — a plain substring
+    # match on "rm -rf /" would block every absolute path (e.g. rm -rf
+    # /tmp/build-cache), which the WARN rule below already covers.
+    if [[ "$COMMAND" =~ rm\ -rf\ +/+([[:space:]]|$) ]] || [[ "$COMMAND" =~ rm\ -rf\ +/+\* ]] || [[ "$COMMAND" =~ rm\ -rf\ +\* ]]; then
         echo "[demerzel] BLOCKED: Article 3 (Reversibility) — recursive delete of root or wildcard is catastrophic." >&2
         exit 2
     fi

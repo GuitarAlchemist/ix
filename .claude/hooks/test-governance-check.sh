@@ -26,6 +26,15 @@ check "rm -rf / is blocked" \
 check "ls is allowed" \
     '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"}}' 0
 
+# (b2) legitimate absolute-path cleanup → allowed (warns, does not block).
+#      Guards the Codex finding: unanchored 'rm -rf /' matched every abs path.
+check "rm -rf /tmp/build-cache is allowed (warn only)" \
+    '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/build-cache"}}' 0
+
+# (b3) rm -rf /* (root wildcard) → BLOCKED (exit 2)
+check "rm -rf /* is blocked" \
+    '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /*"}}' 2
+
 # (c) force-push to main → BLOCKED (exit 2)
 check "git push --force origin main is blocked" \
     '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}' 2
