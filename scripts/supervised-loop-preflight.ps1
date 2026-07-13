@@ -96,9 +96,16 @@ if ($overseer.counts.blocks -gt 0) {
     Emit-Result -Ready:$false -Reason "overseer_blocks_present"
 }
 
-# 6. Optional verify run (off by default — CI runs it).
-if (-not $SkipVerify) {
-    Write-Host "[preflight] skipping verify run; pass -SkipVerify to silence this notice"
+# 6. Verify oracle — runs by DEFAULT; -SkipVerify is the only bypass (ix#228 P0-2:
+#    the previous logic skipped in all cases, making "verified" untrue).
+if ($SkipVerify) {
+    Write-Host "[preflight] verify run SKIPPED (-SkipVerify passed; CI remains the backstop)"
+} else {
+    Write-Host "[preflight] running verify oracle: pwsh scripts/verify.ps1"
+    & pwsh -NoProfile -File (Join-Path $root 'scripts/verify.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        Emit-Result -Ready:$false -Reason "verify_failed"
+    }
 }
 
 Emit-Result -Ready:$true -Reason "loop_ready"
