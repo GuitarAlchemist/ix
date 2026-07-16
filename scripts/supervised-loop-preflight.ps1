@@ -15,6 +15,7 @@ param(
     [string]$BaselinePath = "state/quality/ix-harness/baseline.json",
     [string]$StopMarkerPath = ".STOP",
     [string]$HaltAllPath = "$HOME/.demerzel/HALT-ALL",
+    [string]$VerifyScriptPath = "scripts/verify.ps1",
     [switch]$SkipVerify
 )
 
@@ -101,8 +102,9 @@ if ($overseer.counts.blocks -gt 0) {
 if ($SkipVerify) {
     Write-Host "[preflight] verify run SKIPPED (-SkipVerify passed; CI remains the backstop)"
 } else {
-    Write-Host "[preflight] running verify oracle: pwsh scripts/verify.ps1"
-    & pwsh -NoProfile -File (Join-Path $root 'scripts/verify.ps1')
+    $verifyScriptFull = Join-Path $root $VerifyScriptPath
+    Write-Host "[preflight] running verify oracle: pwsh $VerifyScriptPath"
+    & pwsh -NoProfile -File $verifyScriptFull
     if ($LASTEXITCODE -ne 0) {
         Emit-Result -Ready:$false -Reason "verify_failed"
     }
