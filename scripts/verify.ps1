@@ -26,3 +26,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Invoke-Checked 'cargo' @('test', '--workspace')
+
+Write-Host '[verify] running supervised-loop preflight regression harness'
+Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'test-supervised-loop-preflight.ps1'))
