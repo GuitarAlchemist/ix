@@ -460,8 +460,23 @@ def save_outputs(
     df = pd.DataFrame(
         acts_np, columns=[f"f{i}" for i in range(acts_np.shape[1])]
     )
+    # Self-describing voicing id: each row's stable position in optick.index.
+    # The activation matrix is model(X_train) in X_train order, and X_train is a
+    # SEEDED train/val split (see load/split above) — so row j maps to optick.index
+    # position train_idx[j], NOT position j. Emitting it here means consumers never
+    # have to re-derive the shuffle to map a feature back to a voicing.
+    # (Motivating study: GA docs/research/2026-07-19-optick-sae-feature-atlas.md.)
+    train_idx = np.asarray(metrics["train_idx"], dtype=np.int64)
+    if train_idx.shape[0] != acts_np.shape[0]:
+        raise ValueError(
+            f"train_idx len {train_idx.shape[0]} != activation rows {acts_np.shape[0]}"
+        )
+    df.insert(0, "optick_row", train_idx)
     df.to_parquet(output_dir / "feature_activations.parquet", index=False)
-    log.info("Saved feature_activations.parquet  shape=%s", acts_np.shape)
+    log.info(
+        "Saved feature_activations.parquet  shape=%s (+optick_row id col)",
+        acts_np.shape,
+    )
 
     # feature_manifest.jsonl
     W = model.W_dec.detach().cpu().numpy()
