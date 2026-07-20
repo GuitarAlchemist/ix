@@ -12,7 +12,17 @@ Every agent-driven PR MUST run the local verification gate before requesting rev
 pwsh scripts/verify.ps1
 ```
 
-`verify.ps1` runs `cargo fmt --all --check` and `cargo test --workspace` (build + lint + test in one shot) and is the same command Agent Blackbox invokes in CI via `VERIFY_COMMAND`. If it fails locally, do not push.
+`verify.ps1` is the same command Agent Blackbox invokes in CI via `VERIFY_COMMAND`. If it fails locally, do not push. It runs three steps, and only two of them are gates:
+
+| Step | Invocation | Blocking? |
+| --- | --- | --- |
+| Format | `cargo fmt --all --check` | **No — advisory.** Several crates intentionally use a terser hand style (e.g. `ix-duck`, see CLAUDE.md), so this reports diffs repo-wide. It prints a warning and continues, by design. |
+| Lint | `cargo clippy --workspace --all-targets -- -D warnings` | **Yes.** Byte-identical to the `Clippy lint` step in `.github/workflows/ci.yml`. |
+| Test | `cargo test --workspace` | **Yes.** Also builds the workspace. |
+
+Plus the supervised-loop preflight regression harness (`scripts/test-supervised-loop-preflight.ps1`), which is blocking.
+
+So "verified" means: **clippy clean at CI's exact flags, tests green, formatting merely reported.** `cargo fmt` is deliberately *not* mandatory in this repo — do not "fix" the fmt warning by reformatting unrelated crates. If you change the clippy flags in either `verify.ps1` or `ci.yml`, change both.
 
 Agent Blackbox additionally emits a `harness-audit` and (when an agent response is captured) a `response-quality` report against every PR. Both artifacts are uploaded under `agent-blackbox-risk-report` for durable review evidence.
 

@@ -25,6 +25,11 @@ if ($LASTEXITCODE -ne 0) {
     Write-Warning 'rustfmt --check reported diffs (advisory; not blocking — intentional terse style, see CLAUDE.md).'
 }
 
+# Clippy IS a hard gate, and the flags below must stay byte-identical to the
+# `Clippy lint` step in .github/workflows/ci.yml. CI blocks on it, so local
+# verify blocks on it too — otherwise `verify.ps1` green does not imply CI green.
+Invoke-Checked 'cargo' @('clippy', '--workspace', '--all-targets', '--', '-D', 'warnings')
+
 Invoke-Checked 'cargo' @('test', '--workspace')
 
 Write-Host '[verify] running supervised-loop preflight regression harness'
