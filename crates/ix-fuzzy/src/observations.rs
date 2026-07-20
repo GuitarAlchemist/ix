@@ -220,17 +220,105 @@ fn synthesis_diagnosis_id(
     format!("merge:{kind}:{claim_key}:{lo}+{hi}")
 }
 
+/// Resolve all observations sharing one dedup key into a single
+/// deterministic observation.
+///
+/// `dedup_key`'s contract says "two observations with the same key are
+/// the same observation", but the type cannot enforce it, so divergent
+/// payloads under one key are representable and must resolve
+/// order-independently. The fold is associative, commutative, and
+/// idempotent over the version multiset — required so that carried
+/// re-merges agree with flat merges when versions of the same key
+/// arrive on different sides of a merge boundary:
+///
+/// - identical payloads → that payload (true duplicates);
+/// - same variant, divergent weight/evidence/claim_key → keep the
+///   variant at the MINIMUM weight (conservative confidence), with
+///   the lexicographically least claim_key and evidence;
+/// - divergent variants → the source has contradicted itself within a
+///   single observation slot. Nothing licenses picking a winner, and
+///   the domain has a value for exactly this: `Contradictory`, at the
+///   minimum weight (matching the Belnap `min` convention). The
+///   evidence marker is derived from the key alone (never from the
+///   version count or contents) so it folds identically regardless of
+///   how versions are grouped across merge boundaries.
+///
+/// Deliberately diverges from Demerzel-canonical / first-write-wins
+/// semantics until the fix propagates (canonical home:
+/// `governance/demerzel/logic/hex-merge.md`). Byte-equivalent to
+/// hari-lattice's `resolve_key_versions` — see GuitarAlchemist/hari#27
+/// and hari commit 924b5a4.
+fn resolve_key_versions(versions: Vec<HexObservation>) -> HexObservation {
+    debug_assert!(!versions.is_empty());
+    let first = &versions[0];
+
+    let mut variants: Vec<Hexavalent> = versions.iter().map(|v| v.variant).collect();
+    variants.sort_by_key(|v| variant_rank(*v));
+    variants.dedup();
+
+    let min_weight = versions
+        .iter()
+        .map(|v| v.weight)
+        .fold(f64::INFINITY, f64::min);
+    let min_claim = versions.iter().map(|v| v.claim_key.clone()).min().unwrap();
+    let min_evidence = versions.iter().filter_map(|v| v.evidence.clone()).min();
+
+    if variants.len() == 1 {
+        HexObservation {
+            source: first.source.clone(),
+            diagnosis_id: first.diagnosis_id.clone(),
+            round: first.round,
+            ordinal: first.ordinal,
+            claim_key: min_claim,
+            variant: variants[0],
+            weight: min_weight,
+            evidence: min_evidence,
+        }
+    } else {
+        // Key-derived marker: identical however the versions are
+        // grouped. Folded through `min` with the versions' own
+        // evidence so that resolving in stages (carried merges)
+        // yields the same evidence as resolving flat.
+        let marker = format!(
+            "self-conflict:{}|{}|r{}|o{}",
+            first.source, first.diagnosis_id, first.round, first.ordinal
+        );
+        let evidence = match min_evidence {
+            Some(e) => Some(e.min(marker)),
+            None => Some(marker),
+        };
+        HexObservation {
+            source: first.source.clone(),
+            diagnosis_id: first.diagnosis_id.clone(),
+            round: first.round,
+            ordinal: first.ordinal,
+            claim_key: min_claim,
+            variant: Hexavalent::Contradictory,
+            weight: min_weight,
+            evidence,
+        }
+    }
+}
+
 /// Merge a set of observations into a [`MergedState`]. Implements
 /// the full pipeline specified in `hex-merge.md`:
 ///
-/// 1. Deduplicate by `(source, diagnosis_id, round, ordinal)`
+/// 0. Drop incoming [`MERGE_SOURCE`] observations — synthesis is
+///    derived cache, re-derived from base evidence every merge
+/// 1. Deduplicate by `(source, diagnosis_id, round, ordinal)`,
+///    resolving divergent payloads via [`resolve_key_versions`]
 /// 2. Apply staleness filter: drop obs with `round < current_round - K`
 /// 3. Group by claim_key, synthesize direct contradictions per the
-///    Belnap-extended table
+///    Belnap-extended table (stamped `round = min(parents)`)
 /// 4. Group by action_key (dropping aspect), synthesize meta-
 ///    conflicts for cross-aspect disagreements
 /// 5. Derive hexavalent distribution by summing per-variant weights
 ///    and normalizing
+///
+/// Steps 0–3 together make the merge a pure, order-independent
+/// function of the base-evidence multiset: carried re-merges agree
+/// with flat merges and with evidence recomputes under any staleness
+/// window (see `tests/algebra_probe.rs`).
 ///
 /// `current_round` and `staleness_k` may be `None` to skip the
 /// staleness step (useful in tests and for full-history merges).
@@ -242,22 +330,50 @@ pub fn merge(
     current_round: Option<u32>,
     staleness_k: Option<u32>,
 ) -> Result<MergedState, FuzzyError> {
-    // ── Step 1: deduplicate by dedup key ──────────────────────────
+    // ── Step 0 + Step 1: derived-cache drop, then dedup by key ────
     // BTreeMap keeps order deterministic so the merge output is
-    // reproducible across runs regardless of input order. This is
-    // load-bearing for the CRDT correctness properties.
-    let mut by_key: BTreeMap<(String, String, u32, u32), HexObservation> = BTreeMap::new();
+    // reproducible across runs regardless of input order — load-
+    // bearing for the CRDT correctness properties.
+    //
+    // Colliding keys with DIVERGENT payloads are resolved by
+    // `resolve_key_versions` (an associative-commutative-idempotent
+    // fold), not first-write-wins. First-write-wins let input order
+    // leak into the output, falsifying the reproducibility claim above
+    // and breaking associativity of carried re-merges — see
+    // GuitarAlchemist/hari#27 and hari's
+    // `docs/research/2026-07-20-hex-merge-algebraic-audit.md` §3.
+    // NOTE: this deliberately diverges from the Demerzel-canonical
+    // first-write semantics until the fix is propagated (canonical
+    // home: Demerzel `logic/hex-merge.md`).
+    //
+    // Step 0: incoming MERGE_SOURCE observations are DERIVED CACHE,
+    // not evidence — they are dropped here and re-derived from base
+    // evidence in steps 3–4. Carrying them as input let a synthesis
+    // computed from a partial view (before a later key-collision
+    // resolution or staleness expiry changed its parents) survive
+    // into states where a fresh derivation would not produce it.
+    // Evidence-recompute is authoritative; synthesis is a pure
+    // function of the surviving base observations.
+    let mut by_key: BTreeMap<(String, String, u32, u32), Vec<HexObservation>> = BTreeMap::new();
     for obs in observations {
-        by_key.entry(obs.dedup_key()).or_insert_with(|| obs.clone());
+        if obs.source == MERGE_SOURCE {
+            continue;
+        }
+        by_key.entry(obs.dedup_key()).or_default().push(obs.clone());
+    }
+
+    let mut resolved: BTreeMap<(String, String, u32, u32), HexObservation> = BTreeMap::new();
+    for (key, versions) in by_key {
+        resolved.insert(key, resolve_key_versions(versions));
     }
 
     // ── Step 2: staleness filter ──────────────────────────────────
     if let (Some(current), Some(k)) = (current_round, staleness_k) {
         let cutoff = current.saturating_sub(k);
-        by_key.retain(|_, obs| obs.round >= cutoff);
+        resolved.retain(|_, obs| obs.round >= cutoff);
     }
 
-    let deduped: Vec<HexObservation> = by_key.into_values().collect();
+    let deduped: Vec<HexObservation> = resolved.into_values().collect();
 
     // ── Step 3: direct contradictions by claim_key ───────────────
     //
@@ -299,7 +415,17 @@ pub fn merge(
                     synthesized.push(HexObservation {
                         source: MERGE_SOURCE.to_string(),
                         diagnosis_id: synthesis_diagnosis_id("direct", claim_key, a, b),
-                        round: a.round.max(b.round),
+                        // MIN of the parents, not max: the synthesis is
+                        // supported only while BOTH parents are inside
+                        // the staleness window, and the pair coexists
+                        // iff min(parents) >= cutoff. A max stamp let
+                        // the synthesized C outlive its older parent
+                        // ("ghost contradiction"), making carried state
+                        // disagree with an evidence recompute — see
+                        // GuitarAlchemist/hari#27 and the hari audit doc
+                        // §4. Diverges from Demerzel-canonical until
+                        // propagated.
+                        round: a.round.min(b.round),
                         ordinal: 0,
                         claim_key: claim_key.clone(),
                         variant: Hexavalent::Contradictory,
@@ -355,7 +481,10 @@ pub fn merge(
                 synthesized.push(HexObservation {
                     source: MERGE_SOURCE.to_string(),
                     diagnosis_id: synthesis_diagnosis_id("meta", &meta_claim, pos, neg),
-                    round: pos.round.max(neg.round),
+                    // min for the same reason as direct synthesis: the
+                    // meta-conflict is supported only while both sides
+                    // are in-window (GuitarAlchemist/hari#27).
+                    round: pos.round.min(neg.round),
                     ordinal: 0,
                     claim_key: meta_claim,
                     variant: Hexavalent::Contradictory,
@@ -700,12 +829,11 @@ mod tests {
 
     #[test]
     fn proof_dedup_by_key() {
-        // Same dedup key = same observation. The second copy (with
-        // DIFFERENT weight) should be ignored — first-write-wins on
-        // tied keys.
+        // Same dedup key = same observation. The second copy carries a
+        // DIFFERENT weight, so the slot is a same-variant collision.
         let a = obs("tars", "d", 0, 0, "k::valuable", Hexavalent::True, 0.8);
         let a_dup = HexObservation {
-            weight: 0.3, // different, should be ignored
+            weight: 0.3,
             ..a.clone()
         };
         let result = merge_all(&[a.clone(), a_dup]).unwrap();
@@ -717,13 +845,15 @@ mod tests {
             .filter(|o| o.source == "tars")
             .count();
         assert_eq!(primary_count, 1, "dedup should collapse to one");
-        // The remaining copy should be the first one.
         let remaining = result
             .observations
             .iter()
             .find(|o| o.source == "tars")
             .unwrap();
-        assert!((remaining.weight - 0.8).abs() < 1e-9);
+        // Same-variant collision resolves to the MINIMUM weight
+        // (order-independent), not first-write-wins — see
+        // `resolve_key_versions`. Previously asserted 0.8 (first).
+        assert!((remaining.weight - 0.3).abs() < 1e-9);
     }
 
     // ────────────────────────────────────────────────────────────
@@ -967,24 +1097,25 @@ mod tests {
     }
 
     #[test]
-    fn dedup_preserves_first_write() {
-        // Per BTreeMap::entry::or_insert_with semantics, the first
-        // observation with a given key wins. This is deterministic
-        // across runs because inputs are processed in slice order,
-        // and the test exercises the guarantee so a future
-        // refactor can't silently change it without tripping.
+    fn dedup_same_variant_resolves_to_min_weight_both_orders() {
+        // A same-variant collision resolves to the MINIMUM weight
+        // regardless of input order — the old first-write-wins
+        // semantics only agreed with this when the smaller weight
+        // happened to arrive first. See `resolve_key_versions`.
         let a = obs("tars", "d", 0, 0, "k::valuable", Hexavalent::True, 0.5);
         let b = HexObservation {
             weight: 0.9,
             ..a.clone()
         };
-        let state = merge_all(&[a, b]).unwrap();
-        let primary = state
-            .observations
-            .iter()
-            .find(|o| o.source == "tars")
-            .unwrap();
-        assert!((primary.weight - 0.5).abs() < 1e-9);
+        for input in [[a.clone(), b.clone()], [b, a]] {
+            let state = merge_all(&input).unwrap();
+            let primary = state
+                .observations
+                .iter()
+                .find(|o| o.source == "tars")
+                .unwrap();
+            assert!((primary.weight - 0.5).abs() < 1e-9);
+        }
     }
 
     #[test]
