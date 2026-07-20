@@ -89,16 +89,42 @@ for _name in PHASE1_PARTITIONS:
 assert _cursor == PHASE1_DIM
 
 # ── Dictionary-utilization thresholds ─────────────────────────────────────────
-# A feature is "near-dead" if it fires strongly (>= 50% of its own max) on fewer
-# than MIN_STRONG_SUPPORT voicings — technically alive, but doing no real work.
-# A feature is "always-on" if it fires at all on more than ALWAYS_ON_FREQ of the
-# corpus — it carries a shared/DC component rather than a distinctive concept.
-# The features that are neither form the *effective* dictionary. Thresholds match
-# GA study docs/research/2026-07-19-optick-sae-feature-atlas.md so the emitted
-# metrics are directly comparable to that baseline.
-MIN_STRONG_SUPPORT = 10
-ALWAYS_ON_FREQ = 0.2
+# A feature is "near-dead" if it fires strongly (>= 50% of its own max) on very
+# few voicings — technically alive, but doing no real work. A feature is
+# "always-on" if it fires far more often than TopK forces — it carries a
+# shared/DC component rather than a distinctive concept. Features that are
+# neither form the *effective* dictionary.
+#
+# Both thresholds are expressed RELATIVE to the firing rate TopK enforces,
+# expected_freq = k_sparse / dict_size. Absolute thresholds do not survive a
+# width sweep: at k=32 the mean firing rate is 0.125 at width 256 but 0.0078 at
+# width 4096, so a fixed 0.2 always-on cutoff sits only 1.6x above the mean at
+# width 256 while a fixed 10-voicing floor catches proportionally more features
+# as width grows. That gives the metric a built-in interior optimum — it would
+# show a hump for an equally-good model family, which is the same structural
+# blindness that reversed the feature-atlas study twice. Caught by adversarial
+# review: ga/docs/research/2026-07-19-sae-dictionary-width-utilization.md §5.4.
+#
+# Multipliers are calibrated to reproduce the previous absolute thresholds at the
+# baseline config (dict_size=1024, k_sparse=32, corpus=297_395):
+#   ALWAYS_ON_MULT          6.4 * (32/1024)                  == 0.20  (old ALWAYS_ON_FREQ)
+#   MIN_STRONG_SUPPORT_FRAC 0.001076 * 297_395 * (32/1024)   == 10.0  (old MIN_STRONG_SUPPORT)
+# so the 2026-06-14 decomposition (near_dead=400, always_on=41, effective=379)
+# is preserved exactly at that config while cross-width comparison becomes valid.
+ALWAYS_ON_MULT = 6.4
+MIN_STRONG_SUPPORT_FRAC = 0.001076
+MIN_STRONG_SUPPORT_FLOOR = 3  # guards degenerate values at very large widths
 TOP_VOICINGS_PER_FEATURE = 10
+
+
+def utilization_thresholds(n_rows: int, dict_size: int, k_sparse: int):
+    """(min_strong_support, always_on_freq) scaled to the TopK-enforced rate."""
+    expected_freq = k_sparse / max(dict_size, 1)
+    min_strong = max(
+        MIN_STRONG_SUPPORT_FLOOR,
+        MIN_STRONG_SUPPORT_FRAC * n_rows * expected_freq,
+    )
+    return min_strong, ALWAYS_ON_MULT * expected_freq
 
 
 # ── TopK Sparse Autoencoder ───────────────────────────────────────────────────
@@ -421,9 +447,12 @@ def train(
 
         n_rows = all_acts.shape[0]
         freq_ratio = freq / max(n_rows, 1)
+        min_strong, always_on_freq = utilization_thresholds(
+            n_rows, model.dict_size, model.k
+        )
         alive_mask = freq > 0
-        near_dead_mask = alive_mask & (strong_support < MIN_STRONG_SUPPORT)
-        always_on_mask = freq_ratio > ALWAYS_ON_FREQ
+        near_dead_mask = alive_mask & (strong_support < min_strong)
+        always_on_mask = freq_ratio > always_on_freq
         effective_mask = alive_mask & ~near_dead_mask & ~always_on_mask
 
     high_freq_threshold = 0.01 * len(train_idx)
@@ -584,6 +613,9 @@ def build_artifact(
     batch_size: int,
     lr: float,
     seed: int,
+    aux_alpha: float,
+    aux_k: int,
+    held_out_pct: float,
     metrics: Dict,
     is_synthetic: bool,
     retry_note: Optional[str],
@@ -622,6 +654,15 @@ def build_artifact(
                 "batch_size": batch_size,
                 "lr": lr,
                 "seed": seed,
+                # AuxK (d731cac) and the split fraction were absent, so an artifact
+                # could not say whether ghost grads were on — it had to be inferred
+                # from whether training.log lines carried an `aux=` term. That
+                # inference invalidated a whole study: see
+                # ga/docs/research/2026-07-19-sae-dictionary-width-utilization.md.
+                # Every knob that changes the optimization now lands in the artifact.
+                "aux_alpha": aux_alpha,
+                "aux_k": aux_k,
+                "held_out_pct": held_out_pct,
                 "loss_final": round(metrics["loss_final"], 8),
                 "sparsity_actual_mean": round(metrics["sparsity"], 6),
             },
@@ -648,7 +689,7 @@ def build_artifact(
             # which badly overstates useful capacity: a feature can be "alive" yet fire
             # strongly on <10 voicings. effective_dict_size is the count that is neither
             # near-dead nor always-on — the dictionary actually doing distinctive work.
-            # See MIN_STRONG_SUPPORT / ALWAYS_ON_FREQ and GA study
+            # See utilization_thresholds() and GA study
             # docs/research/2026-07-19-optick-sae-feature-atlas.md (which measured
             # 400/820 "alive" features near-dead on the 2026-06-14 artifact).
             "near_dead_count": metrics["near_dead"],
@@ -782,6 +823,9 @@ def main() -> None:
         batch_size=args.batch_size,
         lr=args.lr,
         seed=args.seed,
+        aux_alpha=args.aux_alpha,
+        aux_k=args.aux_k,
+        held_out_pct=args.held_out_pct,
         metrics=metrics,
         is_synthetic=is_synthetic,
         retry_note=args.retry_note,
