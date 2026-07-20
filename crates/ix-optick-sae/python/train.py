@@ -167,6 +167,27 @@ class TopKSAE(nn.Module):
         topk_vals, topk_idx = torch.topk(pre_dead, k_eff, dim=-1)
         acts_aux = torch.zeros_like(pre_acts)
         acts_aux.scatter_(-1, topk_idx, torch.relu(topk_vals))
+        # The `+ self.b_dec` below is a DELIBERATE deviation from Gao et al. 2024
+        # ("Scaling and evaluating sparse autoencoders"), which reconstructs the
+        # residual WITHOUT the decoder bias. Do not "fix" it — that was tried and
+        # measured, and it makes AuxK inert. Real corpus, dict=1024 k=32 seed=42
+        # epochs=50 batch=4096:
+        #
+        #   aux off                     dead 19.92%   purity 0.5314
+        #   aux on, with this bias      dead  4.88%   purity 0.6125
+        #   aux on, bias removed        dead 19.60%   purity 0.5722   <- inert
+        #
+        # Why: reconstruction here is saturated (r2 0.9996, mse ~1.4e-06), so the
+        # residual carries almost no gradient signal — far too little to wake a
+        # dead feature. Including b_dec makes the effective target
+        # (residual - b_dec), whose magnitude is ~||b_dec||, and that is what
+        # actually revives features. It is the wrong target in principle and the
+        # working one in this regime.
+        #
+        # The principled route, if wanted, is to restore gradient magnitude via
+        # aux_alpha scaling or by normalizing the auxiliary target — not by
+        # dropping the bias. That needs its own study; see
+        # ga/docs/research/2026-07-19-sae-dictionary-width-utilization.md §5.7.
         return acts_aux @ self.W_dec + self.b_dec
 
 
