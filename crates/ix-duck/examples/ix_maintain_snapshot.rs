@@ -11,6 +11,9 @@
 //! Discipline (per issue #145 / ADR-0002):
 //!   * **formats-not-coupling** — writes ONLY the IX tree; Phase B federates into ga/state/quality.
 //!   * **absent-ga → skip** — no sibling corpus ⇒ exit 0 (nothing to produce, not a failure).
+//!   * **absent-hits → skip** — no IX-local metric ledger ⇒ exit 0. Same rule, other
+//!     load-bearing input: publishing "cannot decide" as a snapshot makes a structural
+//!     gap look like a metric regression on the dashboard.
 //!   * **fail-closed** — ga present but unreadable ⇒ nonzero exit, no snapshot written.
 //!   * **atomic** — temp + rename, so a reader never sees a half-written scorecard.
 //!   * **advisory until Phase 3b** — the verdict is not binding.
@@ -54,6 +57,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Metric is IX-local + harness-written (the externally-derived yield ledger).
     let hits = PathBuf::from("state/thinking-machine/hits.jsonl");
+
+    // absent-hits → skip (exit 0), mirroring absent-ga above. hits.jsonl is gitignored
+    // by design (.gitignore: "per-environment runtime data, not a committed artifact"),
+    // so a CI checkout never has it. Without it `metric_delta` returns None, `metric_up`
+    // is None, and `fuse` correctly yields U/escalate "metric evidence missing — cannot
+    // decide". That verdict is honest, but writing it as a SNAPSHOT publishes
+    // metric_value 0.0 + oracle_status=warn to the dashboard, where a structural gap
+    // ("this gate cannot run in this environment") is indistinguishable from a live
+    // regression ("the gate ran and the metric fell"). The scorecard read DEGRADED on
+    // that basis while the nightly went green 8 runs running.
+    //
+    // The metric lens is load-bearing exactly as the guardrail corpus is: absent ⇒
+    // nothing to produce, which is not a failure. Skip instead of publishing a verdict
+    // this environment cannot earn.
+    if !hits.exists() {
+        eprintln!(
+            "ix_maintain_snapshot: no metric evidence at {} — skipping (exit 0). \
+             hits.jsonl is per-environment runtime data; the maintain gate is only \
+             decidable where the harness has written it.",
+            hits.display()
+        );
+        return Ok(());
+    }
     let loops_dir = ga_quality.join("loops");
     let emb_dir = ga_quality.join("query-embeddings");
     let run_at = chrono::Utc::now().to_rfc3339();
