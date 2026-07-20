@@ -88,6 +88,18 @@ for _name in PHASE1_PARTITIONS:
     _cursor += _width
 assert _cursor == PHASE1_DIM
 
+# ── Dictionary-utilization thresholds ─────────────────────────────────────────
+# A feature is "near-dead" if it fires strongly (>= 50% of its own max) on fewer
+# than MIN_STRONG_SUPPORT voicings — technically alive, but doing no real work.
+# A feature is "always-on" if it fires at all on more than ALWAYS_ON_FREQ of the
+# corpus — it carries a shared/DC component rather than a distinctive concept.
+# The features that are neither form the *effective* dictionary. Thresholds match
+# GA study docs/research/2026-07-19-optick-sae-feature-atlas.md so the emitted
+# metrics are directly comparable to that baseline.
+MIN_STRONG_SUPPORT = 10
+ALWAYS_ON_FREQ = 0.2
+TOP_VOICINGS_PER_FEATURE = 10
+
 
 # ── TopK Sparse Autoencoder ───────────────────────────────────────────────────
 
@@ -393,6 +405,27 @@ def train(
 
         freq = (all_acts > 0).float().sum(dim=0).numpy()  # (dict_size,)
 
+        # Strong-activation support: voicings where a feature fires at >= 50% of its
+        # OWN max. A TopK SAE puts every feature into some voicing's top-k even when
+        # only weakly relevant, so raw activation_count overstates how much work a
+        # feature does. GA study 2026-07-19-optick-sae-feature-atlas found ~half of
+        # "alive" features fire strongly on <10 voicings — i.e. dead_features_pct
+        # alone badly undercounts real dictionary utilization.
+        feat_max = all_acts.max(dim=0).values                                   # (dict_size,)
+        strong_support = (all_acts >= (0.5 * feat_max).unsqueeze(0)).sum(dim=0)
+        # Dead features have max == 0, so `>= 0` would match every row — zero them.
+        strong_support = torch.where(
+            feat_max > 0, strong_support, torch.zeros_like(strong_support)
+        ).numpy()
+        feat_max = feat_max.numpy()
+
+        n_rows = all_acts.shape[0]
+        freq_ratio = freq / max(n_rows, 1)
+        alive_mask = freq > 0
+        near_dead_mask = alive_mask & (strong_support < MIN_STRONG_SUPPORT)
+        always_on_mask = freq_ratio > ALWAYS_ON_FREQ
+        effective_mask = alive_mask & ~near_dead_mask & ~always_on_mask
+
     high_freq_threshold = 0.01 * len(train_idx)
     low_freq_threshold = 1.0
     high_freq = int((freq >= high_freq_threshold).sum())
@@ -422,6 +455,11 @@ def train(
         "all_acts": all_acts,
         "freq": freq,
         "train_idx": train_idx,
+        "feat_max": feat_max,
+        "strong_support": strong_support,
+        "near_dead": int(near_dead_mask.sum()),
+        "always_on": int(always_on_mask.sum()),
+        "effective_dict": int(effective_mask.sum()),
     }
 
 
@@ -479,17 +517,46 @@ def save_outputs(
     )
 
     # feature_manifest.jsonl
+    #
+    # Emits the ML-level facts a consumer needs to interpret a feature: how much
+    # real work it does (strong_support), how selective it is (activation_freq),
+    # and WHICH voicings drive it (top_voicings, as optick.index positions). The
+    # *musical* characterization (pitch-class set / interval-class vector / chord
+    # quality) is deliberately NOT done here — that is GA's domain, and ix stays
+    # a pure ML layer. GA joins top_voicings against optick.index metadata.
+    # Before this, the manifest carried only {idx, count, is_alive, decoder_norm},
+    # so every consumer had to re-derive top voicings from the 56MB parquet.
     W = model.W_dec.detach().cpu().numpy()
+    strong_support = metrics["strong_support"]
+    feat_max = metrics["feat_max"]
+    n_rows = acts_np.shape[0]
     with open(output_dir / "feature_manifest.jsonl", "w") as f:
         for i in range(model.dict_size):
+            col = acts_np[:, i]
+            nz = np.flatnonzero(col > 0)
+            if nz.size:
+                k = min(TOP_VOICINGS_PER_FEATURE, nz.size)
+                top_local = nz[np.argpartition(-col[nz], k - 1)[:k]]
+                top_local = top_local[np.argsort(-col[top_local])]
+                top_voicings = [int(train_idx[r]) for r in top_local]
+            else:
+                top_voicings = []
             entry = {
                 "feature_idx": i,
                 "activation_count": int(freq[i]),
+                "activation_freq": round(float(freq[i]) / max(n_rows, 1), 6),
                 "is_alive": bool(freq[i] > 0),
+                "strong_support": int(strong_support[i]),
+                "max_activation": round(float(feat_max[i]), 6),
                 "decoder_norm": round(float(np.linalg.norm(W[i])), 6),
+                # optick.index positions, descending by activation.
+                "top_voicings": top_voicings,
             }
             f.write(json.dumps(entry) + "\n")
-    log.info("Saved feature_manifest.jsonl  (%d features)", model.dict_size)
+    log.info(
+        "Saved feature_manifest.jsonl  (%d features, +strong_support/top_voicings)",
+        model.dict_size,
+    )
 
     # sae_weights.safetensors (fallback: .pt)
     try:
@@ -577,6 +644,19 @@ def build_artifact(
             "alive": metrics["alive"],
             "high_frequency_count": metrics["high_freq"],
             "low_frequency_count": metrics["low_freq"],
+            # Real utilization (v0.1.2+). `alive` counts any feature that ever fires,
+            # which badly overstates useful capacity: a feature can be "alive" yet fire
+            # strongly on <10 voicings. effective_dict_size is the count that is neither
+            # near-dead nor always-on — the dictionary actually doing distinctive work.
+            # See MIN_STRONG_SUPPORT / ALWAYS_ON_FREQ and GA study
+            # docs/research/2026-07-19-optick-sae-feature-atlas.md (which measured
+            # 400/820 "alive" features near-dead on the 2026-06-14 artifact).
+            "near_dead_count": metrics["near_dead"],
+            "always_on_count": metrics["always_on"],
+            "effective_dict_size": metrics["effective_dict"],
+            "effective_dict_pct": round(
+                100.0 * metrics["effective_dict"] / max(dict_size, 1), 2
+            ),
         },
         "links": {
             "feature_activations_parquet": "feature_activations.parquet",
