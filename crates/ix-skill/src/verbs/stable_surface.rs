@@ -324,6 +324,78 @@ pub fn diff_reports(base: &Value, head: &Value) -> DiffResult {
 mod tests {
     use super::*;
 
+    /// Reconciliation guard (issue #243): every workspace-member crate MUST
+    /// appear as a key in `crate-maturity.toml`'s `[crates]` table. The
+    /// stable-surface machinery is otherwise SILENT about members it doesn't
+    /// know — this is the companion signal to `compute_api_hash`'s
+    /// missing-src-dir case (a *listed* crate whose dir is gone → `("missing",
+    /// 0)`); this asserts the other direction (a *member* that isn't listed).
+    ///
+    /// Hermetic: parses the root `Cargo.toml` and each member's own
+    /// `Cargo.toml` directly (no `cargo metadata` subprocess), reads the real
+    /// `[package].name` (never assumes dir basename == crate name), and
+    /// respects `[workspace].exclude`.
+    #[test]
+    fn every_workspace_member_is_listed_in_crate_maturity() {
+        let root = locate_workspace_root().expect("locate workspace root");
+        let maturity = load_maturity(&root).expect("load crate-maturity.toml");
+
+        let cargo_toml = fs::read_to_string(root.join("Cargo.toml")).expect("read root Cargo.toml");
+        let parsed: toml::Value = toml::from_str(&cargo_toml).expect("parse root Cargo.toml");
+        let workspace = parsed
+            .get("workspace")
+            .and_then(|v| v.as_table())
+            .expect("[workspace] table");
+        let members = workspace
+            .get("members")
+            .and_then(|v| v.as_array())
+            .expect("[workspace] members array");
+        let exclude: BTreeSet<String> = workspace
+            .get("exclude")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut unlisted: Vec<String> = Vec::new();
+        for member in members {
+            let Some(member_path) = member.as_str() else {
+                continue;
+            };
+            if exclude.contains(member_path) {
+                continue;
+            }
+            // Read the member's OWN Cargo.toml [package].name — robust against
+            // dir basename != crate name (happens to hold here, but don't rely
+            // on it).
+            let member_cargo = root.join(member_path).join("Cargo.toml");
+            let body = fs::read_to_string(&member_cargo)
+                .unwrap_or_else(|e| panic!("reading {}: {e}", member_cargo.display()));
+            let member_toml: toml::Value = toml::from_str(&body)
+                .unwrap_or_else(|e| panic!("parsing {}: {e}", member_cargo.display()));
+            let name = member_toml
+                .get("package")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("no [package].name in {}", member_cargo.display()));
+            if !maturity.contains_key(name) {
+                unlisted.push(name.to_string());
+            }
+        }
+        unlisted.sort();
+
+        assert!(
+            unlisted.is_empty(),
+            "crate-maturity.toml is missing {} workspace member(s): [{}]. \
+             Add each to the [crates] table with an honest tier (issue #243).",
+            unlisted.len(),
+            unlisted.join(", ")
+        );
+    }
+
     #[test]
     fn extract_pub_lines_basic() {
         let src = r#"
