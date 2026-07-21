@@ -55,6 +55,7 @@ ix-number-theory  = "experimental"
 ix-gpu            = "experimental"
 memristive-markov = "experimental"
 ix-acoustic-tune  = "experimental"
+ix-duck           = "experimental"  # in-process DuckDB analyst bench, IX algos as SQL UDFs — research-grade, no stability guarantees (#243)
 
 # --- Internal tier ------------------------------------------------------
 ix-skill                  = "internal"
@@ -93,3 +94,11 @@ ix-bracelet               = "internal"
 ga-chatbot                = "internal"
 ix-autoresearch           = "internal"
 ix-blast-radius           = "internal"
+# --- Reconciled against workspace members 2026-07-20 (#243) --------------
+ix-ai-annotations         = "internal"  # @ai: annotation extractor → contract JSONL; governance-loop tooling
+ix-assumption-graph       = "internal"  # Phase-1 assumption/contradiction graph over @ai: annotations; governance tooling
+ix-sentrux-annotations    = "internal"  # sentrux violations → ai-annotation records bridge; tooling
+ix-quality-validate       = "internal"  # CI validator: state/quality/*.json vs schema; gate tooling
+ix-registrar              = "internal"  # federation/registrar deep module (ix-streeling/ix-value adapters); infra
+ix-streeling              = "internal"  # generates the federated learnings catalog; tooling
+ix-value                  = "internal"  # federates per-repo value manifests → catalog.jsonl; mirrors ix-streeling
