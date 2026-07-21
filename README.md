@@ -6,7 +6,7 @@
 
 A Rust workspace of composable ML/math algorithms and AI governance, designed to be exposed as **Claude Code skills** via an MCP server and CLI. Part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem (ix + [tars](https://github.com/GuitarAlchemist/tars) + [ga](https://github.com/GuitarAlchemist/ga) + [Demerzel](https://github.com/GuitarAlchemist/Demerzel)).
 
-77 crates. 93 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+78 crates. 93 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -185,6 +185,7 @@ Music set-theory and the GA voicing-index (OPTIC-K) pipeline. Internal-tier — 
 | ix-quality-trend | Internal | Aggregates quality snapshots over time into an executive markdown trend report |
 | ix-invariant-coverage | Internal | Measures invariant-catalog optimality: rank, redundancy, orphans, coverage gaps |
 | ix-quality-validate | Internal | CI validator: every `state/quality/*.json` against the dashboard-envelope schema |
+| ix-registrar | Internal | Federation/registrar deep module: root discovery, catalog.jsonl serialization, repo-scoped drift gate — payload-agnostic substrate for ix-streeling and ix-value |
 | ix-streeling | Internal | Streeling University — federated learnings catalog + campus index over the ecosystem's docs |
 | ix-value | Internal | Business-Value Scorecard — federate per-repo value manifests into a RICE→stars catalog |
 
@@ -399,7 +400,7 @@ cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check ../ga/st
 
 ## Architecture
 
-ix is a Rust workspace of **77 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
+ix is a Rust workspace of **78 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
 
 ```
 ix/
@@ -415,7 +416,7 @@ ix/
 │   └── canonical-showcase/# 5 reproducible demo pipelines + roadmap + findings
 ├── governance/
 │   └── demerzel/          # Git submodule: constitution + personas + policies
-└── crates/                # 77 crates — see maturity tables above
+└── crates/                # 78 crates — see maturity tables above
 ```
 
 For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.
