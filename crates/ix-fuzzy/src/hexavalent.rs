@@ -5,7 +5,9 @@
 //! - Tiebreak order for `argmax`: **C > U > D > P > T > F**
 //!   (conservative — contradictions and unknowns surface first,
 //!   doubt before hope)
-//! - Escalation trigger: `C > 0.3` forces human review
+//! - Escalation trigger: `C / (T+P+D+F+C) > 0.3` (Contradictory
+//!   against *informative* mass — Unknown excluded) forces human
+//!   review; all-Unknown input never escalates
 //! - Sharpen threshold: argmax mass `> 0.8` collapses to a discrete
 //!   `Hexavalent` value
 //! - Hexavalent NOT: `T↔F`, `P↔D`, `U`/`C` preserved (distinct from
@@ -19,20 +21,38 @@ use crate::error::FuzzyError;
 /// Type alias for a fuzzy distribution over [`Hexavalent`] variants.
 pub type HexavalentDistribution = FuzzyDistribution<Hexavalent>;
 
-/// Escalation threshold on `C` membership — above this the
-/// distribution must be escalated to a human per
-/// `fuzzy-membership.md`.
+/// Escalation threshold on the Contradictory *share of informative
+/// mass* — above this the distribution must be escalated to a human
+/// per `fuzzy-membership.md`. See [`escalation_triggered`] for the
+/// informative-mass denominator.
 pub const ESCALATION_THRESHOLD: f64 = 0.3;
 
 /// Sharpen threshold on the argmax mass — above this the
 /// distribution may collapse to a discrete truth value.
 pub const SHARPEN_THRESHOLD: f64 = 0.8;
 
-/// `true` iff the distribution's `C` mass exceeds
-/// [`ESCALATION_THRESHOLD`]. Callers should check this immediately
-/// after each AND/OR/accumulate step.
+/// `true` iff the Contradictory share of *informative* mass exceeds
+/// [`ESCALATION_THRESHOLD`]: `C / (T + P + D + F + C) > 0.3`. Unknown
+/// (abstention) is excluded from the denominator, so piling on
+/// non-evidence cannot dilute an evidence-based alarm; an all-Unknown
+/// distribution has zero informative mass and never escalates.
+/// Callers should check this immediately after each
+/// AND/OR/accumulate step.
+///
+/// The informative-mass denominator is the Demerzel spec v1.2 /
+/// hari GuitarAlchemist/hari#28 abstention-muting fix; the prior
+/// semantics compared raw `C > 0.3`.
 pub fn escalation_triggered(dist: &HexavalentDistribution) -> bool {
-    dist.get(&Hexavalent::Contradictory) > ESCALATION_THRESHOLD
+    let c = dist.get(&Hexavalent::Contradictory);
+    let informative = dist.get(&Hexavalent::True)
+        + dist.get(&Hexavalent::Probable)
+        + dist.get(&Hexavalent::Doubtful)
+        + dist.get(&Hexavalent::False)
+        + c;
+    if informative <= 0.0 {
+        return false;
+    }
+    c / informative > ESCALATION_THRESHOLD
 }
 
 /// Hexavalent-specific NOT: swap `T↔F`, swap `P↔D`, leave `U` and
@@ -165,7 +185,37 @@ mod tests {
 
     #[test]
     fn escalation_does_not_trigger_at_exactly_threshold() {
+        // No Unknown mass → informative denominator is 1.0, so
+        // C/informative = C = 0.3, which is not strictly greater.
         let d = hexavalent_from_tpudfc(0.4, 0.0, 0.0, 0.0, 0.3, 0.3).unwrap();
+        assert!(!escalation_triggered(&d));
+    }
+
+    #[test]
+    fn escalation_survives_unknown_abstention() {
+        // T, F, C at equal mass with an arbitrary amount of Unknown
+        // padding. Escalation weighs C against informative mass only
+        // (C / (T+P+D+F+C) = 1/3 > 0.3), so it fires for ANY amount
+        // of Unknown — abstention cannot mute an evidence-based
+        // alarm. Under the prior raw `C > 0.3` rule the growing
+        // Unknown mass drove raw C below 0.3 and (wrongly) silenced
+        // the alarm; this assertion is the FLIP. Demerzel spec v1.2 /
+        // hari GuitarAlchemist/hari#28.
+        for u in [0.0, 0.3, 0.6, 0.9, 0.99] {
+            let each = (1.0 - u) / 3.0;
+            let d = hexavalent_from_tpudfc(each, 0.0, u, 0.0, each, each).unwrap();
+            assert!(
+                escalation_triggered(&d),
+                "abstention muted escalation at U={u} (raw C={each})"
+            );
+        }
+    }
+
+    #[test]
+    fn all_unknown_does_not_escalate() {
+        // Pure abstention: zero informative mass, so no evidence and
+        // no alarm. Demerzel spec v1.2 / hari GuitarAlchemist/hari#28.
+        let d = hexavalent_from_tpudfc(0.0, 0.0, 1.0, 0.0, 0.0, 0.0).unwrap();
         assert!(!escalation_triggered(&d));
     }
 

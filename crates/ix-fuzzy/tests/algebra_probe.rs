@@ -376,6 +376,15 @@ fn theorem_staleness_carried_equals_recompute() {
 /// stands — a genuine robustness property of the substrate, worth
 /// pinning: it is what makes `escalation_triggered` resistant to
 /// consensus-flooding by agreeing sources.
+///
+/// This is the *corroboration* muting axis (piling on agreeing
+/// evidence). The *abstention* axis (padding with Unknown) is closed
+/// separately by the informative-mass denominator in
+/// `escalation_triggered` — Demerzel spec v1.2 / hari
+/// GuitarAlchemist/hari#28. The two are independent: this merge
+/// synthesizes only T/F/C/P mass (no Unknown), so informative mass
+/// equals total mass here and the trajectory below is unchanged by
+/// that fix.
 #[test]
 fn theorem_escalation_is_antidilutive() {
     let mk = |src: &str, dx: &str, variant, ordinal| HexObservation {
