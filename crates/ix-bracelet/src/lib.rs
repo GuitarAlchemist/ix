@@ -11,6 +11,7 @@
 pub mod action;
 pub mod dihedral;
 pub mod forte;
+pub mod fourier;
 pub mod grothendieck;
 pub mod neo_riemannian;
 pub mod orbit;
@@ -21,6 +22,7 @@ pub mod serial;
 pub use action::Action;
 pub use dihedral::{DihedralElement, Group};
 pub use forte::{all_forte_numbers, forte_number, ForteNumber};
+pub use fourier::{dft, dft_magnitudes, dft_phases, phase_aligned_similarity, Cf, ZERO_TOL};
 pub use grothendieck::{
     find_nearby, find_shortest_path, grothendieck_delta, icv, z_related_pairs, Delta, Icv,
 };
