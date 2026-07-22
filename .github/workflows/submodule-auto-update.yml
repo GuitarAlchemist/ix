@@ -89,7 +89,7 @@ jobs:
 
           # Get recent commit messages for PR body
           cd governance/demerzel
-          CHANGES=$(git log --oneline "$CURRENT..$LATEST" | head -15)
+          CHANGES=$(git log --oneline --max-count=15 "$CURRENT..$LATEST")
           cd ../..
 
           # Idempotent: if a PR for this branch is already open, the force-push above
