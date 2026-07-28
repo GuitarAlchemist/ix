@@ -844,6 +844,20 @@ def main() -> None:
         )
         sys.exit(3)
 
+    # ── Guardrail: split additivity, BEFORE anything reaches disk ─────────────
+    # build_artifact() derives this same block, but it runs *after* save_outputs()
+    # — too late to prevent a partial write. A non-additive split has to abort
+    # with nothing on disk; otherwise the parquet/weights ship with no declaring
+    # artifact JSON, which is precisely the federation drop #248 added the guard
+    # to stop. Recomputing three integers is cheap; the raise is the point.
+    from optick_coverage import activations_coverage  # noqa: PLC0415
+
+    activations_coverage(
+        n_train=len(metrics["train_idx"]),
+        n_val=metrics["n_val"],
+        corpus_n=corpus_size,
+    )
+
     # ── Write output files ────────────────────────────────────────────────────
     save_outputs(model, metrics, output_dir)
 

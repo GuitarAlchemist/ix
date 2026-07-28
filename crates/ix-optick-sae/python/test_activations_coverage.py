@@ -17,6 +17,7 @@ Run::
 """
 from __future__ import annotations
 
+import ast
 import sys
 import unittest
 from pathlib import Path
@@ -80,6 +81,78 @@ class TrainerWiringTests(unittest.TestCase):
             '"n_val": len(val_idx)',
             self.source,
             "metrics must carry n_val so build_artifact can declare the val split.",
+        )
+
+
+def _call_name(node: ast.Call) -> str:
+    """Best-effort callee name for ``f(...)`` and ``mod.f(...)``."""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _scope_calling(tree: ast.AST, callee: str):
+    """The function that CALLS ``callee``, plus that call's line number.
+
+    Returns ``(FunctionDef, lineno)`` or ``(None, None)``. Scoping to the calling
+    function is the whole point: comparing raw line numbers across the module
+    would be meaningless here, because ``build_artifact`` is *defined* above
+    ``main`` and so its internal calls always have lower line numbers than
+    anything in ``main`` — a source-order check would pass while the runtime
+    order stayed wrong.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Call) and _call_name(sub) == callee:
+                return node, sub.lineno
+    return None, None
+
+
+class CoverageGuardOrderingTests(unittest.TestCase):
+    """The guard must run BEFORE anything is written to disk (ix #248 P0).
+
+    ``activations_coverage`` raises on a non-additive split by design. If it is
+    only reached from inside ``build_artifact`` — which runs *after*
+    ``save_outputs`` — the raise happens once the parquet, weights and manifest
+    are already on disk. That leaves activation files with no declaring artifact
+    JSON: exactly the federation-drop #248 added the guard to prevent.
+
+    The pre-existing wiring test cannot catch this. It asserts only that
+    ``train.py`` *references* ``activations_coverage`` — true either way — so the
+    suite stays green while the ordering is wrong.
+    """
+
+    def setUp(self) -> None:
+        self.tree = ast.parse(_TRAINER_SOURCE.read_text(encoding="utf-8"))
+
+    def test_coverage_guard_precedes_save_outputs(self) -> None:
+        scope, save_line = _scope_calling(self.tree, "save_outputs")
+        self.assertIsNotNone(
+            scope, "no function in train.py calls save_outputs — test is stale."
+        )
+
+        guard_lines = [
+            n.lineno
+            for n in ast.walk(scope)
+            if isinstance(n, ast.Call) and _call_name(n) == "activations_coverage"
+        ]
+        self.assertTrue(
+            guard_lines,
+            f"{scope.name}() calls save_outputs (line {save_line}) without ever "
+            "calling activations_coverage. The split-additivity guard is only "
+            "reachable from build_artifact, which runs after the files are "
+            "written; a non-additive split would leave an orphaned parquet.",
+        )
+        self.assertTrue(
+            any(line < save_line for line in guard_lines),
+            f"activations_coverage is called in {scope.name}() at line(s) "
+            f"{guard_lines}, but save_outputs writes at line {save_line}. The "
+            "guard must precede the write, or it cannot prevent partial output.",
         )
 
 
