@@ -49,6 +49,37 @@ class ValidateClaimTests(unittest.TestCase):
         obj = json.loads(_valid_line(ts="2026-07-21 23:37"))  # not RFC3339 Z
         self.assertTrue(any("RFC3339" in p for p in claims.validate_claim(obj)))
 
+    def test_non_string_timestamp_flagged(self) -> None:
+        # `isinstance(ts, str) and not _TS_RE.match(ts)` short-circuits to False
+        # for a non-str ts, so the whole check was skipped and an epoch int
+        # sailed through as valid.
+        for bad in (1_753_140_000, None, ["2026-07-21T23:37:36Z"]):
+            with self.subTest(ts=bad):
+                obj = json.loads(_valid_line(ts=bad))
+                self.assertTrue(
+                    claims.validate_claim(obj),
+                    f"ts={bad!r} must be rejected, not silently accepted",
+                )
+
+    def test_impossible_timestamps_flagged(self) -> None:
+        # The regex only counts digits, so calendar-impossible values matched it.
+        for bad in ("2026-99-99T99:99:99Z", "2026-02-30T00:00:00Z",
+                    "2026-13-01T00:00:00Z", "2026-01-01T25:00:00Z"):
+            with self.subTest(ts=bad):
+                obj = json.loads(_valid_line(ts=bad))
+                self.assertTrue(
+                    claims.validate_claim(obj),
+                    f"ts={bad!r} is not a real instant and must be rejected",
+                )
+
+    def test_missing_ts_reports_only_the_missing_field(self) -> None:
+        # Absent ts is already covered by REQUIRED_FIELDS; the type/shape checks
+        # must not pile a second, redundant complaint on top of it.
+        obj = json.loads(_valid_line())
+        del obj["ts"]
+        problems = claims.validate_claim(obj)
+        self.assertEqual(problems, ["missing required field 'ts'"])
+
     def test_empty_repo_flagged(self) -> None:
         obj = json.loads(_valid_line(repo="  "))
         self.assertTrue(any("'repo'" in p for p in claims.validate_claim(obj)))
