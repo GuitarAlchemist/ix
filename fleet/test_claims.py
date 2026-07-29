@@ -72,6 +72,19 @@ class ValidateClaimTests(unittest.TestCase):
                     f"ts={bad!r} is not a real instant and must be rejected",
                 )
 
+    def test_leap_second_timestamp_accepted(self) -> None:
+        # RFC3339 permits :60; 2016-12-31T23:59:60Z is a real instant. datetime
+        # cannot represent second=60, so a naive strptime probe would reject a
+        # conforming claim and latest_by_lane would silently drop it.
+        obj = json.loads(_valid_line(ts="2016-12-31T23:59:60Z"))
+        self.assertEqual(claims.validate_claim(obj), [])
+
+    def test_leap_second_probe_still_checks_the_rest(self) -> None:
+        # Normalising :60 -> :59 must not become a blanket escape hatch: the
+        # date and hour still have to be real.
+        obj = json.loads(_valid_line(ts="2016-13-31T23:59:60Z"))
+        self.assertTrue(claims.validate_claim(obj))
+
     def test_missing_ts_reports_only_the_missing_field(self) -> None:
         # Absent ts is already covered by REQUIRED_FIELDS; the type/shape checks
         # must not pile a second, redundant complaint on top of it.

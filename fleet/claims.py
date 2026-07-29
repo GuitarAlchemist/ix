@@ -73,8 +73,15 @@ def validate_claim(obj: object) -> List[str]:
             # The regex only counts digits, so it accepts calendar-impossible
             # values like 2026-99-99T99:99:99Z. Parsing is what makes it a real
             # instant rather than a well-shaped string.
+            #
+            # RFC3339 permits :60 for a leap second (2016-12-31T23:59:60Z really
+            # happened), but datetime cannot represent second=60 and would raise.
+            # Normalise to :59 purely for the validity probe — rejecting a
+            # protocol-conforming claim would drop it from `status` silently, via
+            # latest_by_lane skipping invalid rows.
+            probe = f"{ts[:17]}59Z" if ts[17:19] == "60" else ts
             try:
-                datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+                datetime.strptime(probe, "%Y-%m-%dT%H:%M:%SZ")
             except ValueError:
                 problems.append(f"ts {ts!r} is not a valid UTC instant")
     for f in ("repo", "lane", "session"):
