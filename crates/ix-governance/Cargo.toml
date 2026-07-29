@@ -17,3 +17,9 @@ thiserror = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 ix-quality-trend = { workspace = true }
 ix-types = { workspace = true }
+
+[dev-dependencies]
+# Policy-loading tests build a throwaway `policies/` + `logic/` pair on disk,
+# because the ref:confidence# resolution is path-relative and cannot be
+# exercised from an in-memory string.
+tempfile = { workspace = true }
