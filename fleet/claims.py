@@ -60,9 +60,30 @@ def validate_claim(obj: object) -> List[str]:
     status = obj.get("status")
     if status is not None and status not in VALID_STATUS:
         problems.append(f"status {status!r} not in {VALID_STATUS}")
-    ts = obj.get("ts")
-    if isinstance(ts, str) and not _TS_RE.match(ts):
-        problems.append(f"ts {ts!r} is not RFC3339 UTC (YYYY-MM-DDTHH:MM:SSZ)")
+    # Absent ts is already reported by the REQUIRED_FIELDS loop above, so only
+    # validate shape when the key is present — otherwise a missing ts collects
+    # two complaints for one defect.
+    if "ts" in obj:
+        ts = obj["ts"]
+        if not isinstance(ts, str):
+            problems.append(f"ts {ts!r} must be a string, not {type(ts).__name__}")
+        elif not _TS_RE.match(ts):
+            problems.append(f"ts {ts!r} is not RFC3339 UTC (YYYY-MM-DDTHH:MM:SSZ)")
+        else:
+            # The regex only counts digits, so it accepts calendar-impossible
+            # values like 2026-99-99T99:99:99Z. Parsing is what makes it a real
+            # instant rather than a well-shaped string.
+            #
+            # RFC3339 permits :60 for a leap second (2016-12-31T23:59:60Z really
+            # happened), but datetime cannot represent second=60 and would raise.
+            # Normalise to :59 purely for the validity probe — rejecting a
+            # protocol-conforming claim would drop it from `status` silently, via
+            # latest_by_lane skipping invalid rows.
+            probe = f"{ts[:17]}59Z" if ts[17:19] == "60" else ts
+            try:
+                datetime.strptime(probe, "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                problems.append(f"ts {ts!r} is not a valid UTC instant")
     for f in ("repo", "lane", "session"):
         if f in obj and (not isinstance(obj[f], str) or not obj[f].strip()):
             problems.append(f"{f!r} must be a non-empty string")
