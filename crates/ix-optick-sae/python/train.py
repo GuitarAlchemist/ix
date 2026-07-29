@@ -850,6 +850,8 @@ def main() -> None:
     # with nothing on disk; otherwise the parquet/weights ship with no declaring
     # artifact JSON, which is precisely the federation drop #248 added the guard
     # to stop. Recomputing three integers is cheap; the raise is the point.
+    # @ai:invariant activations_coverage runs before save_outputs, so a non-additive
+    # split writes nothing [T:test conf:0.95 src:test_coverage_guard_precedes_save_outputs]
     from optick_coverage import activations_coverage  # noqa: PLC0415
 
     activations_coverage(
