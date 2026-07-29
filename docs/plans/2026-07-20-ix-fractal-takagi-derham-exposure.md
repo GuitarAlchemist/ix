@@ -280,3 +280,46 @@ Each step is end-to-end and independently mergeable.
    surface, never precedes it.
 
 Slices 4 and 5 are legitimately droppable if slices 1–3 find no consumer.
+
+---
+
+## Research Insights (deepened 2026-07-21)
+
+_Parallel domain research + simplicity/YAGNI review (Fable-5 agents; all numerical facts verified against source) + learnings scan. Every asserted Takagi/de Rham value checks out; the deltas are a scope cut and several correctness caveats._
+
+### Enhancement summary
+- **Simplicity:** cut `ix_de_rham_path` entirely (deferred deletion with design cost paid up front); strongly consider cutting `ix_de_rham_1d` too — the MCP `de_rham_1d` op + a Rust-side S13 cover the real gap. Recommended minimum: `ix_takagi` + `ix_hurst` scalars + MCP op; 14 tests → ~5.
+- **Correctness:** the `ix_hurst(list(value))` recipe has an **ordering hazard** (Hurst is order-sensitive); add `ORDER BY i`. Plus Hurst-estimator caveats, per-build-only determinism, NaN-roughness rejection, and an S9 wording fix.
+
+### Simplicity / YAGNI (agent: simplicity review)
+- **Cut `ix_de_rham_path` from the plan** — demote to the §2 deferred list next to `box_counting`, condition "a named SQL consumer." The plan already convicts it (Slice 4 "lowest confidence in the consumer," droppable), yet designs its full `(i,dim,value)` contract, `dim≤8` cap, ragged-input error, S9–S11, a skill section, *and* half the one-way naming sign-off. That's deferred deletion with the design cost paid now. Cutting it removes the sharpest one-way-door risk and S9–S11.
+- **Consider cutting `ix_de_rham_1d` too.** Its only consumers are the skill section and S13 — and **S13 doesn't need the generator to be SQL** (the test can call `de_rham_curve_1d` in Rust and feed samples through `ix_hurst(list(value))`; the tracer bullet survives intact). §6 confirms the MCP `de_rham_1d` op costs zero parity bump. Apply the plan's *own* rules symmetrically: it rejected `takagi_series` as "a second way to do one thing" already on MCP (§2) and says "delete if no consumer" (§7) — both de Rham table fns fall out under those rules. Cutting both deletes §6's self-declared "main risk of the whole issue" (output-size bounds) rather than mitigating it.
+- **Recommended minimum:** `ix_takagi` + `ix_hurst` (two scalars following `ix_skewness`/`invoke_binary` line-for-line, no caps, no RNG-in-SQL, no amplification) + MCP `de_rham_1d` promoted from "optional slice 5" to *the* de Rham exposure — on the surface that actually has users (agent/MCP), not the warehouse. Base rate for a fractal table fn finding a SQL consumer in a quarter is low (ecosystem history of green-but-dead ix-duck UDFs, `project_epistemic_sql_ixduck`); the plan's own delete-by-2026-10-20 trigger is effectively that prediction.
+- **Skill:** drop the `smooth/brownian/rough` banding (the plan itself marks it `@ai:assumption … not a validated classifier`) — a banded enum invites downstream branching that turns a reading aid into a load-bearing unvalidated gate. Return `hurst: float` + one sentence. `fractal_path_interpolate` dies with `ix_de_rham_path`. Resolve the dual DuckDB-or-MCP route (same "two ways to do one thing").
+- **Tests:** cut S2 (symmetry) and S8 (zero-roughness line) as *UDF* tests — they re-verify callee math the wrap can't selectively break (S1+S4 catch arg-order/cast/vectorization; S6/S7/S12 are the real wrap responsibilities). Full plan 14 → ~10; recommended-minimum plan → **5** (S1, S3, S4, Rust-side S13, S14).
+
+### Hurst-estimator caveats (agent: domain research) — the roughness probe understates the risk
+- **ix-chaos implements uncorrected R/S** (`crates/ix-chaos/src/fractal.rs:97-145`): windows 4,8,16,…, log-log OLS slope, **no Anis–Lloyd correction**, and **n<8 returns a hard-coded 0.5 sentinel** (not an estimate). Its own test accepts H ∈ (0.1, 1.5) on 1024 samples.
+- Uncorrected R/S is **positively biased** on short series (worst at the size-4 windows this code includes; +0.05–0.1 near H=0.5 at ~1000 samples). So S13's "ordering not absolute" is exactly right; any absolute-value assertion would flake. "≥32 samples" is a floor, not sufficiency — estimates are noise below ~256 samples; raise the skill's warning floor to ~256.
+- Two failure modes to name in the skill: **(1) profile-vs-increments** — feeding de Rham *values* (an fBm-like profile) pushes H→1 and saturates; probe *first differences* for a calibrated reading (S13's direction still survives). **(2) out-of-range output** — OLS slope is unclamped (H<0 or H>1 occur on strong trends; degenerate → 0.0; n<8 → exactly 0.5, indistinguishable from Brownian). Add an `unreliable` band for H∉[0,1] or n<256 and document the 0.5 sentinel.
+
+### Determinism — correct stance, three gotchas (agent: domain research)
+- **The `ix_hurst(list(value))` recipe is the real determinism hole.** `list()` element order follows input order, which is only deterministic for a single-threaded source; over a parallel-scanned table it is **not guaranteed**, and Hurst is order-sensitive. **Every recipe and S13 must use `ix_hurst(list(value ORDER BY i))`** (DuckDB supports ORDER BY inside aggregates). This is the single most important correctness fix.
+- Phrase the §4 de Rham contracts as "same (depth,roughness,seed) ⇒ identical **(i→value) mapping**" (not "byte-identical samples" in sequence order — result order without `ORDER BY` is not a SQL guarantee, and DuckDB's `preserve_insertion_order` default is under pressure to flip). S6's full-join-on-`i` design is already right (keys, not order). Skill SQL should append `ORDER BY i`.
+- **Determinism is per-build, not eternal:** `StdRng` (ChaCha12) and `rand_distr::Normal` ziggurat sampling are *not* stable across `rand`/`rand_distr` major versions. Same-seed ⇒ same-bytes holds within a compiled binary (all S6 needs), but any frozen `ga/state/` golden file silently pins those crate versions — add a one-line §7 note (or switch to an explicitly-named `ChaCha12Rng`).
+
+### Numerical facts — verified, with small fixes (agent: domain research)
+- All asserted values confirmed: `T(0)=0, T(0.5)=0.5, T(1)=0`, symmetry `T(t)=T(1−t)`, max `2/3` (S4's `0.6667` bound is safe); de Rham zero-roughness ⇒ line (keep S8 at 1e-10, don't tighten — midpoint averaging accumulates rounding); endpoints preserved by construction.
+- **S9: say "exact equality (`=`), no tolerance" — not "bitwise."** `x*0.0 + y*1.0` can normalize `-0.0`→`+0.0`; invisible under f64 `==`/SQL equality, but a literal bit-compare would (spuriously) notice.
+- **Takagi 53-term cap is lossless** because f64 inputs are dyadic rationals (terms past the cap are *exactly* 0 for f64; truncation vs ideal-real ≤ 2⁻⁵³ ≈ 1.1e-16) — not because "2^k is unrepresentable" (it's exact far beyond 2⁵³). Fix the code-comment rationale if touched.
+- **Add NaN/negative-roughness rejection in `bind`** (+ a smoke test) — a NaN roughness silently produces an all-NaN column that nothing in S1–S14 currently catches.
+
+### DuckDB VTab notes (agent: domain research)
+- duckdb-rs `VTab` is **single-threaded by default** (`max_threads=1`); the `graphsig.rs` cursor's non-atomic load-then-store would double-emit if anyone enabled `max_threads>1`. Copy the pattern as-is but **don't advertise parallel-safety**.
+- Precompute-in-`bind` ⇒ peak-RSS cap (correct framing): depth 16 ≈ 1 MB (fine), the callee's silent 20 ≈ 16 MB — exactly why §6's "enforce at the UDF boundary" is right. True streaming isn't worth it (midpoint displacement is inherently coarse-to-fine over the whole buffer). Caps (depth≤16; depth≤12 & dim≤8) are comfortably inside DuckDB's happy zone — no change.
+
+### Institutional notes (agent: learnings)
+- Experimental-tier crates (`ix-fractal`, `ix-chaos`) don't trip the stable-surface hash gate; promotion later *would*. Adding an *operation* to `ix_fractal` doesn't change the tool count → no `parity.rs` bump (a new *tool* would). UDF names are one-way; keep ix-duck terse (no `cargo fmt`). No-UDAF constraint stands (use table fn + GROUP BY if aggregation is ever needed).
+
+### References
+Weron 2002 (arXiv cond-mat/0103510); Kristoufek 2010 (R/S vs DFA finite-sample); Hamed 2007 (bias-corrected R/S); DuckDB C-API table functions + order-preservation docs; duckdb-rs VTab architecture.
