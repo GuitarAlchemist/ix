@@ -83,7 +83,7 @@ members = [
     "crates/ix-duck",
     "crates/ix-registrar",
     "crates/ix-streeling",
-    "crates/ix-value",
+    "crates/ix-value", "crates/ix-baml",
 ]
 
 [workspace.package]

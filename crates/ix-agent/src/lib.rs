@@ -6,6 +6,8 @@
 //! between `ix-registry` and MCP, and call handlers directly.
 
 pub mod acoustic_tune;
+pub mod ast;
+pub mod ixql;
 pub mod demo;
 pub mod eval;
 pub mod flywheel;
