@@ -31,10 +31,21 @@
 //! as `BamlOperation` impls. Nothing outside this crate changes: the evaluator
 //! already dispatches through the trait.
 
+//! # Reaching a real model
+//!
+//! Behind the `claude-cli` feature, [`claude_cli::ClaudeCliOperation`] implements
+//! this trait by shelling out to `claude --print`. That is currently the only
+//! way IX reaches a frontier model without a separate API key — MCP's
+//! `sampling/createMessage` is deprecated and Claude Code does not implement
+//! it. See that module for the measured cost and the authorization boundary.
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::Value;
+
+#[cfg(feature = "claude-cli")]
+pub mod claude_cli;
 
 /// Why a BAML step could not produce a value.
 #[derive(Debug, thiserror::Error)]

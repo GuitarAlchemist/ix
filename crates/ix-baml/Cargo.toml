@@ -9,6 +9,13 @@ categories = ["development-tools"]
 keywords = ["baml", "llm", "ixql", "governance"]
 description = "Boundary seam between the IXQL executor and BAML-generated clients: a dynamic serde_json interface plus deterministic offline stand-ins, so pipelines with LLM steps stay executable (and testable) without a live provider."
 
+[features]
+default = []
+# Subprocess provider backed by the Claude Code CLI. Off by default: it makes
+# the crate able to spawn an agentic process, which no consumer should acquire
+# by accident. Pure std — enabling it adds no dependency.
+claude-cli = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
