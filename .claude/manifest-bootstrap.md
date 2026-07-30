@@ -2,8 +2,8 @@
 
 **Ecosystem:** GuitarAlchemist
 **Source Repository:** GuitarAlchemist/ga
-**Fetched At:** 2026-07-29 00:03:26
-**Manifest Generation Time:** 07/29/2026 04:03:19
+**Fetched At:** 2026-07-30 00:12:32
+**Manifest Generation Time:** 07/30/2026 04:12:25
 
 ---
 
@@ -82,6 +82,7 @@
 
 | Commit | Author | Date | Subject |
 |---|---|---|---|
+| 5d9b44a8 | Stephane Pareilleux | 07/29/2026 09:08:10 | docs(backlog): JEPA/OPTICK cluster triage + sequencing |
 | 10e29d29 | Stephane Pareilleux | 07/24/2026 21:55:42 | fix(core): correct parsing, ordering and thread-safety defects in core domain |
 | 428729b5 | Stephane Pareilleux | 07/23/2026 09:37:58 | feat(chatbot): arpeggio PerformanceIntent structured-output tracer (#589) |
 | 22736771 | github-actions[bot] | 07/23/2026 10:26:37 | chore(context): daily decay report [skip ci] |
@@ -91,4 +92,3 @@
 | ce7c7e0c | github-actions[bot] | 07/23/2026 04:43:03 | chore(presence): snapshot 2026-07-23T04:43Z [skip ci] |
 | 692c46d9 | github-actions[bot] | 07/23/2026 00:13:01 | chore(quality): snapshot 2026-07-23 [skip ci] |
 | 8e60ff14 | github-actions[bot] | 07/23/2026 00:11:39 | chore(fleet): fleet-status snapshot 2026-07-23 [skip ci] |
-| f7a8c33c | github-actions[bot] | 07/23/2026 00:11:32 | chore(quality): post-merge smoke 2026-07-23T00-11-28Z.json [skip ci] |
