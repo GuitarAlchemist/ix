@@ -1,0 +1,18 @@
+[package]
+name = "ix-baml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+categories = ["development-tools"]
+keywords = ["baml", "llm", "ixql", "governance"]
+description = "Boundary seam between the IXQL executor and BAML-generated clients: a dynamic serde_json interface plus deterministic offline stand-ins, so pipelines with LLM steps stay executable (and testable) without a live provider."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
