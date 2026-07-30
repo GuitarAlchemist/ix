@@ -16,10 +16,6 @@
       "command": "dotnet",
       "args": ["run", "--project", "C:/Users/spare/source/repos/ga/GaMcpServer/GaMcpServer.csproj", "--no-build", "--"]
     },
-    "notebooklm": {
-      "command": "npx",
-      "args": ["notebooklm-mcp@latest"]
-    },
     "sentrux": {
       "command": "C:/Users/spare/bin/sentrux.exe",
       "args": ["mcp"]
