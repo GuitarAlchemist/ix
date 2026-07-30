@@ -34,9 +34,25 @@
 //!   rather than being auto-approved.
 //! - `--strict-mcp-config` — the project's MCP servers are not loaded.
 //!
+//! `--permission-mode manual` is verified against CLI **2.1.220**, whose
+//! `--help` lists it among the accepted modes and which accepted it in a live
+//! run. It is not in the published flag reference, so treat it as a version
+//! floor: an older CLI that rejects the mode fails at argument parsing, loudly,
+//! which is the right direction to fail in.
+//!
 //! A caller who genuinely wants tool access must say so explicitly through
 //! [`ClaudeCliConfig::extra_args`], which makes it a visible decision in the
 //! calling code rather than a default nobody chose.
+//!
+//! # Known limit: the timeout kills one process, not a tree
+//!
+//! On timeout the child is killed directly. With tools disabled — the default —
+//! there is nothing else to kill. If a caller enables tools through
+//! `extra_args` and the model has launched a long-running command, that
+//! grandchild survives the kill and can keep running or keep writing. Confining
+//! it properly needs a process group on Unix and a job object on Windows;
+//! until that exists, enabling tools here means accepting that a timeout is not
+//! a guaranteed stop.
 
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -76,6 +92,10 @@ pub struct ClaudeCliConfig {
     pub inherit_api_key: bool,
 
     /// Extra arguments appended verbatim, after the fixed ones.
+    ///
+    /// This is the only way to re-enable tool access, and doing so has a
+    /// consequence beyond the authorization one: the timeout kills the CLI
+    /// process but not any command it spawned. See the module docs.
     pub extra_args: Vec<String>,
 }
 
@@ -242,7 +262,7 @@ impl BamlOperation for ClaudeCliOperation {
         let stdout = self
             .run(&self.render_prompt(input))
             .map_err(|e| self.fail(e))?;
-        parse_envelope(&stdout).map_err(|e| self.fail(e))
+        parse_envelope(&stdout, &self.schema).map_err(|e| self.fail(e))
     }
 }
 
@@ -250,7 +270,7 @@ impl BamlOperation for ClaudeCliOperation {
 ///
 /// Separate from the subprocess so every branch is testable against captured
 /// output instead of a live call.
-pub fn parse_envelope(stdout: &str) -> Result<Value, String> {
+pub fn parse_envelope(stdout: &str, schema: &Value) -> Result<Value, String> {
     // The CLI may print warnings (e.g. about connector auth) before the
     // envelope, so take the last line that parses as a JSON object rather than
     // assuming the whole of stdout is JSON.
@@ -292,18 +312,51 @@ pub fn parse_envelope(stdout: &str) -> Result<Value, String> {
         .and_then(Value::as_str)
         .ok_or("envelope had neither `structured_output` nor a string `result`")?;
 
-    serde_json::from_str(text).map_err(|e| {
+    let value: Value = serde_json::from_str(text).map_err(|e| {
         format!(
             "`result` was not JSON ({e}): {}",
             text.chars().take(200).collect::<String>()
         )
-    })
+    })?;
+
+    // The fallback exists for the case where the CLI stopped honouring
+    // `--json-schema` the way we expect — which is exactly the case where its
+    // output is least trustworthy. Accepting any syntactically valid JSON here
+    // would let a reply missing required fields into the pipeline under a
+    // contract that says it was schema-constrained, so it is checked against
+    // the same schema the flag carried.
+    validate(&value, schema)?;
+    Ok(value)
+}
+
+/// Check a value against the schema the request declared.
+fn validate(value: &Value, schema: &Value) -> Result<(), String> {
+    let validator = jsonschema::draft202012::new(schema)
+        .map_err(|e| format!("the declared schema does not compile: {e}"))?;
+    let errors: Vec<String> = validator
+        .iter_errors(value)
+        .map(|e| e.to_string())
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the CLI's `result` fell back to unstructured output that violates the declared schema: {}",
+            errors.join("; ")
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A schema that accepts anything — for the envelope tests that are about
+    /// parsing, not validation.
+    fn permissive() -> Value {
+        json!({})
+    }
 
     fn operation() -> ClaudeCliOperation {
         ClaudeCliOperation::new(
@@ -324,7 +377,7 @@ mod tests {
     fn structured_output_is_the_value_returned() {
         assert_eq!(
             json!({"parity": "odd", "n": 7}),
-            parse_envelope(REAL_SUCCESS).unwrap()
+            parse_envelope(REAL_SUCCESS, &permissive()).unwrap()
         );
     }
 
@@ -337,13 +390,13 @@ mod tests {
         );
         assert_eq!(
             json!({"parity": "odd", "n": 7}),
-            parse_envelope(&noisy).unwrap()
+            parse_envelope(&noisy, &permissive()).unwrap()
         );
     }
 
     #[test]
     fn an_api_error_surfaces_the_providers_message() {
-        let err = parse_envelope(REAL_API_ERROR).unwrap_err();
+        let err = parse_envelope(REAL_API_ERROR, &permissive()).unwrap_err();
         assert!(err.contains("400"), "{err}");
         assert!(err.contains("usage limits"), "{err}");
     }
@@ -353,7 +406,40 @@ mod tests {
         let envelope = r#"{"is_error":false,"result":"{\"verdict\":\"pass\"}","type":"result"}"#;
         assert_eq!(
             json!({"verdict": "pass"}),
-            parse_envelope(envelope).unwrap()
+            parse_envelope(envelope, &permissive()).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_fallback_is_checked_against_the_declared_schema() {
+        // The fallback exists for a CLI that stopped honouring --json-schema,
+        // which is exactly when its output is least trustworthy. Valid JSON
+        // that violates the contract must not reach the pipeline.
+        let schema = json!({
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {"verdict": {"enum": ["pass", "fail"]}}
+        });
+        let envelope =
+            r#"{"is_error":false,"result":"{\"verdict\":\"probably fine\"}","type":"result"}"#;
+        let err = parse_envelope(envelope, &schema).unwrap_err();
+        assert!(err.contains("violates the declared schema"), "{err}");
+
+        let good = r#"{"is_error":false,"result":"{\"verdict\":\"pass\"}","type":"result"}"#;
+        assert_eq!(
+            json!({"verdict": "pass"}),
+            parse_envelope(good, &schema).unwrap()
+        );
+    }
+
+    #[test]
+    fn structured_output_is_trusted_without_revalidation() {
+        // The CLI already enforced the schema on this path; re-running the
+        // validator would only add a second place for the two to disagree.
+        let schema = json!({"type": "object", "required": ["nope"]});
+        assert_eq!(
+            json!({"parity": "odd", "n": 7}),
+            parse_envelope(REAL_SUCCESS, &schema).unwrap()
         );
     }
 
@@ -361,14 +447,14 @@ mod tests {
     fn prose_where_json_was_promised_is_an_error_not_a_string_value() {
         let envelope =
             r#"{"is_error":false,"result":"Sure! The signal looks fine.","type":"result"}"#;
-        let err = parse_envelope(envelope).unwrap_err();
+        let err = parse_envelope(envelope, &permissive()).unwrap_err();
         assert!(err.contains("was not JSON"), "{err}");
     }
 
     #[test]
     fn empty_or_garbled_output_is_reported_rather_than_panicking() {
-        assert!(parse_envelope("").is_err());
-        assert!(parse_envelope("Killed").is_err());
+        assert!(parse_envelope("", &permissive()).is_err());
+        assert!(parse_envelope("Killed", &permissive()).is_err());
     }
 
     #[test]

@@ -13,13 +13,17 @@ description = "Boundary seam between the IXQL executor and BAML-generated client
 default = []
 # Subprocess provider backed by the Claude Code CLI. Off by default: it makes
 # the crate able to spawn an agentic process, which no consumer should acquire
-# by accident. Pure std — enabling it adds no dependency.
-claude-cli = []
+# by accident. Pulls in jsonschema only to check the provider's fallback path.
+claude-cli = ["dep:jsonschema"]
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# Only for the claude-cli provider, to check the fallback path against the
+# schema the request declared. Same version/features as the workspace's other
+# JSON-Schema consumers.
+jsonschema = { version = "0.30", default-features = false, optional = true }
 
 [lib]
 path = "src/lib.rs"
