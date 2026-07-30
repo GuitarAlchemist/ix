@@ -1,6 +1,16 @@
 {
-  "version": "0.1.0",
-  "description": "Edit scopes for the supervised autonomous loop in ix. Sibling to agent-blackbox.policy.json (which governs PR risk scoring). The supervised-loop skill must only edit paths matched by allow_edit and must never edit paths matched by protected_paths. Rust source and Cargo manifests are protected; observability state and docs are loop-eligible.",
+  "version": "0.2.0",
+  "description": "CANONICAL loop policy for the supervised autonomous loop in ix: the single fail-closed source of truth for both the loop edit scope AND the halt markers. state/quality/{domain}/baseline.json MUST reference this file by version via scope_boundary_ref and MUST NOT inline its own scope_boundary. Sibling to agent-blackbox.policy.json (which governs PR risk scoring). The supervised-loop skill must only edit paths matched by allow_edit and must never edit paths matched by protected_paths. Rust source and Cargo manifests are protected; observability state and docs are loop-eligible. Any halt marker below immediately stops the loop.",
+  "halt_markers": {
+    "global": [
+      "~/.demerzel/HALT-ALL",
+      "state/.loop-halted"
+    ],
+    "repo": [
+      "state/quality/{domain}/.STOP",
+      ".STOP"
+    ]
+  },
   "allow_edit": [
     "docs/**",
     "examples/**",
@@ -15,6 +25,8 @@
     "CHANGELOG.md"
   ],
   "protected_paths": [
+    ".env",
+    ".env.*",
     ".github/workflows/**",
     "schemas/**",
     "contracts/**",

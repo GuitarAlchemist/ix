@@ -10,9 +10,9 @@
 - `BloomFilter::estimated_fp_rate()` is computed from observed fill ratio, not from the insert count. Two filters at the same fill report the same rate even if one has more inserts.
 - `BloomFilter::len()` is the count of `insert` calls, NOT unique items. Inserting the same item twice increments `count`.
 - `CountMinSketch::estimate` returns a value GREATER THAN OR EQUAL TO the true count — never underestimates (one-sided error).
-- `CountMinSketch::with_error(epsilon, delta)` ceils width to `e/epsilon` and depth to `ln(1/delta)`; the actual error guarantee holds with probability `>= 1 - delta`. Choosing `delta = 0` would compute `ln(infinity)` — guarded by `max(1)`.
+- `CountMinSketch::with_error(epsilon, delta)` ceils width to `e/epsilon` and depth to `ln(1/delta)`; the actual error guarantee holds with probability `>= 1 - delta`. Inputs are not validated. `epsilon` must be finite and positive; `delta` is a failure probability and must be finite and in `(0, 1)`. `delta >= 1` makes `ln(1/delta) <= 0`, which saturates to `0` on the `as usize` cast and clamps to depth `1` — a bound that holds with probability `>= 1 - delta <= 0`, i.e. no guarantee at all. `delta = 0` computes infinite depth before casting/clamping and can trigger pathological allocation instead of a safe fallback. The SQL wrapper already enforces `(0, 1)` (`crates/ix-duck/src/sketch.rs`); direct Rust callers get no such check.
 - `HyperLogLog::new(precision)` CLAMPS precision to `[4, 18]` silently. Standard error: `1.04 / sqrt(2^p)`. p=14 gives ~0.81%.
-- `HyperLogLog::count()` returns `f64` (estimate), not `u64`. May be non-integer. For low cardinalities (< ~2.5 * m), small-range correction is applied; for high cardinalities (> 2^32 / 30), large-range correction is applied.
+- `HyperLogLog::count()` returns `f64` (estimate), not `u64`. May be non-integer. For low cardinalities (< ~2.5 * m), small-range correction is applied. No large-range correction is currently applied; high-cardinality estimates return the raw estimate.
 - `CuckooFilter::insert` returns `false` when the filter is FULL (all kick attempts exhausted) — NOT when the item is already present. Distinguishing "already in" vs "rejected" requires a prior `contains` check.
 - `CuckooFilter::delete` returns `true` iff a matching fingerprint was found and removed. Because fingerprints are 16-bit, deleting an item never inserted may by chance succeed (collision) and corrupt another entry.
 - `Bloom::contains` of unhashable types is not possible by signature; `T: Hash` is the only constraint — `Hash` implementations MUST be consistent between insert and contains.
@@ -25,7 +25,7 @@
 ## Failure contracts
 - No `Result` return anywhere. `CuckooFilter::insert` returns `bool` for failure (full). `BloomFilter::insert` always succeeds (returns `()`).
 - `BloomFilter::with_params(size, num_hashes)` with `size = 0` panics on first insert (index out of bounds). No constructor-time validation.
-- `CountMinSketch::new(0, 0)` is silently bumped to `(1, 1)` in `with_error`; via `new` directly it allows zero and panics on first add.
+- `CountMinSketch::new(0, 0)` allows zero and panics on first add. `with_error` clamps finite computed dimensions to at least `(1, 1)` but does not make invalid `epsilon` / `delta` inputs safe.
 
 ## Determinism contracts
 - All four structures are deterministic given identical insertion order and identical `Hash` impls. No internal RNG on Bloom/Count-Min/HLL.

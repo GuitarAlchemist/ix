@@ -102,3 +102,5 @@ ix-quality-validate       = "internal"  # CI validator: state/quality/*.json vs 
 ix-registrar              = "internal"  # federation/registrar deep module (ix-streeling/ix-value adapters); infra
 ix-streeling              = "internal"  # generates the federated learnings catalog; tooling
 ix-value                  = "internal"  # federates per-repo value manifests → catalog.jsonl; mirrors ix-streeling
+ix-baml                   = "experimental"  # BAML boundary seam for IXQL LLM steps; generated client not yet vendored
+ix-ixql                   = "experimental"  # IXQL parser + evaluator (Demerzel pipelines); tracer-bullet stage

@@ -256,11 +256,39 @@ foreach ($baselinePath in $baselineFiles) {
     $historyPath = Join-Path $domainRoot 'loop-history.jsonl'
     $last = Read-JsonOrNull -Path $lastPath
 
+    # Scope boundary is resolved FAIL-CLOSED from the canonical loop policy
+    # (agent-blackbox.loop-policy.json) via baseline.scope_boundary_ref. An
+    # inline scope_boundary is deprecated: it is how the fail-open `**` gate
+    # crept in (ix#228 P1-5). Any resolution failure emits a block finding so
+    # the workflow pauses rather than silently widening the edit scope.
     $allowEdit = @()
     $protected = @()
-    if ($baseline -and $baseline.scope_boundary) {
-        $allowEdit = @($baseline.scope_boundary.allow_edit)
-        $protected = @($baseline.scope_boundary.protected_paths)
+    $scopeRef = Get-ObjectPropertyOrNull -Object $baseline -Names @('scope_boundary_ref', 'scopeBoundaryRef')
+    $inlineScope = Get-ObjectPropertyOrNull -Object $baseline -Names @('scope_boundary', 'scopeBoundary')
+    if ($scopeRef) {
+        $refPolicy = Get-ObjectPropertyOrNull -Object $scopeRef -Names @('policy')
+        $refVersion = Get-ObjectPropertyOrNull -Object $scopeRef -Names @('policy_version', 'policyVersion')
+        $policyPath = if ($refPolicy) { Join-Path $RepoRoot ([string]$refPolicy) } else { $null }
+        $policy = if ($policyPath) { Read-JsonOrNull -Path $policyPath } else { $null }
+        if (-not $policy) {
+            Add-Finding $findings 'block' 'loop-policy-unresolvable' `
+                "Domain '$domainName' scope_boundary_ref points to '$refPolicy', which is missing or unparseable." `
+                'Restore the canonical loop policy (agent-blackbox.loop-policy.json) or fix scope_boundary_ref before running any loop.'
+        } else {
+            $policyVersion = Get-ObjectPropertyOrNull -Object $policy -Names @('version')
+            if ([string]$policyVersion -ne [string]$refVersion) {
+                Add-Finding $findings 'block' 'loop-policy-version-drift' `
+                    "Domain '$domainName' pins loop policy version '$refVersion' but '$refPolicy' is version '$policyVersion'." `
+                    'A human must review the changed canonical policy and re-pin policy_version in baseline.json before loops resume.'
+            } else {
+                $allowEdit = @(Get-ObjectPropertyOrNull -Object $policy -Names @('allow_edit', 'allowEdit'))
+                $protected = @(Get-ObjectPropertyOrNull -Object $policy -Names @('protected_paths', 'protectedPaths'))
+            }
+        }
+    } elseif ($inlineScope) {
+        Add-Finding $findings 'block' 'inline-scope-boundary-deprecated' `
+            "Domain '$domainName' still uses an inline scope_boundary instead of scope_boundary_ref." `
+            'Replace the inline scope_boundary with a scope_boundary_ref that pins agent-blackbox.loop-policy.json by version.'
     }
 
     $outOfScope = @()

@@ -10,20 +10,11 @@
   "primary_baseline_source": "Local harness rollout baseline.",
   "_harness": {
     "oracle_command": "pwsh scripts/verify.ps1",
-    "kill_switches": {
-      "global": "state/.loop-halted",
-      "per_domain": "state/quality/ix-harness/.STOP"
-    },
     "lock_file": "state/quality/ix-harness/.lock",
     "history_file": "state/quality/ix-harness/loop-history.jsonl"
   },
-  "scope_boundary": {
-    "allow_edit": ["**"],
-    "protected_paths": [
-      ".env",
-      ".env.*",
-      "governance/demerzel/schemas/**",
-      "Cargo.lock"
-    ]
+  "scope_boundary_ref": {
+    "policy": "agent-blackbox.loop-policy.json",
+    "policy_version": "0.2.0"
   }
 }

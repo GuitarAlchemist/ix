@@ -11,9 +11,9 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 ## Enrollment
 
-- **77** learnings total
-  - `ga`: 27
-  - `ix`: 50
+- **101** learnings total
+  - `ga`: 36
+  - `ix`: 65
 
 ## Faculties
 
@@ -21,7 +21,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 - Extract chatbot orchestration into GA.Business.Core.Orchestration and wire GaApi to ProductionOrchestrator with agent metadata · `ga` — `docs/solutions/architecture/orchestration-library-extraction-gachatbot.md`
 
-### brainstorm (13)
+### brainstorm (14)
 
 - [comprehensive-ml-documentation · `ix`](../../docs/brainstorms/2026-03-12-comprehensive-docs-brainstorm.md)
 - [tars-math-concepts · `ix`](../../docs/brainstorms/2026-03-13-tars-math-concepts-brainstorm.md)
@@ -35,10 +35,12 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [ix-autoresearch · `ix`](../../docs/brainstorms/2026-04-26-ix-autoresearch-brainstorm.md)
 - [business-value-scorecard · `ix`](../../docs/brainstorms/2026-06-14-business-value-scorecard-brainstorm.md)
 - [chatbot-duckdb-leverage · `ix`](../../docs/brainstorms/2026-06-14-chatbot-duckdb-leverage-brainstorm.md)
+- [lifecycle-fsm-rules-engine · `ix`](../../docs/brainstorms/2026-06-14-lifecycle-fsm-rules-engine-brainstorm.md)
 - [streeling-university · `ix`](../../docs/brainstorms/2026-06-14-streeling-university-brainstorm.md)
 
-### build-errors (2)
+### build-errors (3)
 
+- [ix-duck `duck` feature fails with a bogus missing-header error under a long CARGO_TARGET_DIR (Windows MAX_PATH) · `ix`](../../docs/solutions/build-errors/duckdb-bundled-build-fails-under-long-target-path.md)
 - [Windows Application Control blocks cargo test/build-script binaries (OS error 4551) · `ix`](../../docs/solutions/build-errors/windows-app-control-blocks-cargo-test-binaries.md)
 - [Windows LNK1318 PDB size limit when linking test binaries with many features · `ix`](../../docs/solutions/build-errors/windows-lnk1318-pdb-size-limit.md)
 
@@ -46,8 +48,9 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 - Security Hardening, Layer Violation Fixes, and Dead Code Removal — Chatbot Orchestration Extraction · `ga` — `docs/solutions/compound-reviews/2026-03-07-ce-review-security-arch-hygiene.md`
 
-### ecosystem-integration (1)
+### ecosystem-integration (2)
 
+- [Federating an ix producer snapshot into ga/state/quality (GA-pull, not ix-push) · `ix`](../../docs/solutions/ecosystem-integration/2026-06-21-federate-ix-snapshot-into-ga-state-quality.md)
 - [TARS v1 is the right quarry for IX-spirited exotic math · `ix`](../../docs/solutions/ecosystem-integration/tars-v1-exotic-math-quarry.md)
 
 ### feature-implementation (3)
@@ -56,16 +59,19 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [ML toolkit expansion: gradient boosting, cross-validation, SMOTE, TF-IDF, BatchNorm, bilingual docs · `ix`](../../docs/solutions/feature-implementations/ml-modules-tutorials-and-i18n.md)
 - [Time series module, Poincaré hierarchy extraction, transformer & time series tutorials (EN+FR) · `ix`](../../docs/solutions/feature-implementations/timeseries-poincare-transformer-docs.md)
 
-### feature-implementations (1)
+### feature-implementations (3)
 
 - [DuckDB over chatbot golden-traces: UNNEST a flat _signature.json beats a nested list-lambda · `ix`](../../docs/solutions/feature-implementations/2026-06-14-duckdb-signature-unnest-over-lambda.md)
+- [FlashAssign kernel fusion loses to materialize-then-argmin at IX scale · `ix`](../../docs/solutions/feature-implementations/2026-06-16-flashassign-fusion-loses-at-ix-scale.md)
+- [DuckDB over read_json_auto: absence-as-zero and struct-field bind-crashes (the lens defect class) · `ix`](../../docs/solutions/feature-implementations/2026-06-19-duckdb-absence-as-zero-and-struct-bind-crash.md)
 
-### integration-issues (4)
+### integration-issues (5)
 
 - OPTIC-K SAE Phase 1 — partition drift and Windows python3 stub · `ga` — `docs/solutions/integration-issues/optick-sae-phase1-partition-and-python-bin-2026-05-05.md`
 - replay-and-diff CI check fails on every PR (repo-wide red) · `ga` — `docs/solutions/integration-issues/replay-and-diff-fails-every-pr-no-ollama-in-ci.md`
 - [Cross-Pollinating a 4-Repo AI Ecosystem with Governance, MCP Federation, and Claude Code Skills · `ix`](../../docs/solutions/integration-issues/cross-pollination-4-repo-ecosystem.md)
 - [Headless Browser Can't Capture a Vite SPA — Use a Data-Layer Contract Test Instead · `ix`](../../docs/solutions/integration-issues/headless-browser-blocked-use-data-contract-test.md)
+- [Project-scoped .mcp.json silently overrides the user-global server def and strips its env · `ix`](../../docs/solutions/integration-issues/mcp-project-config-overrides-user-env.md)
 
 ### math-correctness (5)
 
@@ -75,7 +81,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [LDA non-symmetric deflation produces duplicated or wrong discriminants · `ix`](../../docs/solutions/math-correctness/lda-non-symmetric-deflation.md)
 - [Sedenion log(-1) principal value needs pi on an imaginary axis · `ix`](../../docs/solutions/math-correctness/sedenion-log-negative-reals.md)
 
-### plan (19)
+### plan (26)
 
 - [feat: Add quaternions, dual quaternions, Plücker coordinates, primes, and fractal curves · `ix`](../../docs/plans/2026-03-13-002-feat-tars-math-phase1-quaternions-primes-fractals-plan.md)
 - [feat: ix Full Vision — Math Crates + Demo + MCP + Infrastructure · `ix`](../../docs/plans/2026-03-14-001-feat-full-vision-math-demo-mcp-infra-plan.md)
@@ -96,6 +102,13 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [Streeling University v1 — federated learnings hub (Campus + Registrar) · `ix`](../../docs/plans/2026-06-14-002-feat-streeling-university-plan.md)
 - [Business-Value Scorecard — RICE stars for demos + repos · `ix`](../../docs/plans/2026-06-14-003-feat-business-value-scorecard-plan.md)
 - [Chatbot DuckDB flight recorder (ix-duck cross-repo analyzer + regression gate) · `ix`](../../docs/plans/2026-06-14-004-feat-chatbot-duckdb-flight-recorder-plan.md)
+- [Tier 3 — `ix_optick` DuckDB loadable extension · `ix`](../../docs/plans/2026-06-16-001-feat-ix-optick-duckdb-extension-plan.md)
+- [maintain-gate — a fail-closed RSI evaluation oracle over the four DuckDB+IX lenses · `ix`](../../docs/plans/2026-06-16-002-feat-maintain-gate-rsi-oracle-plan.md)
+- [GA maintain-verdict dashboard tile (fused RSI signal, advisory) · `ix`](../../docs/plans/2026-06-20-001-feat-ga-maintain-verdict-tile-plan.md)
+- [ix-math::inference — the statistical-inference primitive (two-sample tests, divergences, moments) · `ix`](../../docs/plans/2026-06-21-001-feat-ix-math-inference-primitive-plan.md)
+- [Exposing ix-fractal Takagi + de Rham through DuckDB, skills, and MCP · `ix`](../../docs/plans/2026-07-20-ix-fractal-takagi-derham-exposure.md)
+- [Additivity reconciliation gate — fail-closed integrity check for sharded warehouse aggregates · `ix`](../../docs/plans/2026-07-21-arch-additivity-reconciliation-gate.md)
+- [DFT-phase invariants — separate the Z-related pairs ICV cannot · `ix`](../../docs/plans/2026-07-21-feat-dft-phase-invariants.md)
 
 ### runtime-errors (2)
 
@@ -112,13 +125,16 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - /auto-optimize chatbot-qa oracle silently reports 'all passed' when build fails · `ga` — `docs/solutions/tooling/2026-05-16-auto-optimize-oracle-silent-success-build-failure.md`
 - Compound Engineering Flywheel — Subagents, Master Skill, Hooks, /ga evolve · `ga` — `docs/solutions/tooling/compound-engineering-flywheel-2026-03-07.md`
 
-### uncategorized (18)
+### uncategorized (27)
 
 - Two casing-variant DI extension methods drift apart silently — `AddGuitarAlchemistAi` vs `AddGuitarAlchemistAI` · `ga` — `docs/solutions/architecture/2026-05-07-di-composition-root-casing-drift.md`
 - Process-wide memory store + anonymous traffic = cross-conversation leak through skill regex parsers · `ga` — `docs/solutions/architecture/2026-05-07-process-wide-memory-store-leaks-into-anonymous-prompts.md`
 - 2026-05-07-slot-build-stale-static-web-assets-manifest · `ga` — `docs/solutions/architecture/2026-05-07-slot-build-stale-static-web-assets-manifest.md`
 - 2026-05-08-voicing-search-corpus-tagging-mismatch · `ga` — `docs/solutions/architecture/2026-05-08-voicing-search-corpus-tagging-mismatch.md`
 - MemoryHook conflates transcript log with durable memory store · `ga` — `docs/solutions/architecture/2026-05-11-memoryhook-conflates-transcript-log-with-durable-memory.md`
+- 2026-06-19-duckdb-invariant-sweep-and-optick-structure-t-invariance · `ga` — `docs/solutions/architecture/2026-06-19-duckdb-invariant-sweep-and-optick-structure-t-invariance.md`
+- "GPU filter reconciliation" was reconciling the wrong pair — production runs neither CPU nor GPU · `ga` — `docs/solutions/architecture/2026-06-20-voicing-search-strategy-filter-parity.md`
+- 2026-07-20-router-anchor-shape-misroute-chord-vs-scale · `ga` — `docs/solutions/architecture/2026-07-20-router-anchor-shape-misroute-chord-vs-scale.md`
 - ixql-parser-extension-panel-registry-2026-03-28 · `ga` — `docs/solutions/best-practices/ixql-parser-extension-panel-registry-2026-03-28.md`
 - missing-voicing-invariants-same-string-parallel-motion-GaDomainServices-20260306 · `ga` — `docs/solutions/best-practices/missing-voicing-invariants-same-string-parallel-motion-GaDomainServices-20260306.md`
 - showcase-demo-end-to-end-qa-2026-05-12 · `ga` — `docs/solutions/best-practices/showcase-demo-end-to-end-qa-2026-05-12.md`
@@ -126,18 +142,26 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - AG-UI ga:scale custom event — streaming scale notes from C# to React via SSE · `ga` — `docs/solutions/integration-issues/2026-03-10-ag-ui-scale-event-sse-streaming-frontend-bridge.md`
 - Extract shared OllamaGenerateClient to eliminate duplicated Ollama HTTP plumbing · `ga` — `docs/solutions/integration-issues/2026-03-10-ollama-client-extraction-hot-alloc-fix.md`
 - GA CI Backend Tests — static-web-assets, Coverlet+ILGPU, perf thresholds, timer race · `ga` — `docs/solutions/integration-issues/2026-05-14-ga-ci-backend-test-failures-static-web-assets-coverlet-ilgpu-perf-threshold.md`
+- A cross-repo tool's description lied about what it does — validate the keystone from source before building toward it · `ga` — `docs/solutions/integration-issues/2026-06-20-tars-stores-not-detects-validate-keystone-first.md`
 - GA CI test-job preconditions — missing artifacts, unstarted GaApi service, and 401-blind liveness probe · `ga` — `docs/solutions/integration-issues/ga-ci-test-job-preconditions-artifacts-services-liveness-2026-05-05.md`
 - Playwright tests against ghost UI — placeholder BaseUrl + ContentRoot mismatch + selector drift · `ga` — `docs/solutions/integration-issues/playwright-tests-against-ghost-ui-2026-05-06.md`
+- eval-register-blindness · `ga` — `docs/solutions/patterns/eval-register-blindness.md`
 - /ce:review — feat/chatbot-orchestration-extraction · `ga` — `docs/solutions/reviews/ce-review-feat-chatbot-orchestration-extraction-2026-03-07.md`
 - Windows git packed-refs silent commit failure — branch HEAD does not advance · `ga` — `docs/solutions/runtime-errors/2026-03-10-windows-git-packed-refs-branch-corruption-workaround.md`
 - MCP `WithTools(IEnumerable<Type>)` silently registers Type instances as tool objects · `ga` — `docs/solutions/runtime-errors/2026-05-07-mcp-withtools-overload-resolution-trap.md`
+- 2026-06-19-chatbot-qa-oracle-worst-variable-collision · `ga` — `docs/solutions/tooling/2026-06-19-chatbot-qa-oracle-worst-variable-collision.md`
+- 2026-07-02-afk-delegation-chain-failures · `ga` — `docs/solutions/tooling/2026-07-02-afk-delegation-chain-failures.md`
+- The "frugal" deep-research workflow blew ~10x its envelope on a dense multi-part question · `ga` — `docs/solutions/tooling/2026-07-04-frugal-deep-research-not-frugal-on-dense-questions.md`
+- Jules "unable to process" is the gemini-dispatch triage failing, NOT the jules-auto-delegate router · `ga` — `docs/solutions/tooling/2026-07-04-jules-unable-to-process-is-gemini-triage-not-the-router.md`
 - lsp-cross-reference-timeout-cclsp-20260306 · `ga` — `docs/solutions/tooling/lsp-cross-reference-timeout-cclsp-20260306.md`
 
-### workflow-patterns (3)
+### workflow-patterns (5)
 
 - [Measuring a yield improvement from an append-only ledger (the cumulative-blend trap) · `ix`](../../docs/solutions/workflow-patterns/2026-06-07-dogfood-yield-before-after-measurement.md)
+- [Green CI + DEGRADED dashboard = a missing input, not a metric regression · `ix`](../../docs/solutions/workflow-patterns/2026-07-20-green-ci-degraded-dashboard-missing-input.md)
 - [Multi-AI review should happen BEFORE merge, not after · `ix`](../../docs/solutions/workflow-patterns/multi-ai-review-before-merge.md)
 - [Parallel worktree merge pitfalls when agents write to main · `ix`](../../docs/solutions/workflow-patterns/parallel-worktree-merge-pitfalls.md)
+- [`streeling catalog` silently drops all ga records when run from a worktree outside repos/, and `streeling check` then blesses the result · `ix`](../../docs/solutions/workflow-patterns/streeling-catalog-drops-sibling-repo-records-from-a-worktree.md)
 
 ## Registrar
 

@@ -31,7 +31,9 @@ Agent Blackbox additionally emits a `harness-audit` and (when an agent response 
 - The PR risk policy lives in [`agent-blackbox.policy.json`](agent-blackbox.policy.json). One-way-door paths (Rust manifests, governance schemas, migrations) force escalation when touched.
 - The supervised-loop edit scope lives in [`agent-blackbox.loop-policy.json`](agent-blackbox.loop-policy.json). `crates/`, `src/`, `Cargo.toml`, and `Cargo.lock` are protected from autonomous loops; only docs, scripts, tests, and observability state are loop-eligible.
 - The supervised-loop preflight ([`scripts/supervised-loop-preflight.ps1`](scripts/supervised-loop-preflight.ps1)) is the deterministic gate that must print `LOOP_READY=true` before any `/loop` or `/goal` automation runs in this repo.
-- Halt markers: a global `$HOME/.demerzel/HALT-ALL` or a repo-local `.STOP` immediately stops the loop.
+- Halt markers (canonical set, defined in [`agent-blackbox.loop-policy.json`](agent-blackbox.loop-policy.json) `halt_markers`): any one of them immediately stops the loop —
+  - global: `$HOME/.demerzel/HALT-ALL` or `state/.loop-halted`
+  - repo: `state/quality/{domain}/.STOP` or a repo-root `.STOP`
 
 ## Review independence
 

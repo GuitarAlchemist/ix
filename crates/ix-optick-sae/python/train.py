@@ -505,6 +505,7 @@ def train(
         "all_acts": all_acts,
         "freq": freq,
         "train_idx": train_idx,
+        "n_val": len(val_idx),
         "feat_max": feat_max,
         "strong_support": strong_support,
         "near_dead": int(near_dead_mask.sum()),
@@ -651,6 +652,18 @@ def build_artifact(
     suffix = f" {retry_note}" if retry_note else ""
     narrative = (base + suffix)[:500]
 
+    # Declare exactly what feature_activations.parquet covers, so a consumer can
+    # assert it instead of guessing from the row count. The parquet holds only the
+    # train split (see save_outputs); n_train + n_val == corpus_size is enforced
+    # here — a non-partitioning split raises. (ix #248.)
+    from optick_coverage import activations_coverage  # noqa: PLC0415
+
+    coverage = activations_coverage(
+        n_train=len(metrics["train_idx"]),
+        n_val=metrics["n_val"],
+        corpus_n=corpus_size,
+    )
+
     return {
         "schema_version": 1,
         "artifact_id": artifact_id,
@@ -666,6 +679,7 @@ def build_artifact(
             "corpus_size": corpus_size,
             "partitions_used": PHASE1_PARTITIONS,
         },
+        "activations_coverage": coverage,
         "model": {
             "kind": "topk_sae",
             "dict_size": dict_size,
@@ -829,6 +843,22 @@ def main() -> None:
             metrics["dead_pct"],
         )
         sys.exit(3)
+
+    # ── Guardrail: split additivity, BEFORE anything reaches disk ─────────────
+    # build_artifact() derives this same block, but it runs *after* save_outputs()
+    # — too late to prevent a partial write. A non-additive split has to abort
+    # with nothing on disk; otherwise the parquet/weights ship with no declaring
+    # artifact JSON, which is precisely the federation drop #248 added the guard
+    # to stop. Recomputing three integers is cheap; the raise is the point.
+    # @ai:invariant activations_coverage runs before save_outputs, so a non-additive
+    # split writes nothing [T:test conf:0.95 src:test_coverage_guard_precedes_save_outputs]
+    from optick_coverage import activations_coverage  # noqa: PLC0415
+
+    activations_coverage(
+        n_train=len(metrics["train_idx"]),
+        n_val=metrics["n_val"],
+        corpus_n=corpus_size,
+    )
 
     # ── Write output files ────────────────────────────────────────────────────
     save_outputs(model, metrics, output_dir)
