@@ -12,7 +12,7 @@ use std::fmt;
 pub enum Tok {
     Ident(String),
     Str(String),
-    Num(f64),
+    Num(serde_json::Number),
     /// `<-`
     Assign,
     /// `→` or `->`
@@ -167,10 +167,15 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
                     }
                 }
                 let text: String = chars[start..i].iter().collect();
-                let value = text.parse::<f64>().map_err(|_| LexError {
-                    line,
-                    message: format!("`{text}` is not a number"),
-                })?;
+                // Parsed as a `serde_json::Number`, not an `f64`: an integer
+                // literal past 2^53 would otherwise be silently rounded on the
+                // way in — `9007199254740993` emitting as `…992` — and these
+                // literals end up in ids and counters inside written artifacts.
+                let value =
+                    serde_json::from_str::<serde_json::Number>(&text).map_err(|_| LexError {
+                        line,
+                        message: format!("`{text}` is not a number"),
+                    })?;
                 out.push(Token {
                     tok: Tok::Num(value),
                     line,
@@ -232,11 +237,26 @@ fn lex_string(
                     line,
                     message: "string ends with a dangling `\\`".to_string(),
                 })?;
+                // Unknown escapes are rejected, not silently unwrapped to the
+                // following character. Swallowing the backslash turned
+                // `"state\quality"` into `"statequality"` and `"state\trigger"`
+                // into a tab — quietly retargeting a read or a write, and
+                // dodging a path-prefixed schema rule on the way.
                 text.push(match escaped {
                     'n' => '\n',
                     't' => '\t',
                     'r' => '\r',
-                    other => other,
+                    '\\' => '\\',
+                    '"' => '"',
+                    '/' => '/',
+                    other => {
+                        return Err(LexError {
+                            line,
+                            message: format!(
+                                "unknown escape `\\{other}`; write `\\\\` for a literal backslash"
+                            ),
+                        })
+                    }
                 });
                 i += 2;
             }
@@ -270,7 +290,12 @@ mod tests {
         // a stray `-` then an arrow and derail the whole file.
         assert_eq!(
             kinds("--- ## Step 1: x\nx <- 1"),
-            vec![Tok::Ident("x".into()), Tok::Assign, Tok::Num(1.0), Tok::Eof]
+            vec![
+                Tok::Ident("x".into()),
+                Tok::Assign,
+                Tok::Num(1.into()),
+                Tok::Eof
+            ]
         );
     }
 
@@ -279,7 +304,12 @@ mod tests {
         // `→ step  -- why` is the common spelling in Demerzel's pipelines.
         assert_eq!(
             kinds("x <- 1  -- max 3 recons/day"),
-            vec![Tok::Ident("x".into()), Tok::Assign, Tok::Num(1.0), Tok::Eof]
+            vec![
+                Tok::Ident("x".into()),
+                Tok::Assign,
+                Tok::Num(1.into()),
+                Tok::Eof
+            ]
         );
     }
 
@@ -291,7 +321,7 @@ mod tests {
                 Tok::Ident("x".into()),
                 Tok::Assign,
                 Tok::Minus,
-                Tok::Num(1.0),
+                Tok::Num(1.into()),
                 Tok::Eof
             ]
         );
@@ -330,5 +360,46 @@ mod tests {
     #[test]
     fn unterminated_string_is_an_error_not_a_panic() {
         assert!(tokenize("x <- \"oops").is_err());
+    }
+
+    #[test]
+    fn integer_literals_beyond_the_f64_range_keep_their_exact_value() {
+        // 2^53 + 1: representable as an i64, not as an f64. Going through f64
+        // silently produced …992.
+        let Tok::Num(n) = &tokenize("x <- 9007199254740993").unwrap()[2].tok else {
+            panic!("expected a number");
+        };
+        assert_eq!("9007199254740993", n.to_string());
+    }
+
+    #[test]
+    fn fractional_literals_still_lex_as_fractions() {
+        let Tok::Num(n) = &tokenize("x <- 0.15").unwrap()[2].tok else {
+            panic!("expected a number");
+        };
+        assert_eq!(Some(0.15), n.as_f64());
+    }
+
+    #[test]
+    fn known_escapes_decode() {
+        assert_eq!(
+            kinds(r#""a\nb\t\\c\"d""#),
+            vec![Tok::Str("a\nb\t\\c\"d".into()), Tok::Eof]
+        );
+    }
+
+    #[test]
+    fn an_unknown_escape_is_rejected_rather_than_swallowing_the_backslash() {
+        // `"state\quality"` used to decode to `"statequality"` and
+        // `"state\trigger.json"` gained a tab — quietly retargeting a write and
+        // dodging a path-prefixed schema rule.
+        let err = tokenize(r#"p <- "state\quality""#).unwrap_err();
+        assert!(err.to_string().contains("unknown escape"), "{err}");
+        // `\t` IS a known escape, so this path silently becomes
+        // `state<TAB>rigger.json` — a different file. Nothing in the lexer can
+        // catch that one; it is why authors must write `\\` and why the
+        // *unknown* escapes above now fail loudly instead of joining it.
+        let toks = tokenize(r#"p <- "state\trigger.json""#).unwrap();
+        assert_eq!(Tok::Str("state\trigger.json".into()), toks[2].tok);
     }
 }

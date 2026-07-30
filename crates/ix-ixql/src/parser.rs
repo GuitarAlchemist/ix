@@ -349,7 +349,7 @@ impl Parser {
         if self.eat(&Tok::Minus) {
             let line = self.prev_line();
             return match self.parse_unary()? {
-                Expr::Lit(Literal::Number(n)) => Ok(Expr::Lit(Literal::Number(-n))),
+                Expr::Lit(Literal::Number(n)) => Ok(Expr::Lit(Literal::Number(negate(&n, line)?))),
                 _ => Err(ParseError::at(
                     line,
                     "unary `-` is only defined on numeric literals",
@@ -475,6 +475,24 @@ impl Parser {
             )),
         }
     }
+}
+
+/// Negate a numeric literal without going through `f64`, so `-9007199254740993`
+/// stays exact the way the positive form does.
+fn negate(n: &serde_json::Number, line: usize) -> Result<serde_json::Number, ParseError> {
+    if let Some(i) = n.as_i64() {
+        return Ok(serde_json::Number::from(-i));
+    }
+    if let Some(u) = n.as_u64() {
+        // The one integer that fits in u64 but whose negation fits in i64 is
+        // 2^63; anything larger has no exact negative representation.
+        if u == (i64::MAX as u64) + 1 {
+            return Ok(serde_json::Number::from(i64::MIN));
+        }
+    }
+    n.as_f64()
+        .and_then(|f| serde_json::Number::from_f64(-f))
+        .ok_or_else(|| ParseError::at(line, format!("`-{n}` is not a representable number")))
 }
 
 /// Split a string literal into its literal and `{{…}}` pieces.

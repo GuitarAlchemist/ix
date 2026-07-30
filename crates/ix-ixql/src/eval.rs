@@ -64,6 +64,9 @@ pub enum EvalError {
     #[error("`{{{{…}}}}` interpolation cannot render a {found}")]
     NotInterpolable { found: &'static str },
 
+    #[error("unusable path — {0}")]
+    Path(#[from] crate::path::PathError),
+
     #[error(transparent)]
     Host(#[from] HostError),
 
@@ -437,6 +440,7 @@ impl Executor {
             "ix.io.read" => {
                 args.expect_positional("ix.io.read", 1)?;
                 let path = expect_string(args.positional[0].clone(), "`ix.io.read` path")?;
+                let path = crate::path::normalize(&path)?;
                 // Absence becomes null so `→ default(…)` can supply a value.
                 Ok(self.host.read(&path)?.unwrap_or(Value::Null))
             }
@@ -444,6 +448,11 @@ impl Executor {
             "ix.io.write" => {
                 args.expect_positional("ix.io.write", 2)?;
                 let path = expect_string(args.positional[0].clone(), "`ix.io.write` path")?;
+                // Normalize once, here, and use that one spelling for the gate,
+                // the host and the record. Letting each component normalize
+                // for itself is what allowed `state/./quality/…` to dodge a
+                // rule registered on `state/quality/` and still land in it.
+                let path = crate::path::normalize(&path)?;
                 let value = args.positional[1].clone();
                 // Gate first: a value that fails its schema must never reach
                 // the host, not even to be deleted afterwards.
@@ -563,18 +572,7 @@ fn literal_value(lit: &Literal) -> Value {
         Literal::Null => Value::Null,
         Literal::Bool(b) => Value::Bool(*b),
         Literal::String(s) => Value::String(s.clone()),
-        Literal::Number(n) => number_value(*n),
-    }
-}
-
-/// Numbers are parsed as `f64`, but an integer literal must serialize back as
-/// an integer — `"schema_version": 1.0` would be a gratuitous difference from
-/// the JSON every other producer of these artifacts writes.
-fn number_value(n: f64) -> Value {
-    if n.is_finite() && n.fract() == 0.0 && n.abs() <= i64::MAX as f64 {
-        Value::from(n as i64)
-    } else {
-        serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
+        Literal::Number(n) => Value::Number(n.clone()),
     }
 }
 
@@ -813,6 +811,49 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("violates schema"));
         assert!(host.files().is_empty(), "nothing may be persisted");
+    }
+
+    #[test]
+    fn a_dot_segment_cannot_route_a_write_around_its_schema() {
+        // The P1 from #274: `state/./quality/…` normalizes onto the protected
+        // prefix on disk, so the gate has to see it that way. Built by
+        // interpolation here, the way a pipeline actually produces a path.
+        let host = Arc::new(MemoryHost::frozen());
+        let mut exec = Executor::new(host.clone());
+        exec.schema_gate()
+            .register(
+                "state/quality/",
+                "verdict",
+                &json!({"type": "object", "required": ["verdict"]}),
+            )
+            .unwrap();
+
+        let err = exec
+            .run_source(
+                "dir <- \"./quality\"\nix.io.write(\"state/{{dir}}//v.json\", { other: 1 })",
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("violates schema"), "{err}");
+        assert!(host.files().is_empty(), "nothing may be persisted");
+    }
+
+    #[test]
+    fn a_traversing_path_stops_the_run_before_any_host_call() {
+        let host = Arc::new(MemoryHost::frozen());
+        let err = Executor::new(host.clone())
+            .run_source("ix.io.write(\"state/../../escape.json\", { a: 1 })")
+            .unwrap_err();
+        assert!(err.to_string().contains("escape"), "{err}");
+        assert!(host.files().is_empty());
+    }
+
+    #[test]
+    fn the_recorded_write_path_is_the_normalized_one() {
+        let host = Arc::new(MemoryHost::frozen());
+        let outcome = Executor::new(host)
+            .run_source("ix.io.write(\"state/./a//b.json\", { a: 1 })")
+            .unwrap();
+        assert_eq!("state/a/b.json", outcome.writes[0].path);
     }
 
     #[test]

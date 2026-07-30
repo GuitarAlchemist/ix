@@ -7,11 +7,13 @@
 //! the repo it was launched in.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
+
+use crate::path::{normalize, normalize_lossy};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HostError {
@@ -19,8 +21,8 @@ pub enum HostError {
     Io { path: String, message: String },
     #[error("{path} is not valid JSON: {message}")]
     Parse { path: String, message: String },
-    #[error("{path} escapes the pipeline root")]
-    Escapes { path: String },
+    #[error("{path} escapes the pipeline root: {reason}")]
+    Escapes { path: String, reason: String },
 }
 
 /// Reads, writes, and time — the only ways an IXQL run touches anything.
@@ -60,7 +62,7 @@ impl MemoryHost {
         self.files
             .lock()
             .expect("MemoryHost lock")
-            .insert(normalize(path), value);
+            .insert(normalize_lossy(path), value);
     }
 
     /// Everything written so far, keyed by path.
@@ -75,7 +77,7 @@ impl Host for MemoryHost {
             .files
             .lock()
             .expect("MemoryHost lock")
-            .get(&normalize(path))
+            .get(&normalize_lossy(path))
             .cloned())
     }
 
@@ -83,7 +85,7 @@ impl Host for MemoryHost {
         self.files
             .lock()
             .expect("MemoryHost lock")
-            .insert(normalize(path), value.clone());
+            .insert(normalize_lossy(path), value.clone());
         Ok(())
     }
 
@@ -102,23 +104,61 @@ impl FsHost {
         Self { root: root.into() }
     }
 
-    /// Reject `..` and absolute paths before touching the disk: a pipeline
-    /// builds its own write paths by interpolation, so a value read from
-    /// elsewhere could otherwise steer a write out of the repo.
+    /// Turn a pipeline-supplied path into a real one, or refuse it.
+    ///
+    /// Two checks, because either alone is insufficient. [`normalize`] rejects
+    /// `..` and absolute paths — the *lexical* escapes. But a lexically clean
+    /// path can still leave the root by traversing a symlink: if `root/link`
+    /// points elsewhere, `link/escaped.json` looks innocent and is not. So the
+    /// deepest existing ancestor is canonicalized and required to sit under the
+    /// canonicalized root, which resolves any links along the way.
     fn resolve(&self, path: &str) -> Result<PathBuf, HostError> {
-        let candidate = Path::new(path);
-        let unsafe_component = candidate.components().any(|c| {
-            matches!(
-                c,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        });
-        if unsafe_component {
-            return Err(HostError::Escapes {
+        let relative = normalize(path).map_err(|e| HostError::Escapes {
+            path: path.to_string(),
+            reason: e.to_string(),
+        })?;
+        let full = self.root.join(&relative);
+
+        // Only the part that exists can be canonicalized; the rest is about to
+        // be created by `create_dir_all`, and it cannot introduce a link.
+        let mut probe = full.as_path();
+        let existing = loop {
+            if probe.exists() {
+                break Some(probe);
+            }
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                None => break None,
+            }
+        };
+
+        if let Some(existing) = existing {
+            let resolved = existing.canonicalize().map_err(|e| HostError::Io {
                 path: path.to_string(),
-            });
+                message: format!("resolving {}: {e}", existing.display()),
+            })?;
+            // If the root itself cannot be canonicalized it does not exist yet,
+            // in which case nothing under it exists either and `existing` would
+            // have been `None` — so falling back to the literal root here only
+            // happens on a genuine I/O oddity, and comparing against it is
+            // still the conservative choice.
+            let root = self
+                .root
+                .canonicalize()
+                .unwrap_or_else(|_| self.root.clone());
+            if !resolved.starts_with(&root) {
+                return Err(HostError::Escapes {
+                    path: path.to_string(),
+                    reason: format!(
+                        "resolves to {} via a link outside {}",
+                        resolved.display(),
+                        root.display()
+                    ),
+                });
+            }
         }
-        Ok(self.root.join(candidate))
+
+        Ok(full)
     }
 }
 
@@ -165,10 +205,6 @@ impl Host for FsHost {
     fn now(&self) -> DateTime<Utc> {
         Utc::now()
     }
-}
-
-fn normalize(path: &str) -> String {
-    path.replace('\\', "/")
 }
 
 /// Translate a .NET-style format string — the spelling `now_utc(…)` uses in
@@ -257,5 +293,70 @@ mod tests {
         let host = FsHost::new(std::env::temp_dir().join("ix-ixql-root-test"));
         let err = host.write("../escape.json", &json!(1)).unwrap_err();
         assert!(matches!(err, HostError::Escapes { .. }));
+    }
+
+    #[test]
+    fn memory_host_agrees_with_the_gate_on_dot_segments() {
+        // The two used to disagree: the gate matched raw text while the host
+        // stored a differently-spelled key, so `state/./q/v.json` could dodge a
+        // rule on `state/q/` and still be written.
+        let host = MemoryHost::frozen();
+        host.write("state/./quality//v.json", &json!(1)).unwrap();
+        assert_eq!(
+            Some(json!(1)),
+            host.read("state/quality/v.json").unwrap(),
+            "a normalized read must find a denormalized write"
+        );
+    }
+
+    #[test]
+    fn fs_host_refuses_a_path_that_leaves_the_root_through_a_symlink() {
+        let temp = std::env::temp_dir().join("ix-ixql-symlink-test");
+        let root = temp.join("root");
+        let outside = temp.join("outside");
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        // Symlink creation needs Developer Mode or admin on Windows. If it is
+        // unavailable the escape it guards against is not reachable here
+        // either, so skipping is honest rather than a silent pass.
+        let link = root.join("link");
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_dir(&outside, &link).is_ok();
+        if !made {
+            eprintln!("skipping: this platform/user cannot create symlinks");
+            return;
+        }
+
+        let host = FsHost::new(&root);
+        let err = host.write("link/escaped.json", &json!(1)).unwrap_err();
+        assert!(matches!(err, HostError::Escapes { .. }), "{err}");
+        assert!(
+            !outside.join("escaped.json").exists(),
+            "the write must not have happened"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn fs_host_still_accepts_an_ordinary_path_under_the_root() {
+        let root = std::env::temp_dir().join("ix-ixql-ok-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let host = FsHost::new(&root);
+        host.write("state/quality/v.json", &json!({"k": 1}))
+            .unwrap();
+        assert_eq!(
+            Some(json!({"k": 1})),
+            host.read("state/./quality/v.json").unwrap(),
+            "dot segments must resolve to the same file"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

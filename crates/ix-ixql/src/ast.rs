@@ -50,7 +50,11 @@ pub enum UnaryOp {
 pub enum Literal {
     Null,
     Bool(bool),
-    Number(f64),
+    /// Held as a `serde_json::Number` rather than an `f64` so an integer
+    /// literal keeps its exact value all the way into the emitted JSON. These
+    /// end up in ids and counters, where rounding `9007199254740993` down to
+    /// `…992` would be a silent corruption.
+    Number(serde_json::Number),
     String(String),
 }
 

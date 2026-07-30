@@ -9,6 +9,8 @@
 use jsonschema::Validator;
 use serde_json::Value;
 
+use crate::path::normalize_lossy;
+
 /// A write that a registered schema rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("write to `{path}` violates schema `{schema}`: {}", errors.join("; "))]
@@ -55,7 +57,10 @@ impl SchemaGate {
         let validator = jsonschema::draft202012::new(schema)
             .map_err(|e| format!("schema `{name}` does not compile: {e}"))?;
         self.rules.push(Rule {
-            prefix: prefix.into().replace('\\', "/"),
+            // Both sides of the comparison go through the same normalizer, so
+            // a rule registered as `state\quality\` matches a path built as
+            // `state/./quality/…`.
+            prefix: normalize_prefix(&prefix.into()),
             name,
             validator,
         });
@@ -68,7 +73,7 @@ impl SchemaGate {
     /// several is not an error — a broad envelope schema and a narrow one can
     /// legitimately both apply to the same directory.
     pub fn check(&self, path: &str, value: &Value) -> Result<(), SchemaViolation> {
-        let normalized = path.replace('\\', "/");
+        let normalized = normalize_lossy(path);
         for rule in &self.rules {
             if !normalized.starts_with(&rule.prefix) {
                 continue;
@@ -99,6 +104,18 @@ impl SchemaGate {
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
+}
+
+/// A prefix is a directory stub, not a whole path, so it is normalized with the
+/// trailing separator preserved — `state/quality/` must not become
+/// `state/quality`, or it would also match `state/quality-archive/`.
+fn normalize_prefix(prefix: &str) -> String {
+    let trailing = prefix.ends_with('/') || prefix.ends_with('\\');
+    let mut normalized = normalize_lossy(prefix);
+    if trailing && !normalized.ends_with('/') {
+        normalized.push('/');
+    }
+    normalized
 }
 
 impl std::fmt::Debug for SchemaGate {
@@ -162,6 +179,25 @@ mod tests {
     #[test]
     fn paths_outside_the_prefix_are_untouched() {
         assert!(gate().check("state/evolution/log.json", &json!(42)).is_ok());
+    }
+
+    #[test]
+    fn dot_segments_cannot_dodge_a_registered_prefix() {
+        // The bypass Codex found on #274: the filesystem resolves this into the
+        // protected directory, so the gate has to see it that way too.
+        assert!(gate()
+            .check(
+                "state/./quality//verdicts/ga/v1.json",
+                &json!({"schema_version": 1, "verdict": "probably fine"})
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn a_prefix_does_not_match_a_sibling_directory_that_shares_its_name() {
+        assert!(gate()
+            .check("state/quality/verdicts-archive/v1.json", &json!(42))
+            .is_ok());
     }
 
     #[test]
