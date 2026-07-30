@@ -11,7 +11,7 @@ These notes are passed to all review agents during /workflows:review and /workfl
 ## This repo (ix)
 
 - Rust workspace, 78 crates — pure Rust, no external ML frameworks except `wgpu` for GPU compute. CPU algorithms use `f64` + `ndarray`; GPU uses `f32` via WGPU. MSRV 1.80+.
-- CI bar is exact: `cargo clippy --workspace --all-targets -D warnings` and `cargo fmt --check`. Run the CI-exact invocation before claiming green (`--bins --lib` misses lints).
+- Verification is `pwsh scripts/verify.ps1` — the same command Agent Blackbox runs in CI. Two of its three steps block: `cargo clippy --workspace --all-targets -- -D warnings` (note the `--`; without it the flag is not passed to the lint pass) and `cargo test --workspace`. Run the CI-exact clippy invocation before claiming green — `--bins --lib` misses lints. **`cargo fmt --all --check` is advisory here, not a gate**: several crates keep a terser hand style on purpose (`ix-duck`), so it reports diffs repo-wide and `verify.ps1` continues past it. Do not "fix" that warning by reformatting unrelated crates. See AGENTS.md.
 - Crate maturity is tiered (`crate-maturity.toml`); a stable-surface hash gate hashes `pub `-prefixed lines — adding a `pub fn` to a stable crate trips it. `experimental`-tier crates don't.
 - Do NOT add `petgraph`/`daggy`/`graph-rs` — use `ix-graph`, `ix-pipeline::dag`, `ix-search`, `ix-topo` (ix already has 10 graph modules).
 - Governance: agent actions are subject to the Demerzel constitution; hexavalent (6-valued T/P/U/D/F/C) logic, not tetravalent. Invariants/assumptions carry `@ai:` annotations with a live binding + confidence.
