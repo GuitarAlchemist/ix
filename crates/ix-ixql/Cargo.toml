@@ -1,0 +1,29 @@
+[package]
+name = "ix-ixql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+categories = ["development-tools", "parser-implementations"]
+keywords = ["ixql", "pipeline", "governance", "interpreter", "baml"]
+description = "Parser and evaluator for IXQL, the declarative pipeline language Demerzel writes its governance cycles in. Values flow as serde_json::Value, LLM steps cross the ix-baml seam, and every at-rest write is gated by a JSON Schema."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+ix-baml = { workspace = true }
+# Same version/features as ix-quality-validate, the workspace's existing
+# JSON-Schema consumer — one validator implementation across the repo.
+jsonschema = { version = "0.30", default-features = false }
+
+[dev-dependencies]
+# Integration tests link only against the crate under test plus dev-deps, so the
+# seam and the JSON helpers have to be named again here.
+ix-baml = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
