@@ -42,6 +42,19 @@ pub enum EvalError {
     #[error("`{0}` is not a function this executor provides")]
     UnknownFunction(String),
 
+    #[error(
+        "a lambda (`{params} => …`) is not a value, and no higher-order function \
+         accepts one yet — `map`/`filter`/`any`/`find`/`reduce` parse but do not \
+         run (see issue #281). Lambdas are currently accepted by the grammar only."
+    )]
+    LambdaIsNotAValue { params: String },
+
+    #[error("division by zero")]
+    DivideByZero,
+
+    #[error("`{op}` produced {value}, which JSON cannot represent")]
+    NotRepresentable { op: &'static str, value: f64 },
+
     #[error("`{function}` takes {expected} positional argument(s), got {found}")]
     Arity {
         function: &'static str,
@@ -284,6 +297,24 @@ impl Executor {
                 }
                 Ok(value)
             }
+
+            // A lambda is not a value — the value domain here is exactly JSON,
+            // because everything this language produces is written to disk as
+            // JSON. A higher-order function would therefore have to destructure
+            // this AST node at its own call site rather than evaluate it.
+            //
+            // No such function exists yet, so *every* lambda reaching the
+            // evaluator lands here. That is deliberate: the corpus spells
+            // higher-order calls two ways — `filter(p => …)` but also
+            // `group.filter(signal_type == "pain")`, where the predicate reads
+            // fields off the element with no binder at all — and picking the
+            // scoping rule that unifies them is a design decision, not a
+            // detail. Parsing lambdas without executing them keeps the corpus
+            // measurable while that stays open. Erroring here is what stops it
+            // from silently yielding null. See issue #281.
+            Expr::Lambda { params, .. } => Err(EvalError::LambdaIsNotAValue {
+                params: params.join(", "),
+            }),
         }
     }
 
@@ -308,6 +339,16 @@ impl Executor {
         let lhs = self.eval(left, outcome)?;
         let rhs = self.eval(right, outcome)?;
 
+        // Arithmetic yields a number, not a predicate, so it leaves before the
+        // boolean block below.
+        match op {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                return arithmetic(&lhs, &rhs, op);
+            }
+            BinaryOp::Concat => return concat_values(&lhs, &rhs),
+            _ => {}
+        }
+
         Ok(Value::Bool(match op {
             BinaryOp::Eq => values_equal(&lhs, &rhs),
             BinaryOp::Neq => !values_equal(&lhs, &rhs),
@@ -323,6 +364,11 @@ impl Executor {
             BinaryOp::In => contains(&rhs, &lhs)?,
             BinaryOp::NotIn => !contains(&rhs, &lhs)?,
             BinaryOp::And | BinaryOp::Or => unreachable!("handled above"),
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Concat => unreachable!("returned above"),
         }))
     }
 
@@ -618,6 +664,89 @@ fn render(value: &Value) -> Result<String, EvalError> {
 /// A literal in a pipeline is parsed as `f64`; the same field read back from
 /// disk is a JSON integer. Without this, `verdict.schema_version == 1` would
 /// depend on where the value came from.
+/// `+`, `-`, `*`, `/` on two numbers.
+///
+/// Integer inputs stay integral when the exact result fits an `i64`, so a
+/// counter incremented past 2^53 keeps its value — the same reason literals are
+/// carried as `serde_json::Number`. Anything else goes through `f64`.
+///
+/// Every result is checked for finiteness before it becomes a `Number`. JSON
+/// has no `Infinity` or `NaN`, so an unchecked `1/0` would either panic in
+/// `Number::from_f64` or, worse, serialise as `null` into an artifact that
+/// looks well-formed. Division by zero is refused outright.
+fn arithmetic(left: &Value, right: &Value, op: BinaryOp) -> Result<Value, EvalError> {
+    let (a, b) = match (left.as_f64(), right.as_f64()) {
+        (Some(a), Some(b)) => (a, b),
+        _ => {
+            return Err(EvalError::Type {
+                context: format!("`{}`", op.as_str()),
+                expected: "two numbers",
+                found: type_name(if left.as_f64().is_none() { left } else { right }),
+            })
+        }
+    };
+
+    if let (Some(x), Some(y)) = (left.as_i64(), right.as_i64()) {
+        let exact = match op {
+            BinaryOp::Add => x.checked_add(y),
+            BinaryOp::Sub => x.checked_sub(y),
+            BinaryOp::Mul => x.checked_mul(y),
+            // Only exact division stays integral; 7/2 must not become 3.
+            // `checked_rem`, not `%`: `i64::MIN % -1` overflows and panics —
+            // in release builds too, since remainder overflow is a hard error
+            // rather than a debug assertion. It falls through to `f64` here.
+            BinaryOp::Div if x.checked_rem(y) == Some(0) => x.checked_div(y),
+            _ => None,
+        };
+        if let Some(v) = exact {
+            return Ok(Value::Number(v.into()));
+        }
+    }
+
+    if matches!(op, BinaryOp::Div) && b == 0.0 {
+        return Err(EvalError::DivideByZero);
+    }
+
+    let value = match op {
+        BinaryOp::Add => a + b,
+        BinaryOp::Sub => a - b,
+        BinaryOp::Mul => a * b,
+        BinaryOp::Div => a / b,
+        _ => unreachable!("only arithmetic ops reach here"),
+    };
+
+    serde_json::Number::from_f64(value)
+        .map(Value::Number)
+        .ok_or(EvalError::NotRepresentable {
+            op: op.as_str(),
+            value,
+        })
+}
+
+/// `++` — sequence concatenation.
+///
+/// Arrays only. Strings deliberately do not concatenate here: the corpus joins
+/// text with `"…{{x}}…"` interpolation, so allowing `++` on strings would give
+/// two spellings for one thing and make `["a"] ++ "b"` ambiguous.
+fn concat_values(left: &Value, right: &Value) -> Result<Value, EvalError> {
+    match (left, right) {
+        (Value::Array(a), Value::Array(b)) => {
+            let mut out = a.clone();
+            out.extend(b.iter().cloned());
+            Ok(Value::Array(out))
+        }
+        _ => Err(EvalError::Type {
+            context: "`++`".to_string(),
+            expected: "two arrays",
+            found: type_name(if matches!(left, Value::Array(_)) {
+                right
+            } else {
+                left
+            }),
+        }),
+    }
+}
+
 fn values_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(a), Value::Number(b)) => match (a.as_f64(), b.as_f64()) {
@@ -725,6 +854,46 @@ mod tests {
             "{\"schema_version\":1}",
             serde_json::to_string(out.binding("a").unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn exact_division_stays_integral_but_inexact_division_does_not() {
+        let (exec, _) = executor();
+        let out = exec.run_source("a <- 8 / 2\nb <- 7 / 2").unwrap();
+        assert_eq!("8/2 = 4", format!("8/2 = {}", out.binding("a").unwrap()));
+        assert_eq!("7/2 = 3.5", format!("7/2 = {}", out.binding("b").unwrap()));
+    }
+
+    #[test]
+    fn dividing_i64_min_by_negative_one_does_not_panic() {
+        // `x % y` overflows here — and remainder overflow panics in release
+        // builds too, so this crashed the executor rather than erroring. The
+        // magnitude is not representable as an `i64`, so the answer is the
+        // `f64` one; what matters is that a value comes back at all.
+        let (exec, _) = executor();
+        let out = exec
+            .run_source("a <- -9223372036854775808 / -1")
+            .expect("i64::MIN / -1 must not panic");
+        let a = out.binding("a").unwrap().as_f64().unwrap();
+        assert_eq!(9.223372036854776e18, a);
+    }
+
+    #[test]
+    fn division_by_zero_is_refused_rather_than_becoming_null() {
+        // JSON has no `Infinity`; serialising one yields `null`, which would
+        // land in an artifact that still looks well-formed.
+        let (exec, _) = executor();
+        let err = exec.run_source("a <- 1 / 0").unwrap_err();
+        assert!(err.to_string().contains("division by zero"), "{err}");
+    }
+
+    #[test]
+    fn a_lambda_reaching_the_evaluator_is_an_error_not_a_null() {
+        // Lambdas parse but nothing consumes them yet (issue #281). The error
+        // is what keeps that gap visible instead of silently yielding null.
+        let (exec, _) = executor();
+        let err = exec.run_source("a <- map(x => x.name)").unwrap_err();
+        assert!(err.to_string().contains("is not a value"), "{err}");
     }
 
     #[test]

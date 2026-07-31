@@ -18,11 +18,22 @@ pub enum BinaryOp {
     Or,
     In,
     NotIn,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    /// `++` — sequence concatenation, not numeric.
+    Concat,
 }
 
 impl BinaryOp {
     pub fn as_str(self) -> &'static str {
         match self {
+            BinaryOp::Add => "+",
+            BinaryOp::Sub => "-",
+            BinaryOp::Mul => "*",
+            BinaryOp::Div => "/",
+            BinaryOp::Concat => "++",
             BinaryOp::Eq => "==",
             BinaryOp::Neq => "!=",
             BinaryOp::Gt => ">",
@@ -84,6 +95,18 @@ pub enum Expr {
     },
     /// `source → step → step`.
     Pipeline(Box<Expr>, Vec<PipeStep>),
+    /// `x => body`, or `(acc, item) => body` for the fold-shaped callers.
+    ///
+    /// Only ever an *argument* to a higher-order host function — the corpus
+    /// never binds one to a name or returns one. It is therefore not a value:
+    /// there is no `Value::Lambda`, and the evaluator matches this node
+    /// syntactically at the call site rather than building a closure. That
+    /// keeps the value domain exactly JSON, which is what every artifact this
+    /// language writes has to be.
+    Lambda {
+        params: Vec<String>,
+        body: Box<Expr>,
+    },
 }
 
 /// One `→` stage. The value flowing in is the previous stage's output.
