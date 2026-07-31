@@ -42,6 +42,18 @@ pub enum EvalError {
     #[error("`{0}` is not a function this executor provides")]
     UnknownFunction(String),
 
+    #[error(
+        "a lambda (`{params} => …`) is not a value — it can only be an argument \
+         to a higher-order function such as `map` or `filter`"
+    )]
+    LambdaIsNotAValue { params: String },
+
+    #[error("division by zero")]
+    DivideByZero,
+
+    #[error("`{op}` produced {value}, which JSON cannot represent")]
+    NotRepresentable { op: &'static str, value: f64 },
+
     #[error("`{function}` takes {expected} positional argument(s), got {found}")]
     Arity {
         function: &'static str,
@@ -284,6 +296,16 @@ impl Executor {
                 }
                 Ok(value)
             }
+
+            // A lambda is not a value — the value domain here is exactly JSON,
+            // because everything this language produces is written to disk as
+            // JSON. Higher-order host functions destructure the AST node at the
+            // call site instead. Reaching here means one was used where a value
+            // was expected, which is a real authoring error and is reported as
+            // one rather than silently yielding null.
+            Expr::Lambda { params, .. } => Err(EvalError::LambdaIsNotAValue {
+                params: params.join(", "),
+            }),
         }
     }
 
@@ -308,6 +330,16 @@ impl Executor {
         let lhs = self.eval(left, outcome)?;
         let rhs = self.eval(right, outcome)?;
 
+        // Arithmetic yields a number, not a predicate, so it leaves before the
+        // boolean block below.
+        match op {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                return arithmetic(&lhs, &rhs, op);
+            }
+            BinaryOp::Concat => return concat_values(&lhs, &rhs),
+            _ => {}
+        }
+
         Ok(Value::Bool(match op {
             BinaryOp::Eq => values_equal(&lhs, &rhs),
             BinaryOp::Neq => !values_equal(&lhs, &rhs),
@@ -323,6 +355,11 @@ impl Executor {
             BinaryOp::In => contains(&rhs, &lhs)?,
             BinaryOp::NotIn => !contains(&rhs, &lhs)?,
             BinaryOp::And | BinaryOp::Or => unreachable!("handled above"),
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Concat => unreachable!("returned above"),
         }))
     }
 
@@ -618,6 +655,86 @@ fn render(value: &Value) -> Result<String, EvalError> {
 /// A literal in a pipeline is parsed as `f64`; the same field read back from
 /// disk is a JSON integer. Without this, `verdict.schema_version == 1` would
 /// depend on where the value came from.
+/// `+`, `-`, `*`, `/` on two numbers.
+///
+/// Integer inputs stay integral when the exact result fits an `i64`, so a
+/// counter incremented past 2^53 keeps its value — the same reason literals are
+/// carried as `serde_json::Number`. Anything else goes through `f64`.
+///
+/// Every result is checked for finiteness before it becomes a `Number`. JSON
+/// has no `Infinity` or `NaN`, so an unchecked `1/0` would either panic in
+/// `Number::from_f64` or, worse, serialise as `null` into an artifact that
+/// looks well-formed. Division by zero is refused outright.
+fn arithmetic(left: &Value, right: &Value, op: BinaryOp) -> Result<Value, EvalError> {
+    let (a, b) = match (left.as_f64(), right.as_f64()) {
+        (Some(a), Some(b)) => (a, b),
+        _ => {
+            return Err(EvalError::Type {
+                context: format!("`{}`", op.as_str()),
+                expected: "two numbers",
+                found: type_name(if left.as_f64().is_none() { left } else { right }),
+            })
+        }
+    };
+
+    if let (Some(x), Some(y)) = (left.as_i64(), right.as_i64()) {
+        let exact = match op {
+            BinaryOp::Add => x.checked_add(y),
+            BinaryOp::Sub => x.checked_sub(y),
+            BinaryOp::Mul => x.checked_mul(y),
+            // Only exact division stays integral; 7/2 must not become 3.
+            BinaryOp::Div if y != 0 && x % y == 0 => x.checked_div(y),
+            _ => None,
+        };
+        if let Some(v) = exact {
+            return Ok(Value::Number(v.into()));
+        }
+    }
+
+    if matches!(op, BinaryOp::Div) && b == 0.0 {
+        return Err(EvalError::DivideByZero);
+    }
+
+    let value = match op {
+        BinaryOp::Add => a + b,
+        BinaryOp::Sub => a - b,
+        BinaryOp::Mul => a * b,
+        BinaryOp::Div => a / b,
+        _ => unreachable!("only arithmetic ops reach here"),
+    };
+
+    serde_json::Number::from_f64(value)
+        .map(Value::Number)
+        .ok_or(EvalError::NotRepresentable {
+            op: op.as_str(),
+            value,
+        })
+}
+
+/// `++` — sequence concatenation.
+///
+/// Arrays only. Strings deliberately do not concatenate here: the corpus joins
+/// text with `"…{{x}}…"` interpolation, so allowing `++` on strings would give
+/// two spellings for one thing and make `["a"] ++ "b"` ambiguous.
+fn concat_values(left: &Value, right: &Value) -> Result<Value, EvalError> {
+    match (left, right) {
+        (Value::Array(a), Value::Array(b)) => {
+            let mut out = a.clone();
+            out.extend(b.iter().cloned());
+            Ok(Value::Array(out))
+        }
+        _ => Err(EvalError::Type {
+            context: "`++`".to_string(),
+            expected: "two arrays",
+            found: type_name(if matches!(left, Value::Array(_)) {
+                right
+            } else {
+                left
+            }),
+        }),
+    }
+}
+
 fn values_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(a), Value::Number(b)) => match (a.as_f64(), b.as_f64()) {

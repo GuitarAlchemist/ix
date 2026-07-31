@@ -272,7 +272,69 @@ impl Parser {
     // ---- expressions ---------------------------------------------------
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        // Lambdas bind loosest, and the body is parsed with `parse_expr` again
+        // so `x => a && b` takes the whole conjunction as the body rather than
+        // stopping at `a`.
+        if let Some(params) = self.take_lambda_params()? {
+            let body = Box::new(self.parse_expr()?);
+            return Ok(Expr::Lambda { params, body });
+        }
         self.parse_or()
+    }
+
+    /// Recognise and consume a lambda head, or consume nothing.
+    ///
+    /// `x =>` is decidable with one token of lookahead. `(a, b) =>` is not: a
+    /// `(` also opens a grouped expression, and the two only diverge after the
+    /// matching `)`. Rather than parse-and-backtrack — which would mean
+    /// unwinding a partly built AST — this scans ahead for the matching paren
+    /// and commits only once it has seen the `=>` behind it. Nothing is
+    /// consumed on the `None` paths.
+    fn take_lambda_params(&mut self) -> Result<Option<Vec<String>>, ParseError> {
+        if matches!(self.peek(), Tok::Ident(_)) && matches!(self.peek_at(1), Tok::FatArrow) {
+            let param = self.expect_ident()?;
+            self.bump(); // `=>`
+            return Ok(Some(vec![param]));
+        }
+
+        if !matches!(self.peek(), Tok::LParen) {
+            return Ok(None);
+        }
+
+        let mut depth = 0usize;
+        let mut offset = 0usize;
+        loop {
+            match self.peek_at(offset) {
+                Tok::LParen => depth += 1,
+                Tok::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                // `peek_at` clamps to `Eof`, so an unbalanced `(` terminates
+                // here instead of scanning forever. Report it as not-a-lambda
+                // and let the normal path produce the real error.
+                Tok::Eof => return Ok(None),
+                _ => {}
+            }
+            offset += 1;
+        }
+        if !matches!(self.peek_at(offset + 1), Tok::FatArrow) {
+            return Ok(None);
+        }
+
+        self.bump(); // `(`
+        let mut params = Vec::new();
+        while !matches!(self.peek(), Tok::RParen) {
+            params.push(self.expect_ident()?);
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
+        }
+        self.expect(&Tok::RParen)?;
+        self.bump(); // `=>`
+        Ok(Some(params))
     }
 
     fn parse_or(&mut self) -> Result<Expr, ParseError> {
@@ -294,7 +356,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        let left = self.parse_unary()?;
+        let left = self.parse_term()?;
 
         let op = match self.peek() {
             Tok::EqEq => Some(BinaryOp::Eq),
@@ -317,7 +379,7 @@ impl Parser {
             if op == BinaryOp::NotIn {
                 self.bump(); // the `in` of `not in`
             }
-            let right = self.parse_unary()?;
+            let right = self.parse_term()?;
             return Ok(Expr::BinOp(Box::new(left), op, Box::new(right)));
         }
 
@@ -340,6 +402,41 @@ impl Parser {
         }
 
         Ok(left)
+    }
+
+    /// `+`, `-` and `++`, left-associative and looser than `*` / `/`.
+    ///
+    /// `++` sits at this level rather than its own: the corpus only ever
+    /// concatenates whole sequences, so there is no expression where its
+    /// precedence against `+` is observable.
+    fn parse_term(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_factor()?;
+        loop {
+            let op = match self.peek() {
+                Tok::Plus => BinaryOp::Add,
+                Tok::Minus => BinaryOp::Sub,
+                Tok::PlusPlus => BinaryOp::Concat,
+                _ => return Ok(left),
+            };
+            self.bump();
+            let right = self.parse_factor()?;
+            left = Expr::BinOp(Box::new(left), op, Box::new(right));
+        }
+    }
+
+    /// `*` and `/`, binding tighter than `+` / `-`.
+    fn parse_factor(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_unary()?;
+        loop {
+            let op = match self.peek() {
+                Tok::Star => BinaryOp::Mul,
+                Tok::Slash => BinaryOp::Div,
+                _ => return Ok(left),
+            };
+            self.bump();
+            let right = self.parse_unary()?;
+            left = Expr::BinOp(Box::new(left), op, Box::new(right));
+        }
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParseError> {
@@ -392,7 +489,7 @@ impl Parser {
             if matches!(self.peek(), Tok::Ident(_)) && matches!(self.peek_at(1), Tok::Colon) {
                 let key = self.expect_ident()?;
                 self.bump(); // `:`
-                let value = self.parse_expr()?;
+                let value = self.parse_pipeline()?;
                 if named.insert(key.clone(), value).is_some() {
                     return Err(ParseError::at(
                         self.prev_line(),
@@ -406,7 +503,7 @@ impl Parser {
                         "positional arguments cannot follow named ones",
                     ));
                 }
-                positional.push(self.parse_expr()?);
+                positional.push(self.parse_pipeline()?);
             }
 
             if !self.eat(&Tok::Comma) {
@@ -638,5 +735,89 @@ mod tests {
     fn when_is_refused_explicitly_rather_than_misparsed() {
         let err = parse_program("when x: y <- 1").unwrap_err();
         assert!(err.to_string().contains("`when` blocks are not supported"));
+    }
+    // ---- lambdas ---------------------------------------------------------
+
+    #[test]
+    fn a_single_parameter_lambda_takes_the_whole_body() {
+        // `=>` binds loosest: the body is the entire conjunction, not just `a`.
+        let expr = parse_expression("x => x.a && x.b").unwrap();
+        let Expr::Lambda { params, body } = expr else {
+            panic!("expected a lambda, got {expr:?}")
+        };
+        assert_eq!(vec!["x".to_string()], params);
+        assert!(matches!(*body, Expr::BinOp(_, BinaryOp::And, _)));
+    }
+
+    #[test]
+    fn a_parenthesised_parameter_list_is_a_lambda_not_a_group() {
+        // The fold-shaped callers in the corpus: `(sum, d) => …`.
+        let expr = parse_expression("(sum, d) => sum").unwrap();
+        let Expr::Lambda { params, .. } = expr else {
+            panic!("expected a lambda, got {expr:?}")
+        };
+        assert_eq!(vec!["sum".to_string(), "d".to_string()], params);
+    }
+
+    #[test]
+    fn a_parenthesised_expression_is_still_a_group() {
+        // The lookahead must not claim `(a && b)` — there is no `=>` behind
+        // the matching paren, so nothing may be consumed.
+        let expr = parse_expression("(a && b)").unwrap();
+        assert!(matches!(expr, Expr::BinOp(_, BinaryOp::And, _)));
+    }
+
+    #[test]
+    fn a_lambda_is_an_argument_to_a_higher_order_call() {
+        let expr = parse_expression("items.map(i => i.name)").unwrap();
+        let Expr::Call { positional, .. } = expr else {
+            panic!("expected a call, got {expr:?}")
+        };
+        assert!(matches!(positional.as_slice(), [Expr::Lambda { .. }]));
+    }
+
+    // ---- arithmetic ------------------------------------------------------
+
+    #[test]
+    fn multiplication_binds_tighter_than_addition() {
+        // Shape, not value: `2 + (3 * 4)`, so the top node is the `+`.
+        let expr = parse_expression("2 + 3 * 4").unwrap();
+        let Expr::BinOp(_, BinaryOp::Add, right) = expr else {
+            panic!("expected `+` at the top, got {expr:?}")
+        };
+        assert!(matches!(*right, Expr::BinOp(_, BinaryOp::Mul, _)));
+    }
+
+    #[test]
+    fn arithmetic_binds_tighter_than_comparison() {
+        // `(a * 0.7) >= b`, otherwise the comparison would swallow the `*`.
+        let expr = parse_expression("a * 0.7 >= b").unwrap();
+        let Expr::BinOp(left, BinaryOp::Gte, _) = expr else {
+            panic!("expected `>=` at the top, got {expr:?}")
+        };
+        assert!(matches!(*left, Expr::BinOp(_, BinaryOp::Mul, _)));
+    }
+
+    #[test]
+    fn double_plus_is_concatenation_not_two_additions() {
+        let expr = parse_expression("a ++ b").unwrap();
+        assert!(matches!(expr, Expr::BinOp(_, BinaryOp::Concat, _)));
+    }
+
+    // ---- pipelines as arguments -----------------------------------------
+
+    #[test]
+    fn an_argument_may_be_a_whole_pipeline() {
+        // `fan_out` branches are pipelines; a `,` ends one, and the `→`
+        // belongs to the argument because the outer pipeline cannot resume
+        // until the `)`.
+        let expr = parse_expression("fan_out(a -> f(), b -> g())").unwrap();
+        let Expr::Call { positional, .. } = expr else {
+            panic!("expected a call, got {expr:?}")
+        };
+        assert_eq!(2, positional.len());
+        assert!(positional
+            .iter()
+            .all(|arg| matches!(arg, Expr::Pipeline(_, _))));
     }
 }
