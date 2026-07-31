@@ -71,22 +71,43 @@ use crate::{BamlError, BamlOperation};
 /// sends the bill somewhere other than the subscription seat this provider
 /// exists to use, and does so *silently*, because the run then succeeds.
 ///
-/// Deliberately **not** listed: `AWS_*` / `GOOGLE_*` credentials. Without the
-/// routing switches above they select no backend, and clearing them could
-/// break unrelated tooling sharing the process tree. Suppress the switch, not
-/// the whole cloud.
+/// Deliberately **not** listed: `AWS_*` / `GOOGLE_*` credentials, and the
+/// provider-specific base URLs (`ANTHROPIC_BEDROCK_BASE_URL`,
+/// `ANTHROPIC_AWS_BASE_URL`, …). Without their routing switch they select no
+/// backend, and clearing them could break unrelated tooling sharing the
+/// process tree. Suppress the switch, not the whole cloud. `ANTHROPIC_BASE_URL`
+/// *is* listed because it redirects the default API on its own, with no switch.
 ///
-/// The list will grow; [`tests::no_metered_route_survives_into_the_child`]
-/// pins the property rather than the contents.
+/// **Re-derive rather than guess.** The switch set is whatever the installed
+/// CLI reads; enumerate it instead of recalling it:
+///
+/// ```text
+/// grep -ao "CLAUDE_CODE_USE_[A-Z_]*" "$(which claude)" | sort -u
+/// ```
+///
+/// Filter that to routing switches — as of CLI 2.1.220 the non-routing hits are
+/// `COWORK_PLUGINS`, `NATIVE_FILE_SEARCH` and `POWERSHELL_TOOL`, which are
+/// feature toggles and must stay inherited.
+///
+/// [`tests::no_metered_route_survives_into_the_child`] pins the *property*
+/// (nothing here reaches the child). It cannot detect a route missing from the
+/// list — only the enumeration above can, which is why the command is recorded.
 pub const SUPPRESSED_AUTH_VARS: &[&str] = &[
     // Metered Anthropic API — same destination as the key, different name.
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
-    // Cloud routing switches: bill the AWS account / GCP project instead.
+    // Redirects the default API on its own; no switch required.
+    "ANTHROPIC_BASE_URL",
+    // Cloud routing switches: bill an AWS account, GCP project or Azure
+    // subscription instead of the subscription seat.
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
-    // A gateway/proxy that may meter.
-    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+    // Gateway/proxy routes that may meter.
+    "CLAUDE_CODE_USE_GATEWAY",
+    "CLAUDE_CODE_USE_MANTLE",
 ];
 
 /// How the subprocess is launched.
@@ -454,20 +475,46 @@ mod tests {
         );
     }
 
-    /// `ANTHROPIC_API_KEY` was the only variable suppressed before #276; the
-    /// four cloud/gateway routes are the regression this pins.
+    /// `ANTHROPIC_API_KEY` was the only variable suppressed before #276. Every
+    /// other entry is a route that was silently inherited; each is named here
+    /// so removing one fails loudly rather than quietly restoring the hole.
+    ///
+    /// Derived by enumerating the installed CLI, not from memory — see
+    /// [`SUPPRESSED_AUTH_VARS`] for the command.
     #[test]
     fn suppression_list_covers_every_known_metered_route() {
         for expected in [
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
             "CLAUDE_CODE_USE_BEDROCK",
             "CLAUDE_CODE_USE_VERTEX",
-            "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_USE_FOUNDRY",
+            "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+            "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+            "CLAUDE_CODE_USE_GATEWAY",
+            "CLAUDE_CODE_USE_MANTLE",
         ] {
             assert!(
                 SUPPRESSED_AUTH_VARS.contains(&expected),
                 "{expected} dropped out of the suppression list"
+            );
+        }
+    }
+
+    /// Feature toggles that share the `CLAUDE_CODE_USE_` prefix but select no
+    /// backend. Suppressing them would degrade the child for no billing
+    /// benefit, so the prefix must never be used as a blanket rule.
+    #[test]
+    fn feature_toggles_sharing_the_prefix_are_not_suppressed() {
+        for toggle in [
+            "CLAUDE_CODE_USE_COWORK_PLUGINS",
+            "CLAUDE_CODE_USE_NATIVE_FILE_SEARCH",
+            "CLAUDE_CODE_USE_POWERSHELL_TOOL",
+        ] {
+            assert!(
+                !SUPPRESSED_AUTH_VARS.contains(&toggle),
+                "{toggle} is a feature toggle, not a billing route — it must stay inherited"
             );
         }
     }
