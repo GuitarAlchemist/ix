@@ -64,6 +64,52 @@ use serde_json::Value;
 
 use crate::{BamlError, BamlOperation};
 
+/// Ambient environment variables that route the CLI to a metered backend,
+/// cleared from the child unless [`ClaudeCliConfig::inherit_metered_auth`].
+///
+/// `ANTHROPIC_API_KEY` is the common route, not the only one — each of these
+/// sends the bill somewhere other than the subscription seat this provider
+/// exists to use, and does so *silently*, because the run then succeeds.
+///
+/// Deliberately **not** listed: `AWS_*` / `GOOGLE_*` credentials, and the
+/// provider-specific base URLs (`ANTHROPIC_BEDROCK_BASE_URL`,
+/// `ANTHROPIC_AWS_BASE_URL`, …). Without their routing switch they select no
+/// backend, and clearing them could break unrelated tooling sharing the
+/// process tree. Suppress the switch, not the whole cloud. `ANTHROPIC_BASE_URL`
+/// *is* listed because it redirects the default API on its own, with no switch.
+///
+/// **Re-derive rather than guess.** The switch set is whatever the installed
+/// CLI reads; enumerate it instead of recalling it:
+///
+/// ```text
+/// grep -ao "CLAUDE_CODE_USE_[A-Z_]*" "$(which claude)" | sort -u
+/// ```
+///
+/// Filter that to routing switches — as of CLI 2.1.220 the non-routing hits are
+/// `COWORK_PLUGINS`, `NATIVE_FILE_SEARCH` and `POWERSHELL_TOOL`, which are
+/// feature toggles and must stay inherited.
+///
+/// [`tests::no_metered_route_survives_into_the_child`] pins the *property*
+/// (nothing here reaches the child). It cannot detect a route missing from the
+/// list — only the enumeration above can, which is why the command is recorded.
+pub const SUPPRESSED_AUTH_VARS: &[&str] = &[
+    // Metered Anthropic API — same destination as the key, different name.
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    // Redirects the default API on its own; no switch required.
+    "ANTHROPIC_BASE_URL",
+    // Cloud routing switches: bill an AWS account, GCP project or Azure
+    // subscription instead of the subscription seat.
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+    // Gateway/proxy routes that may meter.
+    "CLAUDE_CODE_USE_GATEWAY",
+    "CLAUDE_CODE_USE_MANTLE",
+];
+
 /// How the subprocess is launched.
 #[derive(Debug, Clone)]
 pub struct ClaudeCliConfig {
@@ -81,15 +127,24 @@ pub struct ClaudeCliConfig {
     /// How long to wait before killing the child. Default 120s.
     pub timeout: Duration,
 
-    /// Whether to pass `ANTHROPIC_API_KEY` through to the subprocess.
+    /// Whether to let ambient metered-backend routing reach the subprocess.
     ///
     /// Default `false`, and that default is the point of using the CLI at all:
-    /// when the variable is present the CLI prefers it over the claude.ai
+    /// when such a variable is present the CLI prefers it over the claude.ai
     /// login, so a machine with a spend-limited key set in its environment
     /// gets `400 You have reached your specified API usage limits` even though
-    /// the interactive session works fine. Removing it for the child forces
+    /// the interactive session works fine. Clearing them for the child forces
     /// subscription auth.
-    pub inherit_api_key: bool,
+    ///
+    /// Setting this to `true` moves the call between two budget tiers that
+    /// Demerzel's `state/driver/aiw-budget-policy.json` treats differently —
+    /// `claude-code-cli` is `local-seat` / no approval, `anthropic-api` is
+    /// `metered-cloud` / `requires_manual_approval: true`. Nothing in this
+    /// crate enforces that gate, so a caller flipping this is asserting the
+    /// approval was obtained elsewhere.
+    ///
+    /// See [`SUPPRESSED_AUTH_VARS`] for exactly what is cleared.
+    pub inherit_metered_auth: bool,
 
     /// Extra arguments appended verbatim, after the fixed ones.
     ///
@@ -106,7 +161,7 @@ impl Default for ClaudeCliConfig {
             model: None,
             working_dir: None,
             timeout: Duration::from_secs(120),
-            inherit_api_key: false,
+            inherit_metered_auth: false,
             extra_args: Vec::new(),
         }
     }
@@ -176,6 +231,18 @@ impl ClaudeCliOperation {
         }
     }
 
+    /// Clear every ambient route to a metered backend from the child.
+    ///
+    /// Split out from [`Self::run`] so the property — *no* suppressed variable
+    /// reaches the child — can be asserted without spawning anything.
+    fn apply_auth_suppression(&self, command: &mut Command) {
+        if !self.config.inherit_metered_auth {
+            for var in SUPPRESSED_AUTH_VARS {
+                command.env_remove(var);
+            }
+        }
+    }
+
     fn run(&self, prompt: &str) -> Result<String, String> {
         let mut command = Command::new(&self.config.binary);
         command
@@ -187,9 +254,7 @@ impl ClaudeCliOperation {
         if let Some(dir) = &self.config.working_dir {
             command.current_dir(dir);
         }
-        if !self.config.inherit_api_key {
-            command.env_remove("ANTHROPIC_API_KEY");
-        }
+        self.apply_auth_suppression(&mut command);
 
         let mut child = command.spawn().map_err(|e| {
             format!(
@@ -364,6 +429,94 @@ mod tests {
             "Judge whether this signal is within constitutional bounds.",
             json!({"type": "object", "required": ["verdict"]}),
         )
+    }
+
+    /// The property, not the list: whatever `SUPPRESSED_AUTH_VARS` grows to
+    /// contain, none of it may reach the child. Asserted by iterating the
+    /// constant rather than restating it, so adding a variable without wiring
+    /// it up fails here.
+    #[test]
+    fn no_metered_route_survives_into_the_child() {
+        let op = operation();
+        let mut command = Command::new("claude");
+        // Pretend every route is set in the ambient environment.
+        for var in SUPPRESSED_AUTH_VARS {
+            command.env(var, "set-in-parent");
+        }
+        op.apply_auth_suppression(&mut command);
+
+        let envs: Vec<_> = command.get_envs().collect();
+        for var in SUPPRESSED_AUTH_VARS {
+            let entry = envs
+                .iter()
+                .find(|(k, _)| k.to_str() == Some(var))
+                .unwrap_or_else(|| panic!("{var} missing from the child's env changes entirely"));
+            assert!(
+                entry.1.is_none(),
+                "{var} still reaches the child — it routes billing off the subscription seat"
+            );
+        }
+    }
+
+    /// The escape hatch still works, and is the only way any of them survive.
+    #[test]
+    fn inherit_metered_auth_lets_the_ambient_routes_through() {
+        let mut op = operation();
+        op.config.inherit_metered_auth = true;
+        let mut command = Command::new("claude");
+        for var in SUPPRESSED_AUTH_VARS {
+            command.env(var, "set-in-parent");
+        }
+        op.apply_auth_suppression(&mut command);
+
+        assert!(
+            command.get_envs().all(|(_, v)| v.is_some()),
+            "inherit_metered_auth = true must not clear anything"
+        );
+    }
+
+    /// `ANTHROPIC_API_KEY` was the only variable suppressed before #276. Every
+    /// other entry is a route that was silently inherited; each is named here
+    /// so removing one fails loudly rather than quietly restoring the hole.
+    ///
+    /// Derived by enumerating the installed CLI, not from memory — see
+    /// [`SUPPRESSED_AUTH_VARS`] for the command.
+    #[test]
+    fn suppression_list_covers_every_known_metered_route() {
+        for expected in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+            "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+            "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+            "CLAUDE_CODE_USE_GATEWAY",
+            "CLAUDE_CODE_USE_MANTLE",
+        ] {
+            assert!(
+                SUPPRESSED_AUTH_VARS.contains(&expected),
+                "{expected} dropped out of the suppression list"
+            );
+        }
+    }
+
+    /// Feature toggles that share the `CLAUDE_CODE_USE_` prefix but select no
+    /// backend. Suppressing them would degrade the child for no billing
+    /// benefit, so the prefix must never be used as a blanket rule.
+    #[test]
+    fn feature_toggles_sharing_the_prefix_are_not_suppressed() {
+        for toggle in [
+            "CLAUDE_CODE_USE_COWORK_PLUGINS",
+            "CLAUDE_CODE_USE_NATIVE_FILE_SEARCH",
+            "CLAUDE_CODE_USE_POWERSHELL_TOOL",
+        ] {
+            assert!(
+                !SUPPRESSED_AUTH_VARS.contains(&toggle),
+                "{toggle} is a feature toggle, not a billing route — it must stay inherited"
+            );
+        }
     }
 
     /// Captured verbatim from a real call, minus the fields this module never
