@@ -43,8 +43,9 @@ pub enum EvalError {
     UnknownFunction(String),
 
     #[error(
-        "a lambda (`{params} => …`) is not a value — it can only be an argument \
-         to a higher-order function such as `map` or `filter`"
+        "a lambda (`{params} => …`) is not a value, and no higher-order function \
+         accepts one yet — `map`/`filter`/`any`/`find`/`reduce` parse but do not \
+         run (see issue #281). Lambdas are currently accepted by the grammar only."
     )]
     LambdaIsNotAValue { params: String },
 
@@ -299,10 +300,18 @@ impl Executor {
 
             // A lambda is not a value — the value domain here is exactly JSON,
             // because everything this language produces is written to disk as
-            // JSON. Higher-order host functions destructure the AST node at the
-            // call site instead. Reaching here means one was used where a value
-            // was expected, which is a real authoring error and is reported as
-            // one rather than silently yielding null.
+            // JSON. A higher-order function would therefore have to destructure
+            // this AST node at its own call site rather than evaluate it.
+            //
+            // No such function exists yet, so *every* lambda reaching the
+            // evaluator lands here. That is deliberate: the corpus spells
+            // higher-order calls two ways — `filter(p => …)` but also
+            // `group.filter(signal_type == "pain")`, where the predicate reads
+            // fields off the element with no binder at all — and picking the
+            // scoping rule that unifies them is a design decision, not a
+            // detail. Parsing lambdas without executing them keeps the corpus
+            // measurable while that stays open. Erroring here is what stops it
+            // from silently yielding null. See issue #281.
             Expr::Lambda { params, .. } => Err(EvalError::LambdaIsNotAValue {
                 params: params.join(", "),
             }),
@@ -683,7 +692,10 @@ fn arithmetic(left: &Value, right: &Value, op: BinaryOp) -> Result<Value, EvalEr
             BinaryOp::Sub => x.checked_sub(y),
             BinaryOp::Mul => x.checked_mul(y),
             // Only exact division stays integral; 7/2 must not become 3.
-            BinaryOp::Div if y != 0 && x % y == 0 => x.checked_div(y),
+            // `checked_rem`, not `%`: `i64::MIN % -1` overflows and panics —
+            // in release builds too, since remainder overflow is a hard error
+            // rather than a debug assertion. It falls through to `f64` here.
+            BinaryOp::Div if x.checked_rem(y) == Some(0) => x.checked_div(y),
             _ => None,
         };
         if let Some(v) = exact {
@@ -842,6 +854,46 @@ mod tests {
             "{\"schema_version\":1}",
             serde_json::to_string(out.binding("a").unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn exact_division_stays_integral_but_inexact_division_does_not() {
+        let (exec, _) = executor();
+        let out = exec.run_source("a <- 8 / 2\nb <- 7 / 2").unwrap();
+        assert_eq!("8/2 = 4", format!("8/2 = {}", out.binding("a").unwrap()));
+        assert_eq!("7/2 = 3.5", format!("7/2 = {}", out.binding("b").unwrap()));
+    }
+
+    #[test]
+    fn dividing_i64_min_by_negative_one_does_not_panic() {
+        // `x % y` overflows here — and remainder overflow panics in release
+        // builds too, so this crashed the executor rather than erroring. The
+        // magnitude is not representable as an `i64`, so the answer is the
+        // `f64` one; what matters is that a value comes back at all.
+        let (exec, _) = executor();
+        let out = exec
+            .run_source("a <- -9223372036854775808 / -1")
+            .expect("i64::MIN / -1 must not panic");
+        let a = out.binding("a").unwrap().as_f64().unwrap();
+        assert_eq!(9.223372036854776e18, a);
+    }
+
+    #[test]
+    fn division_by_zero_is_refused_rather_than_becoming_null() {
+        // JSON has no `Infinity`; serialising one yields `null`, which would
+        // land in an artifact that still looks well-formed.
+        let (exec, _) = executor();
+        let err = exec.run_source("a <- 1 / 0").unwrap_err();
+        assert!(err.to_string().contains("division by zero"), "{err}");
+    }
+
+    #[test]
+    fn a_lambda_reaching_the_evaluator_is_an_error_not_a_null() {
+        // Lambdas parse but nothing consumes them yet (issue #281). The error
+        // is what keeps that gap visible instead of silently yielding null.
+        let (exec, _) = executor();
+        let err = exec.run_source("a <- map(x => x.name)").unwrap_err();
+        assert!(err.to_string().contains("is not a value"), "{err}");
     }
 
     #[test]
