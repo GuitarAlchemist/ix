@@ -64,6 +64,31 @@ use serde_json::Value;
 
 use crate::{BamlError, BamlOperation};
 
+/// Ambient environment variables that route the CLI to a metered backend,
+/// cleared from the child unless [`ClaudeCliConfig::inherit_metered_auth`].
+///
+/// `ANTHROPIC_API_KEY` is the common route, not the only one — each of these
+/// sends the bill somewhere other than the subscription seat this provider
+/// exists to use, and does so *silently*, because the run then succeeds.
+///
+/// Deliberately **not** listed: `AWS_*` / `GOOGLE_*` credentials. Without the
+/// routing switches above they select no backend, and clearing them could
+/// break unrelated tooling sharing the process tree. Suppress the switch, not
+/// the whole cloud.
+///
+/// The list will grow; [`tests::no_metered_route_survives_into_the_child`]
+/// pins the property rather than the contents.
+pub const SUPPRESSED_AUTH_VARS: &[&str] = &[
+    // Metered Anthropic API — same destination as the key, different name.
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    // Cloud routing switches: bill the AWS account / GCP project instead.
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    // A gateway/proxy that may meter.
+    "ANTHROPIC_BASE_URL",
+];
+
 /// How the subprocess is launched.
 #[derive(Debug, Clone)]
 pub struct ClaudeCliConfig {
@@ -81,15 +106,24 @@ pub struct ClaudeCliConfig {
     /// How long to wait before killing the child. Default 120s.
     pub timeout: Duration,
 
-    /// Whether to pass `ANTHROPIC_API_KEY` through to the subprocess.
+    /// Whether to let ambient metered-backend routing reach the subprocess.
     ///
     /// Default `false`, and that default is the point of using the CLI at all:
-    /// when the variable is present the CLI prefers it over the claude.ai
+    /// when such a variable is present the CLI prefers it over the claude.ai
     /// login, so a machine with a spend-limited key set in its environment
     /// gets `400 You have reached your specified API usage limits` even though
-    /// the interactive session works fine. Removing it for the child forces
+    /// the interactive session works fine. Clearing them for the child forces
     /// subscription auth.
-    pub inherit_api_key: bool,
+    ///
+    /// Setting this to `true` moves the call between two budget tiers that
+    /// Demerzel's `state/driver/aiw-budget-policy.json` treats differently —
+    /// `claude-code-cli` is `local-seat` / no approval, `anthropic-api` is
+    /// `metered-cloud` / `requires_manual_approval: true`. Nothing in this
+    /// crate enforces that gate, so a caller flipping this is asserting the
+    /// approval was obtained elsewhere.
+    ///
+    /// See [`SUPPRESSED_AUTH_VARS`] for exactly what is cleared.
+    pub inherit_metered_auth: bool,
 
     /// Extra arguments appended verbatim, after the fixed ones.
     ///
@@ -106,7 +140,7 @@ impl Default for ClaudeCliConfig {
             model: None,
             working_dir: None,
             timeout: Duration::from_secs(120),
-            inherit_api_key: false,
+            inherit_metered_auth: false,
             extra_args: Vec::new(),
         }
     }
@@ -176,6 +210,18 @@ impl ClaudeCliOperation {
         }
     }
 
+    /// Clear every ambient route to a metered backend from the child.
+    ///
+    /// Split out from [`Self::run`] so the property — *no* suppressed variable
+    /// reaches the child — can be asserted without spawning anything.
+    fn apply_auth_suppression(&self, command: &mut Command) {
+        if !self.config.inherit_metered_auth {
+            for var in SUPPRESSED_AUTH_VARS {
+                command.env_remove(var);
+            }
+        }
+    }
+
     fn run(&self, prompt: &str) -> Result<String, String> {
         let mut command = Command::new(&self.config.binary);
         command
@@ -187,9 +233,7 @@ impl ClaudeCliOperation {
         if let Some(dir) = &self.config.working_dir {
             command.current_dir(dir);
         }
-        if !self.config.inherit_api_key {
-            command.env_remove("ANTHROPIC_API_KEY");
-        }
+        self.apply_auth_suppression(&mut command);
 
         let mut child = command.spawn().map_err(|e| {
             format!(
@@ -364,6 +408,68 @@ mod tests {
             "Judge whether this signal is within constitutional bounds.",
             json!({"type": "object", "required": ["verdict"]}),
         )
+    }
+
+    /// The property, not the list: whatever `SUPPRESSED_AUTH_VARS` grows to
+    /// contain, none of it may reach the child. Asserted by iterating the
+    /// constant rather than restating it, so adding a variable without wiring
+    /// it up fails here.
+    #[test]
+    fn no_metered_route_survives_into_the_child() {
+        let op = operation();
+        let mut command = Command::new("claude");
+        // Pretend every route is set in the ambient environment.
+        for var in SUPPRESSED_AUTH_VARS {
+            command.env(var, "set-in-parent");
+        }
+        op.apply_auth_suppression(&mut command);
+
+        let envs: Vec<_> = command.get_envs().collect();
+        for var in SUPPRESSED_AUTH_VARS {
+            let entry = envs
+                .iter()
+                .find(|(k, _)| k.to_str() == Some(var))
+                .unwrap_or_else(|| panic!("{var} missing from the child's env changes entirely"));
+            assert!(
+                entry.1.is_none(),
+                "{var} still reaches the child — it routes billing off the subscription seat"
+            );
+        }
+    }
+
+    /// The escape hatch still works, and is the only way any of them survive.
+    #[test]
+    fn inherit_metered_auth_lets_the_ambient_routes_through() {
+        let mut op = operation();
+        op.config.inherit_metered_auth = true;
+        let mut command = Command::new("claude");
+        for var in SUPPRESSED_AUTH_VARS {
+            command.env(var, "set-in-parent");
+        }
+        op.apply_auth_suppression(&mut command);
+
+        assert!(
+            command.get_envs().all(|(_, v)| v.is_some()),
+            "inherit_metered_auth = true must not clear anything"
+        );
+    }
+
+    /// `ANTHROPIC_API_KEY` was the only variable suppressed before #276; the
+    /// four cloud/gateway routes are the regression this pins.
+    #[test]
+    fn suppression_list_covers_every_known_metered_route() {
+        for expected in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "ANTHROPIC_BASE_URL",
+        ] {
+            assert!(
+                SUPPRESSED_AUTH_VARS.contains(&expected),
+                "{expected} dropped out of the suppression list"
+            );
+        }
     }
 
     /// Captured verbatim from a real call, minus the fields this module never
