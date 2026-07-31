@@ -11,9 +11,9 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 ## Enrollment
 
-- **101** learnings total
+- **102** learnings total
   - `ga`: 36
-  - `ix`: 65
+  - `ix`: 66
 
 ## Faculties
 
@@ -81,7 +81,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [LDA non-symmetric deflation produces duplicated or wrong discriminants · `ix`](../../docs/solutions/math-correctness/lda-non-symmetric-deflation.md)
 - [Sedenion log(-1) principal value needs pi on an imaginary axis · `ix`](../../docs/solutions/math-correctness/sedenion-log-negative-reals.md)
 
-### plan (26)
+### plan (27)
 
 - [feat: Add quaternions, dual quaternions, Plücker coordinates, primes, and fractal curves · `ix`](../../docs/plans/2026-03-13-002-feat-tars-math-phase1-quaternions-primes-fractals-plan.md)
 - [feat: ix Full Vision — Math Crates + Demo + MCP + Infrastructure · `ix`](../../docs/plans/2026-03-14-001-feat-full-vision-math-demo-mcp-infra-plan.md)
@@ -109,6 +109,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [Exposing ix-fractal Takagi + de Rham through DuckDB, skills, and MCP · `ix`](../../docs/plans/2026-07-20-ix-fractal-takagi-derham-exposure.md)
 - [Additivity reconciliation gate — fail-closed integrity check for sharded warehouse aggregates · `ix`](../../docs/plans/2026-07-21-arch-additivity-reconciliation-gate.md)
 - [DFT-phase invariants — separate the Z-related pairs ICV cannot · `ix`](../../docs/plans/2026-07-21-feat-dft-phase-invariants.md)
+- [IX↔GA phase-similarity reconciliation — one name, two semantics · `ix`](../../docs/plans/2026-07-31-arch-ix-ga-phase-similarity-reconciliation.md)
 
 ### runtime-errors (2)
 
