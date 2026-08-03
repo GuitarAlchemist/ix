@@ -166,7 +166,13 @@ enum DescribeNoun {
 #[derive(Subcommand)]
 enum CheckNoun {
     /// Environment / registry / governance health
-    Doctor,
+    Doctor {
+        /// (Re)write the skill-inventory snapshot from the live registry
+        /// instead of checking against it. Use after intentionally adding or
+        /// removing an `#[ix_skill]` and reviewing the resulting diff.
+        #[arg(long)]
+        write_snapshot: bool,
+    },
     /// Evaluate a proposed action against the constitution
     Action {
         /// Free-text description of the proposed action
@@ -313,7 +319,7 @@ fn dispatch(cli: Cli) -> i32 {
         },
 
         Verb::Check { noun } => match noun {
-            CheckNoun::Doctor => match verbs::check::doctor(fmt) {
+            CheckNoun::Doctor { write_snapshot } => match verbs::check::doctor(fmt, write_snapshot) {
                 Ok(code) => code,
                 Err(e) => {
                     eprintln!("ix check doctor: {e}");

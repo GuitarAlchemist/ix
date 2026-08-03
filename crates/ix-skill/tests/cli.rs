@@ -13,6 +13,17 @@ fn ix() -> Command {
         "IX_GOVERNANCE_DIR",
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../governance/demerzel"),
     );
+    // Point at the committed skill-inventory snapshot two dirs up from the
+    // crate root — this makes `check doctor` (and thus `cargo test
+    // --workspace`) fail loudly if a PR adds/removes an `#[ix_skill]` without
+    // regenerating the snapshot (ix#185).
+    cmd.env(
+        "IX_REGISTRY_SNAPSHOT",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../state/registry/skills.snapshot.json"
+        ),
+    );
     cmd
 }
 
@@ -119,6 +130,90 @@ fn check_doctor_exits_with_hexavalent_code() {
         code == 0 || code == 1,
         "expected hexavalent T (0) or P (1), got {code}"
     );
+}
+
+#[test]
+fn check_doctor_fails_actionably_when_snapshot_missing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let snapshot_path = dir.path().join("does-not-exist.json");
+
+    let assert = ix()
+        .env("IX_REGISTRY_SNAPSHOT", &snapshot_path)
+        .args(["--format", "json", "check", "doctor"])
+        .assert()
+        .failure();
+    let code = assert.get_output().status.code().unwrap_or(-1);
+    assert_eq!(code, 4, "missing snapshot should yield F/false (4)");
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let registry_check = value["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["check"] == "skill-inventory")
+        .expect("skill-inventory check present");
+    assert_eq!(registry_check["status"], "fail");
+    let message = registry_check["message"].as_str().unwrap();
+    assert!(
+        message.contains("--write-snapshot"),
+        "failure message should name the fix: {message}"
+    );
+}
+
+#[test]
+fn check_doctor_write_snapshot_then_doctor_is_clean() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let snapshot_path = dir.path().join("skills.snapshot.json");
+
+    let write_assert = ix()
+        .env("IX_REGISTRY_SNAPSHOT", &snapshot_path)
+        .args(["--format", "json", "check", "doctor", "--write-snapshot"])
+        .assert();
+    let write_code = write_assert.get_output().status.code().unwrap_or(-1);
+    assert!(
+        write_code == 0 || write_code == 1,
+        "--write-snapshot should still report the hexavalent T/P doctor verdict, got {write_code}"
+    );
+    assert!(snapshot_path.is_file(), "snapshot file was written");
+
+    let assert = ix()
+        .env("IX_REGISTRY_SNAPSHOT", &snapshot_path)
+        .args(["--format", "json", "check", "doctor"])
+        .assert();
+    let code = assert.get_output().status.code().unwrap_or(-1);
+    assert!(
+        code == 0 || code == 1,
+        "freshly written snapshot should match the live registry, got {code}"
+    );
+}
+
+#[test]
+fn check_doctor_detects_drift_with_actionable_names() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let snapshot_path = dir.path().join("skills.snapshot.json");
+    std::fs::write(
+        &snapshot_path,
+        r#"{"count":1,"names":["definitely.not.a.real.skill"]}"#,
+    )
+    .expect("write stale snapshot");
+
+    let assert = ix()
+        .env("IX_REGISTRY_SNAPSHOT", &snapshot_path)
+        .args(["--format", "json", "check", "doctor"])
+        .assert()
+        .failure();
+    let code = assert.get_output().status.code().unwrap_or(-1);
+    assert_eq!(code, 4, "drifted snapshot should yield F/false (4)");
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let registry_check = value["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["check"] == "skill-inventory")
+        .expect("skill-inventory check present");
+    assert_eq!(registry_check["removed"], serde_json::json!(["definitely.not.a.real.skill"]));
+    assert!(registry_check["added"].as_array().unwrap().len() > 30);
 }
 
 #[test]

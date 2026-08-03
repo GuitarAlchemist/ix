@@ -329,6 +329,37 @@ cargo clippy -p ix-agent --tests            # zero new warnings
 
 `cargo clippy` with a zero-new-warnings bar is the commit gate for the ix-agent crate.
 
+### Step 7 — Run the one pre-PR health command
+
+```bash
+pwsh scripts/verify.ps1
+```
+
+`verify.ps1` runs fmt (advisory), clippy, `cargo test --workspace`, and `cargo run -p ix-skill -- check doctor` (ix#185) — the last of these is the single command that catches skill/tool inventory drift (added/removed `#[ix_skill]`s vs. the committed `state/registry/skills.snapshot.json`) without a hand-edited count. See `AGENTS.md`'s Verification section for the full breakdown and exit-code meaning. If you only touched an `#[ix_skill]`-annotated function, you can run the doctor alone:
+
+```bash
+cargo run -p ix-skill -- check doctor            # check for drift
+cargo run -p ix-skill -- check doctor --write-snapshot   # accept an intentional change
+```
+
+### Checklists for other common change types
+
+**Adding an `#[ix_skill]`** (auto-bridged to MCP by `crates/ix-agent/src/registry_bridge.rs` — a *different*, generated path from the hand-written `tools.rs` one above):
+
+- [ ] Annotate the function with `#[ix_skill(domain = "...", ...)]` (see any existing skill in the crate you're adding to for the exact macro shape).
+- [ ] `cargo build -p ix-skill` — confirms the `linkme` distributed slice picks it up.
+- [ ] `cargo run -p ix-skill -- list skills --query <name>` — confirms the new skill is discoverable.
+- [ ] `cargo run -p ix-skill -- check doctor --write-snapshot` and commit the updated `state/registry/skills.snapshot.json` — this is the reviewable diff that replaces a hand-edited count.
+- [ ] `pwsh scripts/verify.ps1` green before opening the PR.
+
+**Adding a DuckDB UDF** (`crates/ix-duck/src/udf.rs` or `tablefn.rs`, via the `VScalar`/table-function traits):
+
+- [ ] Implement the UDF wrapping an existing `ix_math`/`ix_*` function — do not reimplement the algorithm in `ix-duck`.
+- [ ] Register it in `register_all()` in the same file.
+- [ ] Add or extend an inline `#[cfg(test)] mod tests` in the same file (see `crates/ix-duck/src/mesh.rs` for the pattern) exercising the UDF through a real `duckdb::Connection`.
+- [ ] `cargo test -p ix-duck` and `cargo clippy -p ix-duck --all-targets -- -D warnings`.
+- [ ] `pwsh scripts/verify.ps1` green before opening the PR (DuckDB UDFs are not part of the `#[ix_skill]` registry, so no snapshot update is needed for this step).
+
 ---
 
 ## 9. The learning path
