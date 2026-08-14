@@ -15,6 +15,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 ix-baml = { workspace = true }
+sha2 = "0.10"
 # Same version/features as ix-quality-validate, the workspace's existing
 # JSON-Schema consumer — one validator implementation across the repo.
 jsonschema = { version = "0.30", default-features = false }

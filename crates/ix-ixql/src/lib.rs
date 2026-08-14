@@ -55,16 +55,28 @@
 //! [`parser`] for the distinction.
 
 pub mod ast;
+pub mod compiler;
+pub mod effects;
 pub mod eval;
 pub mod host;
 pub mod lexer;
 pub mod parser;
 pub mod path;
 pub mod schema;
+pub mod verifier;
 
 pub use ast::{Block, CompoundOp, Expr, Literal, PipeStep, Statement};
+pub use compiler::{
+    ArtifactRead, Capability, CompileDiagnostics, Compiler, Diagnostic, TypedBlock, TypedProgram,
+    TypedStatement, ValueType, WriteEffectDeclaration,
+};
+pub use effects::{
+    Compensation, EffectAdapter, EffectError, EffectIntent, EffectPlan, EffectReceipt,
+    ExecutionReceipt, ExpectedState,
+};
 pub use eval::{CompoundRecord, EvalError, Executor, RunError, RunOutcome, WriteRecord};
 pub use host::{FsHost, Host, HostError, MemoryHost};
 pub use parser::{parse_expression, parse_program, ParseError};
 pub use path::{normalize, PathError};
 pub use schema::{SchemaGate, SchemaViolation};
+pub use verifier::{VerificationDiagnostics, VerificationPolicy, VerifiedProgram, Verifier};

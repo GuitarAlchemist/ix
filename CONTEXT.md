@@ -23,6 +23,22 @@ contracts (see `docs/contracts/`), not runtime coupling.
   Distinct from a **crate** (Rust library) and a **tool** (MCP-callable function).
 - **Tool** — an MCP-callable function (registered in `ix-agent`; the count is
   asserted by `crates/ix-agent/tests/parity.rs` — every tool-adding PR bumps it).
+- **Typed IXQL program** — the pure compiler result: parsed source plus a scope-aware
+  typed IR and static capability/effect metadata. It is inspectable but has no authority
+  to execute or mutate anything.
+- **Verification policy / verified program** — a caller-owned capability, budget,
+  freshness, schema-gate, and authority contract; successful verification binds the
+  typed program to the canonical SHA-256 identity of that exact policy.
+- **Effect plan / intent / receipt** — strict IXQL evaluation stages declared
+  `EffectIntent`s without committing them; an `EffectAdapter` alone may apply a batch
+  and must return an execution receipt carrying the source, policy, expected-state,
+  compensation, and plan identities. A receipt proves one adapter execution, not approval.
+- **Schema-gate identity** — a content digest over the gate's ordered path/schema
+  registrations. Strict planning must match the exact gate verified by policy; a schema
+  name or path alone is not sufficient evidence.
+- **Logic digest** — a SHA-256 identity supplied for one pipeline node's executable
+  logic. The opt-in strict runtime combines it with node and input identities for cache
+  keys; the legacy `execute()` API preserves its historical unversioned namespace.
 - **Governance / Demerzel constitution** — all agent actions are subject to the
   Demerzel constitution (`governance/demerzel`). The **Galactic Protocol** is the
   cross-repo contract layer; **Prime Radiant** is the 3D governance-graph viz.
@@ -68,8 +84,10 @@ contracts (see `docs/contracts/`), not runtime coupling.
   SQL view/macro over a stream, built from IX UDFs) and correlating their outputs N×N
   to find which streams move together (clusters) and which one leads (centrality). The
   canonical shape is `condition → ix_pearson → ix_connected_components → ix_centrality`.
-  DuckDB SQL is the composition language, **not** IXQL (which is spec-only and stays
-  complementary — see `docs/adr/0004-duckdb-sql-pipeline-mesh.md` + ADR-0001). Advisory
+  DuckDB SQL is the composition language, **not** IXQL. The `ix-ixql` governance executor is
+  complementary and is designed to consume bench results through a future verified adapter;
+  no such adapter ships yet, and it does not execute the ML mesh
+  dialect (see `docs/adr/0004-duckdb-sql-pipeline-mesh.md` + ADR-0001). Advisory
   analysis only; betweenness/degree (not eigenvector) is the hub lens on bipartite meshes.
 - **Artifact source** (`ix_duck::source`) — the deep module a **lens** reads through:
   given a file selector + a flat **column spec**, it materializes a GA-emitted JSON

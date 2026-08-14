@@ -9,10 +9,10 @@ real-world data scenarios (sensors, market ticks, log-rates, ecosystem telemetry
 order of 100+ pipelines — to answer "which streams move together, and which one leads?".
 
 The instinct is to reach for **IXQL** (Demerzel's governance pipeline-spec DSL). But per
-[ADR-0001](0001-ixql-duckdb-integration-via-mcp-seam.md), IXQL is **spec-only** (no executor
-ships; `ix-cli` #103 is a draft) and the grammar is a governed artifact — adding DuckDB
-source/sink nodes is forbidden until the executor lands *and* a grammar change gets
-Galactic-Protocol sign-off. So IXQL cannot run a mesh today.
+[ADR-0001](0001-ixql-duckdb-integration-via-mcp-seam.md), the shipped `ix-ixql` executor covers
+the governance binding/record dialect, not the ML-pipeline dialect needed for this mesh. The
+grammar is governed, and embedding DuckDB source/sink nodes would couple specification to the
+analyst's bench. IXQL therefore remains the wrong execution substrate for this mesh.
 
 Meanwhile `ix-duck` (the analyst bench, `docs/DUCKDB.md`) now exposes ~80 IX algorithm UDFs,
 including the exact correlation primitives a mesh needs: `ix_pearson`, `ix_two_sample`,
@@ -41,9 +41,9 @@ UDFs as the stages — *not* IXQL, and *not* a new execution engine.** Concretel
 ## Why (the trade-off)
 
 - **Runnable today, zero new governed surface.** SQL views/macros + existing UDFs run on the
-  bundled-DuckDB (`duck`) feature now; IXQL would run *nothing*. The mesh is useful immediately
-  and remains forward-compatible: when the IXQL executor ships, its `mcp_tool_output(…)` /
-  `database(…)` productions can target an ix-duck mesh query as a data source (ADR-0001 path #1).
+  bundled-DuckDB (`duck`) feature now. Re-encoding the same execution in IXQL would duplicate
+  SQL composition and widen the governed grammar. A future verified adapter may let IXQL
+  consume an ix-duck mesh result without owning its execution (ADR-0001 path #1); none ships yet.
 - **SQL *is* a declarative composition language.** CTEs, views, and table macros already give
   naming, parameterization, and composition — re-deriving that in a bespoke engine is the
   "build the whole thing" failure mode the repo's tracer-bullet discipline warns against.
@@ -81,6 +81,6 @@ UDFs as the stages — *not* IXQL, and *not* a new execution engine.** Concretel
 
 ## Revisit trigger
 
-When the IXQL executor (`ix-cli` #103) ships: a first-class `duckdb(…)` source could then declare
-a mesh query *inside* an IXQL pipeline (with grammar sign-off, per ADR-0001's revisit trigger).
-Until then the mesh lives entirely in ix-duck.
+The original executor trigger has fired. A first-class `duckdb(…)` source could now declare a
+mesh query inside an IXQL pipeline, but still requires separate grammar sign-off per ADR-0001.
+Until that decision is made, the mesh remains entirely in ix-duck.

@@ -8,6 +8,7 @@
 
 use jsonschema::Validator;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::path::normalize_lossy;
 
@@ -23,6 +24,7 @@ pub struct SchemaViolation {
 struct Rule {
     prefix: String,
     name: String,
+    schema_digest: String,
     validator: Validator,
 }
 
@@ -56,12 +58,17 @@ impl SchemaGate {
         let name = name.into();
         let validator = jsonschema::draft202012::new(schema)
             .map_err(|e| format!("schema `{name}` does not compile: {e}"))?;
+        let schema_digest = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(schema).expect("JSON schema serializes"))
+        );
         self.rules.push(Rule {
             // Both sides of the comparison go through the same normalizer, so
             // a rule registered as `state\quality\` matches a path built as
             // `state/./quality/…`.
             prefix: normalize_prefix(&prefix.into()),
             name,
+            schema_digest,
             validator,
         });
         Ok(self)
@@ -103,6 +110,19 @@ impl SchemaGate {
 
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
+    }
+
+    /// Content identity of the ordered path/schema binding set.
+    pub fn identity_digest(&self) -> String {
+        let bindings = self
+            .rules
+            .iter()
+            .map(|rule| (&rule.prefix, &rule.name, &rule.schema_digest))
+            .collect::<Vec<_>>();
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&bindings).expect("schema bindings serialize"))
+        )
     }
 }
 

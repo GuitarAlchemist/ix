@@ -1,10 +1,12 @@
 //! Pipeline executor — runs DAG nodes in dependency order with parallelism.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::dag::{Dag, NodeId};
 
@@ -89,12 +91,29 @@ pub enum PipelineError {
 
     #[error("compute error: {0}")]
     ComputeError(String),
+
+    #[error("cacheable node '{0}' has no content-addressed logic digest")]
+    MissingLogicDigest(NodeId),
+
+    #[error("node '{node}' logic digest is not a SHA-256 hex digest: {digest}")]
+    InvalidLogicDigest { node: NodeId, digest: String },
+
+    #[error("pipeline execution was cancelled")]
+    Cancelled,
+
+    #[error("node '{0}' worker panicked")]
+    WorkerPanicked(NodeId),
 }
 
 /// Optional cache interface for memoization.
 ///
 /// Implement this to connect to `ix-cache` or any other cache.
 pub trait PipelineCache: Send + Sync {
+    /// Whether this adapter actually stores values.
+    fn enabled(&self) -> bool {
+        true
+    }
+
     /// Try to get a cached result for a node.
     fn get(&self, cache_key: &str) -> Option<Value>;
 
@@ -106,10 +125,93 @@ pub trait PipelineCache: Send + Sync {
 pub struct NoCache;
 
 impl PipelineCache for NoCache {
+    fn enabled(&self) -> bool {
+        false
+    }
+
     fn get(&self, _key: &str) -> Option<Value> {
         None
     }
     fn set(&self, _key: &str, _value: &Value) {}
+}
+
+/// Runtime controls that are not part of the DAG's computational structure.
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken(Arc<AtomicBool>);
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionOptions {
+    logic_digests: HashMap<NodeId, String>,
+    allow_legacy_cache_identity: bool,
+    cancellation: CancellationToken,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CacheIdentity<'a> {
+    Legacy,
+    Versioned(&'a str),
+}
+
+impl ExecutionOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_logic_digest(mut self, node: impl Into<NodeId>, digest: impl Into<String>) -> Self {
+        self.logic_digests.insert(node.into(), digest.into());
+        self
+    }
+
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
+    fn legacy() -> Self {
+        Self {
+            logic_digests: HashMap::new(),
+            allow_legacy_cache_identity: true,
+            cancellation: CancellationToken::new(),
+        }
+    }
+
+    fn cache_identity(
+        &self,
+        node: &str,
+        cache: &dyn PipelineCache,
+    ) -> Result<Option<CacheIdentity<'_>>, PipelineError> {
+        if !cache.enabled() {
+            return Ok(None);
+        }
+        if let Some(digest) = self.logic_digests.get(node) {
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(PipelineError::InvalidLogicDigest {
+                    node: node.into(),
+                    digest: digest.clone(),
+                });
+            }
+            return Ok(Some(CacheIdentity::Versioned(digest)));
+        }
+        if self.allow_legacy_cache_identity {
+            Ok(Some(CacheIdentity::Legacy))
+        } else {
+            Err(PipelineError::MissingLogicDigest(node.into()))
+        }
+    }
 }
 
 /// Execute a pipeline DAG.
@@ -121,6 +223,19 @@ pub fn execute(
     initial_inputs: &HashMap<String, Value>,
     cache: &dyn PipelineCache,
 ) -> Result<PipelineResult, PipelineError> {
+    execute_with_options(dag, initial_inputs, cache, &ExecutionOptions::legacy())
+}
+
+/// Execute with content-addressed cache identity and explicit runtime controls.
+pub fn execute_with_options(
+    dag: &Dag<PipelineNode>,
+    initial_inputs: &HashMap<String, Value>,
+    cache: &dyn PipelineCache,
+    options: &ExecutionOptions,
+) -> Result<PipelineResult, PipelineError> {
+    if options.cancellation.is_cancelled() {
+        return Err(PipelineError::Cancelled);
+    }
     let start = Instant::now();
     let levels = dag.parallel_levels();
 
@@ -142,6 +257,9 @@ pub fn execute(
     }
 
     for level in &levels {
+        if options.cancellation.is_cancelled() {
+            return Err(PipelineError::Cancelled);
+        }
         let level_ids: Vec<NodeId> = level.iter().map(|id| (*id).clone()).collect();
         execution_order.push(level_ids.clone());
 
@@ -150,7 +268,11 @@ pub fn execute(
             let id = level[0];
             let node = dag.get(id).unwrap();
 
-            let result = execute_node(id, node, &outputs, cache)?;
+            if options.cancellation.is_cancelled() {
+                return Err(PipelineError::Cancelled);
+            }
+
+            let result = execute_node(id, node, &outputs, cache, options)?;
             if result.cache_hit {
                 cache_hits += 1;
             }
@@ -161,56 +283,77 @@ pub fn execute(
                 .insert(id.clone(), result.output.clone());
             node_results.insert(id.clone(), result);
         } else {
-            // Multiple nodes — run in parallel
-            let handles: Vec<_> = level
-                .iter()
-                .map(|&id| {
-                    let id = id.clone();
-                    let outputs = Arc::clone(&outputs);
-                    let node = dag.get(&id).unwrap();
+            // Multiple independent nodes — scoped workers borrow the DAG safely.
+            let results = std::thread::scope(|scope| {
+                let handles: Vec<_> = level
+                    .iter()
+                    .map(|&id| {
+                        let id = id.clone();
+                        let worker_id = id.clone();
+                        let outputs = Arc::clone(&outputs);
+                        let node = dag.get(&id).expect("level node exists in DAG");
+                        let handle = scope.spawn(move || {
+                            if options.cancellation.is_cancelled() {
+                                return Err(PipelineError::Cancelled);
+                            }
+                            let node_inputs = gather_inputs(&id, node, &outputs)?;
+                            let cacheable = node.cacheable;
+                            let cache_identity = if cacheable {
+                                options.cache_identity(&id, cache)?
+                            } else {
+                                None
+                            };
+                            let cache_key = cache_identity
+                                .map(|identity| make_cache_key(&id, identity, &node_inputs));
 
-                    // Gather inputs before spawning
-                    let node_inputs = gather_inputs(&id, node, &outputs)?;
-                    let cache_key = make_cache_key(&id, &node_inputs);
-                    let cacheable = node.cacheable;
+                            if cacheable {
+                                if let Some(cached) =
+                                    cache_key.as_deref().and_then(|key| cache.get(key))
+                                {
+                                    let result = NodeResult {
+                                        node_id: id.clone(),
+                                        output: cached.clone(),
+                                        duration: Duration::ZERO,
+                                        cache_hit: true,
+                                    };
+                                    outputs.lock().unwrap().insert(id.clone(), cached);
+                                    return Ok((id, result));
+                                }
+                            }
 
-                    // Check cache
-                    if cacheable {
-                        if let Some(cached) = cache.get(&cache_key) {
+                            let node_start = Instant::now();
+                            let output = (node.compute)(&node_inputs).map_err(|error| {
+                                PipelineError::NodeFailed(id.clone(), error.to_string())
+                            })?;
+
+                            if let Some(cache_key) = &cache_key {
+                                cache.set(cache_key, &output);
+                            }
+
                             let result = NodeResult {
                                 node_id: id.clone(),
-                                output: cached.clone(),
-                                duration: Duration::ZERO,
-                                cache_hit: true,
+                                output: output.clone(),
+                                duration: node_start.elapsed(),
+                                cache_hit: false,
                             };
-                            outputs.lock().unwrap().insert(id.clone(), cached);
-                            return Ok((id, result));
-                        }
-                    }
+                            outputs.lock().unwrap().insert(id.clone(), output);
+                            Ok((id, result))
+                        });
+                        (worker_id, handle)
+                    })
+                    .collect();
 
-                    // Build a closure that doesn't borrow `node`
-                    // We need to run compute in the current thread context since ComputeFn isn't Send
-                    let node_start = Instant::now();
-                    let output = (node.compute)(&node_inputs)
-                        .map_err(|e| PipelineError::NodeFailed(id.clone(), e.to_string()))?;
+                handles
+                    .into_iter()
+                    .map(|(id, handle)| {
+                        handle
+                            .join()
+                            .map_err(|_| PipelineError::WorkerPanicked(id))?
+                    })
+                    .collect::<Result<Vec<_>, PipelineError>>()
+            })?;
 
-                    if cacheable {
-                        cache.set(&cache_key, &output);
-                    }
-
-                    let result = NodeResult {
-                        node_id: id.clone(),
-                        output: output.clone(),
-                        duration: node_start.elapsed(),
-                        cache_hit: false,
-                    };
-
-                    outputs.lock().unwrap().insert(id.clone(), output);
-                    Ok((id, result))
-                })
-                .collect::<Result<Vec<_>, PipelineError>>()?;
-
-            for (id, result) in handles {
+            for (id, result) in results {
                 if result.cache_hit {
                     cache_hits += 1;
                 }
@@ -233,13 +376,15 @@ fn execute_node(
     node: &PipelineNode,
     outputs: &Arc<Mutex<HashMap<NodeId, Value>>>,
     cache: &dyn PipelineCache,
+    options: &ExecutionOptions,
 ) -> Result<NodeResult, PipelineError> {
     let inputs = gather_inputs(id, node, outputs)?;
 
     // Check cache
     if node.cacheable {
-        let cache_key = make_cache_key(id, &inputs);
-        if let Some(cached) = cache.get(&cache_key) {
+        let cache_identity = options.cache_identity(id, cache)?;
+        let cache_key = cache_identity.map(|identity| make_cache_key(id, identity, &inputs));
+        if let Some(cached) = cache_key.as_deref().and_then(|key| cache.get(key)) {
             outputs.lock().unwrap().insert(id.clone(), cached.clone());
             return Ok(NodeResult {
                 node_id: id.clone(),
@@ -255,8 +400,10 @@ fn execute_node(
         .map_err(|e| PipelineError::NodeFailed(id.clone(), e.to_string()))?;
 
     if node.cacheable {
-        let cache_key = make_cache_key(id, &inputs);
-        cache.set(&cache_key, &output);
+        if let Some(cache_identity) = options.cache_identity(id, cache)? {
+            let cache_key = make_cache_key(id, cache_identity, &inputs);
+            cache.set(&cache_key, &output);
+        }
     }
 
     Ok(NodeResult {
@@ -307,18 +454,31 @@ fn gather_inputs(
 }
 
 /// Create a deterministic cache key from node ID and inputs.
-fn make_cache_key(node_id: &str, inputs: &HashMap<String, Value>) -> String {
+fn make_cache_key(
+    node_id: &str,
+    cache_identity: CacheIdentity<'_>,
+    inputs: &HashMap<String, Value>,
+) -> String {
     let mut sorted_inputs: Vec<(&String, &Value)> = inputs.iter().collect();
     sorted_inputs.sort_by_key(|(k, _)| *k);
 
-    let input_hash = format!("{:?}", sorted_inputs);
-    format!("pipeline:{}:{}", node_id, simple_hash(&input_hash))
+    match cache_identity {
+        CacheIdentity::Legacy => {
+            let input_hash = format!("{:?}", sorted_inputs);
+            format!("pipeline:{}:{}", node_id, simple_hash(&input_hash))
+        }
+        CacheIdentity::Versioned(logic_digest) => {
+            let bytes = serde_json::to_vec(&(node_id, logic_digest, sorted_inputs))
+                .expect("pipeline cache identity is serializable");
+            format!("pipeline:sha256:{:x}", Sha256::digest(bytes))
+        }
+    }
 }
 
-fn simple_hash(s: &str) -> u64 {
+fn simple_hash(value: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
-    for b in s.bytes() {
-        hash ^= b as u64;
+    for byte in value.bytes() {
+        hash ^= byte as u64;
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash

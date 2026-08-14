@@ -15,8 +15,9 @@ cargo run -p ix-agent --example ix_pipeline_mesh
 
 The IX pipeline stack is `PipelineSpec` (YAML or built in code) → `lower()` →
 `Dag<PipelineNode>` → `executor::execute`, where each stage invokes a **registered skill**
-(`ix-registry`). (IXQL — Demerzel's governance DSL — is *spec-only*; its executor doesn't
-ship, per ADR-0001. `ix-pipeline` is the executable IX pipeline layer.)
+(`ix-registry`). IXQL's governance binding/record dialect now executes through `ix-ixql`, but
+its ML-pipeline dialect is a distinct surface. `ix-pipeline` remains the executable DAG layer
+for this mesh; see ADR-0001.
 
 ```text
 executable pipeline mesh — 136 stages (N=16 streams)

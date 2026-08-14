@@ -14,6 +14,9 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
 
 use crate::path::{normalize, normalize_lossy};
+use crate::{
+    EffectAdapter, EffectError, EffectPlan, EffectReceipt, ExecutionReceipt, ExpectedState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HostError {
@@ -39,6 +42,7 @@ pub trait Host: Send + Sync {
 /// In-memory host with a frozen clock.
 pub struct MemoryHost {
     files: Mutex<BTreeMap<String, Value>>,
+    receipts: Mutex<BTreeMap<String, EffectReceipt>>,
     now: DateTime<Utc>,
 }
 
@@ -47,6 +51,7 @@ impl MemoryHost {
     pub fn at(now: DateTime<Utc>) -> Self {
         Self {
             files: Mutex::new(BTreeMap::new()),
+            receipts: Mutex::new(BTreeMap::new()),
             now,
         }
     }
@@ -68,6 +73,76 @@ impl MemoryHost {
     /// Everything written so far, keyed by path.
     pub fn files(&self) -> BTreeMap<String, Value> {
         self.files.lock().expect("MemoryHost lock").clone()
+    }
+}
+
+impl EffectAdapter for MemoryHost {
+    fn commit(&self, plan: &EffectPlan) -> Result<ExecutionReceipt, EffectError> {
+        let mut files_guard = self.files.lock().expect("MemoryHost lock");
+        let mut receipts_guard = self.receipts.lock().expect("MemoryHost receipt lock");
+        let mut files = files_guard.clone();
+        let mut receipts = receipts_guard.clone();
+        let mut committed = Vec::with_capacity(plan.effects().len());
+
+        for effect in plan.effects() {
+            let intent_digest = effect.digest();
+            if let Some(existing) = receipts.get(&effect.idempotency_key) {
+                if existing.intent_digest != intent_digest {
+                    return Err(EffectError::IdempotencyConflict {
+                        key: effect.idempotency_key.clone(),
+                    });
+                }
+                committed.push(existing.clone());
+                continue;
+            }
+
+            let before = files.get(&effect.path);
+            let before_digest = before.map(crate::effects::value_digest);
+            match &effect.expected_state {
+                ExpectedState::Any => {}
+                ExpectedState::Absent if before.is_some() => {
+                    return Err(EffectError::ExpectedState {
+                        path: effect.path.clone(),
+                        reason: "artifact already exists".into(),
+                    });
+                }
+                ExpectedState::Absent => {}
+                ExpectedState::Sha256(expected)
+                    if before_digest.as_deref() != Some(expected.as_str()) =>
+                {
+                    return Err(EffectError::ExpectedState {
+                        path: effect.path.clone(),
+                        reason: format!(
+                            "expected sha256:{expected}, found {}",
+                            before_digest.as_deref().unwrap_or("absent")
+                        ),
+                    });
+                }
+                ExpectedState::Sha256(_) => {}
+            }
+
+            let receipt = EffectReceipt {
+                idempotency_key: effect.idempotency_key.clone(),
+                intent_digest,
+                path: effect.path.clone(),
+                before_digest,
+                after_digest: crate::effects::value_digest(&effect.value),
+                authority: effect.authority.clone(),
+                expected_state: effect.expected_state.clone(),
+                compensation: effect.compensation.clone(),
+            };
+            files.insert(effect.path.clone(), effect.value.clone());
+            receipts.insert(effect.idempotency_key.clone(), receipt.clone());
+            committed.push(receipt);
+        }
+
+        *files_guard = files;
+        *receipts_guard = receipts;
+        Ok(ExecutionReceipt {
+            plan_digest: plan.plan_digest().into(),
+            verification_policy_digest: plan.verification_policy_digest().into(),
+            effects: committed,
+        })
     }
 }
 

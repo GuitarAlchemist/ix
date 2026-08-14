@@ -17,6 +17,8 @@ use ix_baml::{BamlError, BamlRegistry};
 use serde_json::{Map, Value};
 
 use crate::ast::{BinaryOp, Block, CompoundOp, Expr, Literal, PipeStep, Statement, UnaryOp};
+use crate::compiler::TypedStatement;
+use crate::effects::{Compensation, EffectError, EffectIntent, EffectPlan, ExpectedState};
 use crate::host::{dotnet_format_to_chrono, Host, HostError};
 use crate::parser::{parse_expression, parse_program, ParseError};
 use crate::schema::{SchemaGate, SchemaViolation};
@@ -91,6 +93,22 @@ pub enum EvalError {
 
     #[error("in a `check:` predicate — {0}")]
     Predicate(#[from] ParseError),
+
+    #[error(transparent)]
+    Effect(#[from] EffectError),
+
+    #[error("strict planning cannot execute `{0}` before an effect adapter can receipt it")]
+    UnsupportedStrictEffect(&'static str),
+
+    #[error("freshness evidence mismatch for `{path}`: expected {expected}, found {found}")]
+    FreshnessMismatch {
+        path: String,
+        expected: String,
+        found: String,
+    },
+
+    #[error("schema-gate identity mismatch: expected {expected}, found {found}")]
+    SchemaGateMismatch { expected: String, found: String },
 }
 
 /// Parse-then-run failure, for [`Executor::run_source`].
@@ -141,6 +159,10 @@ pub struct RunOutcome {
     pub writes: Vec<WriteRecord>,
     /// Compound-phase effects in the order they were declared.
     pub compound: Vec<CompoundRecord>,
+    /// Strict-mode effects, evaluated but not committed.
+    pub effects: Vec<EffectIntent>,
+    stage_writes: bool,
+    fresh_artifacts: BTreeMap<String, String>,
 }
 
 impl RunOutcome {
@@ -185,6 +207,75 @@ impl Executor {
             self.exec_statement(statement, &mut outcome)?;
         }
         Ok(outcome)
+    }
+
+    /// Evaluate an already verified program and return effects without committing them.
+    pub fn plan_verified(
+        &self,
+        verified: &crate::VerifiedProgram,
+    ) -> Result<EffectPlan, EvalError> {
+        if let Some(expected) = verified.expected_schema_gate_digest() {
+            let found = self.gate.identity_digest();
+            if found != expected {
+                return Err(EvalError::SchemaGateMismatch {
+                    expected: expected.into(),
+                    found,
+                });
+            }
+        }
+        if verified
+            .program()
+            .required_capabilities()
+            .contains(&crate::Capability::InvokeModel)
+        {
+            return Err(EvalError::UnsupportedStrictEffect("baml model invocation"));
+        }
+        if verified
+            .program()
+            .required_capabilities()
+            .contains(&crate::Capability::Compound)
+        {
+            return Err(EvalError::UnsupportedStrictEffect("compound operation"));
+        }
+        let mut outcome = RunOutcome {
+            stage_writes: true,
+            fresh_artifacts: verified.fresh_artifacts().clone(),
+            ..RunOutcome::default()
+        };
+        for statement in verified.program().typed_ir().statements() {
+            self.exec_typed_statement(statement, &mut outcome)?;
+        }
+        Ok(EffectPlan::new(
+            verified.program().source_digest(),
+            verified.verification_policy_digest(),
+            outcome.effects,
+        ))
+    }
+
+    fn exec_typed_statement(
+        &self,
+        statement: &TypedStatement,
+        outcome: &mut RunOutcome,
+    ) -> Result<(), EvalError> {
+        match statement {
+            TypedStatement::Assign {
+                name, expression, ..
+            } => {
+                let value = self.eval(expression, outcome)?;
+                outcome.env.insert(name.clone(), value);
+            }
+            TypedStatement::Do { expression, .. } => {
+                self.eval(expression, outcome)?;
+            }
+            TypedStatement::When { condition, body } => {
+                if self.expect_bool(self.eval(condition, outcome)?, "a `when` condition")? {
+                    for inner in body.statements() {
+                        self.exec_typed_statement(inner, outcome)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn exec_statement(
@@ -364,11 +455,9 @@ impl Executor {
             BinaryOp::In => contains(&rhs, &lhs)?,
             BinaryOp::NotIn => !contains(&rhs, &lhs)?,
             BinaryOp::And | BinaryOp::Or => unreachable!("handled above"),
-            BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::Concat => unreachable!("returned above"),
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Concat => {
+                unreachable!("returned above")
+            }
         }))
     }
 
@@ -488,7 +577,25 @@ impl Executor {
                 let path = expect_string(args.positional[0].clone(), "`ix.io.read` path")?;
                 let path = crate::path::normalize(&path)?;
                 // Absence becomes null so `→ default(…)` can supply a value.
-                Ok(self.host.read(&path)?.unwrap_or(Value::Null))
+                if outcome.stage_writes {
+                    if let Some(staged) =
+                        outcome.writes.iter().rev().find(|write| write.path == path)
+                    {
+                        return Ok(staged.value.clone());
+                    }
+                }
+                let value = self.host.read(&path)?.unwrap_or(Value::Null);
+                if let Some(expected) = outcome.fresh_artifacts.get(&path) {
+                    let found = crate::effects::value_digest(&value);
+                    if &found != expected {
+                        return Err(EvalError::FreshnessMismatch {
+                            path,
+                            expected: expected.clone(),
+                            found,
+                        });
+                    }
+                }
+                Ok(value)
             }
 
             "ix.io.write" => {
@@ -503,7 +610,23 @@ impl Executor {
                 // Gate first: a value that fails its schema must never reach
                 // the host, not even to be deleted afterwards.
                 self.gate.check(&path, &value)?;
-                self.host.write(&path, &value)?;
+                if outcome.stage_writes {
+                    let idempotency_key = effect_string(&args, "idempotency_key")?;
+                    let expected_state =
+                        ExpectedState::parse(&effect_string(&args, "expected_state")?)?;
+                    let compensation = Compensation::parse(&effect_string(&args, "compensation")?)?;
+                    let authority = effect_string(&args, "authority")?;
+                    outcome.effects.push(EffectIntent {
+                        path: path.clone(),
+                        value: value.clone(),
+                        idempotency_key,
+                        expected_state,
+                        compensation,
+                        authority,
+                    });
+                } else {
+                    self.host.write(&path, &value)?;
+                }
                 outcome.writes.push(WriteRecord {
                     path,
                     value: value.clone(),
@@ -577,6 +700,20 @@ impl Executor {
             }),
         }
     }
+}
+
+fn effect_string(args: &Args, name: &'static str) -> Result<String, EvalError> {
+    let value =
+        args.named.get(name).cloned().ok_or_else(|| {
+            EffectError::InvalidContract(format!("ix.io.write requires `{name}`"))
+        })?;
+    let value = expect_string(value, name)?;
+    if value.trim().is_empty() {
+        return Err(
+            EffectError::InvalidContract(format!("ix.io.write `{name}` cannot be empty")).into(),
+        );
+    }
+    Ok(value)
 }
 
 #[derive(Default)]
