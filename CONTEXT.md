@@ -49,6 +49,12 @@ contracts (see `docs/contracts/`), not runtime coupling.
 - **Analyst's bench** — the in-process, in-memory DuckDB layer (`ix-duck`) over the
   JSONL/Parquet IX and `ga` already emit. Not a production engine, not a source of
   truth (see `docs/DUCKDB.md`).
+- **Coordination shape** — a content-addressed, read-only advisory artifact derived
+  from typed event-graph windows: balance residuals, queue pressure, tail latency,
+  graph gradients or Laplacian energy, and cycle exposure. It is not a continuum
+  stress tensor, routing decision, authority grant, safety verdict, or control
+  command. Current execution belongs to DuckDB and IX modules; IXQL may describe or
+  verify the plan but remains spec-only and non-executable.
 - **Lens** — a read-only analyst module on the bench (`ix_duck::{chatbot, routing,
   loops, ood, maintain}`) that turns a GA artifact set into a queryable signal. A lens
   owns *analytics*, not ingest.

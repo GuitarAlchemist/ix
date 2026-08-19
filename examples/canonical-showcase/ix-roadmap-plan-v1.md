@@ -195,10 +195,10 @@ Each recommendation is scoped to a shippable unit with a concrete success criter
 - **Source:** `improvement-investigation-ix-v1.md` §9 (R6 addendum)
 - **Scope:** three levels implementable independently:
   - **Level 1 — Adversarial surrogate validation.** Wrap every ML surrogate (random forest, NN, linear regression) with a mandatory `:adversarial_validation` sibling asset. Uses `ix_adversarial_fgsm` to find worst-case inputs, retrains on them, iterates. Target: surrogate trap mitigation.
-  - **Level 2 — Designer vs breaker co-evolution.** Two `ix-evolution` populations. Designer proposes pipeline configurations, breaker proposes stressors. Mixed Nash equilibrium via `ix_game_nash`. Produces a fleet of ~10 Pareto-optimal pipelines, each robust to a different threat profile.
+  - **Level 2 — Designer vs breaker co-evolution.** Two `ix-evolution` populations. Designer proposes pipeline configurations, breaker proposes stressors. Mixed Nash equilibrium via `ix_game_nash` for the designer/breaker game; a Nash equilibrium is not a Pareto front, so candidate ranking uses non-dominated sorting via `ix_evolution::pareto::rank`. Produces a fleet of ~10 non-dominated pipelines, each robust to a different threat profile.
   - **Level 3 — Adversarial-auditor Demerzel persona.** New persona YAML in `governance/demerzel/personas/`. Active chaos engineering on pipeline logic via OOD inputs, cache saturation, constitutional violation attempts. Scored by `ix_governance_check`. Survival unlocks autonomy levels per the alignment policy.
 - **Effort:** L1 3-4 days, L2 1-2 weeks, L3 ~1 week. Total 3-4 weeks.
-- **Success criterion:** L1 discovers and patches ≥ 3 failure modes on the bracket surrogate before convergence. L2 produces a Pareto fleet with measurable diversity. L3 runs the bracket pipeline through 100 adversarial audits and reports a survival rate.
+- **Success criterion:** L1 discovers and patches ≥ 3 failure modes on the bracket surrogate before convergence. L2 produces a non-dominated fleet with measurable diversity. L3 runs the bracket pipeline through 100 adversarial audits and reports a survival rate.
 - **Validation demo:** `04-catia-bracket-generative` runs L1 and proves the stress margin is ≥ 1.45 under the worst adversarial input found.
 - **Dependencies:** R1, R2 (deterministic replay), R5 (large adversarial batch runs), R7 (gradient-adversarial is superior to evolutionary-adversarial for L1).
 - **Risk:** moderate. Mitigation: L1 only ships with the MVP; L2 and L3 are follow-ons gated on L1 success.
