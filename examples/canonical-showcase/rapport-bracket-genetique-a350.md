@@ -1,5 +1,10 @@
 # Conception générative d'un bracket aéronautique A350 par pipeline ix 13 outils
 
+> [!CAUTION]
+> **Historical synthetic exploration — not an engineering report.** This document predates IX's engineering co-processor boundary and contains unvalidated claims. IX did not run a native CAD kernel, structural topology optimizer, FEA/CFD solver, collision-aware 5-axis planner, physical test campaign, or certification process. In particular, `ix_topo` is topological data analysis, Nash equilibrium is not a Pareto front, and Viterbi is not a collision-aware toolpath planner. Every geometry, load, stress, frequency, mass reduction, safety factor, toolpath, certification statement, and commercial comparison below is illustrative only and must not be used for design, manufacture, safety, procurement, or certification decisions. See `docs/adr/0005-engineering-coprocessor-boundary.md`.
+>
+> **Exploration synthétique historique — ce n'est pas un rapport d'ingénierie.** Ce document est antérieur à la frontière « co-processeur d'ingénierie » d'IX et contient des affirmations non validées. IX n'a exécuté ni noyau CAO natif, ni optimiseur topologique structurel, ni solveur FEA/CFD, ni planificateur 5 axes anti-collision, ni campagne d'essais physiques, ni processus de certification. En particulier, `ix_topo` relève de l'analyse topologique de données, un équilibre de Nash n'est pas un front de Pareto, et Viterbi n'est pas un planificateur de trajectoire anti-collision. Toutes les géométries, charges, contraintes, fréquences, réductions de masse, marges de sécurité, trajectoires, mentions de certification et comparaisons commerciales ci-dessous sont purement illustratives et ne doivent servir à aucune décision de conception, fabrication, sécurité, achat ou certification. Voir `docs/adr/0005-engineering-coprocessor-boundary.md`.
+
 **Rapport technique — Version 1.0**
 **Classification : Interne / Confidentiel**
 **Date : Avril 2026**

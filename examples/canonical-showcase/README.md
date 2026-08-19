@@ -1,12 +1,15 @@
-# IX Canonical Showcase
+# IX Exploratory Showcase
 
-The flagship set of demos showing IX composing its 46 MCP tools against four distinct real-world problem classes. Every artifact in this folder was produced by orchestrating IX tools through a language model; none were hand-written by a traditional developer.
+These demos explore how IX algorithms can be composed against several problem classes. They are synthetic, model-orchestrated artifacts, not validated engineering analyses or production benchmarks.
+
+> [!CAUTION]
+> The aerospace/CATIA artifacts do not use a native CAD kernel, structural topology optimizer, FEA/CFD solver, collision-aware toolpath planner, or certification workflow. `ix_topo` computes topological-data-analysis quantities rather than structural topology optimization; `ix_game_nash` does not compute a Pareto front; and Viterbi does not establish a collision-free 5-axis toolpath. All bracket dimensions, stresses, frequencies, mass reductions, safety factors, toolpaths, certification statements, and commercial comparisons are illustrative and unvalidated. They must not be used for design, manufacture, safety, procurement, or certification decisions.
 
 This folder serves three purposes:
 
-1. **Marketing** — prove IX can handle real aerospace, cyber, finops, and signal-processing problems.
+1. **Exploration** — identify promising compositions and the adapters or solvers still missing.
 2. **Onboarding tutorial** — traverse the demos from 3-tool to 13-tool pipelines to learn the IX mental model.
-3. **Regression harness** — each demo replays through `ix_pipeline_run` (after R1 lands) and fails CI on any bit-level drift.
+3. **Candidate regression corpus** — a demo becomes a regression harness only after an executable, independently validated replay exists.
 
 See `ix-roadmap-plan-v1.md` for the roadmap that turns this ad-hoc collection into a CI-gated first-class project artifact.
 
@@ -16,11 +19,11 @@ See `ix-roadmap-plan-v1.md` for the roadmap that turns this ad-hoc collection in
 |---|---|---|---|---|
 | [cost-anomaly-hunter.html](cost-anomaly-hunter.html) | FinOps | `ix_stats`, `ix_fft`, `ix_kmeans` (3) | 9 KB | — |
 | [cyber-intrusion-triage.html](cyber-intrusion-triage.html) | Security | 12 tools: `stats`, `fft`, `chaos_lyapunov`, `bloom_filter`, `kmeans`, `viterbi`, `markov`, `linreg`, `rf`, `topo`, `nash`, `bandit`, `gov_check` | 19 KB | — |
-| [catia-bracket-generative.html](catia-bracket-generative.html) | Aerospace CAD | 13 tools: the full flagship pipeline (`stats`, `fft`, `kmeans`, `linreg`, `rf`, `adam`, `ga`, `topo`, `chaos`, `nash`, `viterbi`, `markov`, `gov`) | 29 KB | [v1 FR](rapport-bracket-genetique-a350.md) · [v2 FR](rapport-bracket-genetique-a350-v2.md) |
-| [catia-bracket-3d.html](catia-bracket-3d.html) | Aerospace CAD | Three.js r160 PBR render of the optimized bracket with stress map | 15 KB | — |
-| [catia-toolpath-3d.html](catia-toolpath-3d.html) | Aerospace CAD | Isometric 5-axis toolpath from the 32-step Viterbi output | 12 KB | — |
-| [catia-bracket-context-a350.html](catia-bracket-context-a350.html) | Aerospace CAD | Schematic A350 side/top/pylon context | 17 KB | — |
-| [catia-bracket-context-realistic.html](catia-bracket-context-realistic.html) | Aerospace CAD | Engineering-drawing-style 4-plate technical package + Three.js r170 WebGPU + TSL | 41 KB | — |
+| [catia-bracket-generative.html](catia-bracket-generative.html) | Synthetic aerospace exploration | 13 mathematical stand-ins; no CAD/FEA validation | 29 KB | [v1 FR](rapport-bracket-genetique-a350.md) · [v2 FR](rapport-bracket-genetique-a350-v2.md) |
+| [catia-bracket-3d.html](catia-bracket-3d.html) | Illustrative rendering | Three.js r160 rendering with a synthetic stress visualization | 15 KB | — |
+| [catia-toolpath-3d.html](catia-toolpath-3d.html) | Illustrative sequence | Isometric visualization of a Viterbi state sequence; not a collision-aware toolpath | 12 KB | — |
+| [catia-bracket-context-a350.html](catia-bracket-context-a350.html) | Illustrative context — unvalidated | Schematic A350 side/top/pylon context; no CAD kernel, no FEA | 17 KB | — |
+| [catia-bracket-context-realistic.html](catia-bracket-context-realistic.html) | Illustrative context — unvalidated | Engineering-drawing-style synthetic context plates + Three.js r170 WebGPU + TSL; no CAD kernel, no FEA, no certification | 41 KB | — |
 
 ## Reports and investigations
 

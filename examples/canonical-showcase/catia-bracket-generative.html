@@ -125,13 +125,17 @@
 </head>
 <body>
 
+<div role="alert" style="padding:10px 16px;background:#3a2100;color:#ffd79a;border-bottom:1px solid #a66a1f;font:600 12px/1.45 system-ui">
+  SYNTHETIC EXPLORATION — NOT ENGINEERING EVIDENCE. No CAD kernel, FEA/CFD solver, structural topology optimizer, collision-aware toolpath planner, physical validation, or certification was executed. All dimensions and results are illustrative.
+</div>
+
 <header>
   <div>
     <h1><span class="logo">ix</span><span class="sep">·</span>CATIA V5 — Bracket génératif A350 <small style="margin-left:8px">fixation moteur/pylône</small></h1>
-    <div class="sub">Pipeline 13 outils · 20 cas de charges · surrogate FEA + optimisation topologique + certification AS9100 / DO-178C</div>
+    <div class="sub">Exploration synthétique de 13 primitives mathématiques · aucun calcul FEA ni certification</div>
   </div>
   <div style="text-align:right">
-    <div class="badge">◉ OPTIMISATION RÉUSSIE</div>
+    <div class="badge">◉ ILLUSTRATION NON VALIDÉE</div>
     <div class="sub" style="margin-top:6px">Ti-6Al-4V · SLM · pilotage CAA V5 + VBA</div>
   </div>
 </header>
@@ -146,7 +150,7 @@
   <div class="tool"><span class="n">7</span> ga_features <span class="check">✓</span></div><span class="arrow">→</span>
   <div class="tool"><span class="n">8</span> topo_betti <span class="check">✓</span></div><span class="arrow">→</span>
   <div class="tool"><span class="n">9</span> chaos_conv <span class="check">✓</span></div><span class="arrow">→</span>
-  <div class="tool"><span class="n">10</span> nash_pareto <span class="check">✓</span></div><span class="arrow">→</span>
+  <div class="tool"><span class="n">10</span> nash stand-in <span class="check">exploratory</span></div><span class="arrow">→</span>
   <div class="tool"><span class="n">11</span> viterbi_5ax <span class="check">✓</span></div><span class="arrow">→</span>
   <div class="tool"><span class="n">12</span> markov_tree <span class="check">✓</span></div><span class="arrow">→</span>
   <div class="tool"><span class="n">13</span> gov_cert <span class="check">✓</span></div>
@@ -156,8 +160,8 @@
   <div class="kpi"><div class="label">Masse finale</div><div class="val ok">412<span class="unit">g</span></div><div class="delta">−38% vs. baseline 665g</div></div>
   <div class="kpi"><div class="label">Contrainte max</div><div class="val ok">221<span class="unit">MPa</span></div><div class="delta">yield 950 · marge ×1.47</div></div>
   <div class="kpi"><div class="label">Mode propre 1</div><div class="val accent">112<span class="unit">Hz</span></div><div class="delta">≫ 80 Hz requis</div></div>
-  <div class="kpi"><div class="label">Facteur sécurité</div><div class="val gold">1.50</div><div class="delta">conforme CS-25</div></div>
-  <div class="kpi"><div class="label">Certification</div><div class="val ok">✓</div><div class="delta">AS9100D · DO-178C</div></div>
+  <div class="kpi"><div class="label">Facteur sécurité</div><div class="val gold">1.50</div><div class="delta">CS-25 non évaluée</div></div>
+  <div class="kpi"><div class="label">Certification</div><div class="val">NON ÉVALUÉE</div><div class="delta">exploration synthétique uniquement</div></div>
 </div>
 
 <div class="grid">
@@ -234,14 +238,14 @@
 
   <!-- ⑩ Nash -->
   <div class="panel span-3">
-    <h2>⑩ Front de Pareto — Nash <span class="tag">ix_nash</span></h2>
+    <h2>⑩ Nash stand-in — pas un moteur Pareto <span class="tag">ix_nash</span></h2>
     <svg viewBox="0 0 200 150" id="nash"></svg>
     <div class="sub-metric">Matrice 3×3 masse↔raideur↔coût · solution dominante : <b>épaisseur moyenne + lattice interne</b></div>
   </div>
 
   <!-- ⑪ Viterbi -->
   <div class="panel span-12">
-    <h2>⑪ Décodage HMM — trajet d'usinage 5 axes (32 étapes) <span class="tag">ix_viterbi</span></h2>
+    <h2>⑪ Décodage HMM — séquence illustrative (32 états) <span class="tag">ix_viterbi</span></h2>
     <svg viewBox="0 0 1100 80" id="viterbi"></svg>
     <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center">
       <span class="chip op1">Ébauche (fraise Ø12)</span>
@@ -277,35 +281,34 @@
 
 <div class="verdict">
   <div class="verdict-head">
-    <h2>⚡ Verdict — Bracket optimisé prêt pour CATIA V5</h2>
-    <div class="stamp">PRÊT POUR PRODUCTION · SLM Ti-6Al-4V</div>
+    <h2>⚡ Résumé — exploration mathématique synthétique</h2>
+    <div class="stamp">NON VALIDÉ · NE PAS FABRIQUER</div>
   </div>
   <p>
-    Treize outils mathématiques ix ont résolu, en quelques centaines de millisecondes, un problème qu'un ingénieur
-    humain ne peut pas traiter à la main : optimiser un bracket aéronautique sous <b>20 cas de charges couplés</b>,
-    sous <b>contraintes de fabricabilité SLM</b> (surplombs, cavités fermées), en respectant un <b>facteur de sécurité 1.5</b>
-    et les <b>exigences de certification AS9100D + DO-178C</b>.
+    Treize primitives mathématiques ix ont illustré une chaîne d'analyse sur des données synthétiques. Aucun kernel CAD,
+    solveur FEA/CFD, essai physique, planificateur collision-aware ou processus de certification n'a été exécuté. Les
+    nombres ci-dessous sont des données de démonstration, pas des résultats d'ingénierie.
   </p>
   <p>
-    Le pipeline a remplacé ~10⁴ appels FEA par un <b>surrogate Random Forest</b> (étape 5) puis lancé une optimisation
-    topologique <b>Adam</b> (étape 6) croisée avec une exploration génétique discrète des features (étape 7). La <b>topologie
-    persistante</b> (étape 8) a garanti qu'aucune cavité non-drainable ne subsiste pour l'impression SLM, pendant que
-    <b>l'exposant de Lyapunov</b> (étape 9) a certifié la convergence de l'optimiseur. L'<b>équilibre de Nash</b>
-    (étape 10) a matérialisé le front de Pareto masse↔raideur↔coût, et <b>Viterbi</b> (étape 11) a décodé le trajet
+    Le pipeline a entraîné un <b>surrogate Random Forest</b> illustratif (étape 5), puis optimisé Rosenbrock comme stand-in
+    (étape 6), croisé avec une exploration génétique Rastrigin (étape 7). L'<b>homologie persistante</b> (étape 8) décrit
+    la topologie des données mais ne prouve ni géométrie imprimable ni absence de cavité. L'<b>exposant de Lyapunov</b>
+    (étape 9) décrit le stand-in dynamique; il ne certifie pas la convergence d'un optimiseur industriel. L'<b>équilibre de Nash</b>
+    (étape 10) a exploré un stand-in Nash qui ne constitue pas un front de Pareto, et <b>Viterbi</b> (étape 11) a décodé une séquence illustrative, pas un trajet collision-aware
     5 axes le plus probable en 32 étapes ébauche→super-finition.
   </p>
   <p style="color:var(--muted)">
     Résultat : <b style="color:var(--ok)">412 g</b> (−38 % vs. baseline 665 g), contrainte max <b style="color:var(--ok)">221 MPa</b> (yield 950, marge ×1.47),
     premier mode propre <b style="color:var(--accent)">112 Hz</b> (seuil 80 Hz respecté).
-    La géométrie peut être écrite directement dans un arbre de features CATIA V5 via CAA C++ ou une macro VBA,
-    avec traçabilité bout-en-bout des 13 étapes pour audit EASA.
+    Une future intégration CATIA exigerait un adapter vers un kernel géométrique, des solveurs et des contrôles de
+    validation indépendants; cette page ne produit aucune géométrie ni preuve utilisable pour un audit EASA.
   </p>
   <div class="certs">
-    <div class="cert">📋 <b>AS9100D</b> — système qualité aéronautique ✓</div>
-    <div class="cert">📋 <b>DO-178C</b> — traçabilité logicielle ✓</div>
-    <div class="cert">📋 <b>CS-25</b> — airworthiness grand avion ✓</div>
-    <div class="cert">🔬 <b>FEA-validé</b> — surrogate R²=0.94 ✓</div>
-    <div class="cert">🏭 <b>DFM-SLM</b> — pas de cavité fermée ✓</div>
+    <div class="cert">📋 <b>AS9100D</b> — non évalué</div>
+    <div class="cert">📋 <b>DO-178C</b> — non évalué</div>
+    <div class="cert">📋 <b>CS-25</b> — non évalué</div>
+    <div class="cert">🔬 <b>FEA</b> — non exécutée</div>
+    <div class="cert">🏭 <b>DFM-SLM</b> — non validé</div>
   </div>
 </div>
 

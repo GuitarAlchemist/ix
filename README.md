@@ -6,6 +6,8 @@
 
 A Rust workspace of composable ML/math algorithms and AI governance, designed to be exposed as **Claude Code skills** via an MCP server and CLI. Part of the [GuitarAlchemist](https://github.com/GuitarAlchemist) ecosystem (ix + [tars](https://github.com/GuitarAlchemist/tars) + [ga](https://github.com/GuitarAlchemist/ga) + [Demerzel](https://github.com/GuitarAlchemist/Demerzel)).
 
+For industrial engineering and robotics, IX is an **offline/advisory co-processor**. It can analyze telemetry, run reproducible optimization experiments, rank planner parameters, and orchestrate external engineering tools. It is not a CAD kernel, FEA/CFD solver, collision engine, complete digital twin, hard-real-time controller, safety PLC, consensus service, or authoritative distributed lock. See [ADR-0005](docs/adr/0005-engineering-coprocessor-boundary.md).
+
 78 crates. 93 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
@@ -106,7 +108,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 
 | Crate | Tier | Notes |
 |-------|------|-------|
-| ix-evolution | Experimental | Genetic algorithms, differential evolution |
+| ix-evolution | Experimental | Genetic algorithms, differential evolution, deterministic Pareto ranking |
 | ix-chaos | Experimental | Lyapunov, bifurcation, strange attractors |
 | ix-adversarial | Experimental | FGSM, PGD, differential privacy |
 | ix-dynamics | Experimental | Lie groups/algebras, neural ODEs |
@@ -232,7 +234,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 |-------|-------------|
 | **ix-nn** | Neural network layers (Dense, LayerNorm, BatchNorm, Dropout), loss functions, backprop, transformers |
 | **ix-rl** | Multi-armed bandits (epsilon-greedy, UCB1, Thompson), Q-learning, GridWorld |
-| **ix-evolution** | Genetic algorithms, differential evolution |
+| **ix-evolution** | Genetic algorithms, differential evolution, deterministic Pareto ranking |
 
 ### Search & Graphs
 | Crate | Description |
