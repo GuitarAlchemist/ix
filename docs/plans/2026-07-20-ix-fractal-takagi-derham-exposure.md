@@ -13,6 +13,37 @@ revisit-trigger: first real consumer of a fractal UDF outside a smoke test, OR i
 Design-only response to ix#203. No Takagi or de Rham math is reimplemented here; every
 proposed surface is a thin wrap over the existing `crates/ix-fractal` functions.
 
+## Implementation status — DRAFT PROPOSAL, NOT APPROVED SURFACE
+
+> **Every public name and signature below is a proposal under ix#203 and is not approved.**
+>
+> Branch `codex/ix-203-fractal-duckdb` carries a *reviewable* implementation of slices 1, 3
+> and 5 — the `ix_takagi` / `ix_hurst` DuckDB scalars and the MCP `ix_fractal
+> { operation: "de_rham_1d" }` op. It exists so the signatures can be argued about against
+> running code instead of prose. It does **not** constitute the sign-off §7 requires.
+>
+> §7 says "sign-off needed on names only, before implementation"; that sequence was inverted,
+> so the gate is now a *merge* gate rather than an implementation gate. Before this merges,
+> the following need explicit approval from the repo owner, recorded on ix#203:
+>
+> | Needs sign-off | Proposed | One-way? |
+> |---|---|---|
+> | DuckDB scalar name + arity | `ix_takagi(t DOUBLE, terms BIGINT) -> DOUBLE` | yes — renaming breaks any notebook that references it |
+> | DuckDB scalar name + arity | `ix_hurst(x DOUBLE[]) -> DOUBLE` | yes — same |
+> | `ix_hurst` unscorable-input contract | SQL NULL (not a value, not an error) for < 8 samples, empty list, non-finite sample, or NULL element | yes — callers will write `WHERE h IS NOT NULL` against it |
+> | MCP operation name + params | `ix_fractal { operation: "de_rham_1d", depth, roughness, seed }` | yes — enum member of a shipped tool schema |
+> | MCP response keys | `points, n_samples, depth, roughness, seed, max_depth, max_roughness` | yes |
+> | Bounds baked into the contract | `depth <= 12`, `0 <= roughness <= 1e6` | no — loosening is compatible, tightening is not |
+>
+> **No public surface beyond that table is to be added under this issue.** In particular the
+> `ix_de_rham_1d` / `ix_de_rham_path` table functions (§3, slices 2 and 4) stay unimplemented
+> and unregistered — see §7 and the Research Insights scope cut. A follow-up needs its own
+> approval on both the names and the column contract before any of it is written.
+>
+> Reversibility while unapproved: everything is behind the opt-in `udf` feature or an added
+> `operation` enum member, so withdrawing the proposal is `git revert` plus nothing — no
+> schema hash, no on-disk contract, no `parity.rs` tool-count change.
+
 ## 0. What is ALREADY exposed (checked, not assumed)
 
 This matters because the issue's candidate list partially duplicates live surface.
@@ -257,6 +288,11 @@ new tool would.
   (`i, dim, value`). Once an analyst notebook or a `ga/state/quality/` query references them,
   renaming breaks callers silently. Cheap to get right now, expensive later — hence the naming
   note in §3. Sign-off needed on names only, before implementation.
+  **Status (2026-08-03):** implementation landed on `codex/ix-203-fractal-duckdb` ahead of that
+  sign-off, so the gate has moved from "before implementation" to "before merge" — see the
+  *Implementation status* block at the top for the exact table of names, signatures and
+  contracts still awaiting approval. Nothing has shipped to a consumer, so the door is still
+  open; it closes the moment this merges and someone writes a query against it.
 - The `ix_de_rham_path_json` rejection is itself reversible: if a JSON-shaped consumer shows up,
   it can be added alongside the table fn without removing anything.
 
