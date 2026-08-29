@@ -13,6 +13,11 @@ description = "Claude Code skill CLI interface for ix ML algorithms"
 name = "ix"
 path = "src/main.rs"
 
+[[bin]]
+name = "ix-embed"
+path = "src/bin/ix-embed.rs"
+required-features = ["embeddings"]
+
 [dependencies]
 # Direct lib access: pulls in all #[ix_skill]-annotated wrappers so the
 # capability registry is populated at link time.
