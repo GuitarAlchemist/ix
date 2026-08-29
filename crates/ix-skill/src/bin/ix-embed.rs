@@ -36,7 +36,8 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<ix_skill::local_embed::LocalEmbeddingResponse, LocalEmbedError> {
-    let (_, revision) = require_cached_model(&cli.model_cache)?;
+    let verified_cache = require_cached_model(&cli.model_cache)?;
+    let revision = verified_cache.revision().to_owned();
     let request = if cli.input.as_os_str() == "-" {
         let mut value = String::new();
         std::io::stdin().read_to_string(&mut value).map(|_| value)
@@ -49,13 +50,12 @@ fn run(cli: Cli) -> Result<ix_skill::local_embed::LocalEmbeddingResponse, LocalE
         exit_code: 64,
     })?;
 
-    // All required cache objects were resolved above. A cache race may still remove one;
-    // forcing the hub endpoint to loopback makes that failure local instead of downloading.
-    std::env::set_var("HF_HOME", &cli.model_cache);
+    // Inference reads only the private verified copy, never the shared caller cache.
+    std::env::set_var("HF_HOME", verified_cache.path());
     std::env::set_var("HF_ENDPOINT", "http://127.0.0.1:9");
     let mut model = TextEmbedding::try_new(
         InitOptions::new(EmbeddingModel::BGEBaseENV15)
-            .with_cache_dir(cli.model_cache)
+            .with_cache_dir(verified_cache.path().to_path_buf())
             .with_show_download_progress(false),
     )
     .map_err(|_| LocalEmbedError {

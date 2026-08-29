@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::Path;
 
 pub const MODEL_ID: &str = "Xenova/bge-base-en-v1.5";
 pub const MODEL_REVISION: &str = "4d6cd88e18e51a5e020c2c305726d76ada9c03cf";
@@ -35,6 +35,22 @@ pub struct LocalEmbedError {
     pub code: &'static str,
     pub message: String,
     pub exit_code: i32,
+}
+
+#[derive(Debug)]
+pub struct VerifiedModelCache {
+    directory: tempfile::TempDir,
+    revision: String,
+}
+
+impl VerifiedModelCache {
+    pub fn path(&self) -> &Path {
+        self.directory.path()
+    }
+
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
 }
 
 #[derive(Deserialize)]
@@ -159,8 +175,7 @@ fn invalid_request(message: &str) -> LocalEmbedError {
     }
 }
 
-pub fn require_cached_model(cache: &Path) -> Result<(PathBuf, String), LocalEmbedError> {
-    let physical_cache = cache.canonicalize().map_err(|_| cache_incomplete())?;
+pub fn require_cached_model(cache: &Path) -> Result<VerifiedModelCache, LocalEmbedError> {
     let repository = cache.join("models--Xenova--bge-base-en-v1.5");
     let revision = std::fs::read_to_string(repository.join("refs/main"))
         .map(|value| value.trim().to_owned())
@@ -168,8 +183,24 @@ pub fn require_cached_model(cache: &Path) -> Result<(PathBuf, String), LocalEmbe
     if revision != MODEL_REVISION {
         return Err(cache_integrity());
     }
-    let snapshot = repository.join("snapshots").join(&revision);
-    for (relative, trusted_sha256) in MODEL_ARTIFACTS {
+    stage_artifacts(cache, &revision, &MODEL_ARTIFACTS)
+}
+
+fn stage_artifacts(
+    cache: &Path,
+    revision: &str,
+    artifacts: &[(&str, &str)],
+) -> Result<VerifiedModelCache, LocalEmbedError> {
+    let physical_cache = cache.canonicalize().map_err(|_| cache_incomplete())?;
+    let repository = cache.join("models--Xenova--bge-base-en-v1.5");
+    let snapshot = repository.join("snapshots").join(revision);
+    let directory = tempfile::Builder::new()
+        .prefix("ix-embed-verified-")
+        .tempdir()
+        .map_err(|_| cache_stage_unavailable())?;
+    let staged_repository = directory.path().join("models--Xenova--bge-base-en-v1.5");
+    let staged_snapshot = staged_repository.join("snapshots").join(revision);
+    for (relative, trusted_sha256) in artifacts {
         let physical_file = snapshot
             .join(relative)
             .canonicalize()
@@ -179,24 +210,49 @@ pub fn require_cached_model(cache: &Path) -> Result<(PathBuf, String), LocalEmbe
         {
             return Err(cache_incomplete());
         }
-        if hash_file_sha256(&physical_file)? != trusted_sha256 {
+        let staged_file = staged_snapshot.join(relative);
+        std::fs::create_dir_all(staged_file.parent().ok_or_else(cache_stage_unavailable)?)
+            .map_err(|_| cache_stage_unavailable())?;
+        let copied_sha256 = copy_and_hash(&physical_file, &staged_file)?;
+        if copied_sha256 != *trusted_sha256 {
             return Err(cache_integrity());
         }
+        let mut permissions = std::fs::metadata(&staged_file)
+            .map_err(|_| cache_stage_unavailable())?
+            .permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&staged_file, permissions)
+            .map_err(|_| cache_stage_unavailable())?;
     }
-    Ok((repository, revision))
+    let refs = staged_repository.join("refs");
+    std::fs::create_dir_all(&refs).map_err(|_| cache_stage_unavailable())?;
+    std::fs::write(refs.join("main"), revision).map_err(|_| cache_stage_unavailable())?;
+    Ok(VerifiedModelCache {
+        directory,
+        revision: revision.to_owned(),
+    })
 }
 
-fn hash_file_sha256(path: &Path) -> Result<String, LocalEmbedError> {
-    let mut file = std::fs::File::open(path).map_err(|_| cache_incomplete())?;
+fn copy_and_hash(source: &Path, destination: &Path) -> Result<String, LocalEmbedError> {
+    let mut source = std::fs::File::open(source).map_err(|_| cache_incomplete())?;
+    let mut destination = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|_| cache_stage_unavailable())?;
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(|_| cache_incomplete())?;
+        let read = source.read(&mut buffer).map_err(|_| cache_incomplete())?;
         if read == 0 {
             break;
         }
         digest.update(&buffer[..read]);
+        destination
+            .write_all(&buffer[..read])
+            .map_err(|_| cache_stage_unavailable())?;
     }
+    destination.flush().map_err(|_| cache_stage_unavailable())?;
     Ok(format!("{:x}", digest.finalize()))
 }
 
@@ -213,5 +269,51 @@ fn cache_integrity() -> LocalEmbedError {
         code: "MODEL_CACHE_INTEGRITY",
         message: format!("{MODEL_ID} cache bytes do not match the pinned trusted manifest"),
         exit_code: 3,
+    }
+}
+
+fn cache_stage_unavailable() -> LocalEmbedError {
+    LocalEmbedError {
+        code: "MODEL_CACHE_STAGING_FAILED",
+        message: format!("{MODEL_ID} could not be staged into a private verified cache"),
+        exit_code: 3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_stage_is_independent_from_later_shared_cache_mutation() {
+        let shared_cache = tempfile::tempdir().expect("shared cache");
+        let source = shared_cache
+            .path()
+            .join("models--Xenova--bge-base-en-v1.5")
+            .join("snapshots")
+            .join("revision")
+            .join("model.bin");
+        std::fs::create_dir_all(source.parent().expect("parent")).expect("source parent");
+        std::fs::write(&source, b"trusted model bytes").expect("source");
+        let trusted = format!("{:x}", Sha256::digest(b"trusted model bytes"));
+
+        let staged = stage_artifacts(
+            shared_cache.path(),
+            "revision",
+            &[("model.bin", trusted.as_str())],
+        )
+        .expect("verified stage");
+        std::fs::write(&source, b"substituted after verification").expect("mutate shared cache");
+
+        let staged_model = staged
+            .path()
+            .join("models--Xenova--bge-base-en-v1.5")
+            .join("snapshots")
+            .join("revision")
+            .join("model.bin");
+        assert_eq!(
+            std::fs::read(staged_model).expect("staged model"),
+            b"trusted model bytes"
+        );
     }
 }
