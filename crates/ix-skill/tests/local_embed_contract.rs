@@ -1,6 +1,6 @@
 #![cfg(feature = "embeddings")]
 
-use ix_skill::local_embed::embed_request_with;
+use ix_skill::local_embed::{embed_request_with, require_cached_model};
 
 #[test]
 fn query_embedding_response_binds_model_revision_text_and_dimensions() {
@@ -63,4 +63,29 @@ fn embedding_response_refuses_non_finite_vectors() {
     .expect_err("non-finite vectors must be refused");
 
     assert_eq!(error.code, "EMBEDDING_RUNTIME_INVALID");
+}
+
+#[test]
+fn cached_model_refuses_nonempty_substituted_artifacts() {
+    let cache = tempfile::tempdir().expect("cache");
+    let repository = cache.path().join("models--Xenova--bge-base-en-v1.5");
+    let revision = "4d6cd88e18e51a5e020c2c305726d76ada9c03cf";
+    std::fs::create_dir_all(repository.join("refs")).expect("refs");
+    std::fs::write(repository.join("refs/main"), revision).expect("revision");
+    let snapshot = repository.join("snapshots").join(revision);
+    for relative in [
+        "config.json",
+        "special_tokens_map.json",
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "onnx/model.onnx",
+    ] {
+        let path = snapshot.join(relative);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("artifact parent");
+        std::fs::write(path, b"substituted-but-nonempty").expect("artifact");
+    }
+
+    let error = require_cached_model(cache.path()).expect_err("substituted artifacts must fail");
+
+    assert_eq!(error.code, "MODEL_CACHE_INTEGRITY");
 }
