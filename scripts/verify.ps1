@@ -34,3 +34,6 @@ Invoke-Checked 'cargo' @('test', '--workspace')
 
 Write-Host '[verify] running supervised-loop preflight regression harness'
 Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'test-supervised-loop-preflight.ps1'))
+
+Write-Host '[verify] running manifest scorecard freshness regression harness'
+Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'test-manifest-sync.ps1'))

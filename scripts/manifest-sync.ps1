@@ -4,7 +4,10 @@
 param(
     [string]$Url = "https://demos.guitaralchemist.com/dev-data/manifest",
     [string]$LocalUrl = "http://localhost:5176/dev-data/manifest",
-    [string]$OutputPath = ".claude/manifest-bootstrap.md"
+    [string]$OutputPath = ".claude/manifest-bootstrap.md",
+    # Offline seam: render a manifest read from disk instead of fetching one.
+    # Exercised by scripts/test-manifest-sync.ps1; no network call is made.
+    [string]$FixturePath
 )
 
 Set-StrictMode -Version Latest
@@ -20,22 +23,118 @@ function Get-SafeProperty {
     return $null
 }
 
+# Freshness threshold for quality snapshots, in hours. Deliberately the same
+# number as GA's isMaintainStale default (ga/src/dev-data/parsers.ts), so the
+# agent-facing scorecard and the human-facing Prime Radiant tile agree about
+# what "stale" means. Do not diverge without changing both.
+$StaleAfterHours = 36
+
+function Format-EvidenceAge {
+    param([Parameter(Mandatory = $true)][timespan]$Age)
+    $hours = [math]::Max(0, [math]::Floor($Age.TotalHours))
+    if ($hours -lt 48) { return "${hours}h" }
+    return "$([math]::Floor($Age.TotalDays))d"
+}
+
+# Classifies one quality domain from its own emitted_at.
+#   ok                              -> healthy, whatever its age
+#   non-ok + fresh evidence         -> degraded (a real, current failure)
+#   non-ok + evidence older than    -> not evaluated (the producer skipped here;
+#     $StaleAfterHours                 neutral, and not an active regression)
+#   non-ok + missing/unparseable    -> degraded, freshness unknown (fail closed:
+#     emitted_at                       unknown freshness must never suppress a
+#                                      failure or read as healthy)
+function Get-DomainFreshness {
+    param($data)
+
+    $status = Get-SafeProperty $data "oracle_status"
+    $emittedRaw = Get-SafeProperty $data "emitted_at"
+
+    $age = $null
+    $ageText = $null
+    $emittedUtc = $null
+    $parseNote = $null
+    if (-not $emittedRaw) {
+        $parseNote = "no emitted_at in snapshot"
+    } elseif ($emittedRaw -is [datetimeoffset]) {
+        # Invoke-RestMethod / ConvertFrom-Json hydrate ISO-8601 timestamps into
+        # date objects rather than strings. Use them directly: round-tripping
+        # them through [string] loses the offset and skews the age by the local
+        # UTC offset.
+        $emittedUtc = $emittedRaw.ToUniversalTime()
+    } elseif ($emittedRaw -is [datetime]) {
+        $emittedUtc = ([datetimeoffset]$emittedRaw).ToUniversalTime()
+    } else {
+        $parsed = [datetimeoffset]::MinValue
+        if ([datetimeoffset]::TryParse(
+                [string]$emittedRaw,
+                [cultureinfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::AssumeUniversal,
+                [ref]$parsed)) {
+            $emittedUtc = $parsed.ToUniversalTime()
+        } else {
+            $parseNote = "unparseable emitted_at '$emittedRaw'"
+        }
+    }
+
+    if ($null -ne $emittedUtc) {
+        $age = [datetimeoffset]::UtcNow - $emittedUtc
+        $ageText = Format-EvidenceAge -Age $age
+    }
+
+    if ($status -eq 'ok') {
+        $label = "🟢 OK"
+        $stale = $false
+    } elseif ($null -eq $age) {
+        $label = "🔴 DEGRADED, freshness unknown"
+        $stale = $false
+    } elseif ($age.TotalHours -gt $StaleAfterHours) {
+        $label = "⚪ NOT EVALUATED, stale $ageText"
+        $stale = $true
+    } else {
+        $label = "🔴 DEGRADED"
+        $stale = $false
+    }
+
+    if ($ageText) {
+        $freshness = "emitted $($emittedUtc.ToString('yyyy-MM-ddTHH:mm:ssZ')) ($ageText ago)"
+    } else {
+        $freshness = "unknown - $parseNote"
+    }
+
+    return [pscustomobject]@{
+        Label     = $label
+        Stale     = $stale
+        AgeText   = $ageText
+        Freshness = $freshness
+    }
+}
+
 # 1. Fetch JSON manifest
 $manifest = $null
-try {
-    Write-Host "Fetching live manifest from $Url..." -ForegroundColor Gray
-    $resp = Invoke-RestMethod -Uri $Url -Method Get -TimeoutSec 10
-    $manifest = $resp
-    Write-Host "  Successfully fetched live manifest." -ForegroundColor Green
-} catch {
-    Write-Host "  Live server fetch failed, trying local Vite dev server at $LocalUrl..." -ForegroundColor Yellow
-    try {
-        $resp = Invoke-RestMethod -Uri $LocalUrl -Method Get -TimeoutSec 5
-        $manifest = $resp
-        Write-Host "  Successfully fetched local dev manifest." -ForegroundColor Green
-    } catch {
-        Write-Host "  ERROR: Failed to connect to both live and local dev-data endpoints. Ensure Vite dev server is running." -ForegroundColor Red
+if ($FixturePath) {
+    if (-not (Test-Path -LiteralPath $FixturePath)) {
+        Write-Host "  ERROR: Fixture manifest not found at $FixturePath." -ForegroundColor Red
         exit 1
+    }
+    Write-Host "Reading offline manifest fixture from $FixturePath..." -ForegroundColor Gray
+    $manifest = Get-Content -LiteralPath $FixturePath -Raw | ConvertFrom-Json
+} else {
+    try {
+        Write-Host "Fetching live manifest from $Url..." -ForegroundColor Gray
+        $resp = Invoke-RestMethod -Uri $Url -Method Get -TimeoutSec 10
+        $manifest = $resp
+        Write-Host "  Successfully fetched live manifest." -ForegroundColor Green
+    } catch {
+        Write-Host "  Live server fetch failed, trying local Vite dev server at $LocalUrl..." -ForegroundColor Yellow
+        try {
+            $resp = Invoke-RestMethod -Uri $LocalUrl -Method Get -TimeoutSec 5
+            $manifest = $resp
+            Write-Host "  Successfully fetched local dev manifest." -ForegroundColor Green
+        } catch {
+            Write-Host "  ERROR: Failed to connect to both live and local dev-data endpoints. Ensure Vite dev server is running." -ForegroundColor Red
+            exit 1
+        }
     }
 }
 
@@ -74,18 +173,22 @@ $md = @"
 "@
 
 # Add quality domains
+$staleDomains = @()
 if ($quality -and $quality.psobject.Properties["domains"]) {
     foreach ($domainName in $quality.domains.psobject.properties.name) {
         $domain = $quality.domains.$domainName
         $source = Get-SafeProperty $domain "source"
         $data = Get-SafeProperty $domain "data"
-        $status = Get-SafeProperty $data "oracle_status"
-        
-        $statusColor = if ($status -eq 'ok') { "🟢 OK" } else { "🔴 DEGRADED" }
-        
-        $md += "### $domainName ($statusColor)`n"
+
+        $freshness = Get-DomainFreshness $data
+        if ($freshness.Stale) {
+            $staleDomains += [pscustomobject]@{ Name = $domainName; AgeText = $freshness.AgeText }
+        }
+
+        $md += "### $domainName ($($freshness.Label))`n"
         $md += "- **Source:** $source`n"
-        
+        $md += "- **Freshness:** $($freshness.Freshness)`n"
+
         $metricVal = Get-SafeProperty $data "metric_value"
         if ($metricVal -ne $null) {
             $md += "- **Metric Value:** $metricVal`n"
@@ -105,15 +208,33 @@ if ($quality -and $quality.psobject.Properties["domains"]) {
     }
 }
 
-# Add Regressions
-if ($regressions.Count -gt 0) {
+# Add Regressions.
+# A regression entry is "<domain>: <detail>". Entries whose domain rendered as
+# NOT EVALUATED are dropped: stale evidence is not an active regression, it is an
+# absence of evidence. The suppression is disclosed below so it is never silent.
+$activeRegressions = @()
+foreach ($reg in $regressions) {
+    $regText = [string]$reg
+    $isStale = $false
+    foreach ($sd in $staleDomains) {
+        if ($regText.StartsWith("$($sd.Name):")) { $isStale = $true; break }
+    }
+    if (-not $isStale) { $activeRegressions += $regText }
+}
+
+if ($activeRegressions.Count -gt 0) {
     $md += "### ⚠️ ACTIVE REGRESSIONS`n"
-    foreach ($reg in $regressions) {
+    foreach ($reg in $activeRegressions) {
         $md += "- $reg`n"
     }
     $md += "`n"
 } else {
     $md += "### 🟢 Regressions: None detected`n`n"
+}
+
+if ($staleDomains.Count -gt 0) {
+    $excluded = ($staleDomains | ForEach-Object { "$($_.Name) ($($_.AgeText))" }) -join ', '
+    $md += "_Not counted as regressions - stale evidence, older than ${StaleAfterHours}h: $excluded._`n`n"
 }
 
 # Add Service Ports
