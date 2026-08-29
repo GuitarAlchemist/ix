@@ -22,9 +22,19 @@ cargo test --workspace
 # Run the CLI
 cargo run -p ix-skill -- optimize --algo pso --function sphere --dim 10
 
+# Build the optional local-only text embedding adapter
+cargo build -p ix-skill --features embeddings --bin ix-embed
+
 # Start the MCP server (for Claude Code integration)
 cargo run -p ix-agent
 ```
+
+`ix-embed` accepts an `ix-local-embedding-request/1` JSON document on stdin (or
+from `--input <path>`) and emits `ix-local-embedding-response/1`. The caller must
+provide `--model-cache <path>` containing a complete cached
+`Xenova/bge-base-en-v1.5` revision. The adapter verifies every required cache
+object before inference and forces any cache-miss fallback to loopback, so it
+never downloads a model or calls a paid provider implicitly.
 
 ## Crate Maturity & Stability
 
