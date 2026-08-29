@@ -316,4 +316,35 @@ mod tests {
             b"trusted model bytes"
         );
     }
+
+    #[test]
+    fn verified_stage_is_removed_when_dropped() {
+        let shared_cache = tempfile::tempdir().expect("shared cache");
+        let source = shared_cache
+            .path()
+            .join("models--Xenova--bge-base-en-v1.5")
+            .join("snapshots")
+            .join("revision")
+            .join("model.bin");
+        std::fs::create_dir_all(source.parent().expect("parent")).expect("source parent");
+        std::fs::write(&source, b"trusted model bytes").expect("source");
+        let trusted = format!("{:x}", Sha256::digest(b"trusted model bytes"));
+        let staged_path;
+
+        {
+            let staged = stage_artifacts(
+                shared_cache.path(),
+                "revision",
+                &[("model.bin", trusted.as_str())],
+            )
+            .expect("verified stage");
+            staged_path = staged.path().to_path_buf();
+            assert!(staged_path.exists());
+        }
+
+        assert!(
+            !staged_path.exists(),
+            "private cache must be deleted on drop"
+        );
+    }
 }
