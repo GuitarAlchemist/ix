@@ -1624,6 +1624,96 @@ pub fn number_theory(params: Value) -> Result<Value, String> {
 
 // ── ix_fractal ────────────────────────────────────────────
 
+/// Depth cap for the `de_rham_1d` operation: 2^12 + 1 = 4097 samples.
+///
+/// Deliberately tighter than the depth ≤ 16 cap
+/// `docs/plans/2026-07-20-ix-fractal-takagi-derham-exposure.md` §6 proposes for the
+/// (unshipped) DuckDB table function: rows in a warehouse are scrollable, whereas an
+/// MCP payload is serialized JSON landing in an agent context window. The callee's own
+/// cap is a *silent* 20 (1,048,577 samples) — rejecting loudly here is the whole point.
+const DE_RHAM_MAX_DEPTH: usize = 12;
+
+/// Roughness cap for `de_rham_1d`, chosen for numerical safety at [`DE_RHAM_MAX_DEPTH`].
+///
+/// Midpoint displacement compounds *multiplicatively*: at every one of the `depth` levels
+/// each midpoint is displaced by `N(0,1) × roughness × segment_length`, and the displaced
+/// point then sets the segment length for the next level. The largest sample therefore grows
+/// like `roughness^depth`. Measured at depth 12, `max|value| ≈ roughness^12 × 1e-19`, which
+/// overflows `f64` at roughness ≈ 1.6e27 — and a non-finite `f64` is serialized by
+/// `serde_json` as JSON `null`, so an uncapped extreme input returns a *successful* response
+/// full of nulls rather than an error.
+///
+/// 1e6 bounds the output near 1e53, ~255 decimal orders below `f64::MAX`: headroom no
+/// Gaussian tail reaches over 4097 samples. Legitimate roughness is a fraction of the
+/// segment length (≈ [0, 1]) — this bound exists to make hostile input loud, not to
+/// constrain real use. The statistical argument is belt; [`de_rham_points`] is braces.
+const DE_RHAM_MAX_ROUGHNESS: f64 = 1.0e6;
+
+/// Build the `[t, value]` payload for `de_rham_1d`, refusing to serialize a non-finite
+/// sample.
+///
+/// `serde_json` renders `NaN`/`Infinity` as JSON `null`, so emitting an unchecked curve
+/// would turn a numeric blow-up into a successful-but-null-corrupted response — the one
+/// failure mode a caller cannot detect from the status. [`DE_RHAM_MAX_ROUGHNESS`] makes
+/// that unreachable in practice; this check is the guarantee that does not depend on the
+/// estimate holding.
+fn de_rham_points(curve: &Array1<f64>) -> Result<Vec<[f64; 2]>, String> {
+    let step = 1.0 / (curve.len() - 1).max(1) as f64;
+    curve
+        .iter()
+        .enumerate()
+        .map(|(i, &y)| {
+            if !y.is_finite() {
+                return Err(format!(
+                    "de_rham_1d: sample {i} of {} is not finite ({y}); \
+                     refusing to emit a payload whose points would serialize as JSON null",
+                    curve.len()
+                ));
+            }
+            Ok([i as f64 * step, y])
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod de_rham_points_tests {
+    use super::*;
+
+    /// The finiteness guard is unreachable from the MCP boundary once
+    /// [`DE_RHAM_MAX_ROUGHNESS`] is enforced, so bind it here against a synthetic curve —
+    /// otherwise it is an untested claim dressed as a safety check.
+    #[test]
+    fn rejects_non_finite_samples() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let curve = Array1::from_vec(vec![0.0, bad, 1.0]);
+            let err = de_rham_points(&curve)
+                .expect_err("a non-finite sample must be an error, not a JSON null");
+            assert!(
+                err.contains("sample 1 of 3 is not finite"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    /// The happy path still parameterizes t over [0, 1], and depth 0 (two samples) does not
+    /// divide by zero.
+    #[test]
+    fn maps_t_over_the_unit_interval() {
+        let pts = de_rham_points(&Array1::from_vec(vec![0.0, 0.25, 1.0])).expect("finite");
+        assert_eq!(pts, vec![[0.0, 0.0], [0.5, 0.25], [1.0, 1.0]]);
+
+        let two = de_rham_points(&Array1::from_vec(vec![0.0, 1.0])).expect("finite");
+        assert_eq!(two, vec![[0.0, 0.0], [1.0, 1.0]]);
+
+        let one = de_rham_points(&Array1::from_vec(vec![7.0])).expect("finite");
+        assert_eq!(
+            one,
+            vec![[0.0, 7.0]],
+            "a single sample must not divide by zero"
+        );
+    }
+}
+
 pub fn fractal(params: Value) -> Result<Value, String> {
     let op = parse_str(&params, "operation")?;
 
@@ -1639,6 +1729,61 @@ pub fn fractal(params: Value) -> Result<Value, String> {
                 .map(|(i, &y)| [i as f64 * step, y])
                 .collect();
             Ok(json!({ "points": points, "n_points": n_points, "terms": terms }))
+        }
+        // @ai:invariant de_rham_1d is a pure function of (depth, roughness, seed): the same
+        // triple yields identical samples within a build, a different seed yields a different
+        // curve, depth > 12 is a loud error (never the callee's silent cap-at-20), and
+        // roughness must be finite and within [0, 1e6] [T:test conf:0.9 src:tests::fractal_de_rham_smoke]
+        // @ai:invariant a successful de_rham_1d response never contains a non-finite (JSON null)
+        // coordinate: every generated sample is checked before serialization, so an out-of-range
+        // input is an explicit error [T:test conf:0.9 src:tests::de_rham_1d_never_emits_null_points]
+        "de_rham_1d" => {
+            use rand::SeedableRng;
+            let depth = parse_usize(&params, "depth")?;
+            if depth > DE_RHAM_MAX_DEPTH {
+                return Err(format!(
+                    "de_rham_1d: depth must be <= {} (got {}); \
+                     2^depth + 1 samples are materialized in memory and returned inline",
+                    DE_RHAM_MAX_DEPTH, depth
+                ));
+            }
+            let roughness = params
+                .get("roughness")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing or invalid field 'roughness'")?;
+            // Non-finite is defensive only: serde_json::Value cannot hold NaN/Infinity, so
+            // through the MCP boundary this arm is reachable only via a negative roughness.
+            if !roughness.is_finite() || roughness < 0.0 {
+                return Err(format!(
+                    "de_rham_1d: roughness must be finite and >= 0 (got {})",
+                    roughness
+                ));
+            }
+            if roughness > DE_RHAM_MAX_ROUGHNESS {
+                return Err(format!(
+                    "de_rham_1d: roughness must be <= {} (got {}); \
+                     midpoint displacement compounds over {} levels, and beyond this bound \
+                     samples overflow f64 and would serialize as JSON null",
+                    DE_RHAM_MAX_ROUGHNESS, roughness, depth
+                ));
+            }
+            let seed = params
+                .get("seed")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing or invalid field 'seed'")?;
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let curve = ix_fractal::de_rham::de_rham_curve_1d(depth, roughness, &mut rng);
+            let n_samples = curve.len();
+            let points = de_rham_points(&curve)?;
+            Ok(json!({
+                "points": points,
+                "n_samples": n_samples,
+                "depth": depth,
+                "roughness": roughness,
+                "seed": seed,
+                "max_depth": DE_RHAM_MAX_DEPTH,
+                "max_roughness": DE_RHAM_MAX_ROUGHNESS
+            }))
         }
         "hilbert" => {
             let order = params
