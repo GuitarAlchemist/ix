@@ -1,7 +1,7 @@
 ---
 title: "ix-duck — in-process DuckDB analyst bench + IX UDFs (Tier 1)"
 type: feat
-status: active
+status: completed
 date: 2026-06-14
 origin: docs/DUCKDB.md
 ---
