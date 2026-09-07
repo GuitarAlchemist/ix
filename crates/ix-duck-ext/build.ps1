@@ -30,20 +30,30 @@ try {
     cargo build --release
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
 
-    $dll = Get-ChildItem "$root/target/release" -Filter '*.dll' |
-        Where-Object { $_.Name -like '*ix_duck_ext*' } | Select-Object -First 1
-    if (-not $dll) { throw 'cdylib not found in target/release (expected ix_duck_ext*.dll)' }
-    Write-Host " - cdylib: $($dll.FullName)"
+    # A cdylib is named per platform: ix_duck_ext.dll on Windows,
+    # libix_duck_ext.so on Linux and WSL, libix_duck_ext.dylib on macOS. Globbing
+    # only *.dll is what confined this script — and therefore every release — to
+    # Windows. Matching the stem instead covers all three; the `lib` prefix that
+    # Unix toolchains add is absorbed by the wildcard.
+    $cdylib = Get-ChildItem "$root/target/release" -File |
+        Where-Object { $_.Name -like '*ix_duck_ext*' -and $_.Extension -in '.dll', '.so', '.dylib' } |
+        Select-Object -First 1
+    if (-not $cdylib) {
+        throw "cdylib not found in $root/target/release (expected ix_duck_ext.dll, libix_duck_ext.so or libix_duck_ext.dylib)"
+    }
+    Write-Host " - cdylib: $($cdylib.FullName)"
 
     # Resolve the DuckDB platform string from the CLI itself so the footer matches.
+    # This is also what distinguishes osx_arm64 from osx_amd64 and linux_amd64
+    # from linux_arm64 without this script having to know which runner it is on.
     $platform = (& duckdb -noheader -list -c 'PRAGMA platform;').Trim()
-    if (-not $platform) { throw 'could not resolve duckdb platform (is duckdb.exe on PATH?)' }
+    if (-not $platform) { throw 'could not resolve duckdb platform (is the duckdb CLI on PATH?)' }
     Write-Host " - platform: $platform"
 
     $out = Join-Path $root "$ExtName.duckdb_extension"
     Write-Host '== append metadata footer (C_STRUCT) ==' -ForegroundColor Cyan
     python "$root/append_extension_metadata.py" `
-        -l $dll.FullName -n $ExtName `
+        -l $cdylib.FullName -n $ExtName `
         -dv $CApiVersion -p $platform -ev $ExtVersion `
         --abi-type C_STRUCT -o $out
     if ($LASTEXITCODE -ne 0) { throw "metadata append failed ($LASTEXITCODE)" }

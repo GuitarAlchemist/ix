@@ -1,18 +1,13 @@
-### Release — build the loadable DuckDB extension and attach it to the tag.
+### Release — build the loadable DuckDB extension for every supported platform,
+### prove each artifact loads, and publish them with the evidence.
 #
-# Why this workflow exists: every previous IX tag shipped zero artifacts, so
-# nothing this repository produced was ever consumable without cloning it and
-# building 60+ crates. `ix-duck-ext` is the one artifact a user genuinely cannot
-# build easily — it is deliberately EXCLUDED from the workspace (root
-# Cargo.toml) because it drags duckdb + arrow into every `cargo build
-# --workspace`, and it needs Python for the metadata footer plus a duckdb CLI to
-# resolve the platform string.
+# Two jobs on purpose. `build` runs per platform and never publishes; `publish`
+# runs once, after every platform has passed, and assembles one release from
+# their reports. A matrix publishing from inside itself would race four jobs
+# against one release and could ship a partial set as if it were complete.
 #
-# Windows only, deliberately. crates/ix-duck-ext/build.ps1 discovers the cdylib
-# with a `*.dll` glob, so it produces a Windows artifact and nothing else today.
-# Adding linux/macos means generalising that script to .so/.dylib and proving it
-# on those runners — real work, not another matrix entry. A release carrying one
-# artifact that is known to load beats three where two were never executed.
+# WSL needs no entry of its own: it reports `linux_amd64`, so the Linux artifact
+# is the WSL artifact.
 name: Release
 
 on:
@@ -28,8 +23,20 @@ permissions:
   contents: write
 
 jobs:
-  duckdb-extension:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false          # one platform failing must not hide the others
+      matrix:
+        include:
+          - os: windows-latest
+            duckdb: duckdb_cli-windows-amd64.zip
+          - os: ubuntu-latest
+            duckdb: duckdb_cli-linux-amd64.zip
+          - os: macos-latest     # Apple silicon -> osx_arm64
+            duckdb: duckdb_cli-osx-universal.zip
+          - os: macos-13         # Intel -> osx_amd64
+            duckdb: duckdb_cli-osx-universal.zip
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,48 +50,42 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/ix-duck-ext
+          key: ${{ matrix.os }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # build.ps1 reads the DuckDB platform string from the CLI itself
-      # (`PRAGMA platform;`) so the footer always matches the engine that will
-      # load it. Hardcoding the string here would let the two drift apart, and a
+      # build.ps1 reads the platform string from the CLI itself (`PRAGMA
+      # platform;`) so the metadata footer always matches the engine that will
+      # load it. Hardcoding it per runner would let the two drift apart, and a
       # footer that disagrees with the engine fails at LOAD, not at build.
       - name: Install DuckDB CLI
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $url = 'https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-windows-amd64.zip'
-          Invoke-WebRequest -Uri $url -OutFile duckdb.zip
-          Expand-Archive duckdb.zip -DestinationPath "$env:RUNNER_TEMP\duckdb"
-          "$env:RUNNER_TEMP\duckdb" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          & "$env:RUNNER_TEMP\duckdb\duckdb.exe" -noheader -list -c 'PRAGMA platform;'
+          $url = "https://github.com/duckdb/duckdb/releases/latest/download/${{ matrix.duckdb }}"
+          $dir = Join-Path $env:RUNNER_TEMP 'duckdb'
+          Invoke-WebRequest -Uri $url -OutFile (Join-Path $env:RUNNER_TEMP 'duckdb.zip')
+          Expand-Archive (Join-Path $env:RUNNER_TEMP 'duckdb.zip') -DestinationPath $dir -Force
+          if (-not $IsWindows) { chmod +x (Join-Path $dir 'duckdb') }
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & (Join-Path $dir ($IsWindows ? 'duckdb.exe' : 'duckdb')) -noheader -list -c 'PRAGMA platform;'
 
-      # -SmokeTest is the point of running this in CI at all: it LOADs the
-      # emitted extension into a real duckdb.exe and asserts the scalar and
-      # table UDFs return known values. Without it we would publish a binary
-      # whose only evidence of working is that the compiler accepted it.
+      # -SmokeTest LOADs the freshly built extension into a real duckdb and
+      # asserts the scalar and table UDFs return known values, so a published
+      # binary has evidence of working beyond the compiler accepting it.
       - name: Build and smoke-test the extension
         shell: pwsh
         run: pwsh crates/ix-duck-ext/build.ps1 -SmokeTest
 
-      # v0.3.0 shipped an asset nobody could load, and this step is why.
-      #
-      # DuckDB derives the init symbol it looks for FROM THE FILE NAME. An
-      # extension file called `ix-windows_amd64.duckdb_extension` makes the
-      # engine search for `ix-windows_amd64_init_c_api`, which the binary does
-      # not export — it exports `ix_init_c_api`, because build.ps1 built it
-      # under the name `ix`. Renaming the file to carry the platform therefore
-      # broke it, and the error is emitted by LOAD, not by the build:
-      #
-      #   IO Error: File "ix-windows_amd64.duckdb_extension" did not contain
-      #   function "ix-windows_amd64_init_c_api"
-      #
-      # So the extension keeps its own name and the platform goes on the ZIP,
-      # which is also what lets a future multi-platform release attach several
-      # assets without a name collision.
+      # v0.3.0 shipped an asset nobody could load, and naming is why. DuckDB
+      # derives the init symbol it looks for FROM THE FILE NAME: a file called
+      # `ix-windows_amd64.duckdb_extension` makes the engine search for
+      # `ix-windows_amd64_init_c_api`, which the binary does not export — it
+      # exports `ix_init_c_api`, because build.ps1 built it under the name `ix`.
+      # The extension therefore keeps its own name and the platform goes on the
+      # ZIP, which is also what lets this matrix attach four assets at once.
       - name: Package the artifact for its platform
         shell: pwsh
         run: |
@@ -95,68 +96,134 @@ jobs:
           New-Item -ItemType Directory -Force pkg | Out-Null
           Copy-Item $src pkg/ix.duckdb_extension -Force
           Compress-Archive -Path pkg/ix.duckdb_extension -DestinationPath "ix-$platform.zip" -Force
-          Get-Item "ix-$platform.zip" | Select-Object Name, Length
+          "PLATFORM=$platform" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      # The deeper defect behind v0.3.0: build.ps1 -SmokeTest proves the
-      # INTERMEDIATE artifact loads, then packaging happens afterwards and is
-      # never exercised. A green run therefore said nothing about the bytes
-      # users download. This step closes that gap by unpacking the published
-      # ZIP into a clean directory and loading THAT copy — the same path a user
-      # takes. Any future packaging change that breaks loading fails here
-      # instead of on someone else's machine.
+      # The defect behind v0.3.0 was deeper than the name: -SmokeTest proved the
+      # INTERMEDIATE artifact loads, packaging happened afterwards, and nothing
+      # exercised it — so a green run said nothing about the bytes users
+      # download. This unpacks the ZIP that will be attached, into a clean
+      # directory, and loads THAT copy: the same path a user takes.
       - name: Verify the packaged artifact loads, not the intermediate one
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $platform = (& duckdb -noheader -list -c 'PRAGMA platform;').Trim()
-          Expand-Archive "ix-$platform.zip" -DestinationPath verify -Force
-          $loadPath = (Resolve-Path verify/ix.duckdb_extension).Path -replace '\\', '/'
+          Expand-Archive "ix-$env:PLATFORM.zip" -DestinationPath verify -Force
+          $loadPath = (Resolve-Path verify/ix.duckdb_extension).Path.Replace('\', '/')
           $sql = "LOAD '$loadPath';
             SELECT ix_cosine([1.0,2.0,3.0]::DOUBLE[],[1.0,2.0,3.0]::DOUBLE[]) AS a,
                    ix_euclidean([0.0,0.0]::DOUBLE[],[3.0,4.0]::DOUBLE[])      AS b,
                    (SELECT count(*) FROM duckdb_functions()
                       WHERE function_name LIKE 'ix\_%' ESCAPE '\')            AS n;"
           $row = (& duckdb -unsigned -noheader -list -c $sql).Trim()
-          Write-Host " - packaged artifact: $row"
           $parts = $row -split '\|'
           if ($parts[0] -notmatch '^1(\.0)?$' -or $parts[1] -notmatch '^5(\.0)?$') {
             throw "PACKAGED ARTIFACT FAILED — expected '1.0|5.0|N', got '$row'"
           }
-          # The function count is asserted as a floor, not an exact number: new
-          # UDFs must not have to touch this workflow, but an extension that
-          # loads while registering nothing must not pass.
-          if ([int]$parts[2] -lt 50) {
-            throw "PACKAGED ARTIFACT REGISTERED ONLY $($parts[2]) ix_* functions"
-          }
+          # A floor, not an exact count: new UDFs must never have to touch this
+          # workflow, but an extension that loads while registering nothing must
+          # not pass.
+          if ([int]$parts[2] -lt 50) { throw "REGISTERED ONLY $($parts[2]) ix_* functions" }
+          $size = [math]::Round((Get-Item "ix-$env:PLATFORM.zip").Length / 1MB, 1)
+          $duck = (& duckdb -noheader -list -c 'SELECT version();').Trim()
+          # The checklist this release publishes is written here, by the job that
+          # did the work, rather than composed later from assumptions about it.
+          # Built as an array rather than a here-string: PowerShell requires a
+          # here-string terminator at column 0, which would end the YAML block
+          # scalar this script lives in.
+          $report = @(
+            "### $env:PLATFORM — ${{ matrix.os }}",
+            "",
+            "- [x] compiled from source (cargo build --release)",
+            "- [x] DuckDB metadata footer appended (C_STRUCT ABI)",
+            "- [x] smoke-tested on the built artifact — scalar and table UDFs",
+            "- [x] packaged to ix-$env:PLATFORM.zip ($size MB)",
+            "- [x] **re-loaded from a clean extraction of that ZIP**",
+            "- [x] ix_cosine -> 1.0, ix_euclidean -> 5.0",
+            "- [x] **$($parts[2]) ix_* functions registered**",
+            "- verified against DuckDB CLI $duck",
+            ""
+          ) -join "`n"
+          $report | Out-File "report-$env:PLATFORM.md" -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ix-${{ env.PLATFORM }}
+          path: |
+            ix-${{ env.PLATFORM }}.zip
+            report-${{ env.PLATFORM }}.md
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Assemble the release body from what each platform reported
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $repo = "${{ github.repository }}"
+          $reports = Get-ChildItem dist -Filter 'report-*.md' | Sort-Object Name
+          if ($reports.Count -eq 0) { throw 'no platform reports: nothing was verified' }
+          $checklist = ($reports | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+          $fence = [string][char]0x60 * 3
+          # Same reason as the per-platform report: array, not here-string.
+          # Single-quoted entries are literal, so markdown code fences survive.
+          $body = @(
+            'Loadable DuckDB extension exposing IX algorithms as SQL UDFs: graph (PageRank,',
+            'shortest path, components, centrality), clustering (k-means, DBSCAN, GMM,',
+            'silhouette), projections (PCA, t-SNE, MDS), vector distances, ranking metrics',
+            '(nDCG, MRR, precision@k), probabilistic sketches (HyperLogLog, Bloom, Cuckoo,',
+            'Count-Min), statistics, signal processing (rFFT, DCT, wavelet, Kalman, Viterbi),',
+            'code analysis, and pitch-class set theory.',
+            '',
+            '## Install',
+            '',
+            'Download the ZIP for your platform and extract it. **Keep the file named',
+            'ix.duckdb_extension** — DuckDB derives the init symbol it looks for from the',
+            'file name, so a renamed extension will not load.',
+            '',
+            ($fence + 'sql'),
+            "LOAD 'ix.duckdb_extension';",
+            'SELECT ix_cosine([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[]);',
+            "SELECT * FROM ix_pagerank('[[0,1],[1,2],[2,0]]', 0.85, 20);",
+            $fence,
+            '',
+            'On WSL use the linux_amd64 build: WSL reports that platform. An extension only',
+            'loads into an engine whose PRAGMA platform; matches the ZIP name.',
+            '',
+            '## Validated in CI',
+            '',
+            'Every box below was ticked by the job that built that artifact, against the',
+            'packaged ZIP this release attaches — not against an intermediate build.',
+            '',
+            $checklist,
+            '## Links',
+            '',
+            "- [Extension source](https://github.com/$repo/tree/$tag/crates/ix-duck-ext)",
+            "- [Runnable examples](https://github.com/$repo/blob/$tag/crates/ix-duck-ext/examples.sql)",
+            "- [Release workflow](https://github.com/$repo/blob/$tag/.github/workflows/release.yml)",
+            "- [This build](https://github.com/$repo/actions/runs/${{ github.run_id }})",
+            "- [Open issues](https://github.com/$repo/issues)",
+            '- [Loading DuckDB extensions](https://duckdb.org/docs/extensions/overview)',
+            '',
+            '## Known limits',
+            '',
+            '- Source archives GitHub generates for a tag do **not** include the',
+            '  governance/demerzel submodule. Clone with --recurse-submodules rather than',
+            '  downloading the tarball.',
+            "- Artifacts are built for each runner's architecture. linux_arm64 is not produced."
+          ) -join "`n"
+          $body | Out-File body.md -Encoding utf8
+          Write-Host "assembled from $($reports.Count) platform report(s)"
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: ix-*.zip
+          files: dist/ix-*.zip
           fail_on_unmatched_files: true
-          body: |
-            Loadable DuckDB extension exposing IX algorithms as SQL UDFs:
-            graph (PageRank, shortest path, components), clustering (k-means,
-            DBSCAN, GMM), projections (PCA, t-SNE, MDS), vector distances,
-            ranking metrics (nDCG, MRR, precision@k), probabilistic sketches
-            (HyperLogLog, Bloom, Cuckoo, Count-Min), statistics, signal
-            processing (rFFT, DCT, wavelet, Kalman, Viterbi), code analysis,
-            and pitch-class set theory.
-
-            Download the ZIP for your platform and extract it. **Keep the file
-            named `ix.duckdb_extension`** — DuckDB derives the init symbol it
-            looks for from the file name, so a renamed extension will not load.
-
-            ```sql
-            LOAD 'ix.duckdb_extension';
-            SELECT ix_cosine([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[]);
-            SELECT * FROM ix_pagerank('[[0,1],[1,2],[2,0]]', 0.85, 20);
-            ```
-
-            The extension only loads into an engine whose `PRAGMA platform;`
-            matches the one in the ZIP name. CI built it, loaded it, and
-            asserted the UDFs on the packaged copy that this release attaches.
-
-            Note: the source archives GitHub generates for a tag do NOT include
-            the `governance/demerzel` submodule. Clone with
-            `--recurse-submodules` rather than downloading the tarball.
+          body_path: body.md
