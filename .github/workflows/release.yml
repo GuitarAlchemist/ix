@@ -1,0 +1,105 @@
+### Release — build the loadable DuckDB extension and attach it to the tag.
+#
+# Why this workflow exists: every previous IX tag shipped zero artifacts, so
+# nothing this repository produced was ever consumable without cloning it and
+# building 60+ crates. `ix-duck-ext` is the one artifact a user genuinely cannot
+# build easily — it is deliberately EXCLUDED from the workspace (root
+# Cargo.toml) because it drags duckdb + arrow into every `cargo build
+# --workspace`, and it needs Python for the metadata footer plus a duckdb CLI to
+# resolve the platform string.
+#
+# Windows only, deliberately. crates/ix-duck-ext/build.ps1 discovers the cdylib
+# with a `*.dll` glob, so it produces a Windows artifact and nothing else today.
+# Adding linux/macos means generalising that script to .so/.dylib and proving it
+# on those runners — real work, not another matrix entry. A release carrying one
+# artifact that is known to load beats three where two were never executed.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and attach to
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  duckdb-extension:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/ix-duck-ext
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # build.ps1 reads the DuckDB platform string from the CLI itself
+      # (`PRAGMA platform;`) so the footer always matches the engine that will
+      # load it. Hardcoding the string here would let the two drift apart, and a
+      # footer that disagrees with the engine fails at LOAD, not at build.
+      - name: Install DuckDB CLI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-windows-amd64.zip'
+          Invoke-WebRequest -Uri $url -OutFile duckdb.zip
+          Expand-Archive duckdb.zip -DestinationPath "$env:RUNNER_TEMP\duckdb"
+          "$env:RUNNER_TEMP\duckdb" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          & "$env:RUNNER_TEMP\duckdb\duckdb.exe" -noheader -list -c 'PRAGMA platform;'
+
+      # -SmokeTest is the point of running this in CI at all: it LOADs the
+      # emitted extension into a real duckdb.exe and asserts the scalar and
+      # table UDFs return known values. Without it we would publish a binary
+      # whose only evidence of working is that the compiler accepted it.
+      - name: Build and smoke-test the extension
+        shell: pwsh
+        run: pwsh crates/ix-duck-ext/build.ps1 -SmokeTest
+
+      - name: Name the artifact for its platform
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $platform = (& duckdb -noheader -list -c 'PRAGMA platform;').Trim()
+          $src = 'crates/ix-duck-ext/ix.duckdb_extension'
+          if (-not (Test-Path $src)) { throw "build.ps1 emitted no artifact at $src" }
+          # The platform belongs in the filename: a DuckDB extension only loads
+          # into an engine whose platform matches its footer, so an unqualified
+          # name invites someone to download the wrong one.
+          Copy-Item $src "ix-$platform.duckdb_extension"
+          Get-Item "ix-$platform.duckdb_extension" | Select-Object Name, Length
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ix-*.duckdb_extension
+          fail_on_unmatched_files: true
+          body: |
+            Loadable DuckDB extension exposing IX algorithms as SQL UDFs.
+
+            The artifact is built for one DuckDB platform and only loads into an
+            engine reporting that same `PRAGMA platform;`. It was smoke-tested in
+            CI by loading it and asserting the scalar and table UDFs.
+
+            ```sql
+            LOAD 'ix-<platform>.duckdb_extension';
+            SELECT ix_cosine([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[]);
+            ```
+
+            Note: the source archives GitHub generates for a tag do NOT include
+            the `governance/demerzel` submodule. Clone with
+            `--recurse-submodules` rather than downloading the tarball.
