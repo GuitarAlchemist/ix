@@ -246,8 +246,8 @@ impl std::ops::Neg for Sedenion {
 impl std::fmt::Display for Sedenion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0[0])?;
-        for i in 1..16 {
-            write!(f, " + {}e{}", self.0[i], i)?;
+        for (i, val) in self.0.iter().enumerate().skip(1) {
+            write!(f, " + {}e{}", val, i)?;
         }
         Ok(())
     }
