@@ -15,7 +15,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        rust: [stable, nightly]
+        # The nightly leg is pinned to a dated toolchain on purpose. Clippy
+        # runs under `-D warnings`, so a floating `nightly` turns any upstream
+        # lint change into a red build on unrelated PRs -- as happened on
+        # 2026-08-25, when a widened `needless_range_loop` broke every nightly
+        # job for twelve days. Bump this date deliberately, in its own PR, so
+        # new lints are triaged rather than dumped on whoever pushes next.
+        rust: [stable, nightly-2026-08-23]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
