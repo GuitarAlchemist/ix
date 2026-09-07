@@ -70,35 +70,92 @@ jobs:
         shell: pwsh
         run: pwsh crates/ix-duck-ext/build.ps1 -SmokeTest
 
-      - name: Name the artifact for its platform
+      # v0.3.0 shipped an asset nobody could load, and this step is why.
+      #
+      # DuckDB derives the init symbol it looks for FROM THE FILE NAME. An
+      # extension file called `ix-windows_amd64.duckdb_extension` makes the
+      # engine search for `ix-windows_amd64_init_c_api`, which the binary does
+      # not export — it exports `ix_init_c_api`, because build.ps1 built it
+      # under the name `ix`. Renaming the file to carry the platform therefore
+      # broke it, and the error is emitted by LOAD, not by the build:
+      #
+      #   IO Error: File "ix-windows_amd64.duckdb_extension" did not contain
+      #   function "ix-windows_amd64_init_c_api"
+      #
+      # So the extension keeps its own name and the platform goes on the ZIP,
+      # which is also what lets a future multi-platform release attach several
+      # assets without a name collision.
+      - name: Package the artifact for its platform
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $platform = (& duckdb -noheader -list -c 'PRAGMA platform;').Trim()
           $src = 'crates/ix-duck-ext/ix.duckdb_extension'
           if (-not (Test-Path $src)) { throw "build.ps1 emitted no artifact at $src" }
-          # The platform belongs in the filename: a DuckDB extension only loads
-          # into an engine whose platform matches its footer, so an unqualified
-          # name invites someone to download the wrong one.
-          Copy-Item $src "ix-$platform.duckdb_extension"
-          Get-Item "ix-$platform.duckdb_extension" | Select-Object Name, Length
+          New-Item -ItemType Directory -Force pkg | Out-Null
+          Copy-Item $src pkg/ix.duckdb_extension -Force
+          Compress-Archive -Path pkg/ix.duckdb_extension -DestinationPath "ix-$platform.zip" -Force
+          Get-Item "ix-$platform.zip" | Select-Object Name, Length
+
+      # The deeper defect behind v0.3.0: build.ps1 -SmokeTest proves the
+      # INTERMEDIATE artifact loads, then packaging happens afterwards and is
+      # never exercised. A green run therefore said nothing about the bytes
+      # users download. This step closes that gap by unpacking the published
+      # ZIP into a clean directory and loading THAT copy — the same path a user
+      # takes. Any future packaging change that breaks loading fails here
+      # instead of on someone else's machine.
+      - name: Verify the packaged artifact loads, not the intermediate one
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $platform = (& duckdb -noheader -list -c 'PRAGMA platform;').Trim()
+          Expand-Archive "ix-$platform.zip" -DestinationPath verify -Force
+          $loadPath = (Resolve-Path verify/ix.duckdb_extension).Path -replace '\\', '/'
+          $sql = "LOAD '$loadPath';
+            SELECT ix_cosine([1.0,2.0,3.0]::DOUBLE[],[1.0,2.0,3.0]::DOUBLE[]) AS a,
+                   ix_euclidean([0.0,0.0]::DOUBLE[],[3.0,4.0]::DOUBLE[])      AS b,
+                   (SELECT count(*) FROM duckdb_functions()
+                      WHERE function_name LIKE 'ix\_%' ESCAPE '\')            AS n;"
+          $row = (& duckdb -unsigned -noheader -list -c $sql).Trim()
+          Write-Host " - packaged artifact: $row"
+          $parts = $row -split '\|'
+          if ($parts[0] -notmatch '^1(\.0)?$' -or $parts[1] -notmatch '^5(\.0)?$') {
+            throw "PACKAGED ARTIFACT FAILED — expected '1.0|5.0|N', got '$row'"
+          }
+          # The function count is asserted as a floor, not an exact number: new
+          # UDFs must not have to touch this workflow, but an extension that
+          # loads while registering nothing must not pass.
+          if ([int]$parts[2] -lt 50) {
+            throw "PACKAGED ARTIFACT REGISTERED ONLY $($parts[2]) ix_* functions"
+          }
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: ix-*.duckdb_extension
+          files: ix-*.zip
           fail_on_unmatched_files: true
           body: |
-            Loadable DuckDB extension exposing IX algorithms as SQL UDFs.
+            Loadable DuckDB extension exposing IX algorithms as SQL UDFs:
+            graph (PageRank, shortest path, components), clustering (k-means,
+            DBSCAN, GMM), projections (PCA, t-SNE, MDS), vector distances,
+            ranking metrics (nDCG, MRR, precision@k), probabilistic sketches
+            (HyperLogLog, Bloom, Cuckoo, Count-Min), statistics, signal
+            processing (rFFT, DCT, wavelet, Kalman, Viterbi), code analysis,
+            and pitch-class set theory.
 
-            The artifact is built for one DuckDB platform and only loads into an
-            engine reporting that same `PRAGMA platform;`. It was smoke-tested in
-            CI by loading it and asserting the scalar and table UDFs.
+            Download the ZIP for your platform and extract it. **Keep the file
+            named `ix.duckdb_extension`** — DuckDB derives the init symbol it
+            looks for from the file name, so a renamed extension will not load.
 
             ```sql
-            LOAD 'ix-<platform>.duckdb_extension';
+            LOAD 'ix.duckdb_extension';
             SELECT ix_cosine([1.0,2.0,3.0]::DOUBLE[], [1.0,2.0,3.0]::DOUBLE[]);
+            SELECT * FROM ix_pagerank('[[0,1],[1,2],[2,0]]', 0.85, 20);
             ```
+
+            The extension only loads into an engine whose `PRAGMA platform;`
+            matches the one in the ZIP name. CI built it, loaded it, and
+            asserted the UDFs on the packaged copy that this release attaches.
 
             Note: the source archives GitHub generates for a tag do NOT include
             the `governance/demerzel` submodule. Clone with
