@@ -5,5 +5,6 @@
 
 pub mod differential;
 pub mod genetic;
+pub mod pareto;
 pub mod selection;
 pub mod traits;
