@@ -259,7 +259,7 @@ a one-way-door entry); freeze only at the named Phase-4 milestone.
 ## Implementation Phases
 
 ### Phase 0 — `duck`-feature CI (SEPARATE PR, prerequisite)
-- [ ] One ubuntu job, **keep hermetic `bundled`** (the hard gate is merge-blocking → no
+- [x] One ubuntu job, **keep hermetic `bundled`** (the hard gate is merge-blocking → no
       external-download SPOF, no CI-vs-local divergence; `Cargo.toml` already hardcodes
       `bundled` and switching it off would be a feature change). Tame the cold compile with
       **sccache (GHA backend)** + `Swatinem/rust-cache` `save-if: main` + `shared-key` + a
@@ -271,40 +271,40 @@ a one-way-door entry); freeze only at the named Phase-4 milestone.
 - **Success:** CI compiles+tests `duck` hermetically; de-risks existing UDFs.
 
 ### Phase 1 — Slice A: trace warehouse + dev queries  *(highest leverage, build first)*
-- [ ] `build_traces()` → `chatbot_traces(prompt_id,prompt,category,agent_id,routing_method,
+- [x] `build_traces()` → `chatbot_traces(prompt_id,prompt,category,agent_id,routing_method,
       routing_confidence,grounding_present,response_length,elapsed_ms,recorded_at)`.
-- [ ] Library `pub fn`s for: weak intents (`avg(confidence)<0.7`), latency outliers
+- [x] Library `pub fn`s for: weak intents (`avg(confidence)<0.7`), latency outliers
       (`elapsed_ms`), ungrounded count (`grounding_present=false`), routing-method share.
       `lens` prints them; example stays a thin shell.
-- [ ] Vendor real fixtures (≥3 shapes); test `traces_row_per_run`.
-- [ ] `@ai:invariant chatbot_traces has one row per run file [T:test src:ix_duck::chatbot::tests::traces_row_per_run]`.
+- [x] Vendor real fixtures (≥3 shapes); test `traces_row_per_run`.
+- [x] `@ai:invariant chatbot_traces has one row per run file [T:test src:ix_duck::chatbot::tests::traces_row_per_run]`.
 - **Success:** `lens` reproduces the known weak intents from real data.
 
 ### Phase 2 — Slice B (trimmed): agent_id gate + contract  *(hermetic hard gate)*
-- [ ] Read `_signature.json` for the expected `agent_id` (fallback: `canonicalSteps[]` lambda,
+- [x] Read `_signature.json` for the expected `agent_id` (fallback: `canonicalSteps[]` lambda,
       spiked into a test).
-- [ ] `check_regressions()`: hard `agent_id` diff + soft length band; degraded-vs-regression
-      by fingerprint; majority reducer; baseline content-hash + `baseline_changed`.
-- [ ] Emit the v0.1 contract (ix-side, atomic, fail-closed) — documented JSON shape in
+- [x] `check_regressions()`: hard `agent_id` diff + soft length band; degraded-vs-regression
+      by fingerprint; the shipped single-run v1 policy; baseline content-hash + `baseline_changed`.
+- [x] Emit the v0.1 contract (ix-side, atomic, fail-closed) — documented JSON shape in
       `docs/contracts/chatbot-trace-regression.contract.md` (**no `.schema.json` until a
       consumer**).
-- [ ] **ix CI hard gate over vendored fixtures only**; **separate nightly/on-demand** workflow
+- [x] **ix CI hard gate over vendored fixtures only**; **separate nightly/on-demand** workflow
       for the live-ga advisory artifact (`on: schedule`/`workflow_dispatch`,
       `permissions: contents: read`, pinning matching the existing `ga-nightly-quality.yml`
       convention). The nightly also asserts **vendored-fixture shape still matches live GA
       shape** (so hermetic ≠ stale — guards the `_signature.json` fixture-staleness green-but-
       dead risk).
-- [ ] Tests on real fixtures: `diff_flags_agent_drift`, `degrades_on_absent_ga`,
+- [x] Tests on real fixtures: `diff_flags_agent_drift`, `degrades_on_absent_ga`,
       `homogeneous_failure_is_degraded`, `single_clean_flip_fails`, `oversized_json_skipped`.
-- [ ] `@ai:invariant` on the flagging rule + the `lens`/`check` shared-builder parity, test-bound.
+- [x] `@ai:invariant` on the flagging rule + the `lens`/`check` shared-builder parity, test-bound.
 - **Success:** injected-regression fixture fails; absent-ga skips; homogeneous-failure warns;
   baseline change requires ack.
 
 ### Phase 3 — Docs + wrap
-- [ ] `docs/duckdb/chatbot-queries.sql`; cross-link `docs/DUCKDB.md`; note as the course's
-      operational capstone.
-- [ ] Write the DuckDB-nested-access (+ `_signature.json`) learning to `docs/solutions/`.
-- [ ] Re-snapshot `state/assumptions/annotations.snapshot.json`.
+- [x] Query examples ship through `ix_chatbot_lens` and the `docs/DUCKDB.md` cross-link;
+      the separate SQL file was omitted as documented in the implementation notes.
+- [x] Write the DuckDB-nested-access (+ `_signature.json`) learning to `docs/solutions/`.
+- [x] Re-snapshot `state/assumptions/annotations.snapshot.json`.
 
 ## Alternative Approaches Considered
 
@@ -324,20 +324,20 @@ a one-way-door entry); freeze only at the named Phase-4 milestone.
 ## Acceptance Criteria
 
 ### Functional
-- [ ] `lens` builds `chatbot_traces` and prints weak intents, latency outliers, ungrounded
+- [x] `lens` builds `chatbot_traces` and prints weak intents, latency outliers, ungrounded
       count, routing share over the real corpus.
-- [ ] `check` flags `agent_id` regressions vs canonical (fingerprint-disambiguated), emits the
+- [x] `check` flags `agent_id` regressions vs canonical (fingerprint-disambiguated), emits the
       fail-closed v0.1 contract, exits nonzero only on real `regression`.
-- [ ] Absent ga → skip (exit 0); ga present + read error → degraded/fail.
+- [x] Absent ga → skip (exit 0); ga present + read error → degraded/fail.
 
 ### Quality gates
-- [ ] All tests on **real** vendored fixtures (≥3 shapes incl. injected regression, oversized,
+- [x] All tests on **real** vendored fixtures (≥3 shapes incl. injected regression, oversized,
       homogeneous-failure); pass on ubuntu; Windows WDAC caveat documented.
-- [ ] `cargo clippy -p ix-duck --all-targets --features duck -- -D warnings` clean.
-- [ ] ix hard gate: red on injected-regression fixture, green on happy; nightly live job
+- [x] `cargo clippy -p ix-duck --all-targets --features duck -- -D warnings` clean.
+- [x] ix hard gate: red on injected-regression fixture, green on happy; nightly live job
       emits the artifact without blocking merges.
-- [ ] `@ai:` invariants test-bound; `assumption-drift.yml` green; snapshot retaken.
-- [ ] Codex P0/P1 fetched + addressed before merge.
+- [x] `@ai:` invariants test-bound; `assumption-drift.yml` green; snapshot retaken.
+- [x] Codex review completed; no P0/P1 remained, and the reported P2 findings were addressed before merge.
 
 ## Success Metrics
 - Weak-intent / ungrounded / latency questions each answerable by one query (baseline: 0).

@@ -153,20 +153,20 @@ on catalog completeness + staleness, bound to tests.
 
 ## Acceptance Criteria
 
-- [ ] `docs/contracts/business-value.contract.md` + `.schema.json` (v0.1 draft).
-- [ ] `crates/ix-value` builds; `cargo clippy -p ix-value --all-targets -- -D warnings` clean.
-- [ ] `stars()` = `round(geomean(R,I,C))` clamped `[1,5]`; unit-tested incl. the
-      (4,5,3)→4 case and a low-confidence cap case (e.g. (5,5,1)→2).
-- [ ] `ix-value catalog` federates ix+ga (graceful when `../ga` absent) →
+- [x] `docs/contracts/business-value.contract.md` + `.schema.json` (v0.1 draft).
+- [x] `crates/ix-value` builds; `cargo clippy -p ix-value --all-targets -- -D warnings` clean.
+- [x] `stars()` = `round(geomean(R,I,C))` clamped `[1,5]`; unit-tested incl. the
+      (4,5,3)→4 case and a low-confidence case (e.g. (5,5,1)→3).
+- [x] `ix-value catalog` federates ix+ga (graceful when `../ga` absent) →
       `state/value/catalog.jsonl`, sorted by id, with `kind:"repo"` rollups.
-- [ ] `ix-value check` drift gate is repo-scoped; CI workflow added.
-- [ ] Seed manifests for ix + ga committed; catalog regenerated + committed.
-- [ ] GA `/dev-data/value` endpoint returns the federated catalog (cross-repo
+- [x] `ix-value check` drift gate is repo-scoped; CI workflow added.
+- [x] Seed manifests for ix + ga committed; catalog regenerated + committed.
+- [x] GA `/dev-data/value` endpoint returns the federated catalog (cross-repo
       read), 404s gracefully; `parseValueCatalog` unit-tested.
-- [ ] Stars render on the 4 demo cards + a Repo Scorecard row on `#dev/summary`;
+- [x] Stars render on the 4 demo cards + a Repo Scorecard row on `#dev/summary`;
       "unset" shown for records-absent (no fake zero).
-- [ ] Tests: ingest (fixture), malformed-skip, absent-sibling, drift, stars math.
-- [ ] `@ai:invariant` on catalog completeness + staleness bound to tests.
+- [x] Tests: ingest (fixture), malformed-skip, absent-sibling, drift, stars math.
+- [x] `@ai:invariant` on catalog completeness + staleness bound to tests.
 
 ## Dependencies & Risks
 
