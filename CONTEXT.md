@@ -84,6 +84,18 @@ contracts (see `docs/contracts/`), not runtime coupling.
   (`json_extract(to_json(obj),'$.f')` / `TRY_CAST`, never struct-field access, never
   `coalesce(...,0)`). The seam that makes the absence-as-zero / struct-bind-crash
   defect class non-recurring (see `docs/solutions/.../2026-06-19-duckdb-absence-as-zero-and-struct-bind-crash.md`).
+- **Activation coverage** (`activations_coverage` in `optick-sae-artifact.json`) — the
+  declared share of the OPTIC-K corpus present in `feature_activations.parquet`. The
+  parquet holds the **train split only** (measured 2026-09-07: 297,395 of 313,047
+  voicings, **95.0%**), each row keyed by `optick_row` — its position in the *full*
+  index, not in the split. So a full-corpus join legitimately misses 15,652 rows, and
+  before this block existed it missed them **silently**: no error, no field, and a
+  plausible-looking row count (ix#248). Coverage is *declared* (producer-side counts),
+  *validated* (`validate_coverage` — additivity, staleness, a 90% floor) and
+  *reconciled* (`optick_coverage.reconcile` — the declaration against the parquet's
+  actual key column). Only the third layer can see the bytes; the first two compare the
+  producer's numbers to themselves. Contract:
+  `docs/contracts/2026-09-07-optick-sae-activations-coverage.contract.md`.
 
 ## Conventions
 

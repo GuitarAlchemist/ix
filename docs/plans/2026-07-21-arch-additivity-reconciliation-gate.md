@@ -1,7 +1,7 @@
 ---
 title: Additivity reconciliation gate — fail-closed integrity check for sharded warehouse aggregates
 type: arch
-status: draft
+status: partially-implemented
 date: 2026-07-21
 issue: W1 of docs/research/2026-07-21-ktheory-duckdb-supercharge.md; motivating bug GuitarAlchemist/ix#248
 reversibility: two-way (a SQL query + a CI assertion; no schema, no public API)
@@ -12,8 +12,29 @@ revisit-trigger: a legitimate non-additive aggregate appears (e.g. dedup-across-
 
 - **Issue:** W1 from `docs/research/2026-07-21-ktheory-duckdb-supercharge.md`; motivating bug #248.
 - **Date:** 2026-07-21
-- **Status:** proposal (tracer-bullet)
+- **Status:** partially implemented 2026-09-07 — see the status section below for what shipped and what did not
 - **Reversibility:** two-way door (a query + a CI assertion; no schema, no public API). Revisit trigger: if a *legitimate* non-additive aggregate appears (e.g. a dedup-across-shards metric), relax the gate to a per-metric allowlist.
+
+## Status — 2026-09-07 (ix#248)
+
+**Implemented, with the revisions the research section below demanded.** Shipped in
+`crates/ix-optick-sae`, declared by
+`docs/contracts/2026-09-07-optick-sae-activations-coverage.contract.md`.
+
+What landed, versus this plan as originally written:
+
+| Plan said | Shipped |
+| --- | --- |
+| A3 = `count(*) = $corpus_n` | **Re-pointed to declared-vs-observed** (`rows_match_declared`, `coverage_pct_consistent`, `coverage_floor`). The research section was right: A3 as written is red on every artifact that has ever existed, and a permanently-red gate is the dual of green-but-dead. |
+| three assertions | **eleven**, including the A0 NULL-key check and the prefix-set discriminator (`key_is_corpus_positions`) the research flagged as the actual #248 detector |
+| `crates/ix-duck/sql/reconciliation.sql` + a `reconcile` CLI subcommand | **Neither.** ix-duck has no CLI and is out-of-workspace; a SQL file nothing executes is a dead asset. The check lives with the producer, in `python/optick_coverage.py`. |
+| DuckDB | **pandas + pyarrow** — already trainer dependencies, so the gate adds none. The logic core is stdlib-only and unit-tested without any of them. |
+| generated-in-test parquet fixtures | **No fixtures at all.** The reconciler takes a `KeyStats` tuple, so every assertion and its mutant is a plain integer case. Real-snapshot controls were run once, by hand, and recorded in the PR. |
+| CI step | **Produce time** (trainer exits 4, writes no artifact) plus `ix-optick-sae verify` on demand. No scheduled job over the ga tree — the parquet is gitignored, so that recreates the #238 absence trap, and ix runners have no ga checkout. |
+
+Still open: **weighted valuations** (activation mass, not just row counts) and
+**per-shard `GROUP BY` reconciliation** to localize which shard is lossy. Both were
+already listed under "Out of scope" and remain there.
 
 ## Who is in pain
 

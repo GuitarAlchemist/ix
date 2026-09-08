@@ -860,6 +860,24 @@ def main() -> None:
         corpus_n=corpus_size,
     )
 
+    # ── Retract any prior declaration before replacing the bytes it describes ─
+    # Runs re-use dated output dirs. save_outputs() overwrites the parquet and
+    # weights in place, so a previous run's optick-sae-artifact.json would
+    # survive a failed reconciliation below and sit there describing bytes that
+    # are no longer present — a federatable artifact that lies, which is the
+    # #248 disease with the numbers swapped. Unlink it first: from here until a
+    # green reconciliation the snapshot is explicitly undeclared, and an
+    # undeclared snapshot is one a consumer refuses rather than misreads.
+    # @ai:invariant no artifact JSON coexists with outputs it does not describe
+    # [T:test conf:0.95 src:test_activations_coverage::TrainerWiringTests]
+    stale_artifact = output_dir / "optick-sae-artifact.json"
+    if stale_artifact.exists():
+        log.warning(
+            "Removing prior artifact %s before overwriting outputs — it describes "
+            "bytes this run is about to replace.", stale_artifact,
+        )
+        stale_artifact.unlink()
+
     # ── Write output files ────────────────────────────────────────────────────
     save_outputs(model, metrics, output_dir)
 
@@ -882,6 +900,37 @@ def main() -> None:
         retry_note=args.retry_note,
         supersedes=args.supersedes,
     )
+
+    # ── Gate: declared coverage vs the parquet that actually landed ───────────
+    # The pre-write guard above only compares three integers this process is
+    # already holding — it cannot see a short write, a NULL key column, a dup,
+    # or a key that ended up holding split positions. Read the key column back
+    # off disk and reconcile it against the block build_artifact just declared.
+    #
+    # Fail-closed at birth: on any red verdict the artifact JSON is NOT written,
+    # so the snapshot has nothing to federate and a consumer never sees a
+    # declaration that the bytes do not support. The parquet/weights are left in
+    # place deliberately — they are the evidence for diagnosing the failure.
+    # @ai:invariant an artifact JSON is only written when every reconciliation
+    # verdict is green [T:test conf:0.95 src:test_activations_coverage::ReconcileTests]
+    from optick_coverage import failures, read_key_stats, reconcile  # noqa: PLC0415
+
+    verdicts = reconcile(
+        artifact["activations_coverage"],
+        read_key_stats(output_dir / "feature_activations.parquet"),
+    )
+    for verdict in verdicts:
+        log.info("reconcile %s", verdict)
+    red = failures(verdicts)
+    if red:
+        log.error(
+            "FAIL activation-coverage reconciliation: %d of %d assertions red. "
+            "No artifact emitted — this snapshot must not be federated. "
+            "Outputs left in %s for diagnosis. Red: %s",
+            len(red), len(verdicts), output_dir,
+            json.dumps([{"assertion": v.name, "detail": v.detail} for v in red]),
+        )
+        sys.exit(4)
 
     artifact_path = output_dir / "optick-sae-artifact.json"
     with open(artifact_path, "w") as f:
