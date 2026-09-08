@@ -1,3 +1,6 @@
 # Determinism fixtures for the Pareto frontier pipeline (issue #294):
 # byte-identical output is the contract, so git must never rewrite their EOLs.
 crates/ix-duck/tests/fixtures/pareto/*.csv -text
+
+# Same contract for the H0 persistence fixtures (gap-matrix row B1b).
+crates/ix-duck/tests/fixtures/persistence/*.csv -text

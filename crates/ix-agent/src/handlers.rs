@@ -4834,6 +4834,178 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
     Ok(result)
 }
 
+// ── ix_code_topology ────────────────────────────────────────────────
+//
+// Gap-matrix row F1. `ix-topo` (persistent homology) and `ix-code` (call-graph
+// extraction) were both built and both exposed, but separately: nothing joined
+// them, and `ix_code::topology` was behind a feature flag that no crate in the
+// workspace enabled, so it was never compiled by CI either. This handler is the
+// join, and enabling `ix-code/topology` in ix-agent's manifest is what puts
+// Layer 4 on the `cargo build --workspace` path for the first time.
+
+/// A `.rs` source unit: display name plus contents.
+type SourceUnit = (String, String);
+
+/// Collect Rust sources from a file or directory path.
+fn collect_rust_sources(
+    root: &std::path::Path,
+    max_files: usize,
+) -> Result<Vec<SourceUnit>, String> {
+    use ignore::WalkBuilder;
+
+    if root.is_file() {
+        let source =
+            std::fs::read_to_string(root).map_err(|e| format!("{}: {e}", root.display()))?;
+        return Ok(vec![(root.display().to_string(), source)]);
+    }
+    if !root.is_dir() {
+        return Err(format!("path not found: {}", root.display()));
+    }
+
+    let mut wb = WalkBuilder::new(root);
+    wb.filter_entry(|e| {
+        let n = e.file_name().to_string_lossy();
+        !matches!(n.as_ref(), "target" | "node_modules" | ".git")
+    });
+    let mut units = Vec::new();
+    for ent in wb.build().flatten() {
+        if !ent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let p = ent.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        let rel = p.strip_prefix(root).unwrap_or(p);
+        units.push((rel.display().to_string().replace('\\', "/"), source));
+    }
+    // Deterministic node order: the topology is order-independent, but the
+    // reported node list and the MAX_NODES truncation must not be.
+    units.sort_by(|a, b| a.0.cmp(&b.0));
+    units.truncate(max_files);
+    Ok(units)
+}
+
+pub fn code_topology(params: Value) -> Result<Value, String> {
+    use ix_code::semantic::{extract_call_graph, extract_definitions};
+    use ix_code::topology::{
+        call_graph_from_semantic, compute_code_topology, module_call_graph, Unit, MAX_NODES,
+    };
+
+    let granularity = params
+        .get("granularity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("module");
+    if !matches!(granularity, "module" | "function") {
+        return Err(format!(
+            "'granularity' must be \"module\" or \"function\", got {granularity:?}"
+        ));
+    }
+
+    // Inputs: inline sources, or a path to walk. Inline wins if both are given.
+    let sources: Vec<SourceUnit> =
+        if let Some(items) = params.get("sources").and_then(|v| v.as_array()) {
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("source[{i}]"));
+                    let source = item
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| format!("sources[{i}] is missing 'source'"))?
+                        .to_string();
+                    Ok((name, source))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        } else if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
+            collect_rust_sources(std::path::Path::new(path), MAX_NODES)?
+        } else {
+            return Err("Either 'sources' or 'path' is required".to_string());
+        };
+
+    if sources.is_empty() {
+        return Err("no Rust sources found".to_string());
+    }
+
+    if granularity == "function" {
+        if sources.len() != 1 {
+            return Err(format!(
+                "granularity \"function\" analyses one unit at a time; got {} \
+                 (bare function names are not unique across files, so fusing \
+                 them would invent edges). Use \"module\", or pass one file.",
+                sources.len()
+            ));
+        }
+        let (name, source) = &sources[0];
+        let semantic = extract_call_graph(source)
+            .ok_or_else(|| format!("{name}: source could not be parsed as Rust"))?;
+        let graph = call_graph_from_semantic(&semantic);
+        let topology = compute_code_topology(&graph);
+        return Ok(json!({
+            "granularity": "function",
+            "unit": name,
+            "topology": topology,
+            "undirected_edges": ix_code::topology::undirected_edge_count(&graph),
+            "circuit_rank": circuit_rank(&graph, &topology),
+            "notes": NOTES,
+        }));
+    }
+
+    let units: Vec<Unit> = sources
+        .iter()
+        .map(|(name, source)| Unit {
+            name: name.clone(),
+            definitions: extract_definitions(source),
+            graph: extract_call_graph(source).unwrap_or_default(),
+        })
+        .collect();
+    let (graph, resolution) = module_call_graph(&units);
+    let topology = compute_code_topology(&graph);
+
+    Ok(json!({
+        "granularity": "module",
+        "n_units": units.len(),
+        "units": units.iter().map(|u| &u.name).collect::<Vec<_>>(),
+        "topology": topology,
+        "undirected_edges": ix_code::topology::undirected_edge_count(&graph),
+        "resolution": resolution,
+        "circuit_rank": circuit_rank(&graph, &topology),
+        "notes": NOTES,
+    }))
+}
+
+/// `E - V + betti_0` — McCabe's cyclomatic number applied to the dependency
+/// graph. Returned alongside `betti_1` because, while the filtration stops at
+/// dimension 1, the two are equal by construction; publishing both makes that
+/// visible instead of letting a caller read `betti_1` as something deeper.
+///
+/// `E` is the **undirected** edge count, not `topology.n_edges`: the latter
+/// counts `a -> b` and `b -> a` separately, which inflates the rank by one per
+/// reciprocal pair.
+fn circuit_rank(
+    graph: &ix_code::topology::CallGraph,
+    topology: &ix_code::topology::CodeTopology,
+) -> i64 {
+    ix_code::topology::undirected_edge_count(graph) as i64 - topology.n_nodes as i64
+        + topology.betti_0 as i64
+}
+
+const NOTES: &str = "betti_1 counts UNDIRECTED cycles: the call graph is \
+symmetrized before the filtration is built, so a fan-in diamond registers as \
+tangled and a circular dependency laid over an existing edge does not. With the \
+Rips complex capped at dimension 1, betti_1 equals the circuit rank \
+E - V + betti_0. The measure that goes beyond cyclomatic complexity is the H0 \
+persistence (max_persistence / total_persistence / persistence_pairs): the \
+inverse-coupling scale at which the unit set separates into pieces.";
+
 // ── ix_tars_bridge ──────────────────────────────────────────────────
 
 pub fn tars_bridge(params: Value) -> Result<Value, String> {

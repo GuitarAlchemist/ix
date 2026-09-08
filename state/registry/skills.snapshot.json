@@ -73,7 +73,7 @@
     ]
   },
   "mcp_tools": {
-    "count": 94,
+    "count": 95,
     "names": [
       "ix_adversarial_fgsm",
       "ix_analyze_reference",
@@ -96,6 +96,7 @@
       "ix_code_analyze",
       "ix_code_catalog",
       "ix_code_smells",
+      "ix_code_topology",
       "ix_context_walk",
       "ix_dbscan",
       "ix_demo",
