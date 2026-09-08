@@ -344,9 +344,17 @@ pub fn validate_coverage(artifact: &SaeArtifact) -> Result<(), ValidationError> 
 
 /// `100 * n_train / corpus_n`, rounded to 2dp — the one canonical formula,
 /// matching `optick_coverage.coverage_pct` in the Python producer.
+///
+/// `round_ties_even`, not `round`, is load-bearing. Python's `round` breaks ties
+/// to even while Rust's `f64::round` breaks them away from zero, so a value
+/// landing exactly on a half at the third decimal disagrees across the two. With
+/// `n_train = 721, corpus_n = 800` the quotient is exactly 90.125: Python emits
+/// `90.12`, and `f64::round` would recompute `90.13` — a 0.01 gap that exceeds
+/// the comparison epsilon and rejects a producer-approved artifact *after* a
+/// full training run. Rare, but a hard failure with a baffling message.
 fn recomputed_coverage_pct(n_train: u64, corpus_n: u64) -> f64 {
     let denominator = corpus_n.max(1) as f64;
-    (100.0 * n_train as f64 / denominator * 100.0).round() / 100.0
+    (100.0 * n_train as f64 / denominator * 100.0).round_ties_even() / 100.0
 }
 
 #[cfg(test)]
@@ -602,6 +610,23 @@ mod tests {
             "coverage floor drifted between python/optick_coverage.py ({declared}) \
              and src/lib.rs ({MIN_COVERAGE_PCT}) — bump both in the same PR",
         );
+    }
+
+    #[test]
+    fn coverage_pct_breaks_ties_the_way_python_does() {
+        // 100 * 721 / 800 is exactly 90.125. Python's round() goes to even
+        // (90.12); f64::round() would go away from zero (90.13), and the 0.01
+        // gap exceeds the comparison epsilon — so a producer-approved artifact
+        // would be rejected after a full training run. Guards that agreement.
+        assert_eq!(recomputed_coverage_pct(721, 800), 90.12);
+        let c = ActivationsCoverage {
+            optick_row_split: OPTICK_ROW_SPLIT.into(),
+            n_train: 721,
+            n_val: 79,
+            corpus_n: 800,
+            coverage_pct: 90.12, // what the Python producer emits
+        };
+        assert!(validate_artifact(&artifact_with_coverage(Some(c))).is_ok());
     }
 
     #[test]

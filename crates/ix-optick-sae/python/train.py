@@ -860,6 +860,24 @@ def main() -> None:
         corpus_n=corpus_size,
     )
 
+    # ── Retract any prior declaration before replacing the bytes it describes ─
+    # Runs re-use dated output dirs. save_outputs() overwrites the parquet and
+    # weights in place, so a previous run's optick-sae-artifact.json would
+    # survive a failed reconciliation below and sit there describing bytes that
+    # are no longer present — a federatable artifact that lies, which is the
+    # #248 disease with the numbers swapped. Unlink it first: from here until a
+    # green reconciliation the snapshot is explicitly undeclared, and an
+    # undeclared snapshot is one a consumer refuses rather than misreads.
+    # @ai:invariant no artifact JSON coexists with outputs it does not describe
+    # [T:test conf:0.95 src:test_activations_coverage::TrainerWiringTests]
+    stale_artifact = output_dir / "optick-sae-artifact.json"
+    if stale_artifact.exists():
+        log.warning(
+            "Removing prior artifact %s before overwriting outputs — it describes "
+            "bytes this run is about to replace.", stale_artifact,
+        )
+        stale_artifact.unlink()
+
     # ── Write output files ────────────────────────────────────────────────────
     save_outputs(model, metrics, output_dir)
 

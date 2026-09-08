@@ -29,9 +29,12 @@ _TRAINER_SOURCE = _PYTHON_DIR / "train.py"
 sys.path.insert(0, str(_PYTHON_DIR))
 from optick_coverage import (  # noqa: E402
     KeyStats,
+    Unevaluatable,
+    _prefix_split_is_implausible,
     activations_coverage,
     failures,
     reconcile,
+    reconcile_snapshot,
 )
 
 
@@ -295,6 +298,34 @@ class ReconcileTests(unittest.TestCase):
             {"key_is_corpus_positions"},
         )
 
+    def test_tiny_corpus_skips_the_prefix_check(self) -> None:
+        """A toy corpus can legitimately hold out exactly the suffix.
+
+        With corpus_n=10 and n_val=1 there are only 10 possible val sets, so a
+        correct producer writes corpus positions {0..8} — indistinguishable from
+        split positions — one run in ten. The assertion is a hard produce-time
+        failure, so it must stand down where a legitimate prefix is plausible.
+        """
+        declared = activations_coverage(9, 1, 10)
+        observed = KeyStats(
+            n_rows=9, key_present=True, n_non_null=9, n_distinct=9,
+            key_min=0, key_max=8,  # looks like split positions, is not
+        )
+        verdicts = reconcile(declared, observed)
+        self.assertNotIn("key_is_corpus_positions", {v.name for v in verdicts})
+        # Nothing else may go red just because the corpus is small.
+        self.assertEqual(failures(verdicts), [])
+
+    def test_production_corpus_still_runs_the_prefix_check(self) -> None:
+        # The skip above must not swallow the real detector at real scale:
+        # C(313047, 15652) is astronomically larger than the plausibility cap.
+        self.assertTrue(_prefix_split_is_implausible(self.CORPUS, self.N_VAL))
+        self.assertFalse(_prefix_split_is_implausible(10, 1))
+        self.assertEqual(
+            self.red_names(self.declared(), self.observed(key_max=self.N_TRAIN - 1)),
+            {"key_is_corpus_positions"},
+        )
+
     def test_full_coverage_snapshot_skips_the_prefix_check(self) -> None:
         """With nothing held out, {0..corpus-1} IS the correct key.
 
@@ -311,6 +342,38 @@ class ReconcileTests(unittest.TestCase):
         verdicts = reconcile(declared, observed)
         self.assertEqual(failures(verdicts), [])
         self.assertNotIn("key_is_corpus_positions", {v.name for v in verdicts})
+
+
+
+class UnevaluatableTests(unittest.TestCase):
+    """"Could not check" must never be reported as "checked and contradictory".
+
+    ``feature_activations.parquet`` is gitignored (56 MB), so it is structurally
+    absent on any fresh checkout. If that absence returned the same exit code as
+    a real contradiction, the distinction the reconciler advertises would be
+    fiction and the failure would train people to ignore it.
+    """
+
+    def test_missing_snapshot_raises_rather_than_failing(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(Unevaluatable):
+                reconcile_snapshot(tmp)
+
+    def test_missing_parquet_raises_rather_than_failing(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path as _Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (_Path(tmp) / "optick-sae-artifact.json").write_text(
+                json.dumps({"activations_coverage": activations_coverage(95, 5, 100)}),
+                encoding="utf-8",
+            )
+            # Declaration is present and fine; only the bytes are unavailable.
+            with self.assertRaises(Unevaluatable):
+                reconcile_snapshot(tmp)
 
 
 if __name__ == "__main__":

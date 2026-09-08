@@ -266,9 +266,14 @@ fn run_reconciler(snapshot: &Path, python_bin: &str) -> Result<bool, String> {
         .status()
         .map_err(|e| format!("failed to launch {python_bin} {}: {e}", script.display()))?;
 
+    // The reconciler's codes mirror the constants in optick_coverage.py. Code 5
+    // ("nothing was checked") must map to Err, not Ok(false): a fresh checkout
+    // has no parquet, and reporting that as a contradiction would make the
+    // distinction exit 5 exists for meaningless.
     match status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
+        Some(5) => Err("the reconciler could not evaluate this snapshot".to_string()),
         Some(code) => Err(format!("reconciler exited with unexpected code {code}")),
         None => Err("reconciler was killed by a signal".to_string()),
     }
@@ -299,6 +304,14 @@ fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     match run_python_trainer(&args.python_script, &config, &args.python_bin) {
         Ok(()) => finish(args.output, &artifact_id),
+        // Surfaced with its own code rather than collapsed into the generic
+        // error exit: a reconciliation failure means the outputs on disk are
+        // real but undeclared, which a caller may want to handle differently
+        // from a crash. Mirrors the Python trainer's exit 4.
+        Err(TrainerError::ReconciliationFailed) => {
+            eprintln!("FAIL: {}", TrainerError::ReconciliationFailed);
+            std::process::exit(4);
+        }
         Err(TrainerError::MseGuardrailExceeded) => {
             eprintln!(
                 "FAIL: reconstruction_mse > {:.2} — no artifact emitted.",
@@ -321,6 +334,12 @@ fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
 
             match run_python_trainer(&args.python_script, &config, &args.python_bin) {
                 Ok(()) => finish(args.output, &artifact_id),
+                // Same code on the retry path, so `exit 4 == reconciliation` holds
+                // however the run got here.
+                Err(TrainerError::ReconciliationFailed) => {
+                    eprintln!("FAIL: {}", TrainerError::ReconciliationFailed);
+                    std::process::exit(4);
+                }
                 Err(TrainerError::MseGuardrailExceeded) => {
                     eprintln!("FAIL: reconstruction_mse > 0.05 on retry — no artifact emitted.");
                     std::process::exit(2);

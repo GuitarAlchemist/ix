@@ -237,9 +237,17 @@ def reconcile(declared: Optional[Dict[str, object]], observed: KeyStats) -> List
     # The discriminator for the original keying bug class: if optick_row held
     # SPLIT positions rather than CORPUS positions it would be exactly
     # {0..n_train-1} — unique, in range, and the right count, so every other
-    # assertion above passes. A seeded random train split must reach past
-    # n_train. Only meaningful when something was actually held out.
-    if n_val > 0:
+    # assertion above passes.
+    #
+    # It is a probabilistic argument, not a proof: a seeded random split *could*
+    # legitimately hold out exactly the corpus suffix, leaving correct corpus
+    # positions that look like split positions. That has probability
+    # 1/C(corpus_n, n_val), which is negligible at production scale but not at
+    # toy scale — a 10-row corpus with a 1-row holdout hits it 10% of the time,
+    # and this assertion is a hard produce-time failure. Only assert when a
+    # legitimate prefix is implausible; below that the check would reject valid
+    # artifacts, and a gate that cries wolf gets ignored.
+    if n_val > 0 and _prefix_split_is_implausible(corpus_n, n_val):
         verdicts.append(
             Verdict(
                 "key_is_corpus_positions",
@@ -256,6 +264,26 @@ def reconcile(declared: Optional[Dict[str, object]], observed: KeyStats) -> List
 def failures(verdicts: List[Verdict]) -> List[Verdict]:
     """The red verdicts, in report order."""
     return [v for v in verdicts if not v.passed]
+
+
+def _prefix_split_is_implausible(corpus_n: int, n_val: int, cap: int = 1_000_000) -> bool:
+    """Is a legitimate "held out exactly the suffix" split rarer than 1 in ``cap``?
+
+    That happens for exactly one of the ``C(corpus_n, n_val)`` equally likely
+    val sets, so the question is whether that binomial exceeds ``cap``. The
+    coefficient is astronomically large at production scale, so it is computed
+    incrementally and abandoned the moment it passes the cap — never materialised
+    in full. At the real corpus (313,047 choose 15,652) two iterations settle it.
+    """
+    if n_val <= 0 or n_val >= corpus_n:
+        return False
+    total = 1
+    # C(n, k) == C(n, n-k); iterate the cheaper direction.
+    for i in range(min(n_val, corpus_n - n_val)):
+        total = total * (corpus_n - i) // (i + 1)
+        if total >= cap:
+            return True
+    return total >= cap
 
 
 def _as_int(value: object) -> int:
@@ -298,12 +326,23 @@ def read_key_stats(parquet_path) -> KeyStats:
     )
 
 
+class Unevaluatable(Exception):
+    """The reconciliation could not be run at all.
+
+    Distinct from a red verdict on purpose. "The parquet contradicts the
+    declaration" and "I could not open the parquet" are different facts, and
+    collapsing them is how a coverage gap goes quiet — the caller would read a
+    fresh checkout (where the gitignored parquet is simply absent) as a
+    contradiction, or worse, learn to ignore the failure.
+    """
+
+
 def reconcile_snapshot(snapshot_dir) -> List[Verdict]:
     """Reconcile an on-disk snapshot directory (artifact JSON + parquet).
 
-    A missing artifact or a missing parquet is reported as a single red verdict
-    rather than silently skipped: "cannot be reconciled" must never render as
-    "reconciled good".
+    Raises :class:`Unevaluatable` when the inputs or the parquet libraries are
+    missing. A *missing artifact* is NOT unevaluatable — an absent declaration
+    is precisely the ix #248 finding, so it is a red verdict.
     """
     import json  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
@@ -311,14 +350,13 @@ def reconcile_snapshot(snapshot_dir) -> List[Verdict]:
     snapshot = Path(snapshot_dir)
     artifact_path = snapshot / "optick-sae-artifact.json"
     if not artifact_path.exists():
-        return [
-            Verdict(
-                "artifact_present",
-                False,
-                f"{artifact_path} does not exist — nothing declares this snapshot",
-            )
-        ]
-    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        raise Unevaluatable(
+            f"{artifact_path} does not exist — there is no declaration to reconcile"
+        )
+    try:
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Unevaluatable(f"cannot parse {artifact_path}: {exc}") from exc
     declared = artifact.get("activations_coverage")
 
     links = artifact.get("links") or {}
@@ -326,16 +364,29 @@ def reconcile_snapshot(snapshot_dir) -> List[Verdict]:
         "feature_activations_parquet", "feature_activations.parquet"
     )
     if not parquet_path.exists():
-        return [
-            Verdict(
-                "parquet_present",
-                False,
-                f"{parquet_path} does not exist — the declaration cannot be "
-                f"reconciled against anything (that is 'not verified', not 'good')",
-            )
-        ]
+        raise Unevaluatable(
+            f"{parquet_path} does not exist — the declaration cannot be reconciled "
+            f"against anything. feature_activations.parquet is gitignored, so this "
+            f"is expected on a fresh checkout."
+        )
 
-    return reconcile(declared, read_key_stats(parquet_path))
+    try:
+        observed = read_key_stats(parquet_path)
+    except ImportError as exc:
+        raise Unevaluatable(
+            f"the parquet reader is unavailable ({exc}); install pandas + pyarrow"
+        ) from exc
+    except OSError as exc:
+        raise Unevaluatable(f"cannot read {parquet_path}: {exc}") from exc
+
+    return reconcile(declared, observed)
+
+
+# Exit codes, mirrored by the Rust `verify` subcommand. Kept distinct so a
+# caller can tell "this snapshot is wrong" from "I could not check it".
+EXIT_OK = 0
+EXIT_RECONCILIATION_FAILED = 1
+EXIT_NOT_EVALUATABLE = 5
 
 
 def main(argv=None) -> int:
@@ -350,16 +401,22 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
 
-    verdicts = reconcile_snapshot(args.snapshot)
+    try:
+        verdicts = reconcile_snapshot(args.snapshot)
+    except Unevaluatable as exc:
+        print(f"NOT VERIFIED: {exc}")
+        print("\nThis is not a pass and not a contradiction — nothing was checked.")
+        return EXIT_NOT_EVALUATABLE
+
     for verdict in verdicts:
         print(verdict)
 
     bad = failures(verdicts)
     if bad:
         print(f"\nRECONCILIATION FAILED: {len(bad)} of {len(verdicts)} assertions red.")
-        return 1
+        return EXIT_RECONCILIATION_FAILED
     print(f"\nreconciliation ok: {len(verdicts)} assertions green.")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

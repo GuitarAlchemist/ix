@@ -144,7 +144,7 @@ Run in this order; each is reported separately so one run shows every failure.
 | `key_non_null` | any NULL `optick_row` |
 | `key_unique` | duplicate `optick_row` |
 | `key_in_corpus_range` | `optick_row` outside `[0, corpus_n)` |
-| `key_is_corpus_positions` | `max(optick_row) < n_train` (skipped when `n_val = 0`) |
+| `key_is_corpus_positions` | `max(optick_row) < n_train` (see caveat below) |
 
 `key_non_null` is separate on purpose: `COUNT(DISTINCT)` and `bool_and` both
 ignore NULLs, so an all-NULL key column passes uniqueness and range checks.
@@ -154,12 +154,29 @@ of `{0..n_train-1}` is unique, in range, and exactly the declared row count — 
 passes every other assertion. A seeded random train split must reach past
 `n_train`.
 
+It is a **probabilistic** argument, not a proof: a correct producer could
+legitimately hold out exactly the corpus suffix, which happens for one of the
+`C(corpus_n, n_val)` equally likely val sets. Negligible at production scale
+(`C(313047, 15652)`), but not at toy scale — a 10-row corpus with a 1-row
+holdout hits it one run in ten. Since this is a hard produce-time failure, the
+assertion **stands down when a legitimate prefix is more likely than 1 in a
+million**. A gate that rejects valid artifacts gets ignored, which costs more
+than the case it would have caught.
+
 ## 6. Running it
 
 Produce time is automatic: the trainer reconciles after writing the parquet and
 **exits 4 without writing the artifact** if any assertion is red. The parquet and
 weights stay on disk as evidence; with no artifact JSON there is nothing to
 federate, so a bad snapshot cannot reach a consumer.
+
+Any artifact JSON already in the output directory is **deleted before**
+`save_outputs` overwrites the parquet and weights. Runs re-use dated
+directories, so a previous run's artifact would otherwise survive a failed
+reconciliation and sit there describing bytes that are no longer present — a
+federatable artifact that lies. Between that unlink and a green reconciliation
+the snapshot is explicitly undeclared, and an undeclared snapshot is one a
+consumer refuses rather than misreads.
 
 Auditing an existing snapshot:
 
