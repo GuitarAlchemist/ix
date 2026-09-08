@@ -67,3 +67,59 @@ jobs:
       - name: Build docs
         if: matrix.rust == 'stable'
         run: cargo doc --workspace --no-deps
+
+  # Feature-gated code is invisible to the job above. `cargo build --workspace`
+  # and `cargo test --workspace` compile the DEFAULT feature set, so a module
+  # behind a non-default feature that no workspace member enables is never
+  # compiled, never linted and never tested -- while contributing zero failures
+  # and looking indistinguishable from covered code in every signal this repo
+  # produces.
+  #
+  # That is not hypothetical. `crates/ix-code/src/topology.rs` -- 296 lines and
+  # five tests -- lived on `main` behind the `topology` feature, which nothing
+  # enabled. CI had never compiled it once; rust-analyzer reported it as "not
+  # included in any crates". Its five tests could not fail, because they were
+  # never run. See ix#315.
+  #
+  # This job is deliberately NOT `--all-features`. That flag would drag in
+  # `ix-duck`'s `duck` feature (DuckDB + arrow, which the root Cargo.toml keeps
+  # out of the default build on purpose) and `memristive-markov`'s `gpu`, which
+  # may need hardware a runner does not have. A blanket flag would make every
+  # run slower and let it fail for environmental reasons unrelated to any
+  # change. The crates listed here pull only other IX crates and self-contained
+  # C grammars, so they are cheap and hermetic.
+  #
+  # Adding a non-default feature? Add it here, or state in the PR why it cannot
+  # be compiled in CI. An entry missing from this list is code nobody runs.
+  gated-features:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: ix-code
+            features: full          # semantic, trajectory, topology, gates, advanced, physics
+          - crate: ix-grammar
+            features: cfg_parsers
+          - crate: ix-autograd
+            features: fft-autograd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gated-${{ matrix.crate }}
+
+      - name: Clippy ${{ matrix.crate }} --features ${{ matrix.features }}
+        run: cargo clippy -p ${{ matrix.crate }} --features ${{ matrix.features }} --all-targets -- -D warnings
+
+      # The point of the job: these tests exist and have never been executed.
+      - name: Test ${{ matrix.crate }} --features ${{ matrix.features }}
+        run: cargo test -p ${{ matrix.crate }} --features ${{ matrix.features }}
