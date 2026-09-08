@@ -883,6 +883,37 @@ def main() -> None:
         supersedes=args.supersedes,
     )
 
+    # ── Gate: declared coverage vs the parquet that actually landed ───────────
+    # The pre-write guard above only compares three integers this process is
+    # already holding — it cannot see a short write, a NULL key column, a dup,
+    # or a key that ended up holding split positions. Read the key column back
+    # off disk and reconcile it against the block build_artifact just declared.
+    #
+    # Fail-closed at birth: on any red verdict the artifact JSON is NOT written,
+    # so the snapshot has nothing to federate and a consumer never sees a
+    # declaration that the bytes do not support. The parquet/weights are left in
+    # place deliberately — they are the evidence for diagnosing the failure.
+    # @ai:invariant an artifact JSON is only written when every reconciliation
+    # verdict is green [T:test conf:0.95 src:test_activations_coverage::ReconcileTests]
+    from optick_coverage import failures, read_key_stats, reconcile  # noqa: PLC0415
+
+    verdicts = reconcile(
+        artifact["activations_coverage"],
+        read_key_stats(output_dir / "feature_activations.parquet"),
+    )
+    for verdict in verdicts:
+        log.info("reconcile %s", verdict)
+    red = failures(verdicts)
+    if red:
+        log.error(
+            "FAIL activation-coverage reconciliation: %d of %d assertions red. "
+            "No artifact emitted — this snapshot must not be federated. "
+            "Outputs left in %s for diagnosis. Red: %s",
+            len(red), len(verdicts), output_dir,
+            json.dumps([{"assertion": v.name, "detail": v.detail} for v in red]),
+        )
+        sys.exit(4)
+
     artifact_path = output_dir / "optick-sae-artifact.json"
     with open(artifact_path, "w") as f:
         json.dump(artifact, f, indent=2)

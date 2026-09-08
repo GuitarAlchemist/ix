@@ -27,7 +27,12 @@ _TRAINER_SOURCE = _PYTHON_DIR / "train.py"
 
 # Import the stdlib-only helper directly (no torch), the way the trainer does.
 sys.path.insert(0, str(_PYTHON_DIR))
-from optick_coverage import activations_coverage  # noqa: E402
+from optick_coverage import (  # noqa: E402
+    KeyStats,
+    activations_coverage,
+    failures,
+    reconcile,
+)
 
 
 class ActivationsCoverageHelperTests(unittest.TestCase):
@@ -154,6 +159,158 @@ class CoverageGuardOrderingTests(unittest.TestCase):
             f"{guard_lines}, but save_outputs writes at line {save_line}. The "
             "guard must precede the write, or it cannot prevent partial output.",
         )
+
+
+
+class ReconcileTests(unittest.TestCase):
+    """Declared-vs-observed reconciliation (ix #248).
+
+    ``activations_coverage`` compares three integers the trainer already holds
+    in memory, so it is blind to what actually reached disk. These tests pin the
+    other half of the pair: one mutant per assertion, each mutant killing
+    exactly the assertion it targets and no other, so a future edit that
+    weakens one check cannot hide behind the others.
+
+    Real-corpus shapes (2026-07-20 snapshot, measured with pyarrow):
+    297,395 train rows keyed 0..313,046 over a 313,047-row corpus.
+    """
+
+    N_TRAIN = 297_395
+    N_VAL = 15_652
+    CORPUS = 313_047
+
+    def declared(self, **overrides):
+        block = activations_coverage(self.N_TRAIN, self.N_VAL, self.CORPUS)
+        block.update(overrides)
+        return block
+
+    def observed(self, **overrides) -> KeyStats:
+        base = dict(
+            n_rows=self.N_TRAIN,
+            key_present=True,
+            n_non_null=self.N_TRAIN,
+            n_distinct=self.N_TRAIN,
+            key_min=0,
+            key_max=self.CORPUS - 1,
+        )
+        base.update(overrides)
+        return KeyStats(**base)
+
+    def red_names(self, declared, observed):
+        return {v.name for v in failures(reconcile(declared, observed))}
+
+    # -- positive control ----------------------------------------------------
+
+    def test_healthy_snapshot_is_all_green(self) -> None:
+        verdicts = reconcile(self.declared(), self.observed())
+        self.assertEqual(failures(verdicts), [])
+        # Every assertion must actually run, or "all green" is vacuous.
+        self.assertEqual(len(verdicts), 11)
+
+    # -- one mutant per assertion --------------------------------------------
+
+    def test_missing_declaration_is_red(self) -> None:
+        # The shipped 2026-07-20 artifact: parquet fine, nothing declares it.
+        self.assertEqual(self.red_names(None, self.observed()), {"coverage_declared"})
+        self.assertEqual(self.red_names({}, self.observed()), {"coverage_declared"})
+
+    def test_unknown_split_is_red(self) -> None:
+        self.assertEqual(
+            self.red_names(self.declared(optick_row_split="val"), self.observed()),
+            {"split_is_known"},
+        )
+
+    def test_non_additive_declaration_is_red(self) -> None:
+        # A hand-edited artifact can carry a split that does not partition even
+        # though activations_coverage() would have refused to build it.
+        red = self.red_names(self.declared(n_val=self.N_VAL - 1), self.observed())
+        self.assertIn("split_additivity", red)
+
+    def test_inconsistent_coverage_pct_is_red(self) -> None:
+        self.assertEqual(
+            self.red_names(self.declared(coverage_pct=100.0), self.observed()),
+            {"coverage_pct_consistent"},
+        )
+
+    def test_coverage_below_floor_is_red(self) -> None:
+        # Half the corpus held out: additive, self-consistent, and unacceptable.
+        half = self.CORPUS // 2
+        declared = activations_coverage(half, self.CORPUS - half, self.CORPUS)
+        observed = self.observed(n_rows=half, n_non_null=half, n_distinct=half)
+        self.assertEqual(self.red_names(declared, observed), {"coverage_floor"})
+
+    def test_missing_key_column_is_red_and_stops_early(self) -> None:
+        # The pre-#234 shape (2026-06-14 parquet): no optick_row column at all.
+        verdicts = reconcile(
+            self.declared(), KeyStats(n_rows=self.N_TRAIN, key_present=False)
+        )
+        self.assertEqual({v.name for v in failures(verdicts)}, {"key_present"})
+        # Downstream key assertions are meaningless without a key; they must not
+        # be reported as passing.
+        self.assertNotIn("key_unique", {v.name for v in verdicts})
+
+    def test_row_count_mismatch_is_red(self) -> None:
+        # The writer dropped rows after the counts were computed — the exact
+        # blind spot of the in-memory guard. A real short write loses the key
+        # values with the rows, so the mutant shrinks all three together; that
+        # keeps this a single-assertion kill rather than a shotgun.
+        short = self.N_TRAIN - 7
+        self.assertEqual(
+            self.red_names(
+                self.declared(),
+                self.observed(n_rows=short, n_non_null=short, n_distinct=short),
+            ),
+            {"rows_match_declared"},
+        )
+
+    def test_null_key_is_red(self) -> None:
+        # NULLs are invisible to COUNT(DISTINCT)/bool_and, so this needs its own
+        # assertion or an all-NULL key column reads as healthy.
+        self.assertEqual(
+            self.red_names(self.declared(), self.observed(n_non_null=self.N_TRAIN - 1)),
+            {"key_non_null"},
+        )
+
+    def test_duplicate_key_is_red(self) -> None:
+        self.assertEqual(
+            self.red_names(self.declared(), self.observed(n_distinct=self.N_TRAIN - 1)),
+            {"key_unique"},
+        )
+
+    def test_out_of_range_key_is_red(self) -> None:
+        self.assertEqual(
+            self.red_names(self.declared(), self.observed(key_max=self.CORPUS)),
+            {"key_in_corpus_range"},
+        )
+
+    def test_split_positions_key_is_red(self) -> None:
+        """The keying bug that passes every other assertion.
+
+        ``optick_row = arange(n_train)`` is unique, non-null, in range, and the
+        declared row count — so count/dup/range checks are all green. Only the
+        prefix-set discriminator catches it.
+        """
+        self.assertEqual(
+            self.red_names(self.declared(), self.observed(key_max=self.N_TRAIN - 1)),
+            {"key_is_corpus_positions"},
+        )
+
+    def test_full_coverage_snapshot_skips_the_prefix_check(self) -> None:
+        """With nothing held out, {0..corpus-1} IS the correct key.
+
+        The prefix-set discriminator would misfire on a legitimate 100%-coverage
+        artifact, so it is gated on n_val > 0.
+        """
+        declared = activations_coverage(self.CORPUS, 0, self.CORPUS)
+        observed = self.observed(
+            n_rows=self.CORPUS,
+            n_non_null=self.CORPUS,
+            n_distinct=self.CORPUS,
+            key_max=self.CORPUS - 1,
+        )
+        verdicts = reconcile(declared, observed)
+        self.assertEqual(failures(verdicts), [])
+        self.assertNotIn("key_is_corpus_positions", {v.name for v in verdicts})
 
 
 if __name__ == "__main__":
