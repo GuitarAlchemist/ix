@@ -673,9 +673,11 @@ fn kalman_schema() -> Value {
             ),
             (
                 "measurement_noise",
-                Prop::number()
-                    .exclusive_min(0)
-                    .desc("Measurement noise covariance r (> 0); larger = trust the data less"),
+                Prop::number().minimum(1.0e-12).desc(
+                    "Measurement noise covariance r (>= 1e-12); larger = trust the data less. \
+                     The floor is not cosmetic: below it the innovation covariance drops under \
+                     ix_math::linalg::inverse's pivot tolerance and the filter panics",
+                ),
             ),
             (
                 "dt",
@@ -708,6 +710,7 @@ fn kalman_output_schema() -> Value {
         ("measurement_noise", Prop::number()),
         ("max_samples", Prop::integer()),
         ("max_dt", Prop::number()),
+        ("min_measurement_noise", Prop::number()),
     ])
 }
 

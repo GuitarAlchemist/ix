@@ -340,6 +340,133 @@ fn kalman_rejects_degenerate_input() {
     assert!(err.contains("Unknown kalman operation"), "got: {err}");
 }
 
+/// **Regression test for the Codex P1 on ix#309.**
+///
+/// `KalmanFilter::update` calls `inverse(&S).expect("Innovation covariance singular")`, and
+/// `ix_math::linalg::inverse` returns `Singular` when its largest pivot is `< 1e-12`. For
+/// the constant-velocity model `S = P₀₀ + r`, so a `measurement_noise` below that tolerance
+/// lets the panic escape the handler into the MCP server instead of surfacing as a tool
+/// error.
+///
+/// The trap in finding this: it takes **both** covariances small *and* at least ~4 samples
+/// for `P₀₀` to contract far enough. The original probe for this handler varied one
+/// covariance at a time and concluded — wrongly — that no positive value panics.
+///
+/// This test asserts the fix from both sides *and* sweeps the accepted region for panics.
+/// It calls `op` (the handler) rather than `call`, so a regression is a test failure, not a
+/// poisoned registry.
+#[test]
+fn kalman_rejects_covariances_that_would_panic_the_filter() {
+    // Below the floor: a loud error naming the reason.
+    for r in [1e-13, 1e-20, 1e-100, 1e-300, f64::MIN_POSITIVE] {
+        let err = op(json!({
+            "operation": "smooth_1d",
+            "series": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            "process_noise": 1e-13,
+            "measurement_noise": r
+        }))
+        .expect_err("a measurement_noise under the pivot tolerance must be rejected");
+        assert!(
+            err.contains("measurement_noise must be >= "),
+            "unexpected error for r={r:e}: {err}"
+        );
+    }
+
+    // Exactly at the floor: accepted, and the whole previously-panicking region is now
+    // either accepted-and-finite or rejected — never an unwind.
+    let at_floor = op(json!({
+        "operation": "smooth_1d",
+        "series": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        "process_noise": 1e-12,
+        "measurement_noise": 1e-12
+    }))
+    .expect("exactly at the floor must be accepted");
+    assert!(nums(&at_floor, "position").iter().all(|x| x.is_finite()));
+    assert_eq!(at_floor["min_measurement_noise"], json!(1.0e-12));
+
+    // The sweep: every combination that used to panic, at the sample counts where it did.
+    for q in [1e-300, 1e-100, 1e-20, 1e-13, 1e-12, 1e-6, 1.0] {
+        for r in [1e-300, 1e-100, 1e-20, 1e-13, 1e-12, 1e-6, 1.0] {
+            for n in [1usize, 2, 4, 8, 16] {
+                let series: Vec<f64> = (0..n).map(|i| i as f64).collect();
+                let out = op(json!({
+                    "operation": "smooth_1d",
+                    "series": series,
+                    "process_noise": q,
+                    "measurement_noise": r
+                }));
+                // Either a clean rejection or entirely finite output. Never a panic —
+                // reaching this line at all proves no unwind occurred.
+                if let Ok(v) = out {
+                    for key in ["position", "velocity"] {
+                        assert!(
+                            nums(&v, key).iter().all(|x| x.is_finite()),
+                            "q={q:e} r={r:e} n={n} produced a non-finite {key}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// **Regression test for the Codex P2 on ix#309.**
+///
+/// `ToolRegistry::call` does not validate arguments against the advertised JSON schema, so
+/// a wrong-typed `dt` must be rejected by the handler. Previously `parse_f64_opt` could not
+/// tell "absent" from "present but not a number", and all four shapes below silently became
+/// `dt = 1.0` — returning estimates for a sampling interval the caller never asked for,
+/// with `dt: 1.0` echoed back as if they had.
+#[test]
+fn kalman_rejects_wrong_typed_dt_instead_of_defaulting() {
+    for bad in [
+        json!("0.5"),
+        json!(null),
+        json!(true),
+        json!([1]),
+        json!({}),
+    ] {
+        let mut p = json!({
+            "operation": "smooth_1d",
+            "series": [0.0, 1.0, 2.0, 3.0],
+            "process_noise": 0.01,
+            "measurement_noise": 1.0
+        });
+        p["dt"] = bad.clone();
+        let err = op(p).expect_err("a wrong-typed dt must be rejected, not defaulted");
+        assert!(
+            err.contains("dt must be a JSON number if present"),
+            "unexpected error for dt={bad}: {err}"
+        );
+    }
+
+    // Absent dt still defaults — the fix must not break the documented default.
+    let r = op(json!({
+        "operation": "smooth_1d",
+        "series": [0.0, 1.0, 2.0, 3.0],
+        "process_noise": 0.01,
+        "measurement_noise": 1.0
+    }))
+    .expect("an absent dt must still default to 1.0");
+    assert_eq!(r["dt"], json!(1.0));
+
+    // Wrong-typed covariances are rejected the same way, not treated as missing.
+    for field in ["process_noise", "measurement_noise"] {
+        let mut p = json!({
+            "operation": "smooth_1d",
+            "series": [0.0, 1.0, 2.0, 3.0],
+            "process_noise": 0.01,
+            "measurement_noise": 1.0
+        });
+        p[field] = json!("1.0");
+        let err = op(p).expect_err("a wrong-typed covariance must be rejected");
+        assert!(
+            err.contains(&format!("{field} must be a JSON number")),
+            "unexpected error for {field}: {err}"
+        );
+    }
+}
+
 /// The tool is reachable under its registered name with its schema attached — the actual
 /// subject of ix#193. Before this change `ix_kalman` was not in `ToolRegistry::list()` at
 /// all, so an agent could not call the filter however correct `ix-signal` was.
