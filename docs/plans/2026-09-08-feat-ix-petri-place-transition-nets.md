@@ -11,6 +11,8 @@
 - **One-way-door check**: the only externally-visible commitment is the *shape*
   of the PNML subset the reader accepts, and that shape is ISO/IEC 15909-2's,
   not one this repository invented. Nothing here freezes an IX format.
+- **Maturity tier**: `experimental` in `crate-maturity.toml`. Chosen, not
+  copied — see §8.
 
 ## 1. The brief was three features; this ships one
 
@@ -177,3 +179,37 @@ trigger is about whether a *second* consumer ever appears.
   These decide boundedness and some liveness questions on nets far too large to
   enumerate. Worth adding the day a net in this repository exceeds
   `max_states`; not before.
+
+## 8. Why `experimental` and not another tier
+
+`crate-maturity.toml` is the workspace's answer to "how stable is this surface",
+and `ix skill stable-surface` only guards crates at tier `stable`: it hashes
+every `pub`-prefixed declaration line and **fails CI** when that hash moves.
+Everything below `stable` is unguarded. So the tier is not a label, it is the
+choice between a semver commitment and a two-way door.
+
+- **`stable`** would be dishonest and self-contradictory. `Verdict`,
+  `Analysis`, `Bounds`, the builder methods and the accepted PNML subset are all
+  expected to move as a second consumer appears — that is what §5's entry
+  conditions and §6's delete-by trigger *say*. You cannot promise a crate may be
+  deleted in six months and simultaneously promise its public API. Concretely,
+  adding one `pub fn` (a `PetriNet -> Dfa` view, a PNML writer, a P-invariant
+  analysis) would trip the hash guard and fail CI on a crate nobody outside this
+  repo consumes yet.
+- **`beta`** ("feature-complete, API may change between minor versions") claims
+  feature-completeness this does not have: no PNML writer, no structural
+  analysis, no reference-node resolution.
+- **`internal`** ("tooling/infra, not intended for direct external use") is the
+  tier of `ix-approval`, `ix-agent-core`, `ix-fuzzy` — harness plumbing. It is
+  wrong here in the one direction that matters: `ix-petri` is *specifically*
+  meant to be reached from outside, both through `ix_petri_analyze` and through
+  PNML, which exists precisely so external tools can exchange nets with it.
+- **`experimental`** ("research-grade, novel math, no stability guarantees",
+  downstream-safe: **No**) states exactly the contract this PR claims. It is the
+  tier of the sibling algorithm crates — `ix-topo`, `ix-ktheory`, `ix-category`,
+  `ix-evolution`, `ix-duck` — and it keeps the door two-way.
+
+**Promotion condition**, so the tier is not permanent by default: promote to
+`beta` when a second consumer exists *and* the `Verdict` / `Analysis` shapes
+have survived it unchanged. Until then, a caller outside this repo should treat
+the JSON as unstable.

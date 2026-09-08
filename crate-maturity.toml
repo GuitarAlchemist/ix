@@ -56,6 +56,7 @@ ix-gpu            = "experimental"
 memristive-markov = "experimental"
 ix-acoustic-tune  = "experimental"
 ix-duck           = "experimental"  # in-process DuckDB analyst bench, IX algos as SQL UDFs — research-grade, no stability guarantees (#243)
+ix-petri          = "experimental"  # P/T Petri nets + reachability analyses. Deliberately NOT stable: the plan doc (docs/plans/2026-09-08-feat-ix-petri-place-transition-nets.md) declares a two-way door with a 2027-03-08 delete-by trigger, and a semver commitment would contradict both. Verdict/Analysis shapes and the PNML subset are expected to move as a second consumer appears.
 
 # --- Internal tier ------------------------------------------------------
 ix-skill                  = "internal"
