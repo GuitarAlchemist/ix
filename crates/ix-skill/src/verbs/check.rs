@@ -2,83 +2,17 @@
 
 use crate::exit;
 use crate::output::{self, Format};
-use serde_json::{json, Value};
+use serde_json::json;
 
-/// Environment self-diagnosis: rust toolchain, governance submodule, registry
-/// health, key directories. Returns OK_TRUE on full green, PROBABLE on
-/// non-fatal warnings, DOUBTFUL on missing optional pieces, FALSE on broken.
+/// `ix check doctor` — retained alias for [`ix doctor`](crate::doctor).
+///
+/// The environment self-diagnosis that used to live here asserted
+/// `skill_count >= 34`, one more hand-typed inventory number of exactly the
+/// kind ix#185 set out to remove. The real checks now live in
+/// [`crate::doctor`], which compares the live registry against a committed
+/// snapshot instead. This wrapper keeps the old invocation working.
 pub fn doctor(format: Format) -> Result<i32, String> {
-    let mut checks: Vec<Value> = Vec::new();
-    let mut any_fail = false;
-    let mut any_warn = false;
-
-    // Registry skill count
-    let skill_count = ix_registry::count();
-    let registry_ok = skill_count >= 34; // batch1(6) + batch2(28)
-    if !registry_ok {
-        any_fail = true;
-    }
-    checks.push(json!({
-        "check": "capability-registry",
-        "status": if registry_ok { "ok" } else { "fail" },
-        "skills": skill_count,
-        "expected_minimum": 34,
-    }));
-
-    // Governance submodule presence
-    let gov_dir =
-        std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
-    let gov_ok = std::path::Path::new(&gov_dir).is_dir();
-    if !gov_ok {
-        any_warn = true;
-    }
-    checks.push(json!({
-        "check": "demerzel-governance",
-        "status": if gov_ok { "ok" } else { "warn" },
-        "path": gov_dir,
-    }));
-
-    // Constitution
-    let constitution_path = format!("{gov_dir}/constitutions/default.constitution.md");
-    let const_ok = std::path::Path::new(&constitution_path).is_file();
-    if gov_ok && !const_ok {
-        any_warn = true;
-    }
-    checks.push(json!({
-        "check": "default-constitution",
-        "status": if const_ok { "ok" } else if gov_ok { "warn" } else { "skip" },
-        "path": constitution_path,
-    }));
-
-    // State directory (optional)
-    let state_ok = std::path::Path::new("state").is_dir();
-    checks.push(json!({
-        "check": "state-directory",
-        "status": if state_ok { "ok" } else { "absent" },
-        "path": "state/",
-    }));
-
-    let verdict = if any_fail {
-        "F"
-    } else if any_warn {
-        "P"
-    } else {
-        "T"
-    };
-    let exit_code = match verdict {
-        "T" => exit::OK_TRUE,
-        "P" => exit::PROBABLE,
-        "F" => exit::FALSE,
-        _ => exit::UNKNOWN,
-    };
-
-    let payload = json!({
-        "verdict": verdict,
-        "exit_code": exit_code,
-        "checks": checks,
-    });
-    output::emit(&payload, format).map_err(|e| format!("writing output: {e}"))?;
-    Ok(exit_code)
+    crate::doctor::main(format, crate::doctor::Options::default())
 }
 
 /// Check a proposed action against the Demerzel constitution. Returns a

@@ -98,6 +98,21 @@ enum Verb {
         noun: ServeNoun,
     },
 
+    /// Run every repo-specific pre-PR check and say what to do about failures.
+    ///
+    /// The single gate from ix#185: registry-snapshot drift, orphan public
+    /// traits, and the governance/state environment. See `docs/CHECKLISTS.md`.
+    Doctor {
+        /// Regenerate `state/registry/skills.snapshot.json` from this build,
+        /// then re-check. Review the resulting name diff before committing.
+        #[arg(long)]
+        write: bool,
+
+        /// Additionally run the CI clippy + `cargo test --workspace` invocation.
+        #[arg(long)]
+        full: bool,
+    },
+
     /// Print the maturity-tier "Stable" crates with a public-API hash each.
     ///
     /// CI uses this on `main` and on PR branches and fails the PR if a
@@ -389,6 +404,17 @@ fn dispatch(cli: Cli) -> i32 {
             };
             eprintln!("{msg}");
             exit::UNKNOWN
+        }
+
+        Verb::Doctor { write, full } => {
+            let opts = ix_skill::doctor::Options { write, full };
+            match ix_skill::doctor::main(fmt, opts) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("ix doctor: {e}");
+                    exit::RUNTIME_ERROR
+                }
+            }
         }
 
         Verb::StableSurface { all_tiers } => try_or(verbs::stable_surface::run(fmt, all_tiers)),

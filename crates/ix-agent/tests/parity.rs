@@ -6,9 +6,14 @@
 //! the capability registry. The test fails if any historical tool vanishes
 //! or if a new tool is added without updating this allowlist — an
 //! intentional rate-limiter so every surface change is reviewed.
+//!
+//! `EXPECTED` is cross-checked against `state/registry/skills.snapshot.json`,
+//! the generated inventory oracle (ix#185). The hand-typed counts that used to
+//! live here are gone: drift now reports *which* capability moved, and
+//! `ix doctor --write` regenerates the snapshot.
 
 use ix_agent::tools::ToolRegistry;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// The 72 MCP tools exposed by ix-agent. The first 48 are registry-backed,
 /// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
@@ -163,50 +168,62 @@ fn parity_all_64_tools_reachable() {
     );
 }
 
+/// Load the generated inventory snapshot — the oracle that replaced this
+/// file's hand-typed counts (ix#185).
+///
+/// `assert_eq!(EXPECTED.len(), 94)` used to live here. It carried a 40-line
+/// running tally in a comment, and it is the oracle that drifted and turned
+/// `main` red when `mesh_correlate` landed. The snapshot is regenerated with
+/// `cargo run -p ix-skill --bin ix -- doctor --write`, so adding a tool
+/// produces a reviewable diff of *names* instead of a number nobody can
+/// sanity-check.
+fn snapshot_names(section: &str) -> BTreeSet<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../state/registry/skills.snapshot.json");
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "reading {}: {e}\n  \
+             regenerate it with `cargo run -p ix-skill --bin ix -- doctor --write`",
+            path.display()
+        )
+    });
+    let doc: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
+    doc[section]["names"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{}: {section}.names is not an array", path.display()))
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .expect("snapshot names are strings")
+                .to_string()
+        })
+        .collect()
+}
+
+/// Assert two name sets match, reporting the difference in both directions.
+fn assert_same_names(live: &BTreeSet<String>, snapshot: &BTreeSet<String>, what: &str) {
+    let only_live: Vec<&String> = live.difference(snapshot).collect();
+    let only_snapshot: Vec<&String> = snapshot.difference(live).collect();
+    assert!(
+        only_live.is_empty() && only_snapshot.is_empty(),
+        "{what} drifted from state/registry/skills.snapshot.json\n  \
+         in this build but not the snapshot: {only_live:?}\n  \
+         in the snapshot but not this build: {only_snapshot:?}\n  \
+         If the change is intended, run \
+         `cargo run -p ix-skill --bin ix -- doctor --write` and commit the diff."
+    );
+}
+
+/// The MCP tool allowlist in this file must agree with the generated snapshot.
+///
+/// `EXPECTED` stays hand-maintained on purpose — it is the rate-limiter that
+/// forces every surface change through review. What is gone is the *count*:
+/// the two lists are now compared by name, so neither can drift silently.
 #[test]
-fn parity_expected_count() {
-    // Sanity: 48 registry tools + ix_demo + ix_explain_algorithm +
-    // ix_triage_session + ix_pipeline_run + ix_pipeline_list +
-    // ix_autograd_run + ix_pipeline_compile + ix_git_log +
-    // ix_cargo_deps + ix_code_catalog + ix_catalog_list +
-    // ix_grammar_catalog + ix_rfc_catalog + ix_ast_query +
-    // ix_optick_search + ix_code_smells +
-    // ix_grothendieck_delta + ix_grothendieck_nearby + ix_grothendieck_path +
-    // ix_autoresearch_run = 68. + ix_tsne (2026-04-29) = 69.
-    // + ix_voicings_payload (2026-05-02, voicings -> Prime Radiant Phase 1) = 70.
-    // + ix_sentrux_annotate (2026-05-24, sentrux structural-rules bridge) = 71.
-    // + ix_assumption_query + ix_assumption_belief_at (2026-05-31, temporal
-    //   assumption graph Phase 4) = 73.
-    // + ix_nl_to_pipeline (2026-06-06, NL->pipeline "thinking machine" as an
-    //   MCP tool, agent-native parity with `ix pipeline compile`) = 76.
-    // + ix_thinker_hits (2026-06-07, thinking-machine yield/guardrail ledger
-    //   aggregate, agent-native parity with `ix pipeline hits`) = 77.
-    // + ix_pca (2026-06-07, standalone PCA — first dogfood catalog-breadth fix;
-    //   auto-exposed via the registry bridge) = 78.
-    // + ix_dbscan (2026-06-07, density clustering — dogfood catalog-breadth fix;
-    //   auto-exposed via the registry bridge) = 79.
-    // + ix_eigen (2026-06-07, symmetric eigendecomposition — dogfood
-    //   catalog-breadth fix; auto-exposed via the registry bridge) = 80.
-    // + ix_silhouette (2026-06-07, clustering-quality metric — dogfood
-    //   remaining-gap fix; auto-exposed via the registry bridge) = 81.
-    // + ix_feature_importances (2026-06-07, permutation feature importance —
-    //   dogfood remaining-gap fix; auto-exposed via the registry bridge) = 82.
-    // + catalog-gap-audit batch (2026-06-07): ix_svd, ix_gmm, ix_wavelet_denoise,
-    //   ix_fir_filter, ix_spectrogram, ix_autocorrelation (wrapping existing
-    //   ix-math/ix-unsupervised/ix-signal algorithms) = 88.
-    // + ix_analyze_reference + ix_spectral_distance (2026-06-07, ix-acoustic-tune
-    //   analysis skills — reference descriptor + decomposed spectral distance,
-    //   pipeline/NL/MCP-callable) = 90.
-    // + ix_git_churn (2026-05-24, per-file churn source adapter, P1.3) = 91.
-    // + ix_quality_gate_history (2026-05-24, quality-gate-ledger query tool,
-    //   agent-native parity with the sentrux_gate_writer binary) = 92.
-    // + ix_annotations_scan (2026-05-24, @ai annotation extract+reconcile scan,
-    //   agent-native parity with the ix-ai-annotations reconcile binary) = 93.
-    // + mesh_correlate (2026-06-23, correlation-mesh fan-in for executable pipeline
-    //   meshes — |Pearson|≥τ graph → betweenness + components) = 94.
-    // If this drifts, update both EXPECTED and this assertion in the
-    // same commit.
-    assert_eq!(EXPECTED.len(), 94);
+fn parity_expected_matches_generated_snapshot() {
+    let expected: BTreeSet<String> = EXPECTED.iter().map(|s| (*s).to_string()).collect();
+    assert_same_names(&expected, &snapshot_names("mcp_tools"), "EXPECTED (MCP tools)");
 }
 
 #[test]
@@ -331,25 +348,15 @@ fn parity_batch2_tools_are_registry_backed() {
     }
 }
 
+/// Every `#[ix_skill]` registration must appear in the generated snapshot.
+///
+/// This replaces `assert_eq!(ix_registry::count(), 66)`, which asserted a
+/// number rather than an inventory: a rename that kept the count constant
+/// used to slip through.
 #[test]
-fn parity_all_43_registry_backed() {
-    // After batch1 (6) + batch2 (28) + batch3 (10+1 context.walk +
-    // session.flywheel_export) + prime_radiant (2) migration, all 47
-    // algorithm tools are registry-backed. ix_demo is manual.
-    // + pca (2026-06-07, dogfood catalog-breadth fix) = 53.
-    // + dbscan (2026-06-07, dogfood catalog-breadth fix) = 54.
-    // + eigen (2026-06-07, dogfood catalog-breadth fix) = 55.
-    // + silhouette (2026-06-07, dogfood remaining-gap fix) = 56.
-    // + feature_importances (2026-06-07, dogfood remaining-gap fix) = 57.
-    // + svd/gmm/wavelet_denoise/fir_filter/spectrogram/autocorrelation
-    //   (2026-06-07, catalog-gap-audit batch — wrapping existing algorithms) = 63.
-    // + analyze_reference + spectral_distance (2026-06-07, ix-acoustic-tune
-    //   analysis skills) = 65.
-    let registry_count = ix_registry::count();
-    assert_eq!(
-        registry_count, 66,
-        "expected 66 registry skills, got {registry_count}"
-    );
+fn parity_registry_matches_generated_snapshot() {
+    let live: BTreeSet<String> = ix_registry::all().map(|d| d.name.to_string()).collect();
+    assert_same_names(&live, &snapshot_names("skills"), "capability registry skills");
 }
 
 #[test]

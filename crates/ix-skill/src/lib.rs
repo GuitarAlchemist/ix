@@ -1,5 +1,6 @@
 //! ix — Claude Code ML skill CLI, library entry point for tests.
 
+pub mod doctor;
 pub mod output;
 #[cfg(feature = "embeddings")]
 pub mod local_embed;
