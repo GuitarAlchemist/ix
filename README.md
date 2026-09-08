@@ -58,7 +58,7 @@ never downloads a model or calls a paid provider implicitly.
 | ix-unsupervised | Stable | KMeans, DBSCAN, PCA, t-SNE, GMM |
 | ix-search | Stable | A*, MCTS, minimax, BFS/DFS |
 | ix-graph | Beta | Markov chains, HMM/Viterbi, agent routing, components + centrality. Demoted from Stable 2026-06-21 while the new components/centrality surface settles |
-| ix-signal | Stable | FFT, wavelets, Kalman, spectral analysis |
+| ix-signal | Beta | FFT, wavelets, Kalman, state-space + observability/controllability, spectral analysis |
 | ix-cache | Stable | Embedded in-process cache (TTL, LRU, pub/sub) — promoted 2026-05-02 |
 | ix-probabilistic | Stable | Bloom, HLL, Count-Min, Cuckoo — promoted 2026-05-02 |
 | ix-game | Stable | Nash, Shapley, auctions, mechanism design — promoted 2026-05-02 |
@@ -256,7 +256,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 ### Signal & Chaos
 | Crate | Description |
 |-------|-------------|
-| **ix-signal** | FFT, wavelets, FIR/IIR filters, Kalman filter, spectral analysis, DCT |
+| **ix-signal** | FFT, wavelets, FIR/IIR filters, Kalman filter, discrete state-space models with observability/controllability rank tests, spectral analysis, DCT |
 | **ix-chaos** | Lyapunov exponents, bifurcation diagrams, strange attractors, fractal dimensions, delay embedding, chaos control |
 
 ### Security & Privacy

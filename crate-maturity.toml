@@ -13,14 +13,13 @@
 # that breaks the public API. See README.md "Stability contract" for the flow.
 
 [crates]
-# --- Stable tier (10 crates, guarded by CI) -----------------------------
+# --- Stable tier (7 crates, guarded by CI) ------------------------------
 # ix-math + ix-graph demoted to beta 2026-06-21 (see Beta tier): each grew its
 # public surface (inference; components/centrality) — per the stable-surface flow
 # the tier moves with the API change. Re-promote once the surfaces settle.
 ix-supervised    = "stable"
 ix-ensemble      = "stable"
 ix-search        = "stable"
-ix-signal        = "stable"
 ix-cache         = "stable"
 ix-probabilistic = "stable"
 ix-game          = "stable"
@@ -31,6 +30,7 @@ ix-math        = "beta"   # demoted from stable 2026-06-21 (new inference surfac
 ix-optimize      = "beta"  # demoted 2026-07-02: ConvergenceCriteria collapsed to ix_math::Convergence re-export (#155); re-promote once settled
 ix-unsupervised  = "beta"  # demoted 2026-07-02: kmeans/gmm/nmf adopt shared Convergence, nmf max_iter/tol renames (#155); re-promote once settled
 ix-graph       = "beta"   # demoted from stable 2026-06-21 (new components + centrality surface)
+ix-signal        = "beta"  # demoted 2026-09-08: new `state_space` surface — StateSpaceModel + observability/controllability rank tests (#202 rows A1/A5). Purely ADDITIVE; nothing existing moved. Re-promote once the state-space API settles (A4/A6 will extend it).
 ix-nn          = "beta"
 ix-pipeline    = "beta"
 ix-agent       = "beta"

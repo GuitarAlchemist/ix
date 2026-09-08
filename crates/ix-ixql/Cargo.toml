@@ -15,15 +15,28 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 ix-baml = { workspace = true }
+# `compile`: IXQL programs become an ix-pipeline stage DAG, so cycle rejection,
+# topological_sort and parallel_levels come from `ix_pipeline::dag::Dag` rather
+# than a second scheduler. The edge points language -> runtime and not the other
+# way round on purpose: ix-pipeline has eight dependents and must not inherit
+# ix-baml + jsonschema through this.
+ix-pipeline = { workspace = true }
 # Same version/features as ix-quality-validate, the workspace's existing
 # JSON-Schema consumer — one validator implementation across the repo.
 jsonschema = { version = "0.30", default-features = false }
+
+[[bin]]
+# Regenerates the compiled-plan CSV the DuckDB macros read.
+name = "ixql-plan"
+path = "src/bin/ixql-plan.rs"
 
 [dev-dependencies]
 # Integration tests link only against the crate under test plus dev-deps, so the
 # seam and the JSON helpers have to be named again here.
 ix-baml = { workspace = true }
 serde_json = { workspace = true }
+# `compile_tests` round-trips the rendered spec through the canonical IR.
+ix-pipeline = { workspace = true }
 
 [lib]
 path = "src/lib.rs"

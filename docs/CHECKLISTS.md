@@ -81,7 +81,11 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
 4. New `pub trait`? It needs an implementor or a generic bound in-tree, or
    `ix doctor` will fail the `orphan-traits` check. That is the point: a
    declared contract nothing satisfies is either dead code or a promise the
-   codebase does not keep (see `crates/ix-io/src/protocol.rs`, ix#299).
+   codebase does not keep. `ix-io`'s `DataSource` / `DataSink` were the
+   motivating case (ix#299): the module doc claimed every backend implemented
+   them while none did. The fix is worth copying — implementors *plus* a
+   generic consumer (`protocol::pump`), and a written reason in each module
+   that still does not implement the trait.
 
 ## Adding an `@ai:` invariant
 

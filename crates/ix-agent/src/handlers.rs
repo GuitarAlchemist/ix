@@ -832,6 +832,291 @@ pub fn fir_filter(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_kalman ────────────────────────────────────────────────
+
+/// Sample cap for `smooth_1d`.
+///
+/// No bound below it exists: [`ix_signal::kalman::KalmanFilter::filter`] caps nothing,
+/// and the SQL surface `ix_kalman_smooth` caps nothing either — deliberately, because
+/// warehouse rows are scrollable and a caller pages through them. An MCP response is not
+/// scrollable: it is serialized JSON that lands whole in an agent's context window, and
+/// this op emits *two* f64 per input sample (position and velocity), so 4096 samples is
+/// already ~165 KB of JSON at ~20 characters a number.
+///
+/// 4096 deliberately matches the order of magnitude of the sibling `ix_fractal`
+/// `de_rham_1d` op's 4097-sample ceiling (ix#203/#286), so the two bounded series ops on
+/// this server answer with payloads of comparable size. Unlike de Rham — where the bound
+/// is on a `depth` that *generates* 2^depth+1 samples — the series here is
+/// caller-supplied, so the check is on its length directly and costs nothing.
+const KALMAN_MAX_SAMPLES: usize = 4096;
+
+/// `dt` cap for `smooth_1d`, chosen for numerical safety rather than to constrain use.
+///
+/// `constant_velocity_1d` builds a process-noise covariance whose entries scale as
+/// `q·dt³/3`, `q·dt²/2` and `q·dt`, and the transition matrix `[[1, dt], [0, 1]]`
+/// re-applies `dt` at every step, so the error covariance grows super-linearly in `dt`.
+/// Measured on an 8-sample ramp: `dt = 1e100` still yields finite estimates, `dt = 1e110`
+/// yields **NaN** — and `serde_json` renders a non-finite `f64` as JSON `null`, so an
+/// uncapped extreme-but-finite `dt` returns a *successful* response full of nulls. The
+/// threshold did not move when the series was lengthened to 4096, so it is a property of
+/// `dt` alone, not of series length.
+///
+/// 1e6 sits ~104 decimal orders below the measured break. As a sampling interval it is
+/// already absurd (1e6 seconds ≈ 11.6 days between samples); the bound exists to make
+/// hostile input loud, not to constrain real use. That is the belt;
+/// [`kalman_estimates`] is the braces.
+const KALMAN_MAX_DT: f64 = 1.0e6;
+
+/// Split filtered states into parallel `position` / `velocity` arrays, refusing to
+/// serialize a non-finite estimate.
+///
+/// `serde_json` renders `NaN`/`Infinity` as JSON `null`, so emitting unchecked states
+/// would turn a numeric blow-up into a successful-but-null-corrupted response — the one
+/// failure mode a caller cannot detect from the status. [`KALMAN_MAX_DT`] makes that
+/// unreachable through the MCP boundary; this check is the guarantee that does not rest
+/// on the measured threshold holding for parameter combinations nobody probed.
+///
+/// Parallel arrays rather than `[[p, v], …]` pairs: the SQL surface returns position
+/// only, so a caller porting a query across surfaces can take `position` and ignore the
+/// rest.
+fn kalman_estimates(states: &[Array1<f64>]) -> Result<(Vec<f64>, Vec<f64>), String> {
+    let mut position = Vec::with_capacity(states.len());
+    let mut velocity = Vec::with_capacity(states.len());
+    for (i, s) in states.iter().enumerate() {
+        let (p, v) = (s[0], s[1]);
+        if !p.is_finite() || !v.is_finite() {
+            return Err(format!(
+                "smooth_1d: estimate {i} of {} is not finite (position={p}, velocity={v}); \
+                 refusing to emit a payload whose values would serialize as JSON null",
+                states.len()
+            ));
+        }
+        position.push(p);
+        velocity.push(v);
+    }
+    Ok((position, velocity))
+}
+
+/// Floor for `measurement_noise`, derived from the pivot tolerance in
+/// [`ix_math::linalg::inverse`] — this one prevents a **panic**, not a bad number.
+///
+/// `KalmanFilter::update` computes the innovation covariance `S = H·P·Hᵀ + R` and calls
+/// `ix_math::linalg::inverse(&S).expect("Innovation covariance singular")`. That
+/// `.expect` is an unwind: `inverse` returns `Singular` whenever its largest pivot is
+/// `< 1e-12`, and the panic would escape the handler into the MCP server rather than
+/// surfacing as a tool error.
+///
+/// For `constant_velocity_1d`, `H = [[1, 0]]`, so `S` is the 1×1 matrix `P₀₀ + r`, and
+/// `P₀₀` is a variance, hence `≥ 0`. Therefore `S ≥ r`, and requiring `r ≥ 1e-12` makes
+/// the pivot `≥ 1e-12`, so the `Singular` branch is unreachable. The bound is *derived*
+/// from the callee's tolerance, not fitted to observations — but it was also checked
+/// against them, because `P₀₀ ≥ 0` is an algebraic property that finite-precision
+/// arithmetic can in principle violate (the update uses `P = (I − KH)P`, not the Joseph
+/// form).
+///
+/// Measured, sweeping `n` samples with both covariances equal:
+///
+/// | `q = r` | n = 1, 2 | n ≥ 4 |
+/// | --- | --- | --- |
+/// | 1e-11 | ok | ok |
+/// | 1e-12 | ok | ok |
+/// | 1e-13 | ok | **panic** |
+/// | 1e-300 | ok | **panic** |
+///
+/// Note it takes *both* small: `q = 1e-13, r = 1` and `q = 1, r = 1e-13` are both fine,
+/// because a large `q` keeps `P₀₀` large and a large `r` dominates directly. A probe that
+/// varies one covariance at a time — as the first version of this handler's guard did — misses
+/// this entirely. Found by Codex review on ix#309, then reproduced.
+///
+/// No floor is applied to `process_noise`: a small `q` only shrinks `P₀₀`, which can
+/// never push `S` below `r`.
+const KALMAN_MIN_MEASUREMENT_NOISE: f64 = 1.0e-12;
+
+/// Parse a strictly-positive finite covariance parameter.
+///
+/// Mirrors `ix_duck::graphsig::parse_pos_finite`, the guard the SQL surface already
+/// applies, so `ix_kalman` and `ix_kalman_smooth` accept the same domain. Zero neither
+/// panics nor produces NaN — both were probed — but a zero covariance is a degenerate
+/// model (perfect measurements, or a perfectly known process), and letting the two
+/// surfaces disagree on the accepted domain would be a worse defect than being strict on
+/// both.
+///
+/// `min` additionally enforces [`KALMAN_MIN_MEASUREMENT_NOISE`] where a floor is needed;
+/// pass `None` where any positive value is safe.
+fn parse_kalman_covariance(params: &Value, field: &str, min: Option<f64>) -> Result<f64, String> {
+    let raw = params
+        .get(field)
+        .ok_or_else(|| format!("Missing or invalid field '{}'", field))?;
+    let v = raw
+        .as_f64()
+        .ok_or_else(|| format!("{field} must be a JSON number (got {raw})"))?;
+    if !v.is_finite() || v <= 0.0 {
+        return Err(format!("{field} must be a finite number > 0 (got {v})"));
+    }
+    if let Some(floor) = min {
+        if v < floor {
+            return Err(format!(
+                "{field} must be >= {floor} (got {v}); below this the innovation covariance \
+                 falls under the 1e-12 pivot tolerance of ix_math::linalg::inverse, which \
+                 makes KalmanFilter::update panic rather than return an error"
+            ));
+        }
+    }
+    Ok(v)
+}
+
+/// Parse an optional `f64` that rejects a present-but-wrong-typed value.
+///
+/// [`parse_f64_opt`] cannot distinguish "absent" from "present but not a number", so
+/// `"dt": "0.5"`, `"dt": null` and `"dt": true` all silently become the default. That is
+/// worse than an error: `ToolRegistry::call` does **not** validate arguments against the
+/// advertised JSON schema, so the caller receives estimates computed at a sampling
+/// interval they did not ask for, with `dt: 1.0` echoed back as if they had. Verified
+/// against all four shapes; found by Codex review on ix#309.
+fn parse_f64_opt_typed(params: &Value, field: &str, default: f64) -> Result<f64, String> {
+    match params.get(field) {
+        None => Ok(default),
+        Some(v) => v
+            .as_f64()
+            .ok_or_else(|| format!("{field} must be a JSON number if present (got {v})")),
+    }
+}
+
+// @ai:invariant smooth_1d runs ix_signal's constant-velocity 1-D Kalman filter over the
+// series and returns exactly one (position, velocity) estimate per input sample; fed a
+// clean unit-rate ramp from a cold [0,0] start it locks onto the trajectory, so the final
+// position converges to the final measurement and the final velocity toward the ramp's
+// slope [T:test conf:0.9 src:tests::kalman_smooth_1d_tracks_a_ramp]
+// @ai:invariant smooth_1d agrees with the SQL surface ix_kalman_smooth's documented
+// contract on the position series for the same (series, process_noise, measurement_noise)
+// at dt=1 — the two wrap the same callee with the same model
+// [T:test conf:0.75 src:tests::kalman_agrees_with_sql_surface_contract]
+// @ai:invariant a successful smooth_1d response never contains a non-finite (JSON null)
+// estimate: every state is checked before serialization, so an out-of-range input is an
+// explicit error [T:test conf:0.9 src:tests::kalman_never_emits_null_estimates]
+// @ai:invariant smooth_1d never panics on any input reachable through the MCP boundary:
+// measurement_noise >= 1e-12 keeps the innovation covariance at or above the pivot
+// tolerance of ix_math::linalg::inverse, whose Singular branch KalmanFilter::update turns
+// into an unwinding .expect()
+// [T:test conf:0.9 src:tests::kalman_rejects_covariances_that_would_panic_the_filter]
+pub fn kalman(params: Value) -> Result<Value, String> {
+    let op = parse_str(&params, "operation")?;
+
+    match op {
+        "smooth_1d" => {
+            let series = parse_f64_array(&params, "series")?;
+            if series.is_empty() {
+                return Err("smooth_1d: 'series' must contain at least one sample".to_string());
+            }
+            if series.len() > KALMAN_MAX_SAMPLES {
+                return Err(format!(
+                    "smooth_1d: series length must be <= {} (got {}); \
+                     two f64 per sample are materialized and returned inline in the response",
+                    KALMAN_MAX_SAMPLES,
+                    series.len()
+                ));
+            }
+            if let Some(i) = series.iter().position(|z| !z.is_finite()) {
+                return Err(format!(
+                    "smooth_1d: series[{i}] is not finite ({}); a non-finite measurement \
+                     poisons the state estimate for every later sample",
+                    series[i]
+                ));
+            }
+
+            let process_noise = parse_kalman_covariance(&params, "process_noise", None)?;
+            let measurement_noise = parse_kalman_covariance(
+                &params,
+                "measurement_noise",
+                Some(KALMAN_MIN_MEASUREMENT_NOISE),
+            )?;
+
+            // dt defaults to 1.0 — the value the SQL surface hard-codes, documented there
+            // as "telemetry samples are an evenly-spaced unit-step sequence".
+            let dt = parse_f64_opt_typed(&params, "dt", 1.0)?;
+            if !dt.is_finite() || dt <= 0.0 {
+                return Err(format!("dt must be a finite number > 0 (got {dt})"));
+            }
+            if dt > KALMAN_MAX_DT {
+                return Err(format!(
+                    "smooth_1d: dt must be <= {} (got {}); the process covariance scales as \
+                     dt^3 and estimates overflow to NaN near dt = 1e110, which would \
+                     serialize as JSON null",
+                    KALMAN_MAX_DT, dt
+                ));
+            }
+
+            let mut kf =
+                ix_signal::kalman::constant_velocity_1d(process_noise, measurement_noise, dt);
+            let measurements: Vec<Array1<f64>> =
+                series.iter().map(|&z| Array1::from_vec(vec![z])).collect();
+            let states = kf.filter(&measurements);
+            let (position, velocity) = kalman_estimates(&states)?;
+
+            Ok(json!({
+                "operation": "smooth_1d",
+                "model": "constant_velocity_1d",
+                "position": position,
+                "velocity": velocity,
+                "n_samples": series.len(),
+                "process_noise": process_noise,
+                "measurement_noise": measurement_noise,
+                "dt": dt,
+                "max_samples": KALMAN_MAX_SAMPLES,
+                "max_dt": KALMAN_MAX_DT,
+                "min_measurement_noise": KALMAN_MIN_MEASUREMENT_NOISE
+            }))
+        }
+        other => Err(format!(
+            "Unknown kalman operation '{other}' (expected 'smooth_1d')"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod kalman_estimates_tests {
+    use super::*;
+
+    /// The finiteness guard is unreachable from the MCP boundary once [`KALMAN_MAX_DT`]
+    /// is enforced, so bind it here against synthetic states — otherwise it is an
+    /// untested claim dressed as a safety check.
+    #[test]
+    fn rejects_non_finite_estimates() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let states = vec![
+                Array1::from_vec(vec![0.0, 0.0]),
+                Array1::from_vec(vec![bad, 1.0]),
+            ];
+            let err = kalman_estimates(&states)
+                .expect_err("a non-finite estimate must be an error, not a JSON null");
+            assert!(
+                err.contains("estimate 1 of 2 is not finite"),
+                "unexpected error: {err}"
+            );
+
+            // Velocity is checked independently of position.
+            let states = vec![Array1::from_vec(vec![1.0, bad])];
+            let err = kalman_estimates(&states).expect_err("non-finite velocity must error");
+            assert!(
+                err.contains("estimate 0 of 1 is not finite"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    /// The happy path splits into parallel arrays without reordering.
+    #[test]
+    fn splits_states_into_parallel_arrays() {
+        let states = vec![
+            Array1::from_vec(vec![1.0, 10.0]),
+            Array1::from_vec(vec![2.0, 20.0]),
+        ];
+        let (p, v) = kalman_estimates(&states).expect("finite");
+        assert_eq!(p, vec![1.0, 2.0]);
+        assert_eq!(v, vec![10.0, 20.0]);
+    }
+}
+
 // ── ix_spectrogram ───────────────────────────────────────────
 
 // @ai:invariant spectrogram requires a power-of-two window_size (the STFT uses a radix-2 FFT that would otherwise zero-pad and miscalibrate the bins); it returns an (n_frames × n_bins) magnitude matrix with n_bins = window_size/2 + 1, and a single tone localizes to the frequency bin round(f·window_size) [T:test conf:0.85 src:skills::batch1::tests::spectrogram_skill_localizes_a_tone]
