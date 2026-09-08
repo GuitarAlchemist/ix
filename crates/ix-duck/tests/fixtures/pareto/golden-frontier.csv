@@ -1,0 +1,9 @@
+subject_revision,task_class,candidate_id,objectives
+rev-2026-09-07-a,classify,accurate,accuracy:MAX=0.920000;cost_usd:MIN=0.400000
+rev-2026-09-07-a,classify,fast,accuracy:MAX=0.700000;cost_usd:MIN=0.050000
+rev-2026-09-07-a,summarize,balanced,cost_usd:MIN=0.300000;latency_ms:MIN=400.000000;quality:MAX=0.800000
+rev-2026-09-07-a,summarize,cheap,cost_usd:MIN=0.100000;latency_ms:MIN=800.000000;quality:MAX=0.600000
+rev-2026-09-07-a,summarize,premium,cost_usd:MIN=0.900000;latency_ms:MIN=200.000000;quality:MAX=0.950000
+rev-2026-09-07-a,summarize,twin,cost_usd:MIN=0.300000;latency_ms:MIN=400.000000;quality:MAX=0.800000
+rev-2026-09-07-b,summarize,cheap,cost_usd:MIN=0.200000;latency_ms:MIN=700.000000;quality:MAX=0.650000
+rev-2026-09-07-b,summarize,premium,cost_usd:MIN=0.800000;latency_ms:MIN=250.000000;quality:MAX=0.900000
