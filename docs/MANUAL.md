@@ -24,7 +24,7 @@ You are a language model wired to ix via the MCP protocol. Read **§3** for the 
 
 ### Contributors extending ix itself
 
-You want to add a tool, fix a handler, or refactor a crate. Start with [`CLAUDE.md`](../CLAUDE.md) (project conventions), then this manual's **§8 Extending ix — adding a new tool** for the step-by-step. The roadmap at [`examples/canonical-showcase/ix-roadmap-plan-v1.md`](../examples/canonical-showcase/ix-roadmap-plan-v1.md) is the canonical statement of what's planned, what's shipped, and what's deferred. The [`examples/canonical-showcase/05-adversarial-refactor-oracle/FINDINGS.md`](../examples/canonical-showcase/05-adversarial-refactor-oracle/FINDINGS.md) is an actionable P0/P1/P2 list of concrete improvements the demo surfaced.
+You want to add a tool, fix a handler, or refactor a crate. Start with [`CLAUDE.md`](../CLAUDE.md) (project conventions), then this manual's **§8 Extending ix — adding a new tool** for the step-by-step. Before opening or merging the PR, run `cargo run -p ix-skill --bin ix -- doctor` — the single repo-specific gate — and follow the change-type checklist in [`docs/CHECKLISTS.md`](CHECKLISTS.md) ([FR](fr/CHECKLISTS.md)) for the seam you are touching. The roadmap at [`examples/canonical-showcase/ix-roadmap-plan-v1.md`](../examples/canonical-showcase/ix-roadmap-plan-v1.md) is the canonical statement of what's planned, what's shipped, and what's deferred. The [`examples/canonical-showcase/05-adversarial-refactor-oracle/FINDINGS.md`](../examples/canonical-showcase/05-adversarial-refactor-oracle/FINDINGS.md) is an actionable P0/P1/P2 list of concrete improvements the demo surfaced.
 
 ---
 
