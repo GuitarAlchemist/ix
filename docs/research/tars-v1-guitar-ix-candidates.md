@@ -84,9 +84,10 @@ That single row is the prototype proposal in §9.
 
 Recorded first, because a salvage matrix that does not know the current surface will re-propose it.
 
-### `crates/ix-bracelet` — 3,095 SLOC, 117 tests, 9 modules
+### `crates/ix-bracelet` — 3,095 SLOC, 117 tests, 10 modules
 
-Not "a dihedral `Group` trait". The full public surface, read from source:
+Not "a dihedral `Group` trait". The full public surface, read from source (`dihedral.rs` and
+`action.rs` share a row; every other row is one file):
 
 | Module | Lines | Public surface |
 | --- | ---: | --- |
@@ -119,10 +120,20 @@ architecture plainly:
 > This crate shells out to GA's `FretboardVoicingsCLI --export` with a `--tuning
 > {guitar|bass|ukulele}` flag and turns the JSONL stream into two on-disk artifacts per instrument.
 
-**IX does not generate fretboard geometry. GA does, and IX consumes it.** `fret_span`, `min_fret`,
-`max_fret`, `is_barre` are *deserialized fields* on `VoicingRow`, not computed here. What IX adds is
-the reusable pipeline over that corpus: `featurize` → `cluster` → `topology` → `transitions` →
-`progressions`, plus `silhouette_score`, `predict_cluster`, `ShortestPath`, and `movement_cost`.
+**IX does not generate fretboard geometry. GA does, and IX consumes it.** `min_fret`, `max_fret` and
+`fret_span` are *deserialized fields* on `VoicingRow` (`lib.rs:100-105`), not computed here.
+
+The line is drawn one notch finer than "anything fretboard-shaped is GA's", and the exception is the
+instructive part: **`is_barre` is not a `VoicingRow` field — IX derives it**, in `detect_barre(frets,
+min_fret)` (`lib.rs:476`, unit-tested at `lib.rs:1750-1754`), called from both `build_raw_feature_row`
+(`lib.rs:448`) and `movement_cost` (`lib.rs:958-959`). So the operative boundary is not "geometry is
+GA's"; it is **GA supplies the measured geometry, IX derives features from it**. A barre is an
+interpretation of a fret vector — stateless, machine-checkable, no product state — so it passes the
+three-part test in §8 on its own terms. IX computing it follows the rule rather than breaking it.
+
+What IX adds on top is the reusable pipeline over that corpus: `featurize` → `cluster` → `topology` →
+`transitions` → `progressions`, plus `silhouette_score`, `predict_cluster`, `ShortestPath`, and
+`movement_cost`.
 
 `movement_cost(&VoicingRow, &VoicingRow) -> f64` (`lib.rs:932`) is a physical voice-leading /
 hand-movement distance — per-string fret delta, a mute-toggle penalty, a barre-toggle penalty — and
@@ -136,18 +147,61 @@ tested (`chroma_is_octave_invariant`). Also present: `cqt`, `cqt_frequencies`, `
 `autocorrelation_f0`, `inharmonicity_b`, `fit_inharmonicity`, `spectral_centroid`, `hilbert`,
 `envelope`.
 
+**One caveat that matters downstream:** its own doc comment (`transforms.rs:117-120`) states that
+index 0 is the pitch class of the caller-supplied `f_min`, *not* necessarily C. The vector is
+relative to an origin the caller chooses. Anything that attaches absolute pitch-class labels to it —
+including §9's prototype — has to carry that origin rather than assume C.
+
 This matters more than it looks: the harmonic-analyzer spec's Phase 2 Step 1 asks for "chromatic
 pitch class profile analysis". IX already has it.
 
-### MCP exposure — the music gap
+### MCP exposure — partial, and the gap is one module wide
 
 `crates/ix-agent/tests/parity.rs` `EXPECTED` holds **94** tool names (measured by parsing the array
-with comments stripped; no duplicates, all `ix_`-prefixed). Only four are music-adjacent:
-`ix_ga_bridge`, `ix_analyze_reference`, `ix_optick_search`, `ix_voicings_payload`.
+with comments stripped; no duplicates, all `ix_`-prefixed). Seven are music-adjacent:
+`ix_ga_bridge`, `ix_analyze_reference`, `ix_optick_search`, `ix_voicings_payload`, and
+`ix_grothendieck_delta` / `ix_grothendieck_nearby` / `ix_grothendieck_path`.
 
-**There is no `ix_bracelet` MCP tool.** The richest music crate in IX — 3,095 SLOC, 117 tests — is
-reachable from DuckDB and from Rust, and is invisible to every agent in the federation. This is the
-music-side instance of the exposure deficit #202 found for `ix-dynamics`.
+The last three **are ix-bracelet**, exposed under another name. `parity.rs:24` says so directly
+("`ix_grothendieck_*` PC-set algebra tools backed by ix-bracelet"), `ix-agent/Cargo.toml:57` takes the
+workspace dependency, and the handlers call `ix_bracelet::grothendieck_delta`, `::icv`,
+`::find_nearby` and `::find_shortest_path` (`handlers.rs:6229-6340`). So ix-bracelet is *not*
+invisible to agents, and there is no need for an `ix_bracelet` tool as such.
+
+The accurate finding is narrower and more actionable: **one of ix-bracelet's ten modules is
+MCP-reachable.** `grothendieck.rs` (plus `icv` from `pc_set.rs`) is exposed; `prime_form.rs`,
+`forte.rs`, `neo_riemannian.rs`, `serial.rs`, `fourier.rs`, `dihedral.rs`, `orbit.rs` and `action.rs`
+are not. Prime form, Forte numbers and the twelve-tone row operations *are* reachable from DuckDB as
+UDFs (table above) but not from an MCP client, so which operations an agent can reach depends on
+which door it came through. That asymmetry — not a blanket absence — is the music-side instance of
+the exposure deficit #202 found for `ix-dynamics`.
+
+### Federation discovery — where IX's music surface really does vanish
+
+There is a third layer above MCP, and it is the one that actually loses the music surface.
+`governance/demerzel/schemas/capability-registry.json` (v1.1.0) is the ecosystem's cross-repo
+discovery index, and `ix_federation_discover` reads it at
+`crates/ix-agent/src/handlers.rs:4493` and filters repos on their declared `domains` array
+(`handlers.rs:4517-4521`). What the registry declares for IX:
+
+| | Declared in registry | Actual |
+| --- | --- | --- |
+| `description` | "Rust ML/math algorithm workspace — 32+ MCP tools" | 94 in `EXPECTED` |
+| `domains` | `math, ml, optimization, search, game-theory, signal, chaos, topology, governance` | — no music domain |
+| `tools` | 36 names across 27 categories | 94; **no music category** |
+
+None of `ix_grothendieck_delta`, `ix_grothendieck_nearby`, `ix_grothendieck_path`,
+`ix_voicings_payload`, `ix_optick_search`, `ix_analyze_reference` or `ix_ga_bridge` appears in the
+registry. `ga` is declared with `domains: [music-theory, chord-analysis, fretboard, spectral,
+trace-export]`.
+
+So the operational consequence is exact and testable: **an agent that calls
+`ix_federation_discover(domain: "music")` is told GA can do music and IX cannot** — because the
+filter is a substring match over a `domains` array that omits the word. 3,095 SLOC of set-theoretic
+music algebra, 10 UDFs and 3 live MCP tools are undiscoverable through the mechanism built for
+discovering them. That is the claim an earlier revision of this document made about MCP; it was
+wrong there and is right here, one layer up. It is what IX follow-up 2 should scope, and the fix is
+a registry entry, not a new crate.
 
 > **Two corrections to sibling documents, verified here.**
 > #202 describes "the 96-entry `EXPECTED` array". `EXPECTED` has **94** entries at both `4331cf7`
@@ -172,7 +226,7 @@ Source: `v1/guitar_fretboard_analysis.tars.md` (240 L, a specification).
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | A1 | Fretboard position map (tuning + fret → pitch) | **GA** | — (no `fret_to_note`/`open_string` anywhere) | out_of_scope | document | — | XS | high | Absent from IX *by design*. `ix-voicings` shells out to GA's `FretboardVoicingsCLI`. Deterministic and trivially testable, but it is the instrument-model layer GA owns; duplicating it in IX would create the divergence hazard #202's C3 row found for `takagi.rs`. |
 | A2 | Chord voicing enumeration (12 roots × chord types × positions) | **GA** | consumed via `ix_voicings::enumerate` | out_of_scope | document | — | M | high | Same boundary. GA's live corpus is 313,047 voicings; the spec's target was "500+". |
-| A3 | Fingering ergonomics / playability (span ≤ 4 frets) | **GA** | `VoicingRow::fret_span`, `is_barre` (consumed) | out_of_scope | document | — | S | high | The *constraint* is an instrument-physics fact, not a reusable algorithm. GA computes it. |
+| A3 | Fingering ergonomics / playability (span ≤ 4 frets) | **GA** | `VoicingRow::fret_span` (deserialized from GA); `detect_barre` (`lib.rs:476`, derived in IX) | out_of_scope | document | — | S | high | GA measures the geometry; IX may derive stateless features from it (it already does, for barre). What stays GA's is the *playability judgement* — an instrument-physics constraint tied to a player and an instrument, not a reusable algorithm. |
 | A4 | Difficulty rating from span, position, stretch | **GA** | `FEATURE_COLUMNS` includes `fret_span`, `frets_used_*`, `is_barre` | partially_implemented | document | P3 | S | medium | IX already *features* these columns for clustering. A scalar "difficulty" is a product-facing judgement — GA/GS own the rubric. `ga_easier_voicings` already exists. |
 | A5 | Drop-2 voicing generator | **GA** | — (`drop2`/`drop_2` appear only in prompt strings: `ix-voicings/src/lib.rs:1608`, `ga-chatbot/src/main.rs:1501`) | out_of_scope | document | — | S | high | **Tempting but not IX.** Drop-2 is a deterministic transform (drop the 2nd voice from the top by an octave) with an exact oracle — it passes boundary test 1 and 2, and fails test 3: it operates on GA's voicing/instrument model. It belongs beside GA's enumerator. Recorded because it is the strongest false-positive candidate in this matrix. |
 | A6 | Slash chords / bass inversions | **GA** | — | out_of_scope | document | — | XS | high | GA owns this; per project convention bass lives in `SlashSuffix`, not in PC-set ranking. |
@@ -271,7 +325,9 @@ validation anywhere in the corpus.
 
 #195 says the separation is the hard part. It is, and the useful result is that **IX has already
 drawn this boundary in code** — `ix-voicings` shells out to GA's `FretboardVoicingsCLI` rather than
-reimplementing fretboard geometry. What follows makes that precedent explicit so it can be applied to
+reimplementing fretboard geometry, while still deriving its own stateless features from what comes
+back (`detect_barre`, `lib.rs:476`). The precedent is therefore *measurement is GA's, derivation is
+IX's*, not the cruder "fretboard is GA's". What follows makes that explicit so it can be applied to
 new candidates rather than re-litigated.
 
 **A candidate is IX-owned only if all three hold:**
@@ -310,7 +366,7 @@ The one cheap, testable, genuinely-missing IX algorithm this survey found.
 
 ```
 ix-bracelet (or a new ix-tonal module)
-    pub fn key_from_pcp(pcp: &[f64; 12]) -> KeyEstimate
+    pub fn key_from_pcp(pcp: &[f64; 12], origin_pc: u8) -> Option<KeyEstimate>
     pub struct KeyEstimate { tonic: u8, mode: Mode, r: f64, runner_up: (u8, Mode, f64) }
 ```
 
@@ -318,12 +374,26 @@ ix-bracelet (or a new ix-tonal module)
 rotations × major/minor) built from the published Krumhansl–Kessler constants, and return the argmax
 with its Pearson `r`. Roughly 60 lines.
 
+Two details in the signature are not decoration — both come from properties of the actual upstream
+function, and getting either wrong yields a green test suite over a broken algorithm:
+
+- **`origin_pc`.** `chroma`'s index 0 is the pitch class of the caller's `f_min`, not C
+  (`transforms.rs:117-120`). Taking the origin explicitly and rotating internally means a caller who
+  analyses from an A-based `f_min` gets the right answer instead of one that is silently a minor
+  third off. The alternative — documenting "must pass a C-aligned `f_min`" — is exactly the kind of
+  unenforced assumption this repo's `@ai:assumption` rule exists to flag.
+- **`Option`.** Pearson correlation is undefined at zero variance, so a constant profile has no
+  defined answer. This is reachable, not theoretical: `chroma(&[], …) == [0.0; 12]` is an asserted
+  behaviour (`transforms.rs:274`), so silence in, all-zeros out. `None` for a zero-variance input is
+  the honest return; a tonic of 0 would be a fabricated answer that happens to name C.
+
 **Why IX owns it.** Passes all three boundary tests: it is a function from a 12-vector to a label,
 its oracle is published constants, and it touches no product state. It is vector correlation with a
 fixed basis — the same shape as work already in `ix-math`.
 
 **Why it is cheap.** Its input already exists: `ix_acoustic_tune::transforms::chroma` returns exactly
-`[f64; 12]`, octave-invariant and tested. No new dependency, no data acquisition, no corpus.
+`[f64; 12]`, octave-invariant and tested. No new dependency, no data acquisition, no corpus. The two
+signature details above are the whole cost of the seam — a `u8` argument and an `Option`.
 
 **Why it is not "subjective musical scoring".** The profiles are published experimental constants and
 the decision rule is argmax of a correlation — an explicit rubric, which is what #195's non-goal
@@ -341,18 +411,22 @@ corpus at all, which is what keeps this `free-local`.
 | Tier | Fixture | Oracle | Cost |
 | --- | --- | --- | --- |
 | 1. Analytic | A synthetic PCP with unit weight on `{0,2,4,5,7,9,11}` (C major scale), zero elsewhere | Must return C major. Same set rotated by `k` must return the key `k` semitones up. | free |
-| 2. **Metamorphic** | Any PCP `v`, and its rotation `rot(v, k)` for all `k ∈ 0..11` | **Transposition equivariance**: `key(rot(v,k)).tonic == (key(v).tonic + k) mod 12`, and mode unchanged. Holds for *every* input, so it can be property-tested over random vectors with no labels. | free |
+| 2. **Metamorphic** | Any *non-constant* PCP `v`, and its rotation `rot(v, k)` for all `k ∈ 0..11` | **Transposition equivariance**: `key(rot(v,k)).tonic == (key(v).tonic + k) mod 12`, and mode unchanged. Holds for every input with non-zero variance, so it can be property-tested over random vectors with no labels. | free |
+| 2b. Degenerate | A constant PCP — `[0.0; 12]`, and `[c; 12]` for `c > 0` | `key_from_pcp` returns `None`. Every rotation of a constant vector is itself, so no tonic can advance by `k`; the equivariance property is not weakened here but *undefined*, and the code must say so rather than pick. | free |
 | 3. End-to-end | A synthesised C-major triad arpeggio → `chroma()` → `key_from_pcp` | Returns C major with `r` above the runner-up by a stated margin. Wires the two crates together — the tracer-bullet slice. | free |
 
 Tier 2 is the strongest guard: it is an exact algebraic invariant of the algorithm, it cannot be
 satisfied by a lookup table keyed on the test inputs, and it would catch an off-by-one in the
-rotation logic, which is the realistic bug here.
+rotation logic, which is the realistic bug here. Tier 2b is its necessary companion — a property
+stated as holding for *all* inputs, when it in fact has a domain, is the kind of overclaim that gets
+"fixed" later by weakening the assertion. Naming the excluded set up front keeps tier 2 strict on the
+domain where it is actually an invariant.
 
 **Baseline and guardrail** (per CLAUDE.md's "instrument before you ship"): there is no current IX
 key-finder, so the baseline is *absent*, not zero — the honest declaration is that tiers 1–3 must
-pass at 100%, and the guardrail is that tier 2 holds for all 12 rotations on randomised input. No
-accuracy claim against real music should be made without a labelled corpus, which this proposal does
-not include and does not need.
+pass at 100%, and the guardrail is that tier 2 holds for all 12 rotations on randomised *non-constant*
+input, with tier 2b pinning the constant case to `None`. No accuracy claim against real music should
+be made without a labelled corpus, which this proposal does not include and does not need.
 
 ## Follow-up tasks, by repo
 
@@ -363,17 +437,26 @@ Proposed, **not opened** — #195 asks for candidates and its non-goals forbid p
 | # | Proposed issue | Rows | Oracle | cx | prio |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Krumhansl–Schmuckler `key_from_pcp` + the three-tier fixture set | B1 | published profiles; transposition equivariance | XS | P1 |
-| 2 | Expose `ix-bracelet` through MCP (`ix_bracelet`) | §What IX already has | `EXPECTED[]` count assertion in `parity.rs` + per-op smoke tests | S | P1 |
-| 3 | Chord-template matching over a chroma vector | C2 | fixed binary templates; exact on synthetic input | XS | P2 |
-| 4 | Correct `parity.rs:124`'s stale "(93)" doc comment | — | the array count itself | XS | P3 |
-| 5 | Counterpoint interval checks — **hold until a consumer exists** | B5 | rule-exact | S | P3 |
-| 6 | Bring `docs/research/` into the `ix-streeling` indexer's scope | — | catalog contains an entry per research doc | XS | P3 |
+| 2 | Declare IX's music surface in `capability-registry.json` — add a `music` domain and the seven existing music tools, and correct the stale "32+ MCP tools" description | §Federation discovery | `ix_federation_discover(domain:"music")` returns IX; `ix-registry-check` passes | XS | P1 |
+| 3 | Close the MCP/DuckDB asymmetry: expose prime form, Forte number and the row operations as MCP tools (Grothendieck is already exposed) | §What IX already has | `EXPECTED[]` count assertion in `parity.rs` + per-op smoke tests against the existing DuckDB UDF results | S | P2 |
+| 4 | Chord-template matching over a chroma vector | C2 | fixed binary templates; exact on synthetic input | XS | P2 |
+| 5 | Correct `parity.rs:124`'s stale "(93)" doc comment | — | the array count itself | XS | P3 |
+| 6 | Counterpoint interval checks — **hold until a consumer exists** | B5 | rule-exact | S | P3 |
+| 7 | Bring `docs/research/` into the `ix-streeling` indexer's scope | — | catalog contains an entry per research doc | XS | P3 |
 
-Issue 2 is the highest-leverage item in this document that is not the prototype: IX's largest music
-crate is agent-invisible. Note the parity cascade — `EXPECTED[]` must be bumped in the same PR, and
-stacked tool PRs cannot merge in parallel.
+Issue 2 is the highest-leverage item here that is not the prototype, and the cheapest: it is a JSON
+edit with a machine oracle, and it converts a whole shipped subsystem from undiscoverable to
+discoverable. Note it touches a Demerzel-owned schema, so it is a cross-repo change under CLAUDE.md's
+locked-field rule, and `ix-registry-check` is the breaking-change detector that gates it.
 
-Issue 6 comes from a discoverability gap found while writing this: `state/streeling/catalog.jsonl`
+Issue 3 is the deeper version of the same problem: nine of ix-bracelet's ten modules are
+MCP-unreachable, and which operations an agent can reach depends on whether it arrived via MCP or via
+DuckDB. It has a ready-made oracle — the DuckDB UDFs already compute the same answers, so each new
+MCP tool can be smoke-tested against an existing surface rather than against fresh expectations. Note
+the parity cascade — `EXPECTED[]` must be bumped in the same PR, and stacked tool PRs cannot merge in
+parallel.
+
+Issue 7 comes from a discoverability gap found while writing this: `state/streeling/catalog.jsonl`
 holds 102 entries covering `docs/solutions` (61), `docs/plans` (27) and `docs/brainstorms` (14), and
 **nothing** from `docs/research/`. All eight research documents — including #190's inventory, #202's
 matrix, #192's ToT packet and this one — are absent from the catalog and therefore invisible to
@@ -413,7 +496,7 @@ useful as requirement checklists for GA.
 | Actual spend | **0 USD** |
 | Method | local `git ls-tree` / `git grep` / `git show` against the pinned tars checkout; local `grep` / `wc` / `python` over this worktree; `gh issue view` and `gh repo view` for cross-repo reference checks |
 | Hosted passes | none — no embedding, summarization or model call over any transcript |
-| Compute | one full `cargo +nightly-2026-08-23 clippy --workspace --all-targets -- -D warnings` (6m58s, **exit 0**); no `cargo test`. This change adds no Rust and touches no `.github/workflows/**` |
+| Compute | `pwsh scripts/verify.ps1` to completion (**exit 0** — clippy at CI flags, `cargo test --workspace`, supervised-loop preflight), plus one full `cargo +nightly-2026-08-23 clippy --workspace --all-targets -- -D warnings` (6m58s, **exit 0**). This change adds no Rust and touches no `.github/workflows/**` |
 
 ## Method, and its limits
 
@@ -437,6 +520,14 @@ useful as requirement checklists for GA.
 9. Mapped candidates onto IX by reading the `pub` surface of every file cited, and cross-checked
    exposure against the UDF registrations under `crates/ix-duck*/src/` and the `EXPECTED` array in
    `crates/ix-agent/tests/parity.rs`.
+10. **Corrected the IX-side claims under review.** The first revision of this document asserted that
+    ix-bracelet was "invisible to every agent" and that `is_barre` was a GA-supplied field. Both were
+    wrong, and both were wrong the same way: a name-shaped search (`ix_bracelet`, `VoicingRow` field
+    list) stood in for a call-graph check. `ix_grothendieck_*` *is* ix-bracelet under another name,
+    and `is_barre` is derived by IX. The lesson is recorded here rather than quietly patched, because
+    it is the same failure mode this document criticises in #190 and #202 — the sweep vocabulary
+    determines the finding, and an implementation under an unguessable name reads as a gap. Both
+    claims are now stated in terms of the call graph, which does not depend on naming.
 
 ### Unresolved and not reached
 
@@ -459,9 +550,14 @@ Stated explicitly, because a survey that hides its own gaps is worse than no sur
   corroborated by `ix-bracelet`'s 117 tests (e.g. `forte.rs:30`, `forte.rs:490` asserting `"3-11"`),
   not by running a query. `crates/ix-duck` is excluded from the workspace, so exercising them would
   need a separate build that this `free-local` budget did not cover.
-- **`governance/demerzel/schemas/capability-registry.json` was not read** — the submodule is
-  uninitialized in this worktree (`git submodule status` shows `-e4e4273…`), so the federation
-  capability registry could not be cross-checked against the ownership verdicts.
+- ~~`capability-registry.json` was not read~~ — **now resolved.** The submodule was uninitialized in
+  this worktree, and a first `git submodule update --init` failed part-way through with `No space
+  left on device`, leaving `governance/demerzel` empty while `git submodule status` reported it as
+  initialized. That is worth recording as a trap: the status flag tracked the config, not the working
+  tree, so the directory looked initialized and read as absent. After freeing space and re-running
+  with `--force`, the registry was read, and it produced the §Federation-discovery finding above. The
+  registry does *not* contradict any ownership verdict in the matrix — `ga` is declared with
+  `music-theory` / `fretboard` domains, consistent with §8.
 - **Negative results are sweep-bounded.** Every `—` means the recorded regexes found nothing across
   `crates/**/*.rs`. Sweep 2 finding two files sweep 1 missed demonstrates that this risk is real, not
   hypothetical, on the TARS side too. An implementation under an unguessable name would read as a
@@ -469,8 +565,11 @@ Stated explicitly, because a survey that hides its own gaps is worse than no sur
 - **No claim in any TARS source document has been validated**, and no IX algorithm cited here was
   re-verified for correctness. `already_done` means *the code exists and is under test*, not *it is
   right*.
-- **`cargo test` was not run.** The pinned clippy gate
-  (`cargo +nightly-2026-08-23 clippy --workspace --all-targets -- -D warnings`) *was* run in this
-  worktree and passed clean (exit 0). The test suite was not, since this change adds no Rust; note
-  that `ix-agent/tests/showcase_r1_migrations.rs` fails in a fresh worktree regardless, because
-  `governance/demerzel` is an uninitialized submodule here.
+- ~~`cargo test` was not run~~ — **now resolved.** `pwsh scripts/verify.ps1`, the gate AGENTS.md
+  requires of every agent-driven PR, was run to completion in this worktree: **exit 0**, covering
+  clippy at CI's flags, `cargo test --workspace`, and the supervised-loop preflight harness. The
+  pinned-nightly clippy run (`cargo +nightly-2026-08-23 clippy --workspace --all-targets -- -D
+  warnings`) passed separately, also exit 0. The first `verify.ps1` attempt failed with three
+  `showcase_r1_migrations.rs` failures ("Failed to load constitution … os error 3") — that was the
+  empty `governance/demerzel` submodule described above, not a defect, and all three pass once the
+  submodule is checked out.
