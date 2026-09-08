@@ -116,6 +116,7 @@ pub enum StateSpaceError {
 /// [`StateSpaceModel::new`] cannot be broken afterwards: every rank test and
 /// simulation in this module assumes `A` is `n*n`, `B` is `n*m` and `C` is
 /// `p*n` for a single `n`.
+// @ai:invariant every StateSpaceModel satisfies A:n*n, B:n*m, C:p*n for one n — `new` is the only constructor, it rejects every non-conforming triple, and the fields are private with borrow-only accessors so no later mutation can violate it [T:test conf:0.95 src:state_space::rejects_input_matrix_with_wrong_row_count]
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateSpaceModel {
     a: Array2<f64>,
@@ -163,6 +164,7 @@ impl StateSpaceModel {
     /// Note that [`KalmanFilter::new`] leaves `control` as an `n*1` zero
     /// matrix, so a filter whose control matrix was never set yields an
     /// uncontrollable model — correctly, since it has no input path.
+    // @ai:invariant the extracted (A,B,C) is the same plant the filter itself runs on — stepping the model reproduces KalmanFilter::predict's noise-free state update exactly, so a mis-mapped slot cannot pass silently [T:test conf:0.9 src:state_space::extracted_model_reproduces_the_filters_noise_free_prediction]
     pub fn from_kalman(kf: &KalmanFilter) -> Result<Self, StateSpaceError> {
         Self::new(
             kf.transition.clone(),
@@ -225,6 +227,7 @@ impl StateSpaceModel {
     /// worth more than the convenience. Pass `None` for the noise-free
     /// rollout. When `Some`, `noise` must have exactly `inputs.len()`
     /// entries, each of length `n`.
+    // @ai:assumption keeping w_k caller-supplied is what upholds ix-signal's "no RNG anywhere on the public surface" determinism contract; nothing mechanical enforces that contract, so a future edit adding a sampler here would break it silently [P:manually-reviewed conf:0.8 src:crates/ix-signal/CONTRACTS.md]
     pub fn simulate(
         &self,
         x0: &Array1<f64>,
@@ -258,6 +261,7 @@ impl StateSpaceModel {
 
     /// Controllability matrix `[B, AB, A^2 B, ..., A^(n-1) B]`, shape
     /// `n * (n*m)`.
+    // @ai:invariant n Krylov blocks is EXACT, not a truncation: by Cayley-Hamilton A^n B lies in the span of [B..A^(n-1)B], so appending further powers cannot raise the rank [T:test conf:0.9 src:state_space::extra_powers_beyond_n_minus_one_add_no_rank]
     pub fn controllability_matrix(&self) -> Array2<f64> {
         let n = self.state_dim();
         let m = self.input_dim();
@@ -388,6 +392,7 @@ fn rank_report(
 
     // Relative rank tolerance, the LAPACK / NumPy `matrix_rank` convention:
     // tol = max(rows, cols) * sigma_max * eps.
+    // @ai:invariant a relative tolerance is REQUIRED here, not decoration: ix_math's one-sided Jacobi SVD leaves a mathematically-zero singular value near 1e-16*sigma_max rather than exactly 0, so comparing against 0.0 would over-report the rank of a genuinely deficient system [T:test conf:0.9 src:state_space::seeded_rank_deficiency_survives_a_similarity_transform]
     let scale = matrix.nrows().max(matrix.ncols()) as f64;
     let tolerance = scale * sigma_max * f64::EPSILON;
 
