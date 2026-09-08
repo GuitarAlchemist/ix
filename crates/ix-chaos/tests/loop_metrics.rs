@@ -76,16 +76,40 @@ fn m1_drift_silent_on_a_stable_loop() {
 // M2 — Loop oscillation index, over `ix_signal::correlation::autocorrelation`
 // ---------------------------------------------------------------------------
 
-/// Dominant repeat period of a loop's per-step action signature, and its strength.
+/// Dominant repeat period of a **categorical** action sequence, and its strength.
 ///
-/// Returns `(lag, normalized_autocorrelation)` for the strongest positive lag in
-/// `1..=max_lag`. A high value at lag `k` means the loop repeats itself every `k`
-/// steps — the "edits file A, test fails, reverts to B, repeats" failure.
+/// This is the metric to use for `action_signature`. It is the diagonal of a recurrence
+/// plot: for each lag `k`, the fraction of positions where `action[i] == action[i+k]`.
+/// Because it consumes only *equality*, it is invariant to how action identities are
+/// numbered — which the numeric variant below is not.
+///
+/// Returns `(lag, recurrence_rate)` for the strongest lag in `1..=max_lag`.
+fn oscillation_index_categorical(actions: &[u64], max_lag: usize) -> (usize, f64) {
+    if actions.len() < 2 {
+        return (0, 0.0);
+    }
+    let mut best = (0usize, f64::NEG_INFINITY);
+    for lag in 1..=max_lag.min(actions.len() - 1) {
+        let pairs = actions.len() - lag;
+        let matches = (0..pairs).filter(|&i| actions[i] == actions[i + lag]).count();
+        let rate = matches as f64 / pairs as f64;
+        if rate > best.1 {
+            best = (lag, rate);
+        }
+    }
+    best
+}
+
+/// Dominant repeat period of a **numeric** observable, via autocorrelation.
+///
+/// Valid only when magnitudes are meaningful — e.g. an oscillating residual. It is
+/// **not** valid for an arbitrarily-numbered action signature: see
+/// `m2_numeric_variant_is_not_label_invariant`, which pins that trap in place.
 ///
 /// Two preprocessing steps are mandatory, and both were found by a failing test
 /// rather than by inspection (see the research note's caveat for M2):
 ///
-/// 1. **First-difference** the signature. Raw autocorrelation at short lags measures
+/// 1. **First-difference** the signal. Raw autocorrelation at short lags measures
 ///    *smoothness*, not periodicity: a monotone ramp scores 0.95 at lag 1 and would be
 ///    misreported as a tight 1-cycle. Differencing removes the trend.
 /// 2. **Mean-center** afterwards. `autocorrelation` normalizes by the zero-lag value
@@ -136,6 +160,37 @@ fn m2_quiet_on_a_non_repeating_loop() {
     );
 }
 
+#[test]
+fn m2_numeric_variant_is_not_label_invariant() {
+    // Both encode 60 *all-distinct* actions — there is no cycle in either.
+    // The numeric variant nevertheless reports a near-perfect 1-cycle for the
+    // quadratic labelling, purely because of the magnitudes it was handed.
+    let as_linear: Vec<f64> = (0..60).map(|i| i as f64).collect();
+    let as_squared: Vec<f64> = (0..60).map(|i| (i * i) as f64).collect();
+
+    assert!(oscillation_index(&as_linear, 12).1 < 0.5);
+    assert!(
+        oscillation_index(&as_squared, 12).1 > 0.9,
+        "this trap is asserted so it cannot silently disappear: the numeric \
+         variant is encoding-dependent and must never be fed action identities"
+    );
+}
+
+#[test]
+fn m2_categorical_is_label_invariant() {
+    // Same all-distinct identities under two different numberings: no cycle in either.
+    let distinct_a: Vec<u64> = (0..60).collect();
+    let distinct_b: Vec<u64> = (0..60).map(|i| i * i).collect();
+    assert_eq!(oscillation_index_categorical(&distinct_a, 12).1, 0.0);
+    assert_eq!(oscillation_index_categorical(&distinct_b, 12).1, 0.0);
+
+    // Same period-3 cycle under two different numberings: both must find lag 3.
+    let cycle_a: Vec<u64> = (0..60).map(|i| [1, 2, 3][i % 3]).collect();
+    let cycle_b: Vec<u64> = (0..60).map(|i| [700, 4, 91][i % 3]).collect();
+    assert_eq!(oscillation_index_categorical(&cycle_a, 12), (3, 1.0));
+    assert_eq!(oscillation_index_categorical(&cycle_b, 12), (3, 1.0));
+}
+
 // ---------------------------------------------------------------------------
 // M3 — Loop contraction rate, classified by `ix_chaos::lyapunov::classify_dynamics`
 // ---------------------------------------------------------------------------
@@ -149,13 +204,22 @@ fn m2_quiet_on_a_non_repeating_loop() {
 /// caveat in the research note. It is a finite-time contraction rate on a 1-D
 /// residual, which is why it is fed to `classify_dynamics` rather than computed by
 /// `mle_1d`.
-fn contraction_rate(residual: &[f64]) -> f64 {
+///
+/// Returns `None` for a trace shorter than two steps. This is not defensive padding:
+/// `windows(2)` yields nothing, the mean becomes `0/0 = NaN`, and every `NaN`
+/// comparison inside `classify_dynamics` is false — so it falls through to
+/// `FixedPoint` and reports an *unmeasurable* episode as converged. The trace schema
+/// permits early `stop_reason`s, so 0- and 1-step episodes are reachable in practice.
+fn contraction_rate(residual: &[f64]) -> Option<f64> {
     const FLOOR: f64 = 1e-12;
+    if residual.len() < 2 {
+        return None;
+    }
     let ratios: Vec<f64> = residual
         .windows(2)
         .map(|w| (w[1].abs().max(FLOOR) / w[0].abs().max(FLOOR)).ln())
         .collect();
-    ratios.iter().sum::<f64>() / ratios.len() as f64
+    Some(ratios.iter().sum::<f64>() / ratios.len() as f64)
 }
 
 #[test]
@@ -163,7 +227,7 @@ fn m3_converging_loop_classifies_as_fixed_point() {
     // Geometric decay: the textbook converging loop.
     let residual: Vec<f64> = (0..40).map(|k| 0.5_f64.powi(k)).collect();
 
-    let lambda = contraction_rate(&residual);
+    let lambda = contraction_rate(&residual).expect("40-step trace is measurable");
     assert!(
         (lambda - 0.5_f64.ln()).abs() < 1e-9,
         "contraction rate {lambda} should equal ln(0.5) = {}",
@@ -177,7 +241,7 @@ fn m3_diverging_loop_classifies_as_chaotic_or_divergent() {
     // Geometric growth: the loop is making things worse each step.
     let residual: Vec<f64> = (0..40).map(|k| 1.5_f64.powi(k)).collect();
 
-    let lambda = contraction_rate(&residual);
+    let lambda = contraction_rate(&residual).expect("40-step trace is measurable");
     assert!(lambda > 0.0, "growing residual must give lambda > 0, got {lambda}");
     assert!(
         matches!(
@@ -193,12 +257,29 @@ fn m3_flat_loop_is_marginal_not_converging() {
     // A stalled loop: the residual never moves. lambda == 0 exactly.
     let residual = vec![0.5_f64; 40];
 
-    let lambda = contraction_rate(&residual);
+    let lambda = contraction_rate(&residual).expect("40-step trace is measurable");
     assert!(lambda.abs() < 1e-12, "flat residual must give lambda 0, got {lambda}");
     assert_eq!(
         classify_dynamics(lambda, 0.05),
         DynamicsType::Periodic,
         "a stalled loop is marginal, and M3 alone cannot tell it from a limit cycle"
+    );
+}
+
+#[test]
+fn m3_short_trace_is_unmeasurable_not_converged() {
+    // A 0- or 1-step episode has no ratio to average. Returning NaN here would be
+    // silently misclassified: every NaN comparison in `classify_dynamics` is false,
+    // so it falls through to `FixedPoint` and reports "converged".
+    assert_eq!(contraction_rate(&[]), None);
+    assert_eq!(contraction_rate(&[0.5]), None);
+    assert!(contraction_rate(&[0.5, 0.25]).is_some());
+
+    // Pin the misclassification that `None` exists to prevent.
+    assert_eq!(
+        classify_dynamics(f64::NAN, 0.05),
+        DynamicsType::FixedPoint,
+        "classify_dynamics maps NaN to FixedPoint, so callers must never hand it one"
     );
 }
 
@@ -252,11 +333,11 @@ fn metrics_separate_the_four_loop_regimes() {
     let oscillating: Vec<f64> = (0..40).map(|i| [1.0, 2.0, 3.0][i % 3]).collect();
 
     // M3 separates converging from diverging.
-    assert!(contraction_rate(&converging) < -0.1);
-    assert!(contraction_rate(&diverging) > 0.1);
+    assert!(contraction_rate(&converging).unwrap() < -0.1);
+    assert!(contraction_rate(&diverging).unwrap() > 0.1);
 
     // M3 alone cannot separate stalling from oscillating: both are marginal.
-    assert!(contraction_rate(&stalling).abs() < 1e-12);
+    assert!(contraction_rate(&stalling).unwrap().abs() < 1e-12);
 
     // M4 catches the stall; M2 catches the oscillation. This is why >1 metric is needed.
     assert!(is_stalled(&stalling, 10, 1e-6, 0.01));

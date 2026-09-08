@@ -6,7 +6,7 @@
 **Status:** design note with executable fixtures. Four metrics proposed; all four are
 implemented as test-local compositions and validated by
 [`crates/ix-chaos/tests/loop_metrics.rs`](../../crates/ix-chaos/tests/loop_metrics.rs)
-(10 tests, all passing). Numbers quoted below are measured, not illustrative.
+(13 tests, all passing). Numbers quoted below are measured, not illustrative.
 
 ## What this document is, and what it is not
 
@@ -95,12 +95,26 @@ loop.
 Deterministic LCG-generated boolean traces (no `rand` dependency) so asserted step indices are
 stable across platforms.
 
-### M2 — Oscillation index · reuses `ix_signal::correlation::autocorrelation`
+### M2 — Oscillation index · reuses `ix_signal::correlation::autocorrelation` (numeric variant)
 
 **Question:** is the loop going round in circles?
 
 The "edits file A, test fails, reverts to B, test fails, edits A again" failure shows up as a
 periodic `action_signature`. Autocorrelation finds the period.
+
+There are **two** variants, and picking the wrong one is a live trap (see below).
+
+**M2a — categorical (use this for `action_signature`).** The diagonal of a recurrence
+plot: for each lag `k`, the fraction of positions where `action[i] == action[i+k]`.
+It consumes only *equality*, so it is invariant to how action identities are numbered.
+
+```rust
+fn oscillation_index_categorical(actions: &[u64], max_lag: usize) -> (usize, f64) {
+    // for each lag: matches / pairs, then argmax
+}
+```
+
+**M2b — numeric (use only when magnitudes are meaningful, e.g. an oscillating residual).**
 
 ```rust
 fn oscillation_index(signature: &[f64], max_lag: usize) -> (usize, f64) {
@@ -114,11 +128,15 @@ fn oscillation_index(signature: &[f64], max_lag: usize) -> (usize, f64) {
 
 **Measured:**
 
-| trace | dominant lag | strength |
-|---|---|---|
-| period-3 cycle `[1,2,3,1,2,3,…]` | **3** | **0.948** |
-| monotone ramp `0,1,2,…` (differenced) | 1 | **0.000** |
-| monotone ramp **without** differencing | 1 | **0.950** |
+| trace | variant | dominant lag | strength |
+|---|---|---|---|
+| period-3 cycle `[1,2,3,…]` | M2b numeric | **3** | **0.948** |
+| monotone ramp `0,1,2,…` (differenced) | M2b numeric | 1 | **0.000** |
+| monotone ramp **without** differencing | M2b numeric | 1 | **0.950** |
+| 60 all-distinct actions numbered `i` | M2b numeric | 1 | 0.000 |
+| 60 all-distinct actions numbered `i²` | M2b numeric | 1 | **0.949** ← false positive |
+| 60 all-distinct actions, either numbering | **M2a categorical** | — | **0.000** |
+| period-3 cycle, either numbering | **M2a categorical** | **3** | **1.000** |
 
 > **Caveat found by a failing test.** The first version of M2 reported the monotone ramp as a
 > near-perfect 1-cycle at **0.95** — a false positive that would have flagged a *perfectly
@@ -128,7 +146,18 @@ fn oscillation_index(signature: &[f64], max_lag: usize) -> (usize, f64) {
 > `autocorrelation` normalizes by the zero-lag value but does **not** centre, so any DC offset
 > otherwise dominates every lag.
 
-**Fixture:** `m2_detects_a_three_step_cycle`, `m2_quiet_on_a_non_repeating_loop`.
+> **Second caveat, raised by Codex review on PR #307 and confirmed by measurement.** The
+> numeric variant is **not label-invariant**. Sixty *all-distinct* actions — no cycle at
+> all — score **0.000** when numbered `0,1,2,…` but **0.949** at lag 1 when numbered
+> `0,1,4,9,…`, comfortably clearing the 0.5 "cycle" threshold. The score depends on the
+> magnitudes the encoder happened to assign, not on the loop's behaviour. Differencing
+> does not fix it. **Never feed `action_signature` to M2b**; use M2a, whose recurrence
+> rate reads only equality. This was listed as an untested risk in the first revision of
+> this note; it is now a measured defect with a regression test pinning it.
+
+**Fixture:** `m2_detects_a_three_step_cycle`, `m2_quiet_on_a_non_repeating_loop`,
+`m2_numeric_variant_is_not_label_invariant` (asserts the trap so it cannot silently
+disappear), `m2_categorical_is_label_invariant`.
 
 ### M3 — Contraction rate · classified by `ix_chaos::lyapunov::classify_dynamics`
 
@@ -162,8 +191,19 @@ Negative contracts, zero is marginal, positive diverges. Feeding `lambda` to the
 > read as "not converging", and any report must not surface the raw variant name to a human
 > without translation.
 
+> **Short-trace caveat, raised by Codex review on PR #307 and confirmed by measurement.**
+> `contraction_rate` now returns `Option<f64>` and yields `None` below two steps. The
+> earlier version returned `0/0 = NaN`, and every `NaN` comparison inside
+> `classify_dynamics` is false — so it fell through to `FixedPoint` and reported an
+> **unmeasurable** episode as *converged*. Confirmed directly:
+> `classify_dynamics(f64::NAN, 0.05) == FixedPoint`. The trace schema permits early
+> `stop_reason`s, so 0- and 1-step episodes are reachable in practice, and "converged" is
+> the worst possible default for one. Any future caller must treat `None` as
+> `U:uncertain`, never as success.
+
 **Fixture:** `m3_converging_loop_classifies_as_fixed_point`,
-`m3_diverging_loop_classifies_as_chaotic_or_divergent`, `m3_flat_loop_is_marginal_not_converging`.
+`m3_diverging_loop_classifies_as_chaotic_or_divergent`, `m3_flat_loop_is_marginal_not_converging`,
+`m3_short_trace_is_unmeasurable_not_converged`.
 
 ### M4 — Stall index · reuses `ix_signal::timeseries::rolling_std`
 
@@ -301,7 +341,7 @@ the constitution's job.
 
 ## Minimal test fixtures
 
-All of these exist and pass — `cargo test -p ix-chaos --test loop_metrics` → **10 passed**.
+All of these exist and pass — `cargo test -p ix-chaos --test loop_metrics` → **13 passed**.
 
 | Metric | Fixture | Shape | Asserts |
 |---|---|---|---|
@@ -309,9 +349,12 @@ All of these exist and pass — `cargo test -p ix-chaos --test loop_metrics` →
 | M1 | `m1_drift_silent_on_a_stable_loop` | 300 steps @10% fail | `Drift` never fires |
 | M2 | `m2_detects_a_three_step_cycle` | `[1,2,3]` × 20 | peak lag == 3, strength > 0.5 |
 | M2 | `m2_quiet_on_a_non_repeating_loop` | `0..60` monotone | strength < 0.9 |
+| M2 | `m2_numeric_variant_is_not_label_invariant` | all-distinct as `i` vs `i²` | pins the encoding-dependence trap |
+| M2 | `m2_categorical_is_label_invariant` | same cycles under two numberings | identical verdicts |
 | M3 | `m3_converging_loop_classifies_as_fixed_point` | `0.5^k` | λ == ln 0.5 ± 1e-9, `FixedPoint` |
 | M3 | `m3_diverging_loop_classifies_as_chaotic_or_divergent` | `1.5^k` | λ > 0, not converging |
 | M3 | `m3_flat_loop_is_marginal_not_converging` | constant 0.5 | λ == 0, `Periodic` |
+| M3 | `m3_short_trace_is_unmeasurable_not_converged` | 0- and 1-step traces | `None`, not `FixedPoint` |
 | M4 | `m4_flat_and_far_from_target_is_a_stall` | constant 0.5, target 0.01 | stalled |
 | M4 | `m4_flat_and_at_target_is_convergence_not_a_stall` | constant 0.001, target 0.01 | not stalled |
 | all | `metrics_separate_the_four_loop_regimes` | all four regimes | the metrics do not collapse |
@@ -334,11 +377,19 @@ passed only the per-metric tests could still be useless in combination.
    detector, was **not evaluated at all** and may behave better.
 4. **M2 assumes gap-free `step_index`.** A dropped step shifts every subsequent lag. No
    fixture covers a gapped trace.
-5. **M2's `action_signature` projection is unspecified.** The fixtures use small integers. A
-   real hash projection may collide or, worse, impose spurious numeric structure on unrelated
-   actions — differencing does not fix that. Untested.
+5. **M2's numeric variant is encoding-dependent — now measured, and fixed by M2a.** This was
+   an untested risk in the first revision; Codex review turned it into a confirmed defect
+   (all-distinct actions score 0.949 under an `i²` numbering). M2a resolves it for categorical
+   inputs. **Still untested:** hash *collisions* in a real `action_signature` projection, which
+   M2a would read as genuine recurrence.
 6. **M3 is undefined on sign changes and near-zero residuals.** A `1e-12` floor guards division,
    but a residual that legitimately crosses zero will produce a meaningless ratio. Not covered.
+   Short traces are now handled (`None`), but the floor itself remains a silent fudge.
+   Measured: an all-zero residual gives **λ = 0.0** — reported as *marginal* rather than as the
+   perfect convergence it is; and a sign-flipping residual `[0.5, −0.5, 0.5, −0.5]` also gives
+   **λ = 0.0**, indistinguishable from a stall on M3 alone. `[0.5, 0, 0, 0]` gives **−8.98**,
+   a magnitude driven entirely by the floor constant rather than by the loop. No fixture covers
+   any of these; they are recorded here as known-wrong rather than fixed.
 7. **No multivariate state.** All four metrics take a scalar residual. A loop whose state is
    genuinely vector-valued (progress on two independent goals) is out of scope, and that is
    where A1 would actually earn its place.
