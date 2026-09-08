@@ -6,6 +6,34 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Added — `dark-features` doctor check (2026-09-08)
+
+- `ix doctor` gains a `dark-features` check (`crates/ix-skill/src/doctor/dark_features.rs`,
+  ix#315): a cargo feature that **no workspace member enables** is never built by
+  `cargo {build,clippy,test} --workspace` — the three invocations CI runs — so the
+  code behind it is neither compiled nor tested, and a skipped crate adds zero to
+  both counters, so nothing in the output says so. The dark set is derived from
+  `cargo metadata` (declared features minus the resolved set for the default
+  workspace build), never hardcoded.
+- The check reports **size, not just existence**: crate, feature, gated modules,
+  lines and tests behind the gate. It fails only when a dark feature is
+  significant (at least one test, or 100+ lines) and has no allowlist entry — so
+  meta-features, implicit optional-dependency features and two-line stubs fall
+  out as noise with no special-casing.
+- `state/registry/dark-features.allow.json`: reasoned exemptions in the shape
+  `orphan-traits.allow.json` established — a reasonless entry fails, an entry
+  whose feature is no longer dark is reported stale. `kind` is `environment`
+  (a native toolchain, an external binary, a toolchain newer than the workspace
+  MSRV) or `tracked` (nothing environmental stops it, it is just not wired up —
+  requires an `issue` and is counted as debt in the summary).
+- Baseline at landing: **17 dark features, 13,719 lines and 219 tests that CI
+  has never compiled**, 10 of them significant. The motivating case is
+  `ix-code/topology` — 296 lines and five tests, merged and reviewed, never
+  built once; the code is healthy (`cargo test -p ix-code --features full`
+  passes), which is exactly why nobody noticed.
+- Checklists: "Adding a feature-gated module" in `docs/CHECKLISTS.md`
+  ([FR](docs/fr/CHECKLISTS.md)).
+
 ### Added — Code topology + H0 persistence over DuckDB (2026-09-08)
 
 Gap-matrix rows **F1** and **B1b** of
