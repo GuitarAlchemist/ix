@@ -28,4 +28,11 @@ pub enum IoError {
 
     #[error("timeout")]
     Timeout,
+
+    /// A caller-supplied or crate-imposed bound was exceeded — an oversized
+    /// HTTP body, a refused URL scheme, a zero batch size. Distinct from
+    /// [`IoError::Parse`] on purpose: the input was well-formed, we declined
+    /// to process that much of it.
+    #[error("limit exceeded: {0}")]
+    Limit(String),
 }
