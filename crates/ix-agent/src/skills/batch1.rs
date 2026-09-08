@@ -642,6 +642,88 @@ pub fn fir_filter(params: Value) -> Result<Value, String> {
     handlers::fir_filter(params)
 }
 
+// --- ix_kalman -------------------------------------------------------------
+//
+// PROPOSED SURFACE — not approved. The tool name `ix_kalman`, the operation name
+// `smooth_1d`, the `dt` default of 1.0, and the response keys (`position`, `velocity`,
+// `max_samples`, `max_dt`) are a proposal under ix#193, landed so the signatures can be
+// argued about against running code rather than in the abstract. Do not build a consumer
+// against these names yet. See the PR description for the sign-off checklist; ix#286 set
+// this precedent for the sibling `ix_fractal` op.
+
+fn kalman_schema() -> Value {
+    object(
+        vec![
+            (
+                "operation",
+                Prop::string()
+                    .enum_of(&["smooth_1d"])
+                    .desc("Filtering operation to run"),
+            ),
+            (
+                "series",
+                Prop::num_array()
+                    .desc("Noisy scalar measurements, evenly spaced (max 4096 samples)"),
+            ),
+            (
+                "process_noise",
+                Prop::number()
+                    .exclusive_min(0)
+                    .desc("Process noise covariance q (> 0); larger = trust the model less"),
+            ),
+            (
+                "measurement_noise",
+                Prop::number()
+                    .exclusive_min(0)
+                    .desc("Measurement noise covariance r (> 0); larger = trust the data less"),
+            ),
+            (
+                "dt",
+                Prop::number()
+                    .exclusive_min(0)
+                    .maximum(1.0e6)
+                    .default(1.0)
+                    .desc("Sampling interval between consecutive samples"),
+            ),
+        ],
+        &["operation", "series", "process_noise", "measurement_noise"],
+    )
+}
+
+fn kalman_output_schema() -> Value {
+    output(vec![
+        (
+            "position",
+            Prop::num_array().desc("Filtered position estimate, one per input sample"),
+        ),
+        (
+            "velocity",
+            Prop::num_array().desc("Estimated rate of change, one per input sample"),
+        ),
+        ("n_samples", Prop::integer()),
+        ("model", Prop::string()),
+        ("operation", Prop::string()),
+        ("dt", Prop::number()),
+        ("process_noise", Prop::number()),
+        ("measurement_noise", Prop::number()),
+        ("max_samples", Prop::integer()),
+        ("max_dt", Prop::number()),
+    ])
+}
+
+/// Kalman-filter a noisy scalar time series with a constant-velocity model, returning a
+/// smoothed level and a rate-of-change estimate per sample.
+#[ix_skill(
+    domain = "signal",
+    name = "kalman",
+    governance = "deterministic",
+    schema_fn = "crate::skills::batch1::kalman_schema",
+    output_schema_fn = "crate::skills::batch1::kalman_output_schema"
+)]
+pub fn kalman(params: Value) -> Result<Value, String> {
+    handlers::kalman(params)
+}
+
 // --- ix_spectrogram --------------------------------------------------------
 
 fn spectrogram_schema() -> Value {
