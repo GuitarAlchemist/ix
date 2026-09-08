@@ -413,7 +413,7 @@ useful as requirement checklists for GA.
 | Actual spend | **0 USD** |
 | Method | local `git ls-tree` / `git grep` / `git show` against the pinned tars checkout; local `grep` / `wc` / `python` over this worktree; `gh issue view` and `gh repo view` for cross-repo reference checks |
 | Hosted passes | none — no embedding, summarization or model call over any transcript |
-| Compute | no `cargo build`, `cargo test` or `cargo clippy`; this change adds no Rust and touches no `.github/workflows/**` |
+| Compute | one full `cargo +nightly-2026-08-23 clippy --workspace --all-targets -- -D warnings` (6m58s, **exit 0**); no `cargo test`. This change adds no Rust and touches no `.github/workflows/**` |
 
 ## Method, and its limits
 
@@ -469,6 +469,8 @@ Stated explicitly, because a survey that hides its own gaps is worse than no sur
 - **No claim in any TARS source document has been validated**, and no IX algorithm cited here was
   re-verified for correctness. `already_done` means *the code exists and is under test*, not *it is
   right*.
-- **No build was run.** This change is documentation only, so the pinned clippy gate
-  (`cargo +nightly-2026-08-23 clippy --workspace --all-targets -- -D warnings`) was not exercised
-  locally.
+- **`cargo test` was not run.** The pinned clippy gate
+  (`cargo +nightly-2026-08-23 clippy --workspace --all-targets -- -D warnings`) *was* run in this
+  worktree and passed clean (exit 0). The test suite was not, since this change adds no Rust; note
+  that `ix-agent/tests/showcase_r1_migrations.rs` fails in a fresh worktree regardless, because
+  `governance/demerzel` is an uninitialized submodule here.
