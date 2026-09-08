@@ -1,3 +1,8 @@
 # Determinism fixtures for the Pareto frontier pipeline (issue #294):
 # byte-identical output is the contract, so git must never rewrite their EOLs.
 crates/ix-duck/tests/fixtures/pareto/*.csv -text
+
+# Determinism fixtures for the compiled-IXQL plan pipeline (refs #281):
+# the DuckDB surface must reproduce them byte for byte, so git must never
+# rewrite their EOLs.
+crates/ix-duck/tests/fixtures/ixql/*.csv -text
