@@ -1,4 +1,4 @@
-//! 72-tool parity test — protects the MCP surface during the manual→registry
+//! 73-tool parity test — protects the MCP surface during the manual→registry
 //! migration and any subsequent additions.
 //!
 //! Every tool name in `EXPECTED` must remain reachable through
@@ -15,13 +15,14 @@
 use ix_agent::tools::ToolRegistry;
 use std::collections::{BTreeSet, HashSet};
 
-/// The 72 MCP tools exposed by ix-agent. The first 48 are registry-backed,
+/// The 73 MCP tools exposed by ix-agent. The first 48 are registry-backed,
 /// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
 /// ServerContext-routed surface), plus the 4 pipeline tools added during
 /// the R1/R2/R7-Week-2/NL-compiler work: ix_pipeline_run, ix_pipeline_list,
 /// ix_autograd_run, ix_pipeline_compile, plus the P1.1/P1.2/P1.3 source
 /// adapters ix_git_log + ix_cargo_deps + ix_git_churn, plus the 3
-/// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet.
+/// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet, plus
+/// ix_petri_analyze (Petri-net deadlock/boundedness/liveness, ix-petri).
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_annotations_scan",
@@ -95,6 +96,7 @@ const EXPECTED: &[&str] = &[
     "ix_number_theory",
     "ix_optimize",
     "ix_optick_search",
+    "ix_petri_analyze",
     "ix_pipeline",
     "ix_pipeline_compile",
     "ix_pipeline_list",

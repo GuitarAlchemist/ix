@@ -16,4 +16,5 @@ pub mod assumption_graph;
 pub mod batch1;
 pub mod batch2;
 pub mod batch3;
+pub mod petri;
 pub mod prime_radiant;
