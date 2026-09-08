@@ -49,6 +49,31 @@ pub(crate) fn read_list_col(input: &mut DataChunkHandle, col: usize, n: usize) -
         .collect()
 }
 
+/// Like [`read_list_col`], but consults the child vector's validity mask and yields `None`
+/// for any row containing a SQL NULL *element*.
+///
+/// A NULL element is invisible to [`read_list_col`]: the child buffer still holds a double at
+/// that slot (whatever was last there, or zero), so reading it raw invents a sample out of
+/// nothing. Row validity — the mask [`null_mask`] reads — only covers a NULL *list*, not a
+/// list of partly-NULL values, so the two checks are independent and a caller that cares
+/// about element-level nullity needs this reader.
+pub(crate) fn read_list_col_checked(
+    input: &mut DataChunkHandle,
+    col: usize,
+    n: usize,
+) -> Vec<Option<Vec<f64>>> {
+    let lv = input.list_vector(col);
+    let entries: Vec<(usize, usize)> = (0..n).map(|i| lv.get_entry(i)).collect();
+    let cap = entries.iter().map(|(o, l)| o + l).max().unwrap_or(0);
+    let child = lv.child(cap);
+    let child_null: Vec<bool> = (0..cap).map(|i| child.row_is_null(i as u64)).collect();
+    let all = unsafe { child.as_slice_with_len::<f64>(cap) };
+    entries
+        .iter()
+        .map(|&(o, l)| (!child_null[o..o + l].iter().any(|&b| b)).then(|| all[o..o + l].to_vec()))
+        .collect()
+}
+
 /// Shared row-wise driver: read two `LIST<DOUBLE>` columns, apply `metric`
 /// pairwise, write a `DOUBLE` per row. A metric error (e.g. dimension mismatch)
 /// becomes a DuckDB SQL error rather than a panic.
@@ -294,5 +319,6 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     crate::inference::register(conn)?;
     crate::supervised::register(conn)?;
     crate::hexavalent::register(conn)?;
+    crate::fractal::register(conn)?;
     Ok(())
 }
