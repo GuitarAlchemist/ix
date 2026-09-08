@@ -34,9 +34,14 @@ jobs:
             duckdb: duckdb_cli-linux-amd64.zip
           - os: macos-latest     # Apple silicon -> osx_arm64
             duckdb: duckdb_cli-osx-universal.zip
-          - os: macos-13         # Intel -> osx_amd64
-            duckdb: duckdb_cli-osx-universal.zip
     runs-on: ${{ matrix.os }}
+    # `fail-fast: false` protects against a platform that FAILS. It does nothing
+    # about one that HANGS: with `needs: build`, publish waits for every leg, so a
+    # runner that never starts blocks the release forever rather than loudly. The
+    # v0.4.0 attempt proved it — three legs finished in minutes and macos-13 sat
+    # queued for over two hours, so nothing shipped. A build that cannot finish in
+    # 45 minutes on a warm cache has a problem worth failing on.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -155,6 +160,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -216,7 +222,10 @@ jobs:
             '- Source archives GitHub generates for a tag do **not** include the',
             '  governance/demerzel submodule. Clone with --recurse-submodules rather than',
             '  downloading the tarball.',
-            "- Artifacts are built for each runner's architecture. linux_arm64 is not produced."
+            "- Artifacts are built for each runner's architecture. `linux_arm64` and",
+            "  `osx_amd64` (Intel macOS) are not produced: the `macos-13` runner queued for",
+            "  over two hours on 2026-09-07 while the other three legs finished in minutes,",
+            "  and a platform that cannot be built is better stated than silently awaited."
           ) -join "`n"
           $body | Out-File body.md -Encoding utf8
           Write-Host "assembled from $($reports.Count) platform report(s)"
