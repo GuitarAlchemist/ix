@@ -1,0 +1,13 @@
+ordinal,stage_id,kind,op,deps
+0,trigger_context~0,source,ix.io.read,
+1,trigger_context,pipe,default,trigger_context~0
+2,blast_radius,bind,,
+3,reviewer_chain,bind,,
+4,produced_at_iso,bind,now_utc_iso8601,
+5,produced_at_safe,bind,now_utc,
+6,verdict_id,bind,,produced_at_safe;trigger_context
+7,verdict,bind,,blast_radius;produced_at_iso;reviewer_chain;trigger_context;verdict_id
+8,verdict_path,bind,,verdict;verdict_id
+9,s08~0,source,ix.io.write,verdict;verdict_path
+10,s08~1,pipe,tars.validate,s08~0
+11,s08,compound,compound,s08~1;verdict
