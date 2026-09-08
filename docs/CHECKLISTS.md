@@ -26,6 +26,7 @@ in `ix doctor` instead of here.
 | --- | --- | --- |
 | `registry-snapshot` | The linked build's skills or MCP tools differ from `state/registry/skills.snapshot.json` | `ix doctor --write`, then review the **name** diff |
 | `orphan-traits` | A `pub trait` has no implementor, no generic bound, and no allowlist entry | Delete it, implement it, or record it in `state/registry/orphan-traits.allow.json` with a `reason` |
+| `dark-features` | A cargo feature no workspace member enables gates 100+ lines or at least one test, with no allowlist entry | Enable it from a workspace member, delete the code, or record it in `state/registry/dark-features.allow.json` with a `reason` |
 | `demerzel-governance` | `governance/demerzel` is absent | `git submodule update --init` |
 | `default-constitution` | The submodule is present but incomplete | Re-sync the submodule |
 | `state-directory` | `state/` is missing from the repo root | You are not at the workspace root |
@@ -86,6 +87,37 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
    them while none did. The fix is worth copying — implementors *plus* a
    generic consumer (`protocol::pump`), and a written reason in each module
    that still does not implement the trait.
+
+## Adding a feature-gated module
+
+1. Ask first whether the gate is needed. It is the right tool for an optional
+   heavy dependency — DuckDB, arrow, ONNX Runtime — and the root `Cargo.toml`
+   says so. It is the wrong tool for "this is not ready yet": a `#[cfg]` is not
+   a draft marker.
+2. If you gate it, something must still compile it. A feature that **no
+   workspace member enables** is never built by `cargo build --workspace`,
+   `cargo clippy --workspace` or `cargo test --workspace` — the three
+   invocations CI runs. Its tests are neither passed nor failed; they are
+   absent, and a skipped crate adds zero to both counts, so nothing in the
+   repository's output tells you (ix#315).
+3. `ix doctor` fails the `dark-features` check on any such feature gating 100+
+   lines or at least one test. It reports the crate, the feature, the modules,
+   and how many lines and tests are behind them — a gate hiding two lines is
+   noise, one hiding 95 tests is not.
+4. The fix, in order of preference: enable the feature from a workspace member
+   that wants it (a dev-dependency counts); delete the code; or add an entry to
+   `state/registry/dark-features.allow.json`. An entry needs a non-empty
+   `reason` and a `kind`:
+   - `environment` — enabling it here is blocked or unreasonably costly for
+     reasons outside the code (native toolchain, external binary, GPU, a
+     toolchain newer than the workspace MSRV). Expected to stay.
+   - `tracked` — nothing environmental stops it, it just is not wired up yet.
+     **Requires an `issue`**, and is counted as outstanding debt in the summary
+     so it does not become a parking space.
+5. `ix-code`'s `topology` feature is the motivating case: 296 lines and five
+   tests, merged and reviewed, never once compiled. The code was healthy —
+   `cargo test -p ix-code --features full` passes — which is exactly why nobody
+   noticed.
 
 ## Adding an `@ai:` invariant
 

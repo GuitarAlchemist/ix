@@ -18,6 +18,7 @@
 //! Exit codes follow the repo's hexavalent convention (see [`crate::exit`]):
 //! `0` all green, `1` warnings only, `4` at least one failure.
 
+pub mod dark_features;
 pub mod orphan_traits;
 pub mod registry_snapshot;
 
@@ -168,6 +169,7 @@ pub fn run(root: &Path, opts: Options) -> Report {
     let mut checks = Vec::new();
     checks.push(check_registry_snapshot(root, opts.write));
     checks.push(check_orphan_traits(root));
+    checks.push(check_dark_features(root));
     checks.extend(check_environment(root));
     Report {
         root: root.display().to_string(),
@@ -335,6 +337,142 @@ fn check_orphan_traits(root: &Path) -> CheckResult {
             "{} public traits scanned, {} allowlisted orphan(s), 0 unlisted",
             census.traits.len(),
             census.allowed_orphans.len()
+        ),
+    )
+    .with_details(details)
+}
+
+/// The dark-feature check: source that no compiled configuration reaches.
+///
+/// Unlike its two neighbours this one shells out — `cargo metadata` is the only
+/// authority on feature resolution, and re-deriving it here would create a
+/// second one. When cargo is unavailable the check warns rather than fails: an
+/// environment without cargo cannot have introduced a dark feature either.
+fn check_dark_features(root: &Path) -> CheckResult {
+    const NAME: &str = "dark-features";
+    let census = match dark_features::scan(root) {
+        Ok(c) => c,
+        Err(e) => {
+            return CheckResult::new(
+                NAME,
+                Status::Warn,
+                format!("could not resolve features: {e}"),
+            )
+            .with_remedy(
+                "this check needs `cargo metadata` to run in the repo root — it is skipped, \
+                     not passed, so re-run it somewhere cargo is available before relying on a \
+                     green doctor",
+            )
+        }
+    };
+
+    let details = json!({
+        "dark": census.dark,
+        "unlisted": census.unlisted,
+        "allowed": census.allowed,
+        "stale_allowlist": census.stale_allowlist,
+        "reasonless_allowlist": census.reasonless_allowlist,
+        "unattributed_allowlist": census.unattributed_allowlist,
+        "dark_loc": census.dark_loc,
+        "dark_tests": census.dark_tests,
+        "tracked_debt": census.tracked_debt,
+    });
+
+    if !census.reasonless_allowlist.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Fail,
+            format!(
+                "allowlist entries without a reason: {}",
+                census.reasonless_allowlist.join(", ")
+            ),
+        )
+        .with_remedy(
+            "every entry in state/registry/dark-features.allow.json needs a non-empty \
+             `reason` — an exemption nobody justified is a silencer, not a decision",
+        )
+        .with_details(details);
+    }
+
+    if !census.unattributed_allowlist.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Fail,
+            format!(
+                "`tracked` allowlist entries with no issue: {}",
+                census.unattributed_allowlist.join(", ")
+            ),
+        )
+        .with_remedy(
+            "a `tracked` exemption says the feature could be compiled but is not wired up yet, \
+             so it needs an `issue` naming who is doing that — use kind `environment` instead if \
+             it genuinely cannot be built here",
+        )
+        .with_details(details);
+    }
+
+    if !census.unlisted.is_empty() {
+        let listed = census
+            .unlisted
+            .iter()
+            .map(|d| {
+                format!(
+                    "{} ({} lines, {} test(s) across {})",
+                    d.key(),
+                    d.loc,
+                    d.tests,
+                    if d.modules.is_empty() {
+                        format!("{} gated item(s)", d.items)
+                    } else {
+                        d.modules.join(", ")
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return CheckResult::new(
+            NAME,
+            Status::Fail,
+            format!("no compiled configuration reaches: {listed}"),
+        )
+        .with_remedy(
+            "this code is never type-checked and its tests can neither pass nor fail — enable \
+             the feature from a workspace member so the default build compiles it, delete it, \
+             or add it to state/registry/dark-features.allow.json with a `reason` (kind \
+             `environment` if it cannot be built here, `tracked` plus an `issue` if it just \
+             is not wired up yet)",
+        )
+        .with_details(details);
+    }
+
+    if !census.stale_allowlist.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Warn,
+            format!(
+                "allowlist entries no longer dark: {}",
+                census.stale_allowlist.join(", ")
+            ),
+        )
+        .with_remedy(
+            "these features are now enabled by some workspace member, or no longer declared — \
+             drop their entries from state/registry/dark-features.allow.json so the allowlist \
+             stays honest",
+        )
+        .with_details(details);
+    }
+
+    CheckResult::new(
+        NAME,
+        Status::Ok,
+        format!(
+            "{} dark feature(s), {} significant and all allowlisted ({} tracked); \
+             {} lines and {} test(s) never compiled",
+            census.dark.len(),
+            census.allowed.len(),
+            census.tracked_debt,
+            census.dark_loc,
+            census.dark_tests,
         ),
     )
     .with_details(details)
