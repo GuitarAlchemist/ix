@@ -29,6 +29,7 @@ mécanisée, sa place est dans `ix doctor`, pas ici.
 | --- | --- | --- |
 | `registry-snapshot` | Les skills ou outils MCP du binaire lié diffèrent de `state/registry/skills.snapshot.json` | `ix doctor --write`, puis relire le diff de **noms** |
 | `orphan-traits` | Un `pub trait` n'a ni implémenteur, ni borne générique, ni entrée d'allowlist | Le supprimer, l'implémenter, ou l'inscrire dans `state/registry/orphan-traits.allow.json` avec un `reason` |
+| `dark-features` | Une feature cargo qu'aucun membre de l'espace de travail n'active protège 100 lignes ou plus, ou au moins un test, sans entrée d'allowlist | L'activer depuis un membre de l'espace de travail, supprimer le code, ou l'inscrire dans `state/registry/dark-features.allow.json` avec un `reason` |
 | `demerzel-governance` | `governance/demerzel` est absent | `git submodule update --init` |
 | `default-constitution` | Le sous-module est présent mais incomplet | Resynchroniser le sous-module |
 | `state-directory` | `state/` manque à la racine du dépôt | Vous n'êtes pas à la racine de l'espace de travail |
@@ -100,6 +101,39 @@ des barrières obligatoires pour une PR ordinaire.
    qu'aucun ne le faisait. Le correctif mérite d'être imité — des
    implémenteurs *et* un consommateur générique (`protocol::pump`), plus une
    raison écrite dans chaque module qui n'implémente toujours pas le trait.
+
+## Ajouter un module derrière une feature
+
+1. Demandez-vous d'abord si la barrière est nécessaire. C'est le bon outil pour
+   une dépendance lourde optionnelle — DuckDB, arrow, ONNX Runtime — et le
+   `Cargo.toml` racine le dit. C'est le mauvais outil pour « ce n'est pas encore
+   prêt » : un `#[cfg]` n'est pas un marqueur de brouillon.
+2. Si vous posez la barrière, quelque chose doit tout de même compiler le code.
+   Une feature qu'**aucun membre de l'espace de travail n'active** n'est jamais
+   construite par `cargo build --workspace`, `cargo clippy --workspace` ni
+   `cargo test --workspace` — les trois invocations de la CI. Ses tests ne sont
+   ni réussis ni échoués : ils sont absents, et un crate ignoré ajoute zéro aux
+   deux compteurs, donc rien dans la sortie du dépôt ne vous le dit (ix#315).
+3. `ix doctor` fait échouer la vérification `dark-features` pour toute feature de
+   ce type protégeant 100 lignes ou plus, ou au moins un test. Elle indique le
+   crate, la feature, les modules, et combien de lignes et de tests se trouvent
+   derrière — une barrière qui cache deux lignes est du bruit, une qui en cache
+   95 tests ne l'est pas.
+4. Le correctif, par ordre de préférence : activer la feature depuis un membre de
+   l'espace de travail qui en a besoin (une dev-dependency compte) ; supprimer le
+   code ; ou ajouter une entrée à `state/registry/dark-features.allow.json`. Une
+   entrée exige un `reason` non vide et un `kind` :
+   - `environment` — l'activer ici est bloqué ou déraisonnablement coûteux pour
+     des raisons extérieures au code (chaîne d'outils native, binaire externe,
+     GPU, chaîne d'outils plus récente que la MSRV de l'espace de travail).
+     Destinée à rester.
+   - `tracked` — rien d'environnemental ne l'empêche, ce n'est simplement pas
+     encore branché. **Exige un `issue`**, et est comptée comme dette dans le
+     résumé pour ne pas devenir un parking.
+5. La feature `topology` de `ix-code` est le cas motivant : 296 lignes et cinq
+   tests, fusionnés et relus, jamais compilés une seule fois. Le code était sain
+   — `cargo test -p ix-code --features full` passe — et c'est précisément pour
+   cela que personne ne l'a remarqué.
 
 ## Ajouter un invariant `@ai:`
 

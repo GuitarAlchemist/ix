@@ -1,0 +1,75 @@
+{
+  "note": "Cargo features that no workspace member enables, and are therefore never compiled by `cargo {build,clippy,test} --workspace`. Checked by `ix doctor` (see crates/ix-skill/src/doctor/dark_features.rs, ix#315). A feature only needs an entry once the source behind it is substantial — at least one test, or 100+ lines. Every entry needs a non-empty `reason`: the point of this file is that a human said why the code may stay uncompiled. `kind` is either `environment` (enabling it here is blocked or unreasonably costly for reasons outside the code — a native toolchain, an external binary, GPU hardware, a toolchain newer than the workspace MSRV; these are expected to stay) or `tracked` (nothing environmental stops it, it simply is not wired up yet — these require an `issue` and are counted as outstanding debt). Entries whose feature stops being dark are reported as stale and must be removed. This list is a baseline of what was already true when the check landed — it is not a place to park new dark code.",
+  "allow": [
+    {
+      "crate": "ix-duck",
+      "feature": "udf",
+      "kind": "environment",
+      "reason": "Pulls duckdb-rs (pinned =1.10503.1) and its arrow dependency tree, which crates/ix-duck/Cargo.toml records as requiring a newer toolchain than the workspace MSRV of 1.80. Keeping it out of the default build is the deliberate choice stated there and in crates/ix-duck/sql/pareto_frontier.sql; enabling it from a workspace member would raise the MSRV for every crate. The 95 tests behind it run only under `cargo test -p ix-duck --features udf`.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-duck",
+      "feature": "duck",
+      "kind": "environment",
+      "reason": "Everything `udf` needs, plus duckdb/bundled — a full C++ DuckDB engine compiled from source. Same MSRV constraint, and a multi-minute build on every CI run. This is the feature whose invisibility crates/ix-duck/sql/pareto_frontier.sql documents and works around by putting determinism logic in a SQL macro rather than a UDF.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-skill",
+      "feature": "embeddings",
+      "kind": "environment",
+      "reason": "Pulls fastembed on ONNX Runtime — a native library, not pure Rust. crates/ix-skill/Cargo.toml states the intent explicitly: the pure-Rust TF-IDF gate is the default and the graceful fallback, and the CI path must never pull ONNX. Its coverage test additionally downloads the bge-base-en model on first run.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-code",
+      "feature": "topology",
+      "kind": "tracked",
+      "reason": "Pure Rust, no external dependency — `cargo test -p ix-code --features full` passes and clippy is clean under -D warnings. This is the case that motivated ix#315: 296 lines and five tests that CI has never compiled. PR #317 adds a job that builds ix-code/full; until a workspace member enables the feature it stays dark by this check's definition, which is the honest reading — a dedicated job is a second configuration, not the default one.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-code",
+      "feature": "advanced",
+      "kind": "tracked",
+      "reason": "Layer 6 of the Code Observatory (hyperbolic embeddings, K-theory, spectral, BSP). Pure Rust over ix-math/ix-ktheory/ix-signal/ix-fractal, all already workspace members. Same disposition as ix-code/topology.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-code",
+      "feature": "physics",
+      "kind": "tracked",
+      "reason": "Layer 7 of the Code Observatory (chaos, Kalman, wavelets, Markov, Laplacian). Pure Rust over ix-chaos/ix-signal/ix-graph/ix-math, all already workspace members. Same disposition as ix-code/topology.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-baml",
+      "feature": "claude-cli",
+      "kind": "tracked",
+      "reason": "The largest dark surface with no environmental excuse: 699 lines and 18 tests. crates/ix-baml/Cargo.toml explains why it is off by default — it makes the crate able to spawn an agentic process, which no consumer should acquire by accident — but that is an argument against enabling it in a dependent, not against compiling it. Its only extra dependency is jsonschema, a normal crate.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-cache",
+      "feature": "resp-server",
+      "kind": "tracked",
+      "reason": "A Redis-protocol server behind a tokio dependency already used elsewhere in the workspace. Pure Rust, no tests of its own yet — 378 lines that are not type-checked by any CI job.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "ix-autograd",
+      "feature": "fft-autograd",
+      "kind": "tracked",
+      "reason": "crates/ix-autograd/Cargo.toml states the gate is deliberate: the FFT backward has DC/Nyquist edge cases pending a cross-check against JAX's rfft gradient, so it wants explicit opt-in. That justifies not enabling it for dependents; it does not justify never compiling it. PR #317 adds a CI job that does.",
+      "issue": "ix#315"
+    },
+    {
+      "crate": "memristive-markov",
+      "feature": "reservoir",
+      "kind": "tracked",
+      "reason": "Reservoir-computing layer over ndarray-rand and rand_distr, both pure Rust and already in the workspace lockfile. 118 lines and four tests that have never run.",
+      "issue": "ix#315"
+    }
+  ]
+}
