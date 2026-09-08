@@ -94,8 +94,12 @@ des barrières obligatoires pour une PR ordinaire.
 4. Un nouveau `pub trait` ? Il lui faut un implémenteur ou une borne générique
    dans l'arbre, sinon `ix doctor` fera échouer la vérification
    `orphan-traits`. C'est bien l'objectif : un contrat déclaré que rien ne
-   satisfait est soit du code mort, soit une promesse que le code ne tient pas
-   (voir `crates/ix-io/src/protocol.rs`, ix#299).
+   satisfait est soit du code mort, soit une promesse que le code ne tient pas.
+   `DataSource` / `DataSink` de `ix-io` en étaient le cas fondateur (ix#299) :
+   la doc du module affirmait que tous les backends les implémentaient alors
+   qu'aucun ne le faisait. Le correctif mérite d'être imité — des
+   implémenteurs *et* un consommateur générique (`protocol::pump`), plus une
+   raison écrite dans chaque module qui n'implémente toujours pas le trait.
 
 ## Ajouter un invariant `@ai:`
 

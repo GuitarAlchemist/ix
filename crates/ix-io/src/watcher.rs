@@ -1,6 +1,13 @@
 //! File system watcher — react to data file changes.
 //!
 //! Use case: watch a CSV/JSON file, re-trigger model training when data changes.
+//!
+//! # Not a [`DataSource`](crate::protocol::DataSource)
+//!
+//! A [`FileEvent`] carries a path and a kind — it contains no data at all, so
+//! there is nothing to turn into a [`DataRecord`](crate::protocol::DataRecord).
+//! This module is a *trigger*, not a source: it tells a caller when to open a
+//! [`crate::csv_io::CsvSource`], and that source is what implements the trait.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;

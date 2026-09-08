@@ -5,6 +5,16 @@
 //!
 //! Use case: connect machin to external processes (Python scripts, other tools)
 //! for real-time data exchange without network overhead.
+//!
+//! # Not a [`DataSource`](crate::protocol::DataSource)
+//!
+//! A pipe delivers **unframed bytes**. [`read_from_pipe`] returns whatever one
+//! `read` produced — possibly half a record — and a pipe has no end-of-stream
+//! a reader can observe while a writer may still connect, so
+//! [`has_more`](crate::protocol::DataSource::has_more) has no honest answer
+//! here. Framing is the caller's choice, so the conversion is too: this module
+//! moves bytes, and a caller who framed them as NDJSON reads them with
+//! [`crate::json_io::NdjsonSource`], which does implement the trait.
 
 use crate::error::IoError;
 use crate::protocol::{DataBatch, DataRecord};
