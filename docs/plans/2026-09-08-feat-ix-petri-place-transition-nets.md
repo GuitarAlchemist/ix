@@ -18,10 +18,13 @@
 
 The request named **deterministic state machines**, **Petri nets** and **rules
 engines**. That is three large features, and the repository has a documented
-opinion about shipping surface without an adopter: `ix#299` records eight I/O
+opinion about shipping surface without an adopter: `ix#299` recorded eight I/O
 backends conforming to a trait with **zero implementors**, under a module doc
-asserting the opposite. The gap matrix
-(`docs/research/tars-v1-advanced-math-ix-gap-matrix.md`) closes on the rule
+asserting the opposite. (That specific instance was repaired by PR #312, which
+merged into `main` while this branch was open — cited here as the precedent it
+set, not as a live defect. The issue is still open at time of writing.) The
+gap matrix (`docs/research/tars-v1-advanced-math-ix-gap-matrix.md`) closes on
+the rule
 "no esoteric algorithms without tests and a consumer".
 
 So this PR delivers **one** feature to usable depth and writes down what the
