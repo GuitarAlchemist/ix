@@ -78,6 +78,8 @@ const EXPECTED: &[&str] = &[
     "ix_gmm",
     "ix_wavelet_denoise",
     "ix_fir_filter",
+    // ix#193 — proposed surface, see crates/ix-agent/src/skills/batch1.rs
+    "ix_kalman",
     "ix_spectrogram",
     "ix_autocorrelation",
     "ix_analyze_reference",
