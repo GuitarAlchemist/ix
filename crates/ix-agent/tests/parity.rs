@@ -1,4 +1,4 @@
-//! 73-tool parity test — protects the MCP surface during the manual→registry
+//! MCP-surface parity test — protects the tool surface during the manual→registry
 //! migration and any subsequent additions.
 //!
 //! Every tool name in `EXPECTED` must remain reachable through
@@ -15,7 +15,11 @@
 use ix_agent::tools::ToolRegistry;
 use std::collections::{BTreeSet, HashSet};
 
-/// The 73 MCP tools exposed by ix-agent. The first 48 are registry-backed,
+/// The MCP tools exposed by ix-agent. Deliberately **not** prefixed with a
+/// hand-typed count: the number here read "72" while the list below held 96
+/// entries, because every tool-adding PR bumped the list and left the prose
+/// alone. `state/registry/skills.snapshot.json` is the count oracle (ix#185);
+/// this list is the *name* oracle. The first 48 are registry-backed,
 /// plus ix_demo, ix_explain_algorithm, and ix_triage_session (the manual
 /// ServerContext-routed surface), plus the 4 pipeline tools added during
 /// the R1/R2/R7-Week-2/NL-compiler work: ix_pipeline_run, ix_pipeline_list,
@@ -79,6 +83,8 @@ const EXPECTED: &[&str] = &[
     "ix_gmm",
     "ix_wavelet_denoise",
     "ix_fir_filter",
+    // ix#193 — proposed surface, see crates/ix-agent/src/skills/batch1.rs
+    "ix_kalman",
     "ix_spectrogram",
     "ix_autocorrelation",
     "ix_analyze_reference",

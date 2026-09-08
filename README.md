@@ -8,7 +8,7 @@ A Rust workspace of composable ML/math algorithms and AI governance, designed to
 
 For industrial engineering and robotics, IX is an **offline/advisory co-processor**. It can analyze telemetry, run reproducible optimization experiments, rank planner parameters, and orchestrate external engineering tools. It is not a CAD kernel, FEA/CFD solver, collision engine, complete digital twin, hard-real-time controller, safety PLC, consensus service, or authoritative distributed lock. See [ADR-0005](docs/adr/0005-engineering-coprocessor-boundary.md).
 
-79 crates. 94 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+81 crates. 96 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -58,7 +58,7 @@ never downloads a model or calls a paid provider implicitly.
 | ix-unsupervised | Stable | KMeans, DBSCAN, PCA, t-SNE, GMM |
 | ix-search | Stable | A*, MCTS, minimax, BFS/DFS |
 | ix-graph | Beta | Markov chains, HMM/Viterbi, agent routing, components + centrality. Demoted from Stable 2026-06-21 while the new components/centrality surface settles |
-| ix-signal | Stable | FFT, wavelets, Kalman, spectral analysis |
+| ix-signal | Beta | FFT, wavelets, Kalman, state-space + observability/controllability, spectral analysis |
 | ix-cache | Stable | Embedded in-process cache (TTL, LRU, pub/sub) — promoted 2026-05-02 |
 | ix-probabilistic | Stable | Bloom, HLL, Count-Min, Cuckoo — promoted 2026-05-02 |
 | ix-game | Stable | Nash, Shapley, auctions, mechanism design — promoted 2026-05-02 |
@@ -256,7 +256,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 ### Signal & Chaos
 | Crate | Description |
 |-------|-------------|
-| **ix-signal** | FFT, wavelets, FIR/IIR filters, Kalman filter, spectral analysis, DCT |
+| **ix-signal** | FFT, wavelets, FIR/IIR filters, Kalman filter, discrete state-space models with observability/controllability rank tests, spectral analysis, DCT |
 | **ix-chaos** | Lyapunov exponents, bifurcation diagrams, strange attractors, fractal dimensions, delay embedding, chaos control |
 
 ### Security & Privacy
@@ -413,7 +413,7 @@ cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check ../ga/st
 
 ## Architecture
 
-ix is a Rust workspace of **79 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
+ix is a Rust workspace of **81 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
 
 ```
 ix/
@@ -429,7 +429,7 @@ ix/
 │   └── canonical-showcase/# 5 reproducible demo pipelines + roadmap + findings
 ├── governance/
 │   └── demerzel/          # Git submodule: constitution + personas + policies
-└── crates/                # 79 crates — see maturity tables above
+└── crates/                # 81 crates — see maturity tables above
 ```
 
 For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.
