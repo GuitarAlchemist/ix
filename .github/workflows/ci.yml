@@ -89,8 +89,17 @@ jobs:
   # change. The crates listed here pull only other IX crates and self-contained
   # C grammars, so they are cheap and hermetic.
   #
-  # Adding a non-default feature? Add it here, or state in the PR why it cannot
-  # be compiled in CI. An entry missing from this list is code nobody runs.
+  # This list is a stopgap. `ix doctor`'s uncompiled-source check (ix#318)
+  # DERIVES the same answer from cargo metadata and reports magnitude with it, so
+  # it finds a dark feature nobody remembered to add here. Prefer fixing what that
+  # check reports over extending this matrix.
+  #
+  # Two entries deliberately absent, because compiling them in CI is not free and
+  # is its own decision: `ix-duck/duck` pulls DuckDB and arrow, which the root
+  # Cargo.toml keeps out of the default build on purpose, and
+  # `memristive-markov/gpu` may need hardware a runner does not have. Between them
+  # they are the largest dark surface in the repository — ix-duck alone carries
+  # ~10k lines and 174 tests behind `udf` and `duck`.
   gated-features:
     strategy:
       fail-fast: false
@@ -98,8 +107,6 @@ jobs:
         include:
           - crate: ix-code
             features: full          # semantic, trajectory, topology, gates, advanced, physics
-          - crate: ix-grammar
-            features: cfg_parsers
           - crate: ix-autograd
             features: fft-autograd
     runs-on: ubuntu-latest
