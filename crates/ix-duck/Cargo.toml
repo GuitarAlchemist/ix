@@ -128,6 +128,11 @@ tempfile = { workspace = true }
 ix-evolution = { workspace = true }
 # For the ix_voicing_mesh example's operator-DAG reification (ADR-0004 "both layered").
 ix-pipeline = { workspace = true }
+# The compiled-IXQL golden cross-check runs the Rust half (ix_ixql::compile ->
+# ix_pipeline::dag::parallel_levels) over the same plan the SQL reads. Dev-only
+# and NOT feature-gated, so it executes on the default `cargo test --workspace`
+# path that CI runs (the duck/udf features never are).
+ix-ixql = { workspace = true }
 # For fractal.rs's hurst_orders_roughness test fixture (de Rham curve generation) —
 # never used by production code, hence dev-only rather than the udf feature.
 rand = { workspace = true }
