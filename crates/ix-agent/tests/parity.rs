@@ -46,6 +46,7 @@ const EXPECTED: &[&str] = &[
     "ix_code_analyze",
     "ix_code_catalog",
     "ix_code_smells",
+    "ix_code_topology",
     "ix_context_walk",
     "ix_demo",
     "ix_distance",

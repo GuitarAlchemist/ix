@@ -44,7 +44,10 @@ ix-topo = { workspace = true }
 ix-category = { workspace = true }
 ix-governance = { workspace = true }
 ix-io = { workspace = true }
-ix-code = { workspace = true, features = ["semantic"] }
+# `topology` (Layer 4) is enabled here for the ix_code_topology tool. Before
+# this, no crate in the workspace turned it on, so `crates/ix-code/src/topology.rs`
+# was never compiled by `cargo build --workspace` or by CI (gap-matrix row F1).
+ix-code = { workspace = true, features = ["semantic", "topology"] }
 ix-ai-annotations = { workspace = true }
 ignore = "0.4"
 ix-catalog-core = { workspace = true }
