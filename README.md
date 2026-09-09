@@ -8,7 +8,7 @@ A Rust workspace of composable ML/math algorithms and AI governance, designed to
 
 For industrial engineering and robotics, IX is an **offline/advisory co-processor**. It can analyze telemetry, run reproducible optimization experiments, rank planner parameters, and orchestrate external engineering tools. It is not a CAD kernel, FEA/CFD solver, collision engine, complete digital twin, hard-real-time controller, safety PLC, consensus service, or authoritative distributed lock. See [ADR-0005](docs/adr/0005-engineering-coprocessor-boundary.md).
 
-78 crates. 93 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+81 crates. 96 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -107,7 +107,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 |-------|------|-------|
 | ix-nn | Beta | Transformers, backprop — complex but actively developed |
 | ix-pipeline | Beta | DAG executor — critical infrastructure, API stabilizing |
-| ix-agent | Beta | MCP server (93 tools) — production-facing integration point |
+| ix-agent | Beta | MCP server (94 tools) — production-facing integration point |
 | ix-governance | Beta | Demerzel governance bridge — consumed by ga/tars |
 | ix-io | Beta | I/O utilities (CSV, JSON, TCP, WebSocket) |
 | ix-grammar | Beta | Earley, CYK parsers, EBNF/ABNF parsers, ~30-entry grammar catalog |
@@ -283,6 +283,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 | **ix-gpu** | WGPU compute shaders for cosine similarity, matrix multiply, batch vector search (Vulkan/DX12/Metal) |
 | **ix-cache** | Embedded Redis-like cache with sharded concurrency, TTL, LRU eviction, pub/sub, RESP protocol server |
 | **ix-pipeline** | DAG executor with topological sort, parallel branch execution, memoization, critical path analysis |
+| **ix-petri** | Place/Transition Petri nets — deterministic firing, reachability enumeration, deadlock / boundedness / liveness / reversibility with witnesses, PNML (ISO/IEC 15909-2) reader |
 | **ix-probabilistic** | Bloom filter, Count-Min sketch, HyperLogLog, Cuckoo filter |
 | **ix-io** | CSV, JSON, file watcher, named pipes, TCP, HTTP, WebSocket, trace bridge |
 | **ix-catalog-core** | Shared `Catalog` trait + helpers — substrate for ix-code / ix-grammar / ix-net catalogs, exposed via `ix_catalog_list` meta-tool |
@@ -412,7 +413,7 @@ cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check ../ga/st
 
 ## Architecture
 
-ix is a Rust workspace of **78 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
+ix is a Rust workspace of **81 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
 
 ```
 ix/
@@ -428,7 +429,7 @@ ix/
 │   └── canonical-showcase/# 5 reproducible demo pipelines + roadmap + findings
 ├── governance/
 │   └── demerzel/          # Git submodule: constitution + personas + policies
-└── crates/                # 78 crates — see maturity tables above
+└── crates/                # 81 crates — see maturity tables above
 ```
 
 For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.

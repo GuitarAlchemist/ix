@@ -25,14 +25,15 @@ fn list_skills_returns_all_entries() {
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     let count = value["count"].as_u64().expect("count is number");
-    // 67 = batch1 (6 + pca + dbscan + eigen + silhouette + feature_importances +
+    // 68 = batch1 (6 + pca + dbscan + eigen + silhouette + feature_importances +
     // svd + gmm + wavelet_denoise + fir_filter + spectrogram + autocorrelation,
     // 2026-06-07 dogfood catalog-breadth + remaining-gap + gap-audit fixes;
     // + kalman, ix#193 2026-09-08) +
     // batch2 (28) + batch3 (10 + context.walk + session.flywheel_export +
     // fuzzy.eval) + prime_radiant (2) + assumption_graph (4: assumption.query +
     // .belief_at + .drift + .claims) + acoustic_tune (2: analyze_reference +
-    // spectral_distance, 2026-06-07) + mesh_correlate (1, #178 2026-06-23).
+    // spectral_distance, 2026-06-07) + mesh_correlate (1, #178 2026-06-23)
+    // + petri (1: petri.analyze, ix-petri Place/Transition nets).
     // If this drifts, update the assertion alongside the batch changes.
     //
     // NOTE (ix#193): this is a *second* hand-typed count oracle for the same registry.
@@ -42,7 +43,7 @@ fn list_skills_returns_all_entries() {
     // a skill still turns `main` red here even when the snapshot and parity agree. It
     // would be better as `assert_eq!(count, snapshot["skills"]["count"])`, or dropped in
     // favour of the snapshot test — left alone here to keep this PR surgical.
-    assert_eq!(count, 67, "expected 67 registry skills, got {count}");
+    assert_eq!(count, 68, "expected 68 registry skills, got {count}");
 }
 
 #[test]
