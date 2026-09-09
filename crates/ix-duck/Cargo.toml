@@ -126,6 +126,10 @@ tempfile = { workspace = true }
 # executes on the default `cargo test --workspace` path that CI runs (the
 # duck/udf features never are).
 ix-evolution = { workspace = true }
+# Gap-matrix row B1b: the H0 persistence golden cross-check runs the general
+# persistence engine over the same fixture `persistence_h0.sql` reads. Dev-only
+# and NOT feature-gated, for the same reason as ix-evolution above.
+ix-topo = { workspace = true }
 # For the ix_voicing_mesh example's operator-DAG reification (ADR-0004 "both layered").
 ix-pipeline = { workspace = true }
 # The compiled-IXQL golden cross-check runs the Rust half (ix_ixql::compile ->
