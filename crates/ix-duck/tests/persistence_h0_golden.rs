@@ -28,6 +28,8 @@ use std::process::Command;
 use ix_topo::persistence::compute_persistence;
 use ix_topo::simplex::rips_complex;
 
+mod common;
+
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/persistence")
 }
@@ -220,11 +222,13 @@ fn engine_h0_deaths_are_the_consecutive_gaps_of_the_sorted_values() {
 /// Runs the one documented DuckDB CLI command and compares its stdout to the
 /// same frozen golden.
 ///
-/// This binding is **opportunistic**: it exercises the SQL surface only where a
-/// `duckdb` binary is on PATH. On a machine without one it returns without
-/// asserting, so it is NOT evidence that the SQL half is covered by CI — the
-/// engine half above is what CI actually checks. Where duckdb *is* present, a
-/// mismatch is a hard failure, never a skip.
+/// The binding is **conditional, not optional**: it runs the SQL surface
+/// wherever a `duckdb` binary is reachable, and the `duckdb-sql` job in
+/// `.github/workflows/ci.yml` installs a pinned one and sets
+/// `IX_REQUIRE_DUCKDB=1`, under which failing to reach the CLI is a failure
+/// rather than a skip (ix#294). On a machine without duckdb it still names what
+/// went unchecked and returns, so `cargo test --workspace` stays runnable for
+/// contributors who have not installed it.
 #[test]
 fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
     let script = "crates/ix-duck/sql/persistence_h0_golden.sql";
@@ -235,10 +239,10 @@ fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
     {
         Ok(output) => output,
         Err(error) => {
-            eprintln!(
-                "duckdb CLI not runnable ({error}); the SQL half of B1b was NOT checked by this \
-                 run. Reproduce manually from the repo root:\n  \
-                 duckdb -csv -c \".read {script}\""
+            common::sql_surface_unchecked(
+                &error,
+                "the SQL half of B1b",
+                &format!("duckdb -csv -c \".read {script}\""),
             );
             return;
         }
@@ -258,7 +262,7 @@ fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
     );
 }
 
-/// The validation macro must fail closed. Same opportunistic binding as above.
+/// The validation macro must fail closed. Same conditional binding as above.
 ///
 /// Each case feeds `ix_topo_input` something the two surfaces would disagree
 /// about and asserts that `ix_persistence_h0()` raises instead of emitting a
@@ -309,7 +313,11 @@ fn the_sql_guard_rejects_bad_input_when_duckdb_is_installed() {
         {
             Ok(output) => output,
             Err(error) => {
-                eprintln!("duckdb CLI not runnable ({error}); guard case {name} NOT checked");
+                common::sql_surface_unchecked(
+                    &error,
+                    &format!("the SQL guard case {name}"),
+                    &format!("duckdb -csv -c \".read {macros}\""),
+                );
                 return;
             }
         };
