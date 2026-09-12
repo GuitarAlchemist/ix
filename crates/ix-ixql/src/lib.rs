@@ -55,6 +55,7 @@
 //! [`parser`] for the distinction.
 
 pub mod ast;
+pub mod capability;
 pub mod compile;
 pub mod eval;
 pub mod host;
@@ -63,9 +64,15 @@ pub mod parser;
 pub mod path;
 pub mod schema;
 
-pub use ast::{Block, CompoundOp, Expr, Literal, PipeStep, Statement};
+pub use ast::{
+    Block, CompoundOp, ConfidenceOp, Expr, Literal, PipeStep, Statement, Verdict, VerdictArm,
+    VerdictGuard,
+};
+pub use capability::{CallArgs, Capabilities, Capability, Produced, RegistrationError};
 pub use compile::{compile, compile_program, CompileError, CompiledPlan, Stage, StageKind};
-pub use eval::{CompoundRecord, EvalError, Executor, RunError, RunOutcome, WriteRecord};
+pub use eval::{
+    CompoundRecord, EvalError, Executor, GateRecord, RunError, RunOutcome, WriteRecord,
+};
 pub use host::{FsHost, Host, HostError, MemoryHost};
 pub use parser::{parse_expression, parse_program, ParseError};
 pub use path::{normalize, PathError};
