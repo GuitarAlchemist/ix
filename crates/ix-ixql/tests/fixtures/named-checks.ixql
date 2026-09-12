@@ -1,0 +1,7 @@
+-- Named governance checks, in the shape Demerzel/pipelines/conscience-cycle.ixql:56,88-89
+-- applies them. One substitution: the checked value is read from state rather than
+-- produced by `classified → fan_out(classified.map(signal => …))`, which needs #281.
+-- The check lines, comments included, are verbatim.
+processed <- ix.io.read("state/conscience/processed.json")
+  → reversibility_check                    -- Article 3: can we undo signal resolution?
+  → explanation_requirement                -- Article 2: explain why signals were resolved
