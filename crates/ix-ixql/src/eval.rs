@@ -42,7 +42,10 @@ pub enum EvalError {
     #[error("record key `{0}` given twice")]
     DuplicateKey(String),
 
-    #[error("`{0}` is not a function this executor provides")]
+    #[error(
+        "`{0}` is not a function this executor provides — a peer operation or a named \
+         check needs an adapter registered through `Executor::capabilities()`"
+    )]
     UnknownFunction(String),
 
     #[error(

@@ -285,6 +285,14 @@ impl Parser {
                 positional,
                 named,
             } => Ok((target, positional, named)),
+            // `→ explanation_requirement` — a named check applied to the piped
+            // value, read as a call with no arguments. The corpus uses 28 of
+            // these and binds none of the names as a variable, so a bare name
+            // in step position is never a value reference: it resolves to a
+            // capability or fails, it does not consult the environment.
+            name @ (Expr::Var(_) | Expr::Member(..)) => {
+                Ok((Box::new(name), Vec::new(), BTreeMap::new()))
+            }
             _ => Err(ParseError::at(
                 line,
                 "a `→` step must be a call — a bare value cannot consume the piped input",
@@ -810,6 +818,24 @@ mod tests {
         assert!(matches!(
             parse_expression("v.followups is not empty").unwrap(),
             Expr::Unary(UnaryOp::IsNotEmpty, _)
+        ));
+    }
+
+    #[test]
+    fn a_bare_name_step_is_a_call_with_no_arguments() {
+        let block = parse_program("x <- read(\"p\")\n  → explanation_requirement").unwrap();
+        let Statement::Assign(_, expr) = &block[0] else {
+            panic!("{block:#?}");
+        };
+        let Expr::Pipeline(_, steps) = expr.as_ref() else {
+            panic!("{expr:#?}");
+        };
+        assert!(matches!(
+            &steps[0],
+            PipeStep::CallStep { target, positional, named }
+                if matches!(target.as_ref(), Expr::Var(n) if n == "explanation_requirement")
+                    && positional.is_empty()
+                    && named.is_empty()
         ));
     }
 

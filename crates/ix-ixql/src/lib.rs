@@ -27,6 +27,14 @@
 //!   value that violates its canonical JSON Schema stops the run instead of
 //!   landing on disk.
 //!
+//! # Where peers come in
+//!
+//! Calls to federation peers (`tars.research(…)`) and named governance checks
+//! (`→ explanation_requirement`) reach adapters registered in
+//! [`Capabilities`] rather than code in the evaluator. An adapter may attach a
+//! [`Verdict`] to what it returns, which is what `→ when T >= 0.8:` steps
+//! match on — see [`PipeStep::VerdictMatch`].
+//!
 //! # Running one
 //!
 //! ```
