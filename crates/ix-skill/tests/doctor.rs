@@ -525,10 +525,9 @@ fn the_live_workspace_has_dark_features_and_the_check_sizes_them() {
     // numbers against the real workspace, so a scan that silently returned
     // nothing (bad `cargo metadata`, wrong root, broken walker) is caught.
     // Deliberately no exact figures — those move with every crate added.
-    let Ok(census) = dark_features::scan(&repo_root()) else {
-        eprintln!("`cargo metadata` unavailable; dark-feature live scan NOT checked");
-        return;
-    };
+    // `expect`, not a skip: this test runs under cargo, so `cargo metadata` is
+    // available, and a failure here is exactly the silent-nothing it guards.
+    let census = dark_features::scan(&repo_root()).expect("dark-feature live scan");
     assert!(
         census.dark.len() >= 5,
         "expected several dark features, got {:?}",

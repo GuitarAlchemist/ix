@@ -21,6 +21,7 @@
 pub mod dark_features;
 pub mod orphan_traits;
 pub mod registry_snapshot;
+pub mod silent_skips;
 
 use crate::exit;
 use crate::output::{self, Format};
@@ -166,10 +167,12 @@ pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
 /// `--full` shell-outs are handled by [`run_full_checks`] so this stays fast
 /// and side-effect-free enough to call from tests.
 pub fn run(root: &Path, opts: Options) -> Report {
-    let mut checks = Vec::new();
-    checks.push(check_registry_snapshot(root, opts.write));
-    checks.push(check_orphan_traits(root));
-    checks.push(check_dark_features(root));
+    let mut checks = vec![
+        check_registry_snapshot(root, opts.write),
+        check_orphan_traits(root),
+        check_dark_features(root),
+        check_silent_skips(root),
+    ];
     checks.extend(check_environment(root));
     Report {
         root: root.display().to_string(),
@@ -348,6 +351,118 @@ fn check_orphan_traits(root: &Path) -> CheckResult {
 /// authority on feature resolution, and re-deriving it here would create a
 /// second one. When cargo is unavailable the check warns rather than fails: an
 /// environment without cargo cannot have introduced a dark feature either.
+fn check_silent_skips(root: &Path) -> CheckResult {
+    const NAME: &str = "silent-skips";
+    let census = match silent_skips::scan(root) {
+        Ok(c) => c,
+        Err(e) => {
+            return CheckResult::new(NAME, Status::Fail, format!("could not scan tests: {e}"))
+                .with_remedy(
+                    "this check reads crates/*/tests/** directly — a read failure means the                      scan did not happen, so it is a failure rather than a pass",
+                )
+        }
+    };
+
+    let details = json!({
+        "files_scanned": census.files_scanned,
+        "tests_scanned": census.tests_scanned,
+        "findings": census.findings,
+        "stale_allowlist": census.stale_allowlist,
+        "unjustified_allowlist": census.unjustified_allowlist,
+    });
+
+    if !census.unjustified_allowlist.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Fail,
+            format!(
+                "allowlist entries that justify nothing: {}",
+                census.unjustified_allowlist.join(", ")
+            ),
+        )
+        .with_remedy(
+            "every entry in state/registry/silent-skips.allow.json needs a non-empty `reason`,              and a `tracked` entry needs an `issue` naming who is wiring the test up — an              exemption nobody justified is a silencer, not a decision",
+        )
+        .with_details(details);
+    }
+
+    let blocking = census.blocking();
+    if !blocking.is_empty() {
+        let listed = blocking
+            .iter()
+            .map(|f| {
+                format!(
+                    "{}::{} (line {}, skips {} assertion(s) on {})",
+                    f.file,
+                    f.test,
+                    f.line,
+                    f.assertions_skipped,
+                    f.probe.label()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return CheckResult::new(
+            NAME,
+            Status::Fail,
+            format!(
+                "{} guarded return(s) across {} test(s) can pass without asserting: {listed}",
+                blocking.len(),
+                blocking
+                    .iter()
+                    .map(|f| (&f.file, &f.test))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+            ),
+        )
+        .with_remedy(
+            "make the skip impossible in the environment that must run it -- install the tool              in CI and fail closed when a variable says it is required (see the duckdb-sql job              in .github/workflows/ci.yml) -- or, if it genuinely cannot run here, add it to              state/registry/silent-skips.allow.json with a reason",
+        )
+        .with_details(details);
+    }
+
+    let advisory = census.advisory();
+    if !census.stale_allowlist.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Warn,
+            format!(
+                "allowlist entries that no longer skip: {}",
+                census.stale_allowlist.join(", ")
+            ),
+        )
+        .with_remedy(
+            "the test no longer returns early, or no longer exists — drop its entry from              state/registry/silent-skips.allow.json so the list stays honest",
+        )
+        .with_details(details);
+    }
+
+    if !advisory.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Warn,
+            format!(
+                "{} guarded return(s) that bypass no assertion",
+                advisory.len()
+            ),
+        )
+        .with_remedy(
+            "not blocking: these skip nothing today, but a later assertion added after the              guard would become invisible",
+        )
+        .with_details(details);
+    }
+
+    CheckResult::new(
+        NAME,
+        Status::Ok,
+        format!(
+            "{} test(s) across {} file(s); no unjustified silent skips",
+            census.tests_scanned, census.files_scanned
+        ),
+    )
+    .with_details(details)
+}
+
 fn check_dark_features(root: &Path) -> CheckResult {
     const NAME: &str = "dark-features";
     let census = match dark_features::scan(root) {
