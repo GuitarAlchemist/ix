@@ -24,23 +24,16 @@
     },
     {
       "crate": "ix-code",
-      "feature": "topology",
-      "kind": "tracked",
-      "reason": "Pure Rust, no external dependency — `cargo test -p ix-code --features full` passes and clippy is clean under -D warnings. This is the case that motivated ix#315: 296 lines and five tests that CI has never compiled. PR #317 adds a job that builds ix-code/full; until a workspace member enables the feature it stays dark by this check's definition, which is the honest reading — a dedicated job is a second configuration, not the default one.",
-      "issue": "ix#315"
-    },
-    {
-      "crate": "ix-code",
       "feature": "advanced",
       "kind": "tracked",
-      "reason": "Layer 6 of the Code Observatory (hyperbolic embeddings, K-theory, spectral, BSP). Pure Rust over ix-math/ix-ktheory/ix-signal/ix-fractal, all already workspace members. Same disposition as ix-code/topology.",
+      "reason": "Layer 6 of the Code Observatory (hyperbolic embeddings, K-theory, spectral, BSP). Pure Rust over ix-math/ix-ktheory/ix-signal/ix-fractal, all already workspace members. Same disposition ix-code/topology had until #314 enabled it from ix-agent: the gated-features CI job compiles it through ix-code/full, but it stays dark by this check's definition until a workspace member enables it.",
       "issue": "ix#315"
     },
     {
       "crate": "ix-code",
       "feature": "physics",
       "kind": "tracked",
-      "reason": "Layer 7 of the Code Observatory (chaos, Kalman, wavelets, Markov, Laplacian). Pure Rust over ix-chaos/ix-signal/ix-graph/ix-math, all already workspace members. Same disposition as ix-code/topology.",
+      "reason": "Layer 7 of the Code Observatory (chaos, Kalman, wavelets, Markov, Laplacian). Pure Rust over ix-chaos/ix-signal/ix-graph/ix-math, all already workspace members. Same disposition ix-code/topology had until #314 enabled it from ix-agent: the gated-features CI job compiles it through ix-code/full, but it stays dark by this check's definition until a workspace member enables it.",
       "issue": "ix#315"
     },
     {
