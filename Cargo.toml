@@ -24,6 +24,7 @@ members = [
     "crates/ix-gpu",
     "crates/ix-cache",
     "crates/ix-pipeline",
+    "crates/ix-petri",
     "crates/ix-adversarial",
     "crates/ix-grammar",
     "crates/ix-agent",
@@ -150,6 +151,7 @@ ix-search = { path = "crates/ix-search", version = "0.1.0" }
 ix-gpu = { path = "crates/ix-gpu", version = "0.1.0" }
 ix-cache = { path = "crates/ix-cache", version = "0.1.0" }
 ix-pipeline = { path = "crates/ix-pipeline", version = "0.1.0" }
+ix-petri = { path = "crates/ix-petri", version = "0.1.0" }
 ix-adversarial = { path = "crates/ix-adversarial", version = "0.1.0" }
 ix-grammar = { path = "crates/ix-grammar", version = "0.1.0" }
 ix-agent = { path = "crates/ix-agent", version = "0.1.0" }

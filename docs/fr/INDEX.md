@@ -83,6 +83,16 @@ Projets de bout en bout combinant plusieurs algorithmes.
 
 ---
 
+## Guides d'architecture
+
+Pages de référence sur le choix des crates, plutôt que des tutoriels pas à pas.
+
+| Sujet | Ce que la page décide |
+|-------|----------------------|
+| [Réseaux de Petri dans IX](guides/reseaux-de-petri-dans-ix.md) | Quand utiliser `ix-petri` (cycles + concurrence + contention) plutôt que `ix-pipeline`, `ix-graph` ou `ix-fuzzy` ; ce que l'analyse affirme et où elle s'arrête ; le choix PNML en lecture seule |
+
+---
+
 ## Comment utiliser ces tutoriels
 
 **En parallèle avec la version anglaise ?** Les exemples de code sont identiques. Ouvrez la version française pour les explications et la version anglaise pour référence.

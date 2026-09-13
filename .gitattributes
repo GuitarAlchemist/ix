@@ -6,3 +6,5 @@ crates/ix-duck/tests/fixtures/pareto/*.csv -text
 # the DuckDB surface must reproduce them byte for byte, so git must never
 # rewrite their EOLs.
 crates/ix-duck/tests/fixtures/ixql/*.csv -text
+# Same contract for the H0 persistence fixtures (gap-matrix row B1b).
+crates/ix-duck/tests/fixtures/persistence/*.csv -text

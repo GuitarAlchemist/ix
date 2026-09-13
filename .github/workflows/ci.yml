@@ -67,3 +67,130 @@ jobs:
       - name: Build docs
         if: matrix.rust == 'stable'
         run: cargo doc --workspace --no-deps
+
+  # Feature-gated code is invisible to the job above. `cargo build --workspace`
+  # and `cargo test --workspace` compile the DEFAULT feature set, so a module
+  # behind a non-default feature that no workspace member enables is never
+  # compiled, never linted and never tested -- while contributing zero failures
+  # and looking indistinguishable from covered code in every signal this repo
+  # produces.
+  #
+  # That is not hypothetical. `crates/ix-code/src/topology.rs` -- 296 lines and
+  # five tests -- lived on `main` behind the `topology` feature, which nothing
+  # enabled. CI had never compiled it once; rust-analyzer reported it as "not
+  # included in any crates". Its five tests could not fail, because they were
+  # never run. See ix#315.
+  #
+  # This job is deliberately NOT `--all-features`. That flag would drag in
+  # `ix-duck`'s `duck` feature (DuckDB + arrow, which the root Cargo.toml keeps
+  # out of the default build on purpose) and `memristive-markov`'s `gpu`, which
+  # may need hardware a runner does not have. A blanket flag would make every
+  # run slower and let it fail for environmental reasons unrelated to any
+  # change. The crates listed here pull only other IX crates and self-contained
+  # C grammars, so they are cheap and hermetic.
+  #
+  # This list is a stopgap. `ix doctor`'s uncompiled-source check (ix#318)
+  # DERIVES the same answer from cargo metadata and reports magnitude with it, so
+  # it finds a dark feature nobody remembered to add here. Prefer fixing what that
+  # check reports over extending this matrix.
+  #
+  # Two entries deliberately absent, because compiling them in CI is not free and
+  # is its own decision: `ix-duck/duck` pulls DuckDB and arrow, which the root
+  # Cargo.toml keeps out of the default build on purpose, and
+  # `memristive-markov/gpu` may need hardware a runner does not have. Between them
+  # they are the largest dark surface in the repository — ix-duck alone carries
+  # ~10k lines and 174 tests behind `udf` and `duck`.
+  gated-features:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: ix-code
+            features: full          # semantic, trajectory, topology, gates, advanced, physics
+          - crate: ix-autograd
+            features: fft-autograd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gated-${{ matrix.crate }}
+
+      - name: Clippy ${{ matrix.crate }} --features ${{ matrix.features }}
+        run: cargo clippy -p ${{ matrix.crate }} --features ${{ matrix.features }} --all-targets -- -D warnings
+
+      # The point of the job: these tests exist and have never been executed.
+      - name: Test ${{ matrix.crate }} --features ${{ matrix.features }}
+        run: cargo test -p ${{ matrix.crate }} --features ${{ matrix.features }}
+
+  # The SQL half of every frozen-golden cross-check in `ix-duck` needs the
+  # `duckdb` CLI, which no other job here has. Without it those tests return
+  # without asserting, so `cargo test --workspace` prints them as passing while
+  # they execute nothing. Five such skip sites shipped across three test files --
+  # the deterministic Pareto frontier (ix#294), H0 persistence over a DuckDB
+  # column (B1b) and the IXQL plan schedule -- which left every SQL surface
+  # verified on a developer machine and nowhere else. Same invisibility class as
+  # ix#315: not a test that fails, a test that *cannot* fail.
+  #
+  # This job is the only place those SQL surfaces actually run. It sets
+  # IX_REQUIRE_DUCKDB=1, under which an unreachable CLI is a hard failure rather
+  # than a skip, so the job cannot go green by doing nothing.
+  duckdb-sql:
+    runs-on: ubuntu-latest
+    env:
+      # Pinned deliberately, and checked against the release asset's own digest.
+      # The goldens are byte-exact CSV rendered by DuckDB itself, so a CLI
+      # upgrade can change the expected bytes without anything in this
+      # repository changing. v1.5.3 is what the goldens were frozen against
+      # (#305, #314). Bump it in its own PR, and re-freeze the goldens in that
+      # same change if the output moves.
+      DUCKDB_VERSION: v1.5.3
+      DUCKDB_SHA256: 35caef1fecbc8d7e2c07de4fd2cdefc5189ec9ba9e1cca228fb1a1c48cc52a8a
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: duckdb-sql
+
+      - name: Install the DuckDB CLI
+        shell: bash
+        run: |
+          url="https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
+          curl -fsSL -o duckdb.zip "$url"
+          echo "${DUCKDB_SHA256}  duckdb.zip" | sha256sum --check --strict
+          mkdir -p "$HOME/.local/bin"
+          unzip -oq duckdb.zip -d "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/duckdb"
+          rm duckdb.zip
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Its own step on purpose. If the install ever yields something
+      # unrunnable, this fails here -- before any test gets to decide what a
+      # missing binary means.
+      - name: Verify the CLI is runnable
+        run: duckdb --version
+
+      - name: Cross-check every SQL surface against its frozen golden
+        env:
+          IX_REQUIRE_DUCKDB: '1'
+        shell: bash
+        run: |
+          cargo test -p ix-duck \
+            --test pareto_golden \
+            --test persistence_h0_golden \
+            --test ixql_plan_golden

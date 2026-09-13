@@ -16,7 +16,10 @@ use std::sync::Arc;
 use ix_baml::{BamlError, BamlRegistry};
 use serde_json::{Map, Value};
 
-use crate::ast::{BinaryOp, Block, CompoundOp, Expr, Literal, PipeStep, Statement, UnaryOp};
+use crate::ast::{
+    BinaryOp, Block, CompoundOp, Expr, Literal, PipeStep, Statement, UnaryOp, Verdict, VerdictArm,
+};
+use crate::capability::{CallArgs, Capabilities, Produced};
 use crate::host::{dotnet_format_to_chrono, Host, HostError};
 use crate::parser::{parse_expression, parse_program, ParseError};
 use crate::schema::{SchemaGate, SchemaViolation};
@@ -39,7 +42,10 @@ pub enum EvalError {
     #[error("record key `{0}` given twice")]
     DuplicateKey(String),
 
-    #[error("`{0}` is not a function this executor provides")]
+    #[error(
+        "`{0}` is not a function this executor provides — a peer operation or a named \
+         check needs an adapter registered through `Executor::capabilities()`"
+    )]
     UnknownFunction(String),
 
     #[error(
@@ -91,6 +97,27 @@ pub enum EvalError {
 
     #[error("in a `check:` predicate — {0}")]
     Predicate(#[from] ParseError),
+
+    #[error("`{function}` failed: {message}")]
+    Capability { function: String, message: String },
+
+    #[error(
+        "`{function}` attached a verdict with confidence {confidence}, which is not in [0, 1]"
+    )]
+    InvalidVerdict { function: String, confidence: f64 },
+
+    #[error(
+        "`→ when {guard}:` needs a verdict, but the value reaching it has none — only a \
+         registered capability attaches one, and a gate that cannot be evaluated must \
+         neither pass nor skip"
+    )]
+    NoVerdict { guard: String },
+
+    #[error(
+        "the verdict is C (contradictory, confidence {confidence}) and no arm handles it \
+         (arms: {guards}) — a contradiction is escalated, not skipped"
+    )]
+    UnhandledContradiction { confidence: f64, guards: String },
 }
 
 /// Parse-then-run failure, for [`Executor::run_source`].
@@ -132,6 +159,19 @@ pub enum CompoundRecord {
     },
 }
 
+/// How one verdict match was decided — kept so a gate that did not open is as
+/// visible in the outcome as one that did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GateRecord {
+    /// The verdict the arms were matched against.
+    pub verdict: Verdict,
+    /// Each arm's guard, in source order (`T>=0.7`, `U`).
+    pub guards: Vec<String>,
+    /// Index into `guards` of the arm that ran; `None` when none matched and
+    /// the rest of the pipeline was skipped.
+    pub matched: Option<usize>,
+}
+
 /// What a completed run produced.
 #[derive(Debug, Clone, Default)]
 pub struct RunOutcome {
@@ -141,6 +181,8 @@ pub struct RunOutcome {
     pub writes: Vec<WriteRecord>,
     /// Compound-phase effects in the order they were declared.
     pub compound: Vec<CompoundRecord>,
+    /// Every verdict match, in the order it was reached.
+    pub gates: Vec<GateRecord>,
 }
 
 impl RunOutcome {
@@ -154,6 +196,15 @@ pub struct Executor {
     host: Arc<dyn Host>,
     gate: SchemaGate,
     baml: BamlRegistry,
+    capabilities: Capabilities,
+}
+
+/// Whether a pipeline keeps flowing after a step.
+enum Flow {
+    Continue(Produced),
+    /// A verdict match with no matching arm: the remaining steps must not run
+    /// on a value their gate did not admit.
+    Stop(Produced),
 }
 
 impl Executor {
@@ -162,7 +213,13 @@ impl Executor {
             host,
             gate: SchemaGate::new(),
             baml: BamlRegistry::new(),
+            capabilities: Capabilities::new(),
         }
+    }
+
+    /// The peer adapters this run may call — see [`crate::capability`].
+    pub fn capabilities(&mut self) -> &mut Capabilities {
+        &mut self.capabilities
     }
 
     /// The at-rest gate — register the schemas this run must satisfy.
@@ -287,15 +344,34 @@ impl Executor {
             } => {
                 let name = callee_path(target)?;
                 let args = self.eval_args(positional, named, outcome)?;
-                self.call(&name, args, None, outcome)
+                Ok(self.call(&name, args, None, outcome)?.value)
             }
 
             Expr::Pipeline(head, steps) => {
-                let mut value = self.eval(head, outcome)?;
+                // The head keeps its verdict: `tars.assess(…) → when T: …` gates
+                // on what the call itself attached.
+                let mut current = match head.as_ref() {
+                    Expr::Call {
+                        target,
+                        positional,
+                        named,
+                    } => {
+                        let name = callee_path(target)?;
+                        let args = self.eval_args(positional, named, outcome)?;
+                        self.call(&name, args, None, outcome)?
+                    }
+                    other => Produced::plain(self.eval(other, outcome)?),
+                };
                 for step in steps {
-                    value = self.apply_step(step, value, outcome)?;
+                    match self.apply_step(step, current, outcome)? {
+                        Flow::Continue(next) => current = next,
+                        Flow::Stop(held) => {
+                            current = held;
+                            break;
+                        }
+                    }
                 }
-                Ok(value)
+                Ok(current.value)
             }
 
             // A lambda is not a value — the value domain here is exactly JSON,
@@ -394,9 +470,9 @@ impl Executor {
     fn apply_step(
         &self,
         step: &PipeStep,
-        input: Value,
+        input: Produced,
         outcome: &mut RunOutcome,
-    ) -> Result<Value, EvalError> {
+    ) -> Result<Flow, EvalError> {
         match step {
             PipeStep::CallStep {
                 target,
@@ -405,16 +481,60 @@ impl Executor {
             } => {
                 let name = callee_path(target)?;
                 let args = self.eval_args(positional, named, outcome)?;
-                self.call(&name, args, Some(input), outcome)
+                let produced = self.call(&name, args, Some(input.value), outcome)?;
+                Ok(Flow::Continue(produced))
             }
             PipeStep::Compound(ops) => {
                 for op in ops {
-                    self.apply_compound(op, &input, outcome)?;
+                    self.apply_compound(op, &input.value, outcome)?;
                 }
                 // The compound phase observes; it does not rewrite the value.
-                Ok(input)
+                Ok(Flow::Continue(input))
             }
+            PipeStep::VerdictMatch(arms) => self.apply_verdict_match(arms, input, outcome),
         }
+    }
+
+    /// Semantics, provisional until Demerzel's spec states them:
+    ///
+    /// - the first arm whose guard matches runs, with the value piped in; what
+    ///   it returns — including its own verdict, or none — flows on;
+    /// - no verdict at all is an error, not a skip;
+    /// - no matching arm stops the pipeline, binds the value as it reached the
+    ///   gate, and records that nothing ran;
+    /// - except for `C`: an unhandled contradiction fails the run.
+    fn apply_verdict_match(
+        &self,
+        arms: &[VerdictArm],
+        input: Produced,
+        outcome: &mut RunOutcome,
+    ) -> Result<Flow, EvalError> {
+        let guards: Vec<String> = arms.iter().map(|arm| arm.guard.render()).collect();
+        let Some(verdict) = input.verdict else {
+            return Err(EvalError::NoVerdict {
+                guard: guards.join(" | "),
+            });
+        };
+        let matched = arms.iter().position(|arm| arm.guard.matches(&verdict));
+        if matched.is_none() && verdict.truth == ix_types::Hexavalent::Contradictory {
+            return Err(EvalError::UnhandledContradiction {
+                confidence: verdict.confidence,
+                guards: guards.join(", "),
+            });
+        }
+        outcome.gates.push(GateRecord {
+            verdict,
+            guards,
+            matched,
+        });
+        let Some(index) = matched else {
+            return Ok(Flow::Stop(input));
+        };
+        let arm = &arms[index];
+        let name = callee_path(&arm.target)?;
+        let args = self.eval_args(&arm.positional, &arm.named, outcome)?;
+        let produced = self.call(&name, args, Some(input.value), outcome)?;
+        Ok(Flow::Continue(produced))
     }
 
     fn apply_compound(
@@ -456,6 +576,39 @@ impl Executor {
     // ---- host functions ------------------------------------------------
 
     fn call(
+        &self,
+        name: &str,
+        args: Args,
+        piped: Option<Value>,
+        outcome: &mut RunOutcome,
+    ) -> Result<Produced, EvalError> {
+        let Some(adapter) = self.capabilities.get(name) else {
+            return self
+                .call_builtin(name, args, piped, outcome)
+                .map(Produced::plain);
+        };
+        let produced = adapter
+            .call(CallArgs {
+                piped,
+                positional: args.positional,
+                named: args.named,
+            })
+            .map_err(|message| EvalError::Capability {
+                function: name.to_string(),
+                message,
+            })?;
+        if let Some(verdict) = produced.verdict {
+            if !(0.0..=1.0).contains(&verdict.confidence) {
+                return Err(EvalError::InvalidVerdict {
+                    function: name.to_string(),
+                    confidence: verdict.confidence,
+                });
+            }
+        }
+        Ok(produced)
+    }
+
+    fn call_builtin(
         &self,
         name: &str,
         args: Args,

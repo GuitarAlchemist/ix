@@ -96,6 +96,20 @@ contracts (see `docs/contracts/`), not runtime coupling.
   actual key column). Only the third layer can see the bytes; the first two compare the
   producer's numbers to themselves. Contract:
   `docs/contracts/2026-09-07-optick-sae-activations-coverage.contract.md`.
+- **Capability (IXQL)** (`ix_ixql::capability`) — an adapter registered under the name
+  a pipeline calls a peer operation by (`tars.research`, `alert`) or a named governance
+  check by (`→ explanation_requirement`). The evaluator dispatches to it instead of
+  matching on peer names, and never decides what a check *means* — that is Demerzel's.
+  An unregistered name fails the run; the language's own built-ins (`ix.io.write`, …)
+  cannot be registered over, so no adapter can route around the schema gate. Distinct
+  from a **tool** (MCP-callable) and a **skill**: a capability is how one IXQL run
+  reaches either, or something else entirely.
+- **Verdict gate** — consecutive `→ when T >= 0.8: …` / `→ when C: …` steps, read as
+  **one** match over the verdict (hexavalent truth + confidence) the previous
+  capability attached — not as successive filters. The verdict travels *beside* the
+  JSON value, never inside it. Semantics are provisional until Demerzel's spec states
+  them: no verdict is an error, no matching arm stops the pipeline and is recorded in
+  `RunOutcome::gates`, an unhandled `C` fails the run.
 
 ## Conventions
 
