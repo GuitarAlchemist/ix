@@ -1,0 +1,183 @@
+(* Gaia uncertainty grammar candidate v0.1.
+   TARS-compatible specification input; not registered, installed, or authoritative. *)
+
+uncertainty_envelope ::= "UNCERTAINTY" subject scope knowledge_set condition_set action_set probe_set reproducibility_profile navigation_state validity
+
+knowledge_set ::= knowledge_item | knowledge_item knowledge_set
+knowledge_item ::= fact | assumption | hypothesis | contradiction | evidence_gap
+
+fact ::= "FACT" claim evidence_ref provenance_ref
+assumption ::= "ASSUMPTION" claim owner expiry falsifier
+hypothesis ::= "HYPOTHESIS" claim alternative_set falsifier
+contradiction ::= "CONTRADICTION" claim evidence_ref evidence_ref
+evidence_gap ::= "EVIDENCE_GAP" requirement uncertainty_condition
+
+condition_set ::= uncertainty_condition | uncertainty_condition condition_set
+uncertainty_condition ::= missing | unobserved | inaccessible | stale | partial | ambiguous | contradictory | divergent | volatile | novel | underdetermined | irreducible | deceptive_risk | temporal_risk | model_risk
+
+missing ::= "MISSING" subject scope requirement
+unobserved ::= "UNOBSERVED" subject scope observation
+inaccessible ::= "INACCESSIBLE" subject scope authority_ref
+stale ::= "STALE" artifact_ref dependency_vector
+partial ::= "PARTIAL" subject covered_scope uncovered_scope
+ambiguous ::= "AMBIGUOUS" subject interpretation_set
+contradictory ::= "CONTRADICTORY" subject evidence_ref evidence_ref
+divergent ::= "DIVERGENT" subject result_ref result_ref recipe_ref
+volatile ::= "VOLATILE" subject validity_horizon
+novel ::= "NOVEL" subject competency_envelope_ref
+underdetermined ::= "UNDERDETERMINED" hypothesis_set discriminating_observation
+irreducible ::= "IRREDUCIBLE" subject evidence_budget risk_acceptance_ref
+deceptive_risk ::= "DECEPTIVE_RISK" subject threat_model_ref
+temporal_risk ::= "TEMPORAL_RISK" subject validity_horizon recheck_point
+model_risk ::= "MODEL_RISK" evaluator_ref competency_envelope_ref
+
+action_set ::= action | action action_set
+action ::= robust_safe_action | conditional_action | blocked_action | refusal
+robust_safe_action ::= "ROBUST_SAFE" transition_ref surviving_interpretation_set authority_ref blast_radius
+conditional_action ::= "CONDITIONAL" transition_ref precondition_set authority_ref blast_radius
+blocked_action ::= "BLOCKED" transition_ref blocking_condition_set
+refusal ::= "REFUSED" refusal_code subject scope
+
+probe_set ::= "NO_PROBE" | probe | probe probe_set
+probe ::= "PROBE" transition_definition_ref target_condition expected_observation information_gain_bound cost_bound reversibility authority_ref stopping_condition
+
+reproducibility_profile ::= "REPRODUCIBILITY" model_axis decoding_axis context_axis tool_axis scheduling_axis observation_axis replay_class entropy_budget refinement_policy_ref
+model_axis ::= "MODEL_CONTENT_PINNED" | "MODEL_RELEASE_PINNED" | "MODEL_PROVIDER_ALIAS" | "MODEL_UNKNOWN"
+decoding_axis ::= "DECODING_GREEDY" | seeded_decoding | "DECODING_UNSEEDED" | "DECODING_PROVIDER_OPAQUE"
+seeded_decoding ::= "DECODING_SEEDED" seed_ref
+context_axis ::= "CONTEXT_EXACT_CLOSED" | "CONTEXT_SELECTOR_BOUNDED" | "CONTEXT_LIVE_UNBOUNDED" | "CONTEXT_UNKNOWN"
+tool_axis ::= "TOOLS_HERMETIC" | "TOOLS_SNAPSHOTTED" | "TOOLS_VARIABLE" | "TOOLS_UNKNOWN"
+scheduling_axis ::= "SCHEDULE_SERIAL" | "SCHEDULE_ORDERED_PARALLEL" | "SCHEDULE_ORDER_SENSITIVE" | "SCHEDULE_EXTERNAL"
+observation_axis ::= "OBSERVATION_IMMUTABLE" | "OBSERVATION_VALIDITY_BOUNDED" | "OBSERVATION_LIVE" | "OBSERVATION_HUMAN" | "OBSERVATION_UNKNOWN"
+replay_class ::= "BYTE_EXACT" | semantic_replay | statistical_replay | "NON_REPLAYABLE" | "REPLAY_UNKNOWN"
+semantic_replay ::= "DECISION_EQUIVALENT" equivalence_class_ref
+statistical_replay ::= "STATISTICALLY_BOUNDED" statistical_contract_ref
+entropy_budget ::= "ENTROPY_BUDGET" sample_bound cost_bound aggregation_ref stopping_condition
+
+navigation_state ::= "NAVIGATION" semantic_map_ref position_set destination_ref route_set landmark_set geometry_profile localization_state
+position_set ::= semantic_position | semantic_position position_set
+semantic_position ::= "POSITION" artifact_anchor_ref domain_coordinate engineering_coordinate work_coordinate evidence_coordinate capability_coordinate uncertainty_condition_set
+route_set ::= "NO_ROUTE" | semantic_route | semantic_route route_set
+semantic_route ::= "ROUTE" transition_sequence progress_vector risk_vector evidence_gain_vector cost_vector reversibility route_status
+landmark_set ::= semantic_landmark | semantic_landmark landmark_set
+semantic_landmark ::= "LANDMARK" landmark_ref landmark_kind artifact_anchor_ref
+localization_state ::= "LOCATED" | "MULTI_HYPOTHESIS" | "DRIFTED" | "LOST" | "LOCALIZATION_UNKNOWN"
+route_status ::= "CANDIDATE" | "PARETO" | "SELECTED" | "BLOCKED" | "ABANDONED" | "ARRIVED"
+
+geometry_profile ::= "GEOMETRY" product_space_ref geometry_regime_set chart_set distortion_budget_ref projection_status
+geometry_regime_set ::= geometry_regime | geometry_regime geometry_regime_set
+geometry_regime ::= "EXACT_DISCRETE" | "LINEAR" | local_linear | "NONLINEAR"
+local_linear ::= "LOCALLY_LINEAR" validity_region_ref approximation_error_bound
+chart_set ::= "NO_CHART" | semantic_chart | semantic_chart chart_set
+semantic_chart ::= "CHART" chart_ref projection_recipe_ref source_region_ref target_dimension landmark_set validity_region_ref distortion_vector_ref reproducibility_profile
+projection_status ::= "UNFIT" | "TRAINING_ONLY" | "HELD_OUT_VALID" | "PROJECTION_OOD" | "DISTORTED" | "PROJECTION_UNKNOWN"
+
+validity ::= "VALIDITY" observed_at expires_at recheck_point
+
+subject ::= identifier
+scope ::= identifier
+covered_scope ::= identifier
+uncovered_scope ::= identifier
+claim ::= identifier
+owner ::= identifier
+expiry ::= identifier
+falsifier ::= identifier
+requirement ::= identifier
+observation ::= identifier
+authority_ref ::= identifier
+artifact_ref ::= identifier
+dependency_vector ::= identifier
+interpretation_set ::= identifier
+evidence_ref ::= identifier
+provenance_ref ::= identifier
+result_ref ::= identifier
+recipe_ref ::= identifier
+validity_horizon ::= identifier
+competency_envelope_ref ::= identifier
+hypothesis_set ::= identifier
+alternative_set ::= identifier
+discriminating_observation ::= identifier
+evidence_budget ::= identifier
+risk_acceptance_ref ::= identifier
+threat_model_ref ::= identifier
+evaluator_ref ::= identifier
+recheck_point ::= identifier
+transition_ref ::= identifier
+transition_definition_ref ::= identifier
+surviving_interpretation_set ::= identifier
+precondition_set ::= identifier
+blocking_condition_set ::= identifier
+blast_radius ::= identifier
+refusal_code ::= identifier
+target_condition ::= identifier
+expected_observation ::= identifier
+information_gain_bound ::= identifier
+cost_bound ::= identifier
+reversibility ::= identifier
+stopping_condition ::= identifier
+seed_ref ::= identifier
+equivalence_class_ref ::= identifier
+statistical_contract_ref ::= identifier
+aggregation_ref ::= identifier
+sample_bound ::= identifier
+refinement_policy_ref ::= identifier
+semantic_map_ref ::= identifier
+destination_ref ::= identifier
+artifact_anchor_ref ::= identifier
+domain_coordinate ::= identifier
+engineering_coordinate ::= identifier
+work_coordinate ::= identifier
+evidence_coordinate ::= identifier
+capability_coordinate ::= identifier
+uncertainty_condition_set ::= identifier
+transition_sequence ::= identifier
+progress_vector ::= identifier
+risk_vector ::= identifier
+evidence_gain_vector ::= identifier
+cost_vector ::= identifier
+route_status_ref ::= identifier
+landmark_ref ::= identifier
+landmark_kind ::= identifier
+product_space_ref ::= identifier
+distortion_budget_ref ::= identifier
+validity_region_ref ::= identifier
+approximation_error_bound ::= identifier
+chart_ref ::= identifier
+projection_recipe_ref ::= identifier
+source_region_ref ::= identifier
+target_dimension ::= identifier
+distortion_vector_ref ::= identifier
+observed_at ::= identifier
+expires_at ::= identifier
+identifier ::= letter | letter identifier_tail
+identifier_tail ::= letter | digit | "_" | "-" | ":" | "." | "/" | letter identifier_tail | digit identifier_tail
+letter ::= "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+digit ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+
+(* Required semantic checks outside the context-free grammar:
+   1. FACT binds immutable evidence and provenance.
+   2. ASSUMPTION has owner, expiry, and falsifier.
+   3. CONTRADICTION preserves at least two distinct evidence references.
+   4. ROBUST_SAFE is safe under every surviving interpretation.
+   5. PROBE passes authority, cost, reversibility, and blast-radius gates.
+   6. Confidence never promotes UNKNOWN to FRESH, APPROVED, or SAFE.
+   7. TARS rule weights remain advisory and cannot alter these semantics.
+   8. Effects still use only register/send/inbox/ack/heartbeat/handoff.
+   9. Seeded decoding alone cannot establish BYTE_EXACT replay.
+  10. Semantic equivalence binds a deterministic, versioned consumer rule.
+  11. Refinement creates a new Transition Definition and invalidation event.
+  12. Variable proposals cross a deterministic fenced effect boundary. *)
+(* Navigation semantic checks:
+  13. A position binds exact map and Artifact Graph Snapshot digests.
+  14. Multiple plausible positions remain explicit until a discriminating Probe.
+  15. Pareto-incomparable routes are not collapsed into an undeclared scalar score.
+  16. Semantic navigation never grants publication, spend, lease, or acceptance authority.
+  17. Relocalization creates a receipt; it never silently replaces route history. *)
+(* Geometry semantic checks:
+  18. Axis operations require an Axis Contract; heterogeneous state is not one implicit vector.
+  19. A nonlinear chart must beat identity and linear baselines on held-out declared metrics.
+  20. Every chart declares distortion, validity region, landmarks, and OOD behavior.
+  21. Reduced coordinates remain advisory and routes replay against the exact WorkGraph.
+  22. No scalar metric, including explained variance, can erase the distortion vector. *)
+
+(* GAIA_UNCERTAINTY_GRAMMAR_V0_1_COMPLETE *)

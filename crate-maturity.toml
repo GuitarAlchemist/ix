@@ -104,3 +104,5 @@ ix-streeling              = "internal"  # generates the federated learnings cata
 ix-value                  = "internal"  # federates per-repo value manifests → catalog.jsonl; mirrors ix-streeling
 ix-baml                   = "experimental"  # BAML boundary seam for IXQL LLM steps; generated client not yet vendored
 ix-ixql                   = "experimental"  # IXQL parser + evaluator (Demerzel pipelines); tracer-bullet stage
+ix-gaia-census            = "experimental"  # read-only v0a census tracer over copied immutable Gaia evidence; no surface beyond its own tests
+ix-gaia-advisory          = "experimental"  # read-only M3 advisory artifact + Class-Development characterization over the same evidence; no surface beyond its own tests

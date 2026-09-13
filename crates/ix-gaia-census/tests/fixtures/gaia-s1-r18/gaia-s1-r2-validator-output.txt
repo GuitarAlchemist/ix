@@ -1,0 +1,214 @@
+Gaia S1 R2 bundle validator, R15 repair revision
+================================================
+mode: offline static analysis; no network, no install, no subprocess, no writes
+subject: gaia-consolidated-mission-room-factory-spec-v0.2.md + gaia-mission-room-protocol-v0.2.ebnf + gaia-s1-r2-third-party-notices.md + gaia-s1-r2-change-ledger.md + 7 copied inputs
+
+1. Positive checks
+------------------
+PASS  S1-B1 CAPSULE_FIELDS_PRESENT                     capsule schema carries non_goals and dependencies
+PASS  S1-B1 CAPSULE_CARDINALITY_TABLE                  non_goals 1..n empty-refused; dependencies 0..n absent-refused
+PASS  S1-B1 EBNF_CAPSULE_NON_GOALS_NONEMPTY            non_goal_set admits no optional group, so cardinality is 1..n
+PASS  S1-B1 EBNF_CAPSULE_DEPENDENCIES_TYPED            dependency_set 0..n; dependency_ref is task_id | contract_ref
+PASS  S1-B1 CAPSULE_STATEMENT_BINDS_BOTH               capsule statement binds non_goal_set, dependency_set, task_id, mission_id
+PASS  S1-B2 NO_ADVISORY_ORACLE                         AdvisoryOracle absent from specification and grammar
+PASS  S1-B2 NO_ORACLE_IDENTIFIER                       no declared Gaia name contains 'oracle'; the single exemption is the historical evidence filename, present
+PASS  S1-B2 EBNF_ROLE_HAS_NO_ORACLE                    role terminals carry AdvisorySpecialist and no Oracle
+PASS  S1-B2 PER_SYSTEM_ADAPTERS_DECLARED               three narrow adapters declared; no shared seam
+PASS  S1-B3 NO_RESULT_STATE_UNION                      the merged result_state union is gone
+PASS  S1-B3 LATTICES_PAIRWISE_DISJOINT                 5 lattices, 17 tokens, all pairwise disjoint
+PASS  S1-B3 ADVISORY_BINDS_EVIDENCE_STATE_ONLY         advisory binds evidence_state and no other lattice
+PASS  S1-B3 EVIDENCE_BINDS_EVIDENCE_STATE_ONLY         evidence binds evidence_state and no other lattice
+PASS  S1-B3 VERDICT_BINDS_VERDICT_STATE_ONLY           verdict binds verdict_state and no other lattice
+PASS  S1-B3 SPEC_DECLARES_LATTICE_SEPARATION           specification states lattice separation and the advisory boundary
+PASS  S1-B4 IDENTIFIER_BODY_EXCLUDES_COLON             identifier_body admits no ':', so a type prefix is unforgeable
+PASS  S1-B4 TYPED_ID_PREFIXES_DISJOINT                 22 typed identifier prefixes, all distinct and colon-terminated
+PASS  S1-B4 RECIPIENT_UNAMBIGUOUS                      recipient is a keyword-tagged, prefix-disjoint actor_ref
+PASS  S1-B4 REQUIRED_ENTITIES_TYPED_AND_REFERENCED     all 13 required entities carry a typed identity and are referenced
+PASS  S1-B5 EXACTLY_SIX_BUS_VERBS                      exactly six bus alternatives: ack handoff heartbeat inbox register send
+PASS  S1-B5 INBOX_PRESENT_IN_GRAMMAR                   the inbox terminal is present in the grammar
+PASS  S1-B5 LEDGER_TERMINALS_DISJOINT_FROM_BUS         12 ledger statements, none is a bus verb
+PASS  S1-B5 STATEMENT_PARTITION_EXHAUSTIVE             statement partitions into bus_statement | ledger_statement
+PASS  S1-B5 NO_SEVENTH_VERB_PRODUCTION                 no production outside the six bus alternatives leads with a bus verb
+PASS  S1-B5 BUS_TERMINALS_MATCH_SPEC                   specification and grammar declare the same six verbs
+PASS  S1-B6 REFUSAL_CODES_TYPED_AND_OPEN               refusal_code is registered | extension, so the set is typed and open
+PASS  S1-B6 SCOPE_VIOLATION_REGISTERED                 SCOPE_VIOLATION is a registered refusal code
+PASS  S1-B6 FIVE_CONTROL_CODES_PRESENT                 15 registered codes: 10 carried forward, 5 closing controls 10/12/16/17/18
+PASS  S1-B6 EXTENSION_FORM_DISJOINT                    extension form X-<UPPER-WORD> is lexically disjoint from every registered code
+PASS  S1-B6 REFUSAL_CARRIES_EXACT_SCOPE                refusal names an exact write-scope entry or NO_SCOPE
+PASS  S1-B6 UNKNOWN_CODE_FAILS_CLOSED                  unknown codes fail closed, never become a pass, and are preserved verbatim
+PASS  R2-B1 FRAME_STATEMENT_BOUNDED                    frame_statement has exactly two inert alternatives: close mission
+PASS  R2-B1 PROTOCOL_PARTITION_EXHAUSTIVE              20 productions reachable from protocol, each classified exactly once (bus 6, ledger 12, frame 2)
+PASS  R2-B1 SPEC_ENUMERATES_ALL_CLASS_TERMINALS        section 3.3 enumerates all 20 class terminals (6 bus, 12 ledger, 2 frame)
+PASS  R2-B1 FRAME_CARRIES_NO_AUTHORITY                 frame statements are declared inert, and recording an acceptance is separated from producing one
+PASS  R3-B1 BUS_CLASS_LEADING_TERMINALS_BOUND          every top-level alternative of all 6 bus members leads with exactly the 6 declared terminals: ack handoff heartbeat inbox register send
+PASS  R3-B1 FRAME_CLASS_LEADING_TERMINALS_BOUND        every top-level alternative of all 2 frame members leads with exactly the 2 declared terminals: close mission
+PASS  R3-B1 CLASS_LEADING_TERMINALS_RESOLVE            all 20 class leading terminals resolve to a literal; no recursion, absent rule, unbalanced group or omittable head
+PASS  R3-B2 LEDGER_CLASS_LEADING_TERMINALS_BOUND       every top-level alternative of all 12 ledger members leads with exactly the 12 declared terminals: advisory artifact assign capsule claim evidence fence lane receipt refuse transition verdict
+PASS  R3-B2 SPEC_CLASS_COUNTS_MATCH_GRAMMAR            section 3.3 Count column matches the grammar: bus 6, ledger 12, frame 2
+PASS  R3-B2 SPEC_CLASS_TERMINALS_MATCH_GRAMMAR         section 3.3 Leading terminals cells equal the measured class LEAD multisets in both directions and their own Count cells: bus 6, ledger 12, frame 2
+PASS  R2-B2 LATTICE_PRODUCTIONS_NAME_AN_ACTOR          all 6 lattice-bearing productions name an Actor drawn from ['acceptor', 'executor', 'producer', 'reviewer']
+PASS  R2-B2 ACTOR_FIELDS_RESOLVE_TO_ACTOR_REF          producer, reviewer, executor and acceptor are all actor_ref, so every attribution is tagged and resolvable
+PASS  R2-B2 ACCEPTANCE_BINDS_SUBJECT_DIGEST            every acceptance-bearing production (close) binds subject_digest
+PASS  R2-B2 SPEC_DECLARES_ACTOR_ATTRIBUTION            specification binds the who-column to named attribution fields and declares case-sensitive comparison
+PASS  BUNDLE MILESTONE_MARKER                           all four authored files state M1 established; M2-M5 absent; NOT INTEGRATED
+PASS  BUNDLE GATE_TABLE_M2_M5_ABSENT                    gate table shows S1 Pending and M2-M5 Absent
+PASS  BUNDLE NO_SELF_APPROVAL                           the author grants no approval and claims no S1 establishment
+PASS  BUNDLE R1_VERDICT_NOT_SUPERSEDED                  the R1 verdict is cited by digest and explicitly not superseded
+PASS  BUNDLE COPYRIGHT_GATE_PRESERVED                   author, MIT, pinned commit, 18 sources, no endorsement, unpublished
+PASS  BUNDLE CANDIDATE_INPUTS_DECLARED                  all five candidate inputs declared and marked unaccepted
+PASS  BUNDLE TRUSTED_COPIES_BYTE_EXACT                  all 7 copied trusted inputs reproduce byte-exact
+PASS  BUNDLE SPEC_HASHES_MATCH_COPIES                   section 14.3 declares the correct digest for all five candidate inputs
+PASS  BUNDLE LEDGER_NAMES_RESOLVE                       every check, fixture and control named in the change ledger exists in this validator
+PASS  BUNDLE LEDGER_CITATIONS_CANONICAL                 all 239 line citations are written in the canonical `<doc>-v0.2:<line>` or `<doc>-v0.2:<from>-<to>` form, so every one of them is read by LEDGER_LINE_REFS_IN_RANGE
+PASS  BUNDLE LEDGER_LINE_REFS_IN_RANGE                  all 239 line citations fall inside the cited files (spec 579 lines, ebnf 503 lines)
+PASS  BUNDLE LEDGER_ANCHORS_RESOLVE                     all 45 load-bearing citations resolve to a line containing the claimed text
+PASS  BUNDLE NO_DEBRIS                                  12 required files present, no subdirectory, no hidden entry, no debris
+
+2. Discriminating negative fixtures
+-----------------------------------
+Each fixture breaks the bundle in one exact way. The named check MUST fail.
+A fixture whose text anchor no longer matches is INAPP: it is reported as
+lost coverage, not as a defect the suite detected. The two are never merged,
+because anchor drift that reads as detection is a false red (S1R3-N07).
+
+PASS  S1-B1 NEG-B1-a    CAPSULE_FIELDS_PRESENT                 capsule schema drops non_goals
+PASS  S1-B1 NEG-B1-b    EBNF_CAPSULE_NON_GOALS_NONEMPTY        non_goal_set made optional, so an empty list parses
+PASS  S1-B1 NEG-B1-c    CAPSULE_STATEMENT_BINDS_BOTH           capsule statement drops the dependency set
+PASS  S1-B2 NEG-B2-a    NO_ADVISORY_ORACLE                     the AdvisoryOracle seam is reinstated
+PASS  S1-B2 NEG-B2-b    EBNF_ROLE_HAS_NO_ORACLE                the Oracle role returns to the grammar
+PASS  S1-B2 NEG-B2-c    NO_ORACLE_IDENTIFIER                   a component is named with the ambiguous term
+PASS  S1-B3 NEG-B3-a    ADVISORY_BINDS_EVIDENCE_STATE_ONLY     an advisory statement is allowed to carry a verdict
+PASS  S1-B3 NEG-B3-b    LATTICES_PAIRWISE_DISJOINT             the freshness lattice reuses the evidence token UNKNOWN
+PASS  S1-B3 NEG-B3-c    NO_RESULT_STATE_UNION                  the merged v0.1 result_state union is restored
+PASS  S1-B4 NEG-B4-a    RECIPIENT_UNAMBIGUOUS                  recipient reverts to the ambiguous untagged union
+PASS  S1-B4 NEG-B4-b    IDENTIFIER_BODY_EXCLUDES_COLON         the identifier body readmits ':' so prefixes are forgeable
+PASS  S1-B4 NEG-B4-c    TYPED_ID_PREFIXES_DISJOINT             two domain identities share one type prefix
+PASS  S1-B5 NEG-B5-a    EXACTLY_SIX_BUS_VERBS                  a seventh bus alternative is introduced
+PASS  S1-B5 NEG-B5-b    INBOX_PRESENT_IN_GRAMMAR               the inbox verb is deleted, restoring the v0.1 omission
+PASS  S1-B5 NEG-B5-c    LEDGER_TERMINALS_DISJOINT_FROM_BUS     a ledger statement takes a bus verb as its head terminal
+PASS  S1-B6 NEG-B6-a    REFUSAL_CODES_TYPED_AND_OPEN           the refusal set is closed again
+PASS  S1-B6 NEG-B6-b    SCOPE_VIOLATION_REGISTERED             the exact write-scope refusal code is removed
+PASS  S1-B6 NEG-B6-c    REFUSAL_CARRIES_EXACT_SCOPE            the refusal stops naming the exact violated scope
+PASS  S1-B6 NEG-B6-d    UNKNOWN_CODE_FAILS_CLOSED              an unknown refusal code is allowed to become a pass
+PASS  R2-B1 NEG-R2B1-a  PROTOCOL_PARTITION_EXHAUSTIVE          a seventh verb is reachable from protocol outside every class
+PASS  R2-B1 NEG-R2B1-b  FRAME_STATEMENT_BOUNDED                a seventh verb-like production is added at frame level
+PASS  R2-B1 NEG-R2B1-c  PROTOCOL_PARTITION_EXHAUSTIVE          the frame class is deleted, unclassifying mission and close
+PASS  R2-B1 NEG-R2B1-d  PROTOCOL_PARTITION_EXHAUSTIVE          close is classified by two classes at once
+PASS  R2-B1 NEG-R2B1-e  SPEC_ENUMERATES_ALL_CLASS_TERMINALS    the specification stops enumerating the frame class
+PASS  R2-B2 NEG-R2B2-a  LATTICE_PRODUCTIONS_NAME_AN_ACTOR      producer is deleted from the evidence statement
+PASS  R2-B2 NEG-R2B2-b  LATTICE_PRODUCTIONS_NAME_AN_ACTOR      the advisory artifact records no producer
+PASS  R2-B2 NEG-R2B2-c  LATTICE_PRODUCTIONS_NAME_AN_ACTOR      the transition receipt records no executor
+PASS  R2-B2 NEG-R2B2-d  LATTICE_PRODUCTIONS_NAME_AN_ACTOR      the acceptance records no acceptor
+PASS  R2-B2 NEG-R2B2-e  ACCEPTANCE_BINDS_SUBJECT_DIGEST        the acceptance is recorded against no exact subject
+PASS  R2-B2 NEG-R2B2-f  ACTOR_FIELDS_RESOLVE_TO_ACTOR_REF      an attribution field reverts to an untagged identity
+PASS  R3-B1 NEG-R3B1-a  BUS_CLASS_LEADING_TERMINALS_BOUND      a seventh bus verb is a top-level alternative inside handoff
+PASS  R3-B1 NEG-R3B1-b  BUS_CLASS_LEADING_TERMINALS_BOUND      a seventh bus verb is nested two group levels deep in message
+PASS  R3-B1 NEG-R3B1-c  BUS_CLASS_LEADING_TERMINALS_BOUND      a seventh bus verb sits behind an omittable leading element
+PASS  R3-B1 NEG-R3B1-d  BUS_CLASS_LEADING_TERMINALS_BOUND      a seventh bus verb is reached through a referenced production
+PASS  R3-B1 NEG-R3B1-e  FRAME_CLASS_LEADING_TERMINALS_BOUND    a third frame terminal is a top-level alternative inside mission
+PASS  R3-B1 NEG-R3B1-f  CLASS_LEADING_TERMINALS_RESOLVE        a bus member's leading position recurses and cannot be decided
+PASS  R3-B1 NEG-R3B1-g  CLASS_LEADING_TERMINALS_RESOLVE        a frame member becomes entirely omittable, so it has no leading terminal
+PASS  R3-B1 NEG-R3B1-h  CLASS_LEADING_TERMINALS_RESOLVE        a stray closing bracket at a bus member's leading position
+PASS  R3-B1 NEG-R3B1-i  CLASS_LEADING_TERMINALS_RESOLVE        an unmatched opening group behind a bus member's leading terminal
+PASS  R3-B2 NEG-R3B2-a  LEDGER_CLASS_LEADING_TERMINALS_BOUND   a thirteenth ledger statement is added to the class
+PASS  R3-B2 NEG-R3B2-b  LEDGER_CLASS_LEADING_TERMINALS_BOUND   a thirteenth ledger terminal is a top-level alternative inside fence
+PASS  R3-B2 NEG-R3B2-c  LEDGER_CLASS_LEADING_TERMINALS_BOUND   a ledger terminal is respelled, so the count holds but membership does not
+PASS  R3-B2 NEG-R3B2-d  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        section 3.3 states a ledger count the grammar does not carry
+PASS  R3-B2 NEG-R3B2-e  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     section 3.3 names a seventh bus leading terminal the grammar does not carry
+PASS  R3-B2 NEG-R3B2-f  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     section 3.3 names a thirteenth ledger leading terminal the grammar does not carry
+PASS  R3-B2 NEG-R3B2-g  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     section 3.3 names a third frame leading terminal the grammar does not carry
+PASS  R3-B2 NEG-R3B2-h  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate bus row above the genuine one hides a seventh terminal
+PASS  R3-B2 NEG-R3B2-i  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row above the genuine one hides a Count of seven
+PASS  R3-B2 NEG-R3B2-j  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a seventh bus terminal is added to the cell as a bare word
+PASS  R3-B2 NEG-R3B2-k  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a seventh bus terminal is added to the cell in bold
+PASS  R3-B2 NEG-R3B2-l  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a seventh bus terminal is added to the cell as a Markdown link
+PASS  R3-B2 NEG-R3B2-m  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     section 3.3 lists a bus terminal twice beside an unchanged Count
+PASS  R3-B2 NEG-R3B2-n  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate bus row spells its Class cell bare
+PASS  R3-B2 NEG-R3B2-o  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row spells its Class cell in bold
+PASS  R3-B2 NEG-R3B2-p  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate bus row spells its Class cell as a Markdown link
+PASS  R3-B2 NEG-R3B2-q  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row states its Count as a word
+PASS  R3-B2 NEG-R3B2-r  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row decorates its Count with markup
+PASS  R3-B2 NEG-R3B2-s  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate bus row bolds a worded Count
+PASS  R3-B2 NEG-R3B2-t  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row annotates its Count with a note
+PASS  R3-B2 NEG-R3B2-u  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row carries one space of indentation
+PASS  R3-B2 NEG-R3B2-v  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate bus row carries two spaces of indentation
+PASS  R3-B2 NEG-R3B2-w  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row carries three spaces of indentation
+PASS  R3-B2 NEG-R3B2-x  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate ledger row with a bare Class cell hides a thirteenth terminal
+PASS  R3-B2 NEG-R3B2-y  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate frame row with a bare Class cell hides a third terminal
+PASS  R3-B2 NEG-R3B2-z  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     the only visible bus row declares seven while a decoy carries the six
+PASS  R3-B2 NEG-R3B2-aa SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a fourth class-table row names no known class
+PASS  R3-B2 NEG-R3B2-ab SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate bus row carries four spaces of indentation
+PASS  R3-B2 NEG-R3B2-ac SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a duplicate bus row omits its leading pipe, which GFM makes optional
+PASS  R3-B2 NEG-R3B2-ad SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a duplicate bus row omits both of its edge pipes
+PASS  R3-B2 NEG-R3B2-ae SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a second class table sits in section 3.3 past the old 2500-character window
+PASS  R3-B2 NEG-R3B2-af SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a backtick-fenced example carrying a `#` line hides a second class table
+PASS  R3-B2 NEG-R3B2-ag SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a tilde-fenced example carrying a `#` line hides a second class table
+PASS  R3-B2 NEG-R3B2-ah SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a shorter inner fence does not close the outer one, and a `#` line behind it hides a table
+PASS  R3-B2 NEG-R3B2-ai SPEC_CLASS_COUNTS_MATCH_GRAMMAR        every heading above the marker is fenced and a decoy sub-heading truncates the section
+PASS  R3-B2 NEG-R3B2-ak SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     an unclosed fence carrying a `#` line hides a second class table
+PASS  R3-B2 NEG-R3B2-aj SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a setext-headed section 4 does not end section 3.3, so a table placed there is still read
+PASS  R3-B2 NEG-R3B2-al SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a rogue class row sits between the section 3.3 heading and the marker sentence
+PASS  R3-B2 NEG-R3B2-am SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a rogue class row sits on the first line of section 3.3, directly beneath its heading
+PASS  R3-B2 NEG-R3B2-an SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a complete second class table sits in the prose prefix of section 3.3
+PASS  R3-B2 NEG-R3B2-ao SPEC_CLASS_COUNTS_MATCH_GRAMMAR        the section 3.3 heading is fenced, so the region opens at section 3.2, where a rogue row sits
+PASS  R3-B2 NEG-R3B2-ap SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a deeper subsection heading between the section 3.3 heading and the marker shrinks the region
+PASS  R3-B2 NEG-R3B2-aq SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a same-level subsection heading in the document's own house style shrinks the region
+PASS  R3-B2 NEG-R3B2-ar SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a second heading for the declared section is refused rather than resolved by position
+PASS  R3-B2 NEG-R3B2-as SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a same-level descendant subsection heading past the marker ends section 3.3 inside itself
+PASS  BUNDLE NEG-M-a     MILESTONE_MARKER                       the milestone marker is advanced
+PASS  BUNDLE NEG-M-b     GATE_TABLE_M2_M5_ABSENT                a gate row is marked complete
+PASS  BUNDLE NEG-S-a     NO_SELF_APPROVAL                       the author self-approves
+PASS  BUNDLE NEG-L-a     LEDGER_NAMES_RESOLVE                   the ledger cites a validator check that does not exist
+PASS  BUNDLE NEG-L-b     LEDGER_LINE_REFS_IN_RANGE              the ledger cites a line beyond the end of the grammar
+PASS  BUNDLE NEG-L-c     LEDGER_ANCHORS_RESOLVE                 a citation is renumbered to another in-range line
+PASS  BUNDLE NEG-L-d     LEDGER_ANCHORS_RESOLVE                 a cited line stops saying what the ledger claims
+PASS  BUNDLE NEG-L-e     LEDGER_CITATIONS_CANONICAL             a comma-list citation dialect no range check reads is reintroduced
+PASS  BUNDLE NEG-C-a     COPYRIGHT_GATE_PRESERVED               the upstream author attribution is altered
+PASS  BUNDLE NEG-C-b     COPYRIGHT_GATE_PRESERVED               the pinned upstream commit is altered
+PASS  BUNDLE NEG-C-c     COPYRIGHT_GATE_PRESERVED               one of the eighteen upstream sources is dropped
+
+3. Disclosed-boundary positive controls
+---------------------------------------
+Each control mutates outside the declared scope of its check. The named check
+MUST still pass. A control that trips is a false positive: it would mean the
+repair silently widened the boundary the specification discloses as open.
+
+PASS  R3-B1 POS-FIELD-a BUS_CLASS_LEADING_TERMINALS_BOUND      a bus-verb-like production at field position inside envelope
+PASS  R3-B2 POS-FIELD-b LEDGER_CLASS_LEADING_TERMINALS_BOUND   a verb-like production at field position inside the fence ledger statement
+PASS  R3-B1 POS-FIELD-c FRAME_CLASS_LEADING_TERMINALS_BOUND    a verb-like production at continuation position inside mission
+PASS  R3-B2 POS-FIELD-d LEDGER_CLASS_LEADING_TERMINALS_BOUND   the author's own disclosed field-position probe, replayed verbatim
+PASS  R3-B2 POS-PIPELESS-a SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     the truthful class table rewritten in valid pipe-less GFM
+PASS  R3-B2 POS-FENCE-a SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a legitimate backtick-fenced example carrying a `#` line precedes the truthful table
+PASS  R3-B2 POS-FENCE-b SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a legitimate tilde-fenced example carrying a `#` line precedes the truthful table
+PASS  R3-B2 POS-FENCE-c SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a class table in section 4 is outside the declared scope of the section 3.3 checks
+PASS  R3-B2 POS-FENCE-d SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a legitimate unclosed fence at the end of section 3.3 raises no false red
+PASS  R3-B2 POS-HEAD-a  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a class table in section 3.2 sits above the section 3.3 heading, outside the declared scope
+PASS  R3-B2 POS-HEAD-b  SPEC_CLASS_COUNTS_MATCH_GRAMMAR        a legitimate fenced example carrying a `#` line sits between the section 3.3 heading and the marker
+PASS  R3-B2 POS-HEAD-c  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a genuine sibling section 3.4 carrying a class table stays outside the declared scope
+PASS  R3-B2 POS-HEAD-d  SPEC_CLASS_TERMINALS_MATCH_GRAMMAR     a genuine sibling section 3.4 at the fixture's own seam still ends the declared section
+
+4. Blocker coverage
+-------------------
+S1-B1   positive checks:  5   negative fixtures:  3   boundary controls:  0   covered
+S1-B2   positive checks:  4   negative fixtures:  3   boundary controls:  0   covered
+S1-B3   positive checks:  6   negative fixtures:  3   boundary controls:  0   covered
+S1-B4   positive checks:  4   negative fixtures:  3   boundary controls:  0   covered
+S1-B5   positive checks:  6   negative fixtures:  3   boundary controls:  0   covered
+S1-B6   positive checks:  6   negative fixtures:  4   boundary controls:  0   covered
+R2-B1   positive checks:  4   negative fixtures:  5   boundary controls:  0   covered
+R2-B2   positive checks:  4   negative fixtures:  6   boundary controls:  0   covered
+R3-B1   positive checks:  3   negative fixtures:  9   boundary controls:  2   covered
+R3-B2   positive checks:  3   negative fixtures: 45   boundary controls: 11   covered
+BUNDLE  positive checks: 13   negative fixtures: 11   boundary controls:  0   covered
+
+5. Result
+---------
+positive checks:   58 run, 0 failed
+negative fixtures: 95 run, 0 not caught, 0 inapplicable
+boundary controls: 13 run, 0 falsely tripped, 0 inapplicable
+
+VALIDATOR PASS
+
+This result is mechanical evidence, not an approval. It establishes no
+verdict, no acceptance, no freshness and no authority. S1 remains Pending
+until an independent reviewer binds these exact bytes.

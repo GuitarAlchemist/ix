@@ -86,6 +86,8 @@ members = [
     "crates/ix-value",
     "crates/ix-baml",
     "crates/ix-ixql",
+    "crates/ix-gaia-census",
+    "crates/ix-gaia-advisory",
 ]
 
 [workspace.package]

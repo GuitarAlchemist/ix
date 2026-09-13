@@ -1,0 +1,26 @@
+[package]
+name = "ix-gaia-advisory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools"]
+keywords = ["advisory", "provenance", "units", "hexavalent", "deterministic"]
+description = "Read-only M3 advisory artifact over copied immutable Gaia evidence. Emits one typed deterministic artifact carrying per-field units, explicit null semantics, content-addressed provenance, and a typed out-of-sample UNKNOWN; and one Class-Development characterization report of count vectors. No authority, no score, no verdict, no threshold, no model fitting."
+
+[dependencies]
+ix-types = { workspace = true }
+ix-gaia-census = { path = "../ix-gaia-census" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+sha2 = "0.10"
+tempfile = { workspace = true }
+
+[lib]
+path = "src/lib.rs"

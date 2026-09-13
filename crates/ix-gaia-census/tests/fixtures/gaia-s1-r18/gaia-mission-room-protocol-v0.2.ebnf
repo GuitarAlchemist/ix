@@ -1,0 +1,503 @@
+(* Gaia Mission-Room Protocol v0.2 — local draft, advisory, no global registration.
+   Milestone: M1 established; M2-M5 absent; NOT INTEGRATED.
+   Supersedes gaia-mission-room-protocol-v0.1.ebnf
+     (4,888 bytes, sha256 62a0cc3e1e4526748e2f67bd0953d2dc19a7a1afc16902eef01bf52dc13ea4d9)
+   for S1 R2 candidacy only. The S1 R1 verdict over the v0.1 bundle remains a valid
+   negative verdict over its own exact subject and is NOT superseded by this file.
+
+   Repairs applied, traceable to gaia-s1-independent-review-r1.md:
+     S1-B1  capsule statement carries non_goals (1..n) and dependencies (0..n)
+     S1-B2  the speculative shared advisory seam and the Oracle role are removed
+     S1-B3  evidence, verdict, freshness, execution and acceptance lattices are disjoint
+     S1-B4  typed identifiers with disjoint lexical prefixes; recipient is unambiguous
+     S1-B5  bus statements are partitioned from ledger statements; inbox is present
+     S1-B6  refusal codes are typed, extensible, fail-closed and forward-preservable
+
+   Repairs applied in the R3 revision, traceable to
+   gaia-s1-r2-independent-review-r1.md:
+     S1R2-B01  every production reachable from protocol is classified exactly
+               once as bus, ledger or frame; the frame class is declared and
+               bounded, so the six-verb bound is mechanically witnessable over
+               the whole protocol and not only over the statement set
+     S1R2-B02  advisory, transition_receipt and close name an attributable
+               Actor, and close binds the exact subject_digest it accepts
+
+   This grammar authorizes nothing. It adds no bus verb, no runtime behavior,
+   no IXQL grammar, and no TARS registration. The R3 repair adds no seventh
+   verb: frame_statement classifies two productions that were already reachable
+   from protocol in v0.1 and in the R2 candidate. *)
+
+(* ---------------------------------------------------------------------------
+   1. Frame
+   --------------------------------------------------------------------------- *)
+
+protocol        = mission , { statement } , close ;
+mission         = "mission" , mission_id , lineage , epoch , objective ;
+lineage         = "lineage" , lineage_id ;
+epoch           = "epoch" , integer ;
+objective       = "objective" , quoted_text ;
+
+(* ---------------------------------------------------------------------------
+   2. Protocol partition  (S1-B5, S1R2-B01)
+
+   A bus_statement is an utterance on the non-privileged collaboration bus.
+   A ledger_statement is a transcript record. A ledger_statement carries no
+   transport effect, opens no channel, and is not a bus verb.
+   A frame_statement opens or closes the Mission Room frame.
+
+   NORMATIVE: bus_statement has exactly six alternatives and their six leading
+   terminals are exactly
+
+       register  send  inbox  ack  heartbeat  handoff
+
+   which is the set declared in the consolidated specification section 3.3.
+   No leading terminal of any ledger_statement or frame_statement may appear in
+   that set, and no production outside bus_statement may introduce a seventh
+   alternative. A seventh alternative of bus_statement itself is a Spec defect
+   and is detected by the bundle validator check EXACTLY_SIX_BUS_VERBS. A
+   seventh verb introduced as a top-level alternative *inside* one of the six
+   members is equally a Spec defect and is detected by
+   BUS_CLASS_LEADING_TERMINALS_BOUND; see the S1R3-B01 paragraph below.
+
+   NORMATIVE: no bus verb approves, commits, merges, pushes, deploys, changes
+   configuration, reads credentials, spends money, grants authority, establishes
+   freshness, or executes a product mutation.
+
+   NORMATIVE (S1R2-B01): the three classes bus_statement, ledger_statement and
+   frame_statement are pairwise disjoint and jointly exhaustive over every
+   production reachable from protocol at statement position. Each such
+   production belongs to exactly one class. A production that is reachable from
+   protocol at statement position and belongs to no class, or that belongs to
+   two classes, is a Spec defect detected by the bundle validator check
+   PROTOCOL_PARTITION_EXHAUSTIVE.
+
+   NORMATIVE (S1R3-B01, S1R3-B02): each of the three classes is bounded by the
+   leading terminals of its *derivations*, not by the count of its member names.
+   For every member of bus_statement, ledger_statement and frame_statement,
+   collect the leading terminal of every top-level alternative of that member,
+   descending into groups, stepping past an omittable leading element to the
+   element behind it, and resolving through a bare reference to another
+   production. The resulting multiset MUST equal the class set declared in
+   specification section 3.3 exactly, in membership and in cardinality:
+
+       bus_statement    exactly the six verbs above
+       ledger_statement exactly assign lane claim capsule fence artifact
+                        transition receipt evidence advisory verdict refuse
+       frame_statement  exactly mission close
+
+   A leading terminal outside the declared set, a missing declared terminal, a
+   surplus alternative, and a respelled terminal that preserves the count are
+   each a Spec defect, detected by BUS_CLASS_LEADING_TERMINALS_BOUND,
+   LEDGER_CLASS_LEADING_TERMINALS_BOUND and FRAME_CLASS_LEADING_TERMINALS_BOUND.
+   Drift between these sets and the Count column of specification section 3.3 is
+   a Spec defect detected by SPEC_CLASS_COUNTS_MATCH_GRAMMAR.
+
+   NORMATIVE: a leading position that cannot be decided — an absent production,
+   a cycle through the leading position, an unbalanced group, or an alternative
+   every element of which is omittable — is a Spec defect detected by
+   CLASS_LEADING_TERMINALS_RESOLVE. An undecidable bound fails closed; it is
+   never read as satisfied.
+
+   SCOPE, declared rather than implied: these bounds read the leading position
+   only. A verb-like production at field or continuation position inside a
+   statement is outside them by construction. That boundary is the one the
+   specification discloses as open, it is unchanged by S1R3, and it is exercised
+   mechanically by the validator's disclosed-boundary positive controls rather
+   than merely asserted.
+
+   The R2 candidate partitioned only the statement set. mission and close were
+   reachable from protocol and classified by nothing, so a seventh verb-like
+   production introduced at frame level passed every check the specification
+   named as detecting it. That undecidability was the defect; classifying the
+   frame closes it without adding a verb.
+
+   The R3 candidate then partitioned the classes by member *name*, and was blind
+   to alternation *within* a member: a seventh bus verb at statement position
+   inside handoff, and a thirteenth ledger statement, both passed the entire
+   suite while the prose named checks as detecting them. That is the same defect
+   one level down, and the S1R3 bounds above close it by deciding the property
+   over derivations. No verb, lattice, refusal code or authority is added.
+   --------------------------------------------------------------------------- *)
+
+statement       = bus_statement | ledger_statement ;
+
+bus_statement   = registration
+                | message
+                | poll
+                | acknowledgement
+                | heartbeat
+                | handoff ;
+
+ledger_statement= role_assignment
+                | lane
+                | claim
+                | capsule
+                | fence
+                | artifact_revision
+                | transition_definition
+                | transition_receipt
+                | evidence
+                | advisory
+                | verdict
+                | refusal ;
+
+(* S1R2-B01: the frame is classified rather than left outside the partition.
+
+   NORMATIVE: frame_statement has exactly two alternatives and their two
+   leading terminals are exactly
+
+       mission  close
+
+   A frame_statement carries no transport effect, opens no channel, grants no
+   authority, and is not a bus verb. It delimits the Mission Room frame: mission
+   opens it and close ends it.
+
+   close records an acceptance_state, and an acceptance is authority-bearing.
+   The frame statement does not produce that authority and cannot: per S1R2-B02
+   the acceptance value is produced by a separate Acceptance Decision, is
+   attributed to a named acceptor, and binds the exact subject_digest it
+   accepts. close records that decision; it does not make it. Likewise the
+   revocation of role assignments, claims, leases and fences at close removes
+   authority and grants none.
+
+   A seventh verb-like alternative added at frame level is a Spec defect
+   detected by the bundle validator check FRAME_STATEMENT_BOUNDED, and a third
+   frame terminal hidden as a top-level alternative inside mission or close is a
+   Spec defect detected by FRAME_CLASS_LEADING_TERMINALS_BOUND. *)
+
+frame_statement = mission | close ;
+
+(* ---------------------------------------------------------------------------
+   3. The six bus statements
+   --------------------------------------------------------------------------- *)
+
+registration    = "register" , profile_id , incarnation_id , capability_set ;
+message         = "send" , envelope ;
+poll            = "inbox" , incarnation_id , epoch ;
+acknowledgement = "ack" , message_id , "by" , incarnation_id ;
+heartbeat       = "heartbeat" , incarnation_id , epoch , timestamp ;
+handoff         = "handoff" , task_id , "from" , incarnation_id , "to" , profile_id , evidence_ref ;
+
+envelope        = message_id , correlation_id , idempotency_key , sender , recipient ,
+                  epoch , deadline , hop_limit , authority_effect , evidence_refs , payload_ref ;
+
+(* sender is the ordered Actor pair: durable identity plus the exact process. *)
+sender          = profile_id , incarnation_id ;
+
+(* S1-B4: an Actor reference is keyword-tagged AND lexically prefix-disjoint, so
+   every recipient string has exactly one derivation. "deliver to whoever
+   currently incarnates this profile" and "deliver to this exact process" are
+   now distinguishable, which is what negative control #10 witnesses. *)
+actor_ref       = ( "profile" , profile_id ) | ( "incarnation" , incarnation_id ) ;
+recipient       = actor_ref ;
+
+(* authority_effect is a transport annotation, not a lattice value. "advisory"
+   here marks a message that carries no effect; it never denotes a verdict. *)
+authority_effect= "advisory" | "none" ;
+
+(* ---------------------------------------------------------------------------
+   4. Ledger statements
+   --------------------------------------------------------------------------- *)
+
+role_assignment = "assign" , role_assignment_id , role , "to" , profile_id ,
+                  "in" , mission_id , "until" , timestamp ;
+
+(* A Lane is a live execution context bound to one Agent Incarnation, one Role
+   Assignment and one Lease. A pane, tab or shell is not a Lane. *)
+lane            = "lane" , lane_id , incarnation_id , role_assignment_id , lease_id ;
+
+claim           = "claim" , task_id , "by" , incarnation_id , "in" , lane_id ,
+                  lease_id , timestamp ;
+
+(* S1-B1: the Task Capsule statement carries the two load-bearing fields the
+   canonical glossary requires and the v0.1 schema dropped.
+
+   Cardinality is unambiguous and mechanically checkable:
+     non_goal_set   is 1..n — an empty list does not parse. A task with no
+                    declared excluded outcome cannot bound in-scope overreach,
+                    so the empty case is refused rather than defaulted.
+     dependency_set is 0..n — an empty list parses and MUST be written "[]".
+                    An absent dependency_set does not parse: unknown dependency
+                    state fails closed instead of reading as "no dependencies".
+   Each dependency_ref is a typed identity reference — an upstream Task Capsule
+   or a versioned contract — never a bare string. *)
+capsule         = "capsule" , task_id , mission_id , capsule_digest ,
+                  "non_goals" , non_goal_set ,
+                  "dependencies" , dependency_set ;
+
+non_goal_set    = "[" , quoted_text , { "," , quoted_text } , "]" ;
+dependency_set  = "[" , [ dependency_ref , { "," , dependency_ref } ] , "]" ;
+dependency_ref  = task_id | contract_ref ;
+
+(* Coordinator Fence: the mutation capability binding lineage, coordinator epoch
+   and the exact evidence pre-image. A stale or divergent fence fails closed. *)
+fence           = "fence" , fence_id , lineage , epoch , subject_digest ;
+
+(* Artifact WorkGraph statements. Candidate inputs from
+   gaia-artifact-workgraph-context-v0.1.md and
+   gaia-artifact-workgraph-staleness-design-v0.1.md.
+   They record lineage facts. They execute nothing. *)
+artifact_revision     = "artifact" , artifact_id , revision_id , digest ,
+                        producer , freshness_state ;
+
+transition_definition = "transition" , transition_definition_id , digest ,
+                        replay_class ;
+
+transition_receipt    = "receipt" , transition_receipt_id , transition_definition_id ,
+                        fence_id , input_digests , evidence_refs , executor ,
+                        execution_result ;
+
+(* S1-B3: each of the three record kinds below binds its own lattice.
+   evidence and advisory carry an evidence_state only. Only verdict carries a
+   verdict_state. No production allows an advisory artifact to carry a
+   verdict_state, a freshness_state, an execution_result or an acceptance_state,
+   so "advisory ... APPROVED" no longer parses.
+
+   S1R2-B02: every lattice-bearing production names the Actor that produced its
+   value. advisory carries a producer, so section 7.1's requirement that all
+   result fields declare a producer is witnessable at the grammar for the one
+   artifact class the specification most wants to keep non-authoritative. *)
+evidence        = "evidence" , evidence_ref , digest , producer , subject_digest , evidence_state ;
+advisory        = "advisory" , advisory_artifact_id , method_version , input_digests ,
+                  producer , evidence_state ;
+verdict         = "verdict" , axis , verdict_state , reviewer , subject_digest , evidence_refs ;
+
+(* S1-B6: every refusal names the exact scope it refused against. For
+   SCOPE_VIOLATION the scope_ref names the declared write_scope entry that the
+   attempted mutation fell outside. *)
+refusal         = "refuse" , refusal_code , subject_digest , scope_ref ;
+
+(* S1R2-B02: close is the only acceptance_state-bearing production, so it is
+   where the separation of review from acceptance is either witnessable or not.
+   It now names the acceptor exercising the Acceptance Decision and binds the
+   exact subject_digest that decision accepts, as section 7.2 requires and as
+   verdict already did. Without both, an acceptance was recordable with no
+   attributable Actor and against no exact subject, and neither the SELF_REVIEW
+   control nor the "who may produce it" column could be checked against it. *)
+close           = "close" , mission_id , acceptor , subject_digest ,
+                  acceptance_state , evidence_refs ;
+
+(* ---------------------------------------------------------------------------
+   5. Disjoint lattices  (S1-B3)
+
+   NORMATIVE: these five terminal sets are pairwise disjoint. Disjointness is
+   the mechanical meaning of "UNKNOWN, ABSENT, PRESENT, CONTRADICTORY, REJECTED
+   and APPROVED remain distinct". FRESHNESS_UNKNOWN is spelled distinctly from
+   UNKNOWN precisely so that the evidence lattice and the freshness lattice
+   share no token. It is checked by the bundle validator check
+   LATTICES_PAIRWISE_DISJOINT.
+
+   NORMATIVE: these five terminal sets are compared byte-exact and
+   case-sensitively. verdict_state REJECTED and acceptance_state rejected are
+   distinct tokens and are never normalized to one another. A consumer that
+   case-folds before comparing conflates a verdict with an acceptance, which is
+   the same defeat of disjointness that FRESHNESS_UNKNOWN was spelled to avoid.
+   This closes non-blocking observation S1R2-N03 by declaring the comparison
+   rule rather than by respelling the acceptance tokens, because respelling
+   them would change a lattice the R2 review confirmed closed.
+
+   NORMATIVE: no advisory Artifact, model consensus, aggregate score or
+   confidence value may produce a verdict_state, a freshness_state or an
+   acceptance_state. Advisory evidence establishes no approval, no acceptance,
+   no safety, no authority and no freshness.
+
+   NORMATIVE (S1R2-B02): every production binding a value from any of these
+   five lattices names the Actor that produced it, and every production binding
+   an acceptance_state also binds the subject_digest it accepts. A lattice value
+   with no attributable Actor is unattributable evidence and is a Spec defect.
+   --------------------------------------------------------------------------- *)
+
+evidence_state  = "PRESENT" | "ABSENT" | "UNKNOWN" | "CONTRADICTORY" ;
+verdict_state   = "APPROVED" | "REJECTED" | "REQUEST_CHANGES" ;
+freshness_state = "FRESH" | "SUSPECT" | "STALE" | "FRESHNESS_UNKNOWN" ;
+execution_result= "RECEIPT_WRITTEN" | "FAILED" | "VERIFIED" ;
+acceptance_state= "accepted" | "rejected" | "blocked" ;
+
+(* Declared reproducibility expectation of a Transition Definition. Candidate
+   input from gaia-uncertainty-grammar-v0.1.ebnf. Seeded decoding alone cannot
+   establish BYTE_EXACT. *)
+replay_class    = "BYTE_EXACT" | "DECISION_EQUIVALENT" | "STATISTICALLY_BOUNDED"
+                | "NON_REPLAYABLE" | "REPLAY_UNKNOWN" ;
+
+axis            = "Standards" | "Spec" | "Security" | "Evidence" ;
+
+(* S1-B2: the Oracle role is removed. An advisory specialist contributes an
+   advisory Artifact and holds no deterministic-gate meaning. *)
+role            = "Director" | "Architect" | "Developer" | "Reviewer" | "Tester"
+                | "DeploymentOperator" | "Researcher" | "AdvisorySpecialist" ;
+
+(* ---------------------------------------------------------------------------
+   6. Typed, extensible refusal codes  (S1-B6)
+
+   registered_refusal_code is the reviewed v0.2 set. The first ten are the
+   mutation-path codes carried forward unchanged from v0.1. The five that
+   follow close the five declared negative controls that had no protocol
+   representation: #17 write-scope violation, #12 writer reviews itself,
+   #16 unregistered actor or off-ledger message, #10 ambiguous recipient,
+   #18 placeholder or non-discriminating quality gate.
+
+   extension_refusal_code keeps the set open, as the specification states,
+   without admitting untyped strings.
+
+   NORMATIVE forward-compatibility rule. A consumer that does not recognise a
+   refusal_code:
+     (a) MUST treat the statement as a refusal and fail closed;
+     (b) MUST NOT convert the unknown code into a pass, an approval, an
+         acceptance, a freshness state, a safety claim or any authority;
+     (c) MUST preserve the code verbatim in the ledger, so a later reviewed
+         registration can interpret it without evidence loss;
+     (d) MUST NOT emit an extension_refusal_code where a registered code
+         applies. Emitting X-SCOPE-VIOLATION instead of SCOPE_VIOLATION is
+         synonym drift and a Spec defect.
+   --------------------------------------------------------------------------- *)
+
+refusal_code            = registered_refusal_code | extension_refusal_code ;
+
+registered_refusal_code = "STALE_EPOCH" | "FENCE_MISMATCH" | "LINEAGE_DIVERGENCE"
+                        | "EVIDENCE_DRIFT" | "PRECONDITION_DRIFT" | "DUPLICATE_INTENT"
+                        | "PRIMARY_NOT_PROVEN_UNAVAILABLE" | "ACCOUNTING_UNKNOWN"
+                        | "STORE_UNAVAILABLE" | "EXECUTOR_UNFENCED"
+                        | "SCOPE_VIOLATION" | "SELF_REVIEW" | "UNREGISTERED_ACTOR"
+                        | "AMBIGUOUS_RECIPIENT" | "NON_DISCRIMINATING_GATE" ;
+
+extension_refusal_code  = "X-" , upper_word , { "-" , upper_word } ;
+upper_word              = upper_letter , { upper_letter | digit } ;
+
+(* ---------------------------------------------------------------------------
+   7. Lists
+
+   N6 of the S1 R1 review asked why the list cardinalities differ. They differ
+   deliberately:
+     capability_set  0..n — a registered Actor may claim no capability yet.
+     evidence_refs   0..n — a statement may legitimately cite no evidence.
+     input_digests   1..n — an advisory Artifact or Transition Receipt with no
+                     input digest could not be deterministic or reproducible.
+     non_goal_set    1..n — see the capsule note above.
+     dependency_set  0..n — present but possibly empty; never absent.
+   --------------------------------------------------------------------------- *)
+
+capability_set  = "[" , [ identifier_body , { "," , identifier_body } ] , "]" ;
+evidence_refs   = "[" , [ evidence_ref , { "," , evidence_ref } ] , "]" ;
+input_digests   = "[" , digest , { "," , digest } , "]" ;
+
+(* ---------------------------------------------------------------------------
+   8. Typed identifiers  (S1-B4)
+
+   Every domain identity carries a distinct lexical type prefix ending in ":".
+   identifier_body excludes ":", so a typed identifier contains exactly one
+   colon and the prefix is unforgeable by a body. No prefix is a prefix of
+   another prefix, so the alphabet is lexically unambiguous. Checked by the
+   bundle validator check TYPED_ID_PREFIXES_DISJOINT.
+
+   Covered domain entities: Actor (profile + incarnation), Agent Profile,
+   Mission Room, Role Assignment, Lane, Task Capsule, Artifact, Artifact
+   Revision, Transition Definition, Transition Receipt, Coordinator Fence,
+   Evidence Item, advisory Artifact, Message correlation, Lease, Contract.
+   --------------------------------------------------------------------------- *)
+
+profile_id              = "p:"    , identifier_body ;
+incarnation_id          = "i:"    , identifier_body ;
+mission_id              = "m:"    , identifier_body ;
+lineage_id              = "lg:"   , identifier_body ;
+role_assignment_id      = "ra:"   , identifier_body ;
+lane_id                 = "ln:"   , identifier_body ;
+task_id                 = "t:"    , identifier_body ;
+lease_id                = "ls:"   , identifier_body ;
+contract_ref            = "k:"    , identifier_body ;
+fence_id                = "f:"    , identifier_body ;
+artifact_id             = "a:"    , identifier_body ;
+revision_id             = "ar:"   , identifier_body ;
+transition_definition_id= "td:"   , identifier_body ;
+transition_receipt_id   = "tr:"   , identifier_body ;
+evidence_ref            = "ev:"   , identifier_body ;
+advisory_artifact_id    = "adv:"  , identifier_body ;
+message_id              = "msg:"  , identifier_body ;
+correlation_id          = "cor:"  , identifier_body ;
+idempotency_key         = "idem:" , identifier_body ;
+payload_ref             = "pl:"   , identifier_body ;
+method_version          = "mv:"   , identifier_body ;
+scope_ref               = ( "s:"  , identifier_body ) | "NO_SCOPE" ;
+
+(* producer, reviewer, executor and acceptor are Actor references, so they
+   inherit the same tagged, unambiguous form as recipient. Each is therefore
+   always resolvable to exactly one Agent Profile or one Agent Incarnation.
+
+   S1R2-B02: these four names are the complete set of attribution fields. Every
+   production that binds one of the five lattices MUST bind at least one of
+   them, so no lattice value is recordable with no attributable Actor. Checked
+   by the bundle validator check LATTICE_PRODUCTIONS_NAME_AN_ACTOR. An
+   attribution field that does not resolve to actor_ref would reintroduce the
+   untagged ambiguity S1-B4 removed, and is checked by
+   ACTOR_FIELDS_RESOLVE_TO_ACTOR_REF. *)
+producer                = actor_ref ;
+reviewer                = actor_ref ;
+executor                = actor_ref ;
+acceptor                = actor_ref ;
+
+subject_digest          = digest ;
+capsule_digest          = digest ;
+deadline                = timestamp ;
+hop_limit               = integer ;
+
+(* ---------------------------------------------------------------------------
+   9. Lexical
+   --------------------------------------------------------------------------- *)
+
+digest          = "sha256:" , hex64 ;
+identifier_body = letter , { letter | digit | "-" | "_" | "." | "/" } ;
+integer         = digit , { digit } ;
+timestamp       = digit , digit , digit , digit , "-" , digit , digit , "-" , digit , digit ,
+                  "T" , digit , digit , ":" , digit , digit , ":" , digit , digit , "Z" ;
+quoted_text     = '"' , { character - '"' } , '"' ;
+hex64           = hex , hex , hex , hex , hex , hex , hex , hex ,
+                  hex , hex , hex , hex , hex , hex , hex , hex ,
+                  hex , hex , hex , hex , hex , hex , hex , hex ,
+                  hex , hex , hex , hex , hex , hex , hex , hex ,
+                  hex , hex , hex , hex , hex , hex , hex , hex ,
+                  hex , hex , hex , hex , hex , hex , hex , hex ,
+                  hex , hex , hex , hex , hex , hex , hex , hex ,
+                  hex , hex , hex , hex , hex , hex , hex , hex ;
+upper_letter    = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+                | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z" ;
+lower_letter    = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
+                | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" ;
+letter          = upper_letter | lower_letter ;
+digit           = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+hex             = digit | "a" | "b" | "c" | "d" | "e" | "f" ;
+character       = letter | digit | " " | "-" | "_" | "." | "," | ":" | "/" ;
+
+(* ---------------------------------------------------------------------------
+   10. Required semantic checks outside the context-free grammar
+
+    1. A bus verb never grants authority, freshness or acceptance.
+    2. An advisory Artifact never carries a verdict, freshness or acceptance value.
+    3. A writer and an approval-bearing reviewer are different Actors; otherwise
+       refuse SELF_REVIEW.
+    4. A mutation outside the declared write_scope refuses SCOPE_VIOLATION and
+       names the exact violated scope entry in scope_ref.
+    5. An unregistered Actor or off-ledger direct message refuses
+       UNREGISTERED_ACTOR and is not admissible evidence.
+    6. A recipient that cannot be resolved to exactly one Actor class refuses
+       AMBIGUOUS_RECIPIENT.
+    7. A quality command that cannot fail on a known mutation refuses
+       NON_DISCRIMINATING_GATE.
+    8. An unrecognised refusal_code fails closed and is preserved verbatim.
+    9. A Transition Receipt with execution_result VERIFIED still requires a
+       separate Acceptance Decision; RECEIPT_WRITTEN and process exit zero
+       establish neither VERIFIED nor acceptance.
+   10. freshness_state is computed from digests, accepted heads and edge policy.
+       A timestamp, a marker, a model assertion or an agent claim cannot
+       establish FRESH.
+   11. A missing manifest, rule or accepted head yields FRESHNESS_UNKNOWN,
+       never FRESH.
+   12. Effects still use only register/send/inbox/ack/heartbeat/handoff.
+   13. A frame statement opens or closes the frame and does nothing else. It
+       transports no message, opens no channel and grants no authority.
+   14. The acceptor named in close is a different Actor from the writer whose
+       work is being accepted; otherwise refuse SELF_REVIEW. Recording an
+       acceptance does not make one: the Acceptance Decision is a separate
+       authority and close is its transcript record.
+   15. Lattice terminals are compared byte-exact and case-sensitively.
+   --------------------------------------------------------------------------- *)
+
+GAIA_MISSION_ROOM_PROTOCOL_V0_2_COMPLETE
