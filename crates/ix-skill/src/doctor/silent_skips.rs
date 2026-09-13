@@ -51,8 +51,8 @@
 //!
 //! Like its siblings, every ambiguity resolves toward *not* reporting:
 //!
-//! - only `crates/*/tests/**` is scanned, so `#[cfg(test)]` unit tests inside
-//!   `src/` are missed entirely;
+//! - only `crates/*/tests/**` and `crates/*/src/**` are scanned, so tests in
+//!   `benches/`, `examples/` or outside `crates/` are missed;
 //! - a skip expressed as `return Ok(());` or by a helper that returns on the
 //!   caller's behalf is not recognised — only a bare `return;`;
 //! - a probe further back than [`PROBE_WINDOW`] lines is not associated with
@@ -63,6 +63,17 @@
 //!
 //! The check under-states how many tests can silently pass rather than crying
 //! wolf.
+//!
+//! # Why `src/` is scanned too
+//!
+//! Unit tests under `#[cfg(test)]` pass and fail exactly like integration
+//! tests, and they skip the same way. A recall audit on 2026-09-13 found six
+//! guarded returns under `src/` that a `tests/`-only scan could never see. One
+//! of them read a path under a single developer's home directory, so on every
+//! CI runner it returned before any of its five assertions. `src/` files are
+//! scanned whole, not only inside `#[cfg(test)]` blocks: a `#[test]` function
+//! only exists in a test build anyway, and a test module declared as
+//! `#[cfg(test)] mod tests;` lives in a file with no `cfg` of its own.
 
 use super::dark_features::Kind;
 use serde::{Deserialize, Serialize};
@@ -492,7 +503,8 @@ pub fn findings_in(file_label: &str, src: &str) -> (Vec<Finding>, usize) {
     (findings, tests_seen)
 }
 
-/// Walk `crates/*/tests/**` and report every test that can skip.
+/// Walk `crates/*/tests/**` and `crates/*/src/**` and report every test that
+/// can skip.
 pub fn scan(root: &Path) -> Result<Census, String> {
     let allowlist = Allowlist::load(root)?;
     scan_with_allowlist(root, &allowlist)
@@ -506,9 +518,11 @@ pub fn scan_with_allowlist(root: &Path, allowlist: &Allowlist) -> Result<Census,
         let entries =
             std::fs::read_dir(&crates).map_err(|e| format!("reading {}: {e}", crates.display()))?;
         for entry in entries.flatten() {
-            let tests = entry.path().join("tests");
-            if tests.is_dir() {
-                collect_rs(&tests, &mut files);
+            for tree in ["tests", "src"] {
+                let dir = entry.path().join(tree);
+                if dir.is_dir() {
+                    collect_rs(&dir, &mut files);
+                }
             }
         }
     }
@@ -758,6 +772,30 @@ fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
             "tracked needs an issue"
         );
         assert!(census.unjustified_allowlist[0].contains(live));
+    }
+
+    #[test]
+    fn a_unit_test_under_src_is_scanned_like_an_integration_test() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let src = root.path().join("crates/demo/src");
+        std::fs::create_dir_all(&src).expect("src dir");
+        std::fs::write(
+            src.join("lib.rs"),
+            format!("pub fn f() {{}}\n\n#[cfg(test)]\nmod tests {{\n{DUCKDB_SHAPE}}}\n"),
+        )
+        .expect("write lib.rs");
+        // A test module declared from its parent carries no `#[cfg(test)]` of
+        // its own, and is still a test.
+        std::fs::create_dir_all(src.join("verbs")).expect("verbs dir");
+        std::fs::write(src.join("verbs/tests.rs"), DUCKDB_SHAPE).expect("write tests.rs");
+
+        let census = scan_with_allowlist(root.path(), &Allowlist::default()).expect("scan");
+        assert_eq!((census.files_scanned, census.tests_scanned), (2, 2));
+        let files: Vec<&str> = census.findings.iter().map(|f| f.file.as_str()).collect();
+        assert_eq!(
+            files,
+            vec!["crates/demo/src/lib.rs", "crates/demo/src/verbs/tests.rs"]
+        );
     }
 
     #[test]

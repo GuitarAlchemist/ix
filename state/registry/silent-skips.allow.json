@@ -58,6 +58,12 @@
       "issue": "ix#294"
     },
     {
+      "file": "crates/ix-governance/src/feedback.rs",
+      "test": "test_read_beliefs_from_demerzel_state",
+      "kind": "environment",
+      "reason": "Reads governance/demerzel/state from the Demerzel submodule. Both ci.yml jobs check out submodules recursively, so CI runs its five assertions; it skips only when the submodule is not initialised. Until 2026-09-13 it read an absolute path under one developer's home directory and returned before every assertion on every CI runner."
+    },
+    {
       "file": "crates/ix-optick-sae/tests/python_contract_tests.rs",
       "test": "python_contract_suites_pass",
       "kind": "environment",
@@ -107,11 +113,47 @@
       "issue": null
     },
     {
+      "file": "crates/ix-skill/src/verbs/compile.rs",
+      "test": "coverage_baseline_tfidf_over_probe_corpus",
+      "kind": "environment",
+      "reason": "Reads state/thinking-machine/coverage-probes.jsonl, which is committed, so CI runs it. It skips only when the crate is tested outside the workspace tree (Codex #79 P2)."
+    },
+    {
+      "file": "crates/ix-skill/src/verbs/compile.rs",
+      "test": "embedding_sweep_english_models_over_probe_corpus",
+      "kind": "environment",
+      "reason": "Behind the `embeddings` feature, which no CI job enables, so this test is never compiled there; state/registry/dark-features.allow.json already tracks that. When enabled, the guard fires only outside the workspace tree, since the probe corpus is committed; the real dependency is the model download."
+    },
+    {
+      "file": "crates/ix-skill/src/verbs/compile.rs",
+      "test": "ood_scoring_method_sweep_over_probe_corpus",
+      "kind": "environment",
+      "reason": "Behind the `embeddings` feature, which no CI job enables, so this test is never compiled there; state/registry/dark-features.allow.json already tracks that. When enabled, the guard fires only outside the workspace tree, since the probe corpus is committed; the real dependency is the model download."
+    },
+    {
+      "file": "crates/ix-skill/src/verbs/embed_coverage.rs",
+      "test": "embedding_ranks_in_domain_above_out_of_domain",
+      "kind": "environment",
+      "reason": "Behind the `embeddings` feature, which no CI job enables, so this test is never compiled there; state/registry/dark-features.allow.json already tracks that. When enabled, it skips when bge-base-en cannot be loaded (offline, or no ONNX runtime), which a hosted runner without a model cache cannot provide."
+    },
+    {
+      "file": "crates/ix-skill/src/verbs/pipeline.rs",
+      "test": "default_constitution_matches_committed_pin",
+      "kind": "environment",
+      "reason": "Reads the default constitution from the Demerzel submodule and the committed pin in state/governance/constitution-pins.json. CI checks out submodules recursively, so it runs there; it skips only outside the workspace or without the submodule."
+    },
+    {
       "file": "crates/ix-skill/tests/local_embed_cli.rs",
       "test": "local_embed_emits_vectors_from_a_preseeded_cache",
       "kind": "environment",
       "reason": "Needs IX_TEST_FASTEMBED_CACHE pointing at a pre-downloaded fastembed model cache. CI never downloads ONNX models (see the `embeddings` entry in dark-features.allow.json). Skips 7 assertions.",
       "issue": null
+    },
+    {
+      "file": "crates/ix-voicings/src/lib.rs",
+      "test": "grammar_file_parses",
+      "kind": "environment",
+      "reason": "find_grammar_file looks for grammars/progressions.cfg relative to the working directory. cargo test runs a crate's unit tests from the crate directory, where that file is committed, so CI runs it; it skips only when the test binary is started from another directory."
     },
     {
       "file": "crates/ix-voicings/tests/smoke_phase_a.rs",
