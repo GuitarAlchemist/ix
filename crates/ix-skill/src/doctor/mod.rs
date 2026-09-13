@@ -358,7 +358,7 @@ fn check_silent_skips(root: &Path) -> CheckResult {
         Err(e) => {
             return CheckResult::new(NAME, Status::Fail, format!("could not scan tests: {e}"))
                 .with_remedy(
-                    "this check reads crates/*/tests/** directly — a read failure means the                      scan did not happen, so it is a failure rather than a pass",
+                    "this check reads crates/*/tests/** and crates/*/src/** directly — a read failure means the                      scan did not happen, so it is a failure rather than a pass",
                 )
         }
     };
