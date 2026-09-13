@@ -223,7 +223,11 @@ fn synthesis_diagnosis_id(
 /// Merge a set of observations into a [`MergedState`]. Implements
 /// the full pipeline specified in `hex-merge.md`:
 ///
-/// 1. Deduplicate by `(source, diagnosis_id, round, ordinal)`
+/// 0. Drop incoming `demerzel-merge` observations — synthesis is
+///    derived cache, not evidence, and is re-derived in step 3
+/// 1. Deduplicate by `(source, diagnosis_id, round, ordinal)`,
+///    folding key collisions to the minimum weight and collapsing
+///    divergent variants to `Contradictory`
 /// 2. Apply staleness filter: drop obs with `round < current_round - K`
 /// 3. Group by claim_key, synthesize direct contradictions per the
 ///    Belnap-extended table
@@ -246,9 +250,41 @@ pub fn merge(
     // BTreeMap keeps order deterministic so the merge output is
     // reproducible across runs regardless of input order. This is
     // load-bearing for the CRDT correctness properties.
+    //
+    // The fold across a key collision is `resolve_key_versions` from
+    // hex-merge.md (2026-07-20, GuitarAlchemist/hari#27): take the
+    // MINIMUM weight, and collapse divergent variants to
+    // `Contradictory`. A source contradicting itself within one
+    // observation slot is irreconcilable evidence, not a race for the
+    // last writer to win.
+    //
+    // This replaced a first-write-wins `or_insert_with`, which was
+    // order-DEPENDENT and so quietly violated the commutativity the
+    // invariants below assert: T@1.0 then F@0.5 kept T, while the
+    // swapped input kept F. Both `min` and "differ ⇒ C" are
+    // commutative and associative, and C is absorbing, so the fold is
+    // order-independent for any number of colliding versions.
+    // @ai:invariant key-collision fold is order-independent — min weight, divergent variants collapse to Contradictory [T:test conf:0.95 src:test_key_collision_fold_is_order_independent]
+    //
+    // ── Step 0: drop incoming synthesis ───────────────────────────
+    // Synthesis is derived cache, not evidence. A carried
+    // `demerzel-merge` observation was computed from whatever view its
+    // producer happened to hold, so keeping it could let a state
+    // survive that a fresh derivation would never produce. Drop them
+    // and re-derive from surviving base evidence in step 3.
+    // (hex-merge.md 2026-07-20, GuitarAlchemist/hari#27.)
+    // @ai:invariant incoming demerzel-merge observations never survive — synthesis is re-derived from base evidence every merge [T:test conf:0.95 src:test_incoming_synthesis_is_dropped_and_rederived]
     let mut by_key: BTreeMap<(String, String, u32, u32), HexObservation> = BTreeMap::new();
-    for obs in observations {
-        by_key.entry(obs.dedup_key()).or_insert_with(|| obs.clone());
+    for obs in observations.iter().filter(|o| o.source != MERGE_SOURCE) {
+        by_key
+            .entry(obs.dedup_key())
+            .and_modify(|kept| {
+                if kept.variant != obs.variant {
+                    kept.variant = Hexavalent::Contradictory;
+                }
+                kept.weight = kept.weight.min(obs.weight);
+            })
+            .or_insert_with(|| obs.clone());
     }
 
     // ── Step 2: staleness filter ──────────────────────────────────
@@ -700,15 +736,17 @@ mod tests {
 
     #[test]
     fn proof_dedup_by_key() {
-        // Same dedup key = same observation. The second copy (with
-        // DIFFERENT weight) should be ignored — first-write-wins on
-        // tied keys.
+        // Same dedup key = same observation. Per `resolve_key_versions`
+        // (hex-merge.md 2026-07-20, GuitarAlchemist/hari#27) the collision
+        // folds to the MINIMUM weight — deliberately NOT first-write-wins,
+        // which this test asserted until the fixture corpus made the
+        // order-dependence explicit.
         let a = obs("tars", "d", 0, 0, "k::valuable", Hexavalent::True, 0.8);
         let a_dup = HexObservation {
-            weight: 0.3, // different, should be ignored
+            weight: 0.3, // lower — min-fold keeps THIS one
             ..a.clone()
         };
-        let result = merge_all(&[a.clone(), a_dup]).unwrap();
+        let result = merge_all(&[a.clone(), a_dup.clone()]).unwrap();
 
         // Only one primary observation (plus any synthesized).
         let primary_count = result
@@ -717,13 +755,88 @@ mod tests {
             .filter(|o| o.source == "tars")
             .count();
         assert_eq!(primary_count, 1, "dedup should collapse to one");
-        // The remaining copy should be the first one.
         let remaining = result
             .observations
             .iter()
             .find(|o| o.source == "tars")
             .unwrap();
-        assert!((remaining.weight - 0.8).abs() < 1e-9);
+        assert!(
+            (remaining.weight - 0.3).abs() < 1e-9,
+            "collision must keep the minimum weight, got {}",
+            remaining.weight
+        );
+
+        // The property first-write-wins violated: order must not matter.
+        let swapped = merge_all(&[a_dup, a]).unwrap();
+        assert_eq!(
+            result.observations, swapped.observations,
+            "key-collision fold must be order-independent"
+        );
+    }
+
+    #[test]
+    fn test_incoming_synthesis_is_dropped_and_rederived() {
+        // A carried synthesis whose evidence no longer exists must vanish,
+        // not ride along. Pins fixture 10_incoming_merge_source_dropped.
+        let base = obs("tars", "d", 0, 0, "k::valuable", Hexavalent::True, 1.0);
+        let carried = HexObservation {
+            source: MERGE_SOURCE.to_string(),
+            diagnosis_id: "merge:direct:k::valuable:ix|d|0|1+tars|d|0|0".to_string(),
+            variant: Hexavalent::Contradictory,
+            ..base.clone()
+        };
+
+        let result = merge_all(&[base.clone(), carried]).unwrap();
+        assert_eq!(
+            result.observations.len(),
+            1,
+            "the carried C has nothing to contradict and must not survive"
+        );
+        assert_eq!(result.observations[0].variant, Hexavalent::True);
+        assert_eq!(result.contradictions.len(), 0);
+
+        // Dropping incoming synthesis must not suppress a contradiction that
+        // the surviving base evidence still justifies — it is re-derived.
+        let opposing = obs("ix", "d", 0, 1, "k::valuable", Hexavalent::False, 1.0);
+        let rederived = merge_all(&[base, opposing]).unwrap();
+        assert_eq!(
+            rederived.contradictions.len(),
+            1,
+            "real cross-source disagreement still synthesizes"
+        );
+    }
+
+    #[test]
+    fn test_key_collision_fold_is_order_independent() {
+        // DIVERGENT variants on one dedup key are irreconcilable: a source
+        // contradicting itself inside a single observation slot resolves to
+        // Contradictory at the minimum weight, not to whichever arrived
+        // first. Pins fixture 08_collision_divergent_payload.
+        let t = obs("tars", "d", 0, 0, "k::valuable", Hexavalent::True, 1.0);
+        let f = HexObservation {
+            variant: Hexavalent::False,
+            weight: 0.5,
+            ..t.clone()
+        };
+
+        let forward = merge_all(&[t.clone(), f.clone()]).unwrap();
+        let reverse = merge_all(&[f, t]).unwrap();
+        assert_eq!(
+            forward.observations, reverse.observations,
+            "divergent fold must be order-independent"
+        );
+
+        let resolved = forward
+            .observations
+            .iter()
+            .find(|o| o.source == "tars")
+            .expect("the collapsed base observation survives");
+        assert_eq!(resolved.variant, Hexavalent::Contradictory);
+        assert!((resolved.weight - 0.5).abs() < 1e-9);
+
+        // The C is a resolved BASE observation, not a demerzel-merge
+        // synthesis — same-source disagreement never becomes a contradiction.
+        assert_eq!(forward.contradictions.len(), 0);
     }
 
     // ────────────────────────────────────────────────────────────

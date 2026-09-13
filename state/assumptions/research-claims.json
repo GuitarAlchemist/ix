@@ -1,0 +1,44 @@
+[
+  {
+    "claim": "DFT magnitudes of a pitch-class set are transposition- and inversion-invariant, so magnitude-only (cosine) similarity cannot separate homometric (Z-related) sets; the discriminating information is entirely in the DFT phases",
+    "truth_value": "T",
+    "confidence": 0.92,
+    "source": "deep-research-2026-07-22",
+    "evidence": "Amiot & Yust MCM 2022 (10.1007/978-3-031-07015-0_23); Jedrzejewski & Johnson; arXiv:1304.6608"
+  },
+  {
+    "claim": "Transposition by x shifts the k-th DFT phase by exactly k*x mod 12 (a closed-form pure rotation), so a transposition offset over Z/12 is recoverable algebraically rather than by learned search",
+    "truth_value": "T",
+    "confidence": 0.92,
+    "source": "deep-research-2026-07-22",
+    "evidence": "Yust Fourier Phase Space (Princeton); Yust Fourier Phase and Pitch-Class Sum (MCM 2019)"
+  },
+  {
+    "claim": "Products of DFT coefficients whose indices partition 12 are transposition-invariant scalar signatures, and inversion negates their imaginary part while preserving the real part, yielding indexable chirality-aware features",
+    "truth_value": "T",
+    "confidence": 0.85,
+    "source": "deep-research-2026-07-22",
+    "evidence": "Amiot & Yust MCM 2022, Proposition 3"
+  },
+  {
+    "claim": "The recommended production architecture for phase-based transposition-invariant music retrieval is a two-stage retriever (magnitude-cosine top-K then closed-form phase re-rank), not a bespoke phase-aware ANN index",
+    "truth_value": "P",
+    "confidence": 0.7,
+    "source": "deep-research-2026-07-22",
+    "evidence": "synthesis of retrieval-architecture angles; transposition group over Z/12 is a trivial 12-element search"
+  },
+  {
+    "claim": "12-TET has exactly 23 homometric (Z-related) set-class pairs",
+    "truth_value": "T",
+    "confidence": 0.95,
+    "source": "ga579-code-verified",
+    "evidence": "ga#579 SpectralPhaseAlignment test: grouping GA SetClass.Items by ICV (degenerate classes excluded) yields exactly 23; matches Forte and the 2026-07-04 note"
+  },
+  {
+    "claim": "12-TET has exactly 23 homometric (Z-related) set-class pairs",
+    "truth_value": "F",
+    "confidence": 0.6,
+    "source": "deep-research-web-2026-07-22",
+    "evidence": "web sources cite 19 homometric pairs at N=12 (first triple at N=16) — conflicts with the code-verified count of 23"
+  }
+]

@@ -3,6 +3,16 @@
 //! Traces are JSON files exported by GA tools, each containing a list of events
 //! with timing and metadata. This module loads them and computes statistics
 //! suitable for feeding into ix ML pipelines.
+//!
+//! # Not a [`DataSource`](crate::protocol::DataSource)
+//!
+//! Its unit is a [`Trace`] — a nested domain document with a `trace_id`, an
+//! outcome string and a list of events — not a numeric record. Flattening one
+//! to a [`DataRecord`](crate::protocol::DataRecord) is a modelling decision
+//! that belongs to the analysis, not to the loader, and
+//! [`compute_stats`] / [`traces_to_csv_rows`] are the two projections IX
+//! currently makes. Implementing the trait here would have to pick one of them
+//! and call it *the* record shape.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

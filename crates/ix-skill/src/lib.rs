@@ -1,6 +1,9 @@
 //! ix — Claude Code ML skill CLI, library entry point for tests.
 
+pub mod doctor;
 pub mod output;
+#[cfg(feature = "embeddings")]
+pub mod local_embed;
 pub mod verbs;
 
 /// Force-link every crate containing `#[ix_skill]` registrations, so

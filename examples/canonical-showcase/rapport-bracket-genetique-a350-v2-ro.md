@@ -1,5 +1,10 @@
 # Proiectarea generativă a unui bracket aeronautic A350 prin pipeline-ul ix cu 13 unelte
 
+> [!CAUTION]
+> **Historical synthetic exploration — not an engineering report.** This document predates IX's engineering co-processor boundary and contains unvalidated claims. IX did not run a native CAD kernel, structural topology optimizer, FEA/CFD solver, collision-aware 5-axis planner, physical test campaign, or certification process. In particular, `ix_topo` is topological data analysis, Nash equilibrium is not a Pareto front, and Viterbi is not a collision-aware toolpath planner. Every geometry, load, stress, frequency, mass reduction, safety factor, toolpath, certification statement, and commercial comparison below is illustrative only and must not be used for design, manufacture, safety, procurement, or certification decisions. See `docs/adr/0005-engineering-coprocessor-boundary.md`.
+>
+> **Explorare sintetică istorică — nu este un raport de inginerie.** Acest document este anterior frontierei „co-procesor de inginerie” a IX și conține afirmații nevalidate. IX nu a executat niciun nucleu CAD nativ, optimizator topologic structural, solver FEA/CFD, planificator 5 axe anti-coliziune, campanie de teste fizice sau proces de certificare. În particular, `ix_topo` înseamnă analiză topologică de date, un echilibru Nash nu este un front Pareto, iar Viterbi nu este un planificator de traiectorie anti-coliziune. Toate geometriile, sarcinile, tensiunile, frecvențele, reducerile de masă, factorii de siguranță, traiectoriile, declarațiile de certificare și comparațiile comerciale de mai jos sunt pur ilustrative și nu trebuie folosite pentru decizii de proiectare, fabricație, siguranță, achiziție sau certificare. Vezi `docs/adr/0005-engineering-coprocessor-boundary.md`.
+
 **Raport tehnic — Versiunea 2.0 (revizuită)**
 **Clasificare: Intern / Confidențial**
 **Data: 12 aprilie 2026**

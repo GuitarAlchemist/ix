@@ -24,6 +24,7 @@ members = [
     "crates/ix-gpu",
     "crates/ix-cache",
     "crates/ix-pipeline",
+    "crates/ix-petri",
     "crates/ix-adversarial",
     "crates/ix-grammar",
     "crates/ix-agent",
@@ -84,12 +85,14 @@ members = [
     "crates/ix-registrar",
     "crates/ix-streeling",
     "crates/ix-value",
+    "crates/ix-baml",
+    "crates/ix-ixql",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 rust-version = "1.80"
 repository = "https://github.com/GuitarAlchemist/ix"
 
@@ -148,6 +151,7 @@ ix-search = { path = "crates/ix-search", version = "0.1.0" }
 ix-gpu = { path = "crates/ix-gpu", version = "0.1.0" }
 ix-cache = { path = "crates/ix-cache", version = "0.1.0" }
 ix-pipeline = { path = "crates/ix-pipeline", version = "0.1.0" }
+ix-petri = { path = "crates/ix-petri", version = "0.1.0" }
 ix-adversarial = { path = "crates/ix-adversarial", version = "0.1.0" }
 ix-grammar = { path = "crates/ix-grammar", version = "0.1.0" }
 ix-agent = { path = "crates/ix-agent", version = "0.1.0" }
@@ -191,6 +195,8 @@ ix-ai-annotations = { path = "crates/ix-ai-annotations", version = "0.1.0" }
 ix-sentrux-annotations = { path = "crates/ix-sentrux-annotations", version = "0.1.0" }
 ix-assumption-graph = { path = "crates/ix-assumption-graph", version = "0.1.0" }
 ix-registrar = { path = "crates/ix-registrar", version = "0.1.0" }
+ix-baml = { path = "crates/ix-baml", version = "0.1.0" }
+ix-ixql = { path = "crates/ix-ixql", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

@@ -28,11 +28,31 @@ pub const ESCALATION_THRESHOLD: f64 = 0.3;
 /// distribution may collapse to a discrete truth value.
 pub const SHARPEN_THRESHOLD: f64 = 0.8;
 
-/// `true` iff the distribution's `C` mass exceeds
-/// [`ESCALATION_THRESHOLD`]. Callers should check this immediately
-/// after each AND/OR/accumulate step.
+/// `true` iff `C` exceeds [`ESCALATION_THRESHOLD`] as a share of the
+/// **informative** mass — `T + P + D + F + C`, with `Unknown`
+/// excluded. Callers should check this immediately after each
+/// AND/OR/accumulate step.
+///
+/// v1.2 (hex-merge.md, GuitarAlchemist/hari#28). v1.1 measured `C`
+/// against the *full* mass, which let abstention mute a real
+/// contradiction: a genuine T/F pair plus enough `Unknown` bystanders
+/// pushed `dist[C]` under the threshold without resolving anything.
+/// Sharing over the informative mass makes escalation independent of
+/// how many sources declined to take a position.
+///
+/// An all-`Unknown` distribution has no informative mass and never
+/// escalates — nothing conflicts, so there is nothing to escalate.
+// @ai:invariant abstention cannot suppress escalation — Unknown mass is excluded from the denominator [T:test conf:0.95 src:test_abstention_cannot_mute_escalation]
 pub fn escalation_triggered(dist: &HexavalentDistribution) -> bool {
-    dist.get(&Hexavalent::Contradictory) > ESCALATION_THRESHOLD
+    let c = dist.get(&Hexavalent::Contradictory);
+    // Summed directly rather than as `1.0 - dist[U]` so the rule does
+    // not quietly depend on the distribution being normalized.
+    let informative = dist.get(&Hexavalent::True)
+        + dist.get(&Hexavalent::Probable)
+        + dist.get(&Hexavalent::Doubtful)
+        + dist.get(&Hexavalent::False)
+        + c;
+    informative > f64::EPSILON && c / informative > ESCALATION_THRESHOLD
 }
 
 /// Hexavalent-specific NOT: swap `T↔F`, swap `P↔D`, leave `U` and
@@ -161,6 +181,42 @@ mod tests {
     fn escalation_triggers_above_threshold() {
         let d = hexavalent_from_tpudfc(0.4, 0.0, 0.0, 0.0, 0.2, 0.4).unwrap();
         assert!(escalation_triggered(&d));
+    }
+
+    #[test]
+    fn test_abstention_cannot_mute_escalation() {
+        // Fixture 11: a genuine T/F pair synthesizes C at full weight, then
+        // three Unknown bystanders flood the claim. Raw masses T=F=C=1, U=3.
+        let d = hexavalent_from_tpudfc(1.0 / 6.0, 0.0, 0.5, 0.0, 1.0 / 6.0, 1.0 / 6.0).unwrap();
+
+        // v1.1 measured C against the full mass: 0.1667 < 0.3, so abstention
+        // silently muted a real contradiction. v1.2 shares over the
+        // informative mass: 0.1667 / 0.5 = 0.3333 > 0.3.
+        assert!(
+            d.get(&Hexavalent::Contradictory) < ESCALATION_THRESHOLD,
+            "precondition: this case is below the OLD full-mass rule"
+        );
+        assert!(
+            escalation_triggered(&d),
+            "Unknown bystanders must not suppress a T/F contradiction"
+        );
+
+        // Adding yet more abstention must not flip it back off.
+        let flooded =
+            hexavalent_from_tpudfc(1.0 / 21.0, 0.0, 0.857_142_857, 0.0, 1.0 / 21.0, 1.0 / 21.0)
+                .unwrap();
+        assert!(
+            escalation_triggered(&flooded),
+            "escalation must be independent of how many sources abstain"
+        );
+    }
+
+    #[test]
+    fn all_unknown_never_escalates() {
+        // Fixture 12: the informative denominator is empty. Nothing
+        // conflicts, so there is nothing to escalate — and no divide-by-zero.
+        let d = hexavalent_from_tpudfc(0.0, 0.0, 1.0, 0.0, 0.0, 0.0).unwrap();
+        assert!(!escalation_triggered(&d));
     }
 
     #[test]

@@ -16,6 +16,7 @@ When the user has time series, audio, sensor data, or any signal that needs freq
 - **Filtering** — Low-pass, high-pass, band-pass FIR/IIR filters
 - **Wavelets** — Haar wavelet transform, multi-resolution analysis
 - **Kalman Filter** — State estimation for noisy dynamic systems
+- **State Space** — Discrete LTI models `x_{k+1} = Ax_k + Bu_k + w_k`; observability and controllability rank tests
 - **Spectral Analysis** — Power spectral density, spectrogram
 - **Windows** — Hamming, Hanning, Blackman for spectral leakage reduction
 - **Convolution/Correlation** — Cross-correlation, autocorrelation
@@ -26,6 +27,7 @@ When the user has time series, audio, sensor data, or any signal that needs freq
 use ix_signal::fft::{fft, ifft, power_spectrum};
 use ix_signal::filter::{low_pass, high_pass};
 use ix_signal::kalman::KalmanFilter;
+use ix_signal::state_space::StateSpaceModel;
 use ix_signal::wavelet::haar_wavelet_transform;
 use ix_signal::spectral::spectrogram;
 use ix_signal::window::{hamming, hanning};
@@ -34,4 +36,6 @@ use ix_signal::window::{hamming, hanning};
 ## Tips
 - Apply a window function before FFT to reduce spectral leakage
 - Kalman filter requires a state model — help user define F, H, Q, R matrices
+- `StateSpaceModel::from_kalman` lifts a configured filter into a reusable plant `(A, B, C)`
+- Before trusting a diagnostic built on a state model, run `observability()`: a state that is not observable cannot be diagnosed from the outputs, whatever the dashboard claims
 - Use power spectrum to identify dominant frequencies

@@ -1,0 +1,9 @@
+level,stage_count,stages
+0,5,blast_radius;produced_at_iso;produced_at_safe;reviewer_chain;trigger_context~0
+1,1,trigger_context
+2,1,verdict_id
+3,1,verdict
+4,1,verdict_path
+5,1,s08~0
+6,1,s08~1
+7,1,s08

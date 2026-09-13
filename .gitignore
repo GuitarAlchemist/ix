@@ -76,18 +76,22 @@ ix.lock
 # (every NL→pipeline outcome). Read in aggregate via `ix pipeline hits`; the raw
 # rows are per-environment runtime data, not a committed artifact. (Contrast
 # gaps.jsonl, the curated dogfood BACKLOG, which IS tracked.)
-state/thinking-machine/hits.jsonl
+# `**/` because the writer resolves the path cwd-relative, so the ledger appears
+# under a crate dir when the binary is run from there — not just at the repo root.
+**/state/thinking-machine/hits.jsonl
 
 # ix "thinking machine" provenance trail (chain-of-evidence v1) — append-only
 # per-run records (ix-lock/v2). High-volume runtime instrumentation, read in
 # aggregate; the raw rows are per-environment runtime data, not a committed
-# artifact (contrast the schema, which lives in docs/contracts/).
-state/thinking-machine/provenance.jsonl
+# artifact (contrast the schema, which lives in docs/contracts/). `**/` for the
+# same cwd-relative reason as hits.jsonl above.
+**/state/thinking-machine/provenance.jsonl
 
 # maintain-gate RSI oracle verdict ledger — per-run accept/reject records emitted
 # by the nightly gate. Per-environment runtime data like its hits/provenance peers;
-# the contract + schema are tracked under docs/contracts/maintain-gate.*.
-state/thinking-machine/maintain-gate.jsonl
+# the contract + schema are tracked under docs/contracts/maintain-gate.*. `**/`
+# for the same cwd-relative reason as hits.jsonl above.
+**/state/thinking-machine/maintain-gate.jsonl
 
 # in-process embedding catalog cache (feature `embeddings`) — runtime data,
 # regenerated from the skill catalog on demand; cwd-relative so it can appear at

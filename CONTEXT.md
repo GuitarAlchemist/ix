@@ -49,6 +49,12 @@ contracts (see `docs/contracts/`), not runtime coupling.
 - **Analyst's bench** — the in-process, in-memory DuckDB layer (`ix-duck`) over the
   JSONL/Parquet IX and `ga` already emit. Not a production engine, not a source of
   truth (see `docs/DUCKDB.md`).
+- **Coordination shape** — a content-addressed, read-only advisory artifact derived
+  from typed event-graph windows: balance residuals, queue pressure, tail latency,
+  graph gradients or Laplacian energy, and cycle exposure. It is not a continuum
+  stress tensor, routing decision, authority grant, safety verdict, or control
+  command. Current execution belongs to DuckDB and IX modules; IXQL may describe or
+  verify the plan but remains spec-only and non-executable.
 - **Lens** — a read-only analyst module on the bench (`ix_duck::{chatbot, routing,
   loops, ood, maintain}`) that turns a GA artifact set into a queryable signal. A lens
   owns *analytics*, not ingest.
@@ -78,6 +84,32 @@ contracts (see `docs/contracts/`), not runtime coupling.
   (`json_extract(to_json(obj),'$.f')` / `TRY_CAST`, never struct-field access, never
   `coalesce(...,0)`). The seam that makes the absence-as-zero / struct-bind-crash
   defect class non-recurring (see `docs/solutions/.../2026-06-19-duckdb-absence-as-zero-and-struct-bind-crash.md`).
+- **Activation coverage** (`activations_coverage` in `optick-sae-artifact.json`) — the
+  declared share of the OPTIC-K corpus present in `feature_activations.parquet`. The
+  parquet holds the **train split only** (measured 2026-09-07: 297,395 of 313,047
+  voicings, **95.0%**), each row keyed by `optick_row` — its position in the *full*
+  index, not in the split. So a full-corpus join legitimately misses 15,652 rows, and
+  before this block existed it missed them **silently**: no error, no field, and a
+  plausible-looking row count (ix#248). Coverage is *declared* (producer-side counts),
+  *validated* (`validate_coverage` — additivity, staleness, a 90% floor) and
+  *reconciled* (`optick_coverage.reconcile` — the declaration against the parquet's
+  actual key column). Only the third layer can see the bytes; the first two compare the
+  producer's numbers to themselves. Contract:
+  `docs/contracts/2026-09-07-optick-sae-activations-coverage.contract.md`.
+- **Capability (IXQL)** (`ix_ixql::capability`) — an adapter registered under the name
+  a pipeline calls a peer operation by (`tars.research`, `alert`) or a named governance
+  check by (`→ explanation_requirement`). The evaluator dispatches to it instead of
+  matching on peer names, and never decides what a check *means* — that is Demerzel's.
+  An unregistered name fails the run; the language's own built-ins (`ix.io.write`, …)
+  cannot be registered over, so no adapter can route around the schema gate. Distinct
+  from a **tool** (MCP-callable) and a **skill**: a capability is how one IXQL run
+  reaches either, or something else entirely.
+- **Verdict gate** — consecutive `→ when T >= 0.8: …` / `→ when C: …` steps, read as
+  **one** match over the verdict (hexavalent truth + confidence) the previous
+  capability attached — not as successive filters. The verdict travels *beside* the
+  JSON value, never inside it. Semantics are provisional until Demerzel's spec states
+  them: no verdict is an error, no matching arm stops the pipeline and is recorded in
+  `RunOutcome::gates`, an unhandled `C` fails the run.
 
 ## Conventions
 

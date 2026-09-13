@@ -2,6 +2,15 @@
 //!
 //! Use case: connect to live data feeds (market data, sensor streams, etc.)
 //! and pipe into models in real-time.
+//!
+//! # Reaching the synchronous protocol
+//!
+//! Nothing here implements [`DataSource`](crate::protocol::DataSource), for
+//! the same reason as [`crate::tcp`]: the reads are `async`. A WebSocket is
+//! also unbounded in time — there is no point at which it is exhausted — so
+//! the conversion has to name a cutoff. [`collect_ws`] is that cutoff: it
+//! takes `n_messages` and returns a [`DataBatch`](crate::protocol::DataBatch),
+//! which [`crate::protocol::BatchSource`] then serves through the trait.
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;

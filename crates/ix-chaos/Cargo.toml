@@ -13,3 +13,6 @@ description = "Chaos theory: Lyapunov exponents, bifurcation, attractors, fracta
 ndarray = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }
+
+[dev-dependencies]
+ix-signal = { workspace = true }

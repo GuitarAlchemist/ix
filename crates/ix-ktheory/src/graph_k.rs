@@ -71,7 +71,10 @@ pub fn k0_from_adjacency(adj: &Array2<f64>) -> Result<KGroupResult, KTheoryError
 /// Compute K₁ from an adjacency matrix.
 ///
 /// K₁ = ker(I - Aᵀ), the null space of (I - Aᵀ) over ℤ.
-/// Non-trivial K₁ indicates feedback cycles (eigenvalue 1 in Aᵀ).
+/// Its rank detects eigenvalue-1 circulation in Aᵀ, which is sufficient but not
+/// necessary evidence of feedback cycles. Cyclic graphs such as a bidirected P3
+/// can have trivial K₁. Use [`detect_feedback_cycles`] or Tarjan SCC for cycle
+/// detection.
 pub fn k1_from_adjacency(adj: &Array2<f64>) -> Result<KGroupResult, KTheoryError> {
     let n = validate_square(adj)?;
     let mat = compute_i_minus_at(adj, n);
@@ -99,7 +102,7 @@ pub fn k1_from_adjacency(adj: &Array2<f64>) -> Result<KGroupResult, KTheoryError
 
 /// Detect feedback cycles in a directed graph.
 ///
-/// Returns cycle paths found by detecting eigenvalue-1 presence in Aᵀ.
+/// Returns cycle paths found by depth-first search, independently of K₁.
 /// Each cycle is a sequence of node indices.
 pub fn detect_feedback_cycles(adj: &Array2<f64>) -> Result<Vec<Vec<usize>>, KTheoryError> {
     let n = validate_square(adj)?;
@@ -433,8 +436,9 @@ mod tests {
         let k0 = k0_from_adjacency(&adj).unwrap();
         let k1 = k1_from_adjacency(&adj).unwrap();
         let cycles = detect_feedback_cycles(&adj).unwrap();
-        // 3-cycle has feedback
-        assert!(k1.rank > 0 || !cycles.is_empty());
+        // This directed 3-cycle has both eigenvalue-1 circulation and feedback.
+        assert!(k1.rank > 0);
+        assert!(!cycles.is_empty());
         // K₀ should detect the cycle structure
         assert!(k0.rank > 0 || !k0.torsion.is_empty());
     }

@@ -86,6 +86,11 @@ mod supervised;
 #[cfg(feature = "udf")]
 mod hexavalent;
 
+/// Fractal-curve UDFs over `ix-fractal` + `ix-chaos` (ix_takagi, ix_hurst),
+/// registered by [`udf::register_all`]. Pure wraps — no fractal math reimplemented.
+#[cfg(feature = "udf")]
+mod fractal;
+
 /// Artifact source — the deep module every lens reads through: safe materialization of
 /// a GA-emitted JSON artifact set into a bench table (file selection + read_json_auto
 /// flags + the json_extract projection + empty-fallback). See `CONTEXT.md` → "Artifact source".

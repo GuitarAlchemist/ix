@@ -6,6 +6,72 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Added — `dark-features` doctor check (2026-09-08)
+
+- `ix doctor` gains a `dark-features` check (`crates/ix-skill/src/doctor/dark_features.rs`,
+  ix#315): a cargo feature that **no workspace member enables** is never built by
+  `cargo {build,clippy,test} --workspace` — the three invocations CI runs — so the
+  code behind it is neither compiled nor tested, and a skipped crate adds zero to
+  both counters, so nothing in the output says so. The dark set is derived from
+  `cargo metadata` (declared features minus the resolved set for the default
+  workspace build), never hardcoded.
+- The check reports **size, not just existence**: crate, feature, gated modules,
+  lines and tests behind the gate. It fails only when a dark feature is
+  significant (at least one test, or 100+ lines) and has no allowlist entry — so
+  meta-features, implicit optional-dependency features and two-line stubs fall
+  out as noise with no special-casing.
+- `state/registry/dark-features.allow.json`: reasoned exemptions in the shape
+  `orphan-traits.allow.json` established — a reasonless entry fails, an entry
+  whose feature is no longer dark is reported stale. `kind` is `environment`
+  (a native toolchain, an external binary, a toolchain newer than the workspace
+  MSRV) or `tracked` (nothing environmental stops it, it is just not wired up —
+  requires an `issue` and is counted as debt in the summary).
+- Baseline at landing: **17 dark features, 13,719 lines and 219 tests that CI
+  has never compiled**, 10 of them significant. The motivating case is
+  `ix-code/topology` — 296 lines and five tests, merged and reviewed, never
+  built once; the code is healthy (`cargo test -p ix-code --features full`
+  passes), which is exactly why nobody noticed.
+- Checklists: "Adding a feature-gated module" in `docs/CHECKLISTS.md`
+  ([FR](docs/fr/CHECKLISTS.md)).
+
+### Added — Code topology + H0 persistence over DuckDB (2026-09-08)
+
+Gap-matrix rows **F1** and **B1b** of
+`docs/research/tars-v1-advanced-math-ix-gap-matrix.md` (ix#202). No new
+topology: both rows were exposure gaps over mathematics that already shipped.
+
+- **F1 — the seam.** `ix_code::semantic::extract_definitions` and
+  `ix_code::topology::{Unit, module_call_graph, call_graph_from_semantic,
+  undirected_edge_count}` join the tree-sitter call-graph extractor to the
+  persistent-homology layer. Before this, `topology::CallGraph` and
+  `semantic::CallGraph` were unrelated types and `compute_code_topology` had no
+  callers outside its own tests.
+- **F1 — the exposure.** MCP tool `ix_code_topology` (module- or
+  function-granularity). Enabling `ix-code/topology` in `ix-agent` puts
+  `crates/ix-code/src/topology.rs` on the `cargo build --workspace` path for the
+  first time — no crate had ever enabled that feature, so CI never compiled or
+  tested it.
+- **F1 — the measurement.** `cargo run -p ix-agent --example
+  code_topology_corpus` over all 82 IX crates; results and caveats in
+  `docs/research/2026-09-08-code-topology-over-ix.md`, raw data in
+  `docs/research/data/2026-09-08-code-topology-ix.csv`.
+- **B1b — the DuckDB surface.** `crates/ix-duck/sql/persistence_h0.sql` exposes
+  `ix_persistence_h0()`, `ix_betti_0_at(radius)` and a fail-closed
+  `ix_topo_violations()`. A SQL macro rather than a UDF, because ix-duck's
+  `duck`/`udf` features are never CI-compiled — the constraint
+  `sql/pareto_frontier.sql` records. H0 only: one column is a point cloud in R^1.
+  Cross-checked against `ix_topo`'s general engine on a frozen golden
+  (`crates/ix-duck/tests/persistence_h0_golden.rs`), the two-surface shape of
+  ix#294.
+
+### Fixed
+
+- `ix_code::semantic::classify_call_target` panicked (`byte index N is not a
+  char boundary`) when truncating a method-call receiver longer than 64 bytes
+  whose cut point landed inside a multi-byte character. Any source containing a
+  `→` or an accented identifier in a long receiver could trigger it, including
+  IX's own. Found by running the new module topology over this workspace.
+
 ### Added — Stable Surface guard (2026-05-17)
 
 - `crate-maturity.toml` workspace-root file: single source of truth mapping

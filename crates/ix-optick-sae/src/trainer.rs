@@ -40,6 +40,9 @@ pub const fn default_python_bin() -> &'static str {
 pub const EXIT_DEAD_FEATURES: i32 = 3;
 /// Exit code the Python trainer emits when reconstruction_mse > 0.05.
 pub const EXIT_MSE_FAIL: i32 = 2;
+/// Exit code the Python trainer emits when the parquet it just wrote does not
+/// reconcile against the coverage it declared (ix #248). No artifact is written.
+pub const EXIT_RECONCILIATION_FAILED: i32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TrainerError {
@@ -57,6 +60,14 @@ pub enum TrainerError {
          No artifact emitted. This corpus may be too small or too low-rank for the SAE."
     )]
     DeadFeaturesAfterRetry,
+
+    #[error(
+        "feature_activations.parquet does not reconcile against the activations_coverage \
+         the run declared — no artifact was written, so nothing can be federated. The \
+         parquet and weights are left in the output dir as evidence; see the reconcile \
+         lines in training.log for which assertions went red (ix #248)."
+    )]
+    ReconciliationFailed,
 
     #[error("Python trainer exited with unexpected code {code}")]
     UnexpectedExitCode { code: i32 },
@@ -122,6 +133,7 @@ pub fn run_python_trainer(
         Some(EXIT_DEAD_FEATURES) => Err(TrainerError::UnexpectedExitCode {
             code: EXIT_DEAD_FEATURES,
         }),
+        Some(EXIT_RECONCILIATION_FAILED) => Err(TrainerError::ReconciliationFailed),
         Some(code) => Err(TrainerError::UnexpectedExitCode { code }),
         None => Err(TrainerError::KilledBySignal),
     }

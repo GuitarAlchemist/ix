@@ -375,11 +375,21 @@ fn fractal_schema() -> Value {
         vec![
             (
                 "operation",
-                Prop::string().enum_of(&["takagi", "hilbert", "peano", "morton_encode", "morton_decode"]),
+                Prop::string().enum_of(&[
+                    "takagi",
+                    "de_rham_1d",
+                    "hilbert",
+                    "peano",
+                    "morton_encode",
+                    "morton_decode",
+                ]),
             ),
             ("n_points", Prop::integer().minimum(2)),
             ("terms", Prop::integer().minimum(1)),
             ("order", Prop::integer().minimum(1)),
+            ("depth", Prop::integer().minimum(0).maximum(12)),
+            ("roughness", Prop::number().minimum(0).maximum(1.0e6)),
+            ("seed", Prop::integer().minimum(0)),
             ("x", Prop::integer()),
             ("y", Prop::integer()),
             ("z", Prop::integer()),

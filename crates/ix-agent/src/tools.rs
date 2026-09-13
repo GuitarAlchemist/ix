@@ -1108,6 +1108,40 @@ Example 2 — "cluster crates by complexity then classify":
     fn register_ml_and_code(&mut self) {
         // ── ix_code_analyze ─────────────────────────────────────
 
+        // ── ix_code_topology ────────────────────────────────────────
+
+        self.tools.push(Tool {
+            name: "ix_code_topology",
+            description: "Persistent homology over code structure (gap-matrix row F1). Extracts a call graph from Rust sources, inverts call-site counts into distances, and runs a Vietoris-Rips filtration through ix-topo to report betti_0 (how many disconnected pieces the unit set has), betti_1 (undirected cycles in the dependency shape) and the H0 persistence profile (the coupling scale at which the set separates). The persistence is what cyclomatic complexity cannot express: betti_1 alone equals the circuit rank E - V + betti_0. Default granularity \"module\" treats each file as a node and resolves cross-file calls by definition site, dropping external and ambiguous callees rather than guessing; \"function\" analyses one file's functions.",
+            input_schema: object(
+                vec![
+                    (
+                        "path",
+                        Prop::string().desc("File or directory to analyse. Directories are walked for *.rs (gitignore-aware; target/, node_modules/, .git/ skipped) and capped at 300 files, the ix-code MAX_NODES limit."),
+                    ),
+                    (
+                        "sources",
+                        Prop::array_of(Prop::object(
+                            vec![
+                                ("name", Prop::string().desc("Unit name, e.g. a file path.")),
+                                ("source", Prop::string().desc("Rust source text.")),
+                            ],
+                            &["source"],
+                        ))
+                        .desc("Inline sources, as an alternative to 'path'. Takes precedence if both are given."),
+                    ),
+                    (
+                        "granularity",
+                        Prop::string()
+                            .enum_of(&["module", "function"])
+                            .desc("\"module\" (default): one node per file. \"function\": one node per function, single unit only."),
+                    ),
+                ],
+                &[],
+            ),
+            handler: handlers::code_topology,
+        });
+
         // ── ix_annotations_scan ─────────────────────────────────────
 
         self.tools.push(Tool {

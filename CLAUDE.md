@@ -1,8 +1,8 @@
 # ix — ML Algorithms + Governance for Claude Code Skills
 
-Rust workspace (78 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
+Rust workspace (81 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
 
-**Crate map**: see `README.md` for the full list of 78 crates grouped by domain.
+**Crate map**: see `README.md` for the full list of 81 crates grouped by domain.
 
 ## Build
 
@@ -11,6 +11,18 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 ```
+
+Pre-PR gate — one command, actionable failures (ix#185):
+
+```bash
+cargo run -p ix-skill --bin ix -- doctor          # fast repo-specific surface checks
+cargo run -p ix-skill --bin ix -- doctor --full   # plus the CI clippy + test invocation
+```
+
+It checks registry-snapshot drift (no hand-typed tool counts), orphan public
+traits, and the governance/state environment. Per-change-type checklists —
+MCP skill, DuckDB UDF, public API, `@ai:` invariant — live in
+[docs/CHECKLISTS.md](docs/CHECKLISTS.md) ([FR](docs/fr/CHECKLISTS.md)).
 
 Repo harness verification:
 
@@ -29,6 +41,7 @@ MSRV: Rust 1.80+ (due to wgpu 28).
 - Governance: all agent actions subject to Demerzel constitution (see `governance/demerzel`).
 - Before adding a new graph primitive, check `docs/guides/graph-theory-in-ix.md` — IX already has 10 graph-theory modules.
 - Do NOT add `petgraph`/`daggy`/`graph-rs` as new dependencies. Use `ix-graph`, `ix-pipeline::dag::Dag<N>`, `ix-search`, or `ix-topo`.
+- Cycles + concurrency + contention (locks, worker pools, "can these two lanes wedge?") are `ix-petri`, not a DAG — `Dag::add_edge` rejects the cycle. Read `docs/guides/petri-nets-in-ix.md` before modelling one.
 
 ## MCP Federation
 

@@ -14,6 +14,8 @@
 //! - **sampling**: Nyquist, interpolation, decimation
 //! - **window**: Window functions (Hamming, Hanning, Blackman, Kaiser)
 //! - **convolution**: Linear and circular convolution
+//! - **state_space**: Discrete-time linear state-space models, observability
+//!   and controllability rank tests
 
 pub mod convolution;
 pub mod correlation;
@@ -23,6 +25,7 @@ pub mod filter;
 pub mod kalman;
 pub mod sampling;
 pub mod spectral;
+pub mod state_space;
 pub mod timeseries;
 pub mod wavelet;
 pub mod window;

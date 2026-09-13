@@ -4,6 +4,8 @@
 //! differential evolution, and selection operators.
 
 pub mod differential;
+pub mod frontier;
 pub mod genetic;
+pub mod pareto;
 pub mod selection;
 pub mod traits;

@@ -23,7 +23,7 @@
 //! **Tier 3 — K-theory of a graph.** Over a JSON edge-list `'[[from,to],…]'`
 //! (node count = max id + 1), matching `graphsig`'s graph convention:
 //! - `ix_k0(edges)` → TABLE(rank, torsion): K₀ = coker(I − Aᵀ), resource balance.
-//! - `ix_k1(edges)` → TABLE(rank):          K₁ = ker(I − Aᵀ), feedback cycles.
+//! - `ix_k1(edges)` → TABLE(rank):          K₁ = ker(I − Aᵀ), eigenvalue-1 circulation.
 //!
 //! IX↔GA note: `ix_grothendieck_delta` is built on the ICV, which agrees with GA's
 //! `ga_chord_to_set` (cross-checked 2026-06-19). GA's *Forte number* uses a
@@ -442,7 +442,7 @@ impl VTab for IxK1 {
     type InitData = Cursor;
     type BindData = RowsScalar;
 
-    // @ai:invariant ix_k1 emits one (rank) row: K₁ = ker(I−Aᵀ) of the edge-list graph via ix_ktheory k1_from_adjacency; rank>0 iff feedback cycles exist (a DAG → 0); non-JSON edges → SQL error [T:test conf:0.8 src:ix_duck::grothendieck::tests::k1_cycle_vs_dag]
+    // @ai:invariant ix_k1 emits one (rank) row: K₁ = ker(I−Aᵀ) of the edge-list graph via ix_ktheory k1_from_adjacency; rank>0 detects eigenvalue-1 circulation, a sufficient but not necessary signal for feedback cycles (a DAG → 0); use detect_feedback_cycles or Tarjan SCC for cycle detection; non-JSON edges → SQL error [T:test conf:0.9 src:ix_duck::grothendieck::tests::k1_detects_eigenvalue_one_not_all_feedback_cycles]
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
         let adj = parse_adjacency(&bind.get_parameter(0).to_string())?;
         let k = k1_from_adjacency(&adj).map_err(|e| format!("ix_k1: {e}"))?;
@@ -605,12 +605,23 @@ mod tests {
     }
 
     #[test]
-    fn k1_cycle_vs_dag() {
-        // K₁ = ker(I−Aᵀ): a cycle has feedback (rank ≥ 1); a pure DAG has none (0).
+    fn k1_detects_eigenvalue_one_not_all_feedback_cycles() {
+        // The directed 3-cycle has eigenvalue 1 in Aᵀ, so K₁ has positive rank.
         assert_eq!(
             scalar_i64("SELECT rank FROM ix_k1('[[0,1],[1,2],[2,0]]')").map(|r| r >= 1),
             Some(true)
         );
+        // A pure DAG has no eigenvalue-1 circulation.
         assert_eq!(scalar_i64("SELECT rank FROM ix_k1('[[0,1],[1,2]]')"), Some(0));
+
+        // Bidirected P3 has genuine feedback cycles but eigenvalues {sqrt(2), 0, -sqrt(2)},
+        // so K₁ is trivial. This locks down that K₁ is not a complete cycle detector.
+        let p3_edges = "[[0,1],[1,0],[1,2],[2,1]]";
+        let p3 = super::parse_adjacency(p3_edges).unwrap();
+        assert!(!ix_ktheory::graph_k::detect_feedback_cycles(&p3).unwrap().is_empty());
+        assert_eq!(
+            scalar_i64(&format!("SELECT rank FROM ix_k1('{p3_edges}')")),
+            Some(0)
+        );
     }
 }

@@ -84,6 +84,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_gmm",
         "ix_wavelet_denoise",
         "ix_fir_filter",
+        // ix#193 — pure state estimation over a caller-supplied series, no side effects.
+        "ix_kalman",
         "ix_spectrogram",
         "ix_autocorrelation",
         "ix_analyze_reference",
@@ -181,6 +183,12 @@ mod tests {
             "ix_gmm",
             "ix_wavelet_denoise",
             "ix_fir_filter",
+            // ix#193: same "exposed-but-unusable" trap this test's header records for
+            // #83 — registering ix_kalman in ToolRegistry is not enough, because an
+            // unclassified tool falls through to Unknown and the middleware blocks it at
+            // Tier 3. Verified: the end-to-end smoke test failed with
+            // "ApprovalRequired (tier: tier_three)" until this entry was added.
+            "ix_kalman",
             "ix_spectrogram",
             "ix_autocorrelation",
             "ix_analyze_reference",

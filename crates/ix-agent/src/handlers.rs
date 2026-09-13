@@ -832,6 +832,291 @@ pub fn fir_filter(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_kalman ────────────────────────────────────────────────
+
+/// Sample cap for `smooth_1d`.
+///
+/// No bound below it exists: [`ix_signal::kalman::KalmanFilter::filter`] caps nothing,
+/// and the SQL surface `ix_kalman_smooth` caps nothing either — deliberately, because
+/// warehouse rows are scrollable and a caller pages through them. An MCP response is not
+/// scrollable: it is serialized JSON that lands whole in an agent's context window, and
+/// this op emits *two* f64 per input sample (position and velocity), so 4096 samples is
+/// already ~165 KB of JSON at ~20 characters a number.
+///
+/// 4096 deliberately matches the order of magnitude of the sibling `ix_fractal`
+/// `de_rham_1d` op's 4097-sample ceiling (ix#203/#286), so the two bounded series ops on
+/// this server answer with payloads of comparable size. Unlike de Rham — where the bound
+/// is on a `depth` that *generates* 2^depth+1 samples — the series here is
+/// caller-supplied, so the check is on its length directly and costs nothing.
+const KALMAN_MAX_SAMPLES: usize = 4096;
+
+/// `dt` cap for `smooth_1d`, chosen for numerical safety rather than to constrain use.
+///
+/// `constant_velocity_1d` builds a process-noise covariance whose entries scale as
+/// `q·dt³/3`, `q·dt²/2` and `q·dt`, and the transition matrix `[[1, dt], [0, 1]]`
+/// re-applies `dt` at every step, so the error covariance grows super-linearly in `dt`.
+/// Measured on an 8-sample ramp: `dt = 1e100` still yields finite estimates, `dt = 1e110`
+/// yields **NaN** — and `serde_json` renders a non-finite `f64` as JSON `null`, so an
+/// uncapped extreme-but-finite `dt` returns a *successful* response full of nulls. The
+/// threshold did not move when the series was lengthened to 4096, so it is a property of
+/// `dt` alone, not of series length.
+///
+/// 1e6 sits ~104 decimal orders below the measured break. As a sampling interval it is
+/// already absurd (1e6 seconds ≈ 11.6 days between samples); the bound exists to make
+/// hostile input loud, not to constrain real use. That is the belt;
+/// [`kalman_estimates`] is the braces.
+const KALMAN_MAX_DT: f64 = 1.0e6;
+
+/// Split filtered states into parallel `position` / `velocity` arrays, refusing to
+/// serialize a non-finite estimate.
+///
+/// `serde_json` renders `NaN`/`Infinity` as JSON `null`, so emitting unchecked states
+/// would turn a numeric blow-up into a successful-but-null-corrupted response — the one
+/// failure mode a caller cannot detect from the status. [`KALMAN_MAX_DT`] makes that
+/// unreachable through the MCP boundary; this check is the guarantee that does not rest
+/// on the measured threshold holding for parameter combinations nobody probed.
+///
+/// Parallel arrays rather than `[[p, v], …]` pairs: the SQL surface returns position
+/// only, so a caller porting a query across surfaces can take `position` and ignore the
+/// rest.
+fn kalman_estimates(states: &[Array1<f64>]) -> Result<(Vec<f64>, Vec<f64>), String> {
+    let mut position = Vec::with_capacity(states.len());
+    let mut velocity = Vec::with_capacity(states.len());
+    for (i, s) in states.iter().enumerate() {
+        let (p, v) = (s[0], s[1]);
+        if !p.is_finite() || !v.is_finite() {
+            return Err(format!(
+                "smooth_1d: estimate {i} of {} is not finite (position={p}, velocity={v}); \
+                 refusing to emit a payload whose values would serialize as JSON null",
+                states.len()
+            ));
+        }
+        position.push(p);
+        velocity.push(v);
+    }
+    Ok((position, velocity))
+}
+
+/// Floor for `measurement_noise`, derived from the pivot tolerance in
+/// [`ix_math::linalg::inverse`] — this one prevents a **panic**, not a bad number.
+///
+/// `KalmanFilter::update` computes the innovation covariance `S = H·P·Hᵀ + R` and calls
+/// `ix_math::linalg::inverse(&S).expect("Innovation covariance singular")`. That
+/// `.expect` is an unwind: `inverse` returns `Singular` whenever its largest pivot is
+/// `< 1e-12`, and the panic would escape the handler into the MCP server rather than
+/// surfacing as a tool error.
+///
+/// For `constant_velocity_1d`, `H = [[1, 0]]`, so `S` is the 1×1 matrix `P₀₀ + r`, and
+/// `P₀₀` is a variance, hence `≥ 0`. Therefore `S ≥ r`, and requiring `r ≥ 1e-12` makes
+/// the pivot `≥ 1e-12`, so the `Singular` branch is unreachable. The bound is *derived*
+/// from the callee's tolerance, not fitted to observations — but it was also checked
+/// against them, because `P₀₀ ≥ 0` is an algebraic property that finite-precision
+/// arithmetic can in principle violate (the update uses `P = (I − KH)P`, not the Joseph
+/// form).
+///
+/// Measured, sweeping `n` samples with both covariances equal:
+///
+/// | `q = r` | n = 1, 2 | n ≥ 4 |
+/// | --- | --- | --- |
+/// | 1e-11 | ok | ok |
+/// | 1e-12 | ok | ok |
+/// | 1e-13 | ok | **panic** |
+/// | 1e-300 | ok | **panic** |
+///
+/// Note it takes *both* small: `q = 1e-13, r = 1` and `q = 1, r = 1e-13` are both fine,
+/// because a large `q` keeps `P₀₀` large and a large `r` dominates directly. A probe that
+/// varies one covariance at a time — as the first version of this handler's guard did — misses
+/// this entirely. Found by Codex review on ix#309, then reproduced.
+///
+/// No floor is applied to `process_noise`: a small `q` only shrinks `P₀₀`, which can
+/// never push `S` below `r`.
+const KALMAN_MIN_MEASUREMENT_NOISE: f64 = 1.0e-12;
+
+/// Parse a strictly-positive finite covariance parameter.
+///
+/// Mirrors `ix_duck::graphsig::parse_pos_finite`, the guard the SQL surface already
+/// applies, so `ix_kalman` and `ix_kalman_smooth` accept the same domain. Zero neither
+/// panics nor produces NaN — both were probed — but a zero covariance is a degenerate
+/// model (perfect measurements, or a perfectly known process), and letting the two
+/// surfaces disagree on the accepted domain would be a worse defect than being strict on
+/// both.
+///
+/// `min` additionally enforces [`KALMAN_MIN_MEASUREMENT_NOISE`] where a floor is needed;
+/// pass `None` where any positive value is safe.
+fn parse_kalman_covariance(params: &Value, field: &str, min: Option<f64>) -> Result<f64, String> {
+    let raw = params
+        .get(field)
+        .ok_or_else(|| format!("Missing or invalid field '{}'", field))?;
+    let v = raw
+        .as_f64()
+        .ok_or_else(|| format!("{field} must be a JSON number (got {raw})"))?;
+    if !v.is_finite() || v <= 0.0 {
+        return Err(format!("{field} must be a finite number > 0 (got {v})"));
+    }
+    if let Some(floor) = min {
+        if v < floor {
+            return Err(format!(
+                "{field} must be >= {floor} (got {v}); below this the innovation covariance \
+                 falls under the 1e-12 pivot tolerance of ix_math::linalg::inverse, which \
+                 makes KalmanFilter::update panic rather than return an error"
+            ));
+        }
+    }
+    Ok(v)
+}
+
+/// Parse an optional `f64` that rejects a present-but-wrong-typed value.
+///
+/// [`parse_f64_opt`] cannot distinguish "absent" from "present but not a number", so
+/// `"dt": "0.5"`, `"dt": null` and `"dt": true` all silently become the default. That is
+/// worse than an error: `ToolRegistry::call` does **not** validate arguments against the
+/// advertised JSON schema, so the caller receives estimates computed at a sampling
+/// interval they did not ask for, with `dt: 1.0` echoed back as if they had. Verified
+/// against all four shapes; found by Codex review on ix#309.
+fn parse_f64_opt_typed(params: &Value, field: &str, default: f64) -> Result<f64, String> {
+    match params.get(field) {
+        None => Ok(default),
+        Some(v) => v
+            .as_f64()
+            .ok_or_else(|| format!("{field} must be a JSON number if present (got {v})")),
+    }
+}
+
+// @ai:invariant smooth_1d runs ix_signal's constant-velocity 1-D Kalman filter over the
+// series and returns exactly one (position, velocity) estimate per input sample; fed a
+// clean unit-rate ramp from a cold [0,0] start it locks onto the trajectory, so the final
+// position converges to the final measurement and the final velocity toward the ramp's
+// slope [T:test conf:0.9 src:tests::kalman_smooth_1d_tracks_a_ramp]
+// @ai:invariant smooth_1d agrees with the SQL surface ix_kalman_smooth's documented
+// contract on the position series for the same (series, process_noise, measurement_noise)
+// at dt=1 — the two wrap the same callee with the same model
+// [T:test conf:0.75 src:tests::kalman_agrees_with_sql_surface_contract]
+// @ai:invariant a successful smooth_1d response never contains a non-finite (JSON null)
+// estimate: every state is checked before serialization, so an out-of-range input is an
+// explicit error [T:test conf:0.9 src:tests::kalman_never_emits_null_estimates]
+// @ai:invariant smooth_1d never panics on any input reachable through the MCP boundary:
+// measurement_noise >= 1e-12 keeps the innovation covariance at or above the pivot
+// tolerance of ix_math::linalg::inverse, whose Singular branch KalmanFilter::update turns
+// into an unwinding .expect()
+// [T:test conf:0.9 src:tests::kalman_rejects_covariances_that_would_panic_the_filter]
+pub fn kalman(params: Value) -> Result<Value, String> {
+    let op = parse_str(&params, "operation")?;
+
+    match op {
+        "smooth_1d" => {
+            let series = parse_f64_array(&params, "series")?;
+            if series.is_empty() {
+                return Err("smooth_1d: 'series' must contain at least one sample".to_string());
+            }
+            if series.len() > KALMAN_MAX_SAMPLES {
+                return Err(format!(
+                    "smooth_1d: series length must be <= {} (got {}); \
+                     two f64 per sample are materialized and returned inline in the response",
+                    KALMAN_MAX_SAMPLES,
+                    series.len()
+                ));
+            }
+            if let Some(i) = series.iter().position(|z| !z.is_finite()) {
+                return Err(format!(
+                    "smooth_1d: series[{i}] is not finite ({}); a non-finite measurement \
+                     poisons the state estimate for every later sample",
+                    series[i]
+                ));
+            }
+
+            let process_noise = parse_kalman_covariance(&params, "process_noise", None)?;
+            let measurement_noise = parse_kalman_covariance(
+                &params,
+                "measurement_noise",
+                Some(KALMAN_MIN_MEASUREMENT_NOISE),
+            )?;
+
+            // dt defaults to 1.0 — the value the SQL surface hard-codes, documented there
+            // as "telemetry samples are an evenly-spaced unit-step sequence".
+            let dt = parse_f64_opt_typed(&params, "dt", 1.0)?;
+            if !dt.is_finite() || dt <= 0.0 {
+                return Err(format!("dt must be a finite number > 0 (got {dt})"));
+            }
+            if dt > KALMAN_MAX_DT {
+                return Err(format!(
+                    "smooth_1d: dt must be <= {} (got {}); the process covariance scales as \
+                     dt^3 and estimates overflow to NaN near dt = 1e110, which would \
+                     serialize as JSON null",
+                    KALMAN_MAX_DT, dt
+                ));
+            }
+
+            let mut kf =
+                ix_signal::kalman::constant_velocity_1d(process_noise, measurement_noise, dt);
+            let measurements: Vec<Array1<f64>> =
+                series.iter().map(|&z| Array1::from_vec(vec![z])).collect();
+            let states = kf.filter(&measurements);
+            let (position, velocity) = kalman_estimates(&states)?;
+
+            Ok(json!({
+                "operation": "smooth_1d",
+                "model": "constant_velocity_1d",
+                "position": position,
+                "velocity": velocity,
+                "n_samples": series.len(),
+                "process_noise": process_noise,
+                "measurement_noise": measurement_noise,
+                "dt": dt,
+                "max_samples": KALMAN_MAX_SAMPLES,
+                "max_dt": KALMAN_MAX_DT,
+                "min_measurement_noise": KALMAN_MIN_MEASUREMENT_NOISE
+            }))
+        }
+        other => Err(format!(
+            "Unknown kalman operation '{other}' (expected 'smooth_1d')"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod kalman_estimates_tests {
+    use super::*;
+
+    /// The finiteness guard is unreachable from the MCP boundary once [`KALMAN_MAX_DT`]
+    /// is enforced, so bind it here against synthetic states — otherwise it is an
+    /// untested claim dressed as a safety check.
+    #[test]
+    fn rejects_non_finite_estimates() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let states = vec![
+                Array1::from_vec(vec![0.0, 0.0]),
+                Array1::from_vec(vec![bad, 1.0]),
+            ];
+            let err = kalman_estimates(&states)
+                .expect_err("a non-finite estimate must be an error, not a JSON null");
+            assert!(
+                err.contains("estimate 1 of 2 is not finite"),
+                "unexpected error: {err}"
+            );
+
+            // Velocity is checked independently of position.
+            let states = vec![Array1::from_vec(vec![1.0, bad])];
+            let err = kalman_estimates(&states).expect_err("non-finite velocity must error");
+            assert!(
+                err.contains("estimate 0 of 1 is not finite"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    /// The happy path splits into parallel arrays without reordering.
+    #[test]
+    fn splits_states_into_parallel_arrays() {
+        let states = vec![
+            Array1::from_vec(vec![1.0, 10.0]),
+            Array1::from_vec(vec![2.0, 20.0]),
+        ];
+        let (p, v) = kalman_estimates(&states).expect("finite");
+        assert_eq!(p, vec![1.0, 2.0]);
+        assert_eq!(v, vec![10.0, 20.0]);
+    }
+}
+
 // ── ix_spectrogram ───────────────────────────────────────────
 
 // @ai:invariant spectrogram requires a power-of-two window_size (the STFT uses a radix-2 FFT that would otherwise zero-pad and miscalibrate the bins); it returns an (n_frames × n_bins) magnitude matrix with n_bins = window_size/2 + 1, and a single tone localizes to the frequency bin round(f·window_size) [T:test conf:0.85 src:skills::batch1::tests::spectrogram_skill_localizes_a_tone]
@@ -1624,6 +1909,96 @@ pub fn number_theory(params: Value) -> Result<Value, String> {
 
 // ── ix_fractal ────────────────────────────────────────────
 
+/// Depth cap for the `de_rham_1d` operation: 2^12 + 1 = 4097 samples.
+///
+/// Deliberately tighter than the depth ≤ 16 cap
+/// `docs/plans/2026-07-20-ix-fractal-takagi-derham-exposure.md` §6 proposes for the
+/// (unshipped) DuckDB table function: rows in a warehouse are scrollable, whereas an
+/// MCP payload is serialized JSON landing in an agent context window. The callee's own
+/// cap is a *silent* 20 (1,048,577 samples) — rejecting loudly here is the whole point.
+const DE_RHAM_MAX_DEPTH: usize = 12;
+
+/// Roughness cap for `de_rham_1d`, chosen for numerical safety at [`DE_RHAM_MAX_DEPTH`].
+///
+/// Midpoint displacement compounds *multiplicatively*: at every one of the `depth` levels
+/// each midpoint is displaced by `N(0,1) × roughness × segment_length`, and the displaced
+/// point then sets the segment length for the next level. The largest sample therefore grows
+/// like `roughness^depth`. Measured at depth 12, `max|value| ≈ roughness^12 × 1e-19`, which
+/// overflows `f64` at roughness ≈ 1.6e27 — and a non-finite `f64` is serialized by
+/// `serde_json` as JSON `null`, so an uncapped extreme input returns a *successful* response
+/// full of nulls rather than an error.
+///
+/// 1e6 bounds the output near 1e53, ~255 decimal orders below `f64::MAX`: headroom no
+/// Gaussian tail reaches over 4097 samples. Legitimate roughness is a fraction of the
+/// segment length (≈ [0, 1]) — this bound exists to make hostile input loud, not to
+/// constrain real use. The statistical argument is belt; [`de_rham_points`] is braces.
+const DE_RHAM_MAX_ROUGHNESS: f64 = 1.0e6;
+
+/// Build the `[t, value]` payload for `de_rham_1d`, refusing to serialize a non-finite
+/// sample.
+///
+/// `serde_json` renders `NaN`/`Infinity` as JSON `null`, so emitting an unchecked curve
+/// would turn a numeric blow-up into a successful-but-null-corrupted response — the one
+/// failure mode a caller cannot detect from the status. [`DE_RHAM_MAX_ROUGHNESS`] makes
+/// that unreachable in practice; this check is the guarantee that does not depend on the
+/// estimate holding.
+fn de_rham_points(curve: &Array1<f64>) -> Result<Vec<[f64; 2]>, String> {
+    let step = 1.0 / (curve.len() - 1).max(1) as f64;
+    curve
+        .iter()
+        .enumerate()
+        .map(|(i, &y)| {
+            if !y.is_finite() {
+                return Err(format!(
+                    "de_rham_1d: sample {i} of {} is not finite ({y}); \
+                     refusing to emit a payload whose points would serialize as JSON null",
+                    curve.len()
+                ));
+            }
+            Ok([i as f64 * step, y])
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod de_rham_points_tests {
+    use super::*;
+
+    /// The finiteness guard is unreachable from the MCP boundary once
+    /// [`DE_RHAM_MAX_ROUGHNESS`] is enforced, so bind it here against a synthetic curve —
+    /// otherwise it is an untested claim dressed as a safety check.
+    #[test]
+    fn rejects_non_finite_samples() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let curve = Array1::from_vec(vec![0.0, bad, 1.0]);
+            let err = de_rham_points(&curve)
+                .expect_err("a non-finite sample must be an error, not a JSON null");
+            assert!(
+                err.contains("sample 1 of 3 is not finite"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    /// The happy path still parameterizes t over [0, 1], and depth 0 (two samples) does not
+    /// divide by zero.
+    #[test]
+    fn maps_t_over_the_unit_interval() {
+        let pts = de_rham_points(&Array1::from_vec(vec![0.0, 0.25, 1.0])).expect("finite");
+        assert_eq!(pts, vec![[0.0, 0.0], [0.5, 0.25], [1.0, 1.0]]);
+
+        let two = de_rham_points(&Array1::from_vec(vec![0.0, 1.0])).expect("finite");
+        assert_eq!(two, vec![[0.0, 0.0], [1.0, 1.0]]);
+
+        let one = de_rham_points(&Array1::from_vec(vec![7.0])).expect("finite");
+        assert_eq!(
+            one,
+            vec![[0.0, 7.0]],
+            "a single sample must not divide by zero"
+        );
+    }
+}
+
 pub fn fractal(params: Value) -> Result<Value, String> {
     let op = parse_str(&params, "operation")?;
 
@@ -1639,6 +2014,61 @@ pub fn fractal(params: Value) -> Result<Value, String> {
                 .map(|(i, &y)| [i as f64 * step, y])
                 .collect();
             Ok(json!({ "points": points, "n_points": n_points, "terms": terms }))
+        }
+        // @ai:invariant de_rham_1d is a pure function of (depth, roughness, seed): the same
+        // triple yields identical samples within a build, a different seed yields a different
+        // curve, depth > 12 is a loud error (never the callee's silent cap-at-20), and
+        // roughness must be finite and within [0, 1e6] [T:test conf:0.9 src:tests::fractal_de_rham_smoke]
+        // @ai:invariant a successful de_rham_1d response never contains a non-finite (JSON null)
+        // coordinate: every generated sample is checked before serialization, so an out-of-range
+        // input is an explicit error [T:test conf:0.9 src:tests::de_rham_1d_never_emits_null_points]
+        "de_rham_1d" => {
+            use rand::SeedableRng;
+            let depth = parse_usize(&params, "depth")?;
+            if depth > DE_RHAM_MAX_DEPTH {
+                return Err(format!(
+                    "de_rham_1d: depth must be <= {} (got {}); \
+                     2^depth + 1 samples are materialized in memory and returned inline",
+                    DE_RHAM_MAX_DEPTH, depth
+                ));
+            }
+            let roughness = params
+                .get("roughness")
+                .and_then(|v| v.as_f64())
+                .ok_or("Missing or invalid field 'roughness'")?;
+            // Non-finite is defensive only: serde_json::Value cannot hold NaN/Infinity, so
+            // through the MCP boundary this arm is reachable only via a negative roughness.
+            if !roughness.is_finite() || roughness < 0.0 {
+                return Err(format!(
+                    "de_rham_1d: roughness must be finite and >= 0 (got {})",
+                    roughness
+                ));
+            }
+            if roughness > DE_RHAM_MAX_ROUGHNESS {
+                return Err(format!(
+                    "de_rham_1d: roughness must be <= {} (got {}); \
+                     midpoint displacement compounds over {} levels, and beyond this bound \
+                     samples overflow f64 and would serialize as JSON null",
+                    DE_RHAM_MAX_ROUGHNESS, roughness, depth
+                ));
+            }
+            let seed = params
+                .get("seed")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing or invalid field 'seed'")?;
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let curve = ix_fractal::de_rham::de_rham_curve_1d(depth, roughness, &mut rng);
+            let n_samples = curve.len();
+            let points = de_rham_points(&curve)?;
+            Ok(json!({
+                "points": points,
+                "n_samples": n_samples,
+                "depth": depth,
+                "roughness": roughness,
+                "seed": seed,
+                "max_depth": DE_RHAM_MAX_DEPTH,
+                "max_roughness": DE_RHAM_MAX_ROUGHNESS
+            }))
         }
         "hilbert" => {
             let order = params
@@ -4688,6 +5118,178 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
 
     Ok(result)
 }
+
+// ── ix_code_topology ────────────────────────────────────────────────
+//
+// Gap-matrix row F1. `ix-topo` (persistent homology) and `ix-code` (call-graph
+// extraction) were both built and both exposed, but separately: nothing joined
+// them, and `ix_code::topology` was behind a feature flag that no crate in the
+// workspace enabled, so it was never compiled by CI either. This handler is the
+// join, and enabling `ix-code/topology` in ix-agent's manifest is what puts
+// Layer 4 on the `cargo build --workspace` path for the first time.
+
+/// A `.rs` source unit: display name plus contents.
+type SourceUnit = (String, String);
+
+/// Collect Rust sources from a file or directory path.
+fn collect_rust_sources(
+    root: &std::path::Path,
+    max_files: usize,
+) -> Result<Vec<SourceUnit>, String> {
+    use ignore::WalkBuilder;
+
+    if root.is_file() {
+        let source =
+            std::fs::read_to_string(root).map_err(|e| format!("{}: {e}", root.display()))?;
+        return Ok(vec![(root.display().to_string(), source)]);
+    }
+    if !root.is_dir() {
+        return Err(format!("path not found: {}", root.display()));
+    }
+
+    let mut wb = WalkBuilder::new(root);
+    wb.filter_entry(|e| {
+        let n = e.file_name().to_string_lossy();
+        !matches!(n.as_ref(), "target" | "node_modules" | ".git")
+    });
+    let mut units = Vec::new();
+    for ent in wb.build().flatten() {
+        if !ent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let p = ent.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        let rel = p.strip_prefix(root).unwrap_or(p);
+        units.push((rel.display().to_string().replace('\\', "/"), source));
+    }
+    // Deterministic node order: the topology is order-independent, but the
+    // reported node list and the MAX_NODES truncation must not be.
+    units.sort_by(|a, b| a.0.cmp(&b.0));
+    units.truncate(max_files);
+    Ok(units)
+}
+
+pub fn code_topology(params: Value) -> Result<Value, String> {
+    use ix_code::semantic::{extract_call_graph, extract_definitions};
+    use ix_code::topology::{
+        call_graph_from_semantic, compute_code_topology, module_call_graph, Unit, MAX_NODES,
+    };
+
+    let granularity = params
+        .get("granularity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("module");
+    if !matches!(granularity, "module" | "function") {
+        return Err(format!(
+            "'granularity' must be \"module\" or \"function\", got {granularity:?}"
+        ));
+    }
+
+    // Inputs: inline sources, or a path to walk. Inline wins if both are given.
+    let sources: Vec<SourceUnit> =
+        if let Some(items) = params.get("sources").and_then(|v| v.as_array()) {
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("source[{i}]"));
+                    let source = item
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| format!("sources[{i}] is missing 'source'"))?
+                        .to_string();
+                    Ok((name, source))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        } else if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
+            collect_rust_sources(std::path::Path::new(path), MAX_NODES)?
+        } else {
+            return Err("Either 'sources' or 'path' is required".to_string());
+        };
+
+    if sources.is_empty() {
+        return Err("no Rust sources found".to_string());
+    }
+
+    if granularity == "function" {
+        if sources.len() != 1 {
+            return Err(format!(
+                "granularity \"function\" analyses one unit at a time; got {} \
+                 (bare function names are not unique across files, so fusing \
+                 them would invent edges). Use \"module\", or pass one file.",
+                sources.len()
+            ));
+        }
+        let (name, source) = &sources[0];
+        let semantic = extract_call_graph(source)
+            .ok_or_else(|| format!("{name}: source could not be parsed as Rust"))?;
+        let graph = call_graph_from_semantic(&semantic);
+        let topology = compute_code_topology(&graph);
+        return Ok(json!({
+            "granularity": "function",
+            "unit": name,
+            "topology": topology,
+            "undirected_edges": ix_code::topology::undirected_edge_count(&graph),
+            "circuit_rank": circuit_rank(&graph, &topology),
+            "notes": NOTES,
+        }));
+    }
+
+    let units: Vec<Unit> = sources
+        .iter()
+        .map(|(name, source)| Unit {
+            name: name.clone(),
+            definitions: extract_definitions(source),
+            graph: extract_call_graph(source).unwrap_or_default(),
+        })
+        .collect();
+    let (graph, resolution) = module_call_graph(&units);
+    let topology = compute_code_topology(&graph);
+
+    Ok(json!({
+        "granularity": "module",
+        "n_units": units.len(),
+        "units": units.iter().map(|u| &u.name).collect::<Vec<_>>(),
+        "topology": topology,
+        "undirected_edges": ix_code::topology::undirected_edge_count(&graph),
+        "resolution": resolution,
+        "circuit_rank": circuit_rank(&graph, &topology),
+        "notes": NOTES,
+    }))
+}
+
+/// `E - V + betti_0` — McCabe's cyclomatic number applied to the dependency
+/// graph. Returned alongside `betti_1` because, while the filtration stops at
+/// dimension 1, the two are equal by construction; publishing both makes that
+/// visible instead of letting a caller read `betti_1` as something deeper.
+///
+/// `E` is the **undirected** edge count, not `topology.n_edges`: the latter
+/// counts `a -> b` and `b -> a` separately, which inflates the rank by one per
+/// reciprocal pair.
+fn circuit_rank(
+    graph: &ix_code::topology::CallGraph,
+    topology: &ix_code::topology::CodeTopology,
+) -> i64 {
+    ix_code::topology::undirected_edge_count(graph) as i64 - topology.n_nodes as i64
+        + topology.betti_0 as i64
+}
+
+const NOTES: &str = "betti_1 counts UNDIRECTED cycles: the call graph is \
+symmetrized before the filtration is built, so a fan-in diamond registers as \
+tangled and a circular dependency laid over an existing edge does not. With the \
+Rips complex capped at dimension 1, betti_1 equals the circuit rank \
+E - V + betti_0. The measure that goes beyond cyclomatic complexity is the H0 \
+persistence (max_persistence / total_persistence / persistence_pairs): the \
+inverse-coupling scale at which the unit set separates into pieces.";
 
 // ── ix_tars_bridge ──────────────────────────────────────────────────
 

@@ -266,3 +266,48 @@ music set-class histogram, Tier-3 index QA): [`docs/duck/pipelines.sql`](duck/pi
 ```bash
 duckdb -unsigned -c "LOAD 'crates/ix-duck-ext/ix.duckdb_extension';" < docs/duck/pipelines.sql
 ```
+
+### Compiled IXQL plans — inspection, still not execution
+
+The boundary above says SQL does not run the governed DAG engine. It says nothing
+about *reading* a pipeline's structure, and that turns out to be the useful half
+for an analyst.
+
+`ix_ixql::compile` turns an IXQL program (`Demerzel/pipelines/*.ixql`) into a
+stage DAG: one row per stage with its id, kind, callee and upstream stage ids.
+`crates/ix-duck/sql/ixql_plan.sql` reads that relation and answers the questions
+the tree-walking interpreter cannot — which stages are independent, what a stage
+transitively depends on, how deep the pipeline really is:
+
+```bash
+# compile (Rust) — writes the plan relation DuckDB reads
+cargo run -q -p ix-ixql --bin ixql-plan -- crates/ix-ixql/tests/fixtures/qa-architect-cycle.ixql > crates/ix-duck/tests/fixtures/ixql/qa-architect-cycle-plan.csv
+
+# invoke it (DuckDB) — derives the execution schedule from the plan alone
+duckdb -csv -c ".read crates/ix-duck/sql/ixql_plan_golden.sql"
+```
+
+| Macro | Answers |
+| --- | --- |
+| `ix_ixql_schedule()` | which stages can run together, level by level |
+| `ix_ixql_plan_closure(stage)` | everything a stage transitively depends on |
+| `ix_ixql_plan_edges()` | the dependency graph, one row per edge |
+| `ix_ixql_plan_violations()` | fail-closed structural validation of the plan |
+
+Nothing here executes a stage, calls a host function, or consults a gate — it is
+read-only over an already-compiled artifact, so the analyst-bench↔production-engine
+boundary holds. The DAG *engine* still lives in the CLI/agent path.
+
+**Why SQL macros and not a UDF.** The `duck` / `udf` features of `ix-duck` are
+never compiled by `cargo build --workspace` or by any CI job, and `ix-duck-ext` is
+excluded from the workspace outright, so a plan-inspection UDF would be invisible
+to CI from the day it landed. `pareto_frontier.sql` established the alternative:
+plain macros on the stock `duckdb` CLI, with the load-bearing logic mirrored in a
+workspace crate and both pinned to a frozen golden. This follows it.
+
+**What does not compile yet.** Programs using `map`, `filter`, `any`, `reduce`,
+`find` or `transform` are refused, not compiled. Those evaluate their argument in
+element scope, and the scoping rule is an open design decision (issue #281)
+reserved for a maintainer. The compiler raises `RequiresElementScope` naming the
+function, mirroring the evaluator's `LambdaIsNotAValue` — a loud refusal keeps the
+gap measurable.
