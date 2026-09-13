@@ -1,0 +1,106 @@
+{
+  "schema": "ix-pi.second-opinion/v0.1",
+  "run_id": "2026-09-12-silent-skips",
+  "admissible": true,
+  "checks": {
+    "answer_nonempty": true,
+    "used_tools": true,
+    "agent_completed": true,
+    "stream_fully_parsed": true,
+    "worktree_unmodified": true,
+    "no_tool_errors": false
+  },
+  "probe": {
+    "prompt_file": "IX-pi/probe/prompts/silent-skips.md",
+    "prompt_sha256": "de518d9a4cd9fe30722724f65fc8a587ad2ae622a6c27b7a9ba51325b9f4c882",
+    "subject_revision": "4a7fc22ef97a6284981ac19b42122c8601a20753"
+  },
+  "harness": {
+    "name": "pi",
+    "version": "0.85.1",
+    "provider": "openai",
+    "model": "gpt-5.2",
+    "tool_allowlist": [
+      "read",
+      "bash"
+    ]
+  },
+  "run": {
+    "started_at": "2026-09-12T15:13:20Z",
+    "ended_at": "2026-09-12T15:15:54Z",
+    "exit_code": 0,
+    "duration_s": 154,
+    "events": 3600,
+    "unparseable_lines": 0,
+    "event_types": {
+      "session": 1,
+      "agent_start": 1,
+      "turn_start": 31,
+      "message_start": 67,
+      "message_end": 67,
+      "message_update": 3291,
+      "tool_execution_start": 35,
+      "tool_execution_update": 39,
+      "tool_execution_end": 35,
+      "turn_end": 31,
+      "agent_end": 1,
+      "agent_settled": 1
+    }
+  },
+  "cost": {
+    "input_tokens": 6339,
+    "output_tokens": 1453,
+    "reasoning_tokens": 764,
+    "cache_read_tokens": 49280,
+    "total_tokens": 57072,
+    "usd": 0.04005925
+  },
+  "evidence": {
+    "tools_used": [
+      "bash",
+      "read"
+    ],
+    "tool_call_count": 35,
+    "paths_read": [
+      "crates/ix-agent/tests/autonomous_render_audit.rs",
+      "crates/ix-agent/tests/voicings_payload_contract.rs",
+      "crates/ix-duck/tests/ixql_plan_golden.rs",
+      "crates/ix-duck/tests/pareto_golden.rs",
+      "crates/ix-duck/tests/persistence_h0_golden.rs",
+      "crates/ix-ixql/src/host.rs",
+      "crates/ix-optick-sae/tests/python_contract_tests.rs",
+      "crates/ix-optick/tests/conformance.rs",
+      "crates/ix-quality-validate/tests/schema_tests.rs",
+      "crates/ix-registry-check/tests/compatibility.rs",
+      "crates/ix-sentrux-annotations/tests/end_to_end.rs",
+      "crates/ix-skill/tests/doctor.rs",
+      "crates/ix-skill/tests/local_embed_cli.rs",
+      "crates/ix-voicings/tests/smoke_phase_a.rs"
+    ],
+    "commands_run": [
+      "rg -n \"\\b(test|tokio::test|rstest)\\b|fn\\s+test_|\\#\\[test\\]\" -S crates tests src || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"#\\[test\\]\\|tokio::test\\|rstest\\|fn test_\" .",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"which::which\\|command -v\\|not installed\\|Skipping\\|skip\\(\" .",
+      "grep -RIn --exclude-dir=target --exclude=*.lock -F \"which::which\" . || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock -F \"Command::new(\" . | head",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"Command::new(\\\"\" crates/*/tests crates/*/src tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"duckdb CLI not runnable\" crates/ix-duck/tests . || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"return;\" crates/*/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"SKIP:|skipping:\" crates/*/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"SKIP:\" crates/*/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"Command::new(\\\"git\\\"\" crates/*/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"Command::new(\\\"dotnet\\\"\\|dotnet run\\|dotnet\" crates/*/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"sentrux\\.exe not installed\\|DEFAULT_SENTRUX_EXE\\|run_sentrux_check\" crates/*/tests crates/*/src/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"Command::new(\\\"python\\\"\\|Command::new(\\\"python3\\\"\" crates/*/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"Command::new(\\\"\" crates/*/tests tests 2>/dev/null | head -200",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"eprintln!\\(\\\"skipping\\|eprintln!\\(\\\"SKIP\\|skipping.*return;\" crates 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"eprintln!\\(\\\"skipping\" crates tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock -F \"eprintln!(\\\"skipping\" crates tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"\\.exe\\b\" crates/*/tests tests crates/*/src 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"not runnable\\|not installed\\|not found\\|unavailable;.*NOT checked\\|SKIP:\" crates/*/tests tests 2>/dev/null || true",
+      "grep -RIn --exclude-dir=target --exclude=*.lock \"duckdb\" crates | head -200"
+    ]
+  },
+  "answer": "- `crates/ix-duck/tests/ixql_plan_golden.rs`\n  - Test: `duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed`\n  - Early-return condition: `Err(error) => { ...; return; }` in `match Command::new(\"duckdb\") ... .output()`\n  - External tool: `duckdb` (DuckDB CLI on `PATH`)\n  - Test: `duckdb_refuses_a_corrupted_plan_when_duckdb_is_installed`\n  - Early-return condition: `Err(error) => { eprintln!(...); return; }` in `match Command::new(\"duckdb\") ... .output()`\n  - External tool: `duckdb` (DuckDB CLI on `PATH`)\n\n- `crates/ix-duck/tests/pareto_golden.rs`\n  - Test: `duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed`\n  - Early-return condition: `Err(error) => { ...; return; }` in `match Command::new(\"duckdb\") ... .output()`\n  - External tool: `duckdb` (DuckDB CLI on `PATH`)\n\n- `crates/ix-duck/tests/persistence_h0_golden.rs`\n  - Test: `duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed`\n  - Early-return condition: `Err(error) => { ...; return; }` in `match Command::new(\"duckdb\") ... .output()`\n  - External tool: `duckdb` (DuckDB CLI on `PATH`)\n  - Test: `the_sql_guard_rejects_bad_input_when_duckdb_is_installed`\n  - Early-return condition: `Err(error) => { eprintln!(...); return; }` in `match Command::new(\"duckdb\") ... .output()`\n  - External tool: `duckdb` (DuckDB CLI on `PATH`)\n\n- `crates/ix-sentrux-annotations/tests/end_to_end.rs`\n  - Test: `live_sentrux_check_against_ix_worktree`\n  - Early-return condition: `if !exe.exists() { eprintln!(\\\"skipping: sentrux.exe not installed at {}\\\", ...); return; }`\n  - External tool: `sentrux.exe` (the `sentrux.exe mcp` binary)\n\n- `crates/ix-voicings/tests/smoke_phase_a.rs`\n  - Test: `smoke_phase_a_guitar_50`\n  - Early-return condition: `if !cli.exists() { eprintln!(\\\"SKIP: GA CLI not found at {} ...\\\", ...); return; }`\n  - External tool: GA CLI `FretboardVoicingsCLI.exe`\n\n- `crates/ix-skill/tests/doctor.rs`\n  - Test: `the_live_workspace_has_dark_features_and_the_check_sizes_them`\n  - Early-return condition: `let Ok(census) = dark_features::scan(&repo_root()) else { eprintln!(\\\"`cargo metadata` unavailable; ...\\\"); return; };`\n  - External tool: `cargo` (specifically `cargo metadata`)",
+  "answer_sha256": "1dc82987b794f682227f08a09896395e5781be726c7191d10138ce3e996d78a8"
+}
