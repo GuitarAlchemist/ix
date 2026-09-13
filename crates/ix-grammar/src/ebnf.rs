@@ -89,22 +89,30 @@ pub fn parse(input: &str) -> Result<EbnfGrammar, ParseError> {
 /// Remove `(* ... *)` comments from the input. Nested comments are
 /// not supported — the ISO spec allows them but they complicate the
 /// scanner and we have not seen a real grammar that uses nesting.
+///
+/// Every character consumed is replaced by one blank character, and a
+/// newline inside a comment is replaced by a newline. That 1:1 mapping
+/// is what keeps the `line`/`col` in a [`ParseError`] pointing at the
+/// original input: collapsing a comment to a single space (as this
+/// function used to) shifted every later column left by the comment's
+/// length and every later line up by the number of newlines it spanned.
 fn strip_comments(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '(' && chars.peek() == Some(&'*') {
-            // Skip until matching `*)`.
+            // Blank out `(` and `*`, then everything through `*)`.
+            out.push(' ');
             chars.next();
+            out.push(' ');
             let mut prev = ' ';
             for d in chars.by_ref() {
+                out.push(if d == '\n' { '\n' } else { ' ' });
                 if prev == '*' && d == ')' {
                     break;
                 }
                 prev = d;
             }
-            // Preserve whitespace so line numbers stay meaningful.
-            out.push(' ');
         } else {
             out.push(c);
         }

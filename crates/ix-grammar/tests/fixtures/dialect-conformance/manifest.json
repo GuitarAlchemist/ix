@@ -1,0 +1,345 @@
+{
+  "schema": "ga-ebnf-dialect-conformance",
+  "schema_version": "0.1.0",
+  "profile": "ga-ebnf-subset-v0.1",
+  "contract": "docs/contracts/2026-09-08-ga-ebnf-subset.contract.md",
+  "runner": "crates/ix-grammar/tests/dialect_conformance.rs",
+  "measured_at_commit": "834a05d",
+  "description": "Cross-dialect conformance corpus for the EBNF/ABNF parsers in ix-grammar. Every expectation below was MEASURED against the parsers, not derived from the specifications. The corpus exists to pin the points where dialects DISAGREE; cases where they agree are included only where an acceptance criterion asks for the agreement to be proven.",
+  "dialects": {
+    "iso_ebnf": {
+      "entry_point": "ix_grammar::ebnf::parse",
+      "spec": "ISO/IEC 14977:1996 (subset)"
+    },
+    "abnf": {
+      "entry_point": "ix_grammar::abnf::parse",
+      "spec": "RFC 5234 (subset)"
+    },
+    "naive_coloneq": {
+      "entry_point": "ix_grammar::constrained::EbnfGrammar::from_str",
+      "spec": "none — an ad-hoc line splitter, documented here because it is public, doctested, and silently disagrees with iso_ebnf on the same input"
+    }
+  },
+  "classes": {
+    "divergence": "Two or more dialects PARSE THE SAME INPUT SUCCESSFULLY and produce different grammars. Nothing errors; a consumer that switches entry points silently changes meaning. These are the cases the corpus exists for.",
+    "split": "One dialect accepts, another rejects. Useful but weaker: the disagreement is loud.",
+    "agreement": "All applicable dialects produce identical grammars. Included only to discharge a named acceptance criterion."
+  },
+  "cases": [
+    {
+      "id": "semicolon-splits-rules-or-comments-them-out",
+      "class": "divergence",
+      "input": "A = \"a\" ; B = \"b\"\n",
+      "why": "The single sharpest disagreement between the two shipped parsers. ISO 14977 uses ';' as the rule TERMINATOR; RFC 5234 uses ';' to start a comment that runs to end of line. The same 17 characters are a two-rule grammar in one dialect and a one-rule grammar in the other. Rule B does not fail to parse under ABNF — it silently ceases to exist.",
+      "spec": {
+        "iso14977": "§4.3 syntax rule ends with a terminator symbol ';'",
+        "rfc5234": "§3.9 comment = \";\" *(WSP / VCHAR) CRLF"
+      },
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"a\"", "B -> \"b\""] },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"a\""] }
+      }
+    },
+    {
+      "id": "semicolon-redefinition-picks-opposite-alternative",
+      "class": "divergence",
+      "input": "A = \"a\" ; A = \"b\"\n",
+      "why": "The same divergence compounded with silent last-wins redefinition. ISO reads two definitions of A and keeps the second; ABNF reads one definition and keeps the first. Both succeed, and they return OPPOSITE answers for the only rule in the grammar. No diagnostic is emitted by either.",
+      "spec": {
+        "iso14977": "§4.3 terminator; redefinition is not permitted but this parser does not detect it",
+        "rfc5234": "§3.9 comment"
+      },
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"b\""] },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"a\""] }
+      }
+    },
+    {
+      "id": "quotes-retained-by-naive-parser",
+      "class": "divergence",
+      "input": "S ::= \"a\" | \"b\"\n",
+      "why": "iso_ebnf strips the quotes from a terminal; naive_coloneq does not, so its tokens are the three-character strings including quote marks. Any consumer that compares tokens across the two entry points compares 'a' against '\"a\"' and finds no match. Both parse without error.",
+      "spec": {
+        "iso14977": "§4.16 terminal-string is delimited by quotes which are not part of the string"
+      },
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "S", "productions": ["S -> \"a\" | \"b\""] },
+        "naive_coloneq": { "outcome": "ok", "start": "S", "productions": ["S -> \"\\\"a\\\"\" | \"\\\"b\\\"\""] }
+      }
+    },
+    {
+      "id": "grouping-parens-become-literal-tokens",
+      "class": "divergence",
+      "input": "S ::= ( a | b ) c\n",
+      "why": "iso_ebnf desugars the group into an auxiliary rule. naive_coloneq splits on '|' at top level and keeps the parentheses as ordinary tokens, so it reports two alternatives '( a' and 'b ) c' — a grammar that is not merely different but structurally meaningless. It still returns Ok.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "S", "productions": ["S -> \"_grp_0\" \"c\"", "_grp_0 -> \"a\" | \"b\""] },
+        "naive_coloneq": { "outcome": "ok", "start": "S", "productions": ["S -> \"(\" \"a\" | \"b\" \")\" \"c\""] }
+      }
+    },
+    {
+      "id": "optional-brackets-become-literal-tokens",
+      "class": "divergence",
+      "input": "S ::= [ a ] b\n",
+      "why": "iso_ebnf produces an optional (body-or-epsilon) auxiliary rule; naive_coloneq produces four literal tokens with no optionality at all. The language accepted differs: {ab, b} versus {[a]b}.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "S", "productions": ["S -> \"_opt_0\" \"b\"", "_opt_0 -> \"a\" | ε"] },
+        "naive_coloneq": { "outcome": "ok", "start": "S", "productions": ["S -> \"[\" \"a\" \"]\" \"b\""] }
+      }
+    },
+    {
+      "id": "repetition-braces-become-literal-tokens",
+      "class": "divergence",
+      "input": "S ::= { a } b\n",
+      "why": "Same shape as the optional case: iso_ebnf builds a recursive zero-or-more rule, naive_coloneq keeps the braces as tokens. An unbounded language versus a four-token sentence.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "S", "productions": ["S -> \"_rep_0\" \"b\"", "_rep_0 -> \"a\" \"_rep_0\" | ε"] },
+        "naive_coloneq": { "outcome": "ok", "start": "S", "productions": ["S -> \"{\" \"a\" \"}\" \"b\""] }
+      }
+    },
+    {
+      "id": "w3c-character-class-read-as-iso-optional",
+      "class": "divergence",
+      "input": "A ::= [abc]\n",
+      "why": "THE SILENT ONE. In W3C EBNF (XML 1.0 §6) '[abc]' is a character class matching exactly one of a, b or c. In ISO 14977 '[...]' is an optional sequence. iso_ebnf implements ISO, so it accepts this W3C input and yields the language {\"abc\", \"\"} where W3C specifies {\"a\",\"b\",\"c\"} — disjoint from the intended language, with no error. '::=' is accepted by iso_ebnf, so W3C grammars look parseable. ix-grammar ships no W3C parser, so the W3C side of this row is a SPECIFICATION CITATION, not a measurement; only the iso_ebnf and naive_coloneq columns below were executed.",
+      "spec": {
+        "w3c_ebnf": "XML 1.0 §6: '[abc]' matches any Char with a value among the characters enumerated",
+        "iso14977": "§4.9 optional-sequence"
+      },
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"_opt_0\"", "_opt_0 -> \"abc\" | ε"] },
+        "naive_coloneq": { "outcome": "ok", "start": "A", "productions": ["A -> \"[abc]\""] }
+      }
+    },
+    {
+      "id": "iso-exception-absorbed-into-identifier",
+      "class": "agreement",
+      "input": "A = letter-digit ;\n",
+      "why": "Both parsers agree, and both are wrong in the same way. ISO 14977 '-' is the EXCEPT operator, so 'letter-digit' means 'letter but not digit'. Both tokenisers allow '-' inside an identifier, so both silently return a single nonterminal named 'letter-digit'. The module doc claims exception rules are 'flagged, not supported'; they are not flagged. Only the spaced form 'letter - digit' errors, so whether an ISO exception is caught depends on whitespace that ISO treats as insignificant.",
+      "spec": {
+        "iso14977": "§4.7 syntactic-exception; §6.5 whitespace between symbols is not significant"
+      },
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"letter-digit\""] },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"letter-digit\""] }
+      }
+    },
+    {
+      "id": "iso-exception-spaced-is-rejected",
+      "class": "agreement",
+      "input": "A = letter - digit ;\n",
+      "why": "The control for the row above. The identical ISO construct, written with the whitespace ISO says is insignificant, is rejected by both parsers. Pinning both halves is what makes the inconsistency visible: acceptance is a function of spacing, not of grammar.",
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 12, "message_contains": "unexpected character '-'" },
+        "abnf": { "outcome": "error", "line": 1, "col": 12, "message_contains": "unexpected character '-'" }
+      }
+    },
+    {
+      "id": "terminal-and-nonterminal-are-indistinguishable",
+      "class": "agreement",
+      "input": "A = \"b\" ;\n",
+      "why": "Paired with the next case. A quoted terminal and a bare identifier produce byte-identical grammars, because the emitted EbnfGrammar has one string type for both and EbnfGrammar::is_terminal decides terminal-ness by asking whether a rule of that name exists. Whether 'b' is a terminal therefore depends on whether some OTHER rule happens to define it — a non-local property of the whole document.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"b\""] },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"b\""] }
+      }
+    },
+    {
+      "id": "bare-identifier-matches-quoted-terminal",
+      "class": "agreement",
+      "input": "A = b ;\n",
+      "why": "The other half of the pair above: unquoted 'b' yields the same grammar as quoted \"b\". The corpus asserts the two are equal so that any future change giving terminals their own representation shows up here as a deliberate break.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"b\""] },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"b\""] }
+      }
+    },
+    {
+      "id": "abnf-spaced-repeat-silently-accepted",
+      "class": "split",
+      "input": "A = 3 * \"x\"\n",
+      "why": "RFC 5234 §3.6 writes repetition as '<a>*<b>element' with NO whitespace permitted between the repeat and the element. The spaced form is not valid ABNF. The parser accepts it anyway and reads '3' as a nonterminal followed by a zero-or-more of \"x\" — so an author who writes 'exactly three x' gets 'some symbol named 3, then any number of x'. iso_ebnf rejects the same text, which is the correct outcome for the wrong reason (it has no repetition-count syntax at all).",
+      "spec": {
+        "rfc5234": "§3.6 repetition = [repeat] element",
+        "iso14977": "§4.6 repeated-sequence uses '*' between an integer and a factor"
+      },
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 5, "message_contains": "unexpected character '3'" },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"3\" \"_rep_0\"", "_rep_0 -> \"x\" \"_rep_0\" | ε"] }
+      }
+    },
+    {
+      "id": "abnf-repeat-bounds-are-over-approximated",
+      "class": "split",
+      "input": "A = 2*4\"x\"\n",
+      "why": "Documented lossiness rather than a defect, pinned so the loss stays visible: '2*4 element' means between two and four repetitions, and the emitted grammar is one-or-more. The bounds are discarded, so the grammar accepts one 'x' and five 'x' — both outside the declared range. Any harness relying on bounded repetition cannot get it from this parser.",
+      "spec": { "rfc5234": "§3.7 specific repetition" },
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 5, "message_contains": "unexpected character '2'" },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"_rep_0\"", "_rep_0 -> \"x\" | \"x\" \"_rep_0\""] }
+      }
+    },
+    {
+      "id": "alternation-bar-is-iso-only",
+      "class": "split",
+      "input": "A = \"x\" | \"y\" ;\n",
+      "why": "'|' is ISO's definition-separator and is not ABNF syntax at all. Loud in both directions, and the pair with the next case establishes that the two dialects have DISJOINT alternation operators — no single text expresses alternation in both.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"x\" | \"y\""] },
+        "abnf": { "outcome": "error", "line": 1, "col": 9, "message_contains": "unexpected character '|'" }
+      }
+    },
+    {
+      "id": "alternation-slash-is-abnf-only",
+      "class": "split",
+      "input": "A = \"x\" / \"y\"\n",
+      "why": "The mirror image. Together these two cases are the reason a shared dialect cannot simply be 'the intersection plus alternation'.",
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 9, "message_contains": "unexpected character '/'" },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"x\" | \"y\""] }
+      }
+    },
+    {
+      "id": "w3c-postfix-star-rejected-loudly",
+      "class": "split",
+      "input": "A ::= \"x\"*\n",
+      "why": "W3C EBNF postfix repetition. Both shipped parsers reject it, which is the SAFE failure mode and is worth pinning as such: the dangerous W3C construct is '[...]' (see the character-class case), not the postfix operators the catalog guide warns about. Note iso_ebnf gets as far as column 10, i.e. it accepted 'A ::= \"x\"' and only then failed — a truncated prefix parse is not offered as a partial result.",
+      "spec": { "w3c_ebnf": "XML 1.0 §6: 'A*' matches zero or more occurrences of A" },
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 10, "message_contains": "unexpected character '*'" },
+        "abnf": { "outcome": "error", "line": 1, "col": 3, "message_contains": "unexpected character ':'" }
+      }
+    },
+    {
+      "id": "w3c-comment-delimiters-rejected-loudly",
+      "class": "split",
+      "input": "/* c */ A ::= \"x\"\n",
+      "why": "W3C uses '/* */', ISO uses '(* *)', ABNF uses ';'. All three comment syntaxes are mutually unparseable, and this one fails at column 1 before any rule is read. Safe.",
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 1, "message_contains": "unexpected character '/'" },
+        "abnf": { "outcome": "error", "line": 1, "col": 11, "message_contains": "unexpected character ':'" }
+      }
+    },
+    {
+      "id": "iso-special-sequence-rejected-loudly",
+      "class": "split",
+      "input": "A = ? any char ? ;\n",
+      "why": "ISO special-sequence, listed as out of scope by the module docs. Confirmed loud rather than silently absorbed — unlike the exception operator, which is not.",
+      "spec": { "iso14977": "§4.10 special-sequence" },
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 5, "message_contains": "unexpected character '?'" },
+        "abnf": { "outcome": "error", "line": 1, "col": 5, "message_contains": "unexpected character '?'" }
+      }
+    },
+    {
+      "id": "abnf-numeric-terminal-rejected-loudly",
+      "class": "split",
+      "input": "A = %x41\n",
+      "why": "RFC 5234 numeric terminal values are the most common ABNF construct ix-grammar cannot read, and real IETF grammars are full of them. Confirmed loud. Any harness grammar that needs to name a byte value cannot use this parser.",
+      "spec": { "rfc5234": "§2.3 / §3.4 terminal values" },
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 5, "message_contains": "unexpected character '%'" },
+        "abnf": { "outcome": "error", "line": 1, "col": 5, "message_contains": "unexpected character '%'" }
+      }
+    },
+    {
+      "id": "nested-iso-comment-rejected-but-misdiagnosed",
+      "class": "split",
+      "input": "(* a (* b *) c *) A = \"x\" ;\n",
+      "why": "ISO 14977 permits nested comments; this parser does not, and says so in its docs. It fails loudly, which is correct, but the message is 'unexpected character *' at the point where the outer comment's tail resumes — it does not mention comments at all. Pinned because the position and message are part of the contract even when the diagnosis is poor.",
+      "spec": { "iso14977": "§6.4 comments may be nested" },
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 14, "message_contains": "unexpected character '*'" }
+      }
+    },
+    {
+      "id": "hash-comment-only-in-naive-parser",
+      "class": "split",
+      "input": "# c\nS ::= a\n",
+      "why": "A fourth comment syntax, recognised only by EbnfGrammar::from_str. Four entry points, four incompatible comment conventions, no overlap.",
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 1, "col": 1, "message_contains": "unexpected character '#'" },
+        "abnf": { "outcome": "error", "line": 1, "col": 1, "message_contains": "unexpected character '#'" },
+        "naive_coloneq": { "outcome": "ok", "start": "S", "productions": ["S -> \"a\""] }
+      }
+    },
+    {
+      "id": "iso-single-quoted-terminal-is-iso-only",
+      "class": "split",
+      "input": "A = 'x' ;\n",
+      "why": "ISO 14977 allows both quote flavours; RFC 5234 allows only the double quote. A grammar written with single quotes is ISO-portable and ABNF-unparseable.",
+      "spec": { "iso14977": "§4.16", "rfc5234": "§2.3 char-val uses DQUOTE" },
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"x\""] },
+        "abnf": { "outcome": "error", "line": 1, "col": 5, "message_contains": "unexpected character '''" }
+      }
+    },
+    {
+      "id": "defines-operator-equivalence",
+      "class": "agreement",
+      "input": "A = \"x\" \"y\" ;\n",
+      "why": "Acceptance criterion: verify both '=' and '::=' forms where intentionally supported. This is the '=' half; the runner additionally asserts that all three of '= ... ;', '::=' and bare '=' produce an identical grammar for the same right-hand side.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"x\" \"y\""] },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"x\" \"y\""] }
+      }
+    },
+    {
+      "id": "comma-and-whitespace-concatenation-equivalence",
+      "class": "agreement",
+      "input": "A = \"x\" , \"y\" ;\n",
+      "why": "Acceptance criterion: comma and whitespace concatenation must produce equivalent grammar structures. Verified equal to the whitespace form above. ABNF has no comma, so it rejects the ISO-portable spelling.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"x\" \"y\""] },
+        "abnf": { "outcome": "error", "line": 1, "col": 9, "message_contains": "unexpected character ','" }
+      }
+    },
+    {
+      "id": "error-position-is-immune-to-preceding-comments",
+      "class": "agreement",
+      "input": "(* line1\nline2\nline3 *)\nA = ) ;\n",
+      "why": "Acceptance criterion: error positions must be deterministic and useful. The offending ')' is at line 4, column 5, and the reported position must not depend on how much comment text precedes it. Before the strip_comments fix in this PR the parser reported line 2 — the whole comment, newlines included, was replaced by a single space, so the reported line was short by the number of newlines swallowed and the reported column by the comment's length. The runner asserts this case and its comment-free control report the SAME position, which is a difference-of-two-runs check rather than a single absolute number.",
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 4, "col": 5, "message_contains": "expected rule name" }
+      }
+    },
+    {
+      "id": "error-position-control-without-comments",
+      "class": "agreement",
+      "input": "\n\n\nA = ) ;\n",
+      "why": "The control for the row above: the same error at the same coordinates with the comment replaced by bare newlines.",
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 4, "col": 5, "message_contains": "expected rule name" }
+      }
+    },
+    {
+      "id": "comments-and-whitespace-do-not-alter-productions",
+      "class": "agreement",
+      "input": "(* h *)\nA (* a *) = (* b *) \"x\" (* c *) ;\n(* d *)\nB = A ;\n",
+      "why": "Acceptance criterion: comments and insignificant whitespace must not alter productions. Note this is a SEPARATE property from error positions, and the two had different answers before this PR: productions were already immune to comments, positions were not.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"x\"", "B -> \"A\""] }
+      }
+    },
+    {
+      "id": "duplicate-rule-silently-last-wins",
+      "class": "agreement",
+      "input": "A = \"x\" ;\nA = \"y\" ;\n",
+      "why": "A redefinition is neither rejected nor merged — the second definition overwrites the first with no diagnostic. agent-blackbox#70 requires that duplicate declarations FAIL, so this is a named mismatch against the consumer's stated requirement rather than a parser bug in the abstract.",
+      "expect": {
+        "iso_ebnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"y\""] },
+        "abnf": { "outcome": "ok", "start": "A", "productions": ["A -> \"y\""] }
+      }
+    },
+    {
+      "id": "empty-input-reports-sentinel-position",
+      "class": "agreement",
+      "input": "",
+      "why": "Both parsers report line 0, column 0 — not a valid 1-indexed coordinate. Pinned as the documented sentinel for 'no tokens at all' so that a consumer rendering a caret diagnostic knows to special-case it.",
+      "expect": {
+        "iso_ebnf": { "outcome": "error", "line": 0, "col": 0, "message_contains": "no rules in grammar" },
+        "abnf": { "outcome": "error", "line": 0, "col": 0, "message_contains": "no rules in grammar" }
+      }
+    }
+  ]
+}
