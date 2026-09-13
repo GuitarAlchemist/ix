@@ -65,7 +65,10 @@ impl SearchFilter {
 }
 
 /// Tokenize by lowercasing and splitting on any non-alphanumeric character.
-fn tokenize(text: &str) -> Vec<String> {
+///
+/// Public so a second corpus can be ranked on exactly the same terms this
+/// catalog is ranked on — see [`bm25_rank`].
+pub fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_lowercase())
@@ -101,6 +104,59 @@ fn idf(n_docs: f64, doc_freq: f64) -> f64 {
     (1.0 + (n_docs - doc_freq + 0.5) / (doc_freq + 0.5)).ln()
 }
 
+/// Score every pre-tokenized document in `docs` against `query_terms` by Okapi
+/// BM25 (k1=1.2, b=0.75), returning one score per document, in input order.
+///
+/// Corpus-agnostic on purpose: [`search`] applies it to the learnings catalog,
+/// and `ix-corpus-map` applies it to the issue/PR/doc corpus. One BM25 in the
+/// repository means the keyword baseline a retrieval comparison measures is
+/// *the* keyword ranker this repository ships, not a second one that drifted.
+///
+/// IDF and average document length are computed over `docs` as given — the
+/// caller is responsible for pre-filtering, since a hard filter changes the
+/// corpus statistics and therefore the scores.
+pub fn bm25_rank(docs: &[Vec<String>], query_terms: &[String]) -> Vec<f64> {
+    if docs.is_empty() {
+        return Vec::new();
+    }
+
+    let n = docs.len() as f64;
+    let total_len: usize = docs.iter().map(Vec::len).sum();
+    let avgdl = (total_len as f64 / n).max(1.0);
+
+    // Document frequency per term (each term counted once per doc).
+    let mut df: HashMap<&str, usize> = HashMap::new();
+    for doc in docs {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for tok in doc {
+            if seen.insert(tok.as_str()) {
+                *df.entry(tok.as_str()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    docs.iter()
+        .map(|doc| {
+            let dl = doc.len() as f64;
+            let mut tf: HashMap<&str, usize> = HashMap::new();
+            for tok in doc {
+                *tf.entry(tok.as_str()).or_insert(0) += 1;
+            }
+            let mut score = 0.0;
+            for term in query_terms {
+                let f = *tf.get(term.as_str()).unwrap_or(&0) as f64;
+                if f == 0.0 {
+                    continue;
+                }
+                let dfq = *df.get(term.as_str()).unwrap_or(&0) as f64;
+                let denom = f + K1 * (1.0 - B + B * dl / avgdl);
+                score += idf(n, dfq) * (f * (K1 + 1.0)) / denom;
+            }
+            score
+        })
+        .collect()
+}
+
 /// Rank `records` against `query` by Okapi BM25 (k1=1.2, b=0.75).
 ///
 /// `filter` is applied FIRST as a hard pre-filter; BM25 statistics (IDF, average
@@ -119,44 +175,12 @@ pub fn search<'a>(
     }
 
     let docs: Vec<Vec<String>> = filtered.iter().map(|r| document_tokens(r)).collect();
-    let n = docs.len() as f64;
-    let total_len: usize = docs.iter().map(Vec::len).sum();
-    let avgdl = (total_len as f64 / n).max(1.0);
-
-    // Document frequency per term (each term counted once per doc).
-    let mut df: HashMap<&str, usize> = HashMap::new();
-    for doc in &docs {
-        let mut seen: HashSet<&str> = HashSet::new();
-        for tok in doc {
-            if seen.insert(tok.as_str()) {
-                *df.entry(tok.as_str()).or_insert(0) += 1;
-            }
-        }
-    }
-
-    let query_terms = tokenize(query);
+    let scores = bm25_rank(&docs, &tokenize(query));
 
     let mut scored: Vec<(&LearningRecord, f64)> = filtered
         .iter()
-        .zip(docs.iter())
-        .map(|(&r, doc)| {
-            let dl = doc.len() as f64;
-            let mut tf: HashMap<&str, usize> = HashMap::new();
-            for tok in doc {
-                *tf.entry(tok.as_str()).or_insert(0) += 1;
-            }
-            let mut score = 0.0;
-            for term in &query_terms {
-                let f = *tf.get(term.as_str()).unwrap_or(&0) as f64;
-                if f == 0.0 {
-                    continue;
-                }
-                let dfq = *df.get(term.as_str()).unwrap_or(&0) as f64;
-                let denom = f + K1 * (1.0 - B + B * dl / avgdl);
-                score += idf(n, dfq) * (f * (K1 + 1.0)) / denom;
-            }
-            (r, score)
-        })
+        .zip(scores)
+        .map(|(&r, s)| (r, s))
         .filter(|(_, s)| *s > 0.0)
         .collect();
 
