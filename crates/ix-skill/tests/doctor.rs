@@ -691,3 +691,132 @@ fn find_repo_root_walks_up_from_a_nested_directory() {
         "doctor must work from anywhere inside the repo"
     );
 }
+
+// ------------------------------------------------------------ --fast scoping
+//
+// `--fast` decides by change set, never by cost. These tests pin the direction
+// of every branch: an unknown scope must run everything, and a skipped check
+// must never read as a passing one.
+
+use ix_skill::doctor::change_scope::ChangeScope;
+use ix_skill::doctor::{should_run, Skippable};
+
+/// Both slow checks read `*.rs`, so any Rust change runs both.
+#[test]
+fn a_rust_change_runs_every_skippable_check() {
+    let scope = ChangeScope::parse_porcelain_z(" M crates/ix-skill/src/doctor/mod.rs\0");
+    for check in [Skippable::OrphanTraits, Skippable::DarkFeatures] {
+        assert!(
+            should_run(Some(&scope), check),
+            "{check:?} reads *.rs and must run when Rust changed"
+        );
+    }
+}
+
+/// The discriminating case: a manifest-only change resolves features but
+/// cannot add or remove a trait declaration.
+#[test]
+fn a_manifest_only_change_runs_dark_features_but_not_orphan_traits() {
+    let scope = ChangeScope::parse_porcelain_z(" M crates/ix-petri/Cargo.toml\0");
+    assert!(
+        should_run(Some(&scope), Skippable::DarkFeatures),
+        "cargo metadata reads every manifest"
+    );
+    assert!(
+        !should_run(Some(&scope), Skippable::OrphanTraits),
+        "a manifest edit cannot declare or implement a trait"
+    );
+}
+
+/// Editing an allowlist changes that check's verdict without touching Rust.
+#[test]
+fn an_allowlist_change_runs_its_own_check_only() {
+    let orphan = ChangeScope::parse_porcelain_z(&format!(
+        " M {}\0",
+        ix_skill::doctor::orphan_traits::ALLOWLIST_PATH
+    ));
+    assert!(should_run(Some(&orphan), Skippable::OrphanTraits));
+    assert!(!should_run(Some(&orphan), Skippable::DarkFeatures));
+
+    let dark = ChangeScope::parse_porcelain_z(&format!(
+        " M {}\0",
+        ix_skill::doctor::dark_features::ALLOWLIST_PATH
+    ));
+    assert!(should_run(Some(&dark), Skippable::DarkFeatures));
+    assert!(!should_run(Some(&dark), Skippable::OrphanTraits));
+}
+
+/// The case the fast path exists for.
+#[test]
+fn a_docs_only_change_skips_both_slow_checks() {
+    let scope =
+        ChangeScope::parse_porcelain_z(" M README.md\0 M docs/guides/petri-nets-in-ix.md\0");
+    for check in [Skippable::OrphanTraits, Skippable::DarkFeatures] {
+        assert!(!should_run(Some(&scope), check), "{check:?} should skip");
+    }
+}
+
+/// The safety property. If git cannot report the change set, `--fast` must
+/// degrade to the full run rather than to a green tick.
+#[test]
+fn an_unknown_change_set_skips_nothing() {
+    for check in [Skippable::OrphanTraits, Skippable::DarkFeatures] {
+        assert!(
+            should_run(None, check),
+            "{check:?} must run when the change set is unknown"
+        );
+    }
+}
+
+/// A clean tree is *known* to be empty, which is different from unknown.
+#[test]
+fn a_clean_tree_is_known_empty_and_skips() {
+    let scope = ChangeScope::parse_porcelain_z("");
+    assert!(scope.is_empty());
+    assert!(!should_run(Some(&scope), Skippable::OrphanTraits));
+}
+
+/// Seed a real violation, then prove the predicate that guards it is not
+/// vacuous: the scope containing the seeded file must select the check that
+/// catches it. A predicate that returned `false` here would let `--fast` walk
+/// straight past a genuine orphan.
+#[test]
+fn the_scope_predicate_selects_the_check_that_catches_a_seeded_orphan() {
+    let dir = seeded_repo("pub trait Ghost {\n    fn haunt(&self);\n}\n");
+    let census = orphan_traits::scan(dir.path()).expect("scan");
+    let found: Vec<&str> = census.unlisted_orphans.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(found, ["Ghost"], "the seeded orphan must be caught at all");
+
+    // The same file, as git would report it having just been written.
+    let scope = ChangeScope::parse_porcelain_z("?? crates/seed/src/lib.rs\0");
+    assert!(
+        should_run(Some(&scope), Skippable::OrphanTraits),
+        "the change that introduced the orphan must select the orphan check"
+    );
+}
+
+/// A skipped check reports `skip`, never `ok`. The whole risk of a fast path
+/// is that it looks like a pass; this pins the distinction.
+#[test]
+fn skipped_checks_are_reported_as_skip_not_ok() {
+    let dir = seeded_repo("pub struct Fine;\n");
+    // No git repo in the temp dir, so `detect` returns None and nothing is
+    // skipped — assert that first, because it is the safety default.
+    let unknown = doctor::run(
+        dir.path(),
+        doctor::Options {
+            fast: true,
+            ..Default::default()
+        },
+    );
+    let orphan = unknown
+        .checks
+        .iter()
+        .find(|c| c.name == "orphan-traits")
+        .expect("orphan-traits present");
+    assert_ne!(
+        orphan.status,
+        Status::Skip,
+        "an unreadable change set must not produce a skip"
+    );
+}

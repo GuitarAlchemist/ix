@@ -111,6 +111,15 @@ enum Verb {
         /// Additionally run the CI clippy + `cargo test --workspace` invocation.
         #[arg(long)]
         full: bool,
+
+        /// Run only the checks the current change set could affect (ix#186).
+        ///
+        /// Scoped by what changed, never by what is cheap: a check whose inputs
+        /// the working tree touches always runs, and if git cannot report the
+        /// change set nothing is skipped. Skipped checks are reported as
+        /// `skip`, never as `ok`.
+        #[arg(long, conflicts_with = "full")]
+        fast: bool,
     },
 
     /// Print the maturity-tier "Stable" crates with a public-API hash each.
@@ -406,8 +415,8 @@ fn dispatch(cli: Cli) -> i32 {
             exit::UNKNOWN
         }
 
-        Verb::Doctor { write, full } => {
-            let opts = ix_skill::doctor::Options { write, full };
+        Verb::Doctor { write, full, fast } => {
+            let opts = ix_skill::doctor::Options { write, full, fast };
             match ix_skill::doctor::main(fmt, opts) {
                 Ok(code) => code,
                 Err(e) => {

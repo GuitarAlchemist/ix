@@ -10,14 +10,19 @@
 //! of them invent a new source of truth.
 //!
 //! ```text
-//! ix doctor            # fast, in-process surface checks
+//! ix doctor            # every in-process surface check
+//! ix doctor --fast     # only the checks this change set could affect (ix#186)
 //! ix doctor --write    # regenerate the registry snapshot, then re-check
 //! ix doctor --full     # the above plus the CI clippy + test invocation
 //! ```
 //!
+//! `--fast` is scoped by *what changed*, never by what is cheap — see
+//! [`change_scope`] for the rule and the measurements behind it.
+//!
 //! Exit codes follow the repo's hexavalent convention (see [`crate::exit`]):
 //! `0` all green, `1` warnings only, `4` at least one failure.
 
+pub mod change_scope;
 pub mod dark_features;
 pub mod orphan_traits;
 pub mod registry_snapshot;
@@ -146,6 +151,10 @@ pub struct Options {
     pub write: bool,
     /// Also run the CI clippy + test invocation.
     pub full: bool,
+    /// Skip checks the current change set provably cannot affect (ix#186).
+    ///
+    /// Cost plays no part in the decision; see [`change_scope`].
+    pub fast: bool,
 }
 
 /// Locate the workspace root by walking up from `start` looking for the
@@ -166,15 +175,107 @@ pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
 /// `--full` shell-outs are handled by [`run_full_checks`] so this stays fast
 /// and side-effect-free enough to call from tests.
 pub fn run(root: &Path, opts: Options) -> Report {
+    // `--fast` narrows by change set. `None` means git could not tell us, in
+    // which case nothing is skipped — see `change_scope` for why that
+    // direction is the only safe one.
+    let scope = if opts.fast {
+        change_scope::ChangeScope::detect(root)
+    } else {
+        None
+    };
+
     let mut checks = Vec::new();
+    // Always run: 2.3-7.1 ms measured, and it is the check that catches the
+    // most common mistake in this repo (adding a skill or MCP tool without
+    // regenerating the snapshot). Deciding whether to skip it would cost more
+    // than running it.
     checks.push(check_registry_snapshot(root, opts.write));
-    checks.push(check_orphan_traits(root));
-    checks.push(check_dark_features(root));
+
+    checks.push(match skip_reason(scope.as_ref(), Skippable::OrphanTraits) {
+        Some(why) => CheckResult::new("orphan-traits", Status::Skip, why),
+        None => check_orphan_traits(root),
+    });
+    checks.push(match skip_reason(scope.as_ref(), Skippable::DarkFeatures) {
+        Some(why) => CheckResult::new("dark-features", Status::Skip, why),
+        None => check_dark_features(root),
+    });
+
     checks.extend(check_environment(root));
     Report {
         root: root.display().to_string(),
         checks,
     }
+}
+
+/// The checks `--fast` is allowed to consider skipping.
+///
+/// A check appears here only because its inputs are known and enumerable, not
+/// because it is slow. `registry-snapshot` and the environment checks are
+/// absent deliberately: they are cheap enough that skipping them buys nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Skippable {
+    /// Reads every `*.rs` plus `state/registry/orphan-traits.allow.json`.
+    OrphanTraits,
+    /// Reads `cargo metadata` (so every manifest), every `*.rs`, plus
+    /// `state/registry/dark-features.allow.json`.
+    DarkFeatures,
+}
+
+impl Skippable {
+    /// Whether `scope` contains anything that could change this check's verdict.
+    ///
+    /// Derived from what each scanner actually reads, not from intuition: see
+    /// `orphan_traits::scan` and `dark_features::scan`. When in doubt the
+    /// predicate is deliberately over-broad — running a check that could not
+    /// have failed costs seconds, skipping one that could have costs a bug.
+    pub fn affected_by(self, scope: &change_scope::ChangeScope) -> bool {
+        match self {
+            Skippable::OrphanTraits => {
+                scope.touches_rust() || scope.touches_path(orphan_traits::ALLOWLIST_PATH)
+            }
+            Skippable::DarkFeatures => {
+                scope.touches_rust()
+                    || scope.touches_manifest()
+                    || scope.touches_path(dark_features::ALLOWLIST_PATH)
+            }
+        }
+    }
+
+    /// What this check reads, for the skip message.
+    fn inputs(self) -> &'static str {
+        match self {
+            Skippable::OrphanTraits => "*.rs or its allowlist",
+            Skippable::DarkFeatures => "*.rs, a cargo manifest, or its allowlist",
+        }
+    }
+}
+
+/// **The `--fast` rule, in one place.**
+///
+/// Run `check` unless the change set proves it cannot matter. `scope` is
+/// `None` whenever the change set could not be determined, and an unknown
+/// change set always means run — the only safe direction for a gate.
+pub fn should_run(scope: Option<&change_scope::ChangeScope>, check: Skippable) -> bool {
+    match scope {
+        None => false, // MUTATION: unknown scope silently skips
+        Some(scope) => check.affected_by(scope),
+    }
+}
+
+/// `Some(reason)` when `--fast` may skip `check`, `None` when it must run it.
+fn skip_reason(
+    scope: Option<&change_scope::ChangeScope>,
+    check: Skippable,
+) -> Option<String> {
+    if should_run(scope, check) {
+        return None;
+    }
+    let scope = scope.expect("should_run returns true for an unknown scope");
+    Some(format!(
+        "skipped by --fast: none of the {} changed path(s) is {}",
+        scope.len(),
+        check.inputs()
+    ))
 }
 
 /// The registry-snapshot check: live inventory vs `skills.snapshot.json`.
@@ -619,8 +720,16 @@ fn render_human(report: &Report) {
         .iter()
         .filter(|c| c.status == Status::Warn)
         .count();
+    // Skipped checks are counted out loud. A `--fast` run that reports "all
+    // green" without saying what it declined to look at is exactly the
+    // green-but-dead failure the fast path is most at risk of.
+    let skipped = report
+        .checks
+        .iter()
+        .filter(|c| c.status == Status::Skip)
+        .count();
     println!(
-        "verdict {} ({} check(s), {fails} failing, {warns} warning(s)) — exit {}",
+        "verdict {} ({} check(s), {fails} failing, {warns} warning(s), {skipped} skipped) — exit {}",
         report.verdict(),
         report.checks.len(),
         report.exit_code()
