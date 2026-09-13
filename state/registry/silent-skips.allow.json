@@ -1,0 +1,124 @@
+{
+  "note": "Tests that can return before reaching an assertion when their environment is missing, and so report a pass having checked nothing. Checked by `ix doctor` (see crates/ix-skill/src/doctor/silent_skips.rs). Entries are keyed by file and test name, not line. Every entry needs a non-empty `reason`: the point of this file is that a human said why a test may pass without asserting. `kind` is `environment` (the skip covers something CI cannot reasonably provide: a sibling repo's build, a gitignored artifact, a local binary; expected to stay) or `tracked` (nothing environmental stops it being checked; requires an `issue` and counts as outstanding debt). Entries whose test no longer skips are reported as stale and must be removed. This list is a baseline of what was already true when the check landed; it is not a place to park new skips.",
+  "allow": [
+    {
+      "file": "crates/ix-agent/tests/autonomous_render_audit.rs",
+      "test": "harness_discovers_moon_dark_face_issue_and_fixes_it",
+      "kind": "environment",
+      "reason": "Cross-repo test over two GA frontend sources, located by absolute paths under C:/Users/spare/source/repos/ga. It cannot run on CI, and it cannot run for any other contributor even with ga cloned beside ix, because the paths name one developer's home directory. Skips 9 assertions. The hardcoded path is a defect in its own right; resolving ga as a sibling of the workspace root would at least let it run locally for everyone.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-agent/tests/voicings_payload_contract.rs",
+      "test": "corpus_lazy_lookup_resolves_when_present",
+      "kind": "environment",
+      "reason": "Guards on state/voicings/bass-corpus.json, which is committed to git, so in any clean checkout the guard never fires and the test does assert. Baselined because the scanner cannot tell a dead guard from a live one; the honest fix is an `expect` on the read, after which this entry goes stale.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-agent/tests/voicings_payload_contract.rs",
+      "test": "binary_buffer_layout_matches_meta_when_present",
+      "kind": "environment",
+      "reason": "Needs state/viz/voicing-positions.{bin,meta.json}, which are gitignored (.gitignore: state/viz/) and produced by running serve_viz over OPTIC-K data. Never present on CI or in a fresh clone.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-duck/tests/ixql_plan_golden.rs",
+      "test": "duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed",
+      "kind": "tracked",
+      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
+      "issue": "ix#319"
+    },
+    {
+      "file": "crates/ix-duck/tests/ixql_plan_golden.rs",
+      "test": "duckdb_refuses_a_corrupted_plan_when_duckdb_is_installed",
+      "kind": "tracked",
+      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job. This test also returned silently when a temp dir could not be created (line 180); #319 replaces that guard with an `expect`.",
+      "issue": "ix#319"
+    },
+    {
+      "file": "crates/ix-duck/tests/pareto_golden.rs",
+      "test": "duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed",
+      "kind": "tracked",
+      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
+      "issue": "ix#319"
+    },
+    {
+      "file": "crates/ix-duck/tests/persistence_h0_golden.rs",
+      "test": "duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed",
+      "kind": "tracked",
+      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
+      "issue": "ix#319"
+    },
+    {
+      "file": "crates/ix-duck/tests/persistence_h0_golden.rs",
+      "test": "the_sql_guard_rejects_bad_input_when_duckdb_is_installed",
+      "kind": "tracked",
+      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
+      "issue": "ix#319"
+    },
+    {
+      "file": "crates/ix-optick-sae/tests/python_contract_tests.rs",
+      "test": "python_contract_suites_pass",
+      "kind": "environment",
+      "reason": "Not an absence-skip: a missing interpreter panics. It returns only when IX_SKIP_PYTHON_CONTRACT_TESTS is set explicitly, an operator opt-out for a machine with no Python. No workflow sets it, so CI runs the suites.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-optick/tests/conformance.rs",
+      "test": "conformance_open_real_index",
+      "kind": "environment",
+      "reason": "Needs OPTICK_INDEX_PATH pointing at a real OPTK v4 index written by GA's OptickIndexWriter: a ~175 MB gitignored artifact rebuilt from the ga repo, never available on hosted CI. All four conformance tests share this gate.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-optick/tests/conformance.rs",
+      "test": "conformance_search_per_instrument",
+      "kind": "environment",
+      "reason": "Same OPTICK_INDEX_PATH gate as conformance_open_real_index.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-optick/tests/conformance.rs",
+      "test": "conformance_instrument_counts_sum_to_total",
+      "kind": "environment",
+      "reason": "Same OPTICK_INDEX_PATH gate as conformance_open_real_index.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-optick/tests/conformance.rs",
+      "test": "conformance_metadata_random_access",
+      "kind": "environment",
+      "reason": "Same OPTICK_INDEX_PATH gate as conformance_open_real_index.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-registry-check/tests/compatibility.rs",
+      "test": "compare_handles_the_real_capability_registry",
+      "kind": "environment",
+      "reason": "Skips only when the governance/demerzel submodule is not checked out. Both ci.yml jobs that check out code use `submodules: recursive`, so CI runs it; the skip covers a non-recursive local clone.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-sentrux-annotations/tests/end_to_end.rs",
+      "test": "live_sentrux_check_against_ix_worktree",
+      "kind": "environment",
+      "reason": "Needs a local sentrux binary at DEFAULT_SENTRUX_EXE, which is the absolute path C:/Users/spare/bin/sentrux.exe (crates/ix-sentrux-annotations/src/lib.rs). Also skips on a live transport error; the fixture tests in the same file cover parsing. The hardcoded home-directory default is used by production code (src/bin/bridge.rs, src/mcp_bridge.rs), not only this test, and deserves its own issue.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-skill/tests/local_embed_cli.rs",
+      "test": "local_embed_emits_vectors_from_a_preseeded_cache",
+      "kind": "environment",
+      "reason": "Needs IX_TEST_FASTEMBED_CACHE pointing at a pre-downloaded fastembed model cache. CI never downloads ONNX models (see the `embeddings` entry in dark-features.allow.json). Skips 7 assertions.",
+      "issue": null
+    },
+    {
+      "file": "crates/ix-voicings/tests/smoke_phase_a.rs",
+      "test": "smoke_phase_a_guitar_50",
+      "kind": "environment",
+      "reason": "Shells out to the GA FretboardVoicingsCLI build (IX_VOICINGS_GA_CLI, or the sibling ga repo's Debug output). A .NET build from another repository; never present on CI. Skips 10 assertions, the most of any baselined test.",
+      "issue": null
+    }
+  ]
+}

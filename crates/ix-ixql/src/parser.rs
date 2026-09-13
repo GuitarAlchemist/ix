@@ -18,8 +18,16 @@
 
 use std::collections::BTreeMap;
 
-use crate::ast::{BinaryOp, Block, CompoundOp, Expr, Literal, PipeStep, Statement, UnaryOp};
+use ix_types::Hexavalent;
+
+use crate::ast::{
+    BinaryOp, Block, CompoundOp, ConfidenceOp, Expr, Literal, PipeStep, Statement, UnaryOp,
+    VerdictArm, VerdictGuard,
+};
 use crate::lexer::{tokenize, LexError, Tok, Token};
+
+/// A step's callee and arguments, before they are placed in a step variant.
+type StepCall = (Box<Expr>, Vec<Expr>, BTreeMap<String, Expr>);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
@@ -182,9 +190,18 @@ impl Parser {
 
     fn parse_pipeline(&mut self) -> Result<Expr, ParseError> {
         let head = self.parse_expr()?;
-        let mut steps = Vec::new();
+        let mut steps: Vec<PipeStep> = Vec::new();
         while self.eat(&Tok::Arrow) {
-            steps.push(self.parse_pipe_step()?);
+            let step = self.parse_pipe_step()?;
+            // Consecutive verdict arms are one case analysis, not a chain of
+            // filters — see `PipeStep::VerdictMatch`.
+            if let (PipeStep::VerdictMatch(arms), Some(PipeStep::VerdictMatch(open))) =
+                (&step, steps.last_mut())
+            {
+                open.extend(arms.iter().cloned());
+                continue;
+            }
+            steps.push(step);
         }
         if steps.is_empty() {
             Ok(head)
@@ -200,17 +217,82 @@ impl Parser {
             return Ok(PipeStep::Compound(self.parse_compound_ops()?));
         }
 
+        if self.peek_keyword("when") && truth_symbol(self.peek_at(1)).is_some() {
+            self.bump(); // `when`
+            return self.parse_verdict_arm();
+        }
+
+        let (target, positional, named) = self.parse_step_call()?;
+        Ok(PipeStep::CallStep {
+            target,
+            positional,
+            named,
+        })
+    }
+
+    /// `T >= 0.7: call(…)`, after the `when`.
+    fn parse_verdict_arm(&mut self) -> Result<PipeStep, ParseError> {
+        let line = self.line();
+        let truth = match truth_symbol(&self.bump()) {
+            Some(truth) => truth,
+            None => unreachable!("checked by the caller"),
+        };
+        let op = match self.peek() {
+            Tok::Gte => Some(ConfidenceOp::Gte),
+            Tok::Gt => Some(ConfidenceOp::Gt),
+            Tok::Lte => Some(ConfidenceOp::Lte),
+            Tok::Lt => Some(ConfidenceOp::Lt),
+            _ => None,
+        };
+        let confidence = match op {
+            None => None,
+            Some(op) => {
+                self.bump();
+                let bound = match self.bump() {
+                    Tok::Num(n) => n.as_f64(),
+                    _ => None,
+                };
+                match bound {
+                    Some(bound) if (0.0..=1.0).contains(&bound) => Some((op, bound)),
+                    _ => {
+                        return Err(ParseError::at(
+                            line,
+                            format!(
+                                "a verdict guard bounds confidence, so `{} {}` needs a number in [0, 1]",
+                                truth.symbol(),
+                                op.as_str()
+                            ),
+                        ))
+                    }
+                }
+            }
+        };
+        self.expect(&Tok::Colon)?;
+        let (target, positional, named) = self.parse_step_call()?;
+        Ok(PipeStep::VerdictMatch(vec![VerdictArm {
+            guard: VerdictGuard { truth, confidence },
+            target,
+            positional,
+            named,
+        }]))
+    }
+
+    fn parse_step_call(&mut self) -> Result<StepCall, ParseError> {
         let line = self.line();
         match self.parse_expr()? {
             Expr::Call {
                 target,
                 positional,
                 named,
-            } => Ok(PipeStep::CallStep {
-                target,
-                positional,
-                named,
-            }),
+            } => Ok((target, positional, named)),
+            // `→ explanation_requirement` — a named check applied to the piped
+            // value, read as a call with no arguments. The corpus uses 28 of
+            // these and binds none of the names as a variable, so a bare name
+            // in step position is never a value reference: it resolves to a
+            // capability or fails, it does not consult the environment.
+            name @ (Expr::Var(_) | Expr::Member(..)) => {
+                Ok((Box::new(name), Vec::new(), BTreeMap::new()))
+            }
             _ => Err(ParseError::at(
                 line,
                 "a `→` step must be a call — a bare value cannot consume the piped input",
@@ -576,6 +658,20 @@ impl Parser {
 
 /// Negate a numeric literal without going through `f64`, so `-9007199254740993`
 /// stays exact the way the positive form does.
+/// A bare `T`/`P`/`U`/`D`/`F`/`C` — the only identifiers that open a verdict
+/// guard. Everything else after `when` is a boolean condition, which a `→`
+/// step does not support yet.
+fn truth_symbol(tok: &Tok) -> Option<Hexavalent> {
+    let Tok::Ident(name) = tok else {
+        return None;
+    };
+    let mut chars = name.chars();
+    match (chars.next(), chars.next()) {
+        (Some(symbol), None) => Hexavalent::from_char(symbol),
+        _ => None,
+    }
+}
+
 fn negate(n: &serde_json::Number, line: usize) -> Result<serde_json::Number, ParseError> {
     if let Some(i) = n.as_i64() {
         return Ok(serde_json::Number::from(-i));
@@ -722,6 +818,24 @@ mod tests {
         assert!(matches!(
             parse_expression("v.followups is not empty").unwrap(),
             Expr::Unary(UnaryOp::IsNotEmpty, _)
+        ));
+    }
+
+    #[test]
+    fn a_bare_name_step_is_a_call_with_no_arguments() {
+        let block = parse_program("x <- read(\"p\")\n  → explanation_requirement").unwrap();
+        let Statement::Assign(_, expr) = &block[0] else {
+            panic!("{block:#?}");
+        };
+        let Expr::Pipeline(_, steps) = expr.as_ref() else {
+            panic!("{expr:#?}");
+        };
+        assert!(matches!(
+            &steps[0],
+            PipeStep::CallStep { target, positional, named }
+                if matches!(target.as_ref(), Expr::Var(n) if n == "explanation_requirement")
+                    && positional.is_empty()
+                    && named.is_empty()
         ));
     }
 

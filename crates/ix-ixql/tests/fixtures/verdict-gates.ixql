@@ -1,0 +1,12 @@
+-- Verdict gates in the shape Demerzel/pipelines/metasync.ixql:97-99 uses them.
+--
+-- Three substitutions, each forced by a semantic this executor does not decide:
+--   * `belief` is read from state, not bound by `contradictions.map(belief => …)` (#281);
+--   * the channel is the string "discord", not the bare name `discord`;
+--   * the written value is `belief.claim`, not the unbound `resolved_value`.
+-- The gate lines are otherwise verbatim.
+belief <- ix.io.read("state/beliefs/tempo-claim.json")
+
+resolution <- tars.research(belief.claim, depth: "thorough", mode: "resolve_contradiction")
+  → when T >= 0.8: ix.io.write(belief.path, { value: belief.claim })
+  → when C: alert("discord", "Contradiction persists: {{belief.name}} — escalate to human")
