@@ -89,22 +89,44 @@ pub fn parse(input: &str) -> Result<EbnfGrammar, ParseError> {
 /// Remove `(* ... *)` comments from the input. Nested comments are
 /// not supported — the ISO spec allows them but they complicate the
 /// scanner and we have not seen a real grammar that uses nesting.
+///
+/// Every character consumed is replaced by one blank character, and a
+/// newline inside a comment is replaced by a newline. That 1:1 mapping
+/// is what keeps the `line`/`col` in a [`ParseError`] pointing at the
+/// original input: collapsing a comment to a single space (as this
+/// function used to) shifted every later column left by the comment's
+/// length and every later line up by the number of newlines it spanned.
+///
+/// `(*` inside a quoted terminal is text, not a comment: quotes are
+/// tracked with the tokeniser's rule (a literal closes at the next
+/// occurrence of its opening quote, no escapes), so `'x(*y*)z'` stays
+/// that literal instead of being blanked.
 fn strip_comments(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
+    let mut quote: Option<char> = None;
     while let Some(c) = chars.next() {
-        if c == '(' && chars.peek() == Some(&'*') {
-            // Skip until matching `*)`.
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            out.push(c);
+        } else if c == '"' || c == '\'' {
+            quote = Some(c);
+            out.push(c);
+        } else if c == '(' && chars.peek() == Some(&'*') {
+            // Blank out `(` and `*`, then everything through `*)`.
+            out.push(' ');
             chars.next();
+            out.push(' ');
             let mut prev = ' ';
             for d in chars.by_ref() {
+                out.push(if d == '\n' { '\n' } else { ' ' });
                 if prev == '*' && d == ')' {
                     break;
                 }
                 prev = d;
             }
-            // Preserve whitespace so line numbers stay meaningful.
-            out.push(' ');
         } else {
             out.push(c);
         }
@@ -591,6 +613,54 @@ mod tests {
         assert!(g.productions.contains_key("factor"));
         // factor should have at least 3 alternatives (x / y / group)
         assert!(g.alternatives("factor").len() >= 3);
+    }
+
+    /// A comment before the error must not move the reported position:
+    /// each pair below puts the same stray `)` at the same line and column,
+    /// once after comment text and once after plain whitespace.
+    #[test]
+    fn comments_do_not_shift_error_positions() {
+        let cases = [
+            ("(* line1\nline2\nline3 *)\nA = ) ;\n", "\n\n\nA = ) ;\n"),
+            ("(* a\nb *)\n\nA = ) ;\n", "\n\n\nA = ) ;\n"),
+            ("A = (* xxxxxxx *) ) ;\n", "A =               ) ;\n"),
+        ];
+        for (commented, plain) in cases {
+            let with = parse(commented).expect_err("stray `)` must not parse");
+            let without = parse(plain).expect_err("stray `)` must not parse");
+            assert_eq!(
+                (with.line, with.col),
+                (without.line, without.col),
+                "comment shifted the error position for {commented:?}"
+            );
+        }
+        let e = parse("(* a\nb *)\n\nA = ) ;\n").unwrap_err();
+        assert_eq!((e.line, e.col), (4, 5));
+    }
+
+    #[test]
+    fn comments_do_not_change_the_parsed_grammar() {
+        let plain = parse("A = \"x\" ;\nB = A ;\n").expect("parse");
+        let commented = parse("(* h *)\nA (* a *) = (* b *) \"x\" (* c *) ;\n(* d *)\nB = A ;\n")
+            .expect("parse");
+        assert_eq!(commented.start, plain.start);
+        assert_eq!(commented.productions, plain.productions);
+    }
+
+    /// Comment syntax inside a quoted terminal is part of the terminal, for
+    /// both quote styles, and a quote inside a real comment opens nothing.
+    #[test]
+    fn comment_syntax_inside_a_terminal_is_kept() {
+        for src in ["A = 'x(*y*)z' ;", "A = \"x(*y*)z\" ;"] {
+            let g = parse(src).expect("parse");
+            assert_eq!(
+                g.alternatives("A"),
+                vec![vec!["x(*y*)z".to_string()]],
+                "{src:?}"
+            );
+        }
+        let g = parse("(* don't *) A = 'x' ;").expect("apostrophe in a comment");
+        assert_eq!(g.alternatives("A"), vec![vec!["x".to_string()]]);
     }
 
     #[test]
