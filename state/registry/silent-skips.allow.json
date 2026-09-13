@@ -25,37 +25,37 @@
     {
       "file": "crates/ix-duck/tests/ixql_plan_golden.rs",
       "test": "duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed",
-      "kind": "tracked",
-      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
-      "issue": "ix#319"
+      "kind": "environment",
+      "reason": "Needs the `duckdb` CLI. Hosted CI runs this test for real in the `duckdb-sql` job of .github/workflows/ci.yml, which installs a pinned, sha256-checked DuckDB v1.5.3 and sets IX_REQUIRE_DUCKDB=1, so an unreachable CLI fails there instead of skipping (ix#294, #319). The bare `return;` remains for local machines without duckdb, where the test prints that the SQL surface was NOT checked.",
+      "issue": "ix#294"
     },
     {
       "file": "crates/ix-duck/tests/ixql_plan_golden.rs",
       "test": "duckdb_refuses_a_corrupted_plan_when_duckdb_is_installed",
-      "kind": "tracked",
-      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job. This test also returned silently when a temp dir could not be created (line 180); #319 replaces that guard with an `expect`.",
-      "issue": "ix#319"
+      "kind": "environment",
+      "reason": "Needs the `duckdb` CLI. Hosted CI runs this test for real in the `duckdb-sql` job of .github/workflows/ci.yml, which installs a pinned, sha256-checked DuckDB v1.5.3 and sets IX_REQUIRE_DUCKDB=1, so an unreachable CLI fails there instead of skipping (ix#294, #319). The bare `return;` remains for local machines without duckdb, where the test prints that the SQL surface was NOT checked.",
+      "issue": "ix#294"
     },
     {
       "file": "crates/ix-duck/tests/pareto_golden.rs",
       "test": "duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed",
-      "kind": "tracked",
-      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
-      "issue": "ix#319"
+      "kind": "environment",
+      "reason": "Needs the `duckdb` CLI. Hosted CI runs this test for real in the `duckdb-sql` job of .github/workflows/ci.yml, which installs a pinned, sha256-checked DuckDB v1.5.3 and sets IX_REQUIRE_DUCKDB=1, so an unreachable CLI fails there instead of skipping (ix#294, #319). The bare `return;` remains for local machines without duckdb, where the test prints that the SQL surface was NOT checked.",
+      "issue": "ix#294"
     },
     {
       "file": "crates/ix-duck/tests/persistence_h0_golden.rs",
       "test": "duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed",
-      "kind": "tracked",
-      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
-      "issue": "ix#319"
+      "kind": "environment",
+      "reason": "Needs the `duckdb` CLI. Hosted CI runs this test for real in the `duckdb-sql` job of .github/workflows/ci.yml, which installs a pinned, sha256-checked DuckDB v1.5.3 and sets IX_REQUIRE_DUCKDB=1, so an unreachable CLI fails there instead of skipping (ix#294, #319). The bare `return;` remains for local machines without duckdb, where the test prints that the SQL surface was NOT checked.",
+      "issue": "ix#294"
     },
     {
       "file": "crates/ix-duck/tests/persistence_h0_golden.rs",
       "test": "the_sql_guard_rejects_bad_input_when_duckdb_is_installed",
-      "kind": "tracked",
-      "reason": "Needs the `duckdb` CLI, which no CI job installs on main, so this SQL surface has been verified on developer machines only (ix#294). PR #319 adds a `duckdb-sql` job that pins and checksums the CLI and sets IX_REQUIRE_DUCKDB=1, turning the skip into a failure there. The bare `return;` stays after #319 for machines without duckdb, so this entry will not go stale on merge: once #319 lands, change `kind` to `environment` and cite that job.",
-      "issue": "ix#319"
+      "kind": "environment",
+      "reason": "Needs the `duckdb` CLI. Hosted CI runs this test for real in the `duckdb-sql` job of .github/workflows/ci.yml, which installs a pinned, sha256-checked DuckDB v1.5.3 and sets IX_REQUIRE_DUCKDB=1, so an unreachable CLI fails there instead of skipping (ix#294, #319). The bare `return;` remains for local machines without duckdb, where the test prints that the SQL surface was NOT checked.",
+      "issue": "ix#294"
     },
     {
       "file": "crates/ix-optick-sae/tests/python_contract_tests.rs",
