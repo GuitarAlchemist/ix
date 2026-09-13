@@ -1,0 +1,24 @@
+[package]
+name = "ix-gaia-census"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools"]
+keywords = ["census", "evidence", "advisory", "hexavalent", "deterministic"]
+description = "Read-only v0a census tracer over copied immutable Gaia evidence. Measures raw bytes, compares them against a declared inventory, and emits one typed deterministic advisory artifact carrying an ix-types hexavalent evidence state. No authority, no score, no verdict."
+
+[dependencies]
+ix-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+path = "src/lib.rs"

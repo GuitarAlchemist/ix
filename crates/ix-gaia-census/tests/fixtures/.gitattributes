@@ -1,0 +1,10 @@
+# The Gaia S1 R18 evidence fixture is hashed byte for byte, so every
+# end-of-line conversion must be disabled in both directions: a single CRLF/LF
+# rewrite on checkout invalidates every declared SHA-256 in the manifest.
+#
+# This file lives one level ABOVE the fixture directory on purpose. The census
+# reports any file inside the evidence root that the manifest does not declare,
+# and the manifest declares exactly thirteen files plus itself; a .gitattributes
+# inside the fixture would be a fifteenth entry and would make the unlisted-file
+# count non-zero on the happy path.
+gaia-s1-r18/** -text
