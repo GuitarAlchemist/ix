@@ -96,11 +96,25 @@ pub fn parse(input: &str) -> Result<EbnfGrammar, ParseError> {
 /// original input: collapsing a comment to a single space (as this
 /// function used to) shifted every later column left by the comment's
 /// length and every later line up by the number of newlines it spanned.
+///
+/// `(*` inside a quoted terminal is text, not a comment: quotes are
+/// tracked with the tokeniser's rule (a literal closes at the next
+/// occurrence of its opening quote, no escapes), so `'x(*y*)z'` stays
+/// that literal instead of being blanked.
 fn strip_comments(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
+    let mut quote: Option<char> = None;
     while let Some(c) = chars.next() {
-        if c == '(' && chars.peek() == Some(&'*') {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            out.push(c);
+        } else if c == '"' || c == '\'' {
+            quote = Some(c);
+            out.push(c);
+        } else if c == '(' && chars.peek() == Some(&'*') {
             // Blank out `(` and `*`, then everything through `*)`.
             out.push(' ');
             chars.next();
@@ -631,6 +645,22 @@ mod tests {
             .expect("parse");
         assert_eq!(commented.start, plain.start);
         assert_eq!(commented.productions, plain.productions);
+    }
+
+    /// Comment syntax inside a quoted terminal is part of the terminal, for
+    /// both quote styles, and a quote inside a real comment opens nothing.
+    #[test]
+    fn comment_syntax_inside_a_terminal_is_kept() {
+        for src in ["A = 'x(*y*)z' ;", "A = \"x(*y*)z\" ;"] {
+            let g = parse(src).expect("parse");
+            assert_eq!(
+                g.alternatives("A"),
+                vec![vec!["x(*y*)z".to_string()]],
+                "{src:?}"
+            );
+        }
+        let g = parse("(* don't *) A = 'x' ;").expect("apostrophe in a comment");
+        assert_eq!(g.alternatives("A"), vec![vec!["x".to_string()]]);
     }
 
     #[test]
