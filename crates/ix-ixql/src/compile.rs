@@ -383,6 +383,33 @@ impl Builder {
                     }
                     (StageKind::Compound, "compound".to_string(), deps)
                 }
+                // One stage for the whole match: which arm runs is decided by a
+                // verdict at run time, so the plan cannot split it into arms
+                // that would all look schedulable. Its op spells every arm, e.g.
+                // `T>=0.8:ix.io.write|C:alert`.
+                PipeStep::VerdictMatch(arms) => {
+                    let mut deps = Vec::new();
+                    let mut spelled = Vec::with_capacity(arms.len());
+                    for arm in arms {
+                        if let Some(function) = element_scoped_callee(&arm.target) {
+                            return Err(CompileError::RequiresElementScope {
+                                function,
+                                stage: id,
+                            });
+                        }
+                        reject_element_scope(&arm.target, &id)?;
+                        for argument in arm.positional.iter().chain(arm.named.values()) {
+                            reject_element_scope(argument, &id)?;
+                            deps.extend(self.refs(argument));
+                        }
+                        spelled.push(format!(
+                            "{}:{}",
+                            arm.guard.render(),
+                            dotted(&arm.target).unwrap_or_default()
+                        ));
+                    }
+                    (StageKind::When, spelled.join("|"), deps)
+                }
             };
 
             deps.push(previous.clone());
@@ -577,6 +604,13 @@ fn children(expr: &Expr) -> Vec<&Expr> {
                         out.extend(named.values());
                     }
                     PipeStep::Compound(ops) => out.extend(compound_exprs(ops)),
+                    PipeStep::VerdictMatch(arms) => {
+                        for arm in arms {
+                            out.push(arm.target.as_ref());
+                            out.extend(arm.positional.iter());
+                            out.extend(arm.named.values());
+                        }
+                    }
                 }
             }
             out
