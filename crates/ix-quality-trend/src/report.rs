@@ -10,7 +10,7 @@ use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::{
-    ChatbotQaSnapshot, EmbeddingsSnapshot, SnapshotSet, VoicingAnalysisSnapshot,
+    ChatbotQaSnapshot, DatedSnapshot, EmbeddingsSnapshot, SnapshotSet, VoicingAnalysisSnapshot,
 };
 use crate::trend::{compute_trend, MetricSeries, MetricTrend, TrendDirection};
 
@@ -18,20 +18,74 @@ use crate::trend::{compute_trend, MetricSeries, MetricTrend, TrendDirection};
 /// Order here is the order shown in the report.
 const PARTITIONS: &[&str] = &["STRUCTURE", "MORPHOLOGY", "CONTEXT", "SYMBOLIC", "MODAL"];
 
+const EMBEDDINGS: &str = "embeddings";
+const VOICING: &str = "voicing-analysis";
+const CHATBOT: &str = "chatbot-qa";
+
 /// Structured quality summary that can be consumed by governance or telemetry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualityTrendSummary {
     pub embedding_trends: Vec<MetricTrend>,
     pub voicing_trends: Vec<MetricTrend>,
     pub chatbot_trends: Vec<MetricTrend>,
+    /// Categories whose newest snapshot was measured over a different
+    /// population than the history before it (see [`PopulationRebaseline`]).
+    #[serde(default)]
+    pub rebaselines: Vec<PopulationRebaseline>,
+}
+
+/// A snapshot category whose measured population changed: the trends in that
+/// category are computed only over the snapshots that share the newest
+/// snapshot's population, and the older ones are excluded.
+///
+/// Observed 2026-09-14 (every scheduled GA Nightly Quality run since
+/// 2026-05-05): CI measures cross-instrument consistency over the tracked
+/// 500-voicing guitar fixture (corpus 21,726 → 39%), while the committed
+/// history was measured over the full 667k-voicing dump (corpus 688,351 →
+/// 98%). Page-Hinkley read the population change as a drift and the gate
+/// went critical on every run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PopulationRebaseline {
+    /// Snapshot category directory: `embeddings`, `voicing-analysis` or `chatbot-qa`.
+    pub category: String,
+    /// Date of the first snapshot measured over the new population.
+    pub since: NaiveDate,
+    pub previous_population: u64,
+    pub population: u64,
+    /// Older snapshots left out of trend, regression and drift computation.
+    pub excluded_snapshots: usize,
+}
+
+impl PopulationRebaseline {
+    fn note(&self) -> String {
+        format!(
+            "population rebaseline: {} population changed from {} to {} on {}; \
+             {} earlier snapshot(s) are not comparable and were excluded from trend, \
+             regression and drift",
+            self.category,
+            self.previous_population,
+            self.population,
+            self.since,
+            self.excluded_snapshots
+        )
+    }
 }
 
 impl QualityTrendSummary {
     pub fn all_trends(&self) -> impl Iterator<Item = &MetricTrend> {
+        self.trends_by_category().map(|(_, trend)| trend)
+    }
+
+    fn trends_by_category(&self) -> impl Iterator<Item = (&'static str, &MetricTrend)> {
         self.embedding_trends
             .iter()
-            .chain(self.voicing_trends.iter())
-            .chain(self.chatbot_trends.iter())
+            .map(|t| (EMBEDDINGS, t))
+            .chain(self.voicing_trends.iter().map(|t| (VOICING, t)))
+            .chain(self.chatbot_trends.iter().map(|t| (CHATBOT, t)))
+    }
+
+    fn rebaseline_for(&self, category: &str) -> Option<&PopulationRebaseline> {
+        self.rebaselines.iter().find(|r| r.category == category)
     }
 }
 
@@ -56,6 +110,10 @@ pub struct QualityAlert {
     /// `Warning` — a dead sensor must not masquerade as a live regression.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale: Option<String>,
+    /// Set when the metric's category changed measured population: older
+    /// snapshots were excluded, so the trend has no comparable history yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebaseline: Option<String>,
 }
 
 /// A feed whose newest snapshot is older than this many days is reported as
@@ -81,11 +139,55 @@ pub struct QualityHealthArtifact {
 }
 
 pub fn summarize(set: &SnapshotSet, regression_threshold_pct: f64) -> QualityTrendSummary {
+    let mut rebaselines = Vec::new();
+    let embeddings = comparable_suffix(EMBEDDINGS, &set.embeddings, &mut rebaselines, |s| {
+        s.corpus.as_ref().and_then(|c| c.count)
+    });
+    let voicing = comparable_suffix(VOICING, &set.voicing, &mut rebaselines, |s| {
+        s.corpus.as_ref().and_then(|c| c.total)
+    });
+    // Degraded carry-forwards did not measure anything, so they carry no
+    // population and never split the series.
+    let chatbot = comparable_suffix(CHATBOT, &set.chatbot, &mut rebaselines, |s| {
+        (!s.is_degraded()).then_some(s.total_prompts).flatten()
+    });
+
     QualityTrendSummary {
-        embedding_trends: embedding_metrics(&set.embeddings, regression_threshold_pct),
-        voicing_trends: voicing_metrics(&set.voicing, regression_threshold_pct),
-        chatbot_trends: chatbot_metrics(&set.chatbot, regression_threshold_pct),
+        embedding_trends: embedding_metrics(embeddings, regression_threshold_pct),
+        voicing_trends: voicing_metrics(voicing, regression_threshold_pct),
+        chatbot_trends: chatbot_metrics(chatbot, regression_threshold_pct),
+        rebaselines,
     }
+}
+
+/// Newest run of snapshots measured over the same population as the latest
+/// one that reports a population. A snapshot without a population (legacy or
+/// degraded) never splits the run. Records a [`PopulationRebaseline`] when
+/// older snapshots are cut off.
+fn comparable_suffix<'a, T>(
+    category: &str,
+    series: &'a [DatedSnapshot<T>],
+    rebaselines: &mut Vec<PopulationRebaseline>,
+    population: impl Fn(&T) -> Option<u64>,
+) -> &'a [DatedSnapshot<T>] {
+    let Some(current) = series.iter().rev().find_map(|s| population(&s.data)) else {
+        return series;
+    };
+    let Some(boundary) = series
+        .iter()
+        .rposition(|s| population(&s.data).is_some_and(|p| p != current))
+    else {
+        return series;
+    };
+    let start = boundary + 1;
+    rebaselines.push(PopulationRebaseline {
+        category: category.to_string(),
+        since: series[start].date,
+        previous_population: population(&series[boundary].data).unwrap_or_default(),
+        population: current,
+        excluded_snapshots: start,
+    });
+    &series[start..]
 }
 
 pub fn build_health_artifact(
@@ -133,14 +235,21 @@ pub fn build_health_artifact_as_of(
     };
 
     let all_alerts: Vec<QualityAlert> = summary
-        .all_trends()
-        .filter_map(|trend| {
+        .trends_by_category()
+        .filter_map(|(category, trend)| {
             let stale = stale_note(trend);
+            let rebaseline = summary
+                .rebaseline_for(category)
+                .filter(|_| trend.latest.is_some())
+                .map(PopulationRebaseline::note);
             let has_signal = trend.regression.is_some() || trend.drift.is_some();
             // A stale KEY-metric feed alerts even without regression/drift:
             // sensor death on a key metric is itself a warning condition.
-            let dead_key_feed = stale.is_some() && is_key_metric_name(&trend.name);
-            if !has_signal && !dead_key_feed {
+            // Likewise a rebaselined key metric: it has no comparable history,
+            // so the gate is blind on it until history accumulates.
+            let blind_key_feed =
+                (stale.is_some() || rebaseline.is_some()) && is_key_metric_name(&trend.name);
+            if !has_signal && !blind_key_feed {
                 return None;
             }
 
@@ -159,6 +268,7 @@ pub fn build_health_artifact_as_of(
                 drift: trend.drift.as_ref().map(|d| d.description.clone()),
                 drift_since: trend.drift.as_ref().map(|d| d.since),
                 stale,
+                rebaseline,
             })
         })
         .collect();
@@ -242,6 +352,7 @@ pub fn render(set: &SnapshotSet, snapshots_dir: &Path, regression_threshold_pct:
         chatbot_trends,
         today,
     );
+    render_rebaselines(&mut out, &summary.rebaselines);
     render_regressions(&mut out, embedding_trends, voicing_trends, chatbot_trends);
     render_drift(&mut out, embedding_trends, voicing_trends, chatbot_trends);
 
@@ -605,6 +716,33 @@ fn render_stale_feeds(
                 .unwrap();
             }
         }
+    }
+    writeln!(out).unwrap();
+}
+
+fn render_rebaselines(out: &mut String, rebaselines: &[PopulationRebaseline]) {
+    if rebaselines.is_empty() {
+        return;
+    }
+
+    writeln!(out, "## Population rebaselines").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "_The newest snapshots in these categories were measured over a different population \
+         than the history before them (for example the CI fixture corpus instead of the full \
+         GA dump). Only snapshots sharing the newest population feed the trends below, so \
+         regressions and drifts are not detectable until comparable history accumulates._"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    for r in rebaselines {
+        writeln!(
+            out,
+            "- **{}** — population {} → {} since {}; {} earlier snapshot(s) excluded",
+            r.category, r.previous_population, r.population, r.since, r.excluded_snapshots,
+        )
+        .unwrap();
     }
     writeln!(out).unwrap();
 }
@@ -1143,6 +1281,155 @@ mod tests {
             "stale note anchors on the last REAL observation: {stale}"
         );
         assert_ne!(artifact.status, QualityHealthStatus::Critical);
+    }
+
+    fn voicing_snap(day: &str, total: u64, pct: f64) -> DatedSnapshot<VoicingAnalysisSnapshot> {
+        DatedSnapshot {
+            date: NaiveDate::parse_from_str(day, "%Y-%m-%d").unwrap(),
+            path: format!("/tmp/{day}.json").into(),
+            data: serde_json::from_str(&format!(
+                r#"{{"Corpus":{{"Total":{total}}},"CrossInstrumentConsistency":{{"Pct":{pct}}}}}"#
+            ))
+            .unwrap(),
+        }
+    }
+
+    fn consistency_trend(summary: &QualityTrendSummary) -> &MetricTrend {
+        find(
+            &summary.voicing_trends,
+            "Voicing · cross-instrument consistency",
+        )
+        .expect("consistency trend missing")
+    }
+
+    #[test]
+    fn population_change_is_a_rebaseline_not_a_critical_drift() {
+        // The scheduled GA Nightly Quality condition: 14 committed snapshots
+        // over the full 688,351-voicing dump (98.49%), then one CI snapshot
+        // over the tracked fixture corpus (21,726 voicings, 39.18%). Before
+        // the fix this read as a key-metric drift and the gate went critical.
+        let mut set = SnapshotSet::default();
+        for day in 12..=25 {
+            set.voicing
+                .push(voicing_snap(&format!("2026-04-{day}"), 688_351, 98.49));
+        }
+        set.voicing.push(voicing_snap("2026-09-14", 21_726, 39.18));
+
+        let summary = summarize(&set, 5.0);
+        assert_eq!(
+            summary.rebaselines,
+            vec![PopulationRebaseline {
+                category: "voicing-analysis".into(),
+                since: NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(),
+                previous_population: 688_351,
+                population: 21_726,
+                excluded_snapshots: 14,
+            }]
+        );
+        let trend = consistency_trend(&summary);
+        assert_eq!(trend.n_points, 1);
+        assert!(trend.drift.is_none() && trend.regression.is_none());
+
+        let artifact = build_health_artifact_as_of(
+            &summary,
+            5.0,
+            NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(),
+            DEFAULT_STALE_AFTER_DAYS,
+        );
+        // Not green either: the gate has no comparable history on this metric.
+        assert_eq!(artifact.status, QualityHealthStatus::Warning);
+        let alert = artifact
+            .key_metric_alerts
+            .iter()
+            .find(|a| a.metric == "Voicing · cross-instrument consistency")
+            .expect("rebaselined key metric alerts");
+        assert_eq!(alert.status, QualityHealthStatus::Warning);
+        let note = alert.rebaseline.as_deref().expect("rebaseline note");
+        assert!(note.contains("688351") && note.contains("21726"), "{note}");
+
+        let md = render(&set, Path::new("/tmp"), 5.0);
+        assert!(md.contains("## Population rebaselines"));
+    }
+
+    #[test]
+    fn same_population_drop_still_drifts_critical() {
+        // The rebaseline must not blind the gate: the same drop measured over
+        // an unchanged population is still a critical key-metric drift.
+        let mut set = SnapshotSet::default();
+        for day in 1..=6 {
+            set.voicing
+                .push(voicing_snap(&format!("2026-04-0{day}"), 21_726, 98.49));
+        }
+        for day in 7..=12 {
+            set.voicing
+                .push(voicing_snap(&format!("2026-04-{day:02}"), 21_726, 39.18));
+        }
+
+        let summary = summarize(&set, 5.0);
+        assert!(summary.rebaselines.is_empty());
+        assert!(consistency_trend(&summary).drift.is_some());
+        let artifact = build_health_artifact_as_of(
+            &summary,
+            5.0,
+            NaiveDate::from_ymd_opt(2026, 4, 12).unwrap(),
+            DEFAULT_STALE_AFTER_DAYS,
+        );
+        assert_eq!(artifact.status, QualityHealthStatus::Critical);
+    }
+
+    #[test]
+    fn drift_within_new_population_is_still_critical() {
+        // After a rebaseline, a drift inside the comparable run is real.
+        let mut set = SnapshotSet::default();
+        for day in 1..=5 {
+            set.voicing
+                .push(voicing_snap(&format!("2026-04-0{day}"), 688_351, 98.0));
+        }
+        for day in 6..=11 {
+            set.voicing
+                .push(voicing_snap(&format!("2026-04-{day:02}"), 21_726, 95.0));
+        }
+        for day in 12..=17 {
+            set.voicing
+                .push(voicing_snap(&format!("2026-04-{day}"), 21_726, 40.0));
+        }
+
+        let summary = summarize(&set, 5.0);
+        assert_eq!(summary.rebaselines.len(), 1);
+        assert_eq!(summary.rebaselines[0].excluded_snapshots, 5);
+        assert!(consistency_trend(&summary).drift.is_some());
+        let artifact = build_health_artifact_as_of(
+            &summary,
+            5.0,
+            NaiveDate::from_ymd_opt(2026, 4, 17).unwrap(),
+            DEFAULT_STALE_AFTER_DAYS,
+        );
+        assert_eq!(artifact.status, QualityHealthStatus::Critical);
+    }
+
+    #[test]
+    fn snapshots_without_population_never_split_the_series() {
+        // Legacy snapshots with no corpus field, and degraded chatbot
+        // carry-forwards (which measured nothing), keep the full history.
+        let mut set = SnapshotSet::default();
+        let legacy = r#"{"CrossInstrumentConsistency":{"Pct":98.0}}"#;
+        set.voicing.push(DatedSnapshot {
+            date: NaiveDate::from_ymd_opt(2026, 5, 19).unwrap(),
+            path: "/tmp/legacy.json".into(),
+            data: serde_json::from_str(legacy).unwrap(),
+        });
+        set.voicing.push(voicing_snap("2026-05-20", 688_351, 98.0));
+        let mut real = cb_snap("2026-05-20", Some(90.0));
+        real.data.total_prompts = Some(77);
+        let mut degraded = cb_degraded("2026-05-21", Some(90.0));
+        degraded.data.total_prompts = Some(0);
+        set.chatbot.push(real);
+        set.chatbot.push(degraded);
+
+        let summary = summarize(&set, 5.0);
+        assert!(summary.rebaselines.is_empty(), "{:?}", summary.rebaselines);
+        assert_eq!(consistency_trend(&summary).n_points, 2);
+        assert_eq!(find_chatbot_overall(&set).n_points, 2);
     }
 
     #[test]
