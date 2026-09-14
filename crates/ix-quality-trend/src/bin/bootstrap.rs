@@ -69,9 +69,19 @@ fn main() -> ExitCode {
 fn run(cli: &Cli, date: chrono::NaiveDate) -> Result<(), String> {
     fs::create_dir_all(&cli.out_dir).map_err(|e| format!("create {:?}: {e}", cli.out_dir))?;
 
-    let voicing = build_voicing_snapshot(&cli.state_dir)?;
+    let population = voicing_population_id(&cli.state_dir);
+    let mut voicing = build_voicing_snapshot(&cli.state_dir)?;
+    voicing["PopulationId"] = json!(population);
     let chatbot = build_chatbot_snapshot(&cli.qa_results)?;
-    let embeddings = build_embeddings_snapshot(&cli.state_dir, cli.embeddings_report.as_deref())?;
+    // The CI index behind the embeddings report is built by
+    // ix-quality-trend-build-ci-index from the same state dir with the same
+    // raw-dump-else-fixture resolution, so it shares the voicing population.
+    let mut embeddings =
+        build_embeddings_snapshot(&cli.state_dir, cli.embeddings_report.as_deref())?;
+    embeddings
+        .as_object_mut()
+        .ok_or("embeddings report is not a JSON object")?
+        .insert("population_id".into(), json!(population));
 
     write_snapshot(
         &cli.out_dir.join("voicing-analysis"),
@@ -298,7 +308,42 @@ fn build_chatbot_snapshot(qa_results: &Path) -> Result<serde_json::Value, String
         "avg_response_ms": serde_json::Value::Null,
         "by_category": by_category,
         "mode": "deterministic-fixture-ci",
+        // Keyed on the harness, not the prompt count: adding prompts to the
+        // corpus is routine and must not reset the pass-rate history.
+        "population_id": "chatbot-qa:deterministic-fixture-ci",
     }))
+}
+
+const INSTRUMENTS: [&str; 3] = ["guitar", "bass", "ukulele"];
+
+/// Input file `read_voicings` uses for an instrument, relative to the state
+/// dir: the raw GA dump when present, else the tracked fixture, else `None`.
+fn voicing_source(state_dir: &Path, instrument: &str) -> Option<String> {
+    [
+        format!("raw/{instrument}.jsonl"),
+        format!("{instrument}-corpus.json"),
+    ]
+    .into_iter()
+    .find(|rel| state_dir.join(rel).exists())
+}
+
+/// Population identity of the voicing inputs, e.g.
+/// `voicings:guitar=raw/guitar.jsonl,bass=raw/bass.jsonl,ukulele=raw/ukulele.jsonl`
+/// (full GA dump) vs `voicings:guitar=guitar-corpus.json,...` (CI fixture).
+///
+/// It names the source, deliberately not a content hash: the raw dump's
+/// content changes exactly when the upstream producer changes, so hashing it
+/// would turn a producer regression into a free rebaseline. A count or content
+/// change within the same source must stay comparable and alert.
+fn voicing_population_id(state_dir: &Path) -> String {
+    let sources: Vec<String> = INSTRUMENTS
+        .iter()
+        .map(|instrument| {
+            let source = voicing_source(state_dir, instrument);
+            format!("{instrument}={}", source.as_deref().unwrap_or("none"))
+        })
+        .collect();
+    format!("voicings:{}", sources.join(","))
 }
 
 /// Read voicings for an instrument from raw/{name}.jsonl if present, falling
@@ -353,4 +398,30 @@ fn count_jsonl_lines(path: &Path) -> Result<usize, String> {
         }
     }
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn population_id_names_the_source_each_instrument_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("raw")).unwrap();
+        for instrument in INSTRUMENTS {
+            fs::write(dir.path().join(format!("{instrument}-corpus.json")), "[]").unwrap();
+        }
+        assert_eq!(
+            voicing_population_id(dir.path()),
+            "voicings:guitar=guitar-corpus.json,bass=bass-corpus.json,ukulele=ukulele-corpus.json"
+        );
+
+        // A raw dump wins over the fixture, exactly as read_voicings does.
+        fs::write(dir.path().join("raw/guitar.jsonl"), "").unwrap();
+        fs::remove_file(dir.path().join("ukulele-corpus.json")).unwrap();
+        assert_eq!(
+            voicing_population_id(dir.path()),
+            "voicings:guitar=raw/guitar.jsonl,bass=bass-corpus.json,ukulele=none"
+        );
+    }
 }

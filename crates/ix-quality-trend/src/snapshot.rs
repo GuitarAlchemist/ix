@@ -75,6 +75,10 @@ pub struct SnapshotSet {
 pub struct EmbeddingsSnapshot {
     pub timestamp: Option<String>,
     pub corpus: Option<EmbeddingsCorpus>,
+    /// Identity of the measured population (which input corpus the producer
+    /// read), stamped by `ix-quality-trend-bootstrap`. Trends only compare
+    /// snapshots that share it; `None` for legacy and external producers.
+    pub population_id: Option<String>,
     pub leak_detection: Option<LeakDetection>,
     pub retrieval_consistency: Option<RetrievalConsistency>,
     pub topology: Option<Topology>,
@@ -164,6 +168,10 @@ impl EmbeddingsSnapshot {
 pub struct VoicingAnalysisSnapshot {
     pub timestamp: Option<String>,
     pub corpus: Option<VoicingCorpus>,
+    /// Identity of the measured population (which input corpus the producer
+    /// read), stamped by `ix-quality-trend-bootstrap`. Trends only compare
+    /// snapshots that share it; `None` for legacy and external producers.
+    pub population_id: Option<String>,
     pub chord_recognition: Option<ChordRecognition>,
     pub forte_coverage: Option<ForteCoverage>,
     pub cross_instrument_consistency: Option<CrossInstrumentConsistency>,
@@ -282,6 +290,10 @@ pub struct ChatbotQaSnapshot {
     pub last_known_good_pass_pct: Option<f64>,
     pub last_known_good_date: Option<String>,
     pub last_known_good_source: Option<String>,
+    /// Identity of the measured population (which input corpus the producer
+    /// read), stamped by `ix-quality-trend-bootstrap`. Trends only compare
+    /// snapshots that share it; `None` for legacy and external producers.
+    pub population_id: Option<String>,
 }
 
 impl ChatbotQaSnapshot {
