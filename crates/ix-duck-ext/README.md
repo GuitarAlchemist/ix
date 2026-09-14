@@ -117,6 +117,24 @@ unrecognised value is a SQL error. Tier A is keyword-based and always present.
 cargo feature (enabled in this extension's build) — it pulls C-compiled
 tree-sitter grammars (Rust/C#/TS/JS/F#); other languages return `parse_quality 0`.
 
+### Petri nets
+
+`ix_petri_analyze(net VARCHAR, max_states BIGINT) -> VARCHAR` — deadlock (with the
+shortest witness firing sequence), boundedness, dead transitions, liveness and
+reversibility of a Place/Transition net given as JSON, returned as the JSON
+`ix_petri::Analysis`. Wraps `ix-petri`; the net shape and the honesty boundary
+(`unknown` past `max_states`) are in `docs/guides/petri-nets-in-ix.md`. A refused
+net or a budget below 1 is a SQL error; NULL in is NULL out.
+
+```sql
+SELECT json_extract_string(a, '$.deadlock_free.verdict')           AS deadlock_free,
+       json_extract_string(a, '$.deadlock_free.detail[0].marking') AS wedged_at
+FROM (SELECT ix_petri_analyze('{"places":[{"id":"lock","tokens":1},{"id":"working"}],
+        "transitions":[{"id":"acquire"}],
+        "arcs":[{"from":"lock","to":"acquire"},{"from":"acquire","to":"working"}]}', 1000) AS a);
+-- fails | working=1
+```
+
 ## Build
 
 ```powershell

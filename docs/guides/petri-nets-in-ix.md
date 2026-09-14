@@ -109,6 +109,33 @@ Point it at a file with:
 cargo run -p ix-petri --example analyze_pnml -- path/to/net.pnml
 ```
 
+### JSON and SQL, for callers outside Rust
+
+`ix_petri::analyze_json(net_json, max_states)` takes a net in a JSON shape that
+mirrors the builder one call per entry, and returns the same `Analysis`:
+
+```json
+{ "name": "leaked-lock",
+  "places": [{ "id": "lock", "tokens": 1 }, { "id": "working" }],
+  "transitions": [{ "id": "acquire" }],
+  "arcs": [{ "from": "lock", "to": "acquire" }, { "from": "acquire", "to": "working" }] }
+```
+
+`tokens` defaults to 0 and `weight` to 1; unknown fields are **rejected**, so a
+misspelt `initial_marking` cannot silently analyse an empty net. `ix-duck`
+exposes it as a DuckDB scalar, carried by the loadable `ix.duckdb_extension`:
+
+```sql
+SELECT json_extract_string(ix_petri_analyze(content, 50000), '$.deadlock_free.verdict')
+FROM read_text('nets/*.json');   -- one row per file; column `content` holds the JSON
+```
+
+The state budget is a required argument, so every result names the bound it was
+computed under. The serialized `Analysis` is the wire contract; its bytes are
+pinned by `ix_petri::json::tests::wire_shape_is_pinned` on the default test
+path. The first consumer is gaia's issue #80 bootstrap-deadlock tracer, which
+reaches it from Node.js through `@duckdb/node-api`.
+
 ## 5. The worked example that motivated the crate
 
 `crates/ix-petri/tests/worktree_pump.rs` models the hazard `CLAUDE.md` warns

@@ -117,6 +117,35 @@ Pour l'utiliser sur un fichier :
 cargo run -p ix-petri --example analyze_pnml -- chemin/vers/reseau.pnml
 ```
 
+### JSON et SQL, pour les appelants hors Rust
+
+`ix_petri::analyze_json(net_json, max_states)` prend un réseau dans un format
+JSON calqué sur le builder, une entrée par appel, et renvoie la même `Analysis` :
+
+```json
+{ "name": "leaked-lock",
+  "places": [{ "id": "lock", "tokens": 1 }, { "id": "working" }],
+  "transitions": [{ "id": "acquire" }],
+  "arcs": [{ "from": "lock", "to": "acquire" }, { "from": "acquire", "to": "working" }] }
+```
+
+`tokens` vaut 0 par défaut et `weight` 1 ; les champs inconnus sont **rejetés**,
+si bien qu'un `initial_marking` mal orthographié ne peut pas faire analyser en
+silence un réseau vide. `ix-duck` l'expose comme fonction scalaire DuckDB,
+embarquée dans l'extension chargeable `ix.duckdb_extension` :
+
+```sql
+SELECT json_extract_string(ix_petri_analyze(content, 50000), '$.deadlock_free.verdict')
+FROM read_text('reseaux/*.json');   -- une ligne par fichier ; la colonne `content` porte le JSON
+```
+
+Le budget d'états est un argument obligatoire : chaque résultat nomme la borne
+sous laquelle il a été calculé. L'`Analysis` sérialisée est le contrat de
+transport ; ses octets sont figés par `ix_petri::json::tests::wire_shape_is_pinned`
+sur le chemin de test par défaut. Le premier consommateur est le traceur de
+blocage d'amorçage de l'issue #80 de gaia, qui l'atteint depuis Node.js via
+`@duckdb/node-api`.
+
 ## 5. L'exemple concret à l'origine de la crate
 
 `crates/ix-petri/tests/worktree_pump.rs` modélise le risque signalé par
