@@ -160,8 +160,8 @@ fn run_liveness(args: &[String]) -> Result<(), String> {
                      \x20   --output <path>\n\
                      \n\
                      --repo makes read-only gh calls: `workflow list`, the workflow file (for its crons)\n\
-                     and `run list --event schedule`.\n\
-                     --input takes a JSON array of {{repo, workflow, path, state, crons, runs: [gh run list rows]}}.\n"
+                     and the Actions API's scheduled runs of each workflow.\n\
+                     --input takes a JSON array of {{repo, workflow, path, state, crons, schedule_since, runs: [{{conclusion, status, createdAt, event}}]}}.\n"
                 );
                 return Ok(());
             }
@@ -178,7 +178,7 @@ fn run_liveness(args: &[String]) -> Result<(), String> {
         (None, false) => {
             let mut all = Vec::new();
             for repo in &repos {
-                all.extend(fetch_repo(repo, limit)?);
+                all.extend(fetch_repo(repo, limit));
             }
             all
         }
@@ -226,17 +226,19 @@ fn run_liveness(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// `gh workflow list`, then per workflow file its crons (contents API) and,
-/// when it has a schedule, `gh run list --event schedule`. Manually
-/// disabled workflows are a deliberate kill, not a dead loop: skipped.
-fn fetch_repo(repo: &str, limit: u32) -> Result<Vec<WorkflowRuns>, String> {
+/// `gh workflow list`, then per workflow file its crons and last change
+/// (contents + commits API) and, when it has a schedule,
+/// its scheduled runs (Actions API). Manually disabled workflows are a
+/// deliberate kill, not a dead loop: skipped. Read errors never abort the
+/// sweep; they come back as entries carrying `fetch_error`.
+fn fetch_repo(repo: &str, limit: u32) -> Vec<WorkflowRuns> {
     #[derive(serde::Deserialize)]
     struct WorkflowRow {
         name: String,
         path: String,
         state: String,
     }
-    let rows: Vec<WorkflowRow> = gh(&[
+    let rows: Vec<WorkflowRow> = match gh(&[
         "workflow",
         "list",
         "-R",
@@ -246,53 +248,117 @@ fn fetch_repo(repo: &str, limit: u32) -> Result<Vec<WorkflowRuns>, String> {
         "500",
         "--json",
         "name,path,state",
-    ])?;
-    let limit = limit.to_string();
-    let mut out = Vec::new();
-    for row in rows {
-        if !row.path.starts_with(".github/workflows/") || row.state == "disabled_manually" {
-            continue;
-        }
-        let file = row.path.rsplit('/').next().unwrap_or(&row.path).to_string();
-        // A registered workflow whose file was deleted can no longer run: no schedule.
-        let crons = match gh_raw(&[
-            "api",
-            "-H",
-            "Accept: application/vnd.github.raw+json",
-            &format!("repos/{repo}/contents/{}", row.path),
-        ]) {
-            Ok(yaml) => crons_in_workflow(&yaml),
-            Err(e) if e.contains("HTTP 404") => Vec::new(),
-            Err(e) => return Err(e),
-        };
-        let runs: Vec<RunRecord> = if crons.is_empty() && row.state != "disabled_inactivity" {
-            Vec::new()
-        } else {
-            gh(&[
-                "run",
-                "list",
-                "-R",
-                repo,
-                "--workflow",
-                &file,
-                "--event",
-                "schedule",
-                "--limit",
-                &limit,
-                "--json",
-                "conclusion,status,createdAt,event",
-            ])?
-        };
-        out.push(WorkflowRuns {
-            repo: repo.to_string(),
-            workflow: row.name,
-            path: Some(row.path),
-            state: Some(row.state),
-            crons: Some(crons),
-            runs,
-        });
+    ]) {
+        Ok(rows) => rows,
+        Err(e) => return vec![read_failure(repo, "(workflow list)", None, e)],
+    };
+    rows.into_iter()
+        .filter(|row| {
+            row.path.starts_with(".github/workflows/") && row.state != "disabled_manually"
+        })
+        .map(|row| {
+            fetch_workflow(repo, &row.name, &row.path, &row.state, limit)
+                .unwrap_or_else(|e| read_failure(repo, &row.name, Some(row.path.clone()), e))
+        })
+        .collect()
+}
+
+fn fetch_workflow(
+    repo: &str,
+    name: &str,
+    path: &str,
+    state: &str,
+    limit: u32,
+) -> Result<WorkflowRuns, String> {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    // A registered workflow whose file was deleted can no longer run: no schedule.
+    let crons = match gh_raw(&[
+        "api",
+        "-H",
+        "Accept: application/vnd.github.raw+json",
+        &format!("repos/{repo}/contents/{path}"),
+    ]) {
+        Ok(yaml) => crons_in_workflow(&yaml),
+        Err(e) if e.contains("HTTP 404") => Some(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut workflow = WorkflowRuns {
+        repo: repo.to_string(),
+        workflow: name.to_string(),
+        path: Some(path.to_string()),
+        state: Some(state.to_string()),
+        crons,
+        schedule_since: None,
+        runs: Vec::new(),
+        runs_truncated: false,
+        fetch_error: None,
+    };
+    if workflow.crons.as_ref().is_some_and(Vec::is_empty) && state != "disabled_inactivity" {
+        return Ok(workflow);
     }
-    Ok(out)
+    let since = gh_raw(&[
+        "api",
+        &format!("repos/{repo}/commits?path={path}&per_page=1"),
+        "--jq",
+        ".[0].commit.committer.date // empty",
+    ])?;
+    workflow.schedule_since = Some(since.trim().to_string()).filter(|s| !s.is_empty());
+    // The Actions API, not `gh run list --event schedule`: on 2026-09-14 the
+    // latter returned runs a week stale for ga's hourly Gemini triage
+    // (6211 runs), which read as a dead schedule.
+    let runs = |limit: u32| -> Result<Vec<RunRecord>, String> {
+        let per_page = limit.min(100);
+        let mut out: Vec<RunRecord> = Vec::new();
+        for page in 1.. {
+            let body = gh_raw(&[
+                "api",
+                &format!(
+                    "repos/{repo}/actions/workflows/{file}/runs?event=schedule&per_page={per_page}&page={page}"
+                ),
+                "--jq",
+                ".workflow_runs[] | {conclusion, status, createdAt: .created_at, event}",
+            ])?;
+            let before = out.len();
+            for line in body.lines().filter(|l| !l.trim().is_empty()) {
+                out.push(serde_json::from_str(line).map_err(|e| format!("parse run: {e}"))?);
+            }
+            let got = out.len() - before;
+            if got < per_page as usize || out.len() >= limit as usize {
+                break;
+            }
+        }
+        out.truncate(limit as usize);
+        Ok(out)
+    };
+    let mut fetched = runs(limit)?;
+    let mut used = limit;
+    // A window with no success hides how long the streak really is.
+    if fetched.len() == limit as usize
+        && fetched
+            .iter()
+            .all(|r| r.conclusion.as_deref() != Some("success"))
+    {
+        used = limit.max(1000);
+        fetched = runs(used)?;
+    }
+    workflow.runs_truncated = fetched.len() == used as usize;
+    workflow.runs = fetched;
+    Ok(workflow)
+}
+
+fn read_failure(repo: &str, name: &str, path: Option<String>, error: String) -> WorkflowRuns {
+    eprintln!("ix-harness-github-actions: {repo} {name}: {error}");
+    WorkflowRuns {
+        repo: repo.to_string(),
+        workflow: name.to_string(),
+        path,
+        state: None,
+        crons: None,
+        schedule_since: None,
+        runs: Vec::new(),
+        runs_truncated: false,
+        fetch_error: Some(error),
+    }
 }
 
 fn gh<T: serde::de::DeserializeOwned>(args: &[&str]) -> Result<T, String> {

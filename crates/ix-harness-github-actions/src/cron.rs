@@ -133,24 +133,46 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (yoe + era * 400 + i64::from(month <= 2), month, day)
 }
 
-/// Cron expressions from a workflow file's `- cron: '...'` lines.
-/// A line scan, not a YAML parser: GitHub only reads `cron` under
-/// `on.schedule`, and no workflow in the ecosystem uses the key elsewhere.
-pub fn crons_in_workflow(yaml: &str) -> Vec<String> {
-    yaml.lines()
-        .map(str::trim)
-        .filter(|l| !l.starts_with('#'))
-        .filter_map(|l| l.trim_start_matches("- ").strip_prefix("cron:"))
-        .map(|v| {
-            let v = v.trim();
-            let v = match v.chars().next() {
-                Some(q @ ('\'' | '"')) => v[1..].split(q).next().unwrap_or(""),
-                _ => v.split(" #").next().unwrap_or(v),
-            };
-            v.trim().to_string()
-        })
-        .filter(|v| !v.is_empty())
-        .collect()
+/// The `on.schedule[].cron` entries of a workflow file.
+///
+/// `Some(vec![])` means the workflow has no schedule. `None` means the
+/// crons could not be read: the file is not valid YAML, or it declares a
+/// schedule without any readable `cron`. Callers must not treat that as
+/// "not scheduled".
+pub fn crons_in_workflow(yaml: &str) -> Option<Vec<String>> {
+    // Files saved by some Windows editors start with a byte-order mark.
+    let yaml = yaml.strip_prefix('\u{feff}').unwrap_or(yaml);
+    let doc: serde_yaml::Value = serde_yaml::from_str(yaml).ok()?;
+    // A YAML 1.1 reader turns the bare key `on` into boolean true.
+    let on = doc
+        .as_mapping()?
+        .iter()
+        .find_map(|(k, v)| (k.as_str() == Some("on") || k.as_bool() == Some(true)).then_some(v));
+    let Some(on) = on else {
+        return Some(Vec::new());
+    };
+    let schedule = match on {
+        serde_yaml::Value::Mapping(events) => events.get("schedule"),
+        // `on: schedule` or `on: [push, schedule]` declares a schedule with no cron.
+        serde_yaml::Value::String(event) => return (event != "schedule").then(Vec::new),
+        serde_yaml::Value::Sequence(events) => {
+            let declared = events.iter().any(|e| e.as_str() == Some("schedule"));
+            return (!declared).then(Vec::new);
+        }
+        _ => None,
+    };
+    let Some(schedule) = schedule else {
+        return Some(Vec::new());
+    };
+    let crons: Vec<String> = schedule
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("cron")?.as_str())
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+    (!crons.is_empty()).then_some(crons)
 }
 
 #[cfg(test)]
@@ -207,12 +229,81 @@ mod tests {
     }
 
     #[test]
-    fn crons_are_extracted_from_workflow_yaml() {
+    fn dom_only_cron_does_not_fire_on_other_days() {
+        // Demerzel Substrate Audit: monthly, weekday unrestricted.
+        let c = Cron::parse("0 6 1 * *").unwrap();
+        assert!(c.matches(at("2026-09-01T06:00:00Z")));
+        assert!(!c.matches(at("2026-09-02T06:00:00Z")));
+        assert_eq!(
+            c.fires_between(at("2026-09-01T07:00:00Z"), at("2026-09-30T23:59:00Z"), 100),
+            0
+        );
+    }
+
+    #[test]
+    fn start_slash_step_runs_from_start_to_field_max() {
+        let c = Cron::parse("5/15 * * * *").unwrap();
+        for m in ["05", "20", "35", "50"] {
+            assert!(
+                c.matches(at(&format!("2026-09-14T10:{m}:00Z"))),
+                "minute {m}"
+            );
+        }
+        assert!(!c.matches(at("2026-09-14T10:00:00Z")));
+        assert!(!c.matches(at("2026-09-14T10:06:00Z")));
+    }
+
+    fn crons(v: &[&str]) -> Option<Vec<String>> {
+        Some(v.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn crons_are_read_from_on_schedule() {
         let yaml = "on:\n  schedule:\n    # - cron: '0 1 * * *'\n    - cron: '7 14 1-7,15-21 * 1'\n    - cron: \"0 5 * * 0\"  # weekly\n  workflow_dispatch:\n";
         assert_eq!(
             crons_in_workflow(yaml),
-            vec!["7 14 1-7,15-21 * 1".to_string(), "0 5 * * 0".to_string()]
+            crons(&["7 14 1-7,15-21 * 1", "0 5 * * 0"])
         );
-        assert!(crons_in_workflow("on:\n  push:\n    branches: [main]\n").is_empty());
+        // Valid YAML the old line scan missed.
+        assert_eq!(
+            crons_in_workflow("on:\n  schedule:\n    -   cron: '0 5 * * *'\n"),
+            crons(&["0 5 * * *"])
+        );
+        assert_eq!(
+            crons_in_workflow("on:\n  schedule: [{cron: '0 5 * * *'}]\n"),
+            crons(&["0 5 * * *"])
+        );
+        assert_eq!(
+            crons_in_workflow("on:\n  schedule:\n    - cron: >-\n        0 5 * * *\n"),
+            crons(&["0 5 * * *"])
+        );
+        // YAML 1.1 readers parse `on` as boolean true.
+        assert_eq!(
+            crons_in_workflow("true:\n  schedule:\n    - cron: '0 5 * * *'\n"),
+            crons(&["0 5 * * *"])
+        );
+    }
+
+    #[test]
+    fn a_cron_outside_on_schedule_is_not_a_schedule() {
+        let yaml = "on:\n  push:\n    branches: [main]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          cat <<EOF\n          - cron: '0 5 * * *'\n          EOF\n";
+        assert_eq!(crons_in_workflow(yaml), Some(vec![]));
+        assert_eq!(crons_in_workflow("on: push\n"), Some(vec![]));
+        assert_eq!(
+            crons_in_workflow("on: [push, pull_request]\n"),
+            Some(vec![])
+        );
+        // ga's ci.yml starts with a byte-order mark.
+        assert_eq!(
+            crons_in_workflow("\u{feff}name: CI\non:\n  push:\n"),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn unreadable_schedule_is_none_not_unscheduled() {
+        assert_eq!(crons_in_workflow("on: [push, schedule]\n"), None);
+        assert_eq!(crons_in_workflow("on:\n  schedule:\n"), None);
+        assert_eq!(crons_in_workflow("on: {schedule: [\n"), None);
     }
 }

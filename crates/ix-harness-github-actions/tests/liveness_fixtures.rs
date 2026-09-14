@@ -17,7 +17,10 @@ fn ga_nightly_quality(runs: Vec<RunRecord>) -> WorkflowRuns {
         path: Some(".github/workflows/ga-nightly-quality.yml".to_string()),
         state: Some("active".to_string()),
         crons: Some(vec!["15 5 * * *".to_string()]),
+        schedule_since: None,
         runs,
+        runs_truncated: false,
+        fetch_error: None,
     }
 }
 

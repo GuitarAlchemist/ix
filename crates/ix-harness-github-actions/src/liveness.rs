@@ -1,4 +1,4 @@
-//! Workflow liveness — `gh run list` history → one hexavalent verdict
+//! Workflow liveness — scheduled-run history → one hexavalent verdict
 //! per scheduled workflow.
 //!
 //! The run-level adapter in the crate root projects ONE run. A loop
@@ -29,7 +29,7 @@
 //! green but dead.
 //!
 //! Not covered: whether a run produced an artifact, or whether anything
-//! reads it. `gh run list` carries neither.
+//! reads it. The run history carries neither.
 
 use std::collections::BTreeMap;
 
@@ -52,13 +52,13 @@ const DEFAULT_CADENCE_HOURS: f64 = 24.0;
 /// Fires this recent are not yet counted as missed.
 const GRACE_SECS: i64 = 3 * 3600;
 
-/// How far back to look for fires when a scheduled workflow has no run
-/// in the window at all.
-const NEVER_RAN_LOOKBACK_SECS: i64 = 14 * 86_400;
+/// Upper bound on the fires-per-run throttle factor, so a cron change or
+/// a long gap in history cannot excuse a long silence.
+const MAX_FIRES_PER_RUN: f64 = 12.0;
 
 /// One workflow and its run history, as returned by
 /// `gh workflow list --json name,path,state` joined with
-/// `gh run list --workflow <file> --json conclusion,status,createdAt,event`.
+/// the Actions API's `workflows/<file>/runs?event=schedule`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRuns {
     /// `owner/name`.
@@ -76,12 +76,23 @@ pub struct WorkflowRuns {
     /// has no schedule (event-triggered, or the cron was removed).
     #[serde(default)]
     pub crons: Option<Vec<String>>,
-    /// `gh run list` output, any order, any event.
+    /// When the workflow file last changed on the default branch
+    /// (`YYYY-MM-DDTHH:MM:SSZ`). No run is owed from before it: a new,
+    /// renamed or re-scheduled file starts with a clean slate.
+    #[serde(default)]
+    pub schedule_since: Option<String>,
+    /// Run rows, any order, any event (non-schedule events are ignored).
     #[serde(default)]
     pub runs: Vec<RunRecord>,
+    /// The fetch hit its run limit, so older history was not read.
+    #[serde(default)]
+    pub runs_truncated: bool,
+    /// Reading this workflow (or the repo's workflow list) failed.
+    #[serde(default)]
+    pub fetch_error: Option<String>,
 }
 
-/// One element of `gh run list --json conclusion,status,createdAt,event`.
+/// One run: `gh run list --json conclusion,status,createdAt,event` shape.
 /// Extra fields are ignored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +129,10 @@ pub struct LivenessReport {
     /// the grace period, per historically delivered fires-per-run). `None`
     /// when the workflow file was not read.
     pub missed_runs: Option<usize>,
+    /// Older runs were not read, so the streak is a lower bound when no
+    /// run in the window succeeded.
+    pub window_truncated: bool,
+    pub fetch_error: Option<String>,
     /// Merged distribution over `T P U D F C`.
     pub distribution: BTreeMap<String, f64>,
     #[serde(skip)]
@@ -136,8 +151,9 @@ impl LivenessReport {
 
 /// Assess one workflow. Returns `None` when there is no schedule to
 /// judge: the workflow file has no `cron` (event-triggered, or the cron
-/// was removed on purpose), or no scheduled run and no fire was due.
-/// A workflow GitHub disabled for inactivity is always assessed.
+/// was removed on purpose), or neither crons nor scheduled runs are known.
+/// A workflow GitHub disabled for inactivity is always assessed, and a
+/// workflow that could not be read is reported as `Unknown`.
 ///
 /// `now` is `YYYY-MM-DDTHH:MM:SSZ`, injected so runs are reproducible.
 pub fn assess(
@@ -147,6 +163,9 @@ pub fn assess(
 ) -> Result<Option<LivenessReport>, AdapterError> {
     let now_s =
         parse_epoch(now).ok_or_else(|| AdapterError::Parse(format!("invalid --now: {now}")))?;
+    if let Some(error) = &wf.fetch_error {
+        return Ok(Some(unreadable(wf, error)));
+    }
 
     // @ai:invariant only schedule-event runs count toward liveness, so passing PR runs never mask a failing nightly [T:test conf:0.9 src:test_pr_successes_do_not_mask_scheduled_failures]
     let mut scheduled: Vec<(f64, &RunRecord)> = wf
@@ -168,31 +187,38 @@ pub fn assess(
             .map(|c| c.fires_between(after, until, usize::MAX))
             .sum()
     };
-    // Scheduled runs owed since the last one. GitHub throttles frequent
-    // crons (a `*/30` cron may run every few hours), so raw missed fires
-    // are divided by the fires-per-run this workflow has historically
-    // been delivered.
-    let missed_runs = crons.as_ref().filter(|cs| !cs.is_empty()).map(|cs| {
-        let after = scheduled
-            .first()
-            .map(|(t, _)| *t as i64)
-            .unwrap_or(now_s as i64 - NEVER_RAN_LOOKBACK_SECS);
-        let missed = fires(after, now_s as i64 - GRACE_SECS, cs);
-        let fires_per_run = match (scheduled.first(), scheduled.last()) {
-            (Some((newest, _)), Some((oldest, _))) if scheduled.len() >= 2 => {
-                (fires(*oldest as i64, *newest as i64, cs) as f64 / (scheduled.len() - 1) as f64)
-                    .max(1.0)
-            }
-            _ => 1.0,
-        };
-        (missed as f64 / fires_per_run).floor() as usize
-    });
+    // Runs are owed from the later of the last scheduled run and the last
+    // change to the workflow file. With neither, nothing can be owed.
+    let since = wf.schedule_since.as_deref().and_then(parse_epoch);
+    let owed_from = match (scheduled.first().map(|(t, _)| *t), since) {
+        (Some(last), Some(since)) => Some(last.max(since)),
+        (last, since) => last.or(since),
+    };
+    // Scheduled runs owed since then. GitHub throttles frequent crons (a
+    // `*/30` cron may run every few hours), so raw missed fires are divided
+    // by the MEDIAN fires per gap between past runs, capped: a mean would let
+    // one past outage excuse the next death.
+    let missed_runs = crons
+        .as_ref()
+        .filter(|cs| !cs.is_empty())
+        .zip(owed_from)
+        .map(|(cs, from)| {
+            let missed = fires(from as i64, now_s as i64 - GRACE_SECS, cs);
+            let mut per_gap: Vec<usize> = scheduled
+                .windows(2)
+                .map(|w| fires(w[1].0 as i64, w[0].0 as i64, cs))
+                .collect();
+            per_gap.sort_unstable();
+            let fires_per_run = per_gap
+                .get(per_gap.len() / 2)
+                .map_or(1.0, |m| (*m as f64).clamp(1.0, MAX_FIRES_PER_RUN));
+            (missed as f64 / fires_per_run).floor() as usize
+        });
     if !disabled_inactivity {
-        if wf.crons.as_ref().is_some_and(|cs| cs.is_empty()) {
-            return Ok(None);
-        }
-        if scheduled.is_empty() && missed_runs.unwrap_or(0) == 0 {
-            return Ok(None);
+        match &wf.crons {
+            Some(cs) if cs.is_empty() => return Ok(None),
+            None if scheduled.is_empty() => return Ok(None),
+            _ => {}
         }
     }
 
@@ -212,15 +238,7 @@ pub fn assess(
     let last_run_age_hours = scheduled.first().map(|(t, _)| (now_s - t) / 3600.0);
     let cadence_hours = median_gap_hours(&scheduled).unwrap_or(DEFAULT_CADENCE_HOURS);
 
-    let workflow_key = sanitize(
-        wf.path
-            .as_deref()
-            .and_then(|p| p.rsplit('/').next())
-            .map(|f| f.trim_end_matches(".yml").trim_end_matches(".yaml"))
-            .unwrap_or(&wf.workflow),
-    );
-    let repo_key = sanitize(wf.repo.rsplit('/').next().unwrap_or(&wf.repo));
-    let claim_key = format!("gha_loop:{repo_key}:{workflow_key}::reliable");
+    let claim_key = claim_key(wf);
 
     let diagnosis_id = sha256_hex(
         serde_json::to_string(wf)
@@ -245,15 +263,14 @@ pub fn assess(
                 completed.len()
             ),
         ))
-    } else if !scheduled.is_empty() {
-        // Every run skipped or still in progress: nothing to judge.
+    } else {
+        // No run yet, or every run skipped or in progress: the outcome is
+        // unknown, which also keeps a lone on-time T@0.3 from standing.
         Some((
             Hexavalent::Unknown,
             0.5,
             format!("no conclusive scheduled run of {}", scheduled.len()),
         ))
-    } else {
-        None
     };
     if let Some((variant, weight, evidence)) = outcome_signal {
         observations.push(with_source(
@@ -281,7 +298,7 @@ pub fn assess(
     } else if let Some(missed) = missed_runs {
         // One owed run is tolerated: GitHub drops scheduled runs under load.
         let evidence = format!(
-            "{missed} scheduled runs owed by the cron since the last one ({})",
+            "{missed} scheduled runs owed by the cron since the last one ({}) or the last workflow file change",
             last_run_age_hours
                 .map(|h| format!("{h:.1}h ago"))
                 .unwrap_or_else(|| "none in window".to_string())
@@ -343,12 +360,53 @@ pub fn assess(
         last_run_age_hours,
         cadence_hours,
         missed_runs,
+        window_truncated: wf.runs_truncated,
+        fetch_error: None,
         distribution: HEX_ORDER
             .iter()
             .map(|v| (letter(*v).to_string(), merged.distribution.get(v)))
             .collect(),
         observations,
     }))
+}
+
+/// A workflow the sweep could not read: `Unknown`, with no observations,
+/// so one API error neither aborts the sweep nor reads as a dead loop.
+fn unreadable(wf: &WorkflowRuns, error: &str) -> LivenessReport {
+    LivenessReport {
+        repo: wf.repo.clone(),
+        workflow: wf.workflow.clone(),
+        path: wf.path.clone(),
+        claim_key: claim_key(wf),
+        verdict: Hexavalent::Unknown,
+        scheduled_runs: 0,
+        failure_streak: 0,
+        no_success_in_window: false,
+        last_conclusion: None,
+        last_success_age_hours: None,
+        last_run_age_hours: None,
+        cadence_hours: DEFAULT_CADENCE_HOURS,
+        missed_runs: None,
+        window_truncated: false,
+        fetch_error: Some(error.to_string()),
+        distribution: HEX_ORDER
+            .iter()
+            .map(|v| (letter(*v).to_string(), f64::from(*v == Hexavalent::Unknown)))
+            .collect(),
+        observations: Vec::new(),
+    }
+}
+
+fn claim_key(wf: &WorkflowRuns) -> String {
+    let workflow_key = sanitize(
+        wf.path
+            .as_deref()
+            .and_then(|p| p.rsplit('/').next())
+            .map(|f| f.trim_end_matches(".yml").trim_end_matches(".yaml"))
+            .unwrap_or(&wf.workflow),
+    );
+    let repo_key = sanitize(wf.repo.rsplit('/').next().unwrap_or(&wf.repo));
+    format!("gha_loop:{repo_key}:{workflow_key}::reliable")
 }
 
 const HEX_ORDER: [Hexavalent; 6] = [
@@ -445,7 +503,8 @@ fn to_hex_observation(event: &SessionEvent) -> Option<HexObservation> {
 /// an `open` header, one `belief_update` per report, a `close` trailer.
 pub fn to_hari_session(reports: &[LivenessReport], round: u32) -> Vec<serde_json::Value> {
     let mut lines = vec![serde_json::json!({"op": "open", "config": {}})];
-    for r in reports {
+    // An unreadable workflow is a sweep failure, not evidence about the loop.
+    for r in reports.iter().filter(|r| r.fetch_error.is_none()) {
         lines.push(serde_json::json!({
             "op": "event",
             "event": {
@@ -501,12 +560,20 @@ pub fn to_markdown(reports: &[LivenessReport]) -> String {
          | Repo | Workflow | Verdict | Failing runs in a row | Last scheduled success | Last scheduled run | Scheduled runs missed |\n\
          |---|---|---|---|---|---|---|\n",
         unhealthy.len(),
-        reports.len()
+        reports.iter().filter(|r| r.fetch_error.is_none()).count()
     );
     for r in unhealthy {
+        // Older runs were not read: the streak may be longer.
+        let streak_bound = if r.window_truncated && r.no_success_in_window {
+            "≥"
+        } else {
+            ""
+        };
         let success = match r.last_success_age_hours {
             Some(h) => days(h),
-            None => format!("none in last {}", r.scheduled_runs),
+            None if r.window_truncated => format!("none in last {}", r.scheduled_runs),
+            None if r.scheduled_runs == 0 => "no scheduled run yet".to_string(),
+            None => format!("never ({} scheduled runs)", r.scheduled_runs),
         };
         let last_run = r.last_run_age_hours.map(days).unwrap_or_else(|| "-".into());
         let missed = r
@@ -514,9 +581,9 @@ pub fn to_markdown(reports: &[LivenessReport]) -> String {
             .map(|n| n.to_string())
             .unwrap_or_else(|| format!("? (~{:.0}h cadence)", r.cadence_hours));
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} |\n",
-            r.repo.rsplit('/').next().unwrap_or(&r.repo),
-            r.workflow,
+            "| {} | {} | {} | {streak_bound}{} | {} | {} | {} |\n",
+            md_cell(r.repo.rsplit('/').next().unwrap_or(&r.repo)),
+            md_cell(&r.workflow),
             letter(r.verdict),
             r.failure_streak,
             success,
@@ -524,7 +591,31 @@ pub fn to_markdown(reports: &[LivenessReport]) -> String {
             missed
         ));
     }
+    let errors: Vec<&LivenessReport> = reports.iter().filter(|r| r.fetch_error.is_some()).collect();
+    if !errors.is_empty() {
+        out.push_str(&format!(
+            "\nNot assessed, read failed ({}):\n\n",
+            errors.len()
+        ));
+        for r in errors {
+            out.push_str(&format!(
+                "- {} / {}: {}\n",
+                md_cell(&r.repo),
+                md_cell(&r.workflow),
+                md_cell(r.fetch_error.as_deref().unwrap_or_default())
+            ));
+        }
+    }
     out
+}
+
+/// Names and messages come from other repos: keep them from breaking the
+/// table (`|`, newlines) or pinging people (`@`).
+fn md_cell(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace('@', "&#64;")
+        .replace(['\r', '\n'], " ")
 }
 
 fn severity(v: Hexavalent) -> u8 {
@@ -562,11 +653,31 @@ mod tests {
             path: Some(".github/workflows/nightly-thing.yml".to_string()),
             state: Some("active".to_string()),
             crons: None,
+            schedule_since: None,
             runs: days_and_conclusions
                 .iter()
                 .map(|(d, c)| run(&format!("2026-09-{d:02}T09:00:00Z"), "schedule", c))
                 .collect(),
+            runs_truncated: false,
+            fetch_error: None,
         }
+    }
+
+    fn scheduled(cron: &str, since: &str) -> WorkflowRuns {
+        let mut wf = nightly(&[]);
+        wf.crons = Some(vec![cron.to_string()]);
+        wf.schedule_since = Some(since.to_string());
+        wf
+    }
+
+    fn schedule_variant(r: &LivenessReport) -> Hexavalent {
+        let json = r
+            .observations
+            .iter()
+            .map(|e| serde_json::to_value(e).unwrap())
+            .find(|j| j["source"] == SCHEDULE_SOURCE)
+            .expect("a schedule observation");
+        serde_json::from_value(json["variant"].clone()).unwrap()
     }
 
     #[test]
@@ -629,7 +740,7 @@ mod tests {
         wf.state = Some("disabled_inactivity".to_string());
         let r = assess(&wf, NOW, 0).unwrap().unwrap();
         assert_eq!(r.verdict, Hexavalent::False);
-        assert_eq!(r.observations.len(), 1);
+        assert_eq!(schedule_variant(&r), Hexavalent::False);
     }
 
     #[test]
@@ -683,12 +794,141 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_workflow_that_never_ran_is_false() {
-        let mut wf = nightly(&[]);
-        wf.crons = Some(vec!["0 5 * * *".to_string()]);
+    fn new_or_renamed_workflow_owes_nothing_before_its_file_changed() {
+        // Added (or moved, which gives a new workflow id) this morning,
+        // after its 05:00 fire: Unknown, not dead.
+        let wf = scheduled("0 5 * * *", "2026-09-14T08:00:00Z");
         let r = assess(&wf, NOW, 0).unwrap().unwrap();
-        assert_eq!(r.missed_runs, Some(14));
+        assert_eq!(r.missed_runs, Some(0));
+        assert_eq!(r.verdict, Hexavalent::Unknown);
+        assert!(!r.is_unhealthy());
+    }
+
+    #[test]
+    fn monthly_cron_that_never_ran_is_not_reliable_and_stays_visible() {
+        // Two monthly fires (08-01, 09-01) owed since mid-July, no run.
+        let wf = scheduled("0 6 1 * *", "2026-07-15T00:00:00Z");
+        let r = assess(&wf, NOW, 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(2));
+        assert_eq!(r.verdict, Hexavalent::Doubtful);
+        // No fire falls between 09-14 and 09-20: still assessed.
+        let later = assess(&wf, "2026-09-20T12:00:00Z", 0).unwrap().unwrap();
+        assert_eq!(later.verdict, Hexavalent::Doubtful);
+        // One owed fire and no run is not T either.
+        let once = scheduled("0 6 1 * *", "2026-08-15T00:00:00Z");
+        let r = assess(&once, NOW, 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(1));
+        assert_eq!(r.verdict, Hexavalent::Unknown);
+    }
+
+    #[test]
+    fn weekly_cron_that_never_ran_for_a_month_is_false() {
+        // Mondays 08-17 .. 09-14 at 06:00.
+        let wf = scheduled("0 6 * * 1", "2026-08-15T00:00:00Z");
+        let r = assess(&wf, NOW, 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(5));
         assert_eq!(r.verdict, Hexavalent::False);
+    }
+
+    #[test]
+    fn file_change_after_the_last_run_resets_what_is_owed() {
+        let mut wf = nightly(&[(4, "success"), (3, "success")]);
+        wf.crons = Some(vec!["0 9 * * *".to_string()]);
+        wf.schedule_since = Some("2026-09-14T10:00:00Z".to_string());
+        let r = assess(&wf, NOW, 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(0));
+        assert_eq!(r.verdict, Hexavalent::True);
+    }
+
+    #[test]
+    fn past_outage_does_not_excuse_a_later_death() {
+        // Daily runs 08-01..08-10, a month-long outage, runs 09-09..09-12,
+        // then six silent nights. A window-mean throttle factor read this as T.
+        let mut wf = nightly(&[]);
+        wf.crons = Some(vec!["0 9 * * *".to_string()]);
+        wf.runs = (1..=10)
+            .map(|d| format!("2026-08-{d:02}T09:00:00Z"))
+            .chain((9..=12).map(|d| format!("2026-09-{d:02}T09:00:00Z")))
+            .map(|t| run(&t, "schedule", "success"))
+            .collect();
+        let r = assess(&wf, "2026-09-18T12:00:00Z", 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(6));
+        assert_eq!(r.verdict, Hexavalent::Contradictory);
+    }
+
+    #[test]
+    fn cron_change_cannot_inflate_the_throttle_factor_past_its_cap() {
+        // Daily history, cron now hourly, silent for two days: 48 fires owed,
+        // 24 per past gap capped at 12, so 4 runs owed.
+        let mut wf = nightly(&[(10, "success"), (11, "success"), (12, "success")]);
+        wf.crons = Some(vec!["0 * * * *".to_string()]);
+        let r = assess(&wf, NOW, 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(4));
+        assert_eq!(r.verdict, Hexavalent::Contradictory);
+    }
+
+    #[test]
+    fn throttle_factor_never_drops_below_one_run_per_fire() {
+        // Daily history, cron now weekly: past gaps hold no fire (median 0).
+        let mut wf = nightly(&[]);
+        wf.crons = Some(vec!["0 9 * * 1".to_string()]);
+        wf.runs = (1..=5)
+            .map(|d| run(&format!("2026-09-{d:02}T10:00:00Z"), "schedule", "success"))
+            .collect();
+        let r = assess(&wf, "2026-09-28T12:00:00Z", 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(4));
+    }
+
+    #[test]
+    fn one_owed_run_is_tolerated() {
+        let mut wf = nightly(&[(12, "skipped"), (13, "skipped")]);
+        wf.crons = Some(vec!["0 9 * * *".to_string()]);
+        let r = assess(&wf, NOW, 0).unwrap().unwrap();
+        assert_eq!(r.missed_runs, Some(1));
+        assert_eq!(schedule_variant(&r), Hexavalent::True);
+        assert_eq!(r.verdict, Hexavalent::Unknown);
+    }
+
+    #[test]
+    fn verdict_ties_break_pessimistically() {
+        use ix_fuzzy::hexavalent::hexavalent_from_tpudfc;
+        let tie = hexavalent_from_tpudfc(0.5, 0.0, 0.0, 0.0, 0.5, 0.0).unwrap();
+        assert_eq!(verdict(&tie), Hexavalent::False);
+        let tie = hexavalent_from_tpudfc(0.5, 0.0, 0.0, 0.5, 0.0, 0.0).unwrap();
+        assert_eq!(verdict(&tie), Hexavalent::Doubtful);
+    }
+
+    #[test]
+    fn unreadable_workflow_is_unknown_and_listed_not_believed() {
+        let mut wf = nightly(&[]);
+        wf.fetch_error = Some("gh api: HTTP 502".to_string());
+        let r = assess(&wf, NOW, 0).unwrap().unwrap();
+        assert_eq!(r.verdict, Hexavalent::Unknown);
+        assert!(r.observations.is_empty());
+        let md = to_markdown(std::slice::from_ref(&r));
+        assert!(
+            md.starts_with("0 of 0 scheduled workflows unhealthy"),
+            "{md}"
+        );
+        assert!(md.contains("read failed (1)"), "{md}");
+        assert_eq!(to_hari_session(&[r], 0).len(), 2, "open + close only");
+    }
+
+    #[test]
+    fn markdown_escapes_names_and_marks_truncated_streaks() {
+        let mut wf = nightly(&[(14, "failure"), (13, "failure"), (12, "failure")]);
+        wf.workflow = "Build | deploy @owner".to_string();
+        wf.runs_truncated = true;
+        let r = assess(&wf, NOW, 0).unwrap().unwrap();
+        let md = to_markdown(&[r]);
+        assert!(md.contains("Build \\| deploy &#64;owner"), "{md}");
+        assert!(md.contains("| ≥3 |"), "{md}");
+        assert!(md.contains("none in last 3"), "{md}");
+
+        wf.runs_truncated = false;
+        let md = to_markdown(&[assess(&wf, NOW, 0).unwrap().unwrap()]);
+        assert!(md.contains("| 3 |"), "{md}");
+        assert!(md.contains("never (3 scheduled runs)"), "{md}");
     }
 
     #[test]
