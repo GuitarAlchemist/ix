@@ -3547,8 +3547,8 @@ pub fn catalog_list(_params: Value) -> Result<Value, String> {
 
 // ── ix_cargo_deps ──────────────────────────────────────────
 
-/// P1.2 — walk a Rust workspace, parse every `crates/<name>/Cargo.toml`
-/// for intra-workspace `ix-*` dependencies, and return a
+/// P1.2 — walk a Rust workspace, parse the `crates/<name>/Cargo.toml` of
+/// every workspace member for intra-workspace dependencies, and return a
 /// {nodes, edges, n_nodes} structure that `ix_graph` can consume
 /// directly.
 ///
@@ -3609,6 +3609,25 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         crate_entries.push((name, manifest));
     }
     crate_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Keep only workspace members: a directory under `crates/` can be
+    // excluded from the workspace (ix-duck-ext) or simply not listed
+    // (a spike). Without a `[workspace] members` list, keep every crate.
+    let mut non_members: Vec<String> = Vec::new();
+    if let Ok(root_manifest) = std::fs::read_to_string(workspace_root.join("Cargo.toml")) {
+        let (members, exclude) = workspace_member_patterns(&root_manifest);
+        if !members.is_empty() {
+            crate_entries.retain(|(name, _)| {
+                let rel = format!("crates/{name}");
+                let is_member = members.iter().any(|m| member_pattern_matches(m, &rel))
+                    && !exclude.iter().any(|x| member_pattern_matches(x, &rel));
+                if !is_member {
+                    non_members.push(name.clone());
+                }
+                is_member
+            });
+        }
+    }
 
     // Assign stable node ids (alphabetical).
     let name_to_id: std::collections::HashMap<String, usize> = crate_entries
@@ -3695,6 +3714,8 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         "n_nodes": n_nodes,
         "nodes": nodes,
         "edges": edges,
+        // Directories under crates/ skipped because the workspace does not list them.
+        "non_members": non_members,
         // Denormalized flat projections for downstream tools.
         "names": names_vec,
         "sloc": sloc_vec,
@@ -3702,6 +3723,71 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         "dep_counts": dep_count_vec,
         "features": features_matrix,
     }))
+}
+
+/// Read the `members` and `exclude` path patterns of the root
+/// manifest's `[workspace]` table. Arrays may span several lines.
+fn workspace_member_patterns(toml_body: &str) -> (Vec<String>, Vec<String>) {
+    let mut members = Vec::new();
+    let mut exclude = Vec::new();
+    let mut in_workspace = false;
+    // Which array we are inside, when it spans several lines.
+    let mut open: Option<bool> = None; // Some(true) = members, Some(false) = exclude
+
+    for raw in toml_body.lines() {
+        let line = match raw.find('#') {
+            Some(i) => raw[..i].trim(),
+            None => raw.trim(),
+        };
+        if line.is_empty() {
+            continue;
+        }
+        let mut rest = line;
+        if open.is_none() {
+            if let Some(inner) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                in_workspace = inner.trim() == "workspace";
+                continue;
+            }
+            if !in_workspace {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            open = match key.trim() {
+                "members" => Some(true),
+                "exclude" => Some(false),
+                _ => continue,
+            };
+            rest = value;
+        }
+        let target = if open == Some(true) {
+            &mut members
+        } else {
+            &mut exclude
+        };
+        for (i, part) in rest.split('"').enumerate() {
+            if i % 2 == 1 {
+                target.push(part.trim_end_matches('/').to_string());
+            }
+        }
+        if rest.contains(']') {
+            open = None;
+        }
+    }
+    (members, exclude)
+}
+
+/// Match a workspace path pattern (`crates/ix-math` or `crates/*`)
+/// against a relative crate path.
+fn member_pattern_matches(pattern: &str, rel: &str) -> bool {
+    match pattern.strip_suffix("/*") {
+        Some(prefix) => rel
+            .strip_prefix(prefix)
+            .and_then(|r| r.strip_prefix('/'))
+            .is_some_and(|r| !r.contains('/')),
+        None => pattern == rel,
+    }
 }
 
 /// Walk `src/**/*.rs` recursively and return `(total_loc, file_count)`.
@@ -3766,10 +3852,29 @@ fn extract_workspace_deps(
         }
         if let Some(inner) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
             let table_name = inner.trim();
-            section = match table_name {
-                "package" => Section::Package,
-                "dependencies" | "dev-dependencies" | "build-dependencies" => Section::Deps,
-                _ => Section::None,
+            const DEP_TABLES: [&str; 3] =
+                ["dependencies", "dev-dependencies", "build-dependencies"];
+            // `[dependencies.ix-gpu]`: the dep name is the table key itself.
+            let dotted_dep = DEP_TABLES.iter().find_map(|t| {
+                table_name
+                    .strip_prefix(t)
+                    .and_then(|rest| rest.strip_prefix('.'))
+            });
+            section = if table_name == "package" {
+                Section::Package
+            } else if DEP_TABLES
+                .iter()
+                .any(|t| table_name == *t || table_name.ends_with(&format!(".{t}")))
+            {
+                // Plain tables, plus `[target.'cfg(..)'.dependencies]`.
+                Section::Deps
+            } else {
+                if let Some(dep) = dotted_dep {
+                    if known_crates.contains(dep) {
+                        deps.push(dep.to_string());
+                    }
+                }
+                Section::None
             };
             continue;
         }
@@ -4429,7 +4534,20 @@ pub fn governance_check(params: Value) -> Result<Value, String> {
 
     let result = constitution.check_action(action);
 
+    // `check_action` is a keyword heuristic: `compliant` only means no rule
+    // fired. Report that as Unknown rather than letting an unmatched action
+    // read as approved.
+    let verdict = if !result.compliant {
+        "D"
+    } else if !result.relevant_articles.is_empty() {
+        "P"
+    } else {
+        "U"
+    };
+
     let mut response = json!({
+        "verdict": verdict,
+        "basis": "keyword-heuristic",
         "compliant": result.compliant,
         "relevant_articles": result.relevant_articles.iter().map(|a| json!({
             "number": a.number,
@@ -4440,6 +4558,12 @@ pub fn governance_check(params: Value) -> Result<Value, String> {
         "constitution_version": constitution.version,
         "total_articles": constitution.articles.len(),
     });
+    if verdict == "U" {
+        response["note"] = json!(
+            "No rule matched. This check only recognizes English keywords, so no match is not \
+             evidence of compliance: read the constitution for actions it does not cover."
+        );
+    }
 
     // R2 Phase 2: pipeline lineage audit trail. When the caller passes a
     // `lineage` map emitted by `ix_pipeline_run`, summarise it alongside

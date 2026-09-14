@@ -7,6 +7,7 @@
 
 use ix_agent::tools::ToolRegistry;
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 fn workspace_root() -> PathBuf {
@@ -197,4 +198,139 @@ fn output_feeds_ix_graph_pagerank() {
     let pagerank = pr["pagerank"].as_object().expect("pagerank map");
     let n_nodes = result["n_nodes"].as_u64().unwrap() as usize;
     assert_eq!(pagerank.len(), n_nodes);
+}
+
+/// Node names and edges from `result`, as sorted sets.
+fn names_and_edges(result: &serde_json::Value) -> (BTreeSet<String>, BTreeSet<(String, String)>) {
+    let names: Vec<String> = result["names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_str().unwrap().to_string())
+        .collect();
+    let edges = result["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            let from = e[0].as_u64().unwrap() as usize;
+            let to = e[1].as_u64().unwrap() as usize;
+            (names[from].clone(), names[to].clone())
+        })
+        .collect();
+    (names.into_iter().collect(), edges)
+}
+
+#[test]
+fn graph_matches_cargo_metadata() {
+    // Oracle: cargo's own view of the workspace. Regression for the tool
+    // counting directories the workspace excludes (ix-duck-ext) or never
+    // lists (ix-router-spike), and missing `[dependencies.<name>]` tables.
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let out = std::process::Command::new(cargo)
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
+        .current_dir(workspace_root())
+        .output()
+        .expect("run cargo metadata");
+    assert!(out.status.success(), "cargo metadata failed");
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let packages = meta["packages"].as_array().unwrap();
+    let expected_names: BTreeSet<String> = packages
+        .iter()
+        .map(|p| p["name"].as_str().unwrap().to_string())
+        .collect();
+    let expected_edges: BTreeSet<(String, String)> = packages
+        .iter()
+        .flat_map(|p| {
+            let from = p["name"].as_str().unwrap().to_string();
+            let names = &expected_names;
+            p["dependencies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d["name"].as_str().unwrap().to_string())
+                .filter(move |d| names.contains(d))
+                .map(move |d| (from.clone(), d))
+                .collect::<Vec<_>>()
+        })
+        .filter(|(from, to)| from != to)
+        .collect();
+
+    let result = run_cargo_deps();
+    let (names, edges) = names_and_edges(&result);
+    assert_eq!(
+        names, expected_names,
+        "nodes must be exactly the workspace members"
+    );
+    assert_eq!(
+        edges, expected_edges,
+        "edges must match cargo's dependency list"
+    );
+}
+
+#[test]
+fn skips_directories_the_workspace_does_not_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let write = |rel: &str, body: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    };
+    write(
+        "Cargo.toml",
+        "[workspace]\nexclude = [\"crates/c\"]\nmembers = [\n    \"crates/a\", # leaf\n    \"crates/b\",\n]\n",
+    );
+    write("crates/a/Cargo.toml", "[package]\nname = \"a\"\n");
+    write(
+        "crates/b/Cargo.toml",
+        "[package]\nname = \"b\"\n\n[dependencies.a]\npath = \"../a\"\n\n[target.'cfg(unix)'.dependencies]\nc = { path = \"../c\" }\n",
+    );
+    write("crates/c/Cargo.toml", "[package]\nname = \"c\"\n");
+    write("crates/d/Cargo.toml", "[package]\nname = \"d\"\n");
+
+    let result = ToolRegistry::new()
+        .call(
+            "ix_cargo_deps",
+            json!({ "workspace_root": root.display().to_string() }),
+        )
+        .expect("cargo_deps failed");
+    let (names, edges) = names_and_edges(&result);
+    assert_eq!(names, BTreeSet::from(["a".to_string(), "b".to_string()]));
+    assert_eq!(edges, BTreeSet::from([("b".to_string(), "a".to_string())]));
+    assert_eq!(result["non_members"], json!(["c", "d"]));
+}
+
+#[test]
+fn glob_members_include_every_crate_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/*\"]\n",
+    )
+    .unwrap();
+    for name in ["x", "y"] {
+        let crate_dir = root.join("crates").join(name);
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        std::fs::write(
+            crate_dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\n"),
+        )
+        .unwrap();
+    }
+    let result = ToolRegistry::new()
+        .call(
+            "ix_cargo_deps",
+            json!({ "workspace_root": root.display().to_string() }),
+        )
+        .expect("cargo_deps failed");
+    assert_eq!(result["names"], json!(["x", "y"]));
+    assert_eq!(result["non_members"], json!([]));
 }
