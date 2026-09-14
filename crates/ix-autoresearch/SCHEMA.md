@@ -87,8 +87,10 @@ Last line on graceful exit. Absence means the run was interrupted (replay-tolera
 
 - **Append-only**: writers MUST open `O_APPEND`; readers MUST process events in file order.
 - **Deterministic replay**: running the same log through a deterministic consumer (e.g. `hari-from-ix-autoresearch` then `hari-core replay`) MUST produce identical output for identical input. IX side: same seed ⇒ same `config_hash` sequence, tested in `tests/jsonl_contract.rs`. Hari side: committed run reports regenerate byte-for-byte from committed logs, tested in hari's `crates/hari-extractor/tests/ix_autoresearch_replay.rs`.
-- **Contradictory findings preserved**: when two iteration events on the *same* `config_hash` carry different `accepted` values, the consumer (Hari) preserves the contradiction as `HexValue::Contradictory` rather than averaging. Verified in hari by `a_conflicting_repeat_of_one_config_ends_contradictory` on a spliced log.
-  - **The grammar target never triggers this.** It perturbs by continuous Gaussian noise, so no `config_hash` repeats within a run: 500 of 500 distinct under Greedy and SA, pinned by `a_seeded_grammar_run_never_repeats_a_claim_so_nothing_is_contradictory`. Recorded runs in hari end with zero `Contradictory` beliefs (hari#13). A target needs repeated evaluation of the same config before this criterion can fire on real data.
+- **Contradictory findings preserved**: when two iteration events on the *same* `config_hash` carry different `accepted` values, the consumer (Hari) should preserve the contradiction as `HexValue::Contradictory` rather than averaging. **Status: untested against, and unobserved on, real IX data.**
+  - No real run can exercise it today. The grammar target perturbs by continuous Gaussian noise, so no `config_hash` repeats within a run: 500 of 500 claims are distinct under Greedy and under SA. That is pinned by `a_seeded_grammar_run_never_repeats_a_claim_so_nothing_is_contradictory` in `tests/jsonl_contract.rs`.
+  - Real seeded runs replayed through Hari end with zero `Contradictory` beliefs (GuitarAlchemist/hari#37).
+  - The only exercise of this criterion is synthetic: a hand-spliced conflicting repeat in hari's `crates/hari-extractor/tests/ix_autoresearch_replay.rs`, plus the synthetic two-line log in `contradictory_findings_preserved_in_derived_view` here. Neither is evidence about IX runs.
 - **Crash tolerance**: trailing parse failure is silently discarded as crash-truncation; mid-stream parse failure is a hard error.
 
 ## Layer 2 — Derived semantic event view
