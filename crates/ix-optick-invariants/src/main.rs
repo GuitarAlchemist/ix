@@ -22,6 +22,20 @@
 //! distinct set classes into one point. So for every Z-pair represented in
 //! the corpus, STRUCTURE cosine MUST be strictly less than 1.0. This check
 //! catches the failure mode "STRUCTURE accidentally degenerated to ICV".
+//!
+//! **Phase 4** — invariant #37 (no dead dimension). A compact dimension whose
+//! value is constant across the whole index (always zero, or the same non-zero
+//! value everywhere) carries no information: it adds the same term to every
+//! dot product. Exemplars are the 124 compact dims; a dim fires when it varies.
+//! See GuitarAlchemist/ga#552.
+//!
+//! **Phase 5** — invariant #38 (no dead weighted partition). A partition whose
+//! dims are all dead but whose header weight is > 0 spends similarity weight on
+//! a constant. Exemplars are the 6 partitions. See GuitarAlchemist/ga#616.
+//!
+//! #37 and #38 only change the exit code with `--fail-on-dead`: the current
+//! corpus has known dead dims, and `ix-autoresearch` treats a non-zero exit as
+//! an eval failure.
 
 use clap::Parser;
 use ix_invariant_coverage::coverage::{Exemplar, Firings};
@@ -33,6 +47,17 @@ use std::path::PathBuf;
 const STRUCTURE_OFFSET: usize = 0;
 const STRUCTURE_DIM: usize = 24;
 
+// Compact v4-pp-r partition layout: (name, offset, width).
+// @ai:invariant PARTITIONS mirrors the ix-optick SCHEMA_SEED layout byte-for-byte [T:test conf:0.95 src:tests::partition_layout_matches_ix_optick_schema_hash]
+const PARTITIONS: [(&str, usize, usize); 6] = [
+    ("STRUCTURE", 0, 24),
+    ("MORPHOLOGY", 24, 24),
+    ("CONTEXT", 48, 12),
+    ("SYMBOLIC", 60, 12),
+    ("MODAL", 72, 40),
+    ("ROOT", 112, 12),
+];
+
 #[derive(Parser, Debug)]
 #[command(
     name = "ix-optick-invariants",
@@ -42,7 +67,10 @@ const STRUCTURE_DIM: usize = 24;
                   invariant #25 (cross-instrument STRUCTURE equality, byte-tolerant) and #32 \
                   (same PC-set across octaves, STRUCTURE pairwise cosine ≈ 1.0). Both invariants \
                   MUST hold under v4-pp-r; failures indicate octave/position information has \
-                  leaked into the supposedly O+P+T+I-invariant STRUCTURE partition."
+                  leaked into the supposedly O+P+T+I-invariant STRUCTURE partition. Also reports \
+                  #36 (Z-pair STRUCTURE separation), #37 (no dead dimension: every compact dim \
+                  varies across the index) and #38 (no partition with weight > 0 whose dims are \
+                  all dead)."
 )]
 struct Args {
     /// Path to optick.index (v4-pp-r format required)
@@ -64,18 +92,26 @@ struct Args {
     /// Tolerance for STRUCTURE cosine deviation from 1.0, invariant #32
     #[arg(long, default_value = "1e-4")]
     cosine_tolerance: f32,
+
+    /// A dim is dead when max - min across the index is at most this, invariants #37/#38
+    #[arg(long, default_value = "1e-6")]
+    dead_tolerance: f32,
+
+    /// Exit non-zero when #37 or #38 fail (off by default: the current corpus has known dead dims)
+    #[arg(long)]
+    fail_on_dead: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    eprintln!("[1/5] Opening OPTIC-K index: {}", args.index.display());
+    eprintln!("[1/7] Opening OPTIC-K index: {}", args.index.display());
     let index = OptickIndex::open(&args.index)?;
     let count = index.count() as usize;
     eprintln!("      loaded {} voicings, dim={}", count, index.dimension());
 
     // ── Single pass: build both groupings simultaneously ──────────────────────
-    eprintln!("[2/5] Grouping voicings by pitch-class set...");
+    eprintln!("[2/7] Grouping voicings by pitch-class set...");
     // For #25: pc_set → instrument → representative voicing index.
     let mut by_pcs_inst: BTreeMap<u16, BTreeMap<String, usize>> = BTreeMap::new();
     // For #32: pc_set → all voicing indices (any instrument, any octave realization).
@@ -100,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fired: BTreeMap<u32, BTreeSet<String>> = BTreeMap::new();
 
     // ── Invariant #25: cross-instrument STRUCTURE equality ────────────────────
-    eprintln!("[3/5] Testing invariant #25 (cross-instrument STRUCTURE equality)...");
+    eprintln!("[3/7] Testing invariant #25 (cross-instrument STRUCTURE equality)...");
     let (ex25, fired25, viol25) = check_invariant_25(&index, &by_pcs_inst, args.tolerance);
     let tested25 = ex25.len();
     let passed25 = fired25.len();
@@ -115,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fired.insert(25u32, fired25);
 
     // ── Invariant #32: same PC-set across octaves, cosine ≈ 1.0 ──────────────
-    eprintln!("[4/5] Testing invariant #32 (same PC-set across octaves, cosine ≈ 1.0)...");
+    eprintln!("[4/7] Testing invariant #32 (same PC-set across octaves, cosine ≈ 1.0)...");
     let (ex32, fired32, viol32) = check_invariant_32(&index, &by_pcs_all, args.cosine_tolerance);
     let tested32 = ex32.len();
     let passed32 = fired32.len();
@@ -130,7 +166,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fired.insert(32u32, fired32);
 
     // ── Invariant #36: Z-pair STRUCTURE separation ────────────────────────────
-    eprintln!("[5/5] Testing invariant #36 (Z-pair STRUCTURE separation, cosine < 1)...");
+    eprintln!("[5/7] Testing invariant #36 (Z-pair STRUCTURE separation, cosine < 1)...");
     let (ex36, fired36, viol36) =
         check_invariant_36_z_pair_separation(&index, &by_pcs_all, args.cosine_tolerance);
     let tested36 = ex36.len();
@@ -144,6 +180,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_violations("#36", &viol36);
     all_exemplars.extend(ex36);
     fired.insert(36u32, fired36);
+
+    // ── Invariant #37: no dead dimension ──────────────────────────────────────
+    eprintln!("[6/7] Testing invariant #37 (no dead dimension, max - min > tolerance)...");
+    let dim = index.dimension() as usize;
+    let ranges = dimension_ranges(index.vectors(), dim);
+    let (ex37, fired37, viol37) = check_invariant_37_dead_dimensions(&ranges, args.dead_tolerance);
+    let tested37 = ex37.len();
+    let passed37 = fired37.len();
+    let always_zero = ranges
+        .iter()
+        .filter(|&&(min, max)| min == 0.0 && max == 0.0)
+        .count();
+    eprintln!(
+        "      invariant #37: {}/{} compact dims PASS, {} FAIL ({} always zero, {} constant non-zero)",
+        passed37,
+        tested37,
+        tested37 - passed37,
+        always_zero,
+        (tested37 - passed37) - always_zero
+    );
+    print_violations("#37", &viol37);
+    all_exemplars.extend(ex37);
+    fired.insert(37u32, fired37);
+
+    // ── Invariant #38: no dead weighted partition ─────────────────────────────
+    eprintln!("[7/7] Testing invariant #38 (no dead partition with weight > 0)...");
+    let (ex38, fired38, viol38) = check_invariant_38_dead_weighted_partitions(
+        &ranges,
+        &index.header().partition_weights,
+        args.dead_tolerance,
+    );
+    let tested38 = ex38.len();
+    let passed38 = fired38.len();
+    eprintln!(
+        "      invariant #38: {}/{} partitions PASS, {} FAIL",
+        passed38,
+        tested38,
+        tested38 - passed38
+    );
+    print_violations("#38", &viol38);
+    all_exemplars.extend(ex38);
+    fired.insert(38u32, fired38);
 
     // ── Emit firings.json ─────────────────────────────────────────────────────
     let firings = Firings {
@@ -165,8 +243,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Exit non-zero if any invariant failed — lets CI gate on regressions.
-    let any_failed =
-        (tested25 - passed25) > 0 || (tested32 - passed32) > 0 || (tested36 - passed36) > 0;
+    // #37/#38 count only with --fail-on-dead.
+    let any_failed = (tested25 - passed25) > 0
+        || (tested32 - passed32) > 0
+        || (tested36 - passed36) > 0
+        || (args.fail_on_dead && ((tested37 - passed37) > 0 || (tested38 - passed38) > 0));
     if any_failed {
         std::process::exit(1);
     }
@@ -244,6 +325,135 @@ fn check_invariant_36_z_pair_separation(
             fired.insert(exemplar_id);
         } else if violations.len() < 5 {
             violations.push(format!("  {} — cos={:.6}", description, cos));
+        }
+    }
+
+    (exemplars, fired, violations)
+}
+
+/// Per-dimension `(min, max)` over a flat `count * dim` vector slice.
+/// An empty slice yields `(0.0, 0.0)` for every dim.
+fn dimension_ranges(vectors: &[f32], dim: usize) -> Vec<(f32, f32)> {
+    let mut ranges = vec![(f32::INFINITY, f32::NEG_INFINITY); dim];
+    for row in vectors.chunks_exact(dim) {
+        for (range, &x) in ranges.iter_mut().zip(row) {
+            range.0 = range.0.min(x);
+            range.1 = range.1.max(x);
+        }
+    }
+    for range in &mut ranges {
+        if range.0 > range.1 {
+            *range = (0.0, 0.0);
+        }
+    }
+    ranges
+}
+
+fn is_dead(range: (f32, f32), tolerance: f32) -> bool {
+    range.1 - range.0 <= tolerance
+}
+
+/// Name and local index of a compact dim, e.g. `("CONTEXT", 0)` for dim 48.
+fn partition_of(dim: usize) -> Option<(&'static str, usize)> {
+    PARTITIONS
+        .iter()
+        .find(|&&(_, offset, width)| dim >= offset && dim < offset + width)
+        .map(|&(name, offset, _)| (name, dim - offset))
+}
+
+/// Invariant #37: every compact dim must vary across the index. A dim whose
+/// `max - min` is within `tolerance` is dead (always zero, or constant).
+/// Violations are one line per partition listing its dead dims.
+fn check_invariant_37_dead_dimensions(
+    ranges: &[(f32, f32)],
+    tolerance: f32,
+) -> (Vec<Exemplar>, BTreeSet<String>, Vec<String>) {
+    let mut exemplars = Vec::new();
+    let mut fired = BTreeSet::new();
+
+    for (dim, &range) in ranges.iter().enumerate() {
+        let exemplar_id = format!("optick-dim-{:03}", dim);
+        let location = match partition_of(dim) {
+            Some((name, local)) => format!("{} local {}", name, local),
+            None => "no partition".to_string(),
+        };
+        exemplars.push(Exemplar {
+            id: exemplar_id.clone(),
+            description: format!(
+                "compact dim {} ({}), range [{:.6}, {:.6}]",
+                dim, location, range.0, range.1
+            ),
+            kind: "embedding-invariant".to_string(),
+        });
+        if !is_dead(range, tolerance) {
+            fired.insert(exemplar_id);
+        }
+    }
+
+    let violations = PARTITIONS
+        .iter()
+        .filter_map(|&(name, offset, width)| {
+            let dead: Vec<String> = (offset..(offset + width).min(ranges.len()))
+                .filter(|&d| is_dead(ranges[d], tolerance))
+                .map(|d| d.to_string())
+                .collect();
+            (!dead.is_empty()).then(|| {
+                format!(
+                    "  {} {}/{} dead: {}",
+                    name,
+                    dead.len(),
+                    width,
+                    dead.join(",")
+                )
+            })
+        })
+        .collect();
+
+    (exemplars, fired, violations)
+}
+
+/// Invariant #38: a partition whose weight is > 0 must have at least one live
+/// dim. The header stores the per-dim sqrt-weight scale (GA `OptickIndexWriter`),
+/// so the partition weight is the square of the largest scale in its range.
+fn check_invariant_38_dead_weighted_partitions(
+    ranges: &[(f32, f32)],
+    scales: &[f32],
+    tolerance: f32,
+) -> (Vec<Exemplar>, BTreeSet<String>, Vec<String>) {
+    let mut exemplars = Vec::new();
+    let mut fired = BTreeSet::new();
+    let mut violations = Vec::new();
+
+    for &(name, offset, width) in &PARTITIONS {
+        let end = offset + width;
+        if end > ranges.len() || end > scales.len() {
+            continue;
+        }
+        let scale = scales[offset..end].iter().copied().fold(0.0f32, f32::max);
+        let weight = scale * scale;
+        let live = ranges[offset..end]
+            .iter()
+            .filter(|&&r| !is_dead(r, tolerance))
+            .count();
+        let exemplar_id = format!("optick-partition-{}", name);
+        let description = format!(
+            "partition {} (dims {}-{}), weight {:.4}, {}/{} live dims",
+            name,
+            offset,
+            end - 1,
+            weight,
+            live,
+            width
+        );
+        exemplars.push(Exemplar {
+            id: exemplar_id.clone(),
+            description: description.clone(),
+            kind: "embedding-invariant".to_string(),
+        });
+        if live > 0 || weight <= 0.0 {
+            fired.insert(exemplar_id);
+        } else {
+            violations.push(format!("  {}", description));
         }
     }
 
@@ -471,5 +681,95 @@ mod tests {
         let low = [48, 52, 55];
         let high = [72, 76, 79];
         assert_eq!(midi_to_pc_set(&low), midi_to_pc_set(&high));
+    }
+
+    #[test]
+    fn partition_layout_matches_ix_optick_schema_hash() {
+        let layout = PARTITIONS
+            .iter()
+            .map(|&(name, offset, width)| format!("{}:{}-{}", name, offset, offset + width - 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let seed = format!("optk-v4-pp-r:{}", layout);
+        assert_eq!(
+            crc32fast::hash(seed.as_bytes()),
+            ix_optick::compute_schema_hash()
+        );
+    }
+
+    /// Synthetic 124-dim index of 3 voicings: CONTEXT (48..60) always zero,
+    /// SYMBOLIC dim 60 constant non-zero, everything else varies.
+    fn synthetic_index() -> Vec<f32> {
+        let dim = 124;
+        let mut vectors = vec![0.0f32; 3 * dim];
+        for (row, chunk) in vectors.chunks_exact_mut(dim).enumerate() {
+            for (d, x) in chunk.iter_mut().enumerate() {
+                *x = match d {
+                    48..=59 => 0.0,
+                    60 => 0.5,
+                    _ => row as f32 * 0.1 + 0.01,
+                };
+            }
+        }
+        vectors
+    }
+
+    #[test]
+    fn dimension_ranges_tracks_min_and_max() {
+        let vectors = [1.0_f32, -2.0, 3.0, 0.5];
+        assert_eq!(dimension_ranges(&vectors, 2), vec![(1.0, 3.0), (-2.0, 0.5)]);
+    }
+
+    #[test]
+    fn dimension_ranges_empty_index_is_all_zero() {
+        assert_eq!(dimension_ranges(&[], 3), vec![(0.0, 0.0); 3]);
+    }
+
+    #[test]
+    fn invariant_37_flags_zero_and_constant_dims() {
+        let ranges = dimension_ranges(&synthetic_index(), 124);
+        let (exemplars, fired, violations) = check_invariant_37_dead_dimensions(&ranges, 1e-6);
+        assert_eq!(exemplars.len(), 124);
+        assert_eq!(fired.len(), 124 - 13);
+        assert!(!fired.contains("optick-dim-048"));
+        assert!(!fired.contains("optick-dim-060"));
+        assert!(fired.contains("optick-dim-061"));
+        assert_eq!(
+            violations,
+            vec![
+                "  CONTEXT 12/12 dead: 48,49,50,51,52,53,54,55,56,57,58,59".to_string(),
+                "  SYMBOLIC 1/12 dead: 60".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn invariant_37_tolerance_absorbs_jitter() {
+        let ranges = [(0.5_f32, 0.5 + 1e-7), (0.0, 0.1)];
+        let (_, fired, _) = check_invariant_37_dead_dimensions(&ranges, 1e-6);
+        assert_eq!(fired.len(), 1);
+        assert!(fired.contains("optick-dim-001"));
+    }
+
+    #[test]
+    fn invariant_38_flags_dead_partition_only_when_weighted() {
+        let ranges = dimension_ranges(&synthetic_index(), 124);
+        let mut scales = vec![0.1_f32; 124];
+        let (exemplars, fired, violations) =
+            check_invariant_38_dead_weighted_partitions(&ranges, &scales, 1e-6);
+        assert_eq!(exemplars.len(), 6);
+        assert_eq!(fired.len(), 5);
+        assert!(!fired.contains("optick-partition-CONTEXT"));
+        // SYMBOLIC has one dead dim but 11 live ones: it passes.
+        assert!(fired.contains("optick-partition-SYMBOLIC"));
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("CONTEXT"));
+
+        // Zero weight: a dead partition costs nothing, so it passes.
+        scales[48..60].fill(0.0);
+        let (_, fired, violations) =
+            check_invariant_38_dead_weighted_partitions(&ranges, &scales, 1e-6);
+        assert_eq!(fired.len(), 6);
+        assert!(violations.is_empty());
     }
 }
