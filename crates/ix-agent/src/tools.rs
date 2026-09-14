@@ -965,7 +965,7 @@ Example 2 — "cluster crates by complexity then classify":
 
         self.tools.push(Tool {
             name: "ix_cargo_deps",
-            description: "P1.2 — walk a Rust workspace, parse every crates/<name>/Cargo.toml for intra-workspace ix-* dependencies, and emit a {nodes, edges, n_nodes} structure that ix_graph can consume directly. Each node records {id, name, sloc, file_count, dep_count}. Edges are [from_id, to_id, 1.0] triples. Default workspace_root is the process CWD.",
+            description: "P1.2 — walk a Rust workspace, parse the Cargo.toml of every crates/<name> listed in the root [workspace] members (excluded or unlisted directories are reported in non_members) for intra-workspace dependencies, including [dependencies.<name>] and target-specific tables, and emit a {nodes, edges, n_nodes} structure that ix_graph can consume directly. Each node records {id, name, sloc, file_count, dep_count}. Edges are [from_id, to_id, 1.0] triples. Default workspace_root is the process CWD.",
             input_schema: object(
                 vec![(
                     "workspace_root",
