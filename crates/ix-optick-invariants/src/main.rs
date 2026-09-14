@@ -26,7 +26,8 @@
 //! **Phase 4** — invariant #37 (no dead dimension). A compact dimension whose
 //! value is constant across the whole index (always zero, or the same non-zero
 //! value everywhere) carries no information: it adds the same term to every
-//! dot product. Exemplars are the 124 compact dims; a dim fires when it varies.
+//! dot product. Exemplars are the 124 compact dims; a dim fires when it varies
+//! and holds only finite values (NaN/inf dims are reported as non-finite).
 //! See GuitarAlchemist/ga#552.
 //!
 //! **Phase 5** — invariant #38 (no dead weighted partition). A partition whose
@@ -86,15 +87,15 @@ struct Args {
     pretty: bool,
 
     /// Tolerance for STRUCTURE-slice equality, invariant #25 (float abs diff)
-    #[arg(long, default_value = "1e-4")]
+    #[arg(long, default_value = "1e-4", value_parser = parse_tolerance)]
     tolerance: f32,
 
     /// Tolerance for STRUCTURE cosine deviation from 1.0, invariant #32
-    #[arg(long, default_value = "1e-4")]
+    #[arg(long, default_value = "1e-4", value_parser = parse_tolerance)]
     cosine_tolerance: f32,
 
     /// A dim is dead when max - min across the index is at most this, invariants #37/#38
-    #[arg(long, default_value = "1e-6")]
+    #[arg(long, default_value = "1e-6", value_parser = parse_tolerance)]
     dead_tolerance: f32,
 
     /// Exit non-zero when #37 or #38 fail (off by default: the current corpus has known dead dims)
@@ -184,21 +185,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Invariant #37: no dead dimension ──────────────────────────────────────
     eprintln!("[6/7] Testing invariant #37 (no dead dimension, max - min > tolerance)...");
     let dim = index.dimension() as usize;
-    let ranges = dimension_ranges(index.vectors(), dim);
-    let (ex37, fired37, viol37) = check_invariant_37_dead_dimensions(&ranges, args.dead_tolerance);
+    let stats = dimension_stats(index.vectors(), dim);
+    let (ex37, fired37, viol37) = check_invariant_37_dead_dimensions(&stats, args.dead_tolerance);
     let tested37 = ex37.len();
     let passed37 = fired37.len();
-    let always_zero = ranges
-        .iter()
-        .filter(|&&(min, max)| min == 0.0 && max == 0.0)
-        .count();
+    let count_state = |state: DimState| {
+        stats
+            .iter()
+            .filter(|&&s| dim_state(s, args.dead_tolerance) == state)
+            .count()
+    };
     eprintln!(
-        "      invariant #37: {}/{} compact dims PASS, {} FAIL ({} always zero, {} constant non-zero)",
+        "      invariant #37: {}/{} compact dims PASS, {} FAIL ({} always zero, {} constant non-zero, {} non-finite)",
         passed37,
         tested37,
         tested37 - passed37,
-        always_zero,
-        (tested37 - passed37) - always_zero
+        count_state(DimState::AlwaysZero),
+        count_state(DimState::Constant),
+        count_state(DimState::NonFinite)
     );
     print_violations("#37", &viol37);
     all_exemplars.extend(ex37);
@@ -207,7 +211,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Invariant #38: no dead weighted partition ─────────────────────────────
     eprintln!("[7/7] Testing invariant #38 (no dead partition with weight > 0)...");
     let (ex38, fired38, viol38) = check_invariant_38_dead_weighted_partitions(
-        &ranges,
+        &stats,
         &index.header().partition_weights,
         args.dead_tolerance,
     );
@@ -243,12 +247,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Exit non-zero if any invariant failed — lets CI gate on regressions.
-    // #37/#38 count only with --fail-on-dead.
-    let any_failed = (tested25 - passed25) > 0
-        || (tested32 - passed32) > 0
-        || (tested36 - passed36) > 0
-        || (args.fail_on_dead && ((tested37 - passed37) > 0 || (tested38 - passed38) > 0));
-    if any_failed {
+    if any_failed(
+        &[
+            (tested25, passed25),
+            (tested32, passed32),
+            (tested36, passed36),
+        ],
+        &[(tested37, passed37), (tested38, passed38)],
+        args.fail_on_dead,
+    ) {
         std::process::exit(1);
     }
     Ok(())
@@ -331,26 +338,81 @@ fn check_invariant_36_z_pair_separation(
     (exemplars, fired, violations)
 }
 
-/// Per-dimension `(min, max)` over a flat `count * dim` vector slice.
-/// An empty slice yields `(0.0, 0.0)` for every dim.
-fn dimension_ranges(vectors: &[f32], dim: usize) -> Vec<(f32, f32)> {
-    let mut ranges = vec![(f32::INFINITY, f32::NEG_INFINITY); dim];
-    for row in vectors.chunks_exact(dim) {
-        for (range, &x) in ranges.iter_mut().zip(row) {
-            range.0 = range.0.min(x);
-            range.1 = range.1.max(x);
-        }
+/// Clap value parser for tolerances: a finite number >= 0.
+fn parse_tolerance(s: &str) -> Result<f32, String> {
+    match s.parse::<f32>() {
+        Ok(t) if t.is_finite() && t >= 0.0 => Ok(t),
+        _ => Err(format!("expected a finite number >= 0, got '{}'", s)),
     }
-    for range in &mut ranges {
-        if range.0 > range.1 {
-            *range = (0.0, 0.0);
-        }
-    }
-    ranges
 }
 
-fn is_dead(range: (f32, f32), tolerance: f32) -> bool {
-    range.1 - range.0 <= tolerance
+/// Exit-code decision. Each pair is `(tested, passed)` for one invariant.
+/// `dead` (#37/#38) only counts when `fail_on_dead` is set.
+fn any_failed(strict: &[(usize, usize)], dead: &[(usize, usize)], fail_on_dead: bool) -> bool {
+    let failed = |&(tested, passed): &(usize, usize)| passed < tested;
+    strict.iter().any(failed) || (fail_on_dead && dead.iter().any(failed))
+}
+
+/// Per-dimension statistics over one index.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DimStats {
+    /// Smallest finite value (0.0 when the dim has no finite value).
+    min: f32,
+    /// Largest finite value (0.0 when the dim has no finite value).
+    max: f32,
+    /// Count of NaN / infinite values.
+    non_finite: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DimState {
+    Live,
+    AlwaysZero,
+    Constant,
+    NonFinite,
+}
+
+/// Per-dimension [`DimStats`] over a flat `count * dim` vector slice.
+fn dimension_stats(vectors: &[f32], dim: usize) -> Vec<DimStats> {
+    let mut stats = vec![
+        DimStats {
+            min: f32::INFINITY,
+            max: f32::NEG_INFINITY,
+            non_finite: 0,
+        };
+        dim
+    ];
+    for row in vectors.chunks_exact(dim) {
+        for (s, &x) in stats.iter_mut().zip(row) {
+            if x.is_finite() {
+                s.min = s.min.min(x);
+                s.max = s.max.max(x);
+            } else {
+                s.non_finite += 1;
+            }
+        }
+    }
+    for s in &mut stats {
+        if s.min > s.max {
+            s.min = 0.0;
+            s.max = 0.0;
+        }
+    }
+    stats
+}
+
+/// A dim with any non-finite value is `NonFinite`; otherwise it is `Live`
+/// when `max - min > tolerance`, else dead (`AlwaysZero` or `Constant`).
+fn dim_state(s: DimStats, tolerance: f32) -> DimState {
+    if s.non_finite > 0 {
+        DimState::NonFinite
+    } else if s.max - s.min > tolerance {
+        DimState::Live
+    } else if s.min == 0.0 && s.max == 0.0 {
+        DimState::AlwaysZero
+    } else {
+        DimState::Constant
+    }
 }
 
 /// Name and local index of a compact dim, e.g. `("CONTEXT", 0)` for dim 48.
@@ -361,17 +423,18 @@ fn partition_of(dim: usize) -> Option<(&'static str, usize)> {
         .map(|&(name, offset, _)| (name, dim - offset))
 }
 
-/// Invariant #37: every compact dim must vary across the index. A dim whose
-/// `max - min` is within `tolerance` is dead (always zero, or constant).
-/// Violations are one line per partition listing its dead dims.
+/// Invariant #37: every compact dim must vary across the index and hold only
+/// finite values. A dim whose finite `max - min` is within `tolerance` is dead
+/// (always zero, or constant); a dim with any NaN/inf is non-finite. Violations
+/// are one line per partition per kind, listing the dims.
 fn check_invariant_37_dead_dimensions(
-    ranges: &[(f32, f32)],
+    stats: &[DimStats],
     tolerance: f32,
 ) -> (Vec<Exemplar>, BTreeSet<String>, Vec<String>) {
     let mut exemplars = Vec::new();
     let mut fired = BTreeSet::new();
 
-    for (dim, &range) in ranges.iter().enumerate() {
+    for (dim, &s) in stats.iter().enumerate() {
         let exemplar_id = format!("optick-dim-{:03}", dim);
         let location = match partition_of(dim) {
             Some((name, local)) => format!("{} local {}", name, local),
@@ -380,43 +443,50 @@ fn check_invariant_37_dead_dimensions(
         exemplars.push(Exemplar {
             id: exemplar_id.clone(),
             description: format!(
-                "compact dim {} ({}), range [{:.6}, {:.6}]",
-                dim, location, range.0, range.1
+                "compact dim {} ({}), range [{:.6}, {:.6}], {} non-finite",
+                dim, location, s.min, s.max, s.non_finite
             ),
             kind: "embedding-invariant".to_string(),
         });
-        if !is_dead(range, tolerance) {
+        if dim_state(s, tolerance) == DimState::Live {
             fired.insert(exemplar_id);
         }
     }
 
-    let violations = PARTITIONS
-        .iter()
-        .filter_map(|&(name, offset, width)| {
-            let dead: Vec<String> = (offset..(offset + width).min(ranges.len()))
-                .filter(|&d| is_dead(ranges[d], tolerance))
+    let mut violations = Vec::new();
+    for &(name, offset, width) in &PARTITIONS {
+        let dims = offset..(offset + width).min(stats.len());
+        let dims_where = |keep: fn(DimState) -> bool| -> Vec<String> {
+            dims.clone()
+                .filter(|&d| keep(dim_state(stats[d], tolerance)))
                 .map(|d| d.to_string())
-                .collect();
-            (!dead.is_empty()).then(|| {
-                format!(
-                    "  {} {}/{} dead: {}",
+                .collect()
+        };
+        let dead = dims_where(|st| matches!(st, DimState::AlwaysZero | DimState::Constant));
+        let non_finite = dims_where(|st| st == DimState::NonFinite);
+        for (kind, dims) in [("dead", dead), ("non-finite", non_finite)] {
+            if !dims.is_empty() {
+                violations.push(format!(
+                    "  {} {}/{} {}: {}",
                     name,
-                    dead.len(),
+                    dims.len(),
                     width,
-                    dead.join(",")
-                )
-            })
-        })
-        .collect();
+                    kind,
+                    dims.join(",")
+                ));
+            }
+        }
+    }
 
     (exemplars, fired, violations)
 }
 
 /// Invariant #38: a partition whose weight is > 0 must have at least one live
-/// dim. The header stores the per-dim sqrt-weight scale (GA `OptickIndexWriter`),
-/// so the partition weight is the square of the largest scale in its range.
+/// dim (see [`dim_state`]). The header stores the per-dim sqrt-weight scale
+/// (GA `OptickIndexWriter`), so the partition weight is the square of the
+/// largest scale in its range.
 fn check_invariant_38_dead_weighted_partitions(
-    ranges: &[(f32, f32)],
+    stats: &[DimStats],
     scales: &[f32],
     tolerance: f32,
 ) -> (Vec<Exemplar>, BTreeSet<String>, Vec<String>) {
@@ -426,14 +496,14 @@ fn check_invariant_38_dead_weighted_partitions(
 
     for &(name, offset, width) in &PARTITIONS {
         let end = offset + width;
-        if end > ranges.len() || end > scales.len() {
+        if end > stats.len() || end > scales.len() {
             continue;
         }
         let scale = scales[offset..end].iter().copied().fold(0.0f32, f32::max);
         let weight = scale * scale;
-        let live = ranges[offset..end]
+        let live = stats[offset..end]
             .iter()
-            .filter(|&&r| !is_dead(r, tolerance))
+            .filter(|&&s| dim_state(s, tolerance) == DimState::Live)
             .count();
         let exemplar_id = format!("optick-partition-{}", name);
         let description = format!(
@@ -714,21 +784,103 @@ mod tests {
         vectors
     }
 
-    #[test]
-    fn dimension_ranges_tracks_min_and_max() {
-        let vectors = [1.0_f32, -2.0, 3.0, 0.5];
-        assert_eq!(dimension_ranges(&vectors, 2), vec![(1.0, 3.0), (-2.0, 0.5)]);
+    fn finite(min: f32, max: f32) -> DimStats {
+        DimStats {
+            min,
+            max,
+            non_finite: 0,
+        }
     }
 
     #[test]
-    fn dimension_ranges_empty_index_is_all_zero() {
-        assert_eq!(dimension_ranges(&[], 3), vec![(0.0, 0.0); 3]);
+    fn dimension_stats_tracks_min_and_max() {
+        let vectors = [1.0_f32, -2.0, 3.0, 0.5];
+        assert_eq!(
+            dimension_stats(&vectors, 2),
+            vec![finite(1.0, 3.0), finite(-2.0, 0.5)]
+        );
+    }
+
+    #[test]
+    fn dimension_stats_empty_index_is_all_zero() {
+        assert_eq!(dimension_stats(&[], 3), vec![finite(0.0, 0.0); 3]);
+    }
+
+    #[test]
+    fn non_finite_values_are_reported_not_hidden() {
+        // Dims: all NaN / constant +inf / constant 0.5 with one NaN / live.
+        let nan = f32::NAN;
+        let inf = f32::INFINITY;
+        let vectors = [nan, inf, 0.5, 0.0, nan, inf, nan, 2.0];
+        let stats = dimension_stats(&vectors, 4);
+        let states: Vec<DimState> = stats.iter().map(|&s| dim_state(s, 1e-6)).collect();
+        assert_eq!(
+            states,
+            vec![
+                DimState::NonFinite,
+                DimState::NonFinite,
+                DimState::NonFinite,
+                DimState::Live
+            ]
+        );
+        assert_eq!(
+            stats[2],
+            DimStats {
+                min: 0.5,
+                max: 0.5,
+                non_finite: 1
+            }
+        );
+
+        let (_, fired, violations) = check_invariant_37_dead_dimensions(&stats, 1e-6);
+        assert_eq!(fired, BTreeSet::from(["optick-dim-003".to_string()]));
+        assert_eq!(
+            violations,
+            vec!["  STRUCTURE 3/24 non-finite: 0,1,2".to_string()]
+        );
+    }
+
+    #[test]
+    fn dim_state_boundary_at_tolerance_is_dead() {
+        // Exactly representable: 0.75 - 0.5 == 0.25.
+        assert_eq!(dim_state(finite(0.5, 0.75), 0.25), DimState::Constant);
+        assert_eq!(dim_state(finite(0.5, 0.75), 0.125), DimState::Live);
+        assert_eq!(dim_state(finite(0.5, 0.5), 0.0), DimState::Constant);
+        assert_eq!(dim_state(finite(0.0, 0.0), 0.0), DimState::AlwaysZero);
+    }
+
+    #[test]
+    fn parse_tolerance_rejects_negative_and_non_finite() {
+        assert_eq!(parse_tolerance("1e-6"), Ok(1e-6));
+        assert_eq!(parse_tolerance("0"), Ok(0.0));
+        for bad in ["-1", "NaN", "inf", "-inf", "abc"] {
+            assert!(parse_tolerance(bad).is_err(), "{bad} should be rejected");
+        }
+    }
+
+    #[test]
+    fn any_failed_counts_dead_invariants_only_with_flag() {
+        let strict_pass = [(793, 793), (2509, 2509), (19, 19)];
+        let dead_fail = [(124, 83), (6, 5)];
+        assert!(!any_failed(&strict_pass, &dead_fail, false));
+        assert!(any_failed(&strict_pass, &dead_fail, true));
+        assert!(!any_failed(&strict_pass, &[(124, 124), (6, 6)], true));
+        assert!(any_failed(&[(793, 792)], &[(124, 124)], false));
+    }
+
+    #[test]
+    fn invariant_37_descriptions_use_partition_boundaries() {
+        let stats = dimension_stats(&synthetic_index(), 124);
+        let (exemplars, _, _) = check_invariant_37_dead_dimensions(&stats, 1e-6);
+        assert!(exemplars[23].description.contains("(STRUCTURE local 23)"));
+        assert!(exemplars[24].description.contains("(MORPHOLOGY local 0)"));
+        assert!(exemplars[123].description.contains("(ROOT local 11)"));
     }
 
     #[test]
     fn invariant_37_flags_zero_and_constant_dims() {
-        let ranges = dimension_ranges(&synthetic_index(), 124);
-        let (exemplars, fired, violations) = check_invariant_37_dead_dimensions(&ranges, 1e-6);
+        let stats = dimension_stats(&synthetic_index(), 124);
+        let (exemplars, fired, violations) = check_invariant_37_dead_dimensions(&stats, 1e-6);
         assert_eq!(exemplars.len(), 124);
         assert_eq!(fired.len(), 124 - 13);
         assert!(!fired.contains("optick-dim-048"));
@@ -745,30 +897,42 @@ mod tests {
 
     #[test]
     fn invariant_37_tolerance_absorbs_jitter() {
-        let ranges = [(0.5_f32, 0.5 + 1e-7), (0.0, 0.1)];
-        let (_, fired, _) = check_invariant_37_dead_dimensions(&ranges, 1e-6);
+        let stats = [finite(0.5, 0.5 + 1e-7), finite(0.0, 0.1)];
+        let (_, fired, _) = check_invariant_37_dead_dimensions(&stats, 1e-6);
         assert_eq!(fired.len(), 1);
         assert!(fired.contains("optick-dim-001"));
     }
 
     #[test]
     fn invariant_38_flags_dead_partition_only_when_weighted() {
-        let ranges = dimension_ranges(&synthetic_index(), 124);
-        let mut scales = vec![0.1_f32; 124];
+        let stats = dimension_stats(&synthetic_index(), 124);
+        let mut scales = vec![0.5_f32; 124];
         let (exemplars, fired, violations) =
-            check_invariant_38_dead_weighted_partitions(&ranges, &scales, 1e-6);
+            check_invariant_38_dead_weighted_partitions(&stats, &scales, 1e-6);
         assert_eq!(exemplars.len(), 6);
         assert_eq!(fired.len(), 5);
         assert!(!fired.contains("optick-partition-CONTEXT"));
         // SYMBOLIC has one dead dim but 11 live ones: it passes.
         assert!(fired.contains("optick-partition-SYMBOLIC"));
-        assert_eq!(violations.len(), 1);
-        assert!(violations[0].contains("CONTEXT"));
+        // Weight is the squared header scale: 0.5² = 0.25.
+        assert_eq!(
+            violations,
+            vec!["  partition CONTEXT (dims 48-59), weight 0.2500, 0/12 live dims".to_string()]
+        );
+
+        // Non-uniform scales: the partition weight comes from the largest one.
+        scales[48..59].fill(0.0);
+        scales[59] = 0.3;
+        let (_, _, violations) = check_invariant_38_dead_weighted_partitions(&stats, &scales, 1e-6);
+        assert_eq!(
+            violations,
+            vec!["  partition CONTEXT (dims 48-59), weight 0.0900, 0/12 live dims".to_string()]
+        );
 
         // Zero weight: a dead partition costs nothing, so it passes.
-        scales[48..60].fill(0.0);
+        scales[59] = 0.0;
         let (_, fired, violations) =
-            check_invariant_38_dead_weighted_partitions(&ranges, &scales, 1e-6);
+            check_invariant_38_dead_weighted_partitions(&stats, &scales, 1e-6);
         assert_eq!(fired.len(), 6);
         assert!(violations.is_empty());
     }
