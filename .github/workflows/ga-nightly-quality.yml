@@ -89,6 +89,8 @@ jobs:
           cargo run -p ix-quality-trend --bin ix-quality-trend-bootstrap -- \
             --state-dir state/voicings \
             --qa-results "${GA_QUALITY_TMP_DIR}/chatbot-findings.jsonl" \
+            --qa-corpus tests/adversarial/corpus \
+            --qa-fixtures tests/adversarial/fixtures/stub-responses.jsonl \
             --embeddings-report "${GA_QUALITY_TMP_DIR}/embedding-diagnostics/embedding-diagnostics-${DATE}.json" \
             --out-dir "${GA_QUALITY_SNAPSHOTS_DIR}"
 
@@ -191,7 +193,9 @@ jobs:
           # Surface every alert as a run annotation, so a "warning" run is not
           # a silent green: rebaselines (too little comparable history), stale
           # feeds, regressions and corpus shrinks all show on the run page.
-          jq -r '.all_alerts[] | "::\(if .status == "critical" then "error" else "warning" end)::\(.metric): \([.drift, .regression, .corpus_shrink, .stale, .rebaseline] | map(select(. != null)) | join("; "))"' "${ARTIFACT}"
+          # The message is escaped per GitHub's workflow-command rules (% CR LF),
+          # so alert text can never start a second command line.
+          jq -r '.all_alerts[] | "::\(if .status == "critical" then "error" else "warning" end)::" + ("\(.metric): \([.drift, .regression, .corpus_shrink, .stale, .rebaseline] | map(select(. != null)) | join("; "))" | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"))' "${ARTIFACT}"
 
           # PR runs are advisory: a PR can legitimately move a key metric
           # (new producer, new corpus) before history catches up. Scheduled
