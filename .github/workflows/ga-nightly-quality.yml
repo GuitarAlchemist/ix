@@ -188,12 +188,19 @@ jobs:
 
           STATUS=$(jq -r '.status' "${ARTIFACT}")
 
-          # PR runs are advisory: a "critical" status often reflects a
-          # one-time rebaseline (a metric jumping from no-data to real
-          # data) which the drift detector correctly flags but which is
-          # not actually a regression. Surface as warning, don't block.
-          # Scheduled / main runs accumulate enough history to
-          # distinguish real regressions and DO block on critical.
+          # Surface every alert as a run annotation, so a "warning" run is not
+          # a silent green: rebaselines (too little comparable history), stale
+          # feeds, regressions and corpus shrinks all show on the run page.
+          jq -r '.all_alerts[] | "::\(if .status == "critical" then "error" else "warning" end)::\(.metric): \([.drift, .regression, .corpus_shrink, .stale, .rebaseline] | map(select(. != null)) | join("; "))"' "${ARTIFACT}"
+
+          # PR runs are advisory: a PR can legitimately move a key metric
+          # (new producer, new corpus) before history catches up. Scheduled
+          # and dispatched runs block on critical. Note that nothing persists
+          # the snapshots a scheduled run bootstraps: each run compares one
+          # CI-fixture snapshot against the committed history, and
+          # ix-quality-trend only compares snapshots with the same
+          # population_id, so fixture-population metrics stay "warning"
+          # (rebaseline) until their snapshots are kept across runs.
           case "${STATUS}" in
             healthy|warning)
               echo "GA quality gate passed with status '${STATUS}'."
