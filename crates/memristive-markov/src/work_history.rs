@@ -13,18 +13,22 @@
 //! Everything is advisory and deterministic: no clock (the caller passes
 //! `as_of`), no randomness, no GitHub writes.
 //!
-//! `issue.stuck` is inserted whenever a PR sits in a non-terminal state for
-//! longer than `stale_after_secs` — before its next event, or before `as_of`
-//! if it has none. Unlike the schema doc's wording it is therefore *not*
-//! absorbing: a stuck PR can still be merged or closed later, and that
-//! revival rate is itself one of the answers.
+//! A stuck state is inserted whenever a PR sits in a non-terminal state for
+//! longer than `stale_after_secs`, before its next event, or before `as_of`
+//! if it has none. It keeps the PR's origin: `pr.stuck_draft` (GitHub cannot
+//! merge a draft) or `pr.stuck_ready`. A single `issue.stuck` forgot that
+//! origin, and a variable-order model only looked better because it could
+//! recover it from the previous state. Stuck is *not* absorbing: a stuck PR
+//! can still be merged or closed later.
 
 use crate::error::{MemristiveError, Result};
 use crate::tensor::MarkovTensor;
 use crate::vlmm::{FallbackStrategy, VariableOrderSelector};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-/// Seldon lifecycle states, in the schema's enum order.
+/// Seldon lifecycle states: the schema's enum order, then the two
+/// origin-aware stuck states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LifecycleState {
     IssueGrooming = 0,
@@ -36,10 +40,12 @@ pub enum LifecycleState {
     PrMerged = 6,
     PrRejected = 7,
     IssueStuck = 8,
+    PrStuckDraft = 9,
+    PrStuckReady = 10,
 }
 
 impl LifecycleState {
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 11;
     pub const ALL: [LifecycleState; Self::COUNT] = [
         LifecycleState::IssueGrooming,
         LifecycleState::IssueReady,
@@ -50,6 +56,8 @@ impl LifecycleState {
         LifecycleState::PrMerged,
         LifecycleState::PrRejected,
         LifecycleState::IssueStuck,
+        LifecycleState::PrStuckDraft,
+        LifecycleState::PrStuckReady,
     ];
 
     pub fn index(self) -> usize {
@@ -67,11 +75,33 @@ impl LifecycleState {
             LifecycleState::PrMerged => "pr.merged",
             LifecycleState::PrRejected => "pr.rejected",
             LifecycleState::IssueStuck => "issue.stuck",
+            LifecycleState::PrStuckDraft => "pr.stuck_draft",
+            LifecycleState::PrStuckReady => "pr.stuck_ready",
         }
     }
 
     pub fn is_terminal(self) -> bool {
         matches!(self, LifecycleState::PrMerged | LifecycleState::PrRejected)
+    }
+
+    pub fn is_stuck(self) -> bool {
+        matches!(
+            self,
+            LifecycleState::IssueStuck
+                | LifecycleState::PrStuckDraft
+                | LifecycleState::PrStuckReady
+        )
+    }
+
+    /// The stuck state a PR enters after sitting too long in `self`.
+    fn stuck_from(self) -> LifecycleState {
+        match self {
+            LifecycleState::PrDraft | LifecycleState::PrStuckDraft => LifecycleState::PrStuckDraft,
+            LifecycleState::PrReadyForReview
+            | LifecycleState::PrMergeCandidate
+            | LifecycleState::PrStuckReady => LifecycleState::PrStuckReady,
+            _ => LifecycleState::IssueStuck,
+        }
     }
 }
 
@@ -92,7 +122,6 @@ pub struct PrRecord {
     pub created_at: String,
     pub state: String,
     pub is_draft: bool,
-    pub author: String,
     pub head_ref: String,
     pub events: Vec<PrEvent>,
 }
@@ -153,7 +182,11 @@ pub fn parse_timestamp(s: &str) -> Result<i64> {
 const MERGE_CANDIDATE_LABELS: [&str; 2] = ["fleet:merge-ready", "agent-blackbox-reviewed"];
 
 /// Lifecycle of one PR as seen at `as_of`: events after `as_of` are ignored,
-/// consecutive repeats collapse, and `issue.stuck` marks stale gaps.
+/// consecutive repeats collapse, and a stuck state marks stale gaps.
+///
+/// A merge-candidate signal (label or approval) is sticky. On a draft it
+/// creates no state: a draft cannot merge, so the PR becomes
+/// `pr.merge_candidate` only when it is flipped ready.
 pub fn lifecycle(pr: &PrRecord, as_of: i64, stale_after_secs: i64) -> Result<Vec<Step>> {
     let created = parse_timestamp(&pr.created_at)?;
     if created > as_of {
@@ -187,16 +220,22 @@ pub fn lifecycle(pr: &PrRecord, as_of: i64, stale_after_secs: i64) -> Result<Vec
         at: created,
     }];
     let mut last_open = opening;
+    let mut candidate = false;
     for (at, e) in events {
         let state = match e.kind.as_str() {
+            "ready_for_review" if candidate => LifecycleState::PrMergeCandidate,
             "ready_for_review" => LifecycleState::PrReadyForReview,
             "convert_to_draft" => LifecycleState::PrDraft,
-            "approved" => LifecycleState::PrMergeCandidate,
-            "labeled"
-                if e.label
-                    .as_deref()
-                    .is_some_and(|l| MERGE_CANDIDATE_LABELS.contains(&l)) =>
+            "approved" | "labeled"
+                if e.kind == "approved"
+                    || e.label
+                        .as_deref()
+                        .is_some_and(|l| MERGE_CANDIDATE_LABELS.contains(&l)) =>
             {
+                candidate = true;
+                if last_open == LifecycleState::PrDraft {
+                    continue;
+                }
                 LifecycleState::PrMergeCandidate
             }
             "merged" => LifecycleState::PrMerged,
@@ -218,7 +257,7 @@ pub fn lifecycle(pr: &PrRecord, as_of: i64, stale_after_secs: i64) -> Result<Vec
             }
             if !prev.state.is_terminal() && step.at - prev.at > stale_after_secs {
                 steps.push(Step {
-                    state: LifecycleState::IssueStuck,
+                    state: prev.state.stuck_from(),
                     at: prev.at + stale_after_secs,
                 });
             }
@@ -226,12 +265,10 @@ pub fn lifecycle(pr: &PrRecord, as_of: i64, stale_after_secs: i64) -> Result<Vec
         steps.push(step);
     }
     if let Some(last) = steps.last().copied() {
-        if !last.state.is_terminal()
-            && last.state != LifecycleState::IssueStuck
-            && as_of - last.at > stale_after_secs
+        if !last.state.is_terminal() && !last.state.is_stuck() && as_of - last.at > stale_after_secs
         {
             steps.push(Step {
-                state: LifecycleState::IssueStuck,
+                state: last.state.stuck_from(),
                 at: last.at + stale_after_secs,
             });
         }
@@ -254,7 +291,9 @@ pub struct MarkovTransition {
 
 /// First-order transition table over `sequences`, sorted by (from, to).
 /// `sample_size` is the count of that transition; `probability` divides by
-/// all transitions leaving `from_state`.
+/// all transitions leaving `from_state`. Rows into a stuck state carry no
+/// median: the stuck step is placed at the stale threshold, so its duration
+/// is the threshold, not a measurement.
 pub fn transition_table(sequences: &[Vec<Step>], worker: Option<&str>) -> Vec<MarkovTransition> {
     let n = LifecycleState::COUNT;
     let mut hours: Vec<Vec<Vec<f64>>> = vec![vec![Vec::new(); n]; n];
@@ -276,7 +315,7 @@ pub fn transition_table(sequences: &[Vec<Step>], worker: Option<&str>) -> Vec<Ma
                 from_state: from.label().to_string(),
                 to_state: to.label().to_string(),
                 probability: durations.len() as f64 / out as f64,
-                median_duration_hours: Some(median(durations)),
+                median_duration_hours: (!to.is_stuck()).then(|| median(durations)),
                 worker: worker.map(str::to_string),
                 sample_size: durations.len() as u64,
             });
@@ -301,8 +340,13 @@ pub struct Absorption {
     pub state: String,
     pub p_merged: f64,
     pub p_rejected: f64,
-    /// Mass that neither merges nor closes: open PRs with no further history.
+    /// Mass that neither merges nor closes: PRs still open at `as_of`. This
+    /// is right-censoring, not an outcome.
     pub p_unresolved: f64,
+    /// `p_merged / (p_merged + p_rejected)`: the merge rate among PRs that
+    /// did resolve. Absent when none resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_merged_given_resolved: Option<f64>,
     /// Transitions observed leaving this state.
     pub sample_size: u64,
 }
@@ -353,30 +397,62 @@ pub fn absorption(sequences: &[Vec<Step>]) -> Vec<Absorption> {
         .filter(|s| !s.is_terminal() && visits[s.index()] > 0.0)
         .map(|&s| {
             let i = s.index();
+            let resolved = pm[i] + pr[i];
             Absorption {
                 state: s.label().to_string(),
                 p_merged: pm[i],
                 p_rejected: pr[i],
-                p_unresolved: (1.0 - pm[i] - pr[i]).max(0.0),
+                p_unresolved: (1.0 - resolved).max(0.0),
+                p_merged_given_resolved: (resolved > 0.0).then(|| pm[i] / resolved),
                 sample_size: counts[i].iter().sum::<f64>() as u64,
             }
         })
         .collect()
 }
 
+/// Uniform-mixture weights the held-out log-loss is reported at. Log-loss
+/// on this data is decided by rare unseen transitions, so one ε would pick
+/// the winner; accuracy does not depend on ε.
+pub const SMOOTHING_SWEEP: [f64; 3] = [1e-6, 1e-3, 1e-2];
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpsilonLoss {
+    pub epsilon: f64,
+    /// Mean negative log-likelihood (nats).
+    pub log_loss: f64,
+}
+
 /// Next-state prediction quality on held-out transitions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelScore {
     pub model: String,
-    /// Mean negative log-likelihood (nats) with 1e-3 uniform smoothing.
-    pub log_loss: f64,
-    /// Share of transitions whose argmax prediction was right.
+    /// Share of transitions whose argmax prediction was right. The primary
+    /// metric: it does not depend on the smoothing constant.
     pub accuracy: f64,
+    /// One entry per [`SMOOTHING_SWEEP`] value.
+    pub log_loss: Vec<EpsilonLoss>,
+}
+
+/// VLMM vs first-order disagreements, and a sign test that does not treat
+/// same-batch transitions as independent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Disagreement {
+    /// Transitions only VLMM got right.
+    pub vlmm_only_correct: usize,
+    /// Transitions only first-order got right.
+    pub first_order_only_correct: usize,
+    /// Disagreements grouped by (repo, UTC day of the transition): PRs
+    /// merged in one scripted batch are one decision, not many.
+    pub clusters_favoring_vlmm: usize,
+    pub clusters_favoring_first_order: usize,
+    /// Exact two-sided sign test over the non-tied clusters (1.0 if none).
+    pub cluster_sign_test_p: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeldOutReport {
-    /// Train = PRs opened before this instant, censored at it.
+    /// Train = PRs opened strictly before this instant, censored at it;
+    /// test = PRs opened at or after it.
     pub cutoff: i64,
     pub train_sequences: usize,
     pub test_sequences: usize,
@@ -384,19 +460,15 @@ pub struct HeldOutReport {
     pub max_order: usize,
     pub min_observations: usize,
     pub scores: Vec<ModelScore>,
-    /// Discordant pairs for a McNemar test of VLMM vs first-order accuracy:
-    /// transitions only one of the two models got right.
-    pub vlmm_only_correct: usize,
-    pub first_order_only_correct: usize,
+    pub disagreement: Disagreement,
     /// How often VLMM used each order (index = order) on the test set.
     pub vlmm_order_histogram: Vec<u64>,
 }
 
-const SMOOTHING: f64 = 1e-3;
-
-/// Time-split held-out check. PRs are ordered by creation; the first
-/// `train_fraction` train (their events after the cutoff are hidden, so no
-/// future leaks in), the rest are scored with full history up to `as_of`.
+/// Time-split held-out check. The cutoff is the creation time of the PR at
+/// `train_fraction` of the creation order. Train PRs (opened before it) have
+/// their later events hidden, so no future leaks in; test PRs are scored with
+/// full history up to `as_of`.
 pub fn held_out(
     prs: &[PrRecord],
     as_of: i64,
@@ -411,31 +483,32 @@ pub fn held_out(
     }
     dated.sort_by_key(|(t, _)| *t);
     let split = ((dated.len() as f64) * train_fraction) as usize;
-    if split == 0 || split >= dated.len() {
-        return Err(MemristiveError::InvalidConfig(format!(
+    let empty = || {
+        MemristiveError::InvalidConfig(format!(
             "train_fraction {train_fraction} leaves an empty side of {} PRs",
             dated.len()
-        )));
+        ))
+    };
+    if split >= dated.len() {
+        return Err(empty());
     }
     let cutoff = dated[split].0;
+    // Split on time, not index, so PRs tied with the cutoff land in test.
+    let first_test = dated.partition_point(|(t, _)| *t < cutoff);
+    if first_test == 0 {
+        return Err(empty());
+    }
 
-    let seq_states = |pr: &PrRecord, at: i64| -> Result<Vec<usize>> {
-        Ok(lifecycle(pr, at, stale_after_secs)?
-            .iter()
-            .map(|s| s.state.index())
-            .collect())
-    };
+    let lifecycle_at = |pr: &PrRecord, at: i64| lifecycle(pr, at, stale_after_secs);
 
     let mut order0 = MarkovTensor::new(0);
     let mut order1 = MarkovTensor::new(1);
     let mut vlmm_tensor = MarkovTensor::new(max_order);
-    let mut train_sequences = 0;
-    for (t, pr) in &dated[..split] {
-        if *t >= cutoff {
-            continue;
-        }
-        let seq = seq_states(pr, cutoff)?;
-        train_sequences += 1;
+    for (_, pr) in &dated[..first_test] {
+        let seq: Vec<usize> = lifecycle_at(pr, cutoff)?
+            .iter()
+            .map(|s| s.state.index())
+            .collect();
         for i in 1..seq.len() {
             order0.observe(&[], seq[i]);
             order1.observe(&seq[i - 1..i], seq[i]);
@@ -448,14 +521,14 @@ pub fn held_out(
         min_observations,
         FallbackStrategy::MarginalDistribution,
     );
-    let mut nll = [0.0f64; 3];
+    let mut nll = [[0.0f64; SMOOTHING_SWEEP.len()]; 3];
     let mut hits = [0usize; 3];
     let (mut first_order_only, mut vlmm_only) = (0usize, 0usize);
+    let mut clusters: BTreeMap<(&str, i64), i64> = BTreeMap::new();
     let mut transitions = 0usize;
-    let mut test_sequences = 0;
-    for (_, pr) in &dated[split..] {
-        let seq = seq_states(pr, as_of)?;
-        test_sequences += 1;
+    for (_, pr) in &dated[first_test..] {
+        let steps = lifecycle_at(pr, as_of)?;
+        let seq: Vec<usize> = steps.iter().map(|s| s.state.index()).collect();
         for i in 1..seq.len() {
             let actual = seq[i];
             let first = {
@@ -473,16 +546,24 @@ pub fn held_out(
             ];
             let mut right = [false; 3];
             for (m, d) in dists.iter().enumerate() {
-                let dense = smooth(d);
-                nll[m] -= dense[actual].ln();
-                right[m] = argmax(&dense) == actual;
+                for (k, &eps) in SMOOTHING_SWEEP.iter().enumerate() {
+                    nll[m][k] -= smooth(d, eps)[actual].ln();
+                }
+                right[m] = argmax(&smooth(d, SMOOTHING_SWEEP[0])) == actual;
                 if right[m] {
                     hits[m] += 1;
                 }
             }
+            let day = steps[i].at.div_euclid(86_400);
             match (right[1], right[2]) {
-                (true, false) => first_order_only += 1,
-                (false, true) => vlmm_only += 1,
+                (true, false) => {
+                    first_order_only += 1;
+                    *clusters.entry((pr.repo.as_str(), day)).or_default() -= 1;
+                }
+                (false, true) => {
+                    vlmm_only += 1;
+                    *clusters.entry((pr.repo.as_str(), day)).or_default() += 1;
+                }
                 _ => {}
             }
             transitions += 1;
@@ -494,22 +575,83 @@ pub fn held_out(
         .enumerate()
         .map(|(m, name)| ModelScore {
             model: name.to_string(),
-            log_loss: nll[m] / denom,
             accuracy: hits[m] as f64 / denom,
+            log_loss: SMOOTHING_SWEEP
+                .iter()
+                .enumerate()
+                .map(|(k, &epsilon)| EpsilonLoss {
+                    epsilon,
+                    log_loss: nll[m][k] / denom,
+                })
+                .collect(),
         })
         .collect();
+    let favor_vlmm = clusters.values().filter(|&&v| v > 0).count();
+    let favor_first = clusters.values().filter(|&&v| v < 0).count();
     Ok(HeldOutReport {
         cutoff,
-        train_sequences,
-        test_sequences,
+        train_sequences: first_test,
+        test_sequences: dated.len() - first_test,
         test_transitions: transitions,
         max_order,
         min_observations,
         scores,
-        vlmm_only_correct: vlmm_only,
-        first_order_only_correct: first_order_only,
+        disagreement: Disagreement {
+            vlmm_only_correct: vlmm_only,
+            first_order_only_correct: first_order_only,
+            clusters_favoring_vlmm: favor_vlmm,
+            clusters_favoring_first_order: favor_first,
+            cluster_sign_test_p: sign_test_p(favor_vlmm, favor_first),
+        },
         vlmm_order_histogram: vlmm.order_histogram().to_vec(),
     })
+}
+
+/// Exact two-sided binomial sign test, p = 0.5 under the null.
+fn sign_test_p(a: usize, b: usize) -> f64 {
+    let n = a + b;
+    if n == 0 {
+        return 1.0;
+    }
+    let mut coef = 1.0f64; // C(n, 0)
+    let mut tail = 0.0f64;
+    for k in 0..=a.min(b) {
+        if k > 0 {
+            coef = coef * (n - k + 1) as f64 / k as f64;
+        }
+        tail += coef;
+    }
+    (2.0 * tail / 2f64.powi(n as i32)).min(1.0)
+}
+
+/// Draft→ready flips followed by a merge within a minute: a scripted flip,
+/// not a review. Durations out of `pr.ready_for_review` should be read with
+/// this share in mind.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReadyFlips {
+    pub ready_flips: usize,
+    pub merged_within_60s: usize,
+}
+
+fn ready_flips(prs: &[PrRecord]) -> Result<ReadyFlips> {
+    let mut out = ReadyFlips {
+        ready_flips: 0,
+        merged_within_60s: 0,
+    };
+    for pr in prs {
+        let mut merged = Vec::new();
+        for e in pr.events.iter().filter(|e| e.kind == "merged") {
+            merged.push(parse_timestamp(&e.at)?);
+        }
+        for e in pr.events.iter().filter(|e| e.kind == "ready_for_review") {
+            let at = parse_timestamp(&e.at)?;
+            out.ready_flips += 1;
+            if merged.iter().any(|&m| (0..=60).contains(&(m - at))) {
+                out.merged_within_60s += 1;
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Everything #596's Markov slice asks for, from one history snapshot.
@@ -520,11 +662,17 @@ pub struct WorkHistoryReport {
     pub stale_after_days: i64,
     pub prs: usize,
     pub transitions: Vec<MarkovTransition>,
-    /// Same table per branch-inferred worker (`unattributed` omitted).
+    /// Same table per branch-inferred worker (`unattributed` omitted). A
+    /// worker's `from_state` block is kept only if at least
+    /// [`MIN_WORKER_OUTGOING`] transitions leave it, so no row is a
+    /// probability of 1.0 read off a single PR.
     pub transitions_by_worker: Vec<MarkovTransition>,
     pub absorption: Vec<Absorption>,
+    pub ready_flips: ReadyFlips,
     pub held_out: HeldOutReport,
 }
+
+pub const MIN_WORKER_OUTGOING: u64 = 5;
 
 /// Latest `created_at` or event timestamp across `prs`.
 pub fn latest_timestamp(prs: &[PrRecord]) -> Result<i64> {
@@ -560,16 +708,31 @@ pub fn report(
         }
         all.push(seq);
     }
+    let mut transitions_by_worker = Vec::new();
+    for (w, seqs) in &by_worker {
+        let rows = transition_table(seqs, Some(w));
+        let mut outgoing: BTreeMap<&str, u64> = BTreeMap::new();
+        for r in &rows {
+            *outgoing.entry(r.from_state.as_str()).or_default() += r.sample_size;
+        }
+        let keep: Vec<bool> = rows
+            .iter()
+            .map(|r| outgoing[r.from_state.as_str()] >= MIN_WORKER_OUTGOING)
+            .collect();
+        transitions_by_worker.extend(
+            rows.into_iter()
+                .zip(keep)
+                .filter_map(|(r, k)| k.then_some(r)),
+        );
+    }
     Ok(WorkHistoryReport {
         as_of,
         stale_after_days,
         prs: prs.len(),
         transitions: transition_table(&all, None),
-        transitions_by_worker: by_worker
-            .iter()
-            .flat_map(|(w, seqs)| transition_table(seqs, Some(w)))
-            .collect(),
+        transitions_by_worker,
         absorption: absorption(&all),
+        ready_flips: ready_flips(prs)?,
         held_out: held_out(
             prs,
             as_of,
@@ -581,7 +744,7 @@ pub fn report(
     })
 }
 
-fn smooth(dist: &[(usize, f64)]) -> [f64; LifecycleState::COUNT] {
+fn smooth(dist: &[(usize, f64)], epsilon: f64) -> [f64; LifecycleState::COUNT] {
     let mut dense = [0.0f64; LifecycleState::COUNT];
     for &(s, p) in dist {
         if s < dense.len() {
@@ -592,7 +755,7 @@ fn smooth(dist: &[(usize, f64)]) -> [f64; LifecycleState::COUNT] {
     let uniform = 1.0 / LifecycleState::COUNT as f64;
     for p in &mut dense {
         let base = if total > 0.0 { *p / total } else { uniform };
-        *p = (1.0 - SMOOTHING) * base + SMOOTHING * uniform;
+        *p = (1.0 - epsilon) * base + epsilon * uniform;
     }
     dense
 }
@@ -621,14 +784,20 @@ mod tests {
             created_at: created.into(),
             state: "OPEN".into(),
             is_draft,
-            author: "someone".into(),
             head_ref: "codex/x".into(),
             events: events
                 .iter()
-                .map(|(k, at)| PrEvent {
-                    kind: (*k).into(),
-                    at: (*at).into(),
-                    label: None,
+                .map(|(k, at)| {
+                    // "labeled:<name>" carries a label.
+                    let (kind, label) = match k.split_once(':') {
+                        Some((kind, label)) => (kind, Some(label.to_string())),
+                        None => (*k, None),
+                    };
+                    PrEvent {
+                        kind: kind.into(),
+                        at: (*at).into(),
+                        label,
+                    }
                 })
                 .collect(),
         }
@@ -636,6 +805,10 @@ mod tests {
 
     fn states(steps: &[Step]) -> Vec<LifecycleState> {
         steps.iter().map(|s| s.state).collect()
+    }
+
+    fn at(s: &str) -> i64 {
+        parse_timestamp(s).unwrap()
     }
 
     #[test]
@@ -659,35 +832,63 @@ mod tests {
                 ("merged", "2026-01-01T03:00:00Z"),
             ],
         );
-        let as_of = parse_timestamp("2026-02-01T00:00:00Z").unwrap();
-        let s = lifecycle(&p, as_of, 14 * DAY).unwrap();
+        let s = lifecycle(&p, at("2026-02-01T00:00:00Z"), 14 * DAY).unwrap();
         assert_eq!(states(&s), vec![PrDraft, PrReadyForReview, PrMerged]);
     }
 
     #[test]
-    fn stale_gap_inserts_stuck_and_cutoff_hides_future() {
+    fn stale_gap_inserts_origin_aware_stuck_and_cutoff_hides_future() {
         use LifecycleState::*;
         let p = pr(
             "2026-01-01T00:00:00Z",
             false,
             &[("merged", "2026-03-01T00:00:00Z")],
         );
-        let full = lifecycle(
-            &p,
-            parse_timestamp("2026-04-01T00:00:00Z").unwrap(),
-            14 * DAY,
-        );
+        let full = lifecycle(&p, at("2026-04-01T00:00:00Z"), 14 * DAY).unwrap();
         assert_eq!(
-            states(&full.unwrap()),
-            vec![PrReadyForReview, IssueStuck, PrMerged]
+            states(&full),
+            vec![PrReadyForReview, PrStuckReady, PrMerged]
         );
-        let censored = lifecycle(
-            &p,
-            parse_timestamp("2026-02-01T00:00:00Z").unwrap(),
-            14 * DAY,
-        )
-        .unwrap();
-        assert_eq!(states(&censored), vec![PrReadyForReview, IssueStuck]);
+        let censored = lifecycle(&p, at("2026-02-01T00:00:00Z"), 14 * DAY).unwrap();
+        assert_eq!(states(&censored), vec![PrReadyForReview, PrStuckReady]);
+
+        let d = pr("2026-01-01T00:00:00Z", true, &[]);
+        let s = lifecycle(&d, at("2026-02-01T00:00:00Z"), 14 * DAY).unwrap();
+        assert_eq!(states(&s), vec![PrDraft, PrStuckDraft]);
+    }
+
+    #[test]
+    fn merge_candidate_label_on_draft_waits_for_ready_flip() {
+        use LifecycleState::*;
+        let p = pr(
+            "2026-01-01T00:00:00Z",
+            false,
+            &[
+                ("labeled:agent-blackbox-reviewed", "2026-01-01T01:00:00Z"),
+                ("ready_for_review", "2026-01-01T01:10:00Z"),
+                ("merged", "2026-01-01T01:20:00Z"),
+            ],
+        );
+        let s = lifecycle(&p, at("2026-01-02T00:00:00Z"), 14 * DAY).unwrap();
+        assert_eq!(states(&s), vec![PrDraft, PrMergeCandidate, PrMerged]);
+        // Promoted when the draft became mergeable, not when it was labelled.
+        assert_eq!(s[1].at, at("2026-01-01T01:10:00Z"));
+
+        // On a ready PR the label promotes at once; other labels do nothing.
+        let r = pr(
+            "2026-01-01T00:00:00Z",
+            false,
+            &[
+                ("labeled:worker:codex", "2026-01-01T00:30:00Z"),
+                ("labeled:fleet:merge-ready", "2026-01-01T01:00:00Z"),
+                ("merged", "2026-01-01T01:20:00Z"),
+            ],
+        );
+        let s = lifecycle(&r, at("2026-01-02T00:00:00Z"), 14 * DAY).unwrap();
+        assert_eq!(
+            states(&s),
+            vec![PrReadyForReview, PrMergeCandidate, PrMerged]
+        );
     }
 
     #[test]
@@ -701,17 +902,13 @@ mod tests {
                 ("reopened", "2026-01-01T02:00:00Z"),
             ],
         );
-        let s = lifecycle(
-            &p,
-            parse_timestamp("2026-01-02T00:00:00Z").unwrap(),
-            14 * DAY,
-        );
+        let s = lifecycle(&p, at("2026-01-02T00:00:00Z"), 14 * DAY);
         assert_eq!(states(&s.unwrap()), vec![PrDraft, PrRejected, PrDraft]);
     }
 
     #[test]
     fn transition_probabilities_sum_to_one_per_state() {
-        let as_of = parse_timestamp("2026-02-01T00:00:00Z").unwrap();
+        let as_of = at("2026-02-01T00:00:00Z");
         let seqs: Vec<Vec<Step>> = [
             pr(
                 "2026-01-01T00:00:00Z",
@@ -753,5 +950,39 @@ mod tests {
             .unwrap();
         assert!((ready.p_merged - 2.0 / 3.0).abs() < 1e-9);
         assert!((ready.p_rejected - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stuck_rows_have_no_median() {
+        let d = pr("2026-01-01T00:00:00Z", true, &[]);
+        let seqs = vec![lifecycle(&d, at("2026-02-01T00:00:00Z"), 14 * DAY).unwrap()];
+        let table = transition_table(&seqs, None);
+        assert_eq!(table.len(), 1);
+        assert_eq!(table[0].to_state, "pr.stuck_draft");
+        assert_eq!(table[0].median_duration_hours, None);
+    }
+
+    #[test]
+    fn cutoff_ties_go_to_test_not_nowhere() {
+        let prs: Vec<PrRecord> = [
+            "2026-01-01T00:00:00Z",
+            "2026-01-02T00:00:00Z",
+            "2026-01-02T00:00:00Z",
+            "2026-01-03T00:00:00Z",
+        ]
+        .iter()
+        .map(|c| pr(c, false, &[]))
+        .collect();
+        // split index 2 lands on the second of two tied PRs.
+        let h = held_out(&prs, at("2026-01-04T00:00:00Z"), 14 * DAY, 0.5, 2, 1).unwrap();
+        assert_eq!((h.train_sequences, h.test_sequences), (1, 3));
+    }
+
+    #[test]
+    fn sign_test_matches_binomial() {
+        assert_eq!(sign_test_p(0, 0), 1.0);
+        assert!((sign_test_p(3, 0) - 0.25).abs() < 1e-12);
+        assert!((sign_test_p(13, 0) - 2.0 / 8192.0).abs() < 1e-12);
+        assert_eq!(sign_test_p(2, 2), 1.0);
     }
 }

@@ -1,15 +1,19 @@
 //! Work-history distillation on a real snapshot: 1,255 PRs across
 //! ix/ga/tars/Demerzel/hari/gaia, fetched 2026-09-14 by
 //! `scripts/fetch-pr-lifecycle.sh`. Values below are pinned to that
-//! fixture; re-fetching means re-deriving them.
+//! fixture; they are snapshot tripwires, not general properties, and
+//! re-fetching means re-deriving them.
 
-use memristive_markov::work_history::{parse_jsonl, report, WorkHistoryReport};
+use memristive_markov::work_history::{
+    parse_jsonl, report, WorkHistoryReport, MIN_WORKER_OUTGOING, SMOOTHING_SWEEP,
+};
 use std::collections::BTreeMap;
 
 const FIXTURE: &str = include_str!("fixtures/pr-lifecycle-2026-09-14.jsonl");
 
-/// `from_state`/`to_state` enum of Demerzel `schemas/seldon/markov-transition.schema.json`.
-const SCHEMA_STATES: [&str; 9] = [
+/// `from_state`/`to_state` enum of Demerzel `schemas/seldon/markov-transition.schema.json`,
+/// including the origin-aware stuck states proposed in Demerzel#1088.
+const SCHEMA_STATES: [&str; 11] = [
     "issue.grooming",
     "issue.ready",
     "issue.delegated",
@@ -19,6 +23,8 @@ const SCHEMA_STATES: [&str; 9] = [
     "pr.merged",
     "pr.rejected",
     "issue.stuck",
+    "pr.stuck_draft",
+    "pr.stuck_ready",
 ];
 
 fn default_report() -> WorkHistoryReport {
@@ -26,65 +32,100 @@ fn default_report() -> WorkHistoryReport {
     report(&prs, 14, 0.8, 3, 5).unwrap()
 }
 
-fn score(r: &WorkHistoryReport, model: &str) -> (f64, f64) {
-    let s = r.held_out.scores.iter().find(|s| s.model == model).unwrap();
-    (s.log_loss, s.accuracy)
-}
-
 #[test]
 fn transitions_fit_the_seldon_schema() {
     let r = default_report();
     assert_eq!(r.prs, 1255);
-    let mut out_mass: BTreeMap<(&str, Option<&str>), f64> = BTreeMap::new();
+    let mut out_mass: BTreeMap<(&str, Option<&str>), (f64, u64)> = BTreeMap::new();
     for t in r.transitions.iter().chain(&r.transitions_by_worker) {
         assert!(SCHEMA_STATES.contains(&t.from_state.as_str()), "{t:?}");
         assert!(SCHEMA_STATES.contains(&t.to_state.as_str()), "{t:?}");
         assert!((0.0..=1.0).contains(&t.probability));
         assert!(t.sample_size >= 1);
-        assert!(t.median_duration_hours.is_some_and(|h| h >= 0.0));
-        *out_mass
+        // Stuck durations are the threshold, so they are not published.
+        assert_eq!(
+            t.median_duration_hours.is_some(),
+            !t.to_state.contains("stuck"),
+            "{t:?}"
+        );
+        let e = out_mass
             .entry((t.from_state.as_str(), t.worker.as_deref()))
-            .or_default() += t.probability;
+            .or_default();
+        e.0 += t.probability;
+        e.1 += t.sample_size;
     }
-    for (key, mass) in out_mass {
-        assert!((mass - 1.0).abs() < 1e-9, "{key:?} sums to {mass}");
+    for ((from, worker), (mass, n)) in out_mass {
+        assert!(
+            (mass - 1.0).abs() < 1e-9,
+            "{from} {worker:?} sums to {mass}"
+        );
+        if worker.is_some() {
+            assert!(n >= MIN_WORKER_OUTGOING, "{from} {worker:?} has {n}");
+        }
     }
 }
 
 #[test]
-fn ready_prs_mostly_merge_and_stuck_ones_split() {
+fn no_merge_candidate_to_ready_regression() {
+    // Merge-candidate labels applied to drafts used to create
+    // draft -> merge_candidate -> ready_for_review paths (10 PRs).
+    let r = default_report();
+    assert!(!r
+        .transitions
+        .iter()
+        .any(|t| t.from_state == "pr.merge_candidate" && t.to_state == "pr.ready_for_review"));
+    assert_eq!(
+        (r.ready_flips.ready_flips, r.ready_flips.merged_within_60s),
+        (138, 75)
+    );
+}
+
+#[test]
+fn absorption_snapshot_values() {
     let r = default_report();
     let get = |s: &str| r.absorption.iter().find(|a| a.state == s).unwrap();
-    // 1,010 of 1,214 transitions out of ready_for_review go straight to merge.
     let ready = get("pr.ready_for_review");
-    assert_eq!(ready.sample_size, 1214);
-    assert!(ready.p_merged > 0.9, "{ready:?}");
-    // Stuck PRs are far less likely to land.
-    let stuck = get("issue.stuck");
-    assert!(
-        stuck.p_merged < 0.55 && stuck.p_rejected > 0.15,
-        "{stuck:?}"
-    );
-    let draft = get("pr.draft");
-    assert!(draft.p_merged < ready.p_merged && draft.p_merged > stuck.p_merged);
+    assert_eq!(ready.sample_size, 1204);
+    assert!(ready.p_merged > 0.91, "{ready:?}");
+    // Stuck states carry censoring: many are still open at as_of, so the
+    // conditional merge rate is the outcome figure, p_merged is not.
+    for s in ["pr.stuck_draft", "pr.stuck_ready"] {
+        let a = get(s);
+        assert!(a.p_unresolved > 0.2, "{a:?}");
+        let resolved = a.p_merged_given_resolved.unwrap();
+        assert!((0.7..0.76).contains(&resolved), "{a:?}");
+        assert!(resolved < ready.p_merged_given_resolved.unwrap());
+    }
 }
 
 #[test]
-fn vlmm_beats_first_order_on_held_out_transitions() {
+fn held_out_snapshot_values() {
     let r = default_report();
     let h = &r.held_out;
     assert_eq!((h.train_sequences, h.test_sequences), (1004, 251));
-    assert_eq!(h.test_transitions, 361);
-    let (m_loss, _) = score(&r, "order0_marginal");
-    let (f_loss, f_acc) = score(&r, "first_order");
-    let (v_loss, v_acc) = score(&r, "vlmm");
-    assert!(f_loss < m_loss);
-    assert!(v_loss < f_loss, "vlmm {v_loss} vs first-order {f_loss}");
-    assert!(v_acc > f_acc);
-    // Every disagreement goes VLMM's way (exact McNemar p ~ 2.4e-4). All 13
-    // are the context [pr.draft, issue.stuck] -> pr.ready_for_review: a
-    // stuck *draft* revives to review, where first-order predicts merge.
-    assert_eq!((h.vlmm_only_correct, h.first_order_only_correct), (13, 0));
+    assert_eq!(h.test_transitions, 355);
+    let score = |m: &str| h.scores.iter().find(|s| s.model == m).unwrap();
+    let (marginal, first, vlmm) = (
+        score("order0_marginal"),
+        score("first_order"),
+        score("vlmm"),
+    );
+    // With origin-aware stuck states VLMM adds nothing: same accuracy, no
+    // disagreement, and first-order has the lower log-loss at every epsilon.
+    assert!(first.accuracy > marginal.accuracy);
+    assert_eq!(first.accuracy, vlmm.accuracy);
+    assert_eq!(
+        (
+            h.disagreement.vlmm_only_correct,
+            h.disagreement.first_order_only_correct
+        ),
+        (0, 0)
+    );
+    assert_eq!(h.disagreement.cluster_sign_test_p, 1.0);
+    assert_eq!(first.log_loss.len(), SMOOTHING_SWEEP.len());
+    for (f, v) in first.log_loss.iter().zip(&vlmm.log_loss) {
+        assert!(f.log_loss < v.log_loss, "eps {}: {f:?} vs {v:?}", f.epsilon);
+    }
 }
 
 #[test]

@@ -8,7 +8,11 @@
 # One line per PR. Only lifecycle-relevant timeline items are kept:
 # draft/ready flips, APPROVED reviews, merge-candidate and worker:* labels,
 # merge, close (dropped when the PR merged: GitHub emits both), reopen.
-# No titles, bodies or comment text.
+# No authors, titles, bodies or comment text.
+#
+# The timeline is capped at 100 items per PR (before filtering, and merge/close
+# come last). A PR over the cap aborts the fetch instead of silently looking
+# open.
 set -euo pipefail
 
 owner="${1:-GuitarAlchemist}"
@@ -23,8 +27,9 @@ query='query($owner:String!,$name:String!,$endCursor:String){
     pullRequests(first:50,after:$endCursor,orderBy:{field:CREATED_AT,direction:ASC}){
       pageInfo{hasNextPage endCursor}
       nodes{
-        number createdAt isDraft state headRefName author{login}
+        number createdAt isDraft state headRefName
         timelineItems(first:100,itemTypes:[READY_FOR_REVIEW_EVENT,CONVERT_TO_DRAFT_EVENT,PULL_REQUEST_REVIEW,MERGED_EVENT,CLOSED_EVENT,REOPENED_EVENT,LABELED_EVENT]){
+          pageInfo{hasNextPage}
           nodes{
             __typename
             ... on ReadyForReviewEvent{createdAt}
@@ -43,13 +48,16 @@ query='query($owner:String!,$name:String!,$endCursor:String){
 
 for repo in "${repos[@]}"; do
   gh api graphql --paginate -F owner="$owner" -F name="$repo" -f query="$query" --jq '
-    .data.repository.pullRequests.nodes[] | .state as $state | {
+    .data.repository.pullRequests.nodes[]
+    | if .timelineItems.pageInfo.hasNextPage
+      then error("'"$repo"'#\(.number): more than 100 timeline items; merge/close events would be lost")
+      else . end
+    | .state as $state | {
       repo: "'"$repo"'",
       number,
       created_at: .createdAt,
       state,
       is_draft: .isDraft,
-      author: (.author.login // "ghost"),
       head_ref: .headRefName,
       events: [ .timelineItems.nodes[] |
         if .__typename == "ReadyForReviewEvent" then {kind: "ready_for_review", at: .createdAt}
