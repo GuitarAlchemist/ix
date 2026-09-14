@@ -28,6 +28,7 @@
   },
   "mode": "deterministic-fixture-ci",
   "pass_pct": 19.480519480519483,
+  "population_id": "chatbot-qa:deterministic-fixture-ci",
   "timestamp": "2026-04-25T19:03:42.409200400+00:00",
   "total_prompts": 77
 }
