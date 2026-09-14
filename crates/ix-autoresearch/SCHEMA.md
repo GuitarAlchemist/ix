@@ -86,8 +86,9 @@ Last line on graceful exit. Absence means the run was interrupted (replay-tolera
 ### Acceptance criteria (from `agent-blackbox/docs/ix-real-problems-plan.md` Workflow 3)
 
 - **Append-only**: writers MUST open `O_APPEND`; readers MUST process events in file order.
-- **Deterministic replay**: running the same log through a deterministic consumer (e.g. `hari-from-ix-autoresearch` then `hari-core replay`) MUST produce identical output for identical input. Tested in `tests/jsonl_contract.rs`.
-- **Contradictory findings preserved**: when two iteration events on the *same* `config_hash` carry different `accepted` values, the consumer (Hari) preserves the contradiction as `HexValue::Contradictory` rather than averaging. Verified by `hari-core`'s combined-evidence semantics (`crates/hari-core/src/lib.rs` §`process_research_trace`).
+- **Deterministic replay**: running the same log through a deterministic consumer (e.g. `hari-from-ix-autoresearch` then `hari-core replay`) MUST produce identical output for identical input. IX side: same seed ⇒ same `config_hash` sequence, tested in `tests/jsonl_contract.rs`. Hari side: committed run reports regenerate byte-for-byte from committed logs, tested in hari's `crates/hari-extractor/tests/ix_autoresearch_replay.rs`.
+- **Contradictory findings preserved**: when two iteration events on the *same* `config_hash` carry different `accepted` values, the consumer (Hari) preserves the contradiction as `HexValue::Contradictory` rather than averaging. Verified in hari by `a_conflicting_repeat_of_one_config_ends_contradictory` on a spliced log.
+  - **The grammar target never triggers this.** It perturbs by continuous Gaussian noise, so no `config_hash` repeats within a run: 500 of 500 distinct under Greedy and SA, pinned by `a_seeded_grammar_run_never_repeats_a_claim_so_nothing_is_contradictory`. Recorded runs in hari end with zero `Contradictory` beliefs (hari#13). A target needs repeated evaluation of the same config before this criterion can fire on real data.
 - **Crash tolerance**: trailing parse failure is silently discarded as crash-truncation; mid-stream parse failure is a hard error.
 
 ## Layer 2 — Derived semantic event view
@@ -101,7 +102,7 @@ For each `iteration` line, the derived view is:
 | `event_id`       | string (monotone-ordered within a log)   | `format!("{run_id}#{iteration}")` — `run_id` from `run_start`, `iteration` from this line        |
 | `timestamp`      | RFC3339                                  | `iteration.timestamp`                                                                            |
 | `target`         | string                                   | `run_start.target` (propagated to every derived event in the run)                                |
-| `claim`          | string                                   | `format!("{target}/config-{config_hash_short}-is-an-improvement")` — see `hari_from_ix_autoresearch.rs` |
+| `claim`          | string                                   | `format!("{target}/config-{config_hash_short}-is-an-improvement")` — see hari `crates/hari-extractor/src/ix_autoresearch.rs` |
 | `evidence`       | array of `{kind, value}` objects         | `[{kind: "reward", value: <reward>}, {kind: "elapsed_ms", value: <elapsed_ms>}, {kind: "config_hash", value: <full hash>}, ...]` |
 | `confidence`     | float in [0.0, 1.0]                      | `if accepted { 0.66 } else if error.is_some() { 0.10 } else { 0.33 }` — pegged to HexValue rank  |
 | `contradicted_by`| array of `event_id` references           | The set of *prior* `event_id`s in the same log whose `claim` matches this line's `claim` AND whose `accepted` differs. Empty for the first occurrence. Computed by the consumer. |
@@ -161,7 +162,7 @@ Hari's BeliefNetwork then consolidates these as `HexValue::Contradictory` for th
 
 ## Consumers
 
-- **Hari** (`crates/hari-extractor` `hari-from-ix-autoresearch` bin) reads layer 1 directly. The mapping it uses is documented in that file's module-level comment.
+- **Hari** (`crates/hari-extractor` `hari-from-ix-autoresearch` bin; projection in `src/ix_autoresearch.rs`) reads layer 1 directly. The mapping it uses is documented in that file's module-level comment. It departs from the confidence column above in one place: an errored line becomes `Unknown` (no evidence either way), not a low-confidence refutation. `--report` replays the stream under Hari's arms beside IX's own `accepted` flag. Sample reports live in hari's `fixtures/ix-real-or-synthetic/`.
 - **agent-blackbox** consumes the resulting `ResearchReplayReport` JSON (the "belief diff") as evidence — see Workflow 3 in `agent-blackbox/docs/ix-real-problems-plan.md`.
 
 ## Validation

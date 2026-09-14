@@ -262,7 +262,13 @@ fn derive_events(log_path: &Path) -> Vec<DerivedEvent> {
                     .get("config_hash")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let short = &config_hash[..config_hash.len().min(12)];
+                // Strip the `autoresearch:` prefix first — taking 12 chars of
+                // the raw hash yields "autoresearch" for every line and
+                // collapses the whole run into one claim.
+                let hex = config_hash
+                    .strip_prefix("autoresearch:")
+                    .unwrap_or(config_hash);
+                let short = &hex[..hex.len().min(12)];
                 let claim = format!("{target}/config-{short}-is-an-improvement");
                 let accepted = v.get("accepted").and_then(Value::as_bool).unwrap_or(false);
                 let error_present = v
@@ -445,4 +451,37 @@ fn json_schema_file_is_present_and_well_formed() {
         3,
         "schema must define run_start, iteration, run_complete"
     );
+}
+
+#[test]
+fn a_seeded_grammar_run_never_repeats_a_claim_so_nothing_is_contradictory() {
+    // The contradiction criterion above needs the same config_hash observed
+    // twice with different `accepted` flags. The grammar target perturbs by
+    // continuous Gaussian noise, so a repeat is measure-zero: every claim in a
+    // seeded run is distinct and no derived event is contradictory. Measured
+    // on Hari's side too (hari#13, `hari-from-ix-autoresearch`). If a target
+    // ever makes repeats reachable, this test is where that shows up.
+    for strategy in [
+        Strategy::Greedy,
+        Strategy::SimulatedAnnealing {
+            initial_temperature: Some(0.05),
+            cooling_rate: 0.95,
+        },
+    ] {
+        let dir = TempDir::new().unwrap();
+        let mut target = GrammarTarget::default_smoke();
+        let outcome = run_experiment(
+            &mut target,
+            strategy,
+            500,
+            TimeBudget::soft(Duration::from_secs(5)),
+            dir.path(),
+            SEED,
+        )
+        .expect("run_experiment");
+        let derived = derive_events(&outcome.log_path);
+        let claims: BTreeSet<&str> = derived.iter().map(|e| e.claim.as_str()).collect();
+        assert_eq!(claims.len(), derived.len(), "every claim distinct");
+        assert!(derived.iter().all(|e| e.disposition != "contradictory"));
+    }
 }
