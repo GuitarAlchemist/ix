@@ -40,7 +40,7 @@ pub use gate_ledger::{
     GateLedgerEntry, GateMetric, LedgerError, LedgerLine, LedgerQuery, MetricTrendDir, OperatorAck,
 };
 pub use report::{
-    build_health_artifact, is_key_metric_name, PopulationRebaseline, QualityAlert,
+    build_health_artifact, is_key_metric_name, CorpusShrink, PopulationRebaseline, QualityAlert,
     QualityHealthArtifact, QualityHealthStatus, QualityTrendSummary,
 };
 pub use snapshot::{

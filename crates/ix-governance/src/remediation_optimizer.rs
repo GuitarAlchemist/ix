@@ -547,6 +547,7 @@ mod tests {
             voicing_trends: vec![],
             chatbot_trends: vec![],
             rebaselines: vec![],
+            corpus_shrinks: vec![],
         };
 
         let (plan, rec) = RemediationOptimizer::optimize_with_quality_trends(
