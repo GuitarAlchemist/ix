@@ -604,7 +604,7 @@ pub fn load_features(
 /// Higher is better; above 0.15 is our threshold for accepting the clustering.
 /// A point alone in its cluster scores 0 (Rousseeuw 1987, as in scikit-learn).
 ///
-/// For `n >SILHOUETTE_FULL_THRESHOLD` (10k) the exact O(n²) computation is
+/// For `n > SILHOUETTE_FULL_THRESHOLD` (10k) the exact O(n²) computation is
 /// replaced by a seeded random subsample of `SILHOUETTE_SAMPLE_SIZE` (5k)
 /// rows scored against itself — same approximation sklearn uses when
 /// `sample_size` is set. Without this guard the 667k-row guitar corpus
