@@ -56,13 +56,19 @@ des barrières obligatoires pour une PR ordinaire.
    `crates/ix-agent/tests/parity.rs`. Cette liste reste maintenue à la main
    volontairement : c'est le limiteur de débit qui force la relecture de chaque
    changement de surface.
-4. Lancez `ix doctor --write` et validez le diff de `skills.snapshot.json`. Le
+4. Classez-le dans `crates/ix-approval/src/classify.rs` sous le type que ses
+   effets justifient (calcul pur ou lecture → `READ_TOOLS`). Un outil adossé au
+   registre et non classé retombe au niveau 3 et chaque appel MCP est refusé ;
+   le test de parité
+   `every_registry_backed_tool_has_an_explicit_approval_classification` échoue
+   tant qu'il n'est pas classé.
+5. Lancez `ix doctor --write` et validez le diff de `skills.snapshot.json`. Le
    diff doit montrer exactement les noms voulus, et rien d'autre.
-5. Si l'outil est derrière une feature cargo non par défaut, ajoutez son nom à
+6. Si l'outil est derrière une feature cargo non par défaut, ajoutez son nom à
    `feature_gated_tools` dans l'instantané pour que les deux configurations de
    compilation restent vertes.
-6. Lancez `cargo test -p ix-agent --test parity`.
-7. Documentez-le : `docs/MANUAL.md`, ainsi que la traduction française sous
+7. Lancez `cargo test -p ix-agent --test parity`.
+8. Documentez-le : `docs/MANUAL.md`, ainsi que la traduction française sous
    `docs/fr/`.
 
 ## Ajouter une UDF DuckDB

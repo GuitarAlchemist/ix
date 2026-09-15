@@ -101,6 +101,10 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_topo",
         "ix_category",
         "ix_graph",
+        // Pure correlation-mesh compute over caller-supplied series.
+        "ix_mesh_correlate",
+        // Reachability analysis of a caller-supplied Petri net (inline or PNML string).
+        "ix_petri_analyze",
         "ix_hyperloglog",
         "ix_bloom_filter",
         "ix_chaos_lyapunov",
@@ -120,6 +124,11 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         // Code + context analysis
         "ix_code_analyze",
         "ix_context_walk",
+        // Assumption graph: scan @ai: annotations / replay a belief log, no writes.
+        "ix_assumption_query",
+        "ix_assumption_belief_at",
+        "ix_assumption_drift",
+        "ix_assumption_claims",
         // Fuzzy distribution eval (deterministic, no side effects)
         "ix_fuzzy_eval",
         // Governance reads
@@ -193,6 +202,14 @@ mod tests {
             "ix_autocorrelation",
             "ix_analyze_reference",
             "ix_spectral_distance",
+            // Same trap, found by the registry-wide parity check: all six were
+            // registered and unit-tested, and refused on every MCP call.
+            "ix_mesh_correlate",
+            "ix_petri_analyze",
+            "ix_assumption_query",
+            "ix_assumption_belief_at",
+            "ix_assumption_drift",
+            "ix_assumption_claims",
         ] {
             assert_eq!(
                 classify_action_kind(tool),

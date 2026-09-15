@@ -51,12 +51,18 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
 3. Add the tool name to `EXPECTED` in `crates/ix-agent/tests/parity.rs`. This
    list stays hand-maintained on purpose: it is the rate-limiter that forces
    every surface change through review.
-4. Run `ix doctor --write` and commit the `skills.snapshot.json` diff. The diff
+4. Classify it in `crates/ix-approval/src/classify.rs` under the kind its
+   effects warrant (pure computation or read → `READ_TOOLS`). An unclassified
+   registry-backed tool defaults to Tier 3 and every MCP call to it is refused;
+   the parity test
+   `every_registry_backed_tool_has_an_explicit_approval_classification` fails
+   until it is classified.
+5. Run `ix doctor --write` and commit the `skills.snapshot.json` diff. The diff
    should show exactly the names you intended, and nothing else.
-5. If the tool is behind a non-default cargo feature, add its name to
+6. If the tool is behind a non-default cargo feature, add its name to
    `feature_gated_tools` in the snapshot so both build configurations stay green.
-6. Run `cargo test -p ix-agent --test parity`.
-7. Document it: `docs/MANUAL.md`, plus the French translation under `docs/fr/`.
+7. Run `cargo test -p ix-agent --test parity`.
+8. Document it: `docs/MANUAL.md`, plus the French translation under `docs/fr/`.
 
 ## Adding a DuckDB UDF
 
