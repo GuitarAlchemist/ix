@@ -124,8 +124,10 @@ shortest witness firing sequence), boundedness, dead transitions, liveness and
 reversibility of a Place/Transition net given as JSON, returned as the JSON
 `ix_petri::Analysis`. Wraps `ix-petri`; the net shape and the honesty boundary
 (`unknown` past `max_states`) are in `docs/guides/petri-nets-in-ix.md`. A refused
-net, or a budget outside 1..=1 000 000, is a SQL error (one refused row fails the
-whole statement); NULL in is NULL out. Read dead markings from
+net, net JSON over 1 MiB, a budget outside 1..=1 000 000, or a budget whose
+worst-case heap for that net is over 512 MiB (the error names the largest
+admissible budget) is a SQL error (one refused row fails the whole statement);
+NULL in is NULL out. The heap bound is per row, not per statement. Read dead markings from
 `detail[i].tokens`, not by parsing the `marking` prose.
 
 ```sql

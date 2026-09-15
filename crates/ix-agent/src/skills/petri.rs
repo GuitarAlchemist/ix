@@ -77,8 +77,9 @@ fn petri_analyze_schema() -> Value {
             "max_states": {
                 "type": "integer",
                 "minimum": 1,
+                "maximum": 1000000,
                 "default": 50000,
-                "description": "Enumeration budget. Hitting it makes undecided properties `unknown` rather than guessed."
+                "description": "Enumeration budget. Hitting it makes undecided properties `unknown` rather than guessed. Refused above 1000000, or where ix-petri's worst-case heap bound for this net exceeds its budget; the refusal names the largest admissible value."
             }
         }
     })
@@ -94,6 +95,7 @@ fn petri_analyze_output_schema() -> Value {
             "states": { "type": "integer", "description": "Distinct reachable markings enumerated" },
             "transitions_fired": { "type": "integer", "description": "Edges in the reachability graph" },
             "truncated": { "type": "boolean", "description": "True when the search stopped short of the full state space: max_states was reached, or a firing overflowed a u64 token count" },
+            "truncation": { "type": ["string", "null"], "description": "Why the search stopped: max_states (a larger budget may finish it) or overflow (none will); null when not truncated" },
             "deadlock_free": {
                 "type": "object",
                 "description": "verdict holds|fails|unknown; on `fails`, `detail` lists dead markings with the shortest firing sequence reaching each"
@@ -119,6 +121,13 @@ fn petri_analyze_output_schema() -> Value {
 /// document (`pnml`). Every verdict is `holds`, `fails` with a witness, or
 /// `unknown` — never a guess. Firing order is deterministic, so the same net
 /// yields the same report on every call.
+///
+/// `max_states` is admitted by `ix_petri::json::admit`, as it is for SQL's
+/// `ix_petri_analyze`: refused above `MAX_STATES_CEILING`, or where the
+/// worst-case heap bound for this net exceeds `HEAP_BUDGET_BYTES`, because a
+/// request crossing a process boundary must not be able to exhaust the
+/// server's memory. That bound covers the analysis and one serialization of
+/// it; this request's own JSON and the `Value` rendering below are outside it.
 #[ix_skill(
     domain = "petri",
     name = "petri.analyze",
@@ -128,10 +137,11 @@ fn petri_analyze_output_schema() -> Value {
 )]
 pub fn petri_analyze(params: Value) -> Result<Value, String> {
     let net = build_net(&params)?;
-    let limits = match params.get("max_states").and_then(Value::as_u64) {
-        Some(0) | None => Limits::default(),
-        Some(n) => Limits::with_max_states(n as usize),
+    let max_states = match params.get("max_states").and_then(Value::as_u64) {
+        Some(0) | None => Limits::default().max_states as i64,
+        Some(n) => i64::try_from(n).unwrap_or(i64::MAX),
     };
+    let limits = ix_petri::json::admit(&net, 0, max_states).map_err(|e| e.to_string())?;
     let report = analyze(&net, limits);
     render(&net, &report)
 }
@@ -325,6 +335,21 @@ mod tests {
         assert!(out["unbounded_witness"]["pumping_sequence"]
             .as_array()
             .is_some_and(|s| s == &[json!("grow")]));
+    }
+
+    #[test]
+    fn a_budget_past_the_ceiling_is_refused_not_run() {
+        let err = petri_analyze(json!({
+            "places": ["queue"],
+            "transitions": ["grow"],
+            "arcs": [{ "source": "grow", "target": "queue" }],
+            "max_states": u64::MAX
+        }))
+        .unwrap_err();
+        assert!(
+            err.contains("max_states must be between 1 and 1000000"),
+            "{err}"
+        );
     }
 
     #[test]

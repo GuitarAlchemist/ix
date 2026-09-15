@@ -10,11 +10,19 @@
 //! `ix_petri_analyze(net VARCHAR, max_states BIGINT) -> VARCHAR` returns the full
 //! `ix_petri::Analysis` as JSON (net shape: `ix_petri::json`). The state budget
 //! is a required argument, not a default, so every result names the bound it was
-//! computed under. A net the builder refuses, JSON of the wrong shape, or a
-//! budget outside `1..=ix_petri::json::MAX_STATES_CEILING` is a SQL error naming
-//! the reason; NULL in either argument is NULL out. One refused row fails the
-//! whole statement, as any SQL error does. Pure wrap of `ix_petri::analyze_json`
-//! — no Petri logic here.
+//! computed under. A net the builder refuses, JSON of the wrong shape, net JSON
+//! over `ix_petri::json::MAX_NET_JSON_BYTES`, a budget outside
+//! `1..=ix_petri::json::MAX_STATES_CEILING`, or a budget whose worst-case heap
+//! for this net (`ix_petri::json::heap_bound`) is over
+//! `ix_petri::json::HEAP_BUDGET_BYTES` is a SQL error naming the reason; NULL
+//! in either argument is NULL out. One refused row fails the whole statement,
+//! as any SQL error does. Pure wrap of `ix_petri::analyze_json` — no Petri
+//! logic here.
+//!
+//! The heap bound covers what this wrap does with a row: the copy of the text,
+//! the analysis, its JSON and the `CString` DuckDB copies. It is per row, and
+//! DuckDB keeps a chunk's result strings together, so a statement over many
+//! large nets holds their outputs at once; the bound does not cap that.
 //!
 //! The refusal text quotes ids and field names verbatim, and JSON can spell a
 //! NUL (`\u0000`) inside either. duckdb-rs hands an error to DuckDB through
@@ -41,7 +49,7 @@ fn sql_error(e: Box<dyn Error>) -> Box<dyn Error> {
 struct IxPetriAnalyze;
 impl VScalar for IxPetriAnalyze {
     type State = ();
-    // @ai:invariant ix_petri_analyze(net, max_states) returns serde_json of ix_petri::analyze_json(net, max_states) byte-for-byte; a refused net/JSON/budget is a SQL error whose text holds no NUL, never a host abort; NULL arg -> NULL. Bound only by duck-feature tests CI does not compile, hence P [P:test conf:0.7 src:ix_duck::petri::tests::refusals_are_sql_errors]
+    // @ai:invariant ix_petri_analyze(net, max_states) returns serde_json of ix_petri::analyze_json(net, max_states) byte-for-byte; a refused net/JSON/budget is a SQL error whose text holds no NUL; NULL arg -> NULL. Only duck-feature tests exercise it (sql_equals_rust_wire_bytes, nul_in_refusal_text_is_a_sql_error_not_an_abort), CI compiles neither and the drift snapshot lists neither [P:assumed conf:0.7]
     unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn Error>> {
         analyze_rows(input, output).map_err(sql_error)
     }
@@ -113,10 +121,13 @@ mod tests {
 
     #[test]
     fn refusals_are_sql_errors() {
-        for (net, max) in [(r#"{"places":[{"id":"p","initial_marking":1}],"transitions":[],"arcs":[]}"#, 10), (r#"{"places":[{"id":"p"},{"id":"p"}],"transitions":[],"arcs":[]}"#, 10), (LOCK, 0), (LOCK, ix_petri::json::MAX_STATES_CEILING + 1)] {
+        let too_long = format!("{}{LOCK}", " ".repeat(ix_petri::json::MAX_NET_JSON_BYTES));
+        for (net, max) in [(r#"{"places":[{"id":"p","initial_marking":1}],"transitions":[],"arcs":[]}"#, 10), (r#"{"places":[{"id":"p"},{"id":"p"}],"transitions":[],"arcs":[]}"#, 10), (LOCK, 0), (LOCK, ix_petri::json::MAX_STATES_CEILING + 1), (LOCK, ix_petri::json::MAX_STATES_CEILING), (too_long.as_str(), 10)] {
             let err = analyze("SELECT ix_petri_analyze(?, ?)", &[&net, &max]).unwrap_err().to_string();
             assert!(err.contains("ix_petri_analyze"), "{err}");
         }
+        let over_heap = analyze("SELECT ix_petri_analyze(?, ?)", &[&LOCK, &ix_petri::json::MAX_STATES_CEILING]).unwrap_err().to_string();
+        assert!(over_heap.contains("bytes of heap") && over_heap.contains("largest admissible max_states"), "{over_heap}");
     }
 
     /// Before the escape these aborted the test process (a panic inside duckdb-rs's

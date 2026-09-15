@@ -116,11 +116,24 @@ pub struct Deadlock {
     /// labels are free text and are not escaped, so do not parse this.
     pub marking: String,
     /// The same marking as `(place id, tokens)` for the places holding any, in
-    /// place-id order — the form to read programmatically.
+    /// place-id order — the form to read programmatically. Defaulted when
+    /// reading a report recorded before the field existed.
+    #[serde(default)]
     pub tokens: Vec<(String, u64)>,
     /// Transition ids, in firing order, from `m0` to the dead marking. Shortest
     /// such sequence, because the graph is explored breadth-first.
     pub witness: Vec<String>,
+}
+
+/// Why a run stopped short of the full state space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Truncation {
+    /// [`Limits::max_states`] was reached; a larger budget may finish the run.
+    MaxStates,
+    /// A firing overflowed a `u64` token count; no budget finishes the run.
+    /// Reported in preference to `MaxStates` when both happened.
+    Overflow,
 }
 
 /// Per-place token bound over the enumerated state space.
@@ -155,8 +168,13 @@ pub struct Analysis {
     pub transitions_fired: usize,
     /// True when the search stopped short of the full state space: either
     /// [`Limits::max_states`] was reached, or a firing overflowed a `u64`
-    /// token count. The `Unknown` reasons say which.
+    /// token count. [`Analysis::truncation`] says which.
     pub truncated: bool,
+    /// `None` exactly when `truncated` is false; otherwise the cause, so a
+    /// caller can tell a budget cut (raise `max_states`) from an overflow
+    /// (raising it never helps) without parsing the `Unknown` reasons.
+    #[serde(default)]
+    pub truncation: Option<Truncation>,
 
     /// `Holds(())` when no dead marking exists; `Fails(deadlocks)` otherwise.
     pub deadlock_free: Verdict<Vec<Deadlock>>,
@@ -195,6 +213,8 @@ pub struct ReachabilityGraph {
     /// state. `None` for the root only.
     parent: Vec<Option<(usize, usize)>>,
     truncated: bool,
+    /// Whether [`Limits::max_states`] refused a new marking.
+    hit_max_states: bool,
     unbounded: Option<(usize, usize)>,
     /// The first firing that overflowed a token count, if any.
     overflow: Option<PetriError>,
@@ -210,6 +230,7 @@ impl ReachabilityGraph {
             succ: vec![Vec::new()],
             parent: vec![None],
             truncated: false,
+            hit_max_states: false,
             unbounded: None,
             overflow: None,
         };
@@ -238,6 +259,7 @@ impl ReachabilityGraph {
                     None => {
                         if graph.markings.len() >= limits.max_states {
                             graph.truncated = true;
+                            graph.hit_max_states = true;
                             continue;
                         }
                         let id = graph.markings.len();
@@ -532,6 +554,13 @@ pub fn analyze(net: &PetriNet, limits: Limits) -> Analysis {
         states: graph.markings.len(),
         transitions_fired,
         truncated: graph.truncated,
+        truncation: if graph.overflow.is_some() {
+            Some(Truncation::Overflow)
+        } else if graph.hit_max_states {
+            Some(Truncation::MaxStates)
+        } else {
+            None
+        },
         deadlock_free,
         deadlock_count,
         bounded,
@@ -638,6 +667,7 @@ mod tests {
         let a = analyze(&net, Limits::default());
         assert_eq!(a.states, 2);
         assert!(!a.truncated);
+        assert_eq!(a.truncation, None);
         assert!(a.deadlock_free.holds());
         assert_eq!(
             a.bounded,
@@ -708,6 +738,7 @@ mod tests {
             a.truncated,
             "an unrepresentable successor is not exhaustive"
         );
+        assert_eq!(a.truncation, Some(Truncation::Overflow));
         let Verdict::Unknown { reason } = &a.bounded else {
             panic!("boundedness must not be claimed: {:?}", a.bounded);
         };
@@ -720,6 +751,22 @@ mod tests {
         assert!(matches!(a.deadlock_free, Verdict::Unknown { .. }));
         assert!(matches!(a.live, Verdict::Unknown { .. }));
         assert!(matches!(a.reversible, Verdict::Unknown { .. }));
+    }
+
+    #[test]
+    fn overflow_is_the_reported_cause_when_the_budget_also_ran_out() {
+        // `pump` overflows `p` at m0; `grow` fills the budget meanwhile.
+        let net = PetriNet::builder()
+            .place("p", u64::MAX)
+            .place("q", 0)
+            .transition("grow")
+            .transition("pump")
+            .arc("grow", "q")
+            .arc("pump", "p")
+            .build()
+            .unwrap();
+        let a = analyze(&net, Limits::with_max_states(3));
+        assert_eq!(a.truncation, Some(Truncation::Overflow));
     }
 
     #[test]
@@ -752,6 +799,7 @@ mod tests {
 
         let a = analyze(&net, Limits::with_max_states(5));
         assert!(a.truncated);
+        assert_eq!(a.truncation, Some(Truncation::MaxStates));
         assert!(matches!(a.bounded, Verdict::Unknown { .. }));
         assert!(a.unbounded_witness.is_none());
         assert!(matches!(a.quasi_live, Verdict::Unknown { .. }));

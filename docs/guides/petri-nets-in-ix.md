@@ -65,7 +65,9 @@ a positive existence proof and truncation cannot invalidate it. The *absence* of
 a deadlock is never reported from a truncated run.
 
 A firing whose result would not fit a `u64` token count truncates the run too,
-and the `unknown` reasons name the transition and place that overflowed. A net
+and the `unknown` reasons name the transition and place that overflowed. The
+report's `truncation` field says which cause stopped a run: `max_states` (a
+larger budget may finish it) or `overflow` (none will). A net
 with no transitions is dead at its initial marking (`deadlock-free` fails with
 an empty witness) while `live` holds vacuously; read `deadlock-free` for it.
 
@@ -136,14 +138,23 @@ FROM read_text('nets/*.json');   -- one row per file; column `content` holds the
 ```
 
 The state budget is a required argument, so every result names the bound it was
-computed under. It must lie in `1..=ix_petri::json::MAX_STATES_CEILING`
-(1 000 000); anything else is refused, not clamped, because enumeration holds
-every marking in memory and an unbounded net always runs to its budget. A
-refused net is a SQL error, and like any SQL error it fails the whole statement,
+computed under. The call is refused, not clamped, when the budget is outside
+`1..=ix_petri::json::MAX_STATES_CEILING` (1 000 000), when the net JSON is over
+`MAX_NET_JSON_BYTES` (1 MiB), or when `ix_petri::json::heap_bound` for that net
+and budget is over `HEAP_BUDGET_BYTES` (512 MiB). The state count alone does not
+bound memory: markings cost `states × places`, edges and the liveness table
+`states × transitions`, and up to nine witnesses `states × transition-id
+length`, and an unbounded net always runs to its budget. `heap_bound` is a
+worst-case count read off the net's size, checked against measured peaks in
+`crates/ix-petri/tests/heap_budget.rs`; the budget refusal names the largest
+`max_states` that net admits (a few hundred thousand for a small net). The bound
+is per row, so a statement over many large nets holds all their result strings
+at once. A refused net is a SQL error, and like any SQL error it fails the whole statement,
 so one malformed file in `read_text('nets/*.json')` loses every row. Read a dead
 marking from `deadlock_free.detail[i].tokens` (`[place id, tokens]` pairs); the
 `marking` string beside it is rendered from free-text labels for a person and is
-not escaped. The serialized `Analysis` is the wire contract; its bytes are
+not escaped. Token counts are `u64`; a JavaScript reader loses precision above
+2^53, so refuse those (`Number.isSafeInteger`) rather than round them. The serialized `Analysis` is the wire contract; its bytes are
 pinned by `ix_petri::json::tests::wire_shape_is_pinned` on the default test
 path. The first consumer is gaia's issue #80 bootstrap-deadlock tracer, which
 reaches it from Node.js through `@duckdb/node-api`.

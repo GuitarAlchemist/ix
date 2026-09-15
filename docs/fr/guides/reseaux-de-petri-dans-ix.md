@@ -69,7 +69,9 @@ partir d'une exécution tronquée.
 
 Un tir dont le résultat dépasserait un nombre de jetons `u64` tronque lui aussi
 l'exécution, et les raisons `unknown` nomment la transition et la place en
-dépassement. Un réseau sans transition est mort dès son marquage initial
+dépassement. Le champ `truncation` du rapport dit quelle cause a arrêté une
+exécution : `max_states` (un budget plus grand peut la terminer) ou `overflow`
+(aucun ne le fera). Un réseau sans transition est mort dès son marquage initial
 (`sans interblocage` échoue avec un témoin vide) tandis que `vivante` est vraie
 par vacuité ; c'est `sans interblocage` qu'il faut lire pour lui.
 
@@ -147,15 +149,27 @@ FROM read_text('reseaux/*.json');   -- une ligne par fichier ; la colonne `conte
 
 Le budget d'états est un argument obligatoire : chaque résultat nomme la borne
 sous laquelle il a été calculé. Il doit appartenir à
-`1..=ix_petri::json::MAX_STATES_CEILING` (1 000 000) ; toute autre valeur est
-refusée, pas bornée en silence, car l'énumération garde chaque marquage en
-mémoire et un réseau non borné va toujours jusqu'à son budget. Un réseau refusé
+`1..=ix_petri::json::MAX_STATES_CEILING` (1 000 000). L'appel est aussi
+refusé, jamais borné en silence, quand le JSON du réseau dépasse
+`MAX_NET_JSON_BYTES` (1 Mio) ou quand `ix_petri::json::heap_bound` pour ce réseau
+et ce budget dépasse `HEAP_BUDGET_BYTES` (512 Mio). Le nombre d'états ne borne
+pas à lui seul la mémoire : les marquages coûtent `états × places`, les arcs et
+la table de vivacité `états × transitions`, et jusqu'à neuf témoins
+`états × longueur d'identifiant de transition` ; un réseau non borné va toujours
+jusqu'à son budget. `heap_bound` est un décompte au pire lu sur la taille du
+réseau, confronté aux pics mesurés dans `crates/ix-petri/tests/heap_budget.rs` ;
+le refus nomme le plus grand `max_states` admis pour ce réseau (quelques
+centaines de milliers pour un petit réseau). La borne vaut par ligne : une
+instruction sur de nombreux grands réseaux garde toutes leurs chaînes de
+résultat à la fois. Un réseau refusé
 est une erreur SQL et, comme toute erreur SQL, fait échouer l'instruction
 entière : un seul fichier mal formé dans `read_text('reseaux/*.json')` fait
 perdre toutes les lignes. Lisez un marquage mort dans
 `deadlock_free.detail[i].tokens` (paires `[id de place, jetons]`) ; la chaîne
 `marking` voisine est rendue à partir d'étiquettes libres, pour un humain, et
-n'est pas échappée. L'`Analysis` sérialisée est le contrat de
+n'est pas échappée. Les nombres de jetons sont des `u64` ; un lecteur JavaScript
+perd en précision au-delà de 2^53 : refusez ces valeurs (`Number.isSafeInteger`)
+plutôt que de les arrondir. L'`Analysis` sérialisée est le contrat de
 transport ; ses octets sont figés par `ix_petri::json::tests::wire_shape_is_pinned`
 sur le chemin de test par défaut. Le premier consommateur est le traceur de
 blocage d'amorçage de l'issue #80 de gaia, qui l'atteint depuis Node.js via

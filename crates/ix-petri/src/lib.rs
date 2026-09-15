@@ -73,7 +73,7 @@ pub mod net;
 pub mod pnml;
 pub mod xml;
 
-pub use analysis::{analyze, Analysis, Limits, Verdict};
+pub use analysis::{analyze, Analysis, Limits, Truncation, Verdict};
 pub use json::{analyze_json, JsonNetError, NetSpec};
 pub use net::{Marking, PetriError, PetriNet, PetriNetBuilder, Place, Transition};
 pub use pnml::{read_pnml, PnmlError, PnmlNet};
