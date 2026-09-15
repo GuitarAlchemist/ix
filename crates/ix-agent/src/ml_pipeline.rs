@@ -593,10 +593,6 @@ fn run_classification(
     split: &SplitConfig,
     return_predictions: bool,
 ) -> Result<(Value, Preprocessor), String> {
-    // Convert y from f64 to usize labels
-    let y_usize: Array1<usize> = y.mapv(|v| v.round() as usize);
-    let n_classes = *y_usize.iter().max().unwrap_or(&0) + 1;
-
     // Split, then fit the preprocessing on the training rows
     let (split_result, prep) = split_and_preprocess(x, y, preprocess, split)?;
 
@@ -715,18 +711,26 @@ fn run_classification(
         other => return Err(format!("Unknown classification model: '{}'", other)),
     };
 
-    // Metrics: macro-average across classes
+    // Metrics: macro-average over the labels present in the test targets or
+    // the predictions (as scikit-learn does). Labels are class indices, so
+    // `0..=max` would also count indices no row uses, e.g. every integer
+    // below 60 for whole-second targets, and drag the averages down.
     let acc = ix_supervised::metrics::accuracy(&y_test_usize, &predictions);
-    let (avg_p, avg_r, avg_f1) = if n_classes > 0 {
+    let labels: std::collections::BTreeSet<usize> = y_test_usize
+        .iter()
+        .chain(predictions.iter())
+        .copied()
+        .collect();
+    let (avg_p, avg_r, avg_f1) = if !labels.is_empty() {
         let mut sum_p = 0.0;
         let mut sum_r = 0.0;
         let mut sum_f1 = 0.0;
-        for c in 0..n_classes {
+        for &c in &labels {
             sum_p += ix_supervised::metrics::precision(&y_test_usize, &predictions, c);
             sum_r += ix_supervised::metrics::recall(&y_test_usize, &predictions, c);
             sum_f1 += ix_supervised::metrics::f1_score(&y_test_usize, &predictions, c);
         }
-        let nc = n_classes as f64;
+        let nc = labels.len() as f64;
         (sum_p / nc, sum_r / nc, sum_f1 / nc)
     } else {
         (0.0, 0.0, 0.0)
@@ -1140,6 +1144,23 @@ mod tests {
             expected[0],
             all_rows[0]
         );
+    }
+
+    #[test]
+    fn test_macro_metrics_ignore_absent_labels() {
+        // Labels 0 and 5 on separable data: the macro average must run over
+        // the two classes present, not over the six indices 0..=5.
+        let mut config = iris_inline_config("classify", "decision_tree");
+        for row in config.source.data.as_mut().unwrap() {
+            if row[2] == 1.0 {
+                row[2] = 5.0;
+            }
+        }
+        let result = run_pipeline(config).unwrap();
+        assert_eq!(result["metrics"]["accuracy"], 1.0);
+        assert_eq!(result["metrics"]["precision"], 1.0);
+        assert_eq!(result["metrics"]["recall"], 1.0);
+        assert_eq!(result["metrics"]["f1"], 1.0);
     }
 
     #[test]
