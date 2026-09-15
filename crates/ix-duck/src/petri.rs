@@ -11,8 +11,16 @@
 //! `ix_petri::Analysis` as JSON (net shape: `ix_petri::json`). The state budget
 //! is a required argument, not a default, so every result names the bound it was
 //! computed under. A net the builder refuses, JSON of the wrong shape, or a
-//! budget below 1 is a SQL error naming the reason; NULL in either argument is
-//! NULL out. Pure wrap of `ix_petri::analyze_json` — no Petri logic here.
+//! budget outside `1..=ix_petri::json::MAX_STATES_CEILING` is a SQL error naming
+//! the reason; NULL in either argument is NULL out. One refused row fails the
+//! whole statement, as any SQL error does. Pure wrap of `ix_petri::analyze_json`
+//! — no Petri logic here.
+//!
+//! The refusal text quotes ids and field names verbatim, and JSON can spell a
+//! NUL (`\u0000`) inside either. duckdb-rs hands an error to DuckDB through
+//! `CString::new(..).unwrap()` inside an `extern "C"` callback, where a NUL is
+//! a panic that cannot unwind and aborts the host process. So every error
+//! leaving `invoke` goes through [`sql_error`], which escapes NUL as `\0`.
 
 use crate::udf::null_mask;
 use duckdb::core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId};
@@ -24,28 +32,18 @@ use duckdb::Connection;
 use std::error::Error;
 use std::ffi::CString;
 
+/// The only way an error leaves this UDF for DuckDB: its text with NUL escaped,
+/// so no message — today's or a future one — can abort the host.
+fn sql_error(e: Box<dyn Error>) -> Box<dyn Error> {
+    e.to_string().replace('\0', "\\0").into()
+}
+
 struct IxPetriAnalyze;
 impl VScalar for IxPetriAnalyze {
     type State = ();
-    // @ai:invariant ix_petri_analyze(net, max_states) returns serde_json of ix_petri::analyze_json(net, max_states) byte-for-byte; refused net/JSON/budget -> SQL error; NULL arg -> NULL [T:test conf:0.85 src:ix_duck::petri::tests::sql_equals_rust_wire_bytes]
+    // @ai:invariant ix_petri_analyze(net, max_states) returns serde_json of ix_petri::analyze_json(net, max_states) byte-for-byte; a refused net/JSON/budget is a SQL error whose text holds no NUL, never a host abort; NULL arg -> NULL. Bound only by duck-feature tests CI does not compile, hence P [P:test conf:0.7 src:ix_duck::petri::tests::refusals_are_sql_errors]
     unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn Error>> {
-        let n = input.len();
-        let (net_null, max_null) = (null_mask(input, 0, n), null_mask(input, 1, n));
-        let nets = input.flat_vector(0);
-        let nets = nets.as_slice_with_len::<duckdb_string_t>(n);
-        let maxes = input.flat_vector(1);
-        let maxes = maxes.as_slice_with_len::<i64>(n);
-        let mut out = output.flat_vector();
-        for i in 0..n {
-            if net_null[i] || max_null[i] {
-                out.set_null(i);
-                continue;
-            }
-            let net = DuckString::new(&mut { nets[i] }).as_str().to_string();
-            let analysis = ix_petri::analyze_json(&net, maxes[i]).map_err(|e| format!("ix_petri_analyze: {e}"))?;
-            out.insert(i, CString::new(serde_json::to_string(&analysis)?)?);
-        }
-        Ok(())
+        analyze_rows(input, output).map_err(sql_error)
     }
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
@@ -53,6 +51,30 @@ impl VScalar for IxPetriAnalyze {
             LogicalTypeHandle::from(LogicalTypeId::Varchar),
         )]
     }
+}
+
+/// # Safety
+/// As [`VScalar::invoke`]: `input` is a live DuckDB chunk of (VARCHAR, BIGINT).
+unsafe fn analyze_rows(input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn Error>> {
+    let n = input.len();
+    let (net_null, max_null) = (null_mask(input, 0, n), null_mask(input, 1, n));
+    let nets = input.flat_vector(0);
+    let nets = nets.as_slice_with_len::<duckdb_string_t>(n);
+    let maxes = input.flat_vector(1);
+    let maxes = maxes.as_slice_with_len::<i64>(n);
+    let mut out = output.flat_vector();
+    for i in 0..n {
+        if net_null[i] || max_null[i] {
+            out.set_null(i);
+            continue;
+        }
+        let net = DuckString::new(&mut { nets[i] }).as_str().to_string();
+        let analysis = ix_petri::analyze_json(&net, maxes[i])
+            .map_err(|e| format!("ix_petri_analyze: {e}").replace('\0', "\\0"))?;
+        // serde_json escapes control characters, so the output cannot hold a NUL.
+        out.insert(i, CString::new(serde_json::to_string(&analysis)?)?);
+    }
+    Ok(())
 }
 
 pub(crate) fn register(conn: &Connection) -> duckdb::Result<()> {
@@ -91,9 +113,26 @@ mod tests {
 
     #[test]
     fn refusals_are_sql_errors() {
-        for (net, max) in [(r#"{"places":[{"id":"p","initial_marking":1}],"transitions":[],"arcs":[]}"#, 10), (r#"{"places":[{"id":"p"},{"id":"p"}],"transitions":[],"arcs":[]}"#, 10), (LOCK, 0)] {
+        for (net, max) in [(r#"{"places":[{"id":"p","initial_marking":1}],"transitions":[],"arcs":[]}"#, 10), (r#"{"places":[{"id":"p"},{"id":"p"}],"transitions":[],"arcs":[]}"#, 10), (LOCK, 0), (LOCK, ix_petri::json::MAX_STATES_CEILING + 1)] {
             let err = analyze("SELECT ix_petri_analyze(?, ?)", &[&net, &max]).unwrap_err().to_string();
             assert!(err.contains("ix_petri_analyze"), "{err}");
         }
+    }
+
+    /// Before the escape these aborted the test process (a panic inside duckdb-rs's
+    /// `extern "C"` callback), so reaching the assertions at all is half the test.
+    #[test]
+    fn nul_in_refusal_text_is_a_sql_error_not_an_abort() {
+        let dup_id = r#"{"places":[{"id":"p\u0000"},{"id":"p\u0000"}],"transitions":[],"arcs":[]}"#;
+        let unknown_field = r#"{"places":[],"transitions":[],"arcs":[],"x\u0000":1}"#;
+        for (net, quoted) in [(dup_id, "duplicate place id `p\\0`"), (unknown_field, "x\\0")] {
+            let err = analyze("SELECT ix_petri_analyze(?, 10)", &[&net]).unwrap_err().to_string();
+            assert!(err.contains(quoted) && !err.contains('\0'), "{err}");
+        }
+    }
+
+    #[test]
+    fn sql_error_escapes_nul_from_any_message() {
+        assert_eq!(super::sql_error("a\0b".into()).to_string(), "a\\0b");
     }
 }
