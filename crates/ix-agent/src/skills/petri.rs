@@ -93,7 +93,7 @@ fn petri_analyze_output_schema() -> Value {
             "transitions": { "type": "integer" },
             "states": { "type": "integer", "description": "Distinct reachable markings enumerated" },
             "transitions_fired": { "type": "integer", "description": "Edges in the reachability graph" },
-            "truncated": { "type": "boolean", "description": "True when max_states stopped the search" },
+            "truncated": { "type": "boolean", "description": "True when the search stopped short of the full state space: max_states was reached, or a firing overflowed a u64 token count" },
             "deadlock_free": {
                 "type": "object",
                 "description": "verdict holds|fails|unknown; on `fails`, `detail` lists dead markings with the shortest firing sequence reaching each"

@@ -64,6 +64,11 @@ A deadlock found during a truncated run is still reported: a witness sequence is
 a positive existence proof and truncation cannot invalidate it. The *absence* of
 a deadlock is never reported from a truncated run.
 
+A firing whose result would not fit a `u64` token count truncates the run too,
+and the `unknown` reasons name the transition and place that overflowed. A net
+with no transitions is dead at its initial marking (`deadlock-free` fails with
+an empty witness) while `live` holds vacuously; read `deadlock-free` for it.
+
 ## 3. Determinism
 
 Firing order is fixed by the net's own type, not chosen at the call site. Places
@@ -131,7 +136,14 @@ FROM read_text('nets/*.json');   -- one row per file; column `content` holds the
 ```
 
 The state budget is a required argument, so every result names the bound it was
-computed under. The serialized `Analysis` is the wire contract; its bytes are
+computed under. It must lie in `1..=ix_petri::json::MAX_STATES_CEILING`
+(1 000 000); anything else is refused, not clamped, because enumeration holds
+every marking in memory and an unbounded net always runs to its budget. A
+refused net is a SQL error, and like any SQL error it fails the whole statement,
+so one malformed file in `read_text('nets/*.json')` loses every row. Read a dead
+marking from `deadlock_free.detail[i].tokens` (`[place id, tokens]` pairs); the
+`marking` string beside it is rendered from free-text labels for a person and is
+not escaped. The serialized `Analysis` is the wire contract; its bytes are
 pinned by `ix_petri::json::tests::wire_shape_is_pinned` on the default test
 path. The first consumer is gaia's issue #80 bootstrap-deadlock tracer, which
 reaches it from Node.js through `@duckdb/node-api`.

@@ -23,6 +23,13 @@
 //!
 //! Validation is [`PetriNetBuilder::build`]'s, unchanged, so a net refused here
 //! is refused for exactly the reason the builder gives.
+//!
+//! The state budget is capped at [`MAX_STATES_CEILING`]. Enumeration holds every
+//! marking in memory, and an unbounded net always runs to its budget (a
+//! deadlock found after the unboundedness witness is still a real result, so
+//! the search does not stop at the witness). An uncapped budget arriving across
+//! a process boundary would be a way to exhaust the host's memory, not an
+//! analysis.
 
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +81,12 @@ fn one() -> u64 {
     1
 }
 
+/// The largest `max_states` [`analyze_json`] accepts. A million markings is
+/// twenty times the in-crate default and already hundreds of megabytes for a
+/// net with a few dozen places; a caller that needs more should link the crate
+/// and choose its own [`Limits`].
+pub const MAX_STATES_CEILING: i64 = 1_000_000;
+
 /// Why a JSON net could not be analysed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum JsonNetError {
@@ -83,8 +96,9 @@ pub enum JsonNetError {
     /// Well-formed JSON describing a net the builder refuses.
     #[error("invalid net: {0}")]
     Net(#[from] PetriError),
-    /// `max_states` must admit at least the initial marking.
-    #[error("max_states must be >= 1, got {0}")]
+    /// `max_states` must admit at least the initial marking, and may not exceed
+    /// [`MAX_STATES_CEILING`].
+    #[error("max_states must be between 1 and {MAX_STATES_CEILING}, got {0}")]
     MaxStates(i64),
 }
 
@@ -117,13 +131,13 @@ impl NetSpec {
 
 /// Parse a JSON net and run [`analyze`] with a `max_states` budget.
 ///
-/// `max_states` is signed because SQL `BIGINT` is; a value below 1 is refused
-/// rather than clamped, since a silently raised budget is a different analysis
-/// from the one asked for.
+/// `max_states` is signed because SQL `BIGINT` is; a value below 1 or above
+/// [`MAX_STATES_CEILING`] is refused rather than clamped, since a silently
+/// changed budget is a different analysis from the one asked for.
 pub fn analyze_json(net_json: &str, max_states: i64) -> Result<Analysis, JsonNetError> {
-    let budget = usize::try_from(max_states)
-        .ok()
-        .filter(|&m| m >= 1)
+    let budget = Some(max_states)
+        .filter(|m| (1..=MAX_STATES_CEILING).contains(m))
+        .and_then(|m| usize::try_from(m).ok())
         .ok_or(JsonNetError::MaxStates(max_states))?;
     let spec: NetSpec =
         serde_json::from_str(net_json).map_err(|e| JsonNetError::Parse(e.to_string()))?;
@@ -174,7 +188,7 @@ mod tests {
         let got = serde_json::to_string(&analyze_json(LEAKED_LOCK, 50_000).unwrap()).unwrap();
         let want = concat!(
             r#"{"net":"leaked-lock","states":2,"transitions_fired":1,"truncated":false,"#,
-            r#""deadlock_free":{"verdict":"fails","detail":[{"state":1,"marking":"working=1","witness":["acquire"]}]},"#,
+            r#""deadlock_free":{"verdict":"fails","detail":[{"state":1,"marking":"working=1","tokens":[["working",1]],"witness":["acquire"]}]},"#,
             r#""deadlock_count":1,"#,
             r#""bounded":{"verdict":"holds","detail":{"k":1,"per_place":[["lock",1],["working",1]]}},"#,
             r#""unbounded_witness":null,"quasi_live":{"verdict":"holds","detail":[]},"#,
@@ -211,5 +225,53 @@ mod tests {
             analyze_json(LEAKED_LOCK, -3),
             Err(JsonNetError::MaxStates(-3))
         );
+    }
+
+    #[test]
+    fn budget_above_the_ceiling_is_refused_not_clamped() {
+        assert!(analyze_json(LEAKED_LOCK, MAX_STATES_CEILING).is_ok());
+        for over in [MAX_STATES_CEILING + 1, i64::MAX] {
+            assert_eq!(
+                analyze_json(LEAKED_LOCK, over),
+                Err(JsonNetError::MaxStates(over))
+            );
+        }
+    }
+
+    /// A marking already at `u64::MAX` is expressible in JSON. The analysis
+    /// must say it could not finish, not report `bounded: holds` and a pump
+    /// transition that is "never enabled".
+    #[test]
+    fn token_overflow_is_reported_as_truncation() {
+        let net = r#"{"places":[{"id":"p","tokens":18446744073709551615}],"transitions":[{"id":"t"}],"arcs":[{"from":"t","to":"p"}]}"#;
+        let a = analyze_json(net, 1_000).unwrap();
+        assert!(a.truncated);
+        assert!(
+            matches!(a.bounded, Verdict::Unknown { .. }),
+            "{:?}",
+            a.bounded
+        );
+        assert!(
+            matches!(a.quasi_live, Verdict::Unknown { .. }),
+            "{:?}",
+            a.quasi_live
+        );
+    }
+
+    /// The UDF's refusal text quotes ids and field names verbatim. They can
+    /// carry a NUL (JSON `\u0000`), which is what `ix-duck` must escape before
+    /// DuckDB sees the message; this pins that the NUL really arrives here.
+    #[test]
+    fn refusal_text_carries_input_nul_verbatim() {
+        let dup = "{\"places\":[{\"id\":\"p\\u0000\"},{\"id\":\"p\\u0000\"}],\"transitions\":[],\"arcs\":[]}";
+        assert!(analyze_json(dup, 10)
+            .unwrap_err()
+            .to_string()
+            .contains('\0'));
+        let field = "{\"places\":[],\"transitions\":[],\"arcs\":[],\"x\\u0000\":1}";
+        assert!(analyze_json(field, 10)
+            .unwrap_err()
+            .to_string()
+            .contains('\0'));
     }
 }
