@@ -10,9 +10,10 @@
 //!
 //! - Append-only event log (file order is event order).
 //! - Deterministic replay: same seed ⇒ identical config_hash sequence.
-//! - Contradictory findings preserved: same config_hash with differing
-//!   `accepted` flags surfaces as `disposition: "contradictory"` in the
-//!   derived view.
+//! - Contradictory findings preserved: same config_hash judged against the
+//!   same incumbent with differing `accepted` flags surfaces as
+//!   `disposition: "contradictory"` in the derived view (synthetic only —
+//!   see SCHEMA.md for why a deterministic target cannot produce one).
 //! - Schema validation: every line matches the documented per-event
 //!   shape.
 
@@ -239,6 +240,9 @@ fn derive_events(log_path: &Path) -> Vec<DerivedEvent> {
     let mut out: Vec<DerivedEvent> = Vec::new();
     // claim -> Vec<(event_id, accepted)>, in order of appearance.
     let mut by_claim: BTreeMap<String, Vec<(String, bool)>> = BTreeMap::new();
+    // The config the next candidate is judged against: the previous
+    // iteration line's post-decision `previous_hash`.
+    let mut incumbent: Option<String> = None;
 
     for line in raw.lines().filter(|l| !l.trim().is_empty()) {
         let v: Value = serde_json::from_str(line).unwrap();
@@ -262,8 +266,22 @@ fn derive_events(log_path: &Path) -> Vec<DerivedEvent> {
                     .get("config_hash")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let short = &config_hash[..config_hash.len().min(12)];
-                let claim = format!("{target}/config-{short}-is-an-improvement");
+                // Strip the `autoresearch:` prefix first — taking 12 chars of
+                // the raw hash yields "autoresearch" for every line and
+                // collapses the whole run into one claim.
+                let shorten = |h: &str| {
+                    let hex = h.strip_prefix("autoresearch:").unwrap_or(h);
+                    hex[..hex.len().min(12)].to_string()
+                };
+                let short = shorten(config_hash);
+                let over = incumbent
+                    .as_deref()
+                    .map_or_else(|| "baseline".to_string(), shorten);
+                let claim = format!("{target}/config-{short}-is-an-improvement-over-{over}");
+                incumbent = v
+                    .get("previous_hash")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 let accepted = v.get("accepted").and_then(Value::as_bool).unwrap_or(false);
                 let error_present = v
                     .get("error")
@@ -344,10 +362,12 @@ fn derived_event_view_event_ids_are_unique_and_ordered() {
 fn contradictory_findings_preserved_in_derived_view() {
     // Acceptance: "Contradictory findings are preserved as Contradictory,
     // not averaged away." We construct a tiny synthetic log on the fly
-    // — two iteration lines with identical config_hash, differing
-    // `accepted` — and assert the projection flags the second as
-    // `disposition: contradictory` and lists the first in
-    // `contradicted_by`.
+    // — two iteration lines with identical config_hash judged against the
+    // same incumbent (both `previous_hash: null` ⇒ both against the
+    // baseline), different rewards as only a nondeterministic evaluator
+    // could give, and differing `accepted` — and assert the projection
+    // flags the second as `disposition: contradictory` and lists the first
+    // in `contradicted_by`.
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("synthetic.jsonl");
 
@@ -445,4 +465,50 @@ fn json_schema_file_is_present_and_well_formed() {
         3,
         "schema must define run_start, iteration, run_complete"
     );
+}
+
+#[test]
+fn a_seeded_grammar_run_never_repeats_a_claim_so_nothing_is_contradictory() {
+    // The contradiction criterion needs one claim (config + incumbent)
+    // observed twice. The grammar target perturbs by continuous Gaussian
+    // noise, so a repeated config is measure-zero: every claim in a seeded
+    // run is distinct. Measured on Hari's side too (hari#37). Grammar only —
+    // other targets can repeat configs and are not covered here.
+    for strategy in [
+        Strategy::Greedy,
+        Strategy::SimulatedAnnealing {
+            initial_temperature: Some(0.05),
+            cooling_rate: 0.95,
+        },
+    ] {
+        let dir = TempDir::new().unwrap();
+        let mut target = GrammarTarget::default_smoke();
+        let outcome = run_experiment(
+            &mut target,
+            strategy,
+            500,
+            TimeBudget::soft(Duration::from_secs(5)),
+            dir.path(),
+            SEED,
+        )
+        .expect("run_experiment");
+        let derived = derive_events(&outcome.log_path);
+        assert_eq!(derived.len(), 500, "the run was not cut short");
+        let claims: BTreeSet<&str> = derived.iter().map(|e| e.claim.as_str()).collect();
+        assert_eq!(claims.len(), derived.len(), "every claim distinct");
+        // The SCHEMA.md `claim` row: full `run_start.target`, then the
+        // candidate, then the incumbent — `baseline` only on the first line.
+        assert!(derived
+            .iter()
+            .all(|e| e.target.contains("::")
+                && e.claim.starts_with(&format!("{}/config-", e.target))));
+        let over_baseline = derived
+            .iter()
+            .filter(|e| e.claim.ends_with("-is-an-improvement-over-baseline"))
+            .count();
+        assert_eq!(
+            over_baseline, 1,
+            "only the first iteration is judged against the baseline"
+        );
+    }
 }
