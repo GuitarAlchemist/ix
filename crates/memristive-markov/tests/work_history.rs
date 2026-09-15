@@ -3,6 +3,11 @@
 //! `scripts/fetch-pr-lifecycle.sh`. Values below are pinned to that
 //! fixture; they are snapshot tripwires, not general properties, and
 //! re-fetching means re-deriving them.
+//!
+//! The fixture predates two fetch-script fixes: the end-of-history line was
+//! appended by hand, and it lacks the closes of merged PRs that were later
+//! reopened (tars#219 three times, Demerzel#887 once), which the script used
+//! to drop.
 
 use memristive_markov::work_history::{
     parse_jsonl, report, WorkHistoryReport, MIN_WORKER_OUTGOING, SMOOTHING_SWEEP,

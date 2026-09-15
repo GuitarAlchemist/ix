@@ -150,10 +150,40 @@ pub struct Step {
     pub at: i64,
 }
 
-/// Parse JSONL, skipping blank lines.
+/// The fetch script's last line, written only after every repo was fetched.
+#[derive(Deserialize)]
+struct EndOfHistory {
+    end_of_history: bool,
+    prs: usize,
+}
+
+/// Parse JSONL, skipping blank lines. The last line must be the fetch
+/// script's `{"end_of_history":true,"prs":N}` with N matching the records
+/// before it, so an aborted fetch's truncated output is refused rather than
+/// read as a smaller history.
 pub fn parse_jsonl(text: &str) -> Result<Vec<PrRecord>> {
-    text.lines()
-        .filter(|l| !l.trim().is_empty())
+    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let end = lines
+        .pop()
+        .and_then(|l| serde_json::from_str::<EndOfHistory>(l).ok())
+        .filter(|e| e.end_of_history);
+    match end {
+        Some(e) if e.prs == lines.len() => {}
+        Some(e) => {
+            return Err(MemristiveError::InvalidConfig(format!(
+                "incomplete PR history: end-of-history line says {} PRs, found {}",
+                e.prs,
+                lines.len()
+            )))
+        }
+        None => {
+            return Err(MemristiveError::InvalidConfig(
+                "incomplete PR history: no end-of-history line (aborted fetch?)".into(),
+            ))
+        }
+    }
+    lines
+        .into_iter()
         .map(|l| serde_json::from_str(l).map_err(MemristiveError::from))
         .collect()
 }
@@ -187,6 +217,10 @@ const MERGE_CANDIDATE_LABELS: [&str; 2] = ["fleet:merge-ready", "agent-blackbox-
 /// A merge-candidate signal (label or approval) is sticky. On a draft it
 /// creates no state: a draft cannot merge, so the PR becomes
 /// `pr.merge_candidate` only when it is flipped ready.
+///
+/// Once merged or closed, only a reopen of a closed PR moves the lifecycle.
+/// A close that is later reopened is a `pr.rejected` visit, so
+/// `pr.rejected` is final only for PRs that stay closed.
 pub fn lifecycle(pr: &PrRecord, as_of: i64, stale_after_secs: i64) -> Result<Vec<Step>> {
     let created = parse_timestamp(&pr.created_at)?;
     if created > as_of {
@@ -222,16 +256,29 @@ pub fn lifecycle(pr: &PrRecord, as_of: i64, stale_after_secs: i64) -> Result<Vec
     let mut last_open = opening;
     let mut candidate = false;
     for (at, e) in events {
+        let signal = e.kind == "approved"
+            || (e.kind == "labeled"
+                && e.label
+                    .as_deref()
+                    .is_some_and(|l| MERGE_CANDIDATE_LABELS.contains(&l)));
+        let current = raw[raw.len() - 1].state;
         let state = match e.kind.as_str() {
+            // A closed PR that is reopened returns to where it was; a merged
+            // one cannot be reopened.
+            "reopened" if current == LifecycleState::PrRejected => match last_open {
+                LifecycleState::PrReadyForReview if candidate => LifecycleState::PrMergeCandidate,
+                s => s,
+            },
+            // Nothing else leaves a terminal state: a label, approval or flip
+            // after merge or close is remembered but emits no transition.
+            _ if current.is_terminal() => {
+                candidate |= signal;
+                continue;
+            }
             "ready_for_review" if candidate => LifecycleState::PrMergeCandidate,
             "ready_for_review" => LifecycleState::PrReadyForReview,
             "convert_to_draft" => LifecycleState::PrDraft,
-            "approved" | "labeled"
-                if e.kind == "approved"
-                    || e.label
-                        .as_deref()
-                        .is_some_and(|l| MERGE_CANDIDATE_LABELS.contains(&l)) =>
-            {
+            _ if signal => {
                 candidate = true;
                 if last_open == LifecycleState::PrDraft {
                     continue;
@@ -240,7 +287,6 @@ pub fn lifecycle(pr: &PrRecord, as_of: i64, stale_after_secs: i64) -> Result<Vec
             }
             "merged" => LifecycleState::PrMerged,
             "closed" => LifecycleState::PrRejected,
-            "reopened" => last_open,
             _ => continue,
         };
         if !state.is_terminal() {
@@ -351,9 +397,10 @@ pub struct Absorption {
     pub sample_size: u64,
 }
 
-/// Absorbing-state analysis: `pr.merged` and `pr.rejected` absorb; a state
-/// whose sequences end open keeps that mass as `p_unresolved`. Solved by
-/// fixed-point iteration (the chain is small and substochastic).
+/// Absorbing-state analysis: `pr.merged` absorbs; `pr.rejected` absorbs the
+/// sequences that end there, and its reopened share follows the chain. A
+/// state whose sequences end open keeps that mass as `p_unresolved`. Solved
+/// by fixed-point iteration (the chain is small and substochastic).
 pub fn absorption(sequences: &[Vec<Step>]) -> Vec<Absorption> {
     let n = LifecycleState::COUNT;
     let mut counts = vec![vec![0.0f64; n]; n];
@@ -375,10 +422,14 @@ pub fn absorption(sequences: &[Vec<Step>]) -> Vec<Absorption> {
     for _ in 0..10_000 {
         let mut delta = 0.0f64;
         for s in 0..n {
-            if s == merged || s == rejected || visits[s] == 0.0 {
+            if s == merged || visits[s] == 0.0 {
                 continue;
             }
             let (mut m, mut r) = (0.0, 0.0);
+            if s == rejected {
+                // Visits that were never reopened.
+                r = 1.0 - counts[s].iter().sum::<f64>() / visits[s];
+            }
             for t in 0..n {
                 let p = counts[s][t] / visits[s];
                 m += p * pm[t];
@@ -904,6 +955,116 @@ mod tests {
         );
         let s = lifecycle(&p, at("2026-01-02T00:00:00Z"), 14 * DAY);
         assert_eq!(states(&s.unwrap()), vec![PrDraft, PrRejected, PrDraft]);
+    }
+
+    #[test]
+    fn close_reopen_cycles_before_a_merge_stay_visible() {
+        use LifecycleState::*;
+        // tars#219's shape: closed and reopened twice, then merged. GitHub's
+        // own close at the merge is dropped by the fetch script.
+        let cycled = pr(
+            "2026-01-01T00:00:00Z",
+            false,
+            &[
+                ("closed", "2026-01-01T01:00:00Z"),
+                ("reopened", "2026-01-01T01:00:02Z"),
+                ("closed", "2026-01-01T02:00:00Z"),
+                ("reopened", "2026-01-01T02:00:02Z"),
+                ("merged", "2026-01-01T03:00:00Z"),
+            ],
+        );
+        let as_of = at("2026-01-02T00:00:00Z");
+        let s = lifecycle(&cycled, as_of, 14 * DAY).unwrap();
+        assert_eq!(
+            states(&s),
+            vec![
+                PrReadyForReview,
+                PrRejected,
+                PrReadyForReview,
+                PrRejected,
+                PrReadyForReview,
+                PrMerged
+            ]
+        );
+
+        // With a PR that stays closed, one of two PRs merged. Treating every
+        // close as final would give ready 1/4 merged instead of 1/2.
+        let closed = pr(
+            "2026-01-01T00:00:00Z",
+            false,
+            &[("closed", "2026-01-01T01:00:00Z")],
+        );
+        let seqs = vec![s, lifecycle(&closed, as_of, 14 * DAY).unwrap()];
+        let abs = absorption(&seqs);
+        let ready = abs
+            .iter()
+            .find(|a| a.state == "pr.ready_for_review")
+            .unwrap();
+        assert!((ready.p_merged - 0.5).abs() < 1e-9, "{ready:?}");
+        assert!((ready.p_rejected - 0.5).abs() < 1e-9, "{ready:?}");
+    }
+
+    #[test]
+    fn events_after_merge_or_final_close_emit_nothing() {
+        use LifecycleState::*;
+        let as_of = at("2026-01-02T00:00:00Z");
+        // A post-merge audit label, a stray flip, GitHub's merge close and a
+        // reopen attempt must not leave pr.merged.
+        let merged = pr(
+            "2026-01-01T00:00:00Z",
+            false,
+            &[
+                ("merged", "2026-01-01T01:00:00Z"),
+                ("closed", "2026-01-01T01:00:01Z"),
+                ("labeled:agent-blackbox-reviewed", "2026-01-01T02:00:00Z"),
+                ("convert_to_draft", "2026-01-01T02:10:00Z"),
+                ("reopened", "2026-01-01T02:20:00Z"),
+            ],
+        );
+        let s = lifecycle(&merged, as_of, 14 * DAY).unwrap();
+        assert_eq!(states(&s), vec![PrReadyForReview, PrMerged]);
+
+        // A label on a closed PR emits nothing, but it is remembered: the
+        // reopened PR comes back as a merge candidate.
+        let closed = pr(
+            "2026-01-01T00:00:00Z",
+            false,
+            &[
+                ("closed", "2026-01-01T01:00:00Z"),
+                ("labeled:fleet:merge-ready", "2026-01-01T02:00:00Z"),
+            ],
+        );
+        let s = lifecycle(&closed, as_of, 14 * DAY).unwrap();
+        assert_eq!(states(&s), vec![PrReadyForReview, PrRejected]);
+        let mut reopened = closed.clone();
+        reopened.events.push(PrEvent {
+            kind: "reopened".into(),
+            at: "2026-01-01T03:00:00Z".into(),
+            label: None,
+        });
+        let s = lifecycle(&reopened, as_of, 14 * DAY).unwrap();
+        assert_eq!(
+            states(&s),
+            vec![PrReadyForReview, PrRejected, PrMergeCandidate]
+        );
+    }
+
+    #[test]
+    fn truncated_history_is_refused() {
+        let line = r#"{"repo":"ix","number":1,"created_at":"2026-01-01T00:00:00Z","state":"OPEN","is_draft":false,"head_ref":"x","events":[]}"#;
+        let end = |n: usize| format!(r#"{{"end_of_history":true,"prs":{n}}}"#);
+        let ok = format!("{line}\r\n{line}\n\n{}\n", end(2));
+        assert_eq!(parse_jsonl(&ok).unwrap().len(), 2);
+        // An aborted fetch never writes the last line.
+        assert!(parse_jsonl(&format!("{line}\n{line}\n")).is_err());
+        assert!(parse_jsonl("").is_err());
+        // A count that does not match the records is refused too.
+        assert!(parse_jsonl(&format!("{line}\n{}\n", end(2))).is_err());
+        assert!(parse_jsonl(&format!(
+            "{line}\n{}\n",
+            r#"{"end_of_history":false,"prs":1}"#
+        ))
+        .is_err());
     }
 
     #[test]
