@@ -76,7 +76,8 @@ for (i, state) in smoothed.iter().enumerate() {
 Find delivery hotspots — areas where vehicles frequently stop. DBSCAN is perfect because hotspots have irregular shapes (they follow buildings, loading docks, intersections) and you need to identify noise (one-off stops).
 
 ```rust
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 use ndarray::array;
 
 // Stop locations from fleet: [latitude, longitude]
@@ -234,7 +235,7 @@ println!("Confidence: {:.2}", log_prob);
 Track which route patterns are "normal" using a Bloom filter. When a vehicle's route hash isn't in the filter, flag it for review.
 
 ```rust
-use ix_probabilistic::BloomFilter;
+use ix_probabilistic::bloom::BloomFilter;
 
 // Train: insert all normal route patterns
 let mut normal_routes = BloomFilter::new(10_000, 0.01); // 1% false positive rate
@@ -372,7 +373,8 @@ let heuristic = |node: &Intersection| -> f64 {
 Pre-position ambulances by predicting where incidents will cluster. Use DBSCAN on historical incidents to find hotspots, then train a classifier to predict which zones will be active at a given time.
 
 ```rust
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 use ix_ensemble::gradient_boosting::GradientBoostedClassifier;
 use ix_ensemble::traits::EnsembleClassifier;
 use ndarray::{array, Array2};
@@ -424,7 +426,8 @@ println!("Incident risk: {:.0}%", risk[[0, 1]] * 100.0);
 When multiple 911 calls arrive from the same area within minutes, detect the spatial-temporal cluster as a potential mass casualty incident (MCI) requiring multi-unit response.
 
 ```rust
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 use ndarray::Array2;
 
 // Sliding window: 911 calls in the last 5 minutes

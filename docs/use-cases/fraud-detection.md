@@ -40,7 +40,8 @@ Some features are redundant (e.g., "transaction amount" and "log amount" contain
 ```rust
 use ndarray::{Array2, Array1};
 use ix_math::linalg;
-use ix_unsupervised::{PCA, DimensionReducer};
+use ix_unsupervised::pca::PCA;
+use ix_unsupervised::traits::DimensionReducer;
 
 // Load and standardize (critical for PCA)
 let (standardized, means, stds) = linalg::standardize(&raw_features);
@@ -68,7 +69,8 @@ Random Forest is ideal for fraud detection:
 - Fast inference for real-time scoring
 
 ```rust
-use ix_supervised::{DecisionTree, Classifier};
+use ix_supervised::decision_tree::DecisionTree;
+use ix_supervised::traits::Classifier;
 use ix_supervised::metrics;
 use ndarray::Array1;
 
