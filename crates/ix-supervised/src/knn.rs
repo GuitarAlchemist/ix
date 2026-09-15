@@ -6,6 +6,10 @@ use crate::traits::Classifier;
 use ix_math::distance::euclidean;
 
 /// k-Nearest Neighbors classifier (brute-force).
+///
+/// `predict` takes a majority vote among the `k` nearest training rows; a tied
+/// vote goes to the smallest class index, as in scikit-learn's
+/// `KNeighborsClassifier` with uniform weights.
 pub struct KNN {
     pub k: usize,
     x_train: Option<Array2<f64>>,
@@ -50,7 +54,15 @@ impl Classifier for KNN {
             for &(_, label) in distances.iter().take(self.k) {
                 votes[label] += 1;
             }
-            votes.iter().enumerate().max_by_key(|(_, &v)| v).unwrap().0
+            // Ties go to the smallest class index, as in scikit-learn.
+            // (`max_by_key` would return the last maximum, the largest index.)
+            let mut best = 0;
+            for (label, &v) in votes.iter().enumerate() {
+                if v > votes[best] {
+                    best = label;
+                }
+            }
+            best
         }))
     }
 
@@ -103,5 +115,22 @@ mod tests {
         let pred = knn.predict(&x_test);
         assert_eq!(pred[0], 0);
         assert_eq!(pred[1], 1);
+    }
+
+    #[test]
+    fn test_knn_vote_tie_goes_to_smallest_label() {
+        // k = 2: one neighbour of each class, so the vote is [1, 1, 1].
+        // Like scikit-learn (the mode of the neighbours' labels), the tie
+        // must resolve to the smallest class index, whatever the order.
+        let x_train = array![[0.0], [2.0], [10.0]];
+        let y_train = array![2, 0, 1];
+
+        let mut knn = KNN::new(3);
+        knn.fit(&x_train, &y_train);
+        assert_eq!(knn.predict(&array![[1.0]])[0], 0);
+
+        let mut knn = KNN::new(2);
+        knn.fit(&x_train, &array![1, 0, 2]);
+        assert_eq!(knn.predict(&array![[0.9]])[0], 0);
     }
 }
