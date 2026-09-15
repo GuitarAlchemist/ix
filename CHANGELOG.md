@@ -6,6 +6,18 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Changed — governance checks no longer read "no match" as approval (2026-09-14)
+
+- **Breaking for scripts:** `ix check action` exits `2` (verdict `U`) instead of `0` (`T`)
+  when no rule matches, and adds a `note` saying no match is not evidence of compliance.
+  It now also applies `Constitution::check_action` rules (verdict `D` when one fires) and
+  reports `basis` and `warnings`.
+- `ix_governance_check` (MCP) adds `verdict` (`D`/`P`/`U`), `basis` and `note`; `compliant`
+  is unchanged. New constitution rules for force-push / history rewrite (Article 3),
+  acting without human approval (6), removing audit records (7), `--no-verify` (9).
+- `ix_cargo_deps` keeps only root `[workspace]` members (reports skipped directories in
+  `non_members`) and parses `[dependencies.<name>]` and target-specific dependency tables.
+
 ### Added — `dark-features` doctor check (2026-09-08)
 
 - `ix doctor` gains a `dark-features` check (`crates/ix-skill/src/doctor/dark_features.rs`,

@@ -16,7 +16,8 @@ pub fn doctor(format: Format) -> Result<i32, String> {
 }
 
 /// Check a proposed action against the Demerzel constitution. Returns a
-/// hexavalent-friendly exit code based on compliance.
+/// hexavalent exit code: D (3) when a rule fires, P (1) for relevant articles
+/// only, U (2) when nothing matched.
 pub fn action(action_text: &str, _context: Option<&str>, format: Format) -> Result<i32, String> {
     let gov_dir =
         std::env::var("IX_GOVERNANCE_DIR").unwrap_or_else(|_| "governance/demerzel".to_string());
@@ -25,7 +26,8 @@ pub fn action(action_text: &str, _context: Option<&str>, format: Format) -> Resu
     let constitution = ix_governance::Constitution::load(std::path::Path::new(&const_path))
         .map_err(|e| format!("loading {const_path}: {e}"))?;
 
-    // Simple substring/keyword semantic scan over article texts.
+    // Simple substring/keyword semantic scan over article names, plus the
+    // constitution's own rules (the same ones `ix_governance_check` uses).
     let action_lower = action_text.to_lowercase();
     let mut relevant: Vec<(u8, String)> = Vec::new();
     for art in &constitution.articles {
@@ -37,10 +39,18 @@ pub fn action(action_text: &str, _context: Option<&str>, format: Format) -> Resu
             }
         }
     }
+    let rules = constitution.check_action(action_text);
+    for art in &rules.relevant_articles {
+        if !relevant.iter().any(|(n, _)| *n == art.number) {
+            relevant.push((art.number, art.name.clone()));
+        }
+    }
+    relevant.sort_by_key(|(n, _)| *n);
 
-    // Heuristic verdict: no relevant articles hit → T (no constraint fired).
-    // Relevant hits → P (probable compliance, review). Keywords like
-    // "delete", "drop", "rm -rf", "force-push" → D (doubtful).
+    // Heuristic verdict: a dangerous keyword or a constitution rule firing
+    // → D (doubtful). Relevant articles only → P (probable, review).
+    // Nothing matched → U: keyword matching can't tell a benign action from
+    // one the rules don't cover, so no match is not approval.
     let danger_words = [
         "delete",
         "drop table",
@@ -51,30 +61,37 @@ pub fn action(action_text: &str, _context: Option<&str>, format: Format) -> Resu
     ];
     let dangerous = danger_words.iter().any(|w| action_lower.contains(w));
 
-    let verdict = if dangerous {
+    let verdict = if dangerous || !rules.compliant {
         "D"
     } else if !relevant.is_empty() {
         "P"
     } else {
-        "T"
+        "U"
     };
     let exit_code = match verdict {
-        "T" => exit::OK_TRUE,
         "P" => exit::PROBABLE,
         "D" => exit::DOUBTFUL,
         _ => exit::UNKNOWN,
     };
 
-    let payload = json!({
+    let mut payload = json!({
         "verdict": verdict,
         "exit_code": exit_code,
+        "basis": "keyword-heuristic",
         "action": action_text,
         "relevant_articles": relevant
             .iter()
             .map(|(n, name)| json!({ "number": n, "name": name }))
             .collect::<Vec<_>>(),
         "dangerous_keywords_matched": dangerous,
+        "warnings": rules.warnings,
     });
+    if verdict == "U" {
+        payload["note"] = json!(
+            "No rule matched. This check only recognizes English keywords, so no match is not \
+             evidence of compliance: read the constitution for actions it does not cover."
+        );
+    }
     output::emit(&payload, format).map_err(|e| format!("writing output: {e}"))?;
     Ok(exit_code)
 }

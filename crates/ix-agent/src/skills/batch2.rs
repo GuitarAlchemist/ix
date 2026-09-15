@@ -760,7 +760,7 @@ fn governance_check_schema() -> Value {
         &["action"],
     )
 }
-/// Check a proposed action against the Demerzel constitution.
+/// Check a proposed action against the Demerzel constitution with an English keyword heuristic: verdict D when a rule fires, P for advisory articles only, U when nothing matched (not evidence of compliance).
 #[ix_skill(
     domain = "governance",
     name = "governance.check",

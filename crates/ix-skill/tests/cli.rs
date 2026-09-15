@@ -152,15 +152,39 @@ fn check_action_detects_dangerous_keywords() {
 }
 
 #[test]
-fn check_action_benign_is_true() {
+fn check_action_unmatched_is_unknown() {
     let assert = ix()
         .args(["--format", "json", "check", "action", "log the response"])
         .assert();
     let code = assert.get_output().status.code().unwrap_or(-1);
-    assert!(
-        code == 0 || code == 1,
-        "benign action should be T (0) or P (1), got {code}"
-    );
+    assert_eq!(code, 2, "an action no rule matches should be U (2), got {code}");
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(value["verdict"], "U");
+    assert!(value["note"]
+        .as_str()
+        .unwrap()
+        .contains("not evidence of compliance"));
+}
+
+#[test]
+fn check_action_uses_constitution_rules() {
+    // No word from the CLI's own danger list, but Articles 3, 6 and 7 fire.
+    let assert = ix()
+        .args([
+            "--format",
+            "json",
+            "check",
+            "action",
+            "rewrite history to erase the audit ledger without approval",
+        ])
+        .assert();
+    let code = assert.get_output().status.code().unwrap_or(-1);
+    assert_eq!(code, 3, "a constitution rule firing should yield D (3), got {code}");
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(value["verdict"], "D");
+    assert_eq!(value["dangerous_keywords_matched"], false);
 }
 
 #[test]
