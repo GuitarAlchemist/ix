@@ -295,6 +295,84 @@ fn dispatch_action_blocks_unknown_tool_via_approval() {
     }
 }
 
+/// Every registry-backed tool must be named in `ix-approval`'s classification table.
+///
+/// `ToolRegistry::call` routes registry-backed tools through `dispatch_action`, whose
+/// `ApprovalMiddleware` sends an unclassified name to `ActionKind::Unknown` → Tier 3 →
+/// blocked. So adding an `#[ix_skill]` without a matching `classify_action_kind` entry
+/// ships a tool that is listed, unit-tested below the gate, and refused on every MCP call
+/// (`ix_petri_analyze`, `ix_mesh_correlate` and the four `ix_assumption_*` tools were).
+/// Manual tools are invoked directly by `ToolRegistry::call` and never reach the gate.
+///
+/// A tool that *should* be gated gets an explicit gated kind (shell, web fetch,
+/// out-of-project edit), not the silent `Unknown` default.
+#[test]
+fn every_registry_backed_tool_has_an_explicit_approval_classification() {
+    use ix_agent::registry_bridge::mcp_name;
+    use ix_approval::{classify_action_kind, ActionKind};
+
+    let unclassified: Vec<String> = ix_registry::all()
+        .map(|d| mcp_name(d.name))
+        .filter(|name| classify_action_kind(name) == ActionKind::Unknown)
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "registry-backed tools with no ix-approval classification — every MCP call to \
+         them is blocked at Tier 3: {unclassified:?}\n  \
+         Add each to crates/ix-approval/src/classify.rs under the kind its effects warrant."
+    );
+}
+
+/// `ix_petri_analyze` through the exact entry point `main.rs` uses for `tools/call`.
+/// Before its classification it returned
+/// `ix_approval: action blocked (ApprovalRequired)` here.
+#[test]
+fn petri_analyze_is_reachable_through_mcp_dispatch() {
+    use ix_agent::server_context::ServerContext;
+
+    let (ctx, _rx) = ServerContext::new();
+    let out = ToolRegistry::new()
+        .call_with_ctx(
+            "ix_petri_analyze",
+            serde_json::json!({
+                "places": [{ "id": "lock", "tokens": 1 }, "working"],
+                "transitions": ["acquire"],
+                "arcs": [
+                    { "source": "lock", "target": "acquire" },
+                    { "source": "acquire", "target": "working" }
+                ]
+            }),
+            &ctx,
+        )
+        .expect("ix_petri_analyze must not be refused by the approval gate");
+    assert_eq!(out["deadlock_free"]["verdict"], "fails");
+    assert_eq!(out["deadlock_free"]["detail"][0]["witness"][0], "acquire");
+}
+
+/// `ix_pipeline_run` itself is a manual tool and is not gated, but each step goes back
+/// through `ToolRegistry::call` — so a step naming an unclassified registry tool failed
+/// the whole pipeline with the same approval refusal.
+#[test]
+fn pipeline_run_step_reaches_a_newly_classified_tool() {
+    use ix_agent::server_context::ServerContext;
+
+    let (ctx, _rx) = ServerContext::new();
+    let out = ToolRegistry::new()
+        .call_with_ctx(
+            "ix_pipeline_run",
+            serde_json::json!({
+                "steps": [{
+                    "id": "mesh",
+                    "tool": "ix_mesh_correlate",
+                    "arguments": { "series": [[1.0, 2.0, 3.0, 4.0], [2.0, 4.0, 6.0, 8.0]] }
+                }]
+            }),
+            &ctx,
+        )
+        .expect("a pipeline step must not be refused by the approval gate");
+    assert_eq!(out["results"]["mesh"]["n_streams"], 2);
+}
+
 #[test]
 fn parity_batch1_tools_are_registry_backed() {
     // Sanity: the 6 tools migrated in Week 2 batch 1 should now be sourced
