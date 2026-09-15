@@ -219,9 +219,17 @@ fn mcp_response_peak_heap_stays_under_heap_bound_at_the_limits() {
 
     // Control-character ids, whose escapes grow again in the pretty text and
     // again in the JSON-RPC line, and quote ids, whose escape doubles in each.
-    let line = check("control-ids", &deep_witnesses(20_000, CTRL, 32, 0, 0), 25_000);
-    assert!(line.matches("\\u0001").count() >= 32 * 8 * 20_000);
-    let line = check("quote-ids", &deep_witnesses(20_000, QUOTE, 32, 0, 0), 25_000);
+    let line = check(
+        "control-ids",
+        &deep_witnesses(20_000, CTRL, 32, 0, 0),
+        25_000,
+    );
+    assert!(line.matches("\\\\u0001").count() >= 32 * 8 * 20_000);
+    let line = check(
+        "quote-ids",
+        &deep_witnesses(20_000, QUOTE, 32, 0, 0),
+        25_000,
+    );
     assert!(line.matches("\\\\\\\"").count() >= 32 * 8 * 20_000);
 
     // Places times states, and eight dead markings listing every place.
