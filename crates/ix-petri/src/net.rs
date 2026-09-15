@@ -63,9 +63,11 @@ impl Marking {
         self.0.is_empty()
     }
 
-    /// Total tokens across all places.
+    /// Total tokens across all places, saturating at `u64::MAX` rather than
+    /// panicking (debug) or wrapping (release) on a marking whose places
+    /// together hold more than that.
     pub fn total(&self) -> u64 {
-        self.0.iter().sum()
+        self.0.iter().fold(0u64, |sum, &t| sum.saturating_add(t))
     }
 
     /// `self >= other` componentwise — "self covers other".

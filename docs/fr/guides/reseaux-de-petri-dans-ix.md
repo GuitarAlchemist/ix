@@ -67,6 +67,14 @@ séquence témoin est une preuve d'existence positive que la troncature
 n'invalide pas. En revanche, l'*absence* d'interblocage n'est jamais affirmée à
 partir d'une exécution tronquée.
 
+Un tir dont le résultat dépasserait un nombre de jetons `u64` tronque lui aussi
+l'exécution, et les raisons `unknown` nomment la transition et la place en
+dépassement. Le champ `truncation` du rapport dit quelle cause a arrêté une
+exécution : `max_states` (un budget plus grand peut la terminer) ou `overflow`
+(aucun ne le fera). Un réseau sans transition est mort dès son marquage initial
+(`sans interblocage` échoue avec un témoin vide) tandis que `vivante` est vraie
+par vacuité ; c'est `sans interblocage` qu'il faut lire pour lui.
+
 ## 3. Déterminisme
 
 L'ordre de tir est fixé par le type du réseau lui-même, et non choisi au site
@@ -116,6 +124,69 @@ Pour l'utiliser sur un fichier :
 ```bash
 cargo run -p ix-petri --example analyze_pnml -- chemin/vers/reseau.pnml
 ```
+
+### JSON et SQL, pour les appelants hors Rust
+
+`ix_petri::analyze_json(net_json, max_states)` prend un réseau dans un format
+JSON calqué sur le builder, une entrée par appel, et renvoie la même `Analysis` :
+
+```json
+{ "name": "leaked-lock",
+  "places": [{ "id": "lock", "tokens": 1 }, { "id": "working" }],
+  "transitions": [{ "id": "acquire" }],
+  "arcs": [{ "from": "lock", "to": "acquire" }, { "from": "acquire", "to": "working" }] }
+```
+
+`tokens` vaut 0 par défaut et `weight` 1 ; les champs inconnus sont **rejetés**,
+si bien qu'un `initial_marking` mal orthographié ne peut pas faire analyser en
+silence un réseau vide. `ix-duck` l'expose comme fonction scalaire DuckDB,
+embarquée dans l'extension chargeable `ix.duckdb_extension` :
+
+```sql
+SELECT json_extract_string(ix_petri_analyze(content, 50000), '$.deadlock_free.verdict')
+FROM read_text('reseaux/*.json');   -- une ligne par fichier ; la colonne `content` porte le JSON
+```
+
+Le budget d'états est un argument obligatoire : chaque résultat nomme la borne
+sous laquelle il a été calculé. Il doit appartenir à
+`1..=ix_petri::json::MAX_STATES_CEILING` (1 000 000). L'appel est aussi
+refusé, jamais borné en silence, quand le JSON du réseau dépasse
+`MAX_NET_JSON_BYTES` (1 Mio) ou quand `ix_petri::json::heap_bound` pour ce réseau
+et ce budget dépasse `HEAP_BUDGET_BYTES` (512 Mio). Le nombre d'états ne borne
+pas à lui seul la mémoire : les marquages coûtent `états × places`, les arcs et
+la table de vivacité `états × transitions`, et jusqu'à neuf témoins
+`états × longueur d'identifiant de transition` ; un réseau non borné va toujours
+jusqu'à son budget. `heap_bound` est un décompte au pire lu sur la taille du
+réseau, confronté aux pics mesurés dans `crates/ix-petri/tests/heap_budget.rs` ;
+le refus nomme le plus grand `max_states` admis pour ce réseau (quelques
+centaines de milliers pour un petit réseau). La borne vaut par ligne, et ce
+qu'elle laisse rendre aussi : chaque octet du JSON de résultat est compté au
+moins trois fois, si bien qu'une ligne admise rend au plus un tiers environ de
+512 Mio, **environ 171 Mio**. Ce pire cas est atteignable avec un petit réseau :
+un réseau de 2 ko dont les témoins profonds répètent un identifiant de
+transition de 64 caractères de contrôle (six octets chacun une fois échappés)
+rend 129 Mo à son plus grand budget admis (41 537), et la même forme avec des
+identifiants plus longs 144 à 149 Mo. DuckDB garde les chaînes de résultat hors
+de `memory_limit` ; les résultats d'un appel de la fonction scalaire (un bloc,
+jusqu'à 2048 lignes) sont donc refusés ensemble au-delà de 512 Mio. Cela plafonne
+un bloc, pas une instruction : chaque thread traite son propre bloc, et un
+résultat que DuckDB matérialise, ou un opérateur qui garde son entrée
+(`ORDER BY`, `string_agg`, un client qui lit toutes les lignes), en garde
+plusieurs. À 129 Mo par ligne, 64 lignes font environ 8 Go. **Pour de grands
+budgets, analysez un réseau par requête**, ou gardez un budget assez petit pour
+que lignes × résultat tienne en mémoire. Un réseau refusé
+est une erreur SQL et, comme toute erreur SQL, fait échouer l'instruction
+entière : un seul fichier mal formé dans `read_text('reseaux/*.json')` fait
+perdre toutes les lignes. Lisez un marquage mort dans
+`deadlock_free.detail[i].tokens` (paires `[id de place, jetons]`) ; la chaîne
+`marking` voisine est rendue à partir d'étiquettes libres, pour un humain, et
+n'est pas échappée. Les nombres de jetons sont des `u64` ; un lecteur JavaScript
+perd en précision au-delà de 2^53 : refusez ces valeurs (`Number.isSafeInteger`)
+plutôt que de les arrondir. L'`Analysis` sérialisée est le contrat de
+transport ; ses octets sont figés par `ix_petri::json::tests::wire_shape_is_pinned`
+sur le chemin de test par défaut. Le premier consommateur est le traceur de
+blocage d'amorçage de l'issue #80 de gaia, qui l'atteint depuis Node.js via
+`@duckdb/node-api`.
 
 ## 5. L'exemple concret à l'origine de la crate
 
