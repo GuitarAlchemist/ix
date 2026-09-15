@@ -87,8 +87,12 @@ fn absorption_snapshot_values() {
     let ready = get("pr.ready_for_review");
     assert_eq!(ready.sample_size, 1204);
     assert!(ready.p_merged > 0.91, "{ready:?}");
-    // Stuck states carry censoring: many are still open at as_of, so the
-    // conditional merge rate is the outcome figure, p_merged is not.
+    // Stuck states carry censoring: many are still open at as_of, so compare
+    // the conditional merge rate, not p_merged. Both are what the first-order
+    // chain implies, not observed outcomes: all 17 stuck drafts that were
+    // later flipped ready merged. Observed rates (stuck_draft 17/21 = 0.810,
+    // stuck_ready 24/35 = 0.686) fall outside this range, which pins the
+    // chain values on this fixture.
     for s in ["pr.stuck_draft", "pr.stuck_ready"] {
         let a = get(s);
         assert!(a.p_unresolved > 0.2, "{a:?}");
@@ -111,7 +115,12 @@ fn held_out_snapshot_values() {
         score("vlmm"),
     );
     // With origin-aware stuck states VLMM adds nothing: same accuracy, no
-    // disagreement, and first-order has the lower log-loss at every epsilon.
+    // disagreement. The log-loss ordering below is a snapshot value of the
+    // 80/20 split only: across stale {7,14,30} x split {0.7,0.8,0.9} x
+    // (order, min obs) {(3,5),(2,5),(3,2),(3,10)}, VLMM never beats
+    // first-order on accuracy, but it has the lower log-loss at every
+    // epsilon at 0.9 (all 12 settings). A flip here after a refetch or a
+    // split change is not a code regression.
     assert!(first.accuracy > marginal.accuracy);
     assert_eq!(first.accuracy, vlmm.accuracy);
     assert_eq!(
