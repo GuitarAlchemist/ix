@@ -20,9 +20,15 @@
 //! logic here.
 //!
 //! The heap bound covers what this wrap does with a row: the copy of the text,
-//! the analysis, its JSON and the `CString` DuckDB copies. It is per row, and
-//! DuckDB keeps a chunk's result strings together, so a statement over many
-//! large nets holds their outputs at once; the bound does not cap that.
+//! the analysis, its JSON and the `CString` DuckDB copies. It is per row. One
+//! row's result JSON is at most about a third of the budget (about 171 MiB), and
+//! a 2 kB net with deep witnesses over a long control-character transition id
+//! reaches 130 to 150 MB of it. DuckDB keeps a chunk's result strings together,
+//! outside `memory_limit`, so the results of one call of this function (one
+//! chunk, up to 2048 rows) are refused once they pass
+//! [`CHUNK_OUTPUT_BUDGET_BYTES`] together. That caps a chunk, not a statement:
+//! each thread runs its own chunk, and a result DuckDB materializes, or an
+//! operator that keeps its input, holds many chunks.
 //!
 //! The refusal text quotes ids and field names verbatim, and JSON can spell a
 //! NUL (`\u0000`) inside either. duckdb-rs hands an error to DuckDB through
@@ -40,6 +46,12 @@ use duckdb::Connection;
 use std::error::Error;
 use std::ffi::CString;
 
+/// The most result JSON one call of `ix_petri_analyze` hands DuckDB across the
+/// rows of its chunk: the per-row heap budget again, so a chunk of large
+/// results is a SQL error rather than GBs DuckDB's `memory_limit` never sees.
+/// Tests use a small value so the refusal is reachable without that much memory.
+const CHUNK_OUTPUT_BUDGET_BYTES: usize = if cfg!(test) { 64 * 1024 } else { ix_petri::json::HEAP_BUDGET_BYTES as usize };
+
 /// The only way an error leaves this UDF for DuckDB: its text with NUL escaped,
 /// so no message — today's or a future one — can abort the host.
 fn sql_error(e: Box<dyn Error>) -> Box<dyn Error> {
@@ -49,7 +61,7 @@ fn sql_error(e: Box<dyn Error>) -> Box<dyn Error> {
 struct IxPetriAnalyze;
 impl VScalar for IxPetriAnalyze {
     type State = ();
-    // @ai:invariant ix_petri_analyze(net, max_states) returns serde_json of ix_petri::analyze_json(net, max_states) byte-for-byte; a refused net/JSON/budget is a SQL error whose text holds no NUL; NULL arg -> NULL. Only duck-feature tests exercise it (sql_equals_rust_wire_bytes, nul_in_refusal_text_is_a_sql_error_not_an_abort), CI compiles neither and the drift snapshot lists neither [P:assumed conf:0.7]
+    // @ai:invariant ix_petri_analyze(net, max_states) returns serde_json of ix_petri::analyze_json(net, max_states) byte-for-byte; a refused net/JSON/budget, or a chunk whose results pass CHUNK_OUTPUT_BUDGET_BYTES, is a SQL error whose text holds no NUL; NULL arg -> NULL. Only duck-feature tests exercise it (sql_equals_rust_wire_bytes, nul_in_refusal_text_is_a_sql_error_not_an_abort, a_chunk_of_results_over_its_budget_is_a_sql_error), CI compiles neither and the drift snapshot lists neither [P:assumed conf:0.7]
     unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn Error>> {
         analyze_rows(input, output).map_err(sql_error)
     }
@@ -71,6 +83,7 @@ unsafe fn analyze_rows(input: &mut DataChunkHandle, output: &mut dyn WritableVec
     let maxes = input.flat_vector(1);
     let maxes = maxes.as_slice_with_len::<i64>(n);
     let mut out = output.flat_vector();
+    let mut emitted = 0usize;
     for i in 0..n {
         if net_null[i] || max_null[i] {
             out.set_null(i);
@@ -79,8 +92,13 @@ unsafe fn analyze_rows(input: &mut DataChunkHandle, output: &mut dyn WritableVec
         let net = DuckString::new(&mut { nets[i] }).as_str().to_string();
         let analysis = ix_petri::analyze_json(&net, maxes[i])
             .map_err(|e| format!("ix_petri_analyze: {e}").replace('\0', "\\0"))?;
+        let json = serde_json::to_string(&analysis)?;
+        emitted = emitted.saturating_add(json.len());
+        if emitted > CHUNK_OUTPUT_BUDGET_BYTES {
+            return Err(format!("ix_petri_analyze: results in this chunk reach {emitted} bytes at row {} of {n}, over the {CHUNK_OUTPUT_BUDGET_BYTES}-byte budget for one chunk; analyse fewer large nets per statement, or lower max_states", i + 1).into());
+        }
         // serde_json escapes control characters, so the output cannot hold a NUL.
-        out.insert(i, CString::new(serde_json::to_string(&analysis)?)?);
+        out.insert(i, CString::new(json)?);
     }
     Ok(())
 }
@@ -140,6 +158,30 @@ mod tests {
             let err = analyze("SELECT ix_petri_analyze(?, 10)", &[&net]).unwrap_err().to_string();
             assert!(err.contains(quoted) && !err.contains('\0'), "{err}");
         }
+    }
+
+    /// A net whose result is about 18 kB (eight 11-step witnesses of a 32-control-character id)
+    /// passes alone and fails the statement once five rows of it share a chunk past the test budget.
+    #[test]
+    fn a_chunk_of_results_over_its_budget_is_a_sql_error() {
+        let id = "\\u0001".repeat(32);
+        let mut t = vec![format!(r#"{{"id":"{id}"}}"#)];
+        let mut a = vec![format!(r#"{{"from":"c","to":"{id}"}}"#), format!(r#"{{"from":"{id}","to":"d"}}"#)];
+        let mut p = vec![r#"{"id":"c","tokens":10}"#.to_string(), r#"{"id":"d"}"#.to_string(), r#"{"id":"z","tokens":1}"#.to_string()];
+        for i in 0..8 {
+            p.push(format!(r#"{{"id":"o{i}"}}"#));
+            t.push(format!(r#"{{"id":"f{i}"}}"#));
+            a.extend([format!(r#"{{"from":"z","to":"f{i}"}}"#), format!(r#"{{"from":"d","to":"f{i}","weight":10}}"#), format!(r#"{{"from":"f{i}","to":"o{i}"}}"#)]);
+        }
+        let net = format!(r#"{{"places":[{}],"transitions":[{}],"arcs":[{}]}}"#, p.join(","), t.join(","), a.join(","));
+        let one = serde_json::to_string(&ix_petri::analyze_json(&net, 100).unwrap()).unwrap().len();
+        assert!(one < super::CHUNK_OUTPUT_BUDGET_BYTES && 5 * one > super::CHUNK_OUTPUT_BUDGET_BYTES, "{one}");
+        let sum = "SELECT sum(length(ix_petri_analyze(net, 100)))::VARCHAR FROM (VALUES (?), (?), (?), (?), (?)) t(net)";
+        let err = analyze(sum, &[&net, &net, &net, &net, &net]).unwrap_err().to_string();
+        let row = super::CHUNK_OUTPUT_BUDGET_BYTES / one + 1;
+        assert!(err.contains("budget for one chunk") && err.contains(&format!("at row {row} of 5")), "{err}");
+        let pair = "SELECT sum(length(ix_petri_analyze(net, 100)))::VARCHAR FROM (VALUES (?), (?)) t(net)";
+        assert_eq!(analyze(pair, &[&net, &net]).unwrap(), Some((2 * one).to_string()));
     }
 
     #[test]

@@ -46,11 +46,19 @@
 //!   and `max_states`, is at most [`HEAP_BUDGET_BYTES`].
 //!
 //! The bound covers parsing, enumeration, every analysis, the returned
-//! [`Analysis`], one `serde_json::to_string` of it, and handing that string to a
-//! C caller as a `CString` plus one copy of its bytes (which is what `ix-duck`
-//! does). It does not cover what the host does with the string after that, and
-//! it is per call: a host analysing several nets at once holds one budget per
-//! call in flight, and the strings it has already been handed.
+//! [`Analysis`], and what the caller does with it, named by an [`Output`]:
+//! `ix-duck` serializes it once and hands the string to C
+//! ([`Output::CString`]); `ix-agent` renders it as a pretty-printed MCP tool
+//! result inside a JSON-RPC line ([`Output::McpResponse`]), which costs several
+//! times more per byte of result. It does not cover what the host does with
+//! the bytes after that, and it is per call: a host analysing several nets at
+//! once holds one budget per call in flight, and the results it already holds.
+//!
+//! Every byte of the serialized result is charged at least three times, so one
+//! admitted call returns at most `HEAP_BUDGET_BYTES / 3` bytes of JSON, about
+//! 171 MiB. That ceiling is reachable: a 2 kB net whose deep witnesses repeat a
+//! transition id of control characters (six bytes each once escaped) returns
+//! about 130 to 150 MB at its largest admitted `max_states`.
 
 use serde::{Deserialize, Serialize};
 
@@ -118,6 +126,21 @@ pub const HEAP_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
 /// costs a bounded multiple of its JSON length, so this caps that part of the
 /// budget before any of it is spent.
 pub const MAX_NET_JSON_BYTES: usize = 1024 * 1024;
+
+/// What the caller does with the [`Analysis`] it is handed, which the bound
+/// charges for alongside the analysis itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Output {
+    /// One `serde_json::to_string` of it, a `CString` made from that string,
+    /// and one copy of its bytes: what `ix-duck`'s `ix_petri_analyze` does
+    /// with a row, and what [`analyze_json`] is admitted for.
+    CString,
+    /// `ix-agent`'s `petri.analyze` result: `serde_json::to_value` of it, plus
+    /// a `transition_labels` object with one entry per transition a deadlock
+    /// witness fires, that value pretty-printed, and the pretty text escaped
+    /// into the compact JSON-RPC line the server writes.
+    McpResponse,
+}
 
 /// Why a JSON net could not be analysed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -188,7 +211,7 @@ pub fn analyze_json(net_json: &str, max_states: i64) -> Result<Analysis, JsonNet
     let spec: NetSpec =
         serde_json::from_str(net_json).map_err(|e| JsonNetError::Parse(e.to_string()))?;
     let net = spec.build()?;
-    let limits = admit(&net, net_json.len(), max_states)?;
+    let limits = admit(&net, net_json.len(), max_states, Output::CString)?;
     Ok(analyze(&net, limits))
 }
 
@@ -196,10 +219,16 @@ pub fn analyze_json(net_json: &str, max_states: i64) -> Result<Analysis, JsonNet
 /// the refusal: `max_states` outside `1..=`[`MAX_STATES_CEILING`], or a
 /// [`heap_bound`] over [`HEAP_BUDGET_BYTES`]. `json_len` is the length of the
 /// JSON the net was parsed from, or 0 for a caller that built it another way,
-/// whose own parsing is then outside the bound.
-pub fn admit(net: &PetriNet, json_len: usize, max_states: i64) -> Result<Limits, JsonNetError> {
+/// whose own parsing is then outside the bound. `output` is what the caller
+/// will do with the result.
+pub fn admit(
+    net: &PetriNet,
+    json_len: usize,
+    max_states: i64,
+    output: Output,
+) -> Result<Limits, JsonNetError> {
     let limits = Limits::with_max_states(state_count(max_states)?);
-    let (per_state, fixed) = heap_terms(net, json_len, limits.max_reported_deadlocks);
+    let (per_state, fixed) = heap_terms(net, json_len, limits.max_reported_deadlocks, output);
     let bound = fixed + per_state * limits.max_states as u128;
     let budget = u128::from(HEAP_BUDGET_BYTES);
     if bound <= budget {
@@ -220,20 +249,21 @@ fn state_count(max_states: i64) -> Result<usize, JsonNetError> {
         .ok_or(JsonNetError::MaxStates(max_states))
 }
 
-/// A worst-case count of the heap bytes [`analyze_json`] holds at its peak for
-/// `net`, parsed from `json_len` bytes, under `limits`: including one
-/// `serde_json::to_string` of the result, a `CString` made from that string,
-/// and one copy of its bytes.
+/// A worst-case count of the heap bytes held at the peak of analysing `net`,
+/// parsed from `json_len` bytes, under `limits`, and turning the result into
+/// `output`.
 ///
 /// It is `fixed + limits.max_states × per_state`, both read off `net`, and it
 /// sums every structure the call ever holds as if all were live at once. Each
 /// allocation is charged its size rounded up to 16 plus a 16-byte header, as
 /// the system allocators add; fragmentation is not counted. The derivation is
-/// in the comments of `heap_terms`, and `tests/heap_budget.rs` measures the
-/// real peak of adversarial nets under that same charging against it.
-// @ai:invariant analyze_json's peak heap, with one serialization, CString handoff and host copy of its result, is <= heap_bound(net, json_len, limits), and an admitted net at the limits stays <= HEAP_BUDGET_BYTES [P:test conf:0.75 src:heap_budget::peak_heap_stays_under_heap_bound_at_the_limits]
-pub fn heap_bound(net: &PetriNet, json_len: usize, limits: Limits) -> u128 {
-    let (per_state, fixed) = heap_terms(net, json_len, limits.max_reported_deadlocks);
+/// in the comments of `heap_terms`. `tests/heap_budget.rs` measures the real
+/// peak of adversarial nets for [`Output::CString`] under that same charging
+/// against it, and `ix-agent`'s `tests/petri_heap_budget.rs` does the same for
+/// [`Output::McpResponse`] through the tool's own rendering.
+// @ai:invariant analyze_json's peak heap, with one serialization, CString handoff and host copy of its result, is <= heap_bound(net, json_len, limits, Output::CString), and an admitted net at the limits stays <= HEAP_BUDGET_BYTES [P:test conf:0.75 src:heap_budget::peak_heap_stays_under_heap_bound_at_the_limits]
+pub fn heap_bound(net: &PetriNet, json_len: usize, limits: Limits, output: Output) -> u128 {
+    let (per_state, fixed) = heap_terms(net, json_len, limits.max_reported_deadlocks, output);
     fixed + per_state * limits.max_states as u128
 }
 
@@ -245,8 +275,28 @@ fn alloc(n: u128) -> u128 {
 /// `(per_state, fixed)` for [`heap_bound`], for a 64-bit target: a `Vec` or
 /// `String` header is 24 bytes, and a vector grown by pushing holds at most 3×
 /// its elements' bytes while it reallocates.
-fn heap_terms(net: &PetriNet, json_len: usize, max_reported_deadlocks: usize) -> (u128, u128) {
+fn heap_terms(
+    net: &PetriNet,
+    json_len: usize,
+    max_reported_deadlocks: usize,
+    output: Output,
+) -> (u128, u128) {
     let n = |x: usize| x as u128;
+    // The output cost of `c` bytes of compact result JSON holding `values` JSON
+    // values, where an array or object counts once more for its closing line.
+    let text = |c: u128, values: u128| match output {
+        // The doubling `to_string` buffer (3× while it reallocates), then the
+        // `CString` and the copy made from it.
+        Output::CString => 3 * c,
+        // V, the `Value`: a 32-byte slot per value, and a string's text in an
+        // allocation at most 31 bytes over its length, itself at most `c`.
+        // P, the pretty text: at most `c` plus 14 bytes a value (a newline, up
+        // to 12 bytes of indentation, and the space after a key). L, the
+        // JSON-RPC line: escaping at most doubles a byte of P, so L <= 2P.
+        // V lives while P grows (3P); then P, in up to twice its length of
+        // capacity, lives while L grows (3L <= 6P). V + 8P covers both.
+        Output::McpResponse => (64 * values + c) + 8 * (c + 14 * values),
+    };
     let json = |s: &str| n(serde_json::to_string(s).map_or(6 * s.len() + 2, |j| j.len()));
     let longest = |ids: Vec<&str>| {
         ids.into_iter()
@@ -268,13 +318,12 @@ fn heap_terms(net: &PetriNet, json_len: usize, max_reported_deadlocks: usize) ->
     // most one per transition, capacity at most 2× or the first 4); its
     // liveness row (a byte per transition); and one step in each of up to `d`
     // deadlock witnesses and the pumping sequence: a slot (72), a copy of the
-    // id, and 3× its serialized `"id",` (the doubling `to_string` buffer, then
-    // the `CString` and the copy made from it).
+    // id, and the output of its serialized `"id",`.
     let per_state = 482
         + 2 * alloc(8 * places)
         + alloc(32 * transitions + 64)
         + alloc(transitions)
-        + (d + 1) * (72 + alloc(tid) + 3 * (tid_json + 1));
+        + (d + 1) * (72 + alloc(tid) + text(tid_json + 1, 1));
 
     // Parsing and building: the caller's copy of the text, `NetSpec`, the
     // builder's copy of every entry and id, `build()`'s sort buffers, id
@@ -290,26 +339,42 @@ fn heap_terms(net: &PetriNet, json_len: usize, max_reported_deadlocks: usize) ->
     // Per place: its `per_place` bound and its entry in up to `d` deadlock
     // `tokens` lists (slots and id copies), its `label=tokens ` part in up to
     // `d` deadlock markings and the two unbounded-witness markings (a pushed
-    // part slot, the part, and its share of the joined string), and all of
-    // that serialized, 3×.
+    // part slot, the part, and its share of the joined string), and the output
+    // of all of that: `["id",n]` pairs of three values plus a closing line,
+    // and the parts as if each were its own value.
     for p in net.places() {
         let (id, label) = (n(p.id.len()), n(p.label().len()));
         fixed += 8 + 32 + alloc(id) + d * (96 + alloc(id));
         fixed += (d + 2) * (72 + alloc(label + 21) + label + 22 + 16);
-        fixed += 3 * ((d + 1) * (json(&p.id) + 24) + (d + 2) * (json(p.label()) + 20));
+        fixed += text((d + 1) * (json(&p.id) + 24), 4 * (d + 1));
+        fixed += text((d + 2) * (json(p.label()) + 20), d + 2);
     }
     // Per transition: `fired`, the `never_fired` list, the `missing` B-tree
-    // entry and the `live` list (slots and two id copies), serialized twice, 3×.
+    // entry and the `live` list (slots and two id copies), output twice. For
+    // the MCP result also its `transition_labels` entry: the key and label
+    // copies, their share of a `Value` map's B-tree (a 648-byte leaf holds at
+    // least 5 entries), and its output.
     for t in net.transitions() {
         fixed += 1 + 72 + 96 + 24 + 2 * alloc(n(t.id.len()));
-        fixed += 3 * 2 * (json(&t.id) + 1);
+        fixed += text(2 * (json(&t.id) + 1), 2);
+        if output == Output::McpResponse {
+            fixed += 256 + alloc(n(t.id.len())) + alloc(n(t.label().len()));
+            fixed += text(json(&t.id) + json(t.label()) + 2, 1);
+        }
     }
     // Five `unknown` reasons that can quote an overflowing transition and
-    // place, the stored overflow error, and the net name, serialized 3×.
-    fixed += 5 * (alloc(256 + tid + pid) + 3 * (256 + tid_json + pid_json));
+    // place, the stored overflow error, and the net name, with their output.
+    fixed += 5 * (alloc(256 + tid + pid) + text(256 + tid_json + pid_json, 1));
     fixed += 2 * alloc(tid.max(pid));
     if let Some(name) = net.name() {
-        fixed += alloc(n(name.len())) + 3 * json(name);
+        fixed += alloc(n(name.len())) + text(json(name), 1);
+    }
+    // The MCP result's fixed shape as `Value`s: a few dozen objects, each a
+    // B-tree map of at most a few leaves, their keys, the two counts added to
+    // it, the tool-result and JSON-RPC wrappers, and the output of all of
+    // their keys and brackets.
+    if output == Output::McpResponse {
+        fixed += 65_536 + d * 4_096;
     }
     (per_state, fixed)
 }

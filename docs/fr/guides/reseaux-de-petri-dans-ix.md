@@ -159,9 +159,22 @@ la table de vivacité `états × transitions`, et jusqu'à neuf témoins
 jusqu'à son budget. `heap_bound` est un décompte au pire lu sur la taille du
 réseau, confronté aux pics mesurés dans `crates/ix-petri/tests/heap_budget.rs` ;
 le refus nomme le plus grand `max_states` admis pour ce réseau (quelques
-centaines de milliers pour un petit réseau). La borne vaut par ligne : une
-instruction sur de nombreux grands réseaux garde toutes leurs chaînes de
-résultat à la fois. Un réseau refusé
+centaines de milliers pour un petit réseau). La borne vaut par ligne, et ce
+qu'elle laisse rendre aussi : chaque octet du JSON de résultat est compté au
+moins trois fois, si bien qu'une ligne admise rend au plus un tiers environ de
+512 Mio, **environ 171 Mio**. Ce pire cas est atteignable avec un petit réseau :
+un réseau de 2 ko dont les témoins profonds répètent un identifiant de
+transition de 64 caractères de contrôle (six octets chacun une fois échappés)
+rend 129 Mo à son plus grand budget admis (41 537), et la même forme avec des
+identifiants plus longs 144 à 149 Mo. DuckDB garde les chaînes de résultat hors
+de `memory_limit` ; les résultats d'un appel de la fonction scalaire (un bloc,
+jusqu'à 2048 lignes) sont donc refusés ensemble au-delà de 512 Mio. Cela plafonne
+un bloc, pas une instruction : chaque thread traite son propre bloc, et un
+résultat que DuckDB matérialise, ou un opérateur qui garde son entrée
+(`ORDER BY`, `string_agg`, un client qui lit toutes les lignes), en garde
+plusieurs. À 129 Mo par ligne, 64 lignes font environ 8 Go. **Pour de grands
+budgets, analysez un réseau par requête**, ou gardez un budget assez petit pour
+que lignes × résultat tienne en mémoire. Un réseau refusé
 est une erreur SQL et, comme toute erreur SQL, fait échouer l'instruction
 entière : un seul fichier mal formé dans `read_text('reseaux/*.json')` fait
 perdre toutes les lignes. Lisez un marquage mort dans

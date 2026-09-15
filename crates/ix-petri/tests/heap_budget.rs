@@ -13,7 +13,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::ffi::CString;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
-use ix_petri::json::{admit, analyze_json, heap_bound, JsonNetError, NetSpec};
+use ix_petri::json::{admit, analyze_json, heap_bound, JsonNetError, NetSpec, Output};
 use ix_petri::json::{HEAP_BUDGET_BYTES, MAX_NET_JSON_BYTES, MAX_STATES_CEILING};
 use ix_petri::{Analysis, Limits, Verdict};
 
@@ -90,6 +90,7 @@ fn bound(json: &str, max_states: i64) -> u128 {
         &net,
         json.len(),
         Limits::with_max_states(max_states as usize),
+        Output::CString,
     )
 }
 
@@ -99,7 +100,7 @@ fn admissible(json: &str) -> i64 {
         .unwrap()
         .build()
         .unwrap();
-    match admit(&net, json.len(), MAX_STATES_CEILING) {
+    match admit(&net, json.len(), MAX_STATES_CEILING, Output::CString) {
         Ok(_) => MAX_STATES_CEILING,
         Err(JsonNetError::HeapBudget { admissible, .. }) => admissible as i64,
         Err(e) => panic!("{e}"),

@@ -148,8 +148,19 @@ length`, and an unbounded net always runs to its budget. `heap_bound` is a
 worst-case count read off the net's size, checked against measured peaks in
 `crates/ix-petri/tests/heap_budget.rs`; the budget refusal names the largest
 `max_states` that net admits (a few hundred thousand for a small net). The bound
-is per row, so a statement over many large nets holds all their result strings
-at once. A refused net is a SQL error, and like any SQL error it fails the whole statement,
+is per row, and so is what it lets one row return: every byte of the result
+JSON is charged at least three times, so one admitted row returns at most about
+a third of 512 MiB, **about 171 MiB**. That worst case is reachable with a small
+net: a 2 kB net whose deep witnesses repeat a transition id of 64 control
+characters (six bytes each once escaped) returns 129 MB at its largest admitted
+budget (41 537), and the same shape with longer ids 144 to 149 MB. DuckDB holds
+result strings outside `memory_limit`, so the results of one call of the scalar
+(one chunk, up to 2048 rows) are refused together once they pass 512 MiB. That
+caps a chunk, not a statement: each thread works its own chunk, and a result
+DuckDB materializes, or an operator that keeps its input (`ORDER BY`,
+`string_agg`, a client that fetches every row), holds many. At 129 MB a row, 64
+rows are about 8 GB. **For large budgets, analyse one net per query**, or keep
+the budget small enough that rows × result stays within memory. A refused net is a SQL error, and like any SQL error it fails the whole statement,
 so one malformed file in `read_text('nets/*.json')` loses every row. Read a dead
 marking from `deadlock_free.detail[i].tokens` (`[place id, tokens]` pairs); the
 `marking` string beside it is rendered from free-text labels for a person and is

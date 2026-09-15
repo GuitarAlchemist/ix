@@ -127,7 +127,12 @@ reversibility of a Place/Transition net given as JSON, returned as the JSON
 net, net JSON over 1 MiB, a budget outside 1..=1 000 000, or a budget whose
 worst-case heap for that net is over 512 MiB (the error names the largest
 admissible budget) is a SQL error (one refused row fails the whole statement);
-NULL in is NULL out. The heap bound is per row, not per statement. Read dead markings from
+NULL in is NULL out. The heap bound is per row, not per statement: one admitted
+row can return up to about 171 MiB of JSON (a 2 kB net with deep witnesses over a
+long control-character id returns 129–149 MB at its largest budget), DuckDB holds
+those strings outside `memory_limit`, and only one chunk's results (up to 2048
+rows) are refused together past 512 MiB, so threads and materialized results
+multiply it. For large budgets, analyse one net per query. Read dead markings from
 `detail[i].tokens`, not by parsing the `marking` prose.
 
 ```sql
