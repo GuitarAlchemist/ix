@@ -448,7 +448,7 @@ fn load_data(source: &SourceConfig) -> Result<(Array2<f64>, Option<Vec<String>>)
             // Auto-approved tool: the file must lie inside the workspace root
             // (or an IX_EXTRA_ROOTS directory) before anything is read from it.
             let path = crate::path_confine::confine(
-                &crate::path_confine::workspace_root(),
+                &crate::path_confine::workspace_root()?,
                 "source.path",
                 path_str,
             )?;

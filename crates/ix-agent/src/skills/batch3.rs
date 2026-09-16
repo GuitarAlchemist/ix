@@ -154,7 +154,7 @@ fn session_flywheel_export_schema() -> Value {
             (
                 "trace_dir",
                 Prop::string().desc(
-                    "Destination directory (default ~/.ga/traces), created if missing. Must lie inside the workspace root, ~/.ga/traces, the traces/ directory beside the installed session log, or an IX_EXTRA_ROOTS directory.",
+                    "Destination directory (default ~/.ga/traces), created if missing. Must lie inside ~/.ga/traces or the traces/ directory beside the installed session log; relative paths resolve against ~/.ga/traces.",
                 ),
             ),
             (
@@ -429,7 +429,7 @@ fn context_walk_schema() -> Value {
             (
                 "workspace_root",
                 Prop::string().desc(
-                    "Optional path to the Rust workspace to index. Must be an existing directory inside the ix workspace root or an IX_EXTRA_ROOTS directory; relative paths resolve against the workspace root. Defaults to the current working directory.",
+                    "Optional path to the Rust workspace to index. Must be an existing directory inside the ix workspace root or an IX_EXTRA_ROOTS directory; relative paths resolve against the workspace root. Defaults to the workspace root.",
                 ),
             ),
         ],
@@ -453,11 +453,11 @@ pub fn context_walk(p: Value) -> Result<Value, String> {
     // root is confined first.
     let workspace_root = match p.get("workspace_root").and_then(|v| v.as_str()) {
         Some(path) => crate::path_confine::confine(
-            &crate::path_confine::workspace_root(),
+            &crate::path_confine::workspace_root()?,
             "workspace_root",
             path,
         )?,
-        None => std::env::current_dir().map_err(|e| format!("failed to read current dir: {e}"))?,
+        None => crate::path_confine::workspace_root()?,
     };
 
     let index = ix_context::index::ProjectIndex::build(&workspace_root).map_err(|e| {

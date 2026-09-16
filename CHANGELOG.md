@@ -9,17 +9,31 @@ this project uses workspace-unified semver (all crates share one version).
 ### Security — auto-approved MCP tools confine caller paths (2026-09-16)
 
 - Every Tier 1 / Tier 2 registry tool that takes a path now refuses one outside the
-  workspace root (`IX_ROOT`, else the repo root, else the current directory): `..`,
-  absolute paths elsewhere, and symlinks or junctions leading out. Missing and outside
-  paths get the same message, and nothing is read before the check. Newly confined:
+  workspace root: `..`, absolute paths elsewhere, and symlinks or junctions leading out.
+  Missing and outside paths get the same message, and nothing is read before the check.
+  The root is `IX_ROOT`, else the ix checkout holding the server executable, else the ix
+  checkout holding the current directory; never the bare current directory or an inherited
+  `CARGO_MANIFEST_DIR`. When no root is found, or it is a volume root or the home
+  directory, every confined argument is refused. Tools receive the canonical path.
+- On Windows, UNC, device (`\\.\`), verbatim (`\\?\`), drive-relative (`C:x`) and
+  driveless rooted paths are refused by their shape before any filesystem call, so the
+  check never opens a network share or a pipe. NUL is refused everywhere. Newly confined:
   `ix_code_analyze` `path`, `ix_context_walk` `workspace_root`, `ix_governance_graph` /
   `ix_governance_graph_rescan` `root`, `ix_ml_pipeline` `source.path`, `ix_trace_ingest`
   `dir`, `ix_tars_bridge` `trace_dir`, `ix_session_flywheel_export` `session_log` and
   `trace_dir`. Relative paths resolve against the workspace root, not the process cwd.
-- `IX_EXTRA_ROOTS` (OS path list) admits further directories, e.g. a sibling checkout.
-  The trace arguments also admit `~/.ga/traces` and the `traces/` directory beside the
-  installed session log, so `ix_triage_session`'s export-then-ingest loop keeps working.
-- `ix_governance_persona` refuses a `persona` containing a path separator, `:` or `..`.
+- `IX_EXTRA_ROOTS` (OS path list; relative entries resolve against the workspace root)
+  admits further directories, e.g. a sibling checkout. The trace directories read by
+  `ix_trace_ingest` / `ix_tars_bridge` also admit `~/.ga/traces` and the `traces/`
+  directory beside the installed session log, so `ix_triage_session`'s export-then-ingest
+  loop keeps working. The `ix_session_flywheel_export` destination `trace_dir` admits only
+  those two trace locations (relative paths resolve against `~/.ga/traces`), and a
+  destination through a dangling link is refused.
+- `ix_context_walk` without `workspace_root` indexes the workspace root instead of the
+  process cwd.
+- `ix_governance_persona` refuses a `persona` containing a path separator, `:`, `..` or a
+  control character.
+- `.mcp.json` sets `IX_ROOT` for the `ix` server.
 - `confine` moved from `skills/assumption_graph.rs` to `crates/ix-agent/src/path_confine.rs`.
 
 ### Fixed — `ix_session_flywheel_export` validates `trace_id` (2026-09-16)

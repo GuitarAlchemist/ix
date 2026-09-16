@@ -4604,9 +4604,13 @@ pub fn governance_persona(params: Value) -> Result<Value, String> {
     let name = parse_str(&params, "persona")?;
     // The name becomes `<personas>/<name>.persona.yaml`; a separator or `..`
     // would let an auto-approved call probe or parse YAML anywhere on disk.
-    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
+    if name.is_empty()
+        || name.contains(['/', '\\', ':'])
+        || name.contains("..")
+        || name.chars().any(char::is_control)
+    {
         return Err(format!(
-            "`persona`: {name} is not a persona name (no path separators or `..`)"
+            "`persona`: {name} is not a persona name (no path separators, `..` or control characters)"
         ));
     }
 
@@ -5135,12 +5139,11 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "'session_log' is required".to_string())?;
     let log_path = confine_session_log(log_arg)?;
+    // A write destination: only the operator's trace locations, not the
+    // workspace, whose `.claude/` and `.mcp.json` configure the harness itself.
+    // Relative paths resolve against `~/.ga/traces`.
     let trace_dir: PathBuf = match params.get("trace_dir").and_then(|v| v.as_str()) {
-        Some(d) => {
-            let mut roots = path_confine::allowed_roots(&path_confine::workspace_root());
-            roots.extend(path_confine::trace_roots());
-            path_confine::confine_dest_in(&roots, "trace_dir", d)?
-        }
+        Some(d) => path_confine::confine_dest_in(&path_confine::trace_roots(), "trace_dir", d)?,
         None => ix_io::trace_bridge::default_trace_dir(),
     };
     let trace_id = params
@@ -5164,7 +5167,7 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
 /// A caller-supplied trace directory confined to the workspace, the
 /// `IX_EXTRA_ROOTS` directories and the operator's trace locations.
 fn confine_trace_dir(param: &str, raw: &str) -> Result<std::path::PathBuf, String> {
-    let mut roots = path_confine::allowed_roots(&path_confine::workspace_root());
+    let mut roots = path_confine::allowed_roots(&path_confine::workspace_root()?);
     roots.extend(path_confine::trace_roots());
     path_confine::confine_in(&roots, param, raw)
 }
@@ -5173,14 +5176,22 @@ fn confine_trace_dir(param: &str, raw: &str) -> Result<std::path::PathBuf, Strin
 /// workspace confinement admits. `SessionLog::open` creates missing files and
 /// parent directories, so an unconfined path is a write anywhere on disk.
 fn confine_session_log(raw: &str) -> Result<std::path::PathBuf, String> {
+    // Lexical checks first: resolving a UNC or device path would already
+    // contact the server or open the pipe.
+    path_confine::check_lexical("session_log", raw)?;
+    let root = path_confine::workspace_root();
     let installed = crate::registry_bridge::current_session_log()
         .and_then(|log| log.path().canonicalize().ok());
-    if let (Some(installed), Ok(given)) = (installed, std::path::Path::new(raw).canonicalize()) {
-        if !raw.contains("..") && given == installed {
-            return Ok(std::path::PathBuf::from(raw));
+    if let Some(installed) = installed {
+        let given = match &root {
+            Ok(root) => root.join(raw),
+            Err(_) => std::path::PathBuf::from(raw),
+        };
+        if given.canonicalize().is_ok_and(|given| given == installed) {
+            return Ok(given);
         }
     }
-    path_confine::confine(&path_confine::workspace_root(), "session_log", raw)
+    path_confine::confine(&root?, "session_log", raw)
 }
 
 // ── ix_ml_pipeline ────────────────────────────────────────────
@@ -5207,7 +5218,7 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
 
     // Option 1: analyze a file by path
     if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = path_confine::confine(&path_confine::workspace_root(), "path", path_str)?;
+        let path = path_confine::confine(&path_confine::workspace_root()?, "path", path_str)?;
         let metrics = analyze_file(&path).ok_or_else(|| {
             format!(
                 "Could not analyze file: {} (unsupported language or read error)",

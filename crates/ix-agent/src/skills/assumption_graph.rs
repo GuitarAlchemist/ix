@@ -67,7 +67,7 @@ fn assumption_query_schema() -> Value {
     schema_fn = "crate::skills::assumption_graph::assumption_query_schema"
 )]
 pub fn assumption_query(params: Value) -> Result<Value, String> {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let workspace = workspace_param(&root, &params)?;
 
     let research: Vec<ResearchClaim> = match params.get("research").and_then(|v| v.as_str()) {
@@ -121,7 +121,7 @@ pub fn assumption_belief_at(params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("state/assumptions/belief-events.jsonl");
 
-    let path = confine(&workspace_root(), "log", log_path)?;
+    let path = confine(&workspace_root()?, "log", log_path)?;
     let contents = std::fs::read_to_string(path).map_err(|e| format!("read {log_path}: {e}"))?;
     let log = BeliefLog::from_jsonl(&contents).map_err(|e| parse_error("log", log_path, &e))?;
 
@@ -167,7 +167,7 @@ fn assumption_drift_schema() -> Value {
 pub fn assumption_drift(params: Value) -> Result<Value, String> {
     use ix_assumption_graph::drift;
 
-    let root = workspace_root();
+    let root = workspace_root()?;
     let workspace = workspace_param(&root, &params)?;
     let baseline_path = params
         .get("baseline")
@@ -227,7 +227,7 @@ pub fn assumption_claims(params: Value) -> Result<Value, String> {
     let needle = path.replace('\\', "/");
     let prefix = format!("{}/", needle.trim_end_matches('/'));
 
-    let workspace = workspace_param(&workspace_root(), &params)?;
+    let workspace = workspace_param(&workspace_root()?, &params)?;
 
     let snap = drift::snapshot(&workspace).map_err(|e| e.to_string())?;
     let claims: Vec<_> = snap

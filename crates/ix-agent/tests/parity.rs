@@ -426,7 +426,7 @@ fn assumption_tools_refuse_paths_outside_the_workspace() {
             .call_with_ctx(tool, args.clone(), &ctx)
             .expect_err("a path outside the workspace must be refused");
         assert!(
-            err.contains("not an existing path inside the workspace root"),
+            err.contains("not an existing path inside an allowed root"),
             "{tool} {args}: {err}"
         );
         assert!(
@@ -456,18 +456,26 @@ fn assumption_tools_refuse_paths_outside_the_workspace() {
 }
 
 /// The repo root, as `path_confine::workspace_root` resolves it under `cargo test`.
+/// Without the Windows verbatim `\\?\` prefix, which the tools refuse as input.
 fn confine_test_root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let canonical = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
-        .expect("workspace root")
+        .expect("workspace root");
+    match canonical.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(plain) => std::path::PathBuf::from(plain),
+        None => canonical,
+    }
 }
 
-/// A scratch directory inside the workspace root, removed on drop.
+/// A scratch directory inside the workspace root, removed on drop. It lives in
+/// the gitignored `target/confine-test/`, so a killed run leaves nothing in the
+/// tree and tests that walk the workspace sources do not meet its links.
 fn in_root_tempdir() -> tempfile::TempDir {
+    let parent = confine_test_root().join("target").join("confine-test");
+    std::fs::create_dir_all(&parent).expect("create target/confine-test");
     tempfile::Builder::new()
-        .prefix(".confine-test-")
-        .tempdir_in(confine_test_root())
+        .tempdir_in(parent)
         .expect("tempdir inside the workspace root")
 }
 
@@ -534,8 +542,10 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
             .unwrap()
             .replace('\\', "/")
     };
-    let link_file = format!("{}/secret.csv", rel(&link));
-    let link_dir_arg = rel(&link);
+    // Absolute, so the export destination (whose relative paths resolve against
+    // ~/.ga/traces) meets the same in-root link as every other tool.
+    let link_file = link.join("secret.csv").to_str().unwrap().to_string();
+    let link_dir_arg = link.to_str().unwrap().to_string();
 
     // (tool, argument builder) — the builder places the path where the tool reads it.
     type Build = fn(&str) -> serde_json::Value;
@@ -587,10 +597,9 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
                 Ok(v) => panic!("{tool} {args}: a path outside the workspace was accepted: {v}"),
                 Err(e) => e,
             };
-            assert!(
-                err.contains("not an existing path inside the workspace root"),
-                "{tool} {args}: {err}"
-            );
+            // Reads say "not an existing path inside an allowed root", the export
+            // destination "not inside an allowed destination root".
+            assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
             assert!(!err.contains("SECRET"), "{tool} leaked contents: {err}");
         }
         let args = build("../escape");
@@ -604,8 +613,62 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
     // Refusing a write destination must not create it.
     assert!(!outside.path().join("traces").exists());
 
+    // On Windows, UNC, device and verbatim paths are refused by their shape,
+    // before anything is resolved. Only local shapes are used here: a named
+    // pipe that does not exist, and a verbatim path to a real in-root file,
+    // which the root check alone would have accepted.
+    #[cfg(windows)]
+    {
+        let verbatim = format!(r"\\?\{}", confine_test_root().join("Cargo.toml").display());
+        for raw in [r"\\.\pipe\ix-confine-test-absent", verbatim.as_str()] {
+            for (tool, args) in [
+                ("ix_code_analyze", json!({ "path": raw })),
+                ("ix_session_flywheel_export", json!({ "session_log": raw })),
+                ("ix_trace_ingest", json!({ "dir": raw })),
+                (
+                    "ix_session_flywheel_export",
+                    json!({ "session_log": "Cargo.toml", "trace_dir": raw }),
+                ),
+            ] {
+                let err = call(tool, args.clone()).expect_err("a non-local path shape must be refused");
+                assert!(
+                    err.contains("absolute path on a local drive"),
+                    "{tool} {args}: {err}"
+                );
+            }
+        }
+    }
+
+    // The export destination admits only the operator's trace locations: the
+    // workspace itself, including the harness config under it, is refused.
+    let in_root_dest = scratch.path().join("out/new");
+    for dest in [
+        in_root_dest.to_str().unwrap().to_string(),
+        confine_test_root().join(".claude").to_str().unwrap().to_string(),
+    ] {
+        let err = call(
+            "ix_session_flywheel_export",
+            json!({ "session_log": "Cargo.toml", "trace_dir": dest, "trace_id": "settings" }),
+        )
+        .expect_err("a workspace destination must be refused");
+        assert!(err.contains("not inside an allowed destination root"), "{dest}: {err}");
+    }
+    assert!(!scratch.path().join("out").exists());
+
+    // A trace id is a file name, not a path: refused before anything is written.
+    let absolute_id = outside.path().join("settings");
+    for id in [absolute_id.to_str().unwrap(), "../../.claude/settings"] {
+        let err = call(
+            "ix_session_flywheel_export",
+            json!({ "session_log": "Cargo.toml", "trace_id": id }),
+        )
+        .expect_err("a path-shaped trace_id must be refused");
+        assert!(err.contains("is not a plain file name"), "{id}: {err}");
+    }
+    assert!(!outside.path().join("settings.json").exists());
+
     // A persona name is a file stem under the personas directory, not a path.
-    for name in ["../../secret", "a/b", "C:\\x"] {
+    for name in ["../../secret", "a/b", "C:\\x", "a\u{0}b"] {
         let err = call("ix_governance_persona", json!({ "persona": name }))
             .expect_err("a path-shaped persona name must be refused");
         assert!(err.contains("is not a persona name"), "{name}: {err}");
@@ -655,15 +718,17 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
     .expect("an in-root CSV must load");
     assert!(trained.is_object(), "{trained}");
 
-    // Unparseable contents inside the root: the error names the file, not its text.
+    // Unparseable contents inside the root (ragged rows): the call fails, and
+    // the error names the file, not its text.
     let junk = scratch.path().join("junk.csv");
-    std::fs::write(&junk, "SECRET-VALUE\nSECRET-VALUE\n").unwrap();
-    if let Err(e) = call(
+    std::fs::write(&junk, "SECRET-VALUE\nSECRET-VALUE,SECRET-VALUE\n").unwrap();
+    let e = call(
         "ix_ml_pipeline",
         json!({ "source": { "type": "csv", "path": rel(&junk) } }),
-    ) {
-        assert!(!e.contains("SECRET"), "parse error leaked contents: {e}");
-    }
+    )
+    .expect_err("a CSV with ragged rows must be refused");
+    assert!(e.contains("CSV load error"), "{e}");
+    assert!(!e.contains("SECRET"), "parse error leaked contents: {e}");
 
     let traces = scratch.path().join("traces");
     std::fs::create_dir_all(&traces).unwrap();
@@ -677,15 +742,18 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
     .expect("an in-root trace dir must be prepared");
     assert_eq!(prepared["stats"]["total_traces"], 0, "{prepared}");
 
+    // An in-root session log is admitted (the destination check comes next and
+    // refuses the in-root dir). Exports that succeed write under a trace root
+    // and are covered in `session_log_wiring.rs` and `path_confine_env.rs`,
+    // which control those locations.
     let log_path = scratch.path().join("session.jsonl");
     drop(ix_session::SessionLog::open(&log_path).unwrap());
-    let exported = call(
+    let err = call(
         "ix_session_flywheel_export",
-        json!({ "session_log": rel(&log_path), "trace_dir": rel(&scratch.path().join("out/new")) }),
+        json!({ "session_log": rel(&log_path), "trace_dir": in_root_dest.to_str().unwrap() }),
     )
-    .expect("an in-root session log and a new in-root trace dir must export");
-    let written = std::path::PathBuf::from(exported["written"].as_str().unwrap());
-    assert!(written.exists(), "{exported}");
+    .expect_err("the in-root destination is refused");
+    assert!(err.contains("`trace_dir`"), "the session log must pass first: {err}");
 }
 
 #[test]

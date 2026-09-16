@@ -85,16 +85,27 @@ renames a tool in `register_*` and forgets to update the scope table.
   bootstrap order.
 - `IX_ROOT` — the workspace root. Auto-approved tools resolve relative
   caller paths against it and refuse paths outside it (see
-  `src/path_confine.rs`). Unset: the repo root under `cargo run`/`cargo test`,
-  otherwise the current directory.
+  `src/path_confine.rs`). Unset: the ix checkout holding the running
+  executable (`<checkout>/target/<profile>/ix-mcp`), else the ix checkout
+  holding the current directory; never the bare current directory. If the
+  root cannot be found, or is a volume root or the home directory, every
+  confined argument is refused. Setting it in the MCP server entry makes the
+  root explicit.
 - `IX_EXTRA_ROOTS` — extra directories those tools may also use, in the OS
   path-list syntax (`;` on Windows, `:` elsewhere), e.g. a sibling checkout
   such as `../ga` that `ix_code_analyze` or `ix_context_walk` should read.
+  Relative entries resolve against the workspace root, not the current
+  directory.
   Confined arguments: `ix_assumption_*` (`workspace`, `research`, `log`,
   `baseline`), `ix_code_analyze` (`path`), `ix_context_walk`
   (`workspace_root`), `ix_governance_graph` / `_rescan` (`root`),
   `ix_ml_pipeline` (`source.path`), `ix_trace_ingest` (`dir`),
   `ix_tars_bridge` (`trace_dir`), `ix_session_flywheel_export`
-  (`session_log`, `trace_dir`). The trace arguments also admit
-  `~/.ga/traces` and the `traces/` directory beside the installed session
-  log; `session_log` also admits the installed session log itself.
+  (`session_log`, `trace_dir`). The trace directories read by
+  `ix_trace_ingest` / `ix_tars_bridge` also admit `~/.ga/traces` and the
+  `traces/` directory beside the installed session log; the export
+  destination `trace_dir` admits only those two locations; `session_log` also
+  admits the installed session log itself. On Windows, UNC (`\\host\share`),
+  device (`\\.\`), verbatim (`\\?\`), drive-relative (`C:x`) and driveless
+  rooted (`\x`) paths are refused before anything is resolved. Known limit: a
+  hard link inside a root to a file outside it is not detected.

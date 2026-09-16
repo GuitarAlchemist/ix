@@ -94,7 +94,7 @@ pub fn governance_graph(params: Value) -> Result<Value, String> {
 fn root_param(params: &Value) -> Result<std::path::PathBuf, String> {
     match params.get("root").and_then(|v| v.as_str()) {
         Some(raw) => {
-            crate::path_confine::confine(&crate::path_confine::workspace_root(), "root", raw)
+            crate::path_confine::confine(&crate::path_confine::workspace_root()?, "root", raw)
         }
         None => Ok(governance_root()),
     }
