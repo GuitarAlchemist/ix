@@ -304,8 +304,9 @@ fn dispatch_action_blocks_unknown_tool_via_approval() {
 /// (`ix_petri_analyze`, `ix_mesh_correlate` and the four `ix_assumption_*` tools were).
 /// Manual tools are invoked directly by `ToolRegistry::call` and never reach the gate.
 ///
-/// A tool that *should* be gated gets an explicit gated kind (shell, web fetch,
-/// out-of-project edit), not the silent `Unknown` default.
+/// A tool that *should* be gated goes in one of the explicit gated tables
+/// (`SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS`, `EDIT_OUT_OF_PROJECT_TOOLS`), not the
+/// silent `Unknown` default.
 #[test]
 fn every_registry_backed_tool_has_an_explicit_approval_classification() {
     use ix_agent::registry_bridge::mcp_name;
@@ -319,7 +320,10 @@ fn every_registry_backed_tool_has_an_explicit_approval_classification() {
         unclassified.is_empty(),
         "registry-backed tools with no ix-approval classification — every MCP call to \
          them is blocked at Tier 3: {unclassified:?}\n  \
-         Add each to crates/ix-approval/src/classify.rs under the kind its effects warrant."
+         Add each to crates/ix-approval/src/classify.rs in the table its effects warrant: \
+         READ_TOOLS (no side effects), EDIT_IN_PROJECT_TOOLS (writes workspace or \
+         in-process state), or a gated table (SHELL_COMMAND_TOOLS, WEB_FETCH_TOOLS, \
+         EDIT_OUT_OF_PROJECT_TOOLS) for Tier 3."
     );
 }
 
@@ -370,7 +374,85 @@ fn pipeline_run_step_reaches_a_newly_classified_tool() {
             &ctx,
         )
         .expect("a pipeline step must not be refused by the approval gate");
-    assert_eq!(out["results"]["mesh"]["n_streams"], 2);
+    let mesh = &out["results"]["mesh"];
+    assert_eq!(mesh["n_streams"], 2);
+    // Values only the real handler computes: the two series are perfectly
+    // correlated, so both nodes get component id 0 (`components[node]`).
+    let r = mesh["correlation"][0][1]
+        .as_f64()
+        .expect("correlation matrix entry");
+    assert!((r - 1.0).abs() < 1e-9, "expected r = 1.0, got {r}");
+    assert_eq!(mesh["components"], serde_json::json!([0, 0]));
+}
+
+/// The four `ix_assumption_*` tools run auto-approved and take caller paths, so the
+/// paths are confined to the workspace root. Checked through the MCP entry point.
+#[test]
+fn assumption_tools_refuse_paths_outside_the_workspace() {
+    use ix_agent::server_context::ServerContext;
+
+    let (ctx, _rx) = ServerContext::new();
+    let registry = ToolRegistry::new();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.json");
+    std::fs::write(&secret, r#"["SECRET-VALUE"]"#).unwrap();
+    let secret = secret.to_str().unwrap();
+    let outside_dir = outside.path().to_str().unwrap();
+
+    let cases = [
+        (
+            "ix_assumption_query",
+            serde_json::json!({ "research": secret }),
+        ),
+        (
+            "ix_assumption_query",
+            serde_json::json!({ "workspace": outside_dir }),
+        ),
+        (
+            "ix_assumption_belief_at",
+            serde_json::json!({ "log": secret }),
+        ),
+        (
+            "ix_assumption_drift",
+            serde_json::json!({ "baseline": secret }),
+        ),
+        (
+            "ix_assumption_claims",
+            serde_json::json!({ "path": "crates", "workspace": outside_dir }),
+        ),
+    ];
+    for (tool, args) in cases {
+        let err = registry
+            .call_with_ctx(tool, args.clone(), &ctx)
+            .expect_err("a path outside the workspace must be refused");
+        assert!(
+            err.contains("not an existing path inside the workspace root"),
+            "{tool} {args}: {err}"
+        );
+        assert!(
+            !err.contains("SECRET-VALUE"),
+            "{tool} leaked contents: {err}"
+        );
+    }
+
+    let err = registry
+        .call_with_ctx(
+            "ix_assumption_belief_at",
+            serde_json::json!({ "log": "../escape.jsonl" }),
+            &ctx,
+        )
+        .expect_err("`..` must be refused");
+    assert!(err.contains("`..` is not allowed"), "{err}");
+
+    // A relative workspace inside the root still works.
+    let out = registry
+        .call_with_ctx(
+            "ix_assumption_claims",
+            serde_json::json!({ "path": "src", "workspace": "crates/ix-approval" }),
+            &ctx,
+        )
+        .expect("a workspace inside the root must be accepted");
+    assert_eq!(out["path"], "src");
 }
 
 #[test]
@@ -443,7 +525,11 @@ fn parity_batch2_tools_are_registry_backed() {
 #[test]
 fn parity_registry_matches_generated_snapshot() {
     let live: BTreeSet<String> = ix_registry::all().map(|d| d.name.to_string()).collect();
-    assert_same_names(&live, &snapshot_names("skills"), "capability registry skills");
+    assert_same_names(
+        &live,
+        &snapshot_names("skills"),
+        "capability registry skills",
+    );
 }
 
 #[test]

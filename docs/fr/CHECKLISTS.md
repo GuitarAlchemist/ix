@@ -57,7 +57,14 @@ des barrières obligatoires pour une PR ordinaire.
    volontairement : c'est le limiteur de débit qui force la relecture de chaque
    changement de surface.
 4. Classez-le dans `crates/ix-approval/src/classify.rs` sous le type que ses
-   effets justifient (calcul pur ou lecture → `READ_TOOLS`). Un outil adossé au
+   effets justifient : calcul pur ou lecture → `READ_TOOLS` (niveau 1) ;
+   écriture dans l'espace de travail ou dans un état en mémoire comme le cache
+   global → `EDIT_IN_PROJECT_TOOLS` (niveau 2) ; shell, requête web ou écriture
+   hors du projet → `SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS` ou
+   `EDIT_OUT_OF_PROJECT_TOOLS` (niveau 3, refusé). Un outil de niveau 1 qui lit
+   un chemin fourni par l'appelant doit d'abord le confiner à la racine de
+   l'espace de travail (voir `confine` dans
+   `crates/ix-agent/src/skills/assumption_graph.rs`). Un outil adossé au
    registre et non classé retombe au niveau 3 et chaque appel MCP est refusé ;
    le test de parité
    `every_registry_backed_tool_has_an_explicit_approval_classification` échoue

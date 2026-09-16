@@ -143,7 +143,6 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_tars_bridge",
         // Pipeline info (no execution)
         "ix_pipeline",
-        "ix_cache",
     ];
 
     // In-project edits — tools that write to state/ or emit trace data
@@ -154,12 +153,32 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_governance_belief",       // writes to state/beliefs/
         "ix_governance_graph_rescan", // rebuilds graph state
         "ix_session_flywheel_export", // writes a GA Trace JSON file
+        // `set` / `delete` mutate the process-wide cache that `ix_pipeline_run`
+        // consults before dispatching an asset-backed step, so a write can stand
+        // in for a later step's result. In-process state, not a file, but not
+        // side-effect-free either; the classifier is name-only, so the whole
+        // tool takes the writing kind (Tier 2, still auto-continues).
+        "ix_cache",
     ];
+
+    // Gated tools — always Tier 3. None of today's tools belongs here; the
+    // tables exist so a tool that shells out, fetches from the web, or writes
+    // outside the workspace is classified explicitly instead of falling
+    // through to `Unknown`.
+    const SHELL_COMMAND_TOOLS: &[&str] = &[];
+    const WEB_FETCH_TOOLS: &[&str] = &[];
+    const EDIT_OUT_OF_PROJECT_TOOLS: &[&str] = &[];
 
     if READ_TOOLS.contains(&tool_name) {
         ActionKind::Read
     } else if EDIT_IN_PROJECT_TOOLS.contains(&tool_name) {
         ActionKind::EditInProject
+    } else if SHELL_COMMAND_TOOLS.contains(&tool_name) {
+        ActionKind::ShellCommand
+    } else if WEB_FETCH_TOOLS.contains(&tool_name) {
+        ActionKind::WebFetch
+    } else if EDIT_OUT_OF_PROJECT_TOOLS.contains(&tool_name) {
+        ActionKind::EditOutOfProject
     } else {
         ActionKind::Unknown
     }
@@ -226,6 +245,8 @@ mod tests {
             "ix_trace_ingest",
             "ix_governance_belief",
             "ix_governance_graph_rescan",
+            // Writes the in-process cache ix_pipeline_run reads (review on #345).
+            "ix_cache",
         ] {
             assert_eq!(
                 classify_action_kind(tool),
