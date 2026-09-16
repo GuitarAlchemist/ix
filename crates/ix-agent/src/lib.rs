@@ -15,6 +15,8 @@ pub mod handlers;
 #[cfg(feature = "maintain-gate")]
 pub mod maintain_gate;
 pub mod ml_pipeline;
+/// Confinement of caller-supplied paths for tools that run without a prompt.
+mod path_confine;
 pub mod projection;
 pub mod registry_bridge;
 /// A small JSON-Schema builder DSL for MCP tool input/output schemas — collapses the
