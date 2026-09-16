@@ -144,7 +144,9 @@ fn session_flywheel_export_schema() -> Value {
             ),
             (
                 "trace_id",
-                Prop::string().desc("Explicit trace id (default: log filename stem)"),
+                Prop::string().desc(
+                    "Explicit trace id (default: log filename stem). Becomes the file name <trace_dir>/<trace_id>.json, so it must be a plain name: no path separators, `:`, leading dot, trailing dot or space, control characters or reserved device names.",
+                ),
             ),
         ],
         &["session_log"],

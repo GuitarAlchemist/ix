@@ -198,6 +198,13 @@ pub fn session_to_trace(log: &SessionLog, trace_id: Option<String>) -> Result<Tr
 /// Export a [`SessionLog`] to the GA trace directory as a single
 /// `{trace_id}.json` file. Creates the directory if missing.
 ///
+/// The trace id must be a plain file name (see [`check_trace_id`]), so the
+/// file always lands directly in `trace_dir`. Whatever already sits at the
+/// destination is removed and the file is created afresh, so a symlink or
+/// hard link planted there is replaced rather than written through. A link
+/// swapped in between the removal and the create makes the create fail; it is
+/// not followed.
+///
 /// Returns the written file path so callers can hand it straight to
 /// [`crate::handlers::trace_ingest`] (or its skill wrapper).
 pub fn export_session_to_trace_dir(
@@ -205,27 +212,79 @@ pub fn export_session_to_trace_dir(
     trace_dir: &Path,
     trace_id: Option<String>,
 ) -> Result<PathBuf, ExportError> {
+    let trace = session_to_trace(log, trace_id).map_err(ExportError::Session)?;
+    check_trace_id(&trace.trace_id)?;
+    let out_path = trace_dir.join(format!("{}.json", trace.trace_id));
+    if out_path.parent() != Some(trace_dir) {
+        return Err(ExportError::InvalidTraceId(trace.trace_id));
+    }
+
     std::fs::create_dir_all(trace_dir).map_err(|source| ExportError::CreateDir {
         path: trace_dir.to_path_buf(),
         source,
     })?;
 
-    let trace = session_to_trace(log, trace_id).map_err(ExportError::Session)?;
-
-    let file_name = format!("{}.json", trace.trace_id);
-    let out_path = trace_dir.join(file_name);
     let json = serde_json::to_string_pretty(&trace).map_err(ExportError::Serialize)?;
-    std::fs::write(&out_path, json).map_err(|source| ExportError::Write {
+    let write_err = |source| ExportError::Write {
         path: out_path.clone(),
         source,
-    })?;
+    };
+    match std::fs::symlink_metadata(&out_path) {
+        Ok(_) => std::fs::remove_file(&out_path).map_err(write_err)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(write_err(e)),
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&out_path)
+        .map_err(write_err)?;
+    std::io::Write::write_all(&mut file, json.as_bytes()).map_err(write_err)?;
 
     Ok(out_path)
+}
+
+/// A trace id becomes the file name `{trace_id}.json`, so it must be a single
+/// plain name: not empty, no leading dot or trailing dot or space, no path
+/// separator, drive or stream colon, wildcard or control character (NUL
+/// included), and not a Windows reserved device name such as `CON` or `COM1`.
+/// The same rule applies on every platform so a trace id that exports on one
+/// exports on all.
+pub fn check_trace_id(trace_id: &str) -> Result<(), ExportError> {
+    let bad_char = |c: char| {
+        c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+    };
+    let device = trace_id
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    let reserved = matches!(
+        device.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ((device.starts_with("COM") || device.starts_with("LPT"))
+        && device.chars().count() == 4
+        && device[3..]
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '¹' | '²' | '³')));
+    if trace_id.is_empty()
+        || trace_id.starts_with('.')
+        || trace_id.ends_with(['.', ' '])
+        || trace_id.chars().any(bad_char)
+        || reserved
+    {
+        return Err(ExportError::InvalidTraceId(trace_id.to_string()));
+    }
+    Ok(())
 }
 
 /// Errors produced by [`export_session_to_trace_dir`].
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
+    /// The trace id is not a plain file name (see [`check_trace_id`]).
+    #[error("trace_id {0:?} is not a plain file name (no path separators, `:`, leading dot, trailing dot or space, control characters or reserved device names)")]
+    InvalidTraceId(String),
     /// Couldn't create the output directory.
     #[error("create trace directory {path}: {source}")]
     CreateDir {
@@ -432,5 +491,62 @@ mod tests {
         let out = export_session_to_trace_dir(&log, &trace_dir, Some("custom-id".into()))
             .expect("export");
         assert_eq!(out.file_name().unwrap(), "custom-id.json");
+    }
+
+    #[test]
+    fn trace_ids_that_are_not_plain_file_names_are_refused() {
+        let dir = tempdir().unwrap();
+        let elsewhere = tempdir().unwrap();
+        let log = write_log_with_events(&dir.path().join("run.jsonl"), vec![]);
+        let trace_dir = dir.path().join("traces");
+        let absolute = elsewhere.path().join("settings");
+        let refused = [
+            absolute.to_str().unwrap(),
+            "../settings",
+            "a/b",
+            "a\\b",
+            "C:x",
+            "x:stream",
+            "",
+            ".",
+            "..",
+            ".hidden",
+            "trailing.",
+            "trailing ",
+            "nul\0byte",
+            "CON",
+            "con.backup",
+            "COM1",
+            "lpt9",
+            "wild*",
+        ];
+        for id in refused {
+            let err = export_session_to_trace_dir(&log, &trace_dir, Some(id.to_string()))
+                .expect_err(id);
+            assert!(matches!(err, ExportError::InvalidTraceId(_)), "{id:?}: {err}");
+        }
+        assert!(!trace_dir.exists(), "a refused export must not create the dir");
+        assert!(std::fs::read_dir(elsewhere.path()).unwrap().next().is_none());
+
+        for id in ["run-2026.09.16", "session_1", "CONSOLE", "COM10", "a b"] {
+            assert!(check_trace_id(id).is_ok(), "{id:?}");
+        }
+    }
+
+    #[test]
+    fn export_replaces_a_link_at_the_destination_instead_of_writing_through_it() {
+        let dir = tempdir().unwrap();
+        let log = write_log_with_events(&dir.path().join("run.jsonl"), vec![]);
+        let trace_dir = dir.path().join("traces");
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        let victim = dir.path().join("victim.json");
+        std::fs::write(&victim, "KEEP").unwrap();
+        // A hard link needs no privileges on NTFS or Unix and redirects a
+        // truncating write the same way a symlink does.
+        std::fs::hard_link(&victim, trace_dir.join("run.json")).unwrap();
+
+        let out = export_session_to_trace_dir(&log, &trace_dir, None).expect("export");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "KEEP");
+        assert!(ix_io::trace_bridge::load_trace(&out).is_ok());
     }
 }
