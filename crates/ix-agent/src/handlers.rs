@@ -6565,14 +6565,29 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .unwrap_or(10);
 
-    let index_path = params
-        .get("index_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("state/voicings/optick.index");
-
-    let path = std::path::Path::new(index_path);
-    let index = ix_optick::OptickIndex::open(path)
+    let path = resolve_optick_index_path(
+        params.get("index_path").and_then(|v| v.as_str()),
+        std::env::var("OPTICK_INDEX_PATH").ok().as_deref(),
+        &workspace_root(),
+    )?;
+    let index_path = path.display().to_string();
+    let index = ix_optick::OptickIndex::open(&path)
         .map_err(|e| format!("Failed to open OPTK index at '{}': {}", index_path, e))?;
+
+    // The dimension comes from the index header, never a constant: the OPTIC-K
+    // compact layout has changed before, and the query must match the index
+    // actually on disk.
+    let dimension = index.dimension() as usize;
+    if query.len() != dimension {
+        return Err(format!(
+            "query dimension mismatch: got {}, expected {} (dimension of index '{}'). \
+             The query must use the index's compact, pre-scaled layout; a raw \
+             full-schema OPTIC-K embedding must be projected to it first.",
+            query.len(),
+            dimension,
+            index_path
+        ));
+    }
 
     let results = index
         .search(&query, instrument.as_deref(), top_k)
@@ -6596,8 +6611,48 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         "count": hits.len(),
         "top_k": top_k,
         "instrument_filter": instrument,
+        "index_path": index_path,
+        "index_dimension": dimension,
         "results": hits,
     }))
+}
+
+/// Resolve the OPTIC-K index for `ix_optick_search`. Precedence: the explicit
+/// `index_path` argument, then `OPTICK_INDEX_PATH`, then the sibling GA
+/// checkout (`<workspace>/../ga/state/voicings/optick.index`, where GA writes
+/// it), then the legacy in-repo `<workspace>/state/voicings/optick.index`.
+/// An explicit argument or env var that does not exist is an error, not a
+/// silent fallback; the error lists every path tried.
+fn resolve_optick_index_path(
+    explicit: Option<&str>,
+    env_var: Option<&str>,
+    workspace: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let candidates: Vec<(&str, std::path::PathBuf)> = match (explicit, env_var) {
+        (Some(p), _) => vec![("index_path argument", p.into())],
+        (None, Some(p)) if !p.is_empty() => vec![("OPTICK_INDEX_PATH", p.into())],
+        _ => vec![
+            (
+                "sibling ga checkout",
+                workspace.join("../ga/state/voicings/optick.index"),
+            ),
+            (
+                "in-repo default",
+                workspace.join("state/voicings/optick.index"),
+            ),
+        ],
+    };
+    if let Some((_, p)) = candidates.iter().find(|(_, p)| p.is_file()) {
+        return Ok(p.clone());
+    }
+    let tried: Vec<String> = candidates
+        .iter()
+        .map(|(src, p)| format!("{} ({src})", p.display()))
+        .collect();
+    Err(format!(
+        "OPTIC-K index not found; tried: {}. Pass 'index_path' or set OPTICK_INDEX_PATH.",
+        tried.join(", ")
+    ))
 }
 
 // ── ix_ast_query ──────────────────────────────────────────────────────────
@@ -7386,5 +7441,64 @@ mod voicings_payload_tests {
         // back to the default rather than emitting nonsense to the wire.
         let out = voicings_payload(json!({"scene_offset": [1.0, 2.0]})).expect("ok");
         assert_eq!(out["scene_offset"], json!([200.0, 0.0, 0.0]));
+    }
+}
+
+#[cfg(test)]
+mod optick_index_path_tests {
+    use super::resolve_optick_index_path;
+    use std::fs;
+    use std::path::Path;
+
+    fn touch(p: &Path) {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"x").unwrap();
+    }
+
+    #[test]
+    fn precedence_argument_then_env_then_sibling_then_in_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ix");
+        let sibling = tmp.path().join("ga/state/voicings/optick.index");
+        let in_repo = ws.join("state/voicings/optick.index");
+        let arg = tmp.path().join("arg.index");
+        let env = tmp.path().join("env.index");
+        for p in [&sibling, &in_repo, &arg, &env] {
+            touch(p);
+        }
+        let (a, e) = (arg.to_str().unwrap(), env.to_str().unwrap());
+
+        assert_eq!(
+            resolve_optick_index_path(Some(a), Some(e), &ws).unwrap(),
+            arg
+        );
+        assert_eq!(resolve_optick_index_path(None, Some(e), &ws).unwrap(), env);
+        assert!(resolve_optick_index_path(None, None, &ws)
+            .unwrap()
+            .ends_with("ga/state/voicings/optick.index"));
+
+        fs::remove_file(&sibling).unwrap();
+        assert_eq!(resolve_optick_index_path(None, None, &ws).unwrap(), in_repo);
+    }
+
+    #[test]
+    fn missing_index_errors_listing_every_path_tried() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ix");
+
+        let err = resolve_optick_index_path(None, None, &ws).unwrap_err();
+        assert!(err.contains("sibling ga checkout"), "got: {err}");
+        assert!(err.contains("in-repo default"), "got: {err}");
+        assert!(err.contains("optick.index"), "got: {err}");
+
+        // An explicit source that does not exist never falls back silently.
+        touch(&ws.join("state/voicings/optick.index"));
+        let err = resolve_optick_index_path(None, Some("nope.index"), &ws).unwrap_err();
+        assert!(err.contains("nope.index (OPTICK_INDEX_PATH)"), "got: {err}");
+        let err = resolve_optick_index_path(Some("arg.index"), None, &ws).unwrap_err();
+        assert!(
+            err.contains("arg.index (index_path argument)"),
+            "got: {err}"
+        );
     }
 }

@@ -1173,12 +1173,12 @@ Example 2 — "cluster crates by complexity then classify":
     fn register_bridges_and_session(&mut self) {
         self.tools.push(Tool {
             name: "ix_optick_search",
-            description: "Search the OPTIC-K voicing index by embedding similarity. Memory-mapped brute-force cosine search over 228-dim musical embeddings. Returns top-k most similar voicings with diagrams and metadata.",
+            description: "Search the OPTIC-K voicing index by embedding similarity. Memory-mapped brute-force cosine search over the index's compact musical embeddings; the query length must equal the dimension in the index header (a mismatch error states both). Returns top-k most similar voicings with diagrams and metadata, plus the resolved index_path and index_dimension.",
             input_schema: object(
                 vec![
                     (
                         "query",
-                        Prop::num_array().desc("228-dim query embedding vector (will be L2-normalized internally)"),
+                        Prop::num_array().desc("Query embedding in the index's compact layout; length must equal the index dimension (will be L2-normalized internally)"),
                     ),
                     (
                         "instrument",
@@ -1192,7 +1192,7 @@ Example 2 — "cluster crates by complexity then classify":
                     ),
                     (
                         "index_path",
-                        Prop::string().desc("Path to optick.index file (default: state/voicings/optick.index)"),
+                        Prop::string().desc("Path to optick.index file (default: $OPTICK_INDEX_PATH, else ../ga/state/voicings/optick.index, else state/voicings/optick.index, relative to the ix workspace root)"),
                     ),
                 ],
                 &["query"],

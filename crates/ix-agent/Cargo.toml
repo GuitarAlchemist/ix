@@ -90,3 +90,4 @@ maintain-gate = ["dep:ix-duck"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
+rmp-serde = "1"
