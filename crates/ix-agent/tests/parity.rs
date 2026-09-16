@@ -455,6 +455,239 @@ fn assumption_tools_refuse_paths_outside_the_workspace() {
     assert_eq!(out["path"], "src");
 }
 
+/// The repo root, as `path_confine::workspace_root` resolves it under `cargo test`.
+fn confine_test_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root")
+}
+
+/// A scratch directory inside the workspace root, removed on drop.
+fn in_root_tempdir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(".confine-test-")
+        .tempdir_in(confine_test_root())
+        .expect("tempdir inside the workspace root")
+}
+
+#[cfg(unix)]
+fn link_dir(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+/// Symlinks need Developer Mode or elevation on Windows; a directory junction
+/// does not, and is the same escape.
+#[cfg(windows)]
+fn link_dir(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link).or_else(|_| {
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .output()
+            .and_then(|o| {
+                if o.status.success() {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other("mklink /J failed"))
+                }
+            })
+    })
+}
+
+/// Every auto-approved (Tier 1 / Tier 2) registry tool that takes a caller path
+/// confines it: a file or directory outside the workspace, `..`, and a link inside
+/// the workspace that leads out are all refused through the MCP entry point, with
+/// one message that echoes no file contents, while an in-root path still works.
+#[test]
+fn auto_approved_tools_refuse_paths_outside_the_workspace() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use ix_agent::server_context::ServerContext;
+    use serde_json::json;
+
+    let (ctx, _rx) = ServerContext::new();
+    let registry = ToolRegistry::new();
+    let call = |tool: &str, args: serde_json::Value| {
+        shared_loop_detector().clear_key(tool);
+        registry.call_with_ctx(tool, args, &ctx)
+    };
+
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.csv");
+    std::fs::write(&secret, "SECRET-VALUE\nSECRET-VALUE\n").unwrap();
+    std::fs::write(outside.path().join("trace.json"), r#"{"SECRET":"VALUE"}"#).unwrap();
+    std::fs::write(outside.path().join("lib.rs"), "fn secret_value() {}").unwrap();
+    let secret_file = secret.to_str().unwrap().to_string();
+    let outside_dir = outside.path().to_str().unwrap().to_string();
+
+    // A link inside the workspace that points at the outside directory.
+    let scratch = in_root_tempdir();
+    let link = scratch.path().join("escape");
+    link_dir(outside.path(), &link).expect("create a symlink or junction");
+    let rel = |p: &std::path::Path| {
+        p.strip_prefix(confine_test_root())
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace('\\', "/")
+    };
+    let link_file = format!("{}/secret.csv", rel(&link));
+    let link_dir_arg = rel(&link);
+
+    // (tool, argument builder) — the builder places the path where the tool reads it.
+    type Build = fn(&str) -> serde_json::Value;
+    let tools: [(&str, Build, bool); 9] = [
+        ("ix_code_analyze", |p| json!({ "path": p }), true),
+        (
+            "ix_context_walk",
+            |p| json!({ "target": "x::y", "strategy": "callers", "workspace_root": p }),
+            false,
+        ),
+        ("ix_governance_graph", |p| json!({ "root": p }), false),
+        (
+            "ix_governance_graph_rescan",
+            |p| json!({ "root": p, "last_scan_epoch": 0 }),
+            false,
+        ),
+        (
+            "ix_ml_pipeline",
+            |p| json!({ "source": { "type": "csv", "path": p } }),
+            true,
+        ),
+        (
+            "ix_tars_bridge",
+            |p| json!({ "action": "prepare_traces", "trace_dir": p }),
+            false,
+        ),
+        ("ix_trace_ingest", |p| json!({ "dir": p }), false),
+        (
+            "ix_session_flywheel_export",
+            |p| json!({ "session_log": p }),
+            true,
+        ),
+        (
+            "ix_session_flywheel_export",
+            |p| json!({ "session_log": "Cargo.toml", "trace_dir": p }),
+            false,
+        ),
+    ];
+
+    for (tool, build, takes_file) in tools {
+        let (target, via_link) = if takes_file {
+            (secret_file.clone(), link_file.clone())
+        } else {
+            (outside_dir.clone(), link_dir_arg.clone())
+        };
+        for raw in [target, via_link] {
+            let args = build(&raw);
+            let err = match call(tool, args.clone()) {
+                Ok(v) => panic!("{tool} {args}: a path outside the workspace was accepted: {v}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("not an existing path inside the workspace root"),
+                "{tool} {args}: {err}"
+            );
+            assert!(!err.contains("SECRET"), "{tool} leaked contents: {err}");
+        }
+        let args = build("../escape");
+        let err = call(tool, args.clone()).expect_err("`..` must be refused");
+        // `ix_ml_pipeline` keeps its own earlier `..` check and message.
+        assert!(
+            err.contains("`..` is not allowed") || err.contains("must not contain '..'"),
+            "{tool} {args}: {err}"
+        );
+    }
+    // Refusing a write destination must not create it.
+    assert!(!outside.path().join("traces").exists());
+
+    // A persona name is a file stem under the personas directory, not a path.
+    for name in ["../../secret", "a/b", "C:\\x"] {
+        let err = call("ix_governance_persona", json!({ "persona": name }))
+            .expect_err("a path-shaped persona name must be refused");
+        assert!(err.contains("is not a persona name"), "{name}: {err}");
+    }
+
+    // In-root calls keep working.
+    let out = call(
+        "ix_code_analyze",
+        json!({ "path": "crates/ix-approval/src/classify.rs" }),
+    )
+    .expect("an in-root file must be analyzed");
+    assert!(out.is_object(), "{out}");
+
+    call(
+        "ix_context_walk",
+        json!({
+            "target": "ix_approval::classify::classify_action_kind",
+            "strategy": "callers",
+            "workspace_root": "crates/ix-approval"
+        }),
+    )
+    .expect("an in-root workspace must be indexed");
+
+    let graph = call(
+        "ix_governance_graph",
+        json!({ "root": "crates/ix-approval" }),
+    )
+    .expect("an in-root governance root must be scanned");
+    assert_eq!(graph["total_nodes"], 0, "{graph}");
+    let rescan = call(
+        "ix_governance_graph_rescan",
+        json!({ "root": "crates/ix-approval", "last_scan_epoch": 0 }),
+    )
+    .expect("an in-root rescan must work");
+    assert_eq!(rescan["changed"], true, "{rescan}");
+
+    let data = scratch.path().join("data.csv");
+    let mut csv = String::from("a,b,label\n");
+    for i in 0..20 {
+        csv.push_str(&format!("{i},{},{}\n", i * 2, i % 2));
+    }
+    std::fs::write(&data, csv).unwrap();
+    let trained = call(
+        "ix_ml_pipeline",
+        json!({ "source": { "type": "csv", "path": rel(&data), "target_column": "label" } }),
+    )
+    .expect("an in-root CSV must load");
+    assert!(trained.is_object(), "{trained}");
+
+    // Unparseable contents inside the root: the error names the file, not its text.
+    let junk = scratch.path().join("junk.csv");
+    std::fs::write(&junk, "SECRET-VALUE\nSECRET-VALUE\n").unwrap();
+    if let Err(e) = call(
+        "ix_ml_pipeline",
+        json!({ "source": { "type": "csv", "path": rel(&junk) } }),
+    ) {
+        assert!(!e.contains("SECRET"), "parse error leaked contents: {e}");
+    }
+
+    let traces = scratch.path().join("traces");
+    std::fs::create_dir_all(&traces).unwrap();
+    let ingest = call("ix_trace_ingest", json!({ "dir": rel(&traces) }))
+        .expect("an in-root trace dir must be ingested");
+    assert_eq!(ingest["total_traces"], 0, "{ingest}");
+    let prepared = call(
+        "ix_tars_bridge",
+        json!({ "action": "prepare_traces", "trace_dir": rel(&traces) }),
+    )
+    .expect("an in-root trace dir must be prepared");
+    assert_eq!(prepared["stats"]["total_traces"], 0, "{prepared}");
+
+    let log_path = scratch.path().join("session.jsonl");
+    drop(ix_session::SessionLog::open(&log_path).unwrap());
+    let exported = call(
+        "ix_session_flywheel_export",
+        json!({ "session_log": rel(&log_path), "trace_dir": rel(&scratch.path().join("out/new")) }),
+    )
+    .expect("an in-root session log and a new in-root trace dir must export");
+    let written = std::path::PathBuf::from(exported["written"].as_str().unwrap());
+    assert!(written.exists(), "{exported}");
+}
+
 #[test]
 fn parity_batch1_tools_are_registry_backed() {
     // Sanity: the 6 tools migrated in Week 2 batch 1 should now be sourced

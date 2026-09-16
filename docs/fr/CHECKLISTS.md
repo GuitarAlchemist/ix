@@ -61,10 +61,19 @@ des barrières obligatoires pour une PR ordinaire.
    écriture dans l'espace de travail ou dans un état en mémoire comme le cache
    global → `EDIT_IN_PROJECT_TOOLS` (niveau 2) ; shell, requête web ou écriture
    hors du projet → `SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS` ou
-   `EDIT_OUT_OF_PROJECT_TOOLS` (niveau 3, refusé). Un outil de niveau 1 qui lit
-   un chemin fourni par l'appelant doit d'abord le confiner à la racine de
-   l'espace de travail (voir `confine` dans
-   `crates/ix-agent/src/skills/assumption_graph.rs`). Un outil adossé au
+   `EDIT_OUT_OF_PROJECT_TOOLS` (niveau 3, refusé). Les outils de niveaux 1 et 2
+   s'exécutent sans demande de confirmation : un chemin, un répertoire ou une
+   racine de dépôt fourni par l'appelant doit donc être confiné avant d'être
+   lu, parcouru ou écrit. Utilisez `confine` (ou `confine_in` /
+   `confine_dest_in` pour une liste de racines explicite ou un répertoire que
+   l'outil crée) depuis `crates/ix-agent/src/path_confine.rs`. Ces fonctions
+   admettent la racine de l'espace de travail et les répertoires listés dans
+   `IX_EXTRA_ROOTS` ; n'ajoutez une racine propre à un outil que si c'est
+   l'opérateur, et non l'appelant, qui l'a choisie (les outils de traces GA
+   admettent `~/.ga/traces` et le répertoire `traces/` voisin du journal de
+   session installé). Ajoutez l'outil à
+   `auto_approved_tools_refuse_paths_outside_the_workspace` dans
+   `crates/ix-agent/tests/parity.rs`. Un outil adossé au
    registre et non classé retombe au niveau 3 et chaque appel MCP est refusé ;
    le test de parité
    `every_registry_backed_tool_has_an_explicit_approval_classification` échoue

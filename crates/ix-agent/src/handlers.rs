@@ -3,6 +3,8 @@
 use ndarray::{Array1, Array2};
 use serde_json::{json, Value};
 
+use crate::path_confine;
+
 use ix_cache::{Cache, CacheConfig};
 
 use std::sync::OnceLock;
@@ -4600,6 +4602,13 @@ pub fn governance_check(params: Value) -> Result<Value, String> {
 
 pub fn governance_persona(params: Value) -> Result<Value, String> {
     let name = parse_str(&params, "persona")?;
+    // The name becomes `<personas>/<name>.persona.yaml`; a separator or `..`
+    // would let an auto-approved call probe or parse YAML anywhere on disk.
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
+        return Err(format!(
+            "`persona`: {name} is not a persona name (no path separators or `..`)"
+        ));
+    }
 
     let personas_dir = governance_dir().join("personas");
     let persona = ix_governance::Persona::load_by_name(&personas_dir, name)
@@ -4992,13 +5001,11 @@ pub fn federation_discover(params: Value) -> Result<Value, String> {
 /// - `dir`: path to trace directory (default: `~/.ga/traces/`)
 pub fn trace_ingest(params: Value) -> Result<Value, String> {
     use ix_io::trace_bridge;
-    use std::path::PathBuf;
 
-    let dir = params
-        .get("dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(trace_bridge::default_trace_dir);
+    let dir = match params.get("dir").and_then(|v| v.as_str()) {
+        Some(d) => confine_trace_dir("dir", d)?,
+        None => trace_bridge::default_trace_dir(),
+    };
 
     if !dir.exists() {
         return Ok(json!({
@@ -5123,21 +5130,25 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
     use ix_session::SessionLog;
     use std::path::PathBuf;
 
-    let log_path = params
+    let log_arg = params
         .get("session_log")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "'session_log' is required".to_string())?;
-    let trace_dir: PathBuf = params
-        .get("trace_dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(ix_io::trace_bridge::default_trace_dir);
+    let log_path = confine_session_log(log_arg)?;
+    let trace_dir: PathBuf = match params.get("trace_dir").and_then(|v| v.as_str()) {
+        Some(d) => {
+            let mut roots = path_confine::allowed_roots(&path_confine::workspace_root());
+            roots.extend(path_confine::trace_roots());
+            path_confine::confine_dest_in(&roots, "trace_dir", d)?
+        }
+        None => ix_io::trace_bridge::default_trace_dir(),
+    };
     let trace_id = params
         .get("trace_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let log = SessionLog::open(log_path).map_err(|e| format!("open session log: {e}"))?;
+    let log = SessionLog::open(&log_path).map_err(|e| format!("open session log: {e}"))?;
     let written = flywheel::export_session_to_trace_dir(&log, &trace_dir, trace_id)
         .map_err(|e| format!("export trace: {e}"))?;
 
@@ -5148,6 +5159,28 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
         "trace_dir": trace_dir.display().to_string(),
         "event_count": trace_count,
     }))
+}
+
+/// A caller-supplied trace directory confined to the workspace, the
+/// `IX_EXTRA_ROOTS` directories and the operator's trace locations.
+fn confine_trace_dir(param: &str, raw: &str) -> Result<std::path::PathBuf, String> {
+    let mut roots = path_confine::allowed_roots(&path_confine::workspace_root());
+    roots.extend(path_confine::trace_roots());
+    path_confine::confine_in(&roots, param, raw)
+}
+
+/// `session_log` must be the installed session log itself or a file the
+/// workspace confinement admits. `SessionLog::open` creates missing files and
+/// parent directories, so an unconfined path is a write anywhere on disk.
+fn confine_session_log(raw: &str) -> Result<std::path::PathBuf, String> {
+    let installed = crate::registry_bridge::current_session_log()
+        .and_then(|log| log.path().canonicalize().ok());
+    if let (Some(installed), Ok(given)) = (installed, std::path::Path::new(raw).canonicalize()) {
+        if !raw.contains("..") && given == installed {
+            return Ok(std::path::PathBuf::from(raw));
+        }
+    }
+    path_confine::confine(&path_confine::workspace_root(), "session_log", raw)
 }
 
 // ── ix_ml_pipeline ────────────────────────────────────────────
@@ -5174,8 +5207,8 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
 
     // Option 1: analyze a file by path
     if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = Path::new(path_str);
-        let metrics = analyze_file(path).ok_or_else(|| {
+        let path = path_confine::confine(&path_confine::workspace_root(), "path", path_str)?;
+        let metrics = analyze_file(&path).ok_or_else(|| {
             format!(
                 "Could not analyze file: {} (unsupported language or read error)",
                 path_str
@@ -5423,13 +5456,11 @@ pub fn tars_bridge(params: Value) -> Result<Value, String> {
     match action {
         "prepare_traces" => {
             use ix_io::trace_bridge;
-            use std::path::PathBuf;
 
-            let dir = params
-                .get("trace_dir")
-                .and_then(|v| v.as_str())
-                .map(PathBuf::from)
-                .unwrap_or_else(trace_bridge::default_trace_dir);
+            let dir = match params.get("trace_dir").and_then(|v| v.as_str()) {
+                Some(d) => confine_trace_dir("trace_dir", d)?,
+                None => trace_bridge::default_trace_dir(),
+            };
 
             if !dir.exists() {
                 return Ok(json!({

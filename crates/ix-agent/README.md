@@ -83,3 +83,18 @@ renames a tool in `register_*` and forgets to update the scope table.
 - `IX_SESSION_LOG` — path to a JSONL session log for governance
   middleware. See `src/registry_bridge.rs::session_log_slot` for the
   bootstrap order.
+- `IX_ROOT` — the workspace root. Auto-approved tools resolve relative
+  caller paths against it and refuse paths outside it (see
+  `src/path_confine.rs`). Unset: the repo root under `cargo run`/`cargo test`,
+  otherwise the current directory.
+- `IX_EXTRA_ROOTS` — extra directories those tools may also use, in the OS
+  path-list syntax (`;` on Windows, `:` elsewhere), e.g. a sibling checkout
+  such as `../ga` that `ix_code_analyze` or `ix_context_walk` should read.
+  Confined arguments: `ix_assumption_*` (`workspace`, `research`, `log`,
+  `baseline`), `ix_code_analyze` (`path`), `ix_context_walk`
+  (`workspace_root`), `ix_governance_graph` / `_rescan` (`root`),
+  `ix_ml_pipeline` (`source.path`), `ix_trace_ingest` (`dir`),
+  `ix_tars_bridge` (`trace_dir`), `ix_session_flywheel_export`
+  (`session_log`, `trace_dir`). The trace arguments also admit
+  `~/.ga/traces` and the `traces/` directory beside the installed session
+  log; `session_log` also admits the installed session log itself.

@@ -6,6 +6,22 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Security — auto-approved MCP tools confine caller paths (2026-09-16)
+
+- Every Tier 1 / Tier 2 registry tool that takes a path now refuses one outside the
+  workspace root (`IX_ROOT`, else the repo root, else the current directory): `..`,
+  absolute paths elsewhere, and symlinks or junctions leading out. Missing and outside
+  paths get the same message, and nothing is read before the check. Newly confined:
+  `ix_code_analyze` `path`, `ix_context_walk` `workspace_root`, `ix_governance_graph` /
+  `ix_governance_graph_rescan` `root`, `ix_ml_pipeline` `source.path`, `ix_trace_ingest`
+  `dir`, `ix_tars_bridge` `trace_dir`, `ix_session_flywheel_export` `session_log` and
+  `trace_dir`. Relative paths resolve against the workspace root, not the process cwd.
+- `IX_EXTRA_ROOTS` (OS path list) admits further directories, e.g. a sibling checkout.
+  The trace arguments also admit `~/.ga/traces` and the `traces/` directory beside the
+  installed session log, so `ix_triage_session`'s export-then-ingest loop keeps working.
+- `ix_governance_persona` refuses a `persona` containing a path separator, `:` or `..`.
+- `confine` moved from `skills/assumption_graph.rs` to `crates/ix-agent/src/path_confine.rs`.
+
 ### Changed — governance checks no longer read "no match" as approval (2026-09-14)
 
 - **Breaking for scripts:** `ix check action` exits `2` (verdict `U`) instead of `0` (`T`)

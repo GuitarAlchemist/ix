@@ -445,10 +445,17 @@ fn load_data(source: &SourceConfig) -> Result<(Array2<f64>, Option<Vec<String>>)
                 .ok_or("source.type='csv' requires source.path")?;
 
             validate_file_path(path_str)?;
+            // Auto-approved tool: the file must lie inside the workspace root
+            // (or an IX_EXTRA_ROOTS directory) before anything is read from it.
+            let path = crate::path_confine::confine(
+                &crate::path_confine::workspace_root(),
+                "source.path",
+                path_str,
+            )?;
+            check_file_size(&path)?;
 
-            let path = Path::new(path_str);
             let has_header = source.has_header.unwrap_or(true);
-            let (matrix, names) = ix_io::csv_io::load_csv_matrix(path, has_header)
+            let (matrix, names) = ix_io::csv_io::load_csv_matrix(&path, has_header)
                 .map_err(|e| format!("CSV load error: {e}"))?;
             Ok((matrix, names))
         }
@@ -468,6 +475,10 @@ fn validate_file_path(path: &str) -> Result<(), String> {
     if !(lower.ends_with(".csv") || lower.ends_with(".json")) {
         return Err("Only .csv and .json file extensions are allowed".into());
     }
+    Ok(())
+}
+
+fn check_file_size(path: &Path) -> Result<(), String> {
     // Check file size (50 MB limit)
     let metadata = std::fs::metadata(path).map_err(|e| format!("Cannot access file: {e}"))?;
     if metadata.len() > 50 * 1024 * 1024 {
