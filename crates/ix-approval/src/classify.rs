@@ -155,7 +155,9 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_code_catalog",
         "ix_grammar_catalog",
         "ix_rfc_catalog",
-        // Manual tools that only read files (no writes, no processes):
+        // Manual tools that only read files (no writes, no processes). Each
+        // confines the path its caller names through `path_confine`, as Tier 1
+        // requires — see the module docs there.
         "ix_cargo_deps",
         "ix_pipeline_list",
         "ix_quality_gate_history",

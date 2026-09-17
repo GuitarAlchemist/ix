@@ -447,6 +447,101 @@ fn tier_two_manual_tools_refuse_paths_outside_the_workspace() {
     )
     .expect("the workspace root must be accepted as repo_root");
     assert!(out["commits"].is_number(), "{out}");
+
+    // `ix_maintain_gate` is auto-approved too, and every path it takes is the
+    // caller's. Only compiled with the feature that pulls bundled DuckDB.
+    #[cfg(feature = "maintain-gate")]
+    {
+        let err = call(
+            "ix_maintain_gate",
+            json!({ "hits_path": outside_dir, "corpus_dir": "state" }),
+        )
+        .expect_err("a hits_path outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{err}");
+        let err = call(
+            "ix_maintain_gate",
+            json!({ "hits_path": "Cargo.toml", "corpus_dir": "state", "repo_dir": outside_dir }),
+        )
+        .expect_err("a repo_dir outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{err}");
+    }
+}
+
+/// The Tier-1 manual tools read whatever path the caller names, and Tier 1
+/// auto-approves, so each path is confined the same way (ix#350 review). Checked
+/// through `ToolRegistry::call`, with a file whose contents must never appear in
+/// an error message.
+#[test]
+fn tier_one_manual_tools_refuse_paths_outside_the_workspace() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use serde_json::json;
+
+    let registry = ToolRegistry::new();
+    let call = |tool: &str, args: serde_json::Value| {
+        shared_loop_detector().clear_key(tool);
+        registry.call(tool, args)
+    };
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.rs");
+    std::fs::write(&secret, "fn secret_value() { /* SECRET-VALUE */ }").unwrap();
+    let secret_file = secret.to_str().unwrap().to_string();
+    let outside_dir = outside.path().to_str().unwrap().to_string();
+
+    // (tool, argument builder, the path is a file rather than a directory)
+    type Build = fn(&str) -> serde_json::Value;
+    let tools: [(&str, Build, bool); 9] = [
+        ("ix_cargo_deps", |p| json!({ "workspace_root": p }), false),
+        ("ix_pipeline_list", |p| json!({ "root": p }), false),
+        (
+            "ix_quality_gate_history",
+            |p| json!({ "ledger_path": p }),
+            true,
+        ),
+        ("ix_code_topology", |p| json!({ "path": p }), false),
+        (
+            "ix_ast_query",
+            |p| json!({ "query": "(function_item) @f", "path": p }),
+            true,
+        ),
+        ("ix_code_smells", |p| json!({ "dir": p }), false),
+        ("ix_code_smells", |p| json!({ "path": p }), true),
+        ("ix_annotations_scan", |p| json!({ "workspace": p }), false),
+        (
+            "ix_optick_search",
+            |p| json!({ "query": [0.0], "index_path": p }),
+            true,
+        ),
+    ];
+
+    for (tool, build, takes_file) in tools {
+        let raw = if takes_file {
+            secret_file.clone()
+        } else {
+            outside_dir.clone()
+        };
+        let args = build(&raw);
+        let err = match call(tool, args.clone()) {
+            Ok(v) => panic!("{tool} {args}: a path outside the workspace was accepted: {v}"),
+            Err(e) => e,
+        };
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
+        assert!(!err.contains("SECRET"), "{tool} leaked contents: {err}");
+
+        let args = build("../escape");
+        let err = call(tool, args.clone()).expect_err("`..` must be refused");
+        assert!(err.contains("`..` is not allowed"), "{tool} {args}: {err}");
+    }
+
+    // In-root paths keep working.
+    let out = call("ix_cargo_deps", json!({ "workspace_root": "." }))
+        .expect("the workspace itself must be walked");
+    assert!(out["n_nodes"].as_u64().unwrap_or(0) > 0, "{out}");
+    let out = call(
+        "ix_code_smells",
+        json!({ "path": "crates/ix-approval/src/classify.rs" }),
+    )
+    .expect("an in-root file must be scanned");
+    assert_eq!(out["path"], "crates/ix-approval/src/classify.rs", "{out}");
 }
 
 /// `ix_pipeline_run` is gated and its handler dispatches each step through the gate

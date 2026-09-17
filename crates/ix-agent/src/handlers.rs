@@ -3649,7 +3649,7 @@ pub fn catalog_list(_params: Value) -> Result<Value, String> {
 /// narrow.
 pub fn cargo_deps(params: Value) -> Result<Value, String> {
     let workspace_root = match params.get("workspace_root").and_then(|v| v.as_str()) {
-        Some(s) => std::path::PathBuf::from(s),
+        Some(s) => confined_path("workspace_root", s)?,
         None => std::env::current_dir().map_err(|e| format!("ix_cargo_deps: cwd: {e}"))?,
     };
     let crates_dir = workspace_root.join("crates");
@@ -4213,17 +4213,16 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
 /// }
 /// ```
 pub fn pipeline_list(params: Value) -> Result<Value, String> {
-    let root_arg = params
-        .get("root")
-        .and_then(|v| v.as_str())
-        .unwrap_or("examples/canonical-showcase");
-    let root = std::path::PathBuf::from(root_arg);
-    let root = if root.is_absolute() {
-        root
-    } else {
-        std::env::current_dir()
+    // A caller-named root is confined; the default is the tool's own, so it keeps
+    // resolving against the current directory. Confinement requires the path to
+    // exist, so a caller-named root that is missing is an error rather than the
+    // empty-with-warning answer below.
+    let root_arg = params.get("root").and_then(|v| v.as_str());
+    let root = match root_arg {
+        Some(raw) => confined_path("root", raw)?,
+        None => std::env::current_dir()
             .map_err(|e| format!("ix_pipeline_list: cwd: {e}"))?
-            .join(root)
+            .join("examples/canonical-showcase"),
     };
 
     if !root.exists() {
@@ -4927,11 +4926,10 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .or(Some(50));
 
-    let path: PathBuf = params
-        .get("ledger_path")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("state/quality/gate-ledger.jsonl"));
+    let path: PathBuf = match params.get("ledger_path").and_then(|v| v.as_str()) {
+        Some(raw) => confined_path("ledger_path", raw)?,
+        None => PathBuf::from("state/quality/gate-ledger.jsonl"),
+    };
 
     let q = LedgerQuery {
         source,
@@ -5443,7 +5441,7 @@ pub fn code_topology(params: Value) -> Result<Value, String> {
                 })
                 .collect::<Result<Vec<_>, String>>()?
         } else if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
-            collect_rust_sources(std::path::Path::new(path), MAX_NODES)?
+            collect_rust_sources(&confined_path("path", path)?, MAX_NODES)?
         } else {
             return Err("Either 'sources' or 'path' is required".to_string());
         };
@@ -6671,8 +6669,17 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .unwrap_or(10);
 
+    // Only `index_path` is caller input. `OPTICK_INDEX_PATH` and the sibling-GA
+    // default are the operator's own choices, so they are not confined (an
+    // operator who wants a caller to name a sibling checkout lists it in
+    // `IX_EXTRA_ROOTS`).
+    let confined_arg = params
+        .get("index_path")
+        .and_then(|v| v.as_str())
+        .map(|raw| confined_path("index_path", raw))
+        .transpose()?;
     let path = resolve_optick_index_path(
-        params.get("index_path").and_then(|v| v.as_str()),
+        confined_arg.as_ref().and_then(|p| p.to_str()),
         std::env::var("OPTICK_INDEX_PATH").ok().as_deref(),
         &workspace_root(),
     )?;
@@ -6767,7 +6774,6 @@ fn resolve_optick_index_path(
 pub fn ast_query(params: Value) -> Result<Value, String> {
     use ix_code::analyze::Language;
     use ix_code::semantic::run_ast_query;
-    use std::path::Path;
 
     let query_str = params
         .get("query")
@@ -6776,8 +6782,8 @@ pub fn ast_query(params: Value) -> Result<Value, String> {
 
     // Resolve source and language
     let (source, lang) = if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = Path::new(path_str);
-        let src = std::fs::read_to_string(path)
+        let path = confined_path("path", path_str)?;
+        let src = std::fs::read_to_string(&path)
             .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
         let lang =
             Language::from_extension(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
@@ -6814,7 +6820,6 @@ pub fn ast_query(params: Value) -> Result<Value, String> {
 pub fn code_smells(params: Value) -> Result<Value, String> {
     use ix_code::analyze::Language;
     use ix_code::smells::detect_smells;
-    use std::path::Path;
 
     // ── Directory scan ────────────────────────────────────────────────────
     if let Some(dir_str) = params.get("dir").and_then(|v| v.as_str()) {
@@ -6822,12 +6827,12 @@ pub fn code_smells(params: Value) -> Result<Value, String> {
             .get("max_file_kb")
             .and_then(|v| v.as_u64())
             .unwrap_or(256) as usize;
-        let dir = Path::new(dir_str);
+        let dir = confined_path("dir", dir_str)?;
         if !dir.is_dir() {
             return Err(format!("'{}' is not a directory", dir_str));
         }
         let mut file_results: Vec<Value> = Vec::new();
-        scan_dir_for_smells(dir, max_kb, &mut file_results);
+        scan_dir_for_smells(&dir, max_kb, &mut file_results);
         return Ok(json!({
             "dir": dir_str,
             "files_scanned": file_results.len(),
@@ -6837,8 +6842,8 @@ pub fn code_smells(params: Value) -> Result<Value, String> {
 
     // ── Single file ───────────────────────────────────────────────────────
     if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = Path::new(path_str);
-        let src = std::fs::read_to_string(path)
+        let path = confined_path("path", path_str)?;
+        let src = std::fs::read_to_string(&path)
             .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
         let lang =
             Language::from_extension(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
@@ -7222,11 +7227,12 @@ pub fn annotations_scan(params: Value) -> Result<Value, String> {
     use ix_ai_annotations::{reconcile, walker, ReconcilerConfig};
     use std::path::PathBuf;
 
-    let workspace = params
-        .get("workspace")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    // `test_files` are resolved by the reconciler relative to this workspace, so
+    // confining the workspace confines them too.
+    let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+        Some(raw) => confined_path("workspace", raw)?,
+        None => PathBuf::from("."),
+    };
 
     let stale_days = params
         .get("stale_days")

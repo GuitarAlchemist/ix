@@ -14,6 +14,13 @@
 //!   chose ([`trace_roots`]). A trace *destination* is confined to those
 //!   locations alone.
 //!
+//! Both registry-backed and hand-registered ("manual") tools are gated and so
+//! confined: manual tools reach the gate since ix#350. A path the *operator*
+//! chose rather than the caller is not caller input and is not confined —
+//! `ix_optick_search`'s `OPTICK_INDEX_PATH` and its sibling-GA default are the
+//! example; an operator who wants callers to name another checkout lists it in
+//! `IX_EXTRA_ROOTS`.
+//!
 //! Nothing touches the filesystem until the raw argument passes
 //! [`check_lexical`]: `..`, NUL, and on Windows anything but a relative path or
 //! a drive-letter absolute path (UNC `\\server\share`, device `\\.\`, verbatim
