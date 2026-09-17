@@ -137,14 +137,21 @@ pub fn fuzzy_eval(p: Value) -> Result<Value, String> {
 fn session_flywheel_export_schema() -> Value {
     object(
         vec![
-            ("session_log", Prop::string().desc("Path to the JSONL session log")),
+            (
+                "session_log",
+                Prop::string().desc("Path to an existing JSONL session log"),
+            ),
             (
                 "trace_dir",
-                Prop::string().desc("Destination directory (default ~/.ga/traces)"),
+                Prop::string().desc(
+                    "Destination directory (default ~/.ga/traces), created if missing. Must lie inside ~/.ga/traces or the traces/ directory beside the installed session log; relative paths resolve against ~/.ga/traces.",
+                ),
             ),
             (
                 "trace_id",
-                Prop::string().desc("Explicit trace id (default: log filename stem)"),
+                Prop::string().desc(
+                    "Explicit trace id (default: log filename stem). Becomes the file name <trace_dir>/<trace_id>.json, so it must be a plain name: no path separators, `:`, leading dot, trailing dot or space, control characters or reserved device names.",
+                ),
             ),
         ],
         &["session_log"],
