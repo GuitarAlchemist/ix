@@ -90,6 +90,62 @@ fn substitute_refs(value: &Value, upstream: &HashMap<String, Value>) -> Result<V
     }
 }
 
+/// Collect every `"$step_id.field"` string in a step's arguments as
+/// `(reference, step_id)` — the same syntax [`substitute_refs`] resolves.
+fn collect_step_refs<'a>(value: &'a Value, out: &mut Vec<(&'a str, &'a str)>) {
+    match value {
+        Value::String(s) if s.starts_with('$') => {
+            let step_id = s[1..].split('.').next().unwrap_or("");
+            out.push((s.as_str(), step_id));
+        }
+        Value::Object(map) => map.values().for_each(|v| collect_step_refs(v, out)),
+        Value::Array(arr) => arr.iter().for_each(|v| collect_step_refs(v, out)),
+        _ => {}
+    }
+}
+
+/// The `required` field names of a tool's JSON input schema.
+fn required_inputs(input_schema: &Value) -> Vec<String> {
+    input_schema
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|r| {
+            r.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The approval tier `ix_approval::ApprovalMiddleware` (default config)
+/// assigns to an invocation of `tool_name`.
+fn approval_tier(tool_name: &str) -> ix_approval::Tier {
+    let action = ix_agent_core::AgentAction::InvokeTool {
+        tool_name: tool_name.to_string(),
+        params: json!({}),
+        ordinal: 0,
+        target_hint: None,
+    };
+    ix_approval::ApprovalMiddleware::with_defaults()
+        .classify(&action)
+        .tier
+}
+
+/// The stricter of two tiers (`Three` > `Two` > `One`).
+fn tier_max(a: ix_approval::Tier, b: ix_approval::Tier) -> ix_approval::Tier {
+    use ix_approval::Tier;
+    let rank = |t: Tier| match t {
+        Tier::One => 1,
+        Tier::Two => 2,
+        Tier::Three => 3,
+    };
+    if rank(b) > rank(a) {
+        b
+    } else {
+        a
+    }
+}
+
 /// An MCP tool definition.
 pub struct Tool {
     pub name: &'static str,
@@ -632,6 +688,255 @@ Example 2 — "cluster crates by complexity then classify":
         (errors, warnings)
     }
 
+    /// Machine-readable node catalog of every registered tool — the IX
+    /// analogue of ComfyUI's `object_info`. One entry per tool:
+    ///
+    /// ```json
+    /// {
+    ///   "name": "ix_stats",
+    ///   "description": "...",
+    ///   "dispatch": "registry" | "manual",
+    ///   "input_schema": { ... },
+    ///   "required_inputs": ["data"],
+    ///   "output_schema": { ... } | null,
+    ///   "approval": { "action_kind": "read", "tier": "tier_one" }
+    /// }
+    /// ```
+    ///
+    /// `output_schema` is the registry skill's declared output schema, or
+    /// `null` when undeclared (always `null` for manual tools). `approval`
+    /// is what `ix_approval::ApprovalMiddleware` computes for the tool name;
+    /// only `dispatch: "registry"` tools actually pass through that gate
+    /// today, manual tools are invoked directly.
+    pub fn node_catalog(&self) -> Value {
+        let output_schemas: HashMap<String, Value> = ix_registry::all()
+            .map(|d| (registry_bridge::mcp_name(d.name), (d.output_schema)()))
+            .collect();
+        let nodes: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|t| {
+                let tier = approval_tier(t.name);
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "dispatch": if registry_bridge::is_registry_backed(t.handler) { "registry" } else { "manual" },
+                    "input_schema": t.input_schema,
+                    "required_inputs": required_inputs(&t.input_schema),
+                    "output_schema": output_schemas.get(t.name).cloned().unwrap_or(Value::Null),
+                    "approval": {
+                        "action_kind": ix_approval::classify_action_kind(t.name).name(),
+                        "tier": tier.name(),
+                    },
+                })
+            })
+            .collect();
+        json!({ "count": nodes.len(), "nodes": nodes })
+    }
+
+    /// Offline validation of an `ix_pipeline_run` spec (`{"steps": [...]}`)
+    /// against the registry — the IX analogue of `comfy validate`. Nothing
+    /// is executed. Unlike [`Self::validate_pipeline_spec`] (string errors,
+    /// used by `ix_pipeline_compile`), errors here are structured so an
+    /// editor can pin each one to a node:
+    ///
+    /// ```json
+    /// {
+    ///   "valid": false,
+    ///   "errors":   [{ "code": "unknown_tool", "step": "s1", "message": "..." }],
+    ///   "warnings": [{ "code": "undeclared_dependency", "step": "s2", "message": "..." }],
+    ///   "steps":    [{ "id": "s1", "tool": "ix_stats", "tier": "tier_one" }],
+    ///   "max_tier": "tier_one" | null,
+    ///   "requires_approval": false,
+    ///   "execution_order": ["s1", "s2"] | null
+    /// }
+    /// ```
+    ///
+    /// Error codes: `missing_steps`, `empty_steps`, `missing_id`,
+    /// `duplicate_id`, `missing_tool`, `unknown_tool`, `invalid_arguments`,
+    /// `missing_required_input`, `invalid_depends_on`, `unknown_step_reference`,
+    /// `cycle`. Warning code: `undeclared_dependency` — a `$step.field`
+    /// argument names a real step that is not upstream of this one, so it may
+    /// not have run yet when the reference is substituted.
+    pub fn validate_pipeline(&self, spec: &Value) -> Value {
+        use ix_pipeline::dag::Dag;
+        use std::collections::HashSet;
+
+        fn issue(code: &str, step: Option<&str>, message: String) -> Value {
+            json!({ "code": code, "step": step, "message": message })
+        }
+
+        let mut errors: Vec<Value> = Vec::new();
+        let mut warnings: Vec<Value> = Vec::new();
+        let mut step_tiers: Vec<Value> = Vec::new();
+        let mut max_tier: Option<ix_approval::Tier> = None;
+
+        let Some(steps) = spec
+            .get("steps")
+            .and_then(|v| v.as_array())
+            .filter(|s| !s.is_empty())
+        else {
+            errors.push(match spec.get("steps").and_then(|v| v.as_array()) {
+                Some(_) => issue("empty_steps", None, "'steps' array is empty".into()),
+                None => issue("missing_steps", None, "missing 'steps' array".into()),
+            });
+            return json!({
+                "valid": false, "errors": errors, "warnings": warnings, "steps": step_tiers,
+                "max_tier": null, "requires_approval": false, "execution_order": null,
+            });
+        };
+
+        let mut dag: Dag<()> = Dag::new();
+        let mut ids: HashSet<&str> = HashSet::new();
+
+        // First pass: ids, tools, required inputs, tiers.
+        for (i, step) in steps.iter().enumerate() {
+            let Some(id) = step.get("id").and_then(|v| v.as_str()) else {
+                errors.push(issue(
+                    "missing_id",
+                    None,
+                    format!("step[{i}]: missing 'id' string"),
+                ));
+                continue;
+            };
+            if !ids.insert(id) {
+                errors.push(issue(
+                    "duplicate_id",
+                    Some(id),
+                    format!("step[{i}]: duplicate id '{id}'"),
+                ));
+                continue;
+            }
+            let _ = dag.add_node(id, ());
+
+            let Some(tool_name) = step.get("tool").and_then(|v| v.as_str()) else {
+                errors.push(issue(
+                    "missing_tool",
+                    Some(id),
+                    format!("step '{id}': missing 'tool' string"),
+                ));
+                continue;
+            };
+            let Some(tool) = self.tools.iter().find(|t| t.name == tool_name) else {
+                errors.push(issue(
+                    "unknown_tool",
+                    Some(id),
+                    format!("step '{id}': unknown tool '{tool_name}'"),
+                ));
+                continue;
+            };
+
+            let tier = approval_tier(tool_name);
+            max_tier = Some(max_tier.map_or(tier, |m| tier_max(m, tier)));
+            step_tiers.push(json!({ "id": id, "tool": tool_name, "tier": tier.name() }));
+
+            let empty = serde_json::Map::new();
+            let arguments = match step.get("arguments") {
+                None => &empty,
+                Some(Value::Object(m)) => m,
+                Some(_) => {
+                    errors.push(issue(
+                        "invalid_arguments",
+                        Some(id),
+                        format!("step '{id}': 'arguments' must be an object"),
+                    ));
+                    continue;
+                }
+            };
+            for field in required_inputs(&tool.input_schema) {
+                if !arguments.contains_key(&field) {
+                    errors.push(issue(
+                        "missing_required_input",
+                        Some(id),
+                        format!("step '{id}': tool '{tool_name}' requires input '{field}'"),
+                    ));
+                }
+            }
+        }
+
+        // Second pass: depends_on edges (cycle detection via the Dag).
+        for step in steps {
+            let Some(id) = step.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(deps) = step.get("depends_on") else {
+                continue;
+            };
+            let Some(deps) = deps.as_array() else {
+                errors.push(issue(
+                    "invalid_depends_on",
+                    Some(id),
+                    format!("step '{id}': 'depends_on' must be an array of step ids"),
+                ));
+                continue;
+            };
+            for dep in deps {
+                let Some(dep_id) = dep.as_str() else {
+                    errors.push(issue(
+                        "invalid_depends_on",
+                        Some(id),
+                        format!("step '{id}': non-string entry in depends_on"),
+                    ));
+                    continue;
+                };
+                if !ids.contains(dep_id) {
+                    errors.push(issue(
+                        "unknown_step_reference",
+                        Some(id),
+                        format!("step '{id}': depends_on references unknown step '{dep_id}'"),
+                    ));
+                    continue;
+                }
+                if let Err(e) = dag.add_edge(dep_id, id) {
+                    errors.push(issue("cycle", Some(id), format!("step '{id}': {e}")));
+                }
+            }
+        }
+
+        // Third pass: `$step.field` argument references.
+        for step in steps {
+            let (Some(id), Some(args)) = (
+                step.get("id").and_then(|v| v.as_str()),
+                step.get("arguments"),
+            ) else {
+                continue;
+            };
+            let mut refs = Vec::new();
+            collect_step_refs(args, &mut refs);
+            for (reference, target) in refs {
+                if !ids.contains(target) {
+                    errors.push(issue(
+                        "unknown_step_reference",
+                        Some(id),
+                        format!("step '{id}': argument reference '{reference}' names unknown step '{target}'"),
+                    ));
+                } else if target == id || !dag.has_path(target, id) {
+                    warnings.push(issue(
+                        "undeclared_dependency",
+                        Some(id),
+                        format!("step '{id}': argument reference '{reference}' but '{target}' is not upstream — add it to depends_on"),
+                    ));
+                }
+            }
+        }
+
+        let valid = errors.is_empty();
+        let execution_order: Value = if valid {
+            json!(dag.topological_sort())
+        } else {
+            Value::Null
+        };
+        json!({
+            "valid": valid,
+            "errors": errors,
+            "warnings": warnings,
+            "steps": step_tiers,
+            "max_tier": max_tier.map(|t| t.name()),
+            "requires_approval": max_tier.is_some_and(|t| t.requires_approval()),
+            "execution_order": execution_order,
+        })
+    }
+
     /// Merge registry-sourced skills into the tool list, with registry
     /// taking precedence over any manual entry of the same name. Called at
     /// the end of [`Self::register_all`].
@@ -1045,6 +1350,26 @@ Example 2 — "cluster crates by complexity then classify":
             handler: handlers::pipeline_list,
         });
 
+        self.tools.push(Tool {
+            name: "ix_node_catalog",
+            description: "Machine-readable node catalog of every registered IX MCP tool (ComfyUI object_info analogue): name, description, dispatch (registry|manual), input JSON schema, required inputs, declared output schema (null when undeclared), and the ix-approval action kind + tier. Read-only; for pipeline editors and planners.",
+            input_schema: object(vec![], &[]),
+            handler: handlers::node_catalog,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_pipeline_validate",
+            description: "Validate an ix_pipeline_run spec ({steps: [...]}) offline without executing anything: unknown tools, missing required inputs, depends_on or $step.field references to undefined steps, cycles (ix-pipeline Dag). Returns structured errors/warnings ({code, step, message}), per-step approval tiers, the max tier the pipeline needs, and the execution order when valid.",
+            input_schema: object(
+                vec![(
+                    "steps",
+                    Prop::array_of(Prop::object_any())
+                        .desc("Pipeline steps, same shape ix_pipeline_run consumes: {id, tool, arguments?, depends_on?, asset_name?}"),
+                )],
+                &["steps"],
+            ),
+            handler: handlers::pipeline_validate,
+        });
     }
 
     /// Third section: governance, federation bridges, and

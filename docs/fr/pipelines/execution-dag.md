@@ -290,6 +290,37 @@ println!("{}", result.output("greet").unwrap());  // "Bonjour, ix !"
 
 ---
 
+## Valider hors ligne une spécification de pipeline MCP
+
+La surface MCP propose deux compagnons en lecture seule (Tier 1) de `ix_pipeline_run`, inspirés de l'endpoint `object_info` et de `comfy validate` de ComfyUI :
+
+- **`ix_node_catalog`** (sans argument) renvoie une entrée par outil enregistré : `name`, `description`, `dispatch` (`registry` ou `manual`), `input_schema`, `required_inputs`, `output_schema` (`null` si le skill n'en déclare pas) et `approval` (`action_kind` + `tier` calculés par `ix-approval`).
+- **`ix_pipeline_validate`** prend exactement la spécification `{"steps": [...]}` que consomme `ix_pipeline_run` et la vérifie sans rien exécuter.
+
+```json
+{
+  "steps": [
+    { "id": "a", "tool": "ix_stats", "arguments": { "data": [1.0, 2.0, 3.0] } },
+    { "id": "b", "tool": "ix_cache", "depends_on": ["a"],
+      "arguments": { "operation": "set", "key": "k", "value": "$a.mean" } }
+  ]
+}
+```
+
+renvoie `valid: true`, `execution_order: ["a", "b"]`, le tier de chaque étape, `max_tier: "tier_two"` et `requires_approval: false`. Les problèmes reviennent sous forme structurée `{code, step, message}`, pour qu'un éditeur puisse rattacher chacun à un noeud :
+
+| Code | Signification |
+|------|---------------|
+| `unknown_tool` | `tool` n'existe pas dans le registre |
+| `missing_required_input` | une entrée listée dans `required` du schéma de l'outil manque dans `arguments` |
+| `unknown_step_reference` | une entrée de `depends_on` ou un argument `"$etape.champ"` désigne une étape non définie |
+| `cycle` | une arête `depends_on` fermerait un cycle (refusée par `ix_pipeline::dag::Dag`) |
+| `missing_steps`, `empty_steps`, `missing_id`, `duplicate_id`, `missing_tool`, `invalid_arguments`, `invalid_depends_on` | spécification malformée |
+
+L'avertissement `undeclared_dependency` signale une référence `"$etape.champ"` vers une étape qui n'est pas en amont via `depends_on` : elle risque de ne pas avoir été exécutée au moment de la substitution. Les vérifications sont structurelles : les *types* des arguments ne sont pas encore validés contre le schéma. L'exemple ci-dessus est vérifié par `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
+
+---
+
 ## Pour aller plus loin
 
 - Le **[cache et la mémoïsation](./cache-et-memoisation.md)** couvrent le trait `PipelineCache`, la mise en cache par noeud et comment connecter `ix-cache` pour le recalcul incrémental.

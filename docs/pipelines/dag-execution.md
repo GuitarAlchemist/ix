@@ -290,6 +290,37 @@ println!("{}", result.output("greet").unwrap());  // "Hello, ix!"
 
 ---
 
+## Validating MCP Pipeline Specs Offline
+
+The MCP surface has two read-only (Tier 1) companions to `ix_pipeline_run`, modelled on ComfyUI's `object_info` endpoint and `comfy validate`:
+
+- **`ix_node_catalog`** (no arguments) returns one entry per registered tool: `name`, `description`, `dispatch` (`registry` or `manual`), `input_schema`, `required_inputs`, `output_schema` (`null` when the skill declares none) and `approval` (`action_kind` + `tier` as computed by `ix-approval`).
+- **`ix_pipeline_validate`** takes the exact `{"steps": [...]}` spec `ix_pipeline_run` consumes and checks it without running anything.
+
+```json
+{
+  "steps": [
+    { "id": "a", "tool": "ix_stats", "arguments": { "data": [1.0, 2.0, 3.0] } },
+    { "id": "b", "tool": "ix_cache", "depends_on": ["a"],
+      "arguments": { "operation": "set", "key": "k", "value": "$a.mean" } }
+  ]
+}
+```
+
+returns `valid: true`, `execution_order: ["a", "b"]`, per-step tiers, `max_tier: "tier_two"` and `requires_approval: false`. Problems come back as structured `{code, step, message}` entries so an editor can pin each one to a node:
+
+| Code | Meaning |
+|------|---------|
+| `unknown_tool` | `tool` is not in the registry |
+| `missing_required_input` | an input listed in the tool's schema `required` is absent from `arguments` |
+| `unknown_step_reference` | a `depends_on` entry or a `"$step.field"` argument names an undefined step |
+| `cycle` | a `depends_on` edge would close a cycle (rejected by `ix_pipeline::dag::Dag`) |
+| `missing_steps`, `empty_steps`, `missing_id`, `duplicate_id`, `missing_tool`, `invalid_arguments`, `invalid_depends_on` | malformed spec |
+
+The warning `undeclared_dependency` flags a `"$step.field"` reference to a step that is not upstream through `depends_on` — it may not have run when the reference is substituted. The checks are structural: argument *types* are not validated against the schema yet. The example above is pinned by `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
+
+---
+
 ## Going Further
 
 - **[Caching and Memoization](./caching-and-memoization.md)** covers the `PipelineCache` trait, per-node cacheability, and how to connect to `ix-cache` for incremental recomputation.
