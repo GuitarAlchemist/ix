@@ -47,8 +47,14 @@ fn make_ctx() -> ServerContext {
 fn run_pipeline(folder: &str) -> Value {
     let reg = ToolRegistry::new();
     let ctx = make_ctx();
-    // Each test replays a showcase as a fresh session. `ix_pipeline_run` goes through
-    // the loop detector (ix#350), and this binary runs it more than 10 times.
+    // Recorded decision, not a workaround (ix#350 review): manual tools now go
+    // through the loop detector, which caps one tool name at 10 calls per 5
+    // minutes *per process*. Each test here is a separate agent session that
+    // happens to share one test binary, and the binary replays more than 10
+    // pipelines, so the window is cleared at each session boundary. A real
+    // session that runs 10 pipelines in 5 minutes is meant to be cut off; if
+    // that cap proves wrong for orchestrating tools, the fix is a per-kind
+    // threshold in ix-loop-detect, not a wider window here.
     shared_loop_detector().clear_key("ix_pipeline_run");
     reg.call_with_ctx("ix_pipeline_run", load_spec(folder), &ctx)
         .unwrap_or_else(|e| panic!("pipeline_run failed for {folder}: {e}"))
@@ -270,6 +276,7 @@ fn governance_check_consumes_pipeline_lineage() {
     // the response as `lineage_audit`.
     let reg = ToolRegistry::new();
     let ctx = make_ctx();
+    // Session boundary — see `run_pipeline`.
     shared_loop_detector().clear_key("ix_pipeline_run");
     let pipeline_out = reg
         .call_with_ctx("ix_pipeline_run", load_spec("04-sprint-oracle"), &ctx)
