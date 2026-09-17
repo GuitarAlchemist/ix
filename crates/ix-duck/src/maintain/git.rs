@@ -46,14 +46,32 @@ pub(crate) trait Git {
     fn tracked_dirty(&self, repo_dir: &Path) -> Option<bool>;
 }
 
+/// A `git` command that ignores the configuration keys of the target
+/// repository that name an executable. `core.fsmonitor` is run by `status`,
+/// `gpg.program` by `log` when `log.showSignature` is set, and `core.pager`,
+/// `core.editor` and `diff.external` by commands that page or diff. Without
+/// these overrides, pointing this port at a repository whose `.git/config`
+/// someone else wrote runs their program (ix#350).
+fn hardened_git() -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("--no-pager")
+        .args(["-c", "core.fsmonitor=false"])
+        .args(["-c", "core.hooksPath=ix-no-hooks-dir"])
+        .args(["-c", "core.pager=cat"])
+        .args(["-c", "core.editor=false"])
+        .args(["-c", "diff.external="])
+        .args(["-c", "log.showSignature=false"])
+        .args(["-c", "gpg.program=false"]);
+    cmd
+}
+
 /// Production adapter: shells out to `git` (`cat-file -e` then
 /// `status --porcelain --untracked-files=no`).
 pub(crate) struct RealGit;
 
 impl Git for RealGit {
     fn commit_exists(&self, repo_dir: &Path, sha: &str) -> Option<bool> {
-        use std::process::Command;
-        match Command::new("git")
+        match hardened_git()
             .arg("-C")
             .arg(repo_dir)
             .args(["cat-file", "-e", &format!("{sha}^{{commit}}")])
@@ -65,10 +83,9 @@ impl Git for RealGit {
     }
 
     fn tracked_dirty(&self, repo_dir: &Path) -> Option<bool> {
-        use std::process::Command;
         // `--untracked-files=no` excludes other agents' untracked WIP, so a shared tree
         // doesn't spuriously fail a valid iteration.
-        match Command::new("git")
+        match hardened_git()
             .arg("-C")
             .arg(repo_dir)
             .args(["status", "--porcelain", "--untracked-files=no"])
