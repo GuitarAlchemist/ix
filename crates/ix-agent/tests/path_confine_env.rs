@@ -139,6 +139,15 @@ fn confinement_follows_the_operator_environment() {
     .expect_err("the workspace is not an export destination");
     assert!(err.contains("not inside an allowed destination root"), "{err}");
 
+    // An in-root directory is not a session log.
+    std::fs::create_dir_all(root.join("logs")).unwrap();
+    let err = call(
+        "ix_session_flywheel_export",
+        json!({ "session_log": "logs" }),
+    )
+    .expect_err("a directory is not a session log");
+    assert!(err.contains("is not a file"), "{err}");
+
     // A dangling link inside the trace root is refused, not skipped past.
     let gone = base.path().join("gone");
     std::fs::create_dir_all(&gone).unwrap();

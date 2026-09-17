@@ -5193,7 +5193,11 @@ fn confine_session_log(raw: &str) -> Result<std::path::PathBuf, String> {
             return Ok(given);
         }
     }
-    path_confine::confine(&root?, "session_log", raw)
+    let path = path_confine::confine(&root?, "session_log", raw)?;
+    if !path.is_file() {
+        return Err(format!("`session_log`: {raw} is not a file"));
+    }
+    Ok(path)
 }
 
 // ── ix_ml_pipeline ────────────────────────────────────────────
