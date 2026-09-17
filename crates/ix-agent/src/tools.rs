@@ -797,8 +797,12 @@ Example 2 — "cluster crates by complexity then classify":
     ///   "warnings": [{ "code": "loop_detect_threshold", "step": null, "index": null, "message": "..." }],
     ///   "steps":    [{ "id": "s1", "index": 0, "tool": "ix_stats", "gated": true,
     ///                  "tier": "tier_one", "effect": "auto_approved" }],
-    ///   "max_tier": "tier_one" | null,
-    ///   "ungated_steps": [],
+    ///   "approval": {
+    ///     "verdict": "auto_approved" | "ungated_steps_unchecked" | "blocked" | "unknown",
+    ///     "max_gated_tier": "tier_one" | null,
+    ///     "gated_steps": 2,
+    ///     "ungated_steps": []
+    ///   },
     ///   "execution_order": ["s1", "s2"] | null
     /// }
     /// ```
@@ -808,12 +812,23 @@ Example 2 — "cluster crates by complexity then classify":
     /// `unsupported_in_pipeline`, `blocked_by_approval_gate`,
     /// `invalid_arguments`, `missing_required_input`, `invalid_depends_on`,
     /// `too_many_references`, `unknown_step_reference`, `self_reference`,
-    /// `undeclared_dependency`, `cycle`. Warning code: `loop_detect_threshold`.
+    /// `undeclared_dependency`, `cycle`, `internal_graph_error`. Warning codes:
+    /// `ungated_step`, `order_dependent_reference`, `loop_detect_threshold`.
     ///
-    /// `max_tier` is taken over gated steps only; `ungated_steps` lists the
-    /// steps that run without any approval check. `execution_order` is the
-    /// order `ix_pipeline_run` uses: both build an `ix_pipeline::dag::Dag` with
-    /// nodes in step order, and its topological sort is deterministic.
+    /// The `approval` block never reads as "nothing to approve": `verdict` is
+    /// `ungated_steps_unchecked` as soon as one step runs without passing the
+    /// approval gate (each such step also gets an `ungated_step` warning), and
+    /// `unknown` when no step could be classified. `max_gated_tier` covers the
+    /// gated steps only. `execution_order` is the order `ix_pipeline_run` uses:
+    /// both build an `ix_pipeline::dag::Dag` with nodes in step order, and its
+    /// topological sort is deterministic.
+    ///
+    /// A `$step.field` reference resolves exactly when its target precedes the
+    /// referring step in that order — the same condition `run_pipeline` applies
+    /// when it substitutes arguments. A reference that resolves only through
+    /// the order, without a `depends_on` path, gets an
+    /// `order_dependent_reference` warning: it holds today but any later edit
+    /// to the graph can reorder the two steps.
     ///
     /// Deliberately stricter than `ix_pipeline_run`, which accepts an empty
     /// `steps` array and silently ignores a non-array `depends_on` or a
@@ -830,10 +845,19 @@ Example 2 — "cluster crates by complexity then classify":
                 "message": message,
             })
         }
+        /// An issue that belongs to a step position but to no step id (the
+        /// step has no usable `id`), so an editor can still locate it.
+        fn issue_at_index(code: &str, index: usize, message: String) -> Value {
+            json!({ "code": code, "step": null, "index": index, "message": message })
+        }
         fn report(errors: Vec<Value>, warnings: Vec<Value>, steps: Vec<Value>) -> Value {
             json!({
                 "valid": false, "errors": errors, "warnings": warnings, "steps": steps,
-                "max_tier": null, "ungated_steps": [], "execution_order": null,
+                "approval": {
+                    "verdict": "unknown", "max_gated_tier": null,
+                    "gated_steps": 0, "ungated_steps": [],
+                },
+                "execution_order": null,
             })
         }
 
@@ -877,9 +901,9 @@ Example 2 — "cluster crates by complexity then classify":
         // First pass: ids, tools, required inputs, tiers.
         for (i, step) in steps.iter().enumerate() {
             let Some(id) = step.get("id").and_then(|v| v.as_str()) else {
-                errors.push(issue(
+                errors.push(issue_at_index(
                     "missing_id",
-                    None,
+                    i,
                     format!("step[{i}]: missing 'id' string"),
                 ));
                 continue;
@@ -939,6 +963,11 @@ Example 2 — "cluster crates by complexity then classify":
                 }
             } else {
                 ungated.push(id);
+                warnings.push(issue(
+                    "ungated_step",
+                    at,
+                    format!("step '{id}': '{tool_name}' does not pass through the approval gate, so its tier ({}) is not enforced at run time; ix#352 routes manual tools through the gate, after which this step is checked and a Tier-3 tool becomes an error", tier.name()),
+                ));
             }
 
             let empty = serde_json::Map::new();
@@ -1105,8 +1134,15 @@ Example 2 — "cluster crates by complexity then classify":
                 ));
             }
         } else {
-            // Upstream sets, computed once as bitsets in topological order,
-            // so every `$ref` is an O(1) lookup.
+            // A reference resolves iff its target runs first, which is exactly
+            // `run_pipeline`'s condition: it substitutes arguments in this same
+            // order. `position[i]` is the step's rank in it; upstream sets
+            // (bitsets over `preds`) additionally say whether the ordering is
+            // *declared* rather than incidental.
+            let mut position: Vec<usize> = vec![usize::MAX; n];
+            for (rank, &i) in topo.iter().enumerate() {
+                position[i] = rank;
+            }
             let words = n.div_ceil(64);
             let mut upstream: Vec<Vec<u64>> = vec![vec![0; words]; n];
             for &i in &topo {
@@ -1121,13 +1157,19 @@ Example 2 — "cluster crates by complexity then classify":
             }
             for (i, step_refs) in refs.iter().enumerate() {
                 for &(reference, j) in step_refs {
-                    if upstream[i][j / 64] & (1 << (j % 64)) == 0 {
-                        let id = node_id[i].unwrap_or_default();
-                        let target = node_id[j].unwrap_or_default();
+                    let id = node_id[i].unwrap_or_default();
+                    let target = node_id[j].unwrap_or_default();
+                    if position[j] >= position[i] {
                         errors.push(issue(
                             "undeclared_dependency",
                             Some((id, i)),
-                            format!("step '{id}': argument reference '{reference}' but '{target}' is not upstream through depends_on, so it may not have run yet — add it to depends_on"),
+                            format!("step '{id}': argument reference '{reference}' but '{target}' runs after it, so the reference cannot resolve — add '{target}' to this step's depends_on"),
+                        ));
+                    } else if upstream[i][j / 64] & (1 << (j % 64)) == 0 {
+                        warnings.push(issue(
+                            "order_dependent_reference",
+                            Some((id, i)),
+                            format!("step '{id}': argument reference '{reference}' resolves only because '{target}' happens to run earlier; nothing declares that order — add '{target}' to this step's depends_on"),
                         ));
                     }
                 }
@@ -1145,34 +1187,73 @@ Example 2 — "cluster crates by complexity then classify":
             }
         }
 
-        let valid = errors.is_empty();
-        let execution_order = if valid {
-            // Same construction as `run_pipeline`: nodes in step order. Edges
-            // go in topological order of their target, so each `add_edge`
-            // cycle check starts from a node with no successors yet.
+        // Same construction as `run_pipeline`: nodes in step order. Edges go
+        // in topological order of their target, so each `add_edge` cycle check
+        // starts from a node with no successors yet. Both calls are infallible
+        // for a spec that got this far (ids are unique, every endpoint is a
+        // node, the graph is acyclic) — a failure means this function and the
+        // `Dag` disagree, so it is reported instead of discarded.
+        let mut execution_order = Value::Null;
+        if errors.is_empty() {
             let mut dag: Dag<()> = Dag::new();
-            for id in node_id.iter().flatten() {
-                let _ = dag.add_node(*id, ());
+            let mut graph_errors: Vec<Value> = Vec::new();
+            for (i, id) in node_id.iter().enumerate() {
+                let Some(id) = id else { continue };
+                if let Err(e) = dag.add_node(*id, ()) {
+                    graph_errors.push(issue(
+                        "internal_graph_error",
+                        Some((id, i)),
+                        format!("step '{id}': {e}"),
+                    ));
+                }
             }
             for &i in &topo {
                 for &p in &preds[i] {
-                    let _ = dag.add_edge(
+                    let (from, to) = (
                         node_id[p].unwrap_or_default(),
                         node_id[i].unwrap_or_default(),
                     );
+                    if let Err(e) = dag.add_edge(from, to) {
+                        graph_errors.push(issue(
+                            "internal_graph_error",
+                            Some((to, i)),
+                            format!("step '{to}': edge {from} -> {to}: {e}"),
+                        ));
+                    }
                 }
             }
-            json!(dag.topological_sort())
+            if graph_errors.is_empty() {
+                execution_order = json!(dag.topological_sort());
+            } else {
+                errors.extend(graph_errors);
+            }
+        }
+
+        let valid = errors.is_empty();
+        let blocked = errors
+            .iter()
+            .any(|e| e["code"] == "blocked_by_approval_gate");
+        let verdict = if blocked {
+            "blocked"
+        } else if !ungated.is_empty() {
+            "ungated_steps_unchecked"
+        } else if max_tier.is_some() {
+            "auto_approved"
         } else {
-            Value::Null
+            "unknown"
         };
+        let gated_steps = step_reports.len() - ungated.len();
         json!({
             "valid": valid,
             "errors": errors,
             "warnings": warnings,
             "steps": step_reports,
-            "max_tier": max_tier.map(|t| t.name()),
-            "ungated_steps": ungated,
+            "approval": {
+                "verdict": verdict,
+                "max_gated_tier": max_tier.map(|t| t.name()),
+                "gated_steps": gated_steps,
+                "ungated_steps": ungated,
+            },
             "execution_order": execution_order,
         })
     }

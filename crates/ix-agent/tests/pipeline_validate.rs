@@ -40,6 +40,16 @@ fn error_codes(report: &Value) -> Vec<(String, Value)> {
         .collect()
 }
 
+/// Clear the tools' slots in the process-wide loop-detector window before a
+/// test actually runs a pipeline. The window is shared by every test in this
+/// binary (10 calls / 5 min per tool), so without this the last tests to run
+/// would start with someone else's budget already spent.
+fn reset_loop_budget(tools: &[&str]) {
+    for tool in tools {
+        shared_loop_detector().clear_key(tool);
+    }
+}
+
 fn stats_step(id: &str) -> Value {
     json!({ "id": id, "tool": "ix_stats", "arguments": { "data": [1.0] } })
 }
@@ -94,9 +104,13 @@ fn catalog_gated_flag_matches_real_dispatch() {
     let detector = shared_loop_detector();
     let reg = ToolRegistry::new();
 
-    // Neither tool is called anywhere else in this test binary.
+    // Neither tool is called anywhere else in this test binary, so no
+    // concurrent test can reset the counter between the two reads.
     let probes = [
-        ("ix_stats", json!({ "data": [1.0, 2.0] })),
+        (
+            "ix_distance",
+            json!({ "a": [0.0], "b": [1.0], "metric": "euclidean" }),
+        ),
         (
             "ix_pipeline_list",
             json!({ "root": "no/such/dir/for/gating/probe" }),
@@ -133,8 +147,10 @@ fn valid_chained_pipeline_passes_with_order_and_tier() {
         "{report:#}"
     );
     assert_eq!(report["execution_order"], json!(["a", "b"]));
-    assert_eq!(report["max_tier"], "tier_two");
-    assert_eq!(report["ungated_steps"], json!([]));
+    assert_eq!(report["approval"]["max_gated_tier"], "tier_two");
+    assert_eq!(report["approval"]["verdict"], "auto_approved");
+    assert_eq!(report["approval"]["gated_steps"], 2);
+    assert_eq!(report["approval"]["ungated_steps"], json!([]));
     assert_eq!(report["steps"][0]["tier"], "tier_one");
     assert_eq!(report["steps"][0]["gated"], true);
     assert_eq!(report["steps"][1]["effect"], "auto_approved");
@@ -146,9 +162,15 @@ fn ungated_steps_are_listed_and_excluded_from_max_tier() {
         "steps": [{ "id": "cat", "tool": "ix_node_catalog", "arguments": {} }]
     }));
     assert_eq!(report["valid"], true, "{report:#}");
-    assert_eq!(report["ungated_steps"], json!(["cat"]));
-    assert_eq!(report["max_tier"], Value::Null);
+    assert_eq!(report["approval"]["ungated_steps"], json!(["cat"]));
+    assert_eq!(report["approval"]["max_gated_tier"], Value::Null);
+    assert_eq!(report["approval"]["gated_steps"], 0);
     assert_eq!(report["steps"][0]["effect"], "not_gated");
+    // The aggregate must not read as "nothing to approve", and the step itself
+    // carries a warning.
+    assert_eq!(report["approval"]["verdict"], "ungated_steps_unchecked");
+    assert_eq!(report["warnings"][0]["code"], "ungated_step");
+    assert_eq!(report["warnings"][0]["step"], "cat");
 }
 
 /// Vacuous while no gated tool is Tier 3 (parity.rs forbids unclassified
@@ -195,6 +217,7 @@ fn execution_order_matches_what_pipeline_run_executes() {
         ]
     });
     let order = validate(spec.clone())["execution_order"].clone();
+    reset_loop_budget(&["ix_stats"]);
     let run = call("ix_pipeline_run", spec).expect("pipeline runs");
     assert_eq!(order, run["execution_order"]);
     assert_eq!(order, json!(["z", "x", "y"]));
@@ -232,8 +255,9 @@ fn unknown_tool_is_reported_against_its_step() {
         vec![("unknown_tool".to_string(), json!("x"))]
     );
     assert_eq!(report["errors"][0]["index"], 0);
-    // An unknown tool has no tier to contribute.
-    assert_eq!(report["max_tier"], Value::Null);
+    // An unknown tool has no tier to contribute, and no step was classified.
+    assert_eq!(report["approval"]["max_gated_tier"], Value::Null);
+    assert_eq!(report["approval"]["verdict"], "unknown");
 }
 
 #[test]
@@ -281,14 +305,15 @@ fn self_reference_is_an_error_and_really_fails_at_run_time() {
         error_codes(&report),
         vec![("self_reference".to_string(), json!("a"))]
     );
+    reset_loop_budget(&["ix_stats"]);
     let err = call("ix_pipeline_run", spec).expect_err("run must fail");
     assert!(err.contains("has no result yet"), "{err}");
 }
 
-/// A `$ref` to a step that is not upstream is an error: whether it resolves
-/// depends on the sort, not on anything the spec declares.
+/// A `$ref` whose target runs *after* the referring step can never resolve.
+/// The rule is the runner's: the target must precede in the execution order.
 #[test]
-fn reference_to_a_step_not_upstream_is_an_error() {
+fn reference_to_a_step_that_runs_later_is_an_error() {
     let spec = json!({
         "steps": [
             { "id": "b", "tool": "ix_stats", "arguments": { "data": "$a.values" } },
@@ -302,8 +327,50 @@ fn reference_to_a_step_not_upstream_is_an_error() {
         vec![("undeclared_dependency".to_string(), json!("b"))],
         "{report:#}"
     );
-    // With the deterministic sort this particular spec always fails at run time.
-    assert!(call("ix_pipeline_run", spec).is_err());
+    reset_loop_budget(&["ix_stats"]);
+    let err = call("ix_pipeline_run", spec).expect_err("run must fail");
+    assert!(err.contains("has no result yet"), "{err}");
+}
+
+/// The mirror case: the target runs first, so `ix_pipeline_run` resolves the
+/// reference and the spec is valid. Nothing declares the order though, so it
+/// gets an `order_dependent_reference` warning rather than an error.
+#[test]
+fn reference_to_a_step_that_runs_earlier_is_valid_and_warns() {
+    let spec = json!({
+        "steps": [
+            stats_step("a"),
+            { "id": "b", "tool": "ix_cache",
+              "arguments": { "operation": "set", "key": "order_dep_probe", "value": "$a.count" } },
+        ]
+    });
+    let report = validate(spec.clone());
+    assert_eq!(report["valid"], true, "{report:#}");
+    assert_eq!(report["warnings"][0]["code"], "order_dependent_reference");
+    assert_eq!(report["warnings"][0]["step"], "b");
+    reset_loop_budget(&["ix_stats", "ix_cache"]);
+    let run = call("ix_pipeline_run", spec).expect("the runner resolves it");
+    assert_eq!(run["execution_order"], json!(["a", "b"]));
+    assert_eq!(run["results"]["b"]["ok"], true);
+}
+
+/// A declared dependency resolves the reference with no warning at all.
+#[test]
+fn declared_dependency_reference_is_clean() {
+    let report = validate(json!({
+        "steps": [
+            stats_step("a"),
+            { "id": "b", "tool": "ix_stats", "depends_on": ["a"], "arguments": { "data": "$a.values" } },
+        ]
+    }));
+    assert_eq!(report["valid"], true, "{report:#}");
+    let unrelated: Vec<&Value> = report["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["code"] == "order_dependent_reference")
+        .collect();
+    assert!(unrelated.is_empty(), "{report:#}");
 }
 
 #[test]
@@ -330,6 +397,7 @@ fn context_routed_tools_are_rejected_as_steps_and_really_fail_there() {
                 .any(|(c, _)| c == "unsupported_in_pipeline"),
             "{tool}: {report:#}"
         );
+        reset_loop_budget(&["ix_pipeline_run", tool]);
         let err = call("ix_pipeline_run", spec).expect_err("nested step must fail");
         assert!(err.contains("'nested'"), "{tool}: {err}");
     }
@@ -443,5 +511,58 @@ fn missing_or_empty_steps_is_a_structured_error_not_a_call_failure() {
     assert_eq!(
         validate(json!({ "steps": [] }))["errors"][0]["code"],
         "empty_steps"
+    );
+}
+
+/// `missing_id` has no step name to hang off, so it must at least carry the
+/// position an editor can point at.
+#[test]
+fn missing_id_error_carries_the_step_index() {
+    let report = validate(json!({
+        "steps": [stats_step("a"), { "tool": "ix_stats", "arguments": { "data": [1.0] } }]
+    }));
+    assert_eq!(report["errors"][0]["code"], "missing_id");
+    assert_eq!(report["errors"][0]["step"], Value::Null);
+    assert_eq!(report["errors"][0]["index"], 1);
+}
+
+/// The `unsupported_in_pipeline` guard is only as good as its list. Read the
+/// arms of `call_with_ctx` out of the source and require the two to match, so
+/// a tool added to the `match` without the const cannot slip through.
+#[test]
+fn context_routed_tools_const_matches_call_with_ctx() {
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tools.rs"),
+    )
+    .expect("read tools.rs");
+    let body = {
+        let start = src
+            .find("pub fn call_with_ctx(")
+            .expect("call_with_ctx in tools.rs");
+        let rest = &src[start..];
+        let end = rest.find("\n    }").expect("end of call_with_ctx");
+        &rest[..end]
+    };
+    let mut intercepted: Vec<String> = body
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let name = line.strip_prefix('"')?;
+            let (name, tail) = name.split_once('"')?;
+            tail.trim_start()
+                .starts_with("=>")
+                .then(|| name.to_string())
+        })
+        .collect();
+    intercepted.sort();
+    let mut expected: Vec<String> = CONTEXT_ROUTED_TOOLS.iter().map(|s| s.to_string()).collect();
+    expected.sort();
+    assert!(
+        !intercepted.is_empty(),
+        "no match arms found — parser drifted"
+    );
+    assert_eq!(
+        intercepted, expected,
+        "CONTEXT_ROUTED_TOOLS must list exactly the tools call_with_ctx intercepts"
     );
 }
