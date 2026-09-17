@@ -1067,7 +1067,7 @@ Example 2 — "cluster crates by complexity then classify":
         // docs/contracts/2026-05-24-quality-gate-ledger.contract.md.
         self.tools.push(Tool {
             name: "ix_quality_gate_history",
-            description: "Query the unified quality-gate ledger (state/quality/gate-ledger.jsonl). Returns v1 entries filtered by source, domain, decision, and/or since-timestamp, sorted newest-first. Legacy v0 PR-shaped rows are excluded.",
+            description: "Query the unified quality-gate ledger (state/quality/gate-ledger.jsonl). Returns v1 entries filtered by source, domain, decision, and/or since-timestamp, sorted newest-first. Legacy v0 PR-shaped rows are excluded. Always read `ledger_status` before `count`: 'absent' means no gate has recorded a run and is NOT evidence that gates passed. `ix doctor` writes rows with source='ix-doctor'.",
             input_schema: object(
                 vec![
                     (
@@ -1094,7 +1094,7 @@ Example 2 — "cluster crates by complexity then classify":
                     ),
                     (
                         "ledger_path",
-                        Prop::string().desc("Override ledger path. Default: state/quality/gate-ledger.jsonl (repo-relative)."),
+                        Prop::string().desc("Override ledger path. Default: <ix workspace root>/state/quality/gate-ledger.jsonl. Set this to read a sibling repo (ga writes its own ledger)."),
                     ),
                 ],
                 &[],

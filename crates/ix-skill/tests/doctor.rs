@@ -690,3 +690,131 @@ fn find_repo_root_walks_up_from_a_nested_directory() {
         "doctor must work from anywhere inside the repo"
     );
 }
+
+// ── quality-gate ledger producer ───────────────────────────────────────────
+//
+// `ix_quality_gate_history` has always read `state/quality/gate-ledger.jsonl`.
+// Until `ix doctor` wrote it, nothing in this repo did, so the tool answered
+// every query from an absent file. These tests pin the producer side: a run
+// leaves exactly one readable v1 row behind.
+
+use ix_quality_trend::{read_ledger, GateDecision, GateLedgerEntry, LedgerLine};
+
+/// A report with the severities we want, without running real checks.
+fn report_with(statuses: &[Status]) -> doctor::Report {
+    doctor::Report {
+        root: "seeded-root".to_string(),
+        checks: statuses
+            .iter()
+            .enumerate()
+            .map(|(i, s)| doctor::CheckResult {
+                name: format!("check-{i}"),
+                status: *s,
+                summary: "seeded".to_string(),
+                remedy: None,
+                details: serde_json::Value::Null,
+            })
+            .collect(),
+    }
+}
+
+fn only_v1(path: &Path) -> Vec<GateLedgerEntry> {
+    read_ledger(path)
+        .expect("read ledger")
+        .into_iter()
+        .filter_map(|l| match l {
+            LedgerLine::V1(e) => Some(*e),
+            LedgerLine::LegacyV0(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn append_to_ledger_writes_one_readable_v1_row_at_the_contract_path() {
+    let dir = TempDir::new().expect("tempdir");
+    let report = report_with(&[Status::Ok, Status::Ok]);
+
+    let written = doctor::append_to_ledger(dir.path(), &report, doctor::Options::default())
+        .expect("append row");
+    assert_eq!(written, dir.path().join(doctor::LEDGER_RELPATH));
+
+    let rows = only_v1(&written);
+    assert_eq!(rows.len(), 1, "one row per run");
+    let row = &rows[0];
+    assert_eq!(row.schema_version, 1);
+    assert_eq!(row.schema, "quality-gate-ledger-v1");
+    assert_eq!(row.source, "ix-doctor");
+    assert_eq!(row.domain, "harness");
+    assert_eq!(row.decision, GateDecision::Pass);
+    assert_eq!(row.metric.name, "doctor_checks_failing");
+    assert_eq!(row.metric.value, 0.0);
+    assert_eq!(row.metric.threshold, Some(0.0));
+}
+
+/// The row's decision must track the gate's own verdict, or the ledger says
+/// something different from the exit code the contributor saw.
+#[test]
+fn ledger_decision_mirrors_the_report_verdict() {
+    let cases = [
+        (vec![Status::Ok], GateDecision::Pass, 0.0, "T"),
+        (vec![Status::Ok, Status::Warn], GateDecision::Warn, 0.0, "P"),
+        (
+            vec![Status::Warn, Status::Fail, Status::Fail],
+            GateDecision::Fail,
+            2.0,
+            "F",
+        ),
+    ];
+    for (statuses, want_decision, want_value, want_verdict) in cases {
+        let report = report_with(&statuses);
+        let entry = doctor::ledger_entry(&report, doctor::Options::default());
+        assert_eq!(entry.decision, want_decision, "for {statuses:?}");
+        assert_eq!(entry.metric.value, want_value, "failing count");
+        let extra = entry.extra.as_ref().expect("extra");
+        assert_eq!(extra["verdict"], want_verdict, "hexavalent verdict");
+        assert_eq!(extra["exit_code"], report.exit_code());
+    }
+}
+
+/// Per-check detail lives in `extra`, and `--full` is recorded, because a row
+/// written without `--full` skipped the clippy + test checks and is not
+/// comparable with one that ran them.
+#[test]
+fn ledger_row_records_per_check_status_and_run_mode() {
+    let report = report_with(&[Status::Ok, Status::Fail, Status::Skip]);
+    let entry = doctor::ledger_entry(
+        &report,
+        doctor::Options {
+            write: false,
+            full: true,
+        },
+    );
+    let extra = entry.extra.as_ref().expect("extra");
+    assert_eq!(extra["mode"]["full"], true);
+    assert_eq!(extra["check_count"], 3);
+    assert_eq!(extra["skip_count"], 1);
+    assert_eq!(extra["checks"]["check-0"], "ok");
+    assert_eq!(extra["checks"]["check-1"], "FAIL");
+}
+
+/// Repeated runs accumulate rather than overwrite — the point of the ledger
+/// is the history, and a truncating open would silently leave one row.
+#[test]
+fn successive_runs_accumulate_history() {
+    let dir = TempDir::new().expect("tempdir");
+    for _ in 0..3 {
+        doctor::append_to_ledger(
+            dir.path(),
+            &report_with(&[Status::Ok]),
+            doctor::Options::default(),
+        )
+        .expect("append");
+    }
+    let rows = only_v1(&dir.path().join(doctor::LEDGER_RELPATH));
+    assert_eq!(rows.len(), 3);
+    // UUID v7 ids are distinct and sortable, so history is orderable.
+    let mut ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), 3, "each run gets its own id");
+}
