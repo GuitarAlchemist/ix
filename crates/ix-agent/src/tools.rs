@@ -828,7 +828,11 @@ Example 2 — "cluster crates by complexity then classify":
 
         self.tools.push(Tool {
             name: "ix_nl_to_pipeline",
-            description: "The IX \"thinking machine\": translate a natural-language request into a canonical PipelineSpec (ix.yaml), validate it with lower(), gate it through the Demerzel constitution (fail-closed), optionally execute it, and narrate the result back. Direct LLM-provider proposer with bounded self-repair and a two-tier coverage gate (refuses out-of-domain requests instead of confabulating). Prefer this over ix_pipeline_compile (which targets the legacy {steps:[…]} format via deprecated MCP sampling). Returns status one of: ok | compiled | out_of_domain | governance_rejected | translate_failed.",
+            description: "BLOCKED over MCP: ix-approval classifies this tool Tier 3 (it spawns \
+                          the `ix` CLI, which calls an LLM provider API and can run the \
+                          compiled pipeline), and Tier 3 has no approval path yet — see \
+                          GuitarAlchemist/ix#350. Use `ix pipeline compile` at the CLI \
+                          meanwhile. The IX \"thinking machine\": translate a natural-language request into a canonical PipelineSpec (ix.yaml), validate it with lower(), gate it through the Demerzel constitution (fail-closed), optionally execute it, and narrate the result back. Direct LLM-provider proposer with bounded self-repair and a two-tier coverage gate (refuses out-of-domain requests instead of confabulating). Prefer this over ix_pipeline_compile (which targets the legacy {steps:[…]} format via deprecated MCP sampling). Returns status one of: ok | compiled | out_of_domain | governance_rejected | translate_failed.",
             input_schema: object(
                 vec![
                     (
@@ -1622,7 +1626,10 @@ Example 2 — "cluster crates by complexity then classify":
         // unchanged from PR #61.
         self.tools.push(Tool {
             name: "ix_sentrux_annotate",
-            description: "Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments. Set `emit_untested=true` to additionally call sentrux `test_gaps` and emit one untested-smell annotation per file in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations).",
+            description: "BLOCKED over MCP: ix-approval classifies this tool Tier 3 (it runs a \
+                          caller-named executable and writes annotations to caller-named \
+                          paths), and Tier 3 has no approval path yet — see \
+                          GuitarAlchemist/ix#350. Use the sentrux CLI meanwhile. Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments. Set `emit_untested=true` to additionally call sentrux `test_gaps` and emit one untested-smell annotation per file in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations).",
             input_schema: object(
                 vec![
                     (
