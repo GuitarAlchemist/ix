@@ -302,7 +302,8 @@ fn dispatch_action_blocks_unknown_tool_via_approval() {
 /// blocked. So adding an `#[ix_skill]` without a matching `classify_action_kind` entry
 /// ships a tool that is listed, unit-tested below the gate, and refused on every MCP call
 /// (`ix_petri_analyze`, `ix_mesh_correlate` and the four `ix_assumption_*` tools were).
-/// Manual tools are invoked directly by `ToolRegistry::call` and never reach the gate.
+/// Manual tools go through the same gate (ix#350); see
+/// [`every_exposed_tool_including_manual_has_an_explicit_approval_classification`].
 ///
 /// A tool that *should* be gated goes in one of the explicit gated tables
 /// (`SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS`, `EDIT_OUT_OF_PROJECT_TOOLS`), not the
@@ -325,6 +326,167 @@ fn every_registry_backed_tool_has_an_explicit_approval_classification() {
          in-process state), or a gated table (SHELL_COMMAND_TOOLS, WEB_FETCH_TOOLS, \
          EDIT_OUT_OF_PROJECT_TOOLS) for Tier 3."
     );
+}
+
+/// Every tool on the MCP surface — registry-backed *and* hand-registered in
+/// `ToolRegistry` — must be named in `ix-approval`'s classification table.
+///
+/// Manual tools used to be invoked directly and skipped the approval gate entirely
+/// (ix#350). They now run through `registry_bridge::dispatch_manual`, so an unclassified
+/// manual tool is refused at Tier 3 on every call. Enumerating the live surface (not
+/// `EXPECTED`) means a newly registered manual tool fails here until it is classified.
+#[test]
+fn every_exposed_tool_including_manual_has_an_explicit_approval_classification() {
+    use ix_approval::{classify_action_kind, ActionKind};
+
+    let mut unclassified: Vec<String> = exposed_names()
+        .into_iter()
+        .filter(|name| classify_action_kind(name) == ActionKind::Unknown)
+        .collect();
+    unclassified.sort();
+    assert!(
+        unclassified.is_empty(),
+        "MCP tools with no ix-approval classification — every call to them is \
+         blocked at Tier 3: {unclassified:?}\n  \
+         Add each to crates/ix-approval/src/classify.rs in the table its effects warrant: \
+         READ_TOOLS (no side effects), EDIT_IN_PROJECT_TOOLS (writes workspace or \
+         in-process state, or spawns a fixed read-only subprocess), or a gated table \
+         (SHELL_COMMAND_TOOLS, WEB_FETCH_TOOLS, EDIT_OUT_OF_PROJECT_TOOLS) for Tier 3."
+    );
+}
+
+/// A manual tool classified Tier 3 is refused through `ToolRegistry::call` before its
+/// handler runs — proof the manual path reaches the gate. Unrefused, `ix_nl_to_pipeline`
+/// would spawn the `ix` binary and `ix_sentrux_annotate` the named executable.
+#[test]
+fn manual_tier_three_tools_are_refused_by_the_approval_gate() {
+    let marker = in_root_tempdir();
+    let out = marker.path().join("annotations.jsonl");
+    for (tool, args) in [
+        (
+            "ix_nl_to_pipeline",
+            serde_json::json!({ "sentence": "compute stats of 1 2 3" }),
+        ),
+        (
+            "ix_sentrux_annotate",
+            serde_json::json!({
+                "workspace": "crates/ix-approval",
+                "mode": "sidecar",
+                "out": out.to_str().unwrap(),
+            }),
+        ),
+    ] {
+        let err = ToolRegistry::new()
+            .call(tool, args)
+            .expect_err("a Tier-3 manual tool must be refused");
+        assert!(
+            err.starts_with("ix_approval: action blocked (ApprovalRequired)"),
+            "{tool}: expected an approval refusal, got: {err}"
+        );
+    }
+    assert!(!out.exists(), "a refused tool must not write");
+}
+
+/// The auto-approved (Tier 2) manual tools that take a caller path confine it to the
+/// workspace: `repo_root` for the git tools (it also becomes `safe.directory`) and
+/// `state_dir` for `ix_autoresearch_run`, which writes there.
+#[test]
+fn tier_two_manual_tools_refuse_paths_outside_the_workspace() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use serde_json::json;
+
+    let registry = ToolRegistry::new();
+    let call = |tool: &str, args: serde_json::Value| {
+        shared_loop_detector().clear_key(tool);
+        registry.call(tool, args)
+    };
+    let outside = tempfile::tempdir().unwrap();
+    let outside_dir = outside.path().to_str().unwrap().to_string();
+    let new_state = outside.path().join("state");
+
+    let cases = [
+        (
+            "ix_git_log",
+            json!({ "path": "crates", "repo_root": outside_dir }),
+        ),
+        ("ix_git_churn", json!({ "repo_root": outside_dir })),
+        (
+            "ix_autoresearch_run",
+            json!({ "iterations": 1, "state_dir": new_state.to_str().unwrap() }),
+        ),
+    ];
+    for (tool, args) in cases {
+        let err =
+            call(tool, args.clone()).expect_err("a path outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
+    }
+    assert!(
+        !new_state.exists(),
+        "a refused state_dir must not be created"
+    );
+
+    for (tool, args) in [
+        (
+            "ix_git_log",
+            json!({ "path": "crates", "repo_root": "../escape" }),
+        ),
+        ("ix_git_churn", json!({ "repo_root": "../escape" })),
+        (
+            "ix_autoresearch_run",
+            json!({ "iterations": 1, "state_dir": "../escape" }),
+        ),
+    ] {
+        let err = call(tool, args.clone()).expect_err("`..` must be refused");
+        assert!(err.contains("`..` is not allowed"), "{tool} {args}: {err}");
+    }
+
+    // An in-root repo root still works.
+    let out = call(
+        "ix_git_log",
+        json!({ "path": "crates/ix-approval", "since_days": 30, "repo_root": "." }),
+    )
+    .expect("the workspace root must be accepted as repo_root");
+    assert!(out["commits"].is_number(), "{out}");
+}
+
+/// `ix_pipeline_run` is gated and its handler dispatches each step through the gate
+/// again. Before the chain was held behind an `Arc`, the nested dispatch waited on the
+/// chain mutex its own caller held, so this call never returned. The nested calls still
+/// count against the loop detector.
+#[test]
+fn gated_pipeline_run_dispatches_gated_steps_without_deadlock() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use ix_agent::server_context::ServerContext;
+
+    // No other test in this binary calls this tool, so its count is ours alone.
+    const STEP_TOOL: &str = "ix_grothendieck_delta";
+    shared_loop_detector().clear_key(STEP_TOOL);
+    shared_loop_detector().clear_key("ix_pipeline_run");
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (ctx, _rx) = ServerContext::new();
+        let step = |id: &str| {
+            serde_json::json!({
+                "id": id,
+                "tool": STEP_TOOL,
+                "arguments": { "source": [0, 4, 7], "target": [0, 4, 8] }
+            })
+        };
+        let out = ToolRegistry::new().call_with_ctx(
+            "ix_pipeline_run",
+            serde_json::json!({ "steps": [step("a"), step("b")] }),
+            &ctx,
+        );
+        let _ = tx.send(out);
+    });
+    let out = rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("ix_pipeline_run deadlocked on a nested gated dispatch")
+        .expect("pipeline with gated steps must succeed");
+    assert_eq!(out["results"]["a"]["is_zero"], false, "{out}");
+    assert_eq!(shared_loop_detector().count(STEP_TOOL), 2);
+    assert!(shared_loop_detector().count("ix_pipeline_run") >= 1);
 }
 
 /// `ix_petri_analyze` through the exact entry point `main.rs` uses for `tools/call`.
@@ -353,9 +515,10 @@ fn petri_analyze_is_reachable_through_mcp_dispatch() {
     assert_eq!(out["deadlock_free"]["detail"][0]["witness"][0], "acquire");
 }
 
-/// `ix_pipeline_run` itself is a manual tool and is not gated, but each step goes back
+/// `ix_pipeline_run` is a manual tool, gated itself (ix#350), and each step goes back
 /// through `ToolRegistry::call` — so a step naming an unclassified registry tool failed
-/// the whole pipeline with the same approval refusal.
+/// the whole pipeline with the same approval refusal. The nested dispatch also checks
+/// the middleware chain is not held across the outer handler (it would deadlock).
 #[test]
 fn pipeline_run_step_reaches_a_newly_classified_tool() {
     use ix_agent::server_context::ServerContext;

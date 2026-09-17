@@ -10,6 +10,7 @@
 //! keys), and — for deterministic demos — capture the original "aha"
 //! signal (e.g. positive Lyapunov exponent for chaos-detective).
 
+use ix_agent::registry_bridge::shared_loop_detector;
 use ix_agent::server_context::ServerContext;
 use ix_agent::tools::ToolRegistry;
 use serde_json::Value;
@@ -46,6 +47,9 @@ fn make_ctx() -> ServerContext {
 fn run_pipeline(folder: &str) -> Value {
     let reg = ToolRegistry::new();
     let ctx = make_ctx();
+    // Each test replays a showcase as a fresh session. `ix_pipeline_run` goes through
+    // the loop detector (ix#350), and this binary runs it more than 10 times.
+    shared_loop_detector().clear_key("ix_pipeline_run");
     reg.call_with_ctx("ix_pipeline_run", load_spec(folder), &ctx)
         .unwrap_or_else(|e| panic!("pipeline_run failed for {folder}: {e}"))
 }
@@ -266,6 +270,7 @@ fn governance_check_consumes_pipeline_lineage() {
     // the response as `lineage_audit`.
     let reg = ToolRegistry::new();
     let ctx = make_ctx();
+    shared_loop_detector().clear_key("ix_pipeline_run");
     let pipeline_out = reg
         .call_with_ctx("ix_pipeline_run", load_spec("04-sprint-oracle"), &ctx)
         .expect("pipeline_run");

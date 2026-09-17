@@ -23,8 +23,10 @@ use crate::event::ActionOutcome;
 ///
 /// **Object-safe by design.** The trait deliberately avoids generics
 /// so that trait-object dispatch (`Box<dyn AgentHandler>`) works in
-/// the registry.
-pub trait AgentHandler: Send + Sync + 'static {
+/// the registry. No `'static` bound: a dispatcher may pass a handler
+/// that borrows its caller (e.g. a manual MCP tool closing over the
+/// server context) as `&dyn AgentHandler`.
+pub trait AgentHandler: Send + Sync {
     /// Execute the action against the current read context. MUST be
     /// pure in terms of `cx` — any state changes flow via
     /// `ActionOutcome::events`, never via interior mutability.

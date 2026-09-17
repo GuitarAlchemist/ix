@@ -3152,6 +3152,16 @@ fn ix_cli_path() -> std::path::PathBuf {
 
 // ── ix_git_log ─────────────────────────────────────────────
 
+/// The caller's optional `repo_root` for `ix_git_log` / `ix_git_churn`,
+/// confined to the workspace (or an `IX_EXTRA_ROOTS` directory).
+fn confined_repo_root(params: &Value) -> Result<Option<std::path::PathBuf>, String> {
+    params
+        .get("repo_root")
+        .and_then(|v| v.as_str())
+        .map(|raw| path_confine::confine(&path_confine::workspace_root()?, "repo_root", raw))
+        .transpose()
+}
+
 /// P1.1 — shell out to `git log` and return a normalized per-path
 /// commit cadence time series. The primary consumer is the
 /// adversarial refactor oracle, which previously baked its 90-day
@@ -3225,16 +3235,18 @@ pub fn git_log(params: Value) -> Result<Value, String> {
     // only way to reliably resolve repo-relative paths when the MCP
     // handler's CWD is not the repo root (e.g. during `cargo test`
     // where CWD is the crate directory). Paths are still
-    // whitelist-validated as repo-internal.
-    let repo_root = params.get("repo_root").and_then(|v| v.as_str());
+    // whitelist-validated as repo-internal. The root itself is confined to
+    // the workspace: the tool is auto-approved (Tier 2), and
+    // `safe.directory` must only ever name a checked path.
+    let repo_root = confined_repo_root(&params)?;
 
     // Build the argument list. Every arg is a fixed literal or a
     // validated value; there is no string concatenation of untrusted
     // input into a single argument.
     let since_arg = format!("--since={since_days} days ago");
     let mut cmd = Command::new("git");
-    if let Some(root) = repo_root {
-        let safe_root = root.replace('\\', "/");
+    if let Some(root) = &repo_root {
+        let safe_root = root.display().to_string().replace('\\', "/");
         cmd.arg("-c")
             .arg(format!("safe.directory={safe_root}"))
             .arg("-C")
@@ -3988,7 +4000,7 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
         ));
     }
 
-    let repo_root = params.get("repo_root").and_then(|v| v.as_str());
+    let repo_root = confined_repo_root(&params)?;
 
     // Single `git log --numstat` pass: each commit contributes a
     // header line `__C__|<sha>|<YYYY-MM-DD>` followed by one numstat
@@ -3997,8 +4009,8 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
     // and last_changed in O(n) without re-spawning git.
     let since_arg = format!("--since={since_days} days ago");
     let mut cmd = Command::new("git");
-    if let Some(root) = repo_root {
-        let safe_root = root.replace('\\', "/");
+    if let Some(root) = &repo_root {
+        let safe_root = root.display().to_string().replace('\\', "/");
         cmd.arg("-c")
             .arg(format!("safe.directory={safe_root}"))
             .arg("-C")
@@ -7077,11 +7089,16 @@ pub fn autoresearch_run(params: Value) -> Result<Value, String> {
 
     let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
 
-    let state_dir = params
-        .get("state_dir")
-        .and_then(|v| v.as_str())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("state/autoresearch"));
+    // A caller-chosen `state_dir` is written to by an auto-approved (Tier 2)
+    // tool, so it must stay inside the workspace; the default is not caller input.
+    let state_dir = match params.get("state_dir").and_then(|v| v.as_str()) {
+        Some(raw) => path_confine::confine_dest_in(
+            &path_confine::allowed_roots(&path_confine::workspace_root()?),
+            "state_dir",
+            raw,
+        )?,
+        None => std::path::PathBuf::from("state/autoresearch"),
+    };
     let runs_root = state_dir.join("runs");
     std::fs::create_dir_all(&runs_root)
         .map_err(|e| format!("cannot create runs dir {}: {e}", runs_root.display()))?;

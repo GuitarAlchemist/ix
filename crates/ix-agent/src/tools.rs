@@ -157,7 +157,9 @@ impl ToolRegistry {
     ///
     /// Registry-backed tools (handler == `registry_handler_marker`) are
     /// dispatched via `registry_bridge::dispatch`, which routes through
-    /// `ix_registry::invoke`. Manual tools are called directly.
+    /// `ix_registry::invoke`. Manual tools go through
+    /// `registry_bridge::dispatch_manual`. Both run the same middleware
+    /// chain, so the approval gate classifies every tool.
     pub fn call(&self, name: &str, arguments: Value) -> Result<Value, String> {
         let tool = self
             .tools
@@ -167,7 +169,7 @@ impl ToolRegistry {
         if registry_bridge::is_registry_backed(tool.handler) {
             registry_bridge::dispatch(name, arguments)
         } else {
-            (tool.handler)(arguments)
+            registry_bridge::dispatch_manual(name, arguments, tool.handler)
         }
     }
 
@@ -183,11 +185,20 @@ impl ToolRegistry {
         arguments: Value,
         ctx: &crate::server_context::ServerContext,
     ) -> Result<Value, String> {
+        // The intercepted tools pass through the approval gate too.
         match name {
-            "ix_explain_algorithm" => handlers::explain_algorithm_with_ctx(arguments, ctx),
-            "ix_triage_session" => handlers::triage_session_with_ctx(arguments, ctx),
-            "ix_pipeline_run" => self.run_pipeline(arguments),
-            "ix_pipeline_compile" => self.compile_pipeline(arguments, ctx),
+            "ix_explain_algorithm" => registry_bridge::dispatch_manual(name, arguments, |a| {
+                handlers::explain_algorithm_with_ctx(a, ctx)
+            }),
+            "ix_triage_session" => registry_bridge::dispatch_manual(name, arguments, |a| {
+                handlers::triage_session_with_ctx(a, ctx)
+            }),
+            "ix_pipeline_run" => {
+                registry_bridge::dispatch_manual(name, arguments, |a| self.run_pipeline(a))
+            }
+            "ix_pipeline_compile" => {
+                registry_bridge::dispatch_manual(name, arguments, |a| self.compile_pipeline(a, ctx))
+            }
             _ => self.call(name, arguments),
         }
     }
