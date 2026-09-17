@@ -131,6 +131,46 @@ fn approval_tier(tool_name: &str) -> ix_approval::Tier {
         .tier
 }
 
+/// Upper bound on `steps` accepted by `ix_pipeline_validate`. The tool is a
+/// Tier-1 read on a single-threaded stdio server, so its cost must stay
+/// bounded whatever the caller sends.
+pub const MAX_PIPELINE_STEPS: usize = 1000;
+
+/// Upper bound on `depends_on` entries, and separately on `$step.field`
+/// argument references, in one pipeline step.
+pub const MAX_STEP_REFERENCES: usize = 1000;
+
+/// Tools [`ToolRegistry::call_with_ctx`] intercepts by name. Their
+/// registered handlers are placeholders that return `Err`, and pipeline steps
+/// are dispatched through [`ToolRegistry::call`], so none of them can run as a
+/// step. Keep in sync with the `match` in `call_with_ctx`; the test
+/// `context_routed_tools_fail_as_pipeline_steps` checks each entry.
+pub const CONTEXT_ROUTED_TOOLS: &[&str] = &[
+    "ix_explain_algorithm",
+    "ix_triage_session",
+    "ix_pipeline_run",
+    "ix_pipeline_compile",
+];
+
+/// Whether a call to `tool` passes through the `registry_bridge` middleware
+/// chain (loop detection + `ix-approval`). Today only registry-backed tools
+/// do; manual tools run their handler directly. PR ix#352 routes manual tools
+/// through the chain too, at which point this becomes `true` for every tool —
+/// `catalog_gated_flag_matches_real_dispatch` fails until it is updated.
+fn passes_approval_gate(tool: &Tool) -> bool {
+    registry_bridge::is_registry_backed(tool.handler)
+}
+
+/// What the approval gate does with a call: Tier 3 is refused outright, since
+/// the MCP path offers no way to grant approval.
+fn approval_effect(gated: bool, tier: ix_approval::Tier) -> &'static str {
+    match (gated, tier.requires_approval()) {
+        (false, _) => "not_gated",
+        (true, true) => "blocked",
+        (true, false) => "auto_approved",
+    }
+}
+
 /// The stricter of two tiers (`Three` > `Two` > `One`).
 fn tier_max(a: ix_approval::Tier, b: ix_approval::Tier) -> ix_approval::Tier {
     use ix_approval::Tier;
@@ -696,18 +736,25 @@ Example 2 — "cluster crates by complexity then classify":
     ///   "name": "ix_stats",
     ///   "description": "...",
     ///   "dispatch": "registry" | "manual",
+    ///   "gated": true,
     ///   "input_schema": { ... },
     ///   "required_inputs": ["data"],
     ///   "output_schema": { ... } | null,
-    ///   "approval": { "action_kind": "read", "tier": "tier_one" }
+    ///   "approval": {
+    ///     "action_kind": "read",
+    ///     "tier": "tier_one",
+    ///     "effect": "auto_approved" | "blocked" | "not_gated"
+    ///   }
     /// }
     /// ```
     ///
     /// `output_schema` is the registry skill's declared output schema, or
-    /// `null` when undeclared (always `null` for manual tools). `approval`
-    /// is what `ix_approval::ApprovalMiddleware` computes for the tool name;
-    /// only `dispatch: "registry"` tools actually pass through that gate
-    /// today, manual tools are invoked directly.
+    /// `null` when undeclared (always `null` for manual tools). `tier` is what
+    /// `ix_approval::ApprovalMiddleware` computes for the tool name; `gated`
+    /// says whether a call actually passes through that middleware (see
+    /// [`passes_approval_gate`]), and `effect` is the resulting behaviour:
+    /// Tier 3 is **blocked**, not "awaiting approval" — the MCP path has no way
+    /// to grant it.
     pub fn node_catalog(&self) -> Value {
         let output_schemas: HashMap<String, Value> = ix_registry::all()
             .map(|d| (registry_bridge::mcp_name(d.name), (d.output_schema)()))
@@ -717,16 +764,19 @@ Example 2 — "cluster crates by complexity then classify":
             .iter()
             .map(|t| {
                 let tier = approval_tier(t.name);
+                let gated = passes_approval_gate(t);
                 json!({
                     "name": t.name,
                     "description": t.description,
                     "dispatch": if registry_bridge::is_registry_backed(t.handler) { "registry" } else { "manual" },
+                    "gated": gated,
                     "input_schema": t.input_schema,
                     "required_inputs": required_inputs(&t.input_schema),
                     "output_schema": output_schemas.get(t.name).cloned().unwrap_or(Value::Null),
                     "approval": {
                         "action_kind": ix_approval::classify_action_kind(t.name).name(),
                         "tier": tier.name(),
+                        "effect": approval_effect(gated, tier),
                     },
                 })
             })
@@ -743,51 +793,86 @@ Example 2 — "cluster crates by complexity then classify":
     /// ```json
     /// {
     ///   "valid": false,
-    ///   "errors":   [{ "code": "unknown_tool", "step": "s1", "message": "..." }],
-    ///   "warnings": [{ "code": "undeclared_dependency", "step": "s2", "message": "..." }],
-    ///   "steps":    [{ "id": "s1", "tool": "ix_stats", "tier": "tier_one" }],
+    ///   "errors":   [{ "code": "unknown_tool", "step": "s1", "index": 0, "message": "..." }],
+    ///   "warnings": [{ "code": "loop_detect_threshold", "step": null, "index": null, "message": "..." }],
+    ///   "steps":    [{ "id": "s1", "index": 0, "tool": "ix_stats", "gated": true,
+    ///                  "tier": "tier_one", "effect": "auto_approved" }],
     ///   "max_tier": "tier_one" | null,
-    ///   "requires_approval": false,
+    ///   "ungated_steps": [],
     ///   "execution_order": ["s1", "s2"] | null
     /// }
     /// ```
     ///
-    /// Error codes: `missing_steps`, `empty_steps`, `missing_id`,
-    /// `duplicate_id`, `missing_tool`, `unknown_tool`, `invalid_arguments`,
-    /// `missing_required_input`, `invalid_depends_on`, `unknown_step_reference`,
-    /// `cycle`. Warning code: `undeclared_dependency` — a `$step.field`
-    /// argument names a real step that is not upstream of this one, so it may
-    /// not have run yet when the reference is substituted.
+    /// Error codes: `missing_steps`, `empty_steps`, `too_many_steps`,
+    /// `missing_id`, `duplicate_id`, `missing_tool`, `unknown_tool`,
+    /// `unsupported_in_pipeline`, `blocked_by_approval_gate`,
+    /// `invalid_arguments`, `missing_required_input`, `invalid_depends_on`,
+    /// `too_many_references`, `unknown_step_reference`, `self_reference`,
+    /// `undeclared_dependency`, `cycle`. Warning code: `loop_detect_threshold`.
+    ///
+    /// `max_tier` is taken over gated steps only; `ungated_steps` lists the
+    /// steps that run without any approval check. `execution_order` is the
+    /// order `ix_pipeline_run` uses: both build an `ix_pipeline::dag::Dag` with
+    /// nodes in step order, and its topological sort is deterministic.
+    ///
+    /// Deliberately stricter than `ix_pipeline_run`, which accepts an empty
+    /// `steps` array and silently ignores a non-array `depends_on` or a
+    /// non-string entry in it; here those are errors.
     pub fn validate_pipeline(&self, spec: &Value) -> Value {
         use ix_pipeline::dag::Dag;
-        use std::collections::HashSet;
+        use std::collections::BTreeSet;
 
-        fn issue(code: &str, step: Option<&str>, message: String) -> Value {
-            json!({ "code": code, "step": step, "message": message })
+        fn issue(code: &str, step: Option<(&str, usize)>, message: String) -> Value {
+            json!({
+                "code": code,
+                "step": step.map(|s| s.0),
+                "index": step.map(|s| s.1),
+                "message": message,
+            })
+        }
+        fn report(errors: Vec<Value>, warnings: Vec<Value>, steps: Vec<Value>) -> Value {
+            json!({
+                "valid": false, "errors": errors, "warnings": warnings, "steps": steps,
+                "max_tier": null, "ungated_steps": [], "execution_order": null,
+            })
         }
 
         let mut errors: Vec<Value> = Vec::new();
         let mut warnings: Vec<Value> = Vec::new();
-        let mut step_tiers: Vec<Value> = Vec::new();
-        let mut max_tier: Option<ix_approval::Tier> = None;
 
-        let Some(steps) = spec
-            .get("steps")
-            .and_then(|v| v.as_array())
-            .filter(|s| !s.is_empty())
-        else {
-            errors.push(match spec.get("steps").and_then(|v| v.as_array()) {
-                Some(_) => issue("empty_steps", None, "'steps' array is empty".into()),
-                None => issue("missing_steps", None, "missing 'steps' array".into()),
-            });
-            return json!({
-                "valid": false, "errors": errors, "warnings": warnings, "steps": step_tiers,
-                "max_tier": null, "requires_approval": false, "execution_order": null,
-            });
+        let steps = match spec.get("steps").and_then(|v| v.as_array()) {
+            None => {
+                errors.push(issue("missing_steps", None, "missing 'steps' array".into()));
+                return report(errors, warnings, vec![]);
+            }
+            Some(s) if s.is_empty() => {
+                errors.push(issue("empty_steps", None, "'steps' array is empty".into()));
+                return report(errors, warnings, vec![]);
+            }
+            Some(s) if s.len() > MAX_PIPELINE_STEPS => {
+                errors.push(issue(
+                    "too_many_steps",
+                    None,
+                    format!(
+                        "{} steps exceeds the limit of {MAX_PIPELINE_STEPS}",
+                        s.len()
+                    ),
+                ));
+                return report(errors, warnings, vec![]);
+            }
+            Some(s) => s,
         };
 
-        let mut dag: Dag<()> = Dag::new();
-        let mut ids: HashSet<&str> = HashSet::new();
+        let n = steps.len();
+        // Steps that take part in the graph: a string id seen for the first
+        // time. A duplicate is reported once and then ignored, so its edges
+        // and references are not attributed to the first step with that id.
+        let mut node_id: Vec<Option<&str>> = vec![None; n];
+        let mut index_of: HashMap<&str, usize> = HashMap::new();
+        let mut step_reports: Vec<Value> = Vec::new();
+        let mut max_tier: Option<ix_approval::Tier> = None;
+        let mut ungated: Vec<&str> = Vec::new();
+        let mut gated_tool_counts: std::collections::BTreeMap<&str, usize> = Default::default();
 
         // First pass: ids, tools, required inputs, tiers.
         for (i, step) in steps.iter().enumerate() {
@@ -799,20 +884,22 @@ Example 2 — "cluster crates by complexity then classify":
                 ));
                 continue;
             };
-            if !ids.insert(id) {
+            if let Some(first) = index_of.get(id) {
                 errors.push(issue(
                     "duplicate_id",
-                    Some(id),
-                    format!("step[{i}]: duplicate id '{id}'"),
+                    Some((id, i)),
+                    format!("step[{i}]: duplicate id '{id}' (first used by step[{first}])"),
                 ));
                 continue;
             }
-            let _ = dag.add_node(id, ());
+            index_of.insert(id, i);
+            node_id[i] = Some(id);
+            let at = Some((id, i));
 
             let Some(tool_name) = step.get("tool").and_then(|v| v.as_str()) else {
                 errors.push(issue(
                     "missing_tool",
-                    Some(id),
+                    at,
                     format!("step '{id}': missing 'tool' string"),
                 ));
                 continue;
@@ -820,15 +907,39 @@ Example 2 — "cluster crates by complexity then classify":
             let Some(tool) = self.tools.iter().find(|t| t.name == tool_name) else {
                 errors.push(issue(
                     "unknown_tool",
-                    Some(id),
+                    at,
                     format!("step '{id}': unknown tool '{tool_name}'"),
                 ));
                 continue;
             };
+            if CONTEXT_ROUTED_TOOLS.contains(&tool_name) {
+                errors.push(issue(
+                    "unsupported_in_pipeline",
+                    at,
+                    format!("step '{id}': '{tool_name}' only runs as a top-level MCP call, not as a pipeline step"),
+                ));
+            }
 
             let tier = approval_tier(tool_name);
-            max_tier = Some(max_tier.map_or(tier, |m| tier_max(m, tier)));
-            step_tiers.push(json!({ "id": id, "tool": tool_name, "tier": tier.name() }));
+            let gated = passes_approval_gate(tool);
+            let effect = approval_effect(gated, tier);
+            step_reports.push(json!({
+                "id": id, "index": i, "tool": tool_name,
+                "gated": gated, "tier": tier.name(), "effect": effect,
+            }));
+            if gated {
+                max_tier = Some(max_tier.map_or(tier, |m| tier_max(m, tier)));
+                *gated_tool_counts.entry(tool_name).or_default() += 1;
+                if tier.requires_approval() {
+                    errors.push(issue(
+                        "blocked_by_approval_gate",
+                        at,
+                        format!("step '{id}': '{tool_name}' is {} and the MCP path has no way to approve it", tier.name()),
+                    ));
+                }
+            } else {
+                ungated.push(id);
+            }
 
             let empty = serde_json::Map::new();
             let arguments = match step.get("arguments") {
@@ -837,7 +948,7 @@ Example 2 — "cluster crates by complexity then classify":
                 Some(_) => {
                     errors.push(issue(
                         "invalid_arguments",
-                        Some(id),
+                        at,
                         format!("step '{id}': 'arguments' must be an object"),
                     ));
                     continue;
@@ -847,81 +958,210 @@ Example 2 — "cluster crates by complexity then classify":
                 if !arguments.contains_key(&field) {
                     errors.push(issue(
                         "missing_required_input",
-                        Some(id),
+                        at,
                         format!("step '{id}': tool '{tool_name}' requires input '{field}'"),
                     ));
                 }
             }
         }
 
-        // Second pass: depends_on edges (cycle detection via the Dag).
-        for step in steps {
-            let Some(id) = step.get("id").and_then(|v| v.as_str()) else {
+        // Second pass: depends_on edges and `$step.field` references, as
+        // step indices. Unknown targets and self-references are errors here.
+        let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut refs: Vec<Vec<(&str, usize)>> = vec![Vec::new(); n];
+        for (i, step) in steps.iter().enumerate() {
+            let Some(id) = node_id[i] else {
                 continue;
             };
-            let Some(deps) = step.get("depends_on") else {
-                continue;
-            };
-            let Some(deps) = deps.as_array() else {
-                errors.push(issue(
+            let at = Some((id, i));
+            match step.get("depends_on") {
+                None => {}
+                Some(Value::Array(deps)) if deps.len() > MAX_STEP_REFERENCES => {
+                    errors.push(issue(
+                        "too_many_references",
+                        at,
+                        format!("step '{id}': {} depends_on entries exceeds the limit of {MAX_STEP_REFERENCES}", deps.len()),
+                    ));
+                }
+                Some(Value::Array(deps)) => {
+                    for dep in deps {
+                        let Some(dep_id) = dep.as_str() else {
+                            errors.push(issue(
+                                "invalid_depends_on",
+                                at,
+                                format!("step '{id}': non-string entry in depends_on"),
+                            ));
+                            continue;
+                        };
+                        match index_of.get(dep_id) {
+                            None => errors.push(issue(
+                                "unknown_step_reference",
+                                at,
+                                format!(
+                                    "step '{id}': depends_on references unknown step '{dep_id}'"
+                                ),
+                            )),
+                            Some(&j) if j == i => errors.push(issue(
+                                "cycle",
+                                at,
+                                format!("step '{id}': depends_on lists the step itself"),
+                            )),
+                            Some(&j) => preds[i].push(j),
+                        }
+                    }
+                    preds[i].sort_unstable();
+                    preds[i].dedup();
+                }
+                Some(_) => errors.push(issue(
                     "invalid_depends_on",
-                    Some(id),
+                    at,
                     format!("step '{id}': 'depends_on' must be an array of step ids"),
+                )),
+            }
+
+            let Some(args) = step.get("arguments") else {
+                continue;
+            };
+            let mut found = Vec::new();
+            collect_step_refs(args, &mut found);
+            if found.len() > MAX_STEP_REFERENCES {
+                errors.push(issue(
+                    "too_many_references",
+                    at,
+                    format!("step '{id}': {} argument references exceeds the limit of {MAX_STEP_REFERENCES}", found.len()),
                 ));
                 continue;
-            };
-            for dep in deps {
-                let Some(dep_id) = dep.as_str() else {
-                    errors.push(issue(
-                        "invalid_depends_on",
-                        Some(id),
-                        format!("step '{id}': non-string entry in depends_on"),
-                    ));
-                    continue;
-                };
-                if !ids.contains(dep_id) {
-                    errors.push(issue(
+            }
+            for (reference, target) in found {
+                match index_of.get(target) {
+                    None => errors.push(issue(
                         "unknown_step_reference",
-                        Some(id),
-                        format!("step '{id}': depends_on references unknown step '{dep_id}'"),
-                    ));
-                    continue;
-                }
-                if let Err(e) = dag.add_edge(dep_id, id) {
-                    errors.push(issue("cycle", Some(id), format!("step '{id}': {e}")));
+                        at,
+                        format!("step '{id}': argument reference '{reference}' names unknown step '{target}'"),
+                    )),
+                    Some(&j) if j == i => errors.push(issue(
+                        "self_reference",
+                        at,
+                        format!("step '{id}': argument reference '{reference}' reads the step's own output, which never exists when its arguments are substituted"),
+                    )),
+                    Some(&j) => refs[i].push((reference, j)),
                 }
             }
         }
 
-        // Third pass: `$step.field` argument references.
-        for step in steps {
-            let (Some(id), Some(args)) = (
-                step.get("id").and_then(|v| v.as_str()),
-                step.get("arguments"),
-            ) else {
-                continue;
-            };
-            let mut refs = Vec::new();
-            collect_step_refs(args, &mut refs);
-            for (reference, target) in refs {
-                if !ids.contains(target) {
-                    errors.push(issue(
-                        "unknown_step_reference",
-                        Some(id),
-                        format!("step '{id}': argument reference '{reference}' names unknown step '{target}'"),
-                    ));
-                } else if target == id || !dag.has_path(target, id) {
-                    warnings.push(issue(
-                        "undeclared_dependency",
-                        Some(id),
-                        format!("step '{id}': argument reference '{reference}' but '{target}' is not upstream — add it to depends_on"),
-                    ));
+        // Third pass: cycle detection (Kahn, O(V+E)) in the Dag's own
+        // tie-break order — lowest step index first.
+        let mut succs: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut indegree: Vec<usize> = vec![0; n];
+        for (i, ps) in preds.iter().enumerate() {
+            indegree[i] = ps.len();
+            for &p in ps {
+                succs[p].push(i);
+            }
+        }
+        let mut ready: BTreeSet<usize> = (0..n)
+            .filter(|&i| node_id[i].is_some() && indegree[i] == 0)
+            .collect();
+        let mut topo: Vec<usize> = Vec::with_capacity(n);
+        while let Some(i) = ready.pop_first() {
+            topo.push(i);
+            for &s in &succs[i] {
+                indegree[s] -= 1;
+                if indegree[s] == 0 {
+                    ready.insert(s);
                 }
+            }
+        }
+        let node_count = node_id.iter().filter(|x| x.is_some()).count();
+        if topo.len() < node_count {
+            // Peel steps that only lead out of the cyclic core so errors land
+            // on the steps that are actually part of a cycle.
+            let mut in_core: Vec<bool> = (0..n)
+                .map(|i| node_id[i].is_some() && indegree[i] > 0)
+                .collect();
+            let mut outdegree: Vec<usize> = (0..n)
+                .map(|i| succs[i].iter().filter(|&&s| in_core[s]).count())
+                .collect();
+            let mut sinks: Vec<usize> = (0..n)
+                .filter(|&i| in_core[i] && outdegree[i] == 0)
+                .collect();
+            while let Some(i) = sinks.pop() {
+                in_core[i] = false;
+                for &p in &preds[i] {
+                    if in_core[p] {
+                        outdegree[p] -= 1;
+                        if outdegree[p] == 0 {
+                            sinks.push(p);
+                        }
+                    }
+                }
+            }
+            for i in (0..n).filter(|&i| in_core[i]) {
+                let id = node_id[i].unwrap_or_default();
+                errors.push(issue(
+                    "cycle",
+                    Some((id, i)),
+                    format!("step '{id}' is part of a depends_on cycle"),
+                ));
+            }
+        } else {
+            // Upstream sets, computed once as bitsets in topological order,
+            // so every `$ref` is an O(1) lookup.
+            let words = n.div_ceil(64);
+            let mut upstream: Vec<Vec<u64>> = vec![vec![0; words]; n];
+            for &i in &topo {
+                let mut acc = vec![0u64; words];
+                for &p in &preds[i] {
+                    for (a, u) in acc.iter_mut().zip(&upstream[p]) {
+                        *a |= u;
+                    }
+                    acc[p / 64] |= 1 << (p % 64);
+                }
+                upstream[i] = acc;
+            }
+            for (i, step_refs) in refs.iter().enumerate() {
+                for &(reference, j) in step_refs {
+                    if upstream[i][j / 64] & (1 << (j % 64)) == 0 {
+                        let id = node_id[i].unwrap_or_default();
+                        let target = node_id[j].unwrap_or_default();
+                        errors.push(issue(
+                            "undeclared_dependency",
+                            Some((id, i)),
+                            format!("step '{id}': argument reference '{reference}' but '{target}' is not upstream through depends_on, so it may not have run yet — add it to depends_on"),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let threshold = registry_bridge::shared_loop_detector().config().threshold;
+        for (tool, count) in gated_tool_counts {
+            if count > threshold {
+                warnings.push(issue(
+                    "loop_detect_threshold",
+                    None,
+                    format!("{count} steps call '{tool}'; the process-wide loop detector trips after {threshold} calls per tool in its window, so the run will fail part-way (earlier if the tool was already called recently)"),
+                ));
             }
         }
 
         let valid = errors.is_empty();
-        let execution_order: Value = if valid {
+        let execution_order = if valid {
+            // Same construction as `run_pipeline`: nodes in step order. Edges
+            // go in topological order of their target, so each `add_edge`
+            // cycle check starts from a node with no successors yet.
+            let mut dag: Dag<()> = Dag::new();
+            for id in node_id.iter().flatten() {
+                let _ = dag.add_node(*id, ());
+            }
+            for &i in &topo {
+                for &p in &preds[i] {
+                    let _ = dag.add_edge(
+                        node_id[p].unwrap_or_default(),
+                        node_id[i].unwrap_or_default(),
+                    );
+                }
+            }
             json!(dag.topological_sort())
         } else {
             Value::Null
@@ -930,9 +1170,9 @@ Example 2 — "cluster crates by complexity then classify":
             "valid": valid,
             "errors": errors,
             "warnings": warnings,
-            "steps": step_tiers,
+            "steps": step_reports,
             "max_tier": max_tier.map(|t| t.name()),
-            "requires_approval": max_tier.is_some_and(|t| t.requires_approval()),
+            "ungated_steps": ungated,
             "execution_order": execution_order,
         })
     }
