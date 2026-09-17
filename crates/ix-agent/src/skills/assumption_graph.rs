@@ -16,65 +16,17 @@
 //!
 //! All are stateless reads (a full scan / log replay per call), like
 //! `governance.graph`. They run auto-approved (Tier 1), so every path a caller
-//! names is confined to the workspace root by [`confine`] before it is read or
-//! walked.
+//! names is confined to the workspace root by
+//! [`crate::path_confine::confine`] before it is read or walked.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use ix_assumption_graph::{AssumptionGraph, BeliefLog, ResearchClaim};
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
 
-fn workspace_root() -> PathBuf {
-    if let Ok(root) = std::env::var("IX_ROOT") {
-        return PathBuf::from(root);
-    }
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        return Path::new(&manifest).join("../..");
-    }
-    PathBuf::from(".")
-}
-
-/// Resolve a caller-supplied path against `root` and refuse anything that is not
-/// an existing path inside it.
-///
-/// `..` is rejected lexically; everything else (absolute paths elsewhere,
-/// symlinks or junctions leading out) is caught by canonicalizing and requiring
-/// the result to sit under the canonical root. A missing path and a path outside
-/// the root get the same message, so the error does not reveal whether a file
-/// exists elsewhere on disk. Confinement also bounds a `workspace` walk to the
-/// tree the default already scans. Returns the joined (non-canonical) path, like
-/// `ix_ixql::FsHost`, so relative paths reported by the walker stay readable.
-fn confine(root: &Path, param: &str, raw: &str) -> Result<PathBuf, String> {
-    if Path::new(raw)
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
-        return Err(format!("`{param}`: `..` is not allowed in {raw}"));
-    }
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|_| format!("`{param}`: the workspace root is not accessible"))?;
-    let full = root.join(raw);
-    match full.canonicalize() {
-        Ok(resolved) if resolved.starts_with(&canonical_root) => Ok(full),
-        _ => Err(format!(
-            "`{param}`: {raw} is not an existing path inside the workspace root"
-        )),
-    }
-}
-
-/// serde_json's message can quote the offending value, which would echo file
-/// contents back to the caller; report only where parsing failed.
-fn parse_error(param: &str, raw: &str, e: &serde_json::Error) -> String {
-    format!(
-        "`{param}`: {raw} has the wrong shape ({:?} error at line {}, column {})",
-        e.classify(),
-        e.line(),
-        e.column()
-    )
-}
+use crate::path_confine::{confine, parse_error, workspace_root};
 
 /// The `workspace` parameter confined to the root, or the root itself.
 fn workspace_param(root: &Path, params: &Value) -> Result<PathBuf, String> {
@@ -115,7 +67,7 @@ fn assumption_query_schema() -> Value {
     schema_fn = "crate::skills::assumption_graph::assumption_query_schema"
 )]
 pub fn assumption_query(params: Value) -> Result<Value, String> {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let workspace = workspace_param(&root, &params)?;
 
     let research: Vec<ResearchClaim> = match params.get("research").and_then(|v| v.as_str()) {
@@ -169,7 +121,7 @@ pub fn assumption_belief_at(params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("state/assumptions/belief-events.jsonl");
 
-    let path = confine(&workspace_root(), "log", log_path)?;
+    let path = confine(&workspace_root()?, "log", log_path)?;
     let contents = std::fs::read_to_string(path).map_err(|e| format!("read {log_path}: {e}"))?;
     let log = BeliefLog::from_jsonl(&contents).map_err(|e| parse_error("log", log_path, &e))?;
 
@@ -215,7 +167,7 @@ fn assumption_drift_schema() -> Value {
 pub fn assumption_drift(params: Value) -> Result<Value, String> {
     use ix_assumption_graph::drift;
 
-    let root = workspace_root();
+    let root = workspace_root()?;
     let workspace = workspace_param(&root, &params)?;
     let baseline_path = params
         .get("baseline")
@@ -275,7 +227,7 @@ pub fn assumption_claims(params: Value) -> Result<Value, String> {
     let needle = path.replace('\\', "/");
     let prefix = format!("{}/", needle.trim_end_matches('/'));
 
-    let workspace = workspace_param(&workspace_root(), &params)?;
+    let workspace = workspace_param(&workspace_root()?, &params)?;
 
     let snap = drift::snapshot(&workspace).map_err(|e| e.to_string())?;
     let claims: Vec<_> = snap
@@ -285,102 +237,4 @@ pub fn assumption_claims(params: Value) -> Result<Value, String> {
         .collect();
 
     Ok(json!({ "path": needle, "count": claims.len(), "claims": claims }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn confine_accepts_existing_paths_inside_the_root() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("state")).unwrap();
-        std::fs::write(root.path().join("state/log.jsonl"), "").unwrap();
-
-        assert!(confine(root.path(), "log", "state/log.jsonl").is_ok());
-        assert!(confine(root.path(), "workspace", "state").is_ok());
-        let absolute = root.path().join("state/log.jsonl");
-        assert!(confine(root.path(), "log", absolute.to_str().unwrap()).is_ok());
-    }
-
-    #[test]
-    fn confine_rejects_parent_dir_even_when_it_lands_inside() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("a")).unwrap();
-        let err = confine(root.path(), "workspace", "a/../a").unwrap_err();
-        assert!(err.contains("`..` is not allowed"), "{err}");
-    }
-
-    #[test]
-    fn confine_gives_one_message_for_outside_and_missing() {
-        let root = tempfile::tempdir().unwrap();
-        let elsewhere = tempfile::tempdir().unwrap();
-        let secret = elsewhere.path().join("id_ed25519");
-        std::fs::write(&secret, "PRIVATE").unwrap();
-        let missing = elsewhere.path().join("nope");
-
-        let existing = secret.to_str().unwrap();
-        let absent = missing.to_str().unwrap();
-        let err_existing = confine(root.path(), "log", existing).unwrap_err();
-        let err_absent = confine(root.path(), "log", absent).unwrap_err();
-        assert_eq!(
-            err_existing.replace(existing, "<p>"),
-            err_absent.replace(absent, "<p>"),
-            "the error must not reveal whether a file outside the root exists"
-        );
-        assert!(err_existing.contains("not an existing path inside the workspace root"));
-    }
-
-    #[test]
-    fn confine_rejects_a_symlink_that_leads_out_of_the_root() {
-        let root = tempfile::tempdir().unwrap();
-        let elsewhere = tempfile::tempdir().unwrap();
-        std::fs::write(elsewhere.path().join("secret.json"), "{}").unwrap();
-        let link = root.path().join("link");
-        #[cfg(unix)]
-        let made = std::os::unix::fs::symlink(elsewhere.path(), &link);
-        // Symlinks need Developer Mode or elevation on Windows; a directory
-        // junction does not, and is the same escape.
-        #[cfg(windows)]
-        let made = std::os::windows::fs::symlink_dir(elsewhere.path(), &link).or_else(|_| {
-            std::process::Command::new("cmd")
-                .arg("/C")
-                .arg("mklink")
-                .arg("/J")
-                .arg(&link)
-                .arg(elsewhere.path())
-                .output()
-                .and_then(|o| {
-                    if o.status.success() {
-                        Ok(())
-                    } else {
-                        Err(std::io::Error::other("mklink /J failed"))
-                    }
-                })
-        });
-        // A symlink on Unix and a junction on Windows need no privileges, so a
-        // failure here is a broken test environment, not a reason to skip.
-        made.expect("create a symlink or junction");
-        assert!(
-            link.join("secret.json").exists(),
-            "precondition: link resolves"
-        );
-        let err = confine(root.path(), "research", "link/secret.json").unwrap_err();
-        assert!(
-            err.contains("not an existing path inside the workspace root"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn parse_errors_do_not_echo_file_contents() {
-        let e = serde_json::from_str::<Vec<ResearchClaim>>(r#"["SECRET-VALUE"]"#).unwrap_err();
-        assert!(
-            e.to_string().contains("SECRET-VALUE"),
-            "precondition: serde echoes it"
-        );
-        let msg = parse_error("research", "claims.json", &e);
-        assert!(!msg.contains("SECRET-VALUE"), "{msg}");
-        assert!(msg.contains("line 1"), "{msg}");
-    }
 }

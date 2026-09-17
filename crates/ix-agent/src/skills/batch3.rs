@@ -82,7 +82,15 @@ pub fn federation_discover(p: Value) -> Result<Value, String> {
 
 // ---- trace.ingest --------------------------------------------------------
 fn trace_ingest_schema() -> Value {
-    object(vec![("dir", Prop::string())], &[])
+    object(
+        vec![(
+            "dir",
+            Prop::string().desc(
+                "Trace directory (default ~/.ga/traces). Must be an existing directory inside the workspace root, ~/.ga/traces, the traces/ directory beside the installed session log, or an IX_EXTRA_ROOTS directory.",
+            ),
+        )],
+        &[],
+    )
 }
 /// Ingest GA trace files and compute summary statistics.
 #[ix_skill(
@@ -139,7 +147,9 @@ fn session_flywheel_export_schema() -> Value {
         vec![
             (
                 "session_log",
-                Prop::string().desc("Path to an existing JSONL session log"),
+                Prop::string().desc(
+                    "Path to an existing JSONL session log: the installed session log (IX_SESSION_LOG), or a file inside the workspace root or an IX_EXTRA_ROOTS directory",
+                ),
             ),
             (
                 "trace_dir",
@@ -177,7 +187,12 @@ fn ml_pipeline_schema() -> Value {
                 Prop::object(
                     vec![
                         ("type", Prop::string().enum_of(&["csv", "json", "inline"])),
-                        ("path", Prop::string()),
+                        (
+                            "path",
+                            Prop::string().desc(
+                                "CSV file for type=csv. Must be an existing file inside the workspace root or an IX_EXTRA_ROOTS directory; relative paths resolve against the workspace root.",
+                            ),
+                        ),
                         ("data", Prop::num_matrix()),
                         ("has_header", Prop::boolean()),
                         ("target_column", Prop::any()),
@@ -268,7 +283,12 @@ fn code_analyze_schema() -> Value {
                     "ruby",
                 ]),
             ),
-            ("path", Prop::string()),
+            (
+                "path",
+                Prop::string().desc(
+                    "File to analyze instead of `source`. Must be an existing file inside the workspace root or an IX_EXTRA_ROOTS directory; relative paths resolve against the workspace root.",
+                ),
+            ),
         ],
         &[],
     )
@@ -292,7 +312,12 @@ fn tars_bridge_schema() -> Value {
                 "action",
                 Prop::string().enum_of(&["prepare_traces", "prepare_patterns", "export_grammar"]),
             ),
-            ("trace_dir", Prop::string()),
+            (
+                "trace_dir",
+                Prop::string().desc(
+                    "Trace directory for prepare_traces (default ~/.ga/traces). Must be an existing directory inside the workspace root, ~/.ga/traces, the traces/ directory beside the installed session log, or an IX_EXTRA_ROOTS directory.",
+                ),
+            ),
             ("min_frequency", Prop::integer()),
         ],
         &["action"],
@@ -404,7 +429,7 @@ fn context_walk_schema() -> Value {
             (
                 "workspace_root",
                 Prop::string().desc(
-                    "Optional absolute path to the workspace root. Defaults to the current working directory.",
+                    "Optional path to the Rust workspace to index. Must be an existing directory inside the ix workspace root or an IX_EXTRA_ROOTS directory; relative paths resolve against the workspace root. Defaults to the workspace root.",
                 ),
             ),
         ],
@@ -423,10 +448,16 @@ fn context_walk_schema() -> Value {
 )]
 pub fn context_walk(p: Value) -> Result<Value, String> {
     // Optional workspace_root override: pluck it out of the params before
-    // handing the rest to ix-context's handler.
+    // handing the rest to ix-context's handler. The tool runs auto-approved and
+    // indexes (and git-walks) whatever tree it is given, so a caller-supplied
+    // root is confined first.
     let workspace_root = match p.get("workspace_root").and_then(|v| v.as_str()) {
-        Some(path) => std::path::PathBuf::from(path),
-        None => std::env::current_dir().map_err(|e| format!("failed to read current dir: {e}"))?,
+        Some(path) => crate::path_confine::confine(
+            &crate::path_confine::workspace_root()?,
+            "workspace_root",
+            path,
+        )?,
+        None => crate::path_confine::workspace_root()?,
     };
 
     let index = ix_context::index::ProjectIndex::build(&workspace_root).map_err(|e| {

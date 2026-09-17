@@ -103,15 +103,15 @@ fn flywheel_export_confines_its_destination() {
             assert!(err.contains("absolute path on a local drive"), "{raw}: {err}");
         }
 
-        // ── session_log must be an existing file and is never created ──
+        // ── session_log must be an existing file in an allowed root and is never created ──
         let missing_log = work.path().join("sub").join("missing.jsonl");
         let err = call(json!({ "session_log": missing_log.to_str().unwrap() }))
             .expect_err("a missing session_log must be refused");
-        assert!(err.contains("is not an existing file"), "{err}");
+        assert!(err.contains("not an existing path inside an allowed root"), "{err}");
         assert!(!missing_log.exists() && !work.path().join("sub").exists());
         let err = call(json!({ "session_log": work.path().to_str().unwrap() }))
             .expect_err("a directory is not a session log");
-        assert!(err.contains("is not an existing file"), "{err}");
+        assert!(err.contains("not an existing path inside an allowed root"), "{err}");
 
         // ── in-root exports work ──
         let out = call(json!({ "session_log": log, "trace_dir": beside_log.to_str().unwrap() }))
@@ -199,6 +199,9 @@ fn flywheel_export_confines_its_destination() {
             .expect_err("~/.ga/traces is no longer a root");
         assert!(err.contains("not inside an allowed destination root"), "{err}");
         assert!(export_beside_log("nohome").is_ok());
+        // Once uninstalled, the log is only admitted through IX_EXTRA_ROOTS,
+        // which widens `session_log` but never the destination roots.
+        std::env::set_var("IX_EXTRA_ROOTS", work.path());
         clear_session_log();
         let err = call(json!({ "session_log": log, "trace_dir": beside_log.to_str().unwrap() }))
             .expect_err("no root at all without a home directory or a session log");

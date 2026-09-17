@@ -56,9 +56,16 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
    the workspace or to in-process state such as the global cache →
    `EDIT_IN_PROJECT_TOOLS` (Tier 2); shell, web fetch or out-of-project writes →
    `SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS` or `EDIT_OUT_OF_PROJECT_TOOLS`
-   (Tier 3, refused). A Tier 1 tool that reads a path the caller names must
-   confine it to the workspace root first (see `confine` in
-   `crates/ix-agent/src/skills/assumption_graph.rs`). An unclassified
+   (Tier 3, refused). Tier 1 and Tier 2 tools run without a prompt, so a path,
+   directory or repo root the caller names must be confined before it is read,
+   walked or written: use `confine` (or `confine_in` / `confine_dest_in` for an
+   explicit root list or a directory the tool creates) from
+   `crates/ix-agent/src/path_confine.rs`. They admit the workspace root and the
+   directories in `IX_EXTRA_ROOTS`; add a tool-specific root only when the
+   operator, not the caller, chose it (the GA trace tools admit `~/.ga/traces`
+   and the `traces/` directory beside the installed session log). Add the tool
+   to `auto_approved_tools_refuse_paths_outside_the_workspace` in
+   `crates/ix-agent/tests/parity.rs`. An unclassified
    registry-backed tool defaults to Tier 3 and every MCP call to it is refused;
    the parity test
    `every_registry_backed_tool_has_an_explicit_approval_classification` fails
