@@ -272,7 +272,9 @@ impl<N> Dag<N> {
 
     /// Find the critical path (longest path through the DAG).
     ///
-    /// Requires a cost function for each node.
+    /// Requires a cost function for each node. Deterministic: predecessors are
+    /// walked in insertion order and ties (equal cost) go to the node inserted
+    /// first, so the returned path does not depend on hash iteration order.
     pub fn critical_path<F>(&self, cost_fn: F) -> (Vec<&NodeId>, f64)
     where
         F: Fn(&NodeId, &N) -> f64,
@@ -281,20 +283,30 @@ impl<N> Dag<N> {
         let mut dist: HashMap<&str, f64> = HashMap::new();
         let mut prev: HashMap<&str, &str> = HashMap::new();
 
+        let position: HashMap<&str, usize> = self
+            .order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+
         for id in &topo {
             let node_cost = cost_fn(id, self.nodes.get(id.as_str()).unwrap());
-            let preds = self.predecessors(id);
+            // Insertion order, not the `reverse` HashSet's iteration order, so
+            // ties between equally-costly predecessors break deterministically.
+            let mut preds = self.predecessors(id);
+            preds.sort_by_key(|p| position.get(p.as_str()).copied().unwrap_or(usize::MAX));
 
             let max_pred = preds
                 .iter()
                 .map(|p| dist.get(p.as_str()).copied().unwrap_or(0.0))
                 .fold(0.0f64, f64::max);
 
-            let best_pred = preds.iter().max_by(|a, b| {
-                let da = dist.get(a.as_str()).unwrap_or(&0.0);
-                let db = dist.get(b.as_str()).unwrap_or(&0.0);
-                da.partial_cmp(db).unwrap()
-            });
+            // First predecessor reaching `max_pred` wins, i.e. the one
+            // inserted first.
+            let best_pred = preds
+                .iter()
+                .find(|p| dist.get(p.as_str()).copied().unwrap_or(0.0) == max_pred);
 
             dist.insert(id, max_pred + node_cost);
             if let Some(pred) = best_pred {
@@ -302,11 +314,22 @@ impl<N> Dag<N> {
             }
         }
 
-        // Find the end node with maximum distance
-        let (&end_node, &total_cost) = dist
-            .iter()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap_or((&"", &0.0));
+        // End node with the maximum distance; ties go to the node inserted
+        // first (`dist` is a HashMap, so it must not drive the choice).
+        let mut best: Option<(&str, f64)> = None;
+        for id in &self.order {
+            if let Some(&d) = dist.get(id.as_str()) {
+                // `Option::is_none_or` is newer than the 1.80 MSRV.
+                let better = match best {
+                    None => true,
+                    Some((_, best_d)) => d > best_d,
+                };
+                if better {
+                    best = Some((id.as_str(), d));
+                }
+            }
+        }
+        let (end_node, total_cost) = best.unwrap_or(("", 0.0));
 
         // Trace back the critical path
         let mut path = vec![];
@@ -372,6 +395,28 @@ mod tests {
         let mut dag = Dag::new();
         dag.add_node("a", ()).unwrap();
         assert!(matches!(dag.add_edge("a", "a"), Err(DagError::SelfLoop(_))));
+    }
+
+    #[test]
+    fn test_critical_path_is_deterministic_on_ties() {
+        // Two equal-cost branches: the tie must break by insertion order.
+        let mut dag = Dag::new();
+        for id in ["start", "left", "right", "end"] {
+            dag.add_node(id, 1.0f64).unwrap();
+        }
+        dag.add_edge("start", "left").unwrap();
+        dag.add_edge("start", "right").unwrap();
+        dag.add_edge("left", "end").unwrap();
+        dag.add_edge("right", "end").unwrap();
+        let expected = vec!["start", "left", "end"];
+        for _ in 0..20 {
+            let (path, cost) = dag.critical_path(|_, c| *c);
+            assert_eq!(
+                path.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(cost, 3.0);
+        }
     }
 
     #[test]
