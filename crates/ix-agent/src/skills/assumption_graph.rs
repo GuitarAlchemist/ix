@@ -358,10 +358,9 @@ mod tests {
                     }
                 })
         });
-        if let Err(e) = made {
-            eprintln!("SKIPPED confine_rejects_a_symlink_that_leads_out_of_the_root: {e}");
-            return;
-        }
+        // A symlink on Unix and a junction on Windows need no privileges, so a
+        // failure here is a broken test environment, not a reason to skip.
+        made.expect("create a symlink or junction");
         assert!(
             link.join("secret.json").exists(),
             "precondition: link resolves"
