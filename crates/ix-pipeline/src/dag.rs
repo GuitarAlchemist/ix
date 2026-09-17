@@ -1,6 +1,6 @@
 //! Core DAG data structure with cycle detection and topological sort.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 /// Unique identifier for a node in the pipeline.
 pub type NodeId = String;
@@ -197,45 +197,41 @@ impl<N> Dag<N> {
     /// Topological sort using Kahn's algorithm.
     ///
     /// Returns nodes in an order where every node comes after its dependencies.
-    /// Panics if the graph has a cycle (should be impossible if built via add_edge).
+    /// Deterministic: whenever several nodes are ready, the one inserted first
+    /// comes first, so the same graph always sorts the same way (callers such
+    /// as `ix_pipeline_run` report and execute this order).
+    /// Nodes on a cycle are omitted (impossible if built via add_edge).
     pub fn topological_sort(&self) -> Vec<&NodeId> {
-        let mut in_degrees: HashMap<&str, usize> = HashMap::new();
-        for id in &self.order {
-            in_degrees.insert(id, self.in_degree(id));
-        }
-
-        let mut queue: VecDeque<&str> = in_degrees
+        let position: HashMap<&str, usize> = self
+            .order
             .iter()
-            .filter(|(_, &deg)| deg == 0)
-            .map(|(&id, _)| id)
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+        let mut in_degrees: Vec<usize> = self.order.iter().map(|id| self.in_degree(id)).collect();
+
+        let mut ready: BTreeSet<usize> = (0..self.order.len())
+            .filter(|&i| in_degrees[i] == 0)
             .collect();
 
-        let mut sorted = Vec::with_capacity(self.nodes.len());
+        let mut sorted = Vec::with_capacity(self.order.len());
 
-        while let Some(node) = queue.pop_front() {
+        while let Some(i) = ready.pop_first() {
+            let node = &self.order[i];
             sorted.push(node);
             if let Some(succs) = self.edges.get(node) {
                 for succ in succs {
-                    if let Some(deg) = in_degrees.get_mut(succ.as_str()) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            queue.push_back(succ);
+                    if let Some(&j) = position.get(succ.as_str()) {
+                        in_degrees[j] -= 1;
+                        if in_degrees[j] == 0 {
+                            ready.insert(j);
                         }
                     }
                 }
             }
         }
 
-        // Map back to NodeId references from self.order, preserving topological order
-        let pos_map: HashMap<&str, usize> =
-            sorted.iter().enumerate().map(|(i, &s)| (s, i)).collect();
-        let mut result: Vec<&NodeId> = self
-            .order
-            .iter()
-            .filter(|id| pos_map.contains_key(id.as_str()))
-            .collect();
-        result.sort_by_key(|id| pos_map.get(id.as_str()).copied().unwrap_or(usize::MAX));
-        result
+        sorted
     }
 
     /// Group nodes into execution levels (for parallel execution).
@@ -376,6 +372,19 @@ mod tests {
         let mut dag = Dag::new();
         dag.add_node("a", ()).unwrap();
         assert!(matches!(dag.add_edge("a", "a"), Err(DagError::SelfLoop(_))));
+    }
+
+    #[test]
+    fn test_topological_sort_is_deterministic_by_insertion_order() {
+        // Independent nodes used to come out in HashMap order, which differed
+        // between runs; ties now break by insertion order.
+        let mut dag = Dag::new();
+        for id in ["w", "x", "y", "z", "v"] {
+            dag.add_node(id, ()).unwrap();
+        }
+        dag.add_edge("v", "x").unwrap();
+        let ids: Vec<&str> = dag.topological_sort().iter().map(|s| s.as_str()).collect();
+        assert_eq!(ids, ["w", "y", "z", "v", "x"]);
     }
 
     #[test]
