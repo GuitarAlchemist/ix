@@ -136,8 +136,15 @@ fn roots_with_extras(root: &Path, extras: Option<OsString>) -> Vec<PathBuf> {
 /// directory (`~/.ga/traces`, the trace tools' default) and the `traces/`
 /// directory beside the installed session log, where `ix_triage_session`
 /// exports before it re-ingests.
+///
+/// Without `HOME` or `USERPROFILE` the default trace directory would be
+/// relative to the process's current directory, which no operator chose, so it
+/// is left out.
 pub(crate) fn trace_roots() -> Vec<PathBuf> {
-    let mut roots = vec![ix_io::trace_bridge::default_trace_dir()];
+    let mut roots: Vec<PathBuf> = Some(ix_io::trace_bridge::default_trace_dir())
+        .filter(|dir| dir.is_absolute())
+        .into_iter()
+        .collect();
     if let Some(dir) = crate::registry_bridge::current_session_log()
         .and_then(|log| log.path().parent().map(|p| p.join("traces")))
     {
@@ -483,6 +490,7 @@ mod tests {
         // A directory to be created under the link escapes the same way.
         let err = confine_dest_in(&one(root.path()), "trace_dir", "link/new/traces").unwrap_err();
         assert!(err.contains("not inside an allowed destination root"), "{err}");
+        assert!(!elsewhere.path().join("new").exists());
     }
 
     #[test]

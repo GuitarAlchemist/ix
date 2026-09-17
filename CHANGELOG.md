@@ -36,14 +36,23 @@ this project uses workspace-unified semver (all crates share one version).
 - `.mcp.json` sets `IX_ROOT` for the `ix` server.
 - `confine` moved from `skills/assumption_graph.rs` to `crates/ix-agent/src/path_confine.rs`.
 
-### Fixed — `ix_session_flywheel_export` validates `trace_id` (2026-09-16)
+### Fixed — `ix_session_flywheel_export` confines its destination (2026-09-16)
 
 - `trace_id` must be a plain file name: an absolute path, `..`, a separator, `:`, a leading
   dot, a trailing dot or space, a control character or a reserved device name (`CON`,
   `COM1`, ...) is refused before anything is created. Previously the id was joined onto
   `trace_dir` verbatim, so a path-shaped id wrote `<id>.json` outside `trace_dir`.
-- The export replaces whatever sits at `<trace_dir>/<trace_id>.json` (removing it, then
-  creating the file with `create_new`) instead of writing through a symlink or hard link.
+- **Breaking:** `trace_dir` must lie inside `~/.ga/traces` or the `traces/` directory beside
+  the installed session log (`IX_SESSION_LOG`); relative paths resolve against `~/.ga/traces`.
+  `..`, NUL and, on Windows, UNC, device, verbatim and drive-relative paths are refused
+  before anything is resolved. Without `HOME`/`USERPROFILE` there is no `~/.ga/traces` root.
+- `session_log` must be an existing file; a missing log is no longer created.
+- The export writes a temporary file beside the destination and renames it over
+  `<trace_dir>/<trace_id>.json`, so a failed export keeps the previous trace and a symlink or
+  hard link there is replaced, not written through. A directory, symlink, junction or
+  read-only file at the destination is refused.
+- With no `trace_id`, a log stem that is not a valid id (for example `.run.jsonl`) exports as
+  `session-<sanitized stem>` instead of failing.
 
 ### Changed — governance checks no longer read "no match" as approval (2026-09-14)
 

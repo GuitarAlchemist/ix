@@ -5144,7 +5144,9 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
     // Relative paths resolve against `~/.ga/traces`.
     let trace_dir: PathBuf = match params.get("trace_dir").and_then(|v| v.as_str()) {
         Some(d) => path_confine::confine_dest_in(&path_confine::trace_roots(), "trace_dir", d)?,
-        None => ix_io::trace_bridge::default_trace_dir(),
+        None => Some(ix_io::trace_bridge::default_trace_dir())
+            .filter(|dir| dir.is_absolute())
+            .ok_or("no default trace directory: neither HOME nor USERPROFILE is set")?,
     };
     let trace_id = params
         .get("trace_id")
