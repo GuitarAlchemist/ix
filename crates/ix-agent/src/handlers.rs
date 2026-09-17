@@ -3152,14 +3152,81 @@ fn ix_cli_path() -> std::path::PathBuf {
 
 // ── ix_git_log ─────────────────────────────────────────────
 
+/// A caller-supplied repo root that passed [`path_confine`], and whether it is
+/// the workspace root itself rather than a repository somewhere under a root.
+pub(crate) struct ConfinedRoot {
+    path: std::path::PathBuf,
+    is_workspace_root: bool,
+}
+
 /// The caller's optional `repo_root` for `ix_git_log` / `ix_git_churn`,
 /// confined to the workspace (or an `IX_EXTRA_ROOTS` directory).
-fn confined_repo_root(params: &Value) -> Result<Option<std::path::PathBuf>, String> {
-    params
-        .get("repo_root")
-        .and_then(|v| v.as_str())
-        .map(|raw| path_confine::confine(&path_confine::workspace_root()?, "repo_root", raw))
-        .transpose()
+fn confined_repo_root(params: &Value) -> Result<Option<ConfinedRoot>, String> {
+    let Some(raw) = params.get("repo_root").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    let workspace = path_confine::workspace_root()?;
+    let path = path_confine::confine(&workspace, "repo_root", raw)?;
+    let is_workspace_root = match (path.canonicalize(), workspace.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    Ok(Some(ConfinedRoot {
+        path,
+        is_workspace_root,
+    }))
+}
+
+/// A caller-supplied path for an auto-approved tool, confined to the workspace
+/// root or an `IX_EXTRA_ROOTS` directory. Tools call this on every path an MCP
+/// caller names; a default the tool picks for itself is not caller input and is
+/// not confined (see `path_confine`'s module docs).
+pub(crate) fn confined_path(param: &str, raw: &str) -> Result<std::path::PathBuf, String> {
+    path_confine::confine(&path_confine::workspace_root()?, param, raw)
+}
+
+/// A `git` command that cannot be talked into running a program named in the
+/// configuration of the repository it reads. Git reads the target repo's
+/// `.git/config`, and several keys there name executables: `core.fsmonitor`
+/// (run by `status`), `gpg.program` (run by `log` when `log.showSignature` is
+/// set and a commit carries a signature), `core.pager`, `core.editor`,
+/// `diff.external` and textconv filters. Each is overridden here, and the
+/// per-command flags below (`--no-show-signature`, `--no-ext-diff`,
+/// `--no-textconv`) neutralize the same keys a second way. Hooks are not run by
+/// the read-only commands we issue; `core.hooksPath` points at a name that does
+/// not exist so a hook could not be found even if one were.
+pub(crate) fn hardened_git() -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("--no-pager")
+        .args(["-c", "core.fsmonitor=false"])
+        .args(["-c", "core.hooksPath=ix-no-hooks-dir"])
+        .args(["-c", "core.pager=cat"])
+        .args(["-c", "core.editor=false"])
+        .args(["-c", "diff.external="])
+        .args(["-c", "log.showSignature=false"])
+        .args(["-c", "gpg.program=false"]);
+    cmd
+}
+
+/// `git log` over an optional confined repo root, hardened as described on
+/// [`hardened_git`]. `safe.directory` switches off git's ownership check for
+/// the path it names, so only the workspace root itself gets it: a repository
+/// someone else planted under an allowed root must still fail git's "dubious
+/// ownership" check.
+pub(crate) fn hardened_git_log(repo_root: Option<&ConfinedRoot>) -> std::process::Command {
+    let mut cmd = hardened_git();
+    if let Some(root) = repo_root {
+        if root.is_workspace_root {
+            let safe_root = root.path.display().to_string().replace('\\', "/");
+            cmd.arg("-c").arg(format!("safe.directory={safe_root}"));
+        }
+        cmd.arg("-C").arg(&root.path);
+    }
+    cmd.arg("log")
+        .arg("--no-show-signature")
+        .arg("--no-ext-diff")
+        .arg("--no-textconv");
+    cmd
 }
 
 /// P1.1 — shell out to `git log` and return a normalized per-path
@@ -3200,8 +3267,6 @@ fn confined_repo_root(params: &Value) -> Result<Option<std::path::PathBuf>, Stri
 /// `is_safe_git_path` predicate so even a well-formed argument
 /// containing a `.git/hooks/...` style injection vector is rejected.
 pub fn git_log(params: Value) -> Result<Value, String> {
-    use std::process::Command;
-
     let path = parse_str(&params, "path")?.to_string();
     if !is_safe_git_path(&path) {
         return Err(format!(
@@ -3244,16 +3309,7 @@ pub fn git_log(params: Value) -> Result<Value, String> {
     // validated value; there is no string concatenation of untrusted
     // input into a single argument.
     let since_arg = format!("--since={since_days} days ago");
-    let mut cmd = Command::new("git");
-    if let Some(root) = &repo_root {
-        let safe_root = root.display().to_string().replace('\\', "/");
-        cmd.arg("-c")
-            .arg(format!("safe.directory={safe_root}"))
-            .arg("-C")
-            .arg(root);
-    }
-    let output = cmd
-        .arg("log")
+    let output = hardened_git_log(repo_root.as_ref())
         .arg(&since_arg)
         .arg("--format=%ad")
         .arg("--date=format:%Y-%m-%d")
@@ -3981,7 +4037,6 @@ fn extract_workspace_deps(
 /// echoed into any shell.
 pub fn git_churn(params: Value) -> Result<Value, String> {
     use std::collections::BTreeMap;
-    use std::process::Command;
 
     let since_days = params
         .get("since_days")
@@ -4008,16 +4063,7 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
     // one go lets us compute churn_count, lines_added, lines_deleted,
     // and last_changed in O(n) without re-spawning git.
     let since_arg = format!("--since={since_days} days ago");
-    let mut cmd = Command::new("git");
-    if let Some(root) = &repo_root {
-        let safe_root = root.display().to_string().replace('\\', "/");
-        cmd.arg("-c")
-            .arg(format!("safe.directory={safe_root}"))
-            .arg("-C")
-            .arg(root);
-    }
-    let output = cmd
-        .arg("log")
+    let output = hardened_git_log(repo_root.as_ref())
         .arg(&since_arg)
         .arg("--numstat")
         .arg("--format=__C__|%H|%ad")
@@ -7565,5 +7611,78 @@ mod optick_index_path_tests {
             err.contains("arg.index (index_path argument)"),
             "got: {err}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hardened git argv (ix#350 review)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod git_hardening_tests {
+    use super::{hardened_git_log, ConfinedRoot};
+    use std::path::PathBuf;
+
+    fn args_of(cmd: &std::process::Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Each of these keys names a program git would run if the repository it
+    /// reads set it: pointing `ix_git_log` / `ix_git_churn` at a repo under an
+    /// allowed root must not execute anything that repo's config chose.
+    #[test]
+    fn hardened_git_log_neutralizes_every_config_key_that_names_a_program() {
+        let args = args_of(&hardened_git_log(None));
+        for expected in [
+            "--no-pager",
+            "core.fsmonitor=false",
+            "core.hooksPath=ix-no-hooks-dir",
+            "core.pager=cat",
+            "core.editor=false",
+            "diff.external=",
+            "log.showSignature=false",
+            "gpg.program=false",
+            "log",
+            "--no-show-signature",
+            "--no-ext-diff",
+            "--no-textconv",
+        ] {
+            assert!(
+                args.iter().any(|a| a == expected),
+                "missing {expected} in {args:?}"
+            );
+        }
+        // Every `-c` override precedes the subcommand, or git rejects it.
+        let subcommand = args.iter().position(|a| a == "log").expect("log");
+        assert!(
+            !args[subcommand..].iter().any(|a| a == "-c"),
+            "a -c override lands after the subcommand: {args:?}"
+        );
+    }
+
+    /// `safe.directory` turns off git's ownership check for the path it names,
+    /// so a repository someone else planted under an allowed root must not get
+    /// it — only the workspace root itself does.
+    #[test]
+    fn safe_directory_is_passed_only_for_the_workspace_root_itself() {
+        let root = ConfinedRoot {
+            path: PathBuf::from("C:/ws"),
+            is_workspace_root: true,
+        };
+        let args = args_of(&hardened_git_log(Some(&root)));
+        assert!(args.iter().any(|a| a == "safe.directory=C:/ws"), "{args:?}");
+
+        let nested = ConfinedRoot {
+            path: PathBuf::from("C:/ws/nested"),
+            is_workspace_root: false,
+        };
+        let args = args_of(&hardened_git_log(Some(&nested)));
+        assert!(
+            !args.iter().any(|a| a.starts_with("safe.directory=")),
+            "a nested repo must not be marked safe: {args:?}"
+        );
+        assert!(args.iter().any(|a| a == "-C"), "{args:?}");
     }
 }
