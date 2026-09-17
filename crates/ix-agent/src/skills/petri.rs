@@ -13,6 +13,7 @@
 //! ambient authority.
 
 use ix_petri::analysis::{analyze, Analysis, Limits};
+use ix_petri::json::{admit, Output, MAX_STATES_CEILING};
 use ix_petri::{PetriNet, PetriNetBuilder};
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -77,8 +78,9 @@ fn petri_analyze_schema() -> Value {
             "max_states": {
                 "type": "integer",
                 "minimum": 1,
+                "maximum": 1000000,
                 "default": 50000,
-                "description": "Enumeration budget. Hitting it makes undecided properties `unknown` rather than guessed."
+                "description": "Enumeration budget. Hitting it makes undecided properties `unknown` rather than guessed. Refused unless an integer from 1 to 1000000, or where ix-petri's worst-case heap bound for this net and this response exceeds its budget; the heap refusal names the largest admissible value."
             }
         }
     })
@@ -93,7 +95,8 @@ fn petri_analyze_output_schema() -> Value {
             "transitions": { "type": "integer" },
             "states": { "type": "integer", "description": "Distinct reachable markings enumerated" },
             "transitions_fired": { "type": "integer", "description": "Edges in the reachability graph" },
-            "truncated": { "type": "boolean", "description": "True when max_states stopped the search" },
+            "truncated": { "type": "boolean", "description": "True when the search stopped short of the full state space: max_states was reached, or a firing overflowed a u64 token count" },
+            "truncation": { "type": ["string", "null"], "description": "Why the search stopped: max_states (a larger budget may finish it) or overflow (none will); null when not truncated" },
             "deadlock_free": {
                 "type": "object",
                 "description": "verdict holds|fails|unknown; on `fails`, `detail` lists dead markings with the shortest firing sequence reaching each"
@@ -104,9 +107,9 @@ fn petri_analyze_output_schema() -> Value {
             "quasi_live": { "type": "object", "description": "On `fails`, the transitions enabled in no reachable marking" },
             "live": { "type": "object", "description": "L4-liveness. On `fails`, transitions absent from some terminal SCC" },
             "reversible": { "type": "object", "description": "Whether the initial marking is reachable from everywhere" },
-            "witness_labels": {
+            "transition_labels": {
                 "type": "object",
-                "description": "Deadlock witnesses rendered with transition names instead of ids, keyed by deadlock index"
+                "description": "On a deadlock, the human label (name, or id when unnamed) of every transition a reported witness fires, keyed by transition id: witness[k] reads as transition_labels[witness[k]]"
             }
         }
     })
@@ -119,6 +122,16 @@ fn petri_analyze_output_schema() -> Value {
 /// document (`pnml`). Every verdict is `holds`, `fails` with a witness, or
 /// `unknown` — never a guess. Firing order is deterministic, so the same net
 /// yields the same report on every call.
+///
+/// `max_states` is admitted by `ix_petri::json::admit`, as it is for SQL's
+/// `ix_petri_analyze`: refused unless an integer from 1 to
+/// `MAX_STATES_CEILING`, or where the worst-case heap bound for this net
+/// exceeds `HEAP_BUDGET_BYTES`, because a request crossing a process boundary
+/// must not be able to exhaust the server's memory. Absent or `null`, it is
+/// 50 000. The bound is taken for `Output::McpResponse`, so it covers the
+/// analysis, the `Value` rendered below, its pretty-printed text, and the
+/// JSON-RPC line made of that text; this request's own JSON and the net built
+/// from it are outside it.
 #[ix_skill(
     domain = "petri",
     name = "petri.analyze",
@@ -128,12 +141,24 @@ fn petri_analyze_output_schema() -> Value {
 )]
 pub fn petri_analyze(params: Value) -> Result<Value, String> {
     let net = build_net(&params)?;
-    let limits = match params.get("max_states").and_then(Value::as_u64) {
-        Some(0) | None => Limits::default(),
-        Some(n) => Limits::with_max_states(n as usize),
+    let max_states = match params.get("max_states") {
+        None | Some(Value::Null) => Limits::default().max_states as i64,
+        // A budget that is not an integer is refused like one out of range, in
+        // the words `admit` uses, rather than replaced by the default.
+        Some(v) => v.as_i64().ok_or_else(|| {
+            format!("max_states must be between 1 and {MAX_STATES_CEILING}, got {v}")
+        })?,
     };
-    let report = analyze(&net, limits);
-    render(&net, &report)
+    analyze_and_render(&net, max_states)
+}
+
+/// Admit `max_states` for `net`, analyse it, and render the tool result: the
+/// part of [`petri_analyze`] after the net is built, which
+/// `tests/petri_heap_budget.rs` measures against the heap bound.
+pub fn analyze_and_render(net: &PetriNet, max_states: i64) -> Result<Value, String> {
+    let limits = admit(net, 0, max_states, Output::McpResponse).map_err(|e| e.to_string())?;
+    let report = analyze(net, limits);
+    render(net, &report)
 }
 
 /// Either the PNML document or the inline node lists, never both.
@@ -246,12 +271,20 @@ fn render(net: &PetriNet, report: &Analysis) -> Result<Value, String> {
 
     // Witnesses carry transition ids because those are replayable; agents also
     // want the human names, so both are available without either being lossy.
+    // Each label is given once per transition, not again at every step: a
+    // witness can be as long as the state space is deep, and repeating a long
+    // name at each of its steps multiplied the result by that name's length.
     if let ix_petri::Verdict::Fails(deadlocks) = &report.deadlock_free {
-        let labels: Vec<Value> = deadlocks
-            .iter()
-            .map(|d| json!(net.label_sequence(&d.witness)))
-            .collect();
-        object.insert("witness_labels".into(), Value::Array(labels));
+        let mut labels = serde_json::Map::new();
+        for id in deadlocks.iter().flat_map(|d| &d.witness) {
+            if !labels.contains_key(id) {
+                let label = net
+                    .transition_index(id)
+                    .map_or(id.as_str(), |t| net.transitions()[t].label());
+                labels.insert(id.clone(), json!(label));
+            }
+        }
+        object.insert("transition_labels".into(), Value::Object(labels));
     }
     Ok(out)
 }
@@ -285,8 +318,65 @@ mod tests {
             out["deadlock_free"]["detail"][0]["witness"],
             json!(["acquire"])
         );
-        assert_eq!(out["witness_labels"][0], json!(["take the lock"]));
+        assert_eq!(
+            out["transition_labels"],
+            json!({ "acquire": "take the lock" })
+        );
         assert_eq!(out["bounded"]["verdict"], json!("holds"));
+    }
+
+    /// A witness that fires the same named transition at every step carries
+    /// its name once, keyed by id, and every step still reads back to it.
+    #[test]
+    fn a_repeated_transition_is_labelled_once() {
+        let out = petri_analyze(json!({
+            "places": [{ "id": "c", "tokens": 3 }, "d"],
+            "transitions": [{ "id": "t", "name": "take one" }],
+            "arcs": [
+                { "source": "c", "target": "t" },
+                { "source": "t", "target": "d" }
+            ]
+        }))
+        .unwrap();
+        let witness = &out["deadlock_free"]["detail"][0]["witness"];
+        assert_eq!(witness, &json!(["t", "t", "t"]));
+        assert_eq!(out["transition_labels"], json!({ "t": "take one" }));
+        let labels: Vec<&Value> = witness
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| &out["transition_labels"][id.as_str().unwrap()])
+            .collect();
+        assert_eq!(labels, vec![&json!("take one"); 3]);
+    }
+
+    /// A present `max_states` that is not an integer in range is refused, as
+    /// SQL refuses it, instead of silently becoming the 50 000 default.
+    #[test]
+    fn a_budget_that_is_not_a_positive_integer_is_refused_not_defaulted() {
+        let with = |max_states: Value| {
+            petri_analyze(json!({
+                "places": [{ "id": "a", "tokens": 1 }, "b"],
+                "transitions": ["t"],
+                "arcs": [{ "source": "a", "target": "t" }, { "source": "t", "target": "b" }],
+                "max_states": max_states
+            }))
+        };
+        for (bad, shown) in [
+            (json!(0), "0"),
+            (json!(-1), "-1"),
+            (json!(1.5), "1.5"),
+            (json!("1000"), "\"1000\""),
+            (json!(true), "true"),
+        ] {
+            let err = with(bad).unwrap_err();
+            assert_eq!(
+                err,
+                format!("max_states must be between 1 and 1000000, got {shown}")
+            );
+        }
+        assert_eq!(with(json!(null)).unwrap()["states"], json!(2));
+        assert_eq!(with(json!(1)).unwrap()["truncated"], json!(true));
     }
 
     #[test]
@@ -325,6 +415,21 @@ mod tests {
         assert!(out["unbounded_witness"]["pumping_sequence"]
             .as_array()
             .is_some_and(|s| s == &[json!("grow")]));
+    }
+
+    #[test]
+    fn a_budget_past_the_ceiling_is_refused_not_run() {
+        let err = petri_analyze(json!({
+            "places": ["queue"],
+            "transitions": ["grow"],
+            "arcs": [{ "source": "grow", "target": "queue" }],
+            "max_states": u64::MAX
+        }))
+        .unwrap_err();
+        assert!(
+            err.contains("max_states must be between 1 and 1000000"),
+            "{err}"
+        );
     }
 
     #[test]
