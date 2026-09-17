@@ -113,8 +113,9 @@ impl Middleware for BeliefMiddleware {
                 // Action succeeded. If the current belief was NOT
                 // already True, record the correction.
                 if current_belief != Some(Hexavalent::True) {
+                    let ordinal = cx.sink.claim_ordinal();
                     cx.sink.emit(SessionEvent::BeliefChanged {
-                        ordinal: cx.sink.next_ordinal(),
+                        ordinal,
                         proposition,
                         old: current_belief,
                         new: Hexavalent::True,
@@ -170,8 +171,9 @@ impl Middleware for BeliefMiddleware {
                             })
                         }
                     };
+                    let ordinal = cx.sink.claim_ordinal();
                     cx.sink.emit(SessionEvent::BeliefChanged {
-                        ordinal: cx.sink.next_ordinal(),
+                        ordinal,
                         proposition,
                         old: current_belief,
                         new: Hexavalent::False,

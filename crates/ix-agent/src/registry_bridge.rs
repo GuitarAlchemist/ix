@@ -328,6 +328,16 @@ where
     dispatch_through_gate(mcp_tool_name, params, &ManualToolHandler(handler))
 }
 
+/// The ordinal the next dispatched action carries. `main.rs` runs one worker
+/// thread per `tools/call`, and the middleware chain no longer serializes them
+/// (it is cloned out of its mutex before the handler runs), so the counter is
+/// atomic: two concurrent calls never label their session-log events with the
+/// same ordinal.
+fn next_action_ordinal() -> u64 {
+    static ORDINAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    ORDINAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 fn dispatch_through_gate(
     mcp_tool_name: &str,
     params: JsonValue,
@@ -337,7 +347,7 @@ fn dispatch_through_gate(
     let action = AgentAction::InvokeTool {
         tool_name: mcp_tool_name.to_string(),
         params,
-        ordinal: 0,
+        ordinal: next_action_ordinal(),
         target_hint: None,
     };
 
