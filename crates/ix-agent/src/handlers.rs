@@ -5127,11 +5127,25 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
         .get("session_log")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "'session_log' is required".to_string())?;
-    let trace_dir: PathBuf = params
-        .get("trace_dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(ix_io::trace_bridge::default_trace_dir);
+    // `SessionLog::open` creates a missing log and its parent directories, so
+    // only an existing file is accepted. Lexical checks first: resolving a UNC
+    // or device path would already contact the server or open the pipe.
+    crate::path_confine::check_lexical("session_log", log_path)?;
+    if !std::path::Path::new(log_path).is_file() {
+        return Err(format!("`session_log`: {log_path} is not an existing file"));
+    }
+    // A write destination: only the operator's trace locations. Relative paths
+    // resolve against `~/.ga/traces`.
+    let trace_dir: PathBuf = match params.get("trace_dir").and_then(|v| v.as_str()) {
+        Some(d) => crate::path_confine::confine_dest_in(
+            &crate::path_confine::trace_roots(),
+            "trace_dir",
+            d,
+        )?,
+        None => Some(ix_io::trace_bridge::default_trace_dir())
+            .filter(|dir| dir.is_absolute())
+            .ok_or("no default trace directory: neither HOME nor USERPROFILE is set")?,
+    };
     let trace_id = params
         .get("trace_id")
         .and_then(|v| v.as_str())
