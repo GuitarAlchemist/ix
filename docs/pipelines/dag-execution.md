@@ -294,8 +294,8 @@ println!("{}", result.output("greet").unwrap());  // "Hello, ix!"
 
 The MCP surface has two read-only (Tier 1) companions to `ix_pipeline_run`, modelled on ComfyUI's `object_info` endpoint and `comfy validate`:
 
-- **`ix_node_catalog`** (no arguments) returns one entry per registered tool: `name`, `description`, `dispatch` (`registry` or `manual`), `input_schema`, `required_inputs`, `output_schema` (`null` when the skill declares none) and `approval` (`action_kind` + `tier` as computed by `ix-approval`).
-- **`ix_pipeline_validate`** takes the exact `{"steps": [...]}` spec `ix_pipeline_run` consumes and checks it without running anything.
+- **`ix_node_catalog`** (no arguments) returns one entry per registered tool: `name`, `description`, `dispatch` (`registry` or `manual`), `gated` (whether a call really passes through the approval middleware), `input_schema`, `required_inputs`, `output_schema` (`null` when the skill declares none) and `approval` (`action_kind`, `tier`, and `effect`: `auto_approved`, `blocked` or `not_gated`). Tier 3 means **blocked**: the MCP path has no way to grant approval.
+- **`ix_pipeline_validate`** takes the `{"steps": [...]}` spec `ix_pipeline_run` consumes and checks it without running anything.
 
 ```json
 {
@@ -307,17 +307,24 @@ The MCP surface has two read-only (Tier 1) companions to `ix_pipeline_run`, mode
 }
 ```
 
-returns `valid: true`, `execution_order: ["a", "b"]`, per-step tiers, `max_tier: "tier_two"` and `requires_approval: false`. Problems come back as structured `{code, step, message}` entries so an editor can pin each one to a node:
+returns `valid: true`, `execution_order: ["a", "b"]`, per-step `gated` / `tier` / `effect`, `max_tier: "tier_two"` (over gated steps only) and `ungated_steps: []`. `execution_order` is the order `ix_pipeline_run` executes: `Dag::topological_sort` is deterministic (ties break by step order). Problems come back as structured `{code, step, index, message}` entries so an editor can pin each one to a node:
 
 | Code | Meaning |
 |------|---------|
 | `unknown_tool` | `tool` is not in the registry |
+| `unsupported_in_pipeline` | the tool only runs as a top-level MCP call (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_explain_algorithm`, `ix_triage_session`) |
+| `blocked_by_approval_gate` | the step goes through the approval gate at Tier 3 and would be refused |
 | `missing_required_input` | an input listed in the tool's schema `required` is absent from `arguments` |
 | `unknown_step_reference` | a `depends_on` entry or a `"$step.field"` argument names an undefined step |
-| `cycle` | a `depends_on` edge would close a cycle (rejected by `ix_pipeline::dag::Dag`) |
+| `self_reference` | a `"$step.field"` argument reads the step's own output, which never exists at substitution time |
+| `undeclared_dependency` | a `"$step.field"` argument names a step that is not upstream through `depends_on` (checked only when the graph has no cycle) |
+| `cycle` | the step is part of a `depends_on` cycle |
+| `too_many_steps`, `too_many_references` | more than 1000 steps, or more than 1000 `depends_on` entries / argument references in one step |
 | `missing_steps`, `empty_steps`, `missing_id`, `duplicate_id`, `missing_tool`, `invalid_arguments`, `invalid_depends_on` | malformed spec |
 
-The warning `undeclared_dependency` flags a `"$step.field"` reference to a step that is not upstream through `depends_on` — it may not have run when the reference is substituted. The checks are structural: argument *types* are not validated against the schema yet. The example above is pinned by `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
+The warning `loop_detect_threshold` flags more gated steps calling one tool than the loop detector allows (its configured threshold, 10 by default). The detector window is shared by the whole process, so a run can trip earlier. A duplicate id is reported once; that step is then ignored so its edges are not attributed to the first step with the same id.
+
+The validator is deliberately stricter than `ix_pipeline_run`, which accepts an empty `steps` array and silently ignores a non-array `depends_on` or a non-string entry in it. The checks are structural: argument *types* are not validated against the schema yet. The example above is pinned by `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
 
 ---
 
