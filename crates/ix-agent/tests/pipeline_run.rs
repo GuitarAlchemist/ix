@@ -31,7 +31,9 @@ fn call_pipeline_run(
     let seen = detector.count("ix_pipeline_run");
     assert!(
         seen < threshold,
-        "this test binary has already called ix_pipeline_run {seen} times and the          loop-detect threshold is {threshold}: clear the key at the session          boundary instead of widening the window"
+        "this test binary has already called ix_pipeline_run {seen} times and \
+the loop-detect threshold is {threshold}: clear the key at the session \
+boundary instead of widening the window"
     );
     reg.call_with_ctx("ix_pipeline_run", args, ctx)
 }
