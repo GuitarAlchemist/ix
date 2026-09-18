@@ -52,9 +52,14 @@ fn run_pipeline(folder: &str) -> Value {
     // minutes *per process*. Each test here is a separate agent session that
     // happens to share one test binary, and the binary replays more than 10
     // pipelines, so the window is cleared at each session boundary. A real
-    // session that runs 10 pipelines in 5 minutes is meant to be cut off; if
-    // that cap proves wrong for orchestrating tools, the fix is a per-kind
-    // threshold in ix-loop-detect, not a wider window here.
+    // session that runs 10 pipelines in 5 minutes is meant to be cut off.
+    //
+    // The sharpest consequence, measured on this branch: ONE `ix_pipeline_run`
+    // whose steps hit the same tool 11 times dies mid-pipeline (5 and 8 steps
+    // pass, 11 fails at step 's8' with "circuit breaker tripped: 11 calls in
+    // the last 300s"). `parity.rs` pins that. It is pre-existing for
+    // registry-backed steps and new for the manual step tools ix#350 gates; the
+    // fix is a per-kind threshold in ix-loop-detect, not a wider window here.
     shared_loop_detector().clear_key("ix_pipeline_run");
     reg.call_with_ctx("ix_pipeline_run", load_spec(folder), &ctx)
         .unwrap_or_else(|e| panic!("pipeline_run failed for {folder}: {e}"))

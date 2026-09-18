@@ -610,6 +610,52 @@ fn gated_pipeline_run_dispatches_gated_steps_without_deadlock() {
     assert!(shared_loop_detector().count("ix_pipeline_run") >= 1);
 }
 
+/// The user-visible edge of the loop-detect cap, recorded as a test because the
+/// number belongs with the decision in `showcase_r1_migrations` (ix#350 review):
+/// ONE `ix_pipeline_run` whose steps hit the same tool eleven times dies
+/// mid-pipeline. Eight stay under the cap. Pre-existing for registry-backed
+/// steps, new for the manual step tools this PR gates; a per-kind threshold in
+/// `ix-loop-detect` is the fix, and this test is what would change with it.
+#[test]
+fn one_pipeline_hitting_a_tool_eleven_times_trips_the_loop_detector() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use ix_agent::server_context::ServerContext;
+
+    // A pure manual tool no other test in this binary calls, so the window is ours.
+    const STEP_TOOL: &str = "ix_voicings_payload";
+    shared_loop_detector().clear_key(STEP_TOOL);
+    shared_loop_detector().clear_key("ix_pipeline_run");
+
+    let steps = |ids: std::ops::Range<usize>| {
+        let steps: Vec<serde_json::Value> = ids
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("s{i}"),
+                    "tool": STEP_TOOL,
+                    "arguments": {}
+                })
+            })
+            .collect();
+        serde_json::json!({ "steps": steps })
+    };
+
+    let (ctx, _rx) = ServerContext::new();
+    let reg = ToolRegistry::new();
+    let out = reg
+        .call_with_ctx("ix_pipeline_run", steps(0..8), &ctx)
+        .expect("8 steps on one tool stay under the cap");
+    assert_eq!(
+        out["execution_order"].as_array().map(Vec::len),
+        Some(8),
+        "{out}"
+    );
+
+    let err = reg
+        .call_with_ctx("ix_pipeline_run", steps(8..11), &ctx)
+        .expect_err("the 11th call on one tool must trip the breaker");
+    assert!(err.contains("circuit breaker tripped"), "{err}");
+}
+
 /// `ix_petri_analyze` through the exact entry point `main.rs` uses for `tools/call`.
 /// Before its classification it returned
 /// `ix_approval: action blocked (ApprovalRequired)` here.
