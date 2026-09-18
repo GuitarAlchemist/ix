@@ -437,7 +437,9 @@ fn tier_two_manual_tools_refuse_paths_outside_the_workspace() {
         ),
     ] {
         let err = call(tool, args.clone()).expect_err("`..` must be refused");
-        assert!(err.contains("`..` is not allowed"), "{tool} {args}: {err}");
+        // `..` is resolved lexically and the root check decides, so an escaping
+        // one is refused as an outside path (ix#350).
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
     }
 
     // An in-root repo root still works.
@@ -529,7 +531,7 @@ fn tier_one_manual_tools_refuse_paths_outside_the_workspace() {
 
         let args = build("../escape");
         let err = call(tool, args.clone()).expect_err("`..` must be refused");
-        assert!(err.contains("`..` is not allowed"), "{tool} {args}: {err}");
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
     }
 
     // In-root paths keep working.
@@ -700,7 +702,9 @@ fn assumption_tools_refuse_paths_outside_the_workspace() {
             &ctx,
         )
         .expect_err("`..` must be refused");
-    assert!(err.contains("`..` is not allowed"), "{err}");
+    // Since ix#350 a `..` is resolved lexically and the root check decides, so
+    // this one is refused for leaving the root rather than for its shape.
+    assert!(err.contains("inside an allowed"), "{err}");
 
     // A relative workspace inside the root still works.
     let out = registry
@@ -862,9 +866,10 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
         }
         let args = build("../escape");
         let err = call(tool, args.clone()).expect_err("`..` must be refused");
-        // `ix_ml_pipeline` keeps its own earlier `..` check and message.
+        // Since ix#350 confinement resolves `..` and refuses the result for
+        // leaving the root. `ix_ml_pipeline` keeps its own earlier `..` check.
         assert!(
-            err.contains("`..` is not allowed") || err.contains("must not contain '..'"),
+            err.contains("inside an allowed") || err.contains("must not contain '..'"),
             "{tool} {args}: {err}"
         );
     }
