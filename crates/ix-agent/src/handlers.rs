@@ -7227,8 +7227,6 @@ pub fn annotations_scan(params: Value) -> Result<Value, String> {
     use ix_ai_annotations::{reconcile, walker, ReconcilerConfig};
     use std::path::PathBuf;
 
-    // `test_files` are resolved by the reconciler relative to this workspace, so
-    // confining the workspace confines them too.
     let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
         Some(raw) => confined_path("workspace", raw)?,
         None => PathBuf::from("."),
@@ -7241,15 +7239,24 @@ pub fn annotations_scan(params: Value) -> Result<Value, String> {
 
     let annotations = walker::extract(&workspace).map_err(|e| format!("extract failed: {}", e))?;
 
-    let test_files: Vec<PathBuf> = params
-        .get("test_files")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(PathBuf::from))
-                .collect()
-        })
-        .unwrap_or_else(|| discover_test_paths(&workspace));
+    // Each entry is confined on its own. The reconciler resolves them with
+    // `workspace.join(entry)`, and `Path::join` drops the base for an absolute
+    // entry, so confining the workspace alone left an absolute entry pointing
+    // anywhere — and the reconciler reads the file and reports its path, which
+    // made this Tier-1 tool an arbitrary-read content oracle (ix#350 review).
+    let test_files: Vec<PathBuf> = match params.get("test_files").and_then(|v| v.as_array()) {
+        Some(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            // Confined against the workspace the caller named, because that is
+            // what the reconciler joins them onto — an entry is
+            // workspace-relative by contract.
+            .map(|raw| {
+                path_confine::confine_in(std::slice::from_ref(&workspace), "test_files", raw)
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+        None => discover_test_paths(&workspace),
+    };
 
     let cfg = ReconcilerConfig {
         test_files,

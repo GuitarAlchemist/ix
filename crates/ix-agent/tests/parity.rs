@@ -534,6 +534,30 @@ fn tier_one_manual_tools_refuse_paths_outside_the_workspace() {
         assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
     }
 
+    // `test_files` entries are read by the reconciler, which resolves them with
+    // `workspace.join(entry)` — and `join` drops the base for an absolute entry,
+    // so each entry is confined on its own (ix#350 review).
+    for entry in [secret_file.as_str(), "../escape.rs"] {
+        let args = json!({ "workspace": "crates/ix-approval", "test_files": [entry] });
+        let err = call("ix_annotations_scan", args.clone())
+            .expect_err("a test_files entry outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{args}: {err}");
+        assert!(
+            err.contains("test_files"),
+            "the error must name the parameter: {err}"
+        );
+        assert!(!err.contains("SECRET"), "leaked contents: {err}");
+    }
+    let out = call(
+        "ix_annotations_scan",
+        json!({
+            "workspace": "crates/ix-approval",
+            "test_files": ["src/classify.rs"]
+        }),
+    )
+    .expect("an in-root test_files entry must be accepted");
+    assert!(out.is_object(), "{out}");
+
     // In-root paths keep working.
     let out = call("ix_cargo_deps", json!({ "workspace_root": "." }))
         .expect("the workspace itself must be walked");
