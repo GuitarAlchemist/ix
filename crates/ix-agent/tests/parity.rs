@@ -1145,8 +1145,15 @@ fn registry_backed_calls_dispatch_correctly() {
 #[cfg(feature = "maintain-gate")]
 #[test]
 fn maintain_gate_tool_returns_a_verdict() {
-    let here = env!("CARGO_MANIFEST_DIR");
-    let fx = format!("{here}/../ix-duck/tests/fixtures/maintain");
+    // Built from the workspace root rather than `<crate>/..`: the tool confines
+    // its paths, and a `..` segment resolved into an existing in-root path is
+    // accepted (ix#350) — but spelling the fixture without one keeps the
+    // fixture independent of that rule.
+    let fx = confine_test_root()
+        .join("crates/ix-duck/tests/fixtures/maintain")
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let reg = ToolRegistry::new();
     let args = serde_json::json!({
         "hits_path": format!("{fx}/hits_up.jsonl"),
