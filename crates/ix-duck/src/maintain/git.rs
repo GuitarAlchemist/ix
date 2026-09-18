@@ -56,7 +56,16 @@ fn hardened_git() -> std::process::Command {
     let mut cmd = std::process::Command::new("git");
     cmd.arg("--no-pager")
         .args(["-c", "core.fsmonitor=false"])
-        .args(["-c", "core.hooksPath=ix-no-hooks-dir"])
+        // Relative here would resolve against the target worktree, which could
+        // hold a directory of that name; a device path can never be one.
+        .args([
+            "-c",
+            if cfg!(windows) {
+                "core.hooksPath=NUL"
+            } else {
+                "core.hooksPath=/dev/null"
+            },
+        ])
         .args(["-c", "core.pager=cat"])
         .args(["-c", "core.editor=false"])
         .args(["-c", "diff.external="])

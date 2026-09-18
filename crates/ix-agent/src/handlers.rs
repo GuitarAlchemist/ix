@@ -3193,13 +3193,23 @@ pub(crate) fn confined_path(param: &str, raw: &str) -> Result<std::path::PathBuf
 /// `diff.external` and textconv filters. Each is overridden here, and the
 /// per-command flags below (`--no-show-signature`, `--no-ext-diff`,
 /// `--no-textconv`) neutralize the same keys a second way. Hooks are not run by
-/// the read-only commands we issue; `core.hooksPath` points at a name that does
-/// not exist so a hook could not be found even if one were.
+/// the read-only commands we issue; `core.hooksPath` points at a device path,
+/// which can never be a directory of hooks (a relative name would resolve
+/// against the target worktree, which could hold a directory by that name).
 pub(crate) fn hardened_git() -> std::process::Command {
     let mut cmd = std::process::Command::new("git");
     cmd.arg("--no-pager")
         .args(["-c", "core.fsmonitor=false"])
-        .args(["-c", "core.hooksPath=ix-no-hooks-dir"])
+        // Relative here would resolve against the target worktree, which could
+        // hold a directory of that name; a device path can never be one.
+        .args([
+            "-c",
+            if cfg!(windows) {
+                "core.hooksPath=NUL"
+            } else {
+                "core.hooksPath=/dev/null"
+            },
+        ])
         .args(["-c", "core.pager=cat"])
         .args(["-c", "core.editor=false"])
         .args(["-c", "diff.external="])
@@ -7660,7 +7670,11 @@ mod git_hardening_tests {
         for expected in [
             "--no-pager",
             "core.fsmonitor=false",
-            "core.hooksPath=ix-no-hooks-dir",
+            if cfg!(windows) {
+                "core.hooksPath=NUL"
+            } else {
+                "core.hooksPath=/dev/null"
+            },
             "core.pager=cat",
             "core.editor=false",
             "diff.external=",
