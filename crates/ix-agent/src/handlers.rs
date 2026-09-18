@@ -4926,8 +4926,17 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .or(Some(50));
 
+    // `read_ledger` answers with an empty list when the file is missing ("no
+    // ledger yet" is a real answer), so the ledger is confined with the
+    // destination form: it resolves the deepest existing ancestor and still
+    // refuses anything outside a root, without requiring the file to exist
+    // (ix#350 review).
     let path: PathBuf = match params.get("ledger_path").and_then(|v| v.as_str()) {
-        Some(raw) => confined_path("ledger_path", raw)?,
+        Some(raw) => path_confine::confine_dest_in(
+            &path_confine::allowed_roots(&path_confine::workspace_root()?),
+            "ledger_path",
+            raw,
+        )?,
         None => PathBuf::from("state/quality/gate-ledger.jsonl"),
     };
 
