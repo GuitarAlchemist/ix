@@ -216,17 +216,6 @@ pub trait EventSink: Send + Sync {
     /// will be. Used by middleware that wants to cite the upcoming
     /// event in a block message.
     fn next_ordinal(&self) -> u64;
-
-    /// Reserve an ordinal for an event the caller is about to emit.
-    ///
-    /// [`next_ordinal`](Self::next_ordinal) only peeks, so two concurrent
-    /// emitters can read the same value and write duplicate ordinals into one
-    /// session log. A sink whose counter is shared overrides this to hand out
-    /// each value once; the default is the peek, which is correct for a sink
-    /// owned by a single dispatch.
-    fn claim_ordinal(&mut self) -> u64 {
-        self.next_ordinal()
-    }
 }
 
 /// In-memory sink for unit tests and ephemeral dispatches. **Not for

@@ -148,9 +148,16 @@ impl SessionLog {
         self.writer.lock().expect("writer mutex poisoned")
     }
 
-    /// INTERNAL: assign and increment the next ordinal. Returns the
+    /// Assign the next ordinal and advance the counter, under the counter's
+    /// mutex, so concurrent claimers never get the same value. The dispatcher
+    /// claims one per action; the counter resumes from the file on open, so a
+    /// run appending to an existing log does not reuse an earlier run's
+    /// ordinals.
+    ///
+    /// INTERNAL note: also called by [`crate::SessionSink`] after each write, to
+    /// keep [`Self::next_ordinal`] in step with the file. Returns the
     /// value to use for the current emit.
-    pub(crate) fn claim_ordinal(&self) -> u64 {
+    pub fn claim_ordinal(&self) -> u64 {
         let mut n = self
             .next_ordinal
             .lock()

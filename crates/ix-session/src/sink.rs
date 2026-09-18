@@ -84,15 +84,6 @@ impl<'a> EventSink for SessionSink<'a> {
     fn next_ordinal(&self) -> u64 {
         self.log.next_ordinal()
     }
-
-    /// Claims the value under the log's counter mutex, so concurrent dispatches
-    /// against one log get distinct ordinals. The following [`EventSink::emit`]
-    /// advances the counter again, so a claimed ordinal leaves a gap — ordinals
-    /// are correlation ids, not positions (events emitted for one action all
-    /// carry that action's ordinal), and a gap is preferable to a duplicate.
-    fn claim_ordinal(&mut self) -> u64 {
-        self.log.claim_ordinal()
-    }
 }
 
 // SessionSink is Send + Sync because all mutation goes through

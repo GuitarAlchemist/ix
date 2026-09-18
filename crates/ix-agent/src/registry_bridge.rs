@@ -328,14 +328,26 @@ where
     dispatch_through_gate(mcp_tool_name, params, &ManualToolHandler(handler))
 }
 
-/// The ordinal the next dispatched action carries. `main.rs` runs one worker
-/// thread per `tools/call`, and the middleware chain no longer serializes them
-/// (it is cloned out of its mutex before the handler runs), so the counter is
-/// atomic: two concurrent calls never label their session-log events with the
-/// same ordinal.
+/// The ordinal the next dispatched action carries — the single source every
+/// event of that action then uses.
+///
+/// `main.rs` runs one worker thread per `tools/call`, and the middleware chain
+/// no longer serializes them (it is cloned out of its mutex before the handler
+/// runs), so this has to be atomic: two concurrent calls must not label their
+/// session-log events with the same ordinal.
+///
+/// When a session log is installed, the ordinal comes from *its* counter, which
+/// resumes from the file. A process-local counter would restart at 0 and
+/// duplicate the ordinals of an earlier run appending to the same
+/// `IX_SESSION_LOG` (ix#350). Each emit advances the log's counter as well, so
+/// the values a run uses are spaced rather than consecutive; ordinals are
+/// correlation ids, not positions.
 fn next_action_ordinal() -> u64 {
     static ORDINAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    ORDINAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    match current_session_log() {
+        Some(log) => log.claim_ordinal(),
+        None => ORDINAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    }
 }
 
 fn dispatch_through_gate(

@@ -113,7 +113,11 @@ impl Middleware for BeliefMiddleware {
                 // Action succeeded. If the current belief was NOT
                 // already True, record the correction.
                 if current_belief != Some(Hexavalent::True) {
-                    let ordinal = cx.sink.claim_ordinal();
+                    // Every event of one action carries that action's ordinal —
+                    // the approval verdict and the dispatcher's ActionBlocked
+                    // already do. Claiming a fresh one here fed the same log
+                    // from a second counter and duplicated ordinals (ix#350).
+                    let ordinal = action.ordinal();
                     cx.sink.emit(SessionEvent::BeliefChanged {
                         ordinal,
                         proposition,
@@ -171,7 +175,7 @@ impl Middleware for BeliefMiddleware {
                             })
                         }
                     };
-                    let ordinal = cx.sink.claim_ordinal();
+                    let ordinal = action.ordinal();
                     cx.sink.emit(SessionEvent::BeliefChanged {
                         ordinal,
                         proposition,
