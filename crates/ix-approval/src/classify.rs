@@ -143,6 +143,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_tars_bridge",
         // Pipeline info (no execution)
         "ix_pipeline",
+        "ix_node_catalog",
+        "ix_pipeline_validate",
     ];
 
     // In-project edits — tools that write to state/ or emit trace data
@@ -229,6 +231,8 @@ mod tests {
             "ix_assumption_belief_at",
             "ix_assumption_drift",
             "ix_assumption_claims",
+            "ix_node_catalog",
+            "ix_pipeline_validate",
         ] {
             assert_eq!(
                 classify_action_kind(tool),

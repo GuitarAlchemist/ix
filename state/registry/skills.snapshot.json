@@ -75,7 +75,7 @@
     ]
   },
   "mcp_tools": {
-    "count": 96,
+    "count": 99,
     "names": [
       "ix_adversarial_fgsm",
       "ix_analyze_reference",
@@ -142,6 +142,7 @@
       "ix_ml_predict",
       "ix_nl_to_pipeline",
       "ix_nn_forward",
+      "ix_node_catalog",
       "ix_number_theory",
       "ix_optick_search",
       "ix_optimize",
@@ -151,6 +152,7 @@
       "ix_pipeline_compile",
       "ix_pipeline_list",
       "ix_pipeline_run",
+      "ix_pipeline_validate",
       "ix_quality_gate_history",
       "ix_random_forest",
       "ix_rfc_catalog",
