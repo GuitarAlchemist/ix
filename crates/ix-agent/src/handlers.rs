@@ -317,24 +317,45 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
             .ok_or_else(|| "field 'max_iter' must be a non-negative integer".to_string())?,
     };
 
+    // `seed` (default 42) and `n_init` (default 1) follow the same rule: absent
+    // or null takes the default, a present but malformed value is rejected.
+    let seed = match params.get("seed") {
+        None | Some(Value::Null) => 42,
+        Some(v) => v
+            .as_u64()
+            .ok_or_else(|| "field 'seed' must be a non-negative integer".to_string())?,
+    };
+    let n_init = match params.get("n_init") {
+        None | Some(Value::Null) => 1,
+        Some(v) => v
+            .as_u64()
+            .filter(|&n| n >= 1)
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'n_init' must be an integer >= 1".to_string())?,
+    };
+
     let data = vecs_to_array2(&data_rows)?;
 
-    let mut km = ix_unsupervised::kmeans::KMeans::new(k);
-    km.max_iterations = max_iter;
-    km.seed = 42;
-
-    let labels = km.fit_predict(&data);
-    let centroids: Vec<Vec<f64>> = km
-        .centroids
-        .as_ref()
-        .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
-        .unwrap_or_default();
-
-    let inertia = km
-        .centroids
-        .as_ref()
-        .map(|c| ix_unsupervised::kmeans::inertia(&data, &labels, c))
-        .unwrap_or(0.0);
+    // Run `n_init` k-means++ starts from seeds seed, seed + 1, … and keep the
+    // one with the lowest inertia (the first one on a tie).
+    let mut best: Option<(Array1<usize>, Array2<f64>, f64)> = None;
+    for start in 0..n_init {
+        let mut km = ix_unsupervised::kmeans::KMeans::new(k);
+        km.max_iterations = max_iter;
+        km.seed = seed.wrapping_add(start as u64);
+        let labels = km.fit_predict(&data);
+        let Some(centroids) = km.centroids.take() else {
+            continue;
+        };
+        let inertia = ix_unsupervised::kmeans::inertia(&data, &labels, &centroids);
+        if best.as_ref().map_or(true, |(_, _, b)| inertia < *b) {
+            best = Some((labels, centroids, inertia));
+        }
+    }
+    let (labels, centroids, inertia) = best.ok_or("k-means produced no centroids")?;
+    let centroids: Vec<Vec<f64>> = (0..centroids.nrows())
+        .map(|i| centroids.row(i).to_vec())
+        .collect();
 
     Ok(json!({
         "labels": labels.to_vec(),
