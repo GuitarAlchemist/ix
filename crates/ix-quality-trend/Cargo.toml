@@ -22,6 +22,7 @@ ix-optick = { workspace = true }
 ix-ensemble = { workspace = true }
 ndarray = { workspace = true }
 rmp-serde = "1"
+blake3 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
