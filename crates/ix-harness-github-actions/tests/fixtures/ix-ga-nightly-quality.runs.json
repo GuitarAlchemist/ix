@@ -1,0 +1,212 @@
+[
+ {
+  "createdAt": "2026-09-14T10:43:20Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-13T18:06:55Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "claude/ix-219-guard-metrics"
+ },
+ {
+  "createdAt": "2026-09-13T10:19:25Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-12T09:24:23Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-11T09:46:06Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-10T09:47:27Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-09T12:46:31Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "feat/ix-302-petri-nets"
+ },
+ {
+  "createdAt": "2026-09-09T09:49:18Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-08T17:20:58Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "feat/ix-302-petri-nets"
+ },
+ {
+  "createdAt": "2026-09-08T16:43:49Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "feat/ix-302-petri-nets"
+ },
+ {
+  "createdAt": "2026-09-08T14:43:05Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "feat/ix-302-petri-nets"
+ },
+ {
+  "createdAt": "2026-09-08T14:29:27Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "claude/ix-202-a1-a5-state-space"
+ },
+ {
+  "createdAt": "2026-09-08T14:12:04Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "claude/ix-202-a1-a5-state-space"
+ },
+ {
+  "createdAt": "2026-09-08T09:44:38Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-07T20:27:29Z",
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "headBranch": "codex/ix-release-artifacts-r0"
+ },
+ {
+  "createdAt": "2026-09-07T10:23:11Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-06T09:28:02Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-05T09:07:09Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-04T09:41:38Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-03T09:53:16Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-02T09:40:31Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-09-01T10:09:50Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-31T11:37:25Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-30T10:29:44Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-29T11:40:20Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-28T17:27:36Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-27T16:32:38Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-26T05:51:21Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-25T05:48:53Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ },
+ {
+  "createdAt": "2026-08-24T05:54:55Z",
+  "event": "schedule",
+  "status": "completed",
+  "conclusion": "failure",
+  "headBranch": "main"
+ }
+]
