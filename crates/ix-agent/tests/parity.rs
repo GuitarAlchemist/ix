@@ -302,7 +302,8 @@ fn dispatch_action_blocks_unknown_tool_via_approval() {
 /// blocked. So adding an `#[ix_skill]` without a matching `classify_action_kind` entry
 /// ships a tool that is listed, unit-tested below the gate, and refused on every MCP call
 /// (`ix_petri_analyze`, `ix_mesh_correlate` and the four `ix_assumption_*` tools were).
-/// Manual tools are invoked directly by `ToolRegistry::call` and never reach the gate.
+/// Manual tools go through the same gate (ix#350); see
+/// [`every_exposed_tool_including_manual_has_an_explicit_approval_classification`].
 ///
 /// A tool that *should* be gated goes in one of the explicit gated tables
 /// (`SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS`, `EDIT_OUT_OF_PROJECT_TOOLS`), not the
@@ -325,6 +326,334 @@ fn every_registry_backed_tool_has_an_explicit_approval_classification() {
          in-process state), or a gated table (SHELL_COMMAND_TOOLS, WEB_FETCH_TOOLS, \
          EDIT_OUT_OF_PROJECT_TOOLS) for Tier 3."
     );
+}
+
+/// Every tool on the MCP surface — registry-backed *and* hand-registered in
+/// `ToolRegistry` — must be named in `ix-approval`'s classification table.
+///
+/// Manual tools used to be invoked directly and skipped the approval gate entirely
+/// (ix#350). They now run through `registry_bridge::dispatch_manual`, so an unclassified
+/// manual tool is refused at Tier 3 on every call. Enumerating the live surface (not
+/// `EXPECTED`) means a newly registered manual tool fails here until it is classified.
+#[test]
+fn every_exposed_tool_including_manual_has_an_explicit_approval_classification() {
+    use ix_approval::{classify_action_kind, ActionKind};
+
+    let mut unclassified: Vec<String> = exposed_names()
+        .into_iter()
+        .filter(|name| classify_action_kind(name) == ActionKind::Unknown)
+        .collect();
+    unclassified.sort();
+    assert!(
+        unclassified.is_empty(),
+        "MCP tools with no ix-approval classification — every call to them is \
+         blocked at Tier 3: {unclassified:?}\n  \
+         Add each to crates/ix-approval/src/classify.rs in the table its effects warrant: \
+         READ_TOOLS (no side effects), EDIT_IN_PROJECT_TOOLS (writes workspace or \
+         in-process state, or spawns a fixed read-only subprocess), or a gated table \
+         (SHELL_COMMAND_TOOLS, WEB_FETCH_TOOLS, EDIT_OUT_OF_PROJECT_TOOLS) for Tier 3."
+    );
+}
+
+/// A manual tool classified Tier 3 is refused through `ToolRegistry::call` before its
+/// handler runs — proof the manual path reaches the gate. Unrefused, `ix_nl_to_pipeline`
+/// would spawn the `ix` binary and `ix_sentrux_annotate` the named executable.
+#[test]
+fn manual_tier_three_tools_are_refused_by_the_approval_gate() {
+    let marker = in_root_tempdir();
+    let out = marker.path().join("annotations.jsonl");
+    for (tool, args) in [
+        (
+            "ix_nl_to_pipeline",
+            serde_json::json!({ "sentence": "compute stats of 1 2 3" }),
+        ),
+        (
+            "ix_sentrux_annotate",
+            serde_json::json!({
+                "workspace": "crates/ix-approval",
+                "mode": "sidecar",
+                "out": out.to_str().unwrap(),
+            }),
+        ),
+    ] {
+        let err = ToolRegistry::new()
+            .call(tool, args)
+            .expect_err("a Tier-3 manual tool must be refused");
+        assert!(
+            err.starts_with("ix_approval: action blocked (ApprovalRequired)"),
+            "{tool}: expected an approval refusal, got: {err}"
+        );
+    }
+    assert!(!out.exists(), "a refused tool must not write");
+}
+
+/// The auto-approved (Tier 2) manual tools that take a caller path confine it to the
+/// workspace: `repo_root` for the git tools (it also becomes `safe.directory`) and
+/// `state_dir` for `ix_autoresearch_run`, which writes there.
+#[test]
+fn tier_two_manual_tools_refuse_paths_outside_the_workspace() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use serde_json::json;
+
+    let registry = ToolRegistry::new();
+    let call = |tool: &str, args: serde_json::Value| {
+        shared_loop_detector().clear_key(tool);
+        registry.call(tool, args)
+    };
+    let outside = tempfile::tempdir().unwrap();
+    let outside_dir = outside.path().to_str().unwrap().to_string();
+    let new_state = outside.path().join("state");
+
+    let cases = [
+        (
+            "ix_git_log",
+            json!({ "path": "crates", "repo_root": outside_dir }),
+        ),
+        ("ix_git_churn", json!({ "repo_root": outside_dir })),
+        (
+            "ix_autoresearch_run",
+            json!({ "iterations": 1, "state_dir": new_state.to_str().unwrap() }),
+        ),
+    ];
+    for (tool, args) in cases {
+        let err =
+            call(tool, args.clone()).expect_err("a path outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
+    }
+    assert!(
+        !new_state.exists(),
+        "a refused state_dir must not be created"
+    );
+
+    for (tool, args) in [
+        (
+            "ix_git_log",
+            json!({ "path": "crates", "repo_root": "../escape" }),
+        ),
+        ("ix_git_churn", json!({ "repo_root": "../escape" })),
+        (
+            "ix_autoresearch_run",
+            json!({ "iterations": 1, "state_dir": "../escape" }),
+        ),
+    ] {
+        let err = call(tool, args.clone()).expect_err("`..` must be refused");
+        // `..` is resolved lexically and the root check decides, so an escaping
+        // one is refused as an outside path (ix#350).
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
+    }
+
+    // An in-root repo root still works.
+    let out = call(
+        "ix_git_log",
+        json!({ "path": "crates/ix-approval", "since_days": 30, "repo_root": "." }),
+    )
+    .expect("the workspace root must be accepted as repo_root");
+    assert!(out["commits"].is_number(), "{out}");
+
+    // `ix_maintain_gate` is auto-approved too, and every path it takes is the
+    // caller's. Only compiled with the feature that pulls bundled DuckDB.
+    #[cfg(feature = "maintain-gate")]
+    {
+        let err = call(
+            "ix_maintain_gate",
+            json!({ "hits_path": outside_dir, "corpus_dir": "state" }),
+        )
+        .expect_err("a hits_path outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{err}");
+        let err = call(
+            "ix_maintain_gate",
+            json!({ "hits_path": "Cargo.toml", "corpus_dir": "state", "repo_dir": outside_dir }),
+        )
+        .expect_err("a repo_dir outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{err}");
+    }
+}
+
+/// The Tier-1 manual tools read whatever path the caller names, and Tier 1
+/// auto-approves, so each path is confined the same way (ix#350 review). Checked
+/// through `ToolRegistry::call`, with a file whose contents must never appear in
+/// an error message.
+#[test]
+fn tier_one_manual_tools_refuse_paths_outside_the_workspace() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use serde_json::json;
+
+    let registry = ToolRegistry::new();
+    let call = |tool: &str, args: serde_json::Value| {
+        shared_loop_detector().clear_key(tool);
+        registry.call(tool, args)
+    };
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.rs");
+    std::fs::write(&secret, "fn secret_value() { /* SECRET-VALUE */ }").unwrap();
+    let secret_file = secret.to_str().unwrap().to_string();
+    let outside_dir = outside.path().to_str().unwrap().to_string();
+
+    // (tool, argument builder, the path is a file rather than a directory)
+    type Build = fn(&str) -> serde_json::Value;
+    let tools: [(&str, Build, bool); 9] = [
+        ("ix_cargo_deps", |p| json!({ "workspace_root": p }), false),
+        ("ix_pipeline_list", |p| json!({ "root": p }), false),
+        (
+            "ix_quality_gate_history",
+            |p| json!({ "ledger_path": p }),
+            true,
+        ),
+        ("ix_code_topology", |p| json!({ "path": p }), false),
+        (
+            "ix_ast_query",
+            |p| json!({ "query": "(function_item) @f", "path": p }),
+            true,
+        ),
+        ("ix_code_smells", |p| json!({ "dir": p }), false),
+        ("ix_code_smells", |p| json!({ "path": p }), true),
+        ("ix_annotations_scan", |p| json!({ "workspace": p }), false),
+        (
+            "ix_optick_search",
+            |p| json!({ "query": [0.0], "index_path": p }),
+            true,
+        ),
+    ];
+
+    for (tool, build, takes_file) in tools {
+        let raw = if takes_file {
+            secret_file.clone()
+        } else {
+            outside_dir.clone()
+        };
+        let args = build(&raw);
+        let err = match call(tool, args.clone()) {
+            Ok(v) => panic!("{tool} {args}: a path outside the workspace was accepted: {v}"),
+            Err(e) => e,
+        };
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
+        assert!(!err.contains("SECRET"), "{tool} leaked contents: {err}");
+
+        let args = build("../escape");
+        let err = call(tool, args.clone()).expect_err("`..` must be refused");
+        assert!(err.contains("inside an allowed"), "{tool} {args}: {err}");
+    }
+
+    // `test_files` entries are read by the reconciler, which resolves them with
+    // `workspace.join(entry)` — and `join` drops the base for an absolute entry,
+    // so each entry is confined on its own (ix#350 review).
+    for entry in [secret_file.as_str(), "../escape.rs"] {
+        let args = json!({ "workspace": "crates/ix-approval", "test_files": [entry] });
+        let err = call("ix_annotations_scan", args.clone())
+            .expect_err("a test_files entry outside the workspace must be refused");
+        assert!(err.contains("inside an allowed"), "{args}: {err}");
+        assert!(
+            err.contains("test_files"),
+            "the error must name the parameter: {err}"
+        );
+        assert!(!err.contains("SECRET"), "leaked contents: {err}");
+    }
+    let out = call(
+        "ix_annotations_scan",
+        json!({
+            "workspace": "crates/ix-approval",
+            "test_files": ["src/classify.rs"]
+        }),
+    )
+    .expect("an in-root test_files entry must be accepted");
+    assert!(out.is_object(), "{out}");
+
+    // In-root paths keep working.
+    let out = call("ix_cargo_deps", json!({ "workspace_root": "." }))
+        .expect("the workspace itself must be walked");
+    assert!(out["n_nodes"].as_u64().unwrap_or(0) > 0, "{out}");
+    let out = call(
+        "ix_code_smells",
+        json!({ "path": "crates/ix-approval/src/classify.rs" }),
+    )
+    .expect("an in-root file must be scanned");
+    assert_eq!(out["path"], "crates/ix-approval/src/classify.rs", "{out}");
+}
+
+/// `ix_pipeline_run` is gated and its handler dispatches each step through the gate
+/// again. Before the chain was held behind an `Arc`, the nested dispatch waited on the
+/// chain mutex its own caller held, so this call never returned. The nested calls still
+/// count against the loop detector.
+#[test]
+fn gated_pipeline_run_dispatches_gated_steps_without_deadlock() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use ix_agent::server_context::ServerContext;
+
+    // No other test in this binary calls this tool, so its count is ours alone.
+    const STEP_TOOL: &str = "ix_grothendieck_delta";
+    shared_loop_detector().clear_key(STEP_TOOL);
+    shared_loop_detector().clear_key("ix_pipeline_run");
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (ctx, _rx) = ServerContext::new();
+        let step = |id: &str| {
+            serde_json::json!({
+                "id": id,
+                "tool": STEP_TOOL,
+                "arguments": { "source": [0, 4, 7], "target": [0, 4, 8] }
+            })
+        };
+        let out = ToolRegistry::new().call_with_ctx(
+            "ix_pipeline_run",
+            serde_json::json!({ "steps": [step("a"), step("b")] }),
+            &ctx,
+        );
+        let _ = tx.send(out);
+    });
+    let out = rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("ix_pipeline_run deadlocked on a nested gated dispatch")
+        .expect("pipeline with gated steps must succeed");
+    assert_eq!(out["results"]["a"]["is_zero"], false, "{out}");
+    assert_eq!(shared_loop_detector().count(STEP_TOOL), 2);
+    assert!(shared_loop_detector().count("ix_pipeline_run") >= 1);
+}
+
+/// The user-visible edge of the loop-detect cap, recorded as a test because the
+/// number belongs with the decision in `showcase_r1_migrations` (ix#350 review):
+/// ONE `ix_pipeline_run` whose steps hit the same tool eleven times dies
+/// mid-pipeline. Eight stay under the cap. Pre-existing for registry-backed
+/// steps, new for the manual step tools this PR gates; a per-kind threshold in
+/// `ix-loop-detect` is the fix, and this test is what would change with it.
+#[test]
+fn one_pipeline_hitting_a_tool_eleven_times_trips_the_loop_detector() {
+    use ix_agent::registry_bridge::shared_loop_detector;
+    use ix_agent::server_context::ServerContext;
+
+    // A pure manual tool no other test in this binary calls, so the window is ours.
+    const STEP_TOOL: &str = "ix_voicings_payload";
+    shared_loop_detector().clear_key(STEP_TOOL);
+    shared_loop_detector().clear_key("ix_pipeline_run");
+
+    let steps = |ids: std::ops::Range<usize>| {
+        let steps: Vec<serde_json::Value> = ids
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("s{i}"),
+                    "tool": STEP_TOOL,
+                    "arguments": {}
+                })
+            })
+            .collect();
+        serde_json::json!({ "steps": steps })
+    };
+
+    let (ctx, _rx) = ServerContext::new();
+    let reg = ToolRegistry::new();
+    let out = reg
+        .call_with_ctx("ix_pipeline_run", steps(0..8), &ctx)
+        .expect("8 steps on one tool stay under the cap");
+    assert_eq!(
+        out["execution_order"].as_array().map(Vec::len),
+        Some(8),
+        "{out}"
+    );
+
+    let err = reg
+        .call_with_ctx("ix_pipeline_run", steps(8..11), &ctx)
+        .expect_err("the 11th call on one tool must trip the breaker");
+    assert!(err.contains("circuit breaker tripped"), "{err}");
 }
 
 /// `ix_petri_analyze` through the exact entry point `main.rs` uses for `tools/call`.
@@ -353,9 +682,10 @@ fn petri_analyze_is_reachable_through_mcp_dispatch() {
     assert_eq!(out["deadlock_free"]["detail"][0]["witness"][0], "acquire");
 }
 
-/// `ix_pipeline_run` itself is a manual tool and is not gated, but each step goes back
+/// `ix_pipeline_run` is a manual tool, gated itself (ix#350), and each step goes back
 /// through `ToolRegistry::call` — so a step naming an unclassified registry tool failed
-/// the whole pipeline with the same approval refusal.
+/// the whole pipeline with the same approval refusal. The nested dispatch also checks
+/// the middleware chain is not held across the outer handler (it would deadlock).
 #[test]
 fn pipeline_run_step_reaches_a_newly_classified_tool() {
     use ix_agent::server_context::ServerContext;
@@ -442,7 +772,9 @@ fn assumption_tools_refuse_paths_outside_the_workspace() {
             &ctx,
         )
         .expect_err("`..` must be refused");
-    assert!(err.contains("`..` is not allowed"), "{err}");
+    // Since ix#350 a `..` is resolved lexically and the root check decides, so
+    // this one is refused for leaving the root rather than for its shape.
+    assert!(err.contains("inside an allowed"), "{err}");
 
     // A relative workspace inside the root still works.
     let out = registry
@@ -604,9 +936,10 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
         }
         let args = build("../escape");
         let err = call(tool, args.clone()).expect_err("`..` must be refused");
-        // `ix_ml_pipeline` keeps its own earlier `..` check and message.
+        // Since ix#350 confinement resolves `..` and refuses the result for
+        // leaving the root. `ix_ml_pipeline` keeps its own earlier `..` check.
         assert!(
-            err.contains("`..` is not allowed") || err.contains("must not contain '..'"),
+            err.contains("inside an allowed") || err.contains("must not contain '..'"),
             "{tool} {args}: {err}"
         );
     }
@@ -887,8 +1220,15 @@ fn registry_backed_calls_dispatch_correctly() {
 #[cfg(feature = "maintain-gate")]
 #[test]
 fn maintain_gate_tool_returns_a_verdict() {
-    let here = env!("CARGO_MANIFEST_DIR");
-    let fx = format!("{here}/../ix-duck/tests/fixtures/maintain");
+    // Built from the workspace root rather than `<crate>/..`: the tool confines
+    // its paths, and a `..` segment resolved into an existing in-root path is
+    // accepted (ix#350) — but spelling the fixture without one keeps the
+    // fixture independent of that rule.
+    let fx = confine_test_root()
+        .join("crates/ix-duck/tests/fixtures/maintain")
+        .display()
+        .to_string()
+        .replace('\\', "/");
     let reg = ToolRegistry::new();
     let args = serde_json::json!({
         "hits_path": format!("{fx}/hits_up.jsonl"),

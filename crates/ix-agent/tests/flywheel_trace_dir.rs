@@ -89,7 +89,11 @@ fn flywheel_export_confines_its_destination() {
         let dotdot = format!("{}/../escape", beside_log.display());
         let err = call(json!({ "session_log": log, "trace_dir": dotdot }))
             .expect_err("`..` must be refused");
-        assert!(err.contains("`..` is not allowed"), "{err}");
+        // Resolved lexically since ix#350, then refused for leaving the roots.
+        assert!(
+            err.contains("not inside an allowed destination root"),
+            "{err}"
+        );
         assert!(!work.path().join("escape").exists());
         #[cfg(windows)]
         for raw in [

@@ -11,6 +11,33 @@ use ix_agent::server_context::ServerContext;
 use ix_agent::tools::ToolRegistry;
 use serde_json::{json, Value};
 
+/// Call `ix_pipeline_run` through the MCP entry point, failing with a readable
+/// message before the loop detector trips.
+///
+/// Manual tools go through the detector since ix#350: 10 calls per tool name
+/// per 5 minutes *per process*. Every test in this binary is a separate agent
+/// session that happens to share one process, and the binary is close to the
+/// cap — without this guard the next test added here fails inside a pipeline
+/// step with "circuit breaker tripped", which reads like a pipeline bug. When
+/// it fires, clear the key at the session boundary the way
+/// `showcase_r1_migrations` does.
+fn call_pipeline_run(
+    reg: &ToolRegistry,
+    args: Value,
+    ctx: &ServerContext,
+) -> Result<Value, String> {
+    let detector = ix_agent::registry_bridge::shared_loop_detector();
+    let threshold = detector.config().threshold;
+    let seen = detector.count("ix_pipeline_run");
+    assert!(
+        seen < threshold,
+        "this test binary has already called ix_pipeline_run {seen} times and \
+the loop-detect threshold is {threshold}: clear the key at the session \
+boundary instead of widening the window"
+    );
+    reg.call_with_ctx("ix_pipeline_run", args, ctx)
+}
+
 fn make_ctx() -> ServerContext {
     // ServerContext::new returns (ctx, outbound_receiver). We don't
     // need the receiver for pipeline_run tests — the handler never
@@ -34,9 +61,7 @@ fn pipeline_run_single_step_stats() {
         ]
     });
 
-    let result = reg
-        .call_with_ctx("ix_pipeline_run", args, &ctx)
-        .expect("ok");
+    let result = call_pipeline_run(&reg, args, &ctx).expect("ok");
     let results = result.get("results").expect("results");
     let s1 = results.get("s1").expect("s1");
     // Response may be wrapped or bare — check for mean either way.
@@ -76,9 +101,7 @@ fn pipeline_run_two_step_chain_with_substitution() {
         ]
     });
 
-    let result = reg
-        .call_with_ctx("ix_pipeline_run", args, &ctx)
-        .expect("ok");
+    let result = call_pipeline_run(&reg, args, &ctx).expect("ok");
     let order = result
         .get("execution_order")
         .and_then(|v| v.as_array())
@@ -109,7 +132,7 @@ fn pipeline_run_rejects_cycle() {
             { "id": "b", "tool": "ix_stats", "arguments": {"data": [2.0]}, "depends_on": ["a"] }
         ]
     });
-    let result = reg.call_with_ctx("ix_pipeline_run", args, &ctx);
+    let result = call_pipeline_run(&reg, args, &ctx);
     assert!(result.is_err(), "cycle should be rejected");
 }
 
@@ -146,18 +169,14 @@ fn cache_miss_then_hit_on_replay() {
         ]
     });
 
-    let run1 = reg
-        .call_with_ctx("ix_pipeline_run", args.clone(), &ctx)
-        .expect("ok");
+    let run1 = call_pipeline_run(&reg, args.clone(), &ctx).expect("ok");
     let hits1 = run1
         .get("cache_hits")
         .and_then(|v| v.as_array())
         .expect("cache_hits");
     assert!(hits1.is_empty(), "first run should miss cache");
 
-    let run2 = reg
-        .call_with_ctx("ix_pipeline_run", args, &ctx)
-        .expect("ok");
+    let run2 = call_pipeline_run(&reg, args, &ctx).expect("ok");
     let hits2 = run2
         .get("cache_hits")
         .and_then(|v| v.as_array())
@@ -197,12 +216,8 @@ fn cache_invalidates_on_argument_change() {
         }]
     });
 
-    let run_a = reg
-        .call_with_ctx("ix_pipeline_run", args_a, &ctx)
-        .expect("ok");
-    let run_b = reg
-        .call_with_ctx("ix_pipeline_run", args_b, &ctx)
-        .expect("ok");
+    let run_a = call_pipeline_run(&reg, args_a, &ctx).expect("ok");
+    let run_b = call_pipeline_run(&reg, args_b, &ctx).expect("ok");
 
     // Both should be cache misses (different keys because args differ)
     // on first encounter.
@@ -231,9 +246,7 @@ fn steps_without_asset_name_never_cache() {
         }]
     });
 
-    let run = reg
-        .call_with_ctx("ix_pipeline_run", args, &ctx)
-        .expect("ok");
+    let run = call_pipeline_run(&reg, args, &ctx).expect("ok");
     let hits = run
         .get("cache_hits")
         .and_then(|v| v.as_array())

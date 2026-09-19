@@ -274,9 +274,26 @@ fn graph_matches_cargo_metadata() {
     );
 }
 
+/// A scratch directory inside the workspace root, removed on drop. Auto-approved
+/// tools confine the paths a caller names to the workspace (ix#350), so fixtures
+/// live in the gitignored `target/confine-test/` rather than the system temp dir.
+fn in_root_tempdir() -> tempfile::TempDir {
+    let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/confine-test");
+    std::fs::create_dir_all(&parent).expect("create target/confine-test");
+    // Canonical, without the Windows verbatim prefix the tools refuse as input.
+    let canonical = parent.canonicalize().expect("canonical confine-test dir");
+    let parent = match canonical.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(plain) => std::path::PathBuf::from(plain),
+        None => canonical,
+    };
+    tempfile::Builder::new()
+        .tempdir_in(parent)
+        .expect("tempdir inside the workspace root")
+}
+
 #[test]
 fn skips_directories_the_workspace_does_not_list() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = in_root_tempdir();
     let root = dir.path();
     let write = |rel: &str, body: &str| {
         let path = root.join(rel);
@@ -309,7 +326,7 @@ fn skips_directories_the_workspace_does_not_list() {
 
 #[test]
 fn glob_members_include_every_crate_directory() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = in_root_tempdir();
     let root = dir.path();
     std::fs::write(
         root.join("Cargo.toml"),

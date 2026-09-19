@@ -109,6 +109,12 @@ jobs:
             features: full          # semantic, trajectory, topology, gates, advanced, physics
           - crate: ix-autograd
             features: fft-autograd
+          # `maintain-gate` pulls bundled DuckDB through ix-duck, so no workspace
+          # member turns it on and `--workspace` never built it. Its parity test
+          # (`maintain_gate_tool_returns_a_verdict`) was red on a branch while CI
+          # stayed green (ix#350 review); ix#346 tracks the other dark features.
+          - crate: ix-agent
+            features: maintain-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

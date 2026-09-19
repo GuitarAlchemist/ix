@@ -8,10 +8,28 @@ use ix_agent::tools::ToolRegistry;
 use serde_json::json;
 use tempfile::TempDir;
 
+/// A scratch `state_dir` inside the workspace: `ix_autoresearch_run` confines the
+/// caller's `state_dir` to it (ix#350). Lives in the gitignored `target/confine-test/`.
+fn in_root_tempdir() -> TempDir {
+    let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/confine-test");
+    std::fs::create_dir_all(&parent).expect("create target/confine-test");
+    // Canonical, without the Windows verbatim `\\?\` prefix the tool refuses as input.
+    let canonical = parent
+        .canonicalize()
+        .expect("canonical target/confine-test");
+    let parent = match canonical.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(plain) => std::path::PathBuf::from(plain),
+        None => canonical,
+    };
+    tempfile::Builder::new()
+        .tempdir_in(parent)
+        .expect("tempdir inside the workspace root")
+}
+
 #[test]
 fn ix_autoresearch_run_grammar_greedy_returns_outcome_shape() {
     let reg = ToolRegistry::new();
-    let dir = TempDir::new().unwrap();
+    let dir = in_root_tempdir();
     let result = reg
         .call(
             "ix_autoresearch_run",
@@ -89,7 +107,7 @@ fn ix_autoresearch_run_rejects_unknown_target() {
 #[test]
 fn ix_autoresearch_run_sa_with_calibration_runs_to_completion() {
     let reg = ToolRegistry::new();
-    let dir = TempDir::new().unwrap();
+    let dir = in_root_tempdir();
     let result = reg
         .call(
             "ix_autoresearch_run",
