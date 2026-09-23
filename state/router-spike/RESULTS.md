@@ -91,3 +91,21 @@ Graduated as **shadow mode** (default OFF, zero behavior change). New GA code (u
 **Stage 1 budget + guards (operator approved spend under $1 total on 2026-09-22; runner `jev/run-live.ps1`):** exactly 126 calls, no retries; key from env only, never printed; explicit approval env var; no cross-origin redirect; receipts out of git; stop after any response once cumulative *reported* input tokens × rate card exceed $0.05. Planned body size 194,410 UTF-8 bytes (proxy $0.0082 — bytes are not billed tokens). Counts against the operator's $1 all-Jev ceiling (≈ $0.001 already used by the learn journal, per session learn-e3).
 
 **Known limits:** TEST is model-authored (Gemini), not real traffic; ~4 TEST labels are known-ambiguous (e.g. h-7); English only; option order is fixed (alphabetical, canonical JSON — `__none__` sorts FIRST, a possible position bias); the TEST was Gemini-authored and may echo these same intent descriptions, which could favour a reader of them — an option-order-reversal arm is a candidate second pass, not part of this verdict.
+
+## Jev arm — results (2026-09-23, Stage 1 live, scored against the rule above)
+
+126/126 calls, 0 invalid, every response `jev-1.13.0`; reported usage 94,974 input / 26,176 output tokens = **$0.0040** at the reviewed rate card (not an account charge); latency mean 264 ms, max 399 ms. Receipt kept out of git (`jev/live.receipt.jsonl`); scored report committed as `jev/jev-eval.json`.
+
+| Metric (same TEST) | Production | Learned head (iter-1, clean) | **Jev zero-shot** |
+|---|---|---|---|
+| In-scope accuracy | 0.755 (83/110) | 0.818 (90/110) | **0.964 (106/110)** |
+| OOS-decline | 0.375 (6/16) | 0.688 (11/16) | **1.000 (16/16)** |
+| Macro-F1 (16 intents) | 0.745 | 0.817 | **0.967** |
+| Min per-intent F1 | 0.429 | 0.571 | 0.909 (whatcanyoudo) |
+| Brier (17 options) | — | — | 0.044 |
+
+**Verdict: COMPETITIVE_WITH_HEAD** (the highest pre-registered band; it clears every threshold with margin). Paired vs production: Jev right / prod wrong 36, prod right / Jev wrong 3, exact McNemar p = 3.6e-8.
+
+The 4 misses are boundary cases, not systematic: h-7 "notes for A minor" (chordinfo→scaleinfo — the known-ambiguous label), h-46 "make progression sound jazzy" (progressionmood→genreessentials, conf 0.38), h-75 "features" (whatcanyoudo→__none__), h-101 "does F G Am belong to C major?" (keyidentification→diatonicchords, conf 0.97 — the one confident error). Confidence is 1.0 on 109/126; exploratory τ only lowers accuracy (τ=0.9 → 0.85), so no threshold is warranted.
+
+**What this does and does not show.** Shown: on this model-authored TEST, a zero-shot typed classifier fed only the one-line intent descriptions beats both the production router and the trained head, by a paired-significant margin, for well under a cent. Not shown: (1) real-traffic behaviour — TEST is Gemini-authored and may echo the same descriptions (unproven, flagged pre-result); (2) that a hosted call per query is acceptable in GA's latency/cost/privacy envelope; (3) French/Spanish prompts. Per the pre-registration, a win does not justify replacing the router. Next candidates: Jev as the **labeler** for the real-traffic shadow log (path 0a), and Jev as the **escalation** for low-margin head decisions — each its own pre-registered experiment.

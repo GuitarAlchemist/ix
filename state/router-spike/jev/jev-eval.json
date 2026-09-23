@@ -1,0 +1,99 @@
+{
+  "baselines": {
+    "learned_head_current": {
+      "inscope_acc": 0.8181818181818182,
+      "macro_f1": 0.8193629899512253,
+      "oos_decline": 0.625
+    },
+    "learned_head_iter1_clean": {
+      "inscope_acc": 0.818,
+      "macro_f1": 0.817,
+      "oos_decline": 0.688,
+      "source": "RESULTS.md iteration 1 table"
+    },
+    "production": {
+      "inscope_acc": 0.7545454545454545,
+      "oos_decline": 0.375
+    }
+  },
+  "exploratory_confidence_taus": [
+    {
+      "inscope_acc": 0.9636363636363636,
+      "macro_f1": 0.9673951048951049,
+      "oos_decline": 1.0,
+      "tau": 0.0
+    },
+    {
+      "inscope_acc": 0.9636363636363636,
+      "macro_f1": 0.9673951048951049,
+      "oos_decline": 1.0,
+      "tau": 0.3
+    },
+    {
+      "inscope_acc": 0.9636363636363636,
+      "macro_f1": 0.9715617715617716,
+      "oos_decline": 1.0,
+      "tau": 0.5
+    },
+    {
+      "inscope_acc": 0.9363636363636364,
+      "macro_f1": 0.9605040792540792,
+      "oos_decline": 1.0,
+      "tau": 0.7
+    },
+    {
+      "inscope_acc": 0.8545454545454545,
+      "macro_f1": 0.9076340326340329,
+      "oos_decline": 1.0,
+      "tau": 0.9
+    }
+  ],
+  "heldout_version": "heldout-0b-1",
+  "invalid_responses": {},
+  "jev": {
+    "brier": 0.044317460317460325,
+    "inscope_acc": 0.9636363636363636,
+    "inscope_argmax_excluding_none": 0.9727272727272728,
+    "macro_f1": 0.9673951048951049,
+    "min_f1": {
+      "f1": 0.9090909090909091,
+      "intent": "skill.whatcanyoudo"
+    },
+    "oos_decline": 1.0,
+    "per_intent_f1": {
+      "skill.beginnerchords": 1.0,
+      "skill.chordinfo": 0.9230769230769231,
+      "skill.chordsubstitution": 1.0,
+      "skill.circleoffifths": 1.0,
+      "skill.commontones": 1.0,
+      "skill.diatonicchords": 0.9333333333333333,
+      "skill.genreessentials": 0.9333333333333333,
+      "skill.interval": 1.0,
+      "skill.keyidentification": 0.9230769230769231,
+      "skill.modes": 1.0,
+      "skill.practiceroutine": 1.0,
+      "skill.progressioncompletion": 1.0,
+      "skill.progressionmood": 0.9230769230769231,
+      "skill.scaleinfo": 0.9333333333333333,
+      "skill.transpose": 1.0,
+      "skill.whatcanyoudo": 0.9090909090909091
+    }
+  },
+  "label": "LIVE receipt",
+  "mcnemar_vs_production": {
+    "jev_right_prod_wrong": 36,
+    "note": "Reported alongside the verdict; the verdict does not claim significance.",
+    "p_two_sided": 3.608874976634982e-8,
+    "prod_right_jev_wrong": 3
+  },
+  "model": "jev-1.13.0",
+  "options_version": "jev-options-1",
+  "prompts": 126,
+  "usage": {
+    "input_tokens": 94974,
+    "note": "Rate-card arithmetic on reported input tokens (output tokens are free on the reviewed card), not an account charge.",
+    "output_tokens": 26176,
+    "rate_card_usd": 0.003988908
+  },
+  "verdict": "COMPETITIVE_WITH_HEAD"
+}
