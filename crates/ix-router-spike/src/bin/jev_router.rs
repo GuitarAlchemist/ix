@@ -37,6 +37,12 @@ const EXPLORATORY_TAUS: [f64; 5] = [0.0, 0.3, 0.5, 0.7, 0.9];
 /// Probabilities may be rounded by the provider; 17 values rounded to 4 dp can
 /// drift ~1e-4 from 1. A format quirk must not be scored as a routing failure.
 const SUM_TOL: f64 = 1e-3;
+/// The TEST corpus the verdict bands were registered against: SHA-256 of the
+/// canonical JSON of [(id, prompt, expectedIntentId)], line-ending independent.
+const REGISTERED_CORPUS_SHA256: &str =
+    "692b1c9d1460e72074dafaad0223d81c2aa5a50fb58b1ea5a91dbd4d4ef2b588";
+const REGISTERED_INSCOPE: usize = 110;
+const REGISTERED_OOS: usize = 16;
 
 #[derive(Deserialize)]
 struct HeldOut {
@@ -330,6 +336,22 @@ fn setup(root: &Path) -> Setup {
         option_set.len() <= 255,
         "Choice supports at most 255 options"
     );
+    let corpus: Vec<Value> = heldout
+        .prompts
+        .iter()
+        .map(|p| json!([p.id, p.prompt, p.expected]))
+        .collect();
+    let corpus_sha = sha256_hex(&encode(&Value::Array(corpus)));
+    let oos = heldout
+        .prompts
+        .iter()
+        .filter(|p| p.expected == NONE)
+        .count();
+    assert_eq!(
+        (heldout.prompts.len() - oos, oos, corpus_sha.as_str()),
+        (REGISTERED_INSCOPE, REGISTERED_OOS, REGISTERED_CORPUS_SHA256),
+        "held-out corpus differs from the one the verdict bands were registered against"
+    );
     let intents = option_set.iter().filter(|o| *o != NONE).cloned().collect();
     let bodies: Vec<Vec<u8>> = heldout
         .prompts
@@ -362,6 +384,7 @@ fn plan(root: &Path, s: &Setup) {
     let max = s.bodies.iter().map(Vec::len).max().unwrap_or(0);
     let plan = json!({
         "heldout_version": s.heldout.version,
+        "corpus_sha256": REGISTERED_CORPUS_SHA256,
         "options_version": s.options.version,
         "model": MODEL,
         "calls": s.bodies.len(),
@@ -443,6 +466,11 @@ fn validate_all(
     s: &Setup,
     receipt: &BTreeMap<String, (String, Value)>,
 ) -> Vec<Result<Answer, Invalid>> {
+    // An unplanned id is an extra call; the pre-registration fixes the call set.
+    let planned: BTreeSet<&str> = s.heldout.prompts.iter().map(|p| p.id.as_str()).collect();
+    if let Some(extra) = receipt.keys().find(|k| !planned.contains(k.as_str())) {
+        panic!("receipt id {extra} is not in the plan: extra calls are not allowed");
+    }
     s.heldout
         .prompts
         .iter()
@@ -455,7 +483,23 @@ fn validate_all(
         .collect()
 }
 
-fn report(root: &Path, s: &Setup, results: &[Result<Answer, Invalid>], label: &str) -> Value {
+/// Reported usage over EVERY response in the receipt, valid or not: a
+/// rejected answer was still billed.
+fn usage_totals(receipt: &BTreeMap<String, (String, Value)>) -> (u64, u64) {
+    receipt.values().fold((0, 0), |(i, o), (_, r)| {
+        let tok = |k: &str| r["usage"][k].as_f64().filter(|x| *x >= 0.0).unwrap_or(0.0) as u64;
+        (i + tok("input_tokens"), o + tok("output_tokens"))
+    })
+}
+
+fn report(
+    root: &Path,
+    s: &Setup,
+    receipt: &BTreeMap<String, (String, Value)>,
+    label: &str,
+) -> Value {
+    let results = validate_all(s, receipt);
+    let results = results.as_slice();
     let gold: Vec<&str> = s
         .heldout
         .prompts
@@ -491,8 +535,7 @@ fn report(root: &Path, s: &Setup, results: &[Result<Answer, Invalid>], label: &s
         .zip(results)
         .filter_map(|(p, r)| r.as_ref().err().map(|e| (p.id.clone(), format!("{e:?}"))))
         .collect();
-    let input_tokens: u64 = answers.iter().flatten().map(|a| a.input_tokens).sum();
-    let output_tokens: u64 = answers.iter().flatten().map(|a| a.output_tokens).sum();
+    let (input_tokens, output_tokens) = usage_totals(receipt);
     let exploratory: Vec<Value> = EXPLORATORY_TAUS
         .iter()
         .map(|&t| {
@@ -595,13 +638,13 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("plan") => plan(&root, &s),
         Some("mock") => {
-            let r = report(&root, &s, &validate_all(&s, &mock_receipt(&s)), "MOCK — synthetic responses, not a Jev measurement");
+            let r = report(&root, &s, &mock_receipt(&s), "MOCK — synthetic responses, not a Jev measurement");
             fs::write(out.join("mock-report.json"), serde_json::to_string_pretty(&r).unwrap() + "\n").expect("write mock report");
             println!("{}", serde_json::to_string_pretty(&r["jev"]).unwrap());
         }
         Some("score") => {
             let path = args.get(2).expect("usage: score <receipt.jsonl>");
-            let r = report(&root, &s, &validate_all(&s, &load_receipt(Path::new(path))), "LIVE receipt");
+            let r = report(&root, &s, &load_receipt(Path::new(path)), "LIVE receipt");
             fs::write(out.join("jev-eval.json"), serde_json::to_string_pretty(&r).unwrap() + "\n").expect("write jev-eval.json");
             println!("{}", serde_json::to_string_pretty(&r).unwrap());
         }
@@ -700,6 +743,17 @@ mod tests {
         let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts()).unwrap();
         assert_eq!(route(&a, 0.0), "a");
         assert_eq!(route(&a, 0.9), NONE);
+    }
+
+    #[test]
+    fn test_usage_counts_rejected_responses() {
+        let mut bad = resp("a", 0.7, 0.2, 0.2); // invalid: sums to 1.1
+        bad["usage"] = json!({ "input_tokens": 40, "output_tokens": 5 });
+        let receipt = BTreeMap::from([
+            ("x".to_string(), (String::new(), resp("a", 0.7, 0.2, 0.1))),
+            ("y".to_string(), (String::new(), bad)),
+        ]);
+        assert_eq!(usage_totals(&receipt), (50, 5));
     }
 
     #[test]
