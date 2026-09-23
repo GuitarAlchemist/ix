@@ -1,2 +1,5 @@
 embeddings/
 shadow-smoke/
+jev/requests.jsonl
+jev/mock-report.json
+jev/*.receipt.jsonl
