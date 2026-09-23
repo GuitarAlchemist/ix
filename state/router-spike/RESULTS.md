@@ -64,3 +64,48 @@ Graduated as **shadow mode** (default OFF, zero behavior change). New GA code (u
 - `state/router/learned-head.json` (deployable head), `head-eval.json` (head metrics), `production-baseline-heldout.json` (C# production baseline on TEST)
 - code: `crates/ix-router-spike/` ; embed: `state/router-spike/embed.ps1`
 - GA edit (uncommitted, backward-compatible): `RoutingEvalHarness.cs` `GA_EVAL_DATA_PATH` override.
+
+## Jev arm — pre-registration (2026-09-22, written before any Jev call)
+
+**Question:** can TypeSafe Jev (`jev-1.13.0`, pinned), asked zero-shot with one Choice question per prompt, route the SAME held-out TEST at least as well as production — and how close does it come to the learned head?
+
+**Design (Stage 0, offline, shipped):** `crates/ix-router-spike/src/bin/jev_router.rs` (`plan | mock | score`).
+- One request per prompt, state = `{"user_message": <raw prompt>}` (one prompt per state — no shared-state indirection), one Choice question over 17 options: the 16 intents + `__none__`.
+- Option text = GA `RoutingEvalHarness.BuildIntentRegistry` descriptions, verbatim, authored 2026-05-10 (ga `db702ce9`), i.e. **before** TEST existed. `__none__` was written without reading TEST. No TEST prompt or error pattern informed the options. See `jev/options.json`.
+- `jev/plan.json` pins every request SHA-256; `score` refuses a receipt whose digests differ.
+- Fail-closed: missing/malformed/wrong-model responses count as failures (never as a correct OOS decline, never as zero cost).
+
+**Primary metrics (pre-registered):** in-scope accuracy with `__none__` as the ONLY decline, OOS-decline rate, macro-F1 over 16 intents (used by the verdict); min per-intent F1 and Brier over 17 options are reported, not decisive. Confidence thresholds are reported as exploratory only — none is tuned on TEST.
+
+**Comparators (same TEST):** production 0.755 / OOS 0.375 / macro-F1 0.745; learned head iteration-1 (clean) 0.818 / 0.688 / 0.817.
+
+**Decision rule (fixed before any call; revised the same day after an independent review found gaps — still pre-result).** Counts over 110 in-scope / 16 OOS; implemented as `verdict()` in `jev_router.rs`:
+- **KILL** iff > 2 invalid responses, OR any response reports a model other than `jev-1.13.0`, OR in-scope < 83/110 (production's own 83), OR OOS-declined < 6/16 (production's 6).
+- **COMPETITIVE_WITH_HEAD** iff in-scope ≥ 87/110 (head 90 − 3) AND OOS-declined ≥ 11/16 (head 11) AND macro-F1 ≥ 0.787 (head 0.817 − 0.03).
+- **BEATS_PRODUCTION** iff in-scope ≥ 87/110 (production + 4 ≈ +3pp) AND macro-F1 ≥ 0.745.
+- Otherwise **INCONCLUSIVE** (83–86/110 is a tie band, not a win).
+- A 3-prompt margin at n = 110 is within noise: an exact paired McNemar test against production's per-prompt results is reported next to the verdict; the verdict makes no significance claim.
+- Validator tolerance: probabilities must sum to 1 within 1e-3 (provider rounding is a format quirk, not a routing failure); integer-valued float token counts are accepted. Duplicate receipt ids abort scoring (retries are forbidden).
+- Even a win does NOT justify replacing the router: a hosted call per query vs a local dot product. The questions a win opens are (a) Jev as an escalation for low-margin head decisions, (b) Jev as an independent labeler for real-traffic shadow logs. Both are separate experiments.
+
+**Stage 1 budget + guards (operator approved spend under $1 total on 2026-09-22; runner `jev/run-live.ps1`):** exactly 126 calls, no retries; key from env only, never printed; explicit approval env var; no cross-origin redirect; receipts out of git; stop after any response once cumulative *reported* input tokens × rate card exceed $0.05. Planned body size 194,410 UTF-8 bytes (proxy $0.0082 — bytes are not billed tokens). Counts against the operator's $1 all-Jev ceiling (≈ $0.001 already used by the learn journal, per session learn-e3).
+
+**Known limits:** TEST is model-authored (Gemini), not real traffic; ~4 TEST labels are known-ambiguous (e.g. h-7); English only; option order is fixed (alphabetical, canonical JSON — `__none__` sorts FIRST, a possible position bias); the TEST was Gemini-authored and may echo these same intent descriptions, which could favour a reader of them — an option-order-reversal arm is a candidate second pass, not part of this verdict.
+
+## Jev arm — results (2026-09-23, Stage 1 live, scored against the rule above)
+
+126/126 calls, 0 invalid, every response `jev-1.13.0`; reported usage 94,974 input / 26,176 output tokens = **$0.0040** at the reviewed rate card (not an account charge); latency mean 264 ms, max 399 ms. Receipt kept out of git (`jev/live.receipt.jsonl`); scored report committed as `jev/jev-eval.json`.
+
+| Metric (same TEST) | Production | Learned head (iter-1, clean) | **Jev zero-shot** |
+|---|---|---|---|
+| In-scope accuracy | 0.755 (83/110) | 0.818 (90/110) | **0.964 (106/110)** |
+| OOS-decline | 0.375 (6/16) | 0.688 (11/16) | **1.000 (16/16)** |
+| Macro-F1 (16 intents) | 0.745 | 0.817 | **0.967** |
+| Min per-intent F1 | 0.429 | 0.571 | 0.909 (whatcanyoudo) |
+| Brier (17 options) | — | — | 0.044 |
+
+**Verdict: COMPETITIVE_WITH_HEAD** (the highest pre-registered band; it clears every threshold with margin). Paired vs production: Jev right / prod wrong 36, prod right / Jev wrong 3, exact McNemar p = 3.6e-8.
+
+The 4 misses are boundary cases, not systematic: h-7 "notes for A minor" (chordinfo→scaleinfo — the known-ambiguous label), h-46 "make progression sound jazzy" (progressionmood→genreessentials, conf 0.38), h-75 "features" (whatcanyoudo→__none__), h-101 "does F G Am belong to C major?" (keyidentification→diatonicchords, conf 0.97 — the one confident error). Confidence is 1.0 on 109/126; exploratory τ only lowers accuracy (τ=0.9 → 0.85), so no threshold is warranted.
+
+**What this does and does not show.** Shown: on this model-authored TEST, a zero-shot typed classifier fed only the one-line intent descriptions beats both the production router and the trained head, by a paired-significant margin, for well under a cent. Not shown: (1) real-traffic behaviour — TEST is Gemini-authored and may echo the same descriptions (unproven, flagged pre-result); (2) that a hosted call per query is acceptable in GA's latency/cost/privacy envelope; (3) French/Spanish prompts. Per the pre-registration, a win does not justify replacing the router. Next candidates: Jev as the **labeler** for the real-traffic shadow log (path 0a), and Jev as the **escalation** for low-margin head decisions — each its own pre-registered experiment.
