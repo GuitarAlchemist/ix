@@ -133,3 +133,27 @@ Any arm with > 2 invalid responses or a model other than `jev-1.13.0` is **KILL*
 **Budget:** 506 calls, 784,804 body bytes (proxy $0.033; Stage 1 actual tokens were ≈ 0.49 × bytes, so ≈ $0.016 expected). The per-arm runner stops at $0.05 of *reported* usage and makes no retries. Cumulative before Stage 2, all Jev work: 143 calls, ≈ $0.0050 computed (tracked by the orchestrator session for the learn course), against the operator's $1 ceiling.
 
 **Integrity notes:** the fresh-set author is from the same model family as the operator's assistant (Claude), which is independent of Gemini (TEST author), Codex (TRAIN author) and Jev. Its labels are frozen as delivered, and no label will be changed after results. Translation quality was checked only for ids and labels (verified identical) and completeness; a mistranslation counts against Jev, which makes the test conservative.
+
+## Jev arm — Stage 2 results (2026-09-23, scored against the Stage 2 pre-registration)
+
+506 calls to `jev-1.13.0`: 381,914 reported input tokens, **$0.0160** at the rate card (computed, not an invoice). One call timed out at 30 s (fr h-126); its usage is unknown and it was not retried.
+
+| Arm | **Registered verdict** | In-scope | OOS | Macro-F1 | Brier | Invalid |
+|---|---|---|---|---|---|---|
+| reversed | **ROBUST** | 106/110 | 16/16 | 0.971 | 0.040 | 1 |
+| fr | **KILL** | 100/110 | 15/16 | 0.928 | 0.065 | 4 |
+| es | **ROBUST** | 103/110 | 16/16 | 0.947 | 0.078 | 1 |
+| fresh | **ROBUST** | 110/112 | 16/16 | 0.986 | 0.022 | 1 |
+| *learned head on fresh (reported)* | — | *80/112* | *12/16* | — | — | — |
+
+**Echo hypothesis: not supported.** On the blind `fresh` corpus Jev scores *higher* than on TEST (110/112), while the head falls from 90/110 to 80/112. Paired on fresh: Jev right / head wrong 34, head right / Jev wrong 0, exact McNemar p ≈ 1.2e-10. The head script reproduces the head's Stage 1 numbers exactly (90/110, 10/16) before it is applied to fresh.
+
+**Order: robust.** Reversing the option order changes one routing decision (h-46, the 0.38-confidence Stage 1 miss, which becomes correct). The only other difference is h-2, rejected for rounding with the same choice.
+
+**French: KILL under the registered rule, not because of routing.** Of the 4 invalid responses, 3 are **probability vectors that sum to 0.99** (Jev reports 2-decimal probabilities, so 17 rounded values can miss 1 by 0.01) and 1 is the timeout. All 6 invalid responses across the arms have that same 0.99 sum. The 1e-3 tolerance chosen in Stage 1 was too tight for 2-decimal rounding; the Stage 1 independent review had flagged exactly this risk. **Post-hoc (not the verdict):** with a tolerance consistent with 2-decimal rounding, fr would be 101/110, 15/16 (inside the ROBUST band), with 1 invalid (the timeout). The registered verdict stays KILL.
+
+**Remaining misses** are boundary cases again: fresh f-77 (chordsubstitution → progressionmood); es h-40 (beginnerchords → __none__, a rounding-invalid response). Minimum per-intent F1 across arms is 0.80 (whatcanyoudo, in fr and es).
+
+**Lessons carried forward:** (1) any future Jev scorer should accept a sum-to-1 tolerance of at least 0.01. That change applies to future pre-registrations only; these verdicts stand. (2) Timeouts need an explicit rule. Here one counted as invalid, as registered, and its billing is unknown. (3) The claim is stronger now but still not real traffic. The next evidence has to come from GA's shadow log.
+
+**Cumulative Jev spend (all experiments):** 143 + 506 = 649 calls, ≈ $0.0050 + $0.0160 = **≈ $0.021** computed, against the operator's $1 ceiling.

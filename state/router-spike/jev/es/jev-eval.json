@@ -1,5 +1,5 @@
 {
-  "arm": "base",
+  "arm": "es",
   "baselines": {
     "learned_head_current": {
       "inscope_acc": 0.8181818181818182,
@@ -18,62 +18,64 @@
     }
   },
   "counts": {
-    "inscope_correct": 106,
+    "inscope_correct": 103,
     "inscope_total": 110,
     "oos_declined": 16,
     "oos_total": 16
   },
   "exploratory_confidence_taus": [
     {
-      "inscope_acc": 0.9636363636363636,
-      "macro_f1": 0.9673951048951049,
+      "inscope_acc": 0.9363636363636364,
+      "macro_f1": 0.9473614926739927,
       "oos_decline": 1.0,
       "tau": 0.0
     },
     {
-      "inscope_acc": 0.9636363636363636,
-      "macro_f1": 0.9673951048951049,
+      "inscope_acc": 0.9363636363636364,
+      "macro_f1": 0.9473614926739927,
       "oos_decline": 1.0,
       "tau": 0.3
     },
     {
-      "inscope_acc": 0.9636363636363636,
-      "macro_f1": 0.9715617715617716,
+      "inscope_acc": 0.9363636363636364,
+      "macro_f1": 0.9473614926739927,
       "oos_decline": 1.0,
       "tau": 0.5
     },
     {
-      "inscope_acc": 0.9363636363636364,
-      "macro_f1": 0.9605040792540792,
+      "inscope_acc": 0.9090909090909091,
+      "macro_f1": 0.9321371336996338,
       "oos_decline": 1.0,
       "tau": 0.7
     },
     {
-      "inscope_acc": 0.8545454545454545,
-      "macro_f1": 0.9076340326340329,
+      "inscope_acc": 0.8272727272727273,
+      "macro_f1": 0.8882887945387945,
       "oos_decline": 1.0,
       "tau": 0.9
     }
   ],
-  "heldout_version": "heldout-0b-1",
-  "invalid_responses": {},
+  "heldout_version": "heldout-0b-1-es",
+  "invalid_responses": {
+    "h-40": "Contract(\"probabilities must sum to 1\")"
+  },
   "jev": {
-    "brier": 0.044317460317460325,
-    "inscope_acc": 0.9636363636363636,
-    "inscope_argmax_excluding_none": 0.9727272727272728,
-    "macro_f1": 0.9673951048951049,
+    "brier": 0.078216,
+    "inscope_acc": 0.9363636363636364,
+    "inscope_argmax_excluding_none": 0.9545454545454546,
+    "macro_f1": 0.9473614926739927,
     "min_f1": {
-      "f1": 0.9090909090909091,
+      "f1": 0.8,
       "intent": "skill.whatcanyoudo"
     },
     "oos_decline": 1.0,
     "per_intent_f1": {
-      "skill.beginnerchords": 1.0,
+      "skill.beginnerchords": 0.9230769230769231,
       "skill.chordinfo": 0.9230769230769231,
       "skill.chordsubstitution": 1.0,
       "skill.circleoffifths": 1.0,
       "skill.commontones": 1.0,
-      "skill.diatonicchords": 0.9333333333333333,
+      "skill.diatonicchords": 0.8571428571428571,
       "skill.genreessentials": 0.9333333333333333,
       "skill.interval": 1.0,
       "skill.keyidentification": 0.9230769230769231,
@@ -81,18 +83,13 @@
       "skill.practiceroutine": 1.0,
       "skill.progressioncompletion": 1.0,
       "skill.progressionmood": 0.9230769230769231,
-      "skill.scaleinfo": 0.9333333333333333,
+      "skill.scaleinfo": 0.875,
       "skill.transpose": 1.0,
-      "skill.whatcanyoudo": 0.9090909090909091
+      "skill.whatcanyoudo": 0.8
     }
   },
   "label": "LIVE receipt",
-  "mcnemar_vs_production": {
-    "jev_right_prod_wrong": 36,
-    "note": "Reported alongside the verdict; the verdict does not claim significance.",
-    "p_two_sided": 3.608874976634982e-8,
-    "prod_right_jev_wrong": 3
-  },
+  "mcnemar_vs_production": null,
   "model": "jev-1.13.0",
   "options_version": "jev-options-1",
   "predictions": {
@@ -157,7 +154,7 @@
     "h-38": "skill.beginnerchords",
     "h-39": "skill.beginnerchords",
     "h-4": "skill.chordinfo",
-    "h-40": "skill.beginnerchords",
+    "h-40": null,
     "h-41": "skill.beginnerchords",
     "h-42": "skill.beginnerchords",
     "h-43": "skill.progressionmood",
@@ -193,7 +190,7 @@
     "h-70": "skill.whatcanyoudo",
     "h-71": "skill.whatcanyoudo",
     "h-72": "skill.whatcanyoudo",
-    "h-73": "skill.whatcanyoudo",
+    "h-73": "__none__",
     "h-74": "skill.whatcanyoudo",
     "h-75": "__none__",
     "h-76": "skill.transpose",
@@ -215,7 +212,7 @@
     "h-90": "skill.diatonicchords",
     "h-91": "skill.diatonicchords",
     "h-92": "skill.diatonicchords",
-    "h-93": "skill.diatonicchords",
+    "h-93": "skill.scaleinfo",
     "h-94": "skill.diatonicchords",
     "h-95": "skill.diatonicchords",
     "h-96": "skill.diatonicchords",
@@ -225,10 +222,10 @@
   },
   "prompts": 126,
   "usage": {
-    "input_tokens": 94974,
+    "input_tokens": 95232,
     "note": "Rate-card arithmetic on reported input tokens (output tokens are free on the reviewed card), not an account charge.",
-    "output_tokens": 26176,
-    "rate_card_usd": 0.003988908
+    "output_tokens": 26167,
+    "rate_card_usd": 0.003999744
   },
-  "verdict": "COMPETITIVE_WITH_HEAD"
+  "verdict": "ROBUST"
 }
