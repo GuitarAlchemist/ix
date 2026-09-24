@@ -122,7 +122,7 @@ Prend les parametres actuels et un gradient, retourne les parametres mis a jour.
 Beaucoup d'algorithmes ont des hyperparametres (reglages que vous choisissez avant l'entrainement). ix utilise le pattern Builder pour les configurer de maniere fluide :
 
 ```rust
-use ix_optimize::ParticleSwarm;
+use ix_optimize::pso::ParticleSwarm;
 
 let optimizer = ParticleSwarm::new()
     .with_particles(50)
@@ -138,7 +138,7 @@ Ce pattern enchaine les appels `.with_*()` pour definir les options. Chaque meth
 Les algorithmes de ML utilisent souvent de l'aleatoire (initialisation aleatoire, echantillonnage aleatoire). ix accepte un parametre `seed` pour obtenir les memes resultats a chaque execution :
 
 ```rust
-use ix_unsupervised::KMeans;
+use ix_unsupervised::kmeans::KMeans;
 
 let mut kmeans = KMeans::new(3).with_seed(42);
 // Executer deux fois avec la graine 42 donne des clusters identiques
@@ -199,7 +199,8 @@ Voici un exemple complet utilisant tous ces patterns -- entrainer un modele de r
 
 ```rust
 use ndarray::array;
-use ix_supervised::{LinearRegression, Regressor};
+use ix_supervised::linear_regression::LinearRegression;
+use ix_supervised::traits::Regressor;
 
 fn main() {
     // Donnees d'entrainement : 2 caracteristiques par echantillon
