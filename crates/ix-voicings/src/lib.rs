@@ -602,6 +602,7 @@ pub fn load_features(
 
 /// Silhouette score for a clustering. Returns a value in [-1, 1].
 /// Higher is better; above 0.15 is our threshold for accepting the clustering.
+/// A point alone in its cluster scores 0 (Rousseeuw 1987, as in scikit-learn).
 ///
 /// For `n > SILHOUETTE_FULL_THRESHOLD` (10k) the exact O(n²) computation is
 /// replaced by a seeded random subsample of `SILHOUETTE_SAMPLE_SIZE` (5k)
@@ -661,11 +662,12 @@ fn silhouette_score_exact(data: &Array2<f64>, labels: &[usize]) -> f64 {
                 entry.1 += 1;
             }
         }
-        let a = if a_count > 0 {
-            a_sum / a_count as f64
-        } else {
-            0.0
-        };
+        if a_count == 0 {
+            // Alone in its cluster: s(i) = 0 by definition (Rousseeuw 1987,
+            // scikit-learn), not 1 as a(i) = 0 would give.
+            continue;
+        }
+        let a = a_sum / a_count as f64;
         let b = cluster_sums
             .values()
             .map(|(s, c)| s / *c as f64)
@@ -1890,6 +1892,19 @@ mod tests {
         let labels = vec![0];
         let sil = silhouette_score(&data, &labels);
         assert_eq!(sil, 0.0);
+    }
+
+    #[test]
+    fn silhouette_singleton_cluster_scores_zero() {
+        // Rousseeuw (1987) and scikit-learn set s(i) = 0 for a point alone in
+        // its cluster. [0, 1 | 10]: s = 0.9, 8/9 and 0, mean 0.5963.
+        let data = Array2::from_shape_vec((3, 1), vec![0.0, 1.0, 10.0]).unwrap();
+        let sil = silhouette_score(&data, &[0, 0, 1]);
+        let expected = (0.9 + 8.0 / 9.0 + 0.0) / 3.0;
+        assert!(
+            (sil - expected).abs() < 1e-12,
+            "expected {expected}, got {sil}"
+        );
     }
 
     #[test]

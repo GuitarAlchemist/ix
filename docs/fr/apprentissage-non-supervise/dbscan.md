@@ -47,7 +47,8 @@ En clair : on part d'un point dense, on étend le cluster vers l'extérieur à t
 
 ```rust
 use ndarray::array;
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 
 // Coordonnées GPS des arrêts de camions [latitude, longitude]
 let stops = array![
