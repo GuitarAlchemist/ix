@@ -109,3 +109,27 @@ Graduated as **shadow mode** (default OFF, zero behavior change). New GA code (u
 The 4 misses are boundary cases, not systematic: h-7 "notes for A minor" (chordinfo→scaleinfo — the known-ambiguous label), h-46 "make progression sound jazzy" (progressionmood→genreessentials, conf 0.38), h-75 "features" (whatcanyoudo→__none__), h-101 "does F G Am belong to C major?" (keyidentification→diatonicchords, conf 0.97 — the one confident error). Confidence is 1.0 on 109/126; exploratory τ only lowers accuracy (τ=0.9 → 0.85), so no threshold is warranted.
 
 **What this does and does not show.** Shown: on this model-authored TEST, a zero-shot typed classifier fed only the one-line intent descriptions beats both the production router and the trained head, by a paired-significant margin, for well under a cent. Not shown: (1) real-traffic behaviour — TEST is Gemini-authored and may echo the same descriptions (unproven, flagged pre-result); (2) that a hosted call per query is acceptable in GA's latency/cost/privacy envelope; (3) French/Spanish prompts. Per the pre-registration, a win does not justify replacing the router. Next candidates: Jev as the **labeler** for the real-traffic shadow log (path 0a), and Jev as the **escalation** for low-margin head decisions — each its own pre-registered experiment.
+
+## Jev arm — Stage 2 robustness pre-registration (2026-09-23, written before any Stage 2 call)
+
+**Why:** Stage 1 found Jev far ahead (106/110, 16/16) on a single, model-authored TEST. The Gemini authoring prompt (`_heldout-authoring-prompt.txt`) glossed each intent in words close to the option descriptions Jev reads, so an **echo effect** is plausible. Stage 2 tests whether the result survives three perturbations. Same model (`jev-1.13.0`), same options text, same instructions, one prompt per state, same fail-closed scorer (`jev-router --arm <name>`). Each arm has its own plan with request SHA-256 values and a pinned corpus hash (`ARMS` in `jev_router.rs`).
+
+| Arm | Corpus | Calls | Body bytes (cost proxy) | ROBUST iff | DEGRADED iff | else |
+|---|---|---|---|---|---|---|
+| **reversed** | same 126 TEST, option keys in reverse order (`__none__` last) | 126 | 194,410 ($0.0082) | ≥ 102/110 and OOS ≥ 14/16 | ≥ 90/110 | FAIL |
+| **fr** | the 126 TEST prompts translated to French (Claude translation, register, typos and ambiguity kept; ids and labels unchanged) | 126 | 195,261 ($0.0082) | ≥ 99/110 and OOS ≥ 13/16 | ≥ 90/110 | FAIL |
+| **es** | same, Spanish | 126 | 195,020 ($0.0082) | ≥ 99/110 and OOS ≥ 13/16 | ≥ 90/110 | FAIL |
+| **fresh** | 128 new prompts (7 × 16 + 16 OOS), written by a Claude subagent that saw **only the intent IDs**, read no file, and was told to avoid menu vocabulary. Frozen unedited, labels included | 128 | 200,113 ($0.0084) | ≥ 101/112 and OOS ≥ 13/16 | ≥ 92/112 | FAIL |
+
+Any arm with > 2 invalid responses or a model other than `jev-1.13.0` is **KILL**. The DEGRADED floors are the learned head's Stage 1 level (90/110 ≈ 0.818, and ≈ 0.82 × 112 for fresh). DEGRADED therefore means "still at least head-level".
+
+**Reading the verdicts (fixed now):**
+- **fresh = FAIL or DEGRADED** means an echo effect is supported: the Stage 1 margin over the head does not generalise to independently worded prompts.
+- **reversed ≠ ROBUST** means order sensitivity, and a GA integration would need to fix the option order. Per-prompt flips vs Stage 1 are reported, not decisive.
+- **fr / es ≠ ROBUST** means a language gap (English is Jev's documented strongest language); the options stay in English as in GA.
+- The **head is measured on `fresh` too** (nomic-embed via local Ollama plus `state/router/learned-head.json`, τ from the head file), so Jev and head can be compared on a corpus neither was designed around. This comparison is reported, not part of the verdict.
+- Production cannot be measured on the new corpora without the GA C# harness, so no McNemar test is run for them.
+
+**Budget:** 506 calls, 784,804 body bytes (proxy $0.033; Stage 1 actual tokens were ≈ 0.49 × bytes, so ≈ $0.016 expected). The per-arm runner stops at $0.05 of *reported* usage and makes no retries. Cumulative before Stage 2, all Jev work: 143 calls, ≈ $0.0050 computed (tracked by the orchestrator session for the learn course), against the operator's $1 ceiling.
+
+**Integrity notes:** the fresh-set author is from the same model family as the operator's assistant (Claude), which is independent of Gemini (TEST author), Codex (TRAIN author) and Jev. Its labels are frozen as delivered, and no label will be changed after results. Translation quality was checked only for ids and labels (verified identical) and completeness; a mistranslation counts against Jev, which makes the test conservative.

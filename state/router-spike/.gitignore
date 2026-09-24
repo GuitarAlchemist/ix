@@ -3,3 +3,6 @@ shadow-smoke/
 jev/requests.jsonl
 jev/mock-report.json
 jev/*.receipt.jsonl
+jev/*/requests.jsonl
+jev/*/*.receipt.jsonl
+jev/*/mock-report.json

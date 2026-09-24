@@ -37,12 +37,97 @@ const EXPLORATORY_TAUS: [f64; 5] = [0.0, 0.3, 0.5, 0.7, 0.9];
 /// Probabilities may be rounded by the provider; 17 values rounded to 4 dp can
 /// drift ~1e-4 from 1. A format quirk must not be scored as a routing failure.
 const SUM_TOL: f64 = 1e-3;
-/// The TEST corpus the verdict bands were registered against: SHA-256 of the
-/// canonical JSON of [(id, prompt, expectedIntentId)], line-ending independent.
-const REGISTERED_CORPUS_SHA256: &str =
-    "692b1c9d1460e72074dafaad0223d81c2aa5a50fb58b1ea5a91dbd4d4ef2b588";
-const REGISTERED_INSCOPE: usize = 110;
-const REGISTERED_OOS: usize = 16;
+
+/// One pre-registered arm. `corpus_sha256` is the SHA-256 of the canonical JSON
+/// of [(id, prompt, expectedIntentId)] (line-ending independent); the verdict
+/// bands were registered against exactly that corpus and those counts.
+struct Arm {
+    name: &'static str,
+    corpus: &'static str,
+    reversed_options: bool,
+    corpus_sha256: &'static str,
+    inscope: usize,
+    oos: usize,
+    /// Robustness bands (arms other than `base`): (in-scope, OOS) for ROBUST,
+    /// in-scope floor for DEGRADED; below it FAIL.
+    robust: (usize, usize),
+    degraded_floor: usize,
+}
+
+const BASE_SHA: &str = "692b1c9d1460e72074dafaad0223d81c2aa5a50fb58b1ea5a91dbd4d4ef2b588";
+
+/// Stage 2 arms (RESULTS.md, "Jev arm — Stage 2 robustness pre-registration").
+const ARMS: [Arm; 5] = [
+    Arm {
+        name: "base",
+        corpus: "state/router-spike/heldout-test.json",
+        reversed_options: false,
+        corpus_sha256: BASE_SHA,
+        inscope: 110,
+        oos: 16,
+        robust: (0, 0),
+        degraded_floor: 0,
+    },
+    Arm {
+        name: "reversed",
+        corpus: "state/router-spike/heldout-test.json",
+        reversed_options: true,
+        corpus_sha256: BASE_SHA,
+        inscope: 110,
+        oos: 16,
+        robust: (102, 14),
+        degraded_floor: 90,
+    },
+    Arm {
+        name: "fr",
+        corpus: "state/router-spike/jev/corpora/heldout-fr.json",
+        reversed_options: false,
+        corpus_sha256: "d7e9651d97c37ce624ab1cf2fc531a9659e6b90ab501434fb4573a3eab1798e8",
+        inscope: 110,
+        oos: 16,
+        robust: (99, 13),
+        degraded_floor: 90,
+    },
+    Arm {
+        name: "es",
+        corpus: "state/router-spike/jev/corpora/heldout-es.json",
+        reversed_options: false,
+        corpus_sha256: "c509430babf0887e62e1ec2ba6ba16db03d1f1d6f1dc36888b7ea6af0056f564",
+        inscope: 110,
+        oos: 16,
+        robust: (99, 13),
+        degraded_floor: 90,
+    },
+    Arm {
+        name: "fresh",
+        corpus: "state/router-spike/jev/corpora/fresh-test.json",
+        reversed_options: false,
+        corpus_sha256: "e9e8c0e1b51e67abb2543ba77c6992b72bf4c98d18d71d3af5ac7ab777d07385",
+        inscope: 112,
+        oos: 16,
+        robust: (101, 13),
+        degraded_floor: 92,
+    },
+];
+
+fn arm(name: &str) -> &'static Arm {
+    ARMS.iter()
+        .find(|a| a.name == name)
+        .unwrap_or_else(|| panic!("unknown arm {name}"))
+}
+
+/// Stage 2 verdict for a non-base arm.
+fn robustness_verdict(a: &Arm, m: &Metrics, wrong_model: bool) -> &'static str {
+    if wrong_model || m.invalid > 2 {
+        "KILL"
+    } else if m.inscope_correct >= a.robust.0 && m.oos_declined >= a.robust.1 {
+        "ROBUST"
+    } else if m.inscope_correct >= a.degraded_floor {
+        "DEGRADED"
+    } else {
+        "FAIL"
+    }
+}
 
 #[derive(Deserialize)]
 struct HeldOut {
@@ -82,6 +167,31 @@ enum Invalid {
     DigestMismatch,
     WrongModel(String),
     Contract(String),
+}
+
+/// Request bytes. Canonical (sorted) unless `reversed`: then the criteria
+/// object is re-emitted in reverse key order — the only byte change — so that
+/// `__none__` is presented last instead of first.
+fn body(prompt: &Prompt, opts: &Options, reversed: bool) -> Vec<u8> {
+    let canonical = encode(&request(prompt, opts));
+    if !reversed {
+        return canonical;
+    }
+    let sorted = String::from_utf8(encode(&json!(opts.criteria))).unwrap();
+    let pairs: Vec<String> = opts
+        .criteria
+        .iter()
+        .rev()
+        .map(|(k, v)| format!("{}:{}", json!(k), json!(v)))
+        .collect();
+    let text = String::from_utf8(canonical).unwrap();
+    assert_eq!(
+        text.matches(&sorted).count(),
+        1,
+        "criteria must appear once"
+    );
+    text.replace(&sorted, &format!("{{{}}}", pairs.join(",")))
+        .into_bytes()
 }
 
 fn request(prompt: &Prompt, opts: &Options) -> Value {
@@ -314,6 +424,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(p: &Path) -> T {
 }
 
 struct Setup {
+    arm: &'static Arm,
     heldout: HeldOut,
     options: Options,
     option_set: BTreeSet<String>,
@@ -322,8 +433,8 @@ struct Setup {
     bodies: Vec<Vec<u8>>,
 }
 
-fn setup(root: &Path) -> Setup {
-    let heldout: HeldOut = read_json(&root.join("state/router-spike/heldout-test.json"));
+fn setup(root: &Path, arm: &'static Arm) -> Setup {
+    let heldout: HeldOut = read_json(&root.join(arm.corpus));
     let options: Options = read_json(&root.join("state/router-spike/jev/options.json"));
     let option_set: BTreeSet<String> = options.criteria.keys().cloned().collect();
     let gold_labels: BTreeSet<String> =
@@ -349,17 +460,18 @@ fn setup(root: &Path) -> Setup {
         .count();
     assert_eq!(
         (heldout.prompts.len() - oos, oos, corpus_sha.as_str()),
-        (REGISTERED_INSCOPE, REGISTERED_OOS, REGISTERED_CORPUS_SHA256),
+        (arm.inscope, arm.oos, arm.corpus_sha256),
         "held-out corpus differs from the one the verdict bands were registered against"
     );
     let intents = option_set.iter().filter(|o| *o != NONE).cloned().collect();
     let bodies: Vec<Vec<u8>> = heldout
         .prompts
         .iter()
-        .map(|p| encode(&request(p, &options)))
+        .map(|p| body(p, &options, arm.reversed_options))
         .collect();
     let digests = bodies.iter().map(|b| sha256_hex(b)).collect();
     Setup {
+        arm,
         heldout,
         options,
         option_set,
@@ -369,8 +481,20 @@ fn setup(root: &Path) -> Setup {
     }
 }
 
+/// Output directory: `jev/` for the Stage 1 base arm, `jev/<arm>/` otherwise.
+fn arm_dir(root: &Path, a: &Arm) -> PathBuf {
+    let base = root.join("state/router-spike/jev");
+    let dir = if a.name == "base" {
+        base
+    } else {
+        base.join(a.name)
+    };
+    fs::create_dir_all(&dir).expect("create arm dir");
+    dir
+}
+
 fn plan(root: &Path, s: &Setup) {
-    let out = root.join("state/router-spike/jev");
+    let out = arm_dir(root, s.arm);
     let mut lines = String::new();
     for (p, b) in s.heldout.prompts.iter().zip(&s.bodies) {
         lines.push_str(&format!(
@@ -384,7 +508,9 @@ fn plan(root: &Path, s: &Setup) {
     let max = s.bodies.iter().map(Vec::len).max().unwrap_or(0);
     let plan = json!({
         "heldout_version": s.heldout.version,
-        "corpus_sha256": REGISTERED_CORPUS_SHA256,
+        "arm": s.arm.name,
+        "reversed_options": s.arm.reversed_options,
+        "corpus_sha256": s.arm.corpus_sha256,
         "options_version": s.options.version,
         "model": MODEL,
         "calls": s.bodies.len(),
@@ -545,35 +671,57 @@ fn report(
         .collect();
     let prod: Value = read_json(&root.join("state/router-spike/production-baseline-heldout.json"));
     let head: Value = read_json(&root.join("state/router-spike/head-eval.json"));
-    // Paired comparison with production on all 126 prompts ("correct" = right
-    // intent, or a decline for an OOS prompt).
-    let prod_correct: BTreeMap<&str, bool> = prod["prompts"]
-        .as_array()
-        .expect("production per-prompt records")
-        .iter()
-        .map(|r| (r["Id"].as_str().unwrap(), r["Correct"].as_bool().unwrap()))
-        .collect();
-    let (mut jev_only, mut prod_only) = (0, 0);
-    for ((p, g), r) in s.heldout.prompts.iter().zip(&gold).zip(&routed(0.0)) {
-        let j = r.as_deref() == Some(*g);
-        match (j, prod_correct[p.id.as_str()]) {
-            (true, false) => jev_only += 1,
-            (false, true) => prod_only += 1,
-            _ => {}
+    // Paired comparison with production ("correct" = right intent, or a decline
+    // for an OOS prompt) — only where production ran on this exact corpus.
+    let mcnemar = (s.arm.corpus_sha256 == BASE_SHA).then(|| {
+        let prod_correct: BTreeMap<&str, bool> = prod["prompts"]
+            .as_array()
+            .expect("production per-prompt records")
+            .iter()
+            .map(|r| (r["Id"].as_str().unwrap(), r["Correct"].as_bool().unwrap()))
+            .collect();
+        let (mut jev_only, mut prod_only) = (0, 0);
+        for ((p, g), r) in s.heldout.prompts.iter().zip(&gold).zip(&routed(0.0)) {
+            let j = r.as_deref() == Some(*g);
+            match (j, prod_correct[p.id.as_str()]) {
+                (true, false) => jev_only += 1,
+                (false, true) => prod_only += 1,
+                _ => {}
+            }
         }
-    }
-    let wrong_model = results
-        .iter()
-        .any(|r| matches!(r, Err(Invalid::WrongModel(_))));
-    json!({
-        "label": label,
-        "verdict": verdict(&primary, wrong_model),
-        "mcnemar_vs_production": {
+        json!({
             "jev_right_prod_wrong": jev_only,
             "prod_right_jev_wrong": prod_only,
             "p_two_sided": mcnemar_exact(jev_only, prod_only),
             "note": "Reported alongside the verdict; the verdict does not claim significance.",
+        })
+    });
+    let wrong_model = results
+        .iter()
+        .any(|r| matches!(r, Err(Invalid::WrongModel(_))));
+    let predictions: BTreeMap<&str, Option<String>> = s
+        .heldout
+        .prompts
+        .iter()
+        .map(|p| p.id.as_str())
+        .zip(routed(0.0))
+        .collect();
+    json!({
+        "label": label,
+        "arm": s.arm.name,
+        "verdict": if s.arm.name == "base" {
+            verdict(&primary, wrong_model)
+        } else {
+            robustness_verdict(s.arm, &primary, wrong_model)
         },
+        "counts": {
+            "inscope_correct": primary.inscope_correct,
+            "inscope_total": primary.inscope_total,
+            "oos_declined": primary.oos_declined,
+            "oos_total": primary.oos_total,
+        },
+        "mcnemar_vs_production": mcnemar,
+        "predictions": predictions,
         "model": MODEL,
         "heldout_version": s.heldout.version,
         "options_version": s.options.version,
@@ -631,10 +779,18 @@ fn mock_receipt(s: &Setup) -> BTreeMap<String, (String, Value)> {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let arm_name = match args.iter().position(|a| a == "--arm") {
+        Some(i) => {
+            let name = args.get(i + 1).expect("--arm needs a name").clone();
+            args.drain(i..=i + 1);
+            name
+        }
+        None => "base".to_string(),
+    };
     let root = PathBuf::from(std::env::var("IX_ROOT").unwrap_or_else(|_| ".".into()));
-    let s = setup(&root);
-    let out = root.join("state/router-spike/jev");
+    let s = setup(&root, arm(&arm_name));
+    let out = arm_dir(&root, s.arm);
     match args.get(1).map(String::as_str) {
         Some("plan") => plan(&root, &s),
         Some("mock") => {
@@ -648,7 +804,7 @@ fn main() {
             fs::write(out.join("jev-eval.json"), serde_json::to_string_pretty(&r).unwrap() + "\n").expect("write jev-eval.json");
             println!("{}", serde_json::to_string_pretty(&r).unwrap());
         }
-        _ => eprintln!("usage: jev-router plan | mock | score <receipt.jsonl>   (run from the ix root or set IX_ROOT)"),
+        _ => eprintln!("usage: jev-router plan | mock | score <receipt.jsonl> [--arm base|reversed|fr|es|fresh]   (run from the ix root or set IX_ROOT)"),
     }
 }
 
@@ -754,6 +910,49 @@ mod tests {
             ("y".to_string(), (String::new(), bad)),
         ]);
         assert_eq!(usage_totals(&receipt), (50, 5));
+    }
+
+    #[test]
+    fn test_reversed_body_changes_only_option_order() {
+        let opts = Options {
+            version: "t".into(),
+            instructions: "pick".into(),
+            criteria: BTreeMap::from([
+                (NONE.to_string(), "none".to_string()),
+                ("skill.a".to_string(), "A".to_string()),
+            ]),
+        };
+        let p = Prompt {
+            id: "x".into(),
+            prompt: "hi".into(),
+            expected: NONE.into(),
+        };
+        let fwd = String::from_utf8(body(&p, &opts, false)).unwrap();
+        let rev = String::from_utf8(body(&p, &opts, true)).unwrap();
+        assert!(fwd.contains(r#"{"__none__":"none","skill.a":"A"}"#));
+        assert!(rev.contains(r#"{"skill.a":"A","__none__":"none"}"#));
+        assert_eq!(fwd.len(), rev.len());
+        // Same JSON value: only the key order differs.
+        assert_eq!(
+            serde_json::from_str::<Value>(&fwd).unwrap(),
+            serde_json::from_str::<Value>(&rev).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_robustness_bands() {
+        let a = arm("fresh");
+        let m = |ic, od, inv| Metrics {
+            inscope_correct: ic,
+            oos_declined: od,
+            invalid: inv,
+            ..Default::default()
+        };
+        assert_eq!(robustness_verdict(a, &m(101, 13, 0), false), "ROBUST");
+        assert_eq!(robustness_verdict(a, &m(101, 12, 0), false), "DEGRADED");
+        assert_eq!(robustness_verdict(a, &m(92, 16, 0), false), "DEGRADED");
+        assert_eq!(robustness_verdict(a, &m(91, 16, 0), false), "FAIL");
+        assert_eq!(robustness_verdict(a, &m(112, 16, 3), false), "KILL");
     }
 
     #[test]

@@ -1,4 +1,5 @@
 {
+  "arm": "base",
   "calls": 126,
   "corpus_sha256": "692b1c9d1460e72074dafaad0223d81c2aa5a50fb58b1ea5a91dbd4d4ef2b588",
   "heldout_version": "heldout-0b-1",
@@ -136,5 +137,6 @@
     "h-98": "47f5b401af8149b54364654da94da94b814ec70520552560e71d0dea8d0a5054",
     "h-99": "880151d0f66edabedaac774c34594ca231d52e3bbb9b1979f058036a56dba9e5"
   },
-  "retries": 0
+  "retries": 0,
+  "reversed_options": false
 }
