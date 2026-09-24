@@ -6,11 +6,14 @@
 #   - exactly one attempt per request, no retries, no redirects followed
 #   - stop after any response once cumulative REPORTED input tokens x rate card
 #     exceeds the budget (a post-response stop, not a billing cap)
-# Usage (from the ix root): pwsh state/router-spike/jev/run-live.ps1
+# Usage (from the ix root): pwsh state/router-spike/jev/run-live.ps1 [-Arm base|reversed|fr|es|fresh]
 param(
-  [string]$Out = "state/router-spike/jev/live.receipt.jsonl",
+  [ValidateSet("base", "reversed", "fr", "es", "fresh")]
+  [string]$Arm = "base",
   [double]$BudgetUsd = 0.05
 )
+$Dir = if ($Arm -eq "base") { "state/router-spike/jev" } else { "state/router-spike/jev/$Arm" }
+$Out = "$Dir/live.receipt.jsonl"
 $ErrorActionPreference = "Stop"
 $Api = "https://api.typesafe.ai/v1/systemone"
 $Model = "jev-1.13.0"
@@ -21,8 +24,8 @@ if (-not $key) { $key = [Environment]::GetEnvironmentVariable("TYPESAFE_API_KEY"
 if (-not $key) { throw "TYPESAFE_API_KEY is not set" }
 if ($env:JEV_ROUTER_APPROVED -ne "YES") { throw "set JEV_ROUTER_APPROVED=YES after operator approval" }
 
-$plan = Get-Content state/router-spike/jev/plan.json -Raw | ConvertFrom-Json -AsHashtable
-$lines = Get-Content state/router-spike/jev/requests.jsonl -Encoding utf8
+$plan = Get-Content "$Dir/plan.json" -Raw | ConvertFrom-Json -AsHashtable
+$lines = Get-Content "$Dir/requests.jsonl" -Encoding utf8
 if ($lines.Count -ne $plan.calls) { throw "requests.jsonl has $($lines.Count) lines, plan says $($plan.calls) — re-run plan" }
 if (Test-Path $Out) { throw "$Out exists; refusing to append to an old receipt" }
 
