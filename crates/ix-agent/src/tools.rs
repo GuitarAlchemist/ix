@@ -1193,6 +1193,7 @@ Example 2 — "cluster crates by complexity then classify":
         // for a spec that got this far (ids are unique, every endpoint is a
         // node, the graph is acyclic) — a failure means this function and the
         // `Dag` disagree, so it is reported instead of discarded.
+        // @ai:invariant for a spec with no validation errors, Dag::add_node and Dag::add_edge never fail here, so a valid pipeline always gets an execution_order equal to what ix_pipeline_run executes [T:test conf:0.85 src:pipeline_validate::execution_order_matches_what_pipeline_run_executes]
         let mut execution_order = Value::Null;
         if errors.is_empty() {
             let mut dag: Dag<()> = Dag::new();
