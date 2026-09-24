@@ -290,6 +290,51 @@ println!("{}", result.output("greet").unwrap());  // "Bonjour, ix !"
 
 ---
 
+## Valider hors ligne une spécification de pipeline MCP
+
+La surface MCP propose deux compagnons en lecture seule (Tier 1) de `ix_pipeline_run`, inspirés de l'endpoint `object_info` et de `comfy validate` de ComfyUI :
+
+- **`ix_node_catalog`** (sans argument) renvoie une entrée par outil enregistré : `name`, `description`, `dispatch` (`registry` ou `manual`), `gated` (l'appel passe-t-il réellement par le middleware d'approbation), `input_schema`, `required_inputs`, `output_schema` (`null` si le skill n'en déclare pas) et `approval` (`action_kind`, `tier`, et `effect` : `auto_approved`, `blocked` ou `not_gated`). Tier 3 signifie **bloqué** : le chemin MCP n'offre aucun moyen d'accorder l'approbation.
+- **`ix_pipeline_validate`** prend la spécification `{"steps": [...]}` que consomme `ix_pipeline_run` et la vérifie sans rien exécuter.
+
+```json
+{
+  "steps": [
+    { "id": "a", "tool": "ix_stats", "arguments": { "data": [1.0, 2.0, 3.0] } },
+    { "id": "b", "tool": "ix_cache", "depends_on": ["a"],
+      "arguments": { "operation": "set", "key": "k", "value": "$a.mean" } }
+  ]
+}
+```
+
+renvoie `valid: true`, `execution_order: ["a", "b"]`, `gated` / `tier` / `effect` pour chaque étape, et un bloc `approval` : `{verdict, max_gated_tier, gated_steps, ungated_steps}`. Ici `verdict` vaut `auto_approved` ; il vaut `ungated_steps_unchecked` dès qu'une étape s'exécute sans passer par la gate, `blocked` quand une étape soumise à la gate est en Tier 3, et `unknown` quand aucune étape n'a pu être classée — il ne peut donc pas se lire comme « rien à approuver ». `max_gated_tier` ne couvre que les étapes soumises à la gate. `execution_order` est l'ordre qu'exécute `ix_pipeline_run` : `Dag::topological_sort` est déterministe (à égalité, l'ordre des étapes départage). Les problèmes reviennent sous forme structurée `{code, step, index, message}`, pour qu'un éditeur puisse rattacher chacun à un noeud :
+
+| Code | Signification |
+|------|---------------|
+| `unknown_tool` | `tool` n'existe pas dans le registre |
+| `unsupported_in_pipeline` | l'outil ne s'exécute qu'en appel MCP de premier niveau (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_explain_algorithm`, `ix_triage_session`) |
+| `blocked_by_approval_gate` | l'étape passe par la gate d'approbation en Tier 3 et serait refusée |
+| `missing_required_input` | une entrée listée dans `required` du schéma de l'outil manque dans `arguments` |
+| `unknown_step_reference` | une entrée de `depends_on` ou un argument `"$etape.champ"` désigne une étape non définie |
+| `self_reference` | un argument `"$etape.champ"` lit la sortie de sa propre étape, qui n'existe jamais au moment de la substitution |
+| `undeclared_dependency` | un argument `"$etape.champ"` désigne une étape qui s'exécute *après* elle, la référence ne peut donc pas être résolue (vérifié seulement si le graphe n'a pas de cycle) |
+| `cycle` | l'étape fait partie d'un cycle de `depends_on` |
+| `internal_graph_error` | le `Dag` a refusé un noeud ou une arête que cette fonction avait déjà acceptés — signalé au lieu d'être ignoré |
+| `too_many_steps`, `too_many_references` | plus de 1000 étapes, ou plus de 1000 entrées `depends_on` / références d'arguments dans une étape |
+| `missing_steps`, `empty_steps`, `missing_id`, `duplicate_id`, `missing_tool`, `invalid_arguments`, `invalid_depends_on` | spécification malformée |
+
+Une référence est résolue exactement quand sa cible précède l'étape qui la lit dans `execution_order` — la condition même qu'applique `run_pipeline` au moment de substituer les arguments. Trois avertissements couvrent ce qui est légal mais fragile ou non vérifié :
+
+- `order_dependent_reference` — la référence n'est résolue que parce que la cible s'exécute plus tôt par hasard ; rien ne déclare cet ordre, une modification ultérieure peut donc inverser les deux étapes. Ajoutez la cible à `depends_on`.
+- `ungated_step` — l'outil de l'étape ne passe pas par la gate d'approbation, son tier n'est donc pas appliqué à l'exécution. ix#352 fait passer les outils manuels par la gate ; ensuite, l'étape est vérifiée et un outil Tier 3 devient une erreur `blocked_by_approval_gate`.
+- `loop_detect_threshold` — un même outil est appelé par plus d'étapes soumises à la gate que le détecteur de boucles n'en autorise (son seuil configuré, 10 par défaut). La fenêtre du détecteur est partagée par tout le processus : une exécution peut donc déclencher le disjoncteur plus tôt.
+
+Un id en double est signalé une fois, avec son `index` ; l'étape concernée est ensuite ignorée, pour que ses arêtes ne soient pas attribuées à la première étape portant le même id.
+
+Le validateur est volontairement plus strict que `ix_pipeline_run`, qui accepte un tableau `steps` vide et ignore silencieusement un `depends_on` qui n'est pas un tableau ou qui contient une entrée non textuelle. Les vérifications sont structurelles : les *types* des arguments ne sont pas encore validés contre le schéma. L'exemple ci-dessus est vérifié par `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
+
+---
+
 ## Pour aller plus loin
 
 - Le **[cache et la mémoïsation](./cache-et-memoisation.md)** couvrent le trait `PipelineCache`, la mise en cache par noeud et comment connecter `ix-cache` pour le recalcul incrémental.

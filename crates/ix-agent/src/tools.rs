@@ -90,6 +90,102 @@ fn substitute_refs(value: &Value, upstream: &HashMap<String, Value>) -> Result<V
     }
 }
 
+/// Collect every `"$step_id.field"` string in a step's arguments as
+/// `(reference, step_id)` — the same syntax [`substitute_refs`] resolves.
+fn collect_step_refs<'a>(value: &'a Value, out: &mut Vec<(&'a str, &'a str)>) {
+    match value {
+        Value::String(s) if s.starts_with('$') => {
+            let step_id = s[1..].split('.').next().unwrap_or("");
+            out.push((s.as_str(), step_id));
+        }
+        Value::Object(map) => map.values().for_each(|v| collect_step_refs(v, out)),
+        Value::Array(arr) => arr.iter().for_each(|v| collect_step_refs(v, out)),
+        _ => {}
+    }
+}
+
+/// The `required` field names of a tool's JSON input schema.
+fn required_inputs(input_schema: &Value) -> Vec<String> {
+    input_schema
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|r| {
+            r.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The approval tier `ix_approval::ApprovalMiddleware` (default config)
+/// assigns to an invocation of `tool_name`.
+fn approval_tier(tool_name: &str) -> ix_approval::Tier {
+    let action = ix_agent_core::AgentAction::InvokeTool {
+        tool_name: tool_name.to_string(),
+        params: json!({}),
+        ordinal: 0,
+        target_hint: None,
+    };
+    ix_approval::ApprovalMiddleware::with_defaults()
+        .classify(&action)
+        .tier
+}
+
+/// Upper bound on `steps` accepted by `ix_pipeline_validate`. The tool is a
+/// Tier-1 read on a single-threaded stdio server, so its cost must stay
+/// bounded whatever the caller sends.
+pub const MAX_PIPELINE_STEPS: usize = 1000;
+
+/// Upper bound on `depends_on` entries, and separately on `$step.field`
+/// argument references, in one pipeline step.
+pub const MAX_STEP_REFERENCES: usize = 1000;
+
+/// Tools [`ToolRegistry::call_with_ctx`] intercepts by name. Their
+/// registered handlers are placeholders that return `Err`, and pipeline steps
+/// are dispatched through [`ToolRegistry::call`], so none of them can run as a
+/// step. Keep in sync with the `match` in `call_with_ctx`; the test
+/// `context_routed_tools_fail_as_pipeline_steps` checks each entry.
+pub const CONTEXT_ROUTED_TOOLS: &[&str] = &[
+    "ix_explain_algorithm",
+    "ix_triage_session",
+    "ix_pipeline_run",
+    "ix_pipeline_compile",
+];
+
+/// Whether a call to `tool` passes through the `registry_bridge` middleware
+/// chain (loop detection + `ix-approval`). Today only registry-backed tools
+/// do; manual tools run their handler directly. PR ix#352 routes manual tools
+/// through the chain too, at which point this becomes `true` for every tool —
+/// `catalog_gated_flag_matches_real_dispatch` fails until it is updated.
+fn passes_approval_gate(tool: &Tool) -> bool {
+    registry_bridge::is_registry_backed(tool.handler)
+}
+
+/// What the approval gate does with a call: Tier 3 is refused outright, since
+/// the MCP path offers no way to grant approval.
+fn approval_effect(gated: bool, tier: ix_approval::Tier) -> &'static str {
+    match (gated, tier.requires_approval()) {
+        (false, _) => "not_gated",
+        (true, true) => "blocked",
+        (true, false) => "auto_approved",
+    }
+}
+
+/// The stricter of two tiers (`Three` > `Two` > `One`).
+fn tier_max(a: ix_approval::Tier, b: ix_approval::Tier) -> ix_approval::Tier {
+    use ix_approval::Tier;
+    let rank = |t: Tier| match t {
+        Tier::One => 1,
+        Tier::Two => 2,
+        Tier::Three => 3,
+    };
+    if rank(b) > rank(a) {
+        b
+    } else {
+        a
+    }
+}
+
 /// An MCP tool definition.
 pub struct Tool {
     pub name: &'static str,
@@ -632,6 +728,537 @@ Example 2 — "cluster crates by complexity then classify":
         (errors, warnings)
     }
 
+    /// Machine-readable node catalog of every registered tool — the IX
+    /// analogue of ComfyUI's `object_info`. One entry per tool:
+    ///
+    /// ```json
+    /// {
+    ///   "name": "ix_stats",
+    ///   "description": "...",
+    ///   "dispatch": "registry" | "manual",
+    ///   "gated": true,
+    ///   "input_schema": { ... },
+    ///   "required_inputs": ["data"],
+    ///   "output_schema": { ... } | null,
+    ///   "approval": {
+    ///     "action_kind": "read",
+    ///     "tier": "tier_one",
+    ///     "effect": "auto_approved" | "blocked" | "not_gated"
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// `output_schema` is the registry skill's declared output schema, or
+    /// `null` when undeclared (always `null` for manual tools). `tier` is what
+    /// `ix_approval::ApprovalMiddleware` computes for the tool name; `gated`
+    /// says whether a call actually passes through that middleware (see
+    /// [`passes_approval_gate`]), and `effect` is the resulting behaviour:
+    /// Tier 3 is **blocked**, not "awaiting approval" — the MCP path has no way
+    /// to grant it.
+    pub fn node_catalog(&self) -> Value {
+        let output_schemas: HashMap<String, Value> = ix_registry::all()
+            .map(|d| (registry_bridge::mcp_name(d.name), (d.output_schema)()))
+            .collect();
+        let nodes: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|t| {
+                let tier = approval_tier(t.name);
+                let gated = passes_approval_gate(t);
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "dispatch": if registry_bridge::is_registry_backed(t.handler) { "registry" } else { "manual" },
+                    "gated": gated,
+                    "input_schema": t.input_schema,
+                    "required_inputs": required_inputs(&t.input_schema),
+                    "output_schema": output_schemas.get(t.name).cloned().unwrap_or(Value::Null),
+                    "approval": {
+                        "action_kind": ix_approval::classify_action_kind(t.name).name(),
+                        "tier": tier.name(),
+                        "effect": approval_effect(gated, tier),
+                    },
+                })
+            })
+            .collect();
+        json!({ "count": nodes.len(), "nodes": nodes })
+    }
+
+    /// Offline validation of an `ix_pipeline_run` spec (`{"steps": [...]}`)
+    /// against the registry — the IX analogue of `comfy validate`. Nothing
+    /// is executed. Unlike [`Self::validate_pipeline_spec`] (string errors,
+    /// used by `ix_pipeline_compile`), errors here are structured so an
+    /// editor can pin each one to a node:
+    ///
+    /// ```json
+    /// {
+    ///   "valid": false,
+    ///   "errors":   [{ "code": "unknown_tool", "step": "s1", "index": 0, "message": "..." }],
+    ///   "warnings": [{ "code": "loop_detect_threshold", "step": null, "index": null, "message": "..." }],
+    ///   "steps":    [{ "id": "s1", "index": 0, "tool": "ix_stats", "gated": true,
+    ///                  "tier": "tier_one", "effect": "auto_approved" }],
+    ///   "approval": {
+    ///     "verdict": "auto_approved" | "ungated_steps_unchecked" | "blocked" | "unknown",
+    ///     "max_gated_tier": "tier_one" | null,
+    ///     "gated_steps": 2,
+    ///     "ungated_steps": []
+    ///   },
+    ///   "execution_order": ["s1", "s2"] | null
+    /// }
+    /// ```
+    ///
+    /// Error codes: `missing_steps`, `empty_steps`, `too_many_steps`,
+    /// `missing_id`, `duplicate_id`, `missing_tool`, `unknown_tool`,
+    /// `unsupported_in_pipeline`, `blocked_by_approval_gate`,
+    /// `invalid_arguments`, `missing_required_input`, `invalid_depends_on`,
+    /// `too_many_references`, `unknown_step_reference`, `self_reference`,
+    /// `undeclared_dependency`, `cycle`, `internal_graph_error`. Warning codes:
+    /// `ungated_step`, `order_dependent_reference`, `loop_detect_threshold`.
+    ///
+    /// The `approval` block never reads as "nothing to approve": `verdict` is
+    /// `ungated_steps_unchecked` as soon as one step runs without passing the
+    /// approval gate (each such step also gets an `ungated_step` warning), and
+    /// `unknown` when no step could be classified. `max_gated_tier` covers the
+    /// gated steps only. `execution_order` is the order `ix_pipeline_run` uses:
+    /// both build an `ix_pipeline::dag::Dag` with nodes in step order, and its
+    /// topological sort is deterministic.
+    ///
+    /// A `$step.field` reference resolves exactly when its target precedes the
+    /// referring step in that order — the same condition `run_pipeline` applies
+    /// when it substitutes arguments. A reference that resolves only through
+    /// the order, without a `depends_on` path, gets an
+    /// `order_dependent_reference` warning: it holds today but any later edit
+    /// to the graph can reorder the two steps.
+    ///
+    /// Deliberately stricter than `ix_pipeline_run`, which accepts an empty
+    /// `steps` array and silently ignores a non-array `depends_on` or a
+    /// non-string entry in it; here those are errors.
+    pub fn validate_pipeline(&self, spec: &Value) -> Value {
+        use ix_pipeline::dag::Dag;
+        use std::collections::BTreeSet;
+
+        fn issue(code: &str, step: Option<(&str, usize)>, message: String) -> Value {
+            json!({
+                "code": code,
+                "step": step.map(|s| s.0),
+                "index": step.map(|s| s.1),
+                "message": message,
+            })
+        }
+        /// An issue that belongs to a step position but to no step id (the
+        /// step has no usable `id`), so an editor can still locate it.
+        fn issue_at_index(code: &str, index: usize, message: String) -> Value {
+            json!({ "code": code, "step": null, "index": index, "message": message })
+        }
+        fn report(errors: Vec<Value>, warnings: Vec<Value>, steps: Vec<Value>) -> Value {
+            json!({
+                "valid": false, "errors": errors, "warnings": warnings, "steps": steps,
+                "approval": {
+                    "verdict": "unknown", "max_gated_tier": null,
+                    "gated_steps": 0, "ungated_steps": [],
+                },
+                "execution_order": null,
+            })
+        }
+
+        let mut errors: Vec<Value> = Vec::new();
+        let mut warnings: Vec<Value> = Vec::new();
+
+        let steps = match spec.get("steps").and_then(|v| v.as_array()) {
+            None => {
+                errors.push(issue("missing_steps", None, "missing 'steps' array".into()));
+                return report(errors, warnings, vec![]);
+            }
+            Some(s) if s.is_empty() => {
+                errors.push(issue("empty_steps", None, "'steps' array is empty".into()));
+                return report(errors, warnings, vec![]);
+            }
+            Some(s) if s.len() > MAX_PIPELINE_STEPS => {
+                errors.push(issue(
+                    "too_many_steps",
+                    None,
+                    format!(
+                        "{} steps exceeds the limit of {MAX_PIPELINE_STEPS}",
+                        s.len()
+                    ),
+                ));
+                return report(errors, warnings, vec![]);
+            }
+            Some(s) => s,
+        };
+
+        let n = steps.len();
+        // Steps that take part in the graph: a string id seen for the first
+        // time. A duplicate is reported once and then ignored, so its edges
+        // and references are not attributed to the first step with that id.
+        let mut node_id: Vec<Option<&str>> = vec![None; n];
+        let mut index_of: HashMap<&str, usize> = HashMap::new();
+        let mut step_reports: Vec<Value> = Vec::new();
+        let mut max_tier: Option<ix_approval::Tier> = None;
+        let mut ungated: Vec<&str> = Vec::new();
+        let mut gated_tool_counts: std::collections::BTreeMap<&str, usize> = Default::default();
+
+        // First pass: ids, tools, required inputs, tiers.
+        for (i, step) in steps.iter().enumerate() {
+            let Some(id) = step.get("id").and_then(|v| v.as_str()) else {
+                errors.push(issue_at_index(
+                    "missing_id",
+                    i,
+                    format!("step[{i}]: missing 'id' string"),
+                ));
+                continue;
+            };
+            if let Some(first) = index_of.get(id) {
+                errors.push(issue(
+                    "duplicate_id",
+                    Some((id, i)),
+                    format!("step[{i}]: duplicate id '{id}' (first used by step[{first}])"),
+                ));
+                continue;
+            }
+            index_of.insert(id, i);
+            node_id[i] = Some(id);
+            let at = Some((id, i));
+
+            let Some(tool_name) = step.get("tool").and_then(|v| v.as_str()) else {
+                errors.push(issue(
+                    "missing_tool",
+                    at,
+                    format!("step '{id}': missing 'tool' string"),
+                ));
+                continue;
+            };
+            let Some(tool) = self.tools.iter().find(|t| t.name == tool_name) else {
+                errors.push(issue(
+                    "unknown_tool",
+                    at,
+                    format!("step '{id}': unknown tool '{tool_name}'"),
+                ));
+                continue;
+            };
+            if CONTEXT_ROUTED_TOOLS.contains(&tool_name) {
+                errors.push(issue(
+                    "unsupported_in_pipeline",
+                    at,
+                    format!("step '{id}': '{tool_name}' only runs as a top-level MCP call, not as a pipeline step"),
+                ));
+            }
+
+            let tier = approval_tier(tool_name);
+            let gated = passes_approval_gate(tool);
+            let effect = approval_effect(gated, tier);
+            step_reports.push(json!({
+                "id": id, "index": i, "tool": tool_name,
+                "gated": gated, "tier": tier.name(), "effect": effect,
+            }));
+            if gated {
+                max_tier = Some(max_tier.map_or(tier, |m| tier_max(m, tier)));
+                *gated_tool_counts.entry(tool_name).or_default() += 1;
+                if tier.requires_approval() {
+                    errors.push(issue(
+                        "blocked_by_approval_gate",
+                        at,
+                        format!("step '{id}': '{tool_name}' is {} and the MCP path has no way to approve it", tier.name()),
+                    ));
+                }
+            } else {
+                ungated.push(id);
+                warnings.push(issue(
+                    "ungated_step",
+                    at,
+                    format!("step '{id}': '{tool_name}' does not pass through the approval gate, so its tier ({}) is not enforced at run time; ix#352 routes manual tools through the gate, after which this step is checked and a Tier-3 tool becomes an error", tier.name()),
+                ));
+            }
+
+            let empty = serde_json::Map::new();
+            let arguments = match step.get("arguments") {
+                None => &empty,
+                Some(Value::Object(m)) => m,
+                Some(_) => {
+                    errors.push(issue(
+                        "invalid_arguments",
+                        at,
+                        format!("step '{id}': 'arguments' must be an object"),
+                    ));
+                    continue;
+                }
+            };
+            for field in required_inputs(&tool.input_schema) {
+                if !arguments.contains_key(&field) {
+                    errors.push(issue(
+                        "missing_required_input",
+                        at,
+                        format!("step '{id}': tool '{tool_name}' requires input '{field}'"),
+                    ));
+                }
+            }
+        }
+
+        // Second pass: depends_on edges and `$step.field` references, as
+        // step indices. Unknown targets and self-references are errors here.
+        let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut refs: Vec<Vec<(&str, usize)>> = vec![Vec::new(); n];
+        for (i, step) in steps.iter().enumerate() {
+            let Some(id) = node_id[i] else {
+                continue;
+            };
+            let at = Some((id, i));
+            match step.get("depends_on") {
+                None => {}
+                Some(Value::Array(deps)) if deps.len() > MAX_STEP_REFERENCES => {
+                    errors.push(issue(
+                        "too_many_references",
+                        at,
+                        format!("step '{id}': {} depends_on entries exceeds the limit of {MAX_STEP_REFERENCES}", deps.len()),
+                    ));
+                }
+                Some(Value::Array(deps)) => {
+                    for dep in deps {
+                        let Some(dep_id) = dep.as_str() else {
+                            errors.push(issue(
+                                "invalid_depends_on",
+                                at,
+                                format!("step '{id}': non-string entry in depends_on"),
+                            ));
+                            continue;
+                        };
+                        match index_of.get(dep_id) {
+                            None => errors.push(issue(
+                                "unknown_step_reference",
+                                at,
+                                format!(
+                                    "step '{id}': depends_on references unknown step '{dep_id}'"
+                                ),
+                            )),
+                            Some(&j) if j == i => errors.push(issue(
+                                "cycle",
+                                at,
+                                format!("step '{id}': depends_on lists the step itself"),
+                            )),
+                            Some(&j) => preds[i].push(j),
+                        }
+                    }
+                    preds[i].sort_unstable();
+                    preds[i].dedup();
+                }
+                Some(_) => errors.push(issue(
+                    "invalid_depends_on",
+                    at,
+                    format!("step '{id}': 'depends_on' must be an array of step ids"),
+                )),
+            }
+
+            let Some(args) = step.get("arguments") else {
+                continue;
+            };
+            let mut found = Vec::new();
+            collect_step_refs(args, &mut found);
+            if found.len() > MAX_STEP_REFERENCES {
+                errors.push(issue(
+                    "too_many_references",
+                    at,
+                    format!("step '{id}': {} argument references exceeds the limit of {MAX_STEP_REFERENCES}", found.len()),
+                ));
+                continue;
+            }
+            for (reference, target) in found {
+                match index_of.get(target) {
+                    None => errors.push(issue(
+                        "unknown_step_reference",
+                        at,
+                        format!("step '{id}': argument reference '{reference}' names unknown step '{target}'"),
+                    )),
+                    Some(&j) if j == i => errors.push(issue(
+                        "self_reference",
+                        at,
+                        format!("step '{id}': argument reference '{reference}' reads the step's own output, which never exists when its arguments are substituted"),
+                    )),
+                    Some(&j) => refs[i].push((reference, j)),
+                }
+            }
+        }
+
+        // Third pass: cycle detection (Kahn, O(V+E)) in the Dag's own
+        // tie-break order — lowest step index first.
+        let mut succs: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut indegree: Vec<usize> = vec![0; n];
+        for (i, ps) in preds.iter().enumerate() {
+            indegree[i] = ps.len();
+            for &p in ps {
+                succs[p].push(i);
+            }
+        }
+        let mut ready: BTreeSet<usize> = (0..n)
+            .filter(|&i| node_id[i].is_some() && indegree[i] == 0)
+            .collect();
+        let mut topo: Vec<usize> = Vec::with_capacity(n);
+        while let Some(i) = ready.pop_first() {
+            topo.push(i);
+            for &s in &succs[i] {
+                indegree[s] -= 1;
+                if indegree[s] == 0 {
+                    ready.insert(s);
+                }
+            }
+        }
+        let node_count = node_id.iter().filter(|x| x.is_some()).count();
+        if topo.len() < node_count {
+            // Peel steps that only lead out of the cyclic core so errors land
+            // on the steps that are actually part of a cycle.
+            let mut in_core: Vec<bool> = (0..n)
+                .map(|i| node_id[i].is_some() && indegree[i] > 0)
+                .collect();
+            let mut outdegree: Vec<usize> = (0..n)
+                .map(|i| succs[i].iter().filter(|&&s| in_core[s]).count())
+                .collect();
+            let mut sinks: Vec<usize> = (0..n)
+                .filter(|&i| in_core[i] && outdegree[i] == 0)
+                .collect();
+            while let Some(i) = sinks.pop() {
+                in_core[i] = false;
+                for &p in &preds[i] {
+                    if in_core[p] {
+                        outdegree[p] -= 1;
+                        if outdegree[p] == 0 {
+                            sinks.push(p);
+                        }
+                    }
+                }
+            }
+            for i in (0..n).filter(|&i| in_core[i]) {
+                let id = node_id[i].unwrap_or_default();
+                errors.push(issue(
+                    "cycle",
+                    Some((id, i)),
+                    format!("step '{id}' is part of a depends_on cycle"),
+                ));
+            }
+        } else {
+            // A reference resolves iff its target runs first, which is exactly
+            // `run_pipeline`'s condition: it substitutes arguments in this same
+            // order. `position[i]` is the step's rank in it; upstream sets
+            // (bitsets over `preds`) additionally say whether the ordering is
+            // *declared* rather than incidental.
+            let mut position: Vec<usize> = vec![usize::MAX; n];
+            for (rank, &i) in topo.iter().enumerate() {
+                position[i] = rank;
+            }
+            let words = n.div_ceil(64);
+            let mut upstream: Vec<Vec<u64>> = vec![vec![0; words]; n];
+            for &i in &topo {
+                let mut acc = vec![0u64; words];
+                for &p in &preds[i] {
+                    for (a, u) in acc.iter_mut().zip(&upstream[p]) {
+                        *a |= u;
+                    }
+                    acc[p / 64] |= 1 << (p % 64);
+                }
+                upstream[i] = acc;
+            }
+            for (i, step_refs) in refs.iter().enumerate() {
+                for &(reference, j) in step_refs {
+                    let id = node_id[i].unwrap_or_default();
+                    let target = node_id[j].unwrap_or_default();
+                    if position[j] >= position[i] {
+                        errors.push(issue(
+                            "undeclared_dependency",
+                            Some((id, i)),
+                            format!("step '{id}': argument reference '{reference}' but '{target}' runs after it, so the reference cannot resolve — add '{target}' to this step's depends_on"),
+                        ));
+                    } else if upstream[i][j / 64] & (1 << (j % 64)) == 0 {
+                        warnings.push(issue(
+                            "order_dependent_reference",
+                            Some((id, i)),
+                            format!("step '{id}': argument reference '{reference}' resolves only because '{target}' happens to run earlier; nothing declares that order — add '{target}' to this step's depends_on"),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let threshold = registry_bridge::shared_loop_detector().config().threshold;
+        for (tool, count) in gated_tool_counts {
+            if count > threshold {
+                warnings.push(issue(
+                    "loop_detect_threshold",
+                    None,
+                    format!("{count} steps call '{tool}'; the process-wide loop detector trips after {threshold} calls per tool in its window, so the run will fail part-way (earlier if the tool was already called recently)"),
+                ));
+            }
+        }
+
+        // Same construction as `run_pipeline`: nodes in step order. Edges go
+        // in topological order of their target, so each `add_edge` cycle check
+        // starts from a node with no successors yet. Both calls are infallible
+        // for a spec that got this far (ids are unique, every endpoint is a
+        // node, the graph is acyclic) — a failure means this function and the
+        // `Dag` disagree, so it is reported instead of discarded.
+        // @ai:invariant for a spec with no validation errors, Dag::add_node and Dag::add_edge never fail here, so a valid pipeline always gets an execution_order equal to what ix_pipeline_run executes [T:test conf:0.85 src:pipeline_validate::execution_order_matches_what_pipeline_run_executes]
+        let mut execution_order = Value::Null;
+        if errors.is_empty() {
+            let mut dag: Dag<()> = Dag::new();
+            let mut graph_errors: Vec<Value> = Vec::new();
+            for (i, id) in node_id.iter().enumerate() {
+                let Some(id) = id else { continue };
+                if let Err(e) = dag.add_node(*id, ()) {
+                    graph_errors.push(issue(
+                        "internal_graph_error",
+                        Some((id, i)),
+                        format!("step '{id}': {e}"),
+                    ));
+                }
+            }
+            for &i in &topo {
+                for &p in &preds[i] {
+                    let (from, to) = (
+                        node_id[p].unwrap_or_default(),
+                        node_id[i].unwrap_or_default(),
+                    );
+                    if let Err(e) = dag.add_edge(from, to) {
+                        graph_errors.push(issue(
+                            "internal_graph_error",
+                            Some((to, i)),
+                            format!("step '{to}': edge {from} -> {to}: {e}"),
+                        ));
+                    }
+                }
+            }
+            if graph_errors.is_empty() {
+                execution_order = json!(dag.topological_sort());
+            } else {
+                errors.extend(graph_errors);
+            }
+        }
+
+        let valid = errors.is_empty();
+        let blocked = errors
+            .iter()
+            .any(|e| e["code"] == "blocked_by_approval_gate");
+        let verdict = if blocked {
+            "blocked"
+        } else if !ungated.is_empty() {
+            "ungated_steps_unchecked"
+        } else if max_tier.is_some() {
+            "auto_approved"
+        } else {
+            "unknown"
+        };
+        let gated_steps = step_reports.len() - ungated.len();
+        json!({
+            "valid": valid,
+            "errors": errors,
+            "warnings": warnings,
+            "steps": step_reports,
+            "approval": {
+                "verdict": verdict,
+                "max_gated_tier": max_tier.map(|t| t.name()),
+                "gated_steps": gated_steps,
+                "ungated_steps": ungated,
+            },
+            "execution_order": execution_order,
+        })
+    }
+
     /// Merge registry-sourced skills into the tool list, with registry
     /// taking precedence over any manual entry of the same name. Called at
     /// the end of [`Self::register_all`].
@@ -1045,6 +1672,26 @@ Example 2 — "cluster crates by complexity then classify":
             handler: handlers::pipeline_list,
         });
 
+        self.tools.push(Tool {
+            name: "ix_node_catalog",
+            description: "Machine-readable node catalog of every registered IX MCP tool (ComfyUI object_info analogue): name, description, dispatch (registry|manual), input JSON schema, required inputs, declared output schema (null when undeclared), and the ix-approval action kind + tier. Read-only; for pipeline editors and planners.",
+            input_schema: object(vec![], &[]),
+            handler: handlers::node_catalog,
+        });
+
+        self.tools.push(Tool {
+            name: "ix_pipeline_validate",
+            description: "Validate an ix_pipeline_run spec ({steps: [...]}) offline without executing anything: unknown tools, missing required inputs, depends_on or $step.field references to undefined steps, cycles (ix-pipeline Dag). Returns structured errors/warnings ({code, step, message}), per-step approval tiers, the max tier the pipeline needs, and the execution order when valid.",
+            input_schema: object(
+                vec![(
+                    "steps",
+                    Prop::array_of(Prop::object_any())
+                        .desc("Pipeline steps, same shape ix_pipeline_run consumes: {id, tool, arguments?, depends_on?, asset_name?}"),
+                )],
+                &["steps"],
+            ),
+            handler: handlers::pipeline_validate,
+        });
     }
 
     /// Third section: governance, federation bridges, and

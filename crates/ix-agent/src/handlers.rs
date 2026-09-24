@@ -4144,6 +4144,22 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_node_catalog / ix_pipeline_validate ─────────────────
+
+/// `ix_node_catalog`: see [`crate::tools::ToolRegistry::node_catalog`].
+/// Builds a fresh registry — construction only assembles schemas, it
+/// never invokes a handler.
+pub fn node_catalog(_params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().node_catalog())
+}
+
+/// `ix_pipeline_validate`: see
+/// [`crate::tools::ToolRegistry::validate_pipeline`]. An invalid spec is a
+/// successful call with `valid: false`, not an `Err`.
+pub fn pipeline_validate(params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().validate_pipeline(&params))
+}
+
 // ── ix_pipeline_list ───────────────────────────────────────
 
 /// R1 companion to `ix_pipeline_run`: discover `pipeline.json` specs

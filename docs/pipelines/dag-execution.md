@@ -290,6 +290,51 @@ println!("{}", result.output("greet").unwrap());  // "Hello, ix!"
 
 ---
 
+## Validating MCP Pipeline Specs Offline
+
+The MCP surface has two read-only (Tier 1) companions to `ix_pipeline_run`, modelled on ComfyUI's `object_info` endpoint and `comfy validate`:
+
+- **`ix_node_catalog`** (no arguments) returns one entry per registered tool: `name`, `description`, `dispatch` (`registry` or `manual`), `gated` (whether a call really passes through the approval middleware), `input_schema`, `required_inputs`, `output_schema` (`null` when the skill declares none) and `approval` (`action_kind`, `tier`, and `effect`: `auto_approved`, `blocked` or `not_gated`). Tier 3 means **blocked**: the MCP path has no way to grant approval.
+- **`ix_pipeline_validate`** takes the `{"steps": [...]}` spec `ix_pipeline_run` consumes and checks it without running anything.
+
+```json
+{
+  "steps": [
+    { "id": "a", "tool": "ix_stats", "arguments": { "data": [1.0, 2.0, 3.0] } },
+    { "id": "b", "tool": "ix_cache", "depends_on": ["a"],
+      "arguments": { "operation": "set", "key": "k", "value": "$a.mean" } }
+  ]
+}
+```
+
+returns `valid: true`, `execution_order: ["a", "b"]`, per-step `gated` / `tier` / `effect`, and an `approval` block: `{verdict, max_gated_tier, gated_steps, ungated_steps}`. `verdict` is `auto_approved` here; it is `ungated_steps_unchecked` as soon as one step runs without passing the gate, `blocked` when a gated step is Tier 3, and `unknown` when no step could be classified — it never reads as "nothing to approve". `max_gated_tier` covers the gated steps only. `execution_order` is the order `ix_pipeline_run` executes: `Dag::topological_sort` is deterministic (ties break by step order). Problems come back as structured `{code, step, index, message}` entries so an editor can pin each one to a node:
+
+| Code | Meaning |
+|------|---------|
+| `unknown_tool` | `tool` is not in the registry |
+| `unsupported_in_pipeline` | the tool only runs as a top-level MCP call (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_explain_algorithm`, `ix_triage_session`) |
+| `blocked_by_approval_gate` | the step goes through the approval gate at Tier 3 and would be refused |
+| `missing_required_input` | an input listed in the tool's schema `required` is absent from `arguments` |
+| `unknown_step_reference` | a `depends_on` entry or a `"$step.field"` argument names an undefined step |
+| `self_reference` | a `"$step.field"` argument reads the step's own output, which never exists at substitution time |
+| `undeclared_dependency` | a `"$step.field"` argument names a step that runs *after* it, so the reference cannot resolve (checked only when the graph has no cycle) |
+| `cycle` | the step is part of a `depends_on` cycle |
+| `internal_graph_error` | the `Dag` rejected a node or edge this function had already accepted — reported rather than swallowed |
+| `too_many_steps`, `too_many_references` | more than 1000 steps, or more than 1000 `depends_on` entries / argument references in one step |
+| `missing_steps`, `empty_steps`, `missing_id`, `duplicate_id`, `missing_tool`, `invalid_arguments`, `invalid_depends_on` | malformed spec |
+
+A reference resolves exactly when its target precedes the referring step in `execution_order` — the same condition `run_pipeline` applies when it substitutes arguments. Three warnings cover what is legal but fragile or unchecked:
+
+- `order_dependent_reference` — the reference resolves only because the target happens to run earlier; nothing declares that order, so a later edit can reorder the two steps. Add the target to `depends_on`.
+- `ungated_step` — the step's tool does not pass through the approval gate, so its tier is not enforced at run time. ix#352 routes manual tools through the gate; after it lands, such a step is checked and a Tier-3 tool becomes a `blocked_by_approval_gate` error.
+- `loop_detect_threshold` — more gated steps call one tool than the loop detector allows (its configured threshold, 10 by default). The detector window is shared by the whole process, so a run can trip earlier.
+
+A duplicate id is reported once, with its `index`; that step is then ignored so its edges are not attributed to the first step with the same id.
+
+The validator is deliberately stricter than `ix_pipeline_run`, which accepts an empty `steps` array and silently ignores a non-array `depends_on` or a non-string entry in it. The checks are structural: argument *types* are not validated against the schema yet. The example above is pinned by `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
+
+---
+
 ## Going Further
 
 - **[Caching and Memoization](./caching-and-memoization.md)** covers the `PipelineCache` trait, per-node cacheability, and how to connect to `ix-cache` for incremental recomputation.
