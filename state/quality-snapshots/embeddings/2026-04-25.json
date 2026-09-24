@@ -138,6 +138,7 @@
     "Rips complex is O(n²) in edges — topology sampled at 1000 points per instrument",
     "Leak confirmed criterion: mean accuracy > 0.40 on balanced 3-class problem (baseline=0.333)"
   ],
+  "population_id": "voicings:guitar=raw/guitar.jsonl,bass=raw/bass.jsonl,ukulele=raw/ukulele.jsonl",
   "retrieval_consistency": {
     "avg_pc_set_match_pct": 1.0,
     "note": "A STRUCTURE-only query should return voicings sharing the query's pitch-class set. A low match rate indicates the STRUCTURE partition is not cleanly encoding PC-set.",
