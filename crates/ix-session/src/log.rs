@@ -177,6 +177,11 @@ impl SessionLog {
         })?;
         let reader = BufReader::new(file);
         let mut count: u64 = 0;
+        // One past the highest ordinal on disk. The dispatcher claims an
+        // ordinal per action and every emit advances the counter again, so
+        // persisted ordinals run ahead of the line count (ix#352): resuming
+        // from the count alone would hand out an ordinal already in the file.
+        let mut past_max: u64 = 0;
         let mut errors: Vec<ReloadError> = Vec::new();
 
         for (idx, line) in reader.lines().enumerate() {
@@ -192,7 +197,10 @@ impl SessionLog {
                 continue;
             }
             match serde_json::from_str::<SessionEvent>(&text) {
-                Ok(_) => count += 1,
+                Ok(event) => {
+                    count += 1;
+                    past_max = past_max.max(event_ordinal(&event).saturating_add(1));
+                }
                 Err(source) => {
                     errors.push(ReloadError::BadJson {
                         line: line_num,
@@ -201,7 +209,21 @@ impl SessionLog {
                 }
             }
         }
-        Ok((count, errors))
+        Ok((count.max(past_max), errors))
+    }
+}
+
+/// The ordinal an event carries — every variant has one.
+fn event_ordinal(event: &SessionEvent) -> u64 {
+    match event {
+        SessionEvent::ActionProposed { ordinal, .. }
+        | SessionEvent::ActionBlocked { ordinal, .. }
+        | SessionEvent::ActionReplaced { ordinal, .. }
+        | SessionEvent::MetadataMounted { ordinal, .. }
+        | SessionEvent::ActionCompleted { ordinal, .. }
+        | SessionEvent::ActionFailed { ordinal, .. }
+        | SessionEvent::BeliefChanged { ordinal, .. }
+        | SessionEvent::ObservationAdded { ordinal, .. } => *ordinal,
     }
 }
 
