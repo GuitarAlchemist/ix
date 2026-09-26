@@ -47,7 +47,10 @@ fn test_ga_nightly_quality_four_night_failure_streak_is_false() {
     assert_eq!(r.failure_streak, 4);
     assert_eq!(r.verdict, Hexavalent::False);
     assert!(r.is_unhealthy());
-    assert_eq!(r.claim_key, "gha_loop:ix:ga_nightly_quality::reliable");
+    assert_eq!(
+        r.claim_key,
+        "gha_loop:guitaralchemist:ix:ga_nightly_quality::reliable"
+    );
 }
 
 #[test]

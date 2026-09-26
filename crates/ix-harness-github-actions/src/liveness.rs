@@ -240,10 +240,16 @@ pub fn assess(
 
     let claim_key = claim_key(wf);
 
+    // The clock is part of the identity: a schedule that stopped completely
+    // leaves identical runs, and only `now` moves its verdict from T to D to F.
+    // Without it, successive assessments would share dedup keys and a merge
+    // would read that progression as conflicting versions of one event.
     let diagnosis_id = sha256_hex(
-        serde_json::to_string(wf)
-            .map_err(|e| AdapterError::Parse(e.to_string()))?
-            .as_bytes(),
+        format!(
+            "{}\n{now}",
+            serde_json::to_string(wf).map_err(|e| AdapterError::Parse(e.to_string()))?
+        )
+        .as_bytes(),
     );
     let mut ordinal = 0u64;
     let mut observations = Vec::new();
@@ -405,7 +411,14 @@ fn claim_key(wf: &WorkflowRuns) -> String {
             .map(|f| f.trim_end_matches(".yml").trim_end_matches(".yaml"))
             .unwrap_or(&wf.workflow),
     );
-    let repo_key = sanitize(wf.repo.rsplit('/').next().unwrap_or(&wf.repo));
+    // Owner and name both: `org-a/service` and `org-b/service` are different
+    // workflows. `sanitize` removes ':', so the separator stays unambiguous.
+    let repo_key = wf
+        .repo
+        .split('/')
+        .map(sanitize)
+        .collect::<Vec<_>>()
+        .join(":");
     format!("gha_loop:{repo_key}:{workflow_key}::reliable")
 }
 
@@ -955,7 +968,10 @@ mod tests {
         // source ^[a-z][a-z0-9-]*$.
         let wf = nightly(&[(14, "failure"), (13, "success")]);
         let r = assess(&wf, NOW, 0).unwrap().unwrap();
-        assert_eq!(r.claim_key, "gha_loop:ix:nightly_thing::reliable");
+        assert_eq!(
+            r.claim_key,
+            "gha_loop:guitaralchemist:ix:nightly_thing::reliable"
+        );
         let (action, aspect) = r.claim_key.rsplit_once("::").unwrap();
         assert!(action.starts_with(|c: char| c.is_ascii_lowercase()));
         assert!(action
@@ -979,6 +995,32 @@ mod tests {
         let b = assess(&wf, NOW, 3).unwrap().unwrap();
         assert_eq!(a.observations, b.observations);
         assert_eq!(a.distribution, b.distribution);
+    }
+
+    #[test]
+    fn a_later_clock_is_new_evidence_not_the_same_event() {
+        // A schedule that stopped: the runs never change, only `now` does.
+        let wf = nightly(&[(14, "success")]);
+        let early = assess(&wf, NOW, 0).unwrap().unwrap();
+        let late = assess(&wf, "2026-09-24T12:00:00Z", 0).unwrap().unwrap();
+        let ids = |r: &LivenessReport| -> Vec<String> {
+            r.observations
+                .iter()
+                .map(|e| serde_json::to_value(e).unwrap()["diagnosis_id"].to_string())
+                .collect()
+        };
+        assert!(!ids(&early).is_empty());
+        assert!(ids(&early).iter().all(|id| !ids(&late).contains(id)));
+    }
+
+    #[test]
+    fn same_repo_name_under_different_owners_gets_distinct_claims() {
+        let a = nightly(&[(14, "success")]);
+        let mut b = a.clone();
+        b.repo = "SomeoneElse/ix".to_string();
+        let ka = assess(&a, NOW, 0).unwrap().unwrap().claim_key;
+        let kb = assess(&b, NOW, 0).unwrap().unwrap().claim_key;
+        assert_ne!(ka, kb);
     }
 
     #[test]
