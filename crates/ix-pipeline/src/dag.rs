@@ -1,6 +1,6 @@
 //! Core DAG data structure with cycle detection and topological sort.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 /// Unique identifier for a node in the pipeline.
 pub type NodeId = String;
@@ -197,45 +197,41 @@ impl<N> Dag<N> {
     /// Topological sort using Kahn's algorithm.
     ///
     /// Returns nodes in an order where every node comes after its dependencies.
-    /// Panics if the graph has a cycle (should be impossible if built via add_edge).
+    /// Deterministic: whenever several nodes are ready, the one inserted first
+    /// comes first, so the same graph always sorts the same way (callers such
+    /// as `ix_pipeline_run` report and execute this order).
+    /// Nodes on a cycle are omitted (impossible if built via add_edge).
     pub fn topological_sort(&self) -> Vec<&NodeId> {
-        let mut in_degrees: HashMap<&str, usize> = HashMap::new();
-        for id in &self.order {
-            in_degrees.insert(id, self.in_degree(id));
-        }
-
-        let mut queue: VecDeque<&str> = in_degrees
+        let position: HashMap<&str, usize> = self
+            .order
             .iter()
-            .filter(|(_, &deg)| deg == 0)
-            .map(|(&id, _)| id)
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+        let mut in_degrees: Vec<usize> = self.order.iter().map(|id| self.in_degree(id)).collect();
+
+        let mut ready: BTreeSet<usize> = (0..self.order.len())
+            .filter(|&i| in_degrees[i] == 0)
             .collect();
 
-        let mut sorted = Vec::with_capacity(self.nodes.len());
+        let mut sorted = Vec::with_capacity(self.order.len());
 
-        while let Some(node) = queue.pop_front() {
+        while let Some(i) = ready.pop_first() {
+            let node = &self.order[i];
             sorted.push(node);
             if let Some(succs) = self.edges.get(node) {
                 for succ in succs {
-                    if let Some(deg) = in_degrees.get_mut(succ.as_str()) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            queue.push_back(succ);
+                    if let Some(&j) = position.get(succ.as_str()) {
+                        in_degrees[j] -= 1;
+                        if in_degrees[j] == 0 {
+                            ready.insert(j);
                         }
                     }
                 }
             }
         }
 
-        // Map back to NodeId references from self.order, preserving topological order
-        let pos_map: HashMap<&str, usize> =
-            sorted.iter().enumerate().map(|(i, &s)| (s, i)).collect();
-        let mut result: Vec<&NodeId> = self
-            .order
-            .iter()
-            .filter(|id| pos_map.contains_key(id.as_str()))
-            .collect();
-        result.sort_by_key(|id| pos_map.get(id.as_str()).copied().unwrap_or(usize::MAX));
-        result
+        sorted
     }
 
     /// Group nodes into execution levels (for parallel execution).
@@ -276,7 +272,9 @@ impl<N> Dag<N> {
 
     /// Find the critical path (longest path through the DAG).
     ///
-    /// Requires a cost function for each node.
+    /// Requires a cost function for each node. Deterministic: predecessors are
+    /// walked in insertion order and ties (equal cost) go to the node inserted
+    /// first, so the returned path does not depend on hash iteration order.
     pub fn critical_path<F>(&self, cost_fn: F) -> (Vec<&NodeId>, f64)
     where
         F: Fn(&NodeId, &N) -> f64,
@@ -285,20 +283,30 @@ impl<N> Dag<N> {
         let mut dist: HashMap<&str, f64> = HashMap::new();
         let mut prev: HashMap<&str, &str> = HashMap::new();
 
+        let position: HashMap<&str, usize> = self
+            .order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+
         for id in &topo {
             let node_cost = cost_fn(id, self.nodes.get(id.as_str()).unwrap());
-            let preds = self.predecessors(id);
+            // Insertion order, not the `reverse` HashSet's iteration order, so
+            // ties between equally-costly predecessors break deterministically.
+            let mut preds = self.predecessors(id);
+            preds.sort_by_key(|p| position.get(p.as_str()).copied().unwrap_or(usize::MAX));
 
             let max_pred = preds
                 .iter()
                 .map(|p| dist.get(p.as_str()).copied().unwrap_or(0.0))
                 .fold(0.0f64, f64::max);
 
-            let best_pred = preds.iter().max_by(|a, b| {
-                let da = dist.get(a.as_str()).unwrap_or(&0.0);
-                let db = dist.get(b.as_str()).unwrap_or(&0.0);
-                da.partial_cmp(db).unwrap()
-            });
+            // First predecessor reaching `max_pred` wins, i.e. the one
+            // inserted first.
+            let best_pred = preds
+                .iter()
+                .find(|p| dist.get(p.as_str()).copied().unwrap_or(0.0) == max_pred);
 
             dist.insert(id, max_pred + node_cost);
             if let Some(pred) = best_pred {
@@ -306,11 +314,22 @@ impl<N> Dag<N> {
             }
         }
 
-        // Find the end node with maximum distance
-        let (&end_node, &total_cost) = dist
-            .iter()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .unwrap_or((&"", &0.0));
+        // End node with the maximum distance; ties go to the node inserted
+        // first (`dist` is a HashMap, so it must not drive the choice).
+        let mut best: Option<(&str, f64)> = None;
+        for id in &self.order {
+            if let Some(&d) = dist.get(id.as_str()) {
+                // `Option::is_none_or` is newer than the 1.80 MSRV.
+                let better = match best {
+                    None => true,
+                    Some((_, best_d)) => d > best_d,
+                };
+                if better {
+                    best = Some((id.as_str(), d));
+                }
+            }
+        }
+        let (end_node, total_cost) = best.unwrap_or(("", 0.0));
 
         // Trace back the critical path
         let mut path = vec![];
@@ -376,6 +395,41 @@ mod tests {
         let mut dag = Dag::new();
         dag.add_node("a", ()).unwrap();
         assert!(matches!(dag.add_edge("a", "a"), Err(DagError::SelfLoop(_))));
+    }
+
+    #[test]
+    fn test_critical_path_is_deterministic_on_ties() {
+        // Two equal-cost branches: the tie must break by insertion order.
+        let mut dag = Dag::new();
+        for id in ["start", "left", "right", "end"] {
+            dag.add_node(id, 1.0f64).unwrap();
+        }
+        dag.add_edge("start", "left").unwrap();
+        dag.add_edge("start", "right").unwrap();
+        dag.add_edge("left", "end").unwrap();
+        dag.add_edge("right", "end").unwrap();
+        let expected = vec!["start", "left", "end"];
+        for _ in 0..20 {
+            let (path, cost) = dag.critical_path(|_, c| *c);
+            assert_eq!(
+                path.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(cost, 3.0);
+        }
+    }
+
+    #[test]
+    fn test_topological_sort_is_deterministic_by_insertion_order() {
+        // Independent nodes used to come out in HashMap order, which differed
+        // between runs; ties now break by insertion order.
+        let mut dag = Dag::new();
+        for id in ["w", "x", "y", "z", "v"] {
+            dag.add_node(id, ()).unwrap();
+        }
+        dag.add_edge("v", "x").unwrap();
+        let ids: Vec<&str> = dag.topological_sort().iter().map(|s| s.as_str()).collect();
+        assert_eq!(ids, ["w", "y", "z", "v", "x"]);
     }
 
     #[test]

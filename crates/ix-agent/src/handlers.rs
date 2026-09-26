@@ -317,24 +317,45 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
             .ok_or_else(|| "field 'max_iter' must be a non-negative integer".to_string())?,
     };
 
+    // `seed` (default 42) and `n_init` (default 1) follow the same rule: absent
+    // or null takes the default, a present but malformed value is rejected.
+    let seed = match params.get("seed") {
+        None | Some(Value::Null) => 42,
+        Some(v) => v
+            .as_u64()
+            .ok_or_else(|| "field 'seed' must be a non-negative integer".to_string())?,
+    };
+    let n_init = match params.get("n_init") {
+        None | Some(Value::Null) => 1,
+        Some(v) => v
+            .as_u64()
+            .filter(|&n| n >= 1)
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'n_init' must be an integer >= 1".to_string())?,
+    };
+
     let data = vecs_to_array2(&data_rows)?;
 
-    let mut km = ix_unsupervised::kmeans::KMeans::new(k);
-    km.max_iterations = max_iter;
-    km.seed = 42;
-
-    let labels = km.fit_predict(&data);
-    let centroids: Vec<Vec<f64>> = km
-        .centroids
-        .as_ref()
-        .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
-        .unwrap_or_default();
-
-    let inertia = km
-        .centroids
-        .as_ref()
-        .map(|c| ix_unsupervised::kmeans::inertia(&data, &labels, c))
-        .unwrap_or(0.0);
+    // Run `n_init` k-means++ starts from seeds seed, seed + 1, … and keep the
+    // one with the lowest inertia (the first one on a tie).
+    let mut best: Option<(Array1<usize>, Array2<f64>, f64)> = None;
+    for start in 0..n_init {
+        let mut km = ix_unsupervised::kmeans::KMeans::new(k);
+        km.max_iterations = max_iter;
+        km.seed = seed.wrapping_add(start as u64);
+        let labels = km.fit_predict(&data);
+        let Some(centroids) = km.centroids.take() else {
+            continue;
+        };
+        let inertia = ix_unsupervised::kmeans::inertia(&data, &labels, &centroids);
+        if best.as_ref().map_or(true, |(_, _, b)| inertia < *b) {
+            best = Some((labels, centroids, inertia));
+        }
+    }
+    let (labels, centroids, inertia) = best.ok_or("k-means produced no centroids")?;
+    let centroids: Vec<Vec<f64>> = (0..centroids.nrows())
+        .map(|i| centroids.row(i).to_vec())
+        .collect();
 
     Ok(json!({
         "labels": labels.to_vec(),
@@ -4191,6 +4212,22 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_node_catalog / ix_pipeline_validate ─────────────────
+
+/// `ix_node_catalog`: see [`crate::tools::ToolRegistry::node_catalog`].
+/// Builds a fresh registry — construction only assembles schemas, it
+/// never invokes a handler.
+pub fn node_catalog(_params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().node_catalog())
+}
+
+/// `ix_pipeline_validate`: see
+/// [`crate::tools::ToolRegistry::validate_pipeline`]. An invalid spec is a
+/// successful call with `valid: false`, not an `Err`.
+pub fn pipeline_validate(params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().validate_pipeline(&params))
+}
+
 // ── ix_pipeline_list ───────────────────────────────────────
 
 /// R1 companion to `ix_pipeline_run`: discover `pipeline.json` specs
@@ -4902,8 +4939,16 @@ pub fn governance_policy(params: Value) -> Result<Value, String> {
 
 // ── ix_quality_gate_history ────────────────────────────────
 
+/// Query the repo's quality-gate ledger.
+///
+/// Reports `ledger_status` alongside the rows. An absent ledger and a ledger
+/// whose rows all failed a filter both yield `count: 0`, and the two mean
+/// opposite things — "no gate has ever run here" versus "gates ran and none
+/// matched". Returning only the count let a caller read the first as the
+/// second, which is the reassuring-but-empty answer this tool gave for its
+/// whole life before `ix doctor` started writing the file.
 pub fn quality_gate_history(params: Value) -> Result<Value, String> {
-    use ix_quality_trend::{query_ledger, GateDecision, LedgerQuery};
+    use ix_quality_trend::{ledger_status, query_ledger, GateDecision, LedgerQuery, LedgerStatus};
     use std::path::PathBuf;
 
     let source = params
@@ -4940,15 +4985,21 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
     // ledger yet" is a real answer), so the ledger is confined with the
     // destination form: it resolves the deepest existing ancestor and still
     // refuses anything outside a root, without requiring the file to exist
-    // (ix#350 review).
+    // (ix#350 review). A sibling repo's ledger (ga writes one too) is reached
+    // by listing it as an extra root. The default is anchored on the workspace
+    // root, not the process cwd: the MCP server is started from wherever the
+    // client happens to be, and a cwd-relative default missed its own ledger.
     let path: PathBuf = match params.get("ledger_path").and_then(|v| v.as_str()) {
         Some(raw) => path_confine::confine_dest_in(
             &path_confine::allowed_roots(&path_confine::workspace_root()?),
             "ledger_path",
             raw,
         )?,
-        None => PathBuf::from("state/quality/gate-ledger.jsonl"),
+        None => workspace_root().join("state/quality/gate-ledger.jsonl"),
     };
+
+    let status = ledger_status(&path)
+        .map_err(|e| format!("quality_gate_history: cannot stat ledger: {}", e))?;
 
     let q = LedgerQuery {
         source,
@@ -4966,9 +5017,38 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
         .collect();
 
+    // Say plainly when there is nothing to have queried, and how to fix it.
+    // `count: 0` on its own is not an answer about gate health.
+    let (status_str, note) = match status {
+        LedgerStatus::Absent => (
+            "absent",
+            Some(
+                "no ledger at this path — no quality gate has recorded a run here. \
+                 This is NOT evidence that gates passed. Run `cargo run -p ix-skill \
+                 --bin ix -- doctor` to record one, or pass `ledger_path` to point at \
+                 a repo that has a ledger."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Empty => (
+            "empty",
+            Some(
+                "ledger file exists but holds no rows — treat as no history, not as a pass."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Present if rows.is_empty() => (
+            "present",
+            Some("ledger has rows, but none match these filters.".to_string()),
+        ),
+        LedgerStatus::Present => ("present", None),
+    };
+
     Ok(json!({
         "ledger_path": path.display().to_string(),
+        "ledger_status": status_str,
         "count": rows.len(),
+        "note": note,
         "filters": {
             "source": q.source,
             "domain": q.domain,

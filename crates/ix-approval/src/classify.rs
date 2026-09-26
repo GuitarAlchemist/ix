@@ -168,6 +168,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_code_smells",
         // Asks the client LLM (MCP sampling) for a spec and validates it; runs nothing.
         "ix_pipeline_compile",
+        "ix_node_catalog",
+        "ix_pipeline_validate",
     ];
 
     // In-project edits — tools that write to state/ or emit trace data
@@ -282,6 +284,8 @@ mod tests {
             "ix_cargo_deps",
             "ix_optick_search",
             "ix_pipeline_compile",
+            "ix_node_catalog",
+            "ix_pipeline_validate",
         ] {
             assert_eq!(
                 classify_action_kind(tool),

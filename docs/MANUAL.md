@@ -252,6 +252,8 @@ Output:
 
 The validator is also public as `ToolRegistry::validate_pipeline_spec` — use it to shape-check any hand-written pipeline spec before calling `ix_pipeline_run`.
 
+For structured, editor-friendly validation (required inputs, `$step.field` references, approval tier) call the `ix_pipeline_validate` MCP tool; `ix_node_catalog` lists every tool's schemas and tier. See [DAG Execution](pipelines/dag-execution.md#validating-mcp-pipeline-specs-offline).
+
 ---
 
 ## 7. Governance integration

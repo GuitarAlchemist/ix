@@ -121,9 +121,11 @@ impl MarkovTensor {
                 self.state_count = s + 1;
             }
         }
+        // Store the last 1..=max_order states: a context longer than
+        // max_order must contribute its suffixes, not its oversized prefixes.
         let len = context.len().min(self.max_order);
-        for start in 0..len {
-            let ctx = context[start..].to_vec();
+        for k in 1..=len {
+            let ctx = context[context.len() - k..].to_vec();
             *self
                 .transitions
                 .entry(ctx.clone())
@@ -218,6 +220,16 @@ mod tests {
     fn test_predict_unknown_context_returns_empty() {
         let t = MarkovTensor::new(2);
         assert!(t.predict(&[99, 100]).is_empty());
+    }
+
+    #[test]
+    fn test_long_context_stores_suffixes_only() {
+        let mut t = MarkovTensor::new(2);
+        t.observe(&[0, 1, 2, 3], 4);
+        assert!(!t.predict(&[3]).is_empty());
+        assert!(!t.predict(&[2, 3]).is_empty());
+        assert!(t.predict(&[0, 1, 2, 3]).is_empty());
+        assert!(t.predict(&[1, 2, 3]).is_empty());
     }
 
     #[test]
