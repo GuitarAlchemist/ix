@@ -4872,8 +4872,16 @@ pub fn governance_policy(params: Value) -> Result<Value, String> {
 
 // ── ix_quality_gate_history ────────────────────────────────
 
+/// Query the repo's quality-gate ledger.
+///
+/// Reports `ledger_status` alongside the rows. An absent ledger and a ledger
+/// whose rows all failed a filter both yield `count: 0`, and the two mean
+/// opposite things — "no gate has ever run here" versus "gates ran and none
+/// matched". Returning only the count let a caller read the first as the
+/// second, which is the reassuring-but-empty answer this tool gave for its
+/// whole life before `ix doctor` started writing the file.
 pub fn quality_gate_history(params: Value) -> Result<Value, String> {
-    use ix_quality_trend::{query_ledger, GateDecision, LedgerQuery};
+    use ix_quality_trend::{ledger_status, query_ledger, GateDecision, LedgerQuery, LedgerStatus};
     use std::path::PathBuf;
 
     let source = params
@@ -4906,11 +4914,19 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .or(Some(50));
 
+    // Anchor the default on the workspace root, not the process cwd: the MCP
+    // server is started from wherever the client happens to be, and a
+    // cwd-relative default made the tool miss its own repo's ledger. An
+    // explicit `ledger_path` is still taken verbatim, which is how a caller
+    // reaches a sibling repo's ledger (ga writes one too).
     let path: PathBuf = params
         .get("ledger_path")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("state/quality/gate-ledger.jsonl"));
+        .unwrap_or_else(|| workspace_root().join("state/quality/gate-ledger.jsonl"));
+
+    let status = ledger_status(&path)
+        .map_err(|e| format!("quality_gate_history: cannot stat ledger: {}", e))?;
 
     let q = LedgerQuery {
         source,
@@ -4928,9 +4944,38 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
         .collect();
 
+    // Say plainly when there is nothing to have queried, and how to fix it.
+    // `count: 0` on its own is not an answer about gate health.
+    let (status_str, note) = match status {
+        LedgerStatus::Absent => (
+            "absent",
+            Some(
+                "no ledger at this path — no quality gate has recorded a run here. \
+                 This is NOT evidence that gates passed. Run `cargo run -p ix-skill \
+                 --bin ix -- doctor` to record one, or pass `ledger_path` to point at \
+                 a repo that has a ledger."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Empty => (
+            "empty",
+            Some(
+                "ledger file exists but holds no rows — treat as no history, not as a pass."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Present if rows.is_empty() => (
+            "present",
+            Some("ledger has rows, but none match these filters.".to_string()),
+        ),
+        LedgerStatus::Present => ("present", None),
+    };
+
     Ok(json!({
         "ledger_path": path.display().to_string(),
+        "ledger_status": status_str,
         "count": rows.len(),
+        "note": note,
         "filters": {
             "source": q.source,
             "domain": q.domain,
