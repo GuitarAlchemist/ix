@@ -106,8 +106,14 @@ fn bad_input_is_rejected_rather_than_guessed() {
     .unwrap_err();
     assert!(err.contains("one unit at a time"), "got: {err}");
 
+    // Since ix#350 the caller's `path` is confined before it is walked, and
+    // confinement requires it to exist — so a missing path is refused there
+    // rather than by the walker's own "path not found".
     let err = code_topology(json!({ "path": "no/such/directory/anywhere" })).unwrap_err();
-    assert!(err.contains("path not found"), "got: {err}");
+    assert!(
+        err.contains("is not an existing path inside an allowed root"),
+        "got: {err}"
+    );
 }
 
 /// Walk a real crate in this workspace. Asserts invariants rather than frozen

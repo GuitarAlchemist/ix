@@ -153,12 +153,11 @@ pub const CONTEXT_ROUTED_TOOLS: &[&str] = &[
 ];
 
 /// Whether a call to `tool` passes through the `registry_bridge` middleware
-/// chain (loop detection + `ix-approval`). Today only registry-backed tools
-/// do; manual tools run their handler directly. PR ix#352 routes manual tools
-/// through the chain too, at which point this becomes `true` for every tool —
-/// `catalog_gated_flag_matches_real_dispatch` fails until it is updated.
-fn passes_approval_gate(tool: &Tool) -> bool {
-    registry_bridge::is_registry_backed(tool.handler)
+/// chain (loop detection + `ix-approval`). Since ix#352 every tool does:
+/// registry-backed tools via `dispatch`, manual ones via `dispatch_manual`.
+/// `catalog_gated_flag_matches_real_dispatch` checks this against a real call.
+fn passes_approval_gate(_tool: &Tool) -> bool {
+    true
 }
 
 /// What the approval gate does with a call: Tier 3 is refused outright, since
@@ -253,7 +252,9 @@ impl ToolRegistry {
     ///
     /// Registry-backed tools (handler == `registry_handler_marker`) are
     /// dispatched via `registry_bridge::dispatch`, which routes through
-    /// `ix_registry::invoke`. Manual tools are called directly.
+    /// `ix_registry::invoke`. Manual tools go through
+    /// `registry_bridge::dispatch_manual`. Both run the same middleware
+    /// chain, so the approval gate classifies every tool.
     pub fn call(&self, name: &str, arguments: Value) -> Result<Value, String> {
         let tool = self
             .tools
@@ -263,7 +264,7 @@ impl ToolRegistry {
         if registry_bridge::is_registry_backed(tool.handler) {
             registry_bridge::dispatch(name, arguments)
         } else {
-            (tool.handler)(arguments)
+            registry_bridge::dispatch_manual(name, arguments, tool.handler)
         }
     }
 
@@ -279,11 +280,20 @@ impl ToolRegistry {
         arguments: Value,
         ctx: &crate::server_context::ServerContext,
     ) -> Result<Value, String> {
+        // The intercepted tools pass through the approval gate too.
         match name {
-            "ix_explain_algorithm" => handlers::explain_algorithm_with_ctx(arguments, ctx),
-            "ix_triage_session" => handlers::triage_session_with_ctx(arguments, ctx),
-            "ix_pipeline_run" => self.run_pipeline(arguments),
-            "ix_pipeline_compile" => self.compile_pipeline(arguments, ctx),
+            "ix_explain_algorithm" => registry_bridge::dispatch_manual(name, arguments, |a| {
+                handlers::explain_algorithm_with_ctx(a, ctx)
+            }),
+            "ix_triage_session" => registry_bridge::dispatch_manual(name, arguments, |a| {
+                handlers::triage_session_with_ctx(a, ctx)
+            }),
+            "ix_pipeline_run" => {
+                registry_bridge::dispatch_manual(name, arguments, |a| self.run_pipeline(a))
+            }
+            "ix_pipeline_compile" => {
+                registry_bridge::dispatch_manual(name, arguments, |a| self.compile_pipeline(a, ctx))
+            }
             _ => self.call(name, arguments),
         }
     }
@@ -1444,7 +1454,11 @@ Example 2 — "cluster crates by complexity then classify":
 
         self.tools.push(Tool {
             name: "ix_nl_to_pipeline",
-            description: "The IX \"thinking machine\": translate a natural-language request into a canonical PipelineSpec (ix.yaml), validate it with lower(), gate it through the Demerzel constitution (fail-closed), optionally execute it, and narrate the result back. Direct LLM-provider proposer with bounded self-repair and a two-tier coverage gate (refuses out-of-domain requests instead of confabulating). Prefer this over ix_pipeline_compile (which targets the legacy {steps:[…]} format via deprecated MCP sampling). Returns status one of: ok | compiled | out_of_domain | governance_rejected | translate_failed.",
+            description: "BLOCKED over MCP: ix-approval classifies this tool Tier 3 (it spawns \
+                          the `ix` CLI, which calls an LLM provider API and can run the \
+                          compiled pipeline), and Tier 3 has no approval path yet — see \
+                          GuitarAlchemist/ix#350. Use `ix pipeline compile` at the CLI \
+                          meanwhile. The IX \"thinking machine\": translate a natural-language request into a canonical PipelineSpec (ix.yaml), validate it with lower(), gate it through the Demerzel constitution (fail-closed), optionally execute it, and narrate the result back. Direct LLM-provider proposer with bounded self-repair and a two-tier coverage gate (refuses out-of-domain requests instead of confabulating). Prefer this over ix_pipeline_compile (which targets the legacy {steps:[…]} format via deprecated MCP sampling). Returns status one of: ok | compiled | out_of_domain | governance_rejected | translate_failed.",
             input_schema: object(
                 vec![
                     (
@@ -2258,7 +2272,10 @@ Example 2 — "cluster crates by complexity then classify":
         // unchanged from PR #61.
         self.tools.push(Tool {
             name: "ix_sentrux_annotate",
-            description: "Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments. Set `emit_untested=true` to additionally call sentrux `test_gaps` and emit one untested-smell annotation per file in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations).",
+            description: "BLOCKED over MCP: ix-approval classifies this tool Tier 3 (it runs a \
+                          caller-named executable and writes annotations to caller-named \
+                          paths), and Tier 3 has no approval path yet — see \
+                          GuitarAlchemist/ix#350. Use the sentrux CLI meanwhile. Run sentrux structural-rule checks against a workspace and emit one ai-annotation-v1 record per violation (truth_value=F, certainty=detected-by-sentrux, source.author=sentrux). Default mode is `dry-run` (counts only, no file mutation). Use `sidecar` to write the JSONL stream consumed by the reconciler; use `inline` to patch source files with `// @ai:smell` comments. Set `emit_untested=true` to additionally call sentrux `test_gaps` and emit one untested-smell annotation per file in the intersection of (untested files) ∩ (files with `@ai:business-value` annotations).",
             input_schema: object(
                 vec![
                     (

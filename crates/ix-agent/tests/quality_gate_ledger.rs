@@ -15,6 +15,23 @@ use serde_json::{json, Value};
 use std::path::Path;
 use tempfile::TempDir;
 
+/// A temp dir inside the workspace root: since ix#350 an explicit
+/// `ledger_path` is confined to the allowed roots, and the system temp dir is
+/// not one of them.
+fn in_root_tempdir() -> TempDir {
+    let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/confine-test");
+    std::fs::create_dir_all(&parent).expect("create target/confine-test");
+    // Canonical, without the Windows verbatim prefix the tools refuse as input.
+    let canonical = parent.canonicalize().expect("canonical confine-test dir");
+    let parent = match canonical.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(plain) => std::path::PathBuf::from(plain),
+        None => canonical,
+    };
+    tempfile::Builder::new()
+        .tempdir_in(parent)
+        .expect("tempdir inside the workspace root")
+}
+
 /// Call the tool the way the MCP server does.
 fn call(params: Value) -> Value {
     let (ctx, _rx) = ServerContext::new();
@@ -53,7 +70,7 @@ fn seed(path: &Path, entries: &[GateLedgerEntry]) {
 
 #[test]
 fn reads_back_rows_a_producer_appended() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = in_root_tempdir();
     let path = dir.path().join("state/quality/gate-ledger.jsonl");
     seed(
         &path,
@@ -88,7 +105,7 @@ fn reads_back_rows_a_producer_appended() {
 /// The honesty test. An absent ledger must not look like a clean run.
 #[test]
 fn absent_ledger_is_reported_as_absent_not_as_zero_failures() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = in_root_tempdir();
     let path = dir.path().join("state/quality/gate-ledger.jsonl");
     assert!(!path.exists());
 
@@ -116,7 +133,7 @@ fn absent_ledger_is_reported_as_absent_not_as_zero_failures() {
 
 #[test]
 fn empty_ledger_is_distinguished_from_an_absent_one() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = in_root_tempdir();
     let path = dir.path().join("gate-ledger.jsonl");
     std::fs::write(&path, "\n").expect("write empty ledger");
 
@@ -134,7 +151,7 @@ fn empty_ledger_is_distinguished_from_an_absent_one() {
 /// `count: 0`. They must not give the same `ledger_status`.
 #[test]
 fn filtered_to_nothing_still_reports_the_ledger_as_present() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = in_root_tempdir();
     let path = dir.path().join("gate-ledger.jsonl");
     seed(
         &path,
@@ -156,7 +173,7 @@ fn filtered_to_nothing_still_reports_the_ledger_as_present() {
 
 #[test]
 fn filters_select_by_source_domain_and_decision() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = in_root_tempdir();
     let path = dir.path().join("gate-ledger.jsonl");
     seed(
         &path,
@@ -192,7 +209,7 @@ fn filters_select_by_source_domain_and_decision() {
 /// `present`, not `empty`.
 #[test]
 fn legacy_v0_rows_count_as_present_history() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = in_root_tempdir();
     let path = dir.path().join("gate-ledger.jsonl");
     std::fs::write(
         &path,
