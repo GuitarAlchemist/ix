@@ -56,13 +56,35 @@ des barrières obligatoires pour une PR ordinaire.
    `crates/ix-agent/tests/parity.rs`. Cette liste reste maintenue à la main
    volontairement : c'est le limiteur de débit qui force la relecture de chaque
    changement de surface.
-4. Lancez `ix doctor --write` et validez le diff de `skills.snapshot.json`. Le
+4. Classez-le dans `crates/ix-approval/src/classify.rs` sous le type que ses
+   effets justifient : calcul pur ou lecture → `READ_TOOLS` (niveau 1) ;
+   écriture dans l'espace de travail ou dans un état en mémoire comme le cache
+   global → `EDIT_IN_PROJECT_TOOLS` (niveau 2) ; shell, requête web ou écriture
+   hors du projet → `SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS` ou
+   `EDIT_OUT_OF_PROJECT_TOOLS` (niveau 3, refusé). Les outils de niveaux 1 et 2
+   s'exécutent sans demande de confirmation : un chemin, un répertoire ou une
+   racine de dépôt fourni par l'appelant doit donc être confiné avant d'être
+   lu, parcouru ou écrit. Utilisez `confine` (ou `confine_in` /
+   `confine_dest_in` pour une liste de racines explicite ou un répertoire que
+   l'outil crée) depuis `crates/ix-agent/src/path_confine.rs`. Ces fonctions
+   admettent la racine de l'espace de travail et les répertoires listés dans
+   `IX_EXTRA_ROOTS` ; n'ajoutez une racine propre à un outil que si c'est
+   l'opérateur, et non l'appelant, qui l'a choisie (les outils de traces GA
+   admettent `~/.ga/traces` et le répertoire `traces/` voisin du journal de
+   session installé). Ajoutez l'outil à
+   `auto_approved_tools_refuse_paths_outside_the_workspace` dans
+   `crates/ix-agent/tests/parity.rs`. Un outil adossé au
+   registre et non classé retombe au niveau 3 et chaque appel MCP est refusé ;
+   le test de parité
+   `every_registry_backed_tool_has_an_explicit_approval_classification` échoue
+   tant qu'il n'est pas classé.
+5. Lancez `ix doctor --write` et validez le diff de `skills.snapshot.json`. Le
    diff doit montrer exactement les noms voulus, et rien d'autre.
-5. Si l'outil est derrière une feature cargo non par défaut, ajoutez son nom à
+6. Si l'outil est derrière une feature cargo non par défaut, ajoutez son nom à
    `feature_gated_tools` dans l'instantané pour que les deux configurations de
    compilation restent vertes.
-6. Lancez `cargo test -p ix-agent --test parity`.
-7. Documentez-le : `docs/MANUAL.md`, ainsi que la traduction française sous
+7. Lancez `cargo test -p ix-agent --test parity`.
+8. Documentez-le : `docs/MANUAL.md`, ainsi que la traduction française sous
    `docs/fr/`.
 
 ## Ajouter une UDF DuckDB

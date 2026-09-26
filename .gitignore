@@ -68,6 +68,14 @@ state/digests/*
 state/quality/ai-annotations.jsonl
 state/quality/ai-annotations-sentrux.jsonl
 
+# Quality-gate ledger — `ix doctor` appends a row per run, so this is local
+# and CI run history, not source. Tracking it would put an append-only JSONL
+# on the merge path of every PR (ga commits its own ledger because a CI
+# script, not each contributor, writes it). `ix_quality_gate_history` reads
+# the live file; `.1.jsonl` is the single rotated generation.
+state/quality/gate-ledger.jsonl
+state/quality/gate-ledger.1.jsonl
+
 # ix pipeline compile — generated artifacts (regenerated per run)
 ix.compiled.yaml
 ix.lock

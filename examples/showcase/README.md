@@ -111,8 +111,8 @@ stages:
 
 ```
 $ ix check action 'update the README'
-  verdict   T                        # exit 0 — True, proceed autonomously
-  exit_code 0
+  verdict   U                        # exit 2 — Unknown: no rule matched,
+  exit_code 2                        # which is not approval
 
 $ ix check action 'delete production database'
   verdict                     D     # exit 3 — Doubtful, hold action

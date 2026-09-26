@@ -15,7 +15,9 @@
 //!   invariants in code it is about to edit.
 //!
 //! All are stateless reads (a full scan / log replay per call), like
-//! `governance.graph`.
+//! `governance.graph`. They run auto-approved (Tier 1), so every path a caller
+//! names is confined to the workspace root by
+//! [`crate::path_confine::confine`] before it is read or walked.
 
 use std::path::{Path, PathBuf};
 
@@ -24,14 +26,14 @@ use ix_assumption_graph::{AssumptionGraph, BeliefLog, ResearchClaim};
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
 
-fn workspace_root() -> PathBuf {
-    if let Ok(root) = std::env::var("IX_ROOT") {
-        return PathBuf::from(root);
+use crate::path_confine::{confine, parse_error, workspace_root};
+
+/// The `workspace` parameter confined to the root, or the root itself.
+fn workspace_param(root: &Path, params: &Value) -> Result<PathBuf, String> {
+    match params.get("workspace").and_then(|v| v.as_str()) {
+        Some(w) => confine(root, "workspace", w),
+        None => Ok(root.to_path_buf()),
     }
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        return Path::new(&manifest).join("../..");
-    }
-    PathBuf::from(".")
 }
 
 fn assumption_query_schema() -> Value {
@@ -40,11 +42,11 @@ fn assumption_query_schema() -> Value {
         "properties": {
             "workspace": {
                 "type": "string",
-                "description": "Workspace dir to scan for @ai: annotations (default: auto-detect)"
+                "description": "Workspace dir to scan for @ai: annotations; must lie inside the workspace root (default: the root)"
             },
             "research": {
                 "type": "string",
-                "description": "Optional path to a research-claims.json file to fold into the graph"
+                "description": "Optional path, inside the workspace root, to a research-claims.json file to fold into the graph"
             },
             "format": {
                 "type": "string",
@@ -65,16 +67,14 @@ fn assumption_query_schema() -> Value {
     schema_fn = "crate::skills::assumption_graph::assumption_query_schema"
 )]
 pub fn assumption_query(params: Value) -> Result<Value, String> {
-    let workspace = params
-        .get("workspace")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(workspace_root);
+    let root = workspace_root()?;
+    let workspace = workspace_param(&root, &params)?;
 
     let research: Vec<ResearchClaim> = match params.get("research").and_then(|v| v.as_str()) {
         Some(p) => {
-            let text = std::fs::read_to_string(p).map_err(|e| format!("read {p}: {e}"))?;
-            serde_json::from_str(&text).map_err(|e| format!("parse {p}: {e}"))?
+            let path = confine(&root, "research", p)?;
+            let text = std::fs::read_to_string(path).map_err(|e| format!("read {p}: {e}"))?;
+            serde_json::from_str(&text).map_err(|e| parse_error("research", p, &e))?
         }
         None => Vec::new(),
     };
@@ -97,7 +97,7 @@ fn assumption_belief_at_schema() -> Value {
         "properties": {
             "log": {
                 "type": "string",
-                "description": "Path to belief-events.jsonl (default: state/assumptions/belief-events.jsonl)"
+                "description": "Path to belief-events.jsonl, relative to and inside the workspace root (default: state/assumptions/belief-events.jsonl)"
             },
             "at": {
                 "type": "string",
@@ -121,9 +121,9 @@ pub fn assumption_belief_at(params: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("state/assumptions/belief-events.jsonl");
 
-    let contents =
-        std::fs::read_to_string(log_path).map_err(|e| format!("read {log_path}: {e}"))?;
-    let log = BeliefLog::from_jsonl(&contents).map_err(|e| e.to_string())?;
+    let path = confine(&workspace_root()?, "log", log_path)?;
+    let contents = std::fs::read_to_string(path).map_err(|e| format!("read {log_path}: {e}"))?;
+    let log = BeliefLog::from_jsonl(&contents).map_err(|e| parse_error("log", log_path, &e))?;
 
     let at = match params.get("at").and_then(|v| v.as_str()) {
         Some(ts) => DateTime::parse_from_rfc3339(ts)
@@ -142,11 +142,11 @@ fn assumption_drift_schema() -> Value {
         "properties": {
             "baseline": {
                 "type": "string",
-                "description": "Path to the committed claims snapshot (default: state/assumptions/annotations.snapshot.json)"
+                "description": "Path to the committed claims snapshot, relative to and inside the workspace root (default: state/assumptions/annotations.snapshot.json)"
             },
             "workspace": {
                 "type": "string",
-                "description": "Workspace dir to scan (default: auto-detect)"
+                "description": "Workspace dir to scan; must lie inside the workspace root (default: the root)"
             }
         }
     })
@@ -167,20 +167,17 @@ fn assumption_drift_schema() -> Value {
 pub fn assumption_drift(params: Value) -> Result<Value, String> {
     use ix_assumption_graph::drift;
 
-    let workspace = params
-        .get("workspace")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(workspace_root);
+    let root = workspace_root()?;
+    let workspace = workspace_param(&root, &params)?;
     let baseline_path = params
         .get("baseline")
         .and_then(|v| v.as_str())
         .unwrap_or("state/assumptions/annotations.snapshot.json");
 
-    let text =
-        std::fs::read_to_string(baseline_path).map_err(|e| format!("read {baseline_path}: {e}"))?;
+    let path = confine(&root, "baseline", baseline_path)?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("read {baseline_path}: {e}"))?;
     let baseline: drift::Snapshot =
-        serde_json::from_str(&text).map_err(|e| format!("parse {baseline_path}: {e}"))?;
+        serde_json::from_str(&text).map_err(|e| parse_error("baseline", baseline_path, &e))?;
 
     let current = drift::snapshot(&workspace).map_err(|e| e.to_string())?;
     let mut report = drift::diff(&baseline, &current);
@@ -203,7 +200,7 @@ fn assumption_claims_schema() -> Value {
             },
             "workspace": {
                 "type": "string",
-                "description": "Workspace dir to scan (default: auto-detect)"
+                "description": "Workspace dir to scan; must lie inside the workspace root (default: the root)"
             }
         },
         "required": ["path"]
@@ -230,11 +227,7 @@ pub fn assumption_claims(params: Value) -> Result<Value, String> {
     let needle = path.replace('\\', "/");
     let prefix = format!("{}/", needle.trim_end_matches('/'));
 
-    let workspace = params
-        .get("workspace")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(workspace_root);
+    let workspace = workspace_param(&workspace_root()?, &params)?;
 
     let snap = drift::snapshot(&workspace).map_err(|e| e.to_string())?;
     let claims: Vec<_> = snap

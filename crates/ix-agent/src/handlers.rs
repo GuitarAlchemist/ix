@@ -3,6 +3,8 @@
 use ndarray::{Array1, Array2};
 use serde_json::{json, Value};
 
+use crate::path_confine;
+
 use ix_cache::{Cache, CacheConfig};
 
 use std::sync::OnceLock;
@@ -315,24 +317,45 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
             .ok_or_else(|| "field 'max_iter' must be a non-negative integer".to_string())?,
     };
 
+    // `seed` (default 42) and `n_init` (default 1) follow the same rule: absent
+    // or null takes the default, a present but malformed value is rejected.
+    let seed = match params.get("seed") {
+        None | Some(Value::Null) => 42,
+        Some(v) => v
+            .as_u64()
+            .ok_or_else(|| "field 'seed' must be a non-negative integer".to_string())?,
+    };
+    let n_init = match params.get("n_init") {
+        None | Some(Value::Null) => 1,
+        Some(v) => v
+            .as_u64()
+            .filter(|&n| n >= 1)
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'n_init' must be an integer >= 1".to_string())?,
+    };
+
     let data = vecs_to_array2(&data_rows)?;
 
-    let mut km = ix_unsupervised::kmeans::KMeans::new(k);
-    km.max_iterations = max_iter;
-    km.seed = 42;
-
-    let labels = km.fit_predict(&data);
-    let centroids: Vec<Vec<f64>> = km
-        .centroids
-        .as_ref()
-        .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
-        .unwrap_or_default();
-
-    let inertia = km
-        .centroids
-        .as_ref()
-        .map(|c| ix_unsupervised::kmeans::inertia(&data, &labels, c))
-        .unwrap_or(0.0);
+    // Run `n_init` k-means++ starts from seeds seed, seed + 1, … and keep the
+    // one with the lowest inertia (the first one on a tie).
+    let mut best: Option<(Array1<usize>, Array2<f64>, f64)> = None;
+    for start in 0..n_init {
+        let mut km = ix_unsupervised::kmeans::KMeans::new(k);
+        km.max_iterations = max_iter;
+        km.seed = seed.wrapping_add(start as u64);
+        let labels = km.fit_predict(&data);
+        let Some(centroids) = km.centroids.take() else {
+            continue;
+        };
+        let inertia = ix_unsupervised::kmeans::inertia(&data, &labels, &centroids);
+        if best.as_ref().map_or(true, |(_, _, b)| inertia < *b) {
+            best = Some((labels, centroids, inertia));
+        }
+    }
+    let (labels, centroids, inertia) = best.ok_or("k-means produced no centroids")?;
+    let centroids: Vec<Vec<f64>> = (0..centroids.nrows())
+        .map(|i| centroids.row(i).to_vec())
+        .collect();
 
     Ok(json!({
         "labels": labels.to_vec(),
@@ -3547,8 +3570,8 @@ pub fn catalog_list(_params: Value) -> Result<Value, String> {
 
 // ── ix_cargo_deps ──────────────────────────────────────────
 
-/// P1.2 — walk a Rust workspace, parse every `crates/<name>/Cargo.toml`
-/// for intra-workspace `ix-*` dependencies, and return a
+/// P1.2 — walk a Rust workspace, parse the `crates/<name>/Cargo.toml` of
+/// every workspace member for intra-workspace dependencies, and return a
 /// {nodes, edges, n_nodes} structure that `ix_graph` can consume
 /// directly.
 ///
@@ -3609,6 +3632,25 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         crate_entries.push((name, manifest));
     }
     crate_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Keep only workspace members: a directory under `crates/` can be
+    // excluded from the workspace (ix-duck-ext) or simply not listed
+    // (a spike). Without a `[workspace] members` list, keep every crate.
+    let mut non_members: Vec<String> = Vec::new();
+    if let Ok(root_manifest) = std::fs::read_to_string(workspace_root.join("Cargo.toml")) {
+        let (members, exclude) = workspace_member_patterns(&root_manifest);
+        if !members.is_empty() {
+            crate_entries.retain(|(name, _)| {
+                let rel = format!("crates/{name}");
+                let is_member = members.iter().any(|m| member_pattern_matches(m, &rel))
+                    && !exclude.iter().any(|x| member_pattern_matches(x, &rel));
+                if !is_member {
+                    non_members.push(name.clone());
+                }
+                is_member
+            });
+        }
+    }
 
     // Assign stable node ids (alphabetical).
     let name_to_id: std::collections::HashMap<String, usize> = crate_entries
@@ -3695,6 +3737,8 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         "n_nodes": n_nodes,
         "nodes": nodes,
         "edges": edges,
+        // Directories under crates/ skipped because the workspace does not list them.
+        "non_members": non_members,
         // Denormalized flat projections for downstream tools.
         "names": names_vec,
         "sloc": sloc_vec,
@@ -3702,6 +3746,71 @@ pub fn cargo_deps(params: Value) -> Result<Value, String> {
         "dep_counts": dep_count_vec,
         "features": features_matrix,
     }))
+}
+
+/// Read the `members` and `exclude` path patterns of the root
+/// manifest's `[workspace]` table. Arrays may span several lines.
+fn workspace_member_patterns(toml_body: &str) -> (Vec<String>, Vec<String>) {
+    let mut members = Vec::new();
+    let mut exclude = Vec::new();
+    let mut in_workspace = false;
+    // Which array we are inside, when it spans several lines.
+    let mut open: Option<bool> = None; // Some(true) = members, Some(false) = exclude
+
+    for raw in toml_body.lines() {
+        let line = match raw.find('#') {
+            Some(i) => raw[..i].trim(),
+            None => raw.trim(),
+        };
+        if line.is_empty() {
+            continue;
+        }
+        let mut rest = line;
+        if open.is_none() {
+            if let Some(inner) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                in_workspace = inner.trim() == "workspace";
+                continue;
+            }
+            if !in_workspace {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            open = match key.trim() {
+                "members" => Some(true),
+                "exclude" => Some(false),
+                _ => continue,
+            };
+            rest = value;
+        }
+        let target = if open == Some(true) {
+            &mut members
+        } else {
+            &mut exclude
+        };
+        for (i, part) in rest.split('"').enumerate() {
+            if i % 2 == 1 {
+                target.push(part.trim_end_matches('/').to_string());
+            }
+        }
+        if rest.contains(']') {
+            open = None;
+        }
+    }
+    (members, exclude)
+}
+
+/// Match a workspace path pattern (`crates/ix-math` or `crates/*`)
+/// against a relative crate path.
+fn member_pattern_matches(pattern: &str, rel: &str) -> bool {
+    match pattern.strip_suffix("/*") {
+        Some(prefix) => rel
+            .strip_prefix(prefix)
+            .and_then(|r| r.strip_prefix('/'))
+            .is_some_and(|r| !r.contains('/')),
+        None => pattern == rel,
+    }
 }
 
 /// Walk `src/**/*.rs` recursively and return `(total_loc, file_count)`.
@@ -3766,10 +3875,29 @@ fn extract_workspace_deps(
         }
         if let Some(inner) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
             let table_name = inner.trim();
-            section = match table_name {
-                "package" => Section::Package,
-                "dependencies" | "dev-dependencies" | "build-dependencies" => Section::Deps,
-                _ => Section::None,
+            const DEP_TABLES: [&str; 3] =
+                ["dependencies", "dev-dependencies", "build-dependencies"];
+            // `[dependencies.ix-gpu]`: the dep name is the table key itself.
+            let dotted_dep = DEP_TABLES.iter().find_map(|t| {
+                table_name
+                    .strip_prefix(t)
+                    .and_then(|rest| rest.strip_prefix('.'))
+            });
+            section = if table_name == "package" {
+                Section::Package
+            } else if DEP_TABLES
+                .iter()
+                .any(|t| table_name == *t || table_name.ends_with(&format!(".{t}")))
+            {
+                // Plain tables, plus `[target.'cfg(..)'.dependencies]`.
+                Section::Deps
+            } else {
+                if let Some(dep) = dotted_dep {
+                    if known_crates.contains(dep) {
+                        deps.push(dep.to_string());
+                    }
+                }
+                Section::None
             };
             continue;
         }
@@ -4014,6 +4142,22 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
         "lines_added": added_vec,
         "lines_deleted": deleted_vec,
     }))
+}
+
+// ── ix_node_catalog / ix_pipeline_validate ─────────────────
+
+/// `ix_node_catalog`: see [`crate::tools::ToolRegistry::node_catalog`].
+/// Builds a fresh registry — construction only assembles schemas, it
+/// never invokes a handler.
+pub fn node_catalog(_params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().node_catalog())
+}
+
+/// `ix_pipeline_validate`: see
+/// [`crate::tools::ToolRegistry::validate_pipeline`]. An invalid spec is a
+/// successful call with `valid: false`, not an `Err`.
+pub fn pipeline_validate(params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().validate_pipeline(&params))
 }
 
 // ── ix_pipeline_list ───────────────────────────────────────
@@ -4429,7 +4573,20 @@ pub fn governance_check(params: Value) -> Result<Value, String> {
 
     let result = constitution.check_action(action);
 
+    // `check_action` is a keyword heuristic: `compliant` only means no rule
+    // fired. Report that as Unknown rather than letting an unmatched action
+    // read as approved.
+    let verdict = if !result.compliant {
+        "D"
+    } else if !result.relevant_articles.is_empty() {
+        "P"
+    } else {
+        "U"
+    };
+
     let mut response = json!({
+        "verdict": verdict,
+        "basis": "keyword-heuristic",
         "compliant": result.compliant,
         "relevant_articles": result.relevant_articles.iter().map(|a| json!({
             "number": a.number,
@@ -4440,6 +4597,12 @@ pub fn governance_check(params: Value) -> Result<Value, String> {
         "constitution_version": constitution.version,
         "total_articles": constitution.articles.len(),
     });
+    if verdict == "U" {
+        response["note"] = json!(
+            "No rule matched. This check only recognizes English keywords, so no match is not \
+             evidence of compliance: read the constitution for actions it does not cover."
+        );
+    }
 
     // R2 Phase 2: pipeline lineage audit trail. When the caller passes a
     // `lineage` map emitted by `ix_pipeline_run`, summarise it alongside
@@ -4476,6 +4639,17 @@ pub fn governance_check(params: Value) -> Result<Value, String> {
 
 pub fn governance_persona(params: Value) -> Result<Value, String> {
     let name = parse_str(&params, "persona")?;
+    // The name becomes `<personas>/<name>.persona.yaml`; a separator or `..`
+    // would let an auto-approved call probe or parse YAML anywhere on disk.
+    if name.is_empty()
+        || name.contains(['/', '\\', ':'])
+        || name.contains("..")
+        || name.chars().any(char::is_control)
+    {
+        return Err(format!(
+            "`persona`: {name} is not a persona name (no path separators, `..` or control characters)"
+        ));
+    }
 
     let personas_dir = governance_dir().join("personas");
     let persona = ix_governance::Persona::load_by_name(&personas_dir, name)
@@ -4698,8 +4872,16 @@ pub fn governance_policy(params: Value) -> Result<Value, String> {
 
 // ── ix_quality_gate_history ────────────────────────────────
 
+/// Query the repo's quality-gate ledger.
+///
+/// Reports `ledger_status` alongside the rows. An absent ledger and a ledger
+/// whose rows all failed a filter both yield `count: 0`, and the two mean
+/// opposite things — "no gate has ever run here" versus "gates ran and none
+/// matched". Returning only the count let a caller read the first as the
+/// second, which is the reassuring-but-empty answer this tool gave for its
+/// whole life before `ix doctor` started writing the file.
 pub fn quality_gate_history(params: Value) -> Result<Value, String> {
-    use ix_quality_trend::{query_ledger, GateDecision, LedgerQuery};
+    use ix_quality_trend::{ledger_status, query_ledger, GateDecision, LedgerQuery, LedgerStatus};
     use std::path::PathBuf;
 
     let source = params
@@ -4732,11 +4914,19 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .or(Some(50));
 
+    // Anchor the default on the workspace root, not the process cwd: the MCP
+    // server is started from wherever the client happens to be, and a
+    // cwd-relative default made the tool miss its own repo's ledger. An
+    // explicit `ledger_path` is still taken verbatim, which is how a caller
+    // reaches a sibling repo's ledger (ga writes one too).
     let path: PathBuf = params
         .get("ledger_path")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("state/quality/gate-ledger.jsonl"));
+        .unwrap_or_else(|| workspace_root().join("state/quality/gate-ledger.jsonl"));
+
+    let status = ledger_status(&path)
+        .map_err(|e| format!("quality_gate_history: cannot stat ledger: {}", e))?;
 
     let q = LedgerQuery {
         source,
@@ -4754,9 +4944,38 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
         .collect();
 
+    // Say plainly when there is nothing to have queried, and how to fix it.
+    // `count: 0` on its own is not an answer about gate health.
+    let (status_str, note) = match status {
+        LedgerStatus::Absent => (
+            "absent",
+            Some(
+                "no ledger at this path — no quality gate has recorded a run here. \
+                 This is NOT evidence that gates passed. Run `cargo run -p ix-skill \
+                 --bin ix -- doctor` to record one, or pass `ledger_path` to point at \
+                 a repo that has a ledger."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Empty => (
+            "empty",
+            Some(
+                "ledger file exists but holds no rows — treat as no history, not as a pass."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Present if rows.is_empty() => (
+            "present",
+            Some("ledger has rows, but none match these filters.".to_string()),
+        ),
+        LedgerStatus::Present => ("present", None),
+    };
+
     Ok(json!({
         "ledger_path": path.display().to_string(),
+        "ledger_status": status_str,
         "count": rows.len(),
+        "note": note,
         "filters": {
             "source": q.source,
             "domain": q.domain,
@@ -4868,13 +5087,11 @@ pub fn federation_discover(params: Value) -> Result<Value, String> {
 /// - `dir`: path to trace directory (default: `~/.ga/traces/`)
 pub fn trace_ingest(params: Value) -> Result<Value, String> {
     use ix_io::trace_bridge;
-    use std::path::PathBuf;
 
-    let dir = params
-        .get("dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(trace_bridge::default_trace_dir);
+    let dir = match params.get("dir").and_then(|v| v.as_str()) {
+        Some(d) => confine_trace_dir("dir", d)?,
+        None => trace_bridge::default_trace_dir(),
+    };
 
     if !dir.exists() {
         return Ok(json!({
@@ -4999,21 +5216,26 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
     use ix_session::SessionLog;
     use std::path::PathBuf;
 
-    let log_path = params
+    let log_arg = params
         .get("session_log")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "'session_log' is required".to_string())?;
-    let trace_dir: PathBuf = params
-        .get("trace_dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(ix_io::trace_bridge::default_trace_dir);
+    let log_path = confine_session_log(log_arg)?;
+    // A write destination: only the operator's trace locations, not the
+    // workspace, whose `.claude/` and `.mcp.json` configure the harness itself.
+    // Relative paths resolve against `~/.ga/traces`.
+    let trace_dir: PathBuf = match params.get("trace_dir").and_then(|v| v.as_str()) {
+        Some(d) => path_confine::confine_dest_in(&path_confine::trace_roots(), "trace_dir", d)?,
+        None => Some(ix_io::trace_bridge::default_trace_dir())
+            .filter(|dir| dir.is_absolute())
+            .ok_or("no default trace directory: neither HOME nor USERPROFILE is set")?,
+    };
     let trace_id = params
         .get("trace_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let log = SessionLog::open(log_path).map_err(|e| format!("open session log: {e}"))?;
+    let log = SessionLog::open(&log_path).map_err(|e| format!("open session log: {e}"))?;
     let written = flywheel::export_session_to_trace_dir(&log, &trace_dir, trace_id)
         .map_err(|e| format!("export trace: {e}"))?;
 
@@ -5024,6 +5246,40 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
         "trace_dir": trace_dir.display().to_string(),
         "event_count": trace_count,
     }))
+}
+
+/// A caller-supplied trace directory confined to the workspace, the
+/// `IX_EXTRA_ROOTS` directories and the operator's trace locations.
+fn confine_trace_dir(param: &str, raw: &str) -> Result<std::path::PathBuf, String> {
+    let mut roots = path_confine::allowed_roots(&path_confine::workspace_root()?);
+    roots.extend(path_confine::trace_roots());
+    path_confine::confine_in(&roots, param, raw)
+}
+
+/// `session_log` must be the installed session log itself or a file the
+/// workspace confinement admits. `SessionLog::open` creates missing files and
+/// parent directories, so an unconfined path is a write anywhere on disk.
+fn confine_session_log(raw: &str) -> Result<std::path::PathBuf, String> {
+    // Lexical checks first: resolving a UNC or device path would already
+    // contact the server or open the pipe.
+    path_confine::check_lexical("session_log", raw)?;
+    let root = path_confine::workspace_root();
+    let installed = crate::registry_bridge::current_session_log()
+        .and_then(|log| log.path().canonicalize().ok());
+    if let Some(installed) = installed {
+        let given = match &root {
+            Ok(root) => root.join(raw),
+            Err(_) => std::path::PathBuf::from(raw),
+        };
+        if given.canonicalize().is_ok_and(|given| given == installed) {
+            return Ok(given);
+        }
+    }
+    let path = path_confine::confine(&root?, "session_log", raw)?;
+    if !path.is_file() {
+        return Err(format!("`session_log`: {raw} is not a file"));
+    }
+    Ok(path)
 }
 
 // ── ix_ml_pipeline ────────────────────────────────────────────
@@ -5050,8 +5306,8 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
 
     // Option 1: analyze a file by path
     if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = Path::new(path_str);
-        let metrics = analyze_file(path).ok_or_else(|| {
+        let path = path_confine::confine(&path_confine::workspace_root()?, "path", path_str)?;
+        let metrics = analyze_file(&path).ok_or_else(|| {
             format!(
                 "Could not analyze file: {} (unsupported language or read error)",
                 path_str
@@ -5299,13 +5555,11 @@ pub fn tars_bridge(params: Value) -> Result<Value, String> {
     match action {
         "prepare_traces" => {
             use ix_io::trace_bridge;
-            use std::path::PathBuf;
 
-            let dir = params
-                .get("trace_dir")
-                .and_then(|v| v.as_str())
-                .map(PathBuf::from)
-                .unwrap_or_else(trace_bridge::default_trace_dir);
+            let dir = match params.get("trace_dir").and_then(|v| v.as_str()) {
+                Some(d) => confine_trace_dir("trace_dir", d)?,
+                None => trace_bridge::default_trace_dir(),
+            };
 
             if !dir.exists() {
                 return Ok(json!({
@@ -6441,14 +6695,29 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .unwrap_or(10);
 
-    let index_path = params
-        .get("index_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("state/voicings/optick.index");
-
-    let path = std::path::Path::new(index_path);
-    let index = ix_optick::OptickIndex::open(path)
+    let path = resolve_optick_index_path(
+        params.get("index_path").and_then(|v| v.as_str()),
+        std::env::var("OPTICK_INDEX_PATH").ok().as_deref(),
+        &workspace_root(),
+    )?;
+    let index_path = path.display().to_string();
+    let index = ix_optick::OptickIndex::open(&path)
         .map_err(|e| format!("Failed to open OPTK index at '{}': {}", index_path, e))?;
+
+    // The dimension comes from the index header, never a constant: the OPTIC-K
+    // compact layout has changed before, and the query must match the index
+    // actually on disk.
+    let dimension = index.dimension() as usize;
+    if query.len() != dimension {
+        return Err(format!(
+            "query dimension mismatch: got {}, expected {} (dimension of index '{}'). \
+             The query must use the index's compact, pre-scaled layout; a raw \
+             full-schema OPTIC-K embedding must be projected to it first.",
+            query.len(),
+            dimension,
+            index_path
+        ));
+    }
 
     let results = index
         .search(&query, instrument.as_deref(), top_k)
@@ -6472,8 +6741,48 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         "count": hits.len(),
         "top_k": top_k,
         "instrument_filter": instrument,
+        "index_path": index_path,
+        "index_dimension": dimension,
         "results": hits,
     }))
+}
+
+/// Resolve the OPTIC-K index for `ix_optick_search`. Precedence: the explicit
+/// `index_path` argument, then `OPTICK_INDEX_PATH`, then the sibling GA
+/// checkout (`<workspace>/../ga/state/voicings/optick.index`, where GA writes
+/// it), then the legacy in-repo `<workspace>/state/voicings/optick.index`.
+/// An explicit argument or env var that does not exist is an error, not a
+/// silent fallback; the error lists every path tried.
+fn resolve_optick_index_path(
+    explicit: Option<&str>,
+    env_var: Option<&str>,
+    workspace: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let candidates: Vec<(&str, std::path::PathBuf)> = match (explicit, env_var) {
+        (Some(p), _) => vec![("index_path argument", p.into())],
+        (None, Some(p)) if !p.is_empty() => vec![("OPTICK_INDEX_PATH", p.into())],
+        _ => vec![
+            (
+                "sibling ga checkout",
+                workspace.join("../ga/state/voicings/optick.index"),
+            ),
+            (
+                "in-repo default",
+                workspace.join("state/voicings/optick.index"),
+            ),
+        ],
+    };
+    if let Some((_, p)) = candidates.iter().find(|(_, p)| p.is_file()) {
+        return Ok(p.clone());
+    }
+    let tried: Vec<String> = candidates
+        .iter()
+        .map(|(src, p)| format!("{} ({src})", p.display()))
+        .collect();
+    Err(format!(
+        "OPTIC-K index not found; tried: {}. Pass 'index_path' or set OPTICK_INDEX_PATH.",
+        tried.join(", ")
+    ))
 }
 
 // ── ix_ast_query ──────────────────────────────────────────────────────────
@@ -7262,5 +7571,64 @@ mod voicings_payload_tests {
         // back to the default rather than emitting nonsense to the wire.
         let out = voicings_payload(json!({"scene_offset": [1.0, 2.0]})).expect("ok");
         assert_eq!(out["scene_offset"], json!([200.0, 0.0, 0.0]));
+    }
+}
+
+#[cfg(test)]
+mod optick_index_path_tests {
+    use super::resolve_optick_index_path;
+    use std::fs;
+    use std::path::Path;
+
+    fn touch(p: &Path) {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"x").unwrap();
+    }
+
+    #[test]
+    fn precedence_argument_then_env_then_sibling_then_in_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ix");
+        let sibling = tmp.path().join("ga/state/voicings/optick.index");
+        let in_repo = ws.join("state/voicings/optick.index");
+        let arg = tmp.path().join("arg.index");
+        let env = tmp.path().join("env.index");
+        for p in [&sibling, &in_repo, &arg, &env] {
+            touch(p);
+        }
+        let (a, e) = (arg.to_str().unwrap(), env.to_str().unwrap());
+
+        assert_eq!(
+            resolve_optick_index_path(Some(a), Some(e), &ws).unwrap(),
+            arg
+        );
+        assert_eq!(resolve_optick_index_path(None, Some(e), &ws).unwrap(), env);
+        assert!(resolve_optick_index_path(None, None, &ws)
+            .unwrap()
+            .ends_with("ga/state/voicings/optick.index"));
+
+        fs::remove_file(&sibling).unwrap();
+        assert_eq!(resolve_optick_index_path(None, None, &ws).unwrap(), in_repo);
+    }
+
+    #[test]
+    fn missing_index_errors_listing_every_path_tried() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ix");
+
+        let err = resolve_optick_index_path(None, None, &ws).unwrap_err();
+        assert!(err.contains("sibling ga checkout"), "got: {err}");
+        assert!(err.contains("in-repo default"), "got: {err}");
+        assert!(err.contains("optick.index"), "got: {err}");
+
+        // An explicit source that does not exist never falls back silently.
+        touch(&ws.join("state/voicings/optick.index"));
+        let err = resolve_optick_index_path(None, Some("nope.index"), &ws).unwrap_err();
+        assert!(err.contains("nope.index (OPTICK_INDEX_PATH)"), "got: {err}");
+        let err = resolve_optick_index_path(Some("arg.index"), None, &ws).unwrap_err();
+        assert!(
+            err.contains("arg.index (index_path argument)"),
+            "got: {err}"
+        );
     }
 }

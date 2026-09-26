@@ -83,7 +83,18 @@ try {
         if ($table -notmatch '^4\|1(\.0)?$') {
             throw "SMOKE TEST FAILED (table fns) — expected '4|1.0', got '$table'"
         }
-        Write-Host ' - PASS: scalar + table UDFs correct via LOAD' -ForegroundColor Green
+        # Petri: the leaked-lock net wedges with its token in `working` -> fails|working
+        $petriSql = "LOAD '$loadPath';" + @'
+            SELECT json_extract_string(a, '$.deadlock_free.verdict') AS v,
+                   json_extract_string(a, '$.deadlock_free.detail[0].tokens[0][0]') AS p
+            FROM (SELECT ix_petri_analyze('{"places":[{"id":"lock","tokens":1},{"id":"working"}],"transitions":[{"id":"acquire"}],"arcs":[{"from":"lock","to":"acquire"},{"from":"acquire","to":"working"}]}', 1000) AS a);
+'@
+        $petri = (& duckdb -unsigned -noheader -list -c $petriSql).Trim()
+        Write-Host " - petri: $petri"
+        if ($petri -ne 'fails|working') {
+            throw "SMOKE TEST FAILED (petri) — expected 'fails|working', got '$petri'"
+        }
+        Write-Host ' - PASS: scalar + table + petri UDFs correct via LOAD' -ForegroundColor Green
     }
 }
 finally {

@@ -64,6 +64,13 @@ A deadlock found during a truncated run is still reported: a witness sequence is
 a positive existence proof and truncation cannot invalidate it. The *absence* of
 a deadlock is never reported from a truncated run.
 
+A firing whose result would not fit a `u64` token count truncates the run too,
+and the `unknown` reasons name the transition and place that overflowed. The
+report's `truncation` field says which cause stopped a run: `max_states` (a
+larger budget may finish it) or `overflow` (none will). A net
+with no transitions is dead at its initial marking (`deadlock-free` fails with
+an empty witness) while `live` holds vacuously; read `deadlock-free` for it.
+
 ## 3. Determinism
 
 Firing order is fixed by the net's own type, not chosen at the call site. Places
@@ -108,6 +115,60 @@ Point it at a file with:
 ```bash
 cargo run -p ix-petri --example analyze_pnml -- path/to/net.pnml
 ```
+
+### JSON and SQL, for callers outside Rust
+
+`ix_petri::analyze_json(net_json, max_states)` takes a net in a JSON shape that
+mirrors the builder one call per entry, and returns the same `Analysis`:
+
+```json
+{ "name": "leaked-lock",
+  "places": [{ "id": "lock", "tokens": 1 }, { "id": "working" }],
+  "transitions": [{ "id": "acquire" }],
+  "arcs": [{ "from": "lock", "to": "acquire" }, { "from": "acquire", "to": "working" }] }
+```
+
+`tokens` defaults to 0 and `weight` to 1; unknown fields are **rejected**, so a
+misspelt `initial_marking` cannot silently analyse an empty net. `ix-duck`
+exposes it as a DuckDB scalar, carried by the loadable `ix.duckdb_extension`:
+
+```sql
+SELECT json_extract_string(ix_petri_analyze(content, 50000), '$.deadlock_free.verdict')
+FROM read_text('nets/*.json');   -- one row per file; column `content` holds the JSON
+```
+
+The state budget is a required argument, so every result names the bound it was
+computed under. The call is refused, not clamped, when the budget is outside
+`1..=ix_petri::json::MAX_STATES_CEILING` (1 000 000), when the net JSON is over
+`MAX_NET_JSON_BYTES` (1 MiB), or when `ix_petri::json::heap_bound` for that net
+and budget is over `HEAP_BUDGET_BYTES` (512 MiB). The state count alone does not
+bound memory: markings cost `states × places`, edges and the liveness table
+`states × transitions`, and up to nine witnesses `states × transition-id
+length`, and an unbounded net always runs to its budget. `heap_bound` is a
+worst-case count read off the net's size, checked against measured peaks in
+`crates/ix-petri/tests/heap_budget.rs`; the budget refusal names the largest
+`max_states` that net admits (a few hundred thousand for a small net). The bound
+is per row, and so is what it lets one row return: every byte of the result
+JSON is charged at least three times, so one admitted row returns at most about
+a third of 512 MiB, **about 171 MiB**. That worst case is reachable with a small
+net: a 2 kB net whose deep witnesses repeat a transition id of 64 control
+characters (six bytes each once escaped) returns 129 MB at its largest admitted
+budget (41 537), and the same shape with longer ids 144 to 149 MB. DuckDB holds
+result strings outside `memory_limit`, so the results of one call of the scalar
+(one chunk, up to 2048 rows) are refused together once they pass 512 MiB. That
+caps a chunk, not a statement: each thread works its own chunk, and a result
+DuckDB materializes, or an operator that keeps its input (`ORDER BY`,
+`string_agg`, a client that fetches every row), holds many. At 129 MB a row, 64
+rows are about 8 GB. **For large budgets, analyse one net per query**, or keep
+the budget small enough that rows × result stays within memory. A refused net is a SQL error, and like any SQL error it fails the whole statement,
+so one malformed file in `read_text('nets/*.json')` loses every row. Read a dead
+marking from `deadlock_free.detail[i].tokens` (`[place id, tokens]` pairs); the
+`marking` string beside it is rendered from free-text labels for a person and is
+not escaped. Token counts are `u64`; a JavaScript reader loses precision above
+2^53, so refuse those (`Number.isSafeInteger`) rather than round them. The serialized `Analysis` is the wire contract; its bytes are
+pinned by `ix_petri::json::tests::wire_shape_is_pinned` on the default test
+path. The first consumer is gaia's issue #80 bootstrap-deadlock tracer, which
+reaches it from Node.js through `@duckdb/node-api`.
 
 ## 5. The worked example that motivated the crate
 

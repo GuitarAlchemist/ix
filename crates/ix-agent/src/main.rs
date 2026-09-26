@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use ix_agent::scopes::Scope;
-use ix_agent::server_context::ServerContext;
+use ix_agent::server_context::{tools_call_result, ServerContext};
 use ix_agent::tools::ToolRegistry;
 
 const JSONRPC_PARSE_ERROR: i64 = -32700;
@@ -278,25 +278,8 @@ fn handle_tools_call(
 
     eprintln!("[ix-mcp] tools/call name={}", tool_name);
 
-    match registry.call_with_ctx(&tool_name, arguments, ctx) {
-        Ok(result) => success_response(
-            id,
-            json!({
-                "content": [{
-                    "type": "text",
-                    "text": serde_json::to_string_pretty(&result).unwrap_or_default(),
-                }],
-            }),
-        ),
-        Err(e) => success_response(
-            id,
-            json!({
-                "content": [{
-                    "type": "text",
-                    "text": format!("Error: {}", e),
-                }],
-                "isError": true,
-            }),
-        ),
-    }
+    success_response(
+        id,
+        tools_call_result(registry.call_with_ctx(&tool_name, arguments, ctx)),
+    )
 }

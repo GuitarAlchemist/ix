@@ -101,6 +101,10 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_topo",
         "ix_category",
         "ix_graph",
+        // Pure correlation-mesh compute over caller-supplied series.
+        "ix_mesh_correlate",
+        // Reachability analysis of a caller-supplied Petri net (inline or PNML string).
+        "ix_petri_analyze",
         "ix_hyperloglog",
         "ix_bloom_filter",
         "ix_chaos_lyapunov",
@@ -120,6 +124,11 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         // Code + context analysis
         "ix_code_analyze",
         "ix_context_walk",
+        // Assumption graph: scan @ai: annotations / replay a belief log, no writes.
+        "ix_assumption_query",
+        "ix_assumption_belief_at",
+        "ix_assumption_drift",
+        "ix_assumption_claims",
         // Fuzzy distribution eval (deterministic, no side effects)
         "ix_fuzzy_eval",
         // Governance reads
@@ -134,7 +143,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_tars_bridge",
         // Pipeline info (no execution)
         "ix_pipeline",
-        "ix_cache",
+        "ix_node_catalog",
+        "ix_pipeline_validate",
     ];
 
     // In-project edits — tools that write to state/ or emit trace data
@@ -145,12 +155,32 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_governance_belief",       // writes to state/beliefs/
         "ix_governance_graph_rescan", // rebuilds graph state
         "ix_session_flywheel_export", // writes a GA Trace JSON file
+        // `set` / `delete` mutate the process-wide cache that `ix_pipeline_run`
+        // consults before dispatching an asset-backed step, so a write can stand
+        // in for a later step's result. In-process state, not a file, but not
+        // side-effect-free either; the classifier is name-only, so the whole
+        // tool takes the writing kind (Tier 2, still auto-continues).
+        "ix_cache",
     ];
+
+    // Gated tools — always Tier 3. None of today's tools belongs here; the
+    // tables exist so a tool that shells out, fetches from the web, or writes
+    // outside the workspace is classified explicitly instead of falling
+    // through to `Unknown`.
+    const SHELL_COMMAND_TOOLS: &[&str] = &[];
+    const WEB_FETCH_TOOLS: &[&str] = &[];
+    const EDIT_OUT_OF_PROJECT_TOOLS: &[&str] = &[];
 
     if READ_TOOLS.contains(&tool_name) {
         ActionKind::Read
     } else if EDIT_IN_PROJECT_TOOLS.contains(&tool_name) {
         ActionKind::EditInProject
+    } else if SHELL_COMMAND_TOOLS.contains(&tool_name) {
+        ActionKind::ShellCommand
+    } else if WEB_FETCH_TOOLS.contains(&tool_name) {
+        ActionKind::WebFetch
+    } else if EDIT_OUT_OF_PROJECT_TOOLS.contains(&tool_name) {
+        ActionKind::EditOutOfProject
     } else {
         ActionKind::Unknown
     }
@@ -193,6 +223,16 @@ mod tests {
             "ix_autocorrelation",
             "ix_analyze_reference",
             "ix_spectral_distance",
+            // Same trap, found by the registry-wide parity check: all six were
+            // registered and unit-tested, and refused on every MCP call.
+            "ix_mesh_correlate",
+            "ix_petri_analyze",
+            "ix_assumption_query",
+            "ix_assumption_belief_at",
+            "ix_assumption_drift",
+            "ix_assumption_claims",
+            "ix_node_catalog",
+            "ix_pipeline_validate",
         ] {
             assert_eq!(
                 classify_action_kind(tool),
@@ -209,6 +249,8 @@ mod tests {
             "ix_trace_ingest",
             "ix_governance_belief",
             "ix_governance_graph_rescan",
+            // Writes the in-process cache ix_pipeline_run reads (review on #345).
+            "ix_cache",
         ] {
             assert_eq!(
                 classify_action_kind(tool),
