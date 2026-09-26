@@ -52,5 +52,15 @@ jobs:
       - name: Test (duck feature)
         run: cargo test -p ix-duck --features duck
 
+      # `code-semantic` (tree-sitter Tier B: ix_semantic_metrics / ix_ast_query) is
+      # otherwise compiled only at release, through ix-duck-ext. Its tests live in
+      # `code::tests`, which is `cfg(all(test, feature = "duck"))` because they open
+      # a bench connection, so `duck` has to come with it or they silently vanish.
+      - name: Clippy (duck + code-semantic features)
+        run: cargo clippy -p ix-duck --all-targets --features duck,code-semantic -- -D warnings
+
+      - name: Test (duck + code-semantic features)
+        run: cargo test -p ix-duck --features duck,code-semantic
+
       - name: Hard gate over vendored fixtures (must pass; nonzero on regression)
         run: cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check crates/ix-duck/tests/fixtures/chatbot-qa

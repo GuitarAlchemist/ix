@@ -99,7 +99,14 @@ jobs:
   # Cargo.toml keeps out of the default build on purpose, and
   # `memristive-markov/gpu` may need hardware a runner does not have. Between them
   # they are the largest dark surface in the repository — ix-duck alone carries
-  # ~10k lines and 174 tests behind `udf` and `duck`.
+  # ~10k lines and 174 tests behind `udf` and `duck`. (`ix-duck/duck` itself is
+  # compiled and tested by ix-duck-chatbot.yml, path-filtered on crates/ix-duck.)
+  #
+  # One row here does pay for bundled DuckDB: `ix-agent/maintain-gate`. It is the
+  # only way the MCP tool `ix_maintain_gate` and its parity test
+  # (`maintain_gate_tool_returns_a_verdict`, over vendored ix-duck fixtures) are
+  # ever compiled in CI, so a break in that seam would otherwise surface only when
+  # someone builds the opt-in binary by hand.
   gated-features:
     strategy:
       fail-fast: false
@@ -109,6 +116,14 @@ jobs:
             features: full          # semantic, trajectory, topology, gates, advanced, physics
           - crate: ix-autograd
             features: fft-autograd
+          - crate: ix-baml
+            features: claude-cli    # tests never spawn `claude`; the live call is #[ignore]
+          - crate: ix-cache
+            features: resp-server
+          - crate: memristive-markov
+            features: reservoir
+          - crate: ix-agent
+            features: maintain-gate # pulls ix-duck/duck (bundled DuckDB), the slow row
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
