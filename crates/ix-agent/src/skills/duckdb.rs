@@ -7,10 +7,12 @@
 //! DuckDB into `ix-agent`: it runs the operator-installed DuckDB 1.x CLI
 //! (`IX_DUCKDB_BIN`, else `duckdb` on `PATH`).
 //!
-//! The CLI runs in `-safe` mode, in memory: no file, extension, `ATTACH` or
-//! network access, the configuration locked, and the file and shell dot
-//! commands refused. That, a wall-clock timeout and output caps make it a pure
-//! computation over the request, so it is classified Tier 1.
+//! The CLI runs in memory, in safe mode: no file, extension, `ATTACH`,
+//! network or environment access, the configuration locked, and the file and
+//! shell dot commands refused. Before safe mode is entered, memory is capped at
+//! 512 MiB with no spilling to disk and the query gets 2 threads. That, a
+//! wall-clock timeout and output caps make it a pure, bounded computation over
+//! the request, so it is classified Tier 1.
 //!
 //! Tables are loaded without touching disk: one CLI call infers each table's
 //! `json_structure`, a second loads it with `from_json` + `unnest` and then
@@ -29,6 +31,14 @@ const MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_MAX_ROWS: usize = 1_000;
 const MAX_ROWS_CEILING: usize = 10_000;
 const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Prefixes every script. `-safe` on the command line would lock the
+/// configuration before any statement could bound memory, so the limits are
+/// set first and `.safe_mode` then enters the same safe mode, locking them.
+/// An empty `temp_directory` makes a query over the limit fail instead of
+/// spilling to disk.
+const PREAMBLE: &str =
+    "SET memory_limit = '512MiB';\nSET threads = 2;\nSET temp_directory = '';\n.safe_mode\n";
 
 fn duckdb_query_schema() -> Value {
     json!({
@@ -69,7 +79,8 @@ fn duckdb_query_output_schema() -> Value {
 /// Run DuckDB SQL over caller-supplied tables and return the rows as JSON.
 ///
 /// Needs the DuckDB 1.x CLI (`IX_DUCKDB_BIN`, else `duckdb` on `PATH`). The
-/// query runs in memory in DuckDB's `-safe` mode, bounded to 30 s.
+/// query runs in memory in DuckDB's safe mode, bounded to 512 MiB, 2 threads
+/// and 30 s.
 #[ix_skill(
     domain = "duckdb",
     name = "duckdb.query",
@@ -244,12 +255,13 @@ fn version(bin: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Runs a script in `duckdb -safe -bail -json` (in memory) and returns the
-/// JSON value each result-producing statement printed, in order.
+/// Runs `PREAMBLE` then a script in `duckdb -bail -json` (in memory) and
+/// returns the JSON value each result-producing statement printed, in order.
 // @ai:invariant a query run here cannot read, write or attach a file, install an extension or re-enable external access [P:test conf:0.6 src:duckdb_query::cannot_read_write_or_attach_files] — the test skips where the CLI is absent, which includes default CI, so the binding is live only under IX_REQUIRE_DUCKDB=1
+// @ai:invariant a query run here holds at most 512 MiB of DuckDB memory on 2 threads, never spills to disk, and cannot raise either limit [P:test conf:0.6 src:duckdb_query::memory_and_threads_are_bounded_and_locked] — same binding as above: live only under IX_REQUIRE_DUCKDB=1
 fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
     let mut child = Command::new(bin)
-        .args(["-safe", "-bail", "-json", "-no-init"])
+        .args(["-bail", "-json", "-no-init"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -262,7 +274,7 @@ fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
         })?;
 
     let mut stdin = child.stdin.take().ok_or("no stdin for DuckDB")?;
-    let script = script.to_string();
+    let script = format!("{PREAMBLE}{script}");
     let writer = std::thread::spawn(move || {
         // A write error means DuckDB already stopped (-bail); its stderr says why.
         let _ = stdin.write_all(script.as_bytes());
@@ -313,10 +325,72 @@ fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
             "DuckDB output exceeds {MAX_OUTPUT_BYTES} bytes; select fewer rows or columns"
         ));
     }
-    serde_json::Deserializer::from_slice(&out)
+    let values = serde_json::Deserializer::from_slice(&out)
         .into_iter::<Value>()
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("could not read DuckDB JSON output: {e}"))
+        .map_err(|e| format!("could not read DuckDB JSON output: {e}"))?;
+    // A row read into a JSON object keeps only the last of two same-named
+    // columns (`SELECT t.*, u.*`), so the returned result's names are read in
+    // output order first, and a repeat is refused rather than dropped.
+    if let Some(Ok(ResultColumns(names))) = serde_json::Deserializer::from_slice(&out)
+        .into_iter::<ResultColumns>()
+        .last()
+    {
+        let mut seen = std::collections::HashSet::new();
+        if let Some(dup) = names.iter().find(|n| !seen.insert(n.as_str())) {
+            return Err(format!(
+                "the result has more than one column named {dup:?}; rows are JSON objects, so give each column a distinct name with AS"
+            ));
+        }
+    }
+    Ok(values)
+}
+
+/// The column names of one DuckDB `-json` result (an array of row objects),
+/// in output order, read from its first row.
+struct ResultColumns(Vec<String>);
+
+impl<'de> serde::Deserialize<'de> for ResultColumns {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+        struct Row(Vec<String>);
+        impl<'de> serde::Deserialize<'de> for Row {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                struct Names;
+                impl<'de> Visitor<'de> for Names {
+                    type Value = Row;
+                    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        f.write_str("a result row")
+                    }
+                    fn visit_map<A: MapAccess<'de>>(self, mut row: A) -> Result<Row, A::Error> {
+                        let mut names = Vec::new();
+                        while let Some((name, IgnoredAny)) =
+                            row.next_entry::<String, IgnoredAny>()?
+                        {
+                            names.push(name);
+                        }
+                        Ok(Row(names))
+                    }
+                }
+                d.deserialize_map(Names)
+            }
+        }
+
+        struct FirstRow;
+        impl<'de> Visitor<'de> for FirstRow {
+            type Value = ResultColumns;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a DuckDB result")
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut rows: A) -> Result<ResultColumns, A::Error> {
+                let names = rows.next_element::<Row>()?.map(|r| r.0).unwrap_or_default();
+                while rows.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(ResultColumns(names))
+            }
+        }
+        d.deserialize_seq(FirstRow)
+    }
 }
 
 #[cfg(test)]
@@ -341,6 +415,18 @@ mod tests {
         assert!(empty.unwrap_err().contains("empty"));
         let scalar_rows = duckdb_query(json!({ "sql": "SELECT 1", "tables": { "t": [1, 2] } }));
         assert!(scalar_rows.unwrap_err().contains("JSON object"));
+    }
+
+    #[test]
+    fn result_columns_keep_repeated_names_in_order() {
+        let cols =
+            serde_json::from_str::<ResultColumns>(r#"[{"a":1,"b":2,"a":3},{"a":4,"b":5,"a":6}]"#)
+                .unwrap();
+        assert_eq!(cols.0, ["a", "b", "a"]);
+        assert!(serde_json::from_str::<ResultColumns>("[]")
+            .unwrap()
+            .0
+            .is_empty());
     }
 
     #[test]

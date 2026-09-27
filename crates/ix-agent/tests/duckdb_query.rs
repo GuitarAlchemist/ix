@@ -82,7 +82,9 @@ fn cannot_read_write_or_attach_files() {
         format!("COPY (SELECT 1) TO '{out_path}'"),
         format!("ATTACH '{p}.db'"),
         "INSTALL httpfs".to_string(),
+        "LOAD httpfs".to_string(),
         "SET enable_external_access = true".to_string(),
+        "SELECT getenv('PATH') AS p".to_string(),
     ] {
         let err = duckdb_query(json!({ "sql": sql })).expect_err(&sql);
         assert!(
@@ -91,6 +93,42 @@ fn cannot_read_write_or_attach_files() {
         );
     }
     assert!(!dir.path().join("out.csv").exists(), "COPY wrote a file");
+}
+
+#[test]
+fn memory_and_threads_are_bounded_and_locked() {
+    if !duckdb_available() {
+        return;
+    }
+    let out = duckdb_query(json!({
+        "sql": "SELECT current_setting('memory_limit') AS m, current_setting('threads') AS t, current_setting('temp_directory') AS d"
+    }))
+    .unwrap();
+    assert_eq!(out["rows"], json!([{ "m": "512.0 MiB", "t": 2, "d": "" }]));
+    let err = duckdb_query(json!({ "sql": "SET memory_limit = '8GB'" })).unwrap_err();
+    assert!(err.contains("locked"), "{err}");
+    // Materialises 200M BIGINTs (1.6 GB): refused at the limit, not spilled to disk.
+    let err = duckdb_query(json!({ "sql": "SELECT len(list(i)) AS n FROM range(200000000) r(i)" }))
+        .unwrap_err();
+    assert!(err.contains("Out of Memory"), "{err}");
+}
+
+#[test]
+fn refuses_results_with_repeated_column_names() {
+    if !duckdb_available() {
+        return;
+    }
+    let err = duckdb_query(json!({ "sql": "SELECT 1 AS a, 2 AS a" })).unwrap_err();
+    assert!(err.contains("more than one column named \"a\""), "{err}");
+    let err = duckdb_query(json!({
+        "sql": "SELECT t.*, u.* FROM t JOIN u ON t.b = u.b",
+        "tables": {
+            "t": [{ "a": 1, "b": "x" }],
+            "u": [{ "b": "x", "label": "ex" }]
+        }
+    }))
+    .unwrap_err();
+    assert!(err.contains("more than one column named \"b\""), "{err}");
 }
 
 #[test]
