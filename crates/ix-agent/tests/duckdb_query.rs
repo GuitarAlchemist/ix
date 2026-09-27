@@ -263,6 +263,8 @@ fn returns_the_last_statement_or_refuses_the_script() {
         "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
         "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
         "CREATE TABLE t(a INT); PREPARE ins AS INSERT INTO t VALUES (1); SELECT 99 AS stale; EXECUTE ins",
+        "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ($é$; SELECT 1$é$)",
+        "SELECT 99 AS stale; -- c\rCREATE VIEW v AS SELECT 2",
     ] {
         let err = duckdb_query(json!({ "sql": sql })).unwrap_err();
         assert!(err.contains("last statement"), "{sql}: {err}");
@@ -296,6 +298,11 @@ fn returns_the_last_statement_or_refuses_the_script() {
         let out = duckdb_query(json!({ "sql": sql })).unwrap_or_else(|e| panic!("{last}: {e}"));
         assert_ne!(out["rows"], json!([{ "stale": 99 }]), "{last}");
     }
+    // DuckDB reads these statement boundaries the same way.
+    let out = duckdb_query(json!({ "sql": "SELECT $é$a;b$é$ AS s" })).unwrap();
+    assert_eq!(out["rows"], json!([{ "s": "a;b" }]));
+    let out = duckdb_query(json!({ "sql": "SELECT 1 AS stale; -- c\rSELECT 2 AS x" })).unwrap();
+    assert_eq!(out["rows"], json!([{ "x": 2 }]));
     // A leading-dot literal on an indented line is SQL.
     let out = duckdb_query(json!({ "sql": "SELECT\n  .5::DOUBLE AS ratio" })).unwrap();
     assert_eq!(out["rows"], json!([{ "ratio": 0.5 }]));

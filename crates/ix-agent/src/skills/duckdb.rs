@@ -300,8 +300,15 @@ fn prints_rows<'a>(tokens: &'a [String], script: &'a [Vec<String>]) -> Result<()
     }
 }
 
+/// A byte of a dollar-quote tag in DuckDB's (PostgreSQL's) scanner: an ASCII
+/// letter or digit, `_`, or any non-ASCII byte.
+fn tag_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+}
+
+/// A byte that continues a name: a tag byte or `$`.
 fn name_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
+    tag_byte(c) || c == b'$'
 }
 
 /// The script with every byte of a string, quoted name or dollar-quoted
@@ -316,7 +323,11 @@ fn code_only(sql: &str) -> Vec<u8> {
     while i < b.len() {
         let rest = &b[i..];
         let (len, mask) = if rest.starts_with(b"--") {
-            let len = rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
+            // A line comment ends at \n or a lone \r.
+            let len = rest
+                .iter()
+                .position(|&c| c == b'\n' || c == b'\r')
+                .unwrap_or(rest.len());
             (len, b' ')
         } else if rest.starts_with(b"/*") {
             // Block comments nest in DuckDB.
@@ -353,23 +364,22 @@ fn code_only(sql: &str) -> Vec<u8> {
                     (j + 1, b'\'')
                 }
                 // $$...$$ or $tag$...$tag$, but not $1 or a name containing '$'.
-                b'$' if i == 0 || !name_byte(b[i - 1]) => match rest[1..]
-                    .iter()
-                    .position(|&c| !(c.is_ascii_alphanumeric() || c == b'_'))
-                {
-                    Some(n) if rest[1 + n] == b'$' && !rest[1].is_ascii_digit() => {
-                        let tag = &rest[..n + 2];
-                        let body = &rest[n + 2..];
-                        let len = n
-                            + 2
-                            + body
-                                .windows(tag.len())
-                                .position(|w| w == tag)
-                                .map_or(body.len(), |p| p + tag.len());
-                        (len, b'\'')
+                b'$' if i == 0 || !name_byte(b[i - 1]) => {
+                    match rest[1..].iter().position(|&c| !tag_byte(c)) {
+                        Some(n) if rest[1 + n] == b'$' && !rest[1].is_ascii_digit() => {
+                            let tag = &rest[..n + 2];
+                            let body = &rest[n + 2..];
+                            let len = n
+                                + 2
+                                + body
+                                    .windows(tag.len())
+                                    .position(|w| w == tag)
+                                    .map_or(body.len(), |p| p + tag.len());
+                            (len, b'\'')
+                        }
+                        _ => (1, c),
                     }
-                    _ => (1, c),
-                },
+                }
                 _ => (1, c),
             }
         };
@@ -809,6 +819,11 @@ mod tests {
             "SELECT 1; DELETE FROM t WHERE a IN (SELECT 1 AS b) AND s = $$ returning $$",
             // Block comments nest, so this `;` is inside one.
             "SELECT 1 AS stale; /* /* */ ; SELECT 3 */ CREATE VIEW v AS SELECT 2",
+            // A dollar-quote tag takes non-ASCII letters, and a line comment
+            // ends at a lone \r too.
+            "SELECT 99 AS stale; INSERT INTO t VALUES ($é$; SELECT 1$é$)",
+            "SELECT 99 AS stale; -- c\rCREATE VIEW v AS SELECT 2",
+            "SELECT 99 AS stale -- c\r; CREATE VIEW v AS SELECT 2",
             // A prepared write prints nothing when executed; an unknown or
             // quoted name cannot be resolved.
             "PREPARE ins AS INSERT INTO t VALUES (1); SELECT 99 AS stale; EXECUTE ins",
@@ -847,6 +862,10 @@ mod tests {
             "WITH x(n) AS (SELECT 1), y AS MATERIALIZED (SELECT 2) SELECT * FROM x, y",
             "WITH update AS (SELECT 1 AS a) SELECT * FROM update",
             "SELECT 1 /* a /* ; CREATE */ b */ AS x",
+            "SELECT $é$a;CREATE$é$ AS s",
+            "SELECT 1 AS stale; -- c\rSELECT 2 AS x",
+            // '$' inside a name is part of it, not a dollar quote.
+            "CREATE VIEW v AS SELECT 1 AS a$$; SELECT 2 AS x$$",
             "WITH x AS (SELECT 1 AS a) (SELECT * FROM x)",
             "VALUES (1)",
             "TABLE t",
