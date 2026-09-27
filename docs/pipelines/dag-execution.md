@@ -333,6 +333,27 @@ A duplicate id is reported once, with its `index`; that step is then ignored so 
 
 The validator is deliberately stricter than `ix_pipeline_run`, which accepts an empty `steps` array and silently ignores a non-array `depends_on` or a non-string entry in it. The checks are structural: argument *types* are not validated against the schema yet. The example above is pinned by `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
 
+## SQL Over Step Outputs (`ix_duckdb_query`)
+
+`ix_duckdb_query` runs DuckDB SQL over rows passed in with the call, so a pipeline can join, filter or aggregate what earlier tools returned. It runs the operator-installed DuckDB 1.x CLI (`IX_DUCKDB_BIN`, else `duckdb` on `PATH`) and is Tier 1: a pure computation over the request.
+
+```json
+{
+  "sql": "SELECT t.b, sum(t.a) AS total, any_value(u.label) AS label FROM t JOIN u ON t.b = u.b GROUP BY t.b ORDER BY t.b",
+  "tables": {
+    "t": [{ "a": 1, "b": "x" }, { "a": 2.5, "b": "x" }, { "a": 4, "b": "it's" }],
+    "u": [{ "b": "x", "label": "ex" }, { "b": "it's", "label": "quote" }]
+  }
+}
+```
+
+returns `rows: [{"b": "it's", "total": 4.0, "label": "quote"}, {"b": "x", "total": 3.5, "label": "ex"}]`, `columns: ["b", "label", "total"]` (sorted: rows are JSON objects, which do not keep SQL column order), `row_count`, `truncated`, and each table's inferred structure (`tables.t` is `[{"a":"DOUBLE","b":"VARCHAR"}]`). The example is pinned by `crates/ix-agent/tests/duckdb_query.rs::queries_supplied_tables_with_inferred_types`.
+
+- **Input.** `tables` maps a name (`[A-Za-z_][A-Za-z0-9_]*`, at most 64 characters) to a non-empty array of JSON objects; column types are inferred with `json_structure`. A nested object stays a STRUCT column (`meta.score`). At most 16 tables and 8 MiB of JSON.
+- **Isolation.** The query runs in memory in DuckDB's safe mode: no file, extension, `ATTACH`, network or environment (`getenv`) access, the configuration locked, dot commands refused. Before safe mode is entered, memory is capped at 512 MiB with no spilling to disk and the query gets 2 threads; a query over the limit fails with `Out of Memory`. Each DuckDB run is stopped after 30 s.
+- **Output.** `rows` is the last statement's result, at most `max_rows` of it (1 to 10000, default 1000); `truncated` says when there were more. The whole result must fit in 16 MiB of JSON before `max_rows` applies, so bound a large result in SQL with `LIMIT`. A result with two columns of the same name is refused, since a JSON object would keep only one: alias them with `AS`.
+- **Empty results.** DuckDB prints an empty result without its column names, so the script runs a second time to read them. If a query whose result changes between runs (over `random()`, say) has rows the second time, `columns` stays empty rather than guessed.
+
 ---
 
 ## Going Further

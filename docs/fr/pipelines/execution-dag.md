@@ -333,6 +333,27 @@ Un id en double est signalé une fois, avec son `index` ; l'étape concernée es
 
 Le validateur est volontairement plus strict que `ix_pipeline_run`, qui accepte un tableau `steps` vide et ignore silencieusement un `depends_on` qui n'est pas un tableau ou qui contient une entrée non textuelle. Les vérifications sont structurelles : les *types* des arguments ne sont pas encore validés contre le schéma. L'exemple ci-dessus est vérifié par `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
 
+## SQL sur les sorties d'étapes (`ix_duckdb_query`)
+
+`ix_duckdb_query` exécute du SQL DuckDB sur des lignes transmises avec l'appel : un pipeline peut ainsi joindre, filtrer ou agréger ce que les outils précédents ont renvoyé. L'outil lance le CLI DuckDB 1.x installé par l'opérateur (`IX_DUCKDB_BIN`, sinon `duckdb` dans le `PATH`) et relève du Tier 1 : c'est un calcul pur sur la requête.
+
+```json
+{
+  "sql": "SELECT t.b, sum(t.a) AS total, any_value(u.label) AS label FROM t JOIN u ON t.b = u.b GROUP BY t.b ORDER BY t.b",
+  "tables": {
+    "t": [{ "a": 1, "b": "x" }, { "a": 2.5, "b": "x" }, { "a": 4, "b": "it's" }],
+    "u": [{ "b": "x", "label": "ex" }, { "b": "it's", "label": "quote" }]
+  }
+}
+```
+
+renvoie `rows: [{"b": "it's", "total": 4.0, "label": "quote"}, {"b": "x", "total": 3.5, "label": "ex"}]`, `columns: ["b", "label", "total"]` (triées : les lignes sont des objets JSON, qui ne conservent pas l'ordre des colonnes SQL), `row_count`, `truncated`, et la structure inférée de chaque table (`tables.t` vaut `[{"a":"DOUBLE","b":"VARCHAR"}]`). L'exemple est vérifié par `crates/ix-agent/tests/duckdb_query.rs::queries_supplied_tables_with_inferred_types`.
+
+- **Entrée.** `tables` associe un nom (`[A-Za-z_][A-Za-z0-9_]*`, 64 caractères au plus) à un tableau non vide d'objets JSON ; les types des colonnes sont inférés avec `json_structure`. Un objet imbriqué reste une colonne STRUCT (`meta.score`). 16 tables et 8 Mio de JSON au plus.
+- **Isolation.** La requête s'exécute en mémoire, dans le mode sécurisé de DuckDB : aucun accès aux fichiers, aux extensions, à `ATTACH`, au réseau ni à l'environnement (`getenv`), configuration verrouillée, commandes point refusées. Avant l'entrée en mode sécurisé, la mémoire est plafonnée à 512 Mio sans débordement sur disque, et la requête dispose de 2 threads ; une requête qui dépasse la limite échoue avec `Out of Memory`. Chaque exécution de DuckDB est arrêtée au bout de 30 s.
+- **Sortie.** `rows` contient le résultat de la dernière instruction, limité à `max_rows` lignes (de 1 à 10000, 1000 par défaut) ; `truncated` indique qu'il y en avait davantage. Le résultat complet doit tenir dans 16 Mio de JSON avant que `max_rows` ne s'applique : bornez donc un gros résultat en SQL avec `LIMIT`. Un résultat qui contient deux colonnes du même nom est refusé, car un objet JSON n'en garderait qu'une : renommez-les avec `AS`.
+- **Résultats vides.** DuckDB imprime un résultat vide sans ses noms de colonnes ; le script est donc exécuté une seconde fois pour les lire. Si une requête dont le résultat varie d'une exécution à l'autre (avec `random()`, par exemple) renvoie des lignes la seconde fois, `columns` reste vide plutôt que deviné.
+
 ---
 
 ## Pour aller plus loin

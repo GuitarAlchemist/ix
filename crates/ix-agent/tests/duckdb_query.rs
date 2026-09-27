@@ -161,6 +161,20 @@ fn reports_the_columns_of_an_empty_result() {
 }
 
 #[test]
+fn never_reports_a_data_row_as_column_names() {
+    if !duckdb_available() {
+        return;
+    }
+    // Empty on one run and not on the next about a quarter of the time: the
+    // run that reads an empty result's names must not take a row for them.
+    for _ in 0..20 {
+        let out = duckdb_query(json!({ "sql": "SELECT 1 AS id WHERE random() < 0.5" })).unwrap();
+        let columns = &out["columns"];
+        assert!(*columns == json!(["id"]) || *columns == json!([]), "{out}");
+    }
+}
+
+#[test]
 fn reports_sql_errors() {
     if !duckdb_available() {
         return;

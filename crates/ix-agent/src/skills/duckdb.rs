@@ -163,11 +163,15 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
         .unwrap_or_default();
     if row_count == 0 && !outputs.is_empty() {
         // `-json` prints an empty result as `[]`, without its names. The script
-        // runs again in CSV mode, where an empty result still prints its
-        // header; it is in memory and cut off from everything else, so running
-        // it twice changes nothing but the time taken.
-        columns = csv_header_of_empty_result(&bin, &script)?;
-        columns.sort();
+        // runs again in HTML mode, where an empty result still prints its
+        // header row; it is in memory and cut off from everything else, so
+        // running it twice changes nothing but the time taken. A query whose
+        // result differs between runs (over `random()`, say) can have rows the
+        // second time: then the names stay unknown and `columns` stays empty.
+        if let Some(mut names) = header_of_empty_result(&bin, &script)? {
+            names.sort();
+            columns = names;
+        }
     }
 
     Ok(json!({
@@ -289,40 +293,36 @@ fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
     Ok(values)
 }
 
-/// The column names of a script whose last result is empty, from its CSV
-/// header (the last record printed).
-fn csv_header_of_empty_result(bin: &str, script: &str) -> Result<Vec<String>, String> {
-    let out = execute(bin, &format!(".mode csv\n.headers on\n{script}"))?;
-    Ok(last_csv_record(&String::from_utf8_lossy(&out)))
+/// Runs a script again in HTML mode and returns the names of its last result
+/// if that result is empty; `None` if it has rows this time.
+fn header_of_empty_result(bin: &str, script: &str) -> Result<Option<Vec<String>>, String> {
+    let out = execute(bin, &format!(".mode html\n.headers on\n{script}"))?;
+    Ok(last_html_header(
+        &String::from_utf8_lossy(&out).replace("\r\n", "\n"),
+    ))
 }
 
-/// The last record of DuckDB's CSV output: fields split on `,`, quoted with
-/// `"` (doubled inside quotes), records ended by a newline outside quotes.
-fn last_csv_record(text: &str) -> Vec<String> {
-    let (mut last, mut record, mut field) = (Vec::new(), Vec::new(), String::new());
-    let mut quoted = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' if quoted && chars.peek() == Some(&'"') => {
-                chars.next();
-                field.push('"');
-            }
-            '"' => quoted = !quoted,
-            ',' if !quoted => record.push(std::mem::take(&mut field)),
-            '\r' if !quoted => {}
-            '\n' if !quoted => {
-                record.push(std::mem::take(&mut field));
-                last = std::mem::take(&mut record);
-            }
-            _ => field.push(c),
-        }
+/// The cells of the last `<tr>` DuckDB's HTML mode printed when it is a
+/// header row (`<th>` cells), unescaped; `None` for a data row (`<td>`) or
+/// no row. Cell text is escaped, so a name cannot fake either tag.
+fn last_html_header(html: &str) -> Option<Vec<String>> {
+    let row = &html[html.rfind("<tr>")?..];
+    if row.contains("<td>") {
+        return None;
     }
-    if !field.is_empty() || !record.is_empty() {
-        record.push(field);
-        last = record;
-    }
-    last
+    let unescape = |s: &str| {
+        s.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
+    };
+    Some(
+        row.split("<th>")
+            .skip(1)
+            .map(|cell| unescape(cell.split("</th>").next().unwrap_or_default()))
+            .collect(),
+    )
 }
 
 /// Runs `PREAMBLE` then a script in `duckdb -bail -json` (in memory) and
@@ -482,12 +482,22 @@ mod tests {
     }
 
     #[test]
-    fn last_csv_record_reads_duckdb_quoting() {
-        // Bytes DuckDB 1.5.3 printed for `SELECT 7 AS x;` then an empty
-        // result with columns id, "a,b", "q""x" and "multi<newline>line".
-        let out = "x\r\n7\r\nid,\"a,b\",\"q\"\"x\",\"multi\nline\"\r\n";
-        assert_eq!(last_csv_record(out), ["id", "a,b", "q\"x", "multi\nline"]);
-        assert!(last_csv_record("").is_empty());
+    fn last_html_header_reads_only_a_header_row() {
+        // What DuckDB 1.5.3 printed (newlines normalised) for `SELECT 7 AS x;`
+        // then an empty result with columns id, "a<b&c", "q""x", "multi
+        // line".
+        let out = "<tr><th>x</th>\n</tr>\n<tr><td>7</td>\n</tr>\n<tr><th>id</th>\n\
+                   <th>a&lt;b&amp;c</th>\n<th>q&quot;x</th>\n<th>multi\nline</th>\n</tr>\n";
+        assert_eq!(
+            last_html_header(out).unwrap(),
+            ["id", "a<b&c", "q\"x", "multi\nline"]
+        );
+        // The same script, when its last result has a row: no names.
+        assert_eq!(
+            last_html_header("<tr><th>id</th>\n</tr>\n<tr><td>1</td>\n</tr>\n"),
+            None
+        );
+        assert_eq!(last_html_header(""), None);
     }
 
     #[test]
