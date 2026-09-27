@@ -129,6 +129,47 @@ fn refuses_results_with_repeated_column_names() {
     }))
     .unwrap_err();
     assert!(err.contains("more than one column named \"b\""), "{err}");
+    // An empty result's names come from a second run, and are checked too.
+    let err = duckdb_query(json!({ "sql": "SELECT 1 AS a, 2 AS a WHERE false" })).unwrap_err();
+    assert!(err.contains("more than one column named \"a\""), "{err}");
+}
+
+#[test]
+fn returns_numbers_exactly_or_refuses_them() {
+    if !duckdb_available() {
+        return;
+    }
+    // DuckDB prints HUGEINT, UBIGINT and DECIMAL values as strings, but as
+    // numbers inside a LIST or STRUCT, and a DOUBLE as its shortest decimal.
+    let out = duckdb_query(json!({
+        "sql": "SELECT 18446744073709551617::HUGEINT AS h, 12345678901234567890.12::DECIMAL(38,2) AS d, 9007199254740993::BIGINT AS b, [18446744073709551615::UBIGINT] AS l, {'x': 0.1::DECIMAL(3,1)} AS s, 0.1::DOUBLE + 0.2::DOUBLE AS f, 1.0715660391465826e-75::DOUBLE AS g"
+    }))
+    .unwrap();
+    assert_eq!(
+        out["rows"],
+        json!([{
+            "h": "18446744073709551617",
+            "d": "12345678901234567890.12",
+            "b": 9007199254740993_u64,
+            "l": [18446744073709551615_u64],
+            "s": { "x": 0.1 },
+            "f": 0.30000000000000004,
+            "g": 1.0715660391465826e-75
+        }])
+    );
+    for sql in [
+        "SELECT [18446744073709551617::HUGEINT] AS l",
+        "SELECT {'x': 12345678901234567890.12::DECIMAL(38,2)} AS s",
+    ] {
+        let err = duckdb_query(json!({ "sql": sql })).expect_err(sql);
+        assert!(err.contains("would lose digits"), "{sql}: {err}");
+    }
+    // Only the returned result is read.
+    let out = duckdb_query(json!({
+        "sql": "SELECT [18446744073709551617::HUGEINT] AS l; SELECT 1 AS ok"
+    }))
+    .unwrap();
+    assert_eq!(out["rows"], json!([{ "ok": 1 }]));
 }
 
 #[test]

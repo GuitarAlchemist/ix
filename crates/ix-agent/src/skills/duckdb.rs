@@ -169,6 +169,7 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
         // result differs between runs (over `random()`, say) can have rows the
         // second time: then the names stay unknown and `columns` stays empty.
         if let Some(mut names) = header_of_empty_result(&bin, &script)? {
+            refuse_repeated(&names)?;
             names.sort();
             columns = names;
         }
@@ -270,27 +271,103 @@ fn version(bin: &str) -> String {
 
 /// Runs `PREAMBLE` then a script in `duckdb -bail -json` (in memory) and
 /// returns the JSON value each result-producing statement printed, in order.
+/// The last is refused if reading it would drop a column or change a number.
 fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
     let out = execute(bin, script)?;
-    let values = serde_json::Deserializer::from_slice(&out)
-        .into_iter::<Value>()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("could not read DuckDB JSON output: {e}"))?;
+    let mut stream = serde_json::Deserializer::from_slice(&out).into_iter::<Value>();
+    let (mut values, mut last) = (Vec::new(), &out[..0]);
+    loop {
+        let start = stream.byte_offset();
+        let Some(value) = stream.next() else { break };
+        values.push(value.map_err(|e| format!("could not read DuckDB JSON output: {e}"))?);
+        last = &out[start..stream.byte_offset()];
+    }
     // A row read into a JSON object keeps only the last of two same-named
     // columns (`SELECT t.*, u.*`), so the returned result's names are read in
     // output order first, and a repeat is refused rather than dropped.
-    if let Some(Ok(ResultColumns(names))) = serde_json::Deserializer::from_slice(&out)
-        .into_iter::<ResultColumns>()
-        .last()
-    {
-        let mut seen = std::collections::HashSet::new();
-        if let Some(dup) = names.iter().find(|n| !seen.insert(n.as_str())) {
-            return Err(format!(
-                "the result has more than one column named {dup:?}; rows are JSON objects, so give each column a distinct name with AS"
-            ));
-        }
+    if let Ok(ResultColumns(names)) = serde_json::from_slice(last) {
+        refuse_repeated(&names)?;
+    }
+    // A JSON number is read as a 64-bit integer or a double. DuckDB prints
+    // HUGEINT, UBIGINT and DECIMAL values as strings, but as numbers inside a
+    // LIST or STRUCT: one that would come back changed is refused instead.
+    if let Some(num) = inexact_number(last) {
+        return Err(format!(
+            "the result holds the number {num}, which would lose digits as a JSON double; cast it to VARCHAR in SQL"
+        ));
     }
     Ok(values)
+}
+
+/// Refuses two columns of one name: a row read into a JSON object would keep
+/// only the last of them.
+fn refuse_repeated(names: &[String]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    match names.iter().find(|n| !seen.insert(n.as_str())) {
+        Some(dup) => Err(format!(
+            "the result has more than one column named {dup:?}; rows are JSON objects, so give each column a distinct name with AS"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// The first number in a JSON text that reading would change: an integer
+/// outside 64 bits, or a decimal other than the shortest decimal of the
+/// double nearest to it (the way DuckDB prints a DOUBLE).
+fn inexact_number(json: &[u8]) -> Option<&str> {
+    let (mut i, mut in_string) = (0, false);
+    while i < json.len() {
+        let c = json[i];
+        if in_string {
+            match c {
+                b'\\' => i += 1,
+                b'"' => in_string = false,
+                _ => {}
+            }
+        } else if c == b'"' {
+            in_string = true;
+        } else if c == b'-' || c.is_ascii_digit() {
+            // Outside a string, only a number has these bytes.
+            let start = i;
+            while i < json.len()
+                && matches!(json[i], b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E')
+            {
+                i += 1;
+            }
+            let num = std::str::from_utf8(&json[start..i]).unwrap_or_default();
+            let exact = if num.contains(['.', 'e', 'E']) {
+                num.parse::<f64>()
+                    .is_ok_and(|f| decimal(&format!("{f:e}")) == decimal(num))
+            } else {
+                num.parse::<i64>().is_ok() || num.parse::<u64>().is_ok()
+            };
+            if !exact {
+                return Some(num);
+            }
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// A JSON number's value as (negative, significant digits, power of ten), so
+/// that equal values compare equal: `0.10` and `1e-1` are both `(false, "1", -1)`.
+fn decimal(num: &str) -> (bool, String, i64) {
+    let (negative, num) = match num.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, num),
+    };
+    let (mantissa, exponent) = num.split_once(['e', 'E']).unwrap_or((num, "0"));
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = format!("{int}{frac}");
+    let kept = digits.trim_end_matches('0');
+    let power = exponent.parse::<i64>().unwrap_or(0) - frac.len() as i64
+        + (digits.len() - kept.len()) as i64;
+    match kept.trim_start_matches('0') {
+        "" => (false, String::new(), 0),
+        significant => (negative, significant.to_string(), power),
+    }
 }
 
 /// Runs a script again in HTML mode and returns the names of its last result
@@ -498,6 +575,27 @@ mod tests {
             None
         );
         assert_eq!(last_html_header(""), None);
+    }
+
+    #[test]
+    fn inexact_number_finds_what_reading_would_change() {
+        let exact = br#"[{"h":"18446744073709551617","q":"a\"1e999","n":[1,-2,0.1,4.0,-0.0,1e+20,0.30000000000000004,1.0715660391465826e-75,-9223372036854775808,18446744073709551615]}]"#;
+        assert_eq!(inexact_number(exact), None);
+        assert_eq!(
+            inexact_number(br#"[{"l":[1,18446744073709551616]}]"#),
+            Some("18446744073709551616")
+        );
+        assert_eq!(
+            inexact_number(br#"[{"s":{"x":12345678901234567890.12}}]"#),
+            Some("12345678901234567890.12")
+        );
+        // Reads as the double 0.1, whose shortest decimal is 0.1.
+        assert_eq!(
+            inexact_number(b"[0.1000000000000000055511151231257827]"),
+            Some("0.1000000000000000055511151231257827")
+        );
+        assert_eq!(decimal("0.10"), decimal("1e-1"));
+        assert_eq!(decimal("-0.0"), decimal("0"));
     }
 
     #[test]
