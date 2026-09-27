@@ -79,14 +79,17 @@ fn cannot_read_write_or_attach_files() {
         .replace('\\', "/");
     for sql in [
         format!("SELECT * FROM read_csv('{p}')"),
-        format!("COPY (SELECT 1) TO '{out_path}'"),
-        format!("ATTACH '{p}.db'"),
-        "INSTALL httpfs".to_string(),
+        format!("COPY (SELECT 1) TO '{out_path}'; SELECT 1 AS x"),
+        format!("ATTACH '{p}.db'; SELECT 1 AS x"),
+        "INSTALL httpfs; SELECT 1 AS x".to_string(),
         "LOAD httpfs; SELECT 1 AS x".to_string(),
         "SET enable_external_access = true; SELECT 1 AS x".to_string(),
         "SELECT getenv('PATH') AS p".to_string(),
     ] {
+        // Each ends with a query, so DuckDB's safe mode refuses it, not the
+        // last-statement check.
         let err = duckdb_query(json!({ "sql": sql })).expect_err(&sql);
+        assert!(err.starts_with("DuckDB:"), "{sql}: {err}");
         assert!(
             !err.contains("SECRET-VALUE"),
             "{sql} leaked the file: {err}"
@@ -259,6 +262,7 @@ fn returns_the_last_statement_or_refuses_the_script() {
     for sql in [
         "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
         "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
+        "CREATE TABLE t(a INT); PREPARE ins AS INSERT INTO t VALUES (1); SELECT 99 AS stale; EXECUTE ins",
     ] {
         let err = duckdb_query(json!({ "sql": sql })).unwrap_err();
         assert!(err.contains("last statement"), "{sql}: {err}");
@@ -267,6 +271,31 @@ fn returns_the_last_statement_or_refuses_the_script() {
     assert_eq!(out["rows"], json!([{ "a": 1 }]));
     let out = duckdb_query(json!({ "sql": "CREATE TABLE t(a INT); MERGE INTO t USING (SELECT 1 AS a) AS s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a) RETURNING a" })).unwrap();
     assert_eq!(out["rows"], json!([{ "a": 1 }]));
+    // Each kind of statement accepted last prints its own result, even when
+    // it has no rows, so the query before it is never returned in its place.
+    for last in [
+        "SELECT 1 AS a",
+        "FROM t",
+        "WITH x AS (SELECT 1 AS a) (SELECT * FROM x)",
+        "VALUES (1)",
+        "TABLE t",
+        "SHOW TABLES",
+        "DESCRIBE t",
+        "SUMMARIZE t",
+        "PIVOT (SELECT 1 AS a, 'x' AS s) ON s USING count(*)",
+        "UNPIVOT (SELECT 1 AS a, 2 AS b) ON a, b",
+        "CALL range(0)",
+        "PRAGMA table_info('t')",
+        "PRAGMA enable_checkpoint_on_shutdown",
+        "EXECUTE q",
+        "INSERT INTO t VALUES (1) RETURNING a",
+    ] {
+        let sql = format!(
+            "CREATE TABLE t(a INT); PREPARE q AS SELECT 7 AS a; SELECT 99 AS stale; {last}"
+        );
+        let out = duckdb_query(json!({ "sql": sql })).unwrap_or_else(|e| panic!("{last}: {e}"));
+        assert_ne!(out["rows"], json!([{ "stale": 99 }]), "{last}");
+    }
     // A leading-dot literal on an indented line is SQL.
     let out = duckdb_query(json!({ "sql": "SELECT\n  .5::DOUBLE AS ratio" })).unwrap();
     assert_eq!(out["rows"], json!([{ "ratio": 0.5 }]));
@@ -281,7 +310,7 @@ fn reports_sql_errors() {
     if !duckdb_available() {
         return;
     }
-    let err = duckdb_query(json!({ "sql": "SELEC 1" })).unwrap_err();
+    let err = duckdb_query(json!({ "sql": "SELECT 1 FROM" })).unwrap_err();
     assert!(
         err.starts_with("DuckDB:") && err.contains("syntax error"),
         "{err}"

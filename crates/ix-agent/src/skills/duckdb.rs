@@ -46,7 +46,7 @@ fn duckdb_query_schema() -> Value {
         "properties": {
             "sql": {
                 "type": "string",
-                "description": "DuckDB SQL. The result of the last statement is returned, so a script ending with a statement that returns no rows (CREATE, INSERT, SET, ...) is refused. Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
+                "description": "DuckDB SQL. The result of the last statement is returned, so the script must end with a statement that returns rows: a query (SELECT, FROM, WITH, VALUES, TABLE), SHOW, DESCRIBE, SUMMARIZE, PIVOT, UNPIVOT, CALL, PRAGMA, EXECUTE of one of these, or INSERT/UPDATE/DELETE/MERGE with RETURNING; any other is refused. Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
             },
             "tables": {
                 "type": "object",
@@ -211,13 +211,58 @@ fn check_sql(sql: &str) -> Result<(), String> {
     }
     // `-json` prints nothing for a statement without rows, so a script ending
     // with one would return the rows of the query before it as the last
-    // statement's result.
-    let tokens = top_level_tokens(last_statement(&code_only(sql)));
+    // statement's result. Only statements known to print their result are
+    // accepted last.
+    let code = code_only(sql);
+    let statements = code
+        .split(|&c| c == b';')
+        .map(top_level_tokens)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    let last = statements.last().map_or(&[][..], Vec::as_slice);
+    if let Err(keyword) = prints_rows(last, &statements) {
+        return Err(format!(
+            "the result of the last statement is returned, but the last statement of `sql` ({keyword} ...) is not one known to return rows; end `sql` with a query such as SELECT, or a write with RETURNING"
+        ));
+    }
+    Ok(())
+}
+
+/// First keywords of the statements that print their result under `-json`,
+/// an empty one as `[]`; `)` stands for a parenthesised query. INSERT,
+/// UPDATE, DELETE and MERGE print rows only with RETURNING, and EXECUTE what
+/// the statement it runs prints. Any other statement is refused last: some
+/// succeed in safe mode without printing anything (CREATE, SET, ATTACH
+/// ':memory:', COPY FROM DATABASE, ...).
+// @ai:invariant each statement kind in ROWS prints its own result as the last statement under -json in safe mode, so the query before it is never returned in its place [P:test conf:0.6 src:duckdb_query::returns_the_last_statement_or_refuses_the_script] — the test runs one statement of each kind after a stale query on DuckDB 1.5.3, but it skips where the CLI is absent, so the binding is live only under IX_REQUIRE_DUCKDB=1
+const ROWS: &[&str] = &[
+    "SELECT",
+    "FROM",
+    "WITH",
+    ")",
+    "VALUES",
+    "TABLE",
+    "SHOW",
+    "DESCRIBE",
+    "DESC",
+    "SUMMARIZE",
+    "PIVOT",
+    "PIVOT_WIDER",
+    "UNPIVOT",
+    "PIVOT_LONGER",
+    "CALL",
+    "PRAGMA",
+];
+
+/// Whether a statement, as its top-level tokens, prints its result under
+/// `-json`; if not, its first keyword. `script` holds every statement, for
+/// the PREPARE an EXECUTE runs.
+fn prints_rows<'a>(tokens: &'a [String], script: &'a [Vec<String>]) -> Result<(), &'a str> {
     let mut keyword = tokens.first().map_or("", String::as_str);
     if keyword == "WITH" {
         // The statement a CTE list leads to follows the `)` closing the last
         // CTE's query; a `)` closing column names or USING KEY is followed by
-        // AS or USING.
+        // AS or USING. A parenthesised query leaves it at WITH.
         keyword = tokens
             .windows(2)
             .find(|w| {
@@ -227,49 +272,33 @@ fn check_sql(sql: &str) -> Result<(), String> {
             })
             .map_or(keyword, |w| w[1].as_str());
     }
-    let returning = matches!(keyword, "INSERT" | "UPDATE" | "DELETE" | "MERGE")
-        && tokens
-            .windows(2)
-            .any(|w| w[1] == "RETURNING" && w[0] != "AS");
-    if NO_ROWS.contains(&keyword) && !returning {
-        return Err(format!(
-            "the result of the last statement is returned, but the last statement of `sql` ({keyword} ...) returns no rows; end `sql` with a query such as SELECT"
-        ));
+    match keyword {
+        "INSERT" | "UPDATE" | "DELETE" | "MERGE"
+            if tokens
+                .windows(2)
+                .any(|w| w[1] == "RETURNING" && w[0] != "AS") =>
+        {
+            Ok(())
+        }
+        "EXECUTE" => {
+            // A fresh DuckDB holds only what this script prepared, and the
+            // last PREPARE of a name is the one to read. A quoted name is not
+            // read, so it is refused.
+            let name = tokens
+                .get(1)
+                .filter(|n| n.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'));
+            let body = script.iter().rev().find_map(|s| match s.as_slice() {
+                [prepare, n, rest @ ..] if prepare == "PREPARE" && Some(n) == name => {
+                    rest.iter().position(|t| t == "AS").map(|p| &rest[p + 1..])
+                }
+                _ => None,
+            });
+            body.map_or(Err(keyword), |body| prints_rows(body, &[]))
+        }
+        _ if ROWS.contains(&keyword) => Ok(()),
+        _ => Err(keyword),
     }
-    Ok(())
 }
-
-/// First keywords of the statements that succeed in safe mode without
-/// printing rows (INSERT, UPDATE, DELETE and MERGE print them with
-/// RETURNING, also after a CTE list). Checked against DuckDB 1.5.3; the ones
-/// safe mode refuses (COPY, ATTACH, INSTALL, a configuration SET, ...) fail
-/// anyway, and any other word, a typo included, is left to DuckDB.
-// @ai:assumption each statement kind in NO_ROWS succeeds in safe mode without printing rows under -json [P:test conf:0.5 src:duckdb_query::returns_the_last_statement_or_refuses_the_script] — the test exercises CREATE only; the rest of the list, and the same writes after a CTE list, were probed by hand on DuckDB 1.5.3, and it holds only under IX_REQUIRE_DUCKDB=1
-const NO_ROWS: &[&str] = &[
-    "CREATE",
-    "DROP",
-    "ALTER",
-    "INSERT",
-    "UPDATE",
-    "DELETE",
-    "MERGE",
-    "TRUNCATE",
-    "SET",
-    "RESET",
-    "USE",
-    "LOAD",
-    "BEGIN",
-    "START",
-    "COMMIT",
-    "END",
-    "ROLLBACK",
-    "ABORT",
-    "PREPARE",
-    "DEALLOCATE",
-    "COMMENT",
-    "VACUUM",
-    "ANALYZE",
-];
 
 fn name_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
@@ -349,20 +378,6 @@ fn code_only(sql: &str) -> Vec<u8> {
         i = end;
     }
     code
-}
-
-/// The last statement of the code: what follows its last `;` that more than
-/// whitespace follows.
-fn last_statement(code: &[u8]) -> &[u8] {
-    let end = code
-        .iter()
-        .rposition(|&c| !(c == b';' || c.is_ascii_whitespace()))
-        .map_or(0, |p| p + 1);
-    let start = code[..end]
-        .iter()
-        .rposition(|&c| c == b';')
-        .map_or(0, |p| p + 1);
-    &code[start..end]
 }
 
 /// The tokens of a statement outside parentheses: upper-cased words, each
@@ -794,6 +809,20 @@ mod tests {
             "SELECT 1; DELETE FROM t WHERE a IN (SELECT 1 AS b) AND s = $$ returning $$",
             // Block comments nest, so this `;` is inside one.
             "SELECT 1 AS stale; /* /* */ ; SELECT 3 */ CREATE VIEW v AS SELECT 2",
+            // A prepared write prints nothing when executed; an unknown or
+            // quoted name cannot be resolved.
+            "PREPARE ins AS INSERT INTO t VALUES (1); SELECT 99 AS stale; EXECUTE ins",
+            "prepare Ins as with x as (select 1) insert into t select * from x; execute INS",
+            "PREPARE q AS SELECT 1; PREPARE q AS INSERT INTO t VALUES (1); EXECUTE q",
+            "SELECT 1; EXECUTE nope",
+            r#"PREPARE "q" AS SELECT 1; EXECUTE "q""#,
+            // Safe mode lets these through, and they print nothing.
+            "SELECT 1; ATTACH ':memory:' AS m2",
+            "SELECT 1; DETACH DATABASE IF EXISTS m2",
+            "SELECT 1; COPY FROM DATABASE memory TO m2",
+            // Only statements known to print rows are accepted.
+            "SELECT 1; EXPLAIN SELECT 2",
+            "SELEC 1",
         ] {
             let err = check_sql(sql).unwrap_err();
             assert!(err.contains("last statement"), "{sql}: {err}");
@@ -818,7 +847,18 @@ mod tests {
             "WITH x(n) AS (SELECT 1), y AS MATERIALIZED (SELECT 2) SELECT * FROM x, y",
             "WITH update AS (SELECT 1 AS a) SELECT * FROM update",
             "SELECT 1 /* a /* ; CREATE */ b */ AS x",
-            "SELEC 1",
+            "WITH x AS (SELECT 1 AS a) (SELECT * FROM x)",
+            "VALUES (1)",
+            "TABLE t",
+            "SHOW TABLES",
+            "DESC t",
+            "SUMMARIZE t",
+            "PIVOT t ON s USING count(*)",
+            "UNPIVOT t ON a, b",
+            "CALL range(3)",
+            "PRAGMA table_info('t')",
+            "PREPARE q AS SELECT $1 AS a; SELECT 99 AS stale; EXECUTE q(5)",
+            "prepare Ins as insert into t values (1) returning a; execute INS",
         ] {
             assert!(check_sql(sql).is_ok(), "{sql}: {:?}", check_sql(sql));
         }
