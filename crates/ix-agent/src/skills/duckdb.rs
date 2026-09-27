@@ -46,7 +46,7 @@ fn duckdb_query_schema() -> Value {
         "properties": {
             "sql": {
                 "type": "string",
-                "description": "DuckDB SQL. The result of the last statement is returned. Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB -safe mode); dot commands are refused."
+                "description": "DuckDB SQL. The result of the last statement is returned, so the script must end with a query (SELECT, FROM, WITH, VALUES, TABLE, or one in parentheses); any other last statement, a write with RETURNING included, is refused (end a write with a query over what it wrote; write SHOW, DESCRIBE, SUMMARIZE, PIVOT or PRAGMA as FROM (DESCRIBE t), FROM pragma_table_info('t'), ...). Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
             },
             "tables": {
                 "type": "object",
@@ -85,7 +85,7 @@ fn duckdb_query_output_schema() -> Value {
 #[ix_skill(
     domain = "duckdb",
     name = "duckdb.query",
-    governance = "safety,deterministic",
+    governance = "safety",
     schema_fn = "crate::skills::duckdb::duckdb_query_schema",
     output_schema_fn = "crate::skills::duckdb::duckdb_query_output_schema"
 )]
@@ -127,13 +127,17 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
                 outputs.len()
             ));
         }
-        for out in outputs {
+        for ((name, _), out) in tables.iter().zip(outputs) {
             let s = out
                 .get(0)
                 .and_then(|row| row.get("s"))
                 .and_then(Value::as_str)
                 .ok_or("DuckDB returned no json_structure")?;
-            structures.push(s.to_string());
+            let rows = params.get("tables").and_then(|t| t.get(name));
+            structures.push(match rows {
+                Some(rows) if !has_wide_integer(rows) => integers_as_bigint(s)?,
+                _ => s.to_string(),
+            });
         }
     }
 
@@ -196,12 +200,194 @@ fn check_sql(sql: &str) -> Result<(), String> {
         ));
     }
     // The CLI reads its script from stdin, where a line starting with '.' is a
-    // dot command. -safe refuses the ones touching files or the shell; the
-    // rest (.mode, .headers, ...) would only corrupt the JSON output.
-    if sql.lines().any(|l| l.trim_start().starts_with('.')) {
-        return Err("dot commands are not allowed in `sql`".to_string());
+    // dot command; an indented one is SQL. Safe mode refuses the ones touching
+    // files or the shell; the rest (.mode, .headers, ...) would only corrupt
+    // the JSON output.
+    if sql.lines().any(|l| l.starts_with('.')) {
+        return Err(
+            "lines starting with '.' are CLI dot commands, which are not allowed in `sql`; indent a line that is SQL (a `.5` literal, say)"
+                .to_string(),
+        );
+    }
+    // `-json` prints nothing for a statement without rows, so a script ending
+    // with one would return the rows of the query before it as the last
+    // statement's result. Only statements known to print their result are
+    // accepted last.
+    let last = code_only(sql)
+        .split(|&c| c == b';')
+        .map(top_level_tokens)
+        .rfind(|s| !s.is_empty())
+        .unwrap_or_default();
+    if let Err(keyword) = prints_rows(&last) {
+        return Err(format!(
+            "the result of the last statement is returned, but the last statement of `sql` ({keyword} ...) is not a query; end `sql` with a query such as SELECT (after a write, one over what it wrote)"
+        ));
     }
     Ok(())
+}
+
+/// First keywords of the SELECT family, the statements that print their
+/// result under `-json` (an empty one as `[]`); `)` stands for a
+/// parenthesised query. Any other statement is refused last:
+/// - some succeed in safe mode without printing anything (CREATE, SET,
+///   ATTACH ':memory:', COPY FROM DATABASE, ...);
+/// - INSERT, UPDATE, DELETE and MERGE print rows only with a RETURNING
+///   clause, and which `returning` word is the clause (not a string, an alias
+///   or a column) is not read;
+/// - DuckDB rewrites PRAGMA, SHOW, DESCRIBE, SUMMARIZE, PIVOT and CALL, and a
+///   rewrite can print nothing (PRAGMA copy_database is COPY FROM DATABASE).
+///   Each has a spelling in the SELECT family: `FROM (DESCRIBE t)`,
+///   `FROM pragma_table_info('t')`, `FROM range(3)`;
+/// - EXECUTE prints what the statement it runs prints, which is not read.
+// @ai:invariant each statement kind in ROWS prints its own result as the last statement under -json in safe mode, so the query before it is never returned in its place [P:test conf:0.6 src:duckdb_query::returns_the_last_statement_or_refuses_the_script] — the test runs one statement of each kind after a stale query on DuckDB 1.5.3, but it skips where the CLI is absent, so the binding is live only under IX_REQUIRE_DUCKDB=1
+const ROWS: &[&str] = &["SELECT", "FROM", "WITH", ")", "VALUES", "TABLE"];
+
+/// Whether a statement, as its top-level tokens, prints its result under
+/// `-json`; if not, its first keyword.
+fn prints_rows(tokens: &[String]) -> Result<(), &str> {
+    let mut keyword = tokens.first().map_or("", String::as_str);
+    if keyword == "WITH" {
+        // The statement a CTE list leads to follows the `)` closing the last
+        // CTE's query; a `)` closing column names or USING KEY is followed by
+        // AS or USING. A parenthesised query leaves it at WITH.
+        keyword = tokens
+            .windows(2)
+            .find(|w| {
+                w[0] == ")"
+                    && w[1].starts_with(|c: char| c.is_ascii_alphabetic())
+                    && !matches!(w[1].as_str(), "AS" | "USING")
+            })
+            .map_or(keyword, |w| w[1].as_str());
+    }
+    if ROWS.contains(&keyword) {
+        Ok(())
+    } else {
+        Err(keyword)
+    }
+}
+
+/// A byte of a dollar-quote tag in DuckDB's (PostgreSQL's) scanner: an ASCII
+/// letter or digit, `_`, or any non-ASCII byte.
+fn tag_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+}
+
+/// A byte that continues a name: a tag byte or `$`.
+fn name_byte(c: u8) -> bool {
+    tag_byte(c) || c == b'$'
+}
+
+/// The script with every byte of a string, quoted name or dollar-quoted
+/// string replaced by `'`, and every byte of a comment by a space, so what is
+/// left is SQL code. It only reads the script, which runs as sent, so a
+/// misreading can refuse a script or let one through but never change what
+/// runs.
+fn code_only(sql: &str) -> Vec<u8> {
+    let b = sql.as_bytes();
+    let mut code = b.to_vec();
+    let mut i = 0;
+    while i < b.len() {
+        let rest = &b[i..];
+        let (len, mask) = if rest.starts_with(b"--") {
+            // A line comment ends at \n or a lone \r.
+            let len = rest
+                .iter()
+                .position(|&c| c == b'\n' || c == b'\r')
+                .unwrap_or(rest.len());
+            (len, b' ')
+        } else if rest.starts_with(b"/*") {
+            // Block comments nest in DuckDB.
+            let (mut depth, mut j) = (1, 2);
+            while depth > 0 && j < rest.len() {
+                if rest[j..].starts_with(b"/*") {
+                    (depth, j) = (depth + 1, j + 2);
+                } else if rest[j..].starts_with(b"*/") {
+                    (depth, j) = (depth - 1, j + 2);
+                } else {
+                    j += 1;
+                }
+            }
+            (j, b' ')
+        } else {
+            let c = b[i];
+            match c {
+                // A quoted string or name ends at its unpaired closing quote;
+                // E'...' strings also take backslash escapes.
+                b'\'' | b'"' => {
+                    let escapes = c == b'\''
+                        && i > 0
+                        && matches!(b[i - 1], b'e' | b'E')
+                        && (i < 2 || !name_byte(b[i - 2]));
+                    let mut j = 1;
+                    while j < rest.len() {
+                        match rest[j] {
+                            b'\\' if escapes => j += 2,
+                            q if q == c && rest.get(j + 1) == Some(&c) => j += 2,
+                            q if q == c => break,
+                            _ => j += 1,
+                        }
+                    }
+                    (j + 1, b'\'')
+                }
+                // $$...$$ or $tag$...$tag$, but not $1 or a name containing '$'.
+                b'$' if i == 0 || !name_byte(b[i - 1]) => {
+                    match rest[1..].iter().position(|&c| !tag_byte(c)) {
+                        Some(n) if rest[1 + n] == b'$' && !rest[1].is_ascii_digit() => {
+                            let tag = &rest[..n + 2];
+                            let body = &rest[n + 2..];
+                            let len = n
+                                + 2
+                                + body
+                                    .windows(tag.len())
+                                    .position(|w| w == tag)
+                                    .map_or(body.len(), |p| p + tag.len());
+                            (len, b'\'')
+                        }
+                        _ => (1, c),
+                    }
+                }
+                _ => (1, c),
+            }
+        };
+        let end = (i + len).min(b.len());
+        code[i..end].fill(mask);
+        i = end;
+    }
+    code
+}
+
+/// The tokens of a statement outside parentheses: upper-cased words, each
+/// other character, and `)` for each parenthesised group.
+fn top_level_tokens(statement: &[u8]) -> Vec<String> {
+    let (mut tokens, mut depth, mut i) = (Vec::new(), 0usize, 0);
+    while i < statement.len() {
+        let c = statement[i];
+        if name_byte(c) {
+            let len = statement[i..]
+                .iter()
+                .position(|&c| !name_byte(c))
+                .unwrap_or(statement.len() - i);
+            if depth == 0 {
+                let word = String::from_utf8_lossy(&statement[i..i + len]);
+                tokens.push(word.to_ascii_uppercase());
+            }
+            i += len;
+            continue;
+        }
+        match c {
+            b'(' => depth += 1,
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    tokens.push(")".to_string());
+                }
+            }
+            _ if depth == 0 && !c.is_ascii_whitespace() => tokens.push((c as char).to_string()),
+            _ => {}
+        }
+        i += 1;
+    }
+    tokens
 }
 
 fn valid_table_name(name: &str) -> bool {
@@ -250,6 +436,38 @@ fn read_tables(raw: Option<&Value>) -> Result<Vec<(String, String)>, String> {
         out.push((name.clone(), text));
     }
     Ok(out)
+}
+
+/// Whether a JSON value holds an integer beyond i64 (a u64 above i64::MAX).
+fn has_wide_integer(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.is_u64() && n.as_i64().is_none(),
+        Value::Array(items) => items.iter().any(has_wide_integer),
+        Value::Object(fields) => fields.values().any(has_wide_integer),
+        _ => false,
+    }
+}
+
+/// `json_structure` infers UBIGINT for non-negative integers and HUGEINT for
+/// mixed signs, and DuckDB prints both as JSON strings, so a supplied integer
+/// would come back as "1". For a table whose integers all fit an i64, those
+/// types become BIGINT, which prints as a number. Only type names change:
+/// they are the structure's string values, never its keys (column names).
+/// Re-serialising lists keys in name order, the order the rows themselves
+/// are sent in (serde_json sorts them), so columns load in name order.
+fn integers_as_bigint(structure: &str) -> Result<String, String> {
+    fn narrow(v: &mut Value) {
+        match v {
+            Value::String(t) if t == "UBIGINT" || t == "HUGEINT" => *t = "BIGINT".to_string(),
+            Value::Array(items) => items.iter_mut().for_each(narrow),
+            Value::Object(fields) => fields.values_mut().for_each(narrow),
+            _ => {}
+        }
+    }
+    let mut v: Value = serde_json::from_str(structure)
+        .map_err(|e| format!("could not read json_structure {structure:?}: {e}"))?;
+    narrow(&mut v);
+    Ok(v.to_string())
 }
 
 /// A SQL string literal: DuckDB treats backslashes literally, so doubling
@@ -544,6 +762,125 @@ mod tests {
         assert!(empty.unwrap_err().contains("empty"));
         let scalar_rows = duckdb_query(json!({ "sql": "SELECT 1", "tables": { "t": [1, 2] } }));
         assert!(scalar_rows.unwrap_err().contains("JSON object"));
+    }
+
+    #[test]
+    fn check_sql_refuses_a_last_statement_that_returns_no_rows() {
+        // `-json` prints nothing for these, so the rows of the query before
+        // them would have been returned as the last statement's result.
+        for sql in [
+            "SELECT 1 AS stale; CREATE VIEW v AS SELECT 2",
+            "SELECT 1;\nINSERT INTO t VALUES (1); -- trailing comment",
+            "SELECT 1; set threads = 1;",
+            // A write after a CTE list prints nothing either.
+            "SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
+            "SELECT 1; WITH RECURSIVE x(n) AS (SELECT 1) UPDATE t SET a = 2 FROM x",
+            "SELECT 1; MERGE INTO t USING s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a)",
+            // A write is refused last, with or without RETURNING: which
+            // `returning` is the clause (not a string, a comment, a quoted
+            // name, an alias or a column) is not read.
+            r#"SELECT 99 AS stale; INSERT INTO t SELECT s.returning FROM s"#,
+            "INSERT INTO t VALUES (1) RETURNING a",
+            "INSERT INTO t VALUES (1) returning a AS returning",
+            "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x RETURNING *",
+            "MERGE INTO t USING s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a) RETURNING *",
+            "SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
+            "SELECT 1; INSERT INTO t VALUES (1) -- returning *",
+            r#"SELECT 1; UPDATE t SET "returning" = 1"#,
+            "SELECT 1; INSERT INTO t SELECT 1 AS returning",
+            "SELECT 1; DELETE FROM t WHERE a IN (SELECT 1 AS b) AND s = $$ returning $$",
+            // Block comments nest, so this `;` is inside one.
+            "SELECT 1 AS stale; /* /* */ ; SELECT 3 */ CREATE VIEW v AS SELECT 2",
+            // A dollar-quote tag takes non-ASCII letters, and a line comment
+            // ends at a lone \r too.
+            "SELECT 99 AS stale; INSERT INTO t VALUES ($é$; SELECT 1$é$)",
+            "SELECT 99 AS stale; -- c\rCREATE VIEW v AS SELECT 2",
+            "SELECT 99 AS stale -- c\r; CREATE VIEW v AS SELECT 2",
+            // A prepared write prints nothing when executed, and which
+            // statement EXECUTE runs is not read (a quoted PREPARE "q"
+            // replaces q), so a final EXECUTE is refused.
+            "PREPARE ins AS INSERT INTO t VALUES (1); SELECT 99 AS stale; EXECUTE ins",
+            r#"PREPARE q AS SELECT 1; PREPARE "q" AS INSERT INTO t VALUES (1); EXECUTE q"#,
+            "PREPARE q AS SELECT $1 AS a; SELECT 99 AS stale; EXECUTE q(5)",
+            "prepare Ins as insert into t values (1) returning a; execute INS",
+            // Safe mode lets these through, and they print nothing.
+            "SELECT 1; ATTACH ':memory:' AS m2",
+            "SELECT 1; DETACH DATABASE IF EXISTS m2",
+            "SELECT 1; COPY FROM DATABASE memory TO m2",
+            // Only statements known to print rows are accepted.
+            "SELECT 1; EXPLAIN SELECT 2",
+            "SELEC 1",
+            // DuckDB rewrites these, and a rewrite can print nothing
+            // (PRAGMA copy_database is COPY FROM DATABASE), so only the
+            // SELECT family is accepted; each has a spelling in it.
+            "ATTACH ':memory:' AS m2; SELECT 99 AS stale; PRAGMA copy_database('memory', 'm2')",
+            "PRAGMA table_info('t')",
+            "SHOW TABLES",
+            "DESC t",
+            "SUMMARIZE t",
+            "PIVOT t ON s USING count(*)",
+            "UNPIVOT t ON a, b",
+            "CALL range(3)",
+        ] {
+            let err = check_sql(sql).unwrap_err();
+            assert!(err.contains("last statement"), "{sql}: {err}");
+        }
+        for sql in [
+            "CREATE VIEW v AS SELECT 2 AS x; SELECT * FROM v",
+            "SELECT 'a;CREATE' AS s",
+            "SELECT 'it''s;' AS s; select 2",
+            r#"SELECT 1 AS "x;y""#,
+            "SELECT 1 -- ; CREATE\n",
+            "SELECT 1 /* ; CREATE */",
+            "SELECT $$a;CREATE$$ AS s",
+            "SELECT $q$a;CREATE$q$ AS s",
+            r"SELECT E'it\'s; CREATE' AS s",
+            "WITH t AS (SELECT 1) SELECT * FROM t;",
+            "(SELECT 1) UNION ALL (SELECT 2)",
+            "FROM range(3)",
+            "INSERT INTO t VALUES (1); SELECT * FROM t",
+            "WITH x(n) AS (SELECT 1), y AS MATERIALIZED (SELECT 2) SELECT * FROM x, y",
+            "WITH update AS (SELECT 1 AS a) SELECT * FROM update",
+            "SELECT 1 /* a /* ; CREATE */ b */ AS x",
+            "SELECT $é$a;CREATE$é$ AS s",
+            "SELECT 1 AS stale; -- c\rSELECT 2 AS x",
+            // '$' inside a name is part of it, not a dollar quote.
+            "CREATE VIEW v AS SELECT 1 AS a$$; SELECT 2 AS x$$",
+            "WITH x AS (SELECT 1 AS a) (SELECT * FROM x)",
+            "VALUES (1)",
+            "TABLE t",
+            "FROM (SHOW TABLES)",
+            "FROM (DESCRIBE t)",
+            "FROM (SUMMARIZE t)",
+            "FROM (PIVOT t ON s USING count(*))",
+            "FROM (UNPIVOT t ON a, b)",
+            "FROM range(3)",
+            "FROM pragma_table_info('t')",
+        ] {
+            assert!(check_sql(sql).is_ok(), "{sql}: {:?}", check_sql(sql));
+        }
+    }
+
+    #[test]
+    fn check_sql_refuses_dot_commands_only_at_line_start() {
+        // The CLI reads a dot command only from a line starting with '.'.
+        assert!(check_sql("SELECT 1;\n.mode csv\nSELECT 2")
+            .unwrap_err()
+            .contains("dot command"));
+        assert!(check_sql("SELECT\n  .5 AS ratio").is_ok());
+        assert!(check_sql("SELECT 1,\n\t.5 AS ratio").is_ok());
+    }
+
+    #[test]
+    fn is_not_tagged_deterministic() {
+        // SQL can call random(), uuid() or now(): the same arguments need not
+        // give the same rows.
+        let desc = ix_registry::by_name("duckdb.query").expect("registered");
+        assert!(
+            !desc.governance_tags.contains(&"deterministic"),
+            "{:?}",
+            desc.governance_tags
+        );
     }
 
     #[test]
