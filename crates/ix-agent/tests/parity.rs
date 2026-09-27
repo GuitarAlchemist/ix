@@ -26,7 +26,8 @@ use std::collections::{BTreeSet, HashSet};
 /// ix_autograd_run, ix_pipeline_compile, plus the P1.1/P1.2/P1.3 source
 /// adapters ix_git_log + ix_cargo_deps + ix_git_churn, plus the 3
 /// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet, plus
-/// ix_petri_analyze (Petri-net deadlock/boundedness/liveness, ix-petri).
+/// ix_petri_analyze (Petri-net deadlock/boundedness/liveness, ix-petri), plus
+/// ix_duckdb_query (DuckDB SQL over caller rows, the CLI in -safe mode).
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_annotations_scan",
@@ -50,6 +51,7 @@ const EXPECTED: &[&str] = &[
     "ix_context_walk",
     "ix_demo",
     "ix_distance",
+    "ix_duckdb_query",
     "ix_evolution",
     "ix_explain_algorithm",
     "ix_federation_discover",

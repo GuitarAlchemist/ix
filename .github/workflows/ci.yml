@@ -194,3 +194,11 @@ jobs:
             --test pareto_golden \
             --test persistence_h0_golden \
             --test ixql_plan_golden
+
+      # ix_duckdb_query runs this same pinned CLI in -safe mode; its tests
+      # skip without it everywhere else, so this is where they must pass.
+      - name: ix_duckdb_query against the pinned CLI
+        env:
+          IX_REQUIRE_DUCKDB: '1'
+        shell: bash
+        run: cargo test -p ix-agent --test duckdb_query
