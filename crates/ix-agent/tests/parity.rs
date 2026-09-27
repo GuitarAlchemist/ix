@@ -561,6 +561,24 @@ fn tier_one_manual_tools_refuse_paths_outside_the_workspace() {
     )
     .expect("an in-root test_files entry must be accepted");
     assert!(out.is_object(), "{out}");
+    // A matched entry is reported as the caller wrote it, workspace-relative,
+    // not as the host-specific canonical path confinement checked (#352 review).
+    let out = call(
+        "ix_annotations_scan",
+        json!({ "workspace": "crates/ix-agent", "test_files": ["tests/parity.rs"] }),
+    )
+    .expect("an in-root test_files entry must be accepted");
+    let matches: Vec<&str> = out["annotations"]
+        .as_array()
+        .expect("annotations")
+        .iter()
+        .filter_map(|a| a["reconciliation"]["test_match"].as_str())
+        .collect();
+    assert!(!matches.is_empty(), "nothing matched tests/parity.rs");
+    assert!(
+        matches.iter().all(|m| *m == "tests/parity.rs"),
+        "{matches:?}"
+    );
 
     // In-root paths keep working.
     let out = call("ix_cargo_deps", json!({ "workspace_root": "." }))

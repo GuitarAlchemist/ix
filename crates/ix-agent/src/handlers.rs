@@ -7349,9 +7349,12 @@ pub fn annotations_scan(params: Value) -> Result<Value, String> {
             .filter_map(|v| v.as_str())
             // Confined against the workspace the caller named, because that is
             // what the reconciler joins them onto — an entry is
-            // workspace-relative by contract.
+            // workspace-relative by contract. The entry is passed on as written,
+            // since the reconciler reports it: the canonical path it was checked
+            // as is host-specific.
             .map(|raw| {
                 path_confine::confine_in(std::slice::from_ref(&workspace), "test_files", raw)
+                    .map(|_| PathBuf::from(raw))
             })
             .collect::<Result<Vec<_>, String>>()?,
         None => discover_test_paths(&workspace),
