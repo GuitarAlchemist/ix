@@ -105,6 +105,9 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_mesh_correlate",
         // Reachability analysis of a caller-supplied Petri net (inline or PNML string).
         "ix_petri_analyze",
+        // DuckDB SQL over caller-supplied rows, run by the CLI in -safe mode: no
+        // file, extension, ATTACH or network access, configuration locked.
+        "ix_duckdb_query",
         "ix_hyperloglog",
         "ix_bloom_filter",
         "ix_chaos_lyapunov",
@@ -275,6 +278,7 @@ mod tests {
             // registered and unit-tested, and refused on every MCP call.
             "ix_mesh_correlate",
             "ix_petri_analyze",
+            "ix_duckdb_query",
             "ix_assumption_query",
             "ix_assumption_belief_at",
             "ix_assumption_drift",
