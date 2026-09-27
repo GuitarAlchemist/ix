@@ -254,6 +254,19 @@ fn returns_the_last_statement_or_refuses_the_script() {
     let out =
         duckdb_query(json!({ "sql": "CREATE VIEW v AS SELECT 2 AS x; SELECT * FROM v" })).unwrap();
     assert_eq!(out["rows"], json!([{ "x": 2 }]));
+    // A write after a CTE list, or with 'returning' only in a string, prints
+    // nothing, so it is refused too; with a RETURNING clause it prints rows.
+    for sql in [
+        "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
+        "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
+    ] {
+        let err = duckdb_query(json!({ "sql": sql })).unwrap_err();
+        assert!(err.contains("last statement"), "{sql}: {err}");
+    }
+    let out = duckdb_query(json!({ "sql": "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1 AS a) INSERT INTO t SELECT * FROM x RETURNING a" })).unwrap();
+    assert_eq!(out["rows"], json!([{ "a": 1 }]));
+    let out = duckdb_query(json!({ "sql": "CREATE TABLE t(a INT); MERGE INTO t USING (SELECT 1 AS a) AS s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a) RETURNING a" })).unwrap();
+    assert_eq!(out["rows"], json!([{ "a": 1 }]));
     // A leading-dot literal on an indented line is SQL.
     let out = duckdb_query(json!({ "sql": "SELECT\n  .5::DOUBLE AS ratio" })).unwrap();
     assert_eq!(out["rows"], json!([{ "ratio": 0.5 }]));

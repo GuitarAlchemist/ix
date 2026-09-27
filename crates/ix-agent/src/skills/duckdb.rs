@@ -212,15 +212,26 @@ fn check_sql(sql: &str) -> Result<(), String> {
     // `-json` prints nothing for a statement without rows, so a script ending
     // with one would return the rows of the query before it as the last
     // statement's result.
-    let last = last_statement(sql);
-    let keyword = last
-        .chars()
-        .take_while(char::is_ascii_alphabetic)
-        .collect::<String>()
-        .to_ascii_uppercase();
-    let returning = matches!(keyword.as_str(), "INSERT" | "UPDATE" | "DELETE")
-        && last.to_ascii_lowercase().contains("returning");
-    if NO_ROWS.contains(&keyword.as_str()) && !returning {
+    let tokens = top_level_tokens(last_statement(&code_only(sql)));
+    let mut keyword = tokens.first().map_or("", String::as_str);
+    if keyword == "WITH" {
+        // The statement a CTE list leads to follows the `)` closing the last
+        // CTE's query; a `)` closing column names or USING KEY is followed by
+        // AS or USING.
+        keyword = tokens
+            .windows(2)
+            .find(|w| {
+                w[0] == ")"
+                    && w[1].starts_with(|c: char| c.is_ascii_alphabetic())
+                    && !matches!(w[1].as_str(), "AS" | "USING")
+            })
+            .map_or(keyword, |w| w[1].as_str());
+    }
+    let returning = matches!(keyword, "INSERT" | "UPDATE" | "DELETE" | "MERGE")
+        && tokens
+            .windows(2)
+            .any(|w| w[1] == "RETURNING" && w[0] != "AS");
+    if NO_ROWS.contains(&keyword) && !returning {
         return Err(format!(
             "the result of the last statement is returned, but the last statement of `sql` ({keyword} ...) returns no rows; end `sql` with a query such as SELECT"
         ));
@@ -229,11 +240,11 @@ fn check_sql(sql: &str) -> Result<(), String> {
 }
 
 /// First keywords of the statements that succeed in safe mode without
-/// printing rows (INSERT, UPDATE and DELETE print them with RETURNING).
-/// Checked against DuckDB 1.5.3; the ones safe mode refuses (COPY, ATTACH,
-/// INSTALL, a configuration SET, ...) fail anyway, and any other word, a
-/// typo included, is left to DuckDB.
-// @ai:assumption each statement kind in NO_ROWS succeeds in safe mode without printing rows under -json [P:test conf:0.5 src:duckdb_query::returns_the_last_statement_or_refuses_the_script] — the test exercises CREATE only; the rest of the list was probed by hand on DuckDB 1.5.3, and it holds only under IX_REQUIRE_DUCKDB=1
+/// printing rows (INSERT, UPDATE, DELETE and MERGE print them with
+/// RETURNING, also after a CTE list). Checked against DuckDB 1.5.3; the ones
+/// safe mode refuses (COPY, ATTACH, INSTALL, a configuration SET, ...) fail
+/// anyway, and any other word, a typo included, is left to DuckDB.
+// @ai:assumption each statement kind in NO_ROWS succeeds in safe mode without printing rows under -json [P:test conf:0.5 src:duckdb_query::returns_the_last_statement_or_refuses_the_script] — the test exercises CREATE only; the rest of the list, and the same writes after a CTE list, were probed by hand on DuckDB 1.5.3, and it holds only under IX_REQUIRE_DUCKDB=1
 const NO_ROWS: &[&str] = &[
     "CREATE",
     "DROP",
@@ -241,6 +252,7 @@ const NO_ROWS: &[&str] = &[
     "INSERT",
     "UPDATE",
     "DELETE",
+    "MERGE",
     "TRUNCATE",
     "SET",
     "RESET",
@@ -259,78 +271,132 @@ const NO_ROWS: &[&str] = &[
     "ANALYZE",
 ];
 
-/// The last statement of a script: the text after its last `;` outside a
-/// string, quoted name, comment or dollar-quoted string, when more than
-/// whitespace and comments follows it. It only reads the script, which runs
-/// as sent, so a misreading can refuse a script or let one through but never
-/// change what runs.
-fn last_statement(sql: &str) -> &str {
+fn name_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
+}
+
+/// The script with every byte of a string, quoted name or dollar-quoted
+/// string replaced by `'`, and every byte of a comment by a space, so what is
+/// left is SQL code. It only reads the script, which runs as sent, so a
+/// misreading can refuse a script or let one through but never change what
+/// runs.
+fn code_only(sql: &str) -> Vec<u8> {
     let b = sql.as_bytes();
-    let name_byte = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
-    let (mut i, mut start, mut after_semicolon) = (0, 0, true);
+    let mut code = b.to_vec();
+    let mut i = 0;
     while i < b.len() {
         let rest = &b[i..];
-        if rest.starts_with(b"--") {
-            i += rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
-            continue;
-        }
-        if rest.starts_with(b"/*") {
-            i += rest
-                .windows(2)
-                .position(|w| w == b"*/")
-                .map_or(rest.len(), |p| p + 2);
-            continue;
-        }
-        let c = b[i];
-        if c == b';' || c.is_ascii_whitespace() {
-            after_semicolon |= c == b';';
-            i += 1;
-            continue;
-        }
-        if after_semicolon {
-            (start, after_semicolon) = (i, false);
-        }
-        i += match c {
-            // A quoted string or name ends at its unpaired closing quote;
-            // E'...' strings also take backslash escapes.
-            b'\'' | b'"' => {
-                let escapes = c == b'\''
-                    && i > 0
-                    && matches!(b[i - 1], b'e' | b'E')
-                    && (i < 2 || !name_byte(b[i - 2]));
-                let mut j = 1;
-                while j < rest.len() {
-                    match rest[j] {
-                        b'\\' if escapes => j += 2,
-                        q if q == c && rest.get(j + 1) == Some(&c) => j += 2,
-                        q if q == c => break,
-                        _ => j += 1,
-                    }
+        let (len, mask) = if rest.starts_with(b"--") {
+            let len = rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
+            (len, b' ')
+        } else if rest.starts_with(b"/*") {
+            // Block comments nest in DuckDB.
+            let (mut depth, mut j) = (1, 2);
+            while depth > 0 && j < rest.len() {
+                if rest[j..].starts_with(b"/*") {
+                    (depth, j) = (depth + 1, j + 2);
+                } else if rest[j..].starts_with(b"*/") {
+                    (depth, j) = (depth - 1, j + 2);
+                } else {
+                    j += 1;
                 }
-                j + 1
             }
-            // $$...$$ or $tag$...$tag$, but not $1 or a name containing '$'.
-            b'$' if i == 0 || !name_byte(b[i - 1]) => {
-                match rest[1..]
+            (j, b' ')
+        } else {
+            let c = b[i];
+            match c {
+                // A quoted string or name ends at its unpaired closing quote;
+                // E'...' strings also take backslash escapes.
+                b'\'' | b'"' => {
+                    let escapes = c == b'\''
+                        && i > 0
+                        && matches!(b[i - 1], b'e' | b'E')
+                        && (i < 2 || !name_byte(b[i - 2]));
+                    let mut j = 1;
+                    while j < rest.len() {
+                        match rest[j] {
+                            b'\\' if escapes => j += 2,
+                            q if q == c && rest.get(j + 1) == Some(&c) => j += 2,
+                            q if q == c => break,
+                            _ => j += 1,
+                        }
+                    }
+                    (j + 1, b'\'')
+                }
+                // $$...$$ or $tag$...$tag$, but not $1 or a name containing '$'.
+                b'$' if i == 0 || !name_byte(b[i - 1]) => match rest[1..]
                     .iter()
                     .position(|&c| !(c.is_ascii_alphanumeric() || c == b'_'))
                 {
                     Some(n) if rest[1 + n] == b'$' && !rest[1].is_ascii_digit() => {
                         let tag = &rest[..n + 2];
                         let body = &rest[n + 2..];
-                        n + 2
+                        let len = n
+                            + 2
                             + body
                                 .windows(tag.len())
                                 .position(|w| w == tag)
-                                .map_or(body.len(), |p| p + tag.len())
+                                .map_or(body.len(), |p| p + tag.len());
+                        (len, b'\'')
                     }
-                    _ => 1,
+                    _ => (1, c),
+                },
+                _ => (1, c),
+            }
+        };
+        let end = (i + len).min(b.len());
+        code[i..end].fill(mask);
+        i = end;
+    }
+    code
+}
+
+/// The last statement of the code: what follows its last `;` that more than
+/// whitespace follows.
+fn last_statement(code: &[u8]) -> &[u8] {
+    let end = code
+        .iter()
+        .rposition(|&c| !(c == b';' || c.is_ascii_whitespace()))
+        .map_or(0, |p| p + 1);
+    let start = code[..end]
+        .iter()
+        .rposition(|&c| c == b';')
+        .map_or(0, |p| p + 1);
+    &code[start..end]
+}
+
+/// The tokens of a statement outside parentheses: upper-cased words, each
+/// other character, and `)` for each parenthesised group.
+fn top_level_tokens(statement: &[u8]) -> Vec<String> {
+    let (mut tokens, mut depth, mut i) = (Vec::new(), 0usize, 0);
+    while i < statement.len() {
+        let c = statement[i];
+        if name_byte(c) {
+            let len = statement[i..]
+                .iter()
+                .position(|&c| !name_byte(c))
+                .unwrap_or(statement.len() - i);
+            if depth == 0 {
+                let word = String::from_utf8_lossy(&statement[i..i + len]);
+                tokens.push(word.to_ascii_uppercase());
+            }
+            i += len;
+            continue;
+        }
+        match c {
+            b'(' => depth += 1,
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    tokens.push(")".to_string());
                 }
             }
-            _ => 1,
-        };
+            _ if depth == 0 && !c.is_ascii_whitespace() => tokens.push((c as char).to_string()),
+            _ => {}
+        }
+        i += 1;
     }
-    &sql[start..]
+    tokens
 }
 
 fn valid_table_name(name: &str) -> bool {
@@ -715,6 +781,19 @@ mod tests {
             "SELECT 1 AS stale; CREATE VIEW v AS SELECT 2",
             "SELECT 1;\nINSERT INTO t VALUES (1); -- trailing comment",
             "SELECT 1; set threads = 1;",
+            // A write after a CTE list prints nothing either.
+            "SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
+            "SELECT 1; WITH RECURSIVE x(n) AS (SELECT 1) UPDATE t SET a = 2 FROM x",
+            "SELECT 1; MERGE INTO t USING s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a)",
+            // RETURNING only counts as a clause, not in a string, a comment,
+            // a quoted name or an alias.
+            "SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
+            "SELECT 1; INSERT INTO t VALUES (1) -- returning *",
+            r#"SELECT 1; UPDATE t SET "returning" = 1"#,
+            "SELECT 1; INSERT INTO t SELECT 1 AS returning",
+            "SELECT 1; DELETE FROM t WHERE a IN (SELECT 1 AS b) AND s = $$ returning $$",
+            // Block comments nest, so this `;` is inside one.
+            "SELECT 1 AS stale; /* /* */ ; SELECT 3 */ CREATE VIEW v AS SELECT 2",
         ] {
             let err = check_sql(sql).unwrap_err();
             assert!(err.contains("last statement"), "{sql}: {err}");
@@ -733,6 +812,12 @@ mod tests {
             "(SELECT 1) UNION ALL (SELECT 2)",
             "FROM range(3)",
             "INSERT INTO t VALUES (1) RETURNING a",
+            "INSERT INTO t VALUES (1) returning a AS returning",
+            "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x RETURNING *",
+            "MERGE INTO t USING s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a) RETURNING *",
+            "WITH x(n) AS (SELECT 1), y AS MATERIALIZED (SELECT 2) SELECT * FROM x, y",
+            "WITH update AS (SELECT 1 AS a) SELECT * FROM update",
+            "SELECT 1 /* a /* ; CREATE */ b */ AS x",
             "SELEC 1",
         ] {
             assert!(check_sql(sql).is_ok(), "{sql}: {:?}", check_sql(sql));
