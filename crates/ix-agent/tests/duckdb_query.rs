@@ -263,6 +263,7 @@ fn returns_the_last_statement_or_refuses_the_script() {
         "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
         "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
         "CREATE TABLE t(a INT); PREPARE ins AS INSERT INTO t VALUES (1); SELECT 99 AS stale; EXECUTE ins",
+        r#"CREATE TABLE t(a INT); PREPARE q AS SELECT 1; PREPARE "q" AS INSERT INTO t VALUES (1); SELECT 99 AS stale; EXECUTE q"#,
         "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ($é$; SELECT 1$é$)",
         "SELECT 99 AS stale; -- c\rCREATE VIEW v AS SELECT 2",
     ] {
@@ -289,12 +290,9 @@ fn returns_the_last_statement_or_refuses_the_script() {
         "CALL range(0)",
         "PRAGMA table_info('t')",
         "PRAGMA enable_checkpoint_on_shutdown",
-        "EXECUTE q",
         "INSERT INTO t VALUES (1) RETURNING a",
     ] {
-        let sql = format!(
-            "CREATE TABLE t(a INT); PREPARE q AS SELECT 7 AS a; SELECT 99 AS stale; {last}"
-        );
+        let sql = format!("CREATE TABLE t(a INT); SELECT 99 AS stale; {last}");
         let out = duckdb_query(json!({ "sql": sql })).unwrap_or_else(|e| panic!("{last}: {e}"));
         assert_ne!(out["rows"], json!([{ "stale": 99 }]), "{last}");
     }
