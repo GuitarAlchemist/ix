@@ -257,8 +257,9 @@ fn returns_the_last_statement_or_refuses_the_script() {
     let out =
         duckdb_query(json!({ "sql": "CREATE VIEW v AS SELECT 2 AS x; SELECT * FROM v" })).unwrap();
     assert_eq!(out["rows"], json!([{ "x": 2 }]));
-    // A write after a CTE list, or with 'returning' only in a string, prints
-    // nothing, so it is refused too; with a RETURNING clause it prints rows.
+    // A write after a CTE list, or with 'returning' only in a string or as a
+    // column, prints nothing, so a write is refused last, even with
+    // RETURNING.
     for sql in [
         "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
         "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
@@ -267,13 +268,16 @@ fn returns_the_last_statement_or_refuses_the_script() {
         "ATTACH ':memory:' AS m2; SELECT 99 AS stale; PRAGMA copy_database('memory', 'm2')",
         "CREATE TABLE t(s VARCHAR); SELECT 99 AS stale; INSERT INTO t VALUES ($é$; SELECT 1$é$)",
         "SELECT 99 AS stale; -- c\rCREATE VIEW v AS SELECT 2",
+        r#"CREATE TABLE s("returning" INT); CREATE TABLE t(a INT); INSERT INTO s VALUES (1); SELECT 99 AS stale; INSERT INTO t SELECT s.returning FROM s"#,
+        "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1 AS a) INSERT INTO t SELECT * FROM x RETURNING a",
     ] {
         let err = duckdb_query(json!({ "sql": sql })).unwrap_err();
         assert!(err.contains("last statement"), "{sql}: {err}");
     }
-    let out = duckdb_query(json!({ "sql": "CREATE TABLE t(a INT); SELECT 99 AS stale; WITH x AS (SELECT 1 AS a) INSERT INTO t SELECT * FROM x RETURNING a" })).unwrap();
-    assert_eq!(out["rows"], json!([{ "a": 1 }]));
-    let out = duckdb_query(json!({ "sql": "CREATE TABLE t(a INT); MERGE INTO t USING (SELECT 1 AS a) AS s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a) RETURNING a" })).unwrap();
+    let out = duckdb_query(
+        json!({ "sql": "CREATE TABLE t(a INT); INSERT INTO t VALUES (1); SELECT * FROM t" }),
+    )
+    .unwrap();
     assert_eq!(out["rows"], json!([{ "a": 1 }]));
     // Each kind of statement accepted last prints its own result, even when
     // it has no rows, so the query before it is never returned in its place.
@@ -290,7 +294,6 @@ fn returns_the_last_statement_or_refuses_the_script() {
         "FROM (UNPIVOT (SELECT 1 AS a, 2 AS b) ON a, b)",
         "FROM range(0)",
         "FROM pragma_table_info('t')",
-        "INSERT INTO t VALUES (1) RETURNING a",
     ] {
         let sql = format!("CREATE TABLE t(a INT); SELECT 99 AS stale; {last}");
         let out = duckdb_query(json!({ "sql": sql })).unwrap_or_else(|e| panic!("{last}: {e}"));

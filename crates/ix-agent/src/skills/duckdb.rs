@@ -46,7 +46,7 @@ fn duckdb_query_schema() -> Value {
         "properties": {
             "sql": {
                 "type": "string",
-                "description": "DuckDB SQL. The result of the last statement is returned, so the script must end with a query (SELECT, FROM, WITH, VALUES, TABLE, or one in parentheses) or with INSERT/UPDATE/DELETE/MERGE ... RETURNING; any other last statement is refused (write SHOW, DESCRIBE, SUMMARIZE, PIVOT or PRAGMA as FROM (DESCRIBE t), FROM pragma_table_info('t'), ...). Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
+                "description": "DuckDB SQL. The result of the last statement is returned, so the script must end with a query (SELECT, FROM, WITH, VALUES, TABLE, or one in parentheses); any other last statement, a write with RETURNING included, is refused (end a write with a query over what it wrote; write SHOW, DESCRIBE, SUMMARIZE, PIVOT or PRAGMA as FROM (DESCRIBE t), FROM pragma_table_info('t'), ...). Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
             },
             "tables": {
                 "type": "object",
@@ -220,7 +220,7 @@ fn check_sql(sql: &str) -> Result<(), String> {
         .unwrap_or_default();
     if let Err(keyword) = prints_rows(&last) {
         return Err(format!(
-            "the result of the last statement is returned, but the last statement of `sql` ({keyword} ...) is not one known to return rows; end `sql` with a query such as SELECT, or a write with RETURNING"
+            "the result of the last statement is returned, but the last statement of `sql` ({keyword} ...) is not a query; end `sql` with a query such as SELECT (after a write, one over what it wrote)"
         ));
     }
     Ok(())
@@ -228,10 +228,12 @@ fn check_sql(sql: &str) -> Result<(), String> {
 
 /// First keywords of the SELECT family, the statements that print their
 /// result under `-json` (an empty one as `[]`); `)` stands for a
-/// parenthesised query. INSERT, UPDATE, DELETE and MERGE print rows only with
-/// RETURNING. Any other statement is refused last:
+/// parenthesised query. Any other statement is refused last:
 /// - some succeed in safe mode without printing anything (CREATE, SET,
 ///   ATTACH ':memory:', COPY FROM DATABASE, ...);
+/// - INSERT, UPDATE, DELETE and MERGE print rows only with a RETURNING
+///   clause, and which `returning` word is the clause (not a string, an alias
+///   or a column) is not read;
 /// - DuckDB rewrites PRAGMA, SHOW, DESCRIBE, SUMMARIZE, PIVOT and CALL, and a
 ///   rewrite can print nothing (PRAGMA copy_database is COPY FROM DATABASE).
 ///   Each has a spelling in the SELECT family: `FROM (DESCRIBE t)`,
@@ -257,16 +259,10 @@ fn prints_rows(tokens: &[String]) -> Result<(), &str> {
             })
             .map_or(keyword, |w| w[1].as_str());
     }
-    match keyword {
-        "INSERT" | "UPDATE" | "DELETE" | "MERGE"
-            if tokens
-                .windows(2)
-                .any(|w| w[1] == "RETURNING" && w[0] != "AS") =>
-        {
-            Ok(())
-        }
-        _ if ROWS.contains(&keyword) => Ok(()),
-        _ => Err(keyword),
+    if ROWS.contains(&keyword) {
+        Ok(())
+    } else {
+        Err(keyword)
     }
 }
 
@@ -780,8 +776,14 @@ mod tests {
             "SELECT 99 AS stale; WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
             "SELECT 1; WITH RECURSIVE x(n) AS (SELECT 1) UPDATE t SET a = 2 FROM x",
             "SELECT 1; MERGE INTO t USING s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a)",
-            // RETURNING only counts as a clause, not in a string, a comment,
-            // a quoted name or an alias.
+            // A write is refused last, with or without RETURNING: which
+            // `returning` is the clause (not a string, a comment, a quoted
+            // name, an alias or a column) is not read.
+            r#"SELECT 99 AS stale; INSERT INTO t SELECT s.returning FROM s"#,
+            "INSERT INTO t VALUES (1) RETURNING a",
+            "INSERT INTO t VALUES (1) returning a AS returning",
+            "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x RETURNING *",
+            "MERGE INTO t USING s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a) RETURNING *",
             "SELECT 99 AS stale; INSERT INTO t VALUES ('returning')",
             "SELECT 1; INSERT INTO t VALUES (1) -- returning *",
             r#"SELECT 1; UPDATE t SET "returning" = 1"#,
@@ -836,10 +838,7 @@ mod tests {
             "WITH t AS (SELECT 1) SELECT * FROM t;",
             "(SELECT 1) UNION ALL (SELECT 2)",
             "FROM range(3)",
-            "INSERT INTO t VALUES (1) RETURNING a",
-            "INSERT INTO t VALUES (1) returning a AS returning",
-            "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x RETURNING *",
-            "MERGE INTO t USING s ON t.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a) RETURNING *",
+            "INSERT INTO t VALUES (1); SELECT * FROM t",
             "WITH x(n) AS (SELECT 1), y AS MATERIALIZED (SELECT 2) SELECT * FROM x, y",
             "WITH update AS (SELECT 1 AS a) SELECT * FROM update",
             "SELECT 1 /* a /* ; CREATE */ b */ AS x",
