@@ -82,8 +82,8 @@ fn cannot_read_write_or_attach_files() {
         format!("COPY (SELECT 1) TO '{out_path}'"),
         format!("ATTACH '{p}.db'"),
         "INSTALL httpfs".to_string(),
-        "LOAD httpfs".to_string(),
-        "SET enable_external_access = true".to_string(),
+        "LOAD httpfs; SELECT 1 AS x".to_string(),
+        "SET enable_external_access = true; SELECT 1 AS x".to_string(),
         "SELECT getenv('PATH') AS p".to_string(),
     ] {
         let err = duckdb_query(json!({ "sql": sql })).expect_err(&sql);
@@ -105,7 +105,8 @@ fn memory_and_threads_are_bounded_and_locked() {
     }))
     .unwrap();
     assert_eq!(out["rows"], json!([{ "m": "512.0 MiB", "t": 2, "d": "" }]));
-    let err = duckdb_query(json!({ "sql": "SET memory_limit = '8GB'" })).unwrap_err();
+    let err =
+        duckdb_query(json!({ "sql": "SET memory_limit = '8GB'; SELECT 1 AS x" })).unwrap_err();
     assert!(err.contains("locked"), "{err}");
     // Materialises 200M BIGINTs (1.6 GB): refused at the limit, not spilled to disk.
     let err = duckdb_query(json!({ "sql": "SELECT len(list(i)) AS n FROM range(200000000) r(i)" }))
@@ -173,6 +174,33 @@ fn returns_numbers_exactly_or_refuses_them() {
 }
 
 #[test]
+fn returns_supplied_integers_as_numbers() {
+    if !duckdb_available() {
+        return;
+    }
+    // json_structure infers UBIGINT (or HUGEINT, for mixed signs), which
+    // DuckDB prints as strings: a step's integer output would come back as
+    // "1" to the next step.
+    let out = duckdb_query(json!({
+        "sql": "SELECT a, a + 1 AS b FROM t ORDER BY a",
+        "tables": { "t": [{ "a": 2 }, { "a": -1 }] }
+    }))
+    .unwrap();
+    assert_eq!(
+        out["rows"],
+        json!([{ "a": -1, "b": 0 }, { "a": 2, "b": 3 }])
+    );
+    assert_eq!(out["tables"]["t"], json!(r#"[{"a":"BIGINT"}]"#));
+    // An integer beyond i64 keeps its inferred type, printed exactly.
+    let out = duckdb_query(json!({
+        "sql": "SELECT a FROM t",
+        "tables": { "t": [{ "a": 18446744073709551615_u64 }] }
+    }))
+    .unwrap();
+    assert_eq!(out["rows"], json!([{ "a": "18446744073709551615" }]));
+}
+
+#[test]
 fn keeps_nested_objects_as_struct_columns() {
     if !duckdb_available() {
         return;
@@ -213,6 +241,26 @@ fn never_reports_a_data_row_as_column_names() {
         let columns = &out["columns"];
         assert!(*columns == json!(["id"]) || *columns == json!([]), "{out}");
     }
+}
+
+#[test]
+fn returns_the_last_statement_or_refuses_the_script() {
+    if !duckdb_available() {
+        return;
+    }
+    let err =
+        duckdb_query(json!({ "sql": "SELECT 1 AS stale; CREATE VIEW v AS SELECT 2" })).unwrap_err();
+    assert!(err.contains("last statement"), "{err}");
+    let out =
+        duckdb_query(json!({ "sql": "CREATE VIEW v AS SELECT 2 AS x; SELECT * FROM v" })).unwrap();
+    assert_eq!(out["rows"], json!([{ "x": 2 }]));
+    // A leading-dot literal on an indented line is SQL.
+    let out = duckdb_query(json!({ "sql": "SELECT\n  .5::DOUBLE AS ratio" })).unwrap();
+    assert_eq!(out["rows"], json!([{ "ratio": 0.5 }]));
+    // An indented dot command is SQL too, so a syntax error, never a mode change.
+    let err =
+        duckdb_query(json!({ "sql": "SELECT 1 AS a;\n  .mode csv; SELECT 2 AS b" })).unwrap_err();
+    assert!(err.contains("syntax error"), "{err}");
 }
 
 #[test]

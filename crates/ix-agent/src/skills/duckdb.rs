@@ -46,7 +46,7 @@ fn duckdb_query_schema() -> Value {
         "properties": {
             "sql": {
                 "type": "string",
-                "description": "DuckDB SQL. The result of the last statement is returned. Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB -safe mode); dot commands are refused."
+                "description": "DuckDB SQL. The result of the last statement is returned, so a script ending with a statement that returns no rows (CREATE, INSERT, SET, ...) is refused. Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
             },
             "tables": {
                 "type": "object",
@@ -85,7 +85,7 @@ fn duckdb_query_output_schema() -> Value {
 #[ix_skill(
     domain = "duckdb",
     name = "duckdb.query",
-    governance = "safety,deterministic",
+    governance = "safety",
     schema_fn = "crate::skills::duckdb::duckdb_query_schema",
     output_schema_fn = "crate::skills::duckdb::duckdb_query_output_schema"
 )]
@@ -127,13 +127,17 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
                 outputs.len()
             ));
         }
-        for out in outputs {
+        for ((name, _), out) in tables.iter().zip(outputs) {
             let s = out
                 .get(0)
                 .and_then(|row| row.get("s"))
                 .and_then(Value::as_str)
                 .ok_or("DuckDB returned no json_structure")?;
-            structures.push(s.to_string());
+            let rows = params.get("tables").and_then(|t| t.get(name));
+            structures.push(match rows {
+                Some(rows) if !has_wide_integer(rows) => integers_as_bigint(s)?,
+                _ => s.to_string(),
+            });
         }
     }
 
@@ -196,12 +200,137 @@ fn check_sql(sql: &str) -> Result<(), String> {
         ));
     }
     // The CLI reads its script from stdin, where a line starting with '.' is a
-    // dot command. -safe refuses the ones touching files or the shell; the
-    // rest (.mode, .headers, ...) would only corrupt the JSON output.
-    if sql.lines().any(|l| l.trim_start().starts_with('.')) {
-        return Err("dot commands are not allowed in `sql`".to_string());
+    // dot command; an indented one is SQL. Safe mode refuses the ones touching
+    // files or the shell; the rest (.mode, .headers, ...) would only corrupt
+    // the JSON output.
+    if sql.lines().any(|l| l.starts_with('.')) {
+        return Err(
+            "lines starting with '.' are CLI dot commands, which are not allowed in `sql`; indent a line that is SQL (a `.5` literal, say)"
+                .to_string(),
+        );
+    }
+    // `-json` prints nothing for a statement without rows, so a script ending
+    // with one would return the rows of the query before it as the last
+    // statement's result.
+    let last = last_statement(sql);
+    let keyword = last
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let returning = matches!(keyword.as_str(), "INSERT" | "UPDATE" | "DELETE")
+        && last.to_ascii_lowercase().contains("returning");
+    if NO_ROWS.contains(&keyword.as_str()) && !returning {
+        return Err(format!(
+            "the result of the last statement is returned, but the last statement of `sql` ({keyword} ...) returns no rows; end `sql` with a query such as SELECT"
+        ));
     }
     Ok(())
+}
+
+/// First keywords of the statements that succeed in safe mode without
+/// printing rows (INSERT, UPDATE and DELETE print them with RETURNING).
+/// Checked against DuckDB 1.5.3; the ones safe mode refuses (COPY, ATTACH,
+/// INSTALL, a configuration SET, ...) fail anyway, and any other word, a
+/// typo included, is left to DuckDB.
+// @ai:assumption each statement kind in NO_ROWS succeeds in safe mode without printing rows under -json [P:test conf:0.5 src:duckdb_query::returns_the_last_statement_or_refuses_the_script] — the test exercises CREATE only; the rest of the list was probed by hand on DuckDB 1.5.3, and it holds only under IX_REQUIRE_DUCKDB=1
+const NO_ROWS: &[&str] = &[
+    "CREATE",
+    "DROP",
+    "ALTER",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "TRUNCATE",
+    "SET",
+    "RESET",
+    "USE",
+    "LOAD",
+    "BEGIN",
+    "START",
+    "COMMIT",
+    "END",
+    "ROLLBACK",
+    "ABORT",
+    "PREPARE",
+    "DEALLOCATE",
+    "COMMENT",
+    "VACUUM",
+    "ANALYZE",
+];
+
+/// The last statement of a script: the text after its last `;` outside a
+/// string, quoted name, comment or dollar-quoted string, when more than
+/// whitespace and comments follows it. It only reads the script, which runs
+/// as sent, so a misreading can refuse a script or let one through but never
+/// change what runs.
+fn last_statement(sql: &str) -> &str {
+    let b = sql.as_bytes();
+    let name_byte = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+    let (mut i, mut start, mut after_semicolon) = (0, 0, true);
+    while i < b.len() {
+        let rest = &b[i..];
+        if rest.starts_with(b"--") {
+            i += rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
+            continue;
+        }
+        if rest.starts_with(b"/*") {
+            i += rest
+                .windows(2)
+                .position(|w| w == b"*/")
+                .map_or(rest.len(), |p| p + 2);
+            continue;
+        }
+        let c = b[i];
+        if c == b';' || c.is_ascii_whitespace() {
+            after_semicolon |= c == b';';
+            i += 1;
+            continue;
+        }
+        if after_semicolon {
+            (start, after_semicolon) = (i, false);
+        }
+        i += match c {
+            // A quoted string or name ends at its unpaired closing quote;
+            // E'...' strings also take backslash escapes.
+            b'\'' | b'"' => {
+                let escapes = c == b'\''
+                    && i > 0
+                    && matches!(b[i - 1], b'e' | b'E')
+                    && (i < 2 || !name_byte(b[i - 2]));
+                let mut j = 1;
+                while j < rest.len() {
+                    match rest[j] {
+                        b'\\' if escapes => j += 2,
+                        q if q == c && rest.get(j + 1) == Some(&c) => j += 2,
+                        q if q == c => break,
+                        _ => j += 1,
+                    }
+                }
+                j + 1
+            }
+            // $$...$$ or $tag$...$tag$, but not $1 or a name containing '$'.
+            b'$' if i == 0 || !name_byte(b[i - 1]) => {
+                match rest[1..]
+                    .iter()
+                    .position(|&c| !(c.is_ascii_alphanumeric() || c == b'_'))
+                {
+                    Some(n) if rest[1 + n] == b'$' && !rest[1].is_ascii_digit() => {
+                        let tag = &rest[..n + 2];
+                        let body = &rest[n + 2..];
+                        n + 2
+                            + body
+                                .windows(tag.len())
+                                .position(|w| w == tag)
+                                .map_or(body.len(), |p| p + tag.len())
+                    }
+                    _ => 1,
+                }
+            }
+            _ => 1,
+        };
+    }
+    &sql[start..]
 }
 
 fn valid_table_name(name: &str) -> bool {
@@ -250,6 +379,38 @@ fn read_tables(raw: Option<&Value>) -> Result<Vec<(String, String)>, String> {
         out.push((name.clone(), text));
     }
     Ok(out)
+}
+
+/// Whether a JSON value holds an integer beyond i64 (a u64 above i64::MAX).
+fn has_wide_integer(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.is_u64() && n.as_i64().is_none(),
+        Value::Array(items) => items.iter().any(has_wide_integer),
+        Value::Object(fields) => fields.values().any(has_wide_integer),
+        _ => false,
+    }
+}
+
+/// `json_structure` infers UBIGINT for non-negative integers and HUGEINT for
+/// mixed signs, and DuckDB prints both as JSON strings, so a supplied integer
+/// would come back as "1". For a table whose integers all fit an i64, those
+/// types become BIGINT, which prints as a number. Only type names change:
+/// they are the structure's string values, never its keys (column names).
+/// Re-serialising lists keys in name order, the order the rows themselves
+/// are sent in (serde_json sorts them), so columns load in name order.
+fn integers_as_bigint(structure: &str) -> Result<String, String> {
+    fn narrow(v: &mut Value) {
+        match v {
+            Value::String(t) if t == "UBIGINT" || t == "HUGEINT" => *t = "BIGINT".to_string(),
+            Value::Array(items) => items.iter_mut().for_each(narrow),
+            Value::Object(fields) => fields.values_mut().for_each(narrow),
+            _ => {}
+        }
+    }
+    let mut v: Value = serde_json::from_str(structure)
+        .map_err(|e| format!("could not read json_structure {structure:?}: {e}"))?;
+    narrow(&mut v);
+    Ok(v.to_string())
 }
 
 /// A SQL string literal: DuckDB treats backslashes literally, so doubling
@@ -544,6 +705,60 @@ mod tests {
         assert!(empty.unwrap_err().contains("empty"));
         let scalar_rows = duckdb_query(json!({ "sql": "SELECT 1", "tables": { "t": [1, 2] } }));
         assert!(scalar_rows.unwrap_err().contains("JSON object"));
+    }
+
+    #[test]
+    fn check_sql_refuses_a_last_statement_that_returns_no_rows() {
+        // `-json` prints nothing for these, so the rows of the query before
+        // them would have been returned as the last statement's result.
+        for sql in [
+            "SELECT 1 AS stale; CREATE VIEW v AS SELECT 2",
+            "SELECT 1;\nINSERT INTO t VALUES (1); -- trailing comment",
+            "SELECT 1; set threads = 1;",
+        ] {
+            let err = check_sql(sql).unwrap_err();
+            assert!(err.contains("last statement"), "{sql}: {err}");
+        }
+        for sql in [
+            "CREATE VIEW v AS SELECT 2 AS x; SELECT * FROM v",
+            "SELECT 'a;CREATE' AS s",
+            "SELECT 'it''s;' AS s; select 2",
+            r#"SELECT 1 AS "x;y""#,
+            "SELECT 1 -- ; CREATE\n",
+            "SELECT 1 /* ; CREATE */",
+            "SELECT $$a;CREATE$$ AS s",
+            "SELECT $q$a;CREATE$q$ AS s",
+            r"SELECT E'it\'s; CREATE' AS s",
+            "WITH t AS (SELECT 1) SELECT * FROM t;",
+            "(SELECT 1) UNION ALL (SELECT 2)",
+            "FROM range(3)",
+            "INSERT INTO t VALUES (1) RETURNING a",
+            "SELEC 1",
+        ] {
+            assert!(check_sql(sql).is_ok(), "{sql}: {:?}", check_sql(sql));
+        }
+    }
+
+    #[test]
+    fn check_sql_refuses_dot_commands_only_at_line_start() {
+        // The CLI reads a dot command only from a line starting with '.'.
+        assert!(check_sql("SELECT 1;\n.mode csv\nSELECT 2")
+            .unwrap_err()
+            .contains("dot command"));
+        assert!(check_sql("SELECT\n  .5 AS ratio").is_ok());
+        assert!(check_sql("SELECT 1,\n\t.5 AS ratio").is_ok());
+    }
+
+    #[test]
+    fn is_not_tagged_deterministic() {
+        // SQL can call random(), uuid() or now(): the same arguments need not
+        // give the same rows.
+        let desc = ix_registry::by_name("duckdb.query").expect("registered");
+        assert!(
+            !desc.governance_tags.contains(&"deterministic"),
+            "{:?}",
+            desc.governance_tags
+        );
     }
 
     #[test]
