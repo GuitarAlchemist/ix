@@ -46,7 +46,7 @@ fn duckdb_query_schema() -> Value {
         "properties": {
             "sql": {
                 "type": "string",
-                "description": "DuckDB SQL. The result of the last statement is returned, so the script must end with a statement that returns rows: a query (SELECT, FROM, WITH, VALUES, TABLE), SHOW, DESCRIBE, SUMMARIZE, PIVOT, UNPIVOT, CALL, PRAGMA, or INSERT/UPDATE/DELETE/MERGE with RETURNING; any other, EXECUTE included, is refused. Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
+                "description": "DuckDB SQL. The result of the last statement is returned, so the script must end with a query (SELECT, FROM, WITH, VALUES, TABLE, or one in parentheses) or with INSERT/UPDATE/DELETE/MERGE ... RETURNING; any other last statement is refused (write SHOW, DESCRIBE, SUMMARIZE, PIVOT or PRAGMA as FROM (DESCRIBE t), FROM pragma_table_info('t'), ...). Supplied tables are in scope by name. Files, extensions, ATTACH and network are unavailable (DuckDB safe mode); a line starting with '.' is a CLI dot command and is refused."
             },
             "tables": {
                 "type": "object",
@@ -226,31 +226,19 @@ fn check_sql(sql: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// First keywords of the statements that print their result under `-json`,
-/// an empty one as `[]`; `)` stands for a parenthesised query. INSERT,
-/// UPDATE, DELETE and MERGE print rows only with RETURNING. Any other
-/// statement is refused last: some succeed in safe mode without printing
-/// anything (CREATE, SET, ATTACH ':memory:', COPY FROM DATABASE, ...), and
-/// EXECUTE prints what the statement it runs prints, which is not read.
+/// First keywords of the SELECT family, the statements that print their
+/// result under `-json` (an empty one as `[]`); `)` stands for a
+/// parenthesised query. INSERT, UPDATE, DELETE and MERGE print rows only with
+/// RETURNING. Any other statement is refused last:
+/// - some succeed in safe mode without printing anything (CREATE, SET,
+///   ATTACH ':memory:', COPY FROM DATABASE, ...);
+/// - DuckDB rewrites PRAGMA, SHOW, DESCRIBE, SUMMARIZE, PIVOT and CALL, and a
+///   rewrite can print nothing (PRAGMA copy_database is COPY FROM DATABASE).
+///   Each has a spelling in the SELECT family: `FROM (DESCRIBE t)`,
+///   `FROM pragma_table_info('t')`, `FROM range(3)`;
+/// - EXECUTE prints what the statement it runs prints, which is not read.
 // @ai:invariant each statement kind in ROWS prints its own result as the last statement under -json in safe mode, so the query before it is never returned in its place [P:test conf:0.6 src:duckdb_query::returns_the_last_statement_or_refuses_the_script] — the test runs one statement of each kind after a stale query on DuckDB 1.5.3, but it skips where the CLI is absent, so the binding is live only under IX_REQUIRE_DUCKDB=1
-const ROWS: &[&str] = &[
-    "SELECT",
-    "FROM",
-    "WITH",
-    ")",
-    "VALUES",
-    "TABLE",
-    "SHOW",
-    "DESCRIBE",
-    "DESC",
-    "SUMMARIZE",
-    "PIVOT",
-    "PIVOT_WIDER",
-    "UNPIVOT",
-    "PIVOT_LONGER",
-    "CALL",
-    "PRAGMA",
-];
+const ROWS: &[&str] = &["SELECT", "FROM", "WITH", ")", "VALUES", "TABLE"];
 
 /// Whether a statement, as its top-level tokens, prints its result under
 /// `-json`; if not, its first keyword.
@@ -820,6 +808,17 @@ mod tests {
             // Only statements known to print rows are accepted.
             "SELECT 1; EXPLAIN SELECT 2",
             "SELEC 1",
+            // DuckDB rewrites these, and a rewrite can print nothing
+            // (PRAGMA copy_database is COPY FROM DATABASE), so only the
+            // SELECT family is accepted; each has a spelling in it.
+            "ATTACH ':memory:' AS m2; SELECT 99 AS stale; PRAGMA copy_database('memory', 'm2')",
+            "PRAGMA table_info('t')",
+            "SHOW TABLES",
+            "DESC t",
+            "SUMMARIZE t",
+            "PIVOT t ON s USING count(*)",
+            "UNPIVOT t ON a, b",
+            "CALL range(3)",
         ] {
             let err = check_sql(sql).unwrap_err();
             assert!(err.contains("last statement"), "{sql}: {err}");
@@ -851,13 +850,13 @@ mod tests {
             "WITH x AS (SELECT 1 AS a) (SELECT * FROM x)",
             "VALUES (1)",
             "TABLE t",
-            "SHOW TABLES",
-            "DESC t",
-            "SUMMARIZE t",
-            "PIVOT t ON s USING count(*)",
-            "UNPIVOT t ON a, b",
-            "CALL range(3)",
-            "PRAGMA table_info('t')",
+            "FROM (SHOW TABLES)",
+            "FROM (DESCRIBE t)",
+            "FROM (SUMMARIZE t)",
+            "FROM (PIVOT t ON s USING count(*))",
+            "FROM (UNPIVOT t ON a, b)",
+            "FROM range(3)",
+            "FROM pragma_table_info('t')",
         ] {
             assert!(check_sql(sql).is_ok(), "{sql}: {:?}", check_sql(sql));
         }
