@@ -15,8 +15,8 @@
 //! the request, so it is classified Tier 1.
 //!
 //! Tables are loaded without touching disk: one CLI call infers each table's
-//! `json_structure`, a second loads it with `from_json` + `unnest` and then
-//! runs the query.
+//! `json_structure`, a second loads it with `from_json` + `unnest` (one level
+//! deep, so nested objects stay STRUCT columns) and then runs the query.
 
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -80,7 +80,8 @@ fn duckdb_query_output_schema() -> Value {
 ///
 /// Needs the DuckDB 1.x CLI (`IX_DUCKDB_BIN`, else `duckdb` on `PATH`). The
 /// query runs in memory in DuckDB's safe mode, bounded to 512 MiB, 2 threads
-/// and 30 s.
+/// and 30 s per run (a query whose result is empty runs twice, the second
+/// time to read its column names).
 #[ix_skill(
     domain = "duckdb",
     name = "duckdb.query",
@@ -140,7 +141,7 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
     let mut script = String::new();
     for ((name, text), structure) in tables.iter().zip(&structures) {
         script.push_str(&format!(
-            "CREATE TABLE \"{name}\" AS SELECT unnest(from_json({}, {}), recursive := true);\n",
+            "CREATE TABLE \"{name}\" AS SELECT r.* FROM (SELECT unnest(from_json({}, {})) AS r);\n",
             literal(text),
             literal(structure)
         ));
@@ -155,11 +156,19 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
     };
     let row_count = all_rows.len();
     let rows: Vec<Value> = all_rows.into_iter().take(max_rows).collect();
-    let columns: Vec<String> = rows
+    let mut columns: Vec<String> = rows
         .first()
         .and_then(Value::as_object)
         .map(|o| o.keys().cloned().collect())
         .unwrap_or_default();
+    if row_count == 0 && !outputs.is_empty() {
+        // `-json` prints an empty result as `[]`, without its names. The script
+        // runs again in CSV mode, where an empty result still prints its
+        // header; it is in memory and cut off from everything else, so running
+        // it twice changes nothing but the time taken.
+        columns = csv_header_of_empty_result(&bin, &script)?;
+        columns.sort();
+    }
 
     Ok(json!({
         "rows": rows,
@@ -257,9 +266,70 @@ fn version(bin: &str) -> String {
 
 /// Runs `PREAMBLE` then a script in `duckdb -bail -json` (in memory) and
 /// returns the JSON value each result-producing statement printed, in order.
+fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
+    let out = execute(bin, script)?;
+    let values = serde_json::Deserializer::from_slice(&out)
+        .into_iter::<Value>()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("could not read DuckDB JSON output: {e}"))?;
+    // A row read into a JSON object keeps only the last of two same-named
+    // columns (`SELECT t.*, u.*`), so the returned result's names are read in
+    // output order first, and a repeat is refused rather than dropped.
+    if let Some(Ok(ResultColumns(names))) = serde_json::Deserializer::from_slice(&out)
+        .into_iter::<ResultColumns>()
+        .last()
+    {
+        let mut seen = std::collections::HashSet::new();
+        if let Some(dup) = names.iter().find(|n| !seen.insert(n.as_str())) {
+            return Err(format!(
+                "the result has more than one column named {dup:?}; rows are JSON objects, so give each column a distinct name with AS"
+            ));
+        }
+    }
+    Ok(values)
+}
+
+/// The column names of a script whose last result is empty, from its CSV
+/// header (the last record printed).
+fn csv_header_of_empty_result(bin: &str, script: &str) -> Result<Vec<String>, String> {
+    let out = execute(bin, &format!(".mode csv\n.headers on\n{script}"))?;
+    Ok(last_csv_record(&String::from_utf8_lossy(&out)))
+}
+
+/// The last record of DuckDB's CSV output: fields split on `,`, quoted with
+/// `"` (doubled inside quotes), records ended by a newline outside quotes.
+fn last_csv_record(text: &str) -> Vec<String> {
+    let (mut last, mut record, mut field) = (Vec::new(), Vec::new(), String::new());
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                field.push('"');
+            }
+            '"' => quoted = !quoted,
+            ',' if !quoted => record.push(std::mem::take(&mut field)),
+            '\r' if !quoted => {}
+            '\n' if !quoted => {
+                record.push(std::mem::take(&mut field));
+                last = std::mem::take(&mut record);
+            }
+            _ => field.push(c),
+        }
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        last = record;
+    }
+    last
+}
+
+/// Runs `PREAMBLE` then a script in `duckdb -bail -json` (in memory) and
+/// returns what it printed.
 // @ai:invariant a query run here cannot read, write or attach a file, install an extension or re-enable external access [P:test conf:0.6 src:duckdb_query::cannot_read_write_or_attach_files] — the test skips where the CLI is absent, which includes default CI, so the binding is live only under IX_REQUIRE_DUCKDB=1
 // @ai:invariant a query run here holds at most 512 MiB of DuckDB memory on 2 threads, never spills to disk, and cannot raise either limit [P:test conf:0.6 src:duckdb_query::memory_and_threads_are_bounded_and_locked] — same binding as above: live only under IX_REQUIRE_DUCKDB=1
-fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
+fn execute(bin: &str, script: &str) -> Result<Vec<u8>, String> {
     let mut child = Command::new(bin)
         .args(["-bail", "-json", "-no-init"])
         .stdin(Stdio::piped())
@@ -325,25 +395,7 @@ fn run(bin: &str, script: &str) -> Result<Vec<Value>, String> {
             "DuckDB output exceeds {MAX_OUTPUT_BYTES} bytes; select fewer rows or columns"
         ));
     }
-    let values = serde_json::Deserializer::from_slice(&out)
-        .into_iter::<Value>()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("could not read DuckDB JSON output: {e}"))?;
-    // A row read into a JSON object keeps only the last of two same-named
-    // columns (`SELECT t.*, u.*`), so the returned result's names are read in
-    // output order first, and a repeat is refused rather than dropped.
-    if let Some(Ok(ResultColumns(names))) = serde_json::Deserializer::from_slice(&out)
-        .into_iter::<ResultColumns>()
-        .last()
-    {
-        let mut seen = std::collections::HashSet::new();
-        if let Some(dup) = names.iter().find(|n| !seen.insert(n.as_str())) {
-            return Err(format!(
-                "the result has more than one column named {dup:?}; rows are JSON objects, so give each column a distinct name with AS"
-            ));
-        }
-    }
-    Ok(values)
+    Ok(out)
 }
 
 /// The column names of one DuckDB `-json` result (an array of row objects),
@@ -427,6 +479,15 @@ mod tests {
             .unwrap()
             .0
             .is_empty());
+    }
+
+    #[test]
+    fn last_csv_record_reads_duckdb_quoting() {
+        // Bytes DuckDB 1.5.3 printed for `SELECT 7 AS x;` then an empty
+        // result with columns id, "a,b", "q""x" and "multi<newline>line".
+        let out = "x\r\n7\r\nid,\"a,b\",\"q\"\"x\",\"multi\nline\"\r\n";
+        assert_eq!(last_csv_record(out), ["id", "a,b", "q\"x", "multi\nline"]);
+        assert!(last_csv_record("").is_empty());
     }
 
     #[test]

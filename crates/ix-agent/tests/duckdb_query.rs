@@ -132,6 +132,35 @@ fn refuses_results_with_repeated_column_names() {
 }
 
 #[test]
+fn keeps_nested_objects_as_struct_columns() {
+    if !duckdb_available() {
+        return;
+    }
+    let out = duckdb_query(json!({
+        "sql": "SELECT typeof(meta) AS tm, meta.score::INTEGER AS score, id::INTEGER AS id FROM t",
+        "tables": { "t": [{ "id": 1, "meta": { "score": 2, "id": 9 } }] }
+    }))
+    .expect("`meta` is a top-level column");
+    let row = &out["rows"][0];
+    assert!(row["tm"].as_str().unwrap().starts_with("STRUCT("), "{row}");
+    assert_eq!((&row["score"], &row["id"]), (&json!(2), &json!(1)));
+}
+
+#[test]
+fn reports_the_columns_of_an_empty_result() {
+    if !duckdb_available() {
+        return;
+    }
+    let out = duckdb_query(json!({
+        "sql": "SELECT 7 AS earlier; SELECT 1 AS id, 'x' AS \"a,b\", 2 AS \"q\"\"x\" WHERE false"
+    }))
+    .unwrap();
+    assert_eq!(out["rows"], json!([]));
+    assert_eq!(out["row_count"], json!(0));
+    assert_eq!(out["columns"], json!(["a,b", "id", "q\"x"]));
+}
+
+#[test]
 fn reports_sql_errors() {
     if !duckdb_available() {
         return;
