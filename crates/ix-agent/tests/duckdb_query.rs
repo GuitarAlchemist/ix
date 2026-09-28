@@ -62,6 +62,33 @@ fn truncates_to_max_rows_and_reports_it() {
     assert_eq!(out["truncated"], json!(true));
 }
 
+/// Rows past `max_rows` are counted, not kept, so a result that prints more
+/// than the output cap (a million rows print about 19 MB) still comes back cut
+/// to `max_rows`, and only the rows returned are checked for exact numbers.
+#[test]
+fn counts_rows_past_max_rows_without_keeping_them() {
+    if !duckdb_available() {
+        return;
+    }
+    let out = duckdb_query(json!({ "sql": "FROM range(1000000)", "max_rows": 10 }))
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(out["rows"].as_array().unwrap().len(), 10);
+    assert_eq!(out["rows"][9], json!({ "range": 9 }));
+    assert_eq!(out["row_count"], json!(1_000_000));
+    assert_eq!(out["truncated"], json!(true));
+    assert_eq!(out["columns"], json!(["range"]));
+
+    let sql = "SELECT [CASE WHEN range < 3 THEN 1 ELSE 18446744073709551617 END::HUGEINT] AS l FROM range(5)";
+    let out = duckdb_query(json!({ "sql": sql, "max_rows": 3 })).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        out["rows"],
+        json!([{ "l": [1] }, { "l": [1] }, { "l": [1] }])
+    );
+    assert_eq!(out["row_count"], json!(5));
+    let err = duckdb_query(json!({ "sql": sql, "max_rows": 4 })).unwrap_err();
+    assert!(err.contains("18446744073709551617"), "{err}");
+}
+
 #[test]
 fn cannot_read_write_or_attach_files() {
     if !duckdb_available() {
