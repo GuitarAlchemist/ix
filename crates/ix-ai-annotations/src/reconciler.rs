@@ -166,7 +166,12 @@ fn find_test_match(a: &Annotation, cfg: &ReconcilerConfig) -> Option<String> {
             continue;
         }
         // Read the test file and look for any significant keyword from the claim.
-        let abs = cfg.workspace.join(test_path);
+        // `Path::join` drops the base for an absolute `test_path` and keeps a
+        // `..`, so an entry that does not land inside the workspace is skipped
+        // rather than read: the invariant holds whatever a caller passes in.
+        let Some(abs) = resolve_inside_workspace(&cfg.workspace, test_path) else {
+            continue;
+        };
         let body = match fs::read_to_string(&abs) {
             Ok(s) => s.to_lowercase(),
             Err(_) => continue,
@@ -176,6 +181,16 @@ fn find_test_match(a: &Annotation, cfg: &ReconcilerConfig) -> Option<String> {
         }
     }
     None
+}
+
+/// `workspace.join(entry)` if the result is inside `workspace`, else `None`.
+/// Both sides are canonicalized, so a link or a `..` that leads out is caught
+/// rather than followed.
+fn resolve_inside_workspace(workspace: &Path, entry: &Path) -> Option<PathBuf> {
+    let joined = workspace.join(entry);
+    let root = workspace.canonicalize().ok()?;
+    let resolved = joined.canonicalize().ok()?;
+    resolved.starts_with(&root).then_some(joined)
 }
 
 fn significant_words(claim: &str) -> Vec<String> {

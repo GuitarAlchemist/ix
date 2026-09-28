@@ -97,9 +97,26 @@ fn write_index(path: &Path) {
     std::fs::write(path, buf).unwrap();
 }
 
+/// A scratch directory inside the workspace root, removed on drop. Auto-approved
+/// tools confine the paths a caller names to the workspace (ix#350), so fixtures
+/// live in the gitignored `target/confine-test/` rather than the system temp dir.
+fn in_root_tempdir() -> tempfile::TempDir {
+    let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/confine-test");
+    std::fs::create_dir_all(&parent).expect("create target/confine-test");
+    // Canonical, without the Windows verbatim prefix the tools refuse as input.
+    let canonical = parent.canonicalize().expect("canonical confine-test dir");
+    let parent = match canonical.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(plain) => std::path::PathBuf::from(plain),
+        None => canonical,
+    };
+    tempfile::Builder::new()
+        .tempdir_in(parent)
+        .expect("tempdir inside the workspace root")
+}
+
 #[test]
 fn reported_dimension_is_the_index_header_dimension() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = in_root_tempdir();
     let path = tmp.path().join("optick.index");
     write_index(&path);
     let dim = OptickIndex::open(&path).unwrap().dimension() as usize;
@@ -121,7 +138,7 @@ fn reported_dimension_is_the_index_header_dimension() {
 
 #[test]
 fn dimension_mismatch_error_states_both_dimensions() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = in_root_tempdir();
     let path = tmp.path().join("optick.index");
     write_index(&path);
     let dim = OptickIndex::open(&path).unwrap().dimension() as usize;

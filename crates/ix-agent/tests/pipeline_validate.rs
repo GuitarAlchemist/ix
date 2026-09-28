@@ -10,7 +10,15 @@ use ix_agent::tools::{
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
+/// Since ix#350 these manual tools go through the approval gate, loop
+/// detector included, and this binary calls `ix_pipeline_validate` far more
+/// than 10 times. Each call starts from a clear slot for its tool; the lock
+/// keeps parallel tests from refilling the window between the clear and the
+/// call.
 fn call(name: &str, args: Value) -> Result<Value, String> {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    reset_loop_budget(&[name]);
     let (ctx, _rx) = ServerContext::new();
     ToolRegistry::new().call_with_ctx(name, args, &ctx)
 }
@@ -156,21 +164,23 @@ fn valid_chained_pipeline_passes_with_order_and_tier() {
     assert_eq!(report["steps"][1]["effect"], "auto_approved");
 }
 
+/// Manual tools went through no gate before ix#352 and were reported as
+/// `ungated_steps`; they are now classified like every other step.
 #[test]
-fn ungated_steps_are_listed_and_excluded_from_max_tier() {
+fn manual_tool_steps_are_gated() {
     let report = validate(json!({
         "steps": [{ "id": "cat", "tool": "ix_node_catalog", "arguments": {} }]
     }));
     assert_eq!(report["valid"], true, "{report:#}");
-    assert_eq!(report["approval"]["ungated_steps"], json!(["cat"]));
-    assert_eq!(report["approval"]["max_gated_tier"], Value::Null);
-    assert_eq!(report["approval"]["gated_steps"], 0);
-    assert_eq!(report["steps"][0]["effect"], "not_gated");
-    // The aggregate must not read as "nothing to approve", and the step itself
-    // carries a warning.
-    assert_eq!(report["approval"]["verdict"], "ungated_steps_unchecked");
-    assert_eq!(report["warnings"][0]["code"], "ungated_step");
-    assert_eq!(report["warnings"][0]["step"], "cat");
+    assert_eq!(report["approval"]["ungated_steps"], json!([]));
+    assert_eq!(report["approval"]["gated_steps"], 1);
+    assert_eq!(report["approval"]["max_gated_tier"], "tier_one");
+    assert_eq!(report["approval"]["verdict"], "auto_approved");
+    assert_eq!(report["steps"][0]["effect"], "auto_approved");
+    assert!(
+        report["warnings"].as_array().unwrap().is_empty(),
+        "{report:#}"
+    );
 }
 
 /// Vacuous while no gated tool is Tier 3 (parity.rs forbids unclassified

@@ -14,11 +14,24 @@
 //!   chose ([`trace_roots`]). A trace *destination* is confined to those
 //!   locations alone.
 //!
+//! Both registry-backed and hand-registered ("manual") tools are gated and so
+//! confined: manual tools reach the gate since ix#350. A path the *operator*
+//! chose rather than the caller is not caller input and is not confined —
+//! `ix_optick_search`'s `OPTICK_INDEX_PATH` and its sibling-GA default are the
+//! example; an operator who wants callers to name another checkout lists it in
+//! `IX_EXTRA_ROOTS`.
+//!
 //! Nothing touches the filesystem until the raw argument passes
-//! [`check_lexical`]: `..`, NUL, and on Windows anything but a relative path or
-//! a drive-letter absolute path (UNC `\\server\share`, device `\\.\`, verbatim
+//! [`check_lexical`]: NUL, and on Windows anything but a relative path or a
+//! drive-letter absolute path (UNC `\\server\share`, device `\\.\`, verbatim
 //! `\\?\`, drive-relative `C:x`, rooted `\x`) are refused first, so the check
-//! itself never opens a network share or a named pipe. The joined path is then
+//! itself never opens a network share or a named pipe. A `..` segment is then
+//! resolved lexically, by popping the component before it — no link is followed
+//! to do that, and the popped path is the one canonicalized, root-checked and
+//! handed back, so the tool opens exactly what was checked. A `..` that leaves
+//! every allowed root is refused by the root check like any other outside path;
+//! one that stays inside (`crates/ix-agent/../ix-duck`, which a script composing
+//! a path hands an MCP tool routinely) is accepted. The joined path is
 //! canonicalized and must sit under a canonical allowed root, and the canonical
 //! path is what the tool gets back.
 //!
@@ -214,10 +227,11 @@ pub(crate) fn parse_error(param: &str, raw: &str, e: &serde_json::Error) -> Stri
     )
 }
 
-/// Checks that need no filesystem access: no NUL, no `..`, and on Windows only
-/// a relative path or a drive-letter absolute path. Opening a UNC or WebDAV
-/// path connects to the server with the user's credentials, and `\\.\pipe\x`
-/// opens a pipe client, so those are refused before anything is resolved.
+/// Checks that need no filesystem access: no NUL, and on Windows only a
+/// relative path or a drive-letter absolute path. Opening a UNC or WebDAV path
+/// connects to the server with the user's credentials, and `\\.\pipe\x` opens a
+/// pipe client, so those are refused before anything is resolved. `..` is not
+/// refused here — [`pop_parent_dirs`] resolves it and the root check decides.
 pub(crate) fn check_lexical(param: &str, raw: &str) -> Result<(), String> {
     if raw.contains('\0') {
         return Err(format!("`{param}`: NUL is not allowed in a path"));
@@ -228,12 +242,6 @@ pub(crate) fn check_lexical(param: &str, raw: &str) -> Result<(), String> {
             "`{param}`: {raw} must be a relative path or an absolute path on a local drive \
              (UNC, device, verbatim, drive-relative and driveless rooted paths are refused)"
         ));
-    }
-    if path
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
-        return Err(format!("`{param}`: `..` is not allowed in {raw}"));
     }
     Ok(())
 }
@@ -263,7 +271,38 @@ fn join_checked(roots: &[PathBuf], param: &str, raw: &str) -> Result<PathBuf, St
     let base = roots
         .first()
         .ok_or_else(|| format!("`{param}`: no allowed root is configured"))?;
-    Ok(base.join(raw))
+    pop_parent_dirs(param, &base.join(raw))
+}
+
+/// Resolve `..` (and `.`) segments by popping the preceding component, purely
+/// lexically: no link is followed to normalize, and the result is what gets
+/// canonicalized, root-checked and opened, so a link inside the path is still
+/// caught by the root check rather than silently rewritten around.
+///
+/// Escaping is not decided here — a `..` that walks out of every allowed root
+/// simply produces a path the root check refuses, the same way any other outside
+/// path does. Only a `..` with nothing left to pop (above the filesystem root or
+/// the drive prefix) is refused here, because it names nothing.
+fn pop_parent_dirs(param: &str, path: &Path) -> Result<PathBuf, String> {
+    let mut kept: Vec<Component> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match kept.last() {
+                Some(Component::Normal(_)) => {
+                    kept.pop();
+                }
+                _ => {
+                    return Err(format!(
+                        "`{param}`: {} climbs above the filesystem root",
+                        path.display()
+                    ))
+                }
+            },
+            other => kept.push(other),
+        }
+    }
+    Ok(kept.iter().collect())
 }
 
 fn canonical_roots(roots: &[PathBuf], param: &str) -> Result<Vec<PathBuf>, String> {
@@ -384,14 +423,37 @@ mod tests {
         assert!(confine_in(&one(root.path()), "log", absolute.to_str().unwrap()).is_ok());
     }
 
+    /// ix#350 reverses the earlier blanket refusal: `..` is resolved lexically and
+    /// the root check decides. A `..` that lands inside is ordinary (a caller
+    /// composing `<crate>/../<sibling>` is the motivating case); one that leaves
+    /// every root is refused as an outside path, and the destination form never
+    /// creates anything on the way out.
     #[test]
-    fn confine_rejects_parent_dir_even_when_it_lands_inside() {
+    fn confine_resolves_parent_dir_inside_and_refuses_the_ones_that_leave() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("a")).unwrap();
-        let err = confine_in(&one(root.path()), "workspace", "a/../a").unwrap_err();
-        assert!(err.contains("`..` is not allowed"), "{err}");
-        let err = confine_dest_in(&one(root.path()), "trace_dir", "a/../b").unwrap_err();
-        assert!(err.contains("`..` is not allowed"), "{err}");
+        let inside = confine_in(&one(root.path()), "workspace", "a/../a").unwrap();
+        assert!(inside.ends_with("a"), "{inside:?}");
+        assert!(confine_dest_in(&one(root.path()), "trace_dir", "a/../b").is_ok());
+
+        let err = confine_in(&one(root.path()), "workspace", "../escape").unwrap_err();
+        assert!(
+            err.contains("is not an existing path inside an allowed root"),
+            "{err}"
+        );
+        let err = confine_dest_in(&one(root.path()), "trace_dir", "a/../../escape").unwrap_err();
+        assert!(err.contains("not inside an allowed destination root"), "{err}");
+        assert!(!root.path().parent().unwrap().join("escape").exists());
+    }
+
+    /// Nothing is left to pop above the filesystem root, so that one is refused
+    /// where it is spelled rather than turned into a root-relative path.
+    #[test]
+    fn confine_refuses_a_parent_dir_above_the_filesystem_root() {
+        let root = tempfile::tempdir().unwrap();
+        let deep = "../".repeat(40) + "escape";
+        let err = confine_in(&one(root.path()), "workspace", &deep).unwrap_err();
+        assert!(err.contains("climbs above the filesystem root"), "{err}");
     }
 
     #[test]

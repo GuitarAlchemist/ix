@@ -59,11 +59,16 @@ pub fn shared_loop_detector() -> Arc<LoopDetector> {
 /// initialized with a default chain containing
 /// [`ApprovalMiddleware`] with its default config.
 ///
-/// The chain is wrapped in a `Mutex` so tests can push additional
-/// middlewares or replace the chain entirely. Production callers
-/// should treat it as read-only.
-fn middleware_chain() -> &'static Mutex<MiddlewareChain> {
-    static CHAIN: OnceLock<Mutex<MiddlewareChain>> = OnceLock::new();
+/// The chain is wrapped in a `Mutex` so tests can replace the chain
+/// entirely. Production callers should treat it as read-only.
+///
+/// The chain sits behind an [`Arc`] so a dispatch clones a handle and
+/// releases the mutex *before* the handler runs. Manual tools that
+/// dispatch other tools (`ix_demo`, `ix_pipeline_run`,
+/// `ix_triage_session`) re-enter this path from inside their handler;
+/// holding the mutex across the handler would deadlock them.
+fn middleware_chain() -> &'static Mutex<Arc<MiddlewareChain>> {
+    static CHAIN: OnceLock<Mutex<Arc<MiddlewareChain>>> = OnceLock::new();
     CHAIN.get_or_init(|| {
         let mut chain = MiddlewareChain::new();
         // Loop detection runs first — a runaway agent should be
@@ -79,14 +84,14 @@ fn middleware_chain() -> &'static Mutex<MiddlewareChain> {
         // the belief update reflects the actual outcome, not a
         // pre-flight classification.
         chain.push(Box::new(BeliefMiddleware::new()));
-        Mutex::new(chain)
+        Mutex::new(Arc::new(chain))
     })
 }
 
-/// Expose a handle to the shared middleware chain so tests can push
-/// additional middlewares or reset the chain between cases. Production
-/// callers should not mutate the chain at runtime.
-pub fn shared_middleware_chain() -> &'static Mutex<MiddlewareChain> {
+/// Expose a handle to the shared middleware chain so tests can replace
+/// it between cases. Production callers should not mutate the chain at
+/// runtime.
+pub fn shared_middleware_chain() -> &'static Mutex<Arc<MiddlewareChain>> {
     middleware_chain()
 }
 
@@ -219,6 +224,18 @@ impl AgentHandler for RegistryLookupHandler {
 /// Returns the handler's output value on success, or an `ActionError`
 /// on any failure from the middleware chain or the handler.
 pub fn dispatch_action(cx: &ReadContext, action: AgentAction) -> ActionResult {
+    dispatch_action_with(cx, action, &RegistryLookupHandler)
+}
+
+/// [`dispatch_action`] with a caller-supplied terminal handler. Manual
+/// (non-registry) tools use this so they pass through the same
+/// middleware chain — loop detection, approval, belief revision — as
+/// registry-backed tools.
+pub fn dispatch_action_with(
+    cx: &ReadContext,
+    action: AgentAction,
+    handler: &dyn AgentHandler,
+) -> ActionResult {
     // Grab an `Arc` handle to the installed log (if any) before
     // locking the chain. The session log has its own internal mutex,
     // so holding the `Arc` alone does not block concurrent dispatches.
@@ -233,16 +250,19 @@ pub fn dispatch_action(cx: &ReadContext, action: AgentAction) -> ActionResult {
         None => &mut vec_sink,
     };
 
-    let chain_guard = middleware_chain()
-        .lock()
-        .expect("middleware chain mutex poisoned");
+    // Clone the chain handle and release the mutex before dispatching,
+    // so a handler that dispatches another tool does not deadlock.
+    let chain = Arc::clone(
+        &middleware_chain()
+            .lock()
+            .expect("middleware chain mutex poisoned"),
+    );
 
     let result = {
         let mut wc = WriteContext { read: cx, sink };
-        chain_guard.dispatch(&mut wc, action, &RegistryLookupHandler)
+        chain.dispatch(&mut wc, action, handler)
     };
 
-    drop(chain_guard);
     drop(session_sink);
     drop(vec_sink);
 
@@ -268,15 +288,82 @@ pub fn mcp_name(skill_name: &str) -> String {
 /// `"ix_loop_detect: circuit breaker tripped on tool '…'"` string
 /// that runaway-agent detectors downstream still match against.
 pub fn dispatch(mcp_tool_name: &str, params: JsonValue) -> Result<JsonValue, String> {
+    dispatch_through_gate(mcp_tool_name, params, &RegistryLookupHandler)
+}
+
+/// Terminal handler for a manual tool: runs a JSON-in/JSON-out closure.
+/// Unlike [`ix_agent_core::LegacyAdapter`] it accepts a borrowing
+/// closure, which the `ServerContext`-routed tools need.
+struct ManualToolHandler<F>(F);
+
+impl<F> AgentHandler for ManualToolHandler<F>
+where
+    F: Fn(JsonValue) -> Result<JsonValue, String> + Send + Sync,
+{
+    fn run(&self, _cx: &ReadContext, action: &AgentAction) -> ActionResult {
+        match action {
+            AgentAction::InvokeTool { params, .. } => {
+                let value = (self.0)(params.clone()).map_err(ActionError::Exec)?;
+                Ok(ActionOutcome::value_only(value))
+            }
+            _ => Err(ActionError::Exec(
+                "manual tool handler only supports InvokeTool actions".into(),
+            )),
+        }
+    }
+}
+
+/// Dispatch a manual (non-registry) tool through the same middleware
+/// chain as [`dispatch`]: `classify_action_kind` decides its tier, so an
+/// unclassified manual tool is refused at Tier 3 exactly like an
+/// unclassified registry tool. Same error shape as [`dispatch`].
+pub fn dispatch_manual<F>(
+    mcp_tool_name: &str,
+    params: JsonValue,
+    handler: F,
+) -> Result<JsonValue, String>
+where
+    F: Fn(JsonValue) -> Result<JsonValue, String> + Send + Sync,
+{
+    dispatch_through_gate(mcp_tool_name, params, &ManualToolHandler(handler))
+}
+
+/// The ordinal the next dispatched action carries — the single source every
+/// event of that action then uses.
+///
+/// `main.rs` runs one worker thread per `tools/call`, and the middleware chain
+/// no longer serializes them (it is cloned out of its mutex before the handler
+/// runs), so this has to be atomic: two concurrent calls must not label their
+/// session-log events with the same ordinal.
+///
+/// When a session log is installed, the ordinal comes from *its* counter, which
+/// resumes from the file. A process-local counter would restart at 0 and
+/// duplicate the ordinals of an earlier run appending to the same
+/// `IX_SESSION_LOG` (ix#350). Each emit advances the log's counter as well, so
+/// the values a run uses are spaced rather than consecutive; ordinals are
+/// correlation ids, not positions.
+fn next_action_ordinal() -> u64 {
+    static ORDINAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    match current_session_log() {
+        Some(log) => log.claim_ordinal(),
+        None => ORDINAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    }
+}
+
+fn dispatch_through_gate(
+    mcp_tool_name: &str,
+    params: JsonValue,
+    handler: &dyn AgentHandler,
+) -> Result<JsonValue, String> {
     let cx = ReadContext::synthetic_for_legacy();
     let action = AgentAction::InvokeTool {
         tool_name: mcp_tool_name.to_string(),
         params,
-        ordinal: 0,
+        ordinal: next_action_ordinal(),
         target_hint: None,
     };
 
-    match dispatch_action(&cx, action) {
+    match dispatch_action_with(&cx, action, handler) {
         Ok(outcome) => Ok(outcome.value),
         Err(ActionError::Blocked {
             code: BlockCode::LoopDetected,
