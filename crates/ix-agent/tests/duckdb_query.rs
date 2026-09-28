@@ -87,6 +87,13 @@ fn counts_rows_past_max_rows_without_keeping_them() {
     assert_eq!(out["row_count"], json!(5));
     let err = duckdb_query(json!({ "sql": sql, "max_rows": 4 })).unwrap_err();
     assert!(err.contains("18446744073709551617"), "{err}");
+
+    // Only the returned result must fit: an earlier one's rows are dropped.
+    let sql = "SELECT repeat('x', 10485760) AS s; SELECT repeat('y', 10485760) AS s";
+    let out = duckdb_query(json!({ "sql": sql, "max_rows": 1 })).unwrap_or_else(|e| panic!("{e}"));
+    let s = out["rows"][0]["s"].as_str().unwrap_or_default();
+    assert_eq!((s.len(), s.starts_with('y')), (10485760, true));
+    assert_eq!(out["row_count"], json!(1));
 }
 
 #[test]

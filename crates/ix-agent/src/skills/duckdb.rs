@@ -119,7 +119,7 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
                 )
             })
             .collect();
-        let outputs = run(&bin, &script, 1)?;
+        let outputs = run(&bin, &script, 1, false)?;
         if outputs.len() != tables.len() {
             return Err(format!(
                 "expected {} structures from DuckDB, got {}",
@@ -152,8 +152,9 @@ pub fn duckdb_query(params: Value) -> Result<Value, String> {
     }
     script.push_str(sql);
     script.push('\n');
-    // Rows past `max_rows` are counted as DuckDB prints them, never kept.
-    let outputs = run(&bin, &script, max_rows)?;
+    // Rows past `max_rows` are counted as DuckDB prints them, never kept, and
+    // only the last result is kept at all.
+    let outputs = run(&bin, &script, max_rows, true)?;
     let (rows, row_count) = match outputs.last() {
         Some((Value::Array(rows), count)) => (rows.clone(), *count),
         Some((other, _)) => return Err(format!("unexpected DuckDB output: {other}")),
@@ -487,13 +488,18 @@ fn version(bin: &str) -> String {
 }
 
 /// Runs `PREAMBLE` then a script in `duckdb -bail -json` (in memory) and
-/// returns, for each result-producing statement in order, its first `keep`
-/// rows as a JSON array and how many rows it had in all. The rows of the last
-/// that are kept are refused if reading them would drop a column or change a
-/// number.
-fn run(bin: &str, script: &str, keep: usize) -> Result<Vec<(Value, usize)>, String> {
+/// returns, for each result-producing statement in order (or, with
+/// `only_last`, for the last alone), its first `keep` rows as a JSON array and
+/// how many rows it had in all. The rows of the last that are kept are
+/// refused if reading them would drop a column or change a number.
+fn run(
+    bin: &str,
+    script: &str,
+    keep: usize,
+    only_last: bool,
+) -> Result<Vec<(Value, usize)>, String> {
     let printed = execute(bin, script, move |pipe| {
-        read_results(pipe, keep, MAX_OUTPUT_BYTES)
+        read_results(pipe, keep, MAX_OUTPUT_BYTES, only_last)
     })??;
     let mut values = Vec::with_capacity(printed.len());
     for result in &printed {
@@ -530,10 +536,16 @@ struct Printed {
 /// row objects; the first `keep` rows of each are kept and the rest only
 /// counted, so a result far larger than `cap` bytes is still cut to
 /// `max_rows` rather than refused. At most `cap` bytes of rows are kept in
-/// all. Anything outside an array but whitespace is not JSON (a box printed
-/// by EXPLAIN, say). The pipe is read to its end either way, so DuckDB is
-/// never blocked on it.
-fn read_results(pipe: &mut dyn Read, keep: usize, cap: usize) -> Result<Vec<Printed>, String> {
+/// all; with `only_last`, only the last result is returned, so the cap
+/// applies to it alone. Anything outside an array but whitespace is not JSON
+/// (a box printed by EXPLAIN, say). The pipe is read to its end either way,
+/// so DuckDB is never blocked on it.
+fn read_results(
+    pipe: &mut dyn Read,
+    keep: usize,
+    cap: usize,
+    only_last: bool,
+) -> Result<Vec<Printed>, String> {
     let mut results = Vec::new();
     let mut current: Option<Printed> = None; // the array being read
     let mut row: Option<Vec<u8>> = None; // the row being read, when it is kept
@@ -588,6 +600,13 @@ fn read_results(pipe: &mut dyn Read, keep: usize, cap: usize) -> Result<Vec<Prin
                 (_, b' ' | b'\t' | b'\r' | b'\n') | (1, b',') => {}
                 (0, b'[') => {
                     depth = 1;
+                    if only_last {
+                        // A new result supersedes the ones before it, which
+                        // are not returned: their rows go, and so does their
+                        // share of the cap.
+                        results.clear();
+                        (kept_bytes, too_large) = (0, false);
+                    }
                     current = Some(Printed {
                         kept: vec![b'['],
                         rows: 0,
@@ -1080,7 +1099,7 @@ mod tests {
     fn read_results_keeps_the_first_rows_and_counts_the_rest() {
         let out = b"[]\r\n[{\"a\":\"x]},{\\\"\"},\r\n{\"a\":2},\r\n{\"a\":3}]\r\n[{\"b\":[1,{\"c\":\"}\"}]}]\r\n";
         for step in [1, 2, 7, out.len()] {
-            let got = read_results(&mut Trickle(out, step), 2, 1 << 20).unwrap();
+            let got = read_results(&mut Trickle(out, step), 2, 1 << 20, false).unwrap();
             let got: Vec<(String, usize)> = got
                 .into_iter()
                 .map(|r| (String::from_utf8(r.kept).unwrap(), r.rows))
@@ -1099,19 +1118,52 @@ mod tests {
 
     #[test]
     fn read_results_refuses_what_is_not_json_or_too_large() {
-        let err = read_results(&mut Trickle("┌──┐\n│ x │".as_bytes(), 64), 10, 1 << 20)
-            .err()
-            .unwrap();
+        let err = read_results(
+            &mut Trickle("┌──┐\n│ x │".as_bytes(), 64),
+            10,
+            1 << 20,
+            false,
+        )
+        .err()
+        .unwrap();
         assert!(err.contains("could not read DuckDB JSON output"), "{err}");
-        let err = read_results(&mut Trickle(b"[{\"a\":1}", 64), 10, 1 << 20)
+        let err = read_results(&mut Trickle(b"[{\"a\":1}", 64), 10, 1 << 20, false)
             .err()
             .unwrap();
         assert!(err.contains("could not read DuckDB JSON output"), "{err}");
         // Kept rows are capped; counted ones are not.
         let rows = b"[{\"a\":\"0123456789\"},{\"a\":\"0123456789\"}]";
-        let err = read_results(&mut Trickle(rows, 64), 2, 30).err().unwrap();
+        let err = read_results(&mut Trickle(rows, 64), 2, 30, false)
+            .err()
+            .unwrap();
         assert!(err.contains("exceed 30 bytes"), "{err}");
-        let got = read_results(&mut Trickle(rows, 64), 1, 30).unwrap();
+        let got = read_results(&mut Trickle(rows, 64), 1, 30, false).unwrap();
         assert_eq!((got[0].kept.len(), got[0].rows), (20, 2));
+    }
+
+    #[test]
+    fn read_results_caps_only_the_last_result_when_only_it_is_returned() {
+        // Each result keeps 18 bytes of rows: 36 in all, over a cap of 30.
+        let out = b"[{\"a\":\"0123456789\"}]\n[]\n[{\"b\":\"0123456789\"}]\n";
+        let err = read_results(&mut Trickle(out, 7), 1, 30, false)
+            .err()
+            .unwrap();
+        assert!(err.contains("exceed 30 bytes"), "{err}");
+        let got = read_results(&mut Trickle(out, 7), 1, 30, true).unwrap();
+        let got: Vec<(String, usize)> = got
+            .into_iter()
+            .map(|r| (String::from_utf8(r.kept).unwrap(), r.rows))
+            .collect();
+        assert_eq!(got, [(r#"[{"b":"0123456789"}]"#.to_string(), 1)]);
+        // The last result alone over the cap is still refused.
+        let err = read_results(
+            &mut Trickle(b"[]\n[{\"a\":\"0123456789\"},{\"a\":\"0123456789\"}]", 7),
+            2,
+            30,
+            true,
+        )
+        .err()
+        .unwrap();
+        assert!(err.contains("exceed 30 bytes"), "{err}");
     }
 }
