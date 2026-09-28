@@ -264,6 +264,15 @@ fn reports_the_columns_of_an_empty_result() {
     assert_eq!(out["rows"], json!([]));
     assert_eq!(out["row_count"], json!(0));
     assert_eq!(out["columns"], json!(["a,b", "id", "q\"x"]));
+
+    // Only the last result is read for its names: an earlier one of any size
+    // is dropped as it prints.
+    let out = duckdb_query(json!({
+        "sql": "SELECT repeat('x', 20971520) AS s; SELECT 1 AS x WHERE false"
+    }))
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(out["rows"], json!([]));
+    assert_eq!(out["columns"], json!(["x"]));
 }
 
 #[test]

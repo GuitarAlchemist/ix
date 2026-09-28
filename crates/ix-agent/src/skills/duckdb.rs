@@ -715,19 +715,52 @@ fn decimal(num: &str) -> (bool, String, i64) {
 /// Runs a script again in HTML mode and returns the names of its last result
 /// if that result is empty; `None` if it has rows this time.
 fn header_of_empty_result(bin: &str, script: &str) -> Result<Option<Vec<String>>, String> {
-    let out = execute(
+    let row = execute(
         bin,
         &format!(".mode html\n.headers on\n{script}"),
-        read_capped,
-    )?;
-    if out.len() > MAX_OUTPUT_BYTES {
-        return Err(format!(
-            "DuckDB output exceeds {MAX_OUTPUT_BYTES} bytes; select fewer rows or columns"
-        ));
-    }
+        read_last_row,
+    )?
+    .ok_or_else(|| {
+        format!("the column names of a DuckDB result exceed {MAX_OUTPUT_BYTES} bytes; select fewer columns")
+    })?;
     Ok(last_html_header(
-        &String::from_utf8_lossy(&out).replace("\r\n", "\n"),
+        &String::from_utf8_lossy(&row).replace("\r\n", "\n"),
     ))
+}
+
+/// What DuckDB's HTML mode printed from its last `<tr>` on, the one row
+/// `last_html_header` reads. Each row is dropped as the next starts, so an
+/// earlier result of any size never counts; cell text is escaped, so `<tr>`
+/// is always a tag. A data row (`<tr><td>`) is cut to its opening, which is
+/// all that shows it is one. `None` if the last row is a header row longer
+/// than `MAX_OUTPUT_BYTES`.
+fn read_last_row(pipe: &mut dyn Read) -> Option<Vec<u8>> {
+    let (mut row, mut cut) = (Vec::new(), false);
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = match pipe.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        // A `<tr>` split across reads starts in the last 3 bytes kept.
+        let from = row.len().saturating_sub(3);
+        row.extend_from_slice(&buf[..n]);
+        if let Some(i) = row[from..].windows(4).rposition(|w| w == b"<tr>") {
+            row.drain(..from + i);
+            cut = false;
+        }
+        // Past its opening a data row is not needed, nor a header row too long
+        // to return: cut it, keeping those last 3 bytes.
+        let data = row.starts_with(b"<tr><td>");
+        if row.len() > 11 && (data || row.len() > MAX_OUTPUT_BYTES) {
+            cut |= !data;
+            let end = row.len() - 3;
+            row.drain(8..end);
+        }
+    }
+    (!cut).then_some(row)
 }
 
 /// The cells of the last `<tr>` DuckDB's HTML mode printed when it is a
@@ -1165,5 +1198,33 @@ mod tests {
         .err()
         .unwrap();
         assert!(err.contains("exceed 30 bytes"), "{err}");
+    }
+
+    #[test]
+    fn read_last_row_keeps_only_the_last_row() {
+        let big = "x".repeat(100_000);
+        let out = format!(
+            "<tr><th>s</th>\r\n</tr>\r\n<tr><td>{big}</td>\r\n</tr>\r\n<tr><th>x</th>\r\n</tr>\r\n"
+        );
+        for step in [1, 2, 3, 5, 7, out.len()] {
+            let row = read_last_row(&mut Trickle(out.as_bytes(), step)).unwrap();
+            assert_eq!(row, b"<tr><th>x</th>\r\n</tr>\r\n", "reads of {step} bytes");
+        }
+        // A data row last is cut to its opening, and reads as no header.
+        let out = format!("<tr><th>s</th>\r\n</tr>\r\n<tr><td>{big}</td>\r\n</tr>\r\n");
+        let row = read_last_row(&mut Trickle(out.as_bytes(), 7)).unwrap();
+        assert!(row.len() < 64, "{} bytes kept", row.len());
+        assert_eq!(last_html_header(&String::from_utf8_lossy(&row)), None);
+    }
+
+    #[test]
+    fn read_last_row_refuses_only_a_last_header_too_long() {
+        let long = format!("<tr><th>{}</th>\r\n</tr>\r\n", "y".repeat(MAX_OUTPUT_BYTES));
+        assert_eq!(read_last_row(&mut Trickle(long.as_bytes(), 1 << 16)), None);
+        let then = format!("{long}<tr><th>x</th>\r\n</tr>\r\n");
+        assert_eq!(
+            read_last_row(&mut Trickle(then.as_bytes(), 1 << 16)),
+            Some(b"<tr><th>x</th>\r\n</tr>\r\n".to_vec())
+        );
     }
 }
