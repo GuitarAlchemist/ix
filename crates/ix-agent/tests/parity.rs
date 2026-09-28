@@ -15,6 +15,11 @@
 use ix_agent::tools::ToolRegistry;
 use std::collections::{BTreeSet, HashSet};
 
+/// Taken first by every test that clears or counts a key of the process-wide
+/// loop detector. Tests run in parallel, and one test's `clear_key` could land
+/// between another's call and its count.
+static LOOP_DETECTOR: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The MCP tools exposed by ix-agent. Deliberately **not** prefixed with a
 /// hand-typed count: the number here read "72" while the list below held 96
 /// entries, because every tool-adding PR bumped the list and left the prose
@@ -398,6 +403,7 @@ fn manual_tier_three_tools_are_refused_by_the_approval_gate() {
 fn tier_two_manual_tools_refuse_paths_outside_the_workspace() {
     use ix_agent::registry_bridge::shared_loop_detector;
     use serde_json::json;
+    let _serial = LOOP_DETECTOR.lock().unwrap_or_else(|e| e.into_inner());
 
     let registry = ToolRegistry::new();
     let call = |tool: &str, args: serde_json::Value| {
@@ -481,6 +487,7 @@ fn tier_two_manual_tools_refuse_paths_outside_the_workspace() {
 fn tier_one_manual_tools_refuse_paths_outside_the_workspace() {
     use ix_agent::registry_bridge::shared_loop_detector;
     use serde_json::json;
+    let _serial = LOOP_DETECTOR.lock().unwrap_or_else(|e| e.into_inner());
 
     let registry = ToolRegistry::new();
     let call = |tool: &str, args: serde_json::Value| {
@@ -600,6 +607,7 @@ fn tier_one_manual_tools_refuse_paths_outside_the_workspace() {
 fn gated_pipeline_run_dispatches_gated_steps_without_deadlock() {
     use ix_agent::registry_bridge::shared_loop_detector;
     use ix_agent::server_context::ServerContext;
+    let _serial = LOOP_DETECTOR.lock().unwrap_or_else(|e| e.into_inner());
 
     // No other test in this binary calls this tool, so its count is ours alone.
     const STEP_TOOL: &str = "ix_grothendieck_delta";
@@ -642,6 +650,7 @@ fn gated_pipeline_run_dispatches_gated_steps_without_deadlock() {
 fn one_pipeline_hitting_a_tool_eleven_times_trips_the_loop_detector() {
     use ix_agent::registry_bridge::shared_loop_detector;
     use ix_agent::server_context::ServerContext;
+    let _serial = LOOP_DETECTOR.lock().unwrap_or_else(|e| e.into_inner());
 
     // A pure manual tool no other test in this binary calls, so the window is ours.
     const STEP_TOOL: &str = "ix_voicings_payload";
@@ -869,6 +878,7 @@ fn auto_approved_tools_refuse_paths_outside_the_workspace() {
     use ix_agent::registry_bridge::shared_loop_detector;
     use ix_agent::server_context::ServerContext;
     use serde_json::json;
+    let _serial = LOOP_DETECTOR.lock().unwrap_or_else(|e| e.into_inner());
 
     let (ctx, _rx) = ServerContext::new();
     let registry = ToolRegistry::new();
