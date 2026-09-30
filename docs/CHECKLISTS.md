@@ -51,12 +51,31 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
 3. Add the tool name to `EXPECTED` in `crates/ix-agent/tests/parity.rs`. This
    list stays hand-maintained on purpose: it is the rate-limiter that forces
    every surface change through review.
-4. Run `ix doctor --write` and commit the `skills.snapshot.json` diff. The diff
+4. Classify it in `crates/ix-approval/src/classify.rs` under the kind its
+   effects warrant: pure computation or read → `READ_TOOLS` (Tier 1); writes to
+   the workspace or to in-process state such as the global cache →
+   `EDIT_IN_PROJECT_TOOLS` (Tier 2); shell, web fetch or out-of-project writes →
+   `SHELL_COMMAND_TOOLS`, `WEB_FETCH_TOOLS` or `EDIT_OUT_OF_PROJECT_TOOLS`
+   (Tier 3, refused). Tier 1 and Tier 2 tools run without a prompt, so a path,
+   directory or repo root the caller names must be confined before it is read,
+   walked or written: use `confine` (or `confine_in` / `confine_dest_in` for an
+   explicit root list or a directory the tool creates) from
+   `crates/ix-agent/src/path_confine.rs`. They admit the workspace root and the
+   directories in `IX_EXTRA_ROOTS`; add a tool-specific root only when the
+   operator, not the caller, chose it (the GA trace tools admit `~/.ga/traces`
+   and the `traces/` directory beside the installed session log). Add the tool
+   to `auto_approved_tools_refuse_paths_outside_the_workspace` in
+   `crates/ix-agent/tests/parity.rs`. An unclassified
+   registry-backed tool defaults to Tier 3 and every MCP call to it is refused;
+   the parity test
+   `every_registry_backed_tool_has_an_explicit_approval_classification` fails
+   until it is classified.
+5. Run `ix doctor --write` and commit the `skills.snapshot.json` diff. The diff
    should show exactly the names you intended, and nothing else.
-5. If the tool is behind a non-default cargo feature, add its name to
+6. If the tool is behind a non-default cargo feature, add its name to
    `feature_gated_tools` in the snapshot so both build configurations stay green.
-6. Run `cargo test -p ix-agent --test parity`.
-7. Document it: `docs/MANUAL.md`, plus the French translation under `docs/fr/`.
+7. Run `cargo test -p ix-agent --test parity`.
+8. Document it: `docs/MANUAL.md`, plus the French translation under `docs/fr/`.
 
 ## Adding a DuckDB UDF
 

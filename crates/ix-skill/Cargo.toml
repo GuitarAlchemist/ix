@@ -42,6 +42,12 @@ ix-graph = { workspace = true }
 ix-probabilistic = { workspace = true }
 ix-io = { workspace = true }
 
+# `ix doctor` appends a v1 quality-gate-ledger row per run. Already in the
+# graph via ix-agent (which hosts the `ix_quality_gate_history` consumer), so
+# the direct edge costs no extra compilation — it just makes the producer
+# explicit.
+ix-quality-trend = { workspace = true }
+
 ndarray = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

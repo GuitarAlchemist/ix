@@ -60,7 +60,8 @@ And so on. Typically the first 2-3 components capture 80-95% of the total varian
 
 ```rust
 use ndarray::array;
-use ix_unsupervised::{PCA, DimensionReducer};
+use ix_unsupervised::pca::PCA;
+use ix_unsupervised::traits::DimensionReducer;
 
 // 6 customers with 4 features
 let data = array![
@@ -98,7 +99,9 @@ if let Some(components) = pca.components() {
 A common pattern — reduce dimensions first, then cluster:
 
 ```rust
-use ix_unsupervised::{PCA, DimensionReducer, KMeans, Clusterer};
+use ix_unsupervised::kmeans::KMeans;
+use ix_unsupervised::pca::PCA;
+use ix_unsupervised::traits::{Clusterer, DimensionReducer};
 
 // High-dimensional data
 let data = /* ... 50-feature dataset ... */;

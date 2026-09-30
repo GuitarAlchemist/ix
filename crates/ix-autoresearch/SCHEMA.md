@@ -86,8 +86,15 @@ Last line on graceful exit. Absence means the run was interrupted (replay-tolera
 ### Acceptance criteria (from `agent-blackbox/docs/ix-real-problems-plan.md` Workflow 3)
 
 - **Append-only**: writers MUST open `O_APPEND`; readers MUST process events in file order.
-- **Deterministic replay**: running the same log through a deterministic consumer (e.g. `hari-from-ix-autoresearch` then `hari-core replay`) MUST produce identical output for identical input. Tested in `tests/jsonl_contract.rs`.
-- **Contradictory findings preserved**: when two iteration events on the *same* `config_hash` carry different `accepted` values, the consumer (Hari) preserves the contradiction as `HexValue::Contradictory` rather than averaging. Verified by `hari-core`'s combined-evidence semantics (`crates/hari-core/src/lib.rs` §`process_research_trace`).
+- **Deterministic replay**: running the same log through a deterministic consumer (e.g. `hari-from-ix-autoresearch` then `hari-core replay`) MUST produce identical output for identical input. IX side: same seed ⇒ same `config_hash` sequence, tested in `tests/jsonl_contract.rs`. Hari side: committed run reports regenerate byte-for-byte (after CRLF normalisation) from committed logs, tested by `committed_run_reports_regenerate_byte_for_byte_from_committed_logs` in hari's `crates/hari-extractor/tests/ix_autoresearch_replay.rs`.
+- **Contradictory findings preserved**: when two iteration events carry the same derived `claim` — the same `config_hash` judged against the same incumbent (see the `claim` row below) — and different `accepted` values, the consumer (Hari) should preserve the contradiction as `HexValue::Contradictory` rather than averaging. **Status: untested against, and unobserved on, real IX data.**
+  - **What can and cannot produce one.**
+    - The incumbent is part of the claim because a repeat of the same `config_hash` alone is *not* a contradiction. Under Greedy (`candidate_reward > prev_reward`) the incumbent's reward never decreases. A repeat of an already-accepted config is therefore correctly rejected once the incumbent has moved to it or past it. Keyed on `config_hash` alone, every such repeat would read as a spurious contradiction.
+    - With the incumbent in the claim, a deterministic target under Greedy cannot produce one at all, since the same config against the same incumbent gets the same reward and the same decision. A genuine conflict needs a nondeterministic evaluator.
+    - Under SA or random search, `accepted` is not an improvement test, so a conflict there reflects the accept rule rather than the evidence.
+  - **Measured on the grammar target only.** It perturbs by continuous Gaussian noise, so no `config_hash` repeats within a run: 500 of 500 claims are distinct under Greedy and under SA. That is pinned by `a_seeded_grammar_run_never_repeats_a_claim_so_nothing_is_contradictory` in `tests/jsonl_contract.rs`. Recorded grammar runs replayed through Hari end with zero `Contradictory` beliefs (GuitarAlchemist/hari#37).
+  - **Other targets were not measured.** `target_chatbot` clamps its perturbation to bounds, and `target_optick` falls back to the renormalised weights on a degenerate Dirichlet, so either can repeat a config. Both declare deterministic evaluation, though, so by the reasoning above a repeat there should not conflict either.
+  - **The only exercises are synthetic.** In hari (`crates/hari-extractor/tests/ix_autoresearch_replay.rs`), one test has a genuine conflict (same config, same incumbent, rewards straddling the incumbent's) and one pins that a Greedy re-evaluation of the incumbent is not a conflict. Here, the two-line log in `contradictory_findings_preserved_in_derived_view`. None of these is evidence about IX runs.
 - **Crash tolerance**: trailing parse failure is silently discarded as crash-truncation; mid-stream parse failure is a hard error.
 
 ## Layer 2 — Derived semantic event view
@@ -101,10 +108,10 @@ For each `iteration` line, the derived view is:
 | `event_id`       | string (monotone-ordered within a log)   | `format!("{run_id}#{iteration}")` — `run_id` from `run_start`, `iteration` from this line        |
 | `timestamp`      | RFC3339                                  | `iteration.timestamp`                                                                            |
 | `target`         | string                                   | `run_start.target` (propagated to every derived event in the run)                                |
-| `claim`          | string                                   | `format!("{target}/config-{config_hash_short}-is-an-improvement")` — see `hari_from_ix_autoresearch.rs` |
+| `claim`          | string                                   | `format!("{target}/config-{config_hash_short}-is-an-improvement-over-{incumbent_short}")`. `target` is `run_start.target` verbatim. `config_hash_short` is the first 12 hex characters after stripping the `autoresearch:` prefix. `incumbent_short` is the same shortening of the *previous* iteration line's `previous_hash` (the config this candidate was judged against), or `baseline` for a log's first iteration. See hari `crates/hari-extractor/src/ix_autoresearch.rs`. |
 | `evidence`       | array of `{kind, value}` objects         | `[{kind: "reward", value: <reward>}, {kind: "elapsed_ms", value: <elapsed_ms>}, {kind: "config_hash", value: <full hash>}, ...]` |
 | `confidence`     | float in [0.0, 1.0]                      | `if accepted { 0.66 } else if error.is_some() { 0.10 } else { 0.33 }` — pegged to HexValue rank  |
-| `contradicted_by`| array of `event_id` references           | The set of *prior* `event_id`s in the same log whose `claim` matches this line's `claim` AND whose `accepted` differs. Empty for the first occurrence. Computed by the consumer. |
+| `contradicted_by`| array of `event_id` references           | The set of *prior* `event_id`s in the same log whose `claim` (config *and* incumbent) matches this line's `claim` AND whose `accepted` differs. Empty for the first occurrence. Computed by the consumer. |
 | `disposition`    | enum `pending` \| `confirmed` \| `refuted` \| `contradictory` | `if contradicted_by.is_empty() && !accepted { "refuted" } else if contradicted_by.is_empty() && accepted { "confirmed" } else if !contradicted_by.is_empty() { "contradictory" } else { "pending" }` |
 
 ### Why the projection lives in the consumer
@@ -117,41 +124,41 @@ The raw IX log is the canonical wire format. The derived view is a *reading disc
 
 ### Example projection
 
-Given these two iteration lines (same `config_hash`, different `accepted`):
+This example is **synthetic**. It needs a nondeterministic evaluator: the same config is judged twice against the same incumbent (`autoresearch:9f8e7d6c5b4a...`, reward 0.41) and gets rewards on opposite sides of it. A deterministic target cannot produce this (see the acceptance criterion above). Under Greedy the first evaluation (0.40) is rejected and the incumbent stays. The second (0.42) is accepted.
 
 ```jsonl
-{"event":"iteration","schema_version":1,"iteration":5,"timestamp":"2026-05-17T10:00:05Z","config":{"...":"..."},"config_hash":"autoresearch:abc123def456...","score":{"...":"..."},"reward":0.42,"accepted":true,...}
-{"event":"iteration","schema_version":1,"iteration":11,"timestamp":"2026-05-17T10:00:11Z","config":{"...":"..."},"config_hash":"autoresearch:abc123def456...","score":{"...":"..."},"reward":0.40,"accepted":false,...}
+{"event":"iteration","schema_version":1,"iteration":5,"timestamp":"2026-05-17T10:00:05Z","config":{"...":"..."},"config_hash":"autoresearch:abc123def456...","score":{"...":"..."},"reward":0.40,"accepted":false,"previous_hash":"autoresearch:9f8e7d6c5b4a...",...}
+{"event":"iteration","schema_version":1,"iteration":11,"timestamp":"2026-05-17T10:00:11Z","config":{"...":"..."},"config_hash":"autoresearch:abc123def456...","score":{"...":"..."},"reward":0.42,"accepted":true,"previous_hash":"autoresearch:abc123def456...",...}
 ```
 
-The derived view is:
+Both lines' preceding iteration lines (4 and 10) carry `previous_hash: "autoresearch:9f8e7d6c5b4a..."`, so both candidates were judged against the same incumbent. The derived view is:
 
 ```json
 [
   {
     "event_id": "01958d6a-.../iteration-5",
     "timestamp": "2026-05-17T10:00:05Z",
-    "target": "target_grammar",
-    "claim": "target_grammar/config-abc123def456-is-an-improvement",
-    "evidence": [{"kind":"reward","value":0.42},{"kind":"elapsed_ms","value":12},{"kind":"config_hash","value":"autoresearch:abc123def456..."}],
-    "confidence": 0.66,
+    "target": "ix_autoresearch::target_chatbot::ChatbotTarget",
+    "claim": "ix_autoresearch::target_chatbot::ChatbotTarget/config-abc123def456-is-an-improvement-over-9f8e7d6c5b4a",
+    "evidence": [{"kind":"reward","value":0.40},{"kind":"elapsed_ms","value":12},{"kind":"config_hash","value":"autoresearch:abc123def456..."}],
+    "confidence": 0.33,
     "contradicted_by": [],
-    "disposition": "confirmed"
+    "disposition": "refuted"
   },
   {
     "event_id": "01958d6a-.../iteration-11",
     "timestamp": "2026-05-17T10:00:11Z",
-    "target": "target_grammar",
-    "claim": "target_grammar/config-abc123def456-is-an-improvement",
-    "evidence": [{"kind":"reward","value":0.40},{"kind":"elapsed_ms","value":14},{"kind":"config_hash","value":"autoresearch:abc123def456..."}],
-    "confidence": 0.33,
+    "target": "ix_autoresearch::target_chatbot::ChatbotTarget",
+    "claim": "ix_autoresearch::target_chatbot::ChatbotTarget/config-abc123def456-is-an-improvement-over-9f8e7d6c5b4a",
+    "evidence": [{"kind":"reward","value":0.42},{"kind":"elapsed_ms","value":14},{"kind":"config_hash","value":"autoresearch:abc123def456..."}],
+    "confidence": 0.66,
     "contradicted_by": ["01958d6a-.../iteration-5"],
     "disposition": "contradictory"
   }
 ]
 ```
 
-Hari's BeliefNetwork then consolidates these as `HexValue::Contradictory` for the canonical proposition `target_grammar/config-abc123def456-is-an-improvement`.
+Hari's belief network then consolidates both as `HexValue::Contradictory` for that one proposition.
 
 ## Versioning
 
@@ -161,7 +168,7 @@ Hari's BeliefNetwork then consolidates these as `HexValue::Contradictory` for th
 
 ## Consumers
 
-- **Hari** (`crates/hari-extractor` `hari-from-ix-autoresearch` bin) reads layer 1 directly. The mapping it uses is documented in that file's module-level comment.
+- **Hari** (`crates/hari-extractor` `hari-from-ix-autoresearch` bin; projection in `src/ix_autoresearch.rs`) reads layer 1 directly. The mapping it uses is documented in that file's module-level comment. It departs from the confidence column above in one place: an errored line becomes `Unknown` (no evidence either way), not a low-confidence refutation. `--report` replays the stream under Hari's arms beside IX's own `accepted` flag. Sample reports live in hari's `fixtures/ix-real-or-synthetic/`.
 - **agent-blackbox** consumes the resulting `ResearchReplayReport` JSON (the "belief diff") as evidence — see Workflow 3 in `agent-blackbox/docs/ix-real-problems-plan.md`.
 
 ## Validation

@@ -175,12 +175,17 @@ fn flywheel_round_trip_session_log_to_trace_ingest() {
 
     // Now feed the trace directory to ix_trace_ingest via the
     // registry-backed dispatch path — same code path an agent
-    // would use to close its own loop.
+    // would use to close its own loop. `ix_trace_ingest` confines `dir`; the
+    // `traces/` directory beside the installed session log is one of the trace
+    // locations it admits, so reinstall the log first, as `ix_triage_session` has
+    // it installed when it re-ingests.
+    install_session_log(log);
     let stats = ix_agent::registry_bridge::dispatch(
         "ix_trace_ingest",
         serde_json::json!({ "dir": trace_dir.display().to_string() }),
-    )
-    .expect("ix_trace_ingest should succeed");
+    );
+    clear_session_log();
+    let stats = stats.expect("ix_trace_ingest should succeed");
     let total = stats["total_traces"].as_u64().unwrap_or(0);
     assert_eq!(total, 1, "expected one ingested trace, got {stats}");
 }

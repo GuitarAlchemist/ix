@@ -19,6 +19,9 @@ pub struct KMeansState {
 }
 
 /// K-Means clustering.
+///
+/// `fit` runs a single k-means++ start from `seed`. A cluster that ends an
+/// assignment step with no rows keeps its previous centroid.
 pub struct KMeans {
     pub k: usize,
     pub max_iterations: usize,
@@ -149,6 +152,11 @@ impl Clusterer for KMeans {
             for (c, &count) in counts.iter().enumerate().take(self.k) {
                 if count > 0 {
                     new_centroids.row_mut(c).mapv_inplace(|v| v / count as f64);
+                } else {
+                    // Empty cluster: keep its previous centroid rather than
+                    // leaving it at the origin, where it would sit far from
+                    // the data and capture unrelated points in `predict`.
+                    new_centroids.row_mut(c).assign(&centroids.row(c));
                 }
             }
 
@@ -251,6 +259,23 @@ mod tests {
             orig_labels, rest_labels,
             "predictions must match after roundtrip"
         );
+    }
+
+    #[test]
+    fn test_kmeans_empty_cluster_keeps_its_centroid() {
+        // Two distinct values for three clusters: one cluster stays empty.
+        // Its centroid must not jump to the origin, which is far from the
+        // data and would capture new points near zero.
+        let x = array![[10.0], [10.0], [14.0], [14.0]];
+        let mut km = KMeans::new(3).with_seed(42);
+        km.fit(&x);
+        let centroids = km.centroids.clone().unwrap();
+        for &c in centroids.column(0) {
+            assert!(c == 10.0 || c == 14.0, "centroid {c} is not a data value");
+        }
+
+        let near_zero = km.predict(&array![[4.0]])[0];
+        assert_eq!(centroids[[near_zero, 0]], 10.0);
     }
 
     #[test]

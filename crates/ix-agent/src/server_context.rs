@@ -86,7 +86,8 @@ impl ServerContext {
         }
     }
 
-    /// Serialize and enqueue a JSON value as a single line.
+    /// Serialize and enqueue a JSON value as a single line. A `tools/call`
+    /// response reaches the client this way, around [`tools_call_result`].
     pub fn write_value(&self, value: &Value) {
         match serde_json::to_string(value) {
             Ok(s) => self.write_outbound(s),
@@ -315,5 +316,25 @@ impl ServerContext {
             .ok_or_else(|| format!("sampling response missing text content: {}", result))?;
 
         Ok(text)
+    }
+}
+
+/// The `result` of a JSON-RPC `tools/call` response: the tool's value as one
+/// pretty-printed text part, or its error as an `isError` text part.
+pub fn tools_call_result(outcome: Result<Value, String>) -> Value {
+    match outcome {
+        Ok(result) => json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string_pretty(&result).unwrap_or_default(),
+            }],
+        }),
+        Err(e) => json!({
+            "content": [{
+                "type": "text",
+                "text": format!("Error: {}", e),
+            }],
+            "isError": true,
+        }),
     }
 }

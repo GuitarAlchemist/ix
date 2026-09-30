@@ -25,6 +25,7 @@ pub mod silent_skips;
 
 use crate::exit;
 use crate::output::{self, Format};
+use ix_quality_trend::{GateDecision, GateLedgerEntry, GateMetric};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -138,6 +139,85 @@ impl Report {
             _ => exit::OK_TRUE,
         }
     }
+
+    /// How many checks landed on each severity.
+    fn tally(&self, want: Status) -> usize {
+        self.checks.iter().filter(|c| c.status == want).count()
+    }
+}
+
+/// Where this repo's quality-gate ledger lives, relative to `root`.
+///
+/// One path per repo, per `docs/contracts/2026-05-24-quality-gate-ledger.contract.md`.
+pub const LEDGER_RELPATH: &str = "state/quality/gate-ledger.jsonl";
+
+/// Project a doctor report into a v1 quality-gate-ledger entry.
+///
+/// One row per run, not one per check: the gate's verdict is the aggregate
+/// (that is what the exit code reports), and the per-check breakdown rides in
+/// `extra` where consumers that want it can find it without the ledger's
+/// top-level shape having to grow a doctor-specific field.
+///
+/// The metric is the failing-check count against a threshold of zero, so a
+/// consumer reading only `metric` still sees the thing the gate is about.
+pub fn ledger_entry(report: &Report, opts: Options) -> GateLedgerEntry {
+    let fails = report.tally(Status::Fail);
+    let decision = match report.worst() {
+        Status::Fail => GateDecision::Fail,
+        Status::Warn => GateDecision::Warn,
+        _ => GateDecision::Pass,
+    };
+
+    let mut entry = GateLedgerEntry::new(
+        "ix-doctor",
+        "harness",
+        decision,
+        GateMetric {
+            name: "doctor_checks_failing".to_string(),
+            value: fails as f64,
+            threshold: Some(0.0),
+            // No trend: `ix doctor` has no history binding of its own. The
+            // ledger it writes here is what will eventually provide one, so
+            // claiming a direction now would be an unbacked assertion.
+            trend: None,
+        },
+    );
+
+    let per_check: serde_json::Map<String, Value> = report
+        .checks
+        .iter()
+        .map(|c| (c.name.clone(), json!(c.status.label())))
+        .collect();
+
+    entry.extra = Some(json!({
+        "verdict": report.verdict(),
+        "exit_code": report.exit_code(),
+        "check_count": report.checks.len(),
+        "warn_count": report.tally(Status::Warn),
+        "skip_count": report.tally(Status::Skip),
+        // `--full` runs the CI clippy + test invocation; without it several
+        // checks are skipped, so a consumer comparing two rows needs to know
+        // which mode produced each.
+        "mode": { "write": opts.write, "full": opts.full },
+        "checks": per_check,
+    }));
+    entry
+}
+
+/// Append this run's row to the repo ledger. Returns the path written.
+///
+/// Best-effort by contract: `ix doctor`'s job is to gate, and a ledger the
+/// filesystem refused must not turn a green repo red. The caller surfaces the
+/// failure on stderr instead — a silently-skipped append is exactly the
+/// green-but-dead shape this wiring exists to remove.
+pub fn append_to_ledger(
+    root: &Path,
+    report: &Report,
+    opts: Options,
+) -> Result<PathBuf, ix_quality_trend::LedgerError> {
+    let path = root.join(LEDGER_RELPATH);
+    ix_quality_trend::append_entry(&path, &ledger_entry(report, opts))?;
+    Ok(path)
 }
 
 /// What to run.
@@ -204,14 +284,13 @@ fn check_registry_snapshot(root: &Path, write: bool) -> CheckResult {
         };
     }
 
-    let snapshot = match registry_snapshot::Snapshot::load(root) {
-        Ok(s) => s,
-        Err(e) => {
-            return CheckResult::new(NAME, Status::Fail, e).with_remedy(
+    let snapshot =
+        match registry_snapshot::Snapshot::load(root) {
+            Ok(s) => s,
+            Err(e) => return CheckResult::new(NAME, Status::Fail, e).with_remedy(
                 "run `cargo run -p ix-skill --bin ix -- doctor --write` and commit the snapshot",
-            )
-        }
-    };
+            ),
+        };
 
     let drift = registry_snapshot::diff(&snapshot, &live);
     if drift.is_clean() {
@@ -602,7 +681,11 @@ fn check_environment(root: &Path) -> Vec<CheckResult> {
     let gov_ok = gov_path.is_dir();
 
     let mut out = vec![if gov_ok {
-        CheckResult::new("demerzel-governance", Status::Ok, format!("{gov_dir} present"))
+        CheckResult::new(
+            "demerzel-governance",
+            Status::Ok,
+            format!("{gov_dir} present"),
+        )
     } else {
         CheckResult::new(
             "demerzel-governance",
@@ -650,7 +733,14 @@ pub fn run_full_checks() -> Vec<CheckResult> {
     vec![
         shell_check(
             "clippy",
-            &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+            &[
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
             "fix the lints, or justify an `#[allow]` in the diff — CI runs this same \
              invocation on stable and on the pinned nightly-2026-08-23",
         ),
@@ -665,9 +755,11 @@ pub fn run_full_checks() -> Vec<CheckResult> {
 /// Run `cargo <args>` and turn its exit status into a [`CheckResult`].
 fn shell_check(name: &str, args: &[&str], remedy: &str) -> CheckResult {
     match std::process::Command::new("cargo").args(args).status() {
-        Ok(st) if st.success() => {
-            CheckResult::new(name, Status::Ok, format!("`cargo {}` passed", args.join(" ")))
-        }
+        Ok(st) if st.success() => CheckResult::new(
+            name,
+            Status::Ok,
+            format!("`cargo {}` passed", args.join(" ")),
+        ),
         Ok(st) => CheckResult::new(
             name,
             Status::Fail,
@@ -694,15 +786,28 @@ pub fn main(format: Format, opts: Options) -> Result<i32, String> {
         report.checks.extend(run_full_checks());
     }
 
+    // Record the run. `ix_quality_gate_history` reads this file; until
+    // something wrote it, that tool answered every query from an absent
+    // ledger. A gate whose history nobody keeps cannot be asked "when did
+    // this last pass?".
+    let ledger = match append_to_ledger(&root, &report, opts) {
+        Ok(p) => Some(p.display().to_string()),
+        Err(e) => {
+            eprintln!("ix doctor: quality-gate ledger not written: {e}");
+            None
+        }
+    };
+
     let payload = json!({
         "verdict": report.verdict(),
         "exit_code": report.exit_code(),
         "root": report.root,
+        "ledger": ledger,
         "checks": report.checks,
     });
 
     match format.resolve() {
-        Format::Table => render_human(&report),
+        Format::Table => render_human(&report, ledger.as_deref()),
         other => output::emit(&payload, other).map_err(|e| format!("writing output: {e}"))?,
     }
     Ok(report.exit_code())
@@ -712,7 +817,7 @@ pub fn main(format: Format, opts: Options) -> Result<i32, String> {
 ///
 /// The default table renderer flattens nested detail into noise, so the
 /// terminal path is hand-rolled to keep the remedy readable.
-fn render_human(report: &Report) {
+fn render_human(report: &Report, ledger: Option<&str>) {
     println!("ix doctor — {}", report.root);
     println!();
     for c in &report.checks {
@@ -740,6 +845,10 @@ fn render_human(report: &Report) {
         report.checks.len(),
         report.exit_code()
     );
+    match ledger {
+        Some(p) => println!("ledger  {p}"),
+        None => println!("ledger  (not written — see stderr)"),
+    }
 }
 
 /// Greedy word wrap, so a long remedy stays readable in a terminal.

@@ -290,6 +290,73 @@ println!("{}", result.output("greet").unwrap());  // "Hello, ix!"
 
 ---
 
+## Validating MCP Pipeline Specs Offline
+
+The MCP surface has two read-only (Tier 1) companions to `ix_pipeline_run`, modelled on ComfyUI's `object_info` endpoint and `comfy validate`:
+
+- **`ix_node_catalog`** (no arguments) returns one entry per registered tool: `name`, `description`, `dispatch` (`registry` or `manual`), `gated` (whether a call really passes through the approval middleware), `input_schema`, `required_inputs`, `output_schema` (`null` when the skill declares none) and `approval` (`action_kind`, `tier`, and `effect`: `auto_approved`, `blocked` or `not_gated`). Tier 3 means **blocked**: the MCP path has no way to grant approval.
+- **`ix_pipeline_validate`** takes the `{"steps": [...]}` spec `ix_pipeline_run` consumes and checks it without running anything.
+
+```json
+{
+  "steps": [
+    { "id": "a", "tool": "ix_stats", "arguments": { "data": [1.0, 2.0, 3.0] } },
+    { "id": "b", "tool": "ix_cache", "depends_on": ["a"],
+      "arguments": { "operation": "set", "key": "k", "value": "$a.mean" } }
+  ]
+}
+```
+
+returns `valid: true`, `execution_order: ["a", "b"]`, per-step `gated` / `tier` / `effect`, and an `approval` block: `{verdict, max_gated_tier, gated_steps, ungated_steps}`. `verdict` is `auto_approved` here; it is `ungated_steps_unchecked` as soon as one step runs without passing the gate, `blocked` when a gated step is Tier 3, and `unknown` when no step could be classified — it never reads as "nothing to approve". `max_gated_tier` covers the gated steps only. `execution_order` is the order `ix_pipeline_run` executes: `Dag::topological_sort` is deterministic (ties break by step order). Problems come back as structured `{code, step, index, message}` entries so an editor can pin each one to a node:
+
+| Code | Meaning |
+|------|---------|
+| `unknown_tool` | `tool` is not in the registry |
+| `unsupported_in_pipeline` | the tool only runs as a top-level MCP call (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_explain_algorithm`, `ix_triage_session`) |
+| `blocked_by_approval_gate` | the step goes through the approval gate at Tier 3 and would be refused |
+| `missing_required_input` | an input listed in the tool's schema `required` is absent from `arguments` |
+| `unknown_step_reference` | a `depends_on` entry or a `"$step.field"` argument names an undefined step |
+| `self_reference` | a `"$step.field"` argument reads the step's own output, which never exists at substitution time |
+| `undeclared_dependency` | a `"$step.field"` argument names a step that runs *after* it, so the reference cannot resolve (checked only when the graph has no cycle) |
+| `cycle` | the step is part of a `depends_on` cycle |
+| `internal_graph_error` | the `Dag` rejected a node or edge this function had already accepted — reported rather than swallowed |
+| `too_many_steps`, `too_many_references` | more than 1000 steps, or more than 1000 `depends_on` entries / argument references in one step |
+| `missing_steps`, `empty_steps`, `missing_id`, `duplicate_id`, `missing_tool`, `invalid_arguments`, `invalid_depends_on` | malformed spec |
+
+A reference resolves exactly when its target precedes the referring step in `execution_order` — the same condition `run_pipeline` applies when it substitutes arguments. Three warnings cover what is legal but fragile or unchecked:
+
+- `order_dependent_reference` — the reference resolves only because the target happens to run earlier; nothing declares that order, so a later edit can reorder the two steps. Add the target to `depends_on`.
+- `ungated_step` — the step's tool does not pass through the approval gate, so its tier is not enforced at run time. ix#352 routes manual tools through the gate; after it lands, such a step is checked and a Tier-3 tool becomes a `blocked_by_approval_gate` error.
+- `loop_detect_threshold` — more gated steps call one tool than the loop detector allows (its configured threshold, 10 by default). The detector window is shared by the whole process, so a run can trip earlier.
+
+A duplicate id is reported once, with its `index`; that step is then ignored so its edges are not attributed to the first step with the same id.
+
+The validator is deliberately stricter than `ix_pipeline_run`, which accepts an empty `steps` array and silently ignores a non-array `depends_on` or a non-string entry in it. The checks are structural: argument *types* are not validated against the schema yet. The example above is pinned by `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
+
+## SQL Over Step Outputs (`ix_duckdb_query`)
+
+`ix_duckdb_query` runs DuckDB SQL over rows passed in with the call, so a pipeline can join, filter or aggregate what earlier tools returned. It runs the operator-installed DuckDB 1.x CLI (`IX_DUCKDB_BIN`, else `duckdb` on `PATH`) and is Tier 1: a pure computation over the request.
+
+```json
+{
+  "sql": "SELECT t.b, sum(t.a) AS total, any_value(u.label) AS label FROM t JOIN u ON t.b = u.b GROUP BY t.b ORDER BY t.b",
+  "tables": {
+    "t": [{ "a": 1, "b": "x" }, { "a": 2.5, "b": "x" }, { "a": 4, "b": "it's" }],
+    "u": [{ "b": "x", "label": "ex" }, { "b": "it's", "label": "quote" }]
+  }
+}
+```
+
+returns `rows: [{"b": "it's", "total": 4.0, "label": "quote"}, {"b": "x", "total": 3.5, "label": "ex"}]`, `columns: ["b", "label", "total"]` (sorted: rows are JSON objects, which do not keep SQL column order), `row_count`, `truncated`, and each table's inferred structure (`tables.t` is `[{"a":"DOUBLE","b":"VARCHAR"}]`). The example is pinned by `crates/ix-agent/tests/duckdb_query.rs::queries_supplied_tables_with_inferred_types`.
+
+- **Input.** `tables` maps a name (`[A-Za-z_][A-Za-z0-9_]*`, at most 64 characters) to a non-empty array of JSON objects; column types are inferred with `json_structure`, and integers load as BIGINT, so they come back as numbers (a table holding an integer beyond the signed 64-bit range keeps DuckDB's inferred type, which it prints as a string). A nested object stays a STRUCT column (`meta.score`). At most 16 tables and 8 MiB of JSON.
+- **Isolation.** The query runs in memory in DuckDB's safe mode: no file, extension, `ATTACH`, network or environment (`getenv`) access, the configuration locked. A line starting with `.` is a CLI dot command and is refused; indent a line that is SQL (a `.5` literal, say). Before safe mode is entered, memory is capped at 512 MiB with no spilling to disk and the query gets 2 threads; a query over the limit fails with `Out of Memory`. Each DuckDB run is stopped after 30 s.
+- **Output.** `rows` is the last statement's result, at most `max_rows` of it (1 to 10000, default 1000); `truncated` says when there were more. The last statement must be a query (`SELECT`, `FROM`, `WITH`, `VALUES`, `TABLE`, or one in parentheses). Any other is refused: DuckDB prints nothing for some (`CREATE`, `SET`, `ATTACH`, ...), so the previous query's rows would pass for their result, and it rewrites `PRAGMA`, `SHOW`, `DESCRIBE`, `SUMMARIZE`, `PIVOT` and `CALL`, sometimes into such a statement (`PRAGMA copy_database` is `COPY FROM DATABASE`). Write those as a query: `FROM (DESCRIBE t)`, `FROM (SUMMARIZE t)`, `FROM pragma_table_info('t')`, `FROM range(3)`. `EXECUTE` is refused too, since what it prints depends on the statement it runs, and so is a write, even with `RETURNING`: end the script with a query over what it wrote (`INSERT ...; SELECT * FROM t`). Rows past `max_rows` are counted, not kept, so `row_count` stays exact and only the rows returned must fit in 16 MiB of JSON: lower `max_rows` or select fewer columns when they do not. A result with two columns of the same name is refused, since a JSON object would keep only one: alias them with `AS`.
+- **Numbers.** DuckDB prints HUGEINT, UBIGINT and DECIMAL values as strings, which keep every digit, and a DOUBLE as its shortest decimal, which reads back as the same double. Inside a LIST or STRUCT it prints HUGEINT, UBIGINT and DECIMAL values as numbers: a result holding one that would lose digits as a JSON double (beyond 64 bits, or more digits than a double holds) is refused rather than rounded. Cast it to VARCHAR in SQL.
+- **Empty results.** DuckDB prints an empty result without its column names, so the script runs a second time to read them. If a query whose result changes between runs (over `random()`, say) has rows the second time, `columns` stays empty rather than guessed.
+
+---
+
 ## Going Further
 
 - **[Caching and Memoization](./caching-and-memoization.md)** covers the `PipelineCache` trait, per-node cacheability, and how to connect to `ix-cache` for incremental recomputation.

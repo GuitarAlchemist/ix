@@ -1,0 +1,24 @@
+{
+  "version": "jev-options-1",
+  "provenance": "Intent descriptions copied verbatim from ga Tests/Common/GA.Business.ML.Tests/Eval/RoutingEvalHarness.cs BuildIntentRegistry (text authored 2026-05-10 at ga db702ce9, before the held-out TEST was authored 2026-06-13). __none__ was written for this experiment without reading TEST prompts.",
+  "instructions": "Which assistant skill should handle this user message? Choose __none__ if the message is not a request that one of the listed guitar and music-theory skills can answer.",
+  "criteria": {
+    "skill.chordinfo": "Chord info — notes, intervals, quality.",
+    "skill.scaleinfo": "Scale info — notes of a named scale.",
+    "skill.modes": "Modes of the major scale — list and discuss.",
+    "skill.interval": "Interval between two notes / interval naming.",
+    "skill.chordsubstitution": "Chord substitution suggestions for a given chord.",
+    "skill.beginnerchords": "Beginner chord suggestions.",
+    "skill.progressionmood": "Darken or brighten a chord progression via parallel-minor swaps, modal interchange, or borrowed chords.",
+    "skill.circleoffifths": "Circle of fifths — positions, relationships.",
+    "skill.practiceroutine": "Practice routine suggestions.",
+    "skill.genreessentials": "Essential chords / scales for a genre.",
+    "skill.whatcanyoudo": "Meta — what the assistant can do.",
+    "skill.transpose": "Transpose a chord or progression by an interval.",
+    "skill.commontones": "Common tones between two chords.",
+    "skill.diatonicchords": "Diatonic chords in a key.",
+    "skill.keyidentification": "Identify the key of a chord progression.",
+    "skill.progressioncompletion": "Suggest the next chord in a progression.",
+    "__none__": "None of these skills: the message is off-topic, not about guitar or music theory, or asks for something no listed skill does."
+  }
+}

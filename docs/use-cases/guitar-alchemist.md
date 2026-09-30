@@ -99,7 +99,8 @@ let best_action = mcts_search(&initial, 1000, 1.41, 42);
 Each chord can be played in many positions on a guitar. A genetic algorithm finds voicings that minimize total finger movement across the progression.
 
 ```rust
-use ix_evolution::{GeneticAlgorithm, EvolutionResult};
+use ix_evolution::genetic::GeneticAlgorithm;
+use ix_evolution::traits::EvolutionResult;
 use ndarray::Array1;
 
 // Each gene = fret position for each string (-1 = muted, 0-22 = fret)
@@ -206,7 +207,7 @@ println!("Path confidence: {:.4}", log_prob);
 Find progressions in a database that are harmonically similar, using GPU-accelerated cosine similarity.
 
 ```rust
-use ix_gpu::{GpuContext, similarity};
+use ix_gpu::{context::GpuContext, similarity};
 
 // Each progression encoded as a feature vector (from wavelet features)
 let query_embedding: Vec<f32> = encode_progression(&my_progression);

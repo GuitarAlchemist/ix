@@ -69,7 +69,10 @@ ix-registry = { workspace = true }
 ix-skill-macros = { workspace = true }
 linkme = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# float_roundtrip: parse a JSON double to the nearest f64. The default parse
+# is off by one ULP for about a tenth of the doubles DuckDB prints
+# (ix_duckdb_query rows).
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 ndarray = { workspace = true }
@@ -90,3 +93,4 @@ maintain-gate = ["dep:ix-duck"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
+rmp-serde = "1"

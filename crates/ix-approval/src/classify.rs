@@ -101,6 +101,13 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_topo",
         "ix_category",
         "ix_graph",
+        // Pure correlation-mesh compute over caller-supplied series.
+        "ix_mesh_correlate",
+        // Reachability analysis of a caller-supplied Petri net (inline or PNML string).
+        "ix_petri_analyze",
+        // DuckDB SQL over caller-supplied rows, run by the CLI in -safe mode: no
+        // file, extension, ATTACH or network access, configuration locked.
+        "ix_duckdb_query",
         "ix_hyperloglog",
         "ix_bloom_filter",
         "ix_chaos_lyapunov",
@@ -120,6 +127,11 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         // Code + context analysis
         "ix_code_analyze",
         "ix_context_walk",
+        // Assumption graph: scan @ai: annotations / replay a belief log, no writes.
+        "ix_assumption_query",
+        "ix_assumption_belief_at",
+        "ix_assumption_drift",
+        "ix_assumption_claims",
         // Fuzzy distribution eval (deterministic, no side effects)
         "ix_fuzzy_eval",
         // Governance reads
@@ -134,7 +146,33 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_tars_bridge",
         // Pipeline info (no execution)
         "ix_pipeline",
-        "ix_cache",
+        // Manual (hand-registered) tools, gated since ix#350. Pure compute or
+        // static data:
+        "ix_tsne",
+        "ix_autograd_run",
+        "ix_grothendieck_delta",
+        "ix_grothendieck_nearby",
+        "ix_grothendieck_path",
+        "ix_voicings_payload",
+        "ix_catalog_list",
+        "ix_code_catalog",
+        "ix_grammar_catalog",
+        "ix_rfc_catalog",
+        // Manual tools that only read files (no writes, no processes). Each
+        // confines the path its caller names through `path_confine`, as Tier 1
+        // requires — see the module docs there.
+        "ix_cargo_deps",
+        "ix_pipeline_list",
+        "ix_quality_gate_history",
+        "ix_code_topology",
+        "ix_annotations_scan",
+        "ix_optick_search",
+        "ix_ast_query",
+        "ix_code_smells",
+        // Asks the client LLM (MCP sampling) for a spec and validates it; runs nothing.
+        "ix_pipeline_compile",
+        "ix_node_catalog",
+        "ix_pipeline_validate",
     ];
 
     // In-project edits — tools that write to state/ or emit trace data
@@ -145,12 +183,55 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_governance_belief",       // writes to state/beliefs/
         "ix_governance_graph_rescan", // rebuilds graph state
         "ix_session_flywheel_export", // writes a GA Trace JSON file
+        // `set` / `delete` mutate the process-wide cache that `ix_pipeline_run`
+        // consults before dispatching an asset-backed step, so a write can stand
+        // in for a later step's result. In-process state, not a file, but not
+        // side-effect-free either; the classifier is name-only, so the whole
+        // tool takes the writing kind (Tier 2, still auto-continues).
+        "ix_cache",
+        // Manual tools, gated since ix#350. Orchestrators: each inner tool call
+        // is gated on its own; the outer call writes the step cache
+        // (ix_pipeline_run) or may export a trace (ix_triage_session learn=true).
+        "ix_pipeline_run",
+        "ix_triage_session",
+        // Writes run logs under a caller-chosen `state_dir`.
+        "ix_autoresearch_run",
+        // Spawn a subprocess with a fixed, read-only argument list (`git log`,
+        // `ix pipeline hits`, `git cat-file`/`git status`). Not Tier 1 because
+        // they start processes; not Tier 3 because Tier 3 is a hard refusal
+        // (no approval path) and none of them takes a caller-chosen program or
+        // writes. Tier 2 keeps them classified, logged and loop-detected.
+        "ix_git_log",
+        "ix_git_churn",
+        "ix_thinker_hits",
+        "ix_maintain_gate",
     ];
+
+    // Gated tools — always Tier 3, which refuses the call. The tables exist
+    // so a tool that shells out, fetches from the web, or writes outside the
+    // workspace is classified explicitly instead of falling through to
+    // `Unknown`.
+    const SHELL_COMMAND_TOOLS: &[&str] = &[
+        // Runs a caller-chosen executable (`sentrux_exe`) and writes
+        // annotations to caller-chosen paths.
+        "ix_sentrux_annotate",
+        // Spawns `ix pipeline compile`, which calls an LLM provider API and,
+        // with `run: true`, executes the compiled pipeline.
+        "ix_nl_to_pipeline",
+    ];
+    const WEB_FETCH_TOOLS: &[&str] = &[];
+    const EDIT_OUT_OF_PROJECT_TOOLS: &[&str] = &[];
 
     if READ_TOOLS.contains(&tool_name) {
         ActionKind::Read
     } else if EDIT_IN_PROJECT_TOOLS.contains(&tool_name) {
         ActionKind::EditInProject
+    } else if SHELL_COMMAND_TOOLS.contains(&tool_name) {
+        ActionKind::ShellCommand
+    } else if WEB_FETCH_TOOLS.contains(&tool_name) {
+        ActionKind::WebFetch
+    } else if EDIT_OUT_OF_PROJECT_TOOLS.contains(&tool_name) {
+        ActionKind::EditOutOfProject
     } else {
         ActionKind::Unknown
     }
@@ -193,6 +274,22 @@ mod tests {
             "ix_autocorrelation",
             "ix_analyze_reference",
             "ix_spectral_distance",
+            // Same trap, found by the registry-wide parity check: all six were
+            // registered and unit-tested, and refused on every MCP call.
+            "ix_mesh_correlate",
+            "ix_petri_analyze",
+            "ix_duckdb_query",
+            "ix_assumption_query",
+            "ix_assumption_belief_at",
+            "ix_assumption_drift",
+            "ix_assumption_claims",
+            // Manual tools, gated since ix#350.
+            "ix_tsne",
+            "ix_cargo_deps",
+            "ix_optick_search",
+            "ix_pipeline_compile",
+            "ix_node_catalog",
+            "ix_pipeline_validate",
         ] {
             assert_eq!(
                 classify_action_kind(tool),
@@ -209,11 +306,31 @@ mod tests {
             "ix_trace_ingest",
             "ix_governance_belief",
             "ix_governance_graph_rescan",
+            // Writes the in-process cache ix_pipeline_run reads (review on #345).
+            "ix_cache",
+            // Manual tools that spawn fixed read-only subprocesses or write run
+            // state (ix#350) — never Tier 1.
+            "ix_git_log",
+            "ix_git_churn",
+            "ix_thinker_hits",
+            "ix_autoresearch_run",
+            "ix_pipeline_run",
         ] {
             assert_eq!(
                 classify_action_kind(tool),
                 ActionKind::EditInProject,
                 "expected {tool} to be EditInProject"
+            );
+        }
+    }
+
+    #[test]
+    fn caller_chosen_process_tools_classify_as_shell_command() {
+        for tool in &["ix_sentrux_annotate", "ix_nl_to_pipeline"] {
+            assert_eq!(
+                classify_action_kind(tool),
+                ActionKind::ShellCommand,
+                "expected {tool} to be ShellCommand"
             );
         }
     }

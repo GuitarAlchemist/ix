@@ -75,6 +75,15 @@ pub struct SnapshotSet {
 pub struct EmbeddingsSnapshot {
     pub timestamp: Option<String>,
     pub corpus: Option<EmbeddingsCorpus>,
+    /// Identity of the measured population (which input corpus the producer
+    /// read), stamped by `ix-quality-trend-bootstrap`. Trends only compare
+    /// snapshots that share it; `None` for legacy and external producers.
+    pub population_id: Option<String>,
+    /// Present on a clone of another snapshot, dated back to seed a history
+    /// (`_seeded_baseline`). Not a measurement: excluded from comparable
+    /// populations.
+    #[serde(rename = "_seeded_baseline")]
+    pub seeded_baseline: Option<serde_json::Value>,
     pub leak_detection: Option<LeakDetection>,
     pub retrieval_consistency: Option<RetrievalConsistency>,
     pub topology: Option<Topology>,
@@ -164,6 +173,15 @@ impl EmbeddingsSnapshot {
 pub struct VoicingAnalysisSnapshot {
     pub timestamp: Option<String>,
     pub corpus: Option<VoicingCorpus>,
+    /// Identity of the measured population (which input corpus the producer
+    /// read), stamped by `ix-quality-trend-bootstrap`. Trends only compare
+    /// snapshots that share it; `None` for legacy and external producers.
+    pub population_id: Option<String>,
+    /// Present on a clone of another snapshot, dated back to seed a history
+    /// (`_seeded_baseline`). Not a measurement: excluded from comparable
+    /// populations.
+    #[serde(rename = "_seeded_baseline")]
+    pub seeded_baseline: Option<serde_json::Value>,
     pub chord_recognition: Option<ChordRecognition>,
     pub forte_coverage: Option<ForteCoverage>,
     pub cross_instrument_consistency: Option<CrossInstrumentConsistency>,
@@ -282,6 +300,15 @@ pub struct ChatbotQaSnapshot {
     pub last_known_good_pass_pct: Option<f64>,
     pub last_known_good_date: Option<String>,
     pub last_known_good_source: Option<String>,
+    /// Identity of the measured population (which input corpus the producer
+    /// read), stamped by `ix-quality-trend-bootstrap`. Trends only compare
+    /// snapshots that share it; `None` for legacy and external producers.
+    pub population_id: Option<String>,
+    /// Present on a clone of another snapshot, dated back to seed a history
+    /// (`_seeded_baseline`). Not a measurement: excluded from comparable
+    /// populations.
+    #[serde(rename = "_seeded_baseline")]
+    pub seeded_baseline: Option<serde_json::Value>,
 }
 
 impl ChatbotQaSnapshot {

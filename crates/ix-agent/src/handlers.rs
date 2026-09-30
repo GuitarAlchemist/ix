@@ -3,6 +3,8 @@
 use ndarray::{Array1, Array2};
 use serde_json::{json, Value};
 
+use crate::path_confine;
+
 use ix_cache::{Cache, CacheConfig};
 
 use std::sync::OnceLock;
@@ -315,24 +317,45 @@ pub fn kmeans(params: Value) -> Result<Value, String> {
             .ok_or_else(|| "field 'max_iter' must be a non-negative integer".to_string())?,
     };
 
+    // `seed` (default 42) and `n_init` (default 1) follow the same rule: absent
+    // or null takes the default, a present but malformed value is rejected.
+    let seed = match params.get("seed") {
+        None | Some(Value::Null) => 42,
+        Some(v) => v
+            .as_u64()
+            .ok_or_else(|| "field 'seed' must be a non-negative integer".to_string())?,
+    };
+    let n_init = match params.get("n_init") {
+        None | Some(Value::Null) => 1,
+        Some(v) => v
+            .as_u64()
+            .filter(|&n| n >= 1)
+            .map(|n| n as usize)
+            .ok_or_else(|| "field 'n_init' must be an integer >= 1".to_string())?,
+    };
+
     let data = vecs_to_array2(&data_rows)?;
 
-    let mut km = ix_unsupervised::kmeans::KMeans::new(k);
-    km.max_iterations = max_iter;
-    km.seed = 42;
-
-    let labels = km.fit_predict(&data);
-    let centroids: Vec<Vec<f64>> = km
-        .centroids
-        .as_ref()
-        .map(|c| (0..c.nrows()).map(|i| c.row(i).to_vec()).collect())
-        .unwrap_or_default();
-
-    let inertia = km
-        .centroids
-        .as_ref()
-        .map(|c| ix_unsupervised::kmeans::inertia(&data, &labels, c))
-        .unwrap_or(0.0);
+    // Run `n_init` k-means++ starts from seeds seed, seed + 1, … and keep the
+    // one with the lowest inertia (the first one on a tie).
+    let mut best: Option<(Array1<usize>, Array2<f64>, f64)> = None;
+    for start in 0..n_init {
+        let mut km = ix_unsupervised::kmeans::KMeans::new(k);
+        km.max_iterations = max_iter;
+        km.seed = seed.wrapping_add(start as u64);
+        let labels = km.fit_predict(&data);
+        let Some(centroids) = km.centroids.take() else {
+            continue;
+        };
+        let inertia = ix_unsupervised::kmeans::inertia(&data, &labels, &centroids);
+        if best.as_ref().map_or(true, |(_, _, b)| inertia < *b) {
+            best = Some((labels, centroids, inertia));
+        }
+    }
+    let (labels, centroids, inertia) = best.ok_or("k-means produced no centroids")?;
+    let centroids: Vec<Vec<f64>> = (0..centroids.nrows())
+        .map(|i| centroids.row(i).to_vec())
+        .collect();
 
     Ok(json!({
         "labels": labels.to_vec(),
@@ -3150,6 +3173,93 @@ fn ix_cli_path() -> std::path::PathBuf {
 
 // ── ix_git_log ─────────────────────────────────────────────
 
+/// A caller-supplied repo root that passed [`path_confine`], and whether it is
+/// the workspace root itself rather than a repository somewhere under a root.
+pub(crate) struct ConfinedRoot {
+    path: std::path::PathBuf,
+    is_workspace_root: bool,
+}
+
+/// The caller's optional `repo_root` for `ix_git_log` / `ix_git_churn`,
+/// confined to the workspace (or an `IX_EXTRA_ROOTS` directory).
+fn confined_repo_root(params: &Value) -> Result<Option<ConfinedRoot>, String> {
+    let Some(raw) = params.get("repo_root").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    let workspace = path_confine::workspace_root()?;
+    let path = path_confine::confine(&workspace, "repo_root", raw)?;
+    let is_workspace_root = match (path.canonicalize(), workspace.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    Ok(Some(ConfinedRoot {
+        path,
+        is_workspace_root,
+    }))
+}
+
+/// A caller-supplied path for an auto-approved tool, confined to the workspace
+/// root or an `IX_EXTRA_ROOTS` directory. Tools call this on every path an MCP
+/// caller names; a default the tool picks for itself is not caller input and is
+/// not confined (see `path_confine`'s module docs).
+pub(crate) fn confined_path(param: &str, raw: &str) -> Result<std::path::PathBuf, String> {
+    path_confine::confine(&path_confine::workspace_root()?, param, raw)
+}
+
+/// A `git` command that cannot be talked into running a program named in the
+/// configuration of the repository it reads. Git reads the target repo's
+/// `.git/config`, and several keys there name executables: `core.fsmonitor`
+/// (run by `status`), `gpg.program` (run by `log` when `log.showSignature` is
+/// set and a commit carries a signature), `core.pager`, `core.editor`,
+/// `diff.external` and textconv filters. Each is overridden here, and the
+/// per-command flags below (`--no-show-signature`, `--no-ext-diff`,
+/// `--no-textconv`) neutralize the same keys a second way. Hooks are not run by
+/// the read-only commands we issue; `core.hooksPath` points at a device path,
+/// which can never be a directory of hooks (a relative name would resolve
+/// against the target worktree, which could hold a directory by that name).
+pub(crate) fn hardened_git() -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("--no-pager")
+        .args(["-c", "core.fsmonitor=false"])
+        // Relative here would resolve against the target worktree, which could
+        // hold a directory of that name; a device path can never be one.
+        .args([
+            "-c",
+            if cfg!(windows) {
+                "core.hooksPath=NUL"
+            } else {
+                "core.hooksPath=/dev/null"
+            },
+        ])
+        .args(["-c", "core.pager=cat"])
+        .args(["-c", "core.editor=false"])
+        .args(["-c", "diff.external="])
+        .args(["-c", "log.showSignature=false"])
+        .args(["-c", "gpg.program=false"]);
+    cmd
+}
+
+/// `git log` over an optional confined repo root, hardened as described on
+/// [`hardened_git`]. `safe.directory` switches off git's ownership check for
+/// the path it names, so only the workspace root itself gets it: a repository
+/// someone else planted under an allowed root must still fail git's "dubious
+/// ownership" check.
+pub(crate) fn hardened_git_log(repo_root: Option<&ConfinedRoot>) -> std::process::Command {
+    let mut cmd = hardened_git();
+    if let Some(root) = repo_root {
+        if root.is_workspace_root {
+            let safe_root = root.path.display().to_string().replace('\\', "/");
+            cmd.arg("-c").arg(format!("safe.directory={safe_root}"));
+        }
+        cmd.arg("-C").arg(&root.path);
+    }
+    cmd.arg("log")
+        .arg("--no-show-signature")
+        .arg("--no-ext-diff")
+        .arg("--no-textconv");
+    cmd
+}
+
 /// P1.1 — shell out to `git log` and return a normalized per-path
 /// commit cadence time series. The primary consumer is the
 /// adversarial refactor oracle, which previously baked its 90-day
@@ -3188,8 +3298,6 @@ fn ix_cli_path() -> std::path::PathBuf {
 /// `is_safe_git_path` predicate so even a well-formed argument
 /// containing a `.git/hooks/...` style injection vector is rejected.
 pub fn git_log(params: Value) -> Result<Value, String> {
-    use std::process::Command;
-
     let path = parse_str(&params, "path")?.to_string();
     if !is_safe_git_path(&path) {
         return Err(format!(
@@ -3223,23 +3331,16 @@ pub fn git_log(params: Value) -> Result<Value, String> {
     // only way to reliably resolve repo-relative paths when the MCP
     // handler's CWD is not the repo root (e.g. during `cargo test`
     // where CWD is the crate directory). Paths are still
-    // whitelist-validated as repo-internal.
-    let repo_root = params.get("repo_root").and_then(|v| v.as_str());
+    // whitelist-validated as repo-internal. The root itself is confined to
+    // the workspace: the tool is auto-approved (Tier 2), and
+    // `safe.directory` must only ever name a checked path.
+    let repo_root = confined_repo_root(&params)?;
 
     // Build the argument list. Every arg is a fixed literal or a
     // validated value; there is no string concatenation of untrusted
     // input into a single argument.
     let since_arg = format!("--since={since_days} days ago");
-    let mut cmd = Command::new("git");
-    if let Some(root) = repo_root {
-        let safe_root = root.replace('\\', "/");
-        cmd.arg("-c")
-            .arg(format!("safe.directory={safe_root}"))
-            .arg("-C")
-            .arg(root);
-    }
-    let output = cmd
-        .arg("log")
+    let output = hardened_git_log(repo_root.as_ref())
         .arg(&since_arg)
         .arg("--format=%ad")
         .arg("--date=format:%Y-%m-%d")
@@ -3579,7 +3680,7 @@ pub fn catalog_list(_params: Value) -> Result<Value, String> {
 /// narrow.
 pub fn cargo_deps(params: Value) -> Result<Value, String> {
     let workspace_root = match params.get("workspace_root").and_then(|v| v.as_str()) {
-        Some(s) => std::path::PathBuf::from(s),
+        Some(s) => confined_path("workspace_root", s)?,
         None => std::env::current_dir().map_err(|e| format!("ix_cargo_deps: cwd: {e}"))?,
     };
     let crates_dir = workspace_root.join("crates");
@@ -3967,7 +4068,6 @@ fn extract_workspace_deps(
 /// echoed into any shell.
 pub fn git_churn(params: Value) -> Result<Value, String> {
     use std::collections::BTreeMap;
-    use std::process::Command;
 
     let since_days = params
         .get("since_days")
@@ -3986,7 +4086,7 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
         ));
     }
 
-    let repo_root = params.get("repo_root").and_then(|v| v.as_str());
+    let repo_root = confined_repo_root(&params)?;
 
     // Single `git log --numstat` pass: each commit contributes a
     // header line `__C__|<sha>|<YYYY-MM-DD>` followed by one numstat
@@ -3994,16 +4094,7 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
     // one go lets us compute churn_count, lines_added, lines_deleted,
     // and last_changed in O(n) without re-spawning git.
     let since_arg = format!("--since={since_days} days ago");
-    let mut cmd = Command::new("git");
-    if let Some(root) = repo_root {
-        let safe_root = root.replace('\\', "/");
-        cmd.arg("-c")
-            .arg(format!("safe.directory={safe_root}"))
-            .arg("-C")
-            .arg(root);
-    }
-    let output = cmd
-        .arg("log")
+    let output = hardened_git_log(repo_root.as_ref())
         .arg(&since_arg)
         .arg("--numstat")
         .arg("--format=__C__|%H|%ad")
@@ -4121,6 +4212,22 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
     }))
 }
 
+// ── ix_node_catalog / ix_pipeline_validate ─────────────────
+
+/// `ix_node_catalog`: see [`crate::tools::ToolRegistry::node_catalog`].
+/// Builds a fresh registry — construction only assembles schemas, it
+/// never invokes a handler.
+pub fn node_catalog(_params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().node_catalog())
+}
+
+/// `ix_pipeline_validate`: see
+/// [`crate::tools::ToolRegistry::validate_pipeline`]. An invalid spec is a
+/// successful call with `valid: false`, not an `Err`.
+pub fn pipeline_validate(params: Value) -> Result<Value, String> {
+    Ok(crate::tools::ToolRegistry::new().validate_pipeline(&params))
+}
+
 // ── ix_pipeline_list ───────────────────────────────────────
 
 /// R1 companion to `ix_pipeline_run`: discover `pipeline.json` specs
@@ -4153,17 +4260,16 @@ pub fn git_churn(params: Value) -> Result<Value, String> {
 /// }
 /// ```
 pub fn pipeline_list(params: Value) -> Result<Value, String> {
-    let root_arg = params
-        .get("root")
-        .and_then(|v| v.as_str())
-        .unwrap_or("examples/canonical-showcase");
-    let root = std::path::PathBuf::from(root_arg);
-    let root = if root.is_absolute() {
-        root
-    } else {
-        std::env::current_dir()
+    // A caller-named root is confined; the default is the tool's own, so it keeps
+    // resolving against the current directory. Confinement requires the path to
+    // exist, so a caller-named root that is missing is an error rather than the
+    // empty-with-warning answer below.
+    let root_arg = params.get("root").and_then(|v| v.as_str());
+    let root = match root_arg {
+        Some(raw) => confined_path("root", raw)?,
+        None => std::env::current_dir()
             .map_err(|e| format!("ix_pipeline_list: cwd: {e}"))?
-            .join(root)
+            .join("examples/canonical-showcase"),
     };
 
     if !root.exists() {
@@ -4600,6 +4706,17 @@ pub fn governance_check(params: Value) -> Result<Value, String> {
 
 pub fn governance_persona(params: Value) -> Result<Value, String> {
     let name = parse_str(&params, "persona")?;
+    // The name becomes `<personas>/<name>.persona.yaml`; a separator or `..`
+    // would let an auto-approved call probe or parse YAML anywhere on disk.
+    if name.is_empty()
+        || name.contains(['/', '\\', ':'])
+        || name.contains("..")
+        || name.chars().any(char::is_control)
+    {
+        return Err(format!(
+            "`persona`: {name} is not a persona name (no path separators, `..` or control characters)"
+        ));
+    }
 
     let personas_dir = governance_dir().join("personas");
     let persona = ix_governance::Persona::load_by_name(&personas_dir, name)
@@ -4822,8 +4939,16 @@ pub fn governance_policy(params: Value) -> Result<Value, String> {
 
 // ── ix_quality_gate_history ────────────────────────────────
 
+/// Query the repo's quality-gate ledger.
+///
+/// Reports `ledger_status` alongside the rows. An absent ledger and a ledger
+/// whose rows all failed a filter both yield `count: 0`, and the two mean
+/// opposite things — "no gate has ever run here" versus "gates ran and none
+/// matched". Returning only the count let a caller read the first as the
+/// second, which is the reassuring-but-empty answer this tool gave for its
+/// whole life before `ix doctor` started writing the file.
 pub fn quality_gate_history(params: Value) -> Result<Value, String> {
-    use ix_quality_trend::{query_ledger, GateDecision, LedgerQuery};
+    use ix_quality_trend::{ledger_status, query_ledger, GateDecision, LedgerQuery, LedgerStatus};
     use std::path::PathBuf;
 
     let source = params
@@ -4856,11 +4981,25 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .or(Some(50));
 
-    let path: PathBuf = params
-        .get("ledger_path")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("state/quality/gate-ledger.jsonl"));
+    // `read_ledger` answers with an empty list when the file is missing ("no
+    // ledger yet" is a real answer), so the ledger is confined with the
+    // destination form: it resolves the deepest existing ancestor and still
+    // refuses anything outside a root, without requiring the file to exist
+    // (ix#350 review). A sibling repo's ledger (ga writes one too) is reached
+    // by listing it as an extra root. The default is anchored on the workspace
+    // root, not the process cwd: the MCP server is started from wherever the
+    // client happens to be, and a cwd-relative default missed its own ledger.
+    let path: PathBuf = match params.get("ledger_path").and_then(|v| v.as_str()) {
+        Some(raw) => path_confine::confine_dest_in(
+            &path_confine::allowed_roots(&path_confine::workspace_root()?),
+            "ledger_path",
+            raw,
+        )?,
+        None => workspace_root().join("state/quality/gate-ledger.jsonl"),
+    };
+
+    let status = ledger_status(&path)
+        .map_err(|e| format!("quality_gate_history: cannot stat ledger: {}", e))?;
 
     let q = LedgerQuery {
         source,
@@ -4878,9 +5017,38 @@ pub fn quality_gate_history(params: Value) -> Result<Value, String> {
         .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
         .collect();
 
+    // Say plainly when there is nothing to have queried, and how to fix it.
+    // `count: 0` on its own is not an answer about gate health.
+    let (status_str, note) = match status {
+        LedgerStatus::Absent => (
+            "absent",
+            Some(
+                "no ledger at this path — no quality gate has recorded a run here. \
+                 This is NOT evidence that gates passed. Run `cargo run -p ix-skill \
+                 --bin ix -- doctor` to record one, or pass `ledger_path` to point at \
+                 a repo that has a ledger."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Empty => (
+            "empty",
+            Some(
+                "ledger file exists but holds no rows — treat as no history, not as a pass."
+                    .to_string(),
+            ),
+        ),
+        LedgerStatus::Present if rows.is_empty() => (
+            "present",
+            Some("ledger has rows, but none match these filters.".to_string()),
+        ),
+        LedgerStatus::Present => ("present", None),
+    };
+
     Ok(json!({
         "ledger_path": path.display().to_string(),
+        "ledger_status": status_str,
         "count": rows.len(),
+        "note": note,
         "filters": {
             "source": q.source,
             "domain": q.domain,
@@ -4992,13 +5160,11 @@ pub fn federation_discover(params: Value) -> Result<Value, String> {
 /// - `dir`: path to trace directory (default: `~/.ga/traces/`)
 pub fn trace_ingest(params: Value) -> Result<Value, String> {
     use ix_io::trace_bridge;
-    use std::path::PathBuf;
 
-    let dir = params
-        .get("dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(trace_bridge::default_trace_dir);
+    let dir = match params.get("dir").and_then(|v| v.as_str()) {
+        Some(d) => confine_trace_dir("dir", d)?,
+        None => trace_bridge::default_trace_dir(),
+    };
 
     if !dir.exists() {
         return Ok(json!({
@@ -5123,21 +5289,26 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
     use ix_session::SessionLog;
     use std::path::PathBuf;
 
-    let log_path = params
+    let log_arg = params
         .get("session_log")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "'session_log' is required".to_string())?;
-    let trace_dir: PathBuf = params
-        .get("trace_dir")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(ix_io::trace_bridge::default_trace_dir);
+    let log_path = confine_session_log(log_arg)?;
+    // A write destination: only the operator's trace locations, not the
+    // workspace, whose `.claude/` and `.mcp.json` configure the harness itself.
+    // Relative paths resolve against `~/.ga/traces`.
+    let trace_dir: PathBuf = match params.get("trace_dir").and_then(|v| v.as_str()) {
+        Some(d) => path_confine::confine_dest_in(&path_confine::trace_roots(), "trace_dir", d)?,
+        None => Some(ix_io::trace_bridge::default_trace_dir())
+            .filter(|dir| dir.is_absolute())
+            .ok_or("no default trace directory: neither HOME nor USERPROFILE is set")?,
+    };
     let trace_id = params
         .get("trace_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let log = SessionLog::open(log_path).map_err(|e| format!("open session log: {e}"))?;
+    let log = SessionLog::open(&log_path).map_err(|e| format!("open session log: {e}"))?;
     let written = flywheel::export_session_to_trace_dir(&log, &trace_dir, trace_id)
         .map_err(|e| format!("export trace: {e}"))?;
 
@@ -5148,6 +5319,40 @@ pub fn session_flywheel_export(params: Value) -> Result<Value, String> {
         "trace_dir": trace_dir.display().to_string(),
         "event_count": trace_count,
     }))
+}
+
+/// A caller-supplied trace directory confined to the workspace, the
+/// `IX_EXTRA_ROOTS` directories and the operator's trace locations.
+fn confine_trace_dir(param: &str, raw: &str) -> Result<std::path::PathBuf, String> {
+    let mut roots = path_confine::allowed_roots(&path_confine::workspace_root()?);
+    roots.extend(path_confine::trace_roots());
+    path_confine::confine_in(&roots, param, raw)
+}
+
+/// `session_log` must be the installed session log itself or a file the
+/// workspace confinement admits. `SessionLog::open` creates missing files and
+/// parent directories, so an unconfined path is a write anywhere on disk.
+fn confine_session_log(raw: &str) -> Result<std::path::PathBuf, String> {
+    // Lexical checks first: resolving a UNC or device path would already
+    // contact the server or open the pipe.
+    path_confine::check_lexical("session_log", raw)?;
+    let root = path_confine::workspace_root();
+    let installed = crate::registry_bridge::current_session_log()
+        .and_then(|log| log.path().canonicalize().ok());
+    if let Some(installed) = installed {
+        let given = match &root {
+            Ok(root) => root.join(raw),
+            Err(_) => std::path::PathBuf::from(raw),
+        };
+        if given.canonicalize().is_ok_and(|given| given == installed) {
+            return Ok(given);
+        }
+    }
+    let path = path_confine::confine(&root?, "session_log", raw)?;
+    if !path.is_file() {
+        return Err(format!("`session_log`: {raw} is not a file"));
+    }
+    Ok(path)
 }
 
 // ── ix_ml_pipeline ────────────────────────────────────────────
@@ -5174,8 +5379,8 @@ pub fn code_analyze(params: Value) -> Result<Value, String> {
 
     // Option 1: analyze a file by path
     if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = Path::new(path_str);
-        let metrics = analyze_file(path).ok_or_else(|| {
+        let path = path_confine::confine(&path_confine::workspace_root()?, "path", path_str)?;
+        let metrics = analyze_file(&path).ok_or_else(|| {
             format!(
                 "Could not analyze file: {} (unsupported language or read error)",
                 path_str
@@ -5335,7 +5540,7 @@ pub fn code_topology(params: Value) -> Result<Value, String> {
                 })
                 .collect::<Result<Vec<_>, String>>()?
         } else if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
-            collect_rust_sources(std::path::Path::new(path), MAX_NODES)?
+            collect_rust_sources(&confined_path("path", path)?, MAX_NODES)?
         } else {
             return Err("Either 'sources' or 'path' is required".to_string());
         };
@@ -5423,13 +5628,11 @@ pub fn tars_bridge(params: Value) -> Result<Value, String> {
     match action {
         "prepare_traces" => {
             use ix_io::trace_bridge;
-            use std::path::PathBuf;
 
-            let dir = params
-                .get("trace_dir")
-                .and_then(|v| v.as_str())
-                .map(PathBuf::from)
-                .unwrap_or_else(trace_bridge::default_trace_dir);
+            let dir = match params.get("trace_dir").and_then(|v| v.as_str()) {
+                Some(d) => confine_trace_dir("trace_dir", d)?,
+                None => trace_bridge::default_trace_dir(),
+            };
 
             if !dir.exists() {
                 return Ok(json!({
@@ -6565,14 +6768,38 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .unwrap_or(10);
 
-    let index_path = params
+    // Only `index_path` is caller input. `OPTICK_INDEX_PATH` and the sibling-GA
+    // default are the operator's own choices, so they are not confined (an
+    // operator who wants a caller to name a sibling checkout lists it in
+    // `IX_EXTRA_ROOTS`).
+    let confined_arg = params
         .get("index_path")
         .and_then(|v| v.as_str())
-        .unwrap_or("state/voicings/optick.index");
-
-    let path = std::path::Path::new(index_path);
-    let index = ix_optick::OptickIndex::open(path)
+        .map(|raw| confined_path("index_path", raw))
+        .transpose()?;
+    let path = resolve_optick_index_path(
+        confined_arg.as_ref().and_then(|p| p.to_str()),
+        std::env::var("OPTICK_INDEX_PATH").ok().as_deref(),
+        &workspace_root(),
+    )?;
+    let index_path = path.display().to_string();
+    let index = ix_optick::OptickIndex::open(&path)
         .map_err(|e| format!("Failed to open OPTK index at '{}': {}", index_path, e))?;
+
+    // The dimension comes from the index header, never a constant: the OPTIC-K
+    // compact layout has changed before, and the query must match the index
+    // actually on disk.
+    let dimension = index.dimension() as usize;
+    if query.len() != dimension {
+        return Err(format!(
+            "query dimension mismatch: got {}, expected {} (dimension of index '{}'). \
+             The query must use the index's compact, pre-scaled layout; a raw \
+             full-schema OPTIC-K embedding must be projected to it first.",
+            query.len(),
+            dimension,
+            index_path
+        ));
+    }
 
     let results = index
         .search(&query, instrument.as_deref(), top_k)
@@ -6596,8 +6823,48 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
         "count": hits.len(),
         "top_k": top_k,
         "instrument_filter": instrument,
+        "index_path": index_path,
+        "index_dimension": dimension,
         "results": hits,
     }))
+}
+
+/// Resolve the OPTIC-K index for `ix_optick_search`. Precedence: the explicit
+/// `index_path` argument, then `OPTICK_INDEX_PATH`, then the sibling GA
+/// checkout (`<workspace>/../ga/state/voicings/optick.index`, where GA writes
+/// it), then the legacy in-repo `<workspace>/state/voicings/optick.index`.
+/// An explicit argument or env var that does not exist is an error, not a
+/// silent fallback; the error lists every path tried.
+fn resolve_optick_index_path(
+    explicit: Option<&str>,
+    env_var: Option<&str>,
+    workspace: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let candidates: Vec<(&str, std::path::PathBuf)> = match (explicit, env_var) {
+        (Some(p), _) => vec![("index_path argument", p.into())],
+        (None, Some(p)) if !p.is_empty() => vec![("OPTICK_INDEX_PATH", p.into())],
+        _ => vec![
+            (
+                "sibling ga checkout",
+                workspace.join("../ga/state/voicings/optick.index"),
+            ),
+            (
+                "in-repo default",
+                workspace.join("state/voicings/optick.index"),
+            ),
+        ],
+    };
+    if let Some((_, p)) = candidates.iter().find(|(_, p)| p.is_file()) {
+        return Ok(p.clone());
+    }
+    let tried: Vec<String> = candidates
+        .iter()
+        .map(|(src, p)| format!("{} ({src})", p.display()))
+        .collect();
+    Err(format!(
+        "OPTIC-K index not found; tried: {}. Pass 'index_path' or set OPTICK_INDEX_PATH.",
+        tried.join(", ")
+    ))
 }
 
 // ── ix_ast_query ──────────────────────────────────────────────────────────
@@ -6606,7 +6873,6 @@ pub fn optick_search(params: Value) -> Result<Value, String> {
 pub fn ast_query(params: Value) -> Result<Value, String> {
     use ix_code::analyze::Language;
     use ix_code::semantic::run_ast_query;
-    use std::path::Path;
 
     let query_str = params
         .get("query")
@@ -6615,8 +6881,8 @@ pub fn ast_query(params: Value) -> Result<Value, String> {
 
     // Resolve source and language
     let (source, lang) = if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = Path::new(path_str);
-        let src = std::fs::read_to_string(path)
+        let path = confined_path("path", path_str)?;
+        let src = std::fs::read_to_string(&path)
             .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
         let lang =
             Language::from_extension(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
@@ -6653,7 +6919,6 @@ pub fn ast_query(params: Value) -> Result<Value, String> {
 pub fn code_smells(params: Value) -> Result<Value, String> {
     use ix_code::analyze::Language;
     use ix_code::smells::detect_smells;
-    use std::path::Path;
 
     // ── Directory scan ────────────────────────────────────────────────────
     if let Some(dir_str) = params.get("dir").and_then(|v| v.as_str()) {
@@ -6661,12 +6926,12 @@ pub fn code_smells(params: Value) -> Result<Value, String> {
             .get("max_file_kb")
             .and_then(|v| v.as_u64())
             .unwrap_or(256) as usize;
-        let dir = Path::new(dir_str);
+        let dir = confined_path("dir", dir_str)?;
         if !dir.is_dir() {
             return Err(format!("'{}' is not a directory", dir_str));
         }
         let mut file_results: Vec<Value> = Vec::new();
-        scan_dir_for_smells(dir, max_kb, &mut file_results);
+        scan_dir_for_smells(&dir, max_kb, &mut file_results);
         return Ok(json!({
             "dir": dir_str,
             "files_scanned": file_results.len(),
@@ -6676,8 +6941,8 @@ pub fn code_smells(params: Value) -> Result<Value, String> {
 
     // ── Single file ───────────────────────────────────────────────────────
     if let Some(path_str) = params.get("path").and_then(|v| v.as_str()) {
-        let path = Path::new(path_str);
-        let src = std::fs::read_to_string(path)
+        let path = confined_path("path", path_str)?;
+        let src = std::fs::read_to_string(&path)
             .map_err(|e| format!("Cannot read '{}': {e}", path_str))?;
         let lang =
             Language::from_extension(path.extension().and_then(|e| e.to_str()).unwrap_or(""))
@@ -6974,11 +7239,16 @@ pub fn autoresearch_run(params: Value) -> Result<Value, String> {
 
     let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
 
-    let state_dir = params
-        .get("state_dir")
-        .and_then(|v| v.as_str())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("state/autoresearch"));
+    // A caller-chosen `state_dir` is written to by an auto-approved (Tier 2)
+    // tool, so it must stay inside the workspace; the default is not caller input.
+    let state_dir = match params.get("state_dir").and_then(|v| v.as_str()) {
+        Some(raw) => path_confine::confine_dest_in(
+            &path_confine::allowed_roots(&path_confine::workspace_root()?),
+            "state_dir",
+            raw,
+        )?,
+        None => std::path::PathBuf::from("state/autoresearch"),
+    };
     let runs_root = state_dir.join("runs");
     std::fs::create_dir_all(&runs_root)
         .map_err(|e| format!("cannot create runs dir {}: {e}", runs_root.display()))?;
@@ -7056,11 +7326,10 @@ pub fn annotations_scan(params: Value) -> Result<Value, String> {
     use ix_ai_annotations::{reconcile, walker, ReconcilerConfig};
     use std::path::PathBuf;
 
-    let workspace = params
-        .get("workspace")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+        Some(raw) => confined_path("workspace", raw)?,
+        None => PathBuf::from("."),
+    };
 
     let stale_days = params
         .get("stale_days")
@@ -7069,15 +7338,27 @@ pub fn annotations_scan(params: Value) -> Result<Value, String> {
 
     let annotations = walker::extract(&workspace).map_err(|e| format!("extract failed: {}", e))?;
 
-    let test_files: Vec<PathBuf> = params
-        .get("test_files")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(PathBuf::from))
-                .collect()
-        })
-        .unwrap_or_else(|| discover_test_paths(&workspace));
+    // Each entry is confined on its own. The reconciler resolves them with
+    // `workspace.join(entry)`, and `Path::join` drops the base for an absolute
+    // entry, so confining the workspace alone left an absolute entry pointing
+    // anywhere — and the reconciler reads the file and reports its path, which
+    // made this Tier-1 tool an arbitrary-read content oracle (ix#350 review).
+    let test_files: Vec<PathBuf> = match params.get("test_files").and_then(|v| v.as_array()) {
+        Some(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            // Confined against the workspace the caller named, because that is
+            // what the reconciler joins them onto — an entry is
+            // workspace-relative by contract. The entry is passed on as written,
+            // since the reconciler reports it: the canonical path it was checked
+            // as is host-specific.
+            .map(|raw| {
+                path_confine::confine_in(std::slice::from_ref(&workspace), "test_files", raw)
+                    .map(|_| PathBuf::from(raw))
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+        None => discover_test_paths(&workspace),
+    };
 
     let cfg = ReconcilerConfig {
         test_files,
@@ -7386,5 +7667,141 @@ mod voicings_payload_tests {
         // back to the default rather than emitting nonsense to the wire.
         let out = voicings_payload(json!({"scene_offset": [1.0, 2.0]})).expect("ok");
         assert_eq!(out["scene_offset"], json!([200.0, 0.0, 0.0]));
+    }
+}
+
+#[cfg(test)]
+mod optick_index_path_tests {
+    use super::resolve_optick_index_path;
+    use std::fs;
+    use std::path::Path;
+
+    fn touch(p: &Path) {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"x").unwrap();
+    }
+
+    #[test]
+    fn precedence_argument_then_env_then_sibling_then_in_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ix");
+        let sibling = tmp.path().join("ga/state/voicings/optick.index");
+        let in_repo = ws.join("state/voicings/optick.index");
+        let arg = tmp.path().join("arg.index");
+        let env = tmp.path().join("env.index");
+        for p in [&sibling, &in_repo, &arg, &env] {
+            touch(p);
+        }
+        let (a, e) = (arg.to_str().unwrap(), env.to_str().unwrap());
+
+        assert_eq!(
+            resolve_optick_index_path(Some(a), Some(e), &ws).unwrap(),
+            arg
+        );
+        assert_eq!(resolve_optick_index_path(None, Some(e), &ws).unwrap(), env);
+        assert!(resolve_optick_index_path(None, None, &ws)
+            .unwrap()
+            .ends_with("ga/state/voicings/optick.index"));
+
+        fs::remove_file(&sibling).unwrap();
+        assert_eq!(resolve_optick_index_path(None, None, &ws).unwrap(), in_repo);
+    }
+
+    #[test]
+    fn missing_index_errors_listing_every_path_tried() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ix");
+
+        let err = resolve_optick_index_path(None, None, &ws).unwrap_err();
+        assert!(err.contains("sibling ga checkout"), "got: {err}");
+        assert!(err.contains("in-repo default"), "got: {err}");
+        assert!(err.contains("optick.index"), "got: {err}");
+
+        // An explicit source that does not exist never falls back silently.
+        touch(&ws.join("state/voicings/optick.index"));
+        let err = resolve_optick_index_path(None, Some("nope.index"), &ws).unwrap_err();
+        assert!(err.contains("nope.index (OPTICK_INDEX_PATH)"), "got: {err}");
+        let err = resolve_optick_index_path(Some("arg.index"), None, &ws).unwrap_err();
+        assert!(
+            err.contains("arg.index (index_path argument)"),
+            "got: {err}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hardened git argv (ix#350 review)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod git_hardening_tests {
+    use super::{hardened_git_log, ConfinedRoot};
+    use std::path::PathBuf;
+
+    fn args_of(cmd: &std::process::Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Each of these keys names a program git would run if the repository it
+    /// reads set it: pointing `ix_git_log` / `ix_git_churn` at a repo under an
+    /// allowed root must not execute anything that repo's config chose.
+    #[test]
+    fn hardened_git_log_neutralizes_every_config_key_that_names_a_program() {
+        let args = args_of(&hardened_git_log(None));
+        for expected in [
+            "--no-pager",
+            "core.fsmonitor=false",
+            if cfg!(windows) {
+                "core.hooksPath=NUL"
+            } else {
+                "core.hooksPath=/dev/null"
+            },
+            "core.pager=cat",
+            "core.editor=false",
+            "diff.external=",
+            "log.showSignature=false",
+            "gpg.program=false",
+            "log",
+            "--no-show-signature",
+            "--no-ext-diff",
+            "--no-textconv",
+        ] {
+            assert!(
+                args.iter().any(|a| a == expected),
+                "missing {expected} in {args:?}"
+            );
+        }
+        // Every `-c` override precedes the subcommand, or git rejects it.
+        let subcommand = args.iter().position(|a| a == "log").expect("log");
+        assert!(
+            !args[subcommand..].iter().any(|a| a == "-c"),
+            "a -c override lands after the subcommand: {args:?}"
+        );
+    }
+
+    /// `safe.directory` turns off git's ownership check for the path it names,
+    /// so a repository someone else planted under an allowed root must not get
+    /// it — only the workspace root itself does.
+    #[test]
+    fn safe_directory_is_passed_only_for_the_workspace_root_itself() {
+        let root = ConfinedRoot {
+            path: PathBuf::from("C:/ws"),
+            is_workspace_root: true,
+        };
+        let args = args_of(&hardened_git_log(Some(&root)));
+        assert!(args.iter().any(|a| a == "safe.directory=C:/ws"), "{args:?}");
+
+        let nested = ConfinedRoot {
+            path: PathBuf::from("C:/ws/nested"),
+            is_workspace_root: false,
+        };
+        let args = args_of(&hardened_git_log(Some(&nested)));
+        assert!(
+            !args.iter().any(|a| a.starts_with("safe.directory=")),
+            "a nested repo must not be marked safe: {args:?}"
+        );
+        assert!(args.iter().any(|a| a == "-C"), "{args:?}");
     }
 }

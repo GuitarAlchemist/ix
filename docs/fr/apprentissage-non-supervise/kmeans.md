@@ -57,7 +57,8 @@ En clair : la distance totale de tous les points à leurs centroïdes assignés.
 
 ```rust
 use ndarray::array;
-use ix_unsupervised::{KMeans, Clusterer};
+use ix_unsupervised::kmeans::KMeans;
+use ix_unsupervised::traits::Clusterer;
 
 // Données clients : [panier_moyen, fréquence, ancienneté, catégories]
 let customers = array![
@@ -78,7 +79,7 @@ println!("Affectations : {:?}", labels);
 
 // Vérifier la qualité des clusters
 if let Some(centroids) = &kmeans.centroids {
-    let score = ix_unsupervised::inertia(&customers, &labels, centroids);
+    let score = ix_unsupervised::kmeans::inertia(&customers, &labels, centroids);
     println!("Inertie : {:.2}", score);
 }
 ```
@@ -88,7 +89,8 @@ if let Some(centroids) = &kmeans.centroids {
 ### Méthode du coude : choisir K
 
 ```rust
-use ix_unsupervised::{KMeans, Clusterer, inertia};
+use ix_unsupervised::kmeans::{KMeans, inertia};
+use ix_unsupervised::traits::Clusterer;
 
 for k in 2..=8 {
     let mut kmeans = KMeans::new(k).with_seed(42);

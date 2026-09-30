@@ -47,7 +47,8 @@ In plain English: start at a dense point, grow the cluster outward through densi
 
 ```rust
 use ndarray::array;
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 
 // GPS coordinates of truck stops [latitude, longitude]
 let stops = array![

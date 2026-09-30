@@ -113,9 +113,10 @@ Here's how gradients connect to optimization — the core loop of training any m
 
 ```rust
 use ndarray::array;
-use ix_optimize::{SGD, Optimizer, ClosureObjective, ObjectiveFunction};
+use ix_optimize::gradient::SGD;
+use ix_optimize::traits::{ClosureObjective, ObjectiveFunction, Optimizer};
 use ix_optimize::gradient::minimize;
-use ix_optimize::ConvergenceCriteria;
+use ix_optimize::convergence::ConvergenceCriteria;
 
 // Minimize f(x, y) = (x-3)² + (y-7)²
 // The minimum is at (3, 7)

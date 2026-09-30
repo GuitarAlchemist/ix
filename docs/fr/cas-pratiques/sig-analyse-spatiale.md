@@ -76,7 +76,8 @@ for (i, state) in smoothed.iter().enumerate() {
 Trouver les points chauds de livraison — les zones où les véhicules s'arrêtent fréquemment. DBSCAN est idéal car les points chauds ont des formes irrégulières (ils suivent les bâtiments, les quais de chargement, les intersections) et il faut identifier le bruit (arrêts ponctuels).
 
 ```rust
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 use ndarray::array;
 
 // Stop locations from fleet: [latitude, longitude]
@@ -234,7 +235,7 @@ println!("Confidence: {:.2}", log_prob);
 Suivre les schémas d'itinéraires « normaux » à l'aide d'un filtre de Bloom. Lorsque le hachage de l'itinéraire d'un véhicule n'est pas dans le filtre, le signaler pour examen.
 
 ```rust
-use ix_probabilistic::BloomFilter;
+use ix_probabilistic::bloom::BloomFilter;
 
 // Train: insert all normal route patterns
 let mut normal_routes = BloomFilter::new(10_000, 0.01); // 1% false positive rate
@@ -372,7 +373,8 @@ let heuristic = |node: &Intersection| -> f64 {
 Prépositonner les ambulances en prédisant où les incidents vont se concentrer. Utiliser DBSCAN sur les incidents historiques pour trouver les points chauds, puis entraîner un classifieur pour prédire quelles zones seront actives à un moment donné.
 
 ```rust
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 use ix_ensemble::gradient_boosting::GradientBoostedClassifier;
 use ix_ensemble::traits::EnsembleClassifier;
 use ndarray::{array, Array2};
@@ -424,7 +426,8 @@ println!("Incident risk: {:.0}%", risk[[0, 1]] * 100.0);
 Lorsque plusieurs appels d'urgence arrivent de la même zone en quelques minutes, détecter le regroupement spatio-temporel comme un potentiel incident de masse nécessitant une réponse multi-unités.
 
 ```rust
-use ix_unsupervised::{DBSCAN, Clusterer};
+use ix_unsupervised::dbscan::DBSCAN;
+use ix_unsupervised::traits::Clusterer;
 use ndarray::Array2;
 
 // Sliding window: 911 calls in the last 5 minutes

@@ -290,6 +290,73 @@ println!("{}", result.output("greet").unwrap());  // "Bonjour, ix !"
 
 ---
 
+## Valider hors ligne une spécification de pipeline MCP
+
+La surface MCP propose deux compagnons en lecture seule (Tier 1) de `ix_pipeline_run`, inspirés de l'endpoint `object_info` et de `comfy validate` de ComfyUI :
+
+- **`ix_node_catalog`** (sans argument) renvoie une entrée par outil enregistré : `name`, `description`, `dispatch` (`registry` ou `manual`), `gated` (l'appel passe-t-il réellement par le middleware d'approbation), `input_schema`, `required_inputs`, `output_schema` (`null` si le skill n'en déclare pas) et `approval` (`action_kind`, `tier`, et `effect` : `auto_approved`, `blocked` ou `not_gated`). Tier 3 signifie **bloqué** : le chemin MCP n'offre aucun moyen d'accorder l'approbation.
+- **`ix_pipeline_validate`** prend la spécification `{"steps": [...]}` que consomme `ix_pipeline_run` et la vérifie sans rien exécuter.
+
+```json
+{
+  "steps": [
+    { "id": "a", "tool": "ix_stats", "arguments": { "data": [1.0, 2.0, 3.0] } },
+    { "id": "b", "tool": "ix_cache", "depends_on": ["a"],
+      "arguments": { "operation": "set", "key": "k", "value": "$a.mean" } }
+  ]
+}
+```
+
+renvoie `valid: true`, `execution_order: ["a", "b"]`, `gated` / `tier` / `effect` pour chaque étape, et un bloc `approval` : `{verdict, max_gated_tier, gated_steps, ungated_steps}`. Ici `verdict` vaut `auto_approved` ; il vaut `ungated_steps_unchecked` dès qu'une étape s'exécute sans passer par la gate, `blocked` quand une étape soumise à la gate est en Tier 3, et `unknown` quand aucune étape n'a pu être classée — il ne peut donc pas se lire comme « rien à approuver ». `max_gated_tier` ne couvre que les étapes soumises à la gate. `execution_order` est l'ordre qu'exécute `ix_pipeline_run` : `Dag::topological_sort` est déterministe (à égalité, l'ordre des étapes départage). Les problèmes reviennent sous forme structurée `{code, step, index, message}`, pour qu'un éditeur puisse rattacher chacun à un noeud :
+
+| Code | Signification |
+|------|---------------|
+| `unknown_tool` | `tool` n'existe pas dans le registre |
+| `unsupported_in_pipeline` | l'outil ne s'exécute qu'en appel MCP de premier niveau (`ix_pipeline_run`, `ix_pipeline_compile`, `ix_explain_algorithm`, `ix_triage_session`) |
+| `blocked_by_approval_gate` | l'étape passe par la gate d'approbation en Tier 3 et serait refusée |
+| `missing_required_input` | une entrée listée dans `required` du schéma de l'outil manque dans `arguments` |
+| `unknown_step_reference` | une entrée de `depends_on` ou un argument `"$etape.champ"` désigne une étape non définie |
+| `self_reference` | un argument `"$etape.champ"` lit la sortie de sa propre étape, qui n'existe jamais au moment de la substitution |
+| `undeclared_dependency` | un argument `"$etape.champ"` désigne une étape qui s'exécute *après* elle, la référence ne peut donc pas être résolue (vérifié seulement si le graphe n'a pas de cycle) |
+| `cycle` | l'étape fait partie d'un cycle de `depends_on` |
+| `internal_graph_error` | le `Dag` a refusé un noeud ou une arête que cette fonction avait déjà acceptés — signalé au lieu d'être ignoré |
+| `too_many_steps`, `too_many_references` | plus de 1000 étapes, ou plus de 1000 entrées `depends_on` / références d'arguments dans une étape |
+| `missing_steps`, `empty_steps`, `missing_id`, `duplicate_id`, `missing_tool`, `invalid_arguments`, `invalid_depends_on` | spécification malformée |
+
+Une référence est résolue exactement quand sa cible précède l'étape qui la lit dans `execution_order` — la condition même qu'applique `run_pipeline` au moment de substituer les arguments. Trois avertissements couvrent ce qui est légal mais fragile ou non vérifié :
+
+- `order_dependent_reference` — la référence n'est résolue que parce que la cible s'exécute plus tôt par hasard ; rien ne déclare cet ordre, une modification ultérieure peut donc inverser les deux étapes. Ajoutez la cible à `depends_on`.
+- `ungated_step` — l'outil de l'étape ne passe pas par la gate d'approbation, son tier n'est donc pas appliqué à l'exécution. ix#352 fait passer les outils manuels par la gate ; ensuite, l'étape est vérifiée et un outil Tier 3 devient une erreur `blocked_by_approval_gate`.
+- `loop_detect_threshold` — un même outil est appelé par plus d'étapes soumises à la gate que le détecteur de boucles n'en autorise (son seuil configuré, 10 par défaut). La fenêtre du détecteur est partagée par tout le processus : une exécution peut donc déclencher le disjoncteur plus tôt.
+
+Un id en double est signalé une fois, avec son `index` ; l'étape concernée est ensuite ignorée, pour que ses arêtes ne soient pas attribuées à la première étape portant le même id.
+
+Le validateur est volontairement plus strict que `ix_pipeline_run`, qui accepte un tableau `steps` vide et ignore silencieusement un `depends_on` qui n'est pas un tableau ou qui contient une entrée non textuelle. Les vérifications sont structurelles : les *types* des arguments ne sont pas encore validés contre le schéma. L'exemple ci-dessus est vérifié par `crates/ix-agent/tests/pipeline_validate.rs::valid_chained_pipeline_passes_with_order_and_tier`.
+
+## SQL sur les sorties d'étapes (`ix_duckdb_query`)
+
+`ix_duckdb_query` exécute du SQL DuckDB sur des lignes transmises avec l'appel : un pipeline peut ainsi joindre, filtrer ou agréger ce que les outils précédents ont renvoyé. L'outil lance le CLI DuckDB 1.x installé par l'opérateur (`IX_DUCKDB_BIN`, sinon `duckdb` dans le `PATH`) et relève du Tier 1 : c'est un calcul pur sur la requête.
+
+```json
+{
+  "sql": "SELECT t.b, sum(t.a) AS total, any_value(u.label) AS label FROM t JOIN u ON t.b = u.b GROUP BY t.b ORDER BY t.b",
+  "tables": {
+    "t": [{ "a": 1, "b": "x" }, { "a": 2.5, "b": "x" }, { "a": 4, "b": "it's" }],
+    "u": [{ "b": "x", "label": "ex" }, { "b": "it's", "label": "quote" }]
+  }
+}
+```
+
+renvoie `rows: [{"b": "it's", "total": 4.0, "label": "quote"}, {"b": "x", "total": 3.5, "label": "ex"}]`, `columns: ["b", "label", "total"]` (triées : les lignes sont des objets JSON, qui ne conservent pas l'ordre des colonnes SQL), `row_count`, `truncated`, et la structure inférée de chaque table (`tables.t` vaut `[{"a":"DOUBLE","b":"VARCHAR"}]`). L'exemple est vérifié par `crates/ix-agent/tests/duckdb_query.rs::queries_supplied_tables_with_inferred_types`.
+
+- **Entrée.** `tables` associe un nom (`[A-Za-z_][A-Za-z0-9_]*`, 64 caractères au plus) à un tableau non vide d'objets JSON ; les types des colonnes sont inférés avec `json_structure`, et les entiers sont chargés en BIGINT : ils reviennent donc en nombres (une table qui contient un entier au-delà de la plage signée sur 64 bits garde le type inféré par DuckDB, qu'il imprime en chaîne). Un objet imbriqué reste une colonne STRUCT (`meta.score`). 16 tables et 8 Mio de JSON au plus.
+- **Isolation.** La requête s'exécute en mémoire, dans le mode sécurisé de DuckDB : aucun accès aux fichiers, aux extensions, à `ATTACH`, au réseau ni à l'environnement (`getenv`), configuration verrouillée. Une ligne qui commence par `.` est une commande point du CLI et est refusée ; indentez une ligne qui est du SQL (un littéral `.5`, par exemple). Avant l'entrée en mode sécurisé, la mémoire est plafonnée à 512 Mio sans débordement sur disque, et la requête dispose de 2 threads ; une requête qui dépasse la limite échoue avec `Out of Memory`. Chaque exécution de DuckDB est arrêtée au bout de 30 s.
+- **Sortie.** `rows` contient le résultat de la dernière instruction, limité à `max_rows` lignes (de 1 à 10000, 1000 par défaut) ; `truncated` indique qu'il y en avait davantage. La dernière instruction doit être une requête (`SELECT`, `FROM`, `WITH`, `VALUES`, `TABLE`, ou une requête entre parenthèses). Toute autre est refusée : DuckDB n'imprime rien pour certaines (`CREATE`, `SET`, `ATTACH`, ...), et les lignes de la requête précédente passeraient pour leur résultat ; il réécrit `PRAGMA`, `SHOW`, `DESCRIBE`, `SUMMARIZE`, `PIVOT` et `CALL`, parfois en une telle instruction (`PRAGMA copy_database` devient `COPY FROM DATABASE`). Écrivez-les en requête : `FROM (DESCRIBE t)`, `FROM (SUMMARIZE t)`, `FROM pragma_table_info('t')`, `FROM range(3)`. `EXECUTE` est refusée aussi, car ce qu'elle imprime dépend de l'instruction qu'elle exécute, de même qu'une écriture, même avec `RETURNING` : terminez le script par une requête sur ce qu'il a écrit (`INSERT ...; SELECT * FROM t`). Les lignes au-delà de `max_rows` sont comptées sans être conservées : `row_count` reste exact, et seules les lignes renvoyées doivent tenir dans 16 Mio de JSON ; sinon, baissez `max_rows` ou sélectionnez moins de colonnes. Un résultat qui contient deux colonnes du même nom est refusé, car un objet JSON n'en garderait qu'une : renommez-les avec `AS`.
+- **Nombres.** DuckDB imprime les valeurs HUGEINT, UBIGINT et DECIMAL en chaînes, qui gardent tous leurs chiffres, et un DOUBLE sous sa forme décimale la plus courte, qui se relit comme le même double. Dans une LIST ou un STRUCT, il imprime les valeurs HUGEINT, UBIGINT et DECIMAL en nombres : un résultat qui en contient un qui perdrait des chiffres en double JSON (au-delà de 64 bits, ou plus de chiffres qu'un double n'en garde) est refusé plutôt qu'arrondi. Convertissez-le en VARCHAR dans le SQL.
+- **Résultats vides.** DuckDB imprime un résultat vide sans ses noms de colonnes ; le script est donc exécuté une seconde fois pour les lire. Si une requête dont le résultat varie d'une exécution à l'autre (avec `random()`, par exemple) renvoie des lignes la seconde fois, `columns` reste vide plutôt que deviné.
+
+---
+
 ## Pour aller plus loin
 
 - Le **[cache et la mémoïsation](./cache-et-memoisation.md)** couvrent le trait `PipelineCache`, la mise en cache par noeud et comment connecter `ix-cache` pour le recalcul incrémental.

@@ -6,7 +6,8 @@
     },
     "ix": {
       "command": "C:/Users/spare/source/repos/ix/target/release/ix-mcp.exe",
-      "args": []
+      "args": [],
+      "env": { "IX_ROOT": "C:/Users/spare/source/repos/ix" }
     },
     "tars": {
       "command": "C:/Users/spare/source/repos/tars/v2/src/Tars.Interface.Cli/bin/Release/net10.0/Tars.Interface.Cli.exe",

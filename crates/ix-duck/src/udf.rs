@@ -320,5 +320,6 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     crate::supervised::register(conn)?;
     crate::hexavalent::register(conn)?;
     crate::fractal::register(conn)?;
+    crate::petri::register(conn)?;
     Ok(())
 }

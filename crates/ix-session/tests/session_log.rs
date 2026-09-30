@@ -116,6 +116,35 @@ fn emit_advances_next_ordinal() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn reload_resumes_past_the_highest_persisted_ordinal() {
+    // The dispatcher's shape (ix#352): one claimed ordinal per action, two
+    // events per action, each emit advancing the counter again. Three
+    // actions leave six lines carrying ordinals 0, 3 and 6.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path: PathBuf = tmp.path().join("spaced.jsonl");
+    let mut used = Vec::new();
+    {
+        let log = SessionLog::open(&path).expect("open");
+        let mut sink = log.sink();
+        for _ in 0..3 {
+            let ordinal = log.claim_ordinal();
+            sink.emit(action_proposed(ordinal, "ix_stats"));
+            sink.emit(action_completed(ordinal, json!(null)));
+            used.push(ordinal);
+        }
+    }
+    assert_eq!(used, vec![0, 3, 6]);
+
+    let reopened = SessionLog::open(&path).expect("reopen");
+    let next = reopened.claim_ordinal();
+    assert!(
+        !used.contains(&next),
+        "resumed ordinal {next} collides with a persisted one {used:?}"
+    );
+    assert_eq!(next, 7);
+}
+
+#[test]
 fn reload_after_multiple_emits_restores_ordinal() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let path: PathBuf = tmp.path().join("multi.jsonl");
