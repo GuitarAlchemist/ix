@@ -43,6 +43,7 @@ With the foundations in place, learn the workhorse algorithms.
 | 6 | [Gradient Descent](optimization/gradient-descent.md) | SGD, Momentum, Adam — how models learn from data |
 | 7 | [Simulated Annealing](optimization/simulated-annealing.md) | Escaping local optima by "cooling down" random exploration |
 | 8 | [Particle Swarm](optimization/particle-swarm.md) | Swarm intelligence for hard optimization problems |
+| 8b | [Ant Colony](optimization/ant-colony.md) | Pheromone trails for the shortest delivery loop (TSP) |
 
 ### Supervised Learning — Prediction from Labeled Data
 

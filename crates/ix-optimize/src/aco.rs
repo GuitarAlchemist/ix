@@ -16,6 +16,27 @@
 //!
 //! CPU, `f64`, seeded: the same seed and inputs give the same tour. This is the
 //! oracle a future GPU kernel would be checked against (ix#362).
+//!
+//! # Example
+//!
+//! The example of `docs/optimization/ant-colony.md`: a van leaves the depot
+//! (shop 0) and visits five shops laid out on a 2 x 1 km grid.
+//!
+//! ```
+//! use ix_optimize::aco::AntColony;
+//! use ndarray::Array2;
+//!
+//! let shops: [(f64, f64); 6] = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (0.0, 1.0)];
+//! let km = Array2::from_shape_fn((shops.len(), shops.len()), |(i, j)| {
+//!     let (dx, dy) = (shops[i].0 - shops[j].0, shops[i].1 - shops[j].1);
+//!     (dx * dx + dy * dy).sqrt()
+//! });
+//!
+//! let route = AntColony::max_min_2opt().with_seed(42).solve_tsp(&km);
+//!
+//! assert_eq!(route.tour[0], 0); // tours start at the depot
+//! assert_eq!(route.length, 6.0); // around the grid's edge: the shortest loop
+//! ```
 
 use ndarray::Array2;
 use rand::rngs::StdRng;
