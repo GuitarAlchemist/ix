@@ -1,11 +1,18 @@
 //! Ant Colony Optimization (ACO) for the symmetric travelling salesman problem.
 //!
-//! Ant System (Dorigo, Maniezzo & Colorni, 1996). Each ant builds a closed tour
-//! city by city. From city `i` it moves to an unvisited city `j` with
-//! probability proportional to `tau[i][j]^alpha * eta[i][j]^beta`, where `tau`
-//! is the pheromone and `eta = 1 / d` the heuristic. After each iteration all
-//! pheromone evaporates by `rho`, then every ant deposits `1 / L` on the edges
-//! of its tour of length `L`.
+//! Each ant builds a closed tour city by city. From city `i` it moves to an
+//! unvisited city `j` with probability proportional to
+//! `tau[i][j]^alpha * eta[i][j]^beta`, where `tau` is the pheromone and
+//! `eta = 1 / d` the heuristic. After each iteration all pheromone evaporates
+//! by `rho`, then ants deposit `1 / L` on the edges of a tour of length `L`:
+//!
+//! * [`Variant::AntSystem`] (Dorigo, Maniezzo & Colorni, 1996): every ant deposits.
+//! * [`Variant::MaxMin`] (Stützle & Hoos, 2000): only the iteration's best ant
+//!   deposits, and every pheromone value is kept within `[tau_min, tau_max]`,
+//!   so the search neither stagnates on one tour nor forgets good edges.
+//!
+//! With [`AntColony::with_local_search`], every ant's tour is improved by 2-opt
+//! before it is scored and deposits pheromone.
 //!
 //! CPU, `f64`, seeded: the same seed and inputs give the same tour. This is the
 //! oracle a future GPU kernel would be checked against (ix#362).
@@ -19,9 +26,27 @@ use rand::SeedableRng;
 /// (two cities at the same point) yields a large finite heuristic, not infinity.
 const MIN_DISTANCE: f64 = 1e-12;
 
-/// Ant System configuration.
+/// MAX-MIN Ant System: probability that a converged colony still builds the
+/// best tour, which sets the ratio `tau_max / tau_min` (Stützle & Hoos 2000).
+const MAX_MIN_P_BEST: f64 = 0.05;
+
+/// A 2-opt move must shorten the tour by more than this share of the two edges
+/// it removes, so floating-point noise cannot make the search cycle.
+const TWO_OPT_TOLERANCE: f64 = 1e-12;
+
+/// Which pheromone update rule the colony uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Variant {
+    /// Every ant deposits on its own tour.
+    AntSystem,
+    /// Only the iteration's best ant deposits; pheromone stays within bounds.
+    MaxMin,
+}
+
+/// Ant colony configuration.
 #[derive(Debug, Clone)]
 pub struct AntColony {
+    pub variant: Variant,
     /// Ants per iteration; `None` sends one ant per city.
     pub num_ants: Option<usize>,
     pub max_iterations: usize,
@@ -31,6 +56,8 @@ pub struct AntColony {
     pub beta: f64,
     /// Share of the pheromone that evaporates each iteration, in `(0, 1]`.
     pub evaporation: f64,
+    /// Improve every ant's tour with 2-opt before it deposits.
+    pub local_search: bool,
     pub seed: u64,
 }
 
@@ -38,11 +65,13 @@ impl Default for AntColony {
     /// The settings Dorigo & Stützle (2004, table 3.3) recommend for Ant System.
     fn default() -> Self {
         Self {
+            variant: Variant::AntSystem,
             num_ants: None,
             max_iterations: 200,
             alpha: 1.0,
             beta: 2.0,
             evaporation: 0.5,
+            local_search: false,
             seed: 42,
         }
     }
@@ -62,6 +91,36 @@ pub struct TourResult {
 impl AntColony {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// MAX-MIN Ant System without local search, with the evaporation rate
+    /// Dorigo & Stützle (2004, table 3.3) recommend for it, 0.02.
+    ///
+    /// At that rate it converges slowly, so the budget is 1000 iterations. On
+    /// berlin52 (seeds 1-10) 200 iterations left a mean gap of 9.62% and 1000
+    /// reached the optimum every time (`examples/aco_tsplib.rs`).
+    pub fn max_min() -> Self {
+        Self {
+            variant: Variant::MaxMin,
+            evaporation: 0.02,
+            max_iterations: 1000,
+            ..Self::default()
+        }
+    }
+
+    /// MAX-MIN Ant System with 2-opt local search and the settings Dorigo &
+    /// Stützle (2004, table 3.7) recommend with local search: evaporation 0.2
+    /// and 25 ants. The best of the presets measured in `examples/aco_tsplib.rs`:
+    /// on kroA100 (seeds 1-10) it reached the optimum every time from 50
+    /// iterations.
+    pub fn max_min_2opt() -> Self {
+        Self {
+            variant: Variant::MaxMin,
+            evaporation: 0.2,
+            num_ants: Some(25),
+            local_search: true,
+            ..Self::default()
+        }
     }
 
     pub fn with_ants(mut self, n: usize) -> Self {
@@ -86,6 +145,11 @@ impl AntColony {
 
     pub fn with_evaporation(mut self, rho: f64) -> Self {
         self.evaporation = rho;
+        self
+    }
+
+    pub fn with_local_search(mut self, on: bool) -> Self {
+        self.local_search = on;
         self
     }
 
@@ -129,9 +193,14 @@ impl AntColony {
             }
         });
 
-        // tau0 = m / C_nn (Dorigo & Stützle 2004, §3.4.1).
+        // Initial pheromone (Dorigo & Stützle 2004, §3.4.1): m / C_nn for Ant
+        // System, and the tau_max estimate 1 / (rho * C_nn) for MAX-MIN.
         let nearest = nearest_neighbour_tour(distances, 0);
-        let tau0 = ants as f64 / tour_length(distances, &nearest).max(MIN_DISTANCE);
+        let nearest_length = tour_length(distances, &nearest).max(MIN_DISTANCE);
+        let tau0 = match self.variant {
+            Variant::AntSystem => ants as f64 / nearest_length,
+            Variant::MaxMin => 1.0 / (self.evaporation * nearest_length),
+        };
         let mut pheromone = Array2::from_elem((n, n), tau0);
 
         let mut best_tour = Vec::new();
@@ -145,7 +214,10 @@ impl AntColony {
 
             let tours: Vec<(Vec<usize>, f64)> = (0..ants)
                 .map(|_| {
-                    let tour = construct_tour(&choice, distances, &mut rng);
+                    let mut tour = construct_tour(&choice, distances, &mut rng);
+                    if self.local_search {
+                        two_opt(distances, &mut tour);
+                    }
                     let length = tour_length(distances, &tour);
                     (tour, length)
                 })
@@ -159,11 +231,20 @@ impl AntColony {
             }
 
             pheromone.mapv_inplace(|t| t * (1.0 - self.evaporation));
-            for (tour, length) in &tours {
-                let deposit = 1.0 / length.max(MIN_DISTANCE);
-                for (a, b) in edges(tour) {
-                    pheromone[[a, b]] += deposit;
-                    pheromone[[b, a]] += deposit;
+            match self.variant {
+                Variant::AntSystem => {
+                    for (tour, length) in &tours {
+                        deposit(&mut pheromone, tour, *length);
+                    }
+                }
+                Variant::MaxMin => {
+                    let (tour, length) = tours
+                        .iter()
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .expect("at least one ant");
+                    deposit(&mut pheromone, tour, *length);
+                    let (lo, hi) = max_min_bounds(self.evaporation, best_length, n);
+                    pheromone.mapv_inplace(|t| t.clamp(lo, hi));
                 }
             }
 
@@ -184,6 +265,54 @@ impl AntColony {
             history,
         }
     }
+}
+
+/// Apply improving 2-opt moves to `tour` until none is left: replace edges
+/// `(a, b)` and `(c, d)` by `(a, c)` and `(b, d)`, reversing the path between.
+fn two_opt(distances: &Array2<f64>, tour: &mut [usize]) {
+    let n = tour.len();
+    if n < 4 {
+        return;
+    }
+    let mut improved = true;
+    while improved {
+        improved = false;
+        for i in 0..n - 2 {
+            // j = n - 1 with i = 0 would pick two edges that share city tour[0].
+            let last = if i == 0 { n - 2 } else { n - 1 };
+            for j in i + 2..=last {
+                let (a, b) = (tour[i], tour[i + 1]);
+                let (c, d) = (tour[j], tour[(j + 1) % n]);
+                let removed = distances[[a, b]] + distances[[c, d]];
+                let added = distances[[a, c]] + distances[[b, d]];
+                if added < removed - TWO_OPT_TOLERANCE * removed {
+                    tour[i + 1..=j].reverse();
+                    improved = true;
+                }
+            }
+        }
+    }
+}
+
+/// Add `1 / length` on both directions of every edge of `tour`.
+fn deposit(pheromone: &mut Array2<f64>, tour: &[usize], length: f64) {
+    let amount = 1.0 / length.max(MIN_DISTANCE);
+    for (a, b) in edges(tour) {
+        pheromone[[a, b]] += amount;
+        pheromone[[b, a]] += amount;
+    }
+}
+
+/// `(tau_min, tau_max)` for MAX-MIN Ant System (Stützle & Hoos 2000), with
+/// `n / 2` as the average number of choices an ant has at each step. On very
+/// small instances the formula can put `tau_min` above `tau_max`; it is then
+/// capped at `tau_max`.
+fn max_min_bounds(rho: f64, best_length: f64, n: usize) -> (f64, f64) {
+    let tau_max = 1.0 / (rho * best_length.max(MIN_DISTANCE));
+    let p_dec = MAX_MIN_P_BEST.powf(1.0 / n as f64);
+    let average_choices = n as f64 / 2.0;
+    let tau_min = tau_max * (1.0 - p_dec) / ((average_choices - 1.0) * p_dec);
+    (tau_min.min(tau_max), tau_max)
 }
 
 /// Closed length of `tour`, including the edge from its last city back to its first.
@@ -360,6 +489,56 @@ mod tests {
                 "seed {seed}: ACO {} vs optimum {optimum}",
                 result.length
             );
+        }
+    }
+
+    #[test]
+    fn test_max_min_finds_the_exact_optimum_on_small_instances() {
+        for seed in [1, 2, 3] {
+            let d = euclidean(&random_cities(8, seed));
+            let optimum = brute_force_optimum(&d);
+            let result = AntColony::max_min().with_max_iterations(50).solve_tsp(&d);
+            assert!(
+                (result.length - optimum).abs() < 1e-9,
+                "seed {seed}: MAX-MIN {} vs optimum {optimum}",
+                result.length
+            );
+        }
+    }
+
+    #[test]
+    fn test_max_min_bounds_are_ordered() {
+        for n in 3..60 {
+            let (lo, hi) = max_min_bounds(0.02, 100.0, n);
+            assert!(lo > 0.0 && lo <= hi, "n = {n}: ({lo}, {hi})");
+        }
+    }
+
+    #[test]
+    fn test_two_opt_untangles_a_crossing() {
+        // Square visited as 0-2-1-3: its two diagonals cross.
+        let d = euclidean(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
+        let mut tour = vec![0, 2, 1, 3];
+        two_opt(&d, &mut tour);
+        assert_eq!(tour_length(&d, &tour), 4.0);
+    }
+
+    // @ai:invariant two_opt never lengthens a tour and keeps it a permutation [T:test conf:0.9 src:aco::tests::test_two_opt_never_lengthens_a_tour]
+    #[test]
+    fn test_two_opt_never_lengthens_a_tour() {
+        let d = euclidean(&random_cities(30, 9));
+        let mut rng = StdRng::seed_from_u64(4);
+        for _ in 0..20 {
+            let mut tour: Vec<usize> = (0..30).collect();
+            for i in (1..30).rev() {
+                tour.swap(i, rng.random_range(0..=i));
+            }
+            let before = tour_length(&d, &tour);
+            two_opt(&d, &mut tour);
+            assert!(tour_length(&d, &tour) <= before);
+            let mut sorted = tour.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..30).collect::<Vec<_>>());
         }
     }
 

@@ -1,17 +1,34 @@
 //! Minimal TSPLIB reader for the `EUC_2D` instances under `tests/fixtures`.
 //!
-//! `berlin52.tsp` and `berlin52.opt.tour` are the TSPLIB95 files from
+//! The `.tsp` and `.opt.tour` files are the TSPLIB95 files from
 //! comopt.ifi.uni-heidelberg.de/software/TSPLIB95/tsp/, with line endings
-//! normalised to LF. Shared by `tests/aco_berlin52.rs` and
-//! `examples/aco_berlin52.rs`.
+//! normalised to LF. Shared by `tests/aco_tsplib.rs` and
+//! `examples/aco_tsplib.rs`.
 
 use ndarray::Array2;
 
-pub const BERLIN52_TSP: &str = include_str!("../fixtures/berlin52.tsp");
-pub const BERLIN52_OPT_TOUR: &str = include_str!("../fixtures/berlin52.opt.tour");
+/// A TSPLIB instance with its published optimal tour.
+pub struct Instance {
+    pub name: &'static str,
+    pub tsp: &'static str,
+    pub opt_tour: &'static str,
+    /// Proven optimal tour length (TSPLIB).
+    pub optimum: f64,
+}
 
-/// Proven optimal tour length of berlin52 (TSPLIB).
-pub const BERLIN52_OPTIMUM: f64 = 7542.0;
+pub const BERLIN52: Instance = Instance {
+    name: "berlin52",
+    tsp: include_str!("../fixtures/berlin52.tsp"),
+    opt_tour: include_str!("../fixtures/berlin52.opt.tour"),
+    optimum: 7542.0,
+};
+
+pub const KROA100: Instance = Instance {
+    name: "kroA100",
+    tsp: include_str!("../fixtures/kroA100.tsp"),
+    opt_tour: include_str!("../fixtures/kroA100.opt.tour"),
+    optimum: 21282.0,
+};
 
 /// The distance matrix of an `EUC_2D` instance, rounded to the nearest integer
 /// as TSPLIB defines it (`nint(sqrt(dx^2 + dy^2))`), so tour lengths are
