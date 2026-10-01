@@ -157,3 +157,44 @@ Any arm with > 2 invalid responses or a model other than `jev-1.13.0` is **KILL*
 **Lessons carried forward:** (1) any future Jev scorer should accept a sum-to-1 tolerance of at least 0.01. That change applies to future pre-registrations only; these verdicts stand. (2) Timeouts need an explicit rule. Here one counted as invalid, as registered, and its billing is unknown. (3) The claim is stronger now but still not real traffic. The next evidence has to come from GA's shadow log.
 
 **Cumulative Jev spend (all experiments):** 143 + 506 = 649 calls, ≈ $0.0050 + $0.0160 = **≈ $0.021** computed, against the operator's $1 ceiling.
+
+## Jev arm — Stage 3 full-universe pre-registration (2026-10-01, written before any Stage 3 call and before any local run on its corpus)
+
+**Why:** Stages 1 and 2 asked Jev to choose among 16 skills + `__none__`, and every labelled routing set so far (GA dev, TEST, fresh) covers only those 16. GA routes over **32** skills (the production-like registry of `RoutingEvalHarness`; production also registers `AlgebraIntent` and `VoicingIntent`, which are outside this test). An offline simulation in arena cycle 2 put the GA router plus Jev escalation at 124/126 on TEST, but it ran on the 16-skill sets, where the other 16 skills never compete. The real-traffic shadow named after Stage 2 cannot run yet: GA's routing telemetry holds 34 distinct texts in four months, all developer or QA traffic.
+
+**Design:**
+- **Corpus** `jev/corpora/full-sol.json`, corpus SHA-256 `f062dcbd…792747`. gpt-5.6-sol (Codex CLI, read-only sandbox, empty working directory, told not to read any file) wrote 224 prompts, 6 per skill + 32 `__none__`, from a user-terms gloss of the 32 skills (`_full-authoring-prompt.txt`). An overlap check against the GA dev set, TEST, fresh, a lesson-11 set and every string literal in the skill sources of ga `5c3a52ab` and arena/c2-merge `e9db25cc` removed 3 prompts before any run (listed in the file). That leaves **190 in-scope + 31 OOS = 221**. Labels are frozen as delivered and will not be changed after results.
+- **Options** `jev/options-full.json` (`jev-options-2`): the 32 production `IIntent.Description` texts, verbatim from ga `5c3a52ab`, plus the Stage 1 `__none__` text and instructions, unchanged.
+- **Scorer:** same model, same fail-closed scorer (`jev-router --arm full`). The sum-to-1 tolerance is **0.03** for this arm (Stage 2 lesson 1: 2-decimal probabilities over 33 options). More than 2 invalid responses, or any model other than `jev-1.13.0`, is **KILL**. A timeout counts as invalid (lesson 2).
+- **Local routers** run on the same 221 prompts with the GA `RoutingEvalHarness` at the production pair (bge-large @ 0.64), over the harness's 32-skill universe:
+  - **base**: ga `5c3a52ab`, the production code;
+  - **c2-merge**: arena/c2-merge `e9db25cc`, the best local candidate so far.
+
+**Decision rule.** A prompt is correct when the right skill is chosen, or when a `__none__` prompt is declined. An invalid Jev response is wrong. Primary questions, all with an exact two-sided McNemar test over the 221 prompts:
+- **Q1, Jev (τ = 0) vs c2-merge.**
+  - **JEV_AHEAD** iff Jev has more correct and p < 0.05.
+  - **LOCAL_AHEAD** iff c2-merge has more correct and p < 0.05.
+  - **TIE** otherwise.
+- **Q2, hybrid vs c2-merge alone.** The hybrid keeps c2-merge's answer unless c2-merge declines or its top1−top2 margin is < 0.05, and then uses Jev's answer. The 0.05 is the escalation value already written in `RoutingEvalHarness`, not tuned on any set.
+  - **HYBRID_HELPS** iff the hybrid has more correct and p < 0.05.
+  - **HYBRID_HURTS** iff c2-merge has more correct and p < 0.05.
+  - **NO_GAIN** otherwise.
+- **Absolute bands** (secondary, in `ARMS`), using the Stage 2 proportions rounded up:
+  - **ROBUST**: ≥ 171/190 in-scope and ≥ 26/31 OOS;
+  - **DEGRADED**: ≥ 156/190 in-scope;
+  - **FAIL** below that.
+- **Reported, not decisive:** the same comparisons against base, the share of prompts escalated, other margins, per-skill F1, and the prompts where all routers disagree with Sol's label.
+
+**Reading the verdicts (fixed now):**
+- **Q1 = JEV_AHEAD**: Jev's lead survives the full skill universe.
+- **Q2 = HYBRID_HELPS**: escalation is worth a GA prototype that runs in shadow only, behind a flag that is off by default.
+- **Q1 = LOCAL_AHEAD, or Q2 = NO_GAIN / HYBRID_HURTS**: the escalation idea stops, or is narrowed to the skills where Jev wins.
+
+**Budget:** 221 calls and 2,086,770 body bytes. The cost proxy is $0.088. At Stage 1's ratio of 0.49 reported tokens per byte, about $0.043 is expected. The runner stop for this arm is raised to $0.08 of reported usage, because a stop mid-run would leave prompts unanswered and KILL the arm. The runner still makes no retries.
+
+Jev spend so far is 649 calls, about $0.021. After this arm it should be about $0.064, against the operator's $1 ceiling. The operator approved Stage 3 on 2026-10-01.
+
+**Integrity notes:**
+- The corpus author (Sol) also wrote the out-of-domain penalty that is now part of c2-merge.
+- The corpus is independent of Jev, of Claude (who wrote the rest of c2-merge) and of bge-large.
+- Claude wrote the skill gloss in the authoring prompt. If its wording sits close to the descriptions, that could favour Jev, the echo effect. Stage 2 found no echo effect on the 16 skills.

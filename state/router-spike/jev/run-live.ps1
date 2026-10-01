@@ -6,9 +6,9 @@
 #   - exactly one attempt per request, no retries, no redirects followed
 #   - stop after any response once cumulative REPORTED input tokens x rate card
 #     exceeds the budget (a post-response stop, not a billing cap)
-# Usage (from the ix root): pwsh state/router-spike/jev/run-live.ps1 [-Arm base|reversed|fr|es|fresh]
+# Usage (from the ix root): pwsh state/router-spike/jev/run-live.ps1 [-Arm base|reversed|fr|es|fresh|full]
 param(
-  [ValidateSet("base", "reversed", "fr", "es", "fresh")]
+  [ValidateSet("base", "reversed", "fr", "es", "fresh", "full")]
   [string]$Arm = "base",
   [double]$BudgetUsd = 0.05
 )
