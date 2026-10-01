@@ -1,0 +1,91 @@
+{
+ "q1_jev_vs_c2merge": {
+  "verdict": "JEV_AHEAD",
+  "jev_only": 64,
+  "c2merge_only": 7,
+  "p_two_sided": 1.2596743309903347e-12
+ },
+ "q2_hybrid_vs_c2merge": {
+  "verdict": "HYBRID_HELPS",
+  "hybrid_only": 60,
+  "c2merge_only": 1,
+  "p_two_sided": 5.377642775528102e-17
+ },
+ "totals": {
+  "jev": 209,
+  "c2-merge": 152,
+  "base": 145,
+  "hybrid_c2merge_0.05": 211,
+  "hybrid_escalated": 133,
+  "n": 221
+ },
+ "reported": {
+  "jev_vs_base": {
+   "jev_only": 73,
+   "base_only": 9,
+   "p_two_sided": 1.3767370902215938e-13
+  },
+  "hybrid_vs_jev": {
+   "hybrid_only": 6,
+   "jev_only": 4,
+   "p_two_sided": 0.75390625
+  },
+  "hybrid_base_0.05": {
+   "correct": 204,
+   "escalated": 136
+  },
+  "hybrid_c2merge_by_margin": [
+   {
+    "margin": 0.0,
+    "correct": 180,
+    "escalated": 60
+   },
+   {
+    "margin": 0.02,
+    "correct": 202,
+    "escalated": 103
+   },
+   {
+    "margin": 0.05,
+    "correct": 211,
+    "escalated": 133
+   },
+   {
+    "margin": 0.1,
+    "correct": 211,
+    "escalated": 168
+   },
+   {
+    "margin": 0.2,
+    "correct": 209,
+    "escalated": 215
+   }
+  ],
+  "inscope_oos": {
+   "jev": {
+    "inscope": 178,
+    "oos": 31
+   },
+   "c2-merge": {
+    "inscope": 121,
+    "oos": 31
+   },
+   "base": {
+    "inscope": 121,
+    "oos": 24
+   },
+   "hybrid": {
+    "inscope": 180,
+    "oos": 31
+   }
+  },
+  "all_wrong": [
+   "s-161",
+   "s-179",
+   "s-191"
+  ],
+  "jev_invalid": [
+   "s-59"
+  ]
+ }
+}

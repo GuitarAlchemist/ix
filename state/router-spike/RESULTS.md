@@ -198,3 +198,29 @@ Jev spend so far is 649 calls, about $0.021. After this arm it should be about $
 - The corpus author (Sol) also wrote the out-of-domain penalty that is now part of c2-merge.
 - The corpus is independent of Jev, of Claude (who wrote the rest of c2-merge) and of bge-large.
 - Claude wrote the skill gloss in the authoring prompt. If its wording sits close to the descriptions, that could favour Jev, the echo effect. Stage 2 found no echo effect on the 16 skills.
+
+## Jev arm — Stage 3 results (2026-10-01, scored against the Stage 3 pre-registration)
+
+Jev ran 221 calls. 220 were valid. One, s-59, failed with a network exception after 21.9 s; it counts as invalid and its billing is unknown. Reported usage was 636,493 input and 87,132 output tokens, **$0.0267** at the rate card. This is computed, not an invoice. The ratio was 0.30 tokens per body byte, lower than Stage 1's 0.49.
+
+| On the same 221 prompts | In-scope (190) | OOS declined (31) | Total |
+|---|---|---|---|
+| base (ga `5c3a52ab`, production code, bge-large @ 0.64) | 121 | 24 | 145 |
+| c2-merge (arena `e9db25cc`) | 121 | 31 | 152 |
+| **Jev zero-shot** (32 production descriptions) | **178** | **31** | **209** |
+| Hybrid: c2-merge, escalating to Jev on a decline or a margin < 0.05 | 180 | 31 | 211 |
+
+**Verdicts:**
+- **Q1 = JEV_AHEAD.** Jev is right where c2-merge is wrong on 64 prompts, and the reverse happens on 7 (exact McNemar p ≈ 1.3e-12).
+- **Q2 = HYBRID_HELPS.** The hybrid is right where c2-merge is wrong on 60 prompts, and the reverse happens on 1 (p ≈ 5.4e-17).
+- **Absolute band: ROBUST.** Jev scores 178/190 against the 171 threshold, and 31/31 OOS.
+- Macro F1 is 0.947. The lowest per-skill F1 is 0.80, for chordinfo and transpose.
+
+**What this does and does not show:**
+- The local router falls from 82 % in-scope on the 16-skill TEST (c2-merge 90/110) to **64 %** (121/190) once all 32 skills compete. The c2-merge in-scope gains measured on the 16-skill sets do not carry over; only its out-of-scope declines do (31/31, against base's 24/31).
+- Jev keeps 94 % in-scope on the full universe, from production descriptions it had never been tuned on.
+- At the registered margin of 0.05, the hybrid sends **133 of 221 prompts (60 %)** to Jev, and it is statistically indistinguishable from Jev alone (6 against 4, p = 0.75).
+- So escalation saves only 40 % of the calls. Two designs remain: Jev as the primary router with the local router as fallback, or escalation on declines only. Declines-only reaches 180/221 with 27 % of prompts escalated; it is reported here, not registered.
+- Not shown: real traffic, which does not exist yet, and French. The corpus is model-authored and its labels are Sol's. Three prompts were missed by every router (s-161, s-179, s-191); they may be label errors and were left as delivered.
+
+**Cumulative Jev spend (all experiments):** 649 + 221 = 870 calls, about $0.021 + $0.027 = **$0.048** computed, against the operator's $1 ceiling.
