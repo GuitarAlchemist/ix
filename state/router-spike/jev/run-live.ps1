@@ -6,15 +6,15 @@
 #   - exactly one attempt per request, no retries, no redirects followed
 #   - stop after any response once cumulative REPORTED input tokens x rate card
 #     exceeds the budget (a post-response stop, not a billing cap)
-# Usage (from the ix root): pwsh state/router-spike/jev/run-live.ps1 [-Arm base|reversed|fr|es|fresh|full]
-# Default stop: $0.05, except $0.08 for the full arm, as its pre-registration
-# in RESULTS.md set. -BudgetUsd overrides either.
+# Usage (from the ix root): pwsh state/router-spike/jev/run-live.ps1 [-Arm base|reversed|fr|es|fresh|full|musicse]
+# Default stop: $0.05, except $0.08 for the full arm and $0.03 for the musicse
+# arm, as their pre-registrations in RESULTS.md set. -BudgetUsd overrides any.
 param(
-  [ValidateSet("base", "reversed", "fr", "es", "fresh", "full")]
+  [ValidateSet("base", "reversed", "fr", "es", "fresh", "full", "musicse")]
   [string]$Arm = "base",
   [double]$BudgetUsd
 )
-if (-not $PSBoundParameters.ContainsKey("BudgetUsd")) { $BudgetUsd = if ($Arm -eq "full") { 0.08 } else { 0.05 } }
+if (-not $PSBoundParameters.ContainsKey("BudgetUsd")) { $BudgetUsd = switch ($Arm) { "full" { 0.08 } "musicse" { 0.03 } default { 0.05 } } }
 $Dir = if ($Arm -eq "base") { "state/router-spike/jev" } else { "state/router-spike/jev/$Arm" }
 $Out = "$Dir/live.receipt.jsonl"
 $ErrorActionPreference = "Stop"

@@ -224,3 +224,44 @@ Jev ran 221 calls. 220 were valid. One, s-59, failed with a network exception af
 - Not shown: real traffic, which does not exist yet, and French. The corpus is model-authored and its labels are Sol's. Three prompts were missed by every router (s-161, s-179, s-191); they may be label errors and were left as delivered.
 
 **Cumulative Jev spend (all experiments):** 649 + 221 = 870 calls, about $0.021 + $0.027 = **$0.048** computed, against the operator's $1 ceiling.
+
+## Jev arm — Stage 4 human-question pre-registration (2026-10-02, written before any router run on its corpus)
+
+**Why:** every corpus so far was written by a model, and GA's live shadow (GA #786, on since 2026-10-02) has no real traffic yet. Stage 4 uses questions written by real musicians: the 100 most recent question titles on Music Stack Exchange. They are not GA chatbot messages, but nobody wrote them to fit GA's skills.
+
+**Design:**
+- **Corpus** `jev/corpora/music-se.json`, corpus SHA-256 `d60f8015…571460`, pinned in the `musicse` arm of `jev_router.rs`. Selection rule, fixed before fetching: the 100 most recent questions on music.stackexchange.com created before 2026-10-01T00:00Z (Stack Exchange API, no key, fetched 2026-10-02). They were created between 2026-07-10 and 2026-09-29. Titles are used verbatim with HTML entities decoded; bodies are not used. Each title keeps its link, author and license (CC BY-SA 4.0).
+- **Labels:** Claude labelled every title from the title alone, before any router saw the corpus. Site tags were visible. The rule is written in the file:
+  - a skill id when one listed skill answers the title as asked;
+  - `__none__` when no listed skill covers the subject (notation, engraving, other instruments, gear, software, singing, history, performance practice);
+  - `ambiguous` when a skill covers the subject but the title lacks an input it needs, or two labels are defensible.
+- **Result of labelling, already a finding:** **1** title is clearly in scope (`skill.chordvoicings`, quartal voicings in D Dorian), **86** are `__none__`, **13** are ambiguous. Ambiguous titles are routed and reported, never scored, so a defensible skill pick is never counted as wrong. Stage 4 is therefore mostly a test of declining real questions the catalog cannot answer.
+- **Jev:** the Stage 3 options (`options-full.json`) and tolerance (0.03), the same fail-closed scorer (`jev-router --arm musicse`), and the same runner (`run-live.ps1 -Arm musicse`). More than 2 invalid responses, or any model other than `jev-1.13.0`, is **KILL** and voids the Jev comparisons. The arm band is reported as a validity check: ROBUST needs Stage 3's OOS proportion (73/86 declines).
+- **Local routers:** the GA `RoutingEvalHarness` at the production pair (bge-large @ 0.64), over the 32-skill universe, on the same commits as Stage 3: **base** (ga `5c3a52ab`, production code) and **c2-merge** (arena `e9db25cc`). A harness decline (no skill chosen) counts as `__none__`. Correctness is computed from the chosen skill, not the harness's own flag, because ambiguous titles go to the harness with a placeholder expectation.
+
+**Decision rule.** On the **87 scored titles** (1 in-scope + 86 `__none__`), a title is correct when the right skill is chosen, or when a `__none__` title is declined. An invalid Jev response is wrong. Exact two-sided McNemar tests:
+- **H1, Jev vs base (production).**
+  - **JEV_AHEAD** iff Jev has more correct and p < 0.05.
+  - **BASE_AHEAD** iff base has more correct and p < 0.05.
+  - **TIE** otherwise.
+- **Q2, Jev vs c2-merge,** same rule (secondary).
+- **Reported, not decisive:**
+  - c2-merge vs base;
+  - for each router, the `__none__` titles it routes to a skill, and which skills absorb them;
+  - every router's pick on the in-scope title and on the 13 ambiguous ones;
+  - agreement between Jev and base over all 100 titles, the number GA's live shadow logs.
+
+**Expectation, stated before any run:** base will send many of the 86 `__none__` titles to a skill, because they are music questions close to the skill descriptions, unlike Stage 3's off-topic prompts. Jev will decline most of them.
+
+**Reading the verdicts (fixed now):**
+- **H1 = JEV_AHEAD**: on real musicians' phrasing, production answers questions it cannot serve with a skill, and Jev declines them. That supports keeping the shadow and testing Jev for the decline decision. It does not support replacing the router: GA users still have not been measured.
+- **H1 = TIE**: Stage 3's lead does not show on this traffic; the next evidence has to come from GA's shadow log.
+- **H1 = BASE_AHEAD**: Jev routes real questions it should decline, and the shadow's agreement rate must be read with that in mind.
+
+**Budget:** 100 calls and 946,541 body bytes; the cost proxy at 1 token per byte is $0.040. At Stage 3's 0.30 reported tokens per byte, about $0.012 is expected, or $0.014 if output tokens are charged at the same rate as GA's shadow assumes. The runner stops at **$0.03** of reported input tokens and makes no retries. The operator approved about $0.015 for this stage on 2026-10-02. Jev spend in this spike so far is 870 calls, about $0.048, against the operator's $1 ceiling.
+
+**Integrity notes:**
+- Claude labelled the corpus, and Claude wrote most of c2-merge.
+- The label rule asks the same question Jev is asked ("can a listed skill answer this?"). That is what a decline means in production, but a similarity threshold cannot see it, so the rule may favour Jev. Excluding ambiguous titles limits that effect; it does not remove it.
+- Music Stack Exchange is not GA's audience. Its questions are more about piano, notation, engraving and gear, and fewer are about guitar chords. Titles are shorter than the questions, and all are in English.
+- The titles are public posts under CC BY-SA 4.0, kept with attribution. They are not GA chatbot users' messages.

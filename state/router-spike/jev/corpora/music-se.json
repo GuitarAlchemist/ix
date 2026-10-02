@@ -1,0 +1,2236 @@
+{
+ "version": "music-se-1",
+ "authoredBy": "Music Stack Exchange users (human-written question titles)",
+ "labelledBy": "claude-opus-5-5, from the title alone, before any router run",
+ "provenance": "Fetched 2026-10-02 from https://api.stackexchange.com/2.3/questions?order=desc&sort=creation&todate=1790812800&site=music&pagesize=100 (no key; the 100 most recent questions created before 2026-10-01T00:00Z, a mechanical rule fixed before fetching). Titles are verbatim with HTML entities decoded; question bodies are not used. Created between 2026-07-10 and 2026-09-29.",
+ "license": "Titles are Stack Exchange user contributions under CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/), reused with attribution: each prompt's `source` names the question, its link and its author. `content_license` is null where the API omitted the field; Stack Exchange licenses posts made after 2018-05-02 under CC BY-SA 4.0.",
+ "labelRule": "A skill id when one listed skill (jev/options-full.json) answers the title as asked, from the title alone. `__none__` when no listed skill covers the question's subject (notation, engraving, instruments other than guitar chord shapes, gear, software, singing, history, performance practice). `ambiguous` when a listed skill covers the subject but the title lacks an input it needs, or when two labels are defensible; ambiguous titles are routed and reported but not scored. Site tags were visible while labelling.",
+ "prompts": [
+  {
+   "id": "m-1",
+   "prompt": "Are cigar box guitars with the neck and body not flush a common or viable design?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144333,
+    "link": "https://music.stackexchange.com/questions/144333/are-cigar-box-guitars-with-the-neck-and-body-not-flush-a-common-or-viable-design",
+    "created": "2026-09-29T22:44:36Z",
+    "author": "Michael Atkins-Prescott",
+    "author_link": "https://music.stackexchange.com/users/105551/michael-atkins-prescott",
+    "site_tags": [
+     "guitar",
+     "pick-ups",
+     "construction"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-2",
+   "prompt": "How can musicians find opportunities to perform live and connect with local music communities?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144329,
+    "link": "https://music.stackexchange.com/questions/144329/how-can-musicians-find-opportunities-to-perform-live-and-connect-with-local-musi",
+    "created": "2026-09-28T11:57:27Z",
+    "author": "Alex Carter",
+    "author_link": "https://music.stackexchange.com/users/146807/alex-carter",
+    "site_tags": [
+     "musical-forms",
+     "musicology"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-3",
+   "prompt": "How many flats and sharps are common in Baroque music?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144323,
+    "link": "https://music.stackexchange.com/questions/144323/how-many-flats-and-sharps-are-common-in-baroque-music",
+    "created": "2026-09-27T00:52:27Z",
+    "author": "Anton Sherwood",
+    "author_link": "https://music.stackexchange.com/users/32883/anton-sherwood",
+    "site_tags": [
+     "tuning",
+     "key-signatures",
+     "baroque-period"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-4",
+   "prompt": "Jimmy Bryant - The Night Rider",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144321,
+    "link": "https://music.stackexchange.com/questions/144321/jimmy-bryant-the-night-rider",
+    "created": "2026-09-26T00:25:10Z",
+    "author": "Tikhon",
+    "author_link": "https://music.stackexchange.com/users/36256/tikhon",
+    "site_tags": [
+     "harmony",
+     "improvisation",
+     "transcription",
+     "country-and-western"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-5",
+   "prompt": "Key/time signature change at To Coda",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144318,
+    "link": "https://music.stackexchange.com/questions/144318/key-time-signature-change-at-to-coda",
+    "created": "2026-09-25T02:51:08Z",
+    "author": "the-baby-is-you",
+    "author_link": "https://music.stackexchange.com/users/52631/the-baby-is-you",
+    "site_tags": [
+     "notation",
+     "sheet-music",
+     "time-signatures",
+     "key-signatures",
+     "repeats"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-6",
+   "prompt": "What does Gould mean when saying accidentals on ornaments “should be confirmed or cancelled when the pitch is reiterated”?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144316,
+    "link": "https://music.stackexchange.com/questions/144316/what-does-gould-mean-when-saying-accidentals-on-ornaments-should-be-confirmed-o",
+    "created": "2026-09-24T22:02:03Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "notation",
+     "engraving",
+     "accidentals",
+     "ornaments"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-7",
+   "prompt": "Fender Champion™ 40 Amplifier settings",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144311,
+    "link": "https://music.stackexchange.com/questions/144311/fender-champion-40-amplifier-settings",
+    "created": "2026-09-22T14:39:21Z",
+    "author": "HansrajR",
+    "author_link": "https://music.stackexchange.com/users/146654/hansrajr",
+    "site_tags": [
+     "guitar",
+     "amplifiers",
+     "tone"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-8",
+   "prompt": "Chord leading and the 7 western modes",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.modes"
+   ],
+   "note": "Modes are a listed subject, but the title asks how chords lead within the modes, which no skill computes, and gives no chords.",
+   "source": {
+    "question_id": 144307,
+    "link": "https://music.stackexchange.com/questions/144307/chord-leading-and-the-7-western-modes",
+    "created": "2026-09-21T18:22:12Z",
+    "author": "selectstart",
+    "author_link": "https://music.stackexchange.com/users/95203/selectstart",
+    "site_tags": [
+     "chords",
+     "scales",
+     "chord-progressions",
+     "modes"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-9",
+   "prompt": "How can I get the tone as closest as possible with my gear? Identical BOSS Distortion DS-1X Pedal settings - Different tone (What I'm doing wrong ?)",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144305,
+    "link": "https://music.stackexchange.com/questions/144305/how-can-i-get-the-tone-as-closest-as-possible-with-my-gear-identical-boss-disto",
+    "created": "2026-09-20T18:51:47Z",
+    "author": "HansrajR",
+    "author_link": "https://music.stackexchange.com/users/146654/hansrajr",
+    "site_tags": [
+     "guitar",
+     "electric-guitar",
+     "guitar-effects"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-10",
+   "prompt": "Will playing an electric organ with \"incomplete\" pedalboard do more harm than good for a beginner?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144302,
+    "link": "https://music.stackexchange.com/questions/144302/will-playing-an-electric-organ-with-incomplete-pedalboard-do-more-harm-than-go",
+    "created": "2026-09-19T17:04:46Z",
+    "author": "LoremIpsum",
+    "author_link": "https://music.stackexchange.com/users/146629/loremipsum",
+    "site_tags": [
+     "self-learning",
+     "organ"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-11",
+   "prompt": "Why is the tonal center not explicitly marked (in standard sheet music)?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144298,
+    "link": "https://music.stackexchange.com/questions/144298/why-is-the-tonal-center-not-explicitly-marked-in-standard-sheet-music",
+    "created": "2026-09-18T15:24:51Z",
+    "author": "Scounged",
+    "author_link": "https://music.stackexchange.com/users/70022/scounged",
+    "site_tags": [
+     "sheet-music",
+     "tonal"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-12",
+   "prompt": "Increasing finger speed for Beethoven's Pathetique",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.practiceroutine"
+   ],
+   "note": "practiceroutine covers piano repertoire plans, but the title asks a technique question about one piece.",
+   "source": {
+    "question_id": 144296,
+    "link": "https://music.stackexchange.com/questions/144296/increasing-finger-speed-for-beethovens-pathetique",
+    "created": "2026-09-17T05:48:28Z",
+    "author": "Daniel Chow",
+    "author_link": "https://music.stackexchange.com/users/141467/daniel-chow",
+    "site_tags": [
+     "piano",
+     "technique",
+     "tempo"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-13",
+   "prompt": "How can I stop tensing up so much when I sing?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144293,
+    "link": "https://music.stackexchange.com/questions/144293/how-can-i-stop-tensing-up-so-much-when-i-sing",
+    "created": "2026-09-15T10:04:34Z",
+    "author": "Uyên Phạm",
+    "author_link": "https://music.stackexchange.com/users/146538/uy%c3%aan-ph%e1%ba%a1m",
+    "site_tags": [
+     "voice"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-14",
+   "prompt": "How should this upper mordent be notated?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144287,
+    "link": "https://music.stackexchange.com/questions/144287/how-should-this-upper-mordent-be-notated",
+    "created": "2026-09-13T15:37:50Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "ornaments"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-15",
+   "prompt": "How do I apply decimal points semitone frequencies to musical notes? (Like ±0.43 semitones)",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144281,
+    "link": "https://music.stackexchange.com/questions/144281/how-do-i-apply-decimal-points-semitone-frequencies-to-musical-notes-like-%c2%b10-43",
+    "created": "2026-09-13T03:41:54Z",
+    "author": "mathrm alpha",
+    "author_link": "https://music.stackexchange.com/users/90059/mathrm-alpha",
+    "site_tags": [
+     "microtonality"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-16",
+   "prompt": "Could vocal pitch be corrected in recordings before Auto-Tune?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144279,
+    "link": "https://music.stackexchange.com/questions/144279/could-vocal-pitch-be-corrected-in-recordings-before-auto-tune",
+    "created": "2026-09-12T22:22:37Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "recording",
+     "production",
+     "studio",
+     "autotune"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-17",
+   "prompt": "Confusing figured bass notation in \"The Practical Harmonist at the Harpsichord\"",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144277,
+    "link": "https://music.stackexchange.com/questions/144277/confusing-figured-bass-notation-in-the-practical-harmonist-at-the-harpsichord",
+    "created": "2026-09-12T20:40:34Z",
+    "author": "Clark",
+    "author_link": "https://music.stackexchange.com/users/146473/clark",
+    "site_tags": [
+     "harmony",
+     "figured-bass"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-18",
+   "prompt": "Why do I hear this as a suspension, when it’s clearly not?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144266,
+    "link": "https://music.stackexchange.com/questions/144266/why-do-i-hear-this-as-a-suspension-when-it-s-clearly-not",
+    "created": "2026-09-11T05:37:36Z",
+    "author": "André Kugland",
+    "author_link": "https://music.stackexchange.com/users/135404/andr%c3%a9-kugland",
+    "site_tags": [
+     "psychoacoustics"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-19",
+   "prompt": "How do I play these left hand measures?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144263,
+    "link": "https://music.stackexchange.com/questions/144263/how-do-i-play-these-left-hand-measures",
+    "created": "2026-09-10T21:44:26Z",
+    "author": "Barış Uşaklı",
+    "author_link": "https://music.stackexchange.com/users/146371/bar%c4%b1%c5%9f-u%c5%9fakl%c4%b1",
+    "site_tags": [
+     "fingering",
+     "beginner"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-20",
+   "prompt": "Why are repeats not represented in sheet music?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144256,
+    "link": "https://music.stackexchange.com/questions/144256/why-are-repeats-not-represented-in-sheet-music",
+    "created": "2026-09-08T03:42:27Z",
+    "author": "croakouttatune",
+    "author_link": "https://music.stackexchange.com/users/70728/croakouttatune",
+    "site_tags": [
+     "sheet-music",
+     "engraving",
+     "repeats"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-21",
+   "prompt": "Crackle when tapped on scratch plate. Will changing pickups help?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144252,
+    "link": "https://music.stackexchange.com/questions/144252/crackle-when-tapped-on-scratch-plate-will-changing-pickups-help",
+    "created": "2026-09-07T05:54:47Z",
+    "author": "user_90",
+    "author_link": "https://music.stackexchange.com/users/71665/user-90",
+    "site_tags": [
+     "pick-ups",
+     "noise",
+     "solid-body-electric-guitars"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-22",
+   "prompt": "Exception in chromatic scale on guitar from third to second string",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.alternatetunings"
+   ],
+   "note": "Asks why the G-B major third in standard tuning breaks the pattern; alternatetunings explains string intervals, but for alternate tunings.",
+   "source": {
+    "question_id": 144249,
+    "link": "https://music.stackexchange.com/questions/144249/exception-in-chromatic-scale-on-guitar-from-third-to-second-string",
+    "created": "2026-09-06T13:23:07Z",
+    "author": "User",
+    "author_link": "https://music.stackexchange.com/users/82388/user",
+    "site_tags": [
+     "theory",
+     "guitar"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-23",
+   "prompt": "How do the electronic instruments synchronize tempo?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144246,
+    "link": "https://music.stackexchange.com/questions/144246/how-do-the-electronic-instruments-synchronize-tempo",
+    "created": "2026-09-06T06:10:58Z",
+    "author": "user1079505",
+    "author_link": "https://music.stackexchange.com/users/63781/user1079505",
+    "site_tags": [
+     "daw",
+     "looper-pedals",
+     "sequencer",
+     "lfo"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-24",
+   "prompt": "How do I position my hand for 8-5-5-|-0 on a classical guitar?",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.fretspan"
+   ],
+   "note": "fretspan rates the span of a shape; the title gives a shape but asks about hand position.",
+   "source": {
+    "question_id": 144244,
+    "link": "https://music.stackexchange.com/questions/144244/how-do-i-position-my-hand-for-8-5-5-0-on-a-classical-guitar",
+    "created": "2026-09-06T00:12:52Z",
+    "author": "Flynn Hogan",
+    "author_link": "https://music.stackexchange.com/users/146341/flynn-hogan",
+    "site_tags": [
+     "guitar",
+     "fingering",
+     "beginner",
+     "classical-guitar",
+     "pain"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-25",
+   "prompt": "Audio interface and Mac speakers",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144242,
+    "link": "https://music.stackexchange.com/questions/144242/audio-interface-and-mac-speakers",
+    "created": "2026-09-05T16:16:06Z",
+    "author": "Luke Sawczak",
+    "author_link": "https://music.stackexchange.com/users/40578/luke-sawczak",
+    "site_tags": [
+     "production",
+     "speakers"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-26",
+   "prompt": "Harmonizing a melody query",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.chordsubstitution"
+   ],
+   "note": "Harmonizing a melody is close to reharmonization (chordsubstitution), but neither melody nor chords are given.",
+   "source": {
+    "question_id": 144240,
+    "link": "https://music.stackexchange.com/questions/144240/harmonizing-a-melody-query",
+    "created": "2026-09-05T11:55:17Z",
+    "author": "user144771",
+    "author_link": "https://music.stackexchange.com/users/144771/user144771",
+    "site_tags": [
+     "harmony",
+     "analysis",
+     "functional-harmony",
+     "roman-numerals"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-27",
+   "prompt": "Why GarageBand fails to recognize the \"Clip Distortion\" effect on patches saved from Logic?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144231,
+    "link": "https://music.stackexchange.com/questions/144231/why-garageband-fails-to-recognize-the-clip-distortion-effect-on-patches-saved",
+    "created": "2026-09-03T20:00:20Z",
+    "author": "user144734",
+    "author_link": null,
+    "site_tags": [
+     "logic-pro",
+     "garage-band"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-28",
+   "prompt": "Confusion about some measure numbers",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144229,
+    "link": "https://music.stackexchange.com/questions/144229/confusion-about-some-measure-numbers",
+    "created": "2026-09-03T15:04:02Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "notation",
+     "anacrusis"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-29",
+   "prompt": "Does a drum groove determine the notation values in a ballad song?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144226,
+    "link": "https://music.stackexchange.com/questions/144226/does-a-drum-groove-determine-the-notation-values-in-a-ballad-song",
+    "created": "2026-09-02T22:43:35Z",
+    "author": "armani",
+    "author_link": "https://music.stackexchange.com/users/98308/armani",
+    "site_tags": [
+     "notation"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-30",
+   "prompt": "Techniques for connecting musical phrases into a logical sequence",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144221,
+    "link": "https://music.stackexchange.com/questions/144221/techniques-for-connecting-musical-phrases-into-a-logical-sequence",
+    "created": "2026-09-02T08:41:32Z",
+    "author": "Andy Ayr",
+    "author_link": "https://music.stackexchange.com/users/83229/andy-ayr",
+    "site_tags": [
+     "composition",
+     "transcription",
+     "phrase"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-31",
+   "prompt": "How to get the deep robotic voice sound effect?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144219,
+    "link": "https://music.stackexchange.com/questions/144219/how-to-get-the-deep-robotic-voice-sound-effect",
+    "created": "2026-09-01T20:21:46Z",
+    "author": "Eugen Eray",
+    "author_link": "https://music.stackexchange.com/users/39714/eugen-eray",
+    "site_tags": [
+     "voice",
+     "daw",
+     "production",
+     "effects"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-32",
+   "prompt": "Notation in Ravel's Jeux d'eau: Do accidentals apply to notes under an 8va line?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144218,
+    "link": "https://music.stackexchange.com/questions/144218/notation-in-ravels-jeux-deau-do-accidentals-apply-to-notes-under-an-8va-line",
+    "created": "2026-09-01T14:58:50Z",
+    "author": "dennis",
+    "author_link": "https://music.stackexchange.com/users/146260/dennis",
+    "site_tags": [
+     "notation",
+     "accidentals",
+     "ottava"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-33",
+   "prompt": "Tonality of Ending of Prokofiev Piano Sonata 8",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.keyidentification"
+   ],
+   "note": "Key identification is the subject, but the skill needs chords and the title names a piece.",
+   "source": {
+    "question_id": 144212,
+    "link": "https://music.stackexchange.com/questions/144212/tonality-of-ending-of-prokofiev-piano-sonata-8",
+    "created": "2026-08-31T06:26:34Z",
+    "author": "MysticSwan",
+    "author_link": "https://music.stackexchange.com/users/135470/mysticswan",
+    "site_tags": [
+     "theory",
+     "harmony"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-34",
+   "prompt": "What is the time signature of the boy's song in a David Bowie movie?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144211,
+    "link": "https://music.stackexchange.com/questions/144211/what-is-the-time-signature-of-the-boys-song-in-a-david-bowie-movie",
+    "created": "2026-08-31T04:58:52Z",
+    "author": "enjin2000",
+    "author_link": "https://music.stackexchange.com/users/66210/enjin2000",
+    "site_tags": [
+     "time-signatures"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-35",
+   "prompt": "Why did Bb become the 'industry standard' for trumpets?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144207,
+    "link": "https://music.stackexchange.com/questions/144207/why-did-bb-become-the-industry-standard-for-trumpets",
+    "created": "2026-08-30T06:57:18Z",
+    "author": "Tim",
+    "author_link": "https://music.stackexchange.com/users/2808/tim",
+    "site_tags": [
+     "tuning",
+     "trumpet"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-36",
+   "prompt": "Are piano method books worth practicing time?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144205,
+    "link": "https://music.stackexchange.com/questions/144205/are-piano-method-books-worth-practicing-time",
+    "created": "2026-08-28T20:21:15Z",
+    "author": "SSg",
+    "author_link": "https://music.stackexchange.com/users/90627/ssg",
+    "site_tags": [
+     "piano",
+     "learning"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-37",
+   "prompt": "What is the name and function of the D-F-A♯ chord in this guitar score?",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.chordinfo"
+   ],
+   "note": "Names a chord from its notes and asks its function; chordinfo only spells a named chord.",
+   "source": {
+    "question_id": 144196,
+    "link": "https://music.stackexchange.com/questions/144196/what-is-the-name-and-function-of-the-d-f-a%e2%99%af-chord-in-this-guitar-score",
+    "created": "2026-08-26T00:36:51Z",
+    "author": "Tikhon",
+    "author_link": "https://music.stackexchange.com/users/36256/tikhon",
+    "site_tags": [
+     "chords",
+     "chord-theory"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-38",
+   "prompt": "Is counting enough for any piano rhythm, or is a metronome sometimes necessary?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144194,
+    "link": "https://music.stackexchange.com/questions/144194/is-counting-enough-for-any-piano-rhythm-or-is-a-metronome-sometimes-necessary",
+    "created": "2026-08-25T15:54:09Z",
+    "author": "User",
+    "author_link": "https://music.stackexchange.com/users/85581/user",
+    "site_tags": [
+     "piano",
+     "rhythm",
+     "metronomes"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-39",
+   "prompt": "Clarity with repeat signs for nonstandard part structure",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144191,
+    "link": "https://music.stackexchange.com/questions/144191/clarity-with-repeat-signs-for-nonstandard-part-structure",
+    "created": "2026-08-25T10:53:00Z",
+    "author": "Matthew Plourde",
+    "author_link": "https://music.stackexchange.com/users/5989/matthew-plourde",
+    "site_tags": [
+     "repeats",
+     "musical-forms"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-40",
+   "prompt": "When ‘accel’ and ‘rit’—where the musical notes have the same duration—are used, do they cancel each other out, bringing the tempo back to normal?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144185,
+    "link": "https://music.stackexchange.com/questions/144185/when-accel-and-rit-where-the-musical-notes-have-the-same-duration-are-used",
+    "created": "2026-08-25T08:00:29Z",
+    "author": "mathrm alpha",
+    "author_link": "https://music.stackexchange.com/users/90059/mathrm-alpha",
+    "site_tags": [
+     "tempo"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-41",
+   "prompt": "Rhythm query in 5/4 time melody",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144177,
+    "link": "https://music.stackexchange.com/questions/144177/rhythm-query-in-5-4-time-melody",
+    "created": "2026-08-22T06:56:14Z",
+    "author": "user144771",
+    "author_link": "https://music.stackexchange.com/users/144771/user144771",
+    "site_tags": [
+     "time-signatures"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-42",
+   "prompt": "Looking for the South American guitar song",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144176,
+    "link": "https://music.stackexchange.com/questions/144176/looking-for-the-south-american-guitar-song",
+    "created": "2026-08-22T03:02:24Z",
+    "author": "Alexander Brown",
+    "author_link": "https://music.stackexchange.com/users/146034/alexander-brown",
+    "site_tags": [
+     "guitar"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-43",
+   "prompt": "Orchestrating with more than one conductor",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144171,
+    "link": "https://music.stackexchange.com/questions/144171/orchestrating-with-more-than-one-conductor",
+    "created": "2026-08-21T05:21:56Z",
+    "author": "Prashant Akerkar",
+    "author_link": "https://music.stackexchange.com/users/71313/prashant-akerkar",
+    "site_tags": [
+     "orchestra",
+     "conducting"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-44",
+   "prompt": "Brahms Intermezzo Op. 119 No. 3: How to bring out the melody?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144170,
+    "link": "https://music.stackexchange.com/questions/144170/brahms-intermezzo-op-119-no-3-how-to-bring-out-the-melody",
+    "created": "2026-08-20T22:08:58Z",
+    "author": "Squeaky Fox",
+    "author_link": "https://music.stackexchange.com/users/146011/squeaky-fox",
+    "site_tags": [
+     "technique",
+     "fingering",
+     "dynamics",
+     "romantic-period",
+     "accent"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-45",
+   "prompt": "ABRSM Grade 6: Understanding a sequence in Chopin",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144167,
+    "link": "https://music.stackexchange.com/questions/144167/abrsm-grade-6-understanding-a-sequence-in-chopin",
+    "created": "2026-08-20T13:35:00Z",
+    "author": "user144771",
+    "author_link": "https://music.stackexchange.com/users/144771/user144771",
+    "site_tags": [
+     "analysis",
+     "abrsm"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-46",
+   "prompt": "What is the musical function of a fadeout?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144165,
+    "link": "https://music.stackexchange.com/questions/144165/what-is-the-musical-function-of-a-fadeout",
+    "created": "2026-08-20T10:11:01Z",
+    "author": "Davy5003",
+    "author_link": "https://music.stackexchange.com/users/97890/davy5003",
+    "site_tags": [
+     "recording",
+     "mixing",
+     "performance-practice"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-47",
+   "prompt": "React to a StaffSymbol in an engraver",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144163,
+    "link": "https://music.stackexchange.com/questions/144163/react-to-a-staffsymbol-in-an-engraver",
+    "created": "2026-08-19T14:36:19Z",
+    "author": "Leviathan",
+    "author_link": "https://music.stackexchange.com/users/145963/leviathan",
+    "site_tags": [
+     "lilypond",
+     "engraving",
+     "lily-scheme"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-48",
+   "prompt": "Grace notes in piano reductions: what is their purpose?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144160,
+    "link": "https://music.stackexchange.com/questions/144160/grace-notes-in-piano-reductions-what-is-their-purpose",
+    "created": "2026-08-18T23:38:30Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "piano",
+     "orchestra",
+     "opera"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-49",
+   "prompt": "How best to deal with this measure in Brahms Op. 76 No. 6",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144159,
+    "link": "https://music.stackexchange.com/questions/144159/how-best-to-deal-with-this-measure-in-brahms-op-76-no-6",
+    "created": "2026-08-18T21:02:00Z",
+    "author": "DjinTonic",
+    "author_link": "https://music.stackexchange.com/users/80007/djintonic",
+    "site_tags": [
+     "piano",
+     "notation",
+     "engraving",
+     "editions"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-50",
+   "prompt": "Audio Interface vs Multi-effect processor?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144152,
+    "link": "https://music.stackexchange.com/questions/144152/audio-interface-vs-multi-effect-processor",
+    "created": "2026-08-16T19:14:43Z",
+    "author": "Pranit",
+    "author_link": "https://music.stackexchange.com/users/145889/pranit",
+    "site_tags": [
+     "electric-guitar",
+     "guitar-effects",
+     "daw",
+     "effects-pedal",
+     "latency"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-51",
+   "prompt": "Classifying Cadence at End of Schubert Symphony 5, I. Allegro",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.chordsubstitution"
+   ],
+   "note": "A cadence is a relationship between two chords, which chordsubstitution classifies for named chords; none are given.",
+   "source": {
+    "question_id": 144148,
+    "link": "https://music.stackexchange.com/questions/144148/classifying-cadence-at-end-of-schubert-symphony-5-i-allegro",
+    "created": "2026-08-15T06:11:31Z",
+    "author": "MysticSwan",
+    "author_link": "https://music.stackexchange.com/users/135470/mysticswan",
+    "site_tags": [
+     "theory",
+     "harmony",
+     "cadence"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-52",
+   "prompt": "Interpreting Weber’s Dynamic Markings in the Freischütz Overture (mm. 86ff.)",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144144,
+    "link": "https://music.stackexchange.com/questions/144144/interpreting-weber-s-dynamic-markings-in-the-freisch%c3%bctz-overture-mm-86ff",
+    "created": "2026-08-14T09:48:29Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "notation",
+     "orchestra",
+     "dynamics",
+     "orchestration",
+     "opera"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-53",
+   "prompt": "What does it mean for a Cut-Time piece to have a tempo of “quarter = 144”?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144142,
+    "link": "https://music.stackexchange.com/questions/144142/what-does-it-mean-for-a-cut-time-piece-to-have-a-tempo-of-quarter-144",
+    "created": "2026-08-14T01:18:54Z",
+    "author": "user145825",
+    "author_link": "https://music.stackexchange.com/users/145825/user145825",
+    "site_tags": [
+     "time-signatures",
+     "tempo",
+     "audition"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-54",
+   "prompt": "How should I strum triplets technically on guitar in jazz lines?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144135,
+    "link": "https://music.stackexchange.com/questions/144135/how-should-i-strum-triplets-technically-on-guitar-in-jazz-lines",
+    "created": "2026-08-12T18:36:40Z",
+    "author": "gualvy",
+    "author_link": "https://music.stackexchange.com/users/145580/gualvy",
+    "site_tags": [
+     "electric-guitar",
+     "technique",
+     "tuplet",
+     "picking",
+     "strumming"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-55",
+   "prompt": "What's the best notation for this rhythm? Is there a correct way to write it?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144133,
+    "link": "https://music.stackexchange.com/questions/144133/whats-the-best-notation-for-this-rhythm-is-there-a-correct-way-to-write-it",
+    "created": "2026-08-12T17:52:45Z",
+    "author": "gualvy",
+    "author_link": "https://music.stackexchange.com/users/145580/gualvy",
+    "site_tags": [
+     "notation",
+     "rhythm",
+     "rests",
+     "ties"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-56",
+   "prompt": "Guitar with Humbucker sounding too harsh or husky thru Amp Sim",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144130,
+    "link": "https://music.stackexchange.com/questions/144130/guitar-with-humbucker-sounding-too-harsh-or-husky-thru-amp-sim",
+    "created": "2026-08-12T02:53:39Z",
+    "author": "user_90",
+    "author_link": "https://music.stackexchange.com/users/71665/user-90",
+    "site_tags": [
+     "electric-guitar",
+     "sound",
+     "pick-ups",
+     "distortion"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-57",
+   "prompt": "When did the Tenor Voice Clef move to Treble, and what is the evolution of the various types of octave down clefs for Tenor?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144129,
+    "link": "https://music.stackexchange.com/questions/144129/when-did-the-tenor-voice-clef-move-to-treble-and-what-is-the-evolution-of-the-v",
+    "created": "2026-08-12T01:36:02Z",
+    "author": "steveotomy",
+    "author_link": "https://music.stackexchange.com/users/145774/steveotomy",
+    "site_tags": [
+     "history",
+     "transposition",
+     "clefs",
+     "octave",
+     "tenor"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-58",
+   "prompt": "Is it possible to use effect pedals on computers or phones?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144124,
+    "link": "https://music.stackexchange.com/questions/144124/is-it-possible-to-use-effect-pedals-on-computers-or-phones",
+    "created": "2026-08-11T12:23:31Z",
+    "author": "user144734",
+    "author_link": null,
+    "site_tags": [
+     "effects-pedal"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-59",
+   "prompt": "How to align bar lines across the page?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144122,
+    "link": "https://music.stackexchange.com/questions/144122/how-to-align-bar-lines-across-the-page",
+    "created": "2026-08-11T09:09:30Z",
+    "author": "CasualManiak",
+    "author_link": "https://music.stackexchange.com/users/72707/casualmaniak",
+    "site_tags": [
+     "lilypond"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-60",
+   "prompt": "Linear Phase Plugin",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144121,
+    "link": "https://music.stackexchange.com/questions/144121/linear-phase-plugin",
+    "created": "2026-08-11T08:10:30Z",
+    "author": "Đỗ Gia Thịnh",
+    "author_link": "https://music.stackexchange.com/users/130932/%c4%90%e1%bb%97-gia-th%e1%bb%8bnh",
+    "site_tags": [
+     "mixing",
+     "frequency",
+     "mastering",
+     "phase",
+     "music-production-station"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-61",
+   "prompt": "How to reproduce the random arp mode from Alchemy in Logic Pro's Arp MIDI modifier?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144118,
+    "link": "https://music.stackexchange.com/questions/144118/how-to-reproduce-the-random-arp-mode-from-alchemy-in-logic-pros-arp-midi-modifi",
+    "created": "2026-08-10T23:43:30Z",
+    "author": "user144734",
+    "author_link": null,
+    "site_tags": [
+     "logic-pro",
+     "arpeggios"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-62",
+   "prompt": "Do advanced pianists usually play legato unless a specific articulation like staccato is marked?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144115,
+    "link": "https://music.stackexchange.com/questions/144115/do-advanced-pianists-usually-play-legato-unless-a-specific-articulation-like-sta",
+    "created": "2026-08-10T19:34:37Z",
+    "author": "User",
+    "author_link": "https://music.stackexchange.com/users/85581/user",
+    "site_tags": [
+     "piano",
+     "articulation",
+     "legato"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-63",
+   "prompt": "Why isn’t it necessary to put a time signature on every line of a musical score?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144106,
+    "link": "https://music.stackexchange.com/questions/144106/why-isn-t-it-necessary-to-put-a-time-signature-on-every-line-of-a-musical-score",
+    "created": "2026-08-09T13:44:15Z",
+    "author": "mathrm alpha",
+    "author_link": "https://music.stackexchange.com/users/90059/mathrm-alpha",
+    "site_tags": [
+     "sheet-music",
+     "time-signatures",
+     "engraving"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-64",
+   "prompt": "Slicing notes from quoted variable in lilypond",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144099,
+    "link": "https://music.stackexchange.com/questions/144099/slicing-notes-from-quoted-variable-in-lilypond",
+    "created": "2026-08-07T17:17:32Z",
+    "author": "croakouttatune",
+    "author_link": "https://music.stackexchange.com/users/70728/croakouttatune",
+    "site_tags": [
+     "lilypond"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-65",
+   "prompt": "Adding multi row instrumentName to staff in lilypond",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144094,
+    "link": "https://music.stackexchange.com/questions/144094/adding-multi-row-instrumentname-to-staff-in-lilypond",
+    "created": "2026-08-07T00:04:50Z",
+    "author": "croakouttatune",
+    "author_link": "https://music.stackexchange.com/users/70728/croakouttatune",
+    "site_tags": [
+     "lilypond"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-66",
+   "prompt": "Is there a Lilypond library for rendering functional harmonic analysis in a graphical form?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144093,
+    "link": "https://music.stackexchange.com/questions/144093/is-there-a-lilypond-library-for-rendering-functional-harmonic-analysis-in-a-grap",
+    "created": "2026-08-06T17:03:02Z",
+    "author": "mudskipper",
+    "author_link": "https://music.stackexchange.com/users/117675/mudskipper",
+    "site_tags": [
+     "lilypond",
+     "analysis"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-67",
+   "prompt": "Understanding Pickup selector position 4 - Ibanez guitar with two Humbuckers",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144090,
+    "link": "https://music.stackexchange.com/questions/144090/understanding-pickup-selector-position-4-ibanez-guitar-with-two-humbuckers",
+    "created": "2026-08-05T22:06:20Z",
+    "author": "user_90",
+    "author_link": "https://music.stackexchange.com/users/71665/user-90",
+    "site_tags": [
+     "electric-guitar",
+     "pick-ups",
+     "ibanez"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-68",
+   "prompt": "What exactly is a Yodel, and how do singers make it happen?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144088,
+    "link": "https://music.stackexchange.com/questions/144088/what-exactly-is-a-yodel-and-how-do-singers-make-it-happen",
+    "created": "2026-08-05T07:17:27Z",
+    "author": "Tim",
+    "author_link": "https://music.stackexchange.com/users/2808/tim",
+    "site_tags": [
+     "vocal-range"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-69",
+   "prompt": "How to write triplet that starts on AND after 4 in 4/4?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144083,
+    "link": "https://music.stackexchange.com/questions/144083/how-to-write-triplet-that-starts-on-and-after-4-in-4-4",
+    "created": "2026-08-04T10:08:02Z",
+    "author": "gualvy",
+    "author_link": "https://music.stackexchange.com/users/145580/gualvy",
+    "site_tags": [
+     "rhythm",
+     "engraving",
+     "tuplet",
+     "beaming"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-70",
+   "prompt": "How to identify where the resolution of a suspension is?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144081,
+    "link": "https://music.stackexchange.com/questions/144081/how-to-identify-where-the-resolution-of-a-suspension-is",
+    "created": "2026-08-04T04:34:57Z",
+    "author": "YqL",
+    "author_link": "https://music.stackexchange.com/users/145575/yql",
+    "site_tags": [
+     "counterpoint",
+     "j-s-bach",
+     "fugue"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-71",
+   "prompt": "Is there a standard name for this non-octave based temperament?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144077,
+    "link": "https://music.stackexchange.com/questions/144077/is-there-a-standard-name-for-this-non-octave-based-temperament",
+    "created": "2026-08-02T07:46:07Z",
+    "author": "Robert Lee",
+    "author_link": "https://music.stackexchange.com/users/145538/robert-lee",
+    "site_tags": [
+     "temperament"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-72",
+   "prompt": "what do I need to hear to determine the function of a chord in a progression",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144068,
+    "link": "https://music.stackexchange.com/questions/144068/what-do-i-need-to-hear-to-determine-the-function-of-a-chord-in-a-progression",
+    "created": "2026-07-30T22:34:02Z",
+    "author": "skinny peacock",
+    "author_link": "https://music.stackexchange.com/users/44636/skinny-peacock",
+    "site_tags": [
+     "chords",
+     "functional-harmony",
+     "substitution"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-73",
+   "prompt": "Piano left hand patterns. How to keep the flow going even when the chord changes in the middle of the pattern",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144063,
+    "link": "https://music.stackexchange.com/questions/144063/piano-left-hand-patterns-how-to-keep-the-flow-going-even-when-the-chord-changes",
+    "created": "2026-07-30T07:48:40Z",
+    "author": "Ynk",
+    "author_link": "https://music.stackexchange.com/users/96506/ynk",
+    "site_tags": [
+     "piano",
+     "arpeggios",
+     "accompaniment"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-74",
+   "prompt": "Are \"clarion\" and \"clarino\" range the same?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144061,
+    "link": "https://music.stackexchange.com/questions/144061/are-clarion-and-clarino-range-the-same",
+    "created": "2026-07-29T23:59:49Z",
+    "author": "Steve Bennett",
+    "author_link": "https://music.stackexchange.com/users/9498/steve-bennett",
+    "site_tags": [
+     "terminology",
+     "clarinet"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-75",
+   "prompt": "Is there any merit to practising with a randomly fluctuating metronome?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144056,
+    "link": "https://music.stackexchange.com/questions/144056/is-there-any-merit-to-practising-with-a-randomly-fluctuating-metronome",
+    "created": "2026-07-28T14:19:39Z",
+    "author": "cotton",
+    "author_link": "https://music.stackexchange.com/users/145321/cotton",
+    "site_tags": [
+     "practice",
+     "drums",
+     "performing",
+     "metronomes"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-76",
+   "prompt": "Why is it recommended to play the same piano note with different fingers?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144052,
+    "link": "https://music.stackexchange.com/questions/144052/why-is-it-recommended-to-play-the-same-piano-note-with-different-fingers",
+    "created": "2026-07-28T04:47:03Z",
+    "author": "SSg",
+    "author_link": "https://music.stackexchange.com/users/90627/ssg",
+    "site_tags": [
+     "piano",
+     "fingering"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-77",
+   "prompt": "Why can’t I reproduce this passage correctly?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144042,
+    "link": "https://music.stackexchange.com/questions/144042/why-can-t-i-reproduce-this-passage-correctly",
+    "created": "2026-07-26T15:35:40Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "notation",
+     "rhythm",
+     "tuplet",
+     "musescore"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-78",
+   "prompt": "Contrasting Blues Scale Sonorities",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.genreessentials",
+    "skill.theorycomparison",
+    "skill.modes"
+   ],
+   "note": "Blues scale sonorities: several skills touch the subject, none clearly answers it.",
+   "source": {
+    "question_id": 144037,
+    "link": "https://music.stackexchange.com/questions/144037/contrasting-blues-scale-sonorities",
+    "created": "2026-07-25T20:01:07Z",
+    "author": "David Moore",
+    "author_link": "https://music.stackexchange.com/users/137797/david-moore",
+    "site_tags": [
+     "scales",
+     "blues"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-79",
+   "prompt": "Why does 7:4 sound unpleasant in a C major chord?",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.outsidenotes"
+   ],
+   "note": "outsidenotes explains why a note clashes over a chord, but 7:4 is a just-intonation ratio, not a named note.",
+   "source": {
+    "question_id": 144036,
+    "link": "https://music.stackexchange.com/questions/144036/why-does-74-sound-unpleasant-in-a-c-major-chord",
+    "created": "2026-07-25T17:52:26Z",
+    "author": "Stan Shunpike",
+    "author_link": "https://music.stackexchange.com/users/15674/stan-shunpike",
+    "site_tags": [
+     "harmonics",
+     "consonance-and-dissonance",
+     "overtones"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-80",
+   "prompt": "Why are there English and German styles of recorder?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144035,
+    "link": "https://music.stackexchange.com/questions/144035/why-are-there-english-and-german-styles-of-recorder",
+    "created": "2026-07-25T11:04:34Z",
+    "author": "魏盛恩",
+    "author_link": "https://music.stackexchange.com/users/145204/%e9%ad%8f%e7%9b%9b%e6%81%a9",
+    "site_tags": [
+     "recorder"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-81",
+   "prompt": "D Harmonic Minor or something else",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.modes"
+   ],
+   "note": "modes covers harmonic minor, but the title asks to identify a scale whose notes are not given.",
+   "source": {
+    "question_id": 144031,
+    "link": "https://music.stackexchange.com/questions/144031/d-harmonic-minor-or-something-else",
+    "created": "2026-07-24T22:15:31Z",
+    "author": "Justin Wardrobe",
+    "author_link": "https://music.stackexchange.com/users/145221/justin-wardrobe",
+    "site_tags": [
+     "scales"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-82",
+   "prompt": "Are \"𝉾\" (TAB) guitar clefs written in Serif style?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144028,
+    "link": "https://music.stackexchange.com/questions/144028/are-tab-guitar-clefs-written-in-serif-style",
+    "created": "2026-07-24T06:52:05Z",
+    "author": "mathrm alpha",
+    "author_link": "https://music.stackexchange.com/users/90059/mathrm-alpha",
+    "site_tags": [
+     "tablature",
+     "clefs"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-83",
+   "prompt": "Dies Irae in 'Sweeney Todd'",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144026,
+    "link": "https://music.stackexchange.com/questions/144026/dies-irae-in-sweeney-todd",
+    "created": "2026-07-24T00:26:58Z",
+    "author": "John Idema",
+    "author_link": "https://music.stackexchange.com/users/145333/john-idema",
+    "site_tags": [
+     "analysis",
+     "melody",
+     "musical-theatre"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-84",
+   "prompt": "Can the dynamic markings in music be arranged arbitrarily to form the fz + n = fzn?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144018,
+    "link": "https://music.stackexchange.com/questions/144018/can-the-dynamic-markings-in-music-be-arranged-arbitrarily-to-form-the-fz-n-f",
+    "created": "2026-07-22T06:32:16Z",
+    "author": "mathrm alpha",
+    "author_link": "https://music.stackexchange.com/users/90059/mathrm-alpha",
+    "site_tags": [
+     "dynamics"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-85",
+   "prompt": "What's the difference between having a line next to the number on a musical note multiplets and not having one?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144016,
+    "link": "https://music.stackexchange.com/questions/144016/whats-the-difference-between-having-a-line-next-to-the-number-on-a-musical-note",
+    "created": "2026-07-22T06:07:59Z",
+    "author": "mathrm alpha",
+    "author_link": "https://music.stackexchange.com/users/90059/mathrm-alpha",
+    "site_tags": [
+     "rhythm",
+     "engraving",
+     "tuplet"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-86",
+   "prompt": "ARCT Analysis (Lieder Question)",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144014,
+    "link": "https://music.stackexchange.com/questions/144014/arct-analysis-lieder-question",
+    "created": "2026-07-21T22:42:41Z",
+    "author": "belle",
+    "author_link": "https://music.stackexchange.com/users/145287/belle",
+    "site_tags": [
+     "theory"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-87",
+   "prompt": "How to transcribe a song that seems to drift",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144011,
+    "link": "https://music.stackexchange.com/questions/144011/how-to-transcribe-a-song-that-seems-to-drift",
+    "created": "2026-07-21T11:26:12Z",
+    "author": "Celmar",
+    "author_link": "https://music.stackexchange.com/users/145275/celmar",
+    "site_tags": [
+     "piano",
+     "rhythm",
+     "jazz",
+     "time-signatures",
+     "transcription"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-88",
+   "prompt": "Why swap notes between identical chords?",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.voiceleading"
+   ],
+   "note": "Swapping notes on a repeated chord is a voice-leading subject; voiceleading needs two chords, and none are given.",
+   "source": {
+    "question_id": 144007,
+    "link": "https://music.stackexchange.com/questions/144007/why-swap-notes-between-identical-chords",
+    "created": "2026-07-20T18:25:39Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "composition",
+     "woodwinds",
+     "clarinet"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-89",
+   "prompt": "What voice technique does the choir use to extend the duration of the word maeba in the Making of a Cyborg song of Ghost in the Shell?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 144001,
+    "link": "https://music.stackexchange.com/questions/144001/what-voice-technique-does-the-choir-use-to-extend-the-duration-of-the-word-maeba",
+    "created": "2026-07-17T15:15:44Z",
+    "author": "Marc Le Bihan",
+    "author_link": "https://music.stackexchange.com/users/72082/marc-le-bihan",
+    "site_tags": [
+     "voice",
+     "choir"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-90",
+   "prompt": "Glissando from the last note in measure ending before the bar line",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143998,
+    "link": "https://music.stackexchange.com/questions/143998/glissando-from-the-last-note-in-measure-ending-before-the-bar-line",
+    "created": "2026-07-16T08:16:38Z",
+    "author": "HarryH",
+    "author_link": "https://music.stackexchange.com/users/93130/harryh",
+    "site_tags": [
+     "guitar",
+     "notation",
+     "lilypond"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-91",
+   "prompt": "What does \"sempre molto pedale\" mean?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143993,
+    "link": "https://music.stackexchange.com/questions/143993/what-does-sempre-molto-pedale-mean",
+    "created": "2026-07-16T00:46:23Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "piano",
+     "notation",
+     "technique",
+     "terminology",
+     "keyboard-pedals"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-92",
+   "prompt": "Can Someone Record the Harmonics Excerpt Below?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143989,
+    "link": "https://music.stackexchange.com/questions/143989/can-someone-record-the-harmonics-excerpt-below",
+    "created": "2026-07-15T13:36:36Z",
+    "author": "palestrina21",
+    "author_link": "https://music.stackexchange.com/users/145100/palestrina21",
+    "site_tags": [
+     "composition",
+     "violin",
+     "string-instruments",
+     "harmonics"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-93",
+   "prompt": "How can I replace a fret number in a TabVoice/Staff with text for a harmonic pitch, e.g.: <2.7>?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143988,
+    "link": "https://music.stackexchange.com/questions/143988/how-can-i-replace-a-fret-number-in-a-tabvoice-staff-with-text-for-a-harmonic-pit",
+    "created": "2026-07-15T09:20:24Z",
+    "author": "HarryH",
+    "author_link": "https://music.stackexchange.com/users/93130/harryh",
+    "site_tags": [
+     "notation",
+     "lilypond",
+     "tablature"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-94",
+   "prompt": "Basic five-note quartal voicings in D dorian?",
+   "expectedIntentId": "skill.chordvoicings",
+   "tags": [
+    "music-se",
+    "in-scope"
+   ],
+   "source": {
+    "question_id": 143980,
+    "link": "https://music.stackexchange.com/questions/143980/basic-five-note-quartal-voicings-in-d-dorian",
+    "created": "2026-07-14T16:56:04Z",
+    "author": "saroyr",
+    "author_link": "https://music.stackexchange.com/users/94569/saroyr",
+    "site_tags": [
+     "jazz",
+     "modal",
+     "quartal-harmony"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-95",
+   "prompt": "Quadruple Stops Playability",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143976,
+    "link": "https://music.stackexchange.com/questions/143976/quadruple-stops-playability",
+    "created": "2026-07-14T11:52:59Z",
+    "author": "palestrina21",
+    "author_link": "https://music.stackexchange.com/users/145100/palestrina21",
+    "site_tags": [
+     "technique",
+     "composition",
+     "violin",
+     "string-instruments"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-96",
+   "prompt": "How is this passage of Verklärte Nacht played on the Cello?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143970,
+    "link": "https://music.stackexchange.com/questions/143970/how-is-this-passage-of-verkl%c3%a4rte-nacht-played-on-the-cello",
+    "created": "2026-07-13T16:54:17Z",
+    "author": "palestrina21",
+    "author_link": "https://music.stackexchange.com/users/145100/palestrina21",
+    "site_tags": [
+     "technique",
+     "fingering",
+     "cello",
+     "orchestral-strings"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-97",
+   "prompt": "Do university music departments really only teach music scores and music theory?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143965,
+    "link": "https://music.stackexchange.com/questions/143965/do-university-music-departments-really-only-teach-music-scores-and-music-theory",
+    "created": "2026-07-12T01:58:45Z",
+    "author": "mathrm alpha",
+    "author_link": "https://music.stackexchange.com/users/90059/mathrm-alpha",
+    "site_tags": [
+     "theory",
+     "instruments"
+    ],
+    "content_license": null
+   }
+  },
+  {
+   "id": "m-98",
+   "prompt": "What does \"sim.\" imply for the last note in this passage?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143958,
+    "link": "https://music.stackexchange.com/questions/143958/what-does-sim-imply-for-the-last-note-in-this-passage",
+    "created": "2026-07-11T12:57:37Z",
+    "author": "user140898",
+    "author_link": "https://music.stackexchange.com/users/140961/user140898",
+    "site_tags": [
+     "theory",
+     "notation"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-99",
+   "prompt": "I've hit a wall practicing alone after 8 years of having a teacher, and I need help",
+   "expectedIntentId": "ambiguous",
+   "tags": [
+    "music-se",
+    "ambiguous"
+   ],
+   "candidates": [
+    "skill.practiceroutine"
+   ],
+   "note": "practiceroutine returns practice plans; the title asks for help practising alone after years with a teacher.",
+   "source": {
+    "question_id": 143952,
+    "link": "https://music.stackexchange.com/questions/143952/ive-hit-a-wall-practicing-alone-after-8-years-of-having-a-teacher-and-i-need-h",
+    "created": "2026-07-10T13:34:00Z",
+    "author": "Rami -Succar",
+    "author_link": "https://music.stackexchange.com/users/145023/rami-succar",
+    "site_tags": [
+     "piano",
+     "practice",
+     "self-learning"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  },
+  {
+   "id": "m-100",
+   "prompt": "Transcribing chants to St. Gall neumes",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "music-se",
+    "oos"
+   ],
+   "source": {
+    "question_id": 143950,
+    "link": "https://music.stackexchange.com/questions/143950/transcribing-chants-to-st-gall-neumes",
+    "created": "2026-07-10T07:45:01Z",
+    "author": "Kresimir",
+    "author_link": "https://music.stackexchange.com/users/56003/kresimir",
+    "site_tags": [
+     "notation",
+     "chant"
+    ],
+    "content_license": "CC BY-SA 4.0"
+   }
+  }
+ ]
+}
