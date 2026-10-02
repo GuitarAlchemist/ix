@@ -1,0 +1,1328 @@
+{
+ "s-1": {
+  "chosen": "skill.alternatetunings",
+  "confidence": 0.739895,
+  "margin": 0.19552523,
+  "correct": true
+ },
+ "s-2": {
+  "chosen": "skill.alternatetunings",
+  "confidence": 0.80495495,
+  "margin": 0.13314152,
+  "correct": true
+ },
+ "s-3": {
+  "chosen": "skill.alternatetunings",
+  "confidence": 0.9066677,
+  "margin": 0.13669991,
+  "correct": true
+ },
+ "s-4": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-5": {
+  "chosen": "skill.alternatetunings",
+  "confidence": 0.7402083,
+  "margin": 0.18178129,
+  "correct": true
+ },
+ "s-6": {
+  "chosen": "skill.alternatetunings",
+  "confidence": 0.6812842,
+  "margin": 0.045820713,
+  "correct": true
+ },
+ "s-7": {
+  "chosen": "skill.beginnerchords",
+  "confidence": 0.9585555,
+  "margin": 0.17133951,
+  "correct": true
+ },
+ "s-8": {
+  "chosen": "skill.beginnerchords",
+  "confidence": 0.87235576,
+  "margin": 0.08790332,
+  "correct": true
+ },
+ "s-9": {
+  "chosen": "skill.beginnerchords",
+  "confidence": 0.97335696,
+  "margin": 0.18866211,
+  "correct": true
+ },
+ "s-10": {
+  "chosen": "skill.beginnerchords",
+  "confidence": 0.90938306,
+  "margin": 0.1335293,
+  "correct": true
+ },
+ "s-11": {
+  "chosen": "skill.beginnerchords",
+  "confidence": 0.8174267,
+  "margin": 0.034198105,
+  "correct": true
+ },
+ "s-12": {
+  "chosen": "skill.beginnerchords",
+  "confidence": 0.8649728,
+  "margin": 0.044111848,
+  "correct": true
+ },
+ "s-13": {
+  "chosen": "skill.capo",
+  "confidence": 0.8625746,
+  "margin": 0.07202792,
+  "correct": true
+ },
+ "s-14": {
+  "chosen": "skill.capo",
+  "confidence": 0.8821701,
+  "margin": 0.0840742,
+  "correct": true
+ },
+ "s-15": {
+  "chosen": "skill.transpose",
+  "confidence": 0.84814507,
+  "margin": 0.02002734,
+  "correct": false
+ },
+ "s-16": {
+  "chosen": "skill.capo",
+  "confidence": 0.92782694,
+  "margin": 0.10445404,
+  "correct": true
+ },
+ "s-17": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-18": {
+  "chosen": "skill.capo",
+  "confidence": 0.87124616,
+  "margin": 0.042322457,
+  "correct": true
+ },
+ "s-19": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.8595635,
+  "margin": 0.07948446,
+  "correct": true
+ },
+ "s-20": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.8096518,
+  "margin": 0.0045589805,
+  "correct": true
+ },
+ "s-21": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-22": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.8309682,
+  "margin": 0.12574583,
+  "correct": true
+ },
+ "s-23": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.82673293,
+  "margin": 0.0032820106,
+  "correct": true
+ },
+ "s-24": {
+  "chosen": "skill.scaleinfo",
+  "confidence": 0.6508609,
+  "margin": 0.0015382767,
+  "correct": false
+ },
+ "s-25": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-26": {
+  "chosen": "skill.progressioncompletion",
+  "confidence": 0.904047,
+  "margin": 0.023863614,
+  "correct": false
+ },
+ "s-27": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.7082999,
+  "margin": 0.058865666,
+  "correct": true
+ },
+ "s-28": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-29": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.69803554,
+  "margin": 0.009958923,
+  "correct": true
+ },
+ "s-30": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.8017407,
+  "margin": 0.13434863,
+  "correct": true
+ },
+ "s-31": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.6413428,
+  "margin": 0.010766804,
+  "correct": false
+ },
+ "s-32": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-33": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.6820402,
+  "margin": 0.006738007,
+  "correct": false
+ },
+ "s-34": {
+  "chosen": "skill.chordvoicings",
+  "confidence": 0.7642527,
+  "margin": 0.03512889,
+  "correct": true
+ },
+ "s-35": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.76683813,
+  "margin": 0.016373217,
+  "correct": false
+ },
+ "s-36": {
+  "chosen": "skill.chordvoicings",
+  "confidence": 0.7688836,
+  "margin": 0.07090747,
+  "correct": true
+ },
+ "s-37": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.6547035,
+  "margin": 0.05824834,
+  "correct": true
+ },
+ "s-38": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.7859301,
+  "margin": 0.113790154,
+  "correct": true
+ },
+ "s-39": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.9150888,
+  "margin": 0.15796411,
+  "correct": true
+ },
+ "s-40": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.7526465,
+  "margin": 0.16059446,
+  "correct": true
+ },
+ "s-41": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.7056163,
+  "margin": 0.005974591,
+  "correct": true
+ },
+ "s-42": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-43": {
+  "chosen": "skill.commontones",
+  "confidence": 0.94736725,
+  "margin": 0.10875982,
+  "correct": true
+ },
+ "s-44": {
+  "chosen": "skill.commontones",
+  "confidence": 0.8381106,
+  "margin": 0.18944645,
+  "correct": true
+ },
+ "s-45": {
+  "chosen": "skill.commontones",
+  "confidence": 0.8878228,
+  "margin": 0.10113621,
+  "correct": true
+ },
+ "s-46": {
+  "chosen": "skill.commontones",
+  "confidence": 0.78646606,
+  "margin": 0.05144131,
+  "correct": true
+ },
+ "s-47": {
+  "chosen": "skill.commontones",
+  "confidence": 0.68676805,
+  "margin": 0.06362504,
+  "correct": true
+ },
+ "s-48": {
+  "chosen": "skill.commontones",
+  "confidence": 0.70044523,
+  "margin": 0.0077887774,
+  "correct": true
+ },
+ "s-49": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.8778488,
+  "margin": 0.026495934,
+  "correct": false
+ },
+ "s-50": {
+  "chosen": "skill.diatonicchords",
+  "confidence": 0.862718,
+  "margin": 0.043786943,
+  "correct": true
+ },
+ "s-51": {
+  "chosen": "skill.progressioncompletion",
+  "confidence": 0.82712555,
+  "margin": 0.028660953,
+  "correct": false
+ },
+ "s-52": {
+  "chosen": "skill.keyidentification",
+  "confidence": 0.8029863,
+  "margin": 0.015197396,
+  "correct": false
+ },
+ "s-53": {
+  "chosen": "skill.diatonicchords",
+  "confidence": 0.9134743,
+  "margin": 0.09507209,
+  "correct": true
+ },
+ "s-54": {
+  "chosen": "skill.diatonicchords",
+  "confidence": 0.8176388,
+  "margin": 0.0031188726,
+  "correct": true
+ },
+ "s-55": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.7629402,
+  "margin": 0.03301221,
+  "correct": true
+ },
+ "s-56": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-57": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-58": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.74478596,
+  "margin": 0.03500706,
+  "correct": true
+ },
+ "s-59": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-60": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.7584926,
+  "margin": 0.04637724,
+  "correct": true
+ },
+ "s-61": {
+  "chosen": "skill.genreessentials",
+  "confidence": 0.83217007,
+  "margin": 0.19513977,
+  "correct": true
+ },
+ "s-62": {
+  "chosen": "skill.genreessentials",
+  "confidence": 0.77398336,
+  "margin": 0.0647524,
+  "correct": true
+ },
+ "s-63": {
+  "chosen": "skill.genreessentials",
+  "confidence": 0.84386766,
+  "margin": 0.081730545,
+  "correct": true
+ },
+ "s-64": {
+  "chosen": "skill.genreessentials",
+  "confidence": 0.87031657,
+  "margin": 0.13344514,
+  "correct": true
+ },
+ "s-65": {
+  "chosen": "skill.genreessentials",
+  "confidence": 0.80472547,
+  "margin": 0.022237182,
+  "correct": true
+ },
+ "s-66": {
+  "chosen": "skill.genreessentials",
+  "confidence": 0.78105533,
+  "margin": 0.08247465,
+  "correct": true
+ },
+ "s-67": {
+  "chosen": "skill.grothendieckdelta",
+  "confidence": 0.8621502,
+  "margin": 0.23000813,
+  "correct": true
+ },
+ "s-68": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-69": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-70": {
+  "chosen": "skill.grothendieckdelta",
+  "confidence": 0.6718915,
+  "margin": 0.007673919,
+  "correct": true
+ },
+ "s-71": {
+  "chosen": "skill.grothendieckdelta",
+  "confidence": 0.6914174,
+  "margin": 0.11976087,
+  "correct": true
+ },
+ "s-72": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-73": {
+  "chosen": "skill.grothendieckparse",
+  "confidence": 0.7516597,
+  "margin": 0.012378037,
+  "correct": true
+ },
+ "s-74": {
+  "chosen": "skill.progressioncompletion",
+  "confidence": 0.74224347,
+  "margin": 0.039761484,
+  "correct": false
+ },
+ "s-75": {
+  "chosen": "skill.grothendieckparse",
+  "confidence": 0.9847729,
+  "margin": 0.21945179,
+  "correct": true
+ },
+ "s-76": {
+  "chosen": "skill.transpose",
+  "confidence": 0.72627395,
+  "margin": 0.012828231,
+  "correct": false
+ },
+ "s-77": {
+  "chosen": "skill.intervalclassvector",
+  "confidence": 0.7285638,
+  "margin": 0.0074731708,
+  "correct": false
+ },
+ "s-78": {
+  "chosen": "skill.grothendieckparse",
+  "confidence": 0.81577635,
+  "margin": 0.076137185,
+  "correct": true
+ },
+ "s-79": {
+  "chosen": "skill.icvneighbors",
+  "confidence": 0.88626724,
+  "margin": 0.04259491,
+  "correct": true
+ },
+ "s-80": {
+  "chosen": "skill.icvneighbors",
+  "confidence": 0.7006062,
+  "margin": 0.015451074,
+  "correct": true
+ },
+ "s-81": {
+  "chosen": "skill.interval",
+  "confidence": 0.7590221,
+  "margin": 0.036790848,
+  "correct": false
+ },
+ "s-82": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.7914764,
+  "margin": 0.01110357,
+  "correct": false
+ },
+ "s-83": {
+  "chosen": "skill.intervalclassvector",
+  "confidence": 0.66716444,
+  "margin": 0.07720989,
+  "correct": false
+ },
+ "s-84": {
+  "chosen": "skill.intervalclassvector",
+  "confidence": 0.87848103,
+  "margin": 0.12970191,
+  "correct": false
+ },
+ "s-85": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.9656797,
+  "margin": 0.16986525,
+  "correct": true
+ },
+ "s-86": {
+  "chosen": "skill.icvneighbors",
+  "confidence": 0.8520417,
+  "margin": 0.009797394,
+  "correct": false
+ },
+ "s-87": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.7071036,
+  "margin": 0.103137374,
+  "correct": true
+ },
+ "s-88": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.7590968,
+  "margin": 0.00076669455,
+  "correct": false
+ },
+ "s-89": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.6455588,
+  "margin": 0.062808156,
+  "correct": true
+ },
+ "s-90": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.69991404,
+  "margin": 0.024680674,
+  "correct": true
+ },
+ "s-91": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.8562262,
+  "margin": 0.14037132,
+  "correct": true
+ },
+ "s-92": {
+  "chosen": "skill.modes",
+  "confidence": 0.78763735,
+  "margin": 0.019091249,
+  "correct": false
+ },
+ "s-93": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.89624274,
+  "margin": 0.14337462,
+  "correct": true
+ },
+ "s-94": {
+  "chosen": "skill.modes",
+  "confidence": 0.7743658,
+  "margin": 0.015392482,
+  "correct": false
+ },
+ "s-95": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-96": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.76594466,
+  "margin": 0.12393534,
+  "correct": true
+ },
+ "s-97": {
+  "chosen": "skill.interval",
+  "confidence": 0.64090383,
+  "margin": 0.028732777,
+  "correct": true
+ },
+ "s-98": {
+  "chosen": "skill.interval",
+  "confidence": 0.9177969,
+  "margin": 0.15310228,
+  "correct": true
+ },
+ "s-99": {
+  "chosen": "skill.interval",
+  "confidence": 0.8303681,
+  "margin": 0.072749496,
+  "correct": true
+ },
+ "s-100": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.75812835,
+  "margin": 0.013977408,
+  "correct": false
+ },
+ "s-101": {
+  "chosen": "skill.interval",
+  "confidence": 0.89149624,
+  "margin": 0.13757986,
+  "correct": true
+ },
+ "s-102": {
+  "chosen": "skill.interval",
+  "confidence": 0.7469147,
+  "margin": 0.09606546,
+  "correct": true
+ },
+ "s-103": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-104": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-105": {
+  "chosen": "skill.intervalclassvector",
+  "confidence": 0.7512157,
+  "margin": 0.007505238,
+  "correct": true
+ },
+ "s-106": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.6877374,
+  "margin": 0.031544566,
+  "correct": false
+ },
+ "s-107": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-108": {
+  "chosen": "skill.intervalclassvector",
+  "confidence": 0.9147501,
+  "margin": 0.16437387,
+  "correct": true
+ },
+ "s-109": {
+  "chosen": "skill.keyidentification",
+  "confidence": 0.95377,
+  "margin": 0.13766658,
+  "correct": true
+ },
+ "s-110": {
+  "chosen": "skill.keyidentification",
+  "confidence": 0.928568,
+  "margin": 0.115365386,
+  "correct": true
+ },
+ "s-111": {
+  "chosen": "skill.keyidentification",
+  "confidence": 0.88132775,
+  "margin": 0.109114945,
+  "correct": true
+ },
+ "s-112": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.7859504,
+  "margin": 0.010381997,
+  "correct": false
+ },
+ "s-113": {
+  "chosen": "skill.keyidentification",
+  "confidence": 0.69399166,
+  "margin": 0.058208466,
+  "correct": true
+ },
+ "s-114": {
+  "chosen": "skill.keyidentification",
+  "confidence": 0.76647484,
+  "margin": 0.096661866,
+  "correct": true
+ },
+ "s-115": {
+  "chosen": "skill.modes",
+  "confidence": 0.9098052,
+  "margin": 0.17024976,
+  "correct": true
+ },
+ "s-116": {
+  "chosen": "skill.modes",
+  "confidence": 0.9536974,
+  "margin": 0.072751164,
+  "correct": true
+ },
+ "s-117": {
+  "chosen": "skill.modes",
+  "confidence": 0.8380367,
+  "margin": 0.04543352,
+  "correct": true
+ },
+ "s-118": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.7897903,
+  "margin": 0.0013677478,
+  "correct": false
+ },
+ "s-119": {
+  "chosen": "skill.modes",
+  "confidence": 0.8297784,
+  "margin": 0.08314961,
+  "correct": true
+ },
+ "s-120": {
+  "chosen": "skill.modes",
+  "confidence": 0.76729435,
+  "margin": 0.0021151304,
+  "correct": true
+ },
+ "s-121": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-122": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.7314991,
+  "margin": 0.0028347373,
+  "correct": false
+ },
+ "s-123": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-124": {
+  "chosen": "skill.outsidenotes",
+  "confidence": 0.7209423,
+  "margin": 0.09500456,
+  "correct": true
+ },
+ "s-125": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.76213235,
+  "margin": 0.0058626533,
+  "correct": false
+ },
+ "s-126": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-127": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.94703364,
+  "margin": 0.21934807,
+  "correct": true
+ },
+ "s-128": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.82263756,
+  "margin": 0.12743527,
+  "correct": true
+ },
+ "s-129": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.8115775,
+  "margin": 0.13992894,
+  "correct": true
+ },
+ "s-130": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.71594584,
+  "margin": 0.2052775,
+  "correct": true
+ },
+ "s-131": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.82200545,
+  "margin": 0.10371053,
+  "correct": true
+ },
+ "s-132": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.85885006,
+  "margin": 0.1687659,
+  "correct": true
+ },
+ "s-133": {
+  "chosen": "skill.progressioncompletion",
+  "confidence": 0.9486406,
+  "margin": 0.14907068,
+  "correct": true
+ },
+ "s-134": {
+  "chosen": "skill.progressioncompletion",
+  "confidence": 0.6938217,
+  "margin": 0.12344903,
+  "correct": true
+ },
+ "s-135": {
+  "chosen": "skill.voiceleading",
+  "confidence": 0.6922503,
+  "margin": 0.072057664,
+  "correct": false
+ },
+ "s-136": {
+  "chosen": "skill.progressioncompletion",
+  "confidence": 0.85860777,
+  "margin": 0.05892861,
+  "correct": true
+ },
+ "s-137": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-138": {
+  "chosen": "skill.progressioncompletion",
+  "confidence": 0.80009997,
+  "margin": 0.010867178,
+  "correct": true
+ },
+ "s-139": {
+  "chosen": "skill.progressionmood",
+  "confidence": 0.7529572,
+  "margin": 0.11733532,
+  "correct": true
+ },
+ "s-140": {
+  "chosen": "skill.progressionmood",
+  "confidence": 0.7050093,
+  "margin": 0.0963822,
+  "correct": true
+ },
+ "s-141": {
+  "chosen": "skill.progressionmood",
+  "confidence": 0.6711174,
+  "margin": 0.03143096,
+  "correct": true
+ },
+ "s-142": {
+  "chosen": "skill.progressionmood",
+  "confidence": 0.67442405,
+  "margin": 0.06198901,
+  "correct": true
+ },
+ "s-143": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.6824116,
+  "margin": 0.044638872,
+  "correct": false
+ },
+ "s-144": {
+  "chosen": "skill.progressionmood",
+  "confidence": 0.7164647,
+  "margin": 0.07793331,
+  "correct": true
+ },
+ "s-145": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.827378,
+  "margin": 0.1183154,
+  "correct": true
+ },
+ "s-146": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.8144689,
+  "margin": 0.13423103,
+  "correct": true
+ },
+ "s-147": {
+  "chosen": "skill.commontones",
+  "confidence": 0.80664146,
+  "margin": 0.092847586,
+  "correct": false
+ },
+ "s-148": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.78680295,
+  "margin": 0.06251985,
+  "correct": true
+ },
+ "s-149": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.6810296,
+  "margin": 0.036345005,
+  "correct": true
+ },
+ "s-150": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.810454,
+  "margin": 0.010225296,
+  "correct": true
+ },
+ "s-151": {
+  "chosen": "skill.rememberthis",
+  "confidence": 0.8213633,
+  "margin": 0.045169473,
+  "correct": true
+ },
+ "s-152": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.7236998,
+  "margin": 0.011667967,
+  "correct": false
+ },
+ "s-153": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-154": {
+  "chosen": "skill.rememberthis",
+  "confidence": 0.7075506,
+  "margin": 0.037325203,
+  "correct": true
+ },
+ "s-155": {
+  "chosen": "skill.rememberthis",
+  "confidence": 0.7771728,
+  "margin": 0.088127434,
+  "correct": true
+ },
+ "s-156": {
+  "chosen": "skill.transpose",
+  "confidence": 0.7299634,
+  "margin": 0.00022625923,
+  "correct": false
+ },
+ "s-158": {
+  "chosen": "skill.scaleinfo",
+  "confidence": 0.8948069,
+  "margin": 0.11630404,
+  "correct": true
+ },
+ "s-159": {
+  "chosen": "skill.scaleinfo",
+  "confidence": 0.82814324,
+  "margin": 0.0036737323,
+  "correct": true
+ },
+ "s-160": {
+  "chosen": "skill.scaleinfo",
+  "confidence": 0.8749626,
+  "margin": 0.12728173,
+  "correct": true
+ },
+ "s-161": {
+  "chosen": "skill.interval",
+  "confidence": 0.69770974,
+  "margin": 0.0019443035,
+  "correct": false
+ },
+ "s-162": {
+  "chosen": "skill.scaleinfo",
+  "confidence": 0.7639887,
+  "margin": 0.0023850799,
+  "correct": true
+ },
+ "s-163": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.8439677,
+  "margin": 0.22850722,
+  "correct": true
+ },
+ "s-164": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-165": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-166": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-167": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.73400396,
+  "margin": 0.19214141,
+  "correct": true
+ },
+ "s-168": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.711565,
+  "margin": 0.09826815,
+  "correct": true
+ },
+ "s-169": {
+  "chosen": "skill.modes",
+  "confidence": 0.8052478,
+  "margin": 0.004864931,
+  "correct": false
+ },
+ "s-170": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-171": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-172": {
+  "chosen": "skill.rememberthis",
+  "confidence": 0.74410844,
+  "margin": 0.025498748,
+  "correct": false
+ },
+ "s-173": {
+  "chosen": "skill.theorycomparison",
+  "confidence": 0.70511466,
+  "margin": 0.011630416,
+  "correct": true
+ },
+ "s-174": {
+  "chosen": "skill.modes",
+  "confidence": 0.81522256,
+  "margin": 0.031803608,
+  "correct": false
+ },
+ "s-175": {
+  "chosen": "skill.transpose",
+  "confidence": 0.75719064,
+  "margin": 0.06381166,
+  "correct": true
+ },
+ "s-176": {
+  "chosen": "skill.transpose",
+  "confidence": 0.9196241,
+  "margin": 0.14067996,
+  "correct": true
+ },
+ "s-177": {
+  "chosen": "skill.transpose",
+  "confidence": 0.78475934,
+  "margin": 0.016685426,
+  "correct": true
+ },
+ "s-178": {
+  "chosen": "skill.transpose",
+  "confidence": 0.9058749,
+  "margin": 0.17301977,
+  "correct": true
+ },
+ "s-179": {
+  "chosen": "skill.capo",
+  "confidence": 0.7619105,
+  "margin": 0.018980086,
+  "correct": false
+ },
+ "s-180": {
+  "chosen": "skill.transpose",
+  "confidence": 0.6774878,
+  "margin": 0.036744773,
+  "correct": true
+ },
+ "s-181": {
+  "chosen": "skill.outsidenotes",
+  "confidence": 0.8042852,
+  "margin": 0.0028311014,
+  "correct": false
+ },
+ "s-182": {
+  "chosen": "skill.transpose",
+  "confidence": 0.6638383,
+  "margin": 0.003982067,
+  "correct": false
+ },
+ "s-183": {
+  "chosen": "skill.voiceleading",
+  "confidence": 0.79164666,
+  "margin": 0.06799626,
+  "correct": true
+ },
+ "s-184": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-185": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": false
+ },
+ "s-186": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.6493693,
+  "margin": 0.01384294,
+  "correct": false
+ },
+ "s-187": {
+  "chosen": "skill.whatcanyoudo",
+  "confidence": 0.7869819,
+  "margin": 0.0782246,
+  "correct": true
+ },
+ "s-189": {
+  "chosen": "skill.whatcanyoudo",
+  "confidence": 0.7180119,
+  "margin": 0.20609814,
+  "correct": true
+ },
+ "s-190": {
+  "chosen": "skill.whatcanyoudo",
+  "confidence": 0.72599036,
+  "margin": 0.030565977,
+  "correct": true
+ },
+ "s-191": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.6802629,
+  "margin": 0.012781143,
+  "correct": false
+ },
+ "s-192": {
+  "chosen": "skill.whatcanyoudo",
+  "confidence": 0.74266595,
+  "margin": 0.19958705,
+  "correct": true
+ },
+ "s-193": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-194": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-195": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-196": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-197": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-198": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-199": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-200": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-201": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-202": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-203": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-204": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-205": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-206": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-207": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-208": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-209": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-210": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-211": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-212": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-213": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-214": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-215": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-217": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-218": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-219": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-220": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-221": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-222": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-223": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "s-224": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ }
+}
