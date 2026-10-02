@@ -265,3 +265,45 @@ Jev ran 221 calls. 220 were valid. One, s-59, failed with a network exception af
 - The label rule asks the same question Jev is asked ("can a listed skill answer this?"). That is what a decline means in production, but a similarity threshold cannot see it, so the rule may favour Jev. Excluding ambiguous titles limits that effect; it does not remove it.
 - Music Stack Exchange is not GA's audience. Its questions are more about piano, notation, engraving and gear, and fewer are about guitar chords. Titles are shorter than the questions, and all are in English.
 - The titles are public posts under CC BY-SA 4.0, kept with attribution. They are not GA chatbot users' messages.
+
+## Jev arm — Stage 4 results (2026-10-02, scored against the Stage 4 pre-registration)
+
+Jev ran 100 calls and all 100 were valid: HTTP 200 every time, 202 ms median latency, 441 ms at most. Reported usage was 289,779 input and 39,435 output tokens, **$0.0122** at the rate card. This is computed, not an invoice. The ratio was 0.31 tokens per body byte, close to Stage 3's 0.30. Details are in `jev/musicse/stage4-comparison.json`.
+
+| On the 87 scored titles | In-scope (1) | `__none__` declined (86) | Total |
+|---|---|---|---|
+| base (ga `5c3a52ab`, production code, bge-large @ 0.64) | 1 | 41 | 42 |
+| c2-merge (arena `e9db25cc`) | 0 | 54 | 54 |
+| **Jev zero-shot** (32 production descriptions) | **1** | **81** | **82** |
+
+**Verdicts:**
+- **H1 = JEV_AHEAD.** Jev is right where base is wrong on 41 titles, and the reverse happens on 1 (exact McNemar p ≈ 2.0e-11).
+- **Q2 = JEV_AHEAD.** Against c2-merge, the counts are 31 and 3 (p ≈ 7.7e-7).
+- **Arm band: ROBUST.** 81/86 declines against the 73 threshold, and no invalid response.
+- Reported: c2-merge beats base, 15 against 3 (p = 0.0075). Its out-of-domain penalty helps on real questions, but it still routes 32 of the 86.
+
+**What this shows:**
+- **Production routes 45 of the 86 questions it cannot answer (52 %) to a skill**, spread over 21 skills. Examples: "Linear Phase Plugin" goes to icvshortestpath (confidence 0.668), "Why are repeats not represented in sheet music?" to settheoryequivalence (0.660), and "How to get the deep robotic voice sound effect?" to chordvoicings (0.694). A wrong route answers with the wrong canned skill instead of falling through to the general answer.
+- Stage 3 could not show this. Its out-of-scope prompts (weather, boiled eggs) are far from every skill; real music questions are not. The 0.64 threshold separates music from non-music. It does not separate what a skill can answer from what it cannot.
+- **Jev routes 5 of the 86 (6 %).**
+  - Two follow a "difference between" phrasing to theorycomparison: m-74 (clarion and clarino ranges) and m-85 (tuplet brackets).
+  - m-73 (piano left-hand patterns) goes to voiceleading, and m-75 (a randomly fluctuating metronome) to practiceroutine.
+  - m-95 (violin quadruple stops) goes to fretspan, as it does for base.
+- The one in-scope title, quartal voicings in D Dorian, goes to chordvoicings for Jev and base, and to modes for c2-merge.
+- **On the 13 ambiguous titles:**
+  - Jev picks one of the candidate skills written in the corpus 9 times and declines 3; the 13th goes to a skill outside its candidates.
+  - Base never declines them and picks a candidate 3 times.
+  - c2-merge picks a candidate once and declines 3.
+  - Claude wrote both the candidates and the label rule, so this agreement may partly reflect shared reasoning, not independent correctness.
+- **Jev and base agree on 45 of the 100 titles**: 40 where both decline, 5 with the same skill. In 44 of the 55 disagreements, base routes and Jev declines. If GA's users ask questions like these, the live shadow's agreement rate will be low for that reason. Those rows are the ones to label first.
+- **Design consequence (not registered).** Stage 3's cheaper hybrid, escalating to Jev only when the local router declines, cannot fix this failure. Here the local router does not decline; it routes. Fixing it needs Jev to check every routed message, or a stricter local decline.
+- **Exploratory, tuned on this set, not a result:**
+  - raising base's threshold to 0.70 would leave 20 of the 45 wrong routes and keep 118 of base's 121 correct Stage 3 in-scope answers;
+  - at 0.75, it would leave 4 and keep 103.
+  - A threshold change would need its own pre-registration on a fresh set.
+- **Not shown:**
+  - GA's users: the live shadow log still holds only the 3 deploy checks;
+  - French;
+  - independent labels. Claude labelled the corpus with the question Jev is asked, so the 81 declines partly measure agreement between Jev and Claude. Base's 45 wrong routes depend much less on that: most are notation, gear or software questions that no skill covers under any reading.
+
+**Cumulative Jev spend (all experiments):** 870 + 100 = 970 calls, about $0.048 + $0.012 = **$0.060** computed, against the operator's $1 ceiling. GA's live shadow adds 3 calls, $0.00045.
