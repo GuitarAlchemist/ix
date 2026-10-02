@@ -1,0 +1,230 @@
+{
+ "registered_in": "RESULTS.md, Stage 4 pre-registration (commit 806df29)",
+ "scored_titles": 87,
+ "correct": {
+  "jev": 82,
+  "base": 42,
+  "c2-merge": 54
+ },
+ "H1_jev_vs_base": {
+  "a": "jev",
+  "b": "base",
+  "a_correct": 82,
+  "b_correct": 42,
+  "a_right_b_wrong": 41,
+  "b_right_a_wrong": 1,
+  "p_two_sided": 1.9554136088117957e-11,
+  "verdict": "JEV_AHEAD"
+ },
+ "Q2_jev_vs_c2merge": {
+  "a": "jev",
+  "b": "c2-merge",
+  "a_correct": 82,
+  "b_correct": 54,
+  "a_right_b_wrong": 31,
+  "b_right_a_wrong": 3,
+  "p_two_sided": 7.660128176212311e-07,
+  "verdict": "JEV_AHEAD"
+ },
+ "reported_c2merge_vs_base": {
+  "a": "c2-merge",
+  "b": "base",
+  "a_correct": 54,
+  "b_correct": 42,
+  "a_right_b_wrong": 15,
+  "b_right_a_wrong": 3,
+  "p_two_sided": 0.007537841796875,
+  "verdict": "C2-MERGE_AHEAD"
+ },
+ "none_titles_routed_to_a_skill": {
+  "jev": {
+   "count": 5,
+   "by_skill": {
+    "skill.theorycomparison": 2,
+    "skill.voiceleading": 1,
+    "skill.practiceroutine": 1,
+    "skill.fretspan": 1
+   }
+  },
+  "base": {
+   "count": 45,
+   "by_skill": {
+    "skill.settheoryequivalence": 6,
+    "skill.improvisation": 5,
+    "skill.chordsubstitution": 4,
+    "skill.fretspan": 4,
+    "skill.icvshortestpath": 4,
+    "skill.circleoffifths": 3,
+    "skill.chordinfo": 3,
+    "skill.interval": 2,
+    "skill.transpose": 2,
+    "skill.relativekey": 1,
+    "skill.commontones": 1,
+    "skill.progressionmood": 1,
+    "skill.voiceleading": 1,
+    "skill.alternatetunings": 1,
+    "skill.chordvoicings": 1,
+    "skill.capo": 1,
+    "skill.modes": 1,
+    "skill.keyidentification": 1,
+    "skill.outsidenotes": 1,
+    "skill.intervalclassvector": 1,
+    "skill.scaleinfo": 1
+   }
+  },
+  "c2-merge": {
+   "count": 32,
+   "by_skill": {
+    "skill.circleoffifths": 3,
+    "skill.chordsubstitution": 3,
+    "skill.fretspan": 3,
+    "skill.transpose": 2,
+    "skill.keyidentification": 2,
+    "skill.interval": 2,
+    "skill.settheoryequivalence": 2,
+    "skill.modes": 2,
+    "skill.scaleinfo": 2,
+    "skill.commontones": 2,
+    "skill.practiceroutine": 1,
+    "skill.chordvoicings": 1,
+    "skill.chordinfo": 1,
+    "skill.improvisation": 1,
+    "skill.icvshortestpath": 1,
+    "skill.capo": 1,
+    "skill.diatonicchords": 1,
+    "skill.outsidenotes": 1,
+    "skill.progressioncompletion": 1
+   }
+  }
+ },
+ "in_scope_title": {
+  "m-94": {
+   "title": "Basic five-note quartal voicings in D dorian?",
+   "gold": "skill.chordvoicings",
+   "jev": "skill.chordvoicings",
+   "base": "skill.chordvoicings",
+   "c2-merge": "skill.modes"
+  }
+ },
+ "ambiguous_titles": {
+  "m-8": {
+   "title": "Chord leading and the 7 western modes",
+   "jev": "skill.modes",
+   "base": "skill.diatonicchords",
+   "c2-merge": "skill.diatonicchords"
+  },
+  "m-12": {
+   "title": "Increasing finger speed for Beethoven's Pathetique",
+   "jev": "skill.practiceroutine",
+   "base": "skill.chordvoicings",
+   "c2-merge": "__none__"
+  },
+  "m-22": {
+   "title": "Exception in chromatic scale on guitar from third to second string",
+   "jev": "__none__",
+   "base": "skill.fretspan",
+   "c2-merge": "skill.chordsubstitution"
+  },
+  "m-24": {
+   "title": "How do I position my hand for 8-5-5-|-0 on a classical guitar?",
+   "jev": "skill.chordvoicings",
+   "base": "skill.capo",
+   "c2-merge": "skill.capo"
+  },
+  "m-26": {
+   "title": "Harmonizing a melody query",
+   "jev": "skill.chordsubstitution",
+   "base": "skill.genreessentials",
+   "c2-merge": "skill.diatonicchords"
+  },
+  "m-33": {
+   "title": "Tonality of Ending of Prokofiev Piano Sonata 8",
+   "jev": "__none__",
+   "base": "skill.chordsubstitution",
+   "c2-merge": "__none__"
+  },
+  "m-37": {
+   "title": "What is the name and function of the D-F-A♯ chord in this guitar score?",
+   "jev": "skill.chordinfo",
+   "base": "skill.chordinfo",
+   "c2-merge": "skill.chordinfo"
+  },
+  "m-51": {
+   "title": "Classifying Cadence at End of Schubert Symphony 5, I. Allegro",
+   "jev": "__none__",
+   "base": "skill.intervalclassvector",
+   "c2-merge": "skill.commontones"
+  },
+  "m-78": {
+   "title": "Contrasting Blues Scale Sonorities",
+   "jev": "skill.theorycomparison",
+   "base": "skill.chordsubstitution",
+   "c2-merge": "skill.chordsubstitution"
+  },
+  "m-79": {
+   "title": "Why does 7:4 sound unpleasant in a C major chord?",
+   "jev": "skill.outsidenotes",
+   "base": "skill.outsidenotes",
+   "c2-merge": "skill.chordsubstitution"
+  },
+  "m-81": {
+   "title": "D Harmonic Minor or something else",
+   "jev": "skill.modes",
+   "base": "skill.relativekey",
+   "c2-merge": "skill.relativekey"
+  },
+  "m-88": {
+   "title": "Why swap notes between identical chords?",
+   "jev": "skill.voiceleading",
+   "base": "skill.outsidenotes",
+   "c2-merge": "skill.outsidenotes"
+  },
+  "m-99": {
+   "title": "I've hit a wall practicing alone after 8 years of having a teacher, and I need help",
+   "jev": "skill.practiceroutine",
+   "base": "skill.practiceroutine",
+   "c2-merge": "__none__"
+  }
+ },
+ "jev_false_routes": {
+  "m-73": {
+   "title": "Piano left hand patterns. How to keep the flow going even when the chord changes in the middle of the pattern",
+   "jev": "skill.voiceleading",
+   "base": "skill.improvisation"
+  },
+  "m-74": {
+   "title": "Are \"clarion\" and \"clarino\" range the same?",
+   "jev": "skill.theorycomparison",
+   "base": "__none__"
+  },
+  "m-75": {
+   "title": "Is there any merit to practising with a randomly fluctuating metronome?",
+   "jev": "skill.practiceroutine",
+   "base": "skill.improvisation"
+  },
+  "m-85": {
+   "title": "What's the difference between having a line next to the number on a musical note multiplets and not having one?",
+   "jev": "skill.theorycomparison",
+   "base": "skill.outsidenotes"
+  },
+  "m-95": {
+   "title": "Quadruple Stops Playability",
+   "jev": "skill.fretspan",
+   "base": "skill.fretspan"
+  }
+ },
+ "agreement_jev_base_all_100": 45,
+ "agreement_jev_base_breakdown": {
+  "both decline": 40,
+  "base routes, jev declines": 44,
+  "different skills": 10,
+  "same skill": 5,
+  "jev routes, base declines": 1
+ },
+ "jev_usage": {
+  "input_tokens": 289779,
+  "note": "Rate-card arithmetic on reported input tokens (output tokens are free on the reviewed card), not an account charge.",
+  "output_tokens": 39435,
+  "rate_card_usd": 0.012170718
+ }
+}
