@@ -184,13 +184,26 @@ impl AntColony {
     /// # Panics
     ///
     /// If `distances` is not square, not symmetric, or holds a negative or
-    /// non-finite value, or if the evaporation rate is outside `(0, 1]`.
+    /// non-finite value, if `alpha` or `beta` is not finite, or if the
+    /// evaporation rate is outside `(0, 1]`.
     pub fn solve_tsp(&self, distances: &Array2<f64>) -> TourResult {
         validate(distances);
         assert!(
             self.evaporation > 0.0 && self.evaporation <= 1.0,
             "evaporation must be in (0, 1], got {}",
             self.evaporation
+        );
+        // A NaN exponent makes every transition weight NaN, and the walk would
+        // silently fall back to the nearest city at every step.
+        assert!(
+            self.alpha.is_finite(),
+            "alpha must be finite, got {}",
+            self.alpha
+        );
+        assert!(
+            self.beta.is_finite(),
+            "beta must be finite, got {}",
+            self.beta
         );
 
         let n = distances.nrows();
@@ -202,6 +215,7 @@ impl AntColony {
             };
         }
 
+        // @ai:invariant solve_tsp is reproducible: the same seed, parameters and distance matrix give the same tour and the same best-length history on every run, because all randomness comes from this one seeded StdRng [T:test conf:0.9 src:aco::tests::test_same_seed_same_tour]
         let mut rng = StdRng::seed_from_u64(self.seed);
         let ants = self.num_ants.unwrap_or(n).max(1);
 
@@ -620,5 +634,19 @@ mod tests {
     #[should_panic(expected = "square")]
     fn test_rejects_a_non_square_matrix() {
         AntColony::new().solve_tsp(&Array2::zeros((2, 3)));
+    }
+
+    #[test]
+    #[should_panic(expected = "alpha must be finite")]
+    fn test_rejects_a_nan_alpha() {
+        let d = euclidean(&random_cities(5, 1));
+        AntColony::new().with_alpha(f64::NAN).solve_tsp(&d);
+    }
+
+    #[test]
+    #[should_panic(expected = "beta must be finite")]
+    fn test_rejects_an_infinite_beta() {
+        let d = euclidean(&random_cities(5, 1));
+        AntColony::new().with_beta(f64::INFINITY).solve_tsp(&d);
     }
 }
