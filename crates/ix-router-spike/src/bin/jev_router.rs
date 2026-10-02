@@ -37,6 +37,13 @@ const EXPLORATORY_TAUS: [f64; 5] = [0.0, 0.3, 0.5, 0.7, 0.9];
 /// Probabilities may be rounded by the provider; 17 values rounded to 4 dp can
 /// drift ~1e-4 from 1. A format quirk must not be scored as a routing failure.
 const SUM_TOL: f64 = 1e-3;
+/// Stage 3 tolerance, registered before any Stage 3 call. Jev reports
+/// 2-decimal probabilities, and every invalid Stage 2 response summed to 0.99
+/// over 17 options; with 33 options the rounding drift can reach a few
+/// hundredths. The argmax and range checks still apply. Stage 1/2 arms keep
+/// SUM_TOL so their registered verdicts stand.
+const SUM_TOL_STAGE3: f64 = 0.03;
+const OPTIONS_V1: &str = "state/router-spike/jev/options.json";
 
 /// One pre-registered arm. `corpus_sha256` is the SHA-256 of the canonical JSON
 /// of [(id, prompt, expectedIntentId)] (line-ending independent); the verdict
@@ -44,6 +51,10 @@ const SUM_TOL: f64 = 1e-3;
 struct Arm {
     name: &'static str,
     corpus: &'static str,
+    /// Options file the requests are built from (instructions + criteria).
+    options: &'static str,
+    /// Allowed |sum(probabilities) - 1| before a response is a contract failure.
+    sum_tol: f64,
     reversed_options: bool,
     corpus_sha256: &'static str,
     inscope: usize,
@@ -56,11 +67,14 @@ struct Arm {
 
 const BASE_SHA: &str = "692b1c9d1460e72074dafaad0223d81c2aa5a50fb58b1ea5a91dbd4d4ef2b588";
 
-/// Stage 2 arms (RESULTS.md, "Jev arm — Stage 2 robustness pre-registration").
-const ARMS: [Arm; 5] = [
+/// Stage 2 arms (RESULTS.md, "Jev arm — Stage 2 robustness pre-registration"),
+/// plus the Stage 3 `full` arm ("Jev arm — Stage 3 full-universe pre-registration").
+const ARMS: [Arm; 6] = [
     Arm {
         name: "base",
         corpus: "state/router-spike/heldout-test.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
         corpus_sha256: BASE_SHA,
         inscope: 110,
@@ -71,6 +85,8 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "reversed",
         corpus: "state/router-spike/heldout-test.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: true,
         corpus_sha256: BASE_SHA,
         inscope: 110,
@@ -81,6 +97,8 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "fr",
         corpus: "state/router-spike/jev/corpora/heldout-fr.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
         corpus_sha256: "d7e9651d97c37ce624ab1cf2fc531a9659e6b90ab501434fb4573a3eab1798e8",
         inscope: 110,
@@ -91,6 +109,8 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "es",
         corpus: "state/router-spike/jev/corpora/heldout-es.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
         corpus_sha256: "c509430babf0887e62e1ec2ba6ba16db03d1f1d6f1dc36888b7ea6af0056f564",
         inscope: 110,
@@ -101,12 +121,29 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "fresh",
         corpus: "state/router-spike/jev/corpora/fresh-test.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
         corpus_sha256: "e9e8c0e1b51e67abb2543ba77c6992b72bf4c98d18d71d3af5ac7ab777d07385",
         inscope: 112,
         oos: 16,
         robust: (101, 13),
         degraded_floor: 92,
+    },
+    // Stage 3: all 32 routable GA skills + __none__, Sol-authored corpus,
+    // production descriptions as options. Bands use the Stage 2 proportions
+    // (ROBUST >= 0.90 in-scope and >= 13/16 OOS, DEGRADED floor 0.82), rounded up.
+    Arm {
+        name: "full",
+        corpus: "state/router-spike/jev/corpora/full-sol.json",
+        options: "state/router-spike/jev/options-full.json",
+        sum_tol: SUM_TOL_STAGE3,
+        reversed_options: false,
+        corpus_sha256: "f062dcbda5a1ec94a48164aed8aa442094e1232f540fe154a3d195a550792747",
+        inscope: 190,
+        oos: 31,
+        robust: (171, 26),
+        degraded_floor: 156,
     },
 ];
 
@@ -226,7 +263,7 @@ fn num(v: &Value) -> Option<f64> {
 }
 
 /// Fail-closed validation of one response against the options it was asked.
-fn validate(resp: &Value, options: &BTreeSet<String>) -> Result<Answer, Invalid> {
+fn validate(resp: &Value, options: &BTreeSet<String>, sum_tol: f64) -> Result<Answer, Invalid> {
     let c = |m: &str| Invalid::Contract(m.to_string());
     let model = resp
         .get("model")
@@ -270,7 +307,7 @@ fn validate(resp: &Value, options: &BTreeSet<String>) -> Result<Answer, Invalid>
             .ok_or_else(|| c("probability outside [0,1]"))?;
         probabilities.insert(k.clone(), p);
     }
-    if (probabilities.values().sum::<f64>() - 1.0).abs() > SUM_TOL {
+    if (probabilities.values().sum::<f64>() - 1.0).abs() > sum_tol {
         return Err(c("probabilities must sum to 1"));
     }
     let max = probabilities.values().cloned().fold(f64::MIN, f64::max);
@@ -435,7 +472,7 @@ struct Setup {
 
 fn setup(root: &Path, arm: &'static Arm) -> Setup {
     let heldout: HeldOut = read_json(&root.join(arm.corpus));
-    let options: Options = read_json(&root.join("state/router-spike/jev/options.json"));
+    let options: Options = read_json(&root.join(arm.options));
     let option_set: BTreeSet<String> = options.criteria.keys().cloned().collect();
     let gold_labels: BTreeSet<String> =
         heldout.prompts.iter().map(|p| p.expected.clone()).collect();
@@ -604,7 +641,7 @@ fn validate_all(
         .map(|(p, d)| match receipt.get(&p.id) {
             None => Err(Invalid::Missing),
             Some((got, _)) if got != d => Err(Invalid::DigestMismatch),
-            Some((_, resp)) => validate(resp, &s.option_set),
+            Some((_, resp)) => validate(resp, &s.option_set, s.arm.sum_tol),
         })
         .collect()
 }
@@ -804,7 +841,7 @@ fn main() {
             fs::write(out.join("jev-eval.json"), serde_json::to_string_pretty(&r).unwrap() + "\n").expect("write jev-eval.json");
             println!("{}", serde_json::to_string_pretty(&r).unwrap());
         }
-        _ => eprintln!("usage: jev-router plan | mock | score <receipt.jsonl> [--arm base|reversed|fr|es|fresh]   (run from the ix root or set IX_ROOT)"),
+        _ => eprintln!("usage: jev-router plan | mock | score <receipt.jsonl> [--arm base|reversed|fr|es|fresh|full]   (run from the ix root or set IX_ROOT)"),
     }
 }
 
@@ -827,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_validate_accepts_well_formed_choice() {
-        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts()).unwrap();
+        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts(), SUM_TOL).unwrap();
         assert_eq!(a.choice, "a");
         assert_eq!(a.input_tokens, 10);
     }
@@ -835,15 +872,15 @@ mod tests {
     #[test]
     fn test_validate_rejects_contract_breaks() {
         assert!(matches!(
-            validate(&resp("a", 0.7, 0.2, 0.2), &opts()),
+            validate(&resp("a", 0.7, 0.2, 0.2), &opts(), SUM_TOL),
             Err(Invalid::Contract(_))
         )); // sum != 1
         assert!(matches!(
-            validate(&resp("b", 0.7, 0.2, 0.1), &opts()),
+            validate(&resp("b", 0.7, 0.2, 0.1), &opts(), SUM_TOL),
             Err(Invalid::Contract(_))
         )); // not argmax
         assert!(matches!(
-            validate(&resp("z", 0.7, 0.2, 0.1), &opts()),
+            validate(&resp("z", 0.7, 0.2, 0.1), &opts(), SUM_TOL),
             Err(Invalid::Contract(_))
         )); // unknown option
         let mut r = resp("a", 0.7, 0.2, 0.1);
@@ -851,11 +888,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove(NONE);
-        assert!(matches!(validate(&r, &opts()), Err(Invalid::Contract(_)))); // missing option key
+        assert!(matches!(
+            validate(&r, &opts(), SUM_TOL),
+            Err(Invalid::Contract(_))
+        )); // missing option key
         let mut r = resp("a", 0.7, 0.2, 0.1);
         r["model"] = json!("jev-latest");
         assert_eq!(
-            validate(&r, &opts()),
+            validate(&r, &opts(), SUM_TOL),
             Err(Invalid::WrongModel("jev-latest".into()))
         );
     }
@@ -864,7 +904,10 @@ mod tests {
     fn test_missing_usage_is_invalid_not_zero_cost() {
         let mut r = resp("a", 0.7, 0.2, 0.1);
         r.as_object_mut().unwrap().remove("usage");
-        assert!(matches!(validate(&r, &opts()), Err(Invalid::Contract(_))));
+        assert!(matches!(
+            validate(&r, &opts(), SUM_TOL),
+            Err(Invalid::Contract(_))
+        ));
     }
 
     #[test]
@@ -896,7 +939,7 @@ mod tests {
 
     #[test]
     fn test_exploratory_tau_declines_low_confidence() {
-        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts()).unwrap();
+        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts(), SUM_TOL).unwrap();
         assert_eq!(route(&a, 0.0), "a");
         assert_eq!(route(&a, 0.9), NONE);
     }
@@ -956,6 +999,36 @@ mod tests {
     }
 
     #[test]
+    fn test_full_arm_bands_and_rounding_tolerance() {
+        let a = arm("full");
+        assert_eq!(
+            (a.inscope, a.oos, a.options),
+            (190, 31, "state/router-spike/jev/options-full.json")
+        );
+        let m = |ic, od, inv| Metrics {
+            inscope_correct: ic,
+            oos_declined: od,
+            invalid: inv,
+            ..Default::default()
+        };
+        assert_eq!(robustness_verdict(a, &m(171, 26, 0), false), "ROBUST");
+        assert_eq!(robustness_verdict(a, &m(171, 25, 0), false), "DEGRADED");
+        assert_eq!(robustness_verdict(a, &m(155, 31, 0), false), "FAIL");
+        assert_eq!(robustness_verdict(a, &m(190, 31, 3), false), "KILL");
+        // A 2-decimal rounding drift (sum 0.98) is accepted for the full arm only.
+        let drift = resp("a", 0.68, 0.2, 0.1);
+        assert!(validate(&drift, &opts(), a.sum_tol).is_ok());
+        assert!(matches!(
+            validate(&drift, &opts(), arm("fresh").sum_tol),
+            Err(Invalid::Contract(_))
+        ));
+        assert!(matches!(
+            validate(&resp("a", 0.7, 0.2, 0.2), &opts(), a.sum_tol),
+            Err(Invalid::Contract(_))
+        ));
+    }
+
+    #[test]
     fn test_mcnemar_exact_matches_binomial() {
         assert_eq!(mcnemar_exact(0, 0), 1.0);
         // b=0, c=6: 2 * 0.5^6 = 0.03125
@@ -984,7 +1057,7 @@ mod tests {
     fn test_rounded_probabilities_and_float_tokens_are_accepted() {
         let mut r = resp("a", 0.7004, 0.2, 0.1);
         r["usage"]["input_tokens"] = json!(10.0);
-        assert!(validate(&r, &opts()).is_ok());
+        assert!(validate(&r, &opts(), SUM_TOL).is_ok());
     }
 
     #[test]
