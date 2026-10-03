@@ -31,6 +31,7 @@
 
 pub mod forecast;
 pub mod gate_ledger;
+pub mod guard_metrics;
 pub mod report;
 pub mod snapshot;
 pub mod trend;
@@ -39,6 +40,12 @@ pub use gate_ledger::{
     append_entry, query as query_ledger, read_ledger, rotated_path, status as ledger_status,
     EvidenceKind, GateDecision, GateEvidence, GateLedgerEntry, GateMetric, LedgerError, LedgerLine,
     LedgerQuery, LedgerStatus, MetricTrendDir, OperatorAck, LEDGER_MAX_BYTES,
+};
+pub use guard_metrics::{
+    assess, delta as guard_window_delta, measure as measure_guard, provenance, reason_fidelity,
+    run_from_entry, runs_from_ledger, self_probe, AntiProcess, AntiProcessClass,
+    AntiProcessThresholds, GuardExtra, GuardMetrics, GuardRun, Outcome, Provenance, ReasonFidelity,
+    RunAssessment, RunClass, SelfProbe, Verdict, WindowDelta,
 };
 pub use report::{
     build_health_artifact, is_key_metric_name, CorpusShrink, PopulationRebaseline, QualityAlert,
