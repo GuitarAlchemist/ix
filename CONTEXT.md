@@ -132,6 +132,11 @@ contracts (see `docs/contracts/`), not runtime coupling.
   drawing and its mirror image share a code, and so do the granny and the reef.
   `closure` names the knot the drawing must close into. Distinct from a **braid word**,
   which fixes the strands' positions, not only the crossings' order.
+- **Tying mistake** (`ix_knot::Mistake`) — one crossing of a rope diagram passed the
+  wrong way: over where the drawing goes under, or the reverse. `RopeDiagram::mistakes`
+  makes each in turn and names what the closure becomes: `same`, `untied` (one rope,
+  now the unknot), `apart` (several ropes, now lying separate) or `other`. Topology
+  only: a bend still caught may yet slip, which is friction's business.
 
 ## Conventions
 

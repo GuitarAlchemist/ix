@@ -50,6 +50,7 @@ pub mod diagram;
 pub mod gauss;
 pub mod jones;
 pub mod layout;
+pub mod mistakes;
 mod poly;
 #[cfg(test)]
 mod testing;
@@ -62,3 +63,4 @@ pub use diagram::{
 pub use gauss::{GaussCode, GaussError, MAX_GAUSS_CROSSINGS};
 pub use jones::{jones, Jones};
 pub use layout::{layout, LayoutError, StrandPath, MAX_POINTS};
+pub use mistakes::{Mistake, Outcome};

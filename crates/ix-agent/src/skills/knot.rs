@@ -14,8 +14,8 @@
 use ix_knot::catalog::{catalog, closure_braid, find};
 use ix_knot::gauss::draw;
 use ix_knot::{
-    jones, layout, Braid, GaussCode, GaussError, Jones, Rope, RopeDiagram, MAX_CONTROL_POINTS,
-    MAX_CROSSINGS, MAX_GAUSS_CROSSINGS, MAX_POINTS, MAX_ROPES, MAX_STRANDS,
+    jones, layout, Braid, GaussCode, GaussError, Jones, Outcome, Rope, RopeDiagram,
+    MAX_CONTROL_POINTS, MAX_CROSSINGS, MAX_GAUSS_CROSSINGS, MAX_POINTS, MAX_ROPES, MAX_STRANDS,
 };
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -197,6 +197,11 @@ fn knot_schema() -> Value {
                 "type": "boolean",
                 "default": false,
                 "description": "Also return each rope's 3D path, for drawing the knot"
+            },
+            "mistakes": {
+                "type": "boolean",
+                "default": false,
+                "description": "Also pass each crossing of the drawing the wrong way, one at a time (the commonest tying slip), and say what the closure becomes: `same`, `untied` (one rope, now the unknot), `apart` (several ropes, now lying separate, read from the Jones polynomial) or `other`. Each comes with the `over` letters that draw it."
             }
         }
     })
@@ -222,6 +227,10 @@ fn knot_output_schema() -> Value {
             "geometry": {
                 "type": "object",
                 "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...]}, z toward the viewer: up where the rope passes in front) and `min_clearance`, the least distance between two parts of the ropes in rope diameters (below 1 the tubes pass through each other)"
+            },
+            "mistakes": {
+                "type": "object",
+                "description": "With `mistakes`: how many slips leave the closure `same`, `untied`, `apart` or `other`, and `slips`, one per crossing of the drawing in the order the ropes first reach them: `at` [x, y], `ropes` (the two that cross there), `over` (letters drawing the slip), `writhe`, `jones` and `outcome`"
             }
         }
     })
@@ -375,6 +384,37 @@ pub fn knot(params: Value) -> Result<Value, String> {
             "min_clearance": g.min_clearance,
             "ropes": ropes,
         });
+    }
+    if params
+        .get("mistakes")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let slips = diagram.mistakes().map_err(|e| e.to_string())?;
+        let mut summary = json!({});
+        for outcome in [
+            Outcome::Same,
+            Outcome::Untied,
+            Outcome::Apart,
+            Outcome::Other,
+        ] {
+            summary[outcome.name()] = json!(slips.iter().filter(|m| m.outcome == outcome).count());
+        }
+        summary["slips"] = slips
+            .iter()
+            .map(|m| {
+                Ok(json!({
+                    "at": m.at,
+                    "ropes": m.ropes,
+                    "over": m.over,
+                    "writhe": m.writhe,
+                    "jones": jones_json(&m.jones)?,
+                    "outcome": m.outcome.name(),
+                }))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+            .into();
+        out["mistakes"] = summary;
     }
     Ok(out)
 }
@@ -573,6 +613,32 @@ mod tests {
         assert!(err.contains("V ="), "{err}");
         let err = knot(json!({ "gauss": two, "closure": "3_1" })).unwrap_err();
         assert!(err.contains("V ="), "{err}");
+    }
+
+    #[test]
+    fn tries_every_slip_in_one_call() {
+        let eight = knot(json!({ "name": "figure-eight", "mistakes": true })).unwrap();
+        let m = &eight["mistakes"];
+        assert_eq!(
+            (&m["untied"], &m["same"], &m["apart"], &m["other"]),
+            (&json!(4), &json!(0), &json!(0), &json!(0))
+        );
+        assert_eq!(m["slips"].as_array().unwrap().len(), 4);
+        assert_eq!(m["slips"][0]["jones"]["text"], "1");
+
+        // Either slip of the Hopf link lets the rings apart, and the letters
+        // given draw the slip.
+        let ropes = json!([circle(0.0), circle(2.5)]);
+        let hopf = knot(json!({ "ropes": ropes, "over": "OU UO", "mistakes": true })).unwrap();
+        assert_eq!(hopf["mistakes"]["apart"], 2);
+        let slip = &hopf["mistakes"]["slips"][0];
+        assert_eq!(slip["ropes"], json!([0, 1]));
+        let redrawn = knot(json!({ "ropes": ropes, "over": slip["over"] })).unwrap();
+        assert_eq!(redrawn["jones"], slip["jones"]);
+        assert!(knot(json!({ "name": "overhand" }))
+            .unwrap()
+            .get("mistakes")
+            .is_none());
     }
 
     #[test]

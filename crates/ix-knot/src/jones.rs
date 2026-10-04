@@ -49,6 +49,34 @@ impl Jones {
     pub fn at_one(&self) -> i128 {
         self.terms.iter().map(|(_, c)| c).sum()
     }
+
+    /// The unknot's polynomial, 1.
+    pub(crate) fn one() -> Self {
+        Self {
+            terms: vec![(0, 1)],
+        }
+    }
+
+    /// -t^(-1/2) - t^(1/2): what one more component lying apart multiplies
+    /// the polynomial by.
+    pub(crate) fn apart_factor() -> Self {
+        Self {
+            terms: vec![(-1, -1), (1, -1)],
+        }
+    }
+
+    /// The product, or `None` when a coefficient overflows `i128`.
+    pub(crate) fn times(&self, other: &Self) -> Option<Self> {
+        let mut sum: BTreeMap<i32, i128> = BTreeMap::new();
+        for &(a, x) in &self.terms {
+            for &(b, y) in &other.terms {
+                let entry = sum.entry(a + b).or_insert(0);
+                *entry = entry.checked_add(x.checked_mul(y)?)?;
+            }
+        }
+        let terms = sum.into_iter().filter(|&(_, c)| c != 0).collect();
+        Some(Self { terms })
+    }
 }
 
 /// Written in t, e.g. `t + t^3 - t^4`, `-t^(1/2) - t^(5/2)`, `t^-2 - t^-1 + 1`.

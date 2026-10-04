@@ -122,6 +122,8 @@ struct Passage {
 /// A knot or link as drawn: see the module documentation.
 #[derive(Debug, Clone)]
 pub struct RopeDiagram {
+    /// The ropes as given, to redraw them with other crossings.
+    ropes: Vec<Rope>,
     /// Each rope's smoothed curve, then (open ropes) its closing arc.
     loops: Vec<Vec<[f64; 3]>>,
     /// Points of each loop that belong to the drawn rope; the rest close it.
@@ -247,6 +249,7 @@ impl RopeDiagram {
         let writhe = crossings.iter().map(|c| i64::from(c.sign)).sum();
         let jones = normalize(&bracket, writhe);
         Ok(Self {
+            ropes: ropes.to_vec(),
             loops,
             drawn,
             closed,
@@ -260,6 +263,26 @@ impl RopeDiagram {
     /// Ropes, which are also the components of the closure.
     pub fn components(&self) -> usize {
         self.loops.len()
+    }
+
+    /// The ropes as given.
+    pub fn ropes(&self) -> &[Rope] {
+        &self.ropes
+    }
+
+    /// Each rope's passages through the crossings of the drawing (not those its
+    /// closure adds), in the order `over` letters list them: the crossing's
+    /// index in [`Self::crossings`], and whether this passage is in front.
+    pub fn passes(&self) -> Vec<Vec<(usize, bool)>> {
+        self.passages
+            .iter()
+            .map(|list| {
+                list.iter()
+                    .filter(|p| !self.crossings[p.crossing].closure)
+                    .map(|p| (p.crossing, p.over))
+                    .collect()
+            })
+            .collect()
     }
 
     /// The crossings of the drawing, then those its closure adds.
