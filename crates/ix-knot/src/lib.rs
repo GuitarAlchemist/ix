@@ -49,6 +49,7 @@ pub mod catalog;
 pub mod diagram;
 pub mod gauss;
 pub mod jones;
+pub mod knot_file;
 pub mod layout;
 pub mod mistakes;
 mod poly;

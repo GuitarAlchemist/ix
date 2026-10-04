@@ -1,0 +1,16 @@
+# The overhand knot, spelled by its crossings: walking along the rope, under
+# crossing 1, over 2, under 3, then over 1, under 2, over 3.
+knot overhand
+fr "Nœud simple"
+en "Overhand knot"
+family stopper
+abok 514
+gauss U1 O2 U3 O1 U2 O3
+# The code is the same for both hands: this one closes into the right trefoil.
+closure 3_1
+
+expect crossings 3
+expect jones 3_1
+expect jones "t + t^3 - t^4"
+expect clearance >= 1
+expect slips untied 3

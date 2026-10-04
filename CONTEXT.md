@@ -137,6 +137,11 @@ contracts (see `docs/contracts/`), not runtime coupling.
   makes each in turn and names what the closure becomes: `same`, `untied` (one rope,
   now the unknot), `apart` (several ropes, now lying separate) or `other`. Topology
   only: a bend still caught may yet slip, which is friction's business.
+- **`.knot` file** (`ix_knot::knot_file`) — a knot written down to be checked: its
+  name, the knot itself (ropes and their points, or a Gauss code) and `expect` lines
+  stating what it must be. IX owns the grammar and checks each expectation; a writer,
+  human or TARS, only proposes (ADR-0008). An **expectation** is a claim IX can check
+  (`expect jones 6_3`: the polynomial is 6_3's), not a name it can prove.
 
 ## Conventions
 

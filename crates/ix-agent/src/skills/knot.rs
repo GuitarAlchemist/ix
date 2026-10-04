@@ -13,6 +13,7 @@
 
 use ix_knot::catalog::{catalog, closure_braid, find};
 use ix_knot::gauss::draw;
+use ix_knot::knot_file::{KnotFile, Verdict, GRAMMAR, MAX_KNOT_FILE};
 use ix_knot::{
     jones, layout, Braid, GaussCode, GaussError, Jones, Outcome, Rope, RopeDiagram,
     MAX_CONTROL_POINTS, MAX_CROSSINGS, MAX_GAUSS_CROSSINGS, MAX_POINTS, MAX_ROPES, MAX_STRANDS,
@@ -198,6 +199,15 @@ fn knot_schema() -> Value {
                 "default": false,
                 "description": "Also return each rope's 3D path, for drawing the knot"
             },
+            "knot": {
+                "type": "string",
+                "description": format!("The text of a .knot file: `knot <name>`, the knot given by `rope open|closed` and its points (with `over`) or by `gauss`, and `expect` lines (crossings, components, writhe, jones <Rolfsen name or \"text\">, clearance >= n, slips <outcome> n). Each expectation is checked and reported; at most {MAX_KNOT_FILE} bytes. `grammar: true` returns the grammar.")
+            },
+            "grammar": {
+                "type": "boolean",
+                "default": false,
+                "description": "Return the .knot grammar, in EBNF, instead of a knot"
+            },
             "mistakes": {
                 "type": "boolean",
                 "default": false,
@@ -228,6 +238,12 @@ fn knot_output_schema() -> Value {
                 "type": "object",
                 "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...]}, z toward the viewer: up where the rope passes in front) and `min_clearance`, the least distance between two parts of the ropes in rope diameters (below 1 the tubes pass through each other)"
             },
+            "holds": { "type": "boolean", "description": "With `knot`: every expectation of the file holds" },
+            "expectations": {
+                "type": "array",
+                "description": "With `knot`: one per `expect` line, {line, expect, got, holds}: the statement, what IX found, and whether it is what was expected"
+            },
+            "grammar": { "type": "string", "description": "With `grammar`: the .knot grammar in EBNF" },
             "mistakes": {
                 "type": "object",
                 "description": "With `mistakes`: how many slips leave the closure `same`, `untied`, `apart` or `other`, and `slips`, one per crossing of the drawing in the order the ropes first reach them: `at` [x, y], `ropes` (the two that cross there), `over` (letters drawing the slip), `writhe`, `jones` and `outcome`"
@@ -263,17 +279,24 @@ pub fn knot(params: Value) -> Result<Value, String> {
             .collect();
         return Ok(json!({ "entries": entries }));
     }
+    if params
+        .get("grammar")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(json!({ "grammar": GRAMMAR }));
+    }
     let geometry = params
         .get("geometry")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let given: Vec<&str> = ["name", "ropes", "gauss"]
+    let given: Vec<&str> = ["name", "ropes", "gauss", "knot"]
         .into_iter()
         .filter(|k| !matches!(params.get(*k), None | Some(Value::Null)))
         .collect();
     if let [a, b, ..] = given[..] {
         return Err(format!(
-            "give one of `name`, `ropes` and `gauss`, not both `{a}` and `{b}`"
+            "give one of `name`, `ropes`, `gauss` and `knot`, not both `{a}` and `{b}`"
         ));
     }
     let closure = match params.get("closure") {
@@ -290,7 +313,21 @@ pub fn knot(params: Value) -> Result<Value, String> {
         ),
     };
     let mut drawing = None;
+    let mut file: Option<(KnotFile, Vec<Verdict>)> = None;
     let (entry, diagram, radius) = match given.first().copied() {
+        Some("knot") => {
+            let text = params["knot"]
+                .as_str()
+                .ok_or_else(|| format!("`knot` must be a string, got {}", params["knot"]))?;
+            if text.len() > MAX_KNOT_FILE {
+                return Err(format!("a .knot file has at most {MAX_KNOT_FILE} bytes"));
+            }
+            let parsed: KnotFile = text.parse().map_err(|e| format!("{e}"))?;
+            let checked = parsed.check().map_err(|e| format!("{e}"))?;
+            let radius = radius.unwrap_or(checked.radius);
+            file = Some((parsed, checked.verdicts));
+            (None, checked.diagram, radius)
+        }
         Some("name") => {
             let id = params["name"]
                 .as_str()
@@ -360,6 +397,23 @@ pub fn knot(params: Value) -> Result<Value, String> {
     if let Some(k) = closure {
         out["closure"] = json!(k);
     }
+    if let Some((f, verdicts)) = file {
+        for (key, value) in [
+            ("id", json!(f.name)),
+            ("en", json!(f.en)),
+            ("fr", json!(f.fr)),
+            ("family", json!(f.family)),
+            ("abok", json!(f.abok)),
+        ] {
+            out[key] = value;
+        }
+        out["holds"] = json!(verdicts.iter().all(|v| v.holds));
+        out["expectations"] = verdicts
+            .iter()
+            .map(|v| json!({ "line": v.line, "expect": v.text, "got": v.got, "holds": v.holds }))
+            .collect::<Vec<_>>()
+            .into();
+    }
     if let Some(e) = entry {
         for (key, value) in [
             ("id", json!(e.id)),
@@ -422,7 +476,7 @@ pub fn knot(params: Value) -> Result<Value, String> {
 /// `ropes` as the caller drew them; the diagram checks the rest.
 fn read_ropes(params: &Value) -> Result<Vec<Rope>, String> {
     let ropes = params.get("ropes").and_then(Value::as_array).ok_or(
-        "give `name` (a catalogue knot), `ropes` (a drawing of your own) or `gauss` (a code)",
+        "give `name` (a catalogue knot), `ropes` (a drawing of your own), `gauss` (a code) or `knot` (a .knot file)",
     )?;
     ropes
         .iter()
@@ -639,6 +693,37 @@ mod tests {
             .unwrap()
             .get("mistakes")
             .is_none());
+    }
+
+    #[test]
+    fn checks_a_knot_file_and_reports_each_expectation() {
+        let bowline = include_str!("../../../ix-knot/knots/bowline.knot");
+        let out = knot(json!({ "knot": bowline, "geometry": true })).unwrap();
+        assert_eq!(out["id"], "bowline");
+        assert_eq!(out["fr"], "Nœud de chaise");
+        assert_eq!(out["holds"], true);
+        assert_eq!(out["expectations"].as_array().unwrap().len(), 6);
+        assert_eq!(out["geometry"]["radius"], 0.16);
+
+        let wrong = bowline.replace("expect writhe 0", "expect writhe 2");
+        let out = knot(json!({ "knot": wrong })).unwrap();
+        assert_eq!(out["holds"], false);
+        let failed: Vec<&Value> = out["expectations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["holds"] == false)
+            .collect();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(
+            (&failed[0]["expect"], &failed[0]["got"]),
+            (&json!("expect writhe 2"), &json!("0"))
+        );
+
+        let err = knot(json!({ "knot": "knot a\nrope open\n" })).unwrap_err();
+        assert!(err.starts_with("line 0:"), "{err}");
+        let grammar = knot(json!({ "grammar": true })).unwrap();
+        assert!(grammar["grammar"].as_str().unwrap().contains("\"expect\""));
     }
 
     #[test]
