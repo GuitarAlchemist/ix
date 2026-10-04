@@ -124,6 +124,7 @@ Full schemas live in [`crates/ix-agent/src/tools.rs`](../crates/ix-agent/src/too
 | **Adversarial & evolution** | `ix_adversarial_fgsm`, `ix_evolution`, `ix_bandit` | [`ix-adversarial`](../crates/ix-adversarial), [`ix-evolution`](../crates/ix-evolution), [`ix-rl`](../crates/ix-rl) |
 | **Game theory** | `ix_game_nash` | [`ix-game`](../crates/ix-game) |
 | **Advanced math** | `ix_category`, `ix_rotation`, `ix_sedenion`, `ix_fractal`, `ix_number_theory` | respective crates |
+| **Knots & braids** | `ix_braid` — a braid word (`"s1 s2^-1"`) in; its closure's components, writhe and Jones polynomial out (the reef knot `s1^3 s2^-3` is symmetric, the granny `s1^3 s2^3` is not), plus on request each strand's 3D path for drawing it | [`ix-knot`](../crates/ix-knot) |
 | **Probabilistic structures** | `ix_bloom_filter`, `ix_hyperloglog` | [`ix-probabilistic`](../crates/ix-probabilistic) |
 | **Cache, optimization & search indexes** | `ix_cache`, `ix_optimize`, `ix_optick_search` | [`ix-cache`](../crates/ix-cache), [`ix-optimize`](../crates/ix-optimize), [`ix-optick`](../crates/ix-optick) |
 | **Grammar** | `ix_grammar_evolve`, `ix_grammar_search`, `ix_grammar_weights` | [`ix-grammar`](../crates/ix-grammar) |
