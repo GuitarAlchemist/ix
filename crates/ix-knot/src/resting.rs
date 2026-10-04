@@ -5,25 +5,44 @@
 //! as much where it passes behind, adding where crossings come close, so a
 //! rope dips to −2.2 radii: a deck laid under its lowest point leaves most of
 //! the knot floating. Here a rope rests at height 0, its centre one radius
-//! above the surface, and where it passes over another it lies on top of it,
-//! its centre one diameter above the one beneath. It stays there for 1.5 radii
-//! of its length either side of the crossing and comes down over the next 4,
-//! or over what room there is before a lower plateau. A rigid rope (a spar, a
-//! post) never bends: it lies level, one diameter up when anything passes
+//! above the surface, and where it passes in front it lies on top of the rope
+//! it crosses: its centre one diameter above wherever that rope is there. It
+//! stays up for 1.5 radii of its length either side, then comes down over 4
+//! radii for a diameter of height, longer when higher, so that it never bends
+//! tighter coming down than it does climbing. Where two of these meet in a
+//! dip, the dip is filled as a rope would bridge it: no curve turns upward
+//! with a radius under 1.5 rope radii. A rope passing behind is not held down:
+//! it goes where its own crossings take it, and the rope in front is raised
+//! to clear it, round after round until nothing moves. A rigid rope (a spar, a
+//! post) never bends: it lies level, high enough to clear whatever passes
 //! under it.
 //!
-//! A passage behind lies at its own rope's level, so the one in front is
-//! always one diameter above it at the crossing: which passage is in front is
-//! never changed, and the path read by height gives back the drawing's
-//! crossings.
+//! Which passage is in front is never changed, so the path read by height
+//! gives back the drawing's crossings.
 
-use crate::diagram::{arclength, clearance, dist2, DiagramError, Geometry, RopeDiagram, RopePath};
+use crate::diagram::{
+    along, arclength, clearance, dist2, DiagramError, Geometry, RopeDiagram, RopePath,
+};
 use std::f64::consts::PI;
+
+/// Rounds of raising the passage in front onto the one behind.
+const ROUNDS: usize = 32;
+
+/// In rope radii: how long the rope in front stays on top either side of a
+/// crossing, how long it takes to come down a diameter, and the least radius
+/// of a dip it bridges.
+const HOLD: f64 = 1.5;
+const RAMP: f64 = 4.0;
+const BRIDGE: f64 = 1.5;
+
+/// A drawn passage: (position along the rope, segment, fraction of the
+/// segment, crossing, in front).
+type Stop = (f64, usize, f64, usize, bool);
 
 impl RopeDiagram {
     /// Each rope in 3D as a tube of `radius` resting on a surface, `rigid[r]`
     /// saying whether rope `r` is a spar that never bends.
-    // @ai:invariant resting() keeps every rope on or above the surface, rigid ropes level, and the passage in front higher at every crossing [T:test conf:0.85 src:resting::tests::a_rope_rests_on_the_surface_and_keeps_its_crossings]
+    // @ai:invariant resting() keeps every rope on or above the surface, rigid ropes level, the passage in front a diameter above the one behind, and no bend in height tighter than one radius [T:test conf:0.85 src:resting::tests::a_rope_rests_on_the_surface_and_keeps_its_crossings]
     pub fn resting(&self, radius: f64, rigid: &[bool]) -> Result<Geometry, DiagramError> {
         if !(radius.is_finite() && radius > 0.0) {
             return Err(DiagramError::Radius(radius));
@@ -35,11 +54,11 @@ impl RopeDiagram {
                 got: rigid.len(),
             });
         }
-        let (diameter, hold, ramp) = (2.0 * radius, 1.5 * radius, 4.0 * radius);
+        let diameter = 2.0 * radius;
         let mut arcs = Vec::with_capacity(ropes);
         let mut lengths = Vec::with_capacity(ropes);
-        // Each rope's drawn passages, in order: (position along it, crossing, in front).
-        let mut stops: Vec<Vec<(f64, usize, bool)>> = Vec::with_capacity(ropes);
+        // Each rope's drawn passages, in order along it.
+        let mut stops: Vec<Vec<Stop>> = Vec::with_capacity(ropes);
         for rope in 0..ropes {
             let pts = &self.loops[rope][..self.drawn[rope]];
             let s = arclength(pts);
@@ -59,72 +78,88 @@ impl RopeDiagram {
                         } else {
                             length
                         };
-                        (s[p.seg] + p.t * (next - s[p.seg]), p.crossing, p.over)
+                        let at = s[p.seg] + p.t * (next - s[p.seg]);
+                        (at, p.seg, p.t, p.crossing, p.over)
                     })
                     .collect(),
             );
             arcs.push(s);
             lengths.push(length);
         }
-        // A spar lies one diameter up when something passes under it.
-        let level: Vec<f64> = (0..ropes)
-            .map(|r| {
-                if rigid[r] && stops[r].iter().any(|&(_, _, over)| over) {
-                    diameter
-                } else {
-                    0.0
-                }
-            })
-            .collect();
-        // The level of the rope behind at each crossing.
-        let mut behind = vec![0.0; self.crossings().len()];
-        for (r, list) in stops.iter().enumerate() {
-            for &(_, c, over) in list {
+        // The passage behind at each drawn crossing, as (rope, index in its stops).
+        let mut behind = vec![(0, 0); self.crossings().len()];
+        for (rope, list) in stops.iter().enumerate() {
+            for (i, &(.., c, over)) in list.iter().enumerate() {
                 if !over {
-                    behind[c] = level[r];
+                    behind[c] = (rope, i);
                 }
             }
         }
-        // Behind, a passage lies at its rope's level; in front, on top of what it crosses.
-        let height: Vec<Vec<f64>> = stops
-            .iter()
-            .enumerate()
-            .map(|(r, list)| {
-                list.iter()
-                    .map(|&(_, c, over)| {
-                        if over && !rigid[r] {
-                            behind[c] + diameter
-                        } else {
-                            level[r]
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
-        let paths: Vec<RopePath> = (0..ropes)
-            .map(|rope| {
-                let plateaus: Vec<(f64, f64)> = stops[rope]
+        // The height asked of each passage in front, and of each rigid rope.
+        let mut lift: Vec<Vec<f64>> = stops.iter().map(|l| vec![diameter; l.len()]).collect();
+        let mut level = vec![0.0; ropes];
+        let profiles = |lift: &[Vec<f64>], level: &[f64]| -> Vec<Vec<f64>> {
+            (0..ropes)
+                .map(|r| {
+                    if rigid[r] {
+                        return vec![level[r]; arcs[r].len()];
+                    }
+                    let plateaus: Vec<(f64, f64)> = stops[r]
+                        .iter()
+                        .zip(&lift[r])
+                        .filter(|((.., over), _)| *over)
+                        .map(|(&(at, ..), &h)| (at, h))
+                        .collect();
+                    heights(&arcs[r], &plateaus, lengths[r], self.closed[r], radius)
+                })
+                .collect()
+        };
+        let mut round = 0;
+        let z = loop {
+            let z = profiles(&lift, &level);
+            // The highest the rope behind gets while the one in front holds over it.
+            let peak = |u: usize, j: usize| {
+                let (at, seg, t, ..) = stops[u][j];
+                let n = z[u].len();
+                let here = z[u][seg] + t * (z[u][(seg + 1) % n] - z[u][seg]);
+                arcs[u]
                     .iter()
-                    .zip(&height[rope])
-                    .map(|(&(at, _, _), &h)| (at, h))
-                    .collect();
-                let points = self.loops[rope][..self.drawn[rope]]
-                    .iter()
-                    .zip(&arcs[rope])
-                    .map(|(p, &s)| {
-                        let z = if rigid[rope] {
-                            level[rope]
-                        } else {
-                            let closed = self.closed[rope];
-                            profile(s, &plateaus, lengths[rope], closed, hold, ramp)
-                        };
-                        [p[0], p[1], z]
-                    })
-                    .collect();
-                RopePath {
-                    closed: self.closed[rope],
-                    points,
+                    .zip(&z[u])
+                    .filter(|&(&s, _)| along(s, at, lengths[u], self.closed[u]) <= HOLD * radius)
+                    .fold(here, |m, (_, &h)| m.max(h))
+            };
+            let mut raised = false;
+            for (r, list) in stops.iter().enumerate() {
+                for (i, &(.., c, over)) in list.iter().enumerate() {
+                    if !over {
+                        continue;
+                    }
+                    let (u, j) = behind[c];
+                    let need = peak(u, j) + diameter;
+                    let asked = if rigid[r] {
+                        &mut level[r]
+                    } else {
+                        &mut lift[r][i]
+                    };
+                    if *asked < need - 1e-9 {
+                        *asked = need;
+                        raised = true;
+                    }
                 }
+            }
+            round += 1;
+            if !raised || round == ROUNDS {
+                break z;
+            }
+        };
+        let paths: Vec<RopePath> = (0..ropes)
+            .map(|rope| RopePath {
+                closed: self.closed[rope],
+                points: self.loops[rope][..self.drawn[rope]]
+                    .iter()
+                    .zip(&z[rope])
+                    .map(|(p, &h)| [p[0], p[1], h])
+                    .collect(),
             })
             .collect();
         let min_clearance = clearance(&paths, &arcs, &lengths, 3.0 * radius).map(|d| d / diameter);
@@ -136,53 +171,70 @@ impl RopeDiagram {
     }
 }
 
-/// The height at `s` along a rope of `length` with a plateau at each
-/// `(position, height)`, in order along it: flat for `hold` either side, then
-/// easing down over `ramp`, or over the room left when it comes down to a
-/// lower plateau; where two plateaus are closer than `2 * hold`, straight from
-/// one to the other.
-fn profile(
-    s: f64,
-    plateaus: &[(f64, f64)],
-    length: f64,
-    closed: bool,
-    hold: f64,
-    ramp: f64,
-) -> f64 {
-    let ease = |u: f64| (1.0 - (PI * u.clamp(0.0, 1.0)).cos()) / 2.0;
-    let fall = |h: f64, x: f64, reach: f64| h * ease(1.0 - x / reach);
-    let k = plateaus.partition_point(|&(at, _)| at <= s);
-    let before = match k {
-        0 if closed => plateaus.last().map(|&(at, h)| (at - length, h)),
-        0 => None,
-        _ => Some(plateaus[k - 1]),
+/// The height at each arclength `s` of a rope of `length` and `radius` with a
+/// plateau at each `(position, height)`: flat for 1.5 radii either side, then
+/// down to the surface over 4 radii for a diameter of height (a cosine, so
+/// the bend at its top and foot is the same whatever the height), the highest
+/// of these wherever several reach, with every dip they leave filled.
+fn heights(s: &[f64], plateaus: &[(f64, f64)], length: f64, closed: bool, radius: f64) -> Vec<f64> {
+    let (hold, ramp) = (HOLD * radius, RAMP * radius);
+    let bump = |d: f64, h: f64| {
+        let reach = ramp * (h / (2.0 * radius)).sqrt();
+        let u = ((d - hold) / reach).clamp(0.0, 1.0);
+        h * (1.0 + (PI * u).cos()) / 2.0
     };
-    let after = match plateaus.get(k) {
-        Some(&p) => Some(p),
-        None if closed => plateaus.first().map(|&(at, h)| (at + length, h)),
-        None => None,
-    };
-    match (before, after) {
-        (Some((a, ha)), Some((b, hb))) => {
-            let room = b - a - 2.0 * hold;
-            if room <= 0.0 {
-                return ha + (hb - ha) * ease((s - a) / (b - a).max(f64::EPSILON));
-            }
-            let x = s - a - hold;
-            if x <= 0.0 {
-                ha
-            } else if x >= room {
-                hb
-            } else {
-                let reach_a = if hb < ha { ramp.min(room) } else { ramp };
-                let reach_b = if ha < hb { ramp.min(room) } else { ramp };
-                fall(ha, x, reach_a).max(fall(hb, room - x, reach_b))
+    let raw: Vec<f64> = s
+        .iter()
+        .map(|&x| {
+            plateaus
+                .iter()
+                .map(|&(at, h)| bump(along(x, at, length, closed), h))
+                .fold(0.0, f64::max)
+        })
+        .collect();
+    fill(s, &raw, length, closed, BRIDGE * radius)
+}
+
+/// `z` along a rope with every dip narrower than a disc of radius `rho`
+/// filled: a closing in the (arclength, height) plane, so the curve turns
+/// upward nowhere tighter than `rho`. Never lowers a point.
+fn fill(s: &[f64], z: &[f64], length: f64, closed: bool, rho: f64) -> Vec<f64> {
+    let n = s.len();
+    // Each sample within `rho` of sample `i` along the rope, with the height
+    // of the disc's rim above it.
+    let rim = |i: usize| {
+        let mut near = vec![(i, rho)];
+        for forward in [true, false] {
+            let mut j = i;
+            for _ in 1..n {
+                j = match (forward, closed) {
+                    (true, true) => (j + 1) % n,
+                    (false, true) => (j + n - 1) % n,
+                    (true, false) if j + 1 < n => j + 1,
+                    (false, false) if j > 0 => j - 1,
+                    _ => break,
+                };
+                let d = along(s[i], s[j], length, closed);
+                if d > rho {
+                    break;
+                }
+                near.push((j, (rho * rho - d * d).sqrt()));
             }
         }
-        (Some((a, ha)), None) => fall(ha, (s - a - hold).max(0.0), ramp),
-        (None, Some((b, hb))) => fall(hb, (b - s - hold).max(0.0), ramp),
-        (None, None) => 0.0,
-    }
+        near
+    };
+    let rims: Vec<Vec<(usize, f64)>> = (0..n).map(rim).collect();
+    let up: Vec<f64> = rims
+        .iter()
+        .map(|near| near.iter().map(|&(j, r)| z[j] + r).fold(f64::MIN, f64::max))
+        .collect();
+    rims.iter()
+        .map(|near| {
+            near.iter()
+                .map(|&(j, r)| up[j] - r)
+                .fold(f64::MAX, f64::min)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -225,6 +277,20 @@ mod tests {
             .fold(f64::MAX, f64::min)
     }
 
+    /// The tightest bend of a height profile: the least radius of the circle
+    /// through three samples in a row, in the (arclength, height) plane.
+    fn tightest(s: &[f64], z: &[f64]) -> f64 {
+        (2..s.len())
+            .map(|k| {
+                let (a, b, c) = ([s[k - 2], z[k - 2]], [s[k - 1], z[k - 1]], [s[k], z[k]]);
+                let side = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]);
+                let twice_area =
+                    ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
+                side(a, b) * side(b, c) * side(c, a) / (2.0 * twice_area)
+            })
+            .fold(f64::MAX, f64::min)
+    }
+
     #[test]
     fn a_rope_rests_on_the_surface_and_keeps_its_crossings() {
         let mut drawings: Vec<(String, RopeDiagram, f64)> = catalog()
@@ -240,12 +306,19 @@ mod tests {
             assert!(lowest(&d.geometry(radius).unwrap()) < -radius, "{id}");
             let gaps = separations(&d, &g);
             assert_eq!(gaps.len(), d.drawn_crossings(), "{id}");
-            assert!(gaps.iter().all(|&h| h > radius), "{id}: {gaps:?}");
+            let diameter = 2.0 * radius;
+            assert!(gaps.iter().all(|&h| h > diameter - 1e-9), "{id}: {gaps:?}");
             let clear = g.min_clearance.unwrap();
             assert!(
                 clear >= 1.0 - 1e-9,
                 "{id}: the rope passes through itself ({clear:.3})"
             );
+            for (rope, path) in g.ropes.iter().enumerate() {
+                let pts = &d.loops[rope][..d.drawn[rope]];
+                let z: Vec<f64> = path.points.iter().map(|p| p[2]).collect();
+                let bend = tightest(&arclength(pts), &z) / radius;
+                assert!(bend >= 1.0, "{id} rope {rope}: bends to {bend:.2} radii");
+            }
         }
     }
 
@@ -280,20 +353,21 @@ mod tests {
         assert_eq!(d.drawn_crossings(), 4);
         let radius = 0.16;
         let g = d.resting(radius, &[false, true]).unwrap();
-        let level = g.ropes[1].points.iter().map(|p| p[2]);
+        let level: Vec<f64> = g.ropes[1].points.iter().map(|p| p[2]).collect();
         assert!(
-            level.clone().all(|z| z == 2.0 * radius),
-            "{:?}",
-            level.collect::<Vec<_>>()
+            level
+                .iter()
+                .all(|&z| z == level[0] && (z - 2.0 * radius).abs() < 1e-9),
+            "{level:?}"
         );
         let top = g.ropes[0]
             .points
             .iter()
             .map(|p| p[2])
             .fold(f64::MIN, f64::max);
-        assert!((top - 4.0 * radius).abs() < 1e-12, "{top}");
+        assert!((top - 4.0 * radius).abs() < 1e-9, "{top}");
         assert!(lowest(&g) >= 0.0);
-        assert!(separations(&d, &g).iter().all(|&h| h > radius));
+        assert!(separations(&d, &g).iter().all(|&h| h > 2.0 * radius - 1e-9));
         assert!(g.min_clearance.unwrap() >= 1.0 - 1e-9);
         assert_eq!(
             d.resting(radius, &[true]),
@@ -302,23 +376,35 @@ mod tests {
     }
 
     #[test]
-    fn the_rope_holds_on_top_then_comes_down_over_four_radii() {
-        let (hold, ramp) = (1.5, 4.0);
-        let one = [(10.0, 2.0)];
-        let z = |s| profile(s, &one, 30.0, false, hold, ramp);
-        assert_eq!(z(10.0), 2.0);
-        assert_eq!(z(11.5), 2.0);
-        assert!((z(13.5) - 1.0).abs() < 1e-12);
-        assert_eq!(z(15.5), 0.0);
-        assert_eq!(z(0.0), 0.0);
+    fn the_rope_holds_on_top_comes_down_and_bridges_a_dip() {
+        let s: Vec<f64> = (0..=600).map(|k| k as f64 * 0.05).collect();
+        let at = |z: &[f64], x: f64| z[(x / 0.05).round() as usize];
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        // Radius 1: a plateau 2 high holds for 1.5, comes down over 4.
+        let one = heights(&s, &[(10.0, 2.0)], 30.0, false, 1.0);
+        assert!(near(at(&one, 10.0), 2.0));
+        assert!(near(at(&one, 11.5), 2.0));
+        assert!(near(at(&one, 13.5), 1.0));
+        assert!(near(at(&one, 15.5), 0.0));
+        assert!(near(at(&one, 0.0), 0.0));
+        // Twice as high, it comes down over 4√2.
+        let high = heights(&s, &[(10.0, 4.0)], 30.0, false, 1.0);
+        let half_way = (11.5 + 2.0 * 2f64.sqrt()) / 0.05;
+        let (k, t) = (half_way.floor() as usize, half_way.fract());
+        assert!((high[k] + t * (high[k + 1] - high[k]) - 2.0).abs() < 1e-3);
         // Closed, the plateau near the end reaches round to the start.
-        assert_eq!(profile(0.5, &[(29.5, 2.0)], 30.0, true, hold, ramp), 2.0);
-        // Over two strands close together it barely sags between them.
-        let twice = [(10.0, 2.0), (14.0, 2.0)];
-        assert!(profile(12.0, &twice, 30.0, false, hold, ramp) > 1.9);
-        // From the surface up to a plateau 4 on, it climbs in the 1 left.
-        let step = [(10.0, 0.0), (14.0, 2.0)];
-        assert!((profile(12.0, &step, 30.0, false, hold, ramp) - 1.0).abs() < 1e-12);
-        assert_eq!(profile(11.5, &step, 30.0, false, hold, ramp), 0.0);
+        let round = heights(&s, &[(29.5, 2.0)], 30.0, true, 1.0);
+        assert!(near(at(&round, 0.5), 2.0));
+        // Two plateaus 6 apart leave a dip at 13; it is filled, never dug.
+        let two = [(10.0, 2.0), (16.0, 2.0)];
+        let raw: Vec<f64> = s
+            .iter()
+            .map(|&x| heights(&[x], &two, 30.0, false, 1.0)[0])
+            .collect();
+        let bridged = heights(&s, &two, 30.0, false, 1.0);
+        assert!(bridged.iter().zip(&raw).all(|(b, r)| *b >= r - 1e-12));
+        assert!(at(&bridged, 13.0) > at(&raw, 13.0) + 0.1);
+        assert!(tightest(&s, &raw) < 0.5);
+        assert!(tightest(&s, &bridged) >= 1.4, "{}", tightest(&s, &bridged));
     }
 }

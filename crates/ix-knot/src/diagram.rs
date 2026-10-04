@@ -904,7 +904,7 @@ pub(crate) fn arclength(pts: &[[f64; 3]]) -> Vec<f64> {
 }
 
 /// Distance along a rope of `length` between arclengths `a` and `b`.
-fn along(a: f64, b: f64, length: f64, closed: bool) -> f64 {
+pub(crate) fn along(a: f64, b: f64, length: f64, closed: bool) -> f64 {
     let d = (a - b).abs();
     if closed {
         d.min(length - d)
