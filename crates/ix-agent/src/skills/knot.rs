@@ -11,10 +11,11 @@
 //! Pure computations over the caller's input and the built-in catalogue: no
 //! filesystem, no network, no state.
 
-use ix_knot::catalog::{catalog, find};
+use ix_knot::catalog::{catalog, closure_braid, find};
+use ix_knot::gauss::draw;
 use ix_knot::{
-    jones, layout, Braid, Jones, Rope, RopeDiagram, MAX_CONTROL_POINTS, MAX_CROSSINGS, MAX_POINTS,
-    MAX_ROPES, MAX_STRANDS,
+    jones, layout, Braid, GaussCode, GaussError, Jones, Rope, RopeDiagram, MAX_CONTROL_POINTS,
+    MAX_CROSSINGS, MAX_GAUSS_CROSSINGS, MAX_POINTS, MAX_ROPES, MAX_STRANDS,
 };
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -179,10 +180,18 @@ fn knot_schema() -> Value {
                 "type": "string",
                 "description": "With `ropes`: which passage of each crossing is in front. One letter O (over) or U (under) per passage, in the order the ropes reach them (rope 0 from its first point, then rope 1); \"alternating\" for one rope, starting over; or \"height\", the higher z in front. An open rope is closed by an arc over everything from its end back to its start."
             },
+            "gauss": {
+                "type": "string",
+                "description": format!("A knot spelled by its crossings, drawn from the code alone: along each rope, O (over) or U (under) and a number the two passages of one crossing share. \"U1 O2 U3 O1 U2 O3\" is the overhand knot; a closed rope goes in parentheses, \"(O1 U2 O3 U1 O2 U3)\" the trefoil; ropes are separated by |. At most {MAX_GAUSS_CROSSINGS} crossings. The letters do not fix handedness: see `closure`.")
+            },
+            "closure": {
+                "type": "string",
+                "description": "With `gauss`: the knot the closure must be, in Rolfsen's notation from \"0_1\" to \"6_3\", `m` in front for the mirror image; the drawing that closes into it is kept. Without it, a code whose drawings close into different knots (two overhands in a row: the granny or the reef) is refused with the candidates."
+            },
             "radius": {
                 "type": "number",
                 "exclusiveMinimum": 0,
-                "description": "With `ropes` and `geometry`: the rope radius, in the drawing's units. A catalogue knot has its own."
+                "description": "With `ropes` and `geometry`: the rope radius, in the drawing's units. A catalogue knot has its own, and a drawing from `gauss` one that clears itself."
             },
             "geometry": {
                 "type": "boolean",
@@ -205,6 +214,11 @@ fn knot_output_schema() -> Value {
             "components": { "type": "integer", "description": "Components of the closure: one per rope" },
             "jones": { "type": "object", "description": "Jones polynomial of the closure: `text` in t, `terms` as [power, coefficient]" },
             "jones_symmetric": { "type": "boolean", "description": "V(t) = V(1/t)" },
+            "gauss": { "type": "string", "description": "The drawing's Gauss code, crossings numbered in the order they are first passed" },
+            "drawing": {
+                "type": "object",
+                "description": "With `gauss`: the drawing found, as `ropes` and `over` that `ropes`/`over` take back"
+            },
             "geometry": {
                 "type": "object",
                 "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...]}, z toward the viewer: up where the rope passes in front) and `min_clearance`, the least distance between two parts of the ropes in rope diameters (below 1 the tubes pass through each other)"
@@ -244,18 +258,63 @@ pub fn knot(params: Value) -> Result<Value, String> {
         .get("geometry")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let (entry, diagram, radius) = match params.get("name") {
-        Some(Value::String(id)) => {
-            if params.get("ropes").is_some() {
-                return Err("give `name` or `ropes`, not both".to_string());
-            }
+    let given: Vec<&str> = ["name", "ropes", "gauss"]
+        .into_iter()
+        .filter(|k| !matches!(params.get(*k), None | Some(Value::Null)))
+        .collect();
+    if let [a, b, ..] = given[..] {
+        return Err(format!(
+            "give one of `name`, `ropes` and `gauss`, not both `{a}` and `{b}`"
+        ));
+    }
+    let closure = match params.get("closure") {
+        None | Some(Value::Null) => None,
+        Some(_) if given != ["gauss"] => return Err("`closure` goes with `gauss`".into()),
+        Some(Value::String(k)) => Some(k.as_str()),
+        Some(other) => return Err(format!("`closure` must be a string, got {other}")),
+    };
+    let radius = match params.get("radius") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_f64()
+                .ok_or_else(|| format!("`radius` must be a number, got {v}"))?,
+        ),
+    };
+    let mut drawing = None;
+    let (entry, diagram, radius) = match given.first().copied() {
+        Some("name") => {
+            let id = params["name"]
+                .as_str()
+                .ok_or_else(|| format!("`name` must be a string, got {}", params["name"]))?;
             let e = find(id).ok_or_else(|| {
                 format!("no knot {id:?} in the catalogue; `list: true` names them")
             })?;
             (Some(e), e.diagram().map_err(|e| e.to_string())?, e.radius)
         }
-        Some(other) => return Err(format!("`name` must be a string, got {other}")),
-        None => {
+        Some("gauss") => {
+            let text = params["gauss"]
+                .as_str()
+                .ok_or_else(|| format!("`gauss` must be a string, got {}", params["gauss"]))?;
+            let code: GaussCode = text.parse().map_err(|e: GaussError| e.to_string())?;
+            let want = match closure {
+                None => None,
+                Some(k) => Some(jones(&closure_braid(k).ok_or_else(|| {
+                    format!("no knot {k:?} to close into: `closure` is one of \"0_1\" to \"6_3\", `m` in front for the mirror image")
+                })?)),
+            };
+            let drawn = draw(&code, want.as_ref()).map_err(|e| e.to_string())?;
+            let ropes: Vec<Value> = drawn
+                .ropes
+                .iter()
+                .map(|r| {
+                    let points: Vec<[f64; 2]> = r.points.iter().map(|p| [p[0], p[1]]).collect();
+                    json!({ "closed": r.closed, "points": points })
+                })
+                .collect();
+            drawing = Some(json!({ "ropes": ropes, "over": drawn.over }));
+            (None, drawn.diagram, radius.unwrap_or(drawn.radius))
+        }
+        _ => {
             let ropes = read_ropes(&params)?;
             let over = match params.get("over") {
                 None | Some(Value::Null) => "",
@@ -263,16 +322,13 @@ pub fn knot(params: Value) -> Result<Value, String> {
                 Some(other) => return Err(format!("`over` must be a string, got {other}")),
             };
             let diagram = RopeDiagram::new(&ropes, over).map_err(|e| e.to_string())?;
-            let radius = match params.get("radius") {
-                None | Some(Value::Null) if geometry => {
+            let radius = match radius {
+                None if geometry => {
                     return Err(
                         "`radius` is required with `geometry` for a drawing of your own".into(),
                     )
                 }
-                None | Some(Value::Null) => 1.0,
-                Some(v) => v
-                    .as_f64()
-                    .ok_or_else(|| format!("`radius` must be a number, got {v}"))?,
+                r => r.unwrap_or(1.0),
             };
             (None, diagram, radius)
         }
@@ -287,7 +343,14 @@ pub fn knot(params: Value) -> Result<Value, String> {
         "components": diagram.components(),
         "jones": jones_json(v)?,
         "jones_symmetric": v.is_symmetric(),
+        "gauss": diagram.gauss_code().to_string(),
     });
+    if let Some(d) = drawing {
+        out["drawing"] = d;
+    }
+    if let Some(k) = closure {
+        out["closure"] = json!(k);
+    }
     if let Some(e) = entry {
         for (key, value) in [
             ("id", json!(e.id)),
@@ -318,10 +381,9 @@ pub fn knot(params: Value) -> Result<Value, String> {
 
 /// `ropes` as the caller drew them; the diagram checks the rest.
 fn read_ropes(params: &Value) -> Result<Vec<Rope>, String> {
-    let ropes = params
-        .get("ropes")
-        .and_then(Value::as_array)
-        .ok_or("give `name` (a catalogue knot) or `ropes` (a drawing of your own)")?;
+    let ropes = params.get("ropes").and_then(Value::as_array).ok_or(
+        "give `name` (a catalogue knot), `ropes` (a drawing of your own) or `gauss` (a code)",
+    )?;
     ropes
         .iter()
         .enumerate()
@@ -484,12 +546,47 @@ mod tests {
     }
 
     #[test]
+    fn draws_a_knot_from_its_gauss_code_alone() {
+        let overhand = "U1 O2 U3 O1 U2 O3";
+        let right = knot(json!({ "gauss": overhand, "closure": "3_1", "geometry": true })).unwrap();
+        assert_eq!(right["jones"]["text"], "t + t^3 - t^4");
+        assert_eq!(right["gauss"], overhand);
+        assert_eq!(right["closure"], "3_1");
+        assert!(right["geometry"]["min_clearance"].as_f64().unwrap() >= 1.0);
+        let left = knot(json!({ "gauss": overhand, "closure": "m3_1" })).unwrap();
+        assert_eq!(left["jones"]["text"], "-t^-4 + t^-3 + t^-1");
+
+        // The drawing found goes back in as a drawing of your own.
+        let again = knot(json!({
+            "ropes": right["drawing"]["ropes"],
+            "over": right["drawing"]["over"],
+        }))
+        .unwrap();
+        assert_eq!(again["gauss"], overhand);
+        assert_eq!(again["jones"], right["jones"]);
+
+        // Two overhands in a row draw the granny or the reef: the code alone
+        // is refused, and so is a closure neither is, each time with the
+        // polynomials the code does draw.
+        let two = "U1 O2 U3 O1 U2 O3 U4 O5 U6 O4 U5 O6";
+        let err = knot(json!({ "gauss": two })).unwrap_err();
+        assert!(err.contains("V ="), "{err}");
+        let err = knot(json!({ "gauss": two, "closure": "3_1" })).unwrap_err();
+        assert!(err.contains("V ="), "{err}");
+    }
+
+    #[test]
     fn knot_refuses_with_a_reason() {
         let err = |p: Value| knot(p).unwrap_err();
         assert!(err(json!({})).contains("give `name`"));
         assert!(err(json!({ "name": "granny-bend" })).contains("no knot"));
         assert!(err(json!({ "name": 3 })).contains("must be a string"));
         assert!(err(json!({ "name": "overhand", "ropes": [] })).contains("not both"));
+        assert!(err(json!({ "name": "overhand", "gauss": "O1 U1" })).contains("not both"));
+        assert!(err(json!({ "name": "overhand", "closure": "3_1" })).contains("goes with"));
+        assert!(err(json!({ "gauss": "O1 U1", "closure": "7_1" })).contains("no knot \"7_1\""));
+        assert!(err(json!({ "gauss": "O1 O2 U1 U2" })).contains("not a knot drawn on paper"));
+        assert!(err(json!({ "gauss": "O1 X2" })).contains("X2"));
         assert!(err(json!({ "ropes": [{ "points": [[0, 0], [1]] }] })).contains("[x, y]"));
         assert!(
             err(json!({ "ropes": [{ "points": [[0, 0], [1, 1]], "closed": 1 }] }))

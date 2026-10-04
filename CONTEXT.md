@@ -123,6 +123,15 @@ contracts (see `docs/contracts/`), not runtime coupling.
   records each entry's closure, and a test checks the drawing's Jones polynomial against
   that of the closure's KnotInfo braid (writhe depends on the drawing, so it is not
   compared).
+- **Gauss code** (`ix_knot::GaussCode`) — a knot spelled by its crossings. Walk along
+  each rope and write down every crossing as you pass it: `O` if this rope is in front,
+  `U` if it is behind, and a number the crossing's two passages share. `U1 O2 U3 O1 U2
+  O3` is the overhand; `(…)` marks a closed rope, and `|` separates ropes. The code says
+  in which order the crossings come, not where they are, so `ix_knot::gauss::draw`
+  finds a drawing (a **rope diagram**) from it. The letters do not fix handedness: a
+  drawing and its mirror image share a code, and so do the granny and the reef.
+  `closure` names the knot the drawing must close into. Distinct from a **braid word**,
+  which fixes the strands' positions, not only the crossings' order.
 
 ## Conventions
 

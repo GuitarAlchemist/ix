@@ -6,6 +6,7 @@
 //! braid word for it, and its rope, drawn at `radius`, does not pass through
 //! itself.
 
+use crate::braid::Braid;
 use crate::diagram::{DiagramError, Rope, RopeDiagram};
 
 /// A knot of the catalogue.
@@ -53,6 +54,29 @@ pub fn catalog() -> &'static [Entry] {
 /// The entry with this `id`.
 pub fn find(id: &str) -> Option<&'static Entry> {
     CATALOG.iter().find(|e| e.id == id)
+}
+
+/// A braid word whose closure is the knot `name` in Rolfsen's table, `m` in
+/// front for its mirror image: KnotInfo's braid representatives, for the
+/// knots of up to six crossings. `None` for any other name.
+pub fn closure_braid(name: &str) -> Option<Braid> {
+    let (knot, mirror) = match name.strip_prefix('m') {
+        Some(knot) => (knot, true),
+        None => (name, false),
+    };
+    let (strands, word): (usize, &[i32]) = match knot {
+        "0_1" => (2, &[1]),
+        "3_1" => (2, &[1, 1, 1]),
+        "4_1" => (3, &[1, -2, 1, -2]),
+        "5_1" => (2, &[1, 1, 1, 1, 1]),
+        "5_2" => (3, &[1, 1, 1, 2, -1, 2]),
+        "6_1" => (4, &[1, 1, 2, -1, -3, 2, -3]),
+        "6_2" => (3, &[1, 1, 1, -2, 1, -2]),
+        "6_3" => (3, &[1, 1, -2, 1, -2, -2]),
+        _ => return None,
+    };
+    let b = Braid::new(strands, word.to_vec()).ok()?;
+    Some(if mirror { b.mirror() } else { b })
 }
 
 // Coordinates, not π: the overhand's lobes reach x = ±3.14.
@@ -128,27 +152,58 @@ const CATALOG: &[Entry] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{jones, Braid};
+    use crate::{jones, Jones};
 
-    /// A braid word for each knot an entry may close into, from KnotInfo's
-    /// braid representatives.
-    fn closure_braid(name: &str) -> Braid {
-        let (knot, mirror) = match name.strip_prefix('m') {
-            Some(knot) => (knot, true),
-            None => (name, false),
-        };
-        let word = match knot {
-            "0_1" => "s1",
-            "3_1" => "s1^3",
-            "4_1" => "s1 s2^-1 s1 s2^-1",
-            other => panic!("no braid word for {other}"),
-        };
-        let b = Braid::parse(None, word).unwrap();
-        if mirror {
-            b.mirror()
-        } else {
-            b
+    /// |V(-1)| and the span of V: for an alternating knot, its determinant and
+    /// its crossing number.
+    fn determinant_and_span(v: &Jones) -> (i128, i32) {
+        let terms = v.terms();
+        assert!(
+            terms.iter().all(|(h, _)| h % 2 == 0),
+            "a knot: whole powers"
+        );
+        let det = terms
+            .iter()
+            .map(|&(h, c)| if (h / 2) % 2 == 0 { c } else { -c })
+            .sum::<i128>()
+            .abs();
+        (det, (terms[terms.len() - 1].0 - terms[0].0) / 2)
+    }
+
+    #[test]
+    fn closure_braids_are_the_knots_they_name() {
+        // Every knot here is alternating, so the span of V is its crossing
+        // number; with the determinant it tells them all apart.
+        for (name, det, span) in [
+            ("0_1", 1, 0),
+            ("3_1", 3, 3),
+            ("4_1", 5, 4),
+            ("5_1", 5, 5),
+            ("5_2", 7, 5),
+            ("6_1", 9, 6),
+            ("6_2", 11, 6),
+            ("6_3", 13, 6),
+        ] {
+            let b = closure_braid(name).unwrap();
+            assert_eq!(b.components(), 1, "{name}");
+            let v = jones(&b);
+            assert_eq!(determinant_and_span(&v), (det, span), "{name}: {v}");
+            let m = jones(&closure_braid(&format!("m{name}")).unwrap());
+            assert_eq!(m, v.mirror(), "{name}");
         }
+        // Two polynomials from the knot tables, up to mirror image.
+        for (name, text) in [
+            ("5_2", "-t^-6 + t^-5 - t^-4 + 2t^-3 - t^-2 + t^-1"),
+            ("6_1", "t^-4 - t^-3 + t^-2 - 2t^-1 + 2 - t + t^2"),
+        ] {
+            let v = jones(&closure_braid(name).unwrap());
+            assert!(
+                v.to_string() == text || v.mirror().to_string() == text,
+                "{name}: {v}"
+            );
+        }
+        assert!(closure_braid("7_1").is_none());
+        assert!(closure_braid("m").is_none());
     }
 
     #[test]
@@ -158,7 +213,7 @@ mod tests {
             assert_eq!(d.components(), e.ropes.len(), "{}", e.id);
             assert_eq!(
                 *d.jones(),
-                jones(&closure_braid(e.closure)),
+                jones(&closure_braid(e.closure).unwrap()),
                 "{} should close into {}",
                 e.id,
                 e.closure
