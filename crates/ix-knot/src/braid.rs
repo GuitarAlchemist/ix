@@ -158,10 +158,10 @@ impl Braid {
 fn parse_token(token: &str) -> Result<(i32, i32), BraidError> {
     let bad = || BraidError::Token(token.to_string());
     if let Ok(g) = token.parse::<i32>() {
-        return if g == 0 {
-            Err(bad())
-        } else {
-            Ok((g.abs(), g.signum()))
+        // `checked_abs`: i32::MIN has no absolute value in i32.
+        return match g.checked_abs() {
+            Some(k) if k != 0 => Ok((k, g.signum())),
+            _ => Err(bad()),
         };
     }
     let rest = token
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn refuses_what_is_not_a_braid() {
-        for text in ["s0", "x1", "s1^0", "0", "s-1", "s1^x"] {
+        for text in ["s0", "x1", "s1^0", "0", "s-1", "s1^x", "-2147483648"] {
             assert!(
                 matches!(Braid::parse(None, text), Err(BraidError::Token(_))),
                 "{text}"

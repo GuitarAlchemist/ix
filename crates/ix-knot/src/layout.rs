@@ -42,9 +42,12 @@ pub fn layout(braid: &Braid, samples: usize) -> Result<Vec<StrandPath>, LayoutEr
         return Err(LayoutError::Samples(samples));
     }
     let n = braid.strands();
-    let per_strand = braid.crossings() * samples + 1;
-    if n * per_strand > MAX_POINTS {
-        return Err(LayoutError::Points(n * per_strand));
+    // Saturating, not wrapping: `samples` comes from the caller unbounded, and a
+    // wrapped product could slip under the limit.
+    let per_strand = braid.crossings().saturating_mul(samples).saturating_add(1);
+    let total = n.saturating_mul(per_strand);
+    if total > MAX_POINTS {
+        return Err(LayoutError::Points(total));
     }
     let mut paths: Vec<StrandPath> = (0..n)
         .map(|start| StrandPath {
@@ -162,5 +165,6 @@ mod tests {
             layout(&long, 200),
             Err(LayoutError::Points(8 * (64 * 200 + 1)))
         );
+        assert_eq!(layout(&b, usize::MAX), Err(LayoutError::Points(usize::MAX)));
     }
 }
