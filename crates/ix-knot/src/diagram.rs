@@ -79,6 +79,8 @@ pub enum DiagramError {
     Radius(f64),
     #[error("give one pull per rope: {ropes} ropes, {got} pulls")]
     Pulls { ropes: usize, got: usize },
+    #[error("say for each rope whether it is rigid: {ropes} ropes, {got} given")]
+    Rigid { ropes: usize, got: usize },
 }
 
 /// A crossing of the diagram or of its closure.
@@ -506,7 +508,7 @@ fn lerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
 }
 
 /// Squared distance in the plane.
-fn dist2(a: [f64; 3], b: [f64; 3]) -> f64 {
+pub(crate) fn dist2(a: [f64; 3], b: [f64; 3]) -> f64 {
     (b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)
 }
 
@@ -889,7 +891,7 @@ fn join(open: &mut HashMap<u32, u32>, x: u32, y: u32) -> bool {
 }
 
 /// Arclength at each point, from the first.
-fn arclength(pts: &[[f64; 3]]) -> Vec<f64> {
+pub(crate) fn arclength(pts: &[[f64; 3]]) -> Vec<f64> {
     let mut s = Vec::with_capacity(pts.len());
     let mut total = 0.0;
     for (k, p) in pts.iter().enumerate() {
@@ -913,7 +915,12 @@ fn along(a: f64, b: f64, length: f64, closed: bool) -> f64 {
 
 /// The least 3D distance between two centreline points that are not within
 /// `reach` of each other along the same rope.
-fn clearance(ropes: &[RopePath], arcs: &[Vec<f64>], lengths: &[f64], reach: f64) -> Option<f64> {
+pub(crate) fn clearance(
+    ropes: &[RopePath],
+    arcs: &[Vec<f64>],
+    lengths: &[f64],
+    reach: f64,
+) -> Option<f64> {
     let mut best: Option<f64> = None;
     for (r1, a) in ropes.iter().enumerate() {
         for (r2, b) in ropes.iter().enumerate().skip(r1) {

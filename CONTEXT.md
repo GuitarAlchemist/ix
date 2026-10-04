@@ -153,6 +153,11 @@ contracts (see `docs/contracts/`), not runtime coupling.
   running anticlockwise minus clockwise, over the face's edges). Bends with higher τ,
   then higher Γ, held better in their experiments; no formula combines the three.
   Drawing-dependent, not invariants: the same knot drawn otherwise counts otherwise.
+- **Resting geometry** (`RopeDiagram::resting`, `ix_knot` `rest: true`) — the ropes laid
+  on a surface: each lies at z = 0 and, where it passes in front, on top of the rope it
+  crosses, its centre one diameter above; a **rigid** rope (a spar, a post) stays level.
+  Distinct from `geometry`, which lifts the passage in front and lowers the one behind
+  about the drawing's plane, a picture with no surface under it.
 - **`.knot` file** (`ix_knot::knot_file`) — a knot written down to be checked: its
   name, the knot itself (ropes and their points, or a Gauss code) and `expect` lines
   stating what it must be. IX owns the grammar and checks each expectation; a writer,

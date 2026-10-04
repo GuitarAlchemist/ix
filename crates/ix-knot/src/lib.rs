@@ -54,6 +54,7 @@ pub mod layout;
 pub mod mechanics;
 pub mod mistakes;
 mod poly;
+mod resting;
 #[cfg(test)]
 mod testing;
 

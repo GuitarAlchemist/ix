@@ -199,6 +199,16 @@ fn knot_schema() -> Value {
                 "default": false,
                 "description": "Also return each rope's 3D path, for drawing the knot"
             },
+            "rest": {
+                "type": "boolean",
+                "default": false,
+                "description": "With `geometry`: lay the ropes on a surface: each rests at z = 0 and, where it passes in front, lies on top of the rope it crosses, its centre one diameter above; nothing goes below 0, so a renderer can put a deck there"
+            },
+            "rigid": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 0 },
+                "description": "With `rest`: the ropes, by index, that are spars or posts and never bend: each lies level, one diameter up when anything passes under it"
+            },
             "knot": {
                 "type": "string",
                 "description": format!("The text of a .knot file: `knot <name>`, the knot given by `rope open|closed` and its points (with `over`) or by `gauss`, and `expect` lines (crossings, components, writhe, jones <Rolfsen name or \"text\">, clearance >= n, slips <outcome> n). Each expectation is checked and reported; at most {MAX_KNOT_FILE} bytes. `grammar: true` returns the grammar.")
@@ -242,7 +252,7 @@ fn knot_output_schema() -> Value {
             },
             "geometry": {
                 "type": "object",
-                "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...]}, z toward the viewer: up where the rope passes in front) and `min_clearance`, the least distance between two parts of the ropes in rope diameters (below 1 the tubes pass through each other)"
+                "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...]}, z toward the viewer: up where the rope passes in front, and with `rest` 0 where it lies on the surface) and `min_clearance`, the least distance between two parts of the ropes in rope diameters (below 1 the tubes pass through each other)"
             },
             "holds": { "type": "boolean", "description": "With `knot`: every expectation of the file holds" },
             "expectations": {
@@ -297,6 +307,27 @@ pub fn knot(params: Value) -> Result<Value, String> {
         .get("geometry")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let rest = params.get("rest").and_then(Value::as_bool).unwrap_or(false);
+    if rest && !geometry {
+        return Err("`rest` goes with `geometry`".into());
+    }
+    let rigid: Vec<usize> = match params.get("rigid") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(_) if !rest => return Err("`rigid` goes with `rest`".into()),
+        Some(Value::Array(list)) => list
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .map(|i| i as usize)
+                    .ok_or_else(|| format!("`rigid` takes rope indices, got {v}"))
+            })
+            .collect::<Result<_, _>>()?,
+        Some(other) => {
+            return Err(format!(
+                "`rigid` must be an array of rope indices, got {other}"
+            ))
+        }
+    };
     let given: Vec<&str> = ["name", "ropes", "gauss", "knot"]
         .into_iter()
         .filter(|k| !matches!(params.get(*k), None | Some(Value::Null)))
@@ -469,7 +500,22 @@ pub fn knot(params: Value) -> Result<Value, String> {
         }
     }
     if geometry {
-        let g = diagram.geometry(radius).map_err(|e| e.to_string())?;
+        let g = if rest {
+            let ropes = diagram.components();
+            let mut spars = vec![false; ropes];
+            for &r in &rigid {
+                *spars.get_mut(r).ok_or_else(|| {
+                    format!(
+                        "`rigid` names rope {r}, but the ropes are numbered 0 to {}",
+                        ropes - 1
+                    )
+                })? = true;
+            }
+            diagram.resting(radius, &spars)
+        } else {
+            diagram.geometry(radius)
+        }
+        .map_err(|e| e.to_string())?;
         let ropes: Vec<Value> = g
             .ropes
             .iter()
@@ -650,6 +696,36 @@ mod tests {
         assert!(overhand.get("geometry").is_none());
     }
 
+    #[test]
+    fn rest_lays_the_knot_on_a_surface() {
+        let lowest = |out: &Value| {
+            out["geometry"]["ropes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|r| r["points"].as_array().unwrap().clone())
+                .map(|p| p[2].as_f64().unwrap())
+                .fold(f64::MAX, f64::min)
+        };
+        let hung = knot(json!({ "name": "figure-eight", "geometry": true })).unwrap();
+        assert!(lowest(&hung) < 0.0);
+        let laid = knot(json!({ "name": "figure-eight", "geometry": true, "rest": true })).unwrap();
+        assert!(lowest(&laid) >= 0.0);
+        assert!(laid["geometry"]["min_clearance"].as_f64().unwrap() >= 1.0);
+
+        let ropes = json!([circle(0.0), circle(2.5)]);
+        let spar = json!({ "ropes": ropes, "over": "OUUO", "geometry": true, "radius": 0.2,
+                           "rest": true, "rigid": [1] });
+        let out = knot(spar).unwrap();
+        let level: Vec<f64> = out["geometry"]["ropes"][1]["points"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p[2].as_f64().unwrap())
+            .collect();
+        assert!(level.iter().all(|&z| z == 0.4), "{level:?}");
+    }
+
     fn circle(cx: f64) -> Value {
         let points: Vec<[f64; 2]> = (0..8)
             .map(|k| {
@@ -821,6 +897,13 @@ mod tests {
             err(json!({ "ropes": ropes, "over": "OUUO", "geometry": true, "radius": -1 }))
                 .contains("positive")
         );
+        assert!(err(json!({ "name": "overhand", "rest": true })).contains("goes with `geometry`"));
+        assert!(err(json!({ "name": "overhand", "rigid": [0] })).contains("goes with `rest`"));
+        let rest = |rigid: Value| {
+            err(json!({ "name": "overhand", "geometry": true, "rest": true, "rigid": rigid }))
+        };
+        assert!(rest(json!([-1])).contains("rope indices"));
+        assert!(rest(json!([1])).contains("numbered 0 to 0"));
     }
 
     #[test]
