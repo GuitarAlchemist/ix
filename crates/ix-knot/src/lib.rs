@@ -47,14 +47,18 @@
 pub mod braid;
 pub mod catalog;
 pub mod diagram;
+pub mod gauss;
 pub mod jones;
 pub mod layout;
 mod poly;
+#[cfg(test)]
+mod testing;
 
 pub use braid::{Braid, BraidError, MAX_CROSSINGS, MAX_STRANDS};
 pub use diagram::{
     Crossing, DiagramError, Geometry, Rope, RopeDiagram, RopePath, MAX_CONTROL_POINTS,
     MAX_DIAGRAM_CROSSINGS, MAX_ROPES,
 };
+pub use gauss::{GaussCode, GaussError, MAX_GAUSS_CROSSINGS};
 pub use jones::{jones, Jones};
 pub use layout::{layout, LayoutError, StrandPath, MAX_POINTS};

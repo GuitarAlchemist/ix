@@ -27,6 +27,7 @@
 //! loose ends are joined. The cost grows with how wide the diagram is rather
 //! than with 2^crossings.
 
+use crate::gauss::{GaussCode, GaussRope};
 use crate::jones::{normalize, Jones};
 use crate::poly::Laurent;
 use std::collections::{BTreeMap, HashMap};
@@ -279,6 +280,26 @@ impl RopeDiagram {
     /// The Jones polynomial of the closure.
     pub fn jones(&self) -> &Jones {
         &self.jones
+    }
+
+    /// The Gauss code of the drawing: each rope's passages through the
+    /// crossings it draws (not its closure's), from its first control point,
+    /// the crossings numbered in the order they are first passed.
+    pub fn gauss_code(&self) -> GaussCode {
+        let ropes = self
+            .passages
+            .iter()
+            .zip(&self.closed)
+            .map(|(list, &closed)| GaussRope {
+                closed,
+                passages: list
+                    .iter()
+                    .filter(|p| !self.crossings[p.crossing].closure)
+                    .map(|p| (p.crossing as u32 + 1, p.over))
+                    .collect(),
+            })
+            .collect();
+        GaussCode { ropes }.canonical()
     }
 
     /// Each rope in 3D, as a tube of `radius`: lifted by 1.1 radii where it
@@ -864,7 +885,8 @@ fn clearance(ropes: &[RopePath], arcs: &[Vec<f64>], lengths: &[f64], reach: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{jones, layout, Braid};
+    use crate::jones;
+    use crate::testing::{ring, words};
 
     fn open(points: &[[f64; 2]]) -> Rope {
         Rope {
@@ -883,66 +905,6 @@ mod tests {
                 .collect(),
             closed: true,
         }
-    }
-
-    /// A braid closure drawn as a ring: braid position k at radius 2 + k, the
-    /// braid's length once around, z as the layout lifts it. The map keeps the
-    /// plane's orientation, so the crossings keep their signs.
-    fn ring(b: &Braid) -> Vec<Rope> {
-        // An odd count: no sample lands on a crossing, where two strands meet.
-        let samples = 3;
-        let paths = layout(b, samples).unwrap();
-        let turn = 2.0 * PI / b.crossings() as f64;
-        let perm = b.permutation();
-        let mut seen = vec![false; b.strands()];
-        let mut ropes = Vec::new();
-        for first in 0..b.strands() {
-            let mut points = Vec::new();
-            let mut s = first;
-            while !seen[s] {
-                seen[s] = true;
-                let path = &paths[s].points;
-                for p in &path[..path.len() - 1] {
-                    let (a, r) = (turn * p[1], 2.0 + p[0]);
-                    points.push([r * a.cos(), r * a.sin(), p[2]]);
-                }
-                s = perm[s];
-            }
-            if !points.is_empty() {
-                ropes.push(Rope {
-                    points,
-                    closed: true,
-                });
-            }
-        }
-        ropes
-    }
-
-    fn words(count: usize) -> Vec<Braid> {
-        let mut x: u64 = 0x2026_1004_0d1a;
-        let mut next = |m: u64| {
-            x = x
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (x >> 33) % m
-        };
-        (0..count)
-            .map(|_| {
-                let strands = 2 + next(3) as usize;
-                let len = 1 + next(7) as usize;
-                let word = (0..len)
-                    .map(|_| {
-                        let k = 1 + next(strands as u64 - 1) as i32;
-                        if next(2) == 0 {
-                            k
-                        } else {
-                            -k
-                        }
-                    })
-                    .collect();
-                Braid::new(strands, word).unwrap()
-            })
-            .collect()
     }
 
     #[test]
