@@ -300,6 +300,33 @@ impl RopeDiagram {
         self.writhe
     }
 
+    /// The linking number of each two ropes, closed as for the Jones
+    /// polynomial: half the sum of the signs of the crossings between them, as
+    /// `((a, b), number)` with `a < b`. Not zero proves the two closed ropes
+    /// cannot be pulled apart; zero proves nothing.
+    // @ai:invariant crossings between two closed curves in the plane come in an even signed sum, so each linking number is a whole number [T:test conf:0.85 src:diagram::tests::linking_numbers_count_how_often_two_rings_wind_round]
+    pub fn linking_numbers(&self) -> Vec<((usize, usize), i64)> {
+        let n = self.loops.len();
+        let mut ropes_at: Vec<Vec<usize>> = vec![Vec::new(); self.crossings.len()];
+        for (rope, list) in self.passages.iter().enumerate() {
+            for p in list {
+                ropes_at[p.crossing].push(rope);
+            }
+        }
+        let mut sums = vec![0i64; n * n];
+        for (c, at) in self.crossings.iter().zip(&ropes_at) {
+            if let [a, b] = at[..] {
+                if a != b {
+                    sums[a.min(b) * n + a.max(b)] += i64::from(c.sign);
+                }
+            }
+        }
+        (0..n)
+            .flat_map(|a| (a + 1..n).map(move |b| (a, b)))
+            .map(|(a, b)| ((a, b), sums[a * n + b] / 2))
+            .collect()
+    }
+
     /// The Jones polynomial of the closure.
     pub fn jones(&self) -> &Jones {
         &self.jones
@@ -1007,6 +1034,69 @@ mod tests {
         // Splitting them is the unlink, whichever crossing is changed.
         let unlink = RopeDiagram::new(&ropes, "OOUU").unwrap();
         assert_eq!(unlink.jones().to_string(), "-t^(-1/2) - t^(1/2)");
+        assert_eq!(d.linking_numbers()[0].1.abs(), 1);
+        assert_eq!(m.linking_numbers()[0].1, -d.linking_numbers()[0].1);
+        assert_eq!(unlink.linking_numbers(), vec![((0, 1), 0)]);
+    }
+
+    #[test]
+    fn linking_numbers_count_how_often_two_rings_wind_round() {
+        use crate::Braid;
+        let lk = |text: &str| {
+            let b = Braid::parse(None, text).unwrap();
+            RopeDiagram::new(&ring(&b), "height")
+                .unwrap()
+                .linking_numbers()
+        };
+        assert_eq!(lk("s1^2"), vec![((0, 1), 1)]);
+        assert_eq!(lk("s1^-6"), vec![((0, 1), -3)]);
+        assert_eq!(lk("s1^2 s2^4"), vec![((0, 1), 1), ((0, 2), 0), ((1, 2), 2)]);
+        // One rope: no pairs. The figure-eight's crossings are all its own.
+        assert!(lk("s1 s2^-1 s1 s2^-1").is_empty());
+
+        // Against the braid word: follow each strand through the word, and sum
+        // the signs of the generators that cross two different components.
+        for b in words(80) {
+            let n = b.strands();
+            let mut at: Vec<usize> = (0..n).collect();
+            let mut crossed = Vec::new();
+            for &g in b.word() {
+                let k = g.unsigned_abs() as usize - 1;
+                crossed.push((at[k], at[k + 1], g.signum() as i64));
+                at.swap(k, k + 1);
+            }
+            // The closure joins the strand ending at position j to strand j;
+            // ring() numbers the ropes by their least strand.
+            let mut root: Vec<usize> = (0..n).collect();
+            for (j, &s) in at.iter().enumerate() {
+                let (a, b) = (root[j], root[s]);
+                for r in root.iter_mut() {
+                    if *r == a.max(b) {
+                        *r = a.min(b);
+                    }
+                }
+            }
+            let mut firsts: Vec<usize> = root.clone();
+            firsts.sort_unstable();
+            firsts.dedup();
+            let rope = |s: usize| firsts.iter().position(|&f| f == root[s]).unwrap();
+            let mut want: Vec<((usize, usize), i64)> = (0..firsts.len())
+                .flat_map(|a| (a + 1..firsts.len()).map(move |b| ((a, b), 0)))
+                .collect();
+            for (s, t, sign) in crossed {
+                let (a, b) = (rope(s), rope(t));
+                if a != b {
+                    let key = (a.min(b), a.max(b));
+                    want.iter_mut().find(|(k, _)| *k == key).unwrap().1 += sign;
+                }
+            }
+            for w in &mut want {
+                assert_eq!(w.1 % 2, 0, "{b}");
+                w.1 /= 2;
+            }
+            let d = RopeDiagram::new(&ring(&b), "height").unwrap();
+            assert_eq!(d.linking_numbers(), want, "{b}");
+        }
     }
 
     #[test]

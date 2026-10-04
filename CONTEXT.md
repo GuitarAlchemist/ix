@@ -137,6 +137,15 @@ contracts (see `docs/contracts/`), not runtime coupling.
   makes each in turn and names what the closure becomes: `same`, `untied` (one rope,
   now the unknot), `apart` (several ropes, now lying separate) or `other`. Topology
   only: a bend still caught may yet slip, which is friction's business.
+- **Connected sum** (`a#b`, `ix_knot::catalog::closure_jones`) — two knots cut open
+  and joined end to end; its Jones polynomial is the product of theirs. Two overhands
+  in a row close into `3_1#3_1` (the granny) or `3_1#m3_1` (the reef). A `closure` or
+  `expect jones` may name one; in a `.knot` file a `#` starts a comment only at the
+  start of a line or after a space.
+- **Linking number** (`RopeDiagram::linking_numbers`) — for two ropes of a closed
+  diagram, half the signed sum of the crossings between them. Not zero proves the two
+  are caught; zero proves nothing (the Whitehead link). A slip counts as `apart` only
+  when every linking number is zero.
 - **`.knot` file** (`ix_knot::knot_file`) — a knot written down to be checked: its
   name, the knot itself (ropes and their points, or a Gauss code) and `expect` lines
   stating what it must be. IX owns the grammar and checks each expectation; a writer,

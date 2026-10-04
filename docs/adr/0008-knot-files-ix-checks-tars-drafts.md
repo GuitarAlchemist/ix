@@ -21,7 +21,9 @@ question is who owns what.
 `knot <name>`, optional names and family (`fr`, `en`, `family`, `abok`), the knot
 itself — `rope open|closed` followed by its control points and `over`, or
 `gauss <code>` with an optional `closure` — and `expect` lines: `crossings`,
-`components`, `writhe`, `jones` (a Rolfsen name or the polynomial's text),
+`components`, `writhe`, `jones` (a Rolfsen name, a connected sum of them such as
+`3_1#m3_1`, or the polynomial's text; a `#` starts a comment only at the start of
+a line or after a space),
 `clearance >=` (at the file's `radius`) and `slips <outcome> <count>`.
 `crates/ix-knot/knots/` holds two examples, the bowline drawn and the overhand
 spelled; both are tests.

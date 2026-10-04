@@ -11,7 +11,7 @@
 //! Pure computations over the caller's input and the built-in catalogue: no
 //! filesystem, no network, no state.
 
-use ix_knot::catalog::{catalog, closure_braid, find};
+use ix_knot::catalog::{catalog, closure_jones, find, MAX_SUMMANDS};
 use ix_knot::gauss::draw;
 use ix_knot::knot_file::{KnotFile, Verdict, GRAMMAR, MAX_KNOT_FILE};
 use ix_knot::{
@@ -187,7 +187,7 @@ fn knot_schema() -> Value {
             },
             "closure": {
                 "type": "string",
-                "description": "With `gauss`: the knot the closure must be, in Rolfsen's notation from \"0_1\" to \"6_3\", `m` in front for the mirror image; the drawing that closes into it is kept. Without it, a code whose drawings close into different knots (two overhands in a row: the granny or the reef) is refused with the candidates."
+                "description": "With `gauss`: the knot the closure must be, in Rolfsen's notation from \"0_1\" to \"7_7\" and \"8_20\", `m` in front for the mirror image, or a connected sum of them joined by # (\"3_1#m3_1\" closes the reef knot); the drawing that closes into it is kept. Without it, a code whose drawings close into different knots (two overhands in a row: the granny or the reef) is refused with the candidates."
             },
             "radius": {
                 "type": "number",
@@ -230,6 +230,7 @@ fn knot_output_schema() -> Value {
             "jones": { "type": "object", "description": "Jones polynomial of the closure: `text` in t, `terms` as [power, coefficient]" },
             "jones_symmetric": { "type": "boolean", "description": "V(t) = V(1/t)" },
             "gauss": { "type": "string", "description": "The drawing's Gauss code, crossings numbered in the order they are first passed" },
+            "linking": { "type": "array", "description": "With two ropes or more: each pair's linking number in the closure, {ropes: [a, b], number}. Not zero proves the two are caught; zero proves nothing" },
             "drawing": {
                 "type": "object",
                 "description": "With `gauss`: the drawing found, as `ropes` and `over` that `ropes`/`over` take back"
@@ -344,9 +345,9 @@ pub fn knot(params: Value) -> Result<Value, String> {
             let code: GaussCode = text.parse().map_err(|e: GaussError| e.to_string())?;
             let want = match closure {
                 None => None,
-                Some(k) => Some(jones(&closure_braid(k).ok_or_else(|| {
-                    format!("no knot {k:?} to close into: `closure` is one of \"0_1\" to \"6_3\", `m` in front for the mirror image")
-                })?)),
+                Some(k) => Some(closure_jones(k).ok_or_else(|| {
+                    format!("no knot {k:?} to close into: `closure` is \"0_1\" to \"7_7\" or \"8_20\", `m` in front for the mirror image, or at most {MAX_SUMMANDS} of them joined by #")
+                })?),
             };
             let drawn = draw(&code, want.as_ref()).map_err(|e| e.to_string())?;
             let ropes: Vec<Value> = drawn
@@ -391,6 +392,14 @@ pub fn knot(params: Value) -> Result<Value, String> {
         "jones_symmetric": v.is_symmetric(),
         "gauss": diagram.gauss_code().to_string(),
     });
+    if diagram.components() > 1 {
+        out["linking"] = diagram
+            .linking_numbers()
+            .iter()
+            .map(|&((a, b), number)| json!({ "ropes": [a, b], "number": number }))
+            .collect::<Vec<_>>()
+            .into();
+    }
     if let Some(d) = drawing {
         out["drawing"] = d;
     }
@@ -627,6 +636,8 @@ mod tests {
         assert_eq!(hopf["components"], 2);
         assert_eq!(hopf["crossings"], 2);
         assert!(hopf.get("id").is_none());
+        assert_eq!(hopf["linking"][0]["ropes"], json!([0, 1]));
+        assert_eq!(hopf["linking"][0]["number"].as_i64().unwrap().abs(), 1);
         let text = hopf["jones"]["text"].as_str().unwrap();
         assert!(
             ["-t^(1/2) - t^(5/2)", "-t^(-5/2) - t^(-1/2)"].contains(&text),
@@ -637,6 +648,11 @@ mod tests {
                 .unwrap();
         assert_eq!(unlink["jones"]["text"], "-t^(-1/2) - t^(1/2)");
         assert_eq!(unlink["geometry"]["radius"], 0.2);
+        assert_eq!(unlink["linking"], json!([{ "ropes": [0, 1], "number": 0 }]));
+        assert!(knot(json!({ "name": "overhand" }))
+            .unwrap()
+            .get("linking")
+            .is_none());
     }
 
     #[test]
@@ -667,6 +683,10 @@ mod tests {
         assert!(err.contains("V ="), "{err}");
         let err = knot(json!({ "gauss": two, "closure": "3_1" })).unwrap_err();
         assert!(err.contains("V ="), "{err}");
+        // Named as a sum, the reef is kept.
+        let reef = knot(json!({ "gauss": two, "closure": "3_1#m3_1" })).unwrap();
+        assert_eq!(reef["jones_symmetric"], true);
+        assert_eq!(reef["closure"], "3_1#m3_1");
     }
 
     #[test]
@@ -735,7 +755,7 @@ mod tests {
         assert!(err(json!({ "name": "overhand", "ropes": [] })).contains("not both"));
         assert!(err(json!({ "name": "overhand", "gauss": "O1 U1" })).contains("not both"));
         assert!(err(json!({ "name": "overhand", "closure": "3_1" })).contains("goes with"));
-        assert!(err(json!({ "gauss": "O1 U1", "closure": "7_1" })).contains("no knot \"7_1\""));
+        assert!(err(json!({ "gauss": "O1 U1", "closure": "7_8" })).contains("no knot \"7_8\""));
         assert!(err(json!({ "gauss": "O1 O2 U1 U2" })).contains("not a knot drawn on paper"));
         assert!(err(json!({ "gauss": "O1 X2" })).contains("X2"));
         assert!(err(json!({ "ropes": [{ "points": [[0, 0], [1]] }] })).contains("[x, y]"));

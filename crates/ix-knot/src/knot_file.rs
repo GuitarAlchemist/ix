@@ -25,10 +25,10 @@
 //! assert_eq!(checked.diagram.jones().to_string(), "t + t^3 - t^4");
 //! ```
 
-use crate::catalog::closure_braid;
+use crate::catalog::{closure_jones, MAX_SUMMANDS};
 use crate::diagram::{Rope, RopeDiagram};
 use crate::gauss::{draw, GaussCode};
-use crate::jones::jones;
+use crate::jones::Jones;
 use crate::mistakes::Outcome;
 use std::str::FromStr;
 
@@ -36,9 +36,11 @@ use std::str::FromStr;
 pub const MAX_KNOT_FILE: usize = 64 * 1024;
 
 /// The grammar of a `.knot` file, in EBNF. One statement per line; blank
-/// lines and `#` comments anywhere.
+/// lines and comments anywhere. A comment starts at a `#` that begins the line
+/// or follows a space, so `3_1#m3_1` is a connected sum, not a comment.
 pub const GRAMMAR: &str = r##"file        = { line } ;
-line        = [ statement ] , [ "#" , { any character } ] , newline ;
+line        = [ statement ] , [ comment ] , newline ;
+comment     = "#" , { any character } ;                (* at the line's start or after a space *)
 statement   = "knot" , name                                (* first, once *)
             | "fr" , text | "en" , text
             | "family" , word
@@ -47,13 +49,13 @@ statement   = "knot" , name                                (* first, once *)
             | number , number , [ number ]                (* a control point of the last rope: x y, or x y z *)
             | "over" , ( "height" | "alternating" | letters )
             | "gauss" , code                              (* instead of ropes: the rest of the line *)
-            | "closure" , rolfsen                         (* with gauss: the knot its drawing must close into *)
+            | "closure" , knot                            (* with gauss: the knot its drawing must close into *)
             | "radius" , number
             | "expect" , expectation ;
 expectation = "crossings" , integer
             | "components" , integer
             | "writhe" , integer
-            | "jones" , ( rolfsen | text )                (* the closure's Jones polynomial: that knot's, or this text *)
+            | "jones" , ( knot | text )                   (* the closure's Jones polynomial: that knot's, or this text *)
             | "clearance" , ">=" , number                 (* in rope diameters, at the file's radius *)
             | "slips" , ( "same" | "untied" | "apart" | "other" ) , integer ;
 name        = letter , { letter | digit | "-" } ;
@@ -61,7 +63,8 @@ word        = letter , { letter | "-" } ;
 text        = '"' , { any character but '"' } , '"' ;
 letters     = { "O" | "U" } ;
 code        = { ( "O" | "U" ) , integer | "(" | ")" | "|" } ;
-rolfsen     = [ "m" ] , digit , "_" , digit ;
+knot        = rolfsen , { "#" , rolfsen } ;             (* a connected sum: the product of the polynomials *)
+rolfsen     = [ "m" ] , digit , "_" , digit , [ digit ] ;  (* 0_1 to 7_7, and 8_20 *)
 "##;
 
 /// Why a file was refused, and on which line (1-based; 0 for the file as a
@@ -98,7 +101,8 @@ pub enum Expect {
     Crossings(usize),
     Components(usize),
     Writhe(i64),
-    /// The Jones polynomial of the knot with this Rolfsen name.
+    /// The Jones polynomial of the knot with this Rolfsen name, or of a sum
+    /// of them written with `#`.
     JonesOf(String),
     /// The Jones polynomial, written in t as IX writes it.
     JonesText(String),
@@ -170,7 +174,7 @@ impl FromStr for KnotFile {
         let mut expectations = Vec::new();
         for (i, raw) in text.lines().enumerate() {
             let line = i + 1;
-            let statement = raw.split('#').next().unwrap_or("").trim();
+            let statement = strip_comment(raw).trim();
             let Some((head, rest)) = split_head(statement) else {
                 continue;
             };
@@ -317,7 +321,7 @@ impl KnotFile {
             Source::Gauss { code, closure } => {
                 let want = match closure {
                     None => None,
-                    Some(k) => Some(jones(&known(self.source_line, k)?)),
+                    Some(k) => Some(known(self.source_line, k)?),
                 };
                 let d = draw(code, want.as_ref()).map_err(|e| at_source(e.to_string()))?;
                 (d.diagram, Some(d.radius))
@@ -333,7 +337,7 @@ impl KnotFile {
                 Expect::Writhe(w) => (diagram.writhe().to_string(), diagram.writhe() == *w),
                 Expect::JonesOf(k) => {
                     let v = diagram.jones();
-                    (v.to_string(), *v == jones(&known(e.line, k)?))
+                    (v.to_string(), *v == known(e.line, k)?)
                 }
                 Expect::JonesText(t) => {
                     let v = diagram.jones().to_string();
@@ -379,6 +383,18 @@ impl KnotFile {
     }
 }
 
+/// The line up to its comment: a `#` at its start or after whitespace.
+fn strip_comment(raw: &str) -> &str {
+    let mut after_space = true;
+    for (i, c) in raw.char_indices() {
+        if c == '#' && after_space {
+            return &raw[..i];
+        }
+        after_space = c.is_whitespace();
+    }
+    raw
+}
+
 fn count(got: usize, want: usize) -> (String, bool) {
     (got.to_string(), got == want)
 }
@@ -387,11 +403,12 @@ fn squeeze(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-/// The braid of a knot named in the table, or the line's error.
-fn known(line: usize, name: &str) -> Result<crate::braid::Braid, KnotFileError> {
-    closure_braid(name).ok_or_else(|| KnotFileError {
+/// The Jones polynomial of a knot named in the table, or of a sum of them,
+/// or the line's error.
+fn known(line: usize, name: &str) -> Result<Jones, KnotFileError> {
+    closure_jones(name).ok_or_else(|| KnotFileError {
         line,
-        reason: format!("no knot {name:?} in the table IX knows: \"0_1\" to \"6_3\", `m` in front for the mirror"),
+        reason: format!("no knot {name:?} in the table IX knows: \"0_1\" to \"7_7\" and \"8_20\", `m` in front for the mirror, at most {MAX_SUMMANDS} joined by `#`"),
     })
 }
 
@@ -527,6 +544,32 @@ mod tests {
         );
     }
 
+    /// Two overhand knots in a row, spelled by their code: the closure named as
+    /// a sum picks the reef's drawing or the granny's.
+    #[test]
+    fn a_sum_names_which_drawing_of_two_overhands_to_keep() {
+        let file = |closure: &str| {
+            format!(
+                "knot two-overhands\ngauss U1 O2 U3 O1 U2 O3 U4 O5 U6 O4 U5 O6\nclosure {closure}\n\
+                 expect crossings 6\nexpect jones {closure}\n"
+            )
+        };
+        let reef = file("3_1#m3_1")
+            .parse::<KnotFile>()
+            .unwrap()
+            .check()
+            .unwrap();
+        assert!(reef.holds());
+        assert!(reef.diagram.jones().is_symmetric());
+        let granny = file("3_1#3_1")
+            .parse::<KnotFile>()
+            .unwrap()
+            .check()
+            .unwrap();
+        assert!(granny.holds());
+        assert_ne!(granny.diagram.jones(), reef.diagram.jones());
+    }
+
     #[test]
     fn refuses_with_the_line_and_a_reason() {
         let err = |text: &str| text.parse::<KnotFile>().unwrap_err();
@@ -542,6 +585,10 @@ mod tests {
                 .contains("closure")
         );
         assert_eq!(err("knot a\nexpect jones 9_42\n").line, 2);
+        assert_eq!(err("knot a\nexpect jones 3_1#9_42\n").line, 2);
+        // A comment starts at a # after a space, not inside a sum.
+        assert_eq!(err("knot a\nexpect jones 9_42 # 3_1#m3_1\n").line, 2);
+        assert_eq!(err("knot a # 3_1#9_42\n").line, 0);
         assert_eq!(err("knot a\nfr unquoted\n").line, 2);
         assert_eq!(
             err("knot a\nwhat is this\n").reason,

@@ -8,11 +8,12 @@
 //! something else. A bend that comes apart on many single slips is one that
 //! forgives little.
 //!
-//! **Apart** is read from the Jones polynomial: ropes lying apart have the
-//! product of their own polynomials, times -t^(-1/2) - t^(1/2) for each rope
-//! after the first. A different polynomial proves the ropes are still caught;
-//! an equal one is taken as apart, though a few links whose polynomial looks
-//! split are not. Only the drawing's own crossings are flipped: those of the
+//! **Apart** is read from the Jones polynomial and the linking numbers: ropes
+//! lying apart have the product of their own polynomials, times
+//! -t^(-1/2) - t^(1/2) for each rope after the first, and no two of them link.
+//! A different polynomial, or two ropes whose linking number is not zero,
+//! proves the ropes are still caught; otherwise they are taken as apart,
+//! though a few links that look split to both tests are not. Only the drawing's own crossings are flipped: those of the
 //! closing arcs belong to the closure convention, not to the knot.
 
 use crate::diagram::{DiagramError, RopeDiagram};
@@ -62,7 +63,7 @@ impl RopeDiagram {
     /// Each crossing of the drawing passed the wrong way, one at a time, in the
     /// order the ropes first reach them.
     // @ai:invariant each mistake redraws the same ropes with exactly one crossing's two passages swapped, and the unchanged letters redraw the drawing itself [T:test conf:0.9 src:mistakes::tests::the_reef_knot_comes_apart_on_four_slips_of_six]
-    // @ai:assumption a Jones polynomial equal to the product of the ropes' own polynomials means the ropes lie apart; a non-split link with such a polynomial would be misread as apart [U:uncertain conf:0.6 src:no-check]
+    // @ai:assumption a Jones polynomial equal to the product of the ropes' own polynomials, with every linking number zero, means the ropes lie apart; a non-split link passing both would be misread as apart [U:uncertain conf:0.6 src:no-check]
     pub fn mistakes(&self) -> Result<Vec<Mistake>, DiagramError> {
         let passes = self.passes();
         let mut order: Vec<usize> = Vec::new();
@@ -90,7 +91,10 @@ impl RopeDiagram {
                     Outcome::Same
                 } else if single && jones == Jones::one() {
                     Outcome::Untied
-                } else if !single && jones == self.apart(&flipped)? {
+                } else if !single
+                    && diagram.linking_numbers().iter().all(|&(_, lk)| lk == 0)
+                    && jones == self.apart(&flipped)?
+                {
                     Outcome::Apart
                 } else {
                     Outcome::Other
