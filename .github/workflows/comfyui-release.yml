@@ -28,7 +28,7 @@ jobs:
         include:
           - os: windows-latest
             platform: windows-x64
-          - os: ubuntu-latest
+          - os: ubuntu-22.04     # the oldest runner, so the binary runs on glibc 2.35 and newer
             platform: linux-x64
           - os: macos-latest     # Apple silicon
             platform: macos-arm64
@@ -142,7 +142,8 @@ jobs:
           The pack refuses an \`ix-mcp\` whose bytes differ from the hash recorded
           beside it. That catches a binary replaced by accident; it is not a defence
           against someone who can write to the pack. The macOS build is for Apple
-          silicon and is neither signed nor notarized; Intel macOS and Linux arm64
+          silicon and is neither signed nor notarized; the Linux build is made on
+          Ubuntu 22.04 and needs glibc 2.35 or newer. Intel macOS and Linux arm64
           are not built.
           EOF
           gh release create "$TAG" dist/ix_comfyui-* dist/SHA256SUMS \
