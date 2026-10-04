@@ -208,3 +208,37 @@ jobs:
           IX_REQUIRE_DUCKDB: '1'
         shell: bash
         run: cargo test -p ix-agent --test duckdb_query
+
+  # The ComfyUI pack (ADR-0007) calls ix-mcp over stdio, so its tests need a real
+  # build installed into the pack. A missing or mismatched binary fails them
+  # rather than skipping. Only the torch-side tests skip here, by name: they run
+  # in ComfyUI's own Python.
+  comfyui-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: comfyui-pack
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build ix-mcp
+        run: cargo build -p ix-agent --bin ix-mcp
+
+      - name: Install it into the pack
+        run: |
+          python -m pip install numpy pillow
+          python integrations/comfyui/install.py --binary target/debug/ix-mcp
+
+      - name: Pack tests
+        run: python -m unittest discover -s integrations/comfyui/tests -v
