@@ -110,6 +110,19 @@ contracts (see `docs/contracts/`), not runtime coupling.
   JSON value, never inside it. Semantics are provisional until Demerzel's spec states
   them: no verdict is an error, no matching arm stops the pipeline and is recorded in
   `RunOutcome::gates`, an unhandled `C` fails the run.
+- **Rope diagram** (`ix_knot::RopeDiagram`) — a knot as a person ties it: up to 8
+  ropes, each a list of 2D control points (open with two ends, or closed), plus which
+  rope passes over at each crossing (`O`/`U` letters per passage, `alternating`, or by
+  height). IX smooths the points, finds the crossings, and lifts the rope where it
+  passes in front. Distinct from a **braid word** (`ix_braid`), which is strands
+  between two bars — the drawing of a plait, not of a tied knot.
+- **Closure** (of a rope diagram) — the mathematical knot a tied knot becomes once each
+  open rope's two ends are joined by an arc drawn outside and above everything else.
+  A practical knot is not a mathematical knot until closed; the overhand closes into
+  the trefoil `3_1`, the figure-eight into `4_1`. The **catalogue** (`ix_knot::catalog`)
+  records each entry's closure, and a test checks the drawing's Jones polynomial against
+  that of the closure's KnotInfo braid (writhe depends on the drawing, so it is not
+  compared).
 
 ## Conventions
 

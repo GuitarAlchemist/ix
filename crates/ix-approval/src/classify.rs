@@ -107,6 +107,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_petri_analyze",
         // Knot invariants and strand layout of a caller-supplied braid word.
         "ix_braid",
+        // The same for a built-in catalogue knot or a caller-drawn rope diagram.
+        "ix_knot",
         // DuckDB SQL over caller-supplied rows, run by the CLI in -safe mode: no
         // file, extension, ATTACH or network access, configuration locked.
         "ix_duckdb_query",
@@ -281,6 +283,7 @@ mod tests {
             "ix_mesh_correlate",
             "ix_petri_analyze",
             "ix_braid",
+            "ix_knot",
             "ix_duckdb_query",
             "ix_assumption_query",
             "ix_assumption_belief_at",

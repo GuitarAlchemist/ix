@@ -1,12 +1,21 @@
-//! `ix_braid` — the agent-facing surface for `ix-knot`.
+//! `ix_braid` and `ix_knot` — the agent-facing surface for `ix-knot`.
 //!
-//! A braid word in, the knot or link its closure makes out: the strand
-//! permutation, components, writhe and Jones polynomial, plus on request a 3D
-//! layout of the strands a renderer can draw (a ComfyUI control image, for one).
-//! A pure computation over the caller's word: no filesystem, no network, no
-//! state.
+//! `ix_braid`: a braid word in, the knot or link its closure makes out: the
+//! strand permutation, components, writhe and Jones polynomial, plus on request
+//! a 3D layout of the strands a renderer can draw (a ComfyUI control image, for
+//! one).
+//!
+//! `ix_knot`: a knot tied in rope, named from the catalogue or drawn by the
+//! caller, with the same invariants and on request each rope's 3D path.
+//!
+//! Pure computations over the caller's input and the built-in catalogue: no
+//! filesystem, no network, no state.
 
-use ix_knot::{jones, layout, Braid, MAX_CROSSINGS, MAX_POINTS, MAX_STRANDS};
+use ix_knot::catalog::{catalog, find};
+use ix_knot::{
+    jones, layout, Braid, Jones, Rope, RopeDiagram, MAX_CONTROL_POINTS, MAX_CROSSINGS, MAX_POINTS,
+    MAX_ROPES, MAX_STRANDS,
+};
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
 
@@ -99,16 +108,6 @@ pub fn braid(params: Value) -> Result<Value, String> {
         .map_err(|e| e.to_string())?;
 
     let v = jones(&braid);
-    let terms = v
-        .terms()
-        .iter()
-        .map(|&(half, coeff)| {
-            i64::try_from(coeff)
-                .map(|c| json!([f64::from(half) / 2.0, c]))
-                .map_err(|_| format!("a Jones coefficient ({coeff}) does not fit a JSON integer"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
     let mut out = json!({
         "word": braid.to_string(),
         "generators": braid.word(),
@@ -117,7 +116,7 @@ pub fn braid(params: Value) -> Result<Value, String> {
         "writhe": braid.writhe(),
         "permutation": braid.permutation(),
         "components": braid.components(),
-        "jones": { "text": v.to_string(), "terms": terms },
+        "jones": jones_json(&v)?,
         "jones_symmetric": v.is_symmetric(),
     });
     if params
@@ -134,6 +133,226 @@ pub fn braid(params: Value) -> Result<Value, String> {
         out["geometry"] = json!({ "strands": strands });
     }
     Ok(out)
+}
+
+/// `{text, terms}`: the polynomial in t, and its terms as [power, coefficient].
+fn jones_json(v: &Jones) -> Result<Value, String> {
+    let terms = v
+        .terms()
+        .iter()
+        .map(|&(half, coeff)| {
+            i64::try_from(coeff)
+                .map(|c| json!([f64::from(half) / 2.0, c]))
+                .map_err(|_| format!("a Jones coefficient ({coeff}) does not fit a JSON integer"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({ "text": v.to_string(), "terms": terms }))
+}
+
+fn knot_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "A knot from the catalogue, e.g. \"overhand\" or \"figure-eight\"; `list` names them all. Omit it to read a drawing of your own from `ropes`."
+            },
+            "list": {
+                "type": "boolean",
+                "default": false,
+                "description": "Return the catalogue (id, English and French names, family, Ashley number, closure) instead of a knot"
+            },
+            "ropes": {
+                "type": "array",
+                "maxItems": MAX_ROPES,
+                "description": format!("A drawing of your own: each rope {{points: [[x, y], ...], closed}}, its control points in order (a smooth curve passes through them), y up; [x, y, z] when `over` is \"height\". At most {MAX_CONTROL_POINTS} points over all ropes."),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
+                        "closed": { "type": "boolean", "default": false }
+                    },
+                    "required": ["points"]
+                }
+            },
+            "over": {
+                "type": "string",
+                "description": "With `ropes`: which passage of each crossing is in front. One letter O (over) or U (under) per passage, in the order the ropes reach them (rope 0 from its first point, then rope 1); \"alternating\" for one rope, starting over; or \"height\", the higher z in front. An open rope is closed by an arc over everything from its end back to its start."
+            },
+            "radius": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "With `ropes` and `geometry`: the rope radius, in the drawing's units. A catalogue knot has its own."
+            },
+            "geometry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Also return each rope's 3D path, for drawing the knot"
+            }
+        }
+    })
+}
+
+fn knot_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "entries": { "type": "array", "description": "With `list`: the catalogue" },
+            "id": { "type": "string", "description": "Catalogue knots: the id, with `en`, `fr`, `family`, `abok` and `closure` (the closure's knot in Rolfsen's table, `m` in front for the mirror)" },
+            "crossings": { "type": "integer", "description": "Crossings of the drawing" },
+            "closure_crossings": { "type": "integer", "description": "Crossings the arcs closing open ropes add" },
+            "writhe": { "type": "integer", "description": "Crossing signs summed, the closure's included" },
+            "components": { "type": "integer", "description": "Components of the closure: one per rope" },
+            "jones": { "type": "object", "description": "Jones polynomial of the closure: `text` in t, `terms` as [power, coefficient]" },
+            "jones_symmetric": { "type": "boolean", "description": "V(t) = V(1/t)" },
+            "geometry": {
+                "type": "object",
+                "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...]}, z toward the viewer: up where the rope passes in front) and `min_clearance`, the least distance between two parts of the ropes in rope diameters (below 1 the tubes pass through each other)"
+            }
+        }
+    })
+}
+
+/// A knot tied in rope, from the catalogue or drawn by the caller: its
+/// closure's components, writhe and Jones polynomial, and on request each
+/// rope's 3D path.
+///
+/// A drawing is ropes through control points and, at each crossing, which
+/// passage is in front; the crossings are found from the curves. Each
+/// catalogue entry is tested against the knot its closure must be.
+#[ix_skill(
+    domain = "knot",
+    name = "knot",
+    governance = "deterministic",
+    schema_fn = "crate::skills::knot::knot_schema",
+    output_schema_fn = "crate::skills::knot::knot_output_schema"
+)]
+pub fn knot(params: Value) -> Result<Value, String> {
+    if params.get("list").and_then(Value::as_bool).unwrap_or(false) {
+        let entries: Vec<Value> = catalog()
+            .iter()
+            .map(|e| {
+                json!({
+                    "id": e.id, "en": e.en, "fr": e.fr, "family": e.family,
+                    "abok": e.abok, "closure": e.closure,
+                })
+            })
+            .collect();
+        return Ok(json!({ "entries": entries }));
+    }
+    let geometry = params
+        .get("geometry")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let (entry, diagram, radius) = match params.get("name") {
+        Some(Value::String(id)) => {
+            if params.get("ropes").is_some() {
+                return Err("give `name` or `ropes`, not both".to_string());
+            }
+            let e = find(id).ok_or_else(|| {
+                format!("no knot {id:?} in the catalogue; `list: true` names them")
+            })?;
+            (Some(e), e.diagram().map_err(|e| e.to_string())?, e.radius)
+        }
+        Some(other) => return Err(format!("`name` must be a string, got {other}")),
+        None => {
+            let ropes = read_ropes(&params)?;
+            let over = match params.get("over") {
+                None | Some(Value::Null) => "",
+                Some(Value::String(s)) => s.as_str(),
+                Some(other) => return Err(format!("`over` must be a string, got {other}")),
+            };
+            let diagram = RopeDiagram::new(&ropes, over).map_err(|e| e.to_string())?;
+            let radius = match params.get("radius") {
+                None | Some(Value::Null) if geometry => {
+                    return Err(
+                        "`radius` is required with `geometry` for a drawing of your own".into(),
+                    )
+                }
+                None | Some(Value::Null) => 1.0,
+                Some(v) => v
+                    .as_f64()
+                    .ok_or_else(|| format!("`radius` must be a number, got {v}"))?,
+            };
+            (None, diagram, radius)
+        }
+    };
+
+    let drawn = diagram.drawn_crossings();
+    let v = diagram.jones();
+    let mut out = json!({
+        "crossings": drawn,
+        "closure_crossings": diagram.crossings().len() - drawn,
+        "writhe": diagram.writhe(),
+        "components": diagram.components(),
+        "jones": jones_json(v)?,
+        "jones_symmetric": v.is_symmetric(),
+    });
+    if let Some(e) = entry {
+        for (key, value) in [
+            ("id", json!(e.id)),
+            ("en", json!(e.en)),
+            ("fr", json!(e.fr)),
+            ("family", json!(e.family)),
+            ("abok", json!(e.abok)),
+            ("closure", json!(e.closure)),
+        ] {
+            out[key] = value;
+        }
+    }
+    if geometry {
+        let g = diagram.geometry(radius).map_err(|e| e.to_string())?;
+        let ropes: Vec<Value> = g
+            .ropes
+            .iter()
+            .map(|r| json!({ "closed": r.closed, "points": r.points }))
+            .collect();
+        out["geometry"] = json!({
+            "radius": g.radius,
+            "min_clearance": g.min_clearance,
+            "ropes": ropes,
+        });
+    }
+    Ok(out)
+}
+
+/// `ropes` as the caller drew them; the diagram checks the rest.
+fn read_ropes(params: &Value) -> Result<Vec<Rope>, String> {
+    let ropes = params
+        .get("ropes")
+        .and_then(Value::as_array)
+        .ok_or("give `name` (a catalogue knot) or `ropes` (a drawing of your own)")?;
+    ropes
+        .iter()
+        .enumerate()
+        .map(|(i, rope)| {
+            let points = rope
+                .get("points")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("rope {i}: `points` must be an array of [x, y] points"))?;
+            let points = points
+                .iter()
+                .map(|p| {
+                    let xyz: Option<Vec<f64>> = p
+                        .as_array()
+                        .filter(|a| a.len() == 2 || a.len() == 3)
+                        .map(|a| a.iter().filter_map(Value::as_f64).collect());
+                    match xyz {
+                        Some(v) if v.len() == 2 => Ok([v[0], v[1], 0.0]),
+                        Some(v) if v.len() == 3 => Ok([v[0], v[1], v[2]]),
+                        _ => Err(format!("rope {i}: a point is [x, y] or [x, y, z], got {p}")),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let closed = match rope.get("closed") {
+                None | Some(Value::Null) => false,
+                Some(v) => v
+                    .as_bool()
+                    .ok_or_else(|| format!("rope {i}: `closed` must be a boolean"))?,
+            };
+            Ok(Rope { points, closed })
+        })
+        .collect()
 }
 
 /// A present count must be a non-negative integer; absent or `null` is `None`.
@@ -202,6 +421,89 @@ mod tests {
         assert!(
             (mid[0] - 0.5).abs() < 1e-12 && mid[1] == 0.5 && mid[2] == 1.0,
             "{mid:?}"
+        );
+    }
+
+    #[test]
+    fn names_the_catalogue_and_draws_its_knots() {
+        let list = knot(json!({ "list": true })).unwrap();
+        let ids: Vec<&str> = list["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert!(
+            ids.contains(&"overhand") && ids.contains(&"figure-eight"),
+            "{ids:?}"
+        );
+
+        let out = knot(json!({ "name": "figure-eight", "geometry": true })).unwrap();
+        assert_eq!(out["fr"], "Nœud en huit");
+        assert_eq!(out["abok"], 570);
+        assert_eq!(out["closure"], "4_1");
+        assert_eq!(out["crossings"], 4);
+        assert_eq!(out["closure_crossings"], 0);
+        assert_eq!(out["jones"]["text"], "t^-2 - t^-1 + 1 - t + t^2");
+        assert_eq!(out["geometry"]["ropes"].as_array().unwrap().len(), 1);
+        assert!(out["geometry"]["min_clearance"].as_f64().unwrap() >= 1.0);
+        let overhand = knot(json!({ "name": "overhand" })).unwrap();
+        assert_eq!(overhand["jones"]["text"], "t + t^3 - t^4");
+        assert!(overhand.get("geometry").is_none());
+    }
+
+    fn circle(cx: f64) -> Value {
+        let points: Vec<[f64; 2]> = (0..8)
+            .map(|k| {
+                let a = std::f64::consts::PI * k as f64 / 4.0;
+                [cx + 2.0 * a.cos(), 2.0 * a.sin()]
+            })
+            .collect();
+        json!({ "closed": true, "points": points })
+    }
+
+    #[test]
+    fn reads_a_drawing_of_your_own() {
+        // Two overlapping circles, each reaching the upper crossing first:
+        // rope 0 over there and under at the lower one is the Hopf link.
+        let ropes = json!([circle(0.0), circle(2.5)]);
+        let hopf = knot(json!({ "ropes": ropes, "over": "OU UO" })).unwrap();
+        assert_eq!(hopf["components"], 2);
+        assert_eq!(hopf["crossings"], 2);
+        assert!(hopf.get("id").is_none());
+        let text = hopf["jones"]["text"].as_str().unwrap();
+        assert!(
+            ["-t^(1/2) - t^(5/2)", "-t^(-5/2) - t^(-1/2)"].contains(&text),
+            "{text}"
+        );
+        let unlink =
+            knot(json!({ "ropes": ropes, "over": "OOUU", "geometry": true, "radius": 0.2 }))
+                .unwrap();
+        assert_eq!(unlink["jones"]["text"], "-t^(-1/2) - t^(1/2)");
+        assert_eq!(unlink["geometry"]["radius"], 0.2);
+    }
+
+    #[test]
+    fn knot_refuses_with_a_reason() {
+        let err = |p: Value| knot(p).unwrap_err();
+        assert!(err(json!({})).contains("give `name`"));
+        assert!(err(json!({ "name": "granny-bend" })).contains("no knot"));
+        assert!(err(json!({ "name": 3 })).contains("must be a string"));
+        assert!(err(json!({ "name": "overhand", "ropes": [] })).contains("not both"));
+        assert!(err(json!({ "ropes": [{ "points": [[0, 0], [1]] }] })).contains("[x, y]"));
+        assert!(
+            err(json!({ "ropes": [{ "points": [[0, 0], [1, 1]], "closed": 1 }] }))
+                .contains("`closed` must be a boolean")
+        );
+        assert!(
+            err(json!({ "ropes": [{ "points": [[0, 0], [1, 1]] }], "geometry": true }))
+                .contains("`radius` is required")
+        );
+        let ropes = json!([circle(0.0), circle(2.5)]);
+        assert!(err(json!({ "ropes": ropes, "over": "OU" })).contains("2 letters"));
+        assert!(
+            err(json!({ "ropes": ropes, "over": "OUUO", "geometry": true, "radius": -1 }))
+                .contains("positive")
         );
     }
 
