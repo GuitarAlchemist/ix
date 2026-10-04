@@ -146,6 +146,13 @@ contracts (see `docs/contracts/`), not runtime coupling.
   diagram, half the signed sum of the crossings between them. Not zero proves the two
   are caught; zero proves nothing (the Whitehead link). A slip counts as `apart` only
   when every linking number is zero.
+- **Knot mechanics** (`ix_knot::Mechanics`, Patil et al., Science 2020) — three counts
+  on a drawing whose ropes are oriented toward the ends they are **pulled** from: the
+  crossings N, the **twist fluctuation** τ = 1 − (Wr/N)² (1 when as many crossings turn
+  each way as the other), and the **circulation** Γ (around each bounded face, edges
+  running anticlockwise minus clockwise, over the face's edges). Bends with higher τ,
+  then higher Γ, held better in their experiments; no formula combines the three.
+  Drawing-dependent, not invariants: the same knot drawn otherwise counts otherwise.
 - **`.knot` file** (`ix_knot::knot_file`) — a knot written down to be checked: its
   name, the knot itself (ropes and their points, or a Gauss code) and `expect` lines
   stating what it must be. IX owns the grammar and checks each expectation; a writer,

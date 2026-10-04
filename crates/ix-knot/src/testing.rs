@@ -63,3 +63,54 @@ pub(crate) fn words(count: usize) -> Vec<Braid> {
         })
         .collect()
 }
+
+/// Two interlocked bights, six crossings: the sailor-knot series' drawing of the
+/// reef knot. Each rope's tail is its first point, its standing part its last.
+/// Its heights make it neither the reef nor the granny: joining the two tails
+/// and the two standing parts closes it into the unknot. The crossings that make
+/// it either are in `mechanics`'s tests.
+pub(crate) fn bights() -> Vec<Rope> {
+    let rope = |pts: &[[f64; 3]]| Rope {
+        points: pts.to_vec(),
+        closed: false,
+    };
+    let left = rope(&[
+        [-3.7, 0.4, 0.0],
+        [-3.0, 0.4, -0.5],
+        [-2.35, 0.4, -1.0],
+        [-1.3, 0.42, -0.6],
+        [0.0, 0.8, -1.0],
+        [0.9, 1.12, -0.2],
+        [1.6, 1.1, 0.5],
+        [2.2, 0.75, 1.0],
+        [2.42, 0.0, 1.0],
+        [2.2, -0.75, 1.0],
+        [1.6, -1.1, 0.5],
+        [0.9, -1.12, 0.6],
+        [0.0, -0.8, 1.0],
+        [-1.3, -0.42, 0.3],
+        [-2.35, -0.4, -1.0],
+        [-3.2, -0.4, -0.5],
+        [-4.8, -0.4, 0.0],
+    ]);
+    let right = rope(&[
+        [3.7, 0.4, 0.0],
+        [3.0, 0.4, -0.5],
+        [2.35, 0.4, -1.0],
+        [1.3, 0.42, -0.3],
+        [0.04, 0.83, 1.0],
+        [-0.9, 1.12, 0.6],
+        [-1.6, 1.1, 0.5],
+        [-2.2, 0.75, 1.0],
+        [-2.42, 0.0, 1.0],
+        [-2.2, -0.75, 1.0],
+        [-1.6, -1.1, 0.5],
+        [-0.9, -1.12, -0.2],
+        [0.04, -0.83, -1.0],
+        [1.3, -0.42, -0.6],
+        [2.35, -0.4, -1.0],
+        [3.2, -0.4, -0.5],
+        [4.8, -0.4, 0.0],
+    ]);
+    vec![left, right]
+}

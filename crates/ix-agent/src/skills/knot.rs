@@ -208,6 +208,11 @@ fn knot_schema() -> Value {
                 "default": false,
                 "description": "Return the .knot grammar, in EBNF, instead of a knot"
             },
+            "pull": {
+                "type": "array",
+                "items": { "enum": ["start", "end"] },
+                "description": "Which end each rope is pulled from, in rope order (with `knot`, the file's `pull` line otherwise): returns `mechanics`, Patil et al.'s counts (Science 2020) with each rope oriented toward its pull"
+            },
             "mistakes": {
                 "type": "boolean",
                 "default": false,
@@ -245,6 +250,7 @@ fn knot_output_schema() -> Value {
                 "description": "With `knot`: one per `expect` line, {line, expect, got, holds}: the statement, what IX found, and whether it is what was expected"
             },
             "grammar": { "type": "string", "description": "With `grammar`: the .knot grammar in EBNF" },
+            "mechanics": { "type": "object", "description": "With `pull`: `crossings` (N), `writhe` (signs summed, each rope oriented toward its pull), `twist` (tau = 1 - (writhe/N)^2) and `circulation` (Gamma, over the bounded faces). Patil et al. found bends with higher tau, then higher Gamma, hold better: grief (6, 0, 1) < thief (6, 1, 1) < granny (6, 0, 4) < reef (6, 1, 4)" },
             "mistakes": {
                 "type": "object",
                 "description": "With `mistakes`: how many slips leave the closure `same`, `untied`, `apart` or `other`, and `slips`, one per crossing of the drawing in the order the ropes first reach them: `at` [x, y], `ropes` (the two that cross there), `over` (letters drawing the slip), `writhe`, `jones` and `outcome`"
@@ -381,6 +387,24 @@ pub fn knot(params: Value) -> Result<Value, String> {
         }
     };
 
+    let pull = match params.get("pull") {
+        None | Some(Value::Null) => file
+            .as_ref()
+            .and_then(|(f, _)| f.pull.as_ref())
+            .map(|(_, ends)| ends.clone()),
+        Some(Value::Array(ends)) => Some(
+            ends.iter()
+                .map(|e| match e.as_str() {
+                    Some("start") => Ok(true),
+                    Some("end") => Ok(false),
+                    _ => Err(format!(
+                        "`pull` takes \"start\" or \"end\" per rope, got {e}"
+                    )),
+                })
+                .collect::<Result<Vec<bool>, String>>()?,
+        ),
+        Some(other) => return Err(format!("`pull` must be an array, got {other}")),
+    };
     let drawn = diagram.drawn_crossings();
     let v = diagram.jones();
     let mut out = json!({
@@ -399,6 +423,15 @@ pub fn knot(params: Value) -> Result<Value, String> {
             .map(|&((a, b), number)| json!({ "ropes": [a, b], "number": number }))
             .collect::<Vec<_>>()
             .into();
+    }
+    if let Some(pull) = pull {
+        let m = diagram.mechanics(&pull).map_err(|e| e.to_string())?;
+        out["mechanics"] = json!({
+            "crossings": m.crossings,
+            "writhe": m.writhe,
+            "twist": m.twist,
+            "circulation": m.circulation,
+        });
     }
     if let Some(d) = drawing {
         out["drawing"] = d;
@@ -708,6 +741,21 @@ mod tests {
         let slip = &hopf["mistakes"]["slips"][0];
         assert_eq!(slip["ropes"], json!([0, 1]));
         let redrawn = knot(json!({ "ropes": ropes, "over": slip["over"] })).unwrap();
+        // Pulled from the two ends of rope 0 and rope 1's last point: N, tau, Gamma.
+        let pulled =
+            knot(json!({ "ropes": ropes, "over": "OU UO", "pull": ["end", "start"] })).unwrap();
+        assert_eq!(pulled["mechanics"]["crossings"], 2);
+        assert_eq!(pulled["mechanics"]["twist"], 0.0);
+        assert!(
+            knot(json!({ "ropes": ropes, "over": "OU UO", "pull": ["end"] }))
+                .unwrap_err()
+                .contains("one pull per rope")
+        );
+        assert!(
+            knot(json!({ "ropes": ropes, "over": "OU UO", "pull": ["up", "end"] }))
+                .unwrap_err()
+                .contains("start")
+        );
         assert_eq!(redrawn["jones"], slip["jones"]);
         assert!(knot(json!({ "name": "overhand" }))
             .unwrap()

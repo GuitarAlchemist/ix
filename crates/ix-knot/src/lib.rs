@@ -51,6 +51,7 @@ pub mod gauss;
 pub mod jones;
 pub mod knot_file;
 pub mod layout;
+pub mod mechanics;
 pub mod mistakes;
 mod poly;
 #[cfg(test)]
@@ -64,4 +65,5 @@ pub use diagram::{
 pub use gauss::{GaussCode, GaussError, MAX_GAUSS_CROSSINGS};
 pub use jones::{jones, Jones};
 pub use layout::{layout, LayoutError, StrandPath, MAX_POINTS};
+pub use mechanics::Mechanics;
 pub use mistakes::{Mistake, Outcome};

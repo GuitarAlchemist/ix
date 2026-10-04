@@ -24,7 +24,9 @@ itself — `rope open|closed` followed by its control points and `over`, or
 `components`, `writhe`, `jones` (a Rolfsen name, a connected sum of them such as
 `3_1#m3_1`, or the polynomial's text; a `#` starts a comment only at the start of
 a line or after a space),
-`clearance >=` (at the file's `radius`) and `slips <outcome> <count>`.
+`clearance >=` (at the file's `radius`), `slips <outcome> <count>`, and `twist`
+and `circulation` (Patil et al.'s τ and Γ, to 0.01), read with each rope
+oriented toward the end a `pull` line says it is pulled from.
 `crates/ix-knot/knots/` holds two examples, the bowline drawn and the overhand
 spelled; both are tests.
 
@@ -68,7 +70,7 @@ removing one breaks files. Until this ADR is accepted, the format may change.
 - **TARS actually drafts files.** Then decide how a draft travels (a file in a
   shared folder, or the text through MCP) and how many repair rounds TARS gets.
 - **A knot needs what a line cannot say** — a post or ring as part of the knot,
-  a pull direction (rolling versus Magnus hitch), a mechanical claim (`expect
-  holds`) once a test bench exists.
+  or a mechanical claim (`expect holds`) once a test bench exists. The pull
+  direction is now `pull`.
 - **Files are written by hand at scale.** Then error messages and an `ix knot
   check` command matter more than the MCP tool.

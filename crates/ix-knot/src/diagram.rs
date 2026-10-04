@@ -77,6 +77,8 @@ pub enum DiagramError {
     Overflow,
     #[error("rope radius must be a positive number, got {0}")]
     Radius(f64),
+    #[error("give one pull per rope: {ropes} ropes, {got} pulls")]
+    Pulls { ropes: usize, got: usize },
 }
 
 /// A crossing of the diagram or of its closure.
@@ -112,11 +114,11 @@ pub struct Geometry {
 
 /// A passage of a rope (or of its closing arc) through a crossing.
 #[derive(Debug, Clone, Copy)]
-struct Passage {
-    seg: usize,
-    t: f64,
-    crossing: usize,
-    over: bool,
+pub(crate) struct Passage {
+    pub(crate) seg: usize,
+    pub(crate) t: f64,
+    pub(crate) crossing: usize,
+    pub(crate) over: bool,
 }
 
 /// A knot or link as drawn: see the module documentation.
@@ -125,11 +127,12 @@ pub struct RopeDiagram {
     /// The ropes as given, to redraw them with other crossings.
     ropes: Vec<Rope>,
     /// Each rope's smoothed curve, then (open ropes) its closing arc.
-    loops: Vec<Vec<[f64; 3]>>,
+    pub(crate) loops: Vec<Vec<[f64; 3]>>,
     /// Points of each loop that belong to the drawn rope; the rest close it.
-    drawn: Vec<usize>,
-    closed: Vec<bool>,
-    passages: Vec<Vec<Passage>>,
+    pub(crate) drawn: Vec<usize>,
+    pub(crate) closed: Vec<bool>,
+    /// Each loop's passages through the crossings, in order along it.
+    pub(crate) passages: Vec<Vec<Passage>>,
     crossings: Vec<Crossing>,
     writhe: i64,
     jones: Jones,

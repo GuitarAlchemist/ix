@@ -62,7 +62,7 @@ pub struct Mistake {
 impl RopeDiagram {
     /// Each crossing of the drawing passed the wrong way, one at a time, in the
     /// order the ropes first reach them.
-    // @ai:invariant each mistake redraws the same ropes with exactly one crossing's two passages swapped, and the unchanged letters redraw the drawing itself [T:test conf:0.9 src:mistakes::tests::the_reef_knot_comes_apart_on_four_slips_of_six]
+    // @ai:invariant each mistake redraws the same ropes with exactly one crossing's two passages swapped, and the unchanged letters redraw the drawing itself [T:test conf:0.9 src:mistakes::tests::interlocked_bights_come_apart_on_four_slips_of_six]
     // @ai:assumption a Jones polynomial equal to the product of the ropes' own polynomials, with every linking number zero, means the ropes lie apart; a non-split link passing both would be misread as apart [U:uncertain conf:0.6 src:no-check]
     pub fn mistakes(&self) -> Result<Vec<Mistake>, DiagramError> {
         let passes = self.passes();
@@ -190,75 +190,29 @@ mod tests {
         }
     }
 
-    /// The reef knot of the sailor-knot drawings (two interlocked bights,
-    /// heights given): an independent count, made by flipping crossings from
-    /// the outside and asking `ix_knot` each time, found that 4 of its 6 slips
-    /// let the ropes apart.
+    /// Two interlocked bights, heights given (the sailor-knot series' drawing
+    /// of the reef knot, which its heights do not make one): an independent
+    /// count, made by flipping crossings from the outside and asking `ix_knot`
+    /// each time, found that 4 of its 6 slips let the ropes apart.
     #[test]
-    fn the_reef_knot_comes_apart_on_four_slips_of_six() {
-        let rope = |pts: &[[f64; 3]]| Rope {
-            points: pts.to_vec(),
-            closed: false,
-        };
-        let left = rope(&[
-            [-3.7, 0.4, 0.0],
-            [-3.0, 0.4, -0.5],
-            [-2.35, 0.4, -1.0],
-            [-1.3, 0.42, -0.6],
-            [0.0, 0.8, -1.0],
-            [0.9, 1.12, -0.2],
-            [1.6, 1.1, 0.5],
-            [2.2, 0.75, 1.0],
-            [2.42, 0.0, 1.0],
-            [2.2, -0.75, 1.0],
-            [1.6, -1.1, 0.5],
-            [0.9, -1.12, 0.6],
-            [0.0, -0.8, 1.0],
-            [-1.3, -0.42, 0.3],
-            [-2.35, -0.4, -1.0],
-            [-3.2, -0.4, -0.5],
-            [-4.8, -0.4, 0.0],
-        ]);
-        let right = rope(&[
-            [3.7, 0.4, 0.0],
-            [3.0, 0.4, -0.5],
-            [2.35, 0.4, -1.0],
-            [1.3, 0.42, -0.3],
-            [0.04, 0.83, 1.0],
-            [-0.9, 1.12, 0.6],
-            [-1.6, 1.1, 0.5],
-            [-2.2, 0.75, 1.0],
-            [-2.42, 0.0, 1.0],
-            [-2.2, -0.75, 1.0],
-            [-1.6, -1.1, 0.5],
-            [-0.9, -1.12, -0.2],
-            [0.04, -0.83, -1.0],
-            [1.3, -0.42, -0.6],
-            [2.35, -0.4, -1.0],
-            [3.2, -0.4, -0.5],
-            [4.8, -0.4, 0.0],
-        ]);
-        let reef = RopeDiagram::new(&[left, right], "height").unwrap();
-        assert_eq!(reef.drawn_crossings(), 6);
-        assert_eq!(reef.jones().to_string(), "-t^(-5/2) - t^(-1/2)");
+    fn interlocked_bights_come_apart_on_four_slips_of_six() {
+        let bights = RopeDiagram::new(&crate::testing::bights(), "height").unwrap();
+        assert_eq!(bights.drawn_crossings(), 6);
+        assert_eq!(bights.jones().to_string(), "-t^(-5/2) - t^(-1/2)");
 
         // The letters the passages give redraw the drawing itself.
-        let drawn = letters(reef.passes().iter().flatten());
-        let again = RopeDiagram::new(reef.ropes(), &drawn).unwrap();
-        assert_eq!(again.jones(), reef.jones());
+        let drawn = letters(bights.passes().iter().flatten());
+        let again = RopeDiagram::new(bights.ropes(), &drawn).unwrap();
+        assert_eq!(again.jones(), bights.jones());
 
-        let mistakes = reef.mistakes().unwrap();
+        let mistakes = bights.mistakes().unwrap();
         assert_eq!(mistakes.len(), 6);
         let count = |o| mistakes.iter().filter(|m| m.outcome == o).count();
         assert_eq!((count(Outcome::Apart), count(Outcome::Other)), (4, 2));
         for m in &mistakes {
             let changed = drawn.chars().zip(m.over.chars()).filter(|(a, b)| a != b);
             assert_eq!(changed.count(), 2, "one crossing, two passages");
-            assert_eq!(
-                m.ropes,
-                [0, 1],
-                "every crossing of the reef joins the ropes"
-            );
+            assert_eq!(m.ropes, [0, 1], "every crossing joins the ropes");
         }
     }
 }

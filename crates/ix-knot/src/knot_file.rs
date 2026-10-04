@@ -29,6 +29,7 @@ use crate::catalog::{closure_jones, MAX_SUMMANDS};
 use crate::diagram::{Rope, RopeDiagram};
 use crate::gauss::{draw, GaussCode};
 use crate::jones::Jones;
+use crate::mechanics::Mechanics;
 use crate::mistakes::Outcome;
 use std::str::FromStr;
 
@@ -51,13 +52,17 @@ statement   = "knot" , name                                (* first, once *)
             | "gauss" , code                              (* instead of ropes: the rest of the line *)
             | "closure" , knot                            (* with gauss: the knot its drawing must close into *)
             | "radius" , number
+            | "pull" , end , { end }                     (* the end each rope is pulled from, in rope order *)
             | "expect" , expectation ;
 expectation = "crossings" , integer
             | "components" , integer
             | "writhe" , integer
             | "jones" , ( knot | text )                   (* the closure's Jones polynomial: that knot's, or this text *)
             | "clearance" , ">=" , number                 (* in rope diameters, at the file's radius *)
-            | "slips" , ( "same" | "untied" | "apart" | "other" ) , integer ;
+            | "slips" , ( "same" | "untied" | "apart" | "other" ) , integer
+            | "twist" , number                          (* Patil et al.'s tau, each rope oriented toward its pull, to 0.01 *)
+            | "circulation" , number ;                  (* their Gamma, to 0.01 *)
+end         = "start" | "end" ;                         (* "end" for every rope without "pull" *)
 name        = letter , { letter | digit | "-" } ;
 word        = letter , { letter | "-" } ;
 text        = '"' , { any character but '"' } , '"' ;
@@ -108,6 +113,10 @@ pub enum Expect {
     JonesText(String),
     Clearance(f64),
     Slips(Outcome, usize),
+    /// Patil et al.'s twist fluctuation τ, to 0.01.
+    Twist(f64),
+    /// Their circulation Γ, to 0.01.
+    Circulation(f64),
 }
 
 /// One `expect` line.
@@ -131,6 +140,8 @@ pub struct KnotFile {
     /// Line of the `rope` or `gauss` statement that gives the knot.
     pub source_line: usize,
     pub radius: Option<f64>,
+    /// The `pull` line and, per rope, whether it is pulled from its start.
+    pub pull: Option<(usize, Vec<bool>)>,
     pub expectations: Vec<Expectation>,
 }
 
@@ -170,6 +181,7 @@ impl FromStr for KnotFile {
         let (mut fr, mut en, mut family, mut abok) = (None, None, None, None);
         let mut ropes: Vec<Rope> = Vec::new();
         let (mut over, mut gauss, mut closure, mut radius) = (None, None, None, None);
+        let mut pull = None;
         let mut source_line = 0;
         let mut expectations = Vec::new();
         for (i, raw) in text.lines().enumerate() {
@@ -254,6 +266,25 @@ impl FromStr for KnotFile {
                     }
                     radius = Some(r);
                 }
+                "pull" => {
+                    once(pull.is_some(), "pull")?;
+                    let ends: Result<Vec<bool>, _> = rest
+                        .split_whitespace()
+                        .map(|w| match w {
+                            "start" => Ok(true),
+                            "end" => Ok(false),
+                            _ => fail(
+                                line,
+                                format!("`pull` takes start or end per rope, got {w:?}"),
+                            ),
+                        })
+                        .collect();
+                    let ends = ends?;
+                    if ends.is_empty() {
+                        return fail(line, "`pull` takes start or end per rope");
+                    }
+                    pull = Some((line, ends));
+                }
                 "expect" => expectations.push(Expectation {
                     line,
                     text: statement.to_string(),
@@ -300,6 +331,7 @@ impl FromStr for KnotFile {
             source,
             source_line,
             radius,
+            pull,
             expectations,
         })
     }
@@ -329,6 +361,7 @@ impl KnotFile {
         };
         let radius = self.radius.or(drawn_radius);
         let mut slips = None;
+        let mut mechanics = None;
         let mut verdicts = Vec::new();
         for e in &self.expectations {
             let (got, holds) = match &e.expect {
@@ -367,6 +400,17 @@ impl KnotFile {
                     let all = slips.as_deref().unwrap_or_default();
                     count(all.iter().filter(|m| m.outcome == *outcome).count(), *n)
                 }
+                Expect::Twist(want) | Expect::Circulation(want) => {
+                    if mechanics.is_none() {
+                        mechanics = Some(self.mechanics(&diagram)?);
+                    }
+                    let m = mechanics.unwrap_or_else(|| unreachable!());
+                    let got = match e.expect {
+                        Expect::Twist(_) => m.twist,
+                        _ => m.circulation,
+                    };
+                    (format!("{got:.2}"), (got - want).abs() < 0.005)
+                }
             };
             verdicts.push(Verdict {
                 line: e.line,
@@ -393,6 +437,21 @@ fn strip_comment(raw: &str) -> &str {
         after_space = c.is_whitespace();
     }
     raw
+}
+
+impl KnotFile {
+    /// Patil et al.'s counts for the file's knot, each rope pulled as `pull`
+    /// says, or from its last point.
+    pub fn mechanics(&self, diagram: &RopeDiagram) -> Result<Mechanics, KnotFileError> {
+        let (line, pulls) = match &self.pull {
+            Some((line, pulls)) => (*line, pulls.clone()),
+            None => (0, vec![false; diagram.components()]),
+        };
+        diagram.mechanics(&pulls).map_err(|e| KnotFileError {
+            line,
+            reason: e.to_string(),
+        })
+    }
 }
 
 fn count(got: usize, want: usize) -> (String, bool) {
@@ -475,7 +534,7 @@ fn read_expect(line: usize, rest: &str) -> Result<Expect, KnotFileError> {
     let Some((what, arg)) = split_head(rest) else {
         return fail(
             line,
-            "`expect` what? crossings, components, writhe, jones, clearance or slips",
+            "`expect` what? crossings, components, writhe, jones, clearance, slips, twist or circulation",
         );
     };
     let integer = |arg: &str| read_number::<usize>(line, arg, "a whole number");
@@ -489,6 +548,8 @@ fn read_expect(line: usize, rest: &str) -> Result<Expect, KnotFileError> {
             Some(n) => Expect::Clearance(read_number(line, n.trim(), "a number")?),
             None => return fail(line, "`expect clearance >= <diameters>`"),
         },
+        "twist" => Expect::Twist(read_number(line, arg, "a number")?),
+        "circulation" => Expect::Circulation(read_number(line, arg, "a number")?),
         "slips" => {
             let (kind, n) = split_head(arg).unwrap_or(("", ""));
             let outcome = match kind {
@@ -542,6 +603,52 @@ mod tests {
             (wrong[0].text.as_str(), wrong[0].got.as_str()),
             ("expect crossings 8", "7")
         );
+    }
+
+    /// The reef and the thief: one drawing, pulled from one tail or the other.
+    #[test]
+    fn pull_says_which_ends_load_the_knot() {
+        let reef: String = crate::testing::bights()
+            .iter()
+            .map(|r| {
+                let points: Vec<String> = r
+                    .points
+                    .iter()
+                    .map(|p| format!("{} {}", p[0], p[1]))
+                    .collect();
+                format!("rope open\n{}\n", points.join("\n"))
+            })
+            .collect();
+        let file = |pull: &str| {
+            format!("knot reef\n{reef}over OUOOUO UOUUOU\n{pull}\nexpect twist 1\nexpect circulation 4\n")
+        };
+        let reef = file("pull end end")
+            .parse::<KnotFile>()
+            .unwrap()
+            .check()
+            .unwrap();
+        assert!(reef.holds());
+        let thief = file("pull end start")
+            .parse::<KnotFile>()
+            .unwrap()
+            .check()
+            .unwrap();
+        let got: Vec<&str> = thief.verdicts.iter().map(|v| v.got.as_str()).collect();
+        assert_eq!(got, ["1.00", "1.00"]);
+        // Without `pull`, each rope is pulled from its last point.
+        assert!(file("")
+            .parse::<KnotFile>()
+            .unwrap()
+            .check()
+            .unwrap()
+            .holds());
+        let err = file("pull end")
+            .parse::<KnotFile>()
+            .unwrap()
+            .check()
+            .unwrap_err();
+        assert!(err.reason.contains("one pull per rope"), "{err}");
+        assert!(file("pull sideways").parse::<KnotFile>().is_err());
     }
 
     /// Two overhand knots in a row, spelled by their code: the closure named as
@@ -610,6 +717,7 @@ mod tests {
             "gauss",
             "closure",
             "radius",
+            "pull",
             "expect",
             "crossings",
             "components",
@@ -617,6 +725,8 @@ mod tests {
             "jones",
             "clearance",
             "slips",
+            "twist",
+            "circulation",
         ] {
             assert!(GRAMMAR.contains(&format!("\"{word}\"")), "{word}");
         }
