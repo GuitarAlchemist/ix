@@ -1,0 +1,150 @@
+### ComfyUI pack release — the knot pack (integrations/comfyui, ADR-0007) with its
+### own ix-mcp for each platform, tested as a user would unpack it.
+#
+# Every trigger builds, packages and tests. Only a pushed `comfyui-knots-v*` tag
+# goes on to the `release` job, and even then the release is a DRAFT: nothing is
+# public until someone publishes it by hand. Pull requests that touch this file
+# get the same build as a dry run, with the archives kept as run artifacts.
+name: ComfyUI pack release
+
+on:
+  push:
+    tags: ['comfyui-knots-v*']
+  pull_request:
+    paths: ['.github/workflows/comfyui-release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false          # one platform failing must not hide the others
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-latest     # Apple silicon
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: comfyui-release-${{ matrix.platform }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build ix-mcp
+        run: cargo build --release -p ix-agent --bin ix-mcp
+
+      # install.py is the documented install: it copies the build into the pack,
+      # records its SHA-256 beside it, and copies the pack without __pycache__ or
+      # run/. tar keeps the binary's execute bit on Linux and macOS; a zip made
+      # here would not.
+      - name: Package the pack with its binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = $IsWindows ? 'target/release/ix-mcp.exe' : 'target/release/ix-mcp'
+          New-Item -ItemType Directory -Force stage | Out-Null
+          python integrations/comfyui/install.py --binary $exe --custom-nodes stage
+          if ($LASTEXITCODE) { throw 'install.py failed' }
+          $name = 'ix_comfyui-${{ matrix.platform }}'
+          if ($IsWindows) {
+            Compress-Archive -Path stage/ix_comfyui -DestinationPath "$name.zip"
+            $asset = "$name.zip"
+          } else {
+            tar -czf "$name.tar.gz" -C stage ix_comfyui
+            if ($LASTEXITCODE) { throw 'tar failed' }
+            $asset = "$name.tar.gz"
+          }
+          "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # The pack's tests import `ix_comfyui` from the folder beside them, so with
+      # a copy of the tests next to the unpacked archive they exercise the bytes
+      # that will be attached, binary hash check included.
+      - name: Test the packaged copy, unpacked as a user would
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install numpy pillow
+          New-Item -ItemType Directory -Force verify | Out-Null
+          if ($IsWindows) { Expand-Archive $env:ASSET -DestinationPath verify }
+          else { tar -xzf $env:ASSET -C verify; if ($LASTEXITCODE) { throw 'untar failed' } }
+          Copy-Item -Recurse integrations/comfyui/tests verify/tests
+          python -m unittest discover -s verify/tests -v
+          if ($LASTEXITCODE) { throw 'the pack tests failed on the packaged copy' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ix_comfyui-${{ matrix.platform }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/comfyui-knots-v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum ix_comfyui-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/ix_comfyui-*'
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          cat > notes.md <<EOF
+          ComfyUI nodes \`IXKnotControl\`, \`IXBraidControl\` and \`IXSpectrogram\`.
+          Each archive is the pack with its own \`ix-mcp\` already installed. Built
+          and tested by ${RUN_URL}.
+
+          Install: extract the archive for your platform into \`ComfyUI/custom_nodes/\`
+          so that the folder is \`custom_nodes/ix_comfyui\`. Check it first:
+          \`sha256sum -c --ignore-missing SHA256SUMS\` and
+          \`gh attestation verify <archive> --repo ${GITHUB_REPOSITORY}\`.
+
+          The pack refuses an \`ix-mcp\` whose bytes differ from the hash recorded
+          beside it. That catches a binary replaced by accident; it is not a defence
+          against someone who can write to the pack. The macOS build is for Apple
+          silicon and is neither signed nor notarized; Intel macOS and Linux arm64
+          are not built.
+          EOF
+          gh release create "$TAG" dist/ix_comfyui-* dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "ComfyUI knot pack $TAG" --notes-file notes.md
