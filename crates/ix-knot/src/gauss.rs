@@ -539,11 +539,26 @@ fn drawing(code: &GaussCode, s: &Signs, mirror: bool) -> Result<Drawn, String> {
         return finish(code, circle(), mirror);
     }
     if !g.hub {
-        // Only closed ropes: open the largest face to the outside by running
-        // one of its edges through the hub.
+        // Only closed ropes: the largest face is the outside, its boundary laid
+        // on the circle as in Tutte's own drawing. When that boundary passes a
+        // crossing twice, or the drawing does not read back, the face is opened
+        // to the outside instead by running one of its edges through the hub.
         let (rot, pos) = g.rotation(&s);
         let faces = g.faces(&rot, &pos);
-        let outer = faces.iter().max_by_key(|f| f.len()).unwrap();
+        let (f, outer) = faces
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, f)| f.len())
+            .unwrap();
+        let mut passed: Vec<usize> = outer.iter().map(|&d| g.from(d)).collect();
+        passed.sort_unstable();
+        if passed.windows(2).all(|w| w[0] != w[1]) {
+            let laid = tutte(&g, &rot, &pos, &faces, code, Some(f))
+                .and_then(|ropes| finish(code, ropes, mirror));
+            if let Ok(d) = laid {
+                return Ok(d);
+            }
+        }
         let e = outer[0] / 2;
         let (rope, k) = g
             .rope_edges
@@ -560,7 +575,7 @@ fn drawing(code: &GaussCode, s: &Signs, mirror: bool) -> Result<Drawn, String> {
     if g.vertices() + faces.len() != g.tail.len() + 2 {
         return Err("opening a face to the outside broke the embedding".into());
     }
-    let ropes = tutte(&g, &rot, &pos, &faces, code)?;
+    let ropes = tutte(&g, &rot, &pos, &faces, code, None)?;
     finish(code, ropes, mirror)
 }
 
@@ -619,6 +634,11 @@ enum Node {
 /// control points are the edge points and the circle points: the curve through
 /// them passes each crossing without a control point on it.
 ///
+/// With no hub (only closed ropes), `outer` is the face drawn outside: the
+/// points of its edges are fixed on the circle in order around it and it gets
+/// no middle point, as in Tutte's own drawing. Its crossings stay free, so each
+/// sits inside the circle where its two passages cross.
+///
 /// A loop (an edge from a crossing back to itself) comes out collapsed, its
 /// two points on one spot, since nothing in the equations tells its ends
 /// apart; [`open_loops`] spreads them afterwards.
@@ -628,9 +648,9 @@ fn tutte(
     pos: &[usize],
     faces: &[Vec<usize>],
     code: &GaussCode,
+    outer: Option<usize>,
 ) -> Result<Vec<Rope>, String> {
-    let hub = &rot[g.n];
-    let m = hub.len();
+    let m = if g.hub { rot[g.n].len() } else { 0 };
     let per = GAP + 1;
     let mut fixed: Vec<[f64; 2]> = (0..per * m)
         .map(|k| {
@@ -675,6 +695,9 @@ fn tutte(
         link(sub(e, 1), end(e, false), &mut near);
     }
     for (f, face) in faces.iter().enumerate() {
+        if Some(f) == outer {
+            continue;
+        }
         let mut around: Vec<Node> = Vec::new();
         for &d in face {
             let e = d / 2;
@@ -733,6 +756,26 @@ fn tutte(
             let a = to - span * (k as f64 + 1.0) / steps;
             fixed.push([CIRCLE * a.cos(), CIRCLE * a.sin()]);
             link(Node::Free(node), Node::Fixed(fixed.len() - 1), &mut near);
+        }
+    }
+    if let Some(f) = outer {
+        // Three slots per edge of the face, its two points and the crossing
+        // after them, turned a little irregularly as the hub's circle is.
+        let face = &faces[f];
+        let slots = 3 * face.len();
+        // The face's middle, unused, kept out of the equations.
+        fixed.push([0.0, 0.0]);
+        near[free(centre(f))] = vec![Node::Fixed(fixed.len() - 1)];
+        for (i, &d) in face.iter().enumerate() {
+            let (e, forward) = (d / 2, d % 2 == 0);
+            let (a, b) = if forward { (0, 1) } else { (1, 0) };
+            for (k, s) in [(0, a), (1, b)] {
+                let slot = (3 * i + k) as f64;
+                let wobble = 0.2 * ((slot * 0.618_033_988_7).fract() - 0.5);
+                let angle = 2.0 * PI * (slot + wobble) / slots as f64;
+                fixed.push([CIRCLE * angle.cos(), CIRCLE * angle.sin()]);
+                near[free(sub(e, s))] = vec![Node::Fixed(fixed.len() - 1)];
+            }
         }
     }
     let mut at = solve(&near, &fixed)?;
@@ -1018,6 +1061,39 @@ mod tests {
         }
         assert_eq!(drawn + split, 80);
         assert!(drawn >= 40, "only {drawn} of 80 are whole");
+    }
+
+    /// The rope radius at which a code's drawing clears itself, over the
+    /// drawing's width: how thick the rope may be drawn.
+    fn thickness(d: &Drawn) -> f64 {
+        let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+        for p in d.ropes.iter().flat_map(|r| &r.points) {
+            for k in 0..2 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        d.radius / (hi[0] - lo[0]).max(hi[1] - lo[1])
+    }
+
+    /// A closed knot is laid out as an open one is, its outside face on the
+    /// circle. Opened through the hub instead, one edge took the whole circle
+    /// and squeezed the knot inside: the cinquefoil's rope was 0.0085 of the
+    /// drawing's width, against 0.018 for the overhand from its code.
+    #[test]
+    fn a_closed_knot_fills_the_circle() {
+        for text in [
+            "(O1 U2 O3 U1 O2 U3)",
+            "(O1 U2 O3 U4 O5 U1 O2 U3 O4 U5)",
+            "(O1 U2 O3 U4 O2 U1 O4 U3)",
+            "(O1 U2) | (U1 O2)",
+        ] {
+            let d = draw(&code(text), None).unwrap();
+            assert_eq!(d.diagram.gauss_code(), code(text).canonical(), "{text}");
+            assert!(d.min_clearance.unwrap() >= 1.0, "{text}");
+            let t = thickness(&d);
+            assert!(t >= 0.015, "{text}: {t:.4}");
+        }
     }
 
     #[test]
