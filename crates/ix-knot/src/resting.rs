@@ -25,8 +25,19 @@
 //! over the sine of their angle (clamped as above). Each path carries its own
 //! radius, and the clearance is taken pair by pair over the two radii summed.
 //!
+//! Where a rope crosses a rigid one, the rigid one is a straight tube, so the
+//! two clear each other by their true distance rather than stacked over the
+//! whole overlap: a spar over a rope rests on the highest the rope gets less
+//! what their axes are apart in plan, and a rope over a spar holds on top only
+//! until it can come down along the spar's side. Stacked, a rope passing over
+//! and then under the same spar a few diameters on (a turn round it) lifts the
+//! spar onto its own ramp, and the spar lifts the rope, without end. A rope
+//! within reach of a spar in plan but crossing it nowhere near, lower down,
+//! lies under the spar's side: the spar rests on it too.
+//!
 //! Which passage is in front is never changed, so the path read by height
-//! gives back the drawing's crossings.
+//! gives back the drawing's crossings. Heights that do not settle are refused
+//! rather than returned.
 
 use crate::diagram::{
     along, arclength, clearance, dist2, DiagramError, Geometry, RopeDiagram, RopePath,
@@ -112,10 +123,13 @@ impl RopeDiagram {
         // stops), and the two ropes' radii summed: how far apart their centres
         // must be.
         let mut behind = vec![(0, 0); self.crossings().len()];
+        let mut front = vec![0; self.crossings().len()];
         let mut apart = vec![0.0; self.crossings().len()];
         for (rope, list) in stops.iter().enumerate() {
             for (i, &(.., c, over)) in list.iter().enumerate() {
-                if !over {
+                if over {
+                    front[c] = rope;
+                } else {
                     behind[c] = (rope, i);
                 }
                 apart[c] += radii[rope];
@@ -144,11 +158,74 @@ impl RopeDiagram {
                 _ => HOLD * radius,
             })
             .collect();
+        // Where a rope crosses a rigid one: the run of the rope's samples about
+        // the crossing that lie within reach of the rigid rope in plan, each as
+        // (sample, how far along the rope from the crossing, how far its centre
+        // must be above or below the rigid rope's axis to clear it). A rope
+        // within reach of a rigid one nowhere near a crossing lies beside it:
+        // those samples, as (rope, sample, rise), by rigid rope.
+        let mut cylinder: Vec<Vec<(usize, f64, f64)>> = vec![Vec::new(); self.crossings().len()];
+        let mut beside: Vec<Vec<(usize, usize, f64)>> = vec![Vec::new(); ropes];
+        for rope in (0..ropes).filter(|&r| !rigid[r]) {
+            let (n, closed) = (arcs[rope].len(), self.closed[rope]);
+            for other in (0..ropes).filter(|&r| rigid[r]) {
+                let reach = radius + radii[other];
+                let axis = &self.loops[other][..self.drawn[other]];
+                let gap: Vec<f64> = self.loops[rope][..n]
+                    .iter()
+                    .map(|&p| plan_distance(p, axis, self.closed[other]))
+                    .collect();
+                let rise = |k: usize| (reach * reach - gap[k] * gap[k]).sqrt();
+                let crossing: Vec<Stop> = stops[rope]
+                    .iter()
+                    .filter(|&&(.., c, over)| other == if over { behind[c].0 } else { front[c] })
+                    .copied()
+                    .collect();
+                let mut taken = vec![false; n];
+                for &(at, seg, _, c, _) in &crossing {
+                    // No further than halfway to the next crossing of the two.
+                    let half = crossing
+                        .iter()
+                        .map(|&(b, ..)| along(at, b, lengths[rope], closed))
+                        .filter(|&d| d > 0.0)
+                        .fold(f64::MAX, f64::min)
+                        / 2.0;
+                    for forward in [false, true] {
+                        let mut k = if forward { (seg + 1) % n } else { seg };
+                        loop {
+                            let d = along(arcs[rope][k], at, lengths[rope], closed);
+                            if taken[k] || gap[k] >= reach || d > half {
+                                break;
+                            }
+                            taken[k] = true;
+                            cylinder[c].push((k, d, rise(k)));
+                            k = match (forward, closed) {
+                                (true, true) => (k + 1) % n,
+                                (false, true) => (k + n - 1) % n,
+                                (true, false) if k + 1 < n => k + 1,
+                                (false, false) if k > 0 => k - 1,
+                                _ => break,
+                            };
+                        }
+                    }
+                }
+                beside[other].extend(
+                    (0..n)
+                        .filter(|&k| gap[k] < reach && !taken[k])
+                        .map(|k| (rope, k, rise(k))),
+                );
+            }
+        }
         // The height asked of each passage in front, and of each rigid rope: a
         // spar on the surface has its centre its radius less the rope's up.
         let mut lift: Vec<Vec<f64>> = stops.iter().map(|l| vec![diameter; l.len()]).collect();
         let mut level: Vec<f64> = radii.iter().map(|r| r - radius).collect();
-        let profiles = |lift: &[Vec<f64>], level: &[f64]| -> Vec<Vec<f64>> {
+        // How long each passage in front holds on top.
+        let mut held: Vec<Vec<f64>> = stops
+            .iter()
+            .map(|l| l.iter().map(|&(.., c, _)| hold[c]).collect())
+            .collect();
+        let profiles = |lift: &[Vec<f64>], level: &[f64], held: &[Vec<f64>]| -> Vec<Vec<f64>> {
             (0..ropes)
                 .map(|r| {
                     if rigid[r] {
@@ -156,9 +233,9 @@ impl RopeDiagram {
                     }
                     let plateaus: Vec<(f64, f64, f64)> = stops[r]
                         .iter()
-                        .zip(&lift[r])
+                        .zip(lift[r].iter().zip(&held[r]))
                         .filter(|((.., over), _)| *over)
-                        .map(|(&(at, _, _, c, _), &h)| (at, h, hold[c]))
+                        .map(|(&(at, ..), (&h, &hold))| (at, h, hold))
                         .collect();
                     heights(&arcs[r], &plateaus, lengths[r], self.closed[r], radius)
                 })
@@ -166,17 +243,36 @@ impl RopeDiagram {
         };
         let mut round = 0;
         let z = loop {
-            let z = profiles(&lift, &level);
-            // The highest the rope behind gets while the one in front holds over it.
-            let peak = |u: usize, j: usize| {
-                let (at, seg, t, c, _) = stops[u][j];
+            // A rope over a rigid one holds only until it can come down along
+            // the rigid one's side.
+            for (r, list) in stops.iter().enumerate().filter(|&(r, _)| !rigid[r]) {
+                for (i, &(.., c, over)) in list.iter().enumerate() {
+                    let u = behind[c].0;
+                    if over && rigid[u] {
+                        let floors: Vec<(f64, f64)> = cylinder[c]
+                            .iter()
+                            .map(|&(_, d, rise)| (d, level[u] + rise))
+                            .collect();
+                        let most = floors.iter().fold(hold[c], |m, &(d, _)| m.max(d));
+                        held[r][i] = shortest_hold(lift[r][i], &floors, most, radius);
+                    }
+                }
+            }
+            let z = profiles(&lift, &level, &held);
+            // Where the rope behind is at the crossing, and the highest it gets
+            // while the one in front holds over it.
+            let here = |u: usize, j: usize| {
+                let (_, seg, t, ..) = stops[u][j];
                 let n = z[u].len();
-                let here = z[u][seg] + t * (z[u][(seg + 1) % n] - z[u][seg]);
+                z[u][seg] + t * (z[u][(seg + 1) % n] - z[u][seg])
+            };
+            let peak = |u: usize, j: usize| {
+                let (at, .., c, _) = stops[u][j];
                 arcs[u]
                     .iter()
                     .zip(&z[u])
                     .filter(|&(&s, _)| along(s, at, lengths[u], self.closed[u]) <= hold[c])
-                    .fold(here, |m, (_, &h)| m.max(h))
+                    .fold(here(u, j), |m, (_, &h)| m.max(h))
             };
             let mut raised = false;
             for (r, list) in stops.iter().enumerate() {
@@ -185,7 +281,16 @@ impl RopeDiagram {
                         continue;
                     }
                     let (u, j) = behind[c];
-                    let need = peak(u, j) + apart[c];
+                    let need = if rigid[r] && !rigid[u] {
+                        // A spar over a rope rests on it as a tube would.
+                        cylinder[c]
+                            .iter()
+                            .fold(here(u, j) + apart[c], |m, &(k, _, rise)| {
+                                m.max(z[u][k] + rise)
+                            })
+                    } else {
+                        peak(u, j) + apart[c]
+                    };
                     let asked = if rigid[r] {
                         &mut level[r]
                     } else {
@@ -197,9 +302,25 @@ impl RopeDiagram {
                     }
                 }
             }
+            // A rigid rope rests as well on a rope beside it lower down, under
+            // its side.
+            for (r, list) in beside.iter().enumerate() {
+                let need = list
+                    .iter()
+                    .filter(|&&(u, k, _)| z[u][k] < level[r])
+                    .map(|&(u, k, rise)| z[u][k] + rise)
+                    .fold(f64::MIN, f64::max);
+                if level[r] < need - 1e-9 {
+                    level[r] = need;
+                    raised = true;
+                }
+            }
             round += 1;
-            if !raised || round == ROUNDS {
+            if !raised {
                 break z;
+            }
+            if round == ROUNDS {
+                return Err(DiagramError::Unsettled(ROUNDS));
             }
         };
         let paths: Vec<RopePath> = (0..ropes)
@@ -234,22 +355,66 @@ fn heights(
     closed: bool,
     radius: f64,
 ) -> Vec<f64> {
-    let ramp = RAMP * radius;
-    let bump = |d: f64, h: f64, hold: f64| {
-        let reach = ramp * (h / (2.0 * radius)).sqrt();
-        let u = ((d - hold) / reach).clamp(0.0, 1.0);
-        h * (1.0 + (PI * u).cos()) / 2.0
-    };
     let raw: Vec<f64> = s
         .iter()
         .map(|&x| {
             plateaus
                 .iter()
-                .map(|&(at, h, hold)| bump(along(x, at, length, closed), h, hold))
+                .map(|&(at, h, hold)| bump(along(x, at, length, closed), h, hold, radius))
                 .fold(0.0, f64::max)
         })
         .collect();
     fill(s, &raw, length, closed, BRIDGE * radius)
+}
+
+/// A plateau of height `h` held for `hold`, `d` along the rope from its middle.
+fn bump(d: f64, h: f64, hold: f64, radius: f64) -> f64 {
+    let reach = RAMP * radius * (h / (2.0 * radius)).sqrt();
+    let u = ((d - hold) / reach).clamp(0.0, 1.0);
+    h * (1.0 + (PI * u).cos()) / 2.0
+}
+
+/// The shortest hold, from the least to `most`, for which a plateau of height
+/// `h` stays on or above every `(distance along the rope, floor)`: `most` when
+/// even that does not.
+fn shortest_hold(h: f64, floors: &[(f64, f64)], most: f64, radius: f64) -> f64 {
+    let clear = |hold: f64| {
+        floors
+            .iter()
+            .all(|&(d, floor)| bump(d, h, hold, radius) >= floor - 1e-9)
+    };
+    let (mut low, mut high) = (HOLD * radius, most);
+    if clear(low) || !clear(high) {
+        return if clear(low) { low } else { high };
+    }
+    for _ in 0..40 {
+        let mid = (low + high) / 2.0;
+        if clear(mid) {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    high
+}
+
+/// How far `p` is in plan from the nearest point of a drawn rope.
+fn plan_distance(p: [f64; 3], line: &[[f64; 3]], closed: bool) -> f64 {
+    let n = line.len();
+    let segments = if closed { n } else { n.saturating_sub(1) };
+    (0..segments)
+        .map(|i| {
+            let (a, b) = (line[i], line[(i + 1) % n]);
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy);
+            let t = if t.is_finite() {
+                t.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
+        })
+        .fold(f64::MAX, f64::min)
 }
 
 /// `z` along a rope with every dip narrower than a disc of radius `rho`
@@ -299,7 +464,7 @@ mod tests {
     use super::*;
     use crate::catalog::catalog;
     use crate::diagram::Rope;
-    use crate::testing::{bights, clove_hitch};
+    use crate::testing::{bights, clove_hitch, constrictor};
 
     /// For each drawn crossing, how far the passage in front is above the one
     /// behind on the resting path (what reading it by height would decide),
@@ -372,6 +537,9 @@ mod tests {
             let name = format!("clove hitch, spar {spar} radii");
             drawings.push((name, clove, 0.16, vec![false, true], spar * 0.16));
         }
+        let turned = RopeDiagram::new(&constrictor(), "height").unwrap();
+        let name = "constrictor, spar 2.5 radii".to_string();
+        drawings.push((name, turned, 0.16, vec![false, true], 2.5 * 0.16));
         for (id, d, radius, rigid, spar) in drawings {
             let g = d.resting(radius, &rigid, spar).unwrap();
             assert!(lowest(&g) >= 0.0, "{id}: below the surface");

@@ -83,6 +83,10 @@ pub enum DiagramError {
     Rigid { ropes: usize, got: usize },
     #[error("a spar's radius must be a number at least the rope's ({radius}), got {spar}")]
     Spar { spar: f64, radius: f64 },
+    #[error(
+        "the ropes do not come to rest in {0} rounds of raising; draw their crossings further apart along them"
+    )]
+    Unsettled(usize),
 }
 
 /// A crossing of the diagram or of its closure.
