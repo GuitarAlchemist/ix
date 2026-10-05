@@ -355,16 +355,93 @@ fn heights(
     closed: bool,
     radius: f64,
 ) -> Vec<f64> {
-    let raw: Vec<f64> = s
-        .iter()
-        .map(|&x| {
-            plateaus
-                .iter()
-                .map(|&(at, h, hold)| bump(along(x, at, length, closed), h, hold, radius))
-                .fold(0.0, f64::max)
-        })
-        .collect();
-    fill(s, &raw, length, closed, BRIDGE * radius)
+    // The highest plateau's height at `x`, and which plateau it is.
+    let top = |x: f64| {
+        plateaus
+            .iter()
+            .enumerate()
+            .fold((0.0, None), |best, (p, &(at, h, hold))| {
+                let z = bump(along(x, at, length, closed), h, hold, radius);
+                if z > best.0 {
+                    (z, Some(p))
+                } else {
+                    best
+                }
+            })
+    };
+    let tops: Vec<(f64, Option<usize>)> = s.iter().map(|&x| top(x)).collect();
+    let mut z: Vec<f64> = tops.iter().map(|t| t.0).collect();
+    // Where one plateau's ramp gives way to another's, the two leave a dip. It
+    // is filled on an even grid about the dip rather than on the samples:
+    // unevenly spaced, as a drawing's are, those let the filling lift a steep
+    // ramp a few hundredths of a radius at one sample and not the next, a kink.
+    let rho = BRIDGE * radius;
+    let step = radius / 64.0;
+    let half = (4.0 * rho / step).ceil() as i64;
+    let n = s.len();
+    let pairs = if closed { n } else { n.saturating_sub(1) };
+    for k in 0..pairs {
+        let (a, b) = (tops[k].1, tops[(k + 1) % n].1);
+        if a.is_none() || b.is_none() || a == b {
+            continue;
+        }
+        let next = if k + 1 < n { s[k + 1] } else { length };
+        let mid = (s[k] + next) / 2.0;
+        // The grid, as offsets from the dip along the rope.
+        let offsets: Vec<f64> = (-half..=half)
+            .map(|i| i as f64 * step)
+            .filter(|&o| closed || (0.0..=length).contains(&(mid + o)))
+            .collect();
+        let raw: Vec<f64> = offsets
+            .iter()
+            .map(|&o| {
+                top(if closed {
+                    (mid + o).rem_euclid(length)
+                } else {
+                    mid + o
+                })
+                .0
+            })
+            .collect();
+        let span = offsets[offsets.len() - 1] - offsets[0];
+        let bridged = fill(&offsets, &raw, span, false, rho);
+        for (i, &x) in s.iter().enumerate() {
+            let mut o = x - mid;
+            if closed {
+                o = (o + length / 2.0).rem_euclid(length) - length / 2.0;
+            }
+            if o.abs() <= 2.0 * rho {
+                if let Some(h) = smooth_at(&offsets, &bridged, o) {
+                    z[i] = z[i].max(h);
+                }
+            }
+        }
+    }
+    z
+}
+
+/// `ys` on the even grid `xs`, read at `x` through a Catmull-Rom spline, whose
+/// tangent is continuous, so it adds no kink of its own; `None` off the grid.
+fn smooth_at(xs: &[f64], ys: &[f64], x: f64) -> Option<f64> {
+    let n = xs.len();
+    if n < 2 {
+        return None;
+    }
+    let f = (x - xs[0]) / (xs[1] - xs[0]);
+    if !(0.0..=(n - 1) as f64).contains(&f) {
+        return None;
+    }
+    let j = (f.floor() as usize).min(n - 2);
+    let t = f - j as f64;
+    let y = |k: usize| ys[k.min(n - 1)];
+    let (p0, p1, p2, p3) = (y(j.saturating_sub(1)), y(j), y(j + 1), y(j + 2));
+    Some(
+        p1 + 0.5
+            * t
+            * ((p2 - p0)
+                + t * ((2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3)
+                    + t * (3.0 * p1 - p0 - 3.0 * p2 + p3))),
+    )
 }
 
 /// A plateau of height `h` held for `hold`, `d` along the rope from its middle.
@@ -662,6 +739,33 @@ mod tests {
                 Err(DiagramError::Spar { .. })
             ));
         }
+    }
+
+    /// Samples spaced unevenly, as a drawing's are, leave a lone ramp as it is
+    /// and still have a dip bridged: the filling is done on an even grid.
+    #[test]
+    fn uneven_samples_neither_kink_a_ramp_nor_leave_a_dip() {
+        // Four samples 0.05 apart, then three 0.3 apart, and so on.
+        let mut s = vec![0.0];
+        while *s.last().unwrap() < 30.0 {
+            let step = if s.len() % 7 < 4 { 0.05 } else { 0.3 };
+            s.push(s[s.len() - 1] + step);
+        }
+        let length = *s.last().unwrap();
+        // Radius 1: a plateau 4.6 high, as a passage over a spar 1.3 thick.
+        let one = heights(&s, &[(10.0, 4.6, 1.5)], length, false, 1.0);
+        let raw: Vec<f64> = s
+            .iter()
+            .map(|&x| bump((x - 10.0f64).abs(), 4.6, 1.5, 1.0))
+            .collect();
+        assert_eq!(one, raw);
+        assert!(tightest(&s, &one) >= 1.5, "{}", tightest(&s, &one));
+        let two = [(10.0, 2.0, 1.5), (16.0, 2.0, 1.5)];
+        let bridged = heights(&s, &two, length, false, 1.0);
+        let k = s.iter().position(|&x| x >= 13.0).unwrap();
+        let low = bump(s[k] - 10.0, 2.0, 1.5, 1.0).max(bump(16.0 - s[k], 2.0, 1.5, 1.0));
+        assert!(bridged[k] > low + 0.1, "{} {low}", bridged[k]);
+        assert!(tightest(&s, &bridged) >= 1.4, "{}", tightest(&s, &bridged));
     }
 
     #[test]
