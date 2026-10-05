@@ -81,6 +81,8 @@ pub enum DiagramError {
     Pulls { ropes: usize, got: usize },
     #[error("say for each rope whether it is rigid: {ropes} ropes, {got} given")]
     Rigid { ropes: usize, got: usize },
+    #[error("a spar's radius must be a number at least the rope's ({radius}), got {spar}")]
+    Spar { spar: f64, radius: f64 },
 }
 
 /// A crossing of the diagram or of its closure.
@@ -101,6 +103,8 @@ pub struct Crossing {
 pub struct RopePath {
     pub closed: bool,
     pub points: Vec<[f64; 3]>,
+    /// The tube's radius: the rope's, or a resting spar's own.
+    pub radius: f64,
 }
 
 /// The ropes in 3D, for a renderer.
@@ -109,7 +113,8 @@ pub struct Geometry {
     pub radius: f64,
     pub ropes: Vec<RopePath>,
     /// The smallest distance between two rope centrelines that are not
-    /// neighbours along a rope, in rope diameters: below 1 the tubes pass
+    /// neighbours along a rope, over the sum of the two tubes' radii (in rope
+    /// diameters when every tube is the rope's): below 1 the tubes pass
     /// through each other. `None` when no two such points exist.
     pub min_clearance: Option<f64>,
 }
@@ -415,11 +420,12 @@ impl RopeDiagram {
             ropes.push(RopePath {
                 closed: self.closed[rope],
                 points,
+                radius,
             });
             lengths.push(length);
             arcs.push(s);
         }
-        let min_clearance = clearance(&ropes, &arcs, &lengths, reach).map(|d| d / (2.0 * radius));
+        let min_clearance = clearance(&ropes, &arcs, &lengths, reach / radius);
         Ok(Geometry {
             radius,
             ropes,
@@ -914,7 +920,8 @@ pub(crate) fn along(a: f64, b: f64, length: f64, closed: bool) -> f64 {
 }
 
 /// The least 3D distance between two centreline points that are not within
-/// `reach` of each other along the same rope.
+/// `reach` of their rope's radii of each other along the same rope, over the
+/// sum of their ropes' radii.
 pub(crate) fn clearance(
     ropes: &[RopePath],
     arcs: &[Vec<f64>],
@@ -927,11 +934,14 @@ pub(crate) fn clearance(
             for (i, p) in a.points.iter().enumerate() {
                 let from = if r1 == r2 { i + 1 } else { 0 };
                 for (j, q) in b.points.iter().enumerate().skip(from) {
-                    if r1 == r2 && along(arcs[r1][i], arcs[r1][j], lengths[r1], a.closed) < reach {
+                    if r1 == r2
+                        && along(arcs[r1][i], arcs[r1][j], lengths[r1], a.closed) < reach * a.radius
+                    {
                         continue;
                     }
                     let d = ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2))
-                        .sqrt();
+                        .sqrt()
+                        / (a.radius + b.radius);
                     if best.map_or(true, |b| d < b) {
                         best = Some(d);
                     }

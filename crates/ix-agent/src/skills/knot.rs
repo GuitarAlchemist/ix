@@ -207,7 +207,12 @@ fn knot_schema() -> Value {
             "rigid": {
                 "type": "array",
                 "items": { "type": "integer", "minimum": 0 },
-                "description": "With `rest`: the ropes, by index, that are spars or posts and never bend: each lies level, one diameter up when anything passes under it"
+                "description": "With `rest`: the ropes, by index, that are spars or posts and never bend: each lies level, raised onto whatever passes under it"
+            },
+            "spar_radius": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "With `rigid`: the spars' radius, at least the rope's (the default). A spar resting on the surface has its centre its radius less the rope's above a rope's; wherever two cross, the centre in front lies the two radii summed above the one behind"
             },
             "knot": {
                 "type": "string",
@@ -252,7 +257,7 @@ fn knot_output_schema() -> Value {
             },
             "geometry": {
                 "type": "object",
-                "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...]}, z toward the viewer: up where the rope passes in front, and with `rest` 0 where it lies on the surface) and `min_clearance`, the least distance between two parts of the ropes in rope diameters (below 1 the tubes pass through each other)"
+                "description": "With `geometry`: `radius`, `ropes` (each {closed, points: [[x, y, z], ...], radius}, z toward the viewer: up where the rope passes in front, and with `rest` 0 where it lies on the surface; `radius` the tube's, a spar's own with `spar_radius`) and `min_clearance`, the least distance between two parts of the ropes over their two radii summed (below 1 the tubes pass through each other)"
             },
             "holds": { "type": "boolean", "description": "With `knot`: every expectation of the file holds" },
             "expectations": {
@@ -327,6 +332,14 @@ pub fn knot(params: Value) -> Result<Value, String> {
                 "`rigid` must be an array of rope indices, got {other}"
             ))
         }
+    };
+    let spar = match params.get("spar_radius") {
+        None | Some(Value::Null) => None,
+        Some(_) if rigid.is_empty() => return Err("`spar_radius` goes with `rigid`".into()),
+        Some(v) => Some(
+            v.as_f64()
+                .ok_or_else(|| format!("`spar_radius` must be a number, got {v}"))?,
+        ),
     };
     let given: Vec<&str> = ["name", "ropes", "gauss", "knot"]
         .into_iter()
@@ -511,7 +524,7 @@ pub fn knot(params: Value) -> Result<Value, String> {
                     )
                 })? = true;
             }
-            diagram.resting(radius, &spars)
+            diagram.resting(radius, &spars, spar.unwrap_or(radius))
         } else {
             diagram.geometry(radius)
         }
@@ -519,7 +532,7 @@ pub fn knot(params: Value) -> Result<Value, String> {
         let ropes: Vec<Value> = g
             .ropes
             .iter()
-            .map(|r| json!({ "closed": r.closed, "points": r.points }))
+            .map(|r| json!({ "closed": r.closed, "points": r.points, "radius": r.radius }))
             .collect();
         out["geometry"] = json!({
             "radius": g.radius,
@@ -724,6 +737,25 @@ mod tests {
             .map(|p| p[2].as_f64().unwrap())
             .collect();
         assert!(level.iter().all(|&z| z == 0.4), "{level:?}");
+
+        // A ring three times as thick sits on the rope passing under it, its
+        // centre the two radii summed up, and each rope says how thick it is.
+        let thick = json!({ "ropes": ropes, "over": "OUUO", "geometry": true, "radius": 0.2,
+                            "rest": true, "rigid": [1], "spar_radius": 0.6 });
+        let out = knot(thick).unwrap();
+        let g = &out["geometry"];
+        assert_eq!(
+            (&g["ropes"][0]["radius"], &g["ropes"][1]["radius"]),
+            (&json!(0.2), &json!(0.6))
+        );
+        let level: Vec<f64> = g["ropes"][1]["points"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p[2].as_f64().unwrap())
+            .collect();
+        assert!(level.iter().all(|&z| (z - 0.8).abs() < 1e-9), "{level:?}");
+        assert!(g["min_clearance"].as_f64().unwrap() >= 1.0 - 1e-9);
     }
 
     fn circle(cx: f64) -> Value {
@@ -904,6 +936,19 @@ mod tests {
         };
         assert!(rest(json!([-1])).contains("rope indices"));
         assert!(rest(json!([1])).contains("numbered 0 to 0"));
+        let spar = |s: Value| {
+            err(
+                json!({ "name": "overhand", "geometry": true, "rest": true, "rigid": [0],
+                        "spar_radius": s }),
+            )
+        };
+        assert!(spar(json!("thick")).contains("must be a number"));
+        assert!(spar(json!(0.01)).contains("at least the rope's"));
+        assert!(
+            err(json!({ "name": "overhand", "geometry": true, "rest": true,
+                            "spar_radius": 0.5 }))
+            .contains("goes with `rigid`")
+        );
     }
 
     #[test]

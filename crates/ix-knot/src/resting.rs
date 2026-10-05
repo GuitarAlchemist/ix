@@ -19,6 +19,12 @@
 //! post) never bends: it lies level, high enough to clear whatever passes
 //! under it.
 //!
+//! A spar may be thicker than the rope. One of radius S resting on the surface
+//! has its centre S − R above a rope's, and wherever two cross, the centre in
+//! front is their two radii summed above the one behind, held for that sum
+//! over the sine of their angle (clamped as above). Each path carries its own
+//! radius, and the clearance is taken pair by pair over the two radii summed.
+//!
 //! Which passage is in front is never changed, so the path read by height
 //! gives back the drawing's crossings.
 
@@ -44,11 +50,20 @@ type Stop = (f64, usize, f64, usize, bool);
 
 impl RopeDiagram {
     /// Each rope in 3D as a tube of `radius` resting on a surface, `rigid[r]`
-    /// saying whether rope `r` is a spar that never bends.
-    // @ai:invariant resting() keeps every rope on or above the surface, rigid ropes level, the passage in front a diameter above the one behind, and no bend in height tighter than one radius [T:test conf:0.85 src:resting::tests::a_rope_rests_on_the_surface_and_keeps_its_crossings]
-    pub fn resting(&self, radius: f64, rigid: &[bool]) -> Result<Geometry, DiagramError> {
+    /// saying whether rope `r` is a spar that never bends, and each spar a
+    /// tube of radius `spar`, at least the rope's.
+    // @ai:invariant resting() keeps every tube on or above the surface, rigid ropes level, the passage in front the two radii summed above the one behind, and no bend in height tighter than one radius [T:test conf:0.85 src:resting::tests::a_rope_rests_on_the_surface_and_keeps_its_crossings]
+    pub fn resting(
+        &self,
+        radius: f64,
+        rigid: &[bool],
+        spar: f64,
+    ) -> Result<Geometry, DiagramError> {
         if !(radius.is_finite() && radius > 0.0) {
             return Err(DiagramError::Radius(radius));
+        }
+        if !(spar.is_finite() && spar >= radius) {
+            return Err(DiagramError::Spar { spar, radius });
         }
         let ropes = self.components();
         if rigid.len() != ropes {
@@ -58,6 +73,10 @@ impl RopeDiagram {
             });
         }
         let diameter = 2.0 * radius;
+        let radii: Vec<f64> = rigid
+            .iter()
+            .map(|&r| if r { spar } else { radius })
+            .collect();
         let mut arcs = Vec::with_capacity(ropes);
         let mut lengths = Vec::with_capacity(ropes);
         // Each rope's drawn passages, in order along it.
@@ -89,18 +108,22 @@ impl RopeDiagram {
             arcs.push(s);
             lengths.push(length);
         }
-        // The passage behind at each drawn crossing, as (rope, index in its stops).
+        // The passage behind at each drawn crossing, as (rope, index in its
+        // stops), and the two ropes' radii summed: how far apart their centres
+        // must be.
         let mut behind = vec![(0, 0); self.crossings().len()];
+        let mut apart = vec![0.0; self.crossings().len()];
         for (rope, list) in stops.iter().enumerate() {
             for (i, &(.., c, over)) in list.iter().enumerate() {
                 if !over {
                     behind[c] = (rope, i);
                 }
+                apart[c] += radii[rope];
             }
         }
         // How long the rope in front holds over each crossing: either side, the
-        // stretch where the two ropes are within a diameter of each other in
-        // plan, two radii over the sine of the angle they cross at.
+        // stretch where the two ropes overlap in plan, their radii summed over
+        // the sine of the angle they cross at.
         let mut tangents = vec![Vec::new(); self.crossings().len()];
         for (rope, list) in stops.iter().enumerate() {
             let pts = &self.loops[rope];
@@ -111,18 +134,20 @@ impl RopeDiagram {
         }
         let hold: Vec<f64> = tangents
             .iter()
-            .map(|t| match t[..] {
+            .zip(&apart)
+            .map(|(t, &sum)| match t[..] {
                 [u, v] => {
                     let sin =
                         (u[0] * v[1] - u[1] * v[0]).abs() / (u[0].hypot(u[1]) * v[0].hypot(v[1]));
-                    (2.0 / sin).clamp(HOLD, MAX_HOLD) * radius
+                    (sum / radius / sin).clamp(HOLD, MAX_HOLD) * radius
                 }
                 _ => HOLD * radius,
             })
             .collect();
-        // The height asked of each passage in front, and of each rigid rope.
+        // The height asked of each passage in front, and of each rigid rope: a
+        // spar on the surface has its centre its radius less the rope's up.
         let mut lift: Vec<Vec<f64>> = stops.iter().map(|l| vec![diameter; l.len()]).collect();
-        let mut level = vec![0.0; ropes];
+        let mut level: Vec<f64> = radii.iter().map(|r| r - radius).collect();
         let profiles = |lift: &[Vec<f64>], level: &[f64]| -> Vec<Vec<f64>> {
             (0..ropes)
                 .map(|r| {
@@ -160,7 +185,7 @@ impl RopeDiagram {
                         continue;
                     }
                     let (u, j) = behind[c];
-                    let need = peak(u, j) + diameter;
+                    let need = peak(u, j) + apart[c];
                     let asked = if rigid[r] {
                         &mut level[r]
                     } else {
@@ -185,9 +210,10 @@ impl RopeDiagram {
                     .zip(&z[rope])
                     .map(|(p, &h)| [p[0], p[1], h])
                     .collect(),
+                radius: radii[rope],
             })
             .collect();
-        let min_clearance = clearance(&paths, &arcs, &lengths, 3.0 * radius).map(|d| d / diameter);
+        let min_clearance = clearance(&paths, &arcs, &lengths, 3.0);
         Ok(Geometry {
             radius,
             ropes: paths,
@@ -276,9 +302,10 @@ mod tests {
     use crate::testing::{bights, clove_hitch};
 
     /// For each drawn crossing, how far the passage in front is above the one
-    /// behind on the resting path: what reading it by height would decide.
+    /// behind on the resting path (what reading it by height would decide),
+    /// over the two tubes' radii summed: below 1 they pass through each other.
     fn separations(d: &RopeDiagram, g: &Geometry) -> Vec<f64> {
-        let mut at = vec![(f64::NAN, f64::NAN); d.crossings().len()];
+        let mut at = vec![(f64::NAN, f64::NAN, 0.0); d.crossings().len()];
         for (rope, path) in g.ropes.iter().enumerate() {
             let pts = &path.points;
             for p in &d.passages[rope] {
@@ -292,19 +319,21 @@ mod tests {
                 } else {
                     at[p.crossing].1 = z;
                 }
+                at[p.crossing].2 += path.radius;
             }
         }
         at.into_iter()
-            .filter(|(o, u)| !o.is_nan() && !u.is_nan())
-            .map(|(o, u)| o - u)
+            .filter(|(o, u, _)| !o.is_nan() && !u.is_nan())
+            .map(|(o, u, apart)| (o - u) / apart)
             .collect()
     }
 
+    /// The lowest point of any tube, above the surface (a rope's centre at 0
+    /// lies on it, one radius up).
     fn lowest(g: &Geometry) -> f64 {
         g.ropes
             .iter()
-            .flat_map(|r| &r.points)
-            .map(|p| p[2])
+            .flat_map(|r| r.points.iter().map(move |p| p[2] - (r.radius - g.radius)))
             .fold(f64::MAX, f64::min)
     }
 
@@ -322,29 +351,35 @@ mod tests {
             .fold(f64::MAX, f64::min)
     }
 
+    /// A knot from the catalogue or a fixture: (name, drawing, rope radius,
+    /// rigid ropes, spar radius).
+    type Laid = (String, RopeDiagram, f64, Vec<bool>, f64);
+
     #[test]
     fn a_rope_rests_on_the_surface_and_keeps_its_crossings() {
-        let mut drawings: Vec<(String, RopeDiagram, f64, Vec<bool>)> = catalog()
+        let mut drawings: Vec<Laid> = catalog()
             .iter()
             .map(|e| {
                 let d = e.diagram().unwrap();
                 let rigid = vec![false; d.components()];
-                (e.id.to_string(), d, e.radius, rigid)
+                (e.id.to_string(), d, e.radius, rigid, e.radius)
             })
             .collect();
         let reef = RopeDiagram::new(&bights(), "OUOOUO UOUUOU").unwrap();
-        drawings.push(("bights".into(), reef, 0.16, vec![false; 2]));
-        let clove = RopeDiagram::new(&clove_hitch(), "height").unwrap();
-        drawings.push(("clove hitch".into(), clove, 0.16, vec![false, true]));
-        for (id, d, radius, rigid) in drawings {
-            let g = d.resting(radius, &rigid).unwrap();
+        drawings.push(("bights".into(), reef, 0.16, vec![false; 2], 0.16));
+        for spar in [1.0, 2.0, 3.0] {
+            let clove = RopeDiagram::new(&clove_hitch(), "height").unwrap();
+            let name = format!("clove hitch, spar {spar} radii");
+            drawings.push((name, clove, 0.16, vec![false, true], spar * 0.16));
+        }
+        for (id, d, radius, rigid, spar) in drawings {
+            let g = d.resting(radius, &rigid, spar).unwrap();
             assert!(lowest(&g) >= 0.0, "{id}: below the surface");
             // Where the old heights hang a rope under the deck.
             assert!(lowest(&d.geometry(radius).unwrap()) < -radius, "{id}");
             let gaps = separations(&d, &g);
             assert_eq!(gaps.len(), d.drawn_crossings(), "{id}");
-            let diameter = 2.0 * radius;
-            assert!(gaps.iter().all(|&h| h > diameter - 1e-9), "{id}: {gaps:?}");
+            assert!(gaps.iter().all(|&h| h > 1.0 - 1e-9), "{id}: {gaps:?}");
             let clear = g.min_clearance.unwrap();
             assert!(
                 clear >= 1.0 - 1e-9,
@@ -359,10 +394,8 @@ mod tests {
         }
     }
 
-    /// A rope wound over and under a spar: the spar stays level, one diameter
-    /// up, and the rope lies on top of it where it passes over.
-    #[test]
-    fn a_rigid_spar_stays_level() {
+    /// A rope wound over and under a spar, four crossings.
+    fn wound() -> RopeDiagram {
         let spar = Rope {
             points: vec![[-3.6, 0.1, 0.0], [3.6, 0.1, 0.0]],
             closed: false,
@@ -388,8 +421,16 @@ mod tests {
         };
         let d = RopeDiagram::new(&[turns, spar], "UOUO OUOU").unwrap();
         assert_eq!(d.drawn_crossings(), 4);
+        d
+    }
+
+    /// The spar stays level, one diameter up, and the rope lies on top of it
+    /// where it passes over.
+    #[test]
+    fn a_rigid_spar_stays_level() {
+        let d = wound();
         let radius = 0.16;
-        let g = d.resting(radius, &[false, true]).unwrap();
+        let g = d.resting(radius, &[false, true], radius).unwrap();
         let level: Vec<f64> = g.ropes[1].points.iter().map(|p| p[2]).collect();
         assert!(
             level
@@ -404,12 +445,55 @@ mod tests {
             .fold(f64::MIN, f64::max);
         assert!((top - 4.0 * radius).abs() < 1e-9, "{top}");
         assert!(lowest(&g) >= 0.0);
-        assert!(separations(&d, &g).iter().all(|&h| h > 2.0 * radius - 1e-9));
+        assert!(separations(&d, &g).iter().all(|&h| h > 1.0 - 1e-9));
         assert!(g.min_clearance.unwrap() >= 1.0 - 1e-9);
         assert_eq!(
-            d.resting(radius, &[true]),
+            d.resting(radius, &[true], radius),
             Err(DiagramError::Rigid { ropes: 2, got: 1 })
         );
+    }
+
+    /// A spar three rope radii thick sits on the rope where it passes over it,
+    /// its centre the two radii summed up; the rope passing over the spar lies
+    /// that much higher again, and the spar's path says how thick it is.
+    #[test]
+    fn a_thick_spar_rests_on_the_rope_and_the_rope_on_it() {
+        let d = wound();
+        let radius = 0.16;
+        let spar = 3.0 * radius;
+        let g = d.resting(radius, &[false, true], spar).unwrap();
+        assert_eq!((g.ropes[0].radius, g.ropes[1].radius), (radius, spar));
+        let level: Vec<f64> = g.ropes[1].points.iter().map(|p| p[2]).collect();
+        assert!(
+            level
+                .iter()
+                .all(|&z| z == level[0] && (z - 4.0 * radius).abs() < 1e-9),
+            "{level:?}"
+        );
+        let top = g.ropes[0]
+            .points
+            .iter()
+            .map(|p| p[2])
+            .fold(f64::MIN, f64::max);
+        assert!((top - 8.0 * radius).abs() < 1e-9, "{top}");
+        assert!(lowest(&g) >= 0.0);
+        assert!(separations(&d, &g).iter().all(|&h| h > 1.0 - 1e-9));
+        assert!(g.min_clearance.unwrap() >= 1.0 - 1e-9);
+        // With nothing under it, a thick spar lies on the surface: its centre
+        // its radius less the rope's up.
+        let pole = Rope {
+            points: vec![[-3.6, 0.1, 0.0], [3.6, 0.1, 0.0]],
+            closed: false,
+        };
+        let alone = RopeDiagram::new(&[pole], "").unwrap();
+        let g = alone.resting(radius, &[true], spar).unwrap();
+        assert!(g.ropes[0].points.iter().all(|p| p[2] == spar - radius));
+        for bad in [0.5 * radius, f64::NAN] {
+            assert!(matches!(
+                d.resting(radius, &[false, true], bad),
+                Err(DiagramError::Spar { .. })
+            ));
+        }
     }
 
     #[test]

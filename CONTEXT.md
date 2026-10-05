@@ -156,7 +156,9 @@ contracts (see `docs/contracts/`), not runtime coupling.
 - **Resting geometry** (`RopeDiagram::resting`, `ix_knot` `rest: true`) — the ropes laid
   on a surface: each lies at z = 0 and, where it passes in front, on top of the rope it
   crosses, its centre one diameter above wherever that rope is; no bend in height is
-  tighter than one rope radius. A **rigid** rope (a spar, a post) stays level.
+  tighter than one rope radius. A **rigid** rope (a spar, a post) stays level, and may
+  be thicker than the rope (`spar_radius`): wherever two tubes cross, the centre in
+  front is their two radii summed above the one behind.
   Distinct from `geometry`, which lifts the passage in front and lowers the one behind
   about the drawing's plane, a picture with no surface under it.
 - **`.knot` file** (`ix_knot::knot_file`) — a knot written down to be checked: its
