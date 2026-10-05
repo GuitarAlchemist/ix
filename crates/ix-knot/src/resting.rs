@@ -741,6 +741,70 @@ mod tests {
         }
     }
 
+    /// The least 3D distance from a rope's centreline below a spar's centre to
+    /// the spar's axis, over the two radii summed: 1 when the spar rests on
+    /// it. Measured at the rope's samples and at its drawn crossings.
+    fn under_spar(d: &RopeDiagram, g: &Geometry, spar: usize) -> f64 {
+        let axis = &g.ropes[spar].points;
+        let level = axis[0][2];
+        let dot = |u: [f64; 3], v: [f64; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+        let to_axis = |p: [f64; 3]| {
+            axis.windows(2)
+                .map(|w| {
+                    let (a, b) = (w[0], w[1]);
+                    let ab = [0, 1, 2].map(|i| b[i] - a[i]);
+                    let t = (dot([0, 1, 2].map(|i| p[i] - a[i]), ab) / dot(ab, ab)).clamp(0.0, 1.0);
+                    let off = [0, 1, 2].map(|i| p[i] - a[i] - t * ab[i]);
+                    dot(off, off).sqrt()
+                })
+                .fold(f64::MAX, f64::min)
+        };
+        let mut least = f64::MAX;
+        for (rope, path) in g.ropes.iter().enumerate().filter(|&(r, _)| r != spar) {
+            let pts = &path.points;
+            let crossings = d.passages[rope]
+                .iter()
+                .filter(|p| !d.crossings()[p.crossing].closure)
+                .map(|p| {
+                    let (a, b) = (pts[p.seg], pts[(p.seg + 1) % pts.len()]);
+                    [0, 1, 2].map(|i| a[i] + p.t * (b[i] - a[i]))
+                });
+            for p in pts.iter().copied().chain(crossings) {
+                if p[2] < level {
+                    least = least.min(to_axis(p) / (path.radius + g.ropes[spar].radius));
+                }
+            }
+        }
+        least
+    }
+
+    /// A spar comes down onto the rope that passes under it, in a finite
+    /// number of rounds (`resting` returns rather than `Unsettled`): its axis
+    /// is the two radii summed from that rope's centreline, neither floating
+    /// above it nor sunk into it, and every crossing is kept.
+    #[test]
+    fn a_spar_settles_on_the_rope_under_it() {
+        let radius = 0.16;
+        let mut laid: Vec<(String, RopeDiagram, f64)> = Vec::new();
+        for spar in [1.0, 3.0] {
+            laid.push((format!("wound, spar {spar} radii"), wound(), spar));
+        }
+        for spar in [1.0, 2.0, 3.0] {
+            let clove = RopeDiagram::new(&clove_hitch(), "height").unwrap();
+            laid.push((format!("clove hitch, spar {spar} radii"), clove, spar));
+        }
+        let turned = RopeDiagram::new(&constrictor(), "height").unwrap();
+        laid.push(("constrictor, spar 2.5 radii".into(), turned, 2.5));
+        for (id, d, spar) in laid {
+            let g = d.resting(radius, &[false, true], spar * radius).unwrap();
+            let contact = under_spar(&d, &g, 1);
+            assert!((contact - 1.0).abs() < 1e-6, "{id}: {contact}");
+            let gaps = separations(&d, &g);
+            assert_eq!(gaps.len(), d.drawn_crossings(), "{id}");
+            assert!(gaps.iter().all(|&h| h > 1.0 - 1e-9), "{id}: {gaps:?}");
+        }
+    }
+
     /// Samples spaced unevenly, as a drawing's are, leave a lone ramp as it is
     /// and still have a dip bridged: the filling is done on an even grid.
     #[test]
