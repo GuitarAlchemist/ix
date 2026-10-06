@@ -179,9 +179,7 @@ fn geometry_mutant_folded_vertex_moved() {
 fn geometry_mutant_folded_frame_collapsed() {
     // Every folded vertex on one point: the scale is 0 and every length change NaN.
     let mut bad = crane().clone();
-    for p in &mut bad.folded_mut().vertices_coords {
-        *p = [0.0, 0.0];
-    }
+    bad.folded_mut().vertices_coords.fill([0.0, 0.0]);
     let iso = face_isometry(&bad, LEN_TOL);
     assert_eq!(iso.scale, 0.0);
     assert!(iso.max_length_change.is_nan());
