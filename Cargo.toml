@@ -87,6 +87,7 @@ members = [
     "crates/ix-value",
     "crates/ix-baml",
     "crates/ix-ixql",
+    "crates/ix-origami",
 ]
 
 [workspace.package]
