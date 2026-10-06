@@ -12,16 +12,23 @@
 
 use std::collections::BTreeMap;
 
-use ix_origami::{analyse, swap_census, Context, Fold, Rule};
+use ix_origami::{analyse_within, swap_census_within, Context, Fold, Limits, Rule, Unchecked};
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
 
-/// The largest fold checked, in faces. The overlay and the layer rules grow with the number of
-/// faces and of overlay cells, and a request crossing a process boundary must not be able to
-/// tie up the server.
-pub const MAX_FACES: usize = 1000;
-/// The largest census, in stated pairs: it re-checks the rules once per pair.
-pub const MAX_CENSUS_PAIRS: usize = 5000;
+/// The most work one request may ask for. The overlay, the tortillas and tacos, and the census
+/// grow faster than the request, and a request crossing a process boundary must not be able to
+/// tie up the server or run it out of memory. The crane (59 faces, 216 face-vertex incidences,
+/// 83 cells, 16580 cell face pairs, 1245 tortillas and tacos, about 15 million census steps)
+/// is checked with room to spare: 17 times its faces, 18 times its incidences.
+pub const LIMITS: Limits = Limits {
+    faces: 1_000,
+    face_vertices: 4_000,
+    cells: 20_000,
+    cell_pairs: 1_000_000,
+    tacos: 100_000,
+    census_steps: 200_000_000,
+};
 
 fn origami_check_schema() -> Value {
     json!({
@@ -66,8 +73,8 @@ fn origami_check_output_schema() -> Value {
 ///
 /// Returns the report of `ix_origami::analyse`. A fold whose structure stops the checks is a
 /// verdict (`ok: false` with the `structure` problems), not an error; input that is not a FOLD
-/// object is an error. Folds above [`MAX_FACES`] faces, and censuses above
-/// [`MAX_CENSUS_PAIRS`] pairs, are refused.
+/// object is an error, and so is a fold or census over [`LIMITS`]: refused, never checked in
+/// part.
 #[ix_skill(
     domain = "origami",
     name = "origami.check",
@@ -84,15 +91,12 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
         Some(v) => v.as_bool().ok_or("`census` must be a boolean")?,
     };
     let fold = Fold::from_value(value).map_err(|e| e.to_string())?;
-    if fold.faces_vertices.len() > MAX_FACES {
-        return Err(format!(
-            "the fold has {} faces; this tool checks at most {MAX_FACES}",
-            fold.faces_vertices.len()
-        ));
-    }
-    let report = match analyse(&fold) {
+    let report = match analyse_within(&fold, &LIMITS) {
         Ok(r) => r,
-        Err(problems) => return Ok(json!({ "ok": false, "structure": problems })),
+        Err(Unchecked::Structure(problems)) => {
+            return Ok(json!({ "ok": false, "structure": problems }))
+        }
+        Err(Unchecked::OverLimit(e)) => return Err(refused(&e)),
     };
     let mut out = serde_json::to_value(&report).map_err(|e| e.to_string())?;
     out["structure"] = json!([]);
@@ -102,20 +106,13 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
     Ok(out)
 }
 
+fn refused(e: &dyn std::fmt::Display) -> String {
+    format!("refused, not checked: {e} (the limits of this tool)")
+}
+
 fn census_tally(fold: &Fold) -> Result<Value, String> {
-    let pairs = fold
-        .folded()
-        .face_orders
-        .iter()
-        .filter(|t| t[2] != 0)
-        .count();
-    if pairs > MAX_CENSUS_PAIRS {
-        return Err(format!(
-            "the census would flip {pairs} pairs; this tool flips at most {MAX_CENSUS_PAIRS}"
-        ));
-    }
-    let ctx = Context::new(fold).map_err(|p| p.join("; "))?;
-    let rows = swap_census(fold, &ctx);
+    let ctx = Context::within(fold, &LIMITS).map_err(|e| refused(&e))?;
+    let rows = swap_census_within(fold, &ctx, &LIMITS).map_err(|e| refused(&e))?;
     let mut by_rules: BTreeMap<String, usize> = BTreeMap::new();
     for row in &rows {
         let rules: Vec<String> = row.rejected_by.iter().map(|&r| rule_name(r)).collect();
@@ -240,7 +237,7 @@ mod tests {
 
     #[test]
     fn a_fold_above_the_face_limit_is_refused_before_any_check() {
-        let faces = vec![json!([0, 1, 2]); MAX_FACES + 1];
+        let faces = vec![json!([0, 1, 2]); LIMITS.faces + 1];
         let fold = json!({
             "file_spec": 1.2,
             "vertices_coords": [[0, 0], [1, 0], [0, 1]],
@@ -249,6 +246,48 @@ mod tests {
             "faces_vertices": faces
         });
         let err = origami_check(json!({ "fold": fold })).unwrap_err();
-        assert!(err.contains(&format!("at most {MAX_FACES}")), "{err}");
+        assert!(
+            err.contains(&format!("faces: more than {}", LIMITS.faces)),
+            "{err}"
+        );
+    }
+
+    /// One convex face with as many vertices as the limit allows plus one, on a circle: under
+    /// the face limit, but its vertex pairs grow as the square.
+    #[test]
+    fn one_face_with_too_many_vertices_is_refused_before_any_check() {
+        let n = LIMITS.face_vertices + 1;
+        let circle: Vec<Value> = (0..n)
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / n as f64;
+                json!([a.cos(), a.sin()])
+            })
+            .collect();
+        let fold = json!({
+            "file_spec": 1.2,
+            "vertices_coords": circle,
+            "edges_vertices": (0..n).map(|i| json!([i, (i + 1) % n])).collect::<Vec<_>>(),
+            "edges_assignment": vec!["B"; n],
+            "faces_vertices": [(0..n).collect::<Vec<_>>()],
+            "file_frames": [{
+                "frame_classes": ["foldedForm"],
+                "frame_parent": 0,
+                "frame_inherit": true,
+                "vertices_coords": circle
+            }]
+        });
+        let err = origami_check(json!({ "fold": fold })).unwrap_err();
+        assert!(err.contains("face-vertex incidences"), "{err}");
+    }
+
+    /// The crane, with its census, fits well inside the limits.
+    #[test]
+    fn the_crane_and_its_census_fit_inside_the_limits() {
+        let text = include_str!("../../../ix-origami/tests/fixtures/crane-f325f3fd8a.fold");
+        let fold: Value = serde_json::from_str(text).unwrap();
+        let out = origami_check(json!({ "fold": fold, "census": true })).unwrap();
+        assert_eq!(out["ok"], true, "{}", out["structure"]);
+        assert_eq!(out["census"]["pairs"], 838);
+        assert_eq!(out["census"]["rejected"], 838);
     }
 }
