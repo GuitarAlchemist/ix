@@ -29,15 +29,20 @@
 //! flat: testing global flat-foldability is NP-complete (Bern and Hayes 1996). Nothing here
 //! computes a layer order; the checks only test the one the file states.
 //!
+//! The tolerances are absolute, so [`analyse`] and [`Context::new`] first rescale the fold by
+//! powers of two, which multiply exactly: the crease pattern to between 1 and 2 across, the
+//! folded frame to a global scale between 1 and 2. The lower-level functions take the
+//! coordinates as they are.
+//!
 //! Known gaps, so `ok` is not proof:
 //!
-//! - the tolerances are absolute, set for a crease pattern about 1 across (the unit square):
-//!   scale a file to that size before checking it;
 //! - only mountain and valley creases enter the layer rules: a folded unassigned (`U`) edge is
 //!   not checked, nor is a flat (`F`, `J`) edge that lies along a crease, and the
 //!   tortilla-tortilla rule is not implemented;
 //! - keys the folded frame overrides (`edges_assignment`, `faces_vertices`) are ignored, and so
-//!   are `faceOrders` placed on the crease pattern.
+//!   are `faceOrders` placed on the crease pattern;
+//! - fold angles are checked for sign on mountains and valleys only, not for 0 elsewhere;
+//! - areas lose precision for a folded frame placed far from the origin.
 //!
 //! For a fold from outside the process, [`analyse_within`], [`Context::within`] and
 //! [`swap_census_within`] take [`Limits`]: a fold over any of them is refused, never checked in

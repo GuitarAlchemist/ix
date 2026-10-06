@@ -109,7 +109,9 @@ pub fn above(rel: &Relations, orient: &[i8], f: usize, g: usize) -> Option<bool>
     rel.get(f, g).map(|s| s * orient[g] > 0)
 }
 
-/// Face shapes, crease pattern against folded frame.
+/// Face shapes, crease pattern against folded frame. From [`analyse`], the lengths are those of
+/// the fold rescaled by powers of two (the crease pattern between 1 and 2 across, the folded
+/// frame at a scale between 1 and 2), and `scale` is the folded frame's as read.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Isometry {
     /// Folded lengths divided by crease-pattern lengths, over every vertex pair of every face.
@@ -596,9 +598,49 @@ pub enum Unchecked {
     OverLimit(#[from] OverLimit),
 }
 
-/// The face counts in `limits`, [`Fold::structure`], then convex faces in both frames: what the
-/// geometry needs.
-fn usable(fold: &Fold, limits: &Limits) -> Result<(), Unchecked> {
+/// The power of two at or below `x`; 1 if `x` is zero or not finite.
+fn power_of_two_below(x: f64) -> f64 {
+    if x.is_finite() && x > 0.0 {
+        2f64.powi(x.log2().floor() as i32)
+    } else {
+        1.0
+    }
+}
+
+/// The larger side of the points' bounding box.
+fn extent(points: &[Point]) -> f64 {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in points {
+        for i in 0..2 {
+            lo[i] = lo[i].min(p[i]);
+            hi[i] = hi[i].max(p[i]);
+        }
+    }
+    (hi[0] - lo[0]).max(hi[1] - lo[1])
+}
+
+/// The fold rescaled by powers of two, which multiply exactly: both frames so that the crease
+/// pattern is between 1 and 2 across, then the folded frame alone so that its global scale is
+/// between 1 and 2. The tolerances are absolute, so this makes the checks the same at any size.
+/// Also returns the folded frame's own factor.
+fn rescaled(fold: &Fold) -> (Fold, f64) {
+    let mut out = fold.clone();
+    let s = power_of_two_below(extent(&fold.vertices_coords));
+    let frame = &mut out.frames[0].vertices_coords;
+    for p in out.vertices_coords.iter_mut().chain(frame.iter_mut()) {
+        *p = [p[0] / s, p[1] / s];
+    }
+    let t = power_of_two_below(face_isometry(&out, LEN_TOL).scale);
+    for p in &mut out.frames[0].vertices_coords {
+        *p = [p[0] / t, p[1] / t];
+    }
+    (out, t)
+}
+
+/// The face counts in `limits`, [`Fold::structure`], then convex faces in both frames of the
+/// [`rescaled`] fold: what the geometry needs. Returns the rescaled fold and its folded frame's
+/// own factor.
+fn usable(fold: &Fold, limits: &Limits) -> Result<(Fold, f64), Unchecked> {
     within("faces", fold.faces_vertices.len(), limits.faces)?;
     let incidences = fold
         .faces_vertices
@@ -610,6 +652,7 @@ fn usable(fold: &Fold, limits: &Limits) -> Result<(), Unchecked> {
     if !problems.is_empty() {
         return Err(Unchecked::Structure(problems));
     }
+    let (fold, t) = rescaled(fold);
     let non_convex = |coords: &[Point]| {
         fold.faces_vertices
             .iter()
@@ -625,7 +668,7 @@ fn usable(fold: &Fold, limits: &Limits) -> Result<(), Unchecked> {
             "non-convex faces: {cp} in the crease pattern, {folded} folded"
         )]));
     }
-    Ok(())
+    Ok((fold, t))
 }
 
 /// Orientation, relations and geometry of one fold, for swap experiments.
@@ -645,7 +688,8 @@ impl Context {
     /// `Err` with the fold's structure problems (or non-convex faces), or the first count over
     /// `limits`.
     pub fn within(fold: &Fold, limits: &Limits) -> Result<Self, Unchecked> {
-        usable(fold, limits)?;
+        let (fold, _) = usable(fold, limits)?;
+        let fold = &fold;
         let orient = orientation(fold);
         let (rel, _) = relations(fold, &orient);
         let geo = prepare(fold, &orient, limits)?;
@@ -661,7 +705,8 @@ pub fn analyse(fold: &Fold) -> Result<Report, Unchecked> {
 /// Every check on one fold; `Err` with the structure problems (or non-convex faces) that stop
 /// the checks from running, or the first count over `limits`.
 pub fn analyse_within(fold: &Fold, limits: &Limits) -> Result<Report, Unchecked> {
-    usable(fold, limits)?;
+    let (fold, t) = usable(fold, limits)?;
+    let fold = &fold;
     let orient = orientation(fold);
     let (rel, conflicts) = relations(fold, &orient);
     let geo = prepare(fold, &orient, limits)?;
@@ -672,7 +717,10 @@ pub fn analyse_within(fold: &Fold, limits: &Limits) -> Result<Report, Unchecked>
         *assignment.entry(*a).or_insert(0) += 1;
     }
     let up = orient.iter().filter(|&&o| o > 0).count();
-    let isometry = face_isometry(fold, LEN_TOL);
+    let mut isometry = face_isometry(fold, LEN_TOL);
+    // The folded frame's scale as read: the rescaling's crease-pattern factor cancels, and its
+    // own factor is a power of two.
+    isometry.scale *= t;
     let crease_orientation = crease_orientation(fold, &orient);
     let local_theorems = local_theorems(fold, 1e-9);
     let rejected_by = layers.rejected_by();
