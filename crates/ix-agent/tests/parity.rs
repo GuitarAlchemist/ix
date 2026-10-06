@@ -32,7 +32,8 @@ static LOOP_DETECTOR: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// adapters ix_git_log + ix_cargo_deps + ix_git_churn, plus the 3
 /// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet, plus
 /// ix_petri_analyze (Petri-net deadlock/boundedness/liveness, ix-petri), plus
-/// ix_duckdb_query (DuckDB SQL over caller rows, the CLI in -safe mode).
+/// ix_duckdb_query (DuckDB SQL over caller rows, the CLI in -safe mode), plus
+/// ix_braid (braid closures' Jones polynomials and strand layouts, ix-knot).
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_annotations_scan",
@@ -44,6 +45,7 @@ const EXPECTED: &[&str] = &[
     "ix_autograd_run",
     "ix_bandit",
     "ix_bloom_filter",
+    "ix_braid",
     "ix_cache",
     "ix_cargo_deps",
     "ix_catalog_list",
