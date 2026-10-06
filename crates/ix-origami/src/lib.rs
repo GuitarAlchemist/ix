@@ -29,9 +29,23 @@
 //! flat: testing global flat-foldability is NP-complete (Bern and Hayes 1996). Nothing here
 //! computes a layer order; the checks only test the one the file states.
 //!
+//! Known gaps, so `ok` is not proof:
+//!
+//! - the tolerances are absolute, set for a crease pattern about 1 across (the unit square):
+//!   scale a file to that size before checking it;
+//! - only mountain and valley creases enter the layer rules: a folded unassigned (`U`) edge is
+//!   not checked, nor is a flat (`F`, `J`) edge that lies along a crease, and the
+//!   tortilla-tortilla rule is not implemented;
+//! - keys the folded frame overrides (`edges_assignment`, `faces_vertices`) are ignored, and so
+//!   are `faceOrders` placed on the crease pattern.
+//!
+//! For a fold from outside the process, [`analyse_within`], [`Context::within`] and
+//! [`swap_census_within`] take [`Limits`]: a fold over any of them is refused, never checked in
+//! part.
+//!
 //! FOLD 1.1 files that keep the folded state at the top level and the crease pattern in frame 1
 //! (Rabbit Ear's layout before 2024) are rearranged into the 1.2 layout on load: places change,
-//! no value does.
+//! and `file_spec` becomes 1.2.
 //!
 //! The test fixture is the traditional crane from Rabbit Ear (Robby Kraft), MIT, taken at a
 //! commit from before the project moved to GPL-3.0; see `tests/fixtures/NOTICE.md`.
@@ -40,9 +54,12 @@ pub mod controls;
 pub mod fold;
 pub mod geometry;
 pub mod layers;
+pub mod limits;
 pub mod local;
 
 pub use fold::{Assignment, Fold, FoldError, FoldedFrame, Point};
 pub use layers::{
-    analyse, first_swap, swap, swap_census, CensusRow, Context, LayerChecks, Report, Rule,
+    analyse, analyse_within, first_swap, swap, swap_census, swap_census_within, CensusRow, Context,
+    LayerChecks, Report, Rule, Unchecked,
 };
+pub use limits::{Limits, OverLimit};
