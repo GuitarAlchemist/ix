@@ -361,6 +361,38 @@ fn layers_controls_moved_and_turned_over() {
 // --- agreement with the reference implementation --------------------------------------------
 
 #[test]
+fn layers_controls_rescaled() {
+    // The paper's size and the folded frame's scale, as (crease pattern, folded frame) factors:
+    // the checks rescale by powers of two first, so neither changes a verdict.
+    for (cp, folded) in [(400.0, 400.0), (1.0, 1e-6), (1.0, 1e4), (3.0, 1e-5)] {
+        let mut other = crane().clone();
+        for p in &mut other.vertices_coords {
+            *p = [p[0] * cp, p[1] * cp];
+        }
+        for p in &mut other.folded_mut().vertices_coords {
+            *p = [p[0] * folded, p[1] * folded];
+        }
+        let r = analysed(&other);
+        assert!(r.ok, "{cp} {folded}: {:?}", r.rejected_by);
+        assert_eq!(fingerprint(&r), fingerprint(report()), "{cp} {folded}");
+        let scale = 1.4211008987678813 * folded / cp;
+        assert!(
+            (r.isometry.scale / scale - 1.0).abs() < 1e-9,
+            "{cp} {folded}"
+        );
+        assert!(!analysed(&swap(&other, 4, 2)).ok, "{cp} {folded}");
+    }
+    let mut tiny = crane().clone();
+    for p in &mut tiny.folded_mut().vertices_coords {
+        *p = [p[0] * 1e-6, p[1] * 1e-6];
+    }
+    let ctx = Context::new(&tiny).unwrap();
+    assert!(swap_census(&tiny, &ctx)
+        .iter()
+        .all(|row| !row.rejected_by.is_empty()));
+}
+
+#[test]
 fn the_crane_passes_every_check() {
     let r = report();
     let c = &r.counts;
