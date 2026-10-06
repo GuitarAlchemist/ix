@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 
 use crate::fold::Point;
+use crate::limits::{within, Limits, OverLimit};
 
 /// Distances, in units of the crease pattern.
 pub const LEN_TOL: f64 = 1e-9;
@@ -90,13 +91,29 @@ pub struct Cell {
     pub faces: BTreeSet<usize>,
 }
 
+/// Pushes `cell`, refusing it if the cells or their face pairs go over the limits.
+fn keep(
+    next: &mut Vec<Cell>,
+    pairs: &mut usize,
+    cell: Cell,
+    limits: &Limits,
+) -> Result<(), OverLimit> {
+    let k = cell.faces.len();
+    *pairs = pairs.saturating_add(k.saturating_mul(k));
+    within("overlay cells", next.len() + 1, limits.cells)?;
+    within("overlay cell face pairs", *pairs, limits.cell_pairs)?;
+    next.push(cell);
+    Ok(())
+}
+
 /// Cuts the plane into convex cells, each covered by a fixed set of faces, and returns the
 /// covered cells. The faces must be convex and counterclockwise. The number of cells depends on
-/// the order the faces are cut in; which faces overlap does not.
-pub fn overlay(polys: &[Vec<Point>]) -> Vec<Cell> {
+/// the order the faces are cut in; which faces overlap does not. `Err` as soon as the cells, or
+/// their face pairs, go over `limits`.
+pub fn overlay(polys: &[Vec<Point>], limits: &Limits) -> Result<Vec<Cell>, OverLimit> {
     let all: Vec<Point> = polys.iter().flatten().copied().collect();
     if all.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let [x0, y0, x1, y1] = bbox(&all);
     let mut cells = vec![Cell {
@@ -111,22 +128,29 @@ pub fn overlay(polys: &[Vec<Point>]) -> Vec<Cell> {
     for (i, q) in polys.iter().enumerate() {
         let qb = bbox(q);
         let mut next = Vec::with_capacity(cells.len() + q.len());
+        let mut pairs = 0;
         for cell in cells {
             let cb = bbox(&cell.polygon);
             if cb[2] <= qb[0] || qb[2] <= cb[0] || cb[3] <= qb[1] || qb[3] <= cb[1] {
-                next.push(cell);
+                keep(&mut next, &mut pairs, cell, limits)?;
                 continue;
             }
             let mut rem = Some(cell.polygon);
             for j in 0..q.len() {
                 let (a, b) = (q[j], q[(j + 1) % q.len()]);
+                if a == b {
+                    // A side of length 0 cuts nothing: clipping by it would keep the whole
+                    // cell on both sides, doubling it.
+                    continue;
+                }
                 let r = rem.take().expect("a remainder is left while sides remain");
                 let outside = clip(&r, b, a);
                 if area(&outside) > AREA_TOL {
-                    next.push(Cell {
+                    let piece = Cell {
                         polygon: outside,
                         faces: cell.faces.clone(),
-                    });
+                    };
+                    keep(&mut next, &mut pairs, piece, limits)?;
                 }
                 let inside = clip(&r, a, b);
                 if area(&inside) <= AREA_TOL {
@@ -137,12 +161,12 @@ pub fn overlay(polys: &[Vec<Point>]) -> Vec<Cell> {
             if let Some(r) = rem {
                 let mut faces = cell.faces;
                 faces.insert(i);
-                next.push(Cell { polygon: r, faces });
+                keep(&mut next, &mut pairs, Cell { polygon: r, faces }, limits)?;
             }
         }
         cells = next;
     }
-    cells.into_iter().filter(|c| !c.faces.is_empty()).collect()
+    Ok(cells.into_iter().filter(|c| !c.faces.is_empty()).collect())
 }
 
 /// Length of segment `pq` lying inside convex counterclockwise polygon `q` by more than `tol`.
@@ -190,12 +214,39 @@ mod tests {
     fn overlay_of_two_offset_squares_has_one_shared_cell() {
         let a = SQUARE.to_vec();
         let b: Vec<Point> = SQUARE.iter().map(|p| [p[0] + 0.5, p[1]]).collect();
-        let cells = overlay(&[a, b]);
+        let cells = overlay(&[a, b], &Limits::NONE).unwrap();
         let shared: Vec<_> = cells.iter().filter(|c| c.faces.len() == 2).collect();
         assert_eq!(shared.len(), 1);
         assert!((area(&shared[0].polygon) - 0.5).abs() < 1e-12);
         let total: f64 = cells.iter().map(|c| area(&c.polygon)).sum();
         assert!((total - 1.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_side_of_length_zero_cuts_nothing() {
+        let mut a = SQUARE.to_vec();
+        a.insert(1, a[0]);
+        let cells = overlay(&[a, SQUARE.to_vec()], &Limits::NONE).unwrap();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].faces, BTreeSet::from([0, 1]));
+    }
+
+    #[test]
+    fn overlay_refuses_cells_over_the_limit() {
+        let a = SQUARE.to_vec();
+        let b: Vec<Point> = SQUARE.iter().map(|p| [p[0] + 0.5, p[1]]).collect();
+        let tight = Limits {
+            cells: 2,
+            ..Limits::NONE
+        };
+        let err = overlay(&[a.clone(), b.clone()], &tight).unwrap_err();
+        assert_eq!(err.what, "overlay cells");
+        let pairs = Limits {
+            cell_pairs: 4,
+            ..Limits::NONE
+        };
+        let err = overlay(&[a, b], &pairs).unwrap_err();
+        assert_eq!(err.what, "overlay cell face pairs");
     }
 
     #[test]

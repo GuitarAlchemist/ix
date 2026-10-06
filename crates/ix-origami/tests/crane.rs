@@ -13,8 +13,8 @@ use ix_origami::controls::{move_folded, renumber, turn_over};
 use ix_origami::layers::{crease_orientation, face_isometry, orientation};
 use ix_origami::local::{interior_vertices, local_theorems};
 use ix_origami::{
-    analyse, first_swap, swap, swap_census, Assignment, CensusRow, Context, Fold, FoldError,
-    Report, Rule,
+    analyse, analyse_within, first_swap, swap, swap_census, swap_census_within, Assignment,
+    CensusRow, Context, Fold, FoldError, Limits, Report, Rule, Unchecked,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -173,6 +173,42 @@ fn geometry_mutant_folded_vertex_moved() {
     let mut bad = crane().clone();
     bad.folded_mut().vertices_coords[4][0] += 0.01;
     assert!(!face_isometry(&bad, LEN_TOL).ok);
+}
+
+#[test]
+fn geometry_mutant_folded_frame_collapsed() {
+    // Every folded vertex on one point: the scale is 0 and every length change NaN.
+    let mut bad = crane().clone();
+    for p in &mut bad.folded_mut().vertices_coords {
+        *p = [0.0, 0.0];
+    }
+    let iso = face_isometry(&bad, LEN_TOL);
+    assert_eq!(iso.scale, 0.0);
+    assert!(iso.max_length_change.is_nan());
+    assert!(!iso.ok);
+    let r = analysed(&bad);
+    assert!(!r.ok && !r.isometry.ok);
+}
+
+#[test]
+fn geometry_mutant_no_faces() {
+    // Nothing to compare: the scale is 0/0, and an empty fold is not ok.
+    let empty = serde_json::json!({
+        "file_spec": 1.2,
+        "vertices_coords": [],
+        "edges_vertices": [],
+        "edges_assignment": [],
+        "faces_vertices": [],
+        "file_frames": [{
+            "frame_classes": ["foldedForm"],
+            "frame_parent": 0,
+            "frame_inherit": true,
+            "vertices_coords": []
+        }]
+    });
+    let r = analysed(&Fold::from_value(&empty).unwrap());
+    assert!(r.isometry.scale.is_nan());
+    assert!(!r.isometry.ok && !r.ok);
 }
 
 #[test]
@@ -498,4 +534,57 @@ fn the_report_serializes_with_the_reference_keys() {
         serde_json::to_value(flipped).unwrap()["rejected_by"][0],
         "adjacency"
     );
+}
+
+// --- limits ---------------------------------------------------------------------------------
+
+#[test]
+fn a_fold_over_any_limit_is_refused_not_checked_in_part() {
+    let none = Limits::NONE;
+    let refused = |limits: Limits| match analyse_within(crane(), &limits) {
+        Err(Unchecked::OverLimit(e)) => e.what,
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    // The crane has 59 faces, 216 face-vertex incidences, 83 covered cells whose faces² sum to
+    // 16580, and 1049 tortillas plus 196 tacos.
+    assert_eq!(refused(Limits { faces: 58, ..none }), "faces");
+    let incidences = Limits {
+        face_vertices: 215,
+        ..none
+    };
+    assert_eq!(refused(incidences), "face-vertex incidences");
+    assert_eq!(refused(Limits { cells: 82, ..none }), "overlay cells");
+    let pairs = Limits {
+        cell_pairs: 16_579,
+        ..none
+    };
+    assert_eq!(refused(pairs), "overlay cell face pairs");
+    let tacos = Limits {
+        tacos: 1_244,
+        ..none
+    };
+    assert_eq!(refused(tacos), "tortillas and tacos");
+    let at_its_size = Limits {
+        faces: 59,
+        face_vertices: 216,
+        cell_pairs: 16_580,
+        tacos: 1_245,
+        ..none
+    };
+    assert_eq!(analyse_within(crane(), &at_its_size).as_ref(), Ok(report()));
+}
+
+#[test]
+fn a_census_over_its_step_bound_is_refused_before_any_flip() {
+    // 838 flips, each scanning 102 creases, 83 cells, 1049 tortillas and 196 tacos, plus at
+    // most the 16580 cell face pairs.
+    let steps = 838 * (102 + 83 + 1049 + 196 + 16_580);
+    let at = |census_steps| Limits {
+        census_steps,
+        ..Limits::NONE
+    };
+    let full = swap_census_within(crane(), context(), &at(steps)).unwrap();
+    assert_eq!(full, census());
+    let err = swap_census_within(crane(), context(), &at(steps - 1)).unwrap_err();
+    assert_eq!(err.what, "census steps");
 }

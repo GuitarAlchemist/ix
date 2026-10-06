@@ -13,9 +13,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ix_graph::graph::Graph;
 use serde::Serialize;
+use thiserror::Error;
 
 use crate::fold::{Assignment, Fold, Point};
 use crate::geometry::{area, dist, inside_length, is_convex, overlay, Cell, INSIDE_TOL, LEN_TOL};
+use crate::limits::{within, Limits, OverLimit};
 use crate::local::{local_theorems, LocalTheorems};
 
 /// +1 for a face whose vertices stay counterclockwise in the folded frame (its normal faces the
@@ -56,11 +58,16 @@ impl Relations {
         (s != 0).then_some(s)
     }
 
+    /// Reverses the order of faces `f` and `g`, both ways. Twice restores it.
+    fn flip(&mut self, f: usize, g: usize) {
+        self.s[f * self.n + g] = -self.s[f * self.n + g];
+        self.s[g * self.n + f] = -self.s[g * self.n + f];
+    }
+
     /// The relations with the order of faces `f` and `g` reversed, both ways.
     pub fn flipped(&self, f: usize, g: usize) -> Self {
         let mut out = self.clone();
-        out.s[f * self.n + g] = -self.s[f * self.n + g];
-        out.s[g * self.n + f] = -self.s[g * self.n + f];
+        out.flip(f, g);
         out
     }
 
@@ -114,29 +121,33 @@ pub struct Isometry {
 
 /// The distance between any two vertices of one face, crease pattern against folded frame,
 /// after dividing the folded one by one global scale. In the plane those distances fix each
-/// face up to a rigid motion or a reflection.
+/// face up to a rigid motion or a reflection. A scale that is zero or not finite (a folded
+/// frame collapsed to a point, or no faces) fails.
 pub fn face_isometry(fold: &Fold, tol: f64) -> Isometry {
     let (x, y) = (&fold.vertices_coords, &fold.folded().vertices_coords);
-    let pairs: Vec<(usize, usize)> = fold
-        .faces_vertices
-        .iter()
-        .flat_map(|f| (0..f.len()).flat_map(move |i| (i + 1..f.len()).map(move |j| (f[i], f[j]))))
-        .collect();
-    let folded: f64 = pairs.iter().map(|&(a, b)| dist(y[a], y[b])).sum();
-    let flat: f64 = pairs.iter().map(|&(a, b)| dist(x[a], x[b])).sum();
+    // (crease-pattern length, folded length) of every vertex pair of every face, streamed: a
+    // face of n vertices has n(n-1)/2 of them.
+    let pairs = || {
+        fold.faces_vertices.iter().flat_map(move |f| {
+            (0..f.len()).flat_map(move |i| {
+                (i + 1..f.len()).map(move |j| (dist(x[f[i]], x[f[j]]), dist(y[f[i]], y[f[j]])))
+            })
+        })
+    };
+    let (flat, folded) = pairs().fold((0.0, 0.0), |(a, b), (l, m)| (a + l, b + m));
     let k = folded / flat;
+    // A NaN wins, so a degenerate scale cannot pass.
     let worst = |scale: f64| {
-        pairs
-            .iter()
-            .map(|&(a, b)| (dist(y[a], y[b]) / scale - dist(x[a], x[b])).abs())
-            .fold(0.0, f64::max)
+        pairs()
+            .map(|(l, m)| (m / scale - l).abs())
+            .fold(0.0, |w: f64, d| if d.is_nan() || d > w { d } else { w })
     };
     let max_length_change = worst(k);
     Isometry {
         scale: k,
         max_length_change_at_scale_1: worst(1.0),
         max_length_change,
-        ok: max_length_change <= tol,
+        ok: k.is_finite() && k > 0.0 && max_length_change <= tol,
     }
 }
 
@@ -222,11 +233,12 @@ pub struct Geometry {
     pub assignment: Vec<Assignment>,
 }
 
-/// The geometry of a fold that passed [`Fold::structure`] with convex faces.
-pub fn prepare(fold: &Fold, orient: &[i8]) -> Geometry {
+/// The geometry of a fold that passed [`Fold::structure`] with convex faces; `Err` as soon as
+/// the overlay, or the tortillas and tacos, go over `limits`.
+pub fn prepare(fold: &Fold, orient: &[i8], limits: &Limits) -> Result<Geometry, OverLimit> {
     let y = &fold.folded().vertices_coords;
     let polys = folded_polygons(fold, orient);
-    let cells = overlay(&polys);
+    let cells = overlay(&polys, limits)?;
     let mut overlapping = BTreeSet::new();
     for c in &cells {
         for &f in &c.faces {
@@ -255,6 +267,7 @@ pub fn prepare(fold: &Fold, orient: &[i8]) -> Geometry {
         let (p, r) = ends(c);
         for (t, q) in polys.iter().enumerate() {
             if !c.faces.contains(&t) && inside_length(p, r, q, INSIDE_TOL) > 1e-6 {
+                within("tortillas and tacos", tortillas.len() + 1, limits.tacos)?;
                 tortillas.push(Tortilla {
                     crease: *c,
                     face: t,
@@ -290,6 +303,8 @@ pub fn prepare(fold: &Fold, orient: &[i8]) -> Geometry {
                 continue;
             }
             if (side(centroid[c1.faces[0]]) > 0.0) == (side(centroid[c2.faces[0]]) > 0.0) {
+                let items = tortillas.len() + tacos.len() + 1;
+                within("tortillas and tacos", items, limits.tacos)?;
                 tacos.push(Taco {
                     first: *c1,
                     second: *c2,
@@ -299,7 +314,7 @@ pub fn prepare(fold: &Fold, orient: &[i8]) -> Geometry {
             }
         }
     }
-    Geometry {
+    Ok(Geometry {
         cells,
         overlapping,
         creases,
@@ -307,7 +322,7 @@ pub fn prepare(fold: &Fold, orient: &[i8]) -> Geometry {
         tacos,
         opposite_tacos,
         assignment: fold.edges_assignment.clone(),
-    }
+    })
 }
 
 /// Whether the stated "above" among `faces` has a cycle.
@@ -570,11 +585,30 @@ pub struct Report {
     pub ok: bool,
 }
 
-/// [`Fold::structure`], then convex faces in both frames: what the geometry needs.
-fn usable(fold: &Fold) -> Result<(), Vec<String>> {
+/// Why [`analyse`] or [`Context::new`] did not run the checks.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum Unchecked {
+    /// The structure problems, or non-convex faces, that stop the checks.
+    #[error("{}", .0.join("; "))]
+    Structure(Vec<String>),
+    /// A count over its [`Limits`].
+    #[error(transparent)]
+    OverLimit(#[from] OverLimit),
+}
+
+/// The face counts in `limits`, [`Fold::structure`], then convex faces in both frames: what the
+/// geometry needs.
+fn usable(fold: &Fold, limits: &Limits) -> Result<(), Unchecked> {
+    within("faces", fold.faces_vertices.len(), limits.faces)?;
+    let incidences = fold
+        .faces_vertices
+        .iter()
+        .map(Vec::len)
+        .fold(0usize, usize::saturating_add);
+    within("face-vertex incidences", incidences, limits.face_vertices)?;
     let problems = fold.structure();
     if !problems.is_empty() {
-        return Err(problems);
+        return Err(Unchecked::Structure(problems));
     }
     let non_convex = |coords: &[Point]| {
         fold.faces_vertices
@@ -587,9 +621,9 @@ fn usable(fold: &Fold) -> Result<(), Vec<String>> {
         non_convex(&fold.folded().vertices_coords),
     );
     if cp + folded > 0 {
-        return Err(vec![format!(
+        return Err(Unchecked::Structure(vec![format!(
             "non-convex faces: {cp} in the crease pattern, {folded} folded"
-        )]);
+        )]));
     }
     Ok(())
 }
@@ -603,23 +637,34 @@ pub struct Context {
 }
 
 impl Context {
-    /// The fold's structure problems, or non-convex faces, if it has any.
-    pub fn new(fold: &Fold) -> Result<Self, Vec<String>> {
-        usable(fold)?;
+    /// [`Context::within`] with no limit.
+    pub fn new(fold: &Fold) -> Result<Self, Unchecked> {
+        Self::within(fold, &Limits::NONE)
+    }
+
+    /// `Err` with the fold's structure problems (or non-convex faces), or the first count over
+    /// `limits`.
+    pub fn within(fold: &Fold, limits: &Limits) -> Result<Self, Unchecked> {
+        usable(fold, limits)?;
         let orient = orientation(fold);
         let (rel, _) = relations(fold, &orient);
-        let geo = prepare(fold, &orient);
+        let geo = prepare(fold, &orient, limits)?;
         Ok(Self { orient, rel, geo })
     }
 }
 
+/// [`analyse_within`] with no limit.
+pub fn analyse(fold: &Fold) -> Result<Report, Unchecked> {
+    analyse_within(fold, &Limits::NONE)
+}
+
 /// Every check on one fold; `Err` with the structure problems (or non-convex faces) that stop
-/// the checks from running.
-pub fn analyse(fold: &Fold) -> Result<Report, Vec<String>> {
-    usable(fold)?;
+/// the checks from running, or the first count over `limits`.
+pub fn analyse_within(fold: &Fold, limits: &Limits) -> Result<Report, Unchecked> {
+    usable(fold, limits)?;
     let orient = orientation(fold);
     let (rel, conflicts) = relations(fold, &orient);
-    let geo = prepare(fold, &orient);
+    let geo = prepare(fold, &orient, limits)?;
     let layers = layer_checks(&geo, &rel, &orient, None);
     let stated = rel.stated_pairs();
     let mut assignment = BTreeMap::new();
@@ -690,7 +735,7 @@ pub struct CensusRow {
 
 /// Flips each stated pair alone, in file order, and records which rules reject it. A rule that
 /// rejects no flip cannot fail, and proves nothing.
-// @ai:invariant on the crane every one of the 838 single-pair flips is rejected by at least one layer rule, so each rule's check can fail [T:test conf:0.9 src:crane::every_single_swap_of_the_crane_is_rejected]
+// @ai:invariant on the crane every one of the 838 single-pair flips is rejected by at least one layer rule [T:test conf:0.9 src:crane::every_single_swap_of_the_crane_is_rejected]
 pub fn swap_census(fold: &Fold, ctx: &Context) -> Vec<CensusRow> {
     let adjacent: BTreeSet<[usize; 2]> = ctx
         .geo
@@ -698,14 +743,16 @@ pub fn swap_census(fold: &Fold, ctx: &Context) -> Vec<CensusRow> {
         .iter()
         .map(|c| [c.faces[0].min(c.faces[1]), c.faces[0].max(c.faces[1])])
         .collect();
+    let mut rel = ctx.rel.clone();
     fold.folded()
         .face_orders
         .iter()
         .filter(|t| t[2] != 0)
         .map(|t| {
             let (f, g) = (t[0] as usize, t[1] as usize);
-            let rel = ctx.rel.flipped(f, g);
+            rel.flip(f, g);
             let layers = layer_checks(&ctx.geo, &rel, &ctx.orient, Some([f, g]));
+            rel.flip(f, g);
             CensusRow {
                 pair: [f, g],
                 adjacent: adjacent.contains(&[f.min(g), f.max(g)]),
@@ -713,6 +760,36 @@ pub fn swap_census(fold: &Fold, ctx: &Context) -> Vec<CensusRow> {
             }
         })
         .collect()
+}
+
+/// An upper bound on the steps [`swap_census`] takes: each flipped pair scans every crease,
+/// cell, tortilla and taco, and looks for a cycle in the cells holding both its faces, at most
+/// (faces in the cell)² steps each.
+fn census_steps(fold: &Fold, ctx: &Context) -> usize {
+    let rows = fold
+        .folded()
+        .face_orders
+        .iter()
+        .filter(|t| t[2] != 0)
+        .count();
+    let geo = &ctx.geo;
+    let scan = geo.creases.len() + geo.cells.len() + geo.tortillas.len() + geo.tacos.len();
+    let cycles = geo
+        .cells
+        .iter()
+        .map(|c| c.faces.len().saturating_mul(c.faces.len()))
+        .fold(0usize, usize::saturating_add);
+    rows.saturating_mul(scan.saturating_add(cycles))
+}
+
+/// [`swap_census`], refused before any flip when its step bound is over `limits`.
+pub fn swap_census_within(
+    fold: &Fold,
+    ctx: &Context,
+    limits: &Limits,
+) -> Result<Vec<CensusRow>, OverLimit> {
+    within("census steps", census_steps(fold, ctx), limits.census_steps)?;
+    Ok(swap_census(fold, ctx))
 }
 
 /// The first stated pair, in file order, whose flip `rule` rejects, among adjacent or
