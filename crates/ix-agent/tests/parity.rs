@@ -32,7 +32,8 @@ static LOOP_DETECTOR: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// adapters ix_git_log + ix_cargo_deps + ix_git_churn, plus the 3
 /// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet, plus
 /// ix_petri_analyze (Petri-net deadlock/boundedness/liveness, ix-petri), plus
-/// ix_duckdb_query (DuckDB SQL over caller rows, the CLI in -safe mode).
+/// ix_duckdb_query (DuckDB SQL over caller rows, the CLI in -safe mode), plus
+/// ix_origami_check (checks of a stated flat folded state, ix-origami).
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_annotations_scan",
@@ -111,6 +112,7 @@ const EXPECTED: &[&str] = &[
     "ix_number_theory",
     "ix_optimize",
     "ix_optick_search",
+    "ix_origami_check",
     "ix_petri_analyze",
     "ix_pipeline",
     "ix_pipeline_compile",
@@ -711,6 +713,41 @@ fn petri_analyze_is_reachable_through_mcp_dispatch() {
         .expect("ix_petri_analyze must not be refused by the approval gate");
     assert_eq!(out["deadlock_free"]["verdict"], "fails");
     assert_eq!(out["deadlock_free"]["detail"][0]["witness"][0], "acquire");
+}
+
+/// `ix_origami_check` through the exact entry point `main.rs` uses for `tools/call`:
+/// registered, classified, and answering. A unit square folded in half by one valley.
+#[test]
+fn origami_check_is_reachable_through_mcp_dispatch() {
+    use ix_agent::server_context::ServerContext;
+
+    let (ctx, _rx) = ServerContext::new();
+    let out = ToolRegistry::new()
+        .call_with_ctx(
+            "ix_origami_check",
+            serde_json::json!({
+                "fold": {
+                    "file_spec": 1.2,
+                    "frame_classes": ["creasePattern"],
+                    "vertices_coords": [[0, 0], [1, 0], [1, 1], [0, 1], [0.5, 0], [0.5, 1]],
+                    "edges_vertices": [[0, 4], [4, 1], [1, 2], [2, 5], [5, 3], [3, 0], [4, 5]],
+                    "edges_assignment": ["B", "B", "B", "B", "B", "B", "V"],
+                    "faces_vertices": [[0, 4, 5, 3], [4, 1, 2, 5]],
+                    "file_frames": [{
+                        "frame_classes": ["foldedForm"],
+                        "frame_parent": 0,
+                        "frame_inherit": true,
+                        "vertices_coords": [[0, 0], [0, 0], [0, 1], [0, 1], [0.5, 0], [0.5, 1]],
+                        "faceOrders": [[1, 0, 1]]
+                    }]
+                },
+                "census": true
+            }),
+            &ctx,
+        )
+        .expect("ix_origami_check must not be refused by the approval gate");
+    assert_eq!(out["ok"], true, "{out}");
+    assert_eq!(out["census"]["rejected"], 1);
 }
 
 /// `ix_pipeline_run` is a manual tool, gated itself (ix#350), and each step goes back
