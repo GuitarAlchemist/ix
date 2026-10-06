@@ -31,6 +31,7 @@ ix-acoustic-tune = { workspace = true }
 ix-cache = { workspace = true }
 ix-pipeline = { workspace = true }
 ix-petri = { workspace = true }
+ix-origami = { workspace = true }
 ix-autograd = { workspace = true }
 ix-nn = { workspace = true }
 ix-rl = { workspace = true }

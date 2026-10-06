@@ -17,5 +17,6 @@ pub mod batch1;
 pub mod batch2;
 pub mod batch3;
 pub mod duckdb;
+pub mod origami;
 pub mod petri;
 pub mod prime_radiant;

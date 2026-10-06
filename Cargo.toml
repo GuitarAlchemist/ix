@@ -198,6 +198,7 @@ ix-assumption-graph = { path = "crates/ix-assumption-graph", version = "0.1.0" }
 ix-registrar = { path = "crates/ix-registrar", version = "0.1.0" }
 ix-baml = { path = "crates/ix-baml", version = "0.1.0" }
 ix-ixql = { path = "crates/ix-ixql", version = "0.1.0" }
+ix-origami = { path = "crates/ix-origami", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

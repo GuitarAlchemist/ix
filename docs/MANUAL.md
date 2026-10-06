@@ -124,6 +124,7 @@ Full schemas live in [`crates/ix-agent/src/tools.rs`](../crates/ix-agent/src/too
 | **Adversarial & evolution** | `ix_adversarial_fgsm`, `ix_evolution`, `ix_bandit` | [`ix-adversarial`](../crates/ix-adversarial), [`ix-evolution`](../crates/ix-evolution), [`ix-rl`](../crates/ix-rl) |
 | **Game theory** | `ix_game_nash` | [`ix-game`](../crates/ix-game) |
 | **Advanced math** | `ix_category`, `ix_rotation`, `ix_sedenion`, `ix_fractal`, `ix_number_theory` | respective crates |
+| **Origami (flat folding)** | `ix_origami_check` — checks of a stated flat folded state passed as a FOLD object: face isometry, crease orientation, Kawasaki/Maekawa, and the layer order (adjacency, cell cycles, taco-tortilla, taco-taco); `census: true` also flips each stated pair and tallies which rules reject it | [`ix-origami`](../crates/ix-origami), [`ix-agent/src/skills/origami.rs`](../crates/ix-agent/src/skills/origami.rs) |
 | **Probabilistic structures** | `ix_bloom_filter`, `ix_hyperloglog` | [`ix-probabilistic`](../crates/ix-probabilistic) |
 | **Cache, optimization & search indexes** | `ix_cache`, `ix_optimize`, `ix_optick_search` | [`ix-cache`](../crates/ix-cache), [`ix-optimize`](../crates/ix-optimize), [`ix-optick`](../crates/ix-optick) |
 | **Grammar** | `ix_grammar_evolve`, `ix_grammar_search`, `ix_grammar_weights` | [`ix-grammar`](../crates/ix-grammar) |
