@@ -1,5 +1,6 @@
 //! Small folds built by hand, each holding one situation the crane does not have: an unassigned
-//! crease, a flat joint along a crease, two flat joints on one line, and the structure problems
+//! crease, a flat joint along a crease, a face a flat joint runs through, two flat joints on one
+//! line, and the structure problems
 //! that stop the checks. Each comes with a stated order the rules must reject and one they must
 //! accept.
 
@@ -129,6 +130,51 @@ fn a_flat_joint_along_a_crease_carries_its_sheet_across() {
     let ok = analysed(&strip_and_sheet("V", true, &ON_TOP));
     assert!(ok.ok, "{:?}", ok.rejected_by);
     assert_eq!(ok.layers.taco_tortilla.checked, 1);
+}
+
+/// A 2×1 strip cut at x = 1 by a flat joint and laid flat: faces 0 and 1. Then a 1×1 sheet at
+/// x 3..4, moved to x 0.5..1.5 so the joint's line runs through it: face 2.
+fn sheet_across_a_joint(face_orders: &[[i64; 3]]) -> Value {
+    let vertices = [
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [2.0, 0.0],
+        [2.0, 1.0],
+        [1.0, 1.0],
+        [0.0, 1.0],
+        [3.0, 0.0],
+        [4.0, 0.0],
+        [4.0, 1.0],
+        [3.0, 1.0],
+    ];
+    let folded: Vec<[f64; 2]> = vertices
+        .iter()
+        .enumerate()
+        .map(|(v, &[x, y])| if v < 6 { [x, y] } else { [x - 2.5, y] })
+        .collect();
+    let mut edges: Vec<([usize; 2], &str)> = (0..6).map(|k| ([k, (k + 1) % 6], "B")).collect();
+    edges.push(([1, 4], "F"));
+    edges.extend((0..4).map(|k| ([6 + k, 6 + (k + 1) % 4], "B")));
+    let faces: [&[usize]; 3] = [&[0, 1, 4, 5], &[1, 2, 3, 4], &[6, 7, 8, 9]];
+    fold(&vertices, &folded, &edges, &faces, face_orders)
+}
+
+#[test]
+fn a_face_a_flat_joint_runs_through_cannot_lie_between_its_faces() {
+    // Face 2 over face 0 and under face 1 would pass through the sheet at the joint.
+    let r = analysed(&sheet_across_a_joint(&[[2, 0, 1], [1, 2, 1]]));
+    assert_eq!(r.rejected_by, [Rule::TacoTortilla]);
+    assert_eq!(r.layers.taco_tortilla.violations, [[6, 2]]);
+    // Over both, or under both.
+    for orders in [[[2, 0, 1], [2, 1, 1]], [[0, 2, 1], [1, 2, 1]]] {
+        let ok = analysed(&sheet_across_a_joint(&orders));
+        assert!(ok.ok, "{orders:?}: {:?}", ok.rejected_by);
+        assert_eq!(ok.layers.taco_tortilla.checked, 1);
+    }
+    // One side unstated: reported, not failed.
+    let open = analysed(&sheet_across_a_joint(&[[2, 0, 1]]));
+    assert_eq!(open.layers.taco_tortilla.undetermined, 1);
+    assert!(open.ok);
 }
 
 /// Two 2×1 strips, each cut at x = 1 by a flat joint and laid flat on the same spot: faces

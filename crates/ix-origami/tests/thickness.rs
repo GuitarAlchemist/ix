@@ -3,7 +3,7 @@
 
 use ix_origami::controls::{move_folded, renumber, turn_over};
 use ix_origami::layers::above;
-use ix_origami::{analyse, stack, BadThickness, Context, Fold, Stack};
+use ix_origami::{analyse, stack, BadThickness, Context, Fold, Rule, Stack};
 use serde_json::{json, Value};
 
 fn crane() -> Fold {
@@ -307,8 +307,11 @@ fn a_weave_passes_the_layer_rules_but_has_no_rigid_stack() {
 
 #[test]
 fn a_sheet_pierced_across_a_flat_joint_has_no_rigid_stack() {
-    // The layer rules accept it: no rule yet checks a face against both faces of a flat joint.
-    assert!(analyse(&pierce()).unwrap().ok);
+    // Taco-tortilla rejects it through the joint; the rigid reading refuses it on its own.
+    assert_eq!(
+        analyse(&pierce()).unwrap().rejected_by,
+        [Rule::TacoTortilla]
+    );
     let r = stacked(&pierce(), 0.1).rigid;
     assert!(!r.acyclic && r.refused);
     assert_eq!(r.cycle, Some(vec![[0, 2], [2, 1]]));

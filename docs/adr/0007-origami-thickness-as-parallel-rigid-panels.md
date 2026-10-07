@@ -71,8 +71,9 @@ one integration pass.
   built).
 - **Why flat joints are merged into panels.** Without merging, a strip stated over one face of
   a flat joint and under the other would get levels 1, 2, 3, although one rigid panel cannot
-  lie both under and over it. The base checks accept that fold today: it is the known
-  flat-joint gap in `lib.rs`.
+  lie both under and over it. When this record was written, the base checks accepted that
+  fold; this was the flat-joint gap. Since 2026-10-07, taco-tortilla also covers a face that a
+  flat joint runs through, so it now rejects that fold.
 
 ## Consequences
 
