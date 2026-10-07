@@ -2,8 +2,9 @@
 //!
 //! The order comes from the folded frame's `faceOrders`; nothing here computes one. Five rules
 //! test it: the adjacency rule across every mountain and valley, no cycle among the faces
-//! stacked in any overlay cell, taco-tortilla (a face a crease runs through, or that carries a
-//! sheet on across it at a flat joint, cannot lie between the crease's faces), taco-taco (two
+//! stacked in any overlay cell, taco-tortilla (a face that a crease or a flat joint runs through,
+//! or that carries a sheet on across a crease at a flat joint, cannot lie between the faces of
+//! that crease or joint), taco-taco (two
 //! creases folded onto one line, on the same side, nest or stack but never interleave) and
 //! tortilla-tortilla (two flat joints on one line keep one order on both sides of it).
 //!
@@ -213,8 +214,8 @@ pub struct Crease {
     pub faces: [usize; 2],
 }
 
-/// A face that a crease runs through: across its inside, or along a flat joint between it and
-/// a face on the other side of the crease's line.
+/// A face that a crease or a flat joint runs through across its inside; or a face that a crease
+/// runs along, at a flat joint between it and a face on the other side of the crease's line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tortilla {
     pub crease: Crease,
@@ -331,7 +332,10 @@ pub fn prepare(fold: &Fold, orient: &[i8], limits: &Limits) -> Result<Geometry, 
     };
     const ITEMS: &str = "tortillas, tacos and tortilla pairs";
     let mut tortillas = Vec::new();
-    for c in &creases {
+    // A face that a crease or a flat joint runs through, across its inside. A joint's two faces
+    // are one sheet, so the face cannot lie between them either.
+    // @ai:invariant a face that a flat joint's line runs through is rejected by taco-tortilla when stated between the joint's two faces, and accepted over or under both [T:test conf:0.9 src:small_folds::a_face_a_flat_joint_runs_through_cannot_lie_between_its_faces]
+    for c in creases.iter().chain(&joints) {
         let (p, r) = ends(c);
         for (t, q) in polys.iter().enumerate() {
             if !c.faces.contains(&t) && inside_length(p, r, q, INSIDE_TOL) > 1e-6 {
@@ -466,8 +470,8 @@ pub struct Cells {
     pub cyclic: Vec<usize>,
 }
 
-/// Taco-tortilla, taco-taco or tortilla-tortilla. A violation is `[crease edge, face]` for
-/// taco-tortilla, `[crease edge, crease edge]` for taco-taco and `[joint edge, joint edge]` for
+/// Taco-tortilla, taco-taco or tortilla-tortilla. A violation is `[crease or joint edge, face]`
+/// for taco-tortilla, `[crease edge, crease edge]` for taco-taco and `[joint edge, joint edge]` for
 /// tortilla-tortilla.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TacoRule {
@@ -576,7 +580,8 @@ pub fn cells_acyclic(
     out
 }
 
-/// A face that a crease runs through cannot lie between the crease's two faces.
+/// A face that a crease or a flat joint runs through cannot lie between its two faces: a
+/// crease's faces are folded together, a joint's are one sheet.
 pub fn taco_tortilla(
     geo: &Geometry,
     rel: &Relations,

@@ -44,9 +44,6 @@
 //! folded frame to a global scale between 1 and 2. The lower-level functions take the
 //! coordinates as they are.
 //!
-//! Known gap, so `ok` is not proof: a face that a flat joint's line runs through must keep one
-//! order with both of the joint's faces, and nothing checks it.
-//!
 //! For a fold from outside the process, [`analyse_within`], [`Context::within`] and
 //! [`swap_census_within`] take [`Limits`]: a fold over any of them is refused, never checked in
 //! part.
