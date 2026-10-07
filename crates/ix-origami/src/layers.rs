@@ -334,6 +334,7 @@ pub fn prepare(fold: &Fold, orient: &[i8], limits: &Limits) -> Result<Geometry, 
     let mut tortillas = Vec::new();
     // A face that a crease or a flat joint runs through, across its inside. A joint's two faces
     // are one sheet, so the face cannot lie between them either.
+    // @ai:invariant a face that a flat joint's line runs through is rejected by taco-tortilla when stated between the joint's two faces, and accepted over or under both [T:test conf:0.9 src:small_folds::a_face_a_flat_joint_runs_through_cannot_lie_between_its_faces]
     for c in creases.iter().chain(&joints) {
         let (p, r) = ends(c);
         for (t, q) in polys.iter().enumerate() {
