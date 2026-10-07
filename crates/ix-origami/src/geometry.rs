@@ -13,30 +13,46 @@ pub const AREA_TOL: f64 = 1e-10;
 /// How far inside a face a crease must run to cross it.
 pub const INSIDE_TOL: f64 = 1e-7;
 
-/// Signed area: positive for a counterclockwise polygon.
+/// Signed area: positive for a counterclockwise polygon. Taken about the first vertex, so a
+/// polygon far from the origin keeps its precision.
 pub fn area(p: &[Point]) -> f64 {
     let n = p.len();
     if n < 3 {
         return 0.0;
     }
-    0.5 * (0..n)
+    let o = p[0];
+    0.5 * (1..n - 1)
         .map(|i| {
-            let (a, b) = (p[i], p[(i + 1) % n]);
-            a[0] * b[1] - b[0] * a[1]
+            let (a, b) = (p[i], p[i + 1]);
+            (a[0] - o[0]) * (b[1] - o[1]) - (b[0] - o[0]) * (a[1] - o[1])
         })
         .sum::<f64>()
 }
 
-/// Whether every turn of the polygon goes the same way.
+/// Whether the polygon is convex: every turn goes the same way, and it winds once (a star
+/// polygon also turns the same way at every vertex). Sides of length 0 are skipped.
 pub fn is_convex(p: &[Point]) -> bool {
     let n = p.len();
-    let turns: Vec<f64> = (0..n)
+    let sides: Vec<Point> = (0..n)
         .map(|i| {
-            let (a, b, c) = (p[i], p[(i + 1) % n], p[(i + 2) % n]);
-            (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+            let (a, b) = (p[i], p[(i + 1) % n]);
+            [b[0] - a[0], b[1] - a[1]]
         })
+        .filter(|s| *s != [0.0, 0.0])
         .collect();
-    turns.iter().all(|&t| t > -1e-12) || turns.iter().all(|&t| t < 1e-12)
+    let m = sides.len();
+    if m < 3 {
+        return false;
+    }
+    let (mut turns, mut winding) = (Vec::with_capacity(m), 0.0);
+    for i in 0..m {
+        let (u, v) = (sides[i], sides[(i + 1) % m]);
+        let cross = u[0] * v[1] - u[1] * v[0];
+        winding += cross.atan2(u[0] * v[0] + u[1] * v[1]);
+        turns.push(cross);
+    }
+    let one_way = turns.iter().all(|&t| t > -1e-12) || turns.iter().all(|&t| t < 1e-12);
+    one_way && (winding.abs() - std::f64::consts::TAU).abs() < 1e-6
 }
 
 pub fn dist(a: Point, b: Point) -> f64 {
@@ -201,6 +217,31 @@ mod tests {
         cw.reverse();
         assert_eq!(area(&SQUARE), 1.0);
         assert_eq!(area(&cw), -1.0);
+    }
+
+    #[test]
+    fn area_keeps_its_precision_far_from_the_origin() {
+        let far: Vec<Point> = SQUARE.iter().map(|p| [p[0] + 1e8, p[1] - 1e8]).collect();
+        assert_eq!(area(&far), 1.0);
+    }
+
+    #[test]
+    fn convexity_needs_one_turn_direction_and_one_winding() {
+        assert!(is_convex(&SQUARE));
+        let mut repeated = SQUARE.to_vec();
+        repeated.insert(2, repeated[1]);
+        assert!(is_convex(&repeated));
+        // A pentagram turns the same way at every vertex, but winds twice.
+        let star: Vec<Point> = (0..5)
+            .map(|k| {
+                let a = f64::from(2 * k) * std::f64::consts::TAU / 5.0;
+                [a.cos(), a.sin()]
+            })
+            .collect();
+        assert!(!is_convex(&star));
+        let notch = [[0.0, 0.0], [2.0, 0.0], [1.0, 0.5], [2.0, 1.0], [0.0, 1.0]];
+        assert!(!is_convex(&notch));
+        assert!(!is_convex(&[[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]));
     }
 
     #[test]
