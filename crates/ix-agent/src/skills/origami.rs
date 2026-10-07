@@ -2,17 +2,21 @@
 //!
 //! The tool takes a FOLD object (a crease pattern with one folded frame holding `faceOrders`)
 //! and returns every check `ix_origami::analyse` runs on that stated flat folded state:
-//! structure, face isometry, crease orientation, Kawasaki and Maekawa, and the four layer
+//! structure, face isometry, crease orientation, Kawasaki and Maekawa, and the five layer
 //! rules. With `census`, it also flips each stated pair alone and tallies which rules reject
-//! the flip. It is a pure computation: no filesystem, no network, no state. The caller passes
-//! the FOLD object itself; reading a `.fold` file from disk is deliberately not offered.
+//! the flip. With `thickness`, it also reports the stack that thickness implies (see
+//! `ix_origami::thickness`). It is a pure computation: no filesystem, no network, no state. The
+//! caller passes the FOLD object itself; reading a `.fold` file from disk is deliberately not
+//! offered.
 //!
 //! The checks test the layer order the file states. They do not compute one, and they do not
 //! prove the sheet folds flat: global flat-foldability is NP-complete (Bern and Hayes 1996).
 
 use std::collections::BTreeMap;
 
-use ix_origami::{analyse_within, swap_census_within, Context, Fold, Limits, Rule, Unchecked};
+use ix_origami::{
+    analyse_within, stack, swap_census_within, Context, Fold, Limits, Rule, Unchecked,
+};
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
 
@@ -42,6 +46,14 @@ fn origami_check_schema() -> Value {
                 "type": "boolean",
                 "default": false,
                 "description": "Also flip each stated faceOrders pair alone and tally which layer rules reject the flip. A rule that rejects no flip cannot fail, and proves nothing."
+            },
+            "thickness": {
+                "type": "object",
+                "properties": {
+                    "t": { "type": "number", "minimum": 0, "description": "The sheet's full thickness, in the crease pattern's units." }
+                },
+                "required": ["t"],
+                "description": "Also report the stack this thickness implies: the most faces at one point, and whether parallel rigid panels, one height each, can realise the stated order. Never changes the top-level verdict."
             }
         },
         "required": ["fold"]
@@ -64,7 +76,8 @@ fn origami_check_output_schema() -> Value {
             "layers": { "type": "object", "description": "adjacency, cells (cycles), taco_tortilla, taco_taco, tortilla_tortilla: each with what was checked and the violations" },
             "tacos_on_opposite_sides": { "type": "integer" },
             "rejected_by": { "type": "array", "items": { "type": "string" }, "description": "Layer rules with at least one violation" },
-            "census": { "type": "object", "description": "With census: pairs, rejected, the accepted pairs, and a tally keyed '<adjacent|non-adjacent>: <rules>'" }
+            "census": { "type": "object", "description": "With census: pairs, rejected, the accepted pairs, and a tally keyed '<adjacent|non-adjacent>: <rules>'" },
+            "thickness": { "type": "object", "description": "With thickness: t, ply (most faces at one point) and ply_height (the least height of any stack), and rigid: parallel rigid panels (faces joined by flat joints), with acyclic, cycle (stated [below, above] pairs), levels, levels_exact, height, face_levels, undetermined_pairs, refused (t > 0 and a cycle) and ok (the top-level ok and not refused). A refusal means no stack of parallel panels, not that the fold cannot be made." }
         }
     })
 }
@@ -90,6 +103,15 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
         None | Some(Value::Null) => false,
         Some(v) => v.as_bool().ok_or("`census` must be a boolean")?,
     };
+    let thickness = match params.get("thickness") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.get("t")
+                .and_then(Value::as_f64)
+                .filter(|t| *t >= 0.0)
+                .ok_or("`thickness.t` must be a number, 0 or more: the sheet's thickness")?,
+        ),
+    };
     let fold = Fold::from_value(value).map_err(|e| e.to_string())?;
     let report = match analyse_within(&fold, &LIMITS) {
         Ok(r) => r,
@@ -102,6 +124,13 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
     out["structure"] = json!([]);
     if census {
         out["census"] = census_tally(&fold)?;
+    }
+    if let Some(t) = thickness {
+        let ctx = Context::within(&fold, &LIMITS).map_err(|e| refused(&e))?;
+        let stack = stack(&ctx, t).map_err(|e| e.to_string())?;
+        let mut v = serde_json::to_value(&stack).map_err(|e| e.to_string())?;
+        v["rigid"]["ok"] = json!(report.ok && !stack.rigid.refused);
+        out["thickness"] = v;
     }
     Ok(out)
 }
@@ -184,6 +213,70 @@ mod tests {
         assert_eq!(out["layers"]["adjacency"]["checked"], 1);
         assert_eq!(out["isometry"]["ok"], true);
         assert!(out.get("census").is_none());
+        assert!(out.get("thickness").is_none());
+    }
+
+    #[test]
+    fn a_thickness_reports_the_stack_it_implies() {
+        let out = origami_check(json!({
+            "fold": square_folded_in_half(1),
+            "thickness": { "t": 0.5 }
+        }))
+        .unwrap();
+        assert_eq!(out["ok"], true);
+        assert_eq!(
+            out["thickness"],
+            json!({
+                "t": 0.5,
+                "ply": 2,
+                "ply_height": 1.0,
+                "rigid": {
+                    "acyclic": true,
+                    "cycle": null,
+                    "levels": 2,
+                    "levels_exact": true,
+                    "height": 1.0,
+                    "face_levels": [0, 1],
+                    "undetermined_pairs": 0,
+                    "refused": false,
+                    "ok": true
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn a_fold_the_checks_reject_is_never_reported_as_stackable() {
+        let out = origami_check(json!({
+            "fold": square_folded_in_half(-1),
+            "thickness": { "t": 0.5 }
+        }))
+        .unwrap();
+        assert_eq!(out["ok"], false);
+        assert_eq!(out["thickness"]["rigid"]["refused"], false);
+        assert_eq!(out["thickness"]["rigid"]["ok"], false);
+    }
+
+    #[test]
+    fn a_thickness_that_is_not_a_number_0_or_more_is_an_error() {
+        for thickness in [
+            json!({ "t": -1 }),
+            json!({ "t": "thin" }),
+            json!({}),
+            json!(0.5),
+        ] {
+            let err = origami_check(json!({
+                "fold": square_folded_in_half(1),
+                "thickness": thickness
+            }))
+            .unwrap_err();
+            assert!(err.contains("thickness.t"), "{thickness}: {err}");
+        }
+        // Checked before the fold: bad input is an error even when the fold is no verdict.
+        let mut fold = square_folded_in_half(1);
+        fold["file_frames"][0]["faceOrders"] = json!([[1, 7, 1]]);
+        let err = origami_check(json!({ "fold": fold, "thickness": { "t": -1 } })).unwrap_err();
+        assert!(err.contains("thickness.t"), "{err}");
     }
 
     #[test]

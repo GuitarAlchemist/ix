@@ -111,6 +111,15 @@ contracts (see `docs/contracts/`), not runtime coupling.
   them: no verdict is an error, no matching arm stops the pipeline and is recorded in
   `RunOutcome::gates`, an unhandled `C` fails the run.
 
+- **Stated folded state** (`ix-origami`) — a FOLD crease pattern with one folded frame whose
+  `faceOrders` state the layer order. `ix-origami` checks it and never computes one. The checks
+  treat the sheet as having no thickness. A **thickness `t`** is the sheet's full thickness, in
+  crease-pattern units. **Ply** is the most faces stacked at one point, so any stack is at least
+  `ply · t` thick. A **panel** is a set of faces joined by flat joints. A **rigid stack** gives
+  each panel one height, parallel to the sheet, and exists only if the stated order over
+  overlapping panels has no cycle. A rigid-stack refusal means "no stack of parallel panels", not
+  "cannot be made" (ADR-0007).
+
 ## Conventions
 
 See `CLAUDE.md` for the authoritative build/convention/discipline rules

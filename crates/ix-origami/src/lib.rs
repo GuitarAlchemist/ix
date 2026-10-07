@@ -19,6 +19,10 @@
 //! [`swap_census`] flips each stated pair alone and records which rules reject it: a check
 //! that cannot fail proves nothing.
 //!
+//! [`thickness::stack`] reads the stated order at a material thickness `t`: the most faces
+//! stacked at one point, and whether parallel rigid panels, one height each, can realise the
+//! order. It is reported beside the checks above and never changes their verdict.
+//!
 //! Conventions, from the FOLD spec (`doc/spec.md` at
 //! `edemaine/fold@824f9fa6f944248787b0b2077ef622761489201e`):
 //!
@@ -60,6 +64,7 @@ pub mod geometry;
 pub mod layers;
 pub mod limits;
 pub mod local;
+pub mod thickness;
 
 pub use fold::{Assignment, Fold, FoldError, FoldedFrame, Point};
 pub use layers::{
@@ -67,3 +72,4 @@ pub use layers::{
     LayerChecks, Report, Rule, Unchecked,
 };
 pub use limits::{Limits, OverLimit};
+pub use thickness::{stack, BadThickness, Rigid, Stack};
