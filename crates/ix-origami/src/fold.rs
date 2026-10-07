@@ -212,7 +212,7 @@ impl Fold {
         &mut self.frames[0]
     }
 
-    /// The spec's field meanings: lengths, index ranges, fold-angle signs. Empty = ok.
+    /// The spec's field meanings: lengths, index ranges, fold angles. Empty = ok.
     pub fn validate(&self) -> Vec<String> {
         let mut problems = Vec::new();
         let nv = self.vertices_coords.len();
@@ -250,6 +250,14 @@ impl Fold {
                             s.letter()
                         ));
                     }
+                    // The spec: "zero for flat, unassigned, and border folds".
+                    if matches!(s, Assignment::F | Assignment::U | Assignment::B) && a != 0.0 {
+                        problems.push(format!(
+                            "edge {k} ({}): fold angle {a:+.3}, where the spec sets 0 on flat, \
+                             unassigned and border edges",
+                            s.letter()
+                        ));
+                    }
                 }
             }
         }
@@ -257,8 +265,9 @@ impl Fold {
     }
 
     /// What the layer checks need on top of [`Fold::validate`]: one folded frame inheriting from
-    /// the crease pattern, `faceOrders` in range, faces counterclockwise in the crease pattern,
-    /// every face side an edge, one face on a border edge and two on any other. Empty = ok.
+    /// the crease pattern without overriding its edges or faces, `faceOrders` in range and on
+    /// the folded frame only, faces counterclockwise in the crease pattern, every face side an
+    /// edge, one face on a border edge and two on any other. Empty = ok.
     pub fn structure(&self) -> Vec<String> {
         let mut problems = self.validate();
         if !problems.is_empty() {
@@ -277,6 +286,21 @@ impl Fold {
         }
         if fr.frame_parent != Some(0) || fr.frame_inherit != Some(true) {
             problems.push("frame 1 does not inherit from frame 0".to_string());
+        }
+        // The checks read these from the crease pattern and the orders from the folded frame;
+        // anything else would be silently ignored.
+        for key in ["edges_vertices", "edges_assignment", "faces_vertices"] {
+            if fr.other.contains_key(key) {
+                problems.push(format!(
+                    "the folded frame overrides {key}, which the checks read from the crease pattern"
+                ));
+            }
+        }
+        if self.other.contains_key("faceOrders") {
+            problems.push(
+                "faceOrders on the crease pattern; the checks read them from the folded frame"
+                    .to_string(),
+            );
         }
         let nf = self.faces_vertices.len() as i64;
         for (k, t) in fr.face_orders.iter().enumerate() {

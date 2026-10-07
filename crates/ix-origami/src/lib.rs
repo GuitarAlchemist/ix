@@ -3,12 +3,18 @@
 //! A [`Fold`] holds a crease pattern and one folded frame that inherits from it, with the
 //! frame's stated layer order (`faceOrders`). [`analyse`] runs every check on it:
 //!
-//! - **structure**: indices in range, faces counterclockwise, every face side an edge;
+//! - **structure**: indices in range, fold angles that agree with the assignment (0 on flat,
+//!   unassigned and border edges), one folded frame that overrides none of the crease pattern's
+//!   edges or faces, faces counterclockwise, convex and of non-zero area, every face side an
+//!   edge;
 //! - **face isometry**: each face keeps its shape in the folded frame, up to one global scale;
 //! - **crease orientation**: a mountain or valley turns one face over relative to the other;
-//! - **Kawasaki and Maekawa** at interior vertices whose creases are all mountains or valleys;
-//! - **the layer order**: the adjacency rule across every crease, no cycle in any overlay cell,
-//!   taco-tortilla and taco-taco.
+//! - **Kawasaki and Maekawa** at interior vertices whose creases are all mountains or valleys
+//!   (vertices on no edge are skipped and counted);
+//! - **the layer order**: the adjacency rule across every mountain and valley, no cycle in any
+//!   overlay cell, taco-tortilla, taco-taco and tortilla-tortilla. An unassigned edge whose
+//!   faces are turned over relative to each other is a crease in these rules; a flat, join or
+//!   unassigned edge whose faces are not is a flat joint, whose sheet runs on across its line.
 //!
 //! [`swap_census`] flips each stated pair alone and records which rules reject it: a check
 //! that cannot fail proves nothing.
@@ -34,15 +40,8 @@
 //! folded frame to a global scale between 1 and 2. The lower-level functions take the
 //! coordinates as they are.
 //!
-//! Known gaps, so `ok` is not proof:
-//!
-//! - only mountain and valley creases enter the layer rules: a folded unassigned (`U`) edge is
-//!   not checked, nor is a flat (`F`, `J`) edge that lies along a crease, and the
-//!   tortilla-tortilla rule is not implemented;
-//! - keys the folded frame overrides (`edges_assignment`, `faces_vertices`) are ignored, and so
-//!   are `faceOrders` placed on the crease pattern;
-//! - fold angles are checked for sign on mountains and valleys only, not for 0 elsewhere;
-//! - areas lose precision for a folded frame placed far from the origin.
+//! Known gap, so `ok` is not proof: a face that a flat joint's line runs through must keep one
+//! order with both of the joint's faces, and nothing checks it.
 //!
 //! For a fold from outside the process, [`analyse_within`], [`Context::within`] and
 //! [`swap_census_within`] take [`Limits`]: a fold over any of them is refused, never checked in

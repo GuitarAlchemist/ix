@@ -3,8 +3,11 @@
 //! invariance controls of the same object: renumbering, a rigid motion of the folded frame, the
 //! folded model turned over.
 //!
-//! The exact numbers come from a separate Python implementation of the same checks run on the
-//! same file; the two agree on every one of them.
+//! The exact numbers come from the Python implementation this crate is ported from, run on the
+//! same file; the two agree on every one of them. That shows the port is faithful, not that the
+//! checks are right: the mutants and controls test that. The checks added since the port
+//! (tortilla-tortilla, flat joints, unassigned creases, isolated vertices, zero-area faces)
+//! have no Python counterpart and are tested on small folds in `small_folds.rs`.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -173,6 +176,12 @@ fn geometry_mutant_folded_vertex_moved() {
     let mut bad = crane().clone();
     bad.folded_mut().vertices_coords[4][0] += 0.01;
     assert!(!face_isometry(&bad, LEN_TOL).ok);
+    // Through the whole analysis, by a move too small to change anything else.
+    let mut bad = crane().clone();
+    bad.folded_mut().vertices_coords[4][0] += 1e-6;
+    let r = analysed(&bad);
+    assert!(!r.isometry.ok && !r.ok);
+    assert!(r.rejected_by.is_empty());
 }
 
 #[test]
@@ -184,8 +193,15 @@ fn geometry_mutant_folded_frame_collapsed() {
     assert_eq!(iso.scale, 0.0);
     assert!(iso.max_length_change.is_nan());
     assert!(!iso.ok);
-    let r = analysed(&bad);
-    assert!(!r.ok && !r.isometry.ok);
+    // Folded faces of no area have no orientation and cover nothing: refused, not checked.
+    match analyse(&bad) {
+        Err(Unchecked::Structure(p)) => {
+            assert!(p
+                .iter()
+                .any(|s| s.starts_with("faces of zero area: 0 in the crease pattern")));
+        }
+        other => panic!("expected a structure refusal, got {other:?}"),
+    }
 }
 
 #[test]
@@ -220,6 +236,9 @@ fn geometry_mutant_crease_unfolded() {
     bad.edges_assignment[k] = Assignment::F;
     let orient = orientation(&bad);
     assert!(crease_orientation(&bad, &orient).violations.contains(&k));
+    let r = analysed(&bad);
+    assert_eq!(r.crease_orientation.violations, [k]);
+    assert!(!r.ok);
 }
 
 #[test]
@@ -229,6 +248,15 @@ fn geometry_controls_renumbered_moved_turned_over() {
         move_folded(crane(), 0.7, [3.0, -2.0]),
         turn_over(crane()),
     ];
+    // Each control changes the file, or it would test nothing.
+    for other in &others {
+        assert_ne!(other, crane());
+    }
+    let ys = |f: &Fold| -> Vec<f64> { f.folded().vertices_coords.iter().map(|p| p[1]).collect() };
+    assert!(ys(&others[2])
+        .iter()
+        .zip(ys(crane()))
+        .all(|(a, b)| *a == -b));
     for other in &others {
         assert!(face_isometry(other, LEN_TOL).ok);
         let orient = orientation(other);
@@ -258,14 +286,35 @@ fn local_mutant_one_crease_flipped() {
     let mut failing = local_theorems(&bad, 1e-9).maekawa_failing;
     failing.sort_unstable();
     assert_eq!(failing, ends);
+    let r = analysed(&bad);
+    let mut failing = r.local_theorems.maekawa_failing.clone();
+    failing.sort_unstable();
+    assert_eq!(failing, ends);
+    assert!(!r.ok);
 }
 
 #[test]
 fn local_mutant_pattern_vertex_moved() {
-    let mut bad = crane().clone();
-    let v = interior_vertices(&bad)[0];
-    bad.vertices_coords[v][0] += 0.01;
-    assert!(local_theorems(&bad, 1e-9).kawasaki_failing.contains(&v));
+    // Kawasaki's tolerance is 1e-9: a move of 1e-6 is caught, not absorbed.
+    for d in [0.01, 1e-6] {
+        let mut bad = crane().clone();
+        let v = interior_vertices(&bad)[0];
+        bad.vertices_coords[v][0] += d;
+        let lt = local_theorems(&bad, 1e-9);
+        assert!(lt.kawasaki_failing.contains(&v), "{d}");
+        assert!(lt.kawasaki_max_abs_alt_sum > 1e-8, "{d}");
+    }
+}
+
+#[test]
+fn local_skips_vertices_with_other_creases() {
+    // One interior mountain made flat: its two ends leave the vertices the theorems apply to.
+    let mut other = crane().clone();
+    let k = interior_crease(&other);
+    other.edges_assignment[k] = Assignment::F;
+    let r = local_theorems(&other, 1e-9);
+    assert_eq!((r.applicable, r.skipped_other_creases), (42, 2));
+    assert!(r.kawasaki_failing.is_empty() && r.maekawa_failing.is_empty());
 }
 
 #[test]
@@ -298,6 +347,39 @@ fn layers_positive_control() {
 }
 
 #[test]
+fn layers_an_unstated_crease_is_reported_not_failed() {
+    let c = context().geo.creases[0];
+    let [f, g] = c.faces.map(|x| x as i64);
+    let mut other = crane().clone();
+    other
+        .folded_mut()
+        .face_orders
+        .retain(|t| !((t[0] == f && t[1] == g) || (t[0] == g && t[1] == f)));
+    let r = analysed(&other);
+    assert_eq!(r.layers.adjacency.unstated, [c.edge]);
+    assert!(r.layers.adjacency.violations.is_empty());
+    assert_eq!(r.overlap.overlapping_unstated, 1);
+    assert!(r.ok);
+}
+
+#[test]
+fn layers_mutant_converse_stated_against_the_rule() {
+    // A converse added with the sign the spec's rule forbids.
+    let orient = orientation(crane());
+    let [f, g, s] = crane().folded().face_orders[0];
+    let t = if orient[f as usize] != orient[g as usize] {
+        s
+    } else {
+        -s
+    };
+    let mut bad = crane().clone();
+    bad.folded_mut().face_orders.push([g, f, -t]);
+    let r = analysed(&bad);
+    assert!(r.converse_conflicts.contains(&(g as usize, f as usize)));
+    assert!(!r.ok);
+}
+
+#[test]
 fn layers_faulty_swap_adjacent_faces() {
     let [f, g] = first_swap(crane(), context(), Rule::Adjacency, true).unwrap();
     let r = analysed(&swap(crane(), f, g));
@@ -326,6 +408,17 @@ fn layers_faulty_swaps_caught_by_one_taco_rule_only() {
 }
 
 #[test]
+fn the_census_agrees_with_a_full_analysis_of_each_swap() {
+    // The census re-checks only the items that involve both flipped faces; the others cannot
+    // change. A sample of rows, each against the whole analysis of the swapped file.
+    for row in census().iter().step_by(97) {
+        let [f, g] = row.pair;
+        let r = analysed(&swap(crane(), f, g));
+        assert_eq!(r.rejected_by, row.rejected_by, "{:?}", row.pair);
+    }
+}
+
+#[test]
 fn every_single_swap_of_the_crane_is_rejected() {
     assert_eq!(census().len(), 838);
     let accepted: Vec<[usize; 2]> = census()
@@ -349,11 +442,18 @@ fn layers_control_renumbered() {
 
 #[test]
 fn layers_controls_moved_and_turned_over() {
-    for other in [move_folded(crane(), 0.7, [3.0, -2.0]), turn_over(crane())] {
+    // Far from the origin too: areas are taken about a face's own vertex.
+    for other in [
+        move_folded(crane(), 0.7, [3.0, -2.0]),
+        move_folded(crane(), 0.7, [1e5, -1e5]),
+        turn_over(crane()),
+    ] {
         let r = analysed(&other);
         assert!(r.ok);
         assert_eq!(fingerprint(&r), fingerprint(report()));
     }
+    let r = analysed(&turn_over(crane()));
+    assert_eq!((r.orientation.up, r.orientation.down), (30, 29));
 }
 
 // --- agreement with the reference implementation --------------------------------------------
@@ -421,8 +521,13 @@ fn the_crane_passes_every_check() {
 
     let lt = &r.local_theorems;
     assert_eq!(
-        (lt.applicable, lt.skipped_border, lt.skipped_other_creases),
-        (44, 12, 0)
+        (
+            lt.applicable,
+            lt.skipped_border,
+            lt.skipped_other_creases,
+            lt.skipped_isolated
+        ),
+        (44, 12, 0, 0)
     );
     assert!(lt.kawasaki_max_abs_alt_sum < 1e-9);
     assert_eq!(lt.maekawa_m_minus_v, BTreeMap::from([(-2, 14), (2, 30)]));
@@ -446,6 +551,9 @@ fn the_crane_passes_every_check() {
         (1049, 0)
     );
     assert_eq!((l.taco_taco.checked, l.taco_taco.undetermined), (196, 0));
+    // No flat joint, so no tortilla pair.
+    let tt = &l.tortilla_tortilla;
+    assert_eq!((tt.checked, tt.undetermined), (0, 0));
     assert_eq!(r.tacos_on_opposite_sides, 9);
     assert!(r.ok);
 }
@@ -593,7 +701,7 @@ fn a_fold_over_any_limit_is_refused_not_checked_in_part() {
         tacos: 1_244,
         ..none
     };
-    assert_eq!(refused(tacos), "tortillas and tacos");
+    assert_eq!(refused(tacos), "tortillas, tacos and tortilla pairs");
     let at_its_size = Limits {
         faces: 59,
         face_vertices: 216,
@@ -606,8 +714,8 @@ fn a_fold_over_any_limit_is_refused_not_checked_in_part() {
 
 #[test]
 fn a_census_over_its_step_bound_is_refused_before_any_flip() {
-    // 838 flips, each scanning 102 creases, 83 cells, 1049 tortillas and 196 tacos, plus at
-    // most the 16580 cell face pairs.
+    // 838 flips, each scanning 102 creases, 83 cells, 1049 tortillas, 196 tacos and no tortilla
+    // pair, plus at most the 16580 cell face pairs.
     let steps = 838 * (102 + 83 + 1049 + 196 + 16_580);
     let at = |census_steps| Limits {
         census_steps,

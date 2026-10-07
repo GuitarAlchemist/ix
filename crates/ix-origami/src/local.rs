@@ -31,11 +31,12 @@ fn border_vertices(fold: &Fold) -> BTreeSet<usize> {
     border
 }
 
-/// Vertices with no border edge.
+/// Vertices on at least one edge and on no border edge.
 pub fn interior_vertices(fold: &Fold) -> Vec<usize> {
     let border = border_vertices(fold);
+    let inc = incident(fold);
     (0..fold.vertices_coords.len())
-        .filter(|v| !border.contains(v))
+        .filter(|&v| !border.contains(&v) && !inc[v].is_empty())
         .collect()
 }
 
@@ -93,6 +94,8 @@ pub struct LocalTheorems {
     pub applicable: usize,
     pub skipped_border: usize,
     pub skipped_other_creases: usize,
+    /// Vertices on no edge.
+    pub skipped_isolated: usize,
     pub kawasaki_failing: Vec<usize>,
     pub kawasaki_max_abs_alt_sum: f64,
     pub maekawa_failing: Vec<usize>,
@@ -100,9 +103,9 @@ pub struct LocalTheorems {
     pub maekawa_m_minus_v: BTreeMap<i64, usize>,
 }
 
-/// Kawasaki and Maekawa at the vertices where they apply: interior (no border edge), with
-/// every crease a mountain or a valley, in a state folded flat. Other vertices are skipped and
-/// counted by reason.
+/// Kawasaki and Maekawa at the vertices where they apply: interior (on edges, none of them
+/// border), with every crease a mountain or a valley, in a state folded flat. Other vertices
+/// are skipped and counted by reason.
 pub fn local_theorems(fold: &Fold, tol: f64) -> LocalTheorems {
     let border = border_vertices(fold);
     let mut other = BTreeSet::new();
@@ -111,9 +114,9 @@ pub fn local_theorems(fold: &Fold, tol: f64) -> LocalTheorems {
             other.extend([u, w]);
         }
     }
-    let applicable: BTreeSet<usize> = (0..fold.vertices_coords.len())
-        .filter(|v| !border.contains(v) && !other.contains(v))
-        .collect();
+    let interior: BTreeSet<usize> = interior_vertices(fold).into_iter().collect();
+    let applicable: BTreeSet<usize> = interior.difference(&other).copied().collect();
+    let on_edges = border.len() + interior.len();
     let (sums, kfail) = kawasaki(fold, tol);
     let (diff, mfail) = maekawa(fold);
     let mut m_minus_v = BTreeMap::new();
@@ -124,6 +127,7 @@ pub fn local_theorems(fold: &Fold, tol: f64) -> LocalTheorems {
         applicable: applicable.len(),
         skipped_border: border.len(),
         skipped_other_creases: other.difference(&border).count(),
+        skipped_isolated: fold.vertices_coords.len() - on_edges,
         kawasaki_failing: kfail
             .into_iter()
             .filter(|v| applicable.contains(v))

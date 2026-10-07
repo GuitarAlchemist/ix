@@ -61,7 +61,7 @@ fn origami_check_output_schema() -> Value {
             "crease_orientation": { "type": "object", "description": "Mountain and valley creases must turn one face over relative to the other" },
             "local_theorems": { "type": "object", "description": "Kawasaki and Maekawa at interior vertices whose creases are all mountains or valleys" },
             "overlap": { "type": "object", "description": "Overlapping face pairs from the overlay, against the stated pairs" },
-            "layers": { "type": "object", "description": "adjacency, cells (cycles), taco_tortilla, taco_taco: each with what was checked and the violations" },
+            "layers": { "type": "object", "description": "adjacency, cells (cycles), taco_tortilla, taco_taco, tortilla_tortilla: each with what was checked and the violations" },
             "tacos_on_opposite_sides": { "type": "integer" },
             "rejected_by": { "type": "array", "items": { "type": "string" }, "description": "Layer rules with at least one violation" },
             "census": { "type": "object", "description": "With census: pairs, rejected, the accepted pairs, and a tally keyed '<adjacent|non-adjacent>: <rules>'" }

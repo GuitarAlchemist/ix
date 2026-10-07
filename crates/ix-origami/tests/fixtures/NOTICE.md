@@ -20,6 +20,9 @@ The project moved to GPL-3.0 in 2024: the readme changed in commit
 file followed in commit `ebbe4eef19f475e5d89d62c94552b9adb74d0d85` (2024-03-11). Later
 versions of the file are GPL-3.0 and are not used here.
 
+The commit has no licence file. The text below is the standard MIT licence text, with the
+copyright line taken from the build header.
+
 The file is used as published. `Fold::from_value` only rearranges its FOLD 1.1 layout into the
 1.2 layout: places change, no value does. `.gitattributes` marks it `-text` so that its bytes,
 and so its sha256, survive a checkout on any platform.
