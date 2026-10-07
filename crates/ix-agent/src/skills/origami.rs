@@ -264,6 +264,8 @@ mod tests {
             json!({ "t": "thin" }),
             json!({}),
             json!(0.5),
+            // Two layers: 2 · t overflows.
+            json!({ "t": f64::MAX }),
         ] {
             let err = origami_check(json!({
                 "fold": square_folded_in_half(1),

@@ -324,3 +324,20 @@ fn a_thickness_that_is_not_a_finite_non_negative_number_is_refused() {
         assert!(err.to_string().starts_with("thickness.t must be"), "{t}");
     }
 }
+
+#[test]
+fn a_thickness_whose_heights_overflow_is_refused() {
+    // One layer: the largest finite t is still a finite height.
+    let one = sheets(&[([0.0, 0.0, 1.0, 1.0], square(0.0, 0.0, 1.0, 1.0))], &[]);
+    assert_eq!(stacked(&one, f64::MAX).rigid.height, Some(f64::MAX));
+    // The weave has a cycle, so only ply_height (2 · t) can overflow.
+    let weave = Context::new(&weave()).unwrap();
+    assert_eq!(stack(&weave, f64::MAX), Err(BadThickness(f64::MAX)));
+    // The crane: 28 · t is finite, 36 · t is not.
+    let crane = crane();
+    let t = f64::MAX / 30.0;
+    assert_eq!(
+        stack(&Context::new(&crane).unwrap(), t),
+        Err(BadThickness(t))
+    );
+}

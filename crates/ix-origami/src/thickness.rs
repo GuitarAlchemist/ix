@@ -65,7 +65,7 @@ pub struct Rigid {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
-#[error("thickness.t must be a finite number, 0 or more; got {0}")]
+#[error("thickness.t must be a finite number, 0 or more, small enough that every height is finite; got {0}")]
 pub struct BadThickness(pub f64);
 
 /// The faces' panels: each face mapped to the smallest face it is joined to by flat joints.
@@ -125,7 +125,7 @@ fn find_cycle(g: &Graph, n: usize) -> Option<Vec<usize>> {
 }
 
 /// The stack `t` implies for the fold behind `ctx`. `Err` for a `t` that is negative or not
-/// finite.
+/// finite, or so large that a height is not finite.
 // @ai:invariant at t = 0 stack() refuses nothing and every height is 0 [T:test conf:0.9 src:thickness::at_zero_thickness_nothing_changes]
 pub fn stack(ctx: &Context, t: f64) -> Result<Stack, BadThickness> {
     if !(t.is_finite() && t >= 0.0) {
@@ -204,10 +204,16 @@ pub fn stack(ctx: &Context, t: f64) -> Result<Stack, BadThickness> {
             }
         }
     };
+    // A finite `t` can still overflow a height, which JSON would carry as null: the same as a
+    // cycle's missing height.
+    let ply_height = ply as f64 * t;
+    if !ply_height.is_finite() || rigid.height.is_some_and(|h| !h.is_finite()) {
+        return Err(BadThickness(t));
+    }
     Ok(Stack {
         t,
         ply,
-        ply_height: ply as f64 * t,
+        ply_height,
         rigid,
     })
 }
