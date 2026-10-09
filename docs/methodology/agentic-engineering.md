@@ -40,7 +40,7 @@ Agent experience ≈ developer experience. What makes a codebase pleasant for a 
 tractable for an agent: **deep modules** (a lot of behaviour behind a small interface), **low
 duplication**, **clear seams**, **guardrails** (types, tests, invariants). Improving the codebase
 *is* improving the harness — the most overlooked lever. In ix that's the
-[`/improve-codebase-architecture`](../../.claude/skills/improve-codebase-architecture/SKILL.md)
+[`/improve-codebase-architecture`](https://github.com/mattpocock/skills) (from the `mattpocock-skills` plugin)
 vocabulary (module / interface / depth / seam / **deletion test**), read against [`CONTEXT.md`](../../CONTEXT.md).
 Recent worked examples: the `ix-duck::telemetry` ingestion seam (PR #138 — one graceful-degrade
 contract behind a small interface, replacing four copies), `ToneRow`/`PcSet` in `ix-bracelet`, and the
@@ -49,7 +49,8 @@ contract behind a small interface, replacing four copies), `ToneRow`/`PcSet` in 
 ## Procedures vs abilities (and context hygiene)
 
 - **Procedure** — a skill *you* invoke to stay in the driver's seat (`/grill-me`, `/grill-with-docs`,
-  `/to-prd`, `/to-issues`, `/improve-codebase-architecture` — all installed under `.claude/skills/`).
+  `/to-spec`, `/to-tickets`, `/improve-codebase-architecture` — all from the versioned `mattpocock-skills`
+  plugin).
   Prefer these; keep the thinking in the human.
 - **Ability** — a skill the *model* self-invokes (coding standards it pulls in mid-task). Every ability
   leaks its description into the context window. Too many = bloat. (ix already marks ~29 skills

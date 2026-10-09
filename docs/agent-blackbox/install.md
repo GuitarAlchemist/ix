@@ -30,8 +30,8 @@ When the rewrite budget is exhausted without `LOOP_READY=true`, the loop must st
 
 ix uses a producer-reviewer split for autonomous changes:
 
-- **Producer:** `.claude/skills/ce-work/SKILL.md` writes the diff in the active context.
-- **Fresh evaluator:** `.claude/skills/ce-compound/SKILL.md` runs in a separate session with no shared state and reviews the artifact. The fresh evaluator cannot self-certify its own author work.
+- **Producer:** the compound-engineering plugin's `ce-work` skill writes the diff in the active context.
+- **Fresh evaluator:** its `ce-compound` skill runs in a separate session with no shared state and reviews the artifact. The fresh evaluator cannot self-certify its own author work.
 - **Cross-vendor review:** any change touching `Cargo.toml`, `Cargo.lock`, `schemas/**`, `governance/demerzel/schemas/**`, or other one-way-door paths requires a second model (Codex, Gemini, or another vendor) to confirm the diff before the `agent-blackbox-reviewed` override label is applied.
 
 ## CI flow

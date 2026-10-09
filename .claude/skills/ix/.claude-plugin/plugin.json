@@ -1,0 +1,6 @@
+{
+  "name": "ix",
+  "version": "0.1.0",
+  "description": "IX's algorithm and governance skills: how to reach clustering, search, optimisation, signal, topology, chaos, grammar, governance and the other IX crates through the ix MCP server",
+  "author": { "name": "Stephane Pareilleux" }
+}
