@@ -84,3 +84,34 @@ jobs:
 
       - name: Hard gate over vendored fixtures (must pass; nonzero on regression)
         run: cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check crates/ix-duck/tests/fixtures/chatbot-qa
+
+  null-diagnostic:
+    strategy:
+      fail-fast: false
+      matrix:
+        source:
+          - '4c39648ec8cb0c3b565927f5389755933c65b3ae'
+          - '9713616691a947932a7283827df5430c54d526f7'
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.source }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ix-duck-duck
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Reproduce NULL passthrough on pinned source
+        shell: bash
+        run: |
+          echo "[DEBUG-null346] source=${{ matrix.source }}"
+          for attempt in $(seq 1 20); do
+            echo "[DEBUG-null346] attempt=$attempt"
+            cargo test -p ix-duck --features duck,code-semantic --lib tests::ix_cosine_passes_null_through -- --exact --nocapture
+          done
