@@ -361,37 +361,61 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cosine_null_descriptors_do_not_reach_child_buffer() {
-        let mut input = DataChunkHandle::new(&[list_double(), list_double()]);
-        input.set_len(4);
-        for col in 0..2 {
-            let mut list = input.list_vector(col);
-            unsafe { list.set_child(&[1.0_f64, 0.0]) };
-            for row in 0..4 {
-                if row == col + 1 || row == 3 {
-                    list.set_entry(row, usize::MAX, 1);
-                    list.set_null(row);
-                } else {
-                    list.set_entry(row, 0, 2);
+    struct PoisonedNullCosine;
+
+    impl VScalar for PoisonedNullCosine {
+        type State = ();
+
+        unsafe fn invoke(
+            _: &Self::State,
+            input: &mut DataChunkHandle,
+            output: &mut dyn WritableVector,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let n = input.len();
+            for col in 0..2 {
+                let nulls = null_mask(input, col, n);
+                let mut list = input.list_vector(col);
+                for (row, is_null) in nulls.iter().enumerate() {
+                    if *is_null {
+                        // A NULL row's payload is unusable; only its validity
+                        // bit is meaningful. Make accidental reads deterministic.
+                        list.set_entry(row, usize::MAX, 1);
+                    }
                 }
             }
+            unsafe { IxCosine::invoke(&(), input, output) }
         }
-        let output = DataChunkHandle::new(&[LogicalTypeHandle::from(LogicalTypeId::Double)]);
-        output.set_len(4);
-        // The output chunk owns this vector for the entire invocation. There are
-        // no live slices or other writable wrappers over its storage.
-        let mut vector = unsafe {
-            duckdb::ffi::duckdb_data_chunk_get_vector(output.get_ptr(), 0)
-        };
-        unsafe { IxCosine::invoke(&(), &mut input, &mut vector) }.unwrap();
-        let values = output.flat_vector(0);
-        assert!(!values.row_is_null(0));
-        assert!((unsafe { values.as_slice_with_len::<f64>(4) }[0] - 1.0).abs() < 1e-12);
-        for row in 1..4 {
-            assert!(values.row_is_null(row), "NULL on either side must stay SQL NULL");
+
+        fn signatures() -> Vec<ScalarFunctionSignature> {
+            IxCosine::signatures()
         }
     }
+
+    #[test]
+    fn cosine_null_descriptors_do_not_reach_child_buffer() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.register_scalar_function::<PoisonedNullCosine>("poisoned_null_cosine")
+            .unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT poisoned_null_cosine(a, b) FROM (VALUES \
+                (1, [1.0,0.0]::DOUBLE[], [1.0,0.0]::DOUBLE[]), \
+                (2, NULL::DOUBLE[], [1.0,0.0]::DOUBLE[]), \
+                (3, [1.0,0.0]::DOUBLE[], NULL::DOUBLE[]), \
+                (4, NULL::DOUBLE[], NULL::DOUBLE[]), \
+                (5, [1.0,0.0]::DOUBLE[], [0.0,1.0]::DOUBLE[]) \
+             ) t(i,a,b) ORDER BY i",
+        ).unwrap();
+        let rows: Vec<Option<f64>> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+        assert_eq!(rows.len(), 5);
+        assert!((rows[0].unwrap() - 1.0).abs() < 1e-12);
+        assert_eq!(&rows[1..4], &[None, None, None]);
+        assert!(rows[4].unwrap().abs() < 1e-12);
+    }
+
     #[test]
     fn checked_reader_distinguishes_null_elements_empty_lists_and_null_lists() {
         let mut input = DataChunkHandle::new(&[list_double()]);
