@@ -323,3 +323,109 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     crate::petri::register(conn)?;
     Ok(())
 }
+
+#[cfg(all(test, feature = "duck"))]
+mod tests {
+    use super::*;
+
+    fn poisoned_null_list() -> DataChunkHandle {
+        let input = DataChunkHandle::new(&[list_double()]);
+        input.set_len(3);
+        {
+            let mut list = input.list_vector(0);
+            // All child elements used by valid rows are initialized.
+            unsafe { list.set_child(&[1.0_f64, 2.0, 3.0, 4.0]) };
+            list.set_entry(0, 0, 2);
+            list.set_entry(1, usize::MAX, 1);
+            list.set_null(1);
+            list.set_entry(2, 2, 2);
+        }
+        input
+    }
+
+    #[test]
+    fn list_reader_ignores_null_row_descriptor() {
+        let mut input = poisoned_null_list();
+        assert_eq!(
+            read_list_col(&mut input, 0, 3),
+            vec![vec![1.0, 2.0], vec![], vec![3.0, 4.0]],
+        );
+    }
+
+    #[test]
+    fn checked_list_reader_ignores_null_row_descriptor() {
+        let mut input = poisoned_null_list();
+        assert_eq!(
+            read_list_col_checked(&mut input, 0, 3),
+            vec![Some(vec![1.0, 2.0]), None, Some(vec![3.0, 4.0])],
+        );
+    }
+
+    #[test]
+    fn cosine_null_descriptors_do_not_reach_child_buffer() {
+        let mut input = DataChunkHandle::new(&[list_double(), list_double()]);
+        input.set_len(4);
+        for col in 0..2 {
+            let mut list = input.list_vector(col);
+            unsafe { list.set_child(&[1.0_f64, 0.0]) };
+            for row in 0..4 {
+                if row == col + 1 || row == 3 {
+                    list.set_entry(row, usize::MAX, 1);
+                    list.set_null(row);
+                } else {
+                    list.set_entry(row, 0, 2);
+                }
+            }
+        }
+        let output = DataChunkHandle::new(&[LogicalTypeHandle::from(LogicalTypeId::Double)]);
+        output.set_len(4);
+        // The output chunk owns this vector for the entire invocation. There are
+        // no live slices or other writable wrappers over its storage.
+        let mut vector = unsafe {
+            duckdb::ffi::duckdb_data_chunk_get_vector(output.get_ptr(), 0)
+        };
+        unsafe { IxCosine::invoke(&(), &mut input, &mut vector) }.unwrap();
+        let values = output.flat_vector(0);
+        assert!(!values.row_is_null(0));
+        assert!((unsafe { values.as_slice_with_len::<f64>(4) }[0] - 1.0).abs() < 1e-12);
+        for row in 1..4 {
+            assert!(values.row_is_null(row), "NULL on either side must stay SQL NULL");
+        }
+    }
+    #[test]
+    fn checked_reader_distinguishes_null_elements_empty_lists_and_null_lists() {
+        let mut input = DataChunkHandle::new(&[list_double()]);
+        input.set_len(4);
+        {
+            let mut list = input.list_vector(0);
+            unsafe { list.set_child(&[1.0_f64, 2.0, 4.0]) };
+            list.child(3).set_null(1);
+            list.set_entry(0, 0, 2);
+            list.set_entry(1, 2, 0);
+            list.set_entry(2, usize::MAX, 1);
+            list.set_null(2);
+            list.set_entry(3, 2, 1);
+        }
+        assert_eq!(
+            read_list_col_checked(&mut input, 0, 4),
+            vec![None, Some(vec![]), None, Some(vec![4.0])],
+        );
+    }
+
+    #[test]
+    fn empty_and_null_lists_do_not_read_child_storage() {
+        let mut input = DataChunkHandle::new(&[list_double()]);
+        input.set_len(2);
+        {
+            let mut list = input.list_vector(0);
+            list.set_entry(0, 0, 0);
+            list.set_entry(1, usize::MAX, 1);
+            list.set_null(1);
+        }
+        assert_eq!(read_list_col(&mut input, 0, 2), vec![vec![], vec![]]);
+        assert_eq!(
+            read_list_col_checked(&mut input, 0, 2),
+            vec![Some(vec![]), None],
+        );
+    }
+}

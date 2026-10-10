@@ -115,3 +115,21 @@ jobs:
             echo "[DEBUG-null346] attempt=$attempt"
             cargo test -p ix-duck --features duck,code-semantic --lib tests::ix_cosine_passes_null_through -- --exact --nocapture
           done
+
+  null-regression:
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ix-duck-duck
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Deterministic NULL descriptor regression
+        run: cargo test -p ix-duck --features duck,code-semantic --lib udf::tests -- --nocapture
