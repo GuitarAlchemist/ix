@@ -177,7 +177,7 @@ For each relevant document, return a summary in this format:
 
 ## Frontmatter Schema Reference
 
-Reference the [yaml-schema.md](../../skills/compound-docs/references/yaml-schema.md) for the complete schema. Key enum values:
+These enum values are compound-engineering's generic schema. ix's own `docs/solutions` entries use `title`, `category`, `date`, `tags`, `symptom` and `root_cause` (2026-10-09: 26 entries), so match on those first. Key enum values:
 
 **problem_type values:**
 - build_error, test_failure, runtime_error, performance_issue

@@ -19,7 +19,8 @@ contracts (see `docs/contracts/`), not runtime coupling.
   (`Regressor`, `Classifier`, `Clusterer`, `Optimizer`, …) and uses the builder
   pattern + seeded RNG for reproducibility. CPU = `f64` + `ndarray`; GPU = `f32`
   via WGPU shaders. See `README.md` for the full crate map.
-- **Skill** — a capability exposed to Claude Code / agents (a `.claude/skills/<name>/SKILL.md`).
+- **Skill** — a capability exposed to Claude Code / agents (a `.claude/skills/<name>/SKILL.md`, or a
+  plugin's `skills/<name>/SKILL.md`, invoked as `<plugin>:<name>`).
   Distinct from a **crate** (Rust library) and a **tool** (MCP-callable function).
 - **Tool** — an MCP-callable function (registered in `ix-agent`; the count is
   asserted by `crates/ix-agent/tests/parity.rs` — every tool-adding PR bumps it).
