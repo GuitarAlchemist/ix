@@ -100,6 +100,10 @@ jobs:
         with:
           ref: ${{ matrix.source }}
           submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          ref: 'f0df4dbf0e239a61283fe69535f731e5996bdd3c'
+          path: .null-fixture
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -107,14 +111,23 @@ jobs:
         with:
           shared-key: ix-duck-duck
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Reproduce NULL passthrough on pinned source
+      - name: Reproduce deterministic NULL abort on unchanged pinned source
         shell: bash
         run: |
           echo "[DEBUG-null346] source=${{ matrix.source }}"
-          for attempt in $(seq 1 20); do
-            echo "[DEBUG-null346] attempt=$attempt"
-            cargo test -p ix-duck --features duck,code-semantic --lib tests::ix_cosine_passes_null_through -- --exact --nocapture
-          done
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          marker = '\n#[cfg(all(test, feature = "duck"))]\nmod tests {'
+          source = Path("crates/ix-duck/src/udf.rs")
+          original = source.read_text(encoding="utf-8")
+          fixture = Path(".null-fixture/crates/ix-duck/src/udf.rs").read_text(encoding="utf-8")
+          prefix, tests = fixture.rsplit(marker, 1)
+          assert original == prefix, "fixture must not alter the pinned production code"
+          print("[DEBUG-null346] unchanged production sha256=" + hashlib.sha256(original.encode()).hexdigest())
+          source.write_text(original + marker + tests, encoding="utf-8")
+          PY
+          cargo test -p ix-duck --features duck,code-semantic --lib udf::tests::cosine_null_descriptors_do_not_reach_child_buffer -- --exact --nocapture
 
   null-regression:
     runs-on: ubuntu-latest
