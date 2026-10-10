@@ -68,6 +68,7 @@ pub mod compile;
 pub mod eval;
 pub mod host;
 pub mod lexer;
+pub mod mission;
 pub mod parser;
 pub mod path;
 pub mod schema;
