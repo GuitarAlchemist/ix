@@ -169,7 +169,7 @@ impl ScopeRefinement {
         let mut owned = false;
         for claim in &proof.claims {
             canonical_path(&claim.path)?;
-            if !claim_paths.insert(&claim.path) { return Err("DuplicateOwnership".into()); }
+            if !claim_paths.insert(claim.path.to_ascii_lowercase()) { return Err("DuplicateOwnership".into()); }
             if overlaps(candidate, &claim.path) {
                 if claim.owners.len() != 1 || claim.owners[0] != request.owner {
                     return Err("OwnershipAmbiguous".into());
@@ -197,7 +197,7 @@ fn commit_sha(sha: &str) -> bool {
 
 fn canonical_path(path: &str) -> Result<(), String> {
     if path.len() > 512 || crate::path::normalize(path).map_err(|_| "ScopePathInvalid")? != path ||
-        path.split('/').any(|segment| segment.eq_ignore_ascii_case(".git") || segment.starts_with('-')) ||
+        path.split('/').any(|segment| segment.eq_ignore_ascii_case(".git") || segment.starts_with('-') || segment.ends_with('.')) ||
         !path.bytes().all(|b| b.is_ascii_alphanumeric() || b"./_-".contains(&b)) {
         return Err("ScopePathInvalid".into());
     }
@@ -205,7 +205,10 @@ fn canonical_path(path: &str) -> Result<(), String> {
 }
 
 fn overlaps(a: &str, b: &str) -> bool {
-    a == b || a.starts_with(&(b.to_string() + "/")) || b.starts_with(&(a.to_string() + "/"))
+    // Conservatively detect aliases on Windows even when tested on Linux.
+    let a = a.to_ascii_lowercase();
+    let b = b.to_ascii_lowercase();
+    a == b || a.starts_with(&(b.clone() + "/")) || b.starts_with(&(a + "/"))
 }
 
 impl Capability for ScopeRefinement {

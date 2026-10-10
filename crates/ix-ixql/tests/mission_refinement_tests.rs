@@ -84,7 +84,7 @@ fn unknown_refusal_and_ambiguous_ownership_cannot_offer_a_workaround() {
     proof.claims[0].owners.push("Green".into());
     assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("OwnershipAmbiguous"));
     let mut proof = observation();
-    proof.claims.push(OwnershipClaim {path:"Blue/private".into(), owners:vec!["Green".into()]});
+    proof.claims.push(OwnershipClaim {path:"blue/private".into(), owners:vec!["Green".into()]});
     assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("OwnershipAmbiguous"));
 }
 
@@ -92,7 +92,9 @@ fn unknown_refusal_and_ambiguous_ownership_cannot_offer_a_workaround() {
 fn duplicates_are_refused_in_scope_ownership_and_ixql_records() {
     assert!(run(request(json!(["Blue", "Blue"])), Some(observation())).unwrap_err().contains("DuplicateScope"));
     let mut proof = observation();
-    proof.claims.push(proof.claims[0].clone());
+    let mut alias = proof.claims[0].clone();
+    alias.path = "blue".into();
+    proof.claims.push(alias);
     assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("DuplicateOwnership"));
     let executor = composed(Arc::new(MemoryHost::frozen()), Some(observation()));
     assert!(executor.run_source("x <- { paths: [], paths: [] } → mission.refine_scope")
@@ -135,7 +137,7 @@ fn candidate_cannot_escape_ownership_or_git_literal_path_semantics() {
         assert!(run(request(json!([path])), Some(observation())).unwrap_err().contains("ScopeNotOwned"));
     }
     for path in ["../Blue", "Blue/../Green", "/Blue", "C:/Blue", "Blue/*",
-        ":(top)Blue", "Blue/.git", "Blue//x", "Blue/./x", "-Blue"] {
+        ":(top)Blue", "Blue/.git", "Blue//x", "Blue/./x", "Blue./x", "-Blue"] {
         assert!(run(request(json!([path])), Some(observation())).unwrap_err().contains("ScopePathInvalid"));
     }
     let mut proof = observation();
