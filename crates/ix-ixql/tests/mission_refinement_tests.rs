@@ -2,7 +2,7 @@
 //! Fixed SHA values below are fixture identities, not live deployed code receipts.
 use std::sync::Arc;
 use ix_ixql::{CallArgs, Executor, Host, MemoryHost, Produced, RegistrationError};
-use ix_ixql::mission::{self, EnginePin, OwnershipClaim, ProbeRecord, ScopeObservation, ScopeRefinement};
+use ix_ixql::mission::{self, EnginePin, EntryKind, OwnershipClaim, ProbeRecord, ScopeObservation, ScopeRefinement};
 use serde_json::{json, Value};
 
 const SHA: &str = "0123456789012345678901234567890123456789";
@@ -15,7 +15,7 @@ fn observation() -> ScopeObservation {
         refusal_id: "ref-1".into(), refusal_reason: "scope_too_broad".into(),
         original_paths: vec![".".into()], observed_at_ms: at, expires_at_ms: at + 30_000,
         complete: true, physical_paths_verified: true,
-        claims: vec![OwnershipClaim {path: "Blue".into(), owners: vec!["Blue".into()]}],
+        claims: vec![OwnershipClaim {path: "Blue/mission.txt".into(), owners: vec!["Blue".into()], entry_kind: EntryKind::RegularFile}],
         probe: Some(ProbeRecord {ts: "2026-01-02T03:04:05Z".into(),
             metric: "fixture_scope_snapshot".into(), value: 1.0, unit: Some("count".into()),
             probe: "fixture".into(), build: "0123456789ab".into()}),
@@ -55,8 +55,8 @@ fn root_git_add_is_refused_with_a_scope_reason_before_any_effect() {
 
 #[test]
 fn blue_preview_is_bounded_correlated_and_never_grants_permission() {
-    let result = run(request(json!(["Blue"])), Some(observation())).unwrap();
-    assert_eq!(result["argv"], json!(["git", "add", "--", "Blue/"]));
+    let result = run(request(json!(["Blue/mission.txt"])), Some(observation())).unwrap();
+    assert_eq!(result["argv"], json!(["git", "add", "--", "Blue/mission.txt"]));
     assert_eq!(result["status"], "proposal");
     assert_eq!(result["requires_runner_admission"], true);
     assert_eq!(result["mission_id"], "m-1");
@@ -68,7 +68,7 @@ fn blue_preview_is_bounded_correlated_and_never_grants_permission() {
 #[test]
 fn dry_run_returns_a_binding_without_writes_or_compound_effects() {
     let host = Arc::new(MemoryHost::frozen());
-    host.seed("state/mission/proposal.json", request(json!(["Blue"])));
+    host.seed("state/mission/proposal.json", request(json!(["Blue/mission.txt"])));
     let outcome = composed(host.clone(), Some(observation())).run_source(
         r#"proposal <- ix.io.read("state/mission/proposal.json") → mission.refine_scope"#).unwrap();
     assert!(outcome.writes.is_empty() && outcome.compound.is_empty());
@@ -79,23 +79,23 @@ fn dry_run_returns_a_binding_without_writes_or_compound_effects() {
 fn unknown_refusal_and_ambiguous_ownership_cannot_offer_a_workaround() {
     let mut proof = observation();
     proof.refusal_reason = "permission_unknown".into();
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("RefusalUnknown"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("RefusalUnknown"));
     let mut proof = observation();
     proof.claims[0].owners.push("Green".into());
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("OwnershipAmbiguous"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("OwnershipAmbiguous"));
     let mut proof = observation();
-    proof.claims.push(OwnershipClaim {path:"blue/private".into(), owners:vec!["Green".into()]});
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("OwnershipAmbiguous"));
+    proof.claims.push(OwnershipClaim {path:"blue".into(), owners:vec!["Green".into()], entry_kind:EntryKind::Directory});
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("OwnershipAmbiguous"));
 }
 
 #[test]
 fn duplicates_are_refused_in_scope_ownership_and_ixql_records() {
-    assert!(run(request(json!(["Blue", "Blue"])), Some(observation())).unwrap_err().contains("DuplicateScope"));
+    assert!(run(request(json!(["Blue/mission.txt", "Blue/mission.txt"])), Some(observation())).unwrap_err().contains("DuplicateScope"));
     let mut proof = observation();
     let mut alias = proof.claims[0].clone();
-    alias.path = "blue".into();
+    alias.path = "blue/mission.txt".into();
     proof.claims.push(alias);
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("DuplicateOwnership"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("DuplicateOwnership"));
     let executor = composed(Arc::new(MemoryHost::frozen()), Some(observation()));
     assert!(executor.run_source("x <- { paths: [], paths: [] } → mission.refine_scope")
         .unwrap_err().to_string().contains("paths"));
@@ -103,37 +103,37 @@ fn duplicates_are_refused_in_scope_ownership_and_ixql_records() {
 
 #[test]
 fn missing_expired_future_and_wrong_attempt_observations_remain_unknown() {
-    assert!(run(request(json!(["Blue"])), None).unwrap_err().contains("ObservationMissing"));
+    assert!(run(request(json!(["Blue/mission.txt"])), None).unwrap_err().contains("ObservationMissing"));
     let mut proof = observation();
     proof.observed_at_ms -= 30_000; proof.expires_at_ms -= 30_000;
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("ObservationExpired"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("ObservationExpired"));
     let mut proof = observation();
     proof.observed_at_ms += 1;
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("ObservationTimeUnknown"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("ObservationTimeUnknown"));
     let mut proof = observation();
     proof.attempt_id = "different".into();
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("ObservationBindingMismatch"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("ObservationBindingMismatch"));
 }
 
 #[test]
 fn heartbeat_cannot_replace_missing_or_stale_probe_evidence() {
     let mut proof = observation();
     proof.probe = None;
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("ProbeMissing"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("ProbeMissing"));
     let mut proof = observation();
     proof.probe.as_mut().unwrap().ts = "2026-01-02T03:03:34Z".into();
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("ProbeExpiredOrFuture"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("ProbeExpiredOrFuture"));
     let mut proof = observation();
     proof.probe.as_mut().unwrap().ts = "2026-01-02T03:03:35Z".into();
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("ProbeExpiredOrFuture"));
-    let mut value = request(json!(["Blue"]));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("ProbeExpiredOrFuture"));
+    let mut value = request(json!(["Blue/mission.txt"]));
     value["heartbeat"] = json!({"alive":true});
     assert!(run(value, Some(observation())).unwrap_err().contains("ProposalContractInvalid"));
 }
 
 #[test]
 fn candidate_cannot_escape_ownership_or_git_literal_path_semantics() {
-    for path in ["Green", "Blueberry"] {
+    for path in ["Green", "Blueberry", "Blue", "Blue/other.txt"] {
         assert!(run(request(json!([path])), Some(observation())).unwrap_err().contains("ScopeNotOwned"));
     }
     for path in ["../Blue", "Blue/../Green", "/Blue", "C:/Blue", "Blue/*",
@@ -142,27 +142,47 @@ fn candidate_cannot_escape_ownership_or_git_literal_path_semantics() {
     }
     let mut proof = observation();
     proof.physical_paths_verified = false;
-    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("OwnershipUnknown"));
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("OwnershipUnknown"));
+}
+
+#[test]
+fn directories_symlinks_and_unknown_entries_cannot_be_staged_as_files() {
+    for kind in [EntryKind::Directory, EntryKind::Symlink, EntryKind::Unknown] {
+        let mut proof = observation();
+        proof.claims[0].entry_kind = kind;
+        assert!(run(request(json!(["Blue/mission.txt"])), Some(proof))
+            .unwrap_err().contains("ScopeFileRequired"));
+    }
+    let mut proof = observation();
+    proof.claims.push(OwnershipClaim {path:"Blue".into(), owners:vec!["Blue".into()],
+        entry_kind:EntryKind::Symlink});
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof)).unwrap_err().contains("ScopeFileRequired"));
+    let mut proof = observation();
+    proof.claims[0].path = "Blue".into();
+    proof.claims[0].entry_kind = EntryKind::Directory;
+    assert!(run(request(json!(["Blue/mission.txt"])), Some(proof.clone()))
+        .unwrap_err().contains("ScopeNotOwned"));
+    assert!(run(request(json!(["Blue"])), Some(proof)).unwrap_err().contains("ScopeFileRequired"));
 }
 
 #[test]
 fn schema_and_engine_and_function_pins_are_exact_for_replay() {
     for field in ["contract_version", "dsl_version", "function_version"] {
-        let mut value = request(json!(["Blue"])); value[field] = json!("latest");
+        let mut value = request(json!(["Blue/mission.txt"])); value[field] = json!("latest");
         assert!(run(value, Some(observation())).is_err());
     }
-    let mut value = request(json!(["Blue"]));
+    let mut value = request(json!(["Blue/mission.txt"]));
     value["implementation_sha"] = json!(OTHER_SHA);
     assert!(run(value, Some(observation())).unwrap_err().contains("ContractPinMismatch"));
-    let mut value = request(json!(["Blue"]));
+    let mut value = request(json!(["Blue/mission.txt"]));
     value["engine"]["source_sha"] = json!(OTHER_SHA);
     assert!(run(value, Some(observation())).unwrap_err().contains("ContractPinMismatch"));
 }
 
 #[test]
 fn a_replayed_preview_is_pure_but_is_not_an_effect_idempotency_receipt() {
-    let a = run(request(json!(["Blue"])), Some(observation())).unwrap();
-    let b = run(request(json!(["Blue"])), Some(observation())).unwrap();
+    let a = run(request(json!(["Blue/mission.txt"])), Some(observation())).unwrap();
+    let b = run(request(json!(["Blue/mission.txt"])), Some(observation())).unwrap();
     assert_eq!(a, b);
     assert_eq!(a["requires_runner_admission"], true);
 }
@@ -176,7 +196,7 @@ fn duplicate_registration_cannot_replace_the_existing_handler() {
 
 #[test]
 fn canonical_schema_exports_a_typed_roundtrip_without_permission_fields() {
-    let value = request(json!(["Blue"]));
+    let value = request(json!(["Blue/mission.txt"]));
     let typed: mission::ScopeProposal = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(typed).unwrap(), value);
     let mut forged = value;

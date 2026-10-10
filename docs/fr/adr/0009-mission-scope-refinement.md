@@ -4,8 +4,8 @@ Statut : proposé, draft uniquement. [Contrat détaillé anglais](../../adr/0009
 
 La tranche réutilise parser, évaluateur, registre de capacités et horloge IXQL.
 Après un refus racine lié par l'hôte, `mission.refine_scope` peut proposer
-`git add -- Blue/` si la propriété déclarée complète le permet. Refus inconnu,
-propriété ambiguë, doublon, chemin non canonique, observation absente/périmée
+`git add -- Blue/mission.txt` si la l'inventaire déclaré nomme ce fichier régulier exact. Refus inconnu,
+propriété ambiguë, dossier, symlink, type inconnu, doublon, chemin non canonique, observation absente/périmée
 ou corrélation incorrecte restent des refus explicites.
 
 Contrat draft 0.1.0, versions/SHA exacts et identités mission/tentative/révision/refus.
@@ -26,3 +26,6 @@ Backlog ordonné : raccord Gaia exact, observation Go réelle, intégration au s
 Incubateur existant, génération d'interfaces, catalogue/versionnement des artefacts
 Claude/Codex/MCP, puis blue/green sans migration ni effets doubles.
 Ces sujets ne sont pas implémentés dans cette tranche.
+
+Les fixtures déclarent la propriété et le type ; elles ne prouvent aucune inspection
+réelle du checkout. Celle-ci reste nécessaire à l'admission Gaia.

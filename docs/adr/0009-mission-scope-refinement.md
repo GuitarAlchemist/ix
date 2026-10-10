@@ -9,10 +9,13 @@ and injected `Host::now`. No grammar, scheduler, registry metadata migration or
 automatic registration. `proposal → mission.refine_scope` returns a binding only.
 
 A host-bound refusal of root staging `git add .` can produce the narrower proposal
-`["git","add","--","Blue/"]` when complete, physically verified ownership claims
-cover Blue and contain no overlapping foreign owner. Root, unknown refusal,
+`["git","add","--","Blue/mission.txt"]` when host-declared ownership and file-kind claims
+name that exact regular file and contain no overlapping foreign owner. Root, unknown refusal,
 duplicate scope/claims, ambiguous ownership, path escape and stale/missing/mismatched
-observations fail with explicit reasons. This validates declared ownership;
+observations fail with explicit reasons. Directories, symlinks, unknown entry kinds and directory-only coverage refuse.
+The simulated host flags are declarations, not proof of real checkout inspection.
+A live producer must inspect exact targets and parent reparse/symlink escapes before
+admission; no such producer is implemented here. This validates declared ownership;
 it does not establish effective permission or inspect the real index.
 
 The minimal draft contract is `mission-scope.schema.json`, version `0.1.0`.
@@ -65,8 +68,8 @@ executor lacks this adapter, not because Git ran unsafely:
 [CI1202 Linux job](https://github.com/GuitarAlchemist/ix/actions/runs/38080368561/job/114295858387),
 head `3f820b4caa739ad73c7d693ec8290ab181cee5d4`.
 GREEN must exercise the real parser/registry/handler with a simulated host,
-including bounded Blue proposal, no writes, unknown refusal, ambiguity,
-duplicates, correlation, expiry, exact pins and pure replay. Additional negative
+including an exact Blue file proposal, no writes, unknown refusal, ambiguity,
+directories/symlinks, duplicates, correlation, expiry, exact pins and pure replay. Additional negative
 tests are included together; only the first oracle has a separately captured RED.
 
 1. Complete the minimal adapter CI and review; provide its exact evidence to Gaia.

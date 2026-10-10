@@ -46,9 +46,17 @@ pub struct ProbeRecord {
     pub build: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryKind { RegularFile, Directory, Symlink, Unknown }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OwnershipClaim { pub path: String, pub owners: Vec<String> }
+pub struct OwnershipClaim {
+    pub path: String,
+    pub owners: Vec<String>,
+    pub entry_kind: EntryKind,
+}
 
 /// Trusted host composition supplies this; proposal/task text cannot replace it.
 /// complete/physical_paths_verified concern ownership only, never permissions.
@@ -171,10 +179,16 @@ impl ScopeRefinement {
             canonical_path(&claim.path)?;
             if !claim_paths.insert(claim.path.to_ascii_lowercase()) { return Err("DuplicateOwnership".into()); }
             if overlaps(candidate, &claim.path) {
+                if matches!(claim.entry_kind, EntryKind::Symlink | EntryKind::Unknown) {
+                    return Err("ScopeFileRequired".into());
+                }
                 if claim.owners.len() != 1 || claim.owners[0] != request.owner {
                     return Err("OwnershipAmbiguous".into());
                 }
-                if candidate == &claim.path || candidate.starts_with(&(claim.path.clone() + "/")) {
+                if candidate == &claim.path {
+                    if claim.entry_kind != EntryKind::RegularFile {
+                        return Err("ScopeFileRequired".into());
+                    }
                     owned = true;
                 }
             }
@@ -182,7 +196,7 @@ impl ScopeRefinement {
         if !owned { return Err("ScopeNotOwned".into()); }
         let mut result = serde_json::to_value(&request).map_err(|e| e.to_string())?;
         let map = result.as_object_mut().expect("serialized request object");
-        map.insert("argv".into(), json!(["git", "add", "--", format!("{candidate}/")]));
+        map.insert("argv".into(), json!(["git", "add", "--", candidate]));
         map.insert("status".into(), json!("proposal"));
         map.insert("requires_runner_admission".into(), json!(true));
         map.insert("expires_at_ms".into(), json!(proof.expires_at_ms.min(at.saturating_add(30_000))));
