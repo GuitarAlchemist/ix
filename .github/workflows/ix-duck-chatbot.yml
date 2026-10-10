@@ -66,6 +66,9 @@ jobs:
       - name: Regression for chatbot workflow path filters
         run: cargo test -p ix-harness-github-actions --test ix_duck_workflow_paths
 
+      - name: Regression for NULL list descriptors
+        run: cargo test -p ix-duck --features duck,code-semantic --lib udf::tests
+
       - name: Clippy (duck feature)
         run: cargo clippy -p ix-duck --all-targets --features duck -- -D warnings
 
@@ -84,69 +87,3 @@ jobs:
 
       - name: Hard gate over vendored fixtures (must pass; nonzero on regression)
         run: cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check crates/ix-duck/tests/fixtures/chatbot-qa
-
-  null-diagnostic:
-    strategy:
-      fail-fast: false
-      matrix:
-        source:
-          - '4c39648ec8cb0c3b565927f5389755933c65b3ae'
-          - '9713616691a947932a7283827df5430c54d526f7'
-    runs-on: ubuntu-latest
-    env:
-      RUST_BACKTRACE: full
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ matrix.source }}
-          submodules: recursive
-      - name: Fetch the pinned regression fixture blob
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          mkdir -p .null-fixture
-          gh api repos/GuitarAlchemist/ix/git/blobs/d967d0298b8ca4d93b30ded8193bc92f82a10224 --jq '.content' | base64 --decode > .null-fixture/udf.rs
-          test "$(git hash-object .null-fixture/udf.rs)" = "d967d0298b8ca4d93b30ded8193bc92f82a10224"
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ix-duck-duck
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Reproduce deterministic NULL abort on unchanged pinned source
-        shell: bash
-        run: |
-          echo "[DEBUG-null346] source=${{ matrix.source }}"
-          python - <<'PY'
-          import hashlib
-          from pathlib import Path
-          marker = '\n#[cfg(all(test, feature = "duck"))]\nmod tests {'
-          source = Path("crates/ix-duck/src/udf.rs")
-          original = source.read_text(encoding="utf-8")
-          fixture = Path(".null-fixture/udf.rs").read_text(encoding="utf-8")
-          prefix, tests = fixture.rsplit(marker, 1)
-          assert original == prefix, "fixture must not alter the pinned production code"
-          print("[DEBUG-null346] unchanged production sha256=" + hashlib.sha256(original.encode()).hexdigest())
-          source.write_text(original + marker + tests, encoding="utf-8")
-          PY
-          cargo test -p ix-duck --features duck,code-semantic --lib udf::tests::cosine_null_descriptors_do_not_reach_child_buffer -- --exact --nocapture
-
-  null-regression:
-    runs-on: ubuntu-latest
-    env:
-      RUST_BACKTRACE: full
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ix-duck-duck
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Deterministic NULL descriptor regression
-        run: cargo test -p ix-duck --features duck,code-semantic --lib udf::tests -- --nocapture
