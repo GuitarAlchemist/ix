@@ -100,10 +100,14 @@ jobs:
         with:
           ref: ${{ matrix.source }}
           submodules: recursive
-      - uses: actions/checkout@v4
-        with:
-          ref: 'f0df4dbf0e239a61283fe69535f731e5996bdd3c'
-          path: .null-fixture
+      - name: Fetch the pinned regression fixture blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p .null-fixture
+          gh api repos/GuitarAlchemist/ix/git/blobs/d967d0298b8ca4d93b30ded8193bc92f82a10224 --jq '.content' | base64 --decode > .null-fixture/udf.rs
+          test "$(git hash-object .null-fixture/udf.rs)" = "d967d0298b8ca4d93b30ded8193bc92f82a10224"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -121,7 +125,7 @@ jobs:
           marker = '\n#[cfg(all(test, feature = "duck"))]\nmod tests {'
           source = Path("crates/ix-duck/src/udf.rs")
           original = source.read_text(encoding="utf-8")
-          fixture = Path(".null-fixture/crates/ix-duck/src/udf.rs").read_text(encoding="utf-8")
+          fixture = Path(".null-fixture/udf.rs").read_text(encoding="utf-8")
           prefix, tests = fixture.rsplit(marker, 1)
           assert original == prefix, "fixture must not alter the pinned production code"
           print("[DEBUG-null346] unchanged production sha256=" + hashlib.sha256(original.encode()).hexdigest())

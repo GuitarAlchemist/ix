@@ -446,7 +446,7 @@ mod tests {
             list.set_entry(1, usize::MAX, 1);
             list.set_null(1);
         }
-        assert_eq!(read_list_col(&mut input, 0, 2), vec![vec![], vec![]]);
+        assert_eq!(read_list_col(&mut input, 0, 2), vec![Vec::<f64>::new(), Vec::<f64>::new()]);
         assert_eq!(
             read_list_col_checked(&mut input, 0, 2),
             vec![Some(vec![]), None],
