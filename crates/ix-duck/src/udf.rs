@@ -27,50 +27,66 @@ fn list_double() -> LogicalTypeHandle {
     LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Double))
 }
 
-/// Extract every row of a `LIST<DOUBLE>` column as owned `Vec<f64>`.
-///
-/// Reads the per-row `(offset, length)` entries *before* borrowing the child
-/// buffer so the child slice and the entry lookups never alias the same vector.
-/// `cap` is `max(offset + length)`, so every `all[o..o + l]` slice is in bounds
-/// by construction — a malformed entry cannot index past the child buffer.
-// Reads the raw (offset,length) slice for EVERY row, including NULL list rows (whose
-// entry is typically (0,0) → an empty Vec). NULL handling is the caller's job: the
-// scalar UDFs read per-row validity separately and emit SQL NULL (see `invoke_pairwise`),
-// so a NULL row's harmless raw read is overridden downstream.
-pub(crate) fn read_list_col(input: &mut DataChunkHandle, col: usize, n: usize) -> Vec<Vec<f64>> {
-    let lv = input.list_vector(col);
-    let entries: Vec<(usize, usize)> = (0..n).map(|i| lv.get_entry(i)).collect();
-    let cap = entries.iter().map(|(o, l)| o + l).max().unwrap_or(0);
-    let child = lv.child(cap);
-    let all = unsafe { child.as_slice_with_len::<f64>(cap) };
-    entries
-        .iter()
-        .map(|&(o, l)| all[o..o + l].to_vec())
+/// Read list descriptors only after consulting the list-row validity mask.
+/// NULL rows have no usable offset/length metadata.
+// @ai:invariant NULL list descriptors are skipped before computing or borrowing the child span [P:assumed conf:0.85 src:ix_duck::udf::tests::list_reader_ignores_null_row_descriptor]
+fn valid_list_entries(input: &DataChunkHandle, col: usize, n: usize) -> Vec<Option<(usize, usize)>> {
+    let nulls = null_mask(input, col, n);
+    let list = input.list_vector(col);
+    (0..n)
+        .map(|row| (!nulls[row]).then(|| list.get_entry(row)))
         .collect()
 }
 
-/// Like [`read_list_col`], but consults the child vector's validity mask and yields `None`
-/// for any row containing a SQL NULL *element*.
+/// Extract each non-NULL row of a `LIST<DOUBLE>` column as an owned buffer.
+/// NULL rows use an empty internal buffer; callers still consult `null_mask`
+/// to emit SQL NULL rather than treating that buffer as a value.
 ///
-/// A NULL element is invisible to [`read_list_col`]: the child buffer still holds a double at
-/// that slot (whatever was last there, or zero), so reading it raw invents a sample out of
-/// nothing. Row validity — the mask [`null_mask`] reads — only covers a NULL *list*, not a
-/// list of partly-NULL values, so the two checks are independent and a caller that cares
-/// about element-level nullity needs this reader.
+/// Only valid descriptors contribute to the child span. An all-empty/NULL
+/// column is handled before borrowing any child storage.
+pub(crate) fn read_list_col(input: &mut DataChunkHandle, col: usize, n: usize) -> Vec<Vec<f64>> {
+    let entries = valid_list_entries(input, col, n);
+    let cap = entries.iter().flatten().map(|(o, l)| o + l).max().unwrap_or(0);
+    if cap == 0 {
+        return vec![Vec::new(); n];
+    }
+    let list = input.list_vector(col);
+    let child = list.child(cap);
+    let all = unsafe { child.as_slice_with_len::<f64>(cap) };
+    entries
+        .iter()
+        .map(|entry| match entry {
+            Some((o, l)) => all[*o..*o + *l].to_vec(),
+            None => Vec::new(),
+        })
+        .collect()
+}
+
+/// Like [`read_list_col`], but yields `None` for NULL lists or for a valid
+/// list containing a SQL NULL element. A valid empty list remains `Some(vec![])`.
+/// List-row validity and child-element validity are independent masks.
 pub(crate) fn read_list_col_checked(
     input: &mut DataChunkHandle,
     col: usize,
     n: usize,
 ) -> Vec<Option<Vec<f64>>> {
-    let lv = input.list_vector(col);
-    let entries: Vec<(usize, usize)> = (0..n).map(|i| lv.get_entry(i)).collect();
-    let cap = entries.iter().map(|(o, l)| o + l).max().unwrap_or(0);
-    let child = lv.child(cap);
+    let entries = valid_list_entries(input, col, n);
+    let cap = entries.iter().flatten().map(|(o, l)| o + l).max().unwrap_or(0);
+    if cap == 0 {
+        return entries.iter().map(|entry| entry.map(|_| Vec::new())).collect();
+    }
+    let list = input.list_vector(col);
+    let child = list.child(cap);
     let child_null: Vec<bool> = (0..cap).map(|i| child.row_is_null(i as u64)).collect();
     let all = unsafe { child.as_slice_with_len::<f64>(cap) };
     entries
         .iter()
-        .map(|&(o, l)| (!child_null[o..o + l].iter().any(|&b| b)).then(|| all[o..o + l].to_vec()))
+        .map(|entry| {
+            entry.and_then(|(o, l)| {
+                (!child_null[o..o + l].iter().any(|&is_null| is_null))
+                    .then(|| all[o..o + l].to_vec())
+            })
+        })
         .collect()
 }
 
@@ -322,4 +338,139 @@ pub fn register_all(conn: &Connection) -> duckdb::Result<()> {
     crate::fractal::register(conn)?;
     crate::petri::register(conn)?;
     Ok(())
+}
+
+#[cfg(all(test, feature = "duck"))]
+mod tests {
+    use super::*;
+
+    fn poisoned_null_list() -> DataChunkHandle {
+        let input = DataChunkHandle::new(&[list_double()]);
+        input.set_len(3);
+        {
+            let mut list = input.list_vector(0);
+            // All child elements used by valid rows are initialized.
+            unsafe { list.set_child(&[1.0_f64, 2.0, 3.0, 4.0]) };
+            list.set_entry(0, 0, 2);
+            list.set_entry(1, usize::MAX, 1);
+            list.set_null(1);
+            list.set_entry(2, 2, 2);
+        }
+        input
+    }
+
+    #[test]
+    fn list_reader_ignores_null_row_descriptor() {
+        let mut input = poisoned_null_list();
+        assert_eq!(
+            read_list_col(&mut input, 0, 3),
+            vec![vec![1.0, 2.0], vec![], vec![3.0, 4.0]],
+        );
+    }
+
+    #[test]
+    fn checked_list_reader_ignores_null_row_descriptor() {
+        let mut input = poisoned_null_list();
+        assert_eq!(
+            read_list_col_checked(&mut input, 0, 3),
+            vec![Some(vec![1.0, 2.0]), None, Some(vec![3.0, 4.0])],
+        );
+    }
+
+    struct PoisonedNullCosine;
+
+    impl VScalar for PoisonedNullCosine {
+        type State = ();
+
+        unsafe fn invoke(
+            _: &Self::State,
+            input: &mut DataChunkHandle,
+            output: &mut dyn WritableVector,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let n = input.len();
+            for col in 0..2 {
+                let nulls = null_mask(input, col, n);
+                let mut list = input.list_vector(col);
+                for (row, is_null) in nulls.iter().enumerate() {
+                    if *is_null {
+                        // A NULL row's payload is unusable; only its validity
+                        // bit is meaningful. Make accidental reads deterministic.
+                        list.set_entry(row, usize::MAX, 1);
+                    }
+                }
+            }
+            unsafe { IxCosine::invoke(&(), input, output) }
+        }
+
+        fn signatures() -> Vec<ScalarFunctionSignature> {
+            IxCosine::signatures()
+        }
+    }
+
+    #[test]
+    fn cosine_null_descriptors_do_not_reach_child_buffer() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.register_scalar_function::<PoisonedNullCosine>("poisoned_null_cosine")
+            .unwrap();
+        let mut stmt = conn
+            .prepare(
+            "SELECT poisoned_null_cosine(a, b) FROM (VALUES \
+                (1, [1.0,0.0]::DOUBLE[], [1.0,0.0]::DOUBLE[]), \
+                (2, NULL::DOUBLE[], [1.0,0.0]::DOUBLE[]), \
+                (3, [1.0,0.0]::DOUBLE[], NULL::DOUBLE[]), \
+                (4, NULL::DOUBLE[], NULL::DOUBLE[]), \
+                (5, [1.0,0.0]::DOUBLE[], [0.0,1.0]::DOUBLE[]) \
+             ) t(i,a,b) ORDER BY i",
+            )
+            .unwrap();
+        let rows: Vec<Option<f64>> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+        assert_eq!(rows.len(), 5);
+        assert!((rows[0].unwrap() - 1.0).abs() < 1e-12);
+        assert_eq!(&rows[1..4], &[None, None, None]);
+        assert!(rows[4].unwrap().abs() < 1e-12);
+    }
+
+    #[test]
+    fn checked_reader_distinguishes_null_elements_empty_lists_and_null_lists() {
+        let mut input = DataChunkHandle::new(&[list_double()]);
+        input.set_len(4);
+        {
+            let mut list = input.list_vector(0);
+            unsafe { list.set_child(&[1.0_f64, 2.0, 4.0]) };
+            list.child(3).set_null(1);
+            list.set_entry(0, 0, 2);
+            list.set_entry(1, 2, 0);
+            list.set_entry(2, usize::MAX, 1);
+            list.set_null(2);
+            list.set_entry(3, 2, 1);
+        }
+        assert_eq!(
+            read_list_col_checked(&mut input, 0, 4),
+            vec![None, Some(vec![]), None, Some(vec![4.0])],
+        );
+    }
+
+    #[test]
+    fn empty_and_null_lists_do_not_read_child_storage() {
+        let mut input = DataChunkHandle::new(&[list_double()]);
+        input.set_len(2);
+        {
+            let mut list = input.list_vector(0);
+            list.set_entry(0, 0, 0);
+            list.set_entry(1, usize::MAX, 1);
+            list.set_null(1);
+        }
+        assert_eq!(
+            read_list_col(&mut input, 0, 2),
+            vec![Vec::<f64>::new(), Vec::<f64>::new()],
+        );
+        assert_eq!(
+            read_list_col_checked(&mut input, 0, 2),
+            vec![Some(vec![]), None],
+        );
+    }
 }

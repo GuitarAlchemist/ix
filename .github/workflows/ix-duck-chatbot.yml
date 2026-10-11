@@ -15,11 +15,19 @@ on:
     branches: [main]
     paths:
       - 'crates/ix-duck/**'
+      - 'crates/ix-code/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/ix-harness-github-actions/tests/ix_duck_workflow_paths.rs'
       - '.github/workflows/ix-duck-chatbot.yml'
   pull_request:
     branches: [main]
     paths:
       - 'crates/ix-duck/**'
+      - 'crates/ix-code/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/ix-harness-github-actions/tests/ix_duck_workflow_paths.rs'
       - '.github/workflows/ix-duck-chatbot.yml'
 
 permissions:
@@ -36,6 +44,15 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Lint chatbot workflow if actionlint is available
+        shell: bash
+        run: |
+          if command -v actionlint >/dev/null 2>&1; then
+            actionlint .github/workflows/ix-duck-chatbot.yml
+          else
+            echo "actionlint is not installed on this runner."
+          fi
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -46,11 +63,27 @@ jobs:
           shared-key: ix-duck-duck
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Regression for chatbot workflow path filters
+        run: cargo test -p ix-harness-github-actions --test ix_duck_workflow_paths
+
+      - name: Regression for NULL list descriptors
+        run: cargo test -p ix-duck --features duck,code-semantic --lib udf::tests
+
       - name: Clippy (duck feature)
         run: cargo clippy -p ix-duck --all-targets --features duck -- -D warnings
 
       - name: Test (duck feature)
         run: cargo test -p ix-duck --features duck
+
+      # `code-semantic` (tree-sitter Tier B: ix_semantic_metrics / ix_ast_query) is
+      # otherwise compiled only at release, through ix-duck-ext. Its tests live in
+      # `code::tests`, which is `cfg(all(test, feature = "duck"))` because they open
+      # a bench connection, so `duck` has to come with it or they silently vanish.
+      - name: Clippy (duck + code-semantic features)
+        run: cargo clippy -p ix-duck --all-targets --features duck,code-semantic -- -D warnings
+
+      - name: Test (duck + code-semantic features)
+        run: cargo test -p ix-duck --features duck,code-semantic
 
       - name: Hard gate over vendored fixtures (must pass; nonzero on regression)
         run: cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check crates/ix-duck/tests/fixtures/chatbot-qa
