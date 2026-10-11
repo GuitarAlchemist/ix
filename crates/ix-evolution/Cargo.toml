@@ -11,6 +11,10 @@ description = "Evolutionary algorithms: genetic algorithms, differential evoluti
 
 [dependencies]
 ix-math = { workspace = true }
+# `fractal`: the Takagi and de Rham curves. ix-fractal ships the curves,
+# ix-evolution owns the operators; this dependency is the join gap-matrix
+# C5/C6 called out as missing (refs #204).
+ix-fractal = { workspace = true }
 ix-optimize = { workspace = true }
 ndarray = { workspace = true }
 rand = { workspace = true }
