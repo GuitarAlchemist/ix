@@ -36,17 +36,23 @@ def geometry_px(braid_out, width, height):
     return paths, radius
 
 
-def render(paths, radius, width, height):
-    """owner: strand start per pixel (-1 off the tubes); surface: tube height, -inf off the tubes."""
+def render(paths, radius, width, height, permutation):
+    """owner: strand start per pixel (-1 off the tubes); surface: tube height, -inf off the tubes.
+
+    A copy stamped one image height away is the closure going on across the edge, so it takes the label
+    of the strand it continues in this image: moved up, its start meets the strand ending there; moved
+    down, its end meets the strand starting there. One tube then keeps one label up to the edge."""
     owner = np.full((height, width), -1, dtype=np.int16)
     surface = np.full((height, width), -np.inf)
     r = int(math.ceil(radius))
     oy, ox = np.mgrid[-r:r + 1, -r:r + 1]
     dome = np.where(ox ** 2 + oy ** 2 <= radius ** 2,
                     np.sqrt(np.clip(radius ** 2 - ox ** 2 - oy ** 2, 0, None)), -np.inf)
+    ending = {end: start for start, end in enumerate(permutation)}
     for strand, p in paths.items():
+        labels = {-height: ending[strand], 0: strand, height: permutation[strand]}
         for x, row, z in _dense(p, step=0.5):
-            for shift in (-height, 0, height):
+            for shift, label in labels.items():
                 cy, cx = int(round(row + shift)), int(round(x))
                 y0, y1, x0, x1 = cy - r, cy + r + 1, cx - r, cx + r + 1
                 if y1 <= 0 or y0 >= height:
@@ -57,7 +63,7 @@ def render(paths, radius, width, height):
                 view = surface[ty0:ty1, tx0:tx1]
                 front = patch > view
                 view[front] = patch[front]
-                owner[ty0:ty1, tx0:tx1][front] = strand
+                owner[ty0:ty1, tx0:tx1][front] = label
     return owner, surface
 
 
@@ -110,11 +116,15 @@ def lay_lines(paths, permutation, owner, radius, height):
     return out
 
 
-def lineart(owner, strokes):
-    """White on black: tube outlines (owner changes, wrapping vertically), the rope lay, panel borders."""
+def lineart(owner, strokes, permutation):
+    """White on black: tube outlines (owner changes, wrapping vertically), the rope lay, panel borders.
+    Across the top edge a strand goes on as the strand its end starts, so the top row's owners pass
+    through the permutation before they meet the bottom row's."""
     edge = np.zeros(owner.shape, dtype=bool)
     edge[:, 1:] |= owner[:, 1:] != owner[:, :-1]
-    edge |= owner != np.roll(owner, 1, axis=0)
+    edge[1:] |= owner[1:] != owner[:-1]
+    goes_on_as = np.append(np.asarray(permutation), -1)   # owner -1, off the tubes, indexes the -1
+    edge[0] |= goes_on_as[owner[0]] != owner[-1]
     padded = np.pad((edge * 255).astype(np.uint8), ((2, 2), (0, 0)), mode="wrap")
     lines = np.asarray(Image.fromarray(padded).filter(ImageFilter.MaxFilter(5)))[2:-2]
     img = Image.fromarray(np.maximum(lines, strokes))
@@ -137,6 +147,7 @@ def depth(surface):
 def control_images(braid_out, width, height):
     """(lineart, depth, owner) as uint8 / int16 arrays of shape (height, width)."""
     paths, radius = geometry_px(braid_out, width, height)
-    owner, surface = render(paths, radius, width, height)
-    strokes = lay_lines(paths, braid_out["permutation"], owner, radius, height)
-    return lineart(owner, strokes), depth(surface), owner
+    permutation = braid_out["permutation"]
+    owner, surface = render(paths, radius, width, height, permutation)
+    strokes = lay_lines(paths, permutation, owner, radius, height)
+    return lineart(owner, strokes, permutation), depth(surface), owner

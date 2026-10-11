@@ -10,7 +10,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from ix_comfyui import bridge  # noqa: E402
+from ix_comfyui import braid_render, bridge  # noqa: E402
 from ix_comfyui.bridge import IxBridgeError, braid_layout, knot_catalog, knot_layout  # noqa: E402
 from ix_comfyui.braid_render import control_images as braid_images  # noqa: E402
 from ix_comfyui.nodes import IXBraidControl, IXKnotControl  # noqa: E402
@@ -153,6 +153,22 @@ class Nodes(unittest.TestCase):
         np.testing.assert_allclose(rolled.astype(int), np.roll(deep, per_crossing, axis=0).astype(int), atol=1, rtol=0)
         _, _, summary = IXBraidControl().images("s1 s2^-1", 2, 640, 512)
         self.assertEqual(summary["jones"]["text"], "t^-2 - t^-1 + 1 - t + t^2")
+
+    def test_a_braid_tiles_without_an_outline_across_its_strands(self):
+        # The picture repeats vertically, and a strand leaving the top comes back at the bottom as the
+        # strand its end starts. Near that seam each tube keeps one owner, and no outline crosses it.
+        for word, repeat in (("s1", 1), ("s1 s2^-1", 2)):
+            out = braid_layout(word, repeat)
+            paths, radius = braid_render.geometry_px(out, W, H)
+            _, _, owner = braid_images(out, W, H)
+            bare = braid_render.lineart(owner, np.zeros(owner.shape, dtype=np.uint8), out["permutation"])
+            band = int(radius / 2)
+            for s, p in paths.items():
+                top, bottom = int(round(p[-1][0])), int(round(p[0][0]))
+                with self.subTest(word=word, strand=s):
+                    self.assertEqual(set(owner[:band, top].tolist()), {s})
+                    self.assertEqual(set(owner[H - band:, bottom].tolist()), {s})
+                    self.assertFalse(bare[:band, top].any() or bare[H - band:, bottom].any())
 
 
 if __name__ == "__main__":
