@@ -94,3 +94,93 @@ task environment. Existing GitHub CI is used on an isolated draft branch by expl
 user direction. No claim of live probe evidence, real Git refusal, resumed streaming
 execution or deployed canary. Promotion still requires the repository's review and
 verification gates; docs reindexing remains unexecuted unless existing CI performs it.
+
+
+## Archived WMUX transport: candidate-only increment (2026-10-11)
+
+`request → mission.dispatch_candidate` is a second opt-in capability on the same
+registry seam. It produces a candidate only; there is no Python/WMUX call, live
+registration, ledger read/write, waiting loop, native cancellation, or automatic
+permission/admission observer. A consumer must never treat this candidate as authority.
+All outputs set `live_dispatch_available: false` and `requires_runner_admission: true`.
+
+The local archive `snapshot/ix377-transport-20261011` at
+`31d75c00409ff6227a199c4921be893e369c8b4e` freezes previously unversioned Python
+prototypes. It is not an upstream WMUX commit or fix. The pinned sources are:
+
+| Source | SHA-256 |
+| --- | --- |
+| cycle_dispatch.py | fe5f0d23833d4dbd54b985f12ecbb3f64a489617a484c9b56b81f708e9e011e0 |
+| wmux_control.py | 4aa7cc12881982540aed0c8e9971f5a7a912d5fb382b52621307569d75b703b9 |
+| wmux_mission.py | 23f0db454cd4372fc62292fb31d756bac177f4bc7f9d8d9dfc10a7080e924f4d |
+
+These three frozen source hashes were independently recomputed locally for integration.
+The archive SHA is owner-reported; the 54 existing Python fixture tests are also
+owner-reported, not rerun here. No Python implementation is copied into IX.
+
+The typed `DispatchRequest` is an adapter contract, not the existing Python API.
+It pins contract/dialect/engine/implementation/archive/source hashes and the
+mission/nonce, full session+workspace+surface tuple, exact brief digest and declared
+brief/registry/ledger paths. Host composition injects `DispatchObservation`; no
+producer verifies the real GUI, files or permissions here. Nonempty/unknown input
+or non-ready admission refuses a prepared candidate. Changed tuple, nonce, mission,
+artifacts or deadline refuses against that exact host declaration. Duplicate
+registration cannot replace the handler.
+
+A prepared state can suggest `dispatch`, but execution stays unavailable because
+the transport does not offer atomic input reservation/compare-and-send. Empty
+input in a fixture is not proof against concurrent typing. Registry lock and
+GUI ownership are separate. This adapter implements no live concurrency fence.
+
+Any attempted/ambiguous or later known transport state suggests `observe_receipt`
+using the same mission, nonce and artifacts; repeated candidates are pure
+projections, not effect idempotency receipts. No resend or changed identity is
+generated. Unknown or inconsistent state refuses. Transport acceptance,
+submitted-prompt reception, provider working and consumed author claims are
+kept distinct through the projected state; none becomes a completed-tool proof,
+verdict or independently verified success. `first_action_confirmed` stays false;
+`effect_outcome` stays unknown, including on consumed state.
+
+The request JSON budget is 4096 serialized bytes; IDs are at most 128 ASCII
+characters and three distinct canonical relative artifact paths at most 512
+characters each. This is only an adapter budget: Python brief/result/ledger
+reads and subprocess capture buffers are not byte bounded by it. No file access
+or payload authority is inferred from syntactic path validation.
+
+The declared observation is fresh for less than 30 seconds, a proposed adapter
+constraint. `wait_until_ms-created_at_ms` must be 1..3,600,000 ms with checked
+arithmetic and no future creation. At the deadline the candidate suggests
+`stop_waiting`, preserving unknown effect outcome and
+`native_execution_cancelled: false`. This does not implement a transport TTL,
+an actual bounded wait, abandonment or cancellation. Reconciliation belongs to
+the existing transport owner, not an additional IX scheduler.
+
+The only real Blue round trip ended at 2026-10-11T01:08:18.7337442Z. Root observed
+the submitted prompt, explicit reception, native successful Read 2 files and
+result. Its one-attempt `relay_send.py` did **not** use
+`cycle_dispatch.dispatch`, registry lock/fsync, ledger binding or a mission token.
+Its intent write was not exclusive/fsynced. This real case therefore cannot
+validate those prototype mechanisms. Post-run nonempty input remained untouched;
+its draft-versus-suggestion origin is unknown. No second Blue send occurred.
+
+Evidence pins: original relay-case
+`a3066b102836477cf7b590238ccea08510c48dfd6e5acfc92b07bea97dd1e778`;
+redacted projection
+`c025c028309b3d72956d1734313dbf3a2726bae790d026d6d075f5b0d6bb5d7a`;
+root-relay-proof
+`91981136ede4c3d2b5728c8a99664676e4688baab3b605fe8349f0ddedc42822`.
+Digest pinning establishes artifact integrity, not authenticated execution.
+
+Parser/adapter fixtures cover replay, wrong IDs/nonce/artifacts, unknown/nonempty
+input, freshness boundaries, local deadline expiry/overflow, pins, JSON budget,
+path aliases, registry/parser duplicates and evidence distinctions. They model
+snapshots, not GUI interleavings, crash recovery or live transport behavior.
+The first separately captured RED checks the missing capability, not a live
+transport failure. There is no sequence/parallel dependency or new exception engine.
+
+Integration proposal: expose this advisory candidate through the Incubator's
+existing mission proposal view and existing permission gate only after its exact
+schema/consumer is agreed. No UI/CP files are changed, no new Incubator is created,
+and no candidate is an authority dossier. Revisit live dispatch only when the
+transport owner supplies and tests the required admission fence and reconciliation
+contract. Gaia246/247 remain separate contracts and supply no generic resume API.

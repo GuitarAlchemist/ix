@@ -64,6 +64,7 @@
 
 pub mod ast;
 pub mod capability;
+pub mod dispatch;
 pub mod compile;
 pub mod eval;
 pub mod host;
