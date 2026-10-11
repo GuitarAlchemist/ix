@@ -19,7 +19,8 @@ contracts (see `docs/contracts/`), not runtime coupling.
   (`Regressor`, `Classifier`, `Clusterer`, `Optimizer`, …) and uses the builder
   pattern + seeded RNG for reproducibility. CPU = `f64` + `ndarray`; GPU = `f32`
   via WGPU shaders. See `README.md` for the full crate map.
-- **Skill** — a capability exposed to Claude Code / agents (a `.claude/skills/<name>/SKILL.md`).
+- **Skill** — a capability exposed to Claude Code / agents (a `.claude/skills/<name>/SKILL.md`, or a
+  plugin's `skills/<name>/SKILL.md`, invoked as `<plugin>:<name>`).
   Distinct from a **crate** (Rust library) and a **tool** (MCP-callable function).
 - **Tool** — an MCP-callable function (registered in `ix-agent`; the count is
   asserted by `crates/ix-agent/tests/parity.rs` — every tool-adding PR bumps it).
@@ -110,6 +111,15 @@ contracts (see `docs/contracts/`), not runtime coupling.
   JSON value, never inside it. Semantics are provisional until Demerzel's spec states
   them: no verdict is an error, no matching arm stops the pipeline and is recorded in
   `RunOutcome::gates`, an unhandled `C` fails the run.
+
+- **Stated folded state** (`ix-origami`) — a FOLD crease pattern with one folded frame whose
+  `faceOrders` state the layer order. `ix-origami` checks it and never computes one. The checks
+  treat the sheet as having no thickness. A **thickness `t`** is the sheet's full thickness, in
+  crease-pattern units. **Ply** is the most faces stacked at one point, so any stack is at least
+  `ply · t` thick. A **panel** is a set of faces joined by flat joints. A **rigid stack** gives
+  each panel one height, parallel to the sheet, and exists only if the stated order over
+  overlapping panels has no cycle. A rigid-stack refusal means "no stack of parallel panels", not
+  "cannot be made" (ADR-0007).
 
 ## Conventions
 

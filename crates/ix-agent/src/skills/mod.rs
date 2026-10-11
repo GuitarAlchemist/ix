@@ -18,5 +18,6 @@ pub mod batch2;
 pub mod batch3;
 pub mod duckdb;
 pub mod knot;
+pub mod origami;
 pub mod petri;
 pub mod prime_radiant;
