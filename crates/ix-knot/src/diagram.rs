@@ -40,8 +40,12 @@ pub const MAX_CONTROL_POINTS: usize = 256;
 pub const MAX_DIAGRAM_CROSSINGS: usize = 64;
 /// Curve points per span between two control points.
 pub const SAMPLES_PER_SPAN: usize = 16;
-/// The most partial states the bracket keeps between two crossings.
-const MAX_STATES: usize = 1 << 18;
+/// The largest coordinate a control point may have, far beyond any drawing
+/// and far below where a squared distance overflows.
+pub const MAX_COORDINATE: f64 = 1e9;
+/// The most partial states the bracket keeps between two crossings. Each holds
+/// a polynomial, so this is what bounds the memory one drawing can take.
+const MAX_STATES: usize = 1 << 14;
 /// Below this, a crossing parameter counts as sitting on a curve point.
 const EPS: f64 = 1e-9;
 
@@ -103,9 +107,12 @@ pub struct RopePath {
 pub struct Geometry {
     pub radius: f64,
     pub ropes: Vec<RopePath>,
-    /// The smallest distance between two rope centrelines that are not
-    /// neighbours along a rope, in rope diameters: below 1 the tubes pass
-    /// through each other. `None` when no two such points exist.
+    /// The smallest distance between two points of the rope centrelines that
+    /// are not neighbours along a rope, in rope diameters: below 1 the tubes
+    /// pass through each other. It is measured between the sampled points of
+    /// [`RopePath::points`], not between the curves, so tubes that touch
+    /// between two samples can read a little above 1. `None` when no two such
+    /// points exist.
     pub min_clearance: Option<f64>,
 }
 
@@ -364,9 +371,11 @@ fn check_rope(i: usize, rope: &Rope) -> Result<(), DiagramError> {
     if let Some(p) = rope
         .points
         .iter()
-        .find(|p| !p.iter().all(|v| v.is_finite()))
+        .find(|p| !p.iter().all(|v| v.abs() <= MAX_COORDINATE))
     {
-        return bad(format!("control point {p:?} is not finite"));
+        return bad(format!(
+            "control point {p:?} must be finite and within ±{MAX_COORDINATE:e}"
+        ));
     }
     let n = rope.points.len();
     let pairs = if rope.closed { n } else { n - 1 };
@@ -775,12 +784,14 @@ fn contract(slots: &[[u32; 4]]) -> Result<Laurent, DiagramError> {
                     .or_default()
                     .checked_add_scaled(&term, 1, shift)
                     .ok_or(DiagramError::Overflow)?;
+                // Refused while the step is built, not after: the memory is
+                // spent building it.
+                if next.len() > MAX_STATES {
+                    return Err(DiagramError::Width);
+                }
             }
         }
         next.retain(|_, c| *c != Laurent::default());
-        if next.len() > MAX_STATES {
-            return Err(DiagramError::Width);
-        }
         states = next;
     }
     let mut total = Laurent::default();
@@ -837,8 +848,8 @@ fn along(a: f64, b: f64, length: f64, closed: bool) -> f64 {
     }
 }
 
-/// The least 3D distance between two centreline points that are not within
-/// `reach` of each other along the same rope.
+/// The least 3D distance between two sampled centreline points that are not
+/// within `reach` of each other along the same rope.
 fn clearance(ropes: &[RopePath], arcs: &[Vec<f64>], lengths: &[f64], reach: f64) -> Option<f64> {
     let mut best: Option<f64> = None;
     for (r1, a) in ropes.iter().enumerate() {
@@ -1046,6 +1057,42 @@ mod tests {
         let a = open(&[[0.0, 0.0], [4.0, 0.0]]);
         let b = open(&[[1.0, 0.0], [3.0, 0.0]]);
         assert!(matches!(err(&[a, b], ""), DiagramError::Degenerate { .. }));
+        // Squared distances would overflow, and no crossing would be found.
+        let huge = [circle(0.0, 0.0, 2e160, 8), circle(2.5e160, 0.0, 2e160, 8)];
+        assert!(matches!(
+            err(&huge, "height"),
+            DiagramError::Rope { rope: 0, reason } if reason.contains("within")
+        ));
+    }
+
+    #[test]
+    fn a_drawing_too_wide_to_evaluate_is_refused() {
+        // A spiral through a straight rope, well inside the point and crossing
+        // limits: its partial states double with each turn, so 15 turns would
+        // need 2^15 of them.
+        let turns = 15;
+        let spiral = (0..=turns * 8)
+            .map(|k| {
+                let a = 2.0 * PI * k as f64 / 8.0 + 0.3;
+                let r = 0.6 + k as f64 / 8.0;
+                [r * a.cos(), r * a.sin(), 0.0]
+            })
+            .collect();
+        let x = 2.6 + turns as f64;
+        let ropes = [
+            Rope {
+                points: vec![[-x, 0.013, 1.0], [x, 0.013, 1.0]],
+                closed: false,
+            },
+            Rope {
+                points: spiral,
+                closed: false,
+            },
+        ];
+        assert_eq!(
+            RopeDiagram::new(&ropes, "height").unwrap_err(),
+            DiagramError::Width
+        );
     }
 
     #[test]

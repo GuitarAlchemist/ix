@@ -20,8 +20,9 @@ Two questions had to be settled together:
    once per node execution.
 
 The geometry is where the value is, and it is subtle: a knot drawing is
-checked against the knot its closure must be (Jones polynomial, writhe,
-component count) and the rope is lifted only where it passes in front. That
+checked against the knot its closure must be (Jones polynomial and component
+count; the writhe depends on the drawing, so it is not compared) and the rope
+is lifted only where it passes in front. That
 logic is tested in Rust; a Python copy would drift from it the first time
 either side changed.
 

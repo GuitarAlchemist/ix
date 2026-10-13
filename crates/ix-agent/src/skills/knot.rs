@@ -336,7 +336,7 @@ fn read_ropes(params: &Value) -> Result<Vec<Rope>, String> {
                     let xyz: Option<Vec<f64>> = p
                         .as_array()
                         .filter(|a| a.len() == 2 || a.len() == 3)
-                        .map(|a| a.iter().filter_map(Value::as_f64).collect());
+                        .and_then(|a| a.iter().map(Value::as_f64).collect());
                     match xyz {
                         Some(v) if v.len() == 2 => Ok([v[0], v[1], 0.0]),
                         Some(v) if v.len() == 3 => Ok([v[0], v[1], v[2]]),
@@ -505,6 +505,17 @@ mod tests {
             err(json!({ "ropes": ropes, "over": "OUUO", "geometry": true, "radius": -1 }))
                 .contains("positive")
         );
+    }
+
+    #[test]
+    fn refuses_a_point_that_is_not_all_numbers() {
+        // Skipping the bad coordinate would read another point, [0, 2] or
+        // [3, 4], and answer for a drawing the caller never made.
+        for p in [json!([0, "1", 2]), json!([null, 3, 4])] {
+            let ropes = json!([{ "points": [[0, 0], p, [2, 0]] }]);
+            let err = knot(json!({ "ropes": ropes })).unwrap_err();
+            assert!(err.contains("[x, y]"), "{err}");
+        }
     }
 
     #[test]
