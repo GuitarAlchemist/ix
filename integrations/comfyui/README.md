@@ -3,7 +3,7 @@
 [Français](README.fr.md)
 
 ComfyUI custom nodes that ask IX for the maths and only draw what comes back.
-Why the pack lives here and talks to IX this way: [ADR-0007](../../docs/adr/0007-comfyui-extension-lives-in-ix.md).
+Why the pack lives here and talks to IX this way: [ADR-0009](../../docs/adr/0009-comfyui-extension-lives-in-ix.md).
 
 | Node | Category | IX tool | Gives |
 | --- | --- | --- | --- |

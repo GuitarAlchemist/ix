@@ -10,13 +10,36 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from ix_comfyui import bridge  # noqa: E402
+from ix_comfyui import braid_render, bridge  # noqa: E402
 from ix_comfyui.bridge import IxBridgeError, braid_layout, knot_catalog, knot_layout  # noqa: E402
 from ix_comfyui.braid_render import control_images as braid_images  # noqa: E402
 from ix_comfyui.nodes import IXBraidControl, IXKnotControl  # noqa: E402
-from ix_comfyui.rope_render import control_images, geometry_px, render  # noqa: E402
+from ix_comfyui.rope_render import PIECE, Pieces, control_images, geometry_px, outlines, render, stamp  # noqa: E402
+from PIL import Image, ImageFilter  # noqa: E402
 
 W, H = 512, 768
+
+
+def _crossings(p):
+    """Where two pieces of one rope path cross in the image: x, row, and each piece's (height, unit direction)."""
+    a, b = p[:-1], p[1:]
+    found = []
+    for i in range(len(a)):
+        d1 = b[i, :2] - a[i, :2]
+        for j in range(i + 2, len(a)):
+            d2 = b[j, :2] - a[j, :2]
+            den = d1[0] * d2[1] - d1[1] * d2[0]
+            if abs(den) < 1e-12:
+                continue
+            w = a[j, :2] - a[i, :2]
+            t = (w[0] * d2[1] - w[1] * d2[0]) / den
+            u = (w[0] * d1[1] - w[1] * d1[0]) / den
+            if 0 < t < 1 and 0 < u < 1:
+                x, row = a[i, :2] + t * d1
+                zi = a[i, 2] + t * (b[i, 2] - a[i, 2])
+                zj = a[j, 2] + u * (b[j, 2] - a[j, 2])
+                found.append((x, row, (zi, d1 / np.hypot(*d1)), (zj, d2 / np.hypot(*d2))))
+    return found
 
 
 class Catalogue(unittest.TestCase):
@@ -60,27 +83,38 @@ class Picture(unittest.TestCase):
 
     def test_the_rope_in_front_is_the_visible_surface_at_each_crossing(self):
         # Where two pieces of the rope cross in the image, the surface is the higher piece's top.
-        p = self.paths[0]
-        a, b = p[:-1], p[1:]
-        crossings = 0
-        for i in range(len(a)):
-            d1 = b[i, :2] - a[i, :2]
-            for j in range(i + 2, len(a)):
-                d2 = b[j, :2] - a[j, :2]
-                den = d1[0] * d2[1] - d1[1] * d2[0]
-                if abs(den) < 1e-12:
-                    continue
-                w = a[j, :2] - a[i, :2]
-                t = (w[0] * d2[1] - w[1] * d2[0]) / den
-                u = (w[0] * d1[1] - w[1] * d1[0]) / den
-                if 0 < t < 1 and 0 < u < 1:
-                    zi = a[i, 2] + t * (b[i, 2] - a[i, 2])
-                    zj = a[j, 2] + u * (b[j, 2] - a[j, 2])
-                    x, row = a[i, :2] + t * d1
-                    self.assertAlmostEqual(self.surface[int(round(row)), int(round(x))],
-                                           max(zi, zj) + self.radius, delta=0.1 * self.radius)
-                    crossings += 1
-        self.assertEqual(crossings, self.out["crossings"])
+        found = _crossings(self.paths[0])
+        for x, row, (zi, _), (zj, _) in found:
+            self.assertAlmostEqual(self.surface[int(round(row)), int(round(x))],
+                                   max(zi, zj) + self.radius, delta=0.1 * self.radius)
+        self.assertEqual(len(found), self.out["crossings"])
+
+    def test_where_the_rope_passes_over_itself_the_back_passage_is_outlined(self):
+        # The figure-eight is one rope, so every crossing is the rope passing over itself, and the
+        # rope index alone draws no outline there: a render then guesses which passage is in front.
+        # Pieces far apart along the rope are outlined from each other, so on the back passage's
+        # centreline the front passage's two edges show, about a radius either side, while the front
+        # passage runs through the crossing unbroken.
+        owner, along, _ = stamp(self.paths, self.radius, W, H)
+        pieces = Pieces(self.paths, [False], PIECE * self.radius)
+
+        def thick(edge):
+            return np.asarray(Image.fromarray(edge.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(3))) > 0
+
+        new, old = thick(outlines(owner, along, pieces)), thick(outlines(owner))
+        r = self.radius
+
+        def hits(edge, x, row, d, lo, hi):
+            return any(edge[int(round(row + s * d[1])), int(round(x + s * d[0]))] for s in np.arange(lo, hi, 0.5))
+
+        found = _crossings(self.paths[0])
+        self.assertEqual(len(found), 4)
+        for x, row, (zi, di), (zj, dj) in found:
+            back, front = (di, dj) if zi < zj else (dj, di)
+            for side in (-1, 1):
+                self.assertTrue(hits(new, x, row, side * back, 0.5 * r, 1.6 * r), (x, row))
+                self.assertFalse(hits(old, x, row, side * back, 0.5 * r, 1.6 * r), (x, row))
+            self.assertFalse(hits(new, x, row, front, -0.6 * r, 0.6 * r), (x, row))
 
     def test_control_images_have_lines_and_two_depth_levels_at_least(self):
         line, deep, owner = control_images(self.out, W, H)
@@ -119,6 +153,22 @@ class Nodes(unittest.TestCase):
         np.testing.assert_allclose(rolled.astype(int), np.roll(deep, per_crossing, axis=0).astype(int), atol=1, rtol=0)
         _, _, summary = IXBraidControl().images("s1 s2^-1", 2, 640, 512)
         self.assertEqual(summary["jones"]["text"], "t^-2 - t^-1 + 1 - t + t^2")
+
+    def test_a_braid_tiles_without_an_outline_across_its_strands(self):
+        # The picture repeats vertically, and a strand leaving the top comes back at the bottom as the
+        # strand its end starts. Near that seam each tube keeps one owner, and no outline crosses it.
+        for word, repeat in (("s1", 1), ("s1 s2^-1", 2)):
+            out = braid_layout(word, repeat)
+            paths, radius = braid_render.geometry_px(out, W, H)
+            _, _, owner = braid_images(out, W, H)
+            bare = braid_render.lineart(owner, np.zeros(owner.shape, dtype=np.uint8), out["permutation"])
+            band = int(radius / 2)
+            for s, p in paths.items():
+                top, bottom = int(round(p[-1][0])), int(round(p[0][0]))
+                with self.subTest(word=word, strand=s):
+                    self.assertEqual(set(owner[:band, top].tolist()), {s})
+                    self.assertEqual(set(owner[H - band:, bottom].tolist()), {s})
+                    self.assertFalse(bare[:band, top].any() or bare[H - band:, bottom].any())
 
 
 if __name__ == "__main__":

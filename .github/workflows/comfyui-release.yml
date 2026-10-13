@@ -1,4 +1,4 @@
-### ComfyUI pack release — the knot pack (integrations/comfyui, ADR-0007) with its
+### ComfyUI pack release — the knot pack (integrations/comfyui, ADR-0009) with its
 ### own ix-mcp for each platform, tested as a user would unpack it.
 #
 # Every trigger builds, packages and tests. Only a pushed `comfyui-knots-v*` tag

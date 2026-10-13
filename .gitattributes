@@ -8,3 +8,6 @@ crates/ix-duck/tests/fixtures/pareto/*.csv -text
 crates/ix-duck/tests/fixtures/ixql/*.csv -text
 # Same contract for the H0 persistence fixtures (gap-matrix row B1b).
 crates/ix-duck/tests/fixtures/persistence/*.csv -text
+
+# ix-origami pins its FOLD fixtures by sha256, so git must never rewrite their EOLs.
+crates/ix-origami/tests/fixtures/*.fold -text

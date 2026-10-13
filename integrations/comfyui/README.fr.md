@@ -4,7 +4,7 @@
 
 Des nœuds personnalisés ComfyUI qui demandent les calculs à IX et ne font que
 dessiner ce qu'IX renvoie. Pourquoi le paquet vit ici et parle à IX de cette
-façon : [ADR-0007](../../docs/adr/0007-comfyui-extension-lives-in-ix.md).
+façon : [ADR-0009](../../docs/adr/0009-comfyui-extension-lives-in-ix.md).
 
 | Nœud | Catégorie | Outil IX | Produit |
 | --- | --- | --- | --- |
