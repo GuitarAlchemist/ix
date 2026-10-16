@@ -46,15 +46,15 @@ impl VScalar for IxTakagi {
     type State = ();
     // @ai:invariant ix_takagi(t,terms) wraps ix_fractal::takagi::takagi; NULL on either arg -> SQL NULL [T:test conf:0.85 src:ix_duck::fractal::tests::takagi_known_values]
     // @ai:invariant ix_takagi rejects terms < 0 with a SQL error, and terms > 53 is silently capped by the callee (not re-checked here), so terms=54.. is equivalent to terms=53 [T:test conf:0.9 src:ix_duck::fractal::tests::takagi_terms_boundaries]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let t_null = null_mask(input, 0, n);
         let terms_null = null_mask(input, 1, n);
-        let ts = { let v = input.flat_vector(0); v.as_slice_with_len::<f64>(n)[..n].to_vec() };
-        let terms = { let v = input.flat_vector(1); v.as_slice_with_len::<i64>(n)[..n].to_vec() };
+        let ts = { let v = input.flat_vector(0); let s = unsafe { v.as_slice_with_len::<f64>(n) }; s[..n].to_vec() };
+        let terms = { let v = input.flat_vector(1); let s = unsafe { v.as_slice_with_len::<i64>(n) }; s[..n].to_vec() };
         let mut out = output.flat_vector();
         {
-            let slice = out.as_mut_slice_with_len::<f64>(n);
+            let slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
             for i in 0..n {
                 if t_null[i] || terms_null[i] {
                     slice[i] = 0.0; // placeholder; flagged NULL below
@@ -111,14 +111,14 @@ impl VScalar for IxHurst {
     type State = ();
     // @ai:invariant ix_hurst(x) wraps ix_chaos::fractal::hurst_exponent over a LIST<DOUBLE>; NULL -> SQL NULL; a lower-roughness de Rham curve (small roughness param) scores a higher Hurst estimate than a higher-roughness one on the same depth/seed [T:test conf:0.7 src:ix_duck::fractal::tests::hurst_orders_roughness]
     // @ai:invariant ix_hurst returns SQL NULL, never a number, for an unscorable input: < 8 samples (incl. empty), any non-finite sample, or any NULL element — element nullity is read from the child validity mask, not inferred from the raw child buffer [T:test conf:0.9 src:ix_duck::fractal::tests::hurst_rejects_inner_nulls]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let a_null = null_mask(input, 0, n);
         let a = read_list_col_checked(input, 0, n);
         let mut null_out = vec![false; n];
         let mut out = output.flat_vector();
         {
-            let slice = out.as_mut_slice_with_len::<f64>(n);
+            let slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
             for i in 0..n {
                 let h = if a_null[i] {
                     None
