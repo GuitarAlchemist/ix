@@ -104,13 +104,7 @@ fn main() {
 
     let shape = g.shape();
     let petri = check(&shape, Abstraction::clamp(1, 1), 1_000_000).expect("petri net");
-    println!(
-        "{} nodes; petri (cap and workers clamped to 1): deadlock_free={:?} states={} truncated={}",
-        g.len(),
-        petri.deadlock_free,
-        petri.states,
-        petri.truncated
-    );
+    println!("{} nodes; petri: {}", g.len(), petri.json());
     let feed = serve.as_deref().map(|addr| {
         let f = Feed::serve(addr, PAGE, &bus, &["stats", "meta", "done", "signal"], 4000)
             .expect("feed");

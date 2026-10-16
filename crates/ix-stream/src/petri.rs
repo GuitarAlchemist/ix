@@ -11,7 +11,9 @@
 //! (the gate commits to its fallback only once the others are full), so the net has every
 //! behaviour the threads have, and a deadlock-free net means deadlock-free threads. The
 //! converse does not hold: a reported deadlock can be one the threads never reach. A source is
-//! a worker that always has a next value; a sink takes and is done.
+//! a worker that always has a next value; a sink takes and is done. A batching node (a window)
+//! is both a stage and a source: it takes values, and it can send at any moment what it held
+//! back (`make`), which covers the many rows a window may answer for one value.
 //!
 //! When the waiting links have no cycle, no exploration is needed: a dead marking would need a
 //! worker waiting on a full node whose workers all wait further down, and following the
@@ -33,6 +35,8 @@ use std::collections::HashMap;
 pub struct ShapeNode {
     pub name: String,
     pub source: bool,
+    /// Holds values back and sends when it chooses ([`crate::Batch`]).
+    pub batching: bool,
     pub cap: usize,
     pub workers: usize,
     pub outs: Vec<ShapeEdge>,
@@ -56,6 +60,7 @@ impl Shape {
         self.nodes.push(ShapeNode {
             name: name.to_string(),
             source: false,
+            batching: false,
             cap,
             workers,
             outs: Vec::new(),
@@ -204,6 +209,16 @@ pub fn net(shape: &Shape, abs: Abstraction) -> Result<(PetriNet, HashMap<String,
                 .arc(format!("take{i}"), format!("held{i}"))
                 .arc(format!("held{i}"), format!("skip{i}"))
                 .arc(format!("skip{i}"), format!("idle{i}"));
+            if n.batching {
+                b = t(
+                    b,
+                    format!("make{i}"),
+                    format!("{} sends what it held", n.name),
+                );
+                b = b
+                    .arc(format!("idle{i}"), format!("make{i}"))
+                    .arc(format!("make{i}"), format!("held{i}"));
+            }
         }
         for (p, e) in n.outs.iter().enumerate() {
             let (to, u) = (&shape.nodes[e.to].name, e.to);

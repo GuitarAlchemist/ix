@@ -60,6 +60,7 @@
   <section><h2>Choix de la porte par contexte</h2><p>Où vont les questions : routeur local accepté, Jev ou Claude.</p><div id="c-route" class="chart"></div></section>
   <section><h2>Signaux algédoniques</h2><p>Somme cumulée des signaux par nœud : plaisir positif, douleur négative. Le juge à gauche ; les coûts et les débordements, plus petits, à droite.</p><div id="c-signals" class="chart"></div></section>
   <section><h2>Temps occupé et temps bloqué</h2><p>Bloqué : un envoi attendait une place en aval.</p><div id="c-time" class="chart"></div></section>
+  <section><h2>Exactitude par fenêtre (SQL)</h2><p>Une requête DuckDB sur chaque fenêtre de 100 réponses jugées : exactitude de chaque expert.</p><div id="c-windows" class="chart"></div></section>
   <section><h2>Ce que la porte croit</h2><p>Qualité estimée de chaque expert par contexte (nombre de jugements entre parenthèses).</p><div id="c-beliefs" class="chart"></div></section>
 </main>
 <script>
@@ -74,12 +75,12 @@
     tooltip: { trigger: 'axis' },
     legend: { textStyle: { color: muted() }, top: 0, type: 'scroll' },
   });
-  for (const id of ['queues', 'acc', 'route', 'signals', 'time', 'beliefs']) {
+  for (const id of ['queues', 'acc', 'route', 'signals', 'time', 'windows', 'beliefs']) {
     charts[id] = echarts.init(document.getElementById('c-' + id), null, { renderer: 'canvas' });
   }
   addEventListener('resize', () => Object.values(charts).forEach(c => c.resize()));
 
-  const st = { meta: null, samples: [], nodes: [], acc: [], spend: [], routes: {}, beliefs: {},
+  const st = { meta: null, samples: [], nodes: [], acc: [], spend: [], routes: {}, beliefs: {}, windows: {},
                sums: {}, sumSeries: {}, last: null, pleasure: 0, pain: 0, judged: 0, good: 0, dirty: true };
   const axis = () => ({ axisLine: { lineStyle: { color: line() } }, axisLabel: { color: muted() }, splitLine: { lineStyle: { color: line() } } });
 
@@ -126,6 +127,11 @@
       xAxis: { type: 'value', name: 'ms', ...axis() }, yAxis: { type: 'category', data: last.map(n => n.name), ...axis() },
       series: [{ name: 'occupé', type: 'bar', data: last.map(n => n.busy_ms) },
                { name: 'bloqué', type: 'bar', data: last.map(n => n.blocked_ms) }] }, true);
+
+    charts.windows.setOption({ ...base(),
+      xAxis: { type: 'value', name: 'fenêtre', minInterval: 1, ...axis() }, yAxis: { type: 'value', min: 0, max: 1, ...axis() },
+      tooltip: { trigger: 'item', formatter: p => `${p.seriesName} · fenêtre ${p.data[0]} : ${p.data[1]} (${p.data[2]} réponses)` },
+      series: Object.keys(st.windows).map(arm => ({ name: arm, type: 'line', data: st.windows[arm] })) }, true);
 
     const cells = [];
     ctxs.forEach((_, c) => arms.forEach((_, a) => {
@@ -211,6 +217,10 @@
     series.push([+e.t.toFixed(2), +st.sums[s.node].toFixed(3)]);
     if (series.length > 4000) series.splice(0, series.length - 4000);
     $('k-signals').textContent = `${st.pleasure} / ${st.pain}`;
+  });
+  on('window', e => {
+    const r = e.data;
+    (st.windows[r.arm] ??= []).push([r.window, r.acc, r.n]);
   });
   on('done', () => { $('state').textContent = 'terminé'; $('state').className = 'pill done'; });
   connect();

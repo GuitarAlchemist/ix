@@ -23,7 +23,9 @@
 //!    charged what the recorded call reported. Nothing is sent to Jev;
 //! 5. `claude`: Claude Haiku, live, on the person's plan (`claude -p`), at most `--claude`
 //!    calls; none by default;
-//! 6. `judge`: compares with the label and says so on the bus, where the gate learns it.
+//! 6. `judge`: compares with the label and says so on the bus, where the gate learns it;
+//! 7. `acc`: a DuckDB window over every 100 judged answers (accuracy per expert), shown live;
+//!    `parquet`: every judged answer, kept in `results.parquet`.
 //!
 //! The Jev budget is `--jev-share` of the stream at the recorded price per call. `--policy`
 //! swaps the gate for a fixed rule (always `local`; Jev until its budget is spent) on the same
@@ -32,6 +34,7 @@
 use ix_loop::{Ask, ClaudeCode, SemanticNode};
 use ix_stream::gate::{Arm, Budget, Gate, Ledger};
 use ix_stream::petri::{check, Abstraction};
+use ix_stream::sql::{ParquetSink, Window};
 use ix_stream::sse::Feed;
 use ix_stream::{source, Bus, Graph, Refused, Signal};
 use ix_wasm::build::Toolchain;
@@ -565,12 +568,34 @@ fn main() {
             "judged",
             json!({ "n": n, "good": good, "acc": good as f64 / n as f64, "arm": arm, "ctx": v["route"]["ctx"], "right": right }),
         );
-        kept.lock().unwrap().push(json!({
+        let record = json!({
             "epoch": v["epoch"], "id": v["id"], "ctx": v["route"]["ctx"], "arm": arm,
             "answer": v["answer"], "label": v["label"], "correct": right,
             "fallback": v["fallback"], "local": v["local"], "kw": v["kw"], "cost": v["cost"],
-        }));
+        });
+        for port in 0..out.ports() {
+            let _ = out.emit(port, record.clone());
+        }
+        kept.lock().unwrap().push(record);
     });
+
+    // SQL in the stream: accuracy per expert over each window of 100 judged answers.
+    let acc_n = g.batch(
+        "acc",
+        64,
+        Window::new(
+            "acc",
+            "SELECT arm, count(*) AS n, round(avg(correct::INT), 3) AS acc FROM batch GROUP BY arm ORDER BY arm",
+            100,
+            &a.out,
+        ),
+    );
+    let windows_n = g.stage_mut("windows", 64, |row, out| out.bus().publish("window", row));
+    let parquet_n = g.batch(
+        "parquet",
+        64,
+        ParquetSink::new("parquet", &a.out.join("results.parquet")).expect("parquet sink"),
+    );
 
     g.link(src, local_n);
     g.link(local_n, kw_n);
@@ -582,6 +607,9 @@ fn main() {
         g.link(c, judge_n);
     }
     g.link(jev_n, judge_n);
+    g.link(judge_n, acc_n);
+    g.link(acc_n, windows_n);
+    g.link(judge_n, parquet_n);
 
     let shape = g.shape();
     let mut petri = check(&shape, Abstraction::exact(), 50_000).expect("petri net");

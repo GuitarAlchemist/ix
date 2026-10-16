@@ -19,6 +19,7 @@ pub mod bus;
 pub mod gate;
 pub mod petri;
 pub mod source;
+pub mod sql;
 pub mod sse;
 
 pub use bus::{Bus, Event, Signal};
@@ -256,9 +257,20 @@ impl Out {
 
 type Work = Box<dyn FnMut(Value, &Out) + Send>;
 
+/// A one-thread stage that holds values back and sends when it chooses: a window, a sink
+/// that writes at the end.
+pub trait Batch: Send {
+    /// Takes one value.
+    fn take(&mut self, v: Value, out: &Out);
+    /// The input closed after its last value: send or write what is held. Not called when the
+    /// node was stopped or everything downstream ended, since nothing would read it.
+    fn end(&mut self, out: &Out);
+}
+
 enum Kind {
     Source(Box<dyn FnOnce(&Out) + Send>),
     Stage(Vec<Work>),
+    Batch(Box<dyn Batch>),
 }
 
 struct Node {
@@ -362,6 +374,12 @@ impl Graph {
         self.add(name, cap, 1, Kind::Stage(vec![Box::new(f)]))
     }
 
+    /// A stage of one thread that holds values back, as a [`Batch`] does.
+    pub fn batch(&mut self, name: &str, cap: usize, b: impl Batch + 'static) -> NodeId {
+        assert!(cap >= 1, "{name}: cap is at least 1");
+        self.add(name, cap, 1, Kind::Batch(Box::new(b)))
+    }
+
     /// Links `from` to `to` and answers the port's number on `from`.
     pub fn link(&mut self, from: NodeId, to: NodeId) -> usize {
         self.link_as(from, to, false)
@@ -374,7 +392,7 @@ impl Graph {
 
     fn link_as(&mut self, from: NodeId, to: NodeId, lossy: bool) -> usize {
         assert!(
-            matches!(self.nodes[to.0].kind, Kind::Stage(_)),
+            !matches!(self.nodes[to.0].kind, Kind::Source(_)),
             "{}: a source has no input",
             self.nodes[to.0].meter.name
         );
@@ -392,6 +410,7 @@ impl Graph {
                 .map(|n| petri::ShapeNode {
                     name: n.meter.name.clone(),
                     source: matches!(n.kind, Kind::Source(_)),
+                    batching: matches!(n.kind, Kind::Batch(_)),
                     cap: n.meter.cap,
                     workers: n.meter.workers,
                     outs: n
@@ -411,13 +430,13 @@ impl Graph {
         let mut senders: Vec<Option<SyncSender<Value>>> = Vec::new();
         let mut receivers: Vec<Option<Receiver<Value>>> = Vec::new();
         for node in &self.nodes {
-            if let Kind::Stage(_) = node.kind {
+            if let Kind::Source(_) = node.kind {
+                senders.push(None);
+                receivers.push(None);
+            } else {
                 let (tx, rx) = sync_channel(node.meter.cap);
                 senders.push(Some(tx));
                 receivers.push(Some(rx));
-            } else {
-                senders.push(None);
-                receivers.push(None);
             }
         }
         let meters: Vec<Arc<Meter>> = self.nodes.iter().map(|n| n.meter.clone()).collect();
@@ -474,19 +493,30 @@ impl Graph {
                         let (rx, out, meter) = (rx.clone(), out.clone(), node.meter.clone());
                         let worker = std::thread::spawn(move || {
                             let _left = Left(&meter);
-                            while let Some(v) = next(&rx, &meter, &out) {
-                                meter.queued.fetch_sub(1, Ordering::Relaxed);
-                                meter.received.fetch_add(1, Ordering::Relaxed);
-                                let began = Instant::now();
-                                work(v, &out);
-                                meter.busy_ns.fetch_add(
-                                    began.elapsed().as_nanos() as u64,
-                                    Ordering::Relaxed,
-                                );
+                            while let Next::Value(v) = next(&rx, &meter, &out) {
+                                timed(&meter, || work(v, &out));
                             }
                         });
                         workers.push((name.clone(), worker));
                     }
+                }
+                Kind::Batch(mut b) => {
+                    let rx = Mutex::new(rx.expect("a batch has an input"));
+                    let meter = node.meter.clone();
+                    let worker = std::thread::spawn(move || {
+                        let _left = Left(&meter);
+                        loop {
+                            match next(&rx, &meter, &out) {
+                                Next::Value(v) => timed(&meter, || b.take(v, &out)),
+                                Next::Closed => {
+                                    b.end(&out);
+                                    return;
+                                }
+                                Next::Cancelled => return,
+                            }
+                        }
+                    });
+                    workers.push((name, worker));
                 }
             }
         }
@@ -521,23 +551,41 @@ impl Drop for Left<'_> {
     }
 }
 
-/// The next value for a worker, or `None` once its node stopped, its input closed, or every
-/// node downstream ended.
-fn next(rx: &Mutex<Receiver<Value>>, meter: &Meter, out: &Out) -> Option<Value> {
+enum Next {
+    Value(Value),
+    /// Every node upstream ended: the stream is over.
+    Closed,
+    /// The node was stopped, or everything downstream ended.
+    Cancelled,
+}
+
+/// The next value for a worker, or why there is none.
+fn next(rx: &Mutex<Receiver<Value>>, meter: &Meter, out: &Out) -> Next {
     loop {
         if meter.stop.load(Ordering::Relaxed) || out.downstream_gone() {
-            return None;
+            return Next::Cancelled;
         }
         let got = rx
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .recv_timeout(POLL);
         match got {
-            Ok(v) => return Some(v),
+            Ok(v) => return Next::Value(v),
             Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => return None,
+            Err(RecvTimeoutError::Disconnected) => return Next::Closed,
         }
     }
+}
+
+/// Counts a value taken and the time spent on it.
+fn timed(meter: &Meter, work: impl FnOnce()) {
+    meter.queued.fetch_sub(1, Ordering::Relaxed);
+    meter.received.fetch_add(1, Ordering::Relaxed);
+    let began = Instant::now();
+    work();
+    meter
+        .busy_ns
+        .fetch_add(began.elapsed().as_nanos() as u64, Ordering::Relaxed);
 }
 
 fn publish_stats(bus: &Bus, meters: &[Arc<Meter>], last: bool) {
