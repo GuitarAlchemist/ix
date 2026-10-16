@@ -378,6 +378,7 @@ Current state, in dependency order:
 - **R6** (adversarial pipelines, Levels 1–3) — Level 1 preview shipped in the refactor oracle; Levels 2–3 planned.
 - **R8** (QED-MCP, Lean 4 / Kani formal verification) — planned, Phase 4.
 - **R9a/R9b** (PyO3 bridge, WASM surface) — planned, Phase 4.
+- **Agentic loops** (`ix-loop`, [ADR-0011](adr/0011-ix-loop-lua-sandbox-model-drafts-host-judges.md)) — slice B1 is the experimental crate and its CLI: `ix-loop run <script.lua> [--calls N] [--fuel N] [--seconds N]`, `ix-loop proposals`, `ix-loop accept <id>`. Loops are sandboxed Lua 5.4; Claude Code headless is the semantic node, on the person's plan; the store is `IX_LOOP_STORE` (default `~/.cache/ix-loop`). There is no MCP tool yet: B2 (`ix_loop_run`) waits for the open tool PRs that bump `parity.rs`. Then B3, a `loop` node in the pipeline spec, and B4, the ga loop editor running headless on the store.
 
 The authoritative roadmap with dependency graph, phase breakdown, week-by-week plan, risk register, and definition-of-done gates lives at [`examples/canonical-showcase/ix-roadmap-plan-v1.md`](../examples/canonical-showcase/ix-roadmap-plan-v1.md). The P0/P1/P2 priority list specific to ix's own structural health is at [`examples/canonical-showcase/05-adversarial-refactor-oracle/FINDINGS.md`](../examples/canonical-showcase/05-adversarial-refactor-oracle/FINDINGS.md).
 

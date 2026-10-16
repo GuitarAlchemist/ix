@@ -133,6 +133,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | memristive-markov | Experimental | Research prototype |
 | ix-acoustic-tune | Experimental | Acoustic auto-tuning: CMA-ES / ask-tell optimizers + spectral features and losses for synth sound-matching |
 | ix-origami | Experimental | Checks of a flat folded state read from a FOLD file: Kawasaki/Maekawa, face isometry, and the stated layer order (adjacency, cell cycles, taco-tortilla, taco-taco) |
+| ix-loop | Experimental | Agentic loops written in sandboxed Lua 5.4 that run, judge and write other loops: budgets carved from parent to child, Claude Code headless as the semantic node, host-owned oracles, a store where loops propose and a person accepts (CLI `ix-loop`; ADR-0011) |
 
 ### Internal Crates
 

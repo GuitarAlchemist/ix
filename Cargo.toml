@@ -88,6 +88,7 @@ members = [
     "crates/ix-baml",
     "crates/ix-ixql",
     "crates/ix-origami",
+    "crates/ix-loop",
 ]
 
 [workspace.package]
@@ -199,6 +200,9 @@ ix-registrar = { path = "crates/ix-registrar", version = "0.1.0" }
 ix-baml = { path = "crates/ix-baml", version = "0.1.0" }
 ix-ixql = { path = "crates/ix-ixql", version = "0.1.0" }
 ix-origami = { path = "crates/ix-origami", version = "0.1.0" }
+ix-loop = { path = "crates/ix-loop", version = "0.1.0" }
+# Lua 5.4, compiled from vendored C sources; for ix-loop only (ADR-0011).
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 
