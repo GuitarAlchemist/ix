@@ -26,8 +26,9 @@ const SPIN: &str = r#"(module (func (export "_start") (loop $l (br $l))))"#;
 fn host(dir: &tempfile::TempDir, wasm: bool) -> Rc<Host> {
     let host = Host::new(Rc::new(Scripted::always("hi")), Store::at(dir.path()));
     let go = std::env::var_os("IX_GO").unwrap_or_else(|| "go".into());
+    let zig = std::env::var_os("IX_ZIG").unwrap_or_else(|| "zig".into());
     Rc::new(if wasm {
-        host.with_wasm(Stages::new(dir.path().join("wasm"), go))
+        host.with_wasm(Stages::new(dir.path().join("wasm"), go, zig))
     } else {
         host
     })

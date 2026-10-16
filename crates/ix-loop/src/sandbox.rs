@@ -492,25 +492,26 @@ fn sandbox(host: &Rc<Host>, budget: &Rc<Budget>, job: &Job<'_>) -> mlua::Result<
     // Stages in other languages: off unless the person turned them on. Each answers like `run`:
     // `ok, value or why, stats`.
     let wasm = lua.create_table()?;
-    let (h, b) = (host.clone(), budget.clone());
-    wasm.raw_set(
-        "go",
-        lua.create_function(move |lua, source: String| {
-            let r = h.wasm_go(&b, &source);
-            match r {
-                Ok((id, cached)) => {
-                    let info = lua.create_table()?;
-                    info.raw_set("cached", cached)?;
-                    Ok((
-                        true,
-                        Value::String(lua.create_string(&id)?),
-                        Value::Table(info),
-                    ))
+    for lang in ["go", "zig"] {
+        let (h, b) = (host.clone(), budget.clone());
+        wasm.raw_set(
+            lang,
+            lua.create_function(move |lua, source: String| {
+                match h.wasm_build(&b, lang, &source) {
+                    Ok((id, cached)) => {
+                        let info = lua.create_table()?;
+                        info.raw_set("cached", cached)?;
+                        Ok((
+                            true,
+                            Value::String(lua.create_string(&id)?),
+                            Value::Table(info),
+                        ))
+                    }
+                    Err(e) => Ok((false, Value::String(lua.create_string(&e)?), Value::Nil)),
                 }
-                Err(e) => Ok((false, Value::String(lua.create_string(&e)?), Value::Nil)),
-            }
-        })?,
-    )?;
+            })?,
+        )?;
+    }
     let (h, b) = (host.clone(), budget.clone());
     wasm.raw_set(
         "wat",

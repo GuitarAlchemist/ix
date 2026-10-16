@@ -1,7 +1,7 @@
 //! A Go stage, built and run. Needs Go 1.21+ on `PATH` (or `IX_GO`), so it is ignored by
 //! default: `cargo test -p ix-wasm -- --ignored`.
 
-use ix_wasm::go::{is_id, GoBuild};
+use ix_wasm::build::{is_id, Toolchain};
 use ix_wasm::{Limits, Program};
 use std::time::{Duration, Instant};
 
@@ -54,10 +54,10 @@ func main() {
 "#;
 
 /// A toolchain caching into a folder that lives as long as the guard.
-fn go() -> (tempfile::TempDir, GoBuild) {
+fn go() -> (tempfile::TempDir, Toolchain) {
     let cache = tempfile::tempdir().unwrap();
     let go = std::env::var_os("IX_GO").unwrap_or_else(|| "go".into());
-    let build = GoBuild::new(go, cache.path());
+    let build = Toolchain::go(go, cache.path());
     (cache, build)
 }
 

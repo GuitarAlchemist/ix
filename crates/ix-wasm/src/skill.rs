@@ -10,14 +10,14 @@
 //!     args: { stage: "go-…", input: { from: "stats.output" } }
 //! ```
 //!
-//! The module is named by exactly one of `stage` (an id from the cache), `go` (source, built
-//! or reused) or `wat` (text). Its answer is `{ output, exit, fuel_used, stage }`, where
+//! The module is named by exactly one of `stage` (an id from the cache), `go` or `zig` (source,
+//! built or reused) or `wat` (text). Its answer is `{ output, exit, fuel_used, stage }`, where
 //! `output` is stdout as JSON (as text when it does not parse); a non-zero exit is an error.
 //!
 //! Stages are cached in `IX_WASM_CACHE`, else `%LOCALAPPDATA%\ix-wasm` (`~/.cache/ix-wasm`
-//! elsewhere). Go is `IX_GO`, else `go` on `PATH`.
+//! elsewhere). Go is `IX_GO`, else `go` on `PATH`; Zig is `IX_ZIG`, else `zig`.
 
-use crate::go::{id_of, is_id, GoBuild};
+use crate::build::{id_of, is_id, Toolchain};
 use crate::{Limits, Program};
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -40,12 +40,32 @@ fn cache_dir() -> PathBuf {
     PathBuf::from(home).join(".cache").join("ix-wasm")
 }
 
-fn toolchain() -> &'static GoBuild {
-    static GO: OnceLock<GoBuild> = OnceLock::new();
+fn go() -> &'static Toolchain {
+    static GO: OnceLock<Toolchain> = OnceLock::new();
     GO.get_or_init(|| {
-        let go = std::env::var_os("IX_GO").unwrap_or_else(|| "go".into());
-        GoBuild::new(go, cache_dir())
+        let exe = std::env::var_os("IX_GO").unwrap_or_else(|| "go".into());
+        Toolchain::go(exe, cache_dir())
     })
+}
+
+fn zig() -> &'static Toolchain {
+    static ZIG: OnceLock<Toolchain> = OnceLock::new();
+    ZIG.get_or_init(|| {
+        let exe = std::env::var_os("IX_ZIG").unwrap_or_else(|| "zig".into());
+        Toolchain::zig(exe, cache_dir())
+    })
+}
+
+/// Builds `source` with `toolchain`, or reuses what an earlier build left.
+fn built(toolchain: &Toolchain, source: &str) -> Result<(String, Arc<Program>), String> {
+    let deadline = Instant::now() + Duration::from_secs(BUILD_SECONDS);
+    let built = toolchain.build(source, deadline)?;
+    if let Some(p) = recall(&built.id) {
+        return Ok((built.id, p));
+    }
+    let bytes = std::fs::read(&built.path).map_err(|e| e.to_string())?;
+    let program = Program::new(&bytes).map_err(|e| e.to_string())?;
+    Ok((built.id.clone(), remember(&built.id, program)))
 }
 
 /// Loaded modules, shared by every stage of every pipeline in the process.
@@ -74,8 +94,15 @@ fn recall(id: &str) -> Option<Arc<Program>> {
 /// The module `params` names, and its id.
 fn program_of(params: &Value) -> Result<(String, Arc<Program>), String> {
     let text = |k: &str| params.get(k).and_then(Value::as_str);
-    match (text("stage"), text("go"), text("wat")) {
-        (Some(id), None, None) => {
+    let named = ["stage", "go", "zig", "wat"]
+        .iter()
+        .filter(|k| params.get(**k).is_some())
+        .count();
+    if named != 1 {
+        return Err("name the module with exactly one of `stage`, `go`, `zig` or `wat`".into());
+    }
+    match (text("stage"), text("go"), text("zig"), text("wat")) {
+        (Some(id), ..) => {
             if !is_id(id) {
                 return Err(format!("not a stage id: {id}"));
             }
@@ -92,17 +119,9 @@ fn program_of(params: &Value) -> Result<(String, Arc<Program>), String> {
             let program = Program::new(&bytes).map_err(|e| e.to_string())?;
             Ok((id.to_string(), remember(id, program)))
         }
-        (None, Some(source), None) => {
-            let deadline = Instant::now() + Duration::from_secs(BUILD_SECONDS);
-            let built = toolchain().build(source, deadline)?;
-            if let Some(p) = recall(&built.id) {
-                return Ok((built.id, p));
-            }
-            let bytes = std::fs::read(&built.path).map_err(|e| e.to_string())?;
-            let program = Program::new(&bytes).map_err(|e| e.to_string())?;
-            Ok((built.id.clone(), remember(&built.id, program)))
-        }
-        (None, None, Some(wat)) => {
+        (_, Some(source), ..) => built(go(), source),
+        (_, _, Some(source), _) => built(zig(), source),
+        (_, _, _, Some(wat)) => {
             let id = id_of("wat", "", wat.as_bytes());
             if let Some(p) = recall(&id) {
                 return Ok((id, p));
@@ -114,7 +133,7 @@ fn program_of(params: &Value) -> Result<(String, Arc<Program>), String> {
                 .map_err(|e| e.to_string())?;
             Ok((id.clone(), remember(&id, program)))
         }
-        _ => Err("name the module with exactly one of `stage`, `go` or `wat`".into()),
+        _ => Err("`stage`, `go`, `zig` and `wat` are text".into()),
     }
 }
 
@@ -124,6 +143,7 @@ pub fn wasm_run_schema() -> Value {
         "properties": {
             "stage": { "type": "string", "description": "The id of a cached stage (go-…, wat-…)." },
             "go": { "type": "string", "description": "Go source of a package main, built for wasip1 or reused from the cache." },
+            "zig": { "type": "string", "description": "Zig source with a pub fn main, built for wasm32-wasi or reused from the cache." },
             "wat": { "type": "string", "description": "A module in WAT text." },
             "input": { "description": "Any JSON value: the stage reads it on stdin." },
             "fuel": { "type": "integer", "minimum": 0, "description": "Wasm fuel, about one unit per instruction (default 2e9, about 1.5 s)." }

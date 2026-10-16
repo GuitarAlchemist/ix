@@ -13,7 +13,7 @@
 //!   a person, through `ix-loop accept`, moves a proposal into the library;
 //! - `say(text, opts)` / `voice.stop()` speak aloud, and `gh.prs` / `gh.checks` / `gh.runs` /
 //!   `gh.log` read GitHub. Both are [off](world) unless the person turns them on;
-//! - `wasm.go` / `wasm.wat` build a stage in another language and `wasm.run` runs it in a WASI
+//! - `wasm.go` / `wasm.zig` / `wasm.wat` build a stage in another language and `wasm.run` runs it in a WASI
 //!   sandbox, JSON in and JSON out. [Off](wasm) unless the person turns it on.
 //!
 //! The model drafts, the host's oracles judge, and a person promotes (ADR-0011).
@@ -293,12 +293,18 @@ impl Host {
             .ok_or_else(|| wasm::WASM_OFF.to_string())
     }
 
-    /// Builds Go source into a stage: its id, and whether an earlier build was reused.
-    pub fn wasm_go(&self, budget: &Budget, source: &str) -> Result<(String, bool), String> {
+    /// Builds `lang` source (`go`, `zig`) into a stage: its id, and whether an earlier build was
+    /// reused.
+    pub fn wasm_build(
+        &self,
+        budget: &Budget,
+        lang: &str,
+        source: &str,
+    ) -> Result<(String, bool), String> {
         let started = Instant::now();
-        let out = self.stages()?.go(budget, source);
+        let out = self.stages()?.build(budget, lang, source);
         self.ledger.record(json!({
-            "kind": "wasm.go", "depth": budget.depth(), "ok": out.is_ok(),
+            "kind": "wasm.build", "lang": lang, "depth": budget.depth(), "ok": out.is_ok(),
             "id": out.as_ref().ok().map(|(id, _)| id.clone()),
             "cached": out.as_ref().ok().map(|(_, c)| *c),
             "ms": started.elapsed().as_millis() as u64,

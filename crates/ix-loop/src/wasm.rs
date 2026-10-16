@@ -1,17 +1,17 @@
-//! Stages in other languages, run sandboxed: `wasm.go`, `wasm.wat`, `wasm.run`.
+//! Stages in other languages, run sandboxed: `wasm.go`, `wasm.zig`, `wasm.wat`, `wasm.run`.
 //!
-//! A loop hands Go source (or WAT text) to the host, which builds it into a WASI module in a
+//! A loop hands Go or Zig source (or WAT text) to the host, which builds it into a WASI module in a
 //! cache keyed by content and answers its id. `wasm.run(id, input)` runs that module in
 //! [`ix_wasm`]'s sandbox: the input goes in as JSON on stdin, the output comes back as JSON
 //! when stdout parses, else as text. The module sees no files, no network, a seeded clock.
 //!
-//! Off unless the person turns it on (`ix-loop run --wasm`): building spawns the Go toolchain.
+//! Off unless the person turns it on (`ix-loop run --wasm`): building spawns a toolchain.
 //!
 //! A run's wasm fuel is charged to the loop's fuel at [`WASM_FUEL_PER_FUEL`] to one, about the
 //! same wall time as a Lua instruction, so the root budget still bounds the whole tree.
 
 use crate::budget::Budget;
-use ix_wasm::go::{id_of, is_id, GoBuild};
+use ix_wasm::build::{id_of, is_id, Toolchain};
 use ix_wasm::{Limits, Program};
 use serde_json::{json, Value as Json};
 use std::cell::{Cell, RefCell};
@@ -40,20 +40,22 @@ pub struct Ran {
     pub stderr: String,
 }
 
-/// The cache of stages, and the toolchain that fills it.
+/// The cache of stages, and the toolchains that fill it.
 pub struct Stages {
     cache: PathBuf,
-    go: GoBuild,
+    go: Toolchain,
+    zig: Toolchain,
     loaded: RefCell<HashMap<String, Rc<Program>>>,
     builds: Cell<u32>,
 }
 
 impl Stages {
-    /// Stages cached in `cache`, built with the toolchain `go`.
-    pub fn new(cache: impl Into<PathBuf>, go: impl Into<PathBuf>) -> Self {
+    /// Stages cached in `cache`, built with the toolchains `go` and `zig`.
+    pub fn new(cache: impl Into<PathBuf>, go: impl Into<PathBuf>, zig: impl Into<PathBuf>) -> Self {
         let cache = cache.into();
         Self {
-            go: GoBuild::new(go, &cache),
+            go: Toolchain::go(go, &cache),
+            zig: Toolchain::zig(zig, &cache),
             cache,
             loaded: RefCell::default(),
             builds: Cell::new(0),
@@ -68,11 +70,22 @@ impl Stages {
         Ok(())
     }
 
-    /// Builds Go source into a stage; its id, and whether an earlier build was reused.
-    pub fn go(&self, budget: &Budget, source: &str) -> Result<(String, bool), String> {
+    /// Builds `lang` source (`go` or `zig`) into a stage; its id, and whether an earlier build
+    /// was reused.
+    pub fn build(
+        &self,
+        budget: &Budget,
+        lang: &str,
+        source: &str,
+    ) -> Result<(String, bool), String> {
+        let toolchain = match lang {
+            "go" => &self.go,
+            "zig" => &self.zig,
+            other => return Err(format!("wasm: no toolchain for {other}")),
+        };
         self.count_build()?;
         std::fs::create_dir_all(&self.cache).map_err(|e| format!("wasm: {e}"))?;
-        let built = self.go.build(source, budget.deadline())?;
+        let built = toolchain.build(source, budget.deadline())?;
         Ok((built.id, built.cached))
     }
 

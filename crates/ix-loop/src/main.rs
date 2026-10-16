@@ -12,7 +12,8 @@
 //! `--voice` lets loops speak through the local voice service (`IX_VOICE_URL`, else
 //! 127.0.0.1:59126). `--github` lets them read GitHub through `gh`, for the owners named by
 //! `--gh-owner` (GuitarAlchemist when none is named). `--wasm` lets them build and run stages in
-//! other languages (Go through `IX_GO`, else `go` on `PATH`), cached under `<store>/wasm`.
+//! other languages (Go through `IX_GO`, else `go` on `PATH`; Zig through `IX_ZIG`, else `zig`),
+//! cached under `<store>/wasm`.
 
 use ix_loop::{ClaudeCode, GhCli, Grant, Host, Ledger, Stages, Store, VoiceService};
 use serde_json::json;
@@ -117,7 +118,8 @@ fn main() -> ExitCode {
             }
             if flags.wasm {
                 let go = std::env::var_os("IX_GO").unwrap_or_else(|| "go".into());
-                host = host.with_wasm(Stages::new(stages, go));
+                let zig = std::env::var_os("IX_ZIG").unwrap_or_else(|| "zig".into());
+                host = host.with_wasm(Stages::new(stages, go, zig));
             }
             let host = Rc::new(host);
             let out = host.run(&src, &args[1], &flags.grant);
