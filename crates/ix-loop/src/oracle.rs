@@ -31,19 +31,20 @@ const ORIGAMI_LIMITS: Limits = Limits {
 /// The origami targets the host draws, each with a known solution in the tests.
 ///
 /// Each is rare under blind search. A random walk of 1 to 7 folds between the reference points
-/// and lines met each one in at most 2.5e-4 of its valid files, about one in 30 s; it met the
-/// easy targets these replace (2:2, 4:4, 8:8, …) within a second. A judge that grants a child a
-/// few seconds therefore tells a loop that reasons about folding from one that samples.
+/// and lines met each one in at most 6.3e-5 of 207,547 valid files, six of them in at most
+/// 1.4e-5; it met the easy targets these replace (2:2 in a third of them, 4:4, 8:8, …) at once.
+/// A release build checks about 9,000 valid files a second, so a judge that grants a child 2 s
+/// tells a loop that reasons about folding from one that only samples.
 const ORIGAMI_TARGETS: [(usize, usize); 9] = [
-    (5, 2),
-    (9, 5),
-    (9, 9),
     (10, 5),
     (11, 5),
-    (11, 7),
-    (11, 11),
     (12, 4),
-    (12, 7),
+    (14, 4),
+    (14, 6),
+    (14, 7),
+    (15, 4),
+    (15, 6),
+    (17, 17),
 ];
 
 fn check_origami(text: &str, faces: usize, ply: usize) -> Check {
@@ -326,17 +327,8 @@ mod tests {
     /// A solution for every target the host draws, so no hidden instance is impossible.
     #[test]
     fn every_origami_target_has_a_solution() {
-        // 5:2 is the blintz; the others are the first file a random walk found for each.
+        // The first file a random walk found for each.
         let witnesses = [
-            ((5, 2), "valley A to O\nvalley B to O\nvalley C to O\nvalley D to O"),
-            (
-                (9, 5),
-                "mountain A to mBC\nvalley AB to DA\nvalley A to mDA\nmountain mBC to D",
-            ),
-            (
-                (9, 9),
-                "valley mAB to B\nmountain BC to AC\nvalley D to mBC\nvalley A to C",
-            ),
             (
                 (10, 5),
                 "mountain mAB to C\nmountain D to mBC\nmountain BC to AB\nvalley CD to AB\nvalley A to mDA",
@@ -346,20 +338,32 @@ mod tests {
                 "valley BC to AC\nmountain C to O\nmountain B to mAB\nmountain mDA to mAB\nmountain mAB to A",
             ),
             (
-                (11, 7),
-                "valley mBC to B\nmountain BC to AC\nmountain mBC to A\nvalley O to C\nvalley B to mCD",
-            ),
-            (
-                (11, 11),
-                "mountain mBC to D\nvalley A to mBC\nmountain mAB to C\nvalley mDA to O",
-            ),
-            (
                 (12, 4),
                 "mountain B to O\nvalley O to mAB\nmountain D to B\nvalley D to C\nvalley A to D\nvalley mBC to A",
             ),
             (
-                (12, 7),
-                "valley B to mAB\nvalley D to mBC\nvalley BD to DA\nvalley mBC to mCD",
+                (14, 4),
+                "valley B to O\nvalley B to A\nmountain D to A\nvalley A to C\nmountain B to mCD\nvalley O to mAB\nvalley A to mDA",
+            ),
+            (
+                (14, 6),
+                "mountain BC to AC\nvalley mAB to B\nvalley O to mCD\nvalley mCD to A\nvalley D to A\nvalley mCD to C",
+            ),
+            (
+                (14, 7),
+                "valley mDA to O\nmountain C to A\nmountain B to mBC\nvalley BC to CD\nmountain BD to CD\nvalley C to mBC",
+            ),
+            (
+                (15, 4),
+                "valley D to O\nmountain O to C\nmountain A to D\nmountain B to mAB\nmountain B to mBC\nmountain mDA to A\nmountain A to mCD",
+            ),
+            (
+                (15, 6),
+                "mountain mBC to B\nvalley AB to BD\nvalley O to B\nvalley D to mBC\nmountain DA to AC\nmountain A to mAB\nmountain A to C",
+            ),
+            (
+                (17, 17),
+                "valley A to mBC\nvalley mAB to D\nvalley AC to DA\nmountain O to B\nvalley AB to BC",
             ),
         ];
         assert_eq!(witnesses.len(), ORIGAMI_TARGETS.len());
