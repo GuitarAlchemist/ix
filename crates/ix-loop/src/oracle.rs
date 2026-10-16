@@ -29,15 +29,21 @@ const ORIGAMI_LIMITS: Limits = Limits {
 };
 
 /// The origami targets the host draws, each with a known solution in the tests.
-const ORIGAMI_TARGETS: [(usize, usize); 8] = [
-    (2, 2),
-    (3, 2),
-    (4, 2),
+///
+/// Each is rare under blind search. A random walk of 1 to 7 folds between the reference points
+/// and lines met each one in at most 2.5e-4 of its valid files, about one in 30 s; it met the
+/// easy targets these replace (2:2, 4:4, 8:8, …) within a second. A judge that grants a child a
+/// few seconds therefore tells a loop that reasons about folding from one that samples.
+const ORIGAMI_TARGETS: [(usize, usize); 9] = [
     (5, 2),
-    (3, 3),
-    (4, 4),
-    (6, 6),
-    (8, 8),
+    (9, 5),
+    (9, 9),
+    (10, 5),
+    (11, 5),
+    (11, 7),
+    (11, 11),
+    (12, 4),
+    (12, 7),
 ];
 
 fn check_origami(text: &str, faces: usize, ply: usize) -> Check {
@@ -320,23 +326,40 @@ mod tests {
     /// A solution for every target the host draws, so no hidden instance is impossible.
     #[test]
     fn every_origami_target_has_a_solution() {
+        // 5:2 is the blintz; the others are the first file a random walk found for each.
         let witnesses = [
-            ((2, 2), "valley B to A"),
-            ((3, 2), "valley AB to AC\nvalley AD to AC"),
-            ((4, 2), "valley A to O\nvalley B to O\nvalley C to O"),
             ((5, 2), "valley A to O\nvalley B to O\nvalley C to O\nvalley D to O"),
             (
-                (3, 3),
-                "valley through (1/3, 0) (1/3, 1) moving A\nvalley through (2/3, 0) (2/3, 1) moving B",
-            ),
-            ((4, 4), "valley B to A\nvalley D to A"),
-            (
-                (6, 6),
-                "valley through (1/3, 0) (1/3, 1) moving A\nvalley through (2/3, 0) (2/3, 1) moving B\nvalley D to A",
+                (9, 5),
+                "mountain A to mBC\nvalley AB to DA\nvalley A to mDA\nmountain mBC to D",
             ),
             (
-                (8, 8),
-                "valley B to A\nvalley D to A\nvalley through (1/4, 0) (1/4, 1) moving (1/2, 0)",
+                (9, 9),
+                "valley mAB to B\nmountain BC to AC\nvalley D to mBC\nvalley A to C",
+            ),
+            (
+                (10, 5),
+                "mountain mAB to C\nmountain D to mBC\nmountain BC to AB\nvalley CD to AB\nvalley A to mDA",
+            ),
+            (
+                (11, 5),
+                "valley BC to AC\nmountain C to O\nmountain B to mAB\nmountain mDA to mAB\nmountain mAB to A",
+            ),
+            (
+                (11, 7),
+                "valley mBC to B\nmountain BC to AC\nmountain mBC to A\nvalley O to C\nvalley B to mCD",
+            ),
+            (
+                (11, 11),
+                "mountain mBC to D\nvalley A to mBC\nmountain mAB to C\nvalley mDA to O",
+            ),
+            (
+                (12, 4),
+                "mountain B to O\nvalley O to mAB\nmountain D to B\nvalley D to C\nvalley A to D\nvalley mBC to A",
+            ),
+            (
+                (12, 7),
+                "valley B to mAB\nvalley D to mBC\nvalley BD to DA\nvalley mBC to mCD",
             ),
         ];
         assert_eq!(witnesses.len(), ORIGAMI_TARGETS.len());
