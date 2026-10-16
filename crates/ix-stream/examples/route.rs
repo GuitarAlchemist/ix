@@ -641,7 +641,7 @@ fn main() {
             "title": "route", "policy": match a.policy { Policy::Learned => "learned", Policy::Local => "local", Policy::Jev => "jev" },
             "items": items, "contexts": CONTEXTS, "arms": arm_names,
             "budgets": ledger.json(), "petri": petri.json(), "jev_ms": a.jev_ms,
-            "jev_workers": a.jev_workers, "wait": a.wait,
+            "jev_workers": a.jev_workers, "wait": a.wait, "shape": shape.json(),
         }),
     );
     if feed.is_some() && a.linger > 0 {

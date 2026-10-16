@@ -302,6 +302,20 @@ fn the_graph_and_its_shape_agree() {
     assert_eq!((s.nodes[1].cap, s.nodes[1].workers), (3, 2));
     assert_eq!(s.nodes[0].outs.len(), 2);
     assert!(s.nodes[0].outs[1].lossy);
+    assert_eq!(
+        s.json(),
+        json!({
+            "nodes": [
+                { "name": "rows", "source": true, "batching": false, "cap": 0, "workers": 1 },
+                { "name": "a", "source": false, "batching": false, "cap": 3, "workers": 2 },
+                { "name": "lossy", "source": false, "batching": false, "cap": 1, "workers": 1 },
+            ],
+            "edges": [
+                { "from": 0, "to": 1, "lossy": false },
+                { "from": 0, "to": 2, "lossy": true },
+            ],
+        })
+    );
 }
 
 #[test]

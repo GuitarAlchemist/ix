@@ -4,6 +4,7 @@
 //! ```text
 //! cargo run -p ix-stream --example scale -- [--stages 128] [--rows 2000] [--cap 2]
 //!     [--slow-every 32] [--slow-ms 2] [--take N] [--serve 127.0.0.1:8792] [--linger S]
+//!     [--events PATH]
 //! ```
 //!
 //! The source is `SELECT range AS i, ... FROM range(rows)` in DuckDB. Each stage runs one WAT
@@ -11,12 +12,15 @@
 //! sandboxed and written back `stages` times. Every `--slow-every`-th stage also sleeps
 //! `--slow-ms` per value: the queues upstream of it fill and the source slows to its pace.
 //! With `--take N` the sink stops after N values; the stop runs up the chain and kills DuckDB.
+//! With `--events PATH` every bus event (the graph's shape in `meta`, then `stats` every
+//! 200 ms) is written to PATH as JSON lines when the run ends.
 
 use ix_stream::petri::{check, Abstraction};
 use ix_stream::sse::Feed;
 use ix_stream::{source, Bus, Graph};
 use ix_wasm::{Limits, Program};
 use serde_json::{json, Value};
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -50,6 +54,7 @@ fn main() {
     let mut take: Option<u64> = None;
     let mut serve = None;
     let mut linger = 0u64;
+    let mut events: Option<std::path::PathBuf> = None;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| panic!("{flag} needs a value"));
@@ -62,11 +67,13 @@ fn main() {
             "--take" => take = Some(value().parse().expect("--take")),
             "--serve" => serve = Some(value()),
             "--linger" => linger = value().parse().expect("--linger"),
+            "--events" => events = Some(value().into()),
             f => panic!("unknown flag {f}"),
         }
     }
     let echo = Arc::new(Program::new(ECHO.as_bytes()).expect("the echo module"));
     let bus = Bus::new();
+    let record = events.as_ref().map(|_| bus.subscribe(&[], 1 << 20));
     let mut g = Graph::new(&bus);
     let sent = Arc::new(Mutex::new(None));
     let kept = sent.clone();
@@ -114,10 +121,19 @@ fn main() {
     });
     bus.publish(
         "meta",
-        json!({ "title": "scale", "policy": "chaîne wasm", "items": take.unwrap_or(rows), "petri": petri.json() }),
+        json!({ "title": "scale", "policy": "chaîne wasm", "items": take.unwrap_or(rows),
+                "petri": petri.json(), "shape": shape.json() }),
     );
     let report = g.run(Some(Duration::from_millis(200)));
     bus.publish("done", json!({ "elapsed_s": report.elapsed.as_secs_f64() }));
+    if let (Some(path), Some(record)) = (&events, &record) {
+        let mut f = std::io::BufWriter::new(std::fs::File::create(path).expect("--events file"));
+        for e in record.try_iter() {
+            writeln!(f, "{}", e.json()).expect("--events write");
+        }
+        f.flush().expect("--events write");
+        println!("events: {}", path.display());
+    }
     let sent = sent.lock().unwrap().take().expect("the source ran");
     let n = *got.lock().unwrap();
     let secs = report.elapsed.as_secs_f64();

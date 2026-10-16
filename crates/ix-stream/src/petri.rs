@@ -77,6 +77,31 @@ impl Shape {
     pub fn link(&mut self, from: usize, to: usize, lossy: bool) {
         self.nodes[from].outs.push(ShapeEdge { to, lossy });
     }
+
+    /// The nodes in index order and the links between them, by index, for a reader that
+    /// draws the graph: `{ "nodes": [{ name, source, batching, cap, workers }], "edges":
+    /// [{ from, to, lossy }] }`.
+    pub fn json(&self) -> Value {
+        let nodes: Vec<Value> = self
+            .nodes
+            .iter()
+            .map(|n| {
+                json!({ "name": n.name, "source": n.source, "batching": n.batching,
+                        "cap": n.cap, "workers": n.workers })
+            })
+            .collect();
+        let edges: Vec<Value> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .flat_map(|(i, n)| {
+                n.outs
+                    .iter()
+                    .map(move |e| json!({ "from": i, "to": e.to, "lossy": e.lossy }))
+            })
+            .collect();
+        json!({ "nodes": nodes, "edges": edges })
+    }
 }
 
 /// Clamps on the graph before it becomes a net. `None` keeps the real value.
