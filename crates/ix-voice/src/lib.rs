@@ -82,6 +82,9 @@ pub struct Said {
     /// How long the playback took; only an answer to a `wait` request has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub played_ms: Option<u64>,
+    /// Whether a `stop` cut the utterance; only an answer to a `wait` request has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped: Option<bool>,
 }
 
 /// The answer to `POST /v1/stop`.

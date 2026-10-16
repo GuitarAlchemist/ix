@@ -135,6 +135,7 @@ fn say_sends_only_the_text_and_wait_by_default() {
             id: "u-1".into(),
             sentences: 2,
             played_ms: None,
+            stopped: None,
         }
     );
     let seen = server.join().unwrap();
@@ -152,7 +153,7 @@ fn say_sends_only_the_text_and_wait_by_default() {
 fn say_sends_the_contract_s_field_names_for_every_option() {
     let (client, server) = fake(vec![(
         200,
-        r#"{"id":"u-2","sentences":1,"played_ms":1830}"#,
+        r#"{"id":"u-2","sentences":1,"played_ms":1830,"stopped":true}"#,
     )]);
     let options = SayOptions {
         voice: Some("en_US-ljspeech-medium".into()),
@@ -160,7 +161,7 @@ fn say_sends_the_contract_s_field_names_for_every_option() {
         wait: true,
     };
     let said = client.say("Done.", &options).unwrap();
-    assert_eq!(said.played_ms, Some(1830));
+    assert_eq!((said.played_ms, said.stopped), (Some(1830), Some(true)));
     let seen = server.join().unwrap();
     assert_eq!(
         seen[0].json(),
