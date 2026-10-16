@@ -1,9 +1,11 @@
 //! A Server-Sent Events feed of the bus, and the page that draws it.
 //!
 //! `GET /` answers the page. `GET /events` answers `text/event-stream`: the events the feed
-//! kept (the last `history`), then each new one, as `id: <n>`, `event: <kind>` and
+//! kept (the last `history`), then each new one, as `id: <run>-<n>`, `event: <kind>` and
 //! `data: <json>`. A browser that reconnects sends the last id it saw (`Last-Event-ID`) and
-//! gets only what came after, so nothing is counted twice. `GET /events?replay` answers the
+//! gets only what came after, so nothing is counted twice. Each feed has its own `<run>`: a
+//! browser that reconnects to a new run at the same address sends an id of the old one, and
+//! gets everything the new run kept. `GET /events?replay` answers the
 //! kept events and closes: a run seen after the fact, or by a browser with no live
 //! connection. A slow browser loses events instead of slowing anything down: the feed only
 //! observes. It binds where it is told; give it a loopback address.
@@ -12,18 +14,32 @@ use crate::bus::Bus;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Events a browser may fall behind by before it loses some.
 const CLIENT_QUEUE: usize = 4096;
 const MAX_HEAD: usize = 8 << 10;
 
+/// A name no other feed has had: the clock, and a count for two feeds started in the same tick.
+fn run_tag() -> Arc<str> {
+    static STARTED: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    format!(
+        "{:x}",
+        nanos.wrapping_add(STARTED.fetch_add(1, Ordering::Relaxed))
+    )
+    .into()
+}
+
 struct Hub {
     history: VecDeque<(u64, Arc<str>)>,
+    run: Arc<str>,
     next_id: u64,
     keep: usize,
     clients: Vec<SyncSender<Arc<str>>>,
@@ -52,8 +68,10 @@ impl Feed {
         let addr = listener.local_addr()?;
         let stop = Arc::new(AtomicBool::new(false));
         let clients = Arc::new(AtomicUsize::new(0));
+        let run = run_tag();
         let hub = Arc::new(Mutex::new(Hub {
             history: VecDeque::new(),
+            run: run.clone(),
             next_id: 1,
             keep: history,
             clients: Vec::new(),
@@ -68,8 +86,13 @@ impl Feed {
                         let mut h = hub.lock().unwrap_or_else(|e| e.into_inner());
                         let id = h.next_id;
                         h.next_id += 1;
-                        let frame: Arc<str> =
-                            format!("id: {id}\nevent: {}\ndata: {}\n\n", e.kind, e.json()).into();
+                        let frame: Arc<str> = format!(
+                            "id: {}-{id}\nevent: {}\ndata: {}\n\n",
+                            h.run,
+                            e.kind,
+                            e.json()
+                        )
+                        .into();
                         if h.keep > 0 {
                             if h.history.len() == h.keep {
                                 h.history.pop_front();
@@ -99,9 +122,10 @@ impl Feed {
                 while !stop.load(Ordering::Relaxed) {
                     match listener.accept() {
                         Ok((stream, _)) => {
-                            let (hub, stop, clients) = (hub.clone(), stop.clone(), clients.clone());
+                            let (hub, stop, clients, run) =
+                                (hub.clone(), stop.clone(), clients.clone(), run.clone());
                             std::thread::spawn(move || {
-                                let _ = answer(stream, page, &hub, &stop, &clients);
+                                let _ = answer(stream, page, &run, &hub, &stop, &clients);
                             });
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -141,6 +165,7 @@ impl Feed {
 fn answer(
     mut stream: TcpStream,
     page: &str,
+    run: &str,
     hub: &Mutex<Hub>,
     stop: &AtomicBool,
     clients: &AtomicUsize,
@@ -163,11 +188,14 @@ fn answer(
     let replay = query
         .split('&')
         .any(|q| q == "replay" || q.starts_with("replay="));
+    // An id of another run, or of no run, counts as nothing seen.
     let last_seen: u64 = head
         .lines()
         .filter_map(|l| l.split_once(':'))
         .find(|(k, _)| k.trim().eq_ignore_ascii_case("last-event-id"))
-        .and_then(|(_, v)| v.trim().parse().ok())
+        .and_then(|(_, v)| v.trim().split_once('-'))
+        .filter(|(r, _)| *r == run)
+        .and_then(|(_, n)| n.parse().ok())
         .unwrap_or(0);
     if method != "GET" {
         return reply(

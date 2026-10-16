@@ -82,6 +82,7 @@
 
   const st = { meta: null, samples: [], nodes: [], acc: [], spend: [], routes: {}, beliefs: {}, windows: {},
                sums: {}, sumSeries: {}, last: null, pleasure: 0, pain: 0, judged: 0, good: 0, dirty: true };
+  // `fresh` (below, by meta) rebuilds this same shape for a new run.
   const axis = () => ({ axisLine: { lineStyle: { color: line() } }, axisLabel: { color: muted() }, splitLine: { lineStyle: { color: line() } } });
 
   function draw() {
@@ -177,7 +178,17 @@
     for (const k of Object.keys(handlers)) es.addEventListener(k, e => dispatch(k, e.data));
   }
 
+  // A run starts with its meta: a second meta is a new run, so everything drawn so far goes,
+  // and each figure shows what it showed before the first run.
+  const fresh = () => ({ meta: null, samples: [], nodes: [], acc: [], spend: [], routes: {}, beliefs: {}, windows: {},
+                         sums: {}, sumSeries: {}, last: null, pleasure: 0, pain: 0, judged: 0, good: 0, dirty: true });
+  const blank = Object.fromEntries(['k-judged', 'k-acc', 'k-jev', 'k-claude', 'k-signals', 'k-petri']
+    .map(k => [k, $(k).textContent]));
   on('meta', e => {
+    if (st.meta) {
+      Object.assign(st, fresh());
+      for (const [k, text] of Object.entries(blank)) $(k).textContent = text;
+    }
     st.meta = e.data;
     const p = e.data.petri;
     $('meta').textContent = `politique ${e.data.policy ?? '–'} · ${e.data.items ?? '?'} questions` + (e.data.jev_ms ? ` · Jev rejoué à ${e.data.jev_ms} ms` : '');

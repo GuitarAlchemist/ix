@@ -357,22 +357,48 @@ fn the_feed_streams_bus_events_to_a_browser() {
     }
     let text = String::from_utf8_lossy(&got);
     assert!(text.contains("text/event-stream"));
+    let run = text
+        .split("id: ")
+        .nth(1)
+        .and_then(|rest| rest.split_once('-'))
+        .map(|(run, _)| run.to_string())
+        .expect("an id names its run");
     assert!(
-        text.contains("id: 1\nevent: meta"),
+        text.contains(&format!("id: {run}-1\nevent: meta")),
         "the history comes first: {text}"
     );
-    assert!(text.contains("id: 2\nevent: signal"), "{text}");
+    assert!(
+        text.contains(&format!("id: {run}-2\nevent: signal")),
+        "{text}"
+    );
     drop(events);
 
-    // A browser that reconnects after id 1 gets only what followed it.
-    let mut again = std::net::TcpStream::connect(addr).unwrap();
-    again
-        .write_all(b"GET /events?replay HTTP/1.1\r\nHost: x\r\nLast-Event-ID: 1\r\n\r\n")
+    let replay_after = |last: &str| {
+        let mut again = std::net::TcpStream::connect(addr).unwrap();
+        write!(
+            again,
+            "GET /events?replay HTTP/1.1\r\nHost: x\r\nLast-Event-ID: {last}\r\n\r\n"
+        )
         .unwrap();
-    let mut replayed = String::new();
-    again.read_to_string(&mut replayed).unwrap();
+        let mut replayed = String::new();
+        again.read_to_string(&mut replayed).unwrap();
+        replayed
+    };
+    // A browser that reconnects after id 1 gets only what followed it.
+    let replayed = replay_after(&format!("{run}-1"));
     assert!(!replayed.contains("event: meta"), "{replayed}");
-    assert!(replayed.contains("id: 2\nevent: signal"), "{replayed}");
+    assert!(
+        replayed.contains(&format!("id: {run}-2\nevent: signal")),
+        "{replayed}"
+    );
+    // One that saw a run before this one, or an id with no run, gets all of this one.
+    for last in ["0-5", "1"] {
+        let replayed = replay_after(last);
+        assert!(
+            replayed.contains("event: meta") && replayed.contains("event: signal"),
+            "after {last}: {replayed}"
+        );
+    }
 
     // A replay with no id answers everything kept, and closes.
     let mut all = std::net::TcpStream::connect(addr).unwrap();
