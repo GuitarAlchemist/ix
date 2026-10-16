@@ -133,10 +133,16 @@ fn args() -> Args {
         Policy::Local => "local",
         Policy::Jev => "jev",
     };
+    // Every flag that changes the result is in the name, so one run never overwrites another.
     a.out = out.unwrap_or_else(|| {
         std::env::temp_dir().join("ix-stream").join(format!(
-            "route-{name}{}-seed{}",
+            "route-{name}{}-e{}-share{}-jev{}msx{}-claude{}-seed{}",
             if a.wait { "-wait" } else { "" },
+            a.epochs,
+            a.jev_share,
+            a.jev_ms,
+            a.jev_workers,
+            a.claude,
             a.seed
         ))
     });
