@@ -19,7 +19,7 @@ use crate::budget::{Budget, Grant};
 use crate::node::Ask;
 use crate::oracle::{Task, FAMILIES};
 use crate::store::Draft;
-use crate::{clip, Host};
+use crate::{clip, world, Host};
 use mlua::{
     ChunkMode, Debug, HookTriggers, Lua, LuaOptions, StdLib, Table, Thread, Value, Variadic,
     VmState,
@@ -413,6 +413,81 @@ fn sandbox(host: &Rc<Host>, budget: &Rc<Budget>, job: &Job<'_>) -> mlua::Result<
             }
         })?,
     )?;
+
+    // The voice: off unless the person turned it on.
+    let (h, b) = (host.clone(), budget.clone());
+    g.raw_set(
+        "say",
+        lua.create_function(move |lua, (text, opts): (String, Option<Table>)| {
+            let wait = match opts.as_ref() {
+                Some(t) => t.raw_get::<Option<bool>>("wait")?.unwrap_or(false),
+                None => false,
+            };
+            let v = h.say(&b, &text, wait).map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let voice = lua.create_table()?;
+    let h = host.clone();
+    voice.raw_set(
+        "stop",
+        lua.create_function(move |lua, ()| {
+            let v = h.voice_stop().map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    g.raw_set("voice", voice)?;
+
+    // GitHub, read only: off unless the person turned it on, and only for owners they allowed.
+    let gh = lua.create_table()?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "prs",
+        lua.create_function(move |lua, repo: String| {
+            let v = h
+                .gh(&b, "prs", &repo, |get, r| world::prs(get, r))
+                .map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "checks",
+        lua.create_function(move |lua, (repo, number): (String, u64)| {
+            let v = h
+                .gh(&b, "checks", &repo, |get, r| world::checks(get, r, number))
+                .map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "runs",
+        lua.create_function(move |lua, (repo, opts): (String, Option<Table>)| {
+            let branch = opt_str(opts.as_ref(), "branch")?;
+            let v = h
+                .gh(&b, "runs", &repo, |get, r| {
+                    world::runs(get, r, branch.as_deref())
+                })
+                .map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "log",
+        lua.create_function(
+            move |lua, (repo, job_id, lines): (String, u64, Option<usize>)| {
+                let v = h
+                    .gh(&b, "log", &repo, |get, r| {
+                        world::log(get, r, job_id, lines.unwrap_or(40))
+                    })
+                    .map_err(mlua::Error::runtime)?;
+                to_lua(lua, &v)
+            },
+        )?,
+    )?;
+    g.raw_set("gh", gh)?;
 
     // The store. A loop can propose a draft; it cannot accept one.
     let loops = lua.create_table()?;
