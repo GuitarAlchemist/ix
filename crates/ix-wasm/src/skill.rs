@@ -138,7 +138,8 @@ pub fn wasm_run_output_schema() -> Value {
             "output": { "description": "The stage's stdout, as JSON when it parses, else as text." },
             "exit": { "type": "integer" },
             "fuel_used": { "type": "integer", "description": "The same on every run of one stage on one input." },
-            "stage": { "type": "string", "description": "The stage's id: give it as `stage` to reuse it." }
+            "stage": { "type": "string", "description": "The stage's id: give it as `stage` to reuse it." },
+            "closed": { "type": "array", "items": { "type": "string" }, "description": "WASI functions the module imports that only answer an error (files, sockets)." }
         }
     })
 }
@@ -167,5 +168,8 @@ pub fn wasm_run(params: Value) -> Result<Value, String> {
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let output = serde_json::from_str(text.trim()).unwrap_or_else(|_| Value::String(text.into()));
-    Ok(json!({ "output": output, "exit": out.exit, "fuel_used": out.fuel_used, "stage": id }))
+    Ok(json!({
+        "output": output, "exit": out.exit, "fuel_used": out.fuel_used, "stage": id,
+        "closed": program.closed(),
+    }))
 }

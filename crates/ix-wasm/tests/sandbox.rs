@@ -104,23 +104,41 @@ fn an_endless_loop_stops_on_fuel() {
 }
 
 #[test]
-fn a_module_that_asks_for_files_is_refused_before_it_runs() {
+fn a_module_that_opens_a_file_is_told_no_and_the_record_says_so() {
+    // path_open from the first descriptor past stdio, which a preopen would be.
     let wat = r#"
 (module
   (import "wasi_snapshot_preview1" "path_open"
-    (func (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
-  (func (export "_start")))
+    (func $open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 64) "secret.txt")
+  (func (export "_start")
+    (call $exit (call $open (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 10)
+      (i32.const 0) (i64.const -1) (i64.const -1) (i32.const 0) (i32.const 32)))))
 "#;
-    let e = Program::new(wat.as_bytes()).err().unwrap();
-    assert!(
-        matches!(&e, Error::Refused(m) if m.contains("path_open")),
-        "{e}"
-    );
+    const EBADF: i32 = 8;
+    let p = Program::new(wat.as_bytes()).unwrap();
+    assert_eq!(p.closed(), ["path_open"]);
+    assert_eq!(p.run(b"", &limits()).unwrap().exit, EBADF);
+}
+
+#[test]
+fn a_module_that_imports_outside_wasi_is_refused_before_it_runs() {
     let e = Program::new(br#"(module (import "env" "socket" (func)) (func (export "_start")))"#)
         .err()
         .unwrap();
     assert!(
         matches!(&e, Error::Refused(m) if m.contains("env.socket")),
+        "{e}"
+    );
+    let e = Program::new(
+        br#"(module (import "wasi_snapshot_preview1" "sock_open" (func)) (func (export "_start")))"#,
+    )
+    .err()
+    .unwrap();
+    assert!(
+        matches!(&e, Error::Refused(m) if m.contains("sock_open")),
         "{e}"
     );
 }

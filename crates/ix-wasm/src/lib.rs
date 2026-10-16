@@ -5,8 +5,9 @@
 //! written in Rust, and sees only what [the shim](wasi) gives it:
 //!
 //! - stdin, stdout and stderr, and nothing else: no preopened directory, so no file system, and
-//!   no socket. A module that imports a function the shim does not give (`path_open`,
-//!   `fd_filestat_get`, `sock_accept`, ...) is refused when it is loaded, before it runs;
+//!   no socket. Every preview 1 function is linked, so a module from any toolchain loads, but
+//!   the file and socket functions answer an error ([`Program::closed`] lists those a module
+//!   imports). A module importing anything outside preview 1 is refused when it is loaded;
 //! - one argument (`stage`) and an empty environment;
 //! - a clock that starts at 1 ns and moves 1 µs per reading and by the whole timeout of every
 //!   sleep, and a random source seeded by [`Limits::seed`]. Two runs on the same input give the
@@ -99,6 +100,7 @@ pub struct Program {
     engine: Engine,
     module: Module,
     linker: Linker<wasi::Ctx>,
+    closed: Vec<String>,
 }
 
 impl Program {
@@ -118,9 +120,12 @@ impl Program {
         config.compilation_mode(CompilationMode::Eager);
         let engine = Engine::new(&config);
         let module = Module::new(&engine, bytes).map_err(|e| Error::Invalid(e.to_string()))?;
+        let mut closed = Vec::new();
         for import in module.imports() {
             let (m, n) = (import.module(), import.name());
-            if m != wasi::MODULE || !wasi::GIVEN.contains(&n) {
+            if m == wasi::MODULE && wasi::CLOSED.contains(&n) {
+                closed.push(n.to_string());
+            } else if m != wasi::MODULE || !wasi::GIVEN.contains(&n) {
                 return Err(Error::Refused(format!(
                     "it imports {m}.{n}, which the sandbox does not give (it gives stdin, stdout, \
                      stderr, args, a clock and a random source: no files, no network)"
@@ -138,7 +143,14 @@ impl Program {
             engine,
             module,
             linker,
+            closed,
         })
+    }
+
+    /// The preview 1 functions this module imports that answer only an error (files, sockets,
+    /// signals). A stage that calls one is told no; the list is for the record of a run.
+    pub fn closed(&self) -> &[String] {
+        &self.closed
     }
 
     /// The module's imports, as `module.name`.

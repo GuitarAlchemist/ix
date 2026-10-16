@@ -122,7 +122,7 @@ fn a_go_stage_cannot_fetch_a_module() {
 
 #[test]
 #[ignore = "needs the Go toolchain"]
-fn a_go_stage_that_opens_a_file_is_refused_when_loaded() {
+fn a_go_stage_that_opens_a_file_reads_nothing() {
     let src = r#"package main
 
 import "os"
@@ -134,8 +134,12 @@ func main() {
 "#;
     let (_cache, go) = go();
     let built = go.build(src, deadline()).unwrap();
-    let e = Program::new(&std::fs::read(&built.path).unwrap())
-        .err()
-        .expect("refused");
-    assert!(e.to_string().contains("does not give"), "{e}");
+    let p = Program::new(&std::fs::read(&built.path).unwrap()).unwrap();
+    assert!(
+        p.closed().iter().any(|f| f == "path_open"),
+        "{:?}",
+        p.closed()
+    );
+    let out = p.run(b"", &Limits::default()).unwrap();
+    assert_eq!((out.exit, out.stdout.len()), (0, 0));
 }
