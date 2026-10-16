@@ -12,7 +12,9 @@
 //! - `loops.propose` / `loops.list` / `loops.load` reach the [`Store`]. A loop can propose; only
 //!   a person, through `ix-loop accept`, moves a proposal into the library;
 //! - `say(text, opts)` / `voice.stop()` speak aloud, and `gh.prs` / `gh.checks` / `gh.runs` /
-//!   `gh.log` read GitHub. Both are [off](world) unless the person turns them on.
+//!   `gh.log` read GitHub. Both are [off](world) unless the person turns them on;
+//! - `wasm.go` / `wasm.wat` build a stage in another language and `wasm.run` runs it in a WASI
+//!   sandbox, JSON in and JSON out. [Off](wasm) unless the person turns it on.
 //!
 //! The model drafts, the host's oracles judge, and a person promotes (ADR-0011).
 
@@ -22,6 +24,7 @@ pub mod node;
 pub mod oracle;
 pub mod sandbox;
 pub mod store;
+pub mod wasm;
 pub mod world;
 
 pub use budget::{Budget, Grant, MAX_DEPTH};
@@ -30,6 +33,7 @@ pub use node::{Answer, Ask, ClaudeCode, Scripted, SemanticNode};
 pub use oracle::{Check, Task, FAMILIES};
 pub use sandbox::{Engine, Job, Lua54};
 pub use store::{Draft, Store};
+pub use wasm::Stages;
 pub use world::{GhCli, GitHub, Voice, VoiceService};
 
 use serde_json::{json, Value as Json};
@@ -88,6 +92,7 @@ pub struct Host {
     /// The owners whose repositories `gh` may read.
     owners: Vec<String>,
     gh_reads: Cell<u32>,
+    stages: Option<Stages>,
 }
 
 pub(crate) fn clip(s: &str, n: usize) -> String {
@@ -120,7 +125,14 @@ impl Host {
             github: Box::new(world::GITHUB_OFF),
             owners: Vec::new(),
             gh_reads: Cell::new(0),
+            stages: None,
         }
+    }
+
+    /// Turns stages in other languages on.
+    pub fn with_wasm(mut self, stages: Stages) -> Self {
+        self.stages = Some(stages);
+        self
     }
 
     /// Turns the voice on.
@@ -271,6 +283,54 @@ impl Host {
         let out = read(&get, &repo);
         self.ledger.record(json!({
             "kind": "gh", "what": what, "repo": repo, "depth": budget.depth(), "ok": out.is_ok(),
+        }));
+        out
+    }
+
+    fn stages(&self) -> Result<&Stages, String> {
+        self.stages
+            .as_ref()
+            .ok_or_else(|| wasm::WASM_OFF.to_string())
+    }
+
+    /// Builds Go source into a stage: its id, and whether an earlier build was reused.
+    pub fn wasm_go(&self, budget: &Budget, source: &str) -> Result<(String, bool), String> {
+        let started = Instant::now();
+        let out = self.stages()?.go(budget, source);
+        self.ledger.record(json!({
+            "kind": "wasm.go", "depth": budget.depth(), "ok": out.is_ok(),
+            "id": out.as_ref().ok().map(|(id, _)| id.clone()),
+            "cached": out.as_ref().ok().map(|(_, c)| *c),
+            "ms": started.elapsed().as_millis() as u64,
+        }));
+        out
+    }
+
+    /// Checks WAT text and stores it as a stage: its id.
+    pub fn wasm_wat(&self, budget: &Budget, text: &str) -> Result<String, String> {
+        let out = self.stages()?.wat(text);
+        self.ledger.record(json!({
+            "kind": "wasm.wat", "depth": budget.depth(), "ok": out.is_ok(),
+            "id": out.as_ref().ok(),
+        }));
+        out
+    }
+
+    /// Runs stage `id` on `input`, charging its fuel to `budget`.
+    pub fn wasm_run(
+        &self,
+        budget: &Budget,
+        id: &str,
+        input: &Json,
+        fuel: Option<u64>,
+    ) -> Result<wasm::Ran, String> {
+        let started = Instant::now();
+        let out = self.stages()?.run(budget, id, input, fuel);
+        self.ledger.record(json!({
+            "kind": "wasm.run", "depth": budget.depth(), "id": id,
+            "ok": out.as_ref().is_ok_and(|r| r.value.is_ok()),
+            "fuel_used": out.as_ref().map(|r| r.fuel_used).unwrap_or(0),
+            "ms": started.elapsed().as_millis() as u64,
         }));
         out
     }

@@ -489,6 +489,63 @@ fn sandbox(host: &Rc<Host>, budget: &Rc<Budget>, job: &Job<'_>) -> mlua::Result<
     )?;
     g.raw_set("gh", gh)?;
 
+    // Stages in other languages: off unless the person turned them on. Each answers like `run`:
+    // `ok, value or why, stats`.
+    let wasm = lua.create_table()?;
+    let (h, b) = (host.clone(), budget.clone());
+    wasm.raw_set(
+        "go",
+        lua.create_function(move |lua, source: String| {
+            let r = h.wasm_go(&b, &source);
+            match r {
+                Ok((id, cached)) => {
+                    let info = lua.create_table()?;
+                    info.raw_set("cached", cached)?;
+                    Ok((
+                        true,
+                        Value::String(lua.create_string(&id)?),
+                        Value::Table(info),
+                    ))
+                }
+                Err(e) => Ok((false, Value::String(lua.create_string(&e)?), Value::Nil)),
+            }
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    wasm.raw_set(
+        "wat",
+        lua.create_function(move |lua, text: String| {
+            let r = h.wasm_wat(&b, &text);
+            let (ok, s) = match r {
+                Ok(id) => (true, id),
+                Err(e) => (false, e),
+            };
+            Ok((ok, Value::String(lua.create_string(&s)?)))
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    wasm.raw_set(
+        "run",
+        lua.create_function(
+            move |lua, (id, input, opts): (String, Value, Option<Table>)| {
+                let input = to_json(&input, 0)
+                    .map_err(|e| mlua::Error::runtime(format!("wasm.run: input: {e}")))?;
+                let fuel = opt_num(opts.as_ref(), "fuel")?.map(|f| f.max(0.0) as u64);
+                match h.wasm_run(&b, &id, &input, fuel) {
+                    Ok(ran) => {
+                        let stats = to_lua(lua, &crate::wasm::stats(&ran))?;
+                        match ran.value {
+                            Ok(v) => Ok((true, to_lua(lua, &v)?, stats)),
+                            Err(e) => Ok((false, Value::String(lua.create_string(&e)?), stats)),
+                        }
+                    }
+                    Err(e) => Ok((false, Value::String(lua.create_string(&e)?), Value::Nil)),
+                }
+            },
+        )?,
+    )?;
+    g.raw_set("wasm", wasm)?;
+
     // The store. A loop can propose a draft; it cannot accept one.
     let loops = lua.create_table()?;
     let (h, b) = (host.clone(), budget.clone());

@@ -1,7 +1,7 @@
 //! `ix-loop`: run a loop, list what loops proposed, accept a proposal.
 //!
 //! ```text
-//! ix-loop run <script.lua> [--calls N] [--fuel N] [--seconds N] [--voice] [--github [--gh-owner O]...]
+//! ix-loop run <script.lua> [--calls N] [--fuel N] [--seconds N] [--voice] [--github [--gh-owner O]...] [--wasm]
 //! ix-loop proposals
 //! ix-loop accept <id>
 //! ```
@@ -11,16 +11,17 @@
 //!
 //! `--voice` lets loops speak through the local voice service (`IX_VOICE_URL`, else
 //! 127.0.0.1:59126). `--github` lets them read GitHub through `gh`, for the owners named by
-//! `--gh-owner` (GuitarAlchemist when none is named).
+//! `--gh-owner` (GuitarAlchemist when none is named). `--wasm` lets them build and run stages in
+//! other languages (Go through `IX_GO`, else `go` on `PATH`), cached under `<store>/wasm`.
 
-use ix_loop::{ClaudeCode, GhCli, Grant, Host, Ledger, Store, VoiceService};
+use ix_loop::{ClaudeCode, GhCli, Grant, Host, Ledger, Stages, Store, VoiceService};
 use serde_json::json;
 use std::process::ExitCode;
 use std::rc::Rc;
 
 const USAGE: &str =
     "usage: ix-loop run <script.lua> [--calls N] [--fuel N] [--seconds N] [--voice] \
-                     [--github [--gh-owner O]...] | proposals | accept <id>";
+                     [--github [--gh-owner O]...] [--wasm] | proposals | accept <id>";
 
 /// What `run` was asked for.
 struct RunFlags {
@@ -28,6 +29,7 @@ struct RunFlags {
     voice: bool,
     github: bool,
     owners: Vec<String>,
+    wasm: bool,
 }
 
 fn run_flags(flags: &[String]) -> Result<RunFlags, String> {
@@ -40,12 +42,14 @@ fn run_flags(flags: &[String]) -> Result<RunFlags, String> {
         voice: false,
         github: false,
         owners: Vec::new(),
+        wasm: false,
     };
     let mut it = flags.iter();
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--voice" => f.voice = true,
             "--github" => f.github = true,
+            "--wasm" => f.wasm = true,
             "--gh-owner" => f
                 .owners
                 .push(it.next().ok_or("--gh-owner needs an owner")?.to_string()),
@@ -94,6 +98,7 @@ fn main() -> ExitCode {
             };
             let node = Rc::new(ClaudeCode::new(store.root()));
             let ledger = Ledger::at(store.root().join("ledger.jsonl"));
+            let stages = store.root().join("wasm");
             let mut host = Host::new(node, store).with_ledger(ledger);
             if flags.voice {
                 match ix_voice::Client::from_env() {
@@ -109,6 +114,10 @@ fn main() -> ExitCode {
                     bin: std::env::var_os("GH_BIN").map_or_else(|| "gh".into(), Into::into),
                 };
                 host = host.with_github(Box::new(gh), flags.owners);
+            }
+            if flags.wasm {
+                let go = std::env::var_os("IX_GO").unwrap_or_else(|| "go".into());
+                host = host.with_wasm(Stages::new(stages, go));
             }
             let host = Rc::new(host);
             let out = host.run(&src, &args[1], &flags.grant);

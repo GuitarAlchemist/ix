@@ -12,6 +12,7 @@ description = "Agentic loops written in sandboxed Lua: budgets carved from paren
 [dependencies]
 ix-origami = { workspace = true }
 ix-voice = { workspace = true }
+ix-wasm = { workspace = true }
 mlua = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
