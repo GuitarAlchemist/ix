@@ -220,4 +220,4 @@ criterion = { version = "0.5", features = ["html_reports"] }
 # which IX never sets. Remove once a libduckdb-sys release requires zip 9
 # (duckdb/duckdb-rs#902). crates/ix-duck-ext carries the same patch.
 [patch.crates-io]
-zip = { git = "https://github.com/zip-rs/zip2", tag = "v6.0.0" }
+zip = { git = "https://github.com/zip-rs/zip2", rev = "abfc23d19e5c6038cba27eb3a897bc34c6d5bf86" } # tag v6.0.0

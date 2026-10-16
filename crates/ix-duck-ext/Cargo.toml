@@ -33,4 +33,4 @@ ix-optick = { path = "../ix-optick" }
 # Temporary, same as the workspace root: every `zip` below 9.0.3 is yanked and
 # libduckdb-sys still requires `zip = "^6"`. Remove with the root patch.
 [patch.crates-io]
-zip = { git = "https://github.com/zip-rs/zip2", tag = "v6.0.0" }
+zip = { git = "https://github.com/zip-rs/zip2", rev = "abfc23d19e5c6038cba27eb3a897bc34c6d5bf86" } # tag v6.0.0
