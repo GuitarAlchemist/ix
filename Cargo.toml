@@ -92,6 +92,7 @@ members = [
     "crates/ix-voice",
     "crates/ix-wasm",
     "crates/ix-stream",
+    "crates/ix-ctl",
 ]
 
 [workspace.package]
@@ -209,6 +210,7 @@ mlua = { version = "0.10", features = ["lua54", "vendored"] }
 ix-voice = { path = "crates/ix-voice", version = "0.1.0" }
 ix-wasm = { path = "crates/ix-wasm", version = "0.1.0" }
 ix-stream = { path = "crates/ix-stream", version = "0.1.0" }
+ix-ctl = { path = "crates/ix-ctl", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 

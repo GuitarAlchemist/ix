@@ -1,0 +1,163 @@
+//! The smallest HTTP/1.1 client the plane needs: one request per connection.
+//!
+//! Each request says `Connection: close`, so the answer ends where the connection does. The
+//! body is read by `Content-Length`, by chunks when the plane streams it (Go's server does for
+//! an answer past its buffer), or to the end of the stream.
+
+use std::io::{self, BufRead, BufReader, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
+
+/// How long a connection may take to open.
+const CONNECT: Duration = Duration::from_secs(2);
+/// How long a read or a write may wait. `stop` answers once the tree is gone, which can take
+/// the plane's 2 s grace and the kill.
+const IO: Duration = Duration::from_secs(15);
+
+pub(crate) struct Response {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+pub(crate) fn request(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    token: &str,
+    body: Option<&[u8]>,
+) -> io::Result<Response> {
+    let mut stream = TcpStream::connect_timeout(&addr, CONNECT)?;
+    stream.set_read_timeout(Some(IO))?;
+    stream.set_write_timeout(Some(IO))?;
+    stream.set_nodelay(true)?;
+
+    // `SocketAddr` prints as `127.0.0.1:port` or `[::1]:port`: the two spellings of a loopback
+    // `Host` the plane accepts. No `Origin` is sent, and the token stays out of the URL.
+    let mut head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\n\
+         Accept: application/json\r\nConnection: close\r\n"
+    );
+    if let Some(body) = body {
+        head.push_str(&format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            body.len()
+        ));
+    }
+    head.push_str("\r\n");
+    let mut out = head.into_bytes();
+    out.extend_from_slice(body.unwrap_or_default());
+    stream.write_all(&out)?;
+    stream.flush()?;
+
+    read_response(BufReader::new(stream))
+}
+
+fn read_response(mut r: impl BufRead) -> io::Result<Response> {
+    let status_line = read_line(&mut r)?;
+    // `HTTP/1.1 200 OK`
+    let status = status_line
+        .split(' ')
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok())
+        .filter(|_| status_line.starts_with("HTTP/1."))
+        .ok_or_else(|| bad(format!("not an HTTP status line: {status_line:?}")))?;
+
+    let mut length = None;
+    let mut chunked = false;
+    loop {
+        let line = read_line(&mut r)?;
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            return Err(bad(format!("not a header: {line:?}")));
+        };
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            length = Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| bad(format!("Content-Length {value:?}")))?,
+            );
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            chunked = value.to_ascii_lowercase().contains("chunked");
+        }
+    }
+
+    let mut body = Vec::new();
+    if chunked {
+        loop {
+            let size_line = read_line(&mut r)?;
+            let size = size_line.split(';').next().unwrap_or("").trim();
+            let size = usize::from_str_radix(size, 16)
+                .map_err(|_| bad(format!("chunk size {size_line:?}")))?;
+            if size == 0 {
+                // Trailers, if any, up to the blank line.
+                while !read_line(&mut r)?.is_empty() {}
+                break;
+            }
+            let start = body.len();
+            body.resize(start + size, 0);
+            r.read_exact(&mut body[start..])?;
+            if !read_line(&mut r)?.is_empty() {
+                return Err(bad("a chunk does not end with CRLF".into()));
+            }
+        }
+    } else if let Some(n) = length {
+        body.resize(n, 0);
+        r.read_exact(&mut body)?;
+    } else {
+        r.read_to_end(&mut body)?;
+    }
+    Ok(Response { status, body })
+}
+
+/// One line without its `\r\n`; the end of the stream before one is an error.
+fn read_line(r: &mut impl BufRead) -> io::Result<String> {
+    let mut line = String::new();
+    if r.read_line(&mut line)? == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "the plane closed the connection mid-answer",
+        ));
+    }
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+fn bad(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chunked_answer_is_put_back_together() {
+        let wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
+                    4\r\n{\"a\"\r\n3;x=1\r\n:1}\r\n0\r\n\r\n";
+        let r = read_response(wire.as_bytes()).unwrap();
+        assert_eq!(200, r.status);
+        assert_eq!(b"{\"a\":1}".as_slice(), r.body.as_slice());
+    }
+
+    #[test]
+    fn a_length_bounds_the_body_and_its_absence_reads_to_the_end() {
+        let r = read_response(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\n\r\n{}tail".as_bytes(),
+        )
+        .unwrap();
+        assert_eq!((401, b"{}".as_slice()), (r.status, r.body.as_slice()));
+        let r = read_response("HTTP/1.1 400 Bad Request\r\n\r\nall of it".as_bytes()).unwrap();
+        assert_eq!(b"all of it".as_slice(), r.body.as_slice());
+    }
+
+    #[test]
+    fn a_cut_answer_is_an_error_not_an_empty_body() {
+        assert!(
+            read_response("HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n{}".as_bytes()).is_err()
+        );
+        assert!(read_response("HTTP/1.1 200 OK\r\n".as_bytes()).is_err());
+        assert!(read_response("SSH-2.0-OpenSSH\r\n\r\n".as_bytes()).is_err());
+    }
+}
