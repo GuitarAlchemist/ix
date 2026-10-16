@@ -168,6 +168,12 @@ contracts (see `docs/contracts/`), not runtime coupling.
   IX reads it, replays it and checks the result: a file that does not parse is refused with its
   line, and a file whose expectations fail is answered, not refused (ADR-0010).
 
+- **Voice service** (`ix-voice`) — the local program that speaks text aloud (`piper-voice`, built
+  on Piper, outside this workspace), reached over HTTP on 127.0.0.1. `ix-voice` is its client:
+  `say`, `stop`, `status`, `voices`. Speech is streamed **by sentence**: the service plays one
+  sentence while it synthesizes the next. Distinct from **voicings** (`ix-voicings`, chord shapes
+  on a fretboard) (ADR-0013).
+
 ## Conventions
 
 See `CLAUDE.md` for the authoritative build/convention/discipline rules
