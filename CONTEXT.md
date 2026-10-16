@@ -113,13 +113,37 @@ contracts (see `docs/contracts/`), not runtime coupling.
   `RunOutcome::gates`, an unhandled `C` fails the run.
 
 - **Stated folded state** (`ix-origami`) — a FOLD crease pattern with one folded frame whose
-  `faceOrders` state the layer order. `ix-origami` checks it and never computes one. The checks
+  `faceOrders` state the layer order. `ix-origami` checks it and never searches for one; the only
+  one it derives is the **replay** of a folding sequence, which is checked like any other. The checks
   treat the sheet as having no thickness. A **thickness `t`** is the sheet's full thickness, in
   crease-pattern units. **Ply** is the most faces stacked at one point, so any stack is at least
   `ply · t` thick. A **panel** is a set of faces joined by flat joints. A **rigid stack** gives
   each panel one height, parallel to the sheet, and exists only if the stated order over
   overlapping panels has no cycle. A rigid-stack refusal means "no stack of parallel panels", not
   "cannot be made" (ADR-0007).
+- **Folding sequence** — a sheet and the steps that fold it, in the order a diagram gives them
+  (Yoshizawa–Randlett). It is the high level of the origami grammar: replaying it gives a stated
+  folded state, the low level, which is what gets checked. A **step** is one operation of the
+  sequence, named in the folder's vocabulary. _Avoid_: instructions, recipe, crease pattern (which
+  is the result, not the sequence).
+- **Landmark** — a named point of the paper (a corner, an edge's midpoint, the centre), used where
+  it lies at the moment a step names it, not where it started. A step's **fold line** is built from
+  landmarks by a Huzita–Justin axiom (through two points, one point onto another, one line onto
+  another); coordinates are only a fallback. _Avoid_: reference point, vertex (a FOLD index).
+- **Simple fold** — a fold that carries every layer on one side of its fold line onto the other
+  side: in front for a valley, behind for a mountain. It is the only fold whose result needs no
+  choice of layers.
+- **Moving side** — the side of the fold line that a step carries over; the other side stays where
+  it is. It is the side of the landmark or line the step names first (`A to C`: A's side;
+  `AB to DC`: AB's side). A fold line through two landmarks names nothing that moves, so that step must name a
+  landmark on the moving side, or it is refused. There is no default side.
+- **Line** (of a step) — named by two points taken where they lie at that step: two corners (`AC`),
+  or any two points joined by `-` (`mAB-mCD`). Its letter order is its direction: a fold that carries
+  one line onto another lands the first direction on the second (`AB to AC` is the bisector at A).
+  _Avoid_: edge, for a line that is not a side of the paper (an edge is a FOLD index).
+- **`.origami` file** — a folding sequence written one statement per line, with `expect` lines.
+  IX reads it, replays it and checks the result: a file that does not parse is refused with its
+  line, and a file whose expectations fail is answered, not refused (ADR-0010).
 
 ## Conventions
 
