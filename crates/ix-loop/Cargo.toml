@@ -10,6 +10,7 @@ keywords = ["agent", "loop", "lua", "sandbox", "budget"]
 description = "Agentic loops written in sandboxed Lua: budgets carved from parent to child, a semantic node (Claude Code headless), host-owned oracles, and a store where loops propose and a person accepts."
 
 [dependencies]
+ix-origami = { workspace = true }
 mlua = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

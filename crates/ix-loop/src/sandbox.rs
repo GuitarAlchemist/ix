@@ -186,6 +186,11 @@ fn task_table(lua: &Lua, task: &Task) -> mlua::Result<Table> {
             t.raw_set("word", word.as_str())?;
             t.raw_set("letter", letter.to_string())?;
         }
+        Task::Origami { faces, ply } => {
+            t.raw_set("faces", *faces)?;
+            t.raw_set("ply", *ply)?;
+            t.raw_set("grammar", ix_origami::GRAMMAR)?;
+        }
     }
     let oracle = task.clone();
     t.raw_set(
