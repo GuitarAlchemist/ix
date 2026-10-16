@@ -12,9 +12,16 @@ description = "Pipeline stages in any language that targets WASI, run sandboxed 
 
 [dependencies]
 blake3 = { workspace = true }
+# `wasm.run`, the ix-pipeline skill (src/skill.rs), registered at link time.
+ix-registry = { workspace = true }
+ix-skill-macros = { workspace = true }
+ix-types = { workspace = true }
+linkme = { workspace = true }
+serde_json = { workspace = true }
 # auto-dispatch: without it an unoptimized build dispatches by tail calls LLVM does not make,
 # and the host's stack overflows on the first long loop.
 wasmi = { version = "2.0.0", default-features = false, features = ["std", "validate", "wat", "deterministic", "auto-dispatch"] }
 
 [dev-dependencies]
+ix-pipeline = { workspace = true }
 tempfile = { workspace = true }

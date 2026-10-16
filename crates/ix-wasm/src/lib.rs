@@ -15,9 +15,11 @@
 //! Every run is bounded by [`Limits`]: fuel (about one unit per instruction), memory, and output.
 //!
 //! [`Program`] loads a module once (binary, or WAT text) and runs it many times. [`go`] builds
-//! Go source into a stage, in a cache keyed by the source and the toolchain.
+//! Go source into a stage, in a cache keyed by the source and the toolchain. [`skill`] makes a
+//! stage one node of an `ix.yaml` pipeline (`wasm.run`).
 
 pub mod go;
+pub mod skill;
 mod wasi;
 
 use std::fmt;
