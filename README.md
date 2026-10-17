@@ -133,6 +133,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | memristive-markov | Experimental | Research prototype |
 | ix-acoustic-tune | Experimental | Acoustic auto-tuning: CMA-ES / ask-tell optimizers + spectral features and losses for synth sound-matching |
 | ix-origami | Experimental | Checks of a flat folded state read from a FOLD file: Kawasaki/Maekawa, face isometry, and the stated layer order (adjacency, cell cycles, taco-tortilla, taco-taco); replays `.origami` folding sequences into a checked folded state |
+| ix-voice | Experimental | Client and CLI of the local voice service (`piper-voice`, outside the workspace): speak text aloud sentence by sentence, stop, list the voices (ADR-0013) |
 
 ### Internal Crates
 
