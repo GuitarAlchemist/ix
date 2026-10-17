@@ -11,10 +11,17 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Bytes a proposal's name may hold.
+pub const MAX_NAME_BYTES: usize = 40;
+/// Bytes a proposal's body may hold.
+pub const MAX_BODY_BYTES: usize = 256 << 10;
+/// Bytes a proposal's note may hold.
+pub const MAX_NOTE_BYTES: usize = 4 << 10;
+
 /// What a loop proposes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Draft {
-    /// 1 to 40 ASCII letters, digits or `-`.
+    /// 1 to [`MAX_NAME_BYTES`] ASCII letters, digits or `-`.
     pub name: String,
     /// `lua` or `pipeline`.
     pub kind: String,
@@ -37,7 +44,8 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 fn valid_name(name: &str) -> bool {
-    (1..=40).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    (1..=MAX_NAME_BYTES).contains(&name.len())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 fn valid_id(id: &str) -> bool {
@@ -82,12 +90,32 @@ impl Store {
     }
 
     /// Writes a proposal and returns its id. It changes nothing in the library.
+    ///
+    /// The body and the note are bounded before the document is built. Escaping grows a byte
+    /// to at most six (`\u001f`), so a proposal file stays under 2 MB.
+    // @ai:invariant a proposal file written by propose is under 2 MB [T:test conf:0.9 src:store::tests::a_proposal_is_bounded_before_it_is_written]
     pub fn propose(&self, draft: &Draft, proposed_by: &str) -> Result<String, String> {
         if !valid_name(&draft.name) {
-            return Err("propose: a name is 1 to 40 letters, digits or -".into());
+            return Err(format!(
+                "propose: a name is 1 to {MAX_NAME_BYTES} letters, digits or -"
+            ));
         }
         if draft.kind != "lua" && draft.kind != "pipeline" {
             return Err("propose: kind is \"lua\" or \"pipeline\"".into());
+        }
+        if draft.body.len() > MAX_BODY_BYTES {
+            return Err(format!(
+                "propose: a body holds at most {MAX_BODY_BYTES} bytes"
+            ));
+        }
+        if draft
+            .note
+            .as_ref()
+            .is_some_and(|n| n.len() > MAX_NOTE_BYTES)
+        {
+            return Err(format!(
+                "propose: a note holds at most {MAX_NOTE_BYTES} bytes"
+            ));
         }
         let dir = self.root.join("proposals");
         std::fs::create_dir_all(&dir).map_err(|e| format!("propose: {e}"))?;
@@ -203,5 +231,39 @@ mod tests {
         assert!(store.propose(&bad, "test").is_err());
         assert!(store.accept("../x").is_err());
         assert_eq!(store.load("../Cargo.toml"), None);
+    }
+
+    #[test]
+    fn a_proposal_is_bounded_before_it_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::at(dir.path());
+        let draft = |body: String, note: Option<String>| Draft {
+            name: "big".into(),
+            kind: "lua".into(),
+            body,
+            note,
+        };
+        let over_body = draft("x".repeat(MAX_BODY_BYTES + 1), None);
+        let over_note = draft(String::new(), Some("x".repeat(MAX_NOTE_BYTES + 1)));
+        assert!(store
+            .propose(&over_body, "test")
+            .unwrap_err()
+            .contains("body"));
+        assert!(store
+            .propose(&over_note, "test")
+            .unwrap_err()
+            .contains("note"));
+        assert!(store.proposals().is_empty());
+
+        // At the limits, with every byte escaped to six.
+        let worst = draft(
+            "\u{1}".repeat(MAX_BODY_BYTES),
+            Some("\u{1}".repeat(MAX_NOTE_BYTES)),
+        );
+        let id = store.propose(&worst, "test").unwrap();
+        let file = dir.path().join("proposals").join(format!("{id}.json"));
+        let size = std::fs::metadata(file).unwrap().len();
+        assert!(size > 6 * MAX_BODY_BYTES as u64, "not escaped: {size}");
+        assert!(size < 2 << 20, "{size}");
     }
 }

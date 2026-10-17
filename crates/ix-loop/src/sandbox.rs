@@ -5,6 +5,9 @@
 //! `require` or `debug`. `load` takes text only, never a precompiled chunk, and `string.dump` is
 //! gone. A state may use 64 MB.
 //!
+//! JSON crosses as Lua values. A `null` inside an array or an object is the global `null` (a null
+//! light userdata), not `nil`, so its key or its slot survives and leaves the loop as `null`.
+//!
 //! Fuel is counted by an instruction hook. Four things could hide a spent budget, and each is
 //! closed: a caught error (`pcall`, `xpcall`, `coroutine.resume`, `coroutine.close` raise it again
 //! once the budget is spent), a message handler (Lua runs `xpcall`'s handler with the hooks still
@@ -18,7 +21,7 @@
 use crate::budget::{Budget, Grant};
 use crate::node::Ask;
 use crate::oracle::{Task, FAMILIES};
-use crate::store::Draft;
+use crate::store::{Draft, MAX_BODY_BYTES, MAX_NAME_BYTES, MAX_NOTE_BYTES};
 use crate::{clip, Host};
 use mlua::{
     ChunkMode, Debug, HookTriggers, Lua, LuaOptions, StdLib, Table, Thread, Value, Variadic,
@@ -67,13 +70,15 @@ impl Engine for Lua54 {
     }
 }
 
-/// A Lua value as JSON. Functions, threads and userdata cannot leave a loop.
+/// A Lua value as JSON. Functions, threads and userdata cannot leave a loop; `null` leaves as
+/// JSON `null`.
 pub fn to_json(v: &Value, depth: usize) -> Result<Json, String> {
     if depth > 32 {
         return Err("a value nested too deep cannot leave a loop".into());
     }
     Ok(match v {
         Value::Nil => Json::Null,
+        _ if v.is_null() => Json::Null,
         Value::Boolean(b) => Json::Bool(*b),
         Value::Integer(i) => json!(i),
         Value::Number(n) => json!(n),
@@ -110,10 +115,18 @@ pub fn to_json(v: &Value, depth: usize) -> Result<Json, String> {
     })
 }
 
-/// JSON as a Lua value.
+/// JSON as a Lua value: `nil` for a `null` at the top, the global `null` for one inside.
 pub fn to_lua(lua: &Lua, j: &Json) -> mlua::Result<Value> {
+    if j.is_null() {
+        return Ok(Value::Nil);
+    }
+    nested(lua, j)
+}
+
+/// A `nil` would delete an object's key or leave a hole in an array.
+fn nested(lua: &Lua, j: &Json) -> mlua::Result<Value> {
     Ok(match j {
-        Json::Null => Value::Nil,
+        Json::Null => Value::NULL,
         Json::Bool(b) => Value::Boolean(*b),
         Json::Number(n) => match n.as_i64() {
             Some(i) => Value::Integer(i),
@@ -123,18 +136,29 @@ pub fn to_lua(lua: &Lua, j: &Json) -> mlua::Result<Value> {
         Json::Array(a) => {
             let t = lua.create_table()?;
             for (i, x) in a.iter().enumerate() {
-                t.raw_set(i + 1, to_lua(lua, x)?)?;
+                t.raw_set(i + 1, nested(lua, x)?)?;
             }
             Value::Table(t)
         }
         Json::Object(o) => {
             let t = lua.create_table()?;
             for (k, x) in o {
-                t.raw_set(k.as_str(), to_lua(lua, x)?)?;
+                t.raw_set(k.as_str(), nested(lua, x)?)?;
             }
             Value::Table(t)
         }
     })
+}
+
+/// A string argument to `propose`, refused before it is copied out of the sandbox's memory
+/// when it holds more than `max` bytes.
+fn field(s: &mlua::String, what: &str, max: usize) -> mlua::Result<String> {
+    if s.as_bytes().len() > max {
+        return Err(mlua::Error::runtime(format!(
+            "propose: a {what} holds at most {max} bytes"
+        )));
+    }
+    Ok(s.to_str()?.to_owned())
 }
 
 fn triggers() -> HookTriggers {
@@ -415,12 +439,21 @@ fn sandbox(host: &Rc<Host>, budget: &Rc<Budget>, job: &Job<'_>) -> mlua::Result<
     loops.raw_set(
         "propose",
         lua.create_function(
-            move |_, (name, kind, body, note): (String, String, String, Option<String>)| {
+            move |_,
+                  (name, kind, body, note): (
+                mlua::String,
+                mlua::String,
+                mlua::String,
+                Option<mlua::String>,
+            )| {
                 let draft = Draft {
-                    name,
-                    kind,
-                    body,
-                    note,
+                    name: field(&name, "name", MAX_NAME_BYTES)?,
+                    kind: field(&kind, "kind", "pipeline".len())?,
+                    body: field(&body, "body", MAX_BODY_BYTES)?,
+                    note: note
+                        .as_ref()
+                        .map(|n| field(n, "note", MAX_NOTE_BYTES))
+                        .transpose()?,
                 };
                 h.propose(&b, &draft).map_err(mlua::Error::runtime)
             },
@@ -490,5 +523,6 @@ fn sandbox(host: &Rc<Host>, budget: &Rc<Budget>, job: &Job<'_>) -> mlua::Result<
         g.raw_set("task", task_table(&lua, task)?)?;
     }
     g.raw_set("input", to_lua(&lua, job.input)?)?;
+    g.raw_set("null", Value::NULL)?;
     Ok(lua)
 }

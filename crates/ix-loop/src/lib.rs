@@ -34,7 +34,8 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::time::Instant;
 
-/// Proposals one root run may write.
+/// Proposals one root run may write. With the store's per-field bounds, a run writes at most
+/// ten proposal files of under 2 MB each.
 pub const MAX_PROPOSALS_PER_RUN: u32 = 10;
 /// Instances one judgement may draw.
 pub const MAX_JUDGED: usize = 20;
@@ -128,8 +129,11 @@ impl Host {
         &self.store
     }
 
-    /// Runs `src` as a root loop with `grant`.
+    /// Runs `src` as a root loop with `grant`. Each root run starts with its own proposal
+    /// allowance and no instance seen, on a reused host too.
     pub fn run(self: &Rc<Self>, src: &str, name: &str, grant: &Grant) -> Outcome {
+        self.proposals.set(0);
+        self.seen.borrow_mut().clear();
         let started = Instant::now();
         let budget = Rc::new(Budget::root(grant));
         let job = Job {
@@ -278,5 +282,58 @@ impl Host {
             "kind": "judge", "family": family, "passed": passed, "total": n,
         }));
         Ok(Judgement { passed, results })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grant() -> Grant {
+        Grant {
+            calls: 5,
+            fuel: 10_000_000,
+            seconds: 60.0,
+        }
+    }
+
+    #[test]
+    fn a_reused_host_gives_each_root_run_its_own_proposal_allowance() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Rc::new(Host::new(
+            Rc::new(Scripted::always("hi")),
+            Store::at(dir.path()),
+        ));
+        let propose = r#"
+            local n = 0
+            while pcall(loops.propose, "p" .. n, "lua", "return 1") do n = n + 1 end
+            return n
+        "#;
+        for _ in 0..2 {
+            let out = host.run(propose, "test", &grant());
+            assert_eq!(out.value, Ok(json!(MAX_PROPOSALS_PER_RUN)));
+        }
+        assert_eq!(
+            host.store().proposals().len(),
+            2 * MAX_PROPOSALS_PER_RUN as usize
+        );
+    }
+
+    #[test]
+    fn a_reused_host_forgets_the_instances_an_earlier_run_saw() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Rc::new(Host::new(
+            Rc::new(Scripted::always("hi")),
+            Store::at(dir.path()),
+        ));
+        let out = host.run(
+            r#"return tasks.get("lipogram:12:e").name"#,
+            "test",
+            &grant(),
+        );
+        assert_eq!(out.value, Ok(json!("lipogram:12:e")));
+        assert!(host.seen.borrow().contains("lipogram:12:e"));
+        host.run("return 1", "test", &grant()).value.unwrap();
+        assert!(host.seen.borrow().is_empty(), "{:?}", host.seen.borrow());
     }
 }
