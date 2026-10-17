@@ -35,7 +35,8 @@ fn list_skills_returns_all_entries() {
     // spectral_distance, 2026-06-07) + mesh_correlate (1, #178 2026-06-23)
     // + petri (1: petri.analyze, ix-petri Place/Transition nets)
     // + duckdb (1: duckdb.query, DuckDB SQL over caller rows)
-    // + origami (1: origami.check, checks of a stated flat folded state).
+    // + origami (1: origami.check, checks of a stated flat folded state)
+    // + knot (1: braid, ix-knot braid closures).
     // If this drifts, update the assertion alongside the batch changes.
     //
     // NOTE (ix#193): this is a *second* hand-typed count oracle for the same registry.
@@ -45,7 +46,7 @@ fn list_skills_returns_all_entries() {
     // a skill still turns `main` red here even when the snapshot and parity agree. It
     // would be better as `assert_eq!(count, snapshot["skills"]["count"])`, or dropped in
     // favour of the snapshot test — left alone here to keep this PR surgical.
-    assert_eq!(count, 70, "expected 70 registry skills, got {count}");
+    assert_eq!(count, 71, "expected 71 registry skills, got {count}");
 }
 
 #[test]

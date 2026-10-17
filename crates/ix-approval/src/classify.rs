@@ -108,6 +108,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         // Checks of a caller-supplied FOLD object or .origami text (passed inline, never read
         // from disk).
         "ix_origami_check",
+        // Knot invariants and strand layout of a caller-supplied braid word.
+        "ix_braid",
         // DuckDB SQL over caller-supplied rows, run by the CLI in -safe mode: no
         // file, extension, ATTACH or network access, configuration locked.
         "ix_duckdb_query",
@@ -282,6 +284,7 @@ mod tests {
             "ix_mesh_correlate",
             "ix_petri_analyze",
             "ix_origami_check",
+            "ix_braid",
             "ix_duckdb_query",
             "ix_assumption_query",
             "ix_assumption_belief_at",
