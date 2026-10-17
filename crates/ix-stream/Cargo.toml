@@ -14,7 +14,12 @@ description = "JSON streams through a graph of threads joined by bounded channel
 ix-petri = { workspace = true }
 # Its DAG says whether the waiting links are acyclic (src/petri.rs).
 ix-pipeline = { workspace = true }
+# `stream.run`, the ix-pipeline skill (src/skill.rs), registered at link time.
+ix-registry = { workspace = true }
 ix-rl = { workspace = true }
+ix-skill-macros = { workspace = true }
+ix-types = { workspace = true }
+linkme = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

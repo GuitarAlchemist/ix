@@ -102,6 +102,60 @@ impl Shape {
             .collect();
         json!({ "nodes": nodes, "edges": edges })
     }
+
+    /// The shape [`Shape::json`] writes, read back. A field left out takes its default: not a
+    /// source, not batching, one worker, and a capacity of 8 (0 for a source). The links of a
+    /// node keep the order they are listed in, which numbers its ports.
+    pub fn from_json(v: &Value) -> Result<Self, String> {
+        let list = |key: &str| {
+            v.get(key)
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("`{key}` must be an array"))
+        };
+        let count = |n: &Value, key: &str, default: usize| match n.get(key) {
+            None | Some(Value::Null) => Ok(default),
+            Some(x) => x
+                .as_u64()
+                .and_then(|x| usize::try_from(x).ok())
+                .ok_or_else(|| format!("`{key}` must be a whole number, got {x}")),
+        };
+        let flag = |n: &Value, key: &str| match n.get(key) {
+            None | Some(Value::Null) => Ok(false),
+            Some(x) => x
+                .as_bool()
+                .ok_or_else(|| format!("`{key}` must be true or false, got {x}")),
+        };
+        let mut shape = Shape::default();
+        for (i, n) in list("nodes")?.iter().enumerate() {
+            let name = n
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("nodes[{i}] has no `name`"))?;
+            let source = flag(n, "source").map_err(|e| format!("nodes[{i}]: {e}"))?;
+            shape.nodes.push(ShapeNode {
+                name: name.to_string(),
+                source,
+                batching: flag(n, "batching").map_err(|e| format!("nodes[{i}]: {e}"))?,
+                cap: count(n, "cap", if source { 0 } else { 8 })
+                    .map_err(|e| format!("nodes[{i}]: {e}"))?,
+                workers: count(n, "workers", 1).map_err(|e| format!("nodes[{i}]: {e}"))?,
+                outs: Vec::new(),
+            });
+        }
+        let n = shape.nodes.len();
+        for (i, e) in list("edges")?.iter().enumerate() {
+            let end = |key: &str| {
+                count(e, key, usize::MAX)
+                    .ok()
+                    .filter(|&k| k < n)
+                    .ok_or_else(|| format!("edges[{i}]: `{key}` must be the index of a node"))
+            };
+            let (from, to) = (end("from")?, end("to")?);
+            let lossy = flag(e, "lossy").map_err(|e| format!("edges[{i}]: {e}"))?;
+            shape.link(from, to, lossy);
+        }
+        Ok(shape)
+    }
 }
 
 /// Clamps on the graph before it becomes a net. `None` keeps the real value.

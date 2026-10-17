@@ -14,10 +14,13 @@
 //! Nothing flows back through the channels. Feedback (quality, cost, budget) goes on the
 //! [`Bus`], which never blocks a publisher, so a loop from a judge back to a gate cannot wedge
 //! the graph. [`petri::check`] tells, before a run, whether the channels themselves can.
+//!
+//! [`skill`] makes a graph one stage of an `ix.yaml` pipeline (`stream.run`).
 
 pub mod bus;
 pub mod gate;
 pub mod petri;
+pub mod skill;
 pub mod source;
 pub mod sql;
 pub mod sse;
