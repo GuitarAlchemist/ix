@@ -1,0 +1,8 @@
+# A triangle, then a smaller triangle: both diagonals.
+origami triangle-twice
+sheet square
+valley A to C      # along the diagonal BD
+valley B to D      # along AC; B and D sat on the first fold line, so they have not moved
+expect ok
+expect faces 4
+expect ply 4
