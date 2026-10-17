@@ -5,12 +5,17 @@ use ix_pipeline::executor::{execute, NoCache};
 use ix_pipeline::lock::LockFile;
 use ix_pipeline::lower::{bind_params, lower, lower_with_gate};
 use ix_pipeline::spec::PipelineSpec;
+use ix_recover::{Begin, Record, Store};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
 use std::path::Path;
 
 const DEFAULT_FILE: &str = "ix.yaml";
+
+/// Home of recoverable runs (`--run-id`), relative to the working directory
+/// like the provenance trail.
+const DEFAULT_RUNS_DIR: &str = "state/pipeline-runs";
 
 /// `ix pipeline new <name>` — scaffold an `ix.yaml` if it doesn't exist.
 pub fn new(name: &str, format: Format) -> Result<(), String> {
@@ -521,12 +526,24 @@ pub(crate) fn parse_params(
 ///
 /// When `stream_ndjson` is true, emits NDJSON events (`start`, `stage_start`,
 /// `stage_complete`, `done`) to stdout in real time as the DAG runs.
+///
+/// With `run_id` the run is recoverable (provisional, `ix-recover`): the first
+/// run under the id publishes its printed output, its summary and its ix.lock
+/// once; a later run under the same id, bound spec and ix binary prints the
+/// recorded output without executing anything.
 pub fn run(
     file: Option<&str>,
     stream_ndjson: bool,
     raw_params: &[String],
+    run_id: Option<&str>,
+    runs_dir: Option<&str>,
     format: Format,
 ) -> Result<(), String> {
+    if run_id.is_some() && stream_ndjson {
+        return Err(
+            "--run-id cannot be combined with --json: a replay has no events to stream".into(),
+        );
+    }
     let path: &str = file.unwrap_or(DEFAULT_FILE);
     let spec = PipelineSpec::from_file(path).map_err(|e| format!("loading {path}: {e}"))?;
     // Bind run-time `--param NAME=VALUE` values into `{param: "name"}` placeholders
@@ -545,6 +562,16 @@ pub fn run(
     // review P1). A `{"from"}` ref that supplies a destructive op is caught here.
     let gate = ConstitutionGate::load().map_err(|e| format!("governance gate: {e}"))?;
     let dag = lower_with_gate(&spec, gate).map_err(|e| format!("lowering {path}: {e}"))?;
+    // A recoverable run reconciles its id after the governance gates and
+    // before any stage runs: a recorded result is replayed, never recomputed.
+    let attempt = match run_id {
+        None => None,
+        Some(id) => match begin_recoverable(id, runs_dir, &spec)? {
+            Begin::Fresh(attempt) => Some((id, attempt)),
+            Begin::Done(record) => return replay(id, "replayed", &record),
+            Begin::Repaired(record) => return replay(id, "receipt repaired, replayed", &record),
+        },
+    };
     let levels = dag.parallel_levels();
     let total_stages = spec.stages.len();
 
@@ -610,17 +637,73 @@ pub fn run(
             }),
         );
     }
-    output::emit(
-        &json!({
-            "path": path,
-            "total_duration_ms": result.total_duration.as_millis() as u64,
-            "cache_hits": result.cache_hits,
-            "stages": stages_out,
-        }),
-        format,
-    )
-    .map_err(|e| format!("{e}"))?;
-    Ok(())
+    let summary = json!({
+        "path": path,
+        "total_duration_ms": result.total_duration.as_millis() as u64,
+        "cache_hits": result.cache_hits,
+        "stages": stages_out,
+    });
+    let Some((id, attempt)) = attempt else {
+        output::emit(&summary, format).map_err(|e| format!("{e}"))?;
+        return Ok(());
+    };
+    // Publish before printing, so whatever this run prints is durable.
+    let stdout = output::render(&summary, format).map_err(|e| format!("{e}"))?;
+    let summary_json = serde_json::to_vec(&summary).map_err(|e| format!("summary: {e}"))?;
+    let record = attempt
+        .publish(&[
+            ("stdout", stdout.as_slice()),
+            ("summary.json", summary_json.as_slice()),
+            ("ix.lock", lock_yaml.as_bytes()),
+        ])
+        .map_err(|e| format!("run {id}: {e}"))?;
+    eprintln!("run {id}: published attempt {}", record.attempt_id());
+    io::stdout()
+        .lock()
+        .write_all(&stdout)
+        .map_err(|e| format!("{e}"))
+}
+
+/// Take ownership of recoverable run `id` and reconcile it against what the
+/// result depends on: the bound spec (params included) and this ix binary.
+// @ai:assumption a pipeline's result is fixed by its bound spec and the ix binary: stage skills are deterministic in their resolved args and have no side effects a replay would need to repeat [U:uncertain conf:0.5]
+fn begin_recoverable(
+    id: &str,
+    runs_dir: Option<&str>,
+    spec: &PipelineSpec,
+) -> Result<Begin, String> {
+    let fail = |e: ix_recover::Error| format!("run {id}: {e}");
+    let store = Store::open(runs_dir.unwrap_or(DEFAULT_RUNS_DIR)).map_err(fail)?;
+    let spec_value = serde_json::to_value(spec).map_err(|e| format!("run {id}: spec: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("run {id}: locating ix: {e}"))?;
+    let exe_sha256 =
+        file_sha256(&exe).map_err(|e| format!("run {id}: hashing {}: {e}", exe.display()))?;
+    let bindings = json!({
+        "spec_sha256": ix_recover::canonical_sha256(&spec_value),
+        "ix_exe_sha256": exe_sha256,
+    });
+    store.begin(id, &bindings).map_err(fail)
+}
+
+fn file_sha256(path: &Path) -> io::Result<String> {
+    let mut hasher = Sha256::new();
+    io::copy(&mut std::fs::File::open(path)?, &mut hasher)?;
+    Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+/// Print what the recorded run printed, byte for byte.
+fn replay(id: &str, how: &str, record: &Record) -> Result<(), String> {
+    let stdout = record
+        .file("stdout")
+        .ok_or_else(|| format!("run {id}: the record has no stdout"))?;
+    eprintln!(
+        "run {id}: {how} attempt {}; nothing executed",
+        record.attempt_id()
+    );
+    io::stdout()
+        .lock()
+        .write_all(stdout)
+        .map_err(|e| format!("{e}"))
 }
 
 fn emit_event(value: &Value) {

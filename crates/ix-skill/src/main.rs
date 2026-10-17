@@ -236,6 +236,17 @@ enum PipelineNoun {
         /// --param dataset=@data.json --param k=3
         #[arg(long = "param", value_name = "NAME=VALUE")]
         param: Vec<String>,
+        /// Make the run recoverable under ID (provisional). The first run with
+        /// ID publishes its output once; a later run with the same ID, spec,
+        /// params and ix binary prints that output byte for byte, in the
+        /// format the first run used, without executing anything. Another
+        /// spec, params or binary under the same ID is a conflict. Not with
+        /// --json.
+        #[arg(long = "run-id", value_name = "ID")]
+        run_id: Option<String>,
+        /// Directory of recoverable runs (default: state/pipeline-runs)
+        #[arg(long = "runs-dir", value_name = "DIR", requires = "run_id")]
+        runs_dir: Option<String>,
     },
     /// Show execution-level DAG structure
     Dag {
@@ -372,9 +383,20 @@ fn dispatch(cli: Cli) -> i32 {
                 try_or(verbs::pipeline::validate(file.as_deref(), fmt))
             }
             PipelineNoun::Dag { file } => try_or(verbs::pipeline::dag(file.as_deref(), fmt)),
-            PipelineNoun::Run { file, json, param } => {
-                try_or(verbs::pipeline::run(file.as_deref(), json, &param, fmt))
-            }
+            PipelineNoun::Run {
+                file,
+                json,
+                param,
+                run_id,
+                runs_dir,
+            } => try_or(verbs::pipeline::run(
+                file.as_deref(),
+                json,
+                &param,
+                run_id.as_deref(),
+                runs_dir.as_deref(),
+                fmt,
+            )),
             PipelineNoun::Schema => try_or(verbs::pipeline::schema(fmt)),
             PipelineNoun::Compile {
                 sentence,

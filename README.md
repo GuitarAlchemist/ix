@@ -133,6 +133,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | memristive-markov | Experimental | Research prototype |
 | ix-acoustic-tune | Experimental | Acoustic auto-tuning: CMA-ES / ask-tell optimizers + spectral features and losses for synth sound-matching |
 | ix-origami | Experimental | Checks of a flat folded state read from a FOLD file: Kawasaki/Maekawa, face isometry, and the stated layer order (adjacency, cell cycles, taco-tortilla, taco-taco) |
+| ix-recover | Experimental | Provisional: publishes a run's result once under a caller-chosen run id and reconciles from durable evidence after a process kill (`ix pipeline run --run-id`) |
 
 ### Internal Crates
 
