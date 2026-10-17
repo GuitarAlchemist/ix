@@ -1,0 +1,8 @@
+# The kite base: the sides AB and AD folded onto the diagonal AC.
+origami kite
+sheet square
+valley AB to AC    # the bisector at A, 22.5 degrees above AB; AB's side moves
+valley AD to AC    # the bisector on the other side of the diagonal; AD's side moves
+expect ok
+expect faces 3
+expect ply 2       # the two flaps meet along the diagonal and do not overlap
