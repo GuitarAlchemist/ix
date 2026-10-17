@@ -105,7 +105,8 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         "ix_mesh_correlate",
         // Reachability analysis of a caller-supplied Petri net (inline or PNML string).
         "ix_petri_analyze",
-        // Checks of a caller-supplied FOLD object (passed inline, never read from disk).
+        // Checks of a caller-supplied FOLD object or .origami text (passed inline, never read
+        // from disk).
         "ix_origami_check",
         // Knot invariants and strand layout of a caller-supplied braid word.
         "ix_braid",
