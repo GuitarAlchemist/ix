@@ -33,6 +33,28 @@ longer match the recorded hash.
 
 The nodes need numpy and Pillow, which ComfyUI already has.
 
+## Install from a release
+
+A release is tagged `comfyui-knots-v*` and carries one archive per platform,
+each the pack with its own `ix-mcp` already installed:
+`ix_comfyui-windows-x64.zip`, `ix_comfyui-linux-x64.tar.gz` and
+`ix_comfyui-macos-arm64.tar.gz`, plus `SHA256SUMS`. The
+[release workflow](../../.github/workflows/comfyui-release.yml) builds and tests
+each archive as it will be unpacked, and creates the release as a **draft**:
+it is public only once someone publishes it by hand.
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify ix_comfyui-linux-x64.tar.gz --repo GuitarAlchemist/ix
+tar -xzf ix_comfyui-linux-x64.tar.gz -C /path/to/ComfyUI/custom_nodes
+```
+
+On Windows, extract the zip into `ComfyUI\custom_nodes\` so that the folder is
+`custom_nodes\ix_comfyui`. The attestation shows the archive came from this
+repository's workflow; the pack's own hash check still only catches a binary
+replaced by accident. The macOS build is for Apple silicon and is neither
+signed nor notarized.
+
 ## What the pack will and will not do
 
 - It runs only `ix_comfyui/bin/ix-mcp`, only while its hash matches, and only
