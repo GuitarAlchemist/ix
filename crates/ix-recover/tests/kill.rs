@@ -118,10 +118,12 @@ fn pid_alive(pid: u32) -> bool {
         );
         String::from_utf8_lossy(&out.stdout).contains(&format!(",\"{pid}\","))
     };
+    // LC_ALL=C keeps kill's diagnostic in English, so "No such process" can be matched.
     #[cfg(unix)]
     let alive = {
         let out = Command::new("kill")
             .args(["-0", &pid.to_string()])
+            .env("LC_ALL", "C")
             .output()
             .expect("kill runs");
         let err = String::from_utf8_lossy(&out.stderr);
