@@ -99,5 +99,41 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git fetch *)",
+      "Bash(nvidia-smi)",
+      "Bash(nvidia-smi --query*)",
+      "Bash(gh search *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Select-String *)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Get-CimInstance *)",
+      "Bash(tasklist)",
+      "Bash(tasklist *)",
+      "Bash(wmux ping)",
+      "Bash(wmux browser screenshot*)",
+      "Bash(wmux browser get-text*)",
+      "Bash(wmux browser snapshot*)",
+      "PowerShell(Get-Content *)",
+      "Bash(cargo tree *)",
+      "Bash(cargo metadata *)",
+      "Bash(gh label list *)",
+      "mcp__claude_ai_Microsoft_Learn__microsoft_docs_search",
+      "mcp__claude_ai_Microsoft_Learn__microsoft_docs_fetch",
+      "mcp__ga__get_scale_notes",
+      "mcp__AbletonMCP__get_track_info",
+      "mcp__ga__ga_diatonic_chords",
+      "mcp__AbletonMCP__get_browser_items_at_path",
+      "mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram",
+      "mcp__AbletonMCP__get_session_info",
+      "mcp__ga__ga_key_from_progression",
+      "mcp__ga__ga_analyze_progression",
+      "mcp__ga__ga_chord_intervals",
+      "mcp__ga__ga_set_class_subs",
+      "mcp__ga__ga_chord_to_set",
+      "mcp__notebooklm__get_health"
+    ]
   }
 }
