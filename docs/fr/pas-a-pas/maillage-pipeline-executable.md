@@ -16,8 +16,9 @@ cargo run -p ix-agent --example ix_pipeline_mesh
 
 La pile de pipelines IX est `PipelineSpec` (YAML ou construit en code) → `lower()` →
 `Dag<PipelineNode>` → `executor::execute`, où chaque étape invoque un **skill enregistré**
-(`ix-registry`). (IXQL — le DSL de gouvernance de Demerzel — est *spec-only* ; son exécuteur
-n'existe pas, cf. ADR-0001. `ix-pipeline` est la couche de pipelines IX exécutable.)
+(`ix-registry`). (IXQL — le DSL de gouvernance de Demerzel — exécute les pipelines de
+gouvernance avec son propre exécuteur, `ix-ixql`, et n'exécute pas ce maillage ; cf. ADR-0001.
+`ix-pipeline` est la couche de pipelines IX exécutable.)
 
 ```text
 executable pipeline mesh — 136 stages (N=16 streams)
