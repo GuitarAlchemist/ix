@@ -103,6 +103,7 @@ impl Drop for Reaper {
 }
 
 /// Whether the OS still lists a process with this id, asked of its own tool.
+/// A query that fails fails the test; it is never read as absence.
 fn pid_alive(pid: u32) -> bool {
     #[cfg(windows)]
     let alive = {
@@ -110,15 +111,26 @@ fn pid_alive(pid: u32) -> bool {
             .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
             .output()
             .expect("tasklist runs");
+        assert!(
+            out.status.success(),
+            "tasklist failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).contains(&format!(",\"{pid}\","))
     };
     #[cfg(unix)]
-    let alive = Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("kill runs")
-        .success();
+    let alive = {
+        let out = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .expect("kill runs");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success() || err.contains("No such process"),
+            "kill -0 {pid} failed: {err}"
+        );
+        out.status.success()
+    };
     alive
 }
 
@@ -163,7 +175,10 @@ fn kill_at(point: &str) -> (tempfile::TempDir, Store, PathBuf) {
     let mut child = spawn(t.path(), point, WAIT_SECS);
     let pid = child.child().id();
     wait_for(&mut child, t.path(), point, Duration::from_secs(120));
-    assert!(pid_alive(pid), "pid_alive does not see the live child {pid}");
+    assert!(
+        pid_alive(pid),
+        "pid_alive does not see the live child {pid}"
+    );
     let status = child.kill();
     assert!(
         !status.success() && status.code() != Some(DEADLINE_EXIT),
@@ -228,7 +243,10 @@ fn test_a_wait_that_times_out_still_kills_and_reaps_the_child() {
     let base = t.path().to_path_buf();
     let mut child = spawn(&base, "hold", WAIT_SECS);
     let pid = child.child().id();
-    assert!(pid_alive(pid), "pid_alive does not see the live child {pid}");
+    assert!(
+        pid_alive(pid),
+        "pid_alive does not see the live child {pid}"
+    );
     let failed = panic::catch_unwind(AssertUnwindSafe(move || {
         wait_for(&mut child, &base, "hold", Duration::from_secs(2));
     }))

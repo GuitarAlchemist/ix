@@ -3,6 +3,11 @@
 //! there (`Child::kill`: TerminateProcess on Windows, SIGKILL on Unix), and the
 //! next run under the same id reconciles what it left. A recoverable run
 //! writes nothing outside its store, so a kill leaves nothing elsewhere.
+//!
+//! The pause exists only where `debug_assertions` is on, so the kill tests
+//! run in that profile and are ignored, with that reason, in a release
+//! profile; there a smoke test checks instead that the variable is ignored
+//! and the run publishes normally.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -74,6 +79,7 @@ impl Drop for Reaper {
 }
 
 /// Whether the OS still lists a process with this id, asked of its own tool.
+/// A query that fails fails the test; it is never read as absence.
 fn pid_alive(pid: u32) -> bool {
     #[cfg(windows)]
     let alive = {
@@ -81,15 +87,26 @@ fn pid_alive(pid: u32) -> bool {
             .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
             .output()
             .expect("tasklist runs");
+        assert!(
+            out.status.success(),
+            "tasklist failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).contains(&format!(",\"{pid}\","))
     };
     #[cfg(unix)]
-    let alive = Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(Stdio::null())
-        .status()
-        .expect("kill runs")
-        .success();
+    let alive = {
+        let out = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .expect("kill runs");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success() || err.contains("No such process"),
+            "kill -0 {pid} failed: {err}"
+        );
+        out.status.success()
+    };
     alive
 }
 
@@ -166,6 +183,10 @@ fn assert_nothing_outside_the_store(dir: &Path) {
 }
 
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "IX_RECOVER_PAUSE exists in debug builds only; release builds run the smoke test below"
+)]
 fn test_kill_before_the_commit_leaves_nothing_outside_the_store() {
     let dir = tempdir("staged");
     kill(paused_at(&dir, "staged", 120));
@@ -193,6 +214,10 @@ fn test_kill_before_the_commit_leaves_nothing_outside_the_store() {
 }
 
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "IX_RECOVER_PAUSE exists in debug builds only; release builds run the smoke test below"
+)]
 fn test_kill_after_the_commit_is_repaired_without_executing_again() {
     let dir = tempdir("committed");
     kill(paused_at(&dir, "committed", 120));
@@ -217,6 +242,10 @@ fn test_kill_after_the_commit_is_repaired_without_executing_again() {
 }
 
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "IX_RECOVER_PAUSE exists in debug builds only; release builds run the smoke test below"
+)]
 fn test_a_paused_ix_left_alone_stops_itself_at_its_deadline() {
     let dir = tempdir("deadline");
     let mut ix = paused_at(&dir, "staged", 1);
@@ -226,5 +255,33 @@ fn test_a_paused_ix_left_alone_stops_itself_at_its_deadline() {
         thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(ix.reap().code(), Some(DEADLINE_EXIT));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "debug builds honour IX_RECOVER_PAUSE; this checks that release builds ignore it"
+)]
+fn test_a_release_ix_ignores_the_pause_and_publishes() {
+    let dir = tempdir("release");
+    let marker = dir.join("staged.reached");
+    let out = ix(&dir)
+        .env(
+            "IX_RECOVER_PAUSE",
+            format!("staged|{}|60", marker.display()),
+        )
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(err.contains("published attempt"), "{err}");
+    assert!(!marker.exists(), "a release ix paused");
+    let run = dir.join("runs").join("r1");
+    assert!(run.join("committed.json").is_file() && run.join("receipt.json").is_file());
+    let (again, err) = rerun(&dir);
+    assert!(err.contains("replayed"), "{err}");
+    assert_eq!(again, out.stdout);
+    assert_nothing_outside_the_store(&dir);
     fs::remove_dir_all(&dir).ok();
 }
