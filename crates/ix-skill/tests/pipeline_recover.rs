@@ -1,7 +1,8 @@
 //! `ix pipeline run --run-id` (provisional, `ix-recover`): one execution per
 //! run id, replayed byte for byte afterwards. A removed receipt stands in for a
-//! kill between the commit and the receipt (simulated here; the real process
-//! kill is in `crates/ix-recover/tests/kill.rs`).
+//! kill between the commit and the receipt (simulated here; real kills of the
+//! ix process are in `pipeline_kill.rs`, of a store owner in
+//! `crates/ix-recover/tests/kill.rs`).
 
 use assert_cmd::Command;
 use std::fs;
@@ -16,6 +17,8 @@ stages:
     args:
       data: { param: nums }
 "#;
+
+const PROVENANCE: &str = "state/thinking-machine/provenance.jsonl";
 
 fn ix_in(dir: &Path) -> Command {
     let mut cmd = Command::cargo_bin("ix").expect("ix binary built");
@@ -57,6 +60,18 @@ fn attempts(dir: &Path, id: &str) -> usize {
         .count()
 }
 
+/// A recoverable run writes nothing outside its runs directory.
+fn assert_nothing_outside_the_store(dir: &Path) {
+    assert!(
+        !dir.join("ix.lock").exists(),
+        "a recoverable run wrote ix.lock beside the spec"
+    );
+    assert!(
+        !dir.join(PROVENANCE).exists(),
+        "a recoverable run appended provenance"
+    );
+}
+
 #[test]
 fn test_run_id_replays_the_recorded_output_without_executing() {
     let dir = tempdir("replay");
@@ -65,27 +80,96 @@ fn test_run_id_replays_the_recorded_output_without_executing() {
     assert!(err.contains("published attempt"), "{err}");
     let summary: serde_json::Value = serde_json::from_slice(&first).unwrap();
     assert!(summary["stages"]["s"]["output"].is_object(), "{summary}");
-    // Nothing executes on a replay, so nothing rewrites ix.lock.
-    fs::remove_file(dir.join("ix.lock")).unwrap();
     let (ok, again, err) = run(&dir, "r1", "[1.0, 2.0, 3.0]");
     assert!(ok, "replay failed: {err}");
-    assert!(err.contains("replayed") && err.contains("nothing executed"), "{err}");
+    assert!(
+        err.contains("replayed") && err.contains("nothing executed"),
+        "{err}"
+    );
     assert_eq!(again, first, "a replay must print the recorded bytes");
-    assert!(!dir.join("ix.lock").exists(), "a replay executed the pipeline");
-    assert_eq!(attempts(&dir, "r1"), 1);
+    assert_eq!(attempts(&dir, "r1"), 1, "a replay executed the pipeline");
+    assert_nothing_outside_the_store(&dir);
     fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_run_id_keeps_ix_lock_and_provenance_out_of_the_working_tree() {
+    let dir = tempdir("outside");
+    assert!(run(&dir, "r1", "[1.0, 2.0, 3.0]").0);
+    assert_nothing_outside_the_store(&dir);
+    let stored = dir.join("runs").join("r1").join("attempts");
+    let attempt = fs::read_dir(&stored).unwrap().next().unwrap().unwrap();
+    let lock = fs::read_to_string(attempt.path().join("ix.lock")).unwrap();
+    assert!(lock.contains("ix-lock/v2"), "{lock}");
+    // The same spec without --run-id writes both, so the checks above can fail.
+    let out = ix_in(&dir)
+        .args(["--format", "json", "pipeline", "run", "--param"])
+        .arg("nums=[1.0, 2.0, 3.0]")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(dir.join("ix.lock").is_file() && dir.join(PROVENANCE).is_file());
+    fs::remove_dir_all(&dir).ok();
+}
+
+/// The registered skills the review cites: each reads a file or the workspace,
+/// runs a subprocess, or writes outside the store. Some carry the
+/// `deterministic` tag, which is not the audit.
+const UNAUDITED: [(&str, &str); 4] = [
+    ("code_analyze", "path: \"ix.yaml\""),
+    ("federation.discover", "domain: \"math\""),
+    ("duckdb.query", "sql: \"select 1\""),
+    ("session.flywheel_export", "session_path: \"session.json\""),
+];
+
+#[test]
+fn test_run_id_refuses_unaudited_stages_before_the_store() {
+    for (skill, args) in UNAUDITED {
+        let dir = tempdir("unaudited");
+        fs::write(
+            dir.join("ix.yaml"),
+            format!(
+                "version: \"1\"\nstages:\n  s:\n    skill: stats\n    args:\n      data: [1.0, 2.0]\n  q:\n    skill: {skill}\n    args:\n      {args}\n"
+            ),
+        )
+        .unwrap();
+        let out = ix_in(&dir)
+            .args(["pipeline", "run", "--run-id", "r1", "--runs-dir", "runs"])
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success(),
+            "{skill}: an unaudited stage must be refused"
+        );
+        assert!(
+            err.contains("audited")
+                && err.contains(&format!("q ({skill})"))
+                && !err.contains("s (stats)"),
+            "{skill}: {err}"
+        );
+        assert!(out.stdout.is_empty(), "{skill}");
+        assert!(
+            !dir.join("runs").exists(),
+            "{skill}: a refused run touched the store"
+        );
+        assert_nothing_outside_the_store(&dir);
+        fs::remove_dir_all(&dir).ok();
+    }
 }
 
 #[test]
 fn test_run_id_with_other_params_is_a_conflict() {
     let dir = tempdir("conflict");
     assert!(run(&dir, "r1", "[1.0, 2.0, 3.0]").0);
-    fs::remove_file(dir.join("ix.lock")).unwrap();
     let (ok, out, err) = run(&dir, "r1", "[1.0, 2.0, 4.0]");
     assert!(!ok, "a changed param under the same run id must fail");
-    assert!(err.contains("conflict") && err.contains("spec_sha256"), "{err}");
+    assert!(
+        err.contains("conflict") && err.contains("spec_sha256"),
+        "{err}"
+    );
     assert!(out.is_empty());
-    assert!(!dir.join("ix.lock").exists(), "a conflict executed the pipeline");
+    assert_eq!(attempts(&dir, "r1"), 1, "a conflict executed the pipeline");
     fs::remove_dir_all(&dir).ok();
 }
 

@@ -5,7 +5,7 @@ use ix_pipeline::executor::{execute, NoCache};
 use ix_pipeline::lock::LockFile;
 use ix_pipeline::lower::{bind_params, lower, lower_with_gate};
 use ix_pipeline::spec::PipelineSpec;
-use ix_recover::{Begin, Record, Store};
+use ix_recover::{Begin, Point, Record, Store};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
@@ -16,6 +16,20 @@ const DEFAULT_FILE: &str = "ix.yaml";
 /// Home of recoverable runs (`--run-id`), relative to the working directory
 /// like the provenance trail.
 const DEFAULT_RUNS_DIR: &str = "state/pipeline-runs";
+
+/// The skills a recoverable run (`--run-id`) may execute. Each was read down
+/// to the math it calls and computes its output from its resolved args alone:
+/// no file, environment variable, clock, unseeded randomness, process-wide
+/// state or subprocess, and no effect beyond the value it returns. So the
+/// bindings (the bound spec and the ix binary) fix the result a replay prints.
+/// The `deterministic` governance tag is not this audit. Add a skill only
+/// after the same reading.
+// @ai:assumption each listed skill is a pure function of its resolved args, read in ix-agent handlers::stats and handlers::distance down to ix_math [P:assumed conf:0.7]
+const RECOVERABLE_SKILLS: &[&str] = &["distance", "stats"];
+
+/// What a recoverable run paused by `IX_RECOVER_PAUSE` exits with once its
+/// deadline passes.
+const PAUSE_DEADLINE_EXIT: i32 = 86;
 
 /// `ix pipeline new <name>` — scaffold an `ix.yaml` if it doesn't exist.
 pub fn new(name: &str, format: Format) -> Result<(), String> {
@@ -527,10 +541,12 @@ pub(crate) fn parse_params(
 /// When `stream_ndjson` is true, emits NDJSON events (`start`, `stage_start`,
 /// `stage_complete`, `done`) to stdout in real time as the DAG runs.
 ///
-/// With `run_id` the run is recoverable (provisional, `ix-recover`): the first
-/// run under the id publishes its printed output, its summary and its ix.lock
-/// once; a later run under the same id, bound spec and ix binary prints the
-/// recorded output without executing anything.
+/// With `run_id` the run is recoverable (provisional, `ix-recover`): every
+/// stage's skill must be in [`RECOVERABLE_SKILLS`]. The first run under the id
+/// publishes its printed output, its summary and its ix.lock into the run's
+/// store, once, and writes nothing else: no ix.lock beside the spec, no
+/// provenance line. A later run under the same id, bound spec and ix binary
+/// prints the recorded output without executing anything.
 pub fn run(
     file: Option<&str>,
     stream_ndjson: bool,
@@ -591,22 +607,28 @@ pub fn run(
         std::collections::HashMap::new();
     let result = execute(&dag, &initial_inputs, &NoCache).map_err(|e| format!("execution: {e}"))?;
 
-    // Write ix.lock (ix-lock/v2 provenance record) alongside the spec.
     let lock = LockFile::from_run(&spec, &result, &initial_inputs);
     let lock_yaml = lock
         .to_yaml_string()
         .map_err(|e| format!("lock yaml: {e}"))?;
-    let lock_path = Path::new(path)
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("ix.lock");
-    std::fs::write(&lock_path, &lock_yaml)
-        .map_err(|e| format!("writing {}: {e}", lock_path.display()))?;
+    // A recoverable run keeps its ix.lock in its store and appends no
+    // provenance line: written here, either would land outside the
+    // publish-once commit, so a killed attempt could leave one behind and
+    // every retry would write it again.
+    if attempt.is_none() {
+        // Write ix.lock (ix-lock/v2 provenance record) alongside the spec.
+        let lock_path = Path::new(path)
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("ix.lock");
+        std::fs::write(&lock_path, &lock_yaml)
+            .map_err(|e| format!("writing {}: {e}", lock_path.display()))?;
 
-    // Append the run to the durable provenance trail (best-effort, never blocks
-    // the run — same discipline as hits.jsonl). One JSON object per run, keyed
-    // by run_id. See docs/contracts/2026-06-07-provenance-record.contract.md.
-    append_provenance(&lock);
+        // Append the run to the durable provenance trail (best-effort, never blocks
+        // the run — same discipline as hits.jsonl). One JSON object per run, keyed
+        // by run_id. See docs/contracts/2026-06-07-provenance-record.contract.md.
+        append_provenance(&lock);
+    }
 
     if stream_ndjson {
         for (id, node_result) in &result.node_results {
@@ -651,11 +673,14 @@ pub fn run(
     let stdout = output::render(&summary, format).map_err(|e| format!("{e}"))?;
     let summary_json = serde_json::to_vec(&summary).map_err(|e| format!("summary: {e}"))?;
     let record = attempt
-        .publish(&[
-            ("stdout", stdout.as_slice()),
-            ("summary.json", summary_json.as_slice()),
-            ("ix.lock", lock_yaml.as_bytes()),
-        ])
+        .publish_observed(
+            &[
+                ("stdout", stdout.as_slice()),
+                ("summary.json", summary_json.as_slice()),
+                ("ix.lock", lock_yaml.as_bytes()),
+            ],
+            &mut kill_test_pause(),
+        )
         .map_err(|e| format!("run {id}: {e}"))?;
     eprintln!("run {id}: published attempt {}", record.attempt_id());
     io::stdout()
@@ -666,12 +691,27 @@ pub fn run(
 
 /// Take ownership of recoverable run `id` and reconcile it against what the
 /// result depends on: the bound spec (params included) and this ix binary.
-// @ai:assumption a pipeline's result is fixed by its bound spec and the ix binary: stage skills are deterministic in their resolved args and have no side effects a replay would need to repeat [U:uncertain conf:0.5]
+/// A spec with a stage outside [`RECOVERABLE_SKILLS`] is refused before the
+/// store is opened, so a refused run writes nothing.
+// @ai:invariant a recoverable run executes only skills in RECOVERABLE_SKILLS, refused before its store is opened [T:test conf:0.9 src:pipeline_recover::test_run_id_refuses_unaudited_stages_before_the_store]
 fn begin_recoverable(
     id: &str,
     runs_dir: Option<&str>,
     spec: &PipelineSpec,
 ) -> Result<Begin, String> {
+    let unaudited: Vec<String> = spec
+        .stages
+        .iter()
+        .filter(|(_, stage)| !RECOVERABLE_SKILLS.contains(&stage.skill.as_str()))
+        .map(|(stage_id, stage)| format!("{stage_id} ({})", stage.skill))
+        .collect();
+    if !unaudited.is_empty() {
+        return Err(format!(
+            "run {id}: --run-id runs only stages whose skill is audited as pure ({}); refused: {}",
+            RECOVERABLE_SKILLS.join(", "),
+            unaudited.join(", ")
+        ));
+    }
     let fail = |e: ix_recover::Error| format!("run {id}: {e}");
     let store = Store::open(runs_dir.unwrap_or(DEFAULT_RUNS_DIR)).map_err(fail)?;
     let spec_value = serde_json::to_value(spec).map_err(|e| format!("run {id}: spec: {e}"))?;
@@ -683,6 +723,41 @@ fn begin_recoverable(
         "ix_exe_sha256": exe_sha256,
     });
     store.begin(id, &bindings).map_err(fail)
+}
+
+/// The CLI kill tests' stop point, in debug builds only. With
+/// `IX_RECOVER_PAUSE=POINT|MARKER|SECS`, a recoverable run that reaches POINT
+/// (`staged`: the attempt written, not committed; `committed`: committed, no
+/// receipt yet) creates the file MARKER and waits there to be killed. Left
+/// alone, it exits with [`PAUSE_DEADLINE_EXIT`] after SECS seconds, so a test
+/// that dies without killing it leaves no process behind. Release builds
+/// ignore the variable.
+fn kill_test_pause() -> impl FnMut(Point) {
+    let pause = cfg!(debug_assertions)
+        .then(|| std::env::var("IX_RECOVER_PAUSE").ok())
+        .flatten();
+    move |point| {
+        let Some(pause) = &pause else { return };
+        let mut parts = pause.splitn(3, '|');
+        let (Some(at), Some(marker), Some(secs)) = (parts.next(), parts.next(), parts.next())
+        else {
+            panic!("IX_RECOVER_PAUSE must be POINT|MARKER|SECS, got '{pause}'");
+        };
+        let here = match point {
+            Point::Staged => "staged",
+            Point::Committed => "committed",
+        };
+        if at != here {
+            return;
+        }
+        let secs = secs
+            .parse()
+            .unwrap_or_else(|_| panic!("IX_RECOVER_PAUSE: SECS must be a number, got '{secs}'"));
+        std::fs::write(marker, std::process::id().to_string())
+            .unwrap_or_else(|e| panic!("IX_RECOVER_PAUSE: writing {marker}: {e}"));
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+        std::process::exit(PAUSE_DEADLINE_EXIT);
+    }
 }
 
 fn file_sha256(path: &Path) -> io::Result<String> {

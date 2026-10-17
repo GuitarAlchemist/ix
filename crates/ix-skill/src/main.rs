@@ -240,8 +240,10 @@ enum PipelineNoun {
         /// ID publishes its output once; a later run with the same ID, spec,
         /// params and ix binary prints that output byte for byte, in the
         /// format the first run used, without executing anything. Another
-        /// spec, params or binary under the same ID is a conflict. Not with
-        /// --json.
+        /// spec, params or binary under the same ID is a conflict. Only stages
+        /// whose skill is audited as pure (stats, distance) may run, and the
+        /// run writes nothing outside the runs directory: no ix.lock beside
+        /// the spec, no provenance line. Not with --json.
         #[arg(long = "run-id", value_name = "ID")]
         run_id: Option<String>,
         /// Directory of recoverable runs (default: state/pipeline-runs)
