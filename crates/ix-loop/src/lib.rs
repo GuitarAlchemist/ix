@@ -37,6 +37,9 @@ use std::time::Instant;
 /// Proposals one root run may write. With the store's per-field bounds, a run writes at most
 /// ten proposal files of under 2 MB each.
 pub const MAX_PROPOSALS_PER_RUN: u32 = 10;
+/// Bytes the proposals of one root run may hold, names, kinds, bodies and notes together.
+/// Escaping grows a byte to at most six, so a run writes under 7 MB of proposals.
+pub const MAX_PROPOSAL_BYTES_PER_RUN: usize = 1 << 20;
 /// Instances one judgement may draw.
 pub const MAX_JUDGED: usize = 20;
 
@@ -76,6 +79,7 @@ pub struct Host {
     ledger: Ledger,
     engine: Box<dyn Engine>,
     proposals: Cell<u32>,
+    proposed_bytes: Cell<usize>,
     rng: Cell<u64>,
     /// Every instance handed to a loop in this run. A judgement draws outside it.
     seen: RefCell<BTreeSet<String>>,
@@ -104,6 +108,7 @@ impl Host {
             ledger: Ledger::none(),
             engine: Box::new(Lua54),
             proposals: Cell::new(0),
+            proposed_bytes: Cell::new(0),
             rng: Cell::new(store::now_ms()),
             seen: RefCell::new(BTreeSet::new()),
         }
@@ -133,6 +138,7 @@ impl Host {
     /// allowance and no instance seen, on a reused host too.
     pub fn run(self: &Rc<Self>, src: &str, name: &str, grant: &Grant) -> Outcome {
         self.proposals.set(0);
+        self.proposed_bytes.set(0);
         self.seen.borrow_mut().clear();
         let started = Instant::now();
         let budget = Rc::new(Budget::root(grant));
@@ -200,15 +206,28 @@ impl Host {
         answer.map(|a| a.value)
     }
 
-    /// Stores a loop's proposal; at most [`MAX_PROPOSALS_PER_RUN`] per run.
+    /// Stores a loop's proposal; at most [`MAX_PROPOSALS_PER_RUN`] per run, holding at most
+    /// [`MAX_PROPOSAL_BYTES_PER_RUN`] bytes together, checked before the store serializes it.
+    // @ai:invariant the proposals of one root run hold at most MAX_PROPOSAL_BYTES_PER_RUN bytes [T:test conf:0.9 src:tests::a_run_proposes_at_most_its_byte_allowance]
     pub fn propose(&self, budget: &Budget, draft: &Draft) -> Result<String, String> {
         if self.proposals.get() >= MAX_PROPOSALS_PER_RUN {
             return Err("propose: too many proposals in one run".into());
+        }
+        let bytes = draft.name.len()
+            + draft.kind.len()
+            + draft.body.len()
+            + draft.note.as_ref().map_or(0, String::len);
+        let total = self.proposed_bytes.get() + bytes;
+        if total > MAX_PROPOSAL_BYTES_PER_RUN {
+            return Err(format!(
+                "propose: the proposals of one run hold at most {MAX_PROPOSAL_BYTES_PER_RUN} bytes"
+            ));
         }
         let id = self
             .store
             .propose(draft, &format!("loop at depth {}", budget.depth()))?;
         self.proposals.set(self.proposals.get() + 1);
+        self.proposed_bytes.set(total);
         self.ledger
             .record(json!({ "kind": "propose", "id": id, "name": draft.name }));
         Ok(id)
@@ -335,5 +354,36 @@ mod tests {
         assert!(host.seen.borrow().contains("lipogram:12:e"));
         host.run("return 1", "test", &grant()).value.unwrap();
         assert!(host.seen.borrow().is_empty(), "{:?}", host.seen.borrow());
+    }
+
+    #[test]
+    fn a_run_proposes_at_most_its_byte_allowance() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Rc::new(Host::new(
+            Rc::new(Scripted::always("hi")),
+            Store::at(dir.path()),
+        ));
+        let propose = format!(
+            r#"
+            local body = string.rep("x", {})
+            local n = 0
+            while true do
+                local ok, e = pcall(loops.propose, "p" .. n, "lua", body)
+                if not ok then return {{ n = n, err = tostring(e) }} end
+                n = n + 1
+            end
+        "#,
+            store::MAX_BODY_BYTES
+        );
+        for _ in 0..2 {
+            let v = host.run(&propose, "test", &grant()).value.unwrap();
+            let n = v["n"].as_u64().unwrap() as usize;
+            assert!(n < MAX_PROPOSALS_PER_RUN as usize, "{v}");
+            assert!(
+                n * store::MAX_BODY_BYTES <= MAX_PROPOSAL_BYTES_PER_RUN,
+                "{v}"
+            );
+            assert!(v["err"].as_str().unwrap().contains("bytes"), "{v}");
+        }
     }
 }
