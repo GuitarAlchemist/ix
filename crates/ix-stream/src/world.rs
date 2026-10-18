@@ -52,7 +52,7 @@ enum Method {
 /// `url` may hold `{field}` placeholders, filled from the value and percent-encoded (a `/`
 /// stays). With `each`, the node sends one request per element of that list field, and
 /// `{each-field}` is the element. `body`, for a POST, is JSON whose strings `"{field}"` are
-/// replaced by the value's field. Each call answers `{ url, status, ms, error, body }`, with
+/// replaced by the value's field, and whose other strings have their `{field}`s filled as text. Each call answers `{ url, status, ms, error, body }`, with
 /// `body` cut down to `pick` (`{ name: JSON pointer }`) when given, under the field `into`.
 pub struct Http {
     name: String,
@@ -253,6 +253,17 @@ fn fill(
     each: Option<(&str, &Value)>,
     any: bool,
 ) -> Result<String, String> {
+    fill_as(template, v, each, any, encode)
+}
+
+/// [`fill`], each field's text passed through `enc`.
+fn fill_as(
+    template: &str,
+    v: &Value,
+    each: Option<(&str, &Value)>,
+    any: bool,
+    enc: fn(&str) -> String,
+) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = template;
     while let Some(open) = rest.find('{') {
@@ -272,7 +283,7 @@ fn fill(
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
-            out.push_str(&encode(&s));
+            out.push_str(&enc(&s));
         }
         rest = &rest[open + close + 1..];
     }
@@ -293,10 +304,20 @@ fn encode(s: &str) -> String {
     out
 }
 
-/// `body` with each string `"{field}"` replaced by the value's field.
+/// `body` with each string `"{field}"` replaced by the value's field, and the `{field}`s of
+/// any other string filled as text: `"{q} Name the key."`.
 fn fill_json(body: &Value, v: &Value, each: Option<(&str, &Value)>) -> Result<Value, String> {
+    let whole = |s: &str| {
+        s.len() > 1
+            && s.starts_with('{')
+            && s.ends_with('}')
+            && !s[1..s.len() - 1].contains(['{', '}'])
+    };
     Ok(match body {
-        Value::String(s) if s.starts_with('{') && s.ends_with('}') => {
+        Value::String(s) if !whole(s) && s.contains('{') => {
+            Value::String(fill_as(s, v, each, false, str::to_string)?)
+        }
+        Value::String(s) if whole(s) => {
             let field = &s[1..s.len() - 1];
             match each {
                 Some((f, e)) if f == field => e.clone(),
@@ -508,6 +529,18 @@ mod tests {
         assert_eq!(got["id"], 1);
         assert!(got["t"]["status"].is_null());
         assert_eq!(got["t"]["error"], "timed out after 200 ms");
+    }
+
+    #[test]
+    fn a_body_string_with_text_around_a_field_is_filled_as_text() {
+        let v = json!({ "q": "notes of C?", "n": 3 });
+        let body = json!({ "message": "{q}\n\nName the key.", "n": "{n}" });
+        assert_eq!(
+            fill_json(&body, &v, None).unwrap(),
+            json!({ "message": "notes of C?\n\nName the key.", "n": 3 })
+        );
+        let missing = fill_json(&json!({ "m": "{q} {nope}" }), &v, None);
+        assert!(missing.unwrap_err().contains("no `nope`"));
     }
 
     #[test]

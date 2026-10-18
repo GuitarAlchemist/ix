@@ -36,5 +36,12 @@ world = ["dep:reqwest"]
 wasm = ["dep:ix-wasm"]
 
 [dev-dependencies]
+# The hash that freezes tracer A's judge in the L1 example (examples/l1).
+blake3 = { workspace = true }
 ix-loop = { workspace = true }
 ix-wasm = { workspace = true }
+
+# L1 over tracer A: it calls the chatbot and GaApi through `http` nodes.
+[[example]]
+name = "l1"
+required-features = ["world"]
