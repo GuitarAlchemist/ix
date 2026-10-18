@@ -91,8 +91,9 @@ fn recall(id: &str) -> Option<Arc<Program>> {
         .cloned()
 }
 
-/// The module `params` names, and its id.
-fn program_of(params: &Value) -> Result<(String, Arc<Program>), String> {
+/// The module `params` names with exactly one of `stage`, `go`, `zig` or `wat`, loaded (and
+/// built first, for source), and its id. ix-stream's `wasm` nodes name theirs the same way.
+pub fn program_of(params: &Value) -> Result<(String, Arc<Program>), String> {
     let text = |k: &str| params.get(k).and_then(Value::as_str);
     let named = ["stage", "go", "zig", "wat"]
         .iter()

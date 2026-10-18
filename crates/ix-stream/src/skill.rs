@@ -12,10 +12,21 @@
 //!       budget: 1000
 //! ```
 //!
-//! `graph` is a [`Shape`] in the form [`Shape::json`] writes, the `shape` of a `meta` event. Its
-//! nodes do no work of their own yet: a source sends `{ source, i }` values, a stage sends each
-//! value it takes on every link, a batching node sends one `{ node, count }` when its input
-//! ends, and a node with no link is a sink.
+//! `graph` is a [`Shape`] in the form [`Shape::json`] writes, the `shape` of a `meta` event. A
+//! source sends `{ source, i }` values, a stage sends each value it takes on every link, a
+//! batching node sends one `{ node, count }` when its input ends, and a node with no link is a
+//! sink. A stage with `wasm: true` (the `wasm` feature) sends instead what its `program`, a WASI
+//! module run sandboxed by ix-wasm, answers to each value, within `fuel` per value:
+//!
+//! ```yaml
+//! nodes: [{ name: src, source: true },
+//!         { name: double, wasm: true, program: { go: "package main ..." }, fuel: 50000000 },
+//!         { name: sink }]
+//! ```
+//!
+//! A program that runs out of fuel, is refused a file, exits non-zero or writes anything but one
+//! JSON value stops the stream: the answer is then `stopped_by: "error"` with the `error`, and
+//! counts that tell how far the stream got before the stop reached it, which timing decides.
 //!
 //! Two bounds stop the stream: `max_events`, the most values the sources send in all, and
 //! `budget`, the most values the nodes take in all, one step each. Before the run the skill
@@ -35,7 +46,35 @@ use crate::{Batch, Bus, Closed, Graph, NodeId, Out, Signal};
 use ix_pipeline::dag::Dag;
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "wasm")]
+mod wasm;
+
+/// Without the `wasm` feature there is no wasm node: one is refused before the run.
+#[cfg(not(feature = "wasm"))]
+mod wasm {
+    use serde_json::Value;
+
+    pub(super) enum Wasm {}
+
+    impl Wasm {
+        pub(super) fn new(name: &str, _: &Value) -> Result<Self, String> {
+            Err(format!(
+                "{name}: a wasm node needs ix-stream built with its `wasm` feature"
+            ))
+        }
+
+        pub(super) fn run(&self, _: &Value) -> Result<Value, (&'static str, String)> {
+            match *self {}
+        }
+
+        pub(super) fn json(&self) -> Value {
+            match *self {}
+        }
+    }
+}
 
 /// The most nodes a graph may have.
 const MAX_NODES: usize = 256;
@@ -67,7 +106,10 @@ pub fn stream_run_schema() -> Value {
                                 "source": { "type": "boolean", "default": false, "description": "Sends { source, i } values and has no input." },
                                 "batching": { "type": "boolean", "default": false, "description": "Counts what it takes and sends one { node, count } when its input ends." },
                                 "cap": { "type": "integer", "minimum": 1, "maximum": MAX_CAP, "default": 8, "description": "The values its input holds; a full input holds back the nodes before it." },
-                                "workers": { "type": "integer", "minimum": 1, "default": 1, "description": "Threads sharing its input." }
+                                "workers": { "type": "integer", "minimum": 1, "default": 1, "description": "Threads sharing its input." },
+                                "wasm": { "type": "boolean", "default": false, "description": "Runs `program` on each value it takes and sends what it answers. Needs the `wasm` feature." },
+                                "program": { "type": "object", "description": "A wasm node's WASI module, named as wasm.run names it: exactly one of `stage` (a cached id), `go`, `zig` (source, built once) or `wat`. It reads the value as JSON on stdin and writes one JSON value on stdout." },
+                                "fuel": { "type": "integer", "minimum": 1, "default": 2000000000, "description": "A wasm node's fuel per value, about one unit per instruction." }
                             },
                             "required": ["name"]
                         }
@@ -98,26 +140,29 @@ pub fn stream_run_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "stopped_by": { "type": "string", "enum": ["max_events", "budget"], "description": "The bound that ended the stream." },
+            "stopped_by": { "type": "string", "enum": ["max_events", "budget", "error"], "description": "The bound that ended the stream, or `error` when a wasm node failed and stopped it." },
+            "error": { "type": "object", "description": "With `stopped_by: error`: { node, kind, message }, kind one of fuel, refused, exit, output, trap, input." },
             "events": { "type": "integer", "description": "The values the sources sent." },
             "steps": { "type": "integer", "description": "The values the nodes took: what the run spent of its budget." },
             "receipts": {
                 "type": "object",
-                "description": "`petri`: the check that cleared the graph; `budget`: { cap, spent }; `nodes`: what each node took and sent, { name, received, emitted }, in the order of `nodes`."
+                "description": "`petri`: the check that cleared the graph; `budget`: { cap, spent }; `nodes`: what each node took and sent, { name, received, emitted }, in the order of `nodes`, and for a wasm node `wasm`: { stage, fuel_cap, out, fuel }, the values its program answered and the fuel its runs spent."
             }
         }
     })
 }
 
 /// Runs an ix-stream graph as a pipeline stage, bounded by `max_events` (the values its sources
-/// send) and `budget` (the values its nodes take). Deterministic: no files, no processes, no
-/// network, and an answer that does not depend on thread timing.
+/// send) and `budget` (the values its nodes take). Deterministic: no files, no network, no
+/// process but a wasm node's build, and an answer that does not depend on thread timing.
 ///
 /// `graph` is the shape ix-stream writes, `{ nodes: [{ name, source, batching, cap, workers }],
 /// edges: [{ from, to }] }`. Sources send `{ source, i }`, stages send what they take on every
-/// link, batching nodes send `{ node, count }` at the end. Cycles and lossy links are refused.
-/// The answer is `{ stopped_by, events, steps, receipts }`, the receipts holding the Petri
-/// check, the budget spent, and each node's counts.
+/// link, batching nodes send `{ node, count }` at the end, and a `wasm: true` stage sends what
+/// its sandboxed `program` answers to each value, within `fuel`. Cycles and lossy links are
+/// refused. The answer is `{ stopped_by, events, steps, receipts }`, the receipts holding the
+/// Petri check, the budget spent, and each node's counts; a failed wasm node stops the stream
+/// with `stopped_by: "error"` and the `error`.
 #[ix_skill(
     domain = "stream",
     name = "stream.run",
@@ -142,17 +187,43 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
         ));
     }
 
+    let wasm = load_wasm(graph, &shape)?;
+
     let sent = plan(&shape, &order, max_events, budget);
     let (taken, sends) = predict(&shape, &order, &sent);
     let ledger = Ledger::new(vec![Budget::new("steps", "values taken", budget as f64)]);
+    // The first wasm node to fail, as the answer's `error`.
+    let failed: Arc<Mutex<Option<Value>>> = Arc::default();
+    let events = Arc::new(AtomicU64::new(0));
     let mut g = Graph::new(&Bus::new());
     for (i, n) in shape.nodes.iter().enumerate() {
         if n.source {
-            let (name, count) = (n.name.clone(), sent[i]);
+            let (name, count, events) = (n.name.clone(), sent[i], events.clone());
             g.source(&n.name, move |out| {
                 for k in 0..count {
                     if send_all(out, &json!({ "source": name, "i": k })).is_err() {
                         return;
+                    }
+                    events.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+        } else if let Some(w) = wasm[i].clone() {
+            let (ledger, failed) = (ledger.clone(), failed.clone());
+            g.stage(&n.name, n.cap, n.workers, move |v, out| {
+                if !step(&ledger, out) {
+                    return;
+                }
+                match w.run(&v) {
+                    Ok(answer) => {
+                        let _ = send_all(out, &answer);
+                    }
+                    Err((kind, message)) => {
+                        let mut first = failed.lock().unwrap_or_else(|e| e.into_inner());
+                        first.get_or_insert_with(
+                            || json!({ "node": out.name(), "kind": kind, "message": message }),
+                        );
+                        // Its input drops, so the nodes upstream stop at their next send.
+                        out.stop();
                     }
                 }
             });
@@ -181,29 +252,45 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
     if !report.panicked.is_empty() {
         return Err(format!("nodes panicked: {}", report.panicked.join(", ")));
     }
-    for (i, s) in report.nodes.iter().enumerate() {
-        if s.received != taken[i] || s.emitted != sends[i] {
+    let error = failed.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let spent = ledger.get("steps").map_or(0.0, |b| b.spent) as u64;
+    // A stopped stream ends where the stop reached each node, which no shape predicts.
+    if error.is_none() {
+        for (i, s) in report.nodes.iter().enumerate() {
+            if s.received != taken[i] || s.emitted != sends[i] {
+                return Err(format!(
+                    "{} took {} values and sent {}, where its shape predicts {} and {}",
+                    s.name, s.received, s.emitted, taken[i], sends[i]
+                ));
+            }
+        }
+        if spent != steps(&taken) {
             return Err(format!(
-                "{} took {} values and sent {}, where its shape predicts {} and {}",
-                s.name, s.received, s.emitted, taken[i], sends[i]
+                "the nodes spent {spent} steps, where the shape predicts {}",
+                steps(&taken)
             ));
         }
     }
-    let spent = ledger.get("steps").map_or(0.0, |b| b.spent) as u64;
-    if spent != steps(&taken) {
-        return Err(format!(
-            "the nodes spent {spent} steps, where the shape predicts {}",
-            steps(&taken)
-        ));
-    }
-    let events: u64 = sent.iter().sum();
+    let events = events.load(Ordering::Relaxed);
     let nodes: Vec<Value> = report
         .nodes
         .iter()
-        .map(|s| json!({ "name": s.name, "received": s.received, "emitted": s.emitted }))
+        .zip(&wasm)
+        .map(|(s, w)| {
+            let mut node = json!({ "name": s.name, "received": s.received, "emitted": s.emitted });
+            if let Some(w) = w {
+                node["wasm"] = w.json();
+            }
+            node
+        })
         .collect();
-    Ok(json!({
-        "stopped_by": if events == max_events { "max_events" } else { "budget" },
+    let stopped_by = match error {
+        Some(_) => "error",
+        None if events == max_events => "max_events",
+        None => "budget",
+    };
+    let mut answer = json!({
+        "stopped_by": stopped_by,
         "events": events,
         "steps": spent,
         "receipts": {
@@ -211,7 +298,42 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
             "budget": { "cap": budget, "spent": spent },
             "nodes": nodes,
         },
-    }))
+    });
+    if let Some(error) = error {
+        answer["error"] = error;
+    }
+    Ok(answer)
+}
+
+/// The wasm node each node of `graph` is, loaded before the run; `None` for the other nodes.
+fn load_wasm(graph: &Value, shape: &Shape) -> Result<Vec<Option<Arc<wasm::Wasm>>>, String> {
+    let specs = graph["nodes"].as_array().map_or(&[][..], Vec::as_slice);
+    shape
+        .nodes
+        .iter()
+        .zip(specs)
+        .map(|(n, spec)| match spec.get("wasm") {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => {
+                if spec.get("program").is_some() || spec.get("fuel").is_some() {
+                    return Err(format!(
+                        "{}: `program` and `fuel` belong to a node with `wasm: true`",
+                        n.name
+                    ));
+                }
+                Ok(None)
+            }
+            Some(Value::Bool(true)) => {
+                if n.source || n.batching {
+                    return Err(format!(
+                        "{}: a wasm node is a stage, neither a source nor batching",
+                        n.name
+                    ));
+                }
+                Ok(Some(Arc::new(wasm::Wasm::new(&n.name, spec)?)))
+            }
+            Some(x) => Err(format!("{}: `wasm` must be true or false, got {x}", n.name)),
+        })
+        .collect()
 }
 
 /// `params[key]` as a whole number from 1 to [`MAX_BOUND`], `default` when it is absent.

@@ -24,4 +24,7 @@ wasmi = { version = "2.0.0", default-features = false, features = ["std", "valid
 
 [dev-dependencies]
 ix-pipeline = { workspace = true }
+# Only so the workspace's test build compiles and runs ix-stream's `wasm` nodes (src/skill/wasm.rs
+# there), which no normal dependency enables: ix-agent links ix-stream without wasmi.
+ix-stream = { workspace = true, features = ["wasm"] }
 tempfile = { workspace = true }

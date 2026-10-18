@@ -19,8 +19,15 @@ ix-registry = { workspace = true }
 ix-rl = { workspace = true }
 ix-skill-macros = { workspace = true }
 ix-types = { workspace = true }
+# `wasm` nodes of `stream.run` (src/skill/wasm.rs). Optional, so ix-agent, which links
+# ix-stream, does not pull wasmi.
+ix-wasm = { workspace = true, optional = true }
 linkme = { workspace = true }
 serde_json = { workspace = true }
+
+[features]
+# `stream.run` nodes that run each value through a sandboxed WASI program.
+wasm = ["dep:ix-wasm"]
 
 [dev-dependencies]
 ix-loop = { workspace = true }
