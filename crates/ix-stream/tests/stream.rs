@@ -19,7 +19,7 @@ fn a_full_channel_holds_the_source_back() {
     let src = g.source("numbers", move |out| {
         for i in 0..10_000 {
             if out.emit(0, json!(i)).is_err() {
-                return;
+                break;
             }
             counted.fetch_add(1, Ordering::Relaxed);
         }
