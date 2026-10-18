@@ -25,6 +25,14 @@ type processor struct {
 	NumberOfLogicalProcessors uint32
 }
 
+// The "Processor Information" counters Task Manager shows. LoadPercentage
+// read 94-99% on 2026-10-18 while % Processor Utility read 40-75% and
+// % Processor Time 30-50%, so the gauges use utility.
+type processorInformation struct {
+	PercentProcessorUtility uint64
+	PercentProcessorTime    uint64
+}
+
 type observation struct {
 	TS     string  `json:"ts"`
 	Metric string  `json:"metric"`
@@ -87,6 +95,13 @@ func sample(enc *json.Encoder) error {
 	}
 	if loads > 0 {
 		obs = append(obs, observation{ts, "cpu_load_pct", load / float64(loads), "%"})
+	}
+	var info []processorInformation
+	q = "SELECT PercentProcessorUtility, PercentProcessorTime FROM Win32_PerfFormattedData_Counters_ProcessorInformation WHERE Name = '_Total'"
+	if err := wmi.Query(q, &info); err == nil && len(info) > 0 {
+		obs = append(obs,
+			observation{ts, "cpu_util_pct", float64(info[0].PercentProcessorUtility), "%"},
+			observation{ts, "cpu_time_pct", float64(info[0].PercentProcessorTime), "%"})
 	}
 	for _, o := range obs {
 		if err := enc.Encode(o); err != nil {
