@@ -9,13 +9,19 @@
 //! caller passes the FOLD object itself; reading a `.fold` file from disk is deliberately not
 //! offered.
 //!
-//! The checks test the layer order the file states. They do not compute one, and they do not
-//! prove the sheet folds flat: global flat-foldability is NP-complete (Bern and Hayes 1996).
+//! In place of the FOLD object, the tool takes the text of a `.origami` file
+//! (`ix_origami::sequence`): it replays the folding sequence into a stated folded state, checks
+//! that, and answers each `expect` line (ADR-0010).
+//!
+//! The checks test the layer order the file states, or the one the replay derives. They do not
+//! search for one, and they do not prove the sheet folds flat: global flat-foldability is
+//! NP-complete (Bern and Hayes 1996).
 
 use std::collections::BTreeMap;
 
 use ix_origami::{
-    analyse_within, stack, swap_census_within, Context, Fold, Limits, Rule, Unchecked,
+    analyse_within, stack, swap_census_within, Checked, Context, Fold, Limits, Report, Rule,
+    Sequence, SequenceError, Unchecked,
 };
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -40,7 +46,11 @@ fn origami_check_schema() -> Value {
         "properties": {
             "fold": {
                 "type": "object",
-                "description": "A FOLD object (spec 1.2): a crease pattern at the top level and one folded frame in file_frames (frame_parent 0, frame_inherit true) whose faceOrders state the layer order. Rabbit Ear's FOLD 1.1 layout, with the folded state at the top level, is accepted and rearranged; no value changes."
+                "description": "A FOLD object (spec 1.2): a crease pattern at the top level and one folded frame in file_frames (frame_parent 0, frame_inherit true) whose faceOrders state the layer order. Rabbit Ear's FOLD 1.1 layout, with the folded state at the top level, is accepted and rearranged; no value changes. Give fold or sequence, not both."
+            },
+            "sequence": {
+                "type": "string",
+                "description": "The text of a .origami file, in place of fold: a folding sequence of simple folds on the unit square, which IX replays into a stated folded state and checks. One statement per line, # comments: `origami <name>` first; `sheet square` (optional); `valley` or `mountain` followed by `P to Q` (point P onto point Q; P's side moves), `L1 to L2` (line L1 onto line L2, direction onto direction; L1's side moves) or `through P Q moving R` (R's side moves); `expect ok`, `expect faces N`, `expect ply N`. Points, taken where they lie at that step: corners A (0,0), B (1,0), C (1,1), D (0,1); side midpoints mAB, mBC, mCD, mDA; the centre O; (x, y), with decimals or fractions. Lines: two corners (AC) or two points joined by - (mAB-mCD). A file that does not parse, or a step with no fold, is an error naming its line; a failed expectation is answered in `sequence`."
             },
             "census": {
                 "type": "boolean",
@@ -55,8 +65,7 @@ fn origami_check_schema() -> Value {
                 "required": ["t"],
                 "description": "Also report the stack this thickness implies: the most faces at one point, and whether parallel rigid panels, one height each, can realise the stated order. Never changes the top-level verdict."
             }
-        },
-        "required": ["fold"]
+        }
     })
 }
 
@@ -77,17 +86,18 @@ fn origami_check_output_schema() -> Value {
             "tacos_on_opposite_sides": { "type": "integer" },
             "rejected_by": { "type": "array", "items": { "type": "string" }, "description": "Layer rules with at least one violation" },
             "census": { "type": "object", "description": "With census: pairs, rejected, the accepted pairs, and a tally keyed '<adjacent|non-adjacent>: <rules>'" },
-            "thickness": { "type": "object", "description": "With thickness: t, ply (most faces at one point) and ply_height (the least height of any stack), and rigid: parallel rigid panels (faces joined by flat joints), with acyclic, cycle (stated [below, above] pairs), levels, levels_exact, height, face_levels, undetermined_pairs, refused (t > 0 and a cycle) and ok (the top-level ok and not refused). A refusal means no stack of parallel panels, not that the fold cannot be made." }
+            "thickness": { "type": "object", "description": "With thickness: t, ply (most faces at one point) and ply_height (the least height of any stack), and rigid: parallel rigid panels (faces joined by flat joints), with acyclic, cycle (stated [below, above] pairs), levels, levels_exact, height, face_levels, undetermined_pairs, refused (t > 0 and a cycle) and ok (the top-level ok and not refused). A refusal means no stack of parallel panels, not that the fold cannot be made." },
+            "sequence": { "type": "object", "description": "With sequence: name, holds (every expectation holds), expectations ([{line, expect, got, holds}]) and fold, the stated folded state the replay gives, which is what the checks above ran on." }
         }
     })
 }
 
-/// Check a stated flat folded state read from a FOLD object.
+/// Check a stated flat folded state read from a FOLD object, or replayed from a `.origami` file.
 ///
 /// Returns the report of `ix_origami::analyse`. A fold whose structure stops the checks is a
 /// verdict (`ok: false` with the `structure` problems), not an error; input that is not a FOLD
-/// object is an error, and so is a fold or census over [`LIMITS`]: refused, never checked in
-/// part.
+/// object, or a `.origami` file that does not parse or replay, is an error, and so is a fold or
+/// census over [`LIMITS`]: refused, never checked in part. A failed expectation is a verdict.
 #[ix_skill(
     domain = "origami",
     name = "origami.check",
@@ -96,9 +106,19 @@ fn origami_check_output_schema() -> Value {
     output_schema_fn = "crate::skills::origami::origami_check_output_schema"
 )]
 pub fn origami_check(params: Value) -> Result<Value, String> {
-    let value = params
-        .get("fold")
-        .ok_or("supply `fold`: a FOLD object with one folded frame")?;
+    let given = |key| params.get(key).filter(|v| !v.is_null());
+    let input = match (given("fold"), given("sequence")) {
+        (Some(_), Some(_)) => return Err("supply `fold` or `sequence`, not both".into()),
+        (Some(fold), None) => Input::Fold(fold),
+        (None, Some(Value::String(text))) => Input::Sequence(text),
+        (None, Some(_)) => return Err("`sequence` must be the text of a .origami file".into()),
+        (None, None) => {
+            return Err(
+                "supply `fold`, a FOLD object with one folded frame, or `sequence`, the text of a .origami file"
+                    .into(),
+            )
+        }
+    };
     let census = match params.get("census") {
         None | Some(Value::Null) => false,
         Some(v) => v.as_bool().ok_or("`census` must be a boolean")?,
@@ -112,16 +132,39 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
                 .ok_or("`thickness.t` must be a number, 0 or more: the sheet's thickness")?,
         ),
     };
-    let fold = Fold::from_value(value).map_err(|e| e.to_string())?;
-    let report = match analyse_within(&fold, &LIMITS) {
-        Ok(r) => r,
-        Err(Unchecked::Structure(problems)) => {
-            return Ok(json!({ "ok": false, "structure": problems }))
+    let (fold, sequence) = match input {
+        Input::Fold(value) => (Fold::from_value(value).map_err(|e| e.to_string())?, None),
+        Input::Sequence(text) => {
+            let sequence: Sequence = text
+                .parse()
+                .map_err(|e: SequenceError| format!("refused .origami file: {e}"))?;
+            let fold = sequence
+                .replay()
+                .map_err(|e| format!("refused .origami file: {e}"))?;
+            (fold, Some(sequence))
         }
+    };
+    let report = match analyse_within(&fold, &LIMITS) {
+        Ok(r) => Ok(r),
+        Err(Unchecked::Structure(problems)) => Err(problems),
         Err(Unchecked::OverLimit(e)) => return Err(refused(&e)),
+    };
+    let sequence = sequence.map(|s| sequence_answer(&s, &s.answer(fold.clone(), report.clone())));
+    let report: Report = match report {
+        Ok(r) => r,
+        Err(problems) => {
+            let mut out = json!({ "ok": false, "structure": problems });
+            if let Some(s) = sequence {
+                out["sequence"] = s;
+            }
+            return Ok(out);
+        }
     };
     let mut out = serde_json::to_value(&report).map_err(|e| e.to_string())?;
     out["structure"] = json!([]);
+    if let Some(s) = sequence {
+        out["sequence"] = s;
+    }
     if census {
         out["census"] = census_tally(&fold)?;
     }
@@ -133,6 +176,33 @@ pub fn origami_check(params: Value) -> Result<Value, String> {
         out["thickness"] = v;
     }
     Ok(out)
+}
+
+enum Input<'a> {
+    Fold(&'a Value),
+    Sequence(&'a str),
+}
+
+/// The `sequence` block: each expectation with what the checks found, and the replayed fold.
+fn sequence_answer(sequence: &Sequence, checked: &Checked) -> Value {
+    let expectations: Vec<Value> = checked
+        .verdicts
+        .iter()
+        .map(|v| {
+            json!({
+                "line": v.line,
+                "expect": v.text.strip_prefix("expect").unwrap_or(&v.text).trim(),
+                "got": v.got,
+                "holds": v.holds,
+            })
+        })
+        .collect();
+    json!({
+        "name": sequence.name,
+        "holds": checked.holds(),
+        "expectations": expectations,
+        "fold": checked.fold.to_value(),
+    })
 }
 
 fn refused(e: &dyn std::fmt::Display) -> String {
@@ -373,6 +443,65 @@ mod tests {
         });
         let err = origami_check(json!({ "fold": fold })).unwrap_err();
         assert!(err.contains("face-vertex incidences"), "{err}");
+    }
+
+    const HALF: &str = "origami half\nvalley B to A\nexpect ok\nexpect faces 2\nexpect ply 2\n";
+
+    #[test]
+    fn a_sequence_is_replayed_checked_and_answered() {
+        let out = origami_check(json!({ "sequence": HALF, "census": true })).unwrap();
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(out["counts"]["faces"], 2);
+        assert_eq!(out["census"]["rejected"], 1);
+        let s = &out["sequence"];
+        assert_eq!(s["name"], "half");
+        assert_eq!(s["holds"], true);
+        assert_eq!(
+            s["expectations"],
+            json!([
+                { "line": 3, "expect": "ok", "got": "ok", "holds": true },
+                { "line": 4, "expect": "faces 2", "got": "2", "holds": true },
+                { "line": 5, "expect": "ply 2", "got": "2", "holds": true }
+            ])
+        );
+        // The replayed fold is a FOLD object the tool accepts as `fold`, with the same verdict.
+        let again = origami_check(json!({ "fold": s["fold"] })).unwrap();
+        assert_eq!(again["ok"], true);
+        assert_eq!(again["layers"], out["layers"]);
+    }
+
+    #[test]
+    fn a_failed_expectation_is_answered_not_refused() {
+        let out = origami_check(json!({ "sequence": "origami half\nvalley B to A\nexpect ply 3" }))
+            .unwrap();
+        assert_eq!(out["ok"], true);
+        assert_eq!(out["sequence"]["holds"], false);
+        assert_eq!(out["sequence"]["expectations"][0]["got"], "2");
+    }
+
+    #[test]
+    fn a_refused_sequence_names_its_line() {
+        let err = origami_check(json!({
+            "sequence": "origami x\nvalley B to A\nvalley B to A"
+        }))
+        .unwrap_err();
+        assert!(
+            err.contains("line 3") && err.contains("same place"),
+            "{err}"
+        );
+        let err = origami_check(json!({ "sequence": "valley A to C" })).unwrap_err();
+        assert!(err.contains("line 1"), "{err}");
+    }
+
+    #[test]
+    fn exactly_one_of_fold_and_sequence() {
+        let err = origami_check(json!({ "fold": square_folded_in_half(1), "sequence": HALF }))
+            .unwrap_err();
+        assert!(err.contains("not both"), "{err}");
+        let err = origami_check(json!({ "sequence": ["origami half"] })).unwrap_err();
+        assert!(err.contains("text of a .origami file"), "{err}");
+        let err = origami_check(json!({ "fold": null, "sequence": null })).unwrap_err();
+        assert!(err.contains("supply"), "{err}");
     }
 
     /// The crane, with its census, fits well inside the limits.
