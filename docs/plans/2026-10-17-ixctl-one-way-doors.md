@@ -247,6 +247,9 @@ name `ixctl.v1`.
   "a later generation that converges supersedes the failed one" (`plane_test.go:196-199`).
 - **Decoding.** HTTP refuses unknown fields (`http.go:119-126`). The WebSocket path uses plain
   `json.Unmarshal` (`session.go:54-58`), so unknown fields, inside `desired` too, are dropped.
+- **Fixed (F2.2), commit `09193b7`:** both transports go through one strict decoder
+  (`decodeStrict`); an unknown field gets the same refusal on HTTP and WebSocket. Envelope and
+  schema unchanged.
 
 ### Who writes it, who reads it
 

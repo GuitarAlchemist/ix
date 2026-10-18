@@ -260,6 +260,9 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
 - **Décodage.** HTTP refuse les champs inconnus (`http.go:119-126`). Le chemin WebSocket utilise
   un simple `json.Unmarshal` (`session.go:54-58`) : les champs inconnus, y compris dans
   `desired`, sont écartés sans bruit.
+- **Corrigé (F2.2), commit `09193b7` :** les deux transports passent par un même décodeur strict
+  (`decodeStrict`) ; un champ inconnu reçoit le même refus en HTTP et en WebSocket. Enveloppe et
+  schéma inchangés.
 
 ### Qui l'écrit, qui le lit
 
