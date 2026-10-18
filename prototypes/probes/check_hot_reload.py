@@ -8,10 +8,12 @@ It runs the host and checks five things:
       and samples keep coming while the new build replaces the old one;
   S4  a probe that no longer compiles keeps its last good build running;
   S5  DuckDB aggregates the JSONL.
-It stops the host with Ctrl+Break, and restores the probe's source whatever happens.
+It runs its own host on a copy of sysinfo under out/check-hr, so the probes in probes/ and a host
+already running on them are left alone. It stops the host with Ctrl+Break.
 """
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -19,8 +21,11 @@ import time
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(ROOT, "out")
-PROBE = os.path.join(ROOT, "probes", "sysinfo", "main.go")
+CHECK = os.path.join(ROOT, "out", "check-hr")
+OUT = os.path.join(CHECK, "out")
+PROBES = os.path.join(CHECK, "probes")
+PROBE = os.path.join(PROBES, "sysinfocheck", "main.go")
+HOST = os.path.abspath(sys.argv[1]) if sys.argv[1:] else os.path.join(ROOT, "out", "bin", "host.exe")
 BACKSTOP = 180  # the host's own -for, in case the check dies before stopping it
 WAIT = 60  # for one build, under load
 
@@ -74,6 +79,9 @@ def main():
         p = os.path.join(OUT, name)
         if os.path.exists(p):
             os.remove(p)
+    shutil.rmtree(CHECK, ignore_errors=True)
+    os.makedirs(os.path.dirname(PROBE))
+    shutil.copy(os.path.join(ROOT, "probes", "sysinfo", "main.go"), PROBE)
     with open(PROBE, encoding="utf-8") as f:
         original = f.read()
     marker = '\t\t{ts, "cpu_logical", float64(logical), "count"},\n'
@@ -82,7 +90,7 @@ def main():
         '\t\t{ts, "ram_used_pct", 100 * float64(system[0].TotalVisibleMemorySize-system[0].FreePhysicalMemory) /'
         ' float64(system[0].TotalVisibleMemorySize), "%"},\n'))
 
-    host = subprocess.Popen([os.path.join(OUT, "bin", "host.exe"), "-for", f"{BACKSTOP}s"], cwd=ROOT,
+    host = subprocess.Popen([HOST, "-probes", os.path.relpath(PROBES, ROOT), "-out", OUT, "-for", f"{BACKSTOP}s"], cwd=ROOT,
                             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
     t0 = time.time()
     try:
@@ -142,10 +150,10 @@ def main():
     ev = lines("host-events.jsonl")
     starts = [e for e in ev if e["event"] == "host_started"]
     rebuilt = [e for e in ev if e["event"] == "built" and e["build"] == new_build]
-    leftovers = subprocess.run(["tasklist", "/FI", "IMAGENAME eq sysinfo-*"], capture_output=True,
+    leftovers = subprocess.run(["tasklist", "/FI", "IMAGENAME eq sysinfocheck-*"], capture_output=True,
                                text=True).stdout
     print(f"host started {len(starts)} time(s), stopped={bool(events('host_stopped'))}, exit code "
-          f"{host.returncode}; probe processes left: {'none' if 'sysinfo-' not in leftovers else leftovers}")
+          f"{host.returncode}; probe processes left: {'none' if 'sysinfocheck-' not in leftovers else leftovers}")
     print("events:", ", ".join(e["event"] + (f"[{e['build']}]" if e.get("build") else "") for e in ev))
 
     # The longest stretch without a sample while the host ran, swap included.
@@ -154,14 +162,14 @@ def main():
     print(f"{len(ticks)} sampling rounds; median gap {sorted(gaps)[len(gaps) // 2]:.2f}s, longest {max(gaps):.2f}s")
 
     # S5
-    sql = subprocess.run(["duckdb", "-c", ".read aggregate.sql"], cwd=ROOT, capture_output=True, text=True,
+    sql = subprocess.run(["duckdb", "-c", ".read " + os.path.join(ROOT, "aggregate.sql").replace("\\", "/")], cwd=CHECK, capture_output=True, text=True,
                          encoding="utf-8")
     print("S5 duckdb exit", sql.returncode)
     print(sql.stdout or sql.stderr)
 
     ok = (s1 <= 5 and total_ok and cpus_ok and free_ok and new_build != first_build and kept == new_build
           and still and len(rebuilt) == 1 and len(starts) == 1 and host.returncode == 0
-          and "sysinfo-" not in leftovers and sql.returncode == 0)
+          and "sysinfocheck-" not in leftovers and sql.returncode == 0)
     print("RESULT", "PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)
 

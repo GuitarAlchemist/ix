@@ -90,10 +90,12 @@ has no sample yet).
 
 ## Checked, and measured
 
-`check_hot_reload.py` runs the whole loop and checks it. It starts the host,
-compares a sample with `Get-CimInstance`, adds a metric to the probe's source,
-then breaks the source, stops the host with Ctrl+Break and runs
-`aggregate.sql`. It restores the probe's source at the end.
+`check_hot_reload.py` runs the whole loop and checks it. It starts a host of
+its own on a copy of `sysinfo` under `out/check-hr`, compares a sample with
+`Get-CimInstance`, adds a metric to the copy's source, then breaks it, stops
+the host with Ctrl+Break and runs `aggregate.sql`. A host already running on
+`probes/` is left alone. Rerun on 2026-10-18 with the gap-free swap: PASS, the
+longest stretch without a sample 1.38 s at a 1 s interval.
 
 ```powershell
 python -B check_hot_reload.py     # from prototypes/probes, after building the host

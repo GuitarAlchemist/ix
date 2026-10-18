@@ -96,10 +96,13 @@ tant que WMI n'a pas encore d'échantillon).
 
 ## Vérifié, et mesuré
 
-`check_hot_reload.py` exécute toute la boucle et la vérifie. Il démarre
-l'hôte, compare un échantillon avec `Get-CimInstance`, ajoute une métrique au
-source de la probe, puis casse le source, arrête l'hôte avec Ctrl+Break et
-exécute `aggregate.sql`. Il restaure le source de la probe à la fin.
+`check_hot_reload.py` exécute toute la boucle et la vérifie. Il démarre un
+hôte à lui sur une copie de `sysinfo` sous `out/check-hr`, compare un
+échantillon avec `Get-CimInstance`, ajoute une métrique au source de la copie,
+puis le casse, arrête l'hôte avec Ctrl+Break et exécute `aggregate.sql`. Un
+hôte qui tourne déjà sur `probes/` n'est pas touché. Relancé le 2026-10-18 avec
+le remplacement sans trou : PASS, le plus long intervalle sans échantillon
+1,38 s pour un intervalle de 1 s.
 
 ```powershell
 python -B check_hot_reload.py     # depuis prototypes/probes, après avoir compilé l'hôte
