@@ -110,6 +110,33 @@ Also seen:
 - The sampling period was 1.2–1.3 s at a 1 s interval, the WMI queries being
   slow under load.
 
+## Probes from templates, and requests
+
+`new_probe.py` writes a probe from a fixed template, never from free code. Its
+only template today is `process`: the CPU, memory and count of the processes
+whose WMI name matches a `LIKE` pattern. Every parameter must match a strict
+pattern before it reaches the source:
+
+```powershell
+python -B new_probe.py process scene "godot.windows.editor%"   # probes/proc-scene
+```
+
+`probe_requests.py --every 2` lets the 3D scene, a voice command or an agent
+ask for one without running anything. A request is a JSON file in
+`%LOCALAPPDATA%\ix-probes\requests\`, written whole (a `.part` renamed into
+place) and named by its id:
+
+```json
+{"template": "process", "name": "obs", "match": "obs64%"}
+```
+
+The watcher hands it to `new_probe.py` and writes `<id>.result.json` beside it,
+`{"ok": true, "probe": "proc-obs"}` or `{"ok": false, "error": "..."}`. A probe
+that exists is reported, not rewritten, and there are at most 8 template
+probes. On 2026-10-18 it refused `obs; rm` as a name, `x' OR 1=1` as a pattern
+and a `shell` template. The `obs` request's first sample arrived about 20 s
+later.
+
 ## Limits, and what next
 
 - Windows only as written: `sysinfo` reads WMI, and the host has only run

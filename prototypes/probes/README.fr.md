@@ -115,6 +115,33 @@ Observé aussi :
 - La période d'échantillonnage était de 1,2 à 1,3 s pour un intervalle de
   1 s, les requêtes WMI étant lentes sous la charge.
 
+## Des probes à partir de modèles, et des demandes
+
+`new_probe.py` écrit une probe à partir d'un modèle fixe, jamais de code libre.
+Son seul modèle aujourd'hui est `process` : le CPU, la mémoire et le nombre des
+processus dont le nom WMI correspond à un motif `LIKE`. Chaque paramètre doit
+correspondre à un motif strict avant d'atteindre le source :
+
+```powershell
+python -B new_probe.py process scene "godot.windows.editor%"   # probes/proc-scene
+```
+
+`probe_requests.py --every 2` permet à la scène 3D, à une commande vocale ou à
+un agent d'en demander une sans rien exécuter. Une demande est un fichier JSON
+dans `%LOCALAPPDATA%\ix-probes\requests\`, écrit d'un seul coup (un `.part`
+renommé en place) et nommé par son identifiant :
+
+```json
+{"template": "process", "name": "obs", "match": "obs64%"}
+```
+
+Le veilleur la passe à `new_probe.py` et écrit `<id>.result.json` à côté,
+`{"ok": true, "probe": "proc-obs"}` ou `{"ok": false, "error": "..."}`. Une
+probe qui existe est signalée, pas réécrite, et il y a au plus 8 probes de
+modèle. Le 2026-10-18, il a refusé `obs; rm` comme nom, `x' OR 1=1` comme motif
+et un modèle `shell`. Le premier échantillon de la demande `obs` est arrivé
+environ 20 s plus tard.
+
 ## Limites, et suite
 
 - Windows seulement tel quel : `sysinfo` lit WMI, et l'hôte n'a tourné que
