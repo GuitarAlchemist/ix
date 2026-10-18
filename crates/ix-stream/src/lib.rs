@@ -24,6 +24,8 @@ pub mod skill;
 pub mod source;
 pub mod sql;
 pub mod sse;
+#[cfg(feature = "world")]
+pub mod world;
 
 pub use bus::{Bus, Event, Signal};
 

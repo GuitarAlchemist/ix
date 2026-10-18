@@ -72,6 +72,20 @@ pub fn query_batch(rows: &[Value], sql: &str, scratch: &Path) -> Result<Vec<Valu
     ))
 }
 
+/// [`query_batch`] for a query that must reach no file and no network: once `batch` is loaded,
+/// DuckDB's external access and extension autoloading are turned off, and a statement cannot
+/// turn them back on.
+pub fn query_sealed(rows: &[Value], sql: &str, scratch: &Path) -> Result<Vec<Value>, String> {
+    query_batch(
+        rows,
+        &format!(
+            "SET enable_external_access = false; SET autoinstall_known_extensions = false; \
+             SET autoload_known_extensions = false; SET lock_configuration = true; {sql}"
+        ),
+        scratch,
+    )
+}
+
 /// A window of values and the query run over it. Give it to [`crate::Graph::batch`].
 pub struct Window {
     name: String,

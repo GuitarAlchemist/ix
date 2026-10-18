@@ -28,6 +28,13 @@
 //! JSON value stops the stream: the answer is then `stopped_by: "error"` with the `error`, and
 //! counts that tell how far the stream got before the stop reached it, which timing decides.
 //!
+//! A source with `values` sends those instead of `{ source, i }`, and no more of them. With the
+//! `world` feature a node can also reach outside the process (see [`crate::world`]): `http`
+//! calls an allowed loopback service, `sql` runs DuckDB over everything a batching node took,
+//! and `file` writes a sink's values under `out_dir`. Such a graph is not deterministic, so the
+//! paragraph below does not hold for it: its counts are reported, not predicted, the budget
+//! still stops it, and the answer adds what it wrote, what went wrong, and its time.
+//!
 //! Two bounds stop the stream: `max_events`, the most values the sources send in all, and
 //! `budget`, the most values the nodes take in all, one step each. Before the run the skill
 //! works out from the shape how many values each source can send within both, serving the
@@ -41,7 +48,7 @@
 //! node took and sent. A run whose counts differ from what its shape predicts is an error.
 
 use crate::gate::{Budget, Ledger};
-use crate::petri::{self, Abstraction, Shape};
+use crate::petri::{self, Abstraction, Shape, ShapeNode};
 use crate::{Batch, Bus, Closed, Graph, NodeId, Out, Signal};
 use ix_pipeline::dag::Dag;
 use ix_skill_macros::ix_skill;
@@ -109,7 +116,11 @@ pub fn stream_run_schema() -> Value {
                                 "workers": { "type": "integer", "minimum": 1, "default": 1, "description": "Threads sharing its input." },
                                 "wasm": { "type": "boolean", "default": false, "description": "Runs `program` on each value it takes and sends what it answers. Needs the `wasm` feature." },
                                 "program": { "type": "object", "description": "A wasm node's WASI module, named as wasm.run names it: exactly one of `stage` (a cached id), `go`, `zig` (source, built once) or `wat`. It reads the value as JSON on stdin and writes one JSON value on stdout." },
-                                "fuel": { "type": "integer", "minimum": 1, "default": 2000000000, "description": "A wasm node's fuel per value, about one unit per instruction." }
+                                "fuel": { "type": "integer", "minimum": 1, "default": 2000000000, "description": "A wasm node's fuel per value, about one unit per instruction." },
+                                "values": { "type": "array", "description": "A source sends these values, in order, instead of { source, i }." },
+                                "http": { "type": "object", "description": "(feature world) A stage that calls an allowed loopback service per value: { url, method, body, each, pick, into, timeout_ms }." },
+                                "sql": { "type": "string", "description": "(feature world) A batching node that runs this DuckDB query over all it took, as the table `batch`, and sends each row." },
+                                "file": { "type": "string", "description": "(feature world) A sink that writes what it takes, as JSON lines, to this path under out_dir." }
                             },
                             "required": ["name"]
                         }
@@ -130,7 +141,8 @@ pub fn stream_run_schema() -> Value {
                 "required": ["nodes", "edges"]
             },
             "max_events": { "type": "integer", "minimum": 1, "maximum": MAX_BOUND, "default": DEFAULT_EVENTS, "description": "The most values the sources send, in all." },
-            "budget": { "type": "integer", "minimum": 1, "maximum": MAX_BOUND, "default": MAX_BOUND, "description": "The most values the nodes take, in all: one step each." }
+            "budget": { "type": "integer", "minimum": 1, "maximum": MAX_BOUND, "default": MAX_BOUND, "description": "The most values the nodes take, in all: one step each." },
+            "out_dir": { "type": "string", "description": "(feature world) The folder where file sinks write and sql nodes keep their input." }
         },
         "required": ["graph"]
     })
@@ -140,13 +152,13 @@ pub fn stream_run_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "stopped_by": { "type": "string", "enum": ["max_events", "budget", "error"], "description": "The bound that ended the stream, or `error` when a wasm node failed and stopped it." },
+            "stopped_by": { "type": "string", "enum": ["max_events", "budget", "sources", "error"], "description": "The bound that ended the stream, `sources` when they sent all their values, or `error` when a wasm node failed and stopped it." },
             "error": { "type": "object", "description": "With `stopped_by: error`: { node, kind, message }, kind one of fuel, refused, exit, output, trap, input." },
             "events": { "type": "integer", "description": "The values the sources sent." },
             "steps": { "type": "integer", "description": "The values the nodes took: what the run spent of its budget." },
             "receipts": {
                 "type": "object",
-                "description": "`petri`: the check that cleared the graph; `budget`: { cap, spent }; `nodes`: what each node took and sent, { name, received, emitted }, in the order of `nodes`, and for a wasm node `wasm`: { stage, fuel_cap, out, fuel }, the values its program answered and the fuel its runs spent."
+                "description": "`petri`: the check that cleared the graph; `budget`: { cap, spent }; `nodes`: what each node took and sent, { name, received, emitted }, in the order of `nodes`, and for a wasm node `wasm`: { stage, fuel_cap, out, fuel }, the values its program answered and the fuel its runs spent. A graph with world nodes adds `files` ({ node, path, rows }), `faults` and `elapsed_ms`."
             }
         }
     })
@@ -154,7 +166,8 @@ pub fn stream_run_output_schema() -> Value {
 
 /// Runs an ix-stream graph as a pipeline stage, bounded by `max_events` (the values its sources
 /// send) and `budget` (the values its nodes take). Deterministic: no files, no network, no
-/// process but a wasm node's build, and an answer that does not depend on thread timing.
+/// process but a wasm node's build, and an answer that does not depend on thread timing; only
+/// `http`, `sql` and `file` nodes, under the `world` feature, reach outside.
 ///
 /// `graph` is the shape ix-stream writes, `{ nodes: [{ name, source, batching, cap, workers }],
 /// edges: [{ from, to }] }`. Sources send `{ source, i }`, stages send what they take on every
@@ -188,58 +201,132 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
     }
 
     let wasm = load_wasm(graph, &shape)?;
+    let works = works(graph, &shape)?;
+    if let Some((n, _)) = shape
+        .nodes
+        .iter()
+        .zip(&wasm)
+        .zip(&works)
+        .find_map(|((n, w), k)| (w.is_some() && !matches!(k, Work::Pass)).then_some((n, k)))
+    {
+        return Err(format!(
+            "{}: a wasm node has none of values, http, sql and file",
+            n.name
+        ));
+    }
+    let world = works.iter().any(Work::is_world);
 
-    let sent = plan(&shape, &order, max_events, budget);
+    let caps: Vec<u64> = works.iter().map(Work::cap).collect();
+    let sent = if world {
+        serve(&shape, &caps, max_events)
+    } else {
+        plan(&shape, &order, &caps, max_events, budget)
+    };
     let (taken, sends) = predict(&shape, &order, &sent);
     let ledger = Ledger::new(vec![Budget::new("steps", "values taken", budget as f64)]);
     // The first wasm node to fail, as the answer's `error`.
     let failed: Arc<Mutex<Option<Value>>> = Arc::default();
     let events = Arc::new(AtomicU64::new(0));
+    #[cfg(feature = "world")]
+    let receipts = crate::world::Shared::default();
+    #[cfg(feature = "world")]
+    let dir = out_dir(&params, &works)?;
     let mut g = Graph::new(&Bus::new());
-    for (i, n) in shape.nodes.iter().enumerate() {
-        if n.source {
-            let (name, count, events) = (n.name.clone(), sent[i], events.clone());
-            g.source(&n.name, move |out| {
-                for k in 0..count {
-                    if send_all(out, &json!({ "source": name, "i": k })).is_err() {
+    for ((i, n), work) in shape.nodes.iter().enumerate().zip(works) {
+        match work {
+            Work::Values(values) => {
+                let values: Vec<Value> = values.into_iter().take(sent[i] as usize).collect();
+                let events = events.clone();
+                g.source(&n.name, move |out| {
+                    for v in &values {
+                        if send_all(out, v).is_err() {
+                            break;
+                        }
+                        events.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+            Work::Pass if n.source => {
+                let (name, count, events) = (n.name.clone(), sent[i], events.clone());
+                g.source(&n.name, move |out| {
+                    for k in 0..count {
+                        if send_all(out, &json!({ "source": name, "i": k })).is_err() {
+                            return;
+                        }
+                        events.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+            Work::Pass if wasm[i].is_some() => {
+                let w = wasm[i].clone().expect("a wasm node");
+                let (ledger, failed) = (ledger.clone(), failed.clone());
+                g.stage(&n.name, n.cap, n.workers, move |v, out| {
+                    if !step(&ledger, out) {
                         return;
                     }
-                    events.fetch_add(1, Ordering::Relaxed);
-                }
-            });
-        } else if let Some(w) = wasm[i].clone() {
-            let (ledger, failed) = (ledger.clone(), failed.clone());
-            g.stage(&n.name, n.cap, n.workers, move |v, out| {
-                if !step(&ledger, out) {
-                    return;
-                }
-                match w.run(&v) {
-                    Ok(answer) => {
-                        let _ = send_all(out, &answer);
+                    match w.run(&v) {
+                        Ok(answer) => {
+                            let _ = send_all(out, &answer);
+                        }
+                        Err((kind, message)) => {
+                            let mut first = failed.lock().unwrap_or_else(|e| e.into_inner());
+                            first.get_or_insert_with(
+                                || json!({ "node": out.name(), "kind": kind, "message": message }),
+                            );
+                            // Its input drops, so the nodes upstream stop at their next send.
+                            out.stop();
+                        }
                     }
-                    Err((kind, message)) => {
-                        let mut first = failed.lock().unwrap_or_else(|e| e.into_inner());
-                        first.get_or_insert_with(
-                            || json!({ "node": out.name(), "kind": kind, "message": message }),
-                        );
-                        // Its input drops, so the nodes upstream stop at their next send.
-                        out.stop();
+                });
+            }
+            Work::Pass if n.batching => {
+                let count = Count {
+                    ledger: ledger.clone(),
+                    taken: 0,
+                };
+                g.batch(&n.name, n.cap, count);
+            }
+            Work::Pass => {
+                let ledger = ledger.clone();
+                g.stage(&n.name, n.cap, n.workers, move |v, out| {
+                    if step(&ledger, out) {
+                        let _ = send_all(out, &v);
                     }
-                }
-            });
-        } else if n.batching {
-            let count = Count {
-                ledger: ledger.clone(),
-                taken: 0,
-            };
-            g.batch(&n.name, n.cap, count);
-        } else {
-            let ledger = ledger.clone();
-            g.stage(&n.name, n.cap, n.workers, move |v, out| {
-                if step(&ledger, out) {
-                    let _ = send_all(out, &v);
-                }
-            });
+                });
+            }
+            #[cfg(feature = "world")]
+            Work::Http(http) => {
+                let ledger = ledger.clone();
+                g.stage(&n.name, n.cap, n.workers, move |v, out| {
+                    if step(&ledger, out) {
+                        let _ = send_all(out, &http.apply(v));
+                    }
+                });
+            }
+            #[cfg(feature = "world")]
+            Work::Sql(sql) => {
+                let inner = crate::world::Sql::new(&n.name, &sql, &dir, &receipts);
+                g.batch(
+                    &n.name,
+                    n.cap,
+                    Paid {
+                        ledger: ledger.clone(),
+                        inner,
+                    },
+                );
+            }
+            #[cfg(feature = "world")]
+            Work::File(file) => {
+                let inner = crate::world::File::new(&n.name, &file, &dir, &receipts)?;
+                g.batch(
+                    &n.name,
+                    n.cap,
+                    Paid {
+                        ledger: ledger.clone(),
+                        inner,
+                    },
+                );
+            }
         }
     }
     for (i, n) in shape.nodes.iter().enumerate() {
@@ -254,8 +341,9 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
     }
     let error = failed.lock().unwrap_or_else(|e| e.into_inner()).take();
     let spent = ledger.get("steps").map_or(0.0, |b| b.spent) as u64;
-    // A stopped stream ends where the stop reached each node, which no shape predicts.
-    if error.is_none() {
+    // A stopped stream ends where the stop reached each node, which no shape predicts, and a
+    // world node's counts depend on what the world answers: both are reported, not checked.
+    if error.is_none() && !world {
         for (i, s) in report.nodes.iter().enumerate() {
             if s.received != taken[i] || s.emitted != sends[i] {
                 return Err(format!(
@@ -272,6 +360,12 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
         }
     }
     let events = events.load(Ordering::Relaxed);
+    let drained = events == sent.iter().sum::<u64>()
+        && shape
+            .nodes
+            .iter()
+            .enumerate()
+            .all(|(i, n)| !n.source || sent[i] == caps[i]);
     let nodes: Vec<Value> = report
         .nodes
         .iter()
@@ -287,6 +381,7 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
     let stopped_by = match error {
         Some(_) => "error",
         None if events == max_events => "max_events",
+        None if drained => "sources",
         None => "budget",
     };
     let mut answer = json!({
@@ -301,6 +396,15 @@ pub fn stream_run(params: Value) -> Result<Value, String> {
     });
     if let Some(error) = error {
         answer["error"] = error;
+    }
+    #[cfg(feature = "world")]
+    if world {
+        let r = receipts
+            .lock()
+            .map_err(|_| "a world node panicked holding the receipts")?;
+        answer["receipts"]["files"] = json!(r.files);
+        answer["receipts"]["faults"] = json!(r.faults);
+        answer["receipts"]["elapsed_ms"] = json!(report.elapsed.as_millis() as u64);
     }
     Ok(answer)
 }
@@ -443,8 +547,8 @@ fn steps(taken: &[u64]) -> u64 {
 }
 
 /// How many values each source sends. In the order of the nodes, each source sends the most it
-/// can within the events left and the budget.
-fn plan(shape: &Shape, order: &[usize], max_events: u64, budget: u64) -> Vec<u64> {
+/// can within what it has (`caps`), the events left and the budget.
+fn plan(shape: &Shape, order: &[usize], caps: &[u64], max_events: u64, budget: u64) -> Vec<u64> {
     let mut sent = vec![0u64; shape.nodes.len()];
     let mut left = max_events;
     for i in 0..shape.nodes.len() {
@@ -452,7 +556,7 @@ fn plan(shape: &Shape, order: &[usize], max_events: u64, budget: u64) -> Vec<u64
             continue;
         }
         // The steps grow with what a source sends, so halving finds the most it can send.
-        let (mut lo, mut hi) = (0, left);
+        let (mut lo, mut hi) = (0, left.min(caps[i]));
         while lo < hi {
             let mid = lo + (hi - lo).div_ceil(2);
             sent[i] = mid;
@@ -468,8 +572,163 @@ fn plan(shape: &Shape, order: &[usize], max_events: u64, budget: u64) -> Vec<u64
     sent
 }
 
+/// How many values each source of a graph with world nodes sends: in the order of the nodes,
+/// what it has within the events left. Its steps cannot be predicted, so the budget is not
+/// planned for: the ledger alone stops it.
+fn serve(shape: &Shape, caps: &[u64], max_events: u64) -> Vec<u64> {
+    let mut left = max_events;
+    shape
+        .nodes
+        .iter()
+        .zip(caps)
+        .map(|(n, &cap)| {
+            let sent = if n.source { left.min(cap) } else { 0 };
+            left -= sent;
+            sent
+        })
+        .collect()
+}
+
+/// What a node does beyond what its shape says, read from the fields the shape leaves.
+enum Work {
+    /// What the shape says.
+    Pass,
+    /// A source that sends these values.
+    Values(Vec<Value>),
+    #[cfg(feature = "world")]
+    Http(Box<crate::world::Http>),
+    #[cfg(feature = "world")]
+    Sql(String),
+    #[cfg(feature = "world")]
+    File(String),
+}
+
+impl Work {
+    fn is_world(&self) -> bool {
+        !matches!(self, Work::Pass | Work::Values(_))
+    }
+
+    /// The most values it has to send as a source.
+    fn cap(&self) -> u64 {
+        match self {
+            Work::Values(v) => v.len() as u64,
+            _ => u64::MAX,
+        }
+    }
+}
+
+/// What each node of `graph` does. A node has at most one of `values` (on a source), `http`
+/// (on a stage), `sql` (on a batching node) and `file` (on a sink); the last three need the
+/// `world` feature.
+fn works(graph: &Value, shape: &Shape) -> Result<Vec<Work>, String> {
+    let raw = graph["nodes"]
+        .as_array()
+        .ok_or("`nodes` must be an array")?;
+    shape
+        .nodes
+        .iter()
+        .zip(raw)
+        .map(|(n, j)| work(n, j))
+        .collect()
+}
+
+fn work(n: &ShapeNode, j: &Value) -> Result<Work, String> {
+    let given: Vec<&str> = ["values", "http", "sql", "file"]
+        .into_iter()
+        .filter(|k| j.get(*k).is_some_and(|v| !v.is_null()))
+        .collect();
+    let kind = match given[..] {
+        [] => return Ok(Work::Pass),
+        [kind] => kind,
+        _ => {
+            return Err(format!(
+                "{}: a node has one of values, http, sql and file, this one {}",
+                n.name,
+                given.join(", ")
+            ))
+        }
+    };
+    let (fits, place) = match kind {
+        "values" => (n.source, "a source"),
+        "http" => (!n.source && !n.batching, "a stage that is not batching"),
+        "sql" => (!n.source && n.batching, "a batching node"),
+        _ => (!n.source && n.outs.is_empty(), "a sink"),
+    };
+    if !fits {
+        return Err(format!("{}: `{kind}` goes on {place}", n.name));
+    }
+    let cfg = &j[kind];
+    if kind == "values" {
+        return cfg
+            .as_array()
+            .cloned()
+            .map(Work::Values)
+            .ok_or_else(|| format!("{}: `values` is a list", n.name));
+    }
+    world_work(n, kind, cfg)
+}
+
+#[cfg(feature = "world")]
+fn world_work(n: &ShapeNode, kind: &str, cfg: &Value) -> Result<Work, String> {
+    let text = || {
+        cfg.as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("{}: `{kind}` is a string", n.name))
+    };
+    match kind {
+        "http" => crate::world::Http::from_json(&n.name, cfg).map(|h| Work::Http(Box::new(h))),
+        "sql" => text().map(Work::Sql),
+        _ => text().map(Work::File),
+    }
+}
+
+#[cfg(not(feature = "world"))]
+fn world_work(n: &ShapeNode, kind: &str, _: &Value) -> Result<Work, String> {
+    Err(format!(
+        "{}: a `{kind}` node reaches outside the process: build ix-stream with its `world` feature",
+        n.name
+    ))
+}
+
+/// `out_dir`, made if missing, when a node writes files; an empty path when none does.
+#[cfg(feature = "world")]
+fn out_dir(params: &Value, works: &[Work]) -> Result<std::path::PathBuf, String> {
+    if !works
+        .iter()
+        .any(|w| matches!(w, Work::Sql(_) | Work::File(_)))
+    {
+        return Ok(std::path::PathBuf::new());
+    }
+    let dir = params
+        .get("out_dir")
+        .and_then(Value::as_str)
+        .ok_or("sql and file nodes need `out_dir`, the folder they write in")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("out_dir {dir}: {e}"))?;
+    Ok(dir.into())
+}
+
+/// A batching node that pays one step for each value it takes.
+#[cfg(feature = "world")]
+struct Paid<B> {
+    ledger: Arc<Ledger>,
+    inner: B,
+}
+
+#[cfg(feature = "world")]
+impl<B: Batch> Batch for Paid<B> {
+    fn take(&mut self, v: Value, out: &Out) {
+        if step(&self.ledger, out) {
+            self.inner.take(v, out);
+        }
+    }
+
+    fn end(&mut self, out: &Out) {
+        self.inner.end(out);
+    }
+}
+
 /// Sends `v` on every link of the node.
-fn send_all(out: &Out, v: &Value) -> Result<(), Closed> {
+pub(crate) fn send_all(out: &Out, v: &Value) -> Result<(), Closed> {
     for port in 0..out.ports() {
         out.emit(port, v.clone())?;
     }

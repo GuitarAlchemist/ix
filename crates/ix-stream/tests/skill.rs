@@ -185,3 +185,144 @@ fn the_skill_is_registered_with_its_schemas() {
     assert!((d.json_schema)()["properties"]["graph"].is_object());
     assert!((d.output_schema)()["properties"]["receipts"].is_object());
 }
+
+#[test]
+fn a_source_with_values_sends_them_and_stops_when_it_has_none_left() {
+    let graph = json!({
+        "nodes": [
+            { "name": "src", "source": true, "values": [{ "q": 1 }, { "q": 2 }, { "q": 3 }] },
+            { "name": "work" },
+            { "name": "sink" }
+        ],
+        "edges": [{ "from": 0, "to": 1 }, { "from": 1, "to": 2 }]
+    });
+    let out = stream_run(json!({ "graph": graph, "max_events": 10 })).unwrap();
+    assert_eq!(out["stopped_by"], "sources");
+    assert_eq!(out["events"], 3);
+    assert_eq!(
+        counts(&out),
+        [row("src", 0, 3), row("work", 3, 3), row("sink", 3, 0)]
+    );
+    let out = stream_run(json!({ "graph": graph, "max_events": 2 })).unwrap();
+    assert_eq!(out["stopped_by"], "max_events");
+    assert_eq!(out["events"], 2);
+}
+
+/// A source of one value, an http node calling `url`, and a sink.
+fn calling(url: &str) -> Value {
+    json!({
+        "nodes": [
+            { "name": "src", "source": true, "values": [{ "q": 1 }] },
+            { "name": "call", "http": { "url": url } },
+            { "name": "sink" }
+        ],
+        "edges": [{ "from": 0, "to": 1 }, { "from": 1, "to": 2 }]
+    })
+}
+
+#[cfg(not(feature = "world"))]
+#[test]
+fn world_nodes_need_the_world_feature() {
+    let e = stream_run(json!({ "graph": calling("http://127.0.0.1:5232/api") })).unwrap_err();
+    assert!(e.contains("`world` feature"), "{e}");
+}
+
+#[cfg(feature = "world")]
+#[test]
+fn an_http_node_off_the_allowlist_is_refused_before_the_run() {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    l.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/api", l.local_addr().unwrap());
+    let e = stream_run(json!({ "graph": calling(&url) })).unwrap_err();
+    assert!(e.contains("not an allowed origin"), "{e}");
+    let e = stream_run(json!({ "graph": calling("http://example.com/api") })).unwrap_err();
+    assert!(e.contains("not an allowed origin"), "{e}");
+    assert!(l.accept().is_err(), "nothing connected");
+}
+
+#[cfg(feature = "world")]
+#[test]
+#[ignore = "needs the duckdb CLI"]
+fn a_sql_node_answers_rows_a_file_sink_writes_and_the_query_reaches_no_file() {
+    let dir = std::env::temp_dir().join(format!("ix-stream-world-{}", std::process::id()));
+    let graph = |sql: &str| {
+        json!({
+            "nodes": [
+                { "name": "src", "source": true, "values": [{ "k": "a", "n": 1 }, { "k": "b", "n": 2 }, { "k": "a", "n": 3 }] },
+                { "name": "sum", "batching": true, "sql": sql },
+                { "name": "out", "file": "sums.jsonl" }
+            ],
+            "edges": [{ "from": 0, "to": 1 }, { "from": 1, "to": 2 }]
+        })
+    };
+    let out = stream_run(json!({
+        "graph": graph("SELECT k, sum(n)::BIGINT AS n FROM batch GROUP BY k ORDER BY k"),
+        "out_dir": dir.display().to_string()
+    }))
+    .unwrap();
+    assert_eq!(out["receipts"]["faults"], json!([]));
+    assert_eq!(out["receipts"]["files"][0]["rows"], 2);
+    let text = std::fs::read_to_string(dir.join("sums.jsonl")).unwrap();
+    let rows: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        rows,
+        [json!({ "k": "a", "n": 4 }), json!({ "k": "b", "n": 2 })]
+    );
+
+    let out = stream_run(json!({
+        "graph": graph("SELECT * FROM read_text('Cargo.toml')"),
+        "out_dir": dir.display().to_string()
+    }))
+    .unwrap();
+    let faults = out["receipts"]["faults"].to_string();
+    assert!(faults.contains("disabled by configuration"), "{faults}");
+    assert_eq!(out["receipts"]["files"][0]["rows"], 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The rows tracer A wrote (examples/stream/music-theory-oracle/ix.yaml): each question's
+/// verdict is an ix-types hexavalent symbol, and the one its claims call for.
+#[test]
+fn the_tracer_verdicts_follow_from_their_claims() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../state/stream-tracer/2026-10-17-music-theory-oracle/judge.jsonl"
+    );
+    let text = std::fs::read_to_string(path).unwrap();
+    let rows: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let questions: Vec<&Value> = rows.iter().filter(|r| r["row"] == "question").collect();
+    assert_eq!(questions.len(), 10);
+    for q in questions {
+        let symbol = q["verdict"].as_str().unwrap().chars().next().unwrap();
+        let verdict = ix_types::Hexavalent::from_char(symbol).unwrap();
+        let (claims, verified) = (
+            q["claims"].as_u64().unwrap(),
+            q["verified"].as_u64().unwrap(),
+        );
+        let mine = rows
+            .iter()
+            .filter(|r| r["row"] == "claim" && r["id"] == q["id"]);
+        assert_eq!(mine.clone().count() as u64, claims, "{}", q["id"]);
+        assert_eq!(
+            mine.filter(|r| r["match"] == true).count() as u64,
+            verified,
+            "{}",
+            q["id"]
+        );
+        let failed = !q["chatbot_error"].is_null() || q["answer"].is_null();
+        let expected = if failed || claims == 0 {
+            ix_types::Hexavalent::Unknown
+        } else if verified == claims {
+            ix_types::Hexavalent::True
+        } else {
+            ix_types::Hexavalent::False
+        };
+        assert_eq!(verdict, expected, "{}", q["id"]);
+    }
+}

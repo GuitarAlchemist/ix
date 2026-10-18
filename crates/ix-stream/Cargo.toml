@@ -24,8 +24,14 @@ ix-types = { workspace = true }
 ix-wasm = { workspace = true, optional = true }
 linkme = { workspace = true }
 serde_json = { workspace = true }
+# The `http` node of `stream.run` (src/world.rs): plain HTTP to loopback, so no TLS.
+reqwest = { version = "0.12", features = ["blocking"], default-features = false, optional = true }
 
 [features]
+# Nodes of `stream.run` that reach outside the process: `http` (allowed loopback origins only),
+# `sql` (a DuckDB process) and `file` (JSON lines under out_dir). Off by default, so the skill
+# stays offline and deterministic on the MCP surface.
+world = ["dep:reqwest"]
 # `stream.run` nodes that run each value through a sandboxed WASI program.
 wasm = ["dep:ix-wasm"]
 
