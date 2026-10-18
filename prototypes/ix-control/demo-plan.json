@@ -1,0 +1,13 @@
+{
+ "note": "Hand-edited by IX (Indigo) as the work moves. Everything here is shown on the public stream: titles only, no paths, no names of people. Each title is {en, fr, es}.",
+ "chantier": {"en": "Consolidating the probes", "fr": "Consolidation des sondes", "es": "Consolidación de las sondas"},
+ "steps": [
+  {"title": {"en": "Bounded disk: measurement files rotate", "fr": "Disque borné : les fichiers de mesures tournent", "es": "Disco acotado: los archivos de mediciones rotan"}, "state": "done"},
+  {"title": {"en": "No gap in the measurements when a probe is rebuilt", "fr": "Plus de trou de mesure quand une sonde est recompilée", "es": "Sin huecos en las mediciones al recompilar una sonda"}, "state": "done"},
+  {"title": {"en": "Clean stop, start and stop scripts", "fr": "Arrêt propre, scripts de démarrage et d'arrêt", "es": "Parada limpia, scripts de arranque y parada"}, "state": "done"},
+  {"title": {"en": "Eight end-to-end checks pass", "fr": "Huit vérifications de bout en bout passent", "es": "Pasan ocho verificaciones de extremo a extremo"}, "state": "done"},
+  {"title": {"en": "Probes start at logon", "fr": "Les sondes démarrent à l'ouverture de session", "es": "Las sondas arrancan al iniciar sesión"}, "state": "done"},
+  {"title": {"en": "The board in the scene's own language", "fr": "Le panneau dans la langue de la scène", "es": "El panel en el idioma de la escena"}, "state": "doing"}
+ ],
+ "next_demo": {"title": {"en": "Next demo: time to be confirmed", "fr": "Prochaine démo : heure à confirmer", "es": "Próxima demo: hora por confirmar"}, "at": null}
+}
