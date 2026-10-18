@@ -117,10 +117,19 @@ func (s *server) op(build func(*http.Request) (Request, error)) http.HandlerFunc
 }
 
 func decodeBody(r *http.Request, v any) error {
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	return decodeStrict(io.LimitReader(r.Body, 1<<20), v)
+}
+
+// decodeStrict is the one decoder for what clients send, on HTTP and on
+// ixctl.v1 alike: one JSON value, no unknown field, nothing after it.
+func decodeStrict(r io.Reader, v any) error {
+	dec := json.NewDecoder(r)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return fmt.Errorf("bad body: %w", err)
+		return badRequest("bad body: %v", err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return badRequest("bad body: data after the JSON value")
 	}
 	return nil
 }

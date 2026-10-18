@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // subscribe with since replays from the ring, then goes live, in order,
@@ -119,5 +123,51 @@ func TestWSSessionErrors(t *testing.T) {
 	}
 	if _, err := c.Do(ctx, Request{Op: "apply", Peer: "zz", Desired: running("x")}); err == nil || !strings.Contains(err.Error(), "unknown peer") {
 		t.Errorf("unknown peer: %v", err)
+	}
+}
+
+// The same desired-state document with one unknown field gets the same
+// refusal on POST /v1/apply and on an ixctl.v1 apply, and nothing is applied.
+func TestUnknownFieldRefusedOnHTTPAndWS(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws://"+in.addr+"/v1/ws", &websocket.DialOptions{
+		HTTPClient: loopbackHTTP, HTTPHeader: http.Header{"Authorization": {"Bearer " + in.token}}, Subprotocols: []string{subprotocol}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	for i, doc := range []string{
+		`{"services":{"pod":{"state":"running"}},"schema":"ixctl-desired/9"}`,
+		`{"services":{"pod":{"state":"running","replicas":2}}}`,
+	} {
+		code, _, body := httpDo(t, in, "POST", "/v1/apply", json.RawMessage(doc), nil)
+		var he struct {
+			Error string `json:"error"`
+		}
+		json.Unmarshal(body, &he)
+		if code != 400 || !strings.Contains(he.Error, "unknown field") {
+			t.Fatalf("HTTP %s: %d %s", doc, code, body)
+		}
+
+		id := int64(i + 1)
+		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"id":`+strconv.FormatInt(id, 10)+`,"op":"apply","desired":`+doc+`}`)); err != nil {
+			t.Fatal(err)
+		}
+		_, b, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f Frame
+		json.Unmarshal(b, &f)
+		if f.Re == nil || *f.Re != id || f.OK || f.Error != he.Error {
+			t.Fatalf("WS %s: %s, want the refusal %q", doc, b, he.Error)
+		}
+	}
+	var st StatusReply
+	json.Unmarshal(do(t, dial(t, in), Request{Op: "status"}), &st)
+	if st.Generation != 0 {
+		t.Fatalf("a refused document was applied: generation %d", st.Generation)
 	}
 }

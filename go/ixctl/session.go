@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strconv"
@@ -52,8 +53,8 @@ func (s *session) Close() { s.cancel() }
 // slow stop never holds the connection.
 func (s *session) Handle(frame []byte) {
 	var req Request
-	if err := json.Unmarshal(frame, &req); err != nil {
-		s.reply(0, nil, badRequest("bad frame: %v", err))
+	if err := decodeStrict(bytes.NewReader(frame), &req); err != nil {
+		s.reply(req.ID, nil, err)
 		return
 	}
 	switch req.Op {
