@@ -43,8 +43,9 @@ Le package `plugin` de Go n'existe pas sous Windows, et Windows verrouille un
 exécutable en cours. Chaque build est donc un nouveau processus : toutes les
 500 ms, l'hôte hache les fichiers `.go` de chaque probe (le contenu, pas les
 dates de modification) ; quand un hash change, il lance `go build` vers un
-exécutable nommé d'après le hash, le démarre, et seulement ensuite arrête
-l'ancien. Si le nouveau source ne compile pas, l'ancien build continue de
+exécutable nommé d'après le hash, le démarre, et n'arrête l'ancien qu'une fois
+que le nouveau a imprimé sa première ligne (ou s'est arrêté, ou après 30 s) :
+un remplacement ne laisse donc pas de trou. Si le nouveau source ne compile pas, l'ancien build continue de
 tourner et l'hôte ne réessaie pas ce source tant qu'il ne change pas de
 nouveau. Une probe qui plante est redémarrée, au plus toutes les 2 s. Une
 probe dont le répertoire est supprimé est arrêtée.
@@ -61,7 +62,20 @@ duckdb -c ".read aggregate.sql"   # par métrique, puis par build
 ```
 
 Options : `-probes` (par défaut `probes`), `-out` (`out`), `-poll` (`500ms`),
-`-interval` (`1s`), `-for` (`0`, jusqu'à interruption).
+`-interval` (`1s`), `-for` (`0`, jusqu'à interruption), `-rotate-bytes`
+(64 Mio : chaque fichier JSONL est renommé `<nom>-<heure UTC>.jsonl` à cette
+taille, `0` jamais) et `-keep` (`4` fichiers renommés de chaque). Un fichier
+nommé `stop` dans le répertoire de sortie arrête l'hôte et ses probes, comme
+Ctrl+C.
+
+Pour le faire tourner en arrière-plan comme l'attend le panneau de la scène 3D,
+en écrivant dans `%LOCALAPPDATA%\ix-probes` toutes les 5 s, avec le veilleur de
+demandes à côté :
+
+```powershell
+pwsh -File start.ps1   # compile l'hôte au besoin ; ne fait rien pour ce qui tourne déjà
+pwsh -File stop.ps1    # par le fichier stop, puis le veilleur
+```
 
 `out/probes.jsonl` est du JSONL ordinaire avec des horodatages typés, donc
 toute requête DuckDB s'y applique, par exemple la charge CPU par tranches de
@@ -108,12 +122,32 @@ Observé aussi :
   (8 à 14 s sous cette charge). Démarrer un nouvel exécutable prend encore 3 à
   5 s, ce qui ressemble à l'antivirus qui l'analyse ; c'est pourquoi le
   nouveau build démarre avant que l'ancien ne s'arrête.
-- **Le remplacement laisse encore un trou de 2 à 3,5 s** dans les
-  échantillons : le temps entre le démarrage du nouveau processus et son
-  premier échantillon WMI. N'arrêter l'ancien build que lorsque le nouveau a
-  imprimé sa première ligne le fermerait.
+- **Le remplacement laissait un trou de 2 à 3,5 s** dans les échantillons :
+  le temps entre le démarrage du nouveau processus et son premier échantillon
+  WMI. Fermé le 2026-10-18 (voir plus bas).
 - La période d'échantillonnage était de 1,2 à 1,3 s pour un intervalle de
   1 s, les requêtes WMI étant lentes sous la charge.
+
+`check_host.py` vérifie ce qui est venu ensuite, sur une probe jetable à lui
+sous `out/check-probes`, si bien qu'un hôte qui tourne déjà sur `probes/` n'est
+pas touché :
+
+```powershell
+python -B check_host.py [host.exe]   # out/bin/host.exe par défaut
+```
+
+Le 2026-10-18, il a passé :
+
+| | Quoi | Mesuré |
+| --- | --- | --- |
+| S6 | le JSONL est renommé à `-rotate-bytes`, seuls `-keep` fichiers renommés restent | 2 gardés pour keep 2, chacun de 20 150 octets pour une limite de 20 000 |
+| S7 | un remplacement ne laisse aucun trou de plus de 1 s ; l'ancien build s'arrête après le premier échantillon du nouveau | plus long trou 51 ms pour un intervalle de 50 ms ; arrêté 50 ms après |
+| S8 | le fichier stop arrête l'hôte et ses probes en moins de 5 s | 0,1 s, aucune probe restée en marche |
+
+Un hôte qui arrête l'ancien build tout de suite fait passer S7 au rouge :
+l'ancien build s'est arrêté avant le premier échantillon du nouveau. Le trou
+seul ne le montrerait pas avec cette probe, qui échantillonne aussitôt ; le
+trou de 2 à 3,5 s venait de la première requête WMI.
 
 ## Des probes à partir de modèles, et des demandes
 
@@ -146,10 +180,13 @@ environ 20 s plus tard.
 
 - Windows seulement tel quel : `sysinfo` lit WMI, et l'hôte n'a tourné que
   là. Un hôte WSL demanderait des probes qui lisent `/proc`.
-- La sortie grossit sans limite : ni rotation, ni rétention.
-- Une probe est du code de confiance que l'hôte compile et exécute.
+- La sortie est bornée par la rotation, au plus 5 fichiers de 64 Mio pour les
+  échantillons ; il n'y a pas de rétention par âge.
+- Une probe est du code de confiance que l'hôte compile et exécute. Seules les
+  probes de modèle peuvent être demandées de l'extérieur, et elles ne prennent
+  pas de code.
+- Rien ne relance l'hôte après un redémarrage ; il faut lancer `start.ps1`.
 
-Ensuite, dans l'ordre qui semble utile : fermer le trou du remplacement ;
-d'autres probes (disque, GPU, mémoire par processus) ; acheminer les
-enregistrements vers le banc DuckDB d'IX (`ix-duck`) pour qu'ils rencontrent
-les UDF d'IX ; un hôte WSL.
+Ensuite, dans l'ordre qui semble utile : acheminer les enregistrements vers le
+banc DuckDB d'IX (`ix-duck`) pour qu'ils rencontrent les UDF d'IX ; un
+démarrage à l'ouverture de session ; un hôte WSL.

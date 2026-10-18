@@ -5,7 +5,7 @@
 -- windows compare against now() taken in UTC.
 CREATE OR REPLACE VIEW probes AS
     SELECT ts::TIMESTAMP AS ts, probe, build, metric, value, unit
-    FROM read_json_auto(getenv('LOCALAPPDATA') || '/ix-probes/probes.jsonl');
+    FROM read_json_auto(getenv('LOCALAPPDATA') || '/ix-probes/probes*.jsonl');  -- with the renamed files
 
 -- One row per metric: its latest value in the last minute, and when it was taken.
 CREATE OR REPLACE VIEW probes_latest AS

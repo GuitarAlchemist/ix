@@ -40,8 +40,9 @@ The host writes:
 Go's `plugin` package does not exist on Windows, and Windows locks a running
 executable. So each build is a new process: every 500 ms the host hashes each
 probe's `.go` files (contents, not modification times); when a hash changes it
-runs `go build` to an executable named after the hash, starts it, and only then
-stops the old one. If the new source does not build, the old build keeps
+runs `go build` to an executable named after the hash, starts it, and stops the
+old one only once the new one has printed its first line (or died, or 30 s
+have passed), so a swap leaves no gap. If the new source does not build, the old build keeps
 running and the host does not retry that source until it changes again. A
 probe that crashes is restarted, at most every 2 s. A probe whose directory is
 removed is stopped.
@@ -58,7 +59,18 @@ duckdb -c ".read aggregate.sql"   # per metric, then per build
 ```
 
 Flags: `-probes` (default `probes`), `-out` (`out`), `-poll` (`500ms`),
-`-interval` (`1s`), `-for` (`0`, until interrupted).
+`-interval` (`1s`), `-for` (`0`, until interrupted), `-rotate-bytes` (64 MiB:
+each JSONL file is renamed `<name>-<UTC time>.jsonl` at that size, `0` never)
+and `-keep` (`4` renamed files of each). A file named `stop` in the output
+directory stops the host and its probes, as Ctrl+C does.
+
+To run it in the background as the 3D scene's board expects, writing to
+`%LOCALAPPDATA%\ix-probes` at a 5 s interval with the request watcher beside it:
+
+```powershell
+pwsh -File start.ps1   # builds the host if needed; does nothing for what already runs
+pwsh -File stop.ps1    # through the stop file, then the watcher
+```
 
 `out/probes.jsonl` is plain JSONL with typed timestamps, so any DuckDB query
 works on it, for example the CPU load in 10-second buckets:
@@ -104,11 +116,29 @@ Also seen:
   under that load). Starting a new executable takes another 3–5 s, which looks
   like the antivirus scanning it; that is why the new build starts before the
   old one stops.
-- **The swap still leaves a 2–3.5 s gap** in the samples: the time between the
-  new process starting and its first WMI sample. Stopping the old build only
-  when the new one has printed its first line would close it.
+- **The swap left a 2–3.5 s gap** in the samples: the time between the new
+  process starting and its first WMI sample. Closed on 2026-10-18 (see below).
 - The sampling period was 1.2–1.3 s at a 1 s interval, the WMI queries being
   slow under load.
+
+`check_host.py` checks what came after, on a throwaway probe of its own under
+`out/check-probes`, so a host already running on `probes/` is left alone:
+
+```powershell
+python -B check_host.py [host.exe]   # out/bin/host.exe by default
+```
+
+On 2026-10-18 it passed:
+
+| | What | Measured |
+| --- | --- | --- |
+| S6 | the JSONL is renamed at `-rotate-bytes`, only `-keep` renamed files remain | 2 kept at keep 2, each 20 150 bytes for a 20 000-byte limit |
+| S7 | a swap leaves no gap over 1 s; the old build stops after the new one's first sample | longest gap 51 ms at a 50 ms interval; stopped 50 ms after |
+| S8 | the stop file stops the host and its probes within 5 s | 0.1 s, no probe left running |
+
+A host that stops the old build at once turns S7 red: the old build stopped
+before the new one's first sample. The gap alone would not show it with this
+probe, which samples at once; the 2–3.5 s gap came from WMI's first query.
 
 ## Probes from templates, and requests
 
@@ -141,9 +171,11 @@ later.
 
 - Windows only as written: `sysinfo` reads WMI, and the host has only run
   there. A WSL host would need its probes to read `/proc` instead.
-- The output grows without bound: no rotation, no retention.
-- A probe is trusted code that the host builds and runs.
+- The output is bounded by rotation, at most 5 files of 64 MiB each for the
+  samples; there is no retention by age.
+- A probe is trusted code that the host builds and runs. Only the template
+  probes can be asked for from outside, and they take no code.
+- Nothing restarts the host after a reboot; `start.ps1` has to be run.
 
-Next, in the order that seems useful: close the swap gap; more probes (disk,
-GPU, per-process memory); route the records into the IX DuckDB bench
-(`ix-duck`) so they can meet the IX UDFs; a WSL host.
+Next, in the order that seems useful: route the records into the IX DuckDB
+bench (`ix-duck`) so they can meet the IX UDFs; start at logon; a WSL host.
