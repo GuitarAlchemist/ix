@@ -37,7 +37,11 @@
 //!
 //! These are local checks of one stated folded state. They do not prove that the sheet folds
 //! flat: testing global flat-foldability is NP-complete (Bern and Hayes 1996). Nothing here
-//! computes a layer order; the checks only test the one the file states.
+//! searches for a layer order; the checks only test the one the file states.
+//!
+//! [`sequence`] reads a `.origami` file, a folding sequence of simple folds, and replays it into
+//! a stated folded state. Each simple fold has one result, so the replay derives the order the
+//! steps dictate, with no search; the result is checked by [`analyse`] like any other fold.
 //!
 //! The tolerances are absolute, so [`analyse`] and [`Context::new`] first rescale the fold by
 //! powers of two, which multiply exactly: the crease pattern to between 1 and 2 across, the
@@ -61,6 +65,7 @@ pub mod geometry;
 pub mod layers;
 pub mod limits;
 pub mod local;
+pub mod sequence;
 pub mod thickness;
 
 pub use fold::{Assignment, Fold, FoldError, FoldedFrame, Point};
@@ -69,4 +74,5 @@ pub use layers::{
     LayerChecks, Report, Rule, Unchecked,
 };
 pub use limits::{Limits, OverLimit};
+pub use sequence::{Checked, Sequence, SequenceError, Verdict, GRAMMAR};
 pub use thickness::{stack, BadThickness, Rigid, Stack};

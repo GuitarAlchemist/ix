@@ -1,0 +1,8 @@
+# A letter fold, in thirds. No landmark marks a third, so the fold lines are coordinates.
+origami letter
+sheet square
+valley through (1/3, 0) (1/3, 1) moving A    # the left third over the middle
+valley through (2/3, 0) (2/3, 1) moving B    # then the right third over both
+expect ok
+expect faces 3
+expect ply 3
