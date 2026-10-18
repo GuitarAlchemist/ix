@@ -262,7 +262,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::bracelet::tests::forte_number_major_triad",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "forte_number_major_triad"
     },
     {
@@ -274,7 +274,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::bracelet::tests::icv_major_triad",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "icv_major_triad"
     },
     {
@@ -286,7 +286,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::bracelet::tests::prime_form_major_triad",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "prime_form_major_triad"
     },
     {
@@ -298,7 +298,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::bracelet::tests::classify_triad_major_and_nontriad",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "classify_triad_major_and_nontriad"
     },
     {
@@ -334,7 +334,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::code::tests::complexity_counts_branches",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "complexity_counts_branches"
     },
     {
@@ -346,7 +346,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::code::tests::metrics_json_has_fields",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "metrics_json_has_fields"
     },
     {
@@ -358,7 +358,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::code::tests::smells_flags_todo",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "smells_flags_todo"
     },
     {
@@ -370,7 +370,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::code::tests::semantic_metrics_parses_rust",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "semantic_metrics_parses_rust"
     },
     {
@@ -382,7 +382,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::code::tests::ast_query_finds_functions",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "ast_query_finds_functions"
     },
     {
@@ -394,7 +394,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::eval::tests::ndcg_scalar",
-      "anchor_hash": "sha256:bb8153c34fb9fa6624659a7f921356df80b5970ca1d2dc4b96e12ae1ec7ef384",
+      "anchor_hash": "sha256:42701ba7e0c3310e518be26d19c4418b923049d14e9118f2163dfe0c6dc64f06",
       "test_binding": "ndcg_scalar"
     },
     {
@@ -406,7 +406,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::eval::tests::reciprocal_rank_scalar",
-      "anchor_hash": "sha256:bb8153c34fb9fa6624659a7f921356df80b5970ca1d2dc4b96e12ae1ec7ef384",
+      "anchor_hash": "sha256:42701ba7e0c3310e518be26d19c4418b923049d14e9118f2163dfe0c6dc64f06",
       "test_binding": "reciprocal_rank_scalar"
     },
     {
@@ -418,7 +418,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::eval::tests::precision_recall_scalars",
-      "anchor_hash": "sha256:bb8153c34fb9fa6624659a7f921356df80b5970ca1d2dc4b96e12ae1ec7ef384",
+      "anchor_hash": "sha256:42701ba7e0c3310e518be26d19c4418b923049d14e9118f2163dfe0c6dc64f06",
       "test_binding": "precision_recall_scalars"
     },
     {
@@ -430,7 +430,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::eval::tests::precision_recall_scalars",
-      "anchor_hash": "sha256:bb8153c34fb9fa6624659a7f921356df80b5970ca1d2dc4b96e12ae1ec7ef384",
+      "anchor_hash": "sha256:42701ba7e0c3310e518be26d19c4418b923049d14e9118f2163dfe0c6dc64f06",
       "test_binding": "precision_recall_scalars"
     },
     {
@@ -586,7 +586,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::grothendieck::tests::delta_major_to_aug",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "delta_major_to_aug"
     },
     {
@@ -598,7 +598,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::grothendieck::tests::icv_l1_major_to_aug",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "icv_l1_major_to_aug"
     },
     {
@@ -610,7 +610,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::grothendieck::tests::z_related_canonical_pair",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "z_related_canonical_pair"
     },
     {
@@ -670,7 +670,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::hexavalent::tests::consensus_meet_fold",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "consensus_meet_fold"
     },
     {
@@ -682,7 +682,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::hexavalent::tests::or_join_fold",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "or_join_fold"
     },
     {
@@ -694,7 +694,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::hexavalent::tests::not_unary",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "not_unary"
     },
     {
@@ -706,7 +706,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::hexavalent::tests::from_evidence_map",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "from_evidence_map"
     },
     {
@@ -730,49 +730,49 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::inference::tests::quantile_scalar",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "quantile_scalar"
     },
     {
       "key": "sha256:ce24badd8b0056a7eaa7e42bdb5a313e42e66413077089ba54e6a1c526962295",
       "path": "crates/ix-duck/src/inference.rs",
-      "line": 190,
+      "line": 191,
       "kind": "invariant",
       "claim": "ix_kl wraps ix_math::inference::kl_divergence; equal distributions -> 0, q zero where p positive -> SQL error",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::inference::tests::divergence_scalars",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "divergence_scalars"
     },
     {
       "key": "sha256:10a5d75583497b371b93af80fdd78bcd16fee3581bbfda7d98ffa93a59614748",
       "path": "crates/ix-duck/src/inference.rs",
-      "line": 203,
+      "line": 204,
       "kind": "invariant",
       "claim": "ix_js wraps ix_math::inference::js_divergence; symmetric and bounded in [0, ln 2], equal distributions -> 0",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::inference::tests::divergence_scalars",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "divergence_scalars"
     },
     {
       "key": "sha256:2a241308d8e2a63f6d816f81a1984b3035d21f7a47dcdcc6e22c27ee00975b62",
       "path": "crates/ix-duck/src/inference.rs",
-      "line": 217,
+      "line": 218,
       "kind": "invariant",
       "claim": "ix_pearson wraps ix_math::inference::pearson; perfectly correlated -> 1, anti-correlated -> -1, a constant or length-mismatched arg -> SQL error",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::inference::tests::pearson_scalar",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "pearson_scalar"
     },
     {
       "key": "sha256:35e7261274833e006f0e4e3fe3c2f1fe28129af52aa506bbd501030a46f48406",
       "path": "crates/ix-duck/src/inference.rs",
-      "line": 242,
+      "line": 243,
       "kind": "invariant",
       "claim": "ix_two_sample(a,b,kind) emits one (statistic,p_value) row from the ix_math::inference two-sample test named by kind (ks|mannwhitney|welch); a clearly-shifted pair gives a small p_value, an unknown kind or empty sample -> SQL error",
       "verdict": "T",
@@ -934,7 +934,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::serial::tests::retrograde_chromatic",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "retrograde_chromatic"
     },
     {
@@ -946,7 +946,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::serial::tests::invert_chromatic",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "invert_chromatic"
     },
     {
@@ -958,7 +958,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::serial::tests::matrix_first_row_is_input",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "matrix_first_row_is_input"
     },
     {
@@ -970,7 +970,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::serial::tests::combinatoriality_chromatic_has_p6",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "combinatoriality_chromatic_has_p6"
     },
     {
@@ -982,7 +982,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::bloom_roundtrip_no_false_negative",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "bloom_roundtrip_no_false_negative"
     },
     {
@@ -994,7 +994,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::bloom_degenerate_blob_no_panic",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "bloom_degenerate_blob_no_panic"
     },
     {
@@ -1006,7 +1006,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::bloom_union",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "bloom_union"
     },
     {
@@ -1018,7 +1018,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::hll_count_estimate",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "hll_count_estimate"
     },
     {
@@ -1030,7 +1030,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::hll_count_estimate",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "hll_count_estimate"
     },
     {
@@ -1042,7 +1042,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::hll_merge",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "hll_merge"
     },
     {
@@ -1054,7 +1054,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::cms_estimate",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "cms_estimate"
     },
     {
@@ -1066,7 +1066,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::cms_estimate",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "cms_estimate"
     },
     {
@@ -1078,7 +1078,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::cms_merge",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "cms_merge"
     },
     {
@@ -1090,7 +1090,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::cuckoo_build_contains_remove",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "cuckoo_build_contains_remove"
     },
     {
@@ -1102,7 +1102,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::cuckoo_build_contains_remove",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "cuckoo_build_contains_remove"
     },
     {
@@ -1114,7 +1114,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::sketch::tests::cuckoo_build_contains_remove",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "cuckoo_build_contains_remove"
     },
     {
@@ -1126,7 +1126,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::supervised::tests::linreg_fit_predict_recovers_slope",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "linreg_fit_predict_recovers_slope"
     },
     {
@@ -1138,7 +1138,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::supervised::tests::linreg_fit_predict_recovers_slope",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "linreg_fit_predict_recovers_slope"
     },
     {
@@ -1150,7 +1150,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::supervised::tests::logistic_fit_predict_separates_classes",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "logistic_fit_predict_separates_classes"
     },
     {
@@ -1162,7 +1162,7 @@
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::supervised::tests::logistic_fit_predict_separates_classes",
-      "anchor_hash": "sha256:d7abf4dcb4028bfc5d495cd4e4c9e367ae8e411f9b17beef18abf755c306cc58",
+      "anchor_hash": "sha256:de8a867804f1237fe812f63885717381dac622c6396a759f289a43812c62ecb0",
       "test_binding": "logistic_fit_predict_separates_classes"
     },
     {
@@ -1264,7 +1264,7 @@
     {
       "key": "sha256:4260f75edf0d0158e65ec3d3e0f62cf0b53503ada8c838a9b7381801257dec2a",
       "path": "crates/ix-duck/src/udf.rs",
-      "line": 55,
+      "line": 96,
       "kind": "invariant",
       "claim": "a NULL list argument (either side) yields SQL NULL, never a spurious number: per-row validity is read via FlatVector::row_is_null and the output row flagged via FlatVector::set_null",
       "verdict": "T",
@@ -1276,73 +1276,73 @@
     {
       "key": "sha256:53d7d025f447642578492e0492fa2de4e68ea9c785e0819c5874eb59279d5f82",
       "path": "crates/ix-duck/src/udf.rs",
-      "line": 105,
+      "line": 146,
       "kind": "invariant",
       "claim": "ix_cosine returns ix_math cosine_similarity of its two DOUBLE[] args; identical vectors -> 1.0, orthogonal -> 0.0, dimension mismatch -> SQL error (no panic)",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::tests::ix_cosine_matches_ix_math",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "ix_cosine_matches_ix_math"
     },
     {
       "key": "sha256:e672a220c04747253ae70d425e236d2414e8e775a4f8aa47fb09b7a004856540",
       "path": "crates/ix-duck/src/udf.rs",
-      "line": 129,
+      "line": 170,
       "kind": "invariant",
       "claim": "ix_euclidean returns ix_math euclidean L2 distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic)",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::tests::ix_euclidean_matches_ix_math",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "ix_euclidean_matches_ix_math"
     },
     {
       "key": "sha256:9869278b6dc33a7fc51ea7f98278616d1486b6030f5cbc5b03830bfbd50ba537",
       "path": "crates/ix-duck/src/udf.rs",
-      "line": 152,
+      "line": 193,
       "kind": "invariant",
       "claim": "ix_manhattan returns ix_math manhattan L1 distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic)",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::tests::ix_manhattan_matches_ix_math",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "ix_manhattan_matches_ix_math"
     },
     {
       "key": "sha256:0988b231e4066e1f1eaf75871b3872dca28d7b8d20935647cf0e1c100cf77e94",
       "path": "crates/ix-duck/src/udf.rs",
-      "line": 175,
+      "line": 216,
       "kind": "invariant",
       "claim": "ix_chebyshev returns ix_math chebyshev L∞ distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic)",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::tests::ix_chebyshev_matches_ix_math",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "ix_chebyshev_matches_ix_math"
     },
     {
       "key": "sha256:7a2ad2f2ceeef9ccd9e96656e9e50e3a8a70affda59c90e2977ab43e95e5dc19",
       "path": "crates/ix-duck/src/udf.rs",
-      "line": 199,
+      "line": 240,
       "kind": "invariant",
       "claim": "ix_cosine_distance returns ix_math cosine_distance (1 − cosine_similarity) of its two DOUBLE[] args; identical vectors -> 0.0, orthogonal -> 1.0, dimension mismatch -> SQL error (no panic)",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::tests::ix_cosine_distance_matches_ix_math",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "ix_cosine_distance_matches_ix_math"
     },
     {
       "key": "sha256:545c17c96b5187611bc91bcdae1d0e18de10f195ab763302e62d10f2d511e856",
       "path": "crates/ix-duck/src/udf.rs",
-      "line": 224,
+      "line": 265,
       "kind": "invariant",
       "claim": "ix_minkowski(a,b,p) returns ix_math minkowski Lᵖ distance; p=1 equals ix_manhattan, p=2 equals ix_euclidean; a NULL list or NULL p yields SQL NULL; dimension mismatch -> SQL error (no panic)",
       "verdict": "T",
       "certainty": "Test",
       "evidence": "ix_duck::tests::ix_minkowski_matches_ix_math",
-      "anchor_hash": "sha256:bbf4494d38ea0a027d216ebe4cfe4c01cbbc5a70ddf70c6efb0f327c6f6baf56",
+      "anchor_hash": "sha256:2fb5048d6724e76ffda7f268c3337c8c0c0efe61ba55c807299448c8d4c62a52",
       "test_binding": "ix_minkowski_matches_ix_math"
     },
     {
