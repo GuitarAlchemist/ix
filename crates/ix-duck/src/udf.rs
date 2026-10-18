@@ -399,7 +399,7 @@ mod tests {
                     }
                 }
             }
-            unsafe { IxCosine::invoke(&(), input, output) }
+            IxCosine::invoke(&(), input, output)
         }
 
         fn signatures() -> Vec<ScalarFunctionSignature> {
