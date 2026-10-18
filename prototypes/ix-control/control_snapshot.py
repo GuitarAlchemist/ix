@@ -212,7 +212,23 @@ def public(snapshot):
         "waiting_on_human": len(snapshot["decisions"]),
         "autonomous_until_local": local_hm(snapshot["horizon"]["autonomous_until"]),
         "machine": machine(),
+        "viewers": viewers(),
     }
+
+
+def viewers():
+    # The stream's viewer count, from the scene cast's front door (viewer_proxy.py, the 3D scene
+    # session's file): {"at", "viewers"}, rewritten every 5 s. Missing or older than 30 s gives None.
+    path = os.path.join(os.environ["LOCALAPPDATA"], "scene-cast", "viewers.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            v = json.load(f)
+        at = datetime.fromisoformat(v["at"].replace("Z", "+00:00"))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if datetime.now(timezone.utc) - at > timedelta(seconds=30) or not isinstance(v.get("viewers"), int):
+        return None
+    return v["viewers"]
 
 
 def machine():

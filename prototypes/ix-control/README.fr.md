@@ -58,7 +58,10 @@ peut montrer :
 - les titres et l'avancement du chantier, et l'heure de la prochaine démo ;
 - les jauges de la machine, venues de l'hôte de sondes (prototype/probes,
   PR #390). Une mesure périmée ou absente donne `null` : la scène n'affiche
-  alors pas de jauge plutôt qu'une ancienne.
+  alors pas de jauge plutôt qu'une ancienne ;
+- `viewers`, le nombre de spectateurs du flux, que la porte d'entrée de la
+  page du lecteur écrit dans `viewers.json` toutes les 5 s. Un compte absent,
+  ou vieux de plus de 30 s, donne `null`.
 
 Les deux schémas sont provisoires : un lecteur se fie à `schema` et ignore les
 champs qu'il ne connaît pas.

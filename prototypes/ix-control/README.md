@@ -53,7 +53,10 @@ show:
 - the demo plan's titles and progress, and the next demo's time;
 - the machine gauges from the probe host (prototype/probes, PR #390). A stale
   or missing sample gives `null`, so the scene shows no gauge rather than an
-  old one.
+  old one;
+- `viewers`, the stream's viewer count, which the player page's front door
+  writes to `viewers.json` every 5 s. A missing count, or one older than 30 s,
+  gives `null`.
 
 Both schemas are provisional: a reader keys on `schema` and ignores fields it
 does not know.
