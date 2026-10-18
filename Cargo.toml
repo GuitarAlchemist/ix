@@ -88,6 +88,7 @@ members = [
     "crates/ix-baml",
     "crates/ix-ixql",
     "crates/ix-origami",
+    "crates/ix-voice",
 ]
 
 [workspace.package]
@@ -199,6 +200,7 @@ ix-registrar = { path = "crates/ix-registrar", version = "0.1.0" }
 ix-baml = { path = "crates/ix-baml", version = "0.1.0" }
 ix-ixql = { path = "crates/ix-ixql", version = "0.1.0" }
 ix-origami = { path = "crates/ix-origami", version = "0.1.0" }
+ix-voice = { path = "crates/ix-voice", version = "0.1.0" }
 serde_yaml = "0.9"
 parking_lot = "0.12"
 
@@ -212,3 +214,12 @@ proc-macro2 = "1"
 # Testing & benchmarking
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
+
+# Temporary: crates.io yanked every `zip` release below 9.0.3 on 2026-10-16, for
+# security advisories, and every `libduckdb-sys` still requires `zip = "^6"` as a
+# build-dependency. Cargo.lock is not tracked, so a fresh resolution fails
+# workspace-wide. libduckdb-sys only uses `zip` when DUCKDB_DOWNLOAD_LIB is set,
+# which IX never sets. Remove once a libduckdb-sys release requires zip 9
+# (duckdb/duckdb-rs#902). crates/ix-duck-ext carries the same patch.
+[patch.crates-io]
+zip = { git = "https://github.com/zip-rs/zip2", rev = "abfc23d19e5c6038cba27eb3a897bc34c6d5bf86" } # tag v6.0.0

@@ -1,0 +1,8 @@
+# In half, then in half again: four layers.
+origami quarters
+sheet square
+valley B to A      # the right half over the left
+valley D to A      # then the top half down; D lies at (0, 1) and A at (0, 0)
+expect ok
+expect faces 4
+expect ply 4

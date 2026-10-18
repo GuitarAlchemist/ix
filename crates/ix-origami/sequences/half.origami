@@ -1,0 +1,7 @@
+# The square folded in half: the corner B onto the corner A, along the line x = 1/2.
+origami half
+sheet square
+valley B to A
+expect ok
+expect faces 2
+expect ply 2
