@@ -7,7 +7,7 @@ use ix_stream::petri::Shape;
 use ix_stream::skill::stream_run;
 use ix_stream::{Bus, Graph};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// A source, a stage of two workers, and a sink.
 fn chain() -> Value {
@@ -325,4 +325,241 @@ fn the_tracer_verdicts_follow_from_their_claims() {
         };
         assert_eq!(verdict, expected, "{}", q["id"]);
     }
+}
+
+const TRACER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../examples/stream/music-theory-oracle/ix.yaml"
+);
+const WITNESS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../state/stream-tracer/2026-10-17-music-theory-oracle/witness"
+);
+
+fn lines(path: &str) -> Vec<Value> {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// The SQL of a node of tracer A's graph.
+fn tracer_sql(node: &str) -> String {
+    let spec = PipelineSpec::from_file(TRACER).unwrap();
+    let nodes = spec.stages["tracer"].args["graph"]["nodes"].clone();
+    let node = nodes.as_array().unwrap().iter().find(|n| n["name"] == node);
+    node.unwrap()["sql"].as_str().unwrap().to_string()
+}
+
+/// A copy of a stored answer: its edits, applied in order ("" replaces the whole answer), and
+/// the verdict the judge must give it.
+struct Copy {
+    of: &'static str,
+    kind: &'static str,
+    edits: &'static [(&'static str, &'static str)],
+    want: char,
+}
+
+/// The judge's verdicts on the stored answers, in their order.
+const STORED: &[(&str, char)] = &[
+    ("m-94", 'T'),
+    ("m-37", 'F'),
+    ("m-81", 'T'),
+    ("f-1", 'T'),
+    ("f-20", 'T'),
+    ("f-28", 'T'),
+    ("f-12", 'T'),
+    ("f-63", 'T'),
+    ("f-73", 'T'),
+    ("f-75", 'F'),
+];
+
+const M37_FIX: (&str, &str) = (
+    "D\u{202f}augmented (D+)",
+    "B♭ major in first inversion (B♭/D)",
+);
+const F75_FIX: (&str, &str) = (
+    "",
+    "From C up to A♭ is a **minor sixth** (m6): 8 semitones. A♭ is the sixth degree of C minor; \
+     an augmented fifth would be spelled G♯.",
+);
+
+#[rustfmt::skip]
+const COPIES: &[Copy] = &[
+    // m-94: voicings, checked by their frets.
+    Copy { of: "m-94", kind: "wrong note", edits: &[("x-9-x-x-10-10", "x-9-x-x-11-10")], want: 'F' },
+    Copy { of: "m-94", kind: "wrong note", edits: &[("**D/A** `5-x-4-x-3-x`", "**D/F#** `5-x-4-x-3-x`")], want: 'F' },
+    Copy { of: "m-94", kind: "wrong chord name", edits: &[("**D** `10-12-x-11-10-10`", "**E** `10-12-x-11-10-10`")], want: 'F' },
+    Copy { of: "m-94", kind: "neutral", edits: &[("**D/Gb**", "**D/F♯**")], want: 'T' },
+    // m-37: D-F-A# named D augmented; corrected, it names the triad GA lists on those notes.
+    Copy { of: "m-37", kind: "neutral", edits: &[("D\u{202f}augmented (D+)", "D\u{202f}aug (D+)")], want: 'F' },
+    Copy { of: "m-37", kind: "corrected", edits: &[M37_FIX], want: 'T' },
+    Copy { of: "m-37", kind: "wrong chord name", edits: &[M37_FIX, ("B♭ major in", "D minor in")], want: 'F' },
+    Copy { of: "m-37", kind: "neutral", edits: &[M37_FIX, ("B♭ major in first inversion (B♭/D)", "A♯ major in first inversion (A♯/D)")], want: 'T' },
+    // m-81: the triads of D harmonic minor, with their notes.
+    Copy { of: "m-81", kind: "wrong note", edits: &[("B♭ major (B♭\u{2011}D\u{2011}F)", "B♭ major (B♭\u{2011}D♯\u{2011}F)")], want: 'F' },
+    Copy { of: "m-81", kind: "wrong chord name", edits: &[("G minor (G", "G major (G")], want: 'F' },
+    Copy { of: "m-81", kind: "neutral", edits: &[("B♭ major (B♭\u{2011}D\u{2011}F)", "A♯ major (A♯\u{2011}D\u{2011}F)")], want: 'T' },
+    Copy { of: "m-81", kind: "neutral", edits: &[("D minor (D", "Dm (D")], want: 'T' },
+    // f-1: E A B in D, and its open shapes.
+    Copy { of: "f-1", kind: "wrong chord name", edits: &[("**D \u{2013} G \u{2013} A**", "**D \u{2013} G \u{2013} B**")], want: 'F' },
+    Copy { of: "f-1", kind: "wrong note", edits: &[("x\u{2011}0\u{2011}2\u{2011}2\u{2011}2\u{2011}0", "x\u{2011}0\u{2011}2\u{2011}2\u{2011}3\u{2011}0")], want: 'F' },
+    Copy { of: "f-1", kind: "neutral", edits: &[("**D \u{2013} G \u{2013} A**", "**D, G, A**")], want: 'T' },
+    Copy { of: "f-1", kind: "neutral", edits: &[("**D \u{2013} G \u{2013} A**", "**D\u{202f}G\u{202f}A**")], want: 'T' },
+    Copy { of: "f-1", kind: "neutral", edits: &[("**D \u{2013} G \u{2013} A**", "**D \u{2192} G \u{2192} A**")], want: 'T' },
+    Copy { of: "f-1", kind: "neutral", edits: &[("x\u{2011}0\u{2011}2\u{2011}2\u{2011}2\u{2011}0", "x 0 2 2 2 0")], want: 'T' },
+    Copy { of: "f-1", kind: "wrong note", edits: &[("x\u{2011}0\u{2011}2\u{2011}2\u{2011}2\u{2011}0", "x 0 2 2 3 0")], want: 'F' },
+    // f-20: G up to E.
+    Copy { of: "f-20", kind: "wrong interval", edits: &[("**major sixth (M6)**", "**minor sixth (m6)**")], want: 'F' },
+    Copy { of: "f-20", kind: "wrong interval", edits: &[("9 semitones", "8 semitones")], want: 'F' },
+    Copy { of: "f-20", kind: "neutral", edits: &[("major sixth (M6)", "major 6th (M6)")], want: 'T' },
+    Copy { of: "f-20", kind: "neutral", edits: &[("9 semitones", "9 half steps")], want: 'T' },
+    // f-28: the diatonic chords of D major.
+    Copy { of: "f-28", kind: "wrong chord name", edits: &[("F♯\u{202f}m", "G\u{202f}m")], want: 'F' },
+    Copy { of: "f-28", kind: "wrong chord name", edits: &[("C♯\u{202f}dim", "C♯\u{202f}m")], want: 'F' },
+    Copy { of: "f-28", kind: "neutral", edits: &[("D\u{202f}maj", "D major")], want: 'T' },
+    Copy { of: "f-28", kind: "neutral", edits: &[("F♯\u{202f}m", "G♭\u{202f}m")], want: 'T' },
+    // f-12: the notes E and C share.
+    Copy { of: "f-12", kind: "wrong note", edits: &[("The note **E** is common", "The note **G** is common")], want: 'F' },
+    Copy { of: "f-12", kind: "wrong note", edits: &[("E \u{2013} G♯ \u{2013} B", "E \u{2013} G \u{2013} B")], want: 'F' },
+    Copy { of: "f-12", kind: "wrong chord name", edits: &[("**C\u{202f}maj**", "**C\u{202f}min**")], want: 'F' },
+    Copy { of: "f-12", kind: "neutral", edits: &[("E \u{2013} G♯ \u{2013} B", "E, G♯, B")], want: 'T' },
+    // f-63: the notes of Bb.
+    Copy { of: "f-63", kind: "wrong note", edits: &[("Bb, D, and F", "Bb, D#, and F")], want: 'F' },
+    Copy { of: "f-63", kind: "wrong chord name", edits: &[("Bb major chord", "B major chord")], want: 'F' },
+    Copy { of: "f-63", kind: "neutral", edits: &[("Bb major chord contains Bb, D, and F.", "The B♭ major triad is made of B♭, D and F.")], want: 'T' },
+    // f-73: Am F C G up a whole step.
+    Copy { of: "f-73", kind: "wrong chord name", edits: &[("**Bm \u{2013} G \u{2013} D \u{2013} A**", "**Bm \u{2013} G \u{2013} D \u{2013} E**")], want: 'F' },
+    Copy { of: "f-73", kind: "wrong chord name", edits: &[("**Bm \u{2013} G", "**B \u{2013} G")], want: 'F' },
+    Copy { of: "f-73", kind: "neutral", edits: &[("**Bm \u{2013} G \u{2013} D \u{2013} A**", "**Bm, G, D, A**")], want: 'T' },
+    // f-75: C up to Ab, answered with the A minor scale; corrected, it names the interval.
+    Copy { of: "f-75", kind: "neutral", edits: &[("The A minor scale has 7 notes", "The A natural minor scale has seven notes")], want: 'F' },
+    Copy { of: "f-75", kind: "corrected", edits: &[F75_FIX], want: 'T' },
+    Copy { of: "f-75", kind: "wrong interval", edits: &[F75_FIX, ("**minor sixth**", "**augmented fifth**")], want: 'F' },
+    Copy { of: "f-75", kind: "wrong interval", edits: &[F75_FIX, ("8 semitones", "9 semitones")], want: 'F' },
+    Copy { of: "f-75", kind: "neutral", edits: &[F75_FIX, ("**minor sixth**", "**minor 6th**")], want: 'T' },
+];
+
+/// The witness of tracer A's judge, offline: the 10 answers it judged on 2026-10-17
+/// (witness/answers.jsonl), copies with one wrong note, interval or chord name, which it must
+/// call F, and neutral rewordings, which must keep their verdict. A mutant is made from a T
+/// answer, so the two F ones first get a corrected copy, which must be T. The extract and judge
+/// SQL are the spec's; GaApi's answers are recorded (witness/ga.jsonl, and those of the answers'
+/// own requests), and a request without one fails the test.
+#[test]
+#[ignore = "needs the duckdb CLI"]
+fn the_tracer_judge_calls_every_mutant_false_and_keeps_its_verdict_on_rewordings() {
+    let answers = lines(&format!("{WITNESS}/answers.jsonl"));
+    let mut recorded: HashMap<String, Value> = HashMap::new();
+    for a in &answers {
+        let (paths, res) = (a["ga"].as_array().unwrap(), a["ga_res"].as_array().unwrap());
+        for (p, r) in paths.iter().zip(res) {
+            recorded.insert(p.as_str().unwrap().to_string(), r.clone());
+        }
+    }
+    for r in lines(&format!("{WITNESS}/ga.jsonl")) {
+        recorded.insert(r["path"].as_str().unwrap().to_string(), r["res"].clone());
+    }
+    let stored: HashMap<&str, char> = STORED.iter().copied().collect();
+    // The verdict a copy's edits start from: the stored answer's, or the corrected copy's.
+    let base = |c: &Copy| match &c.edits[..c.edits.len() - 1] {
+        [] => stored[c.of],
+        prefix => {
+            COPIES
+                .iter()
+                .find(|b| b.of == c.of && b.edits == prefix)
+                .unwrap()
+                .want
+        }
+    };
+
+    // What the chatbot node hands on: the rows without GaApi's answers.
+    let mut rows: Vec<Value> = answers.clone();
+    for r in &mut rows {
+        r.as_object_mut().unwrap().remove("ga_res");
+    }
+    for (n, c) in COPIES.iter().enumerate() {
+        let mut row = rows.iter().find(|r| r["id"] == c.of).unwrap().clone();
+        let mut text = row["chatbot"]["body"]["answer"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for (find, put) in c.edits {
+            if find.is_empty() {
+                text = put.to_string();
+                continue;
+            }
+            assert!(text.contains(find), "{}#{n}: {find:?} is not in it", c.of);
+            text = text.replacen(find, put, 1);
+        }
+        row["chatbot"]["body"]["answer"] = json!(text);
+        row["id"] = json!(format!("{}#{n}", c.of));
+        rows.push(row);
+    }
+
+    let dir = std::env::temp_dir().join(format!("ix-stream-witness-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let extract = tracer_sql("extract");
+    let mut rows =
+        ix_stream::sql::query_sealed(&rows, &extract, &dir.join("extract.jsonl")).unwrap();
+    for r in &mut rows {
+        let res: Vec<Value> = r["ga"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                let got = recorded.get(p.as_str().unwrap());
+                got.unwrap_or_else(|| panic!("{}: no recorded GaApi answer for {p}", r["id"]))
+                    .clone()
+            })
+            .collect();
+        r["ga_res"] = json!(res);
+    }
+    let out = ix_stream::sql::query_sealed(&rows, &tracer_sql("judge"), &dir.join("judge.jsonl"));
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = out.unwrap();
+    let verdict: HashMap<&str, char> = out
+        .iter()
+        .filter(|r| r["row"] == "question")
+        .map(|r| {
+            let v = r["verdict"].as_str().unwrap().chars().next().unwrap();
+            (r["id"].as_str().unwrap(), v)
+        })
+        .collect();
+
+    let mine: Vec<(&str, char)> = answers
+        .iter()
+        .map(|a| a["id"].as_str().unwrap())
+        .map(|id| (id, verdict[id]))
+        .collect();
+    assert_eq!(mine, STORED);
+    let claims = out
+        .iter()
+        .filter(|r| r["row"] == "claim" && !r["id"].as_str().unwrap().contains('#'));
+    eprintln!(
+        "stored answers: {} claims, {} verified",
+        claims.clone().count(),
+        claims.filter(|r| r["match"] == true).count()
+    );
+
+    let mut tally: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    let mut missed = Vec::new();
+    for (n, c) in COPIES.iter().enumerate() {
+        match c.kind {
+            "neutral" => assert_eq!(c.want, base(c), "{}#{n}", c.of),
+            "corrected" => assert_eq!(c.want, 'T', "{}#{n}", c.of),
+            _ => assert!(c.want == 'F' && base(c) == 'T', "{}#{n}", c.of),
+        }
+        let got = verdict[format!("{}#{n}", c.of).as_str()];
+        let t = tally.entry(c.kind).or_default();
+        t.1 += 1;
+        if got == c.want {
+            t.0 += 1;
+        } else {
+            missed.push(format!("{}#{n} ({}): {got}, not {}", c.of, c.kind, c.want));
+        }
+    }
+    eprintln!("as wanted, of: {tally:?}");
+    assert!(missed.is_empty(), "{missed:#?}");
 }

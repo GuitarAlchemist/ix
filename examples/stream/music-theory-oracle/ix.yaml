@@ -3,7 +3,7 @@
 # no LLM) -> a report. One stage, one ix-stream graph, run by the stream.run skill:
 #
 #   cargo build -p ix-skill -p ix-stream --features ix-stream/world --bin ix
-#   target/debug/ix pipeline run -f examples/stream/music-theory-oracle/ix.yaml   (from the repo root)
+#   target/debug/ix pipeline run --file examples/stream/music-theory-oracle/ix.yaml   (from the repo root)
 #
 # The questions. Only 1 of the 100 Music.SE titles of state/router-spike/jev/corpora/music-se.json
 # is in scope (m-94), so the set is mixed: 3 Music.SE titles with chord or scale content (m-94,
@@ -15,18 +15,27 @@
 # round-robin, each time the first prompt by numeric id whose answer those triads determine:
 # f-1, f-20, f-28, f-12, f-63, then f-73 and f-75.
 #
-# The judge, per question, using the hexavalent symbols of ix-types (T, F, U only here):
-# - claims of the answer: "chord (notes)" or "chord: notes" with 3 or 4 notes, the root first and
-#   a third above it, checked by pitch class against the GA triad of that name, whatever key
-#   GA listed it in. A chord GA did not list is not checkable.
-# - for a fresh-test prompt, GA's expected answer, derived in SQL from GA's rows: each expected
-#   chord, note or interval must appear in the answer. m-37 gives its notes (D-F-A#), so it gets
-#   one too: the answer must name the triad GA lists on those notes.
-# Notes and chords are compared by pitch class: GaApi spells flats as sharps (A# in F major, G#
-# in C minor). Expected items are found by matching words of the answer, a weak check on its own
-# (a major triad named like a note), so every claim row keeps what it compared.
-# T: every checkable claim verified. F: at least one claim contradicted, or an expected item
-# missing. U: nothing checkable, or the chatbot failed.
+# The judge, per question, using the hexavalent symbols of ix-types (T, F, U only here), in SQL:
+# - extract reads the claims of the answer as values: chords with their notes ("Bb major (Bb-D-F)",
+#   a table row "E maj | E - G# - B") or their frets ("D/A 5-x-4-x-3-x"), the chord on each Roman
+#   numeral, progressions, intervals and semitone counts, the notes said to be common, and the
+#   first chord the answer names. Each chord symbol becomes the GaApi request whose first triad
+#   is that chord (modes/ionian|aeolian|locrian/<root>), added to the question's `ga` paths.
+# - ga asks GaApi every path.
+# - judge compares pitch-class sets. A chord's notes must be GA's set for its symbol; a voicing's
+#   a subset of it that sounds the root, with a slash chord's bass lowest. The expected value of
+#   a fresh-test prompt comes from GA's rows and is compared as a value: the chord on each
+#   numeral (diatonic), the progression on the same numerals in the new key (transpose), the
+#   notes of a chord, the common tones (a set), the interval's name and size (from the degree GA
+#   gives the note in the key). m-37 gives its notes, so the first chord the answer names must
+#   have GA's set for them.
+# GaApi has only the major, minor and diminished triads, so a seventh or an augmented chord is
+# listed as unchecked, not judged. Notes compare by pitch class: GaApi spells flats as sharps.
+# T: every claim verified. F: one contradicted, or an expected value missing or wrong. U: nothing
+# checkable, or the chatbot failed.
+# Its witness, offline: crates/ix-stream/tests/skill.rs judges the answers kept in witness/, and
+# copies of them with a wrong note, interval or chord name, which must be F, or reworded, which
+# must keep their verdict; GaApi's answers are the ones recorded in witness/.
 version: "1"
 stages:
   tracer:
@@ -110,6 +119,96 @@ stages:
               body: { message: "{prompt}" }
               pick: { answer: /naturalLanguageAnswer, agent: /agentId, routing: /routingMethod }
               timeout_ms: 180000
+          - name: extract
+            batching: true
+            cap: 16
+            sql: |
+              -- Sharps and flats as # and b, dashes as -, arrows as ->, the no-break spaces the chatbot writes as spaces.
+              CREATE MACRO norm(s) AS regexp_replace(regexp_replace(regexp_replace(
+                replace(replace(replace(replace(replace(s, '♯', '#'), '♭', 'b'), '°', 'dim'), 'ø', 'm7b5'), '→', '->'),
+                '[\x{00A0}\x{2009}\x{202F}]', ' ', 'g'), '[\x{2010}\x{2011}\x{2012}\x{2013}\x{2014}\x{2212}]', '-', 'g'), '[\x{00AD}\r]', '', 'g');
+              CREATE MACRO pc(n) AS (MAP {'C': 0, 'B#': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4, 'Fb': 4, 'F': 5,
+                'E#': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8, 'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11, 'Cb': 11})[n];
+              -- A chord symbol as answers write it: Bb, Bbm7, B♭ minor, F♯ m, E-major, D/A, C♯dim, D+.
+              CREATE MACRO chord_rx() AS '[A-G][#b]?(?:[ -]?(?:major|minor|diminished|augmented|maj7|maj|min|dim7|dim|aug|m)|m7b5|m7|sus2|sus4|7|6|9|\+)?(?:/[A-G][#b]?)?';
+              -- The same without spaces, for chords in a progression (Bm - G - D - A).
+              CREATE MACRO seq_rx() AS '[A-G][#b]?(?:maj7|maj|min|m7b5|m7|dim7|dim|aug|sus2|sus4|m|7|6|9|\+)?(?:/[A-G][#b]?)?';
+              CREATE MACRO note_rx() AS '[A-G][#b]?';
+              CREATE MACRO quality(c) AS lower(trim(regexp_replace(regexp_replace(c, '/[A-G][#b]?$', ''), '^[A-G][#b]?[ -]?', '')));
+              -- The triad a symbol is built on ('' major, m, dim, aug; NULL for sus), and whether it is that triad alone.
+              CREATE MACRO triad(q) AS CASE WHEN q IN ('', 'major', 'maj', 'maj7', '7', '6', '9') THEN ''
+                WHEN q IN ('m', 'min', 'minor', 'm7') THEN 'm' WHEN q IN ('dim', 'diminished', 'dim7', 'm7b5') THEN 'dim'
+                WHEN q IN ('aug', 'augmented', '+') THEN 'aug' END;
+              CREATE MACRO chord(c) AS {'sym': c, 'root': regexp_extract(c, '^[A-G][#b]?'), 'q': quality(c),
+                'bass': nullif(regexp_extract(c, '/([A-G][#b]?)$', 1), ''), 'triad': triad(quality(c)),
+                'plain': quality(c) IN ('', 'major', 'maj', 'm', 'min', 'minor', 'dim', 'diminished', 'aug', 'augmented', '+')};
+              -- Pitch classes stacked in thirds, in any inversion.
+              CREATE MACRO tertian(p) AS list_bool_or(list_transform(p, lambda r:
+                list_sort(list_transform(p, lambda x: (x - r + 12) % 12)) IN ([0, 3, 7], [0, 4, 7], [0, 3, 6], [0, 4, 8],
+                [0, 4, 7, 10], [0, 4, 7, 11], [0, 3, 7, 10], [0, 3, 6, 10], [0, 3, 6, 9], [0, 3, 7, 11])));
+              -- The GaApi request whose first triad is the one a symbol names: GA has the major, minor and
+              -- diminished triads (degree 1 of Ionian, Aeolian, Locrian) on any root, and no other chord.
+              CREATE MACRO ga_path(c) AS 'modes/' || CASE c.triad WHEN '' THEN 'ionian' WHEN 'm' THEN 'aeolian' WHEN 'dim' THEN 'locrian' END
+                || '/' || ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][pc(c.root) + 1];
+              CREATE MACRO interval_name(quality, number) AS coalesce(MAP {'aug': 'augmented', 'dim': 'diminished'}[quality], quality) || ' '
+                || coalesce(MAP {'2nd': 'second', '3rd': 'third', '4th': 'fourth', '5th': 'fifth', '6th': 'sixth', '7th': 'seventh', '8th': 'octave'}[number], number);
+              -- A voicing: six frets, low string to high, x for a muted one, joined by - or a space; its pitch classes in standard tuning.
+              CREATE MACRO frets_rx() AS '(?:x|\d{1,2})(?:[- ](?:x|\d{1,2})){5}';
+              CREATE MACRO fret_pcs(f) AS list_filter(list_transform(string_split_regex(f, '[- ]'),
+                lambda x, i: CASE WHEN x <> 'x' THEN ([4, 9, 2, 7, 11, 4][i] + x::INT) % 12 END), lambda p: p IS NOT NULL);
+              -- The notes a sentence names, without the ones that name a chord (E-major, C chord) or spell one (C-E-G).
+              CREATE MACRO words(s) AS string_split_regex(regexp_replace(s, note_rx() || '(?:[ \t]*[,/-][ \t]*' || note_rx() || '){2,}', ' ', 'g'), '[^A-Za-z0-9#+]+');
+              CREATE MACRO named_notes(s) AS list_filter(words(s), lambda w, i: regexp_full_match(w, note_rx())
+                AND coalesce(lower(words(s)[i + 1]), '') NOT IN ('major', 'minor', 'maj', 'min', 'm', 'dim', 'aug', 'chord', 'triad', 'shape'));
+              CREATE MACRO b() AS '(?:^|[^A-Za-z0-9#])';
+              CREATE MACRO e() AS '(?:$|[^A-Za-z0-9#+])';
+              -- The answer without code blocks and markdown; read through JSON, so a batch whose chatbot calls
+              -- all failed (no body to type) still runs.
+              CREATE TABLE a AS SELECT id, regexp_replace(norm(regexp_replace(coalesce(to_json(batch) ->> '$.chatbot.body.answer', ''), '```.*?```|[*`_]', '', 'gs')),
+                '[ \t]+', ' ', 'g') AS ans FROM batch;
+              CREATE TABLE said AS SELECT id,
+                -- "chord (notes)", "chord: notes", "chord | notes" or "chord contains notes".
+                list_filter(list_transform(regexp_extract_all(ans, b() || chord_rx() || '(?:[ \t]+(?:triad|chord))?(?:[ \t]*[(:=|][ \t]*|[ \t]+(?:contains|has|is|consists of|is made of|spells|spelled)[ \t]+)(?:the[ \t]+notes[ \t]+)?'
+                    || note_rx() || '(?:(?:[ \t]*[,/-][ \t]*(?:and[ \t]+)?|[ \t]+(?:and[ \t]+)?)' || note_rx() || '){2,6}' || e()),
+                  lambda m: {'chord': chord(regexp_extract(regexp_replace(m, '^[^A-G]', ''), '^' || chord_rx())),
+                    'ns': regexp_extract_all(regexp_replace(regexp_replace(m, '^[^A-G]', ''), '^' || chord_rx() || '(?:\s+(?:triad|chord))?', ''), note_rx()),
+                    'said': trim(m), 'bare': regexp_matches(m, '^[^A-G]?[A-G][#b]?(?:[ \t]*[(:=|]|[ \t]+(?:contains|has|is|consists|spells|spelled))')}),
+                  -- 3 or 4 distinct notes. A bare letter names a major triad, so its notes must be 3, stacked in
+                  -- thirds: "E (E-A-B)" glosses a key, "E | E - A - B" may be a key and its progression, and
+                  -- "built on C# (C#-E-G-Bb)" a root.
+                  lambda n: len(n.ns) IN (3, 4) AND len(list_distinct(list_transform(n.ns, lambda x: pc(x)))) = len(n.ns)
+                    AND (NOT n.bare OR (len(n.ns) = 3 AND tertian(list_transform(n.ns, lambda x: pc(x)))))) AS notes,
+                -- "chord frets" or "chord | frets".
+                list_transform(regexp_extract_all(ans, b() || '(' || chord_rx() || ')[ \t]*(?:\|[ \t]*)?' || frets_rx() || '(?:$|[^A-Za-z0-9-])'),
+                  lambda m: {'chord': chord(regexp_extract(m, '(' || chord_rx() || ')[ \t]*(?:\|[ \t]*)?' || frets_rx(), 1)),
+                    'frets': regexp_extract(m, frets_rx()), 'pcs': fret_pcs(regexp_extract(m, frets_rx()))}) AS frets,
+                -- "IV - G", "| iii | F♯ m |": a Roman numeral and the chord the answer puts on that degree.
+                list_transform(regexp_extract_all(ans, '(?:^|[\s|])((?:[iI]{1,3}|[iI][vV]|[vV][iI]{0,2})(?:dim|o|\+)?)\s*(?:\||-|:)\s*(' || chord_rx() || ')' || e()),
+                  lambda m: {'roman': regexp_extract(m, '((?:[iI]{1,3}|[iI][vV]|[vV][iI]{0,2})(?:dim|o|\+)?)\s*(?:\||-|:)', 1),
+                    'chord': chord(regexp_extract(m, '(?:\||-|:)\s*(' || chord_rx() || ')', 1))}) AS romans,
+                -- Progressions: two chords or more on one line, joined by -, ,, -> or spaces.
+                list_transform(regexp_extract_all(ans, b() || '(' || seq_rx() || '(?:(?:[ \t]*(?:[-,]|->)[ \t]*|[ \t]+)' || seq_rx() || ')+)' || e(), 1),
+                  lambda s: list_transform(regexp_extract_all(s, seq_rx()), lambda c: chord(c))) AS sequences,
+                -- Intervals in the order the answer names them, and the semitone counts it gives.
+                list_transform(regexp_extract_all(lower(ans), '(perfect|major|minor|augmented|diminished|aug|dim)\.?\s+(unison|second|third|fourth|fifth|sixth|seventh|octave|2nd|3rd|4th|5th|6th|7th|8th)'),
+                  lambda m: interval_name(regexp_extract(m, '^(\w+)', 1), regexp_extract(m, '(\w+)$', 1))) AS intervals,
+                list_transform(regexp_extract_all(ans, '(\d+)\s*(?:semitones?|half[- ]steps?)', 1), lambda n: n::INT) AS semitones,
+                -- The notes the answer says are common: those of its first sentence or table cell that says so.
+                coalesce(named_notes(list_filter(string_split_regex(ans, '[.!?](?:\s|$)|\n|\|'),
+                  lambda s: regexp_matches(s, '(?i)in common|common (?:to|tones?|notes?)|\bshare|shared'))[1]), []) AS common,
+                -- The first chord the answer names with a quality or a bass: its name for what was asked.
+                list_filter(list_transform(regexp_extract_all(ans, b() || '(' || chord_rx() || ')' || e(), 1), lambda c: chord(c)),
+                  lambda c: c.q <> '' OR c.bass IS NOT NULL)[1] AS named
+              FROM a;
+              -- The row, with the GaApi requests for its chords after its own, and what the answer said.
+              SELECT batch.* REPLACE (list_concat(batch.ga, list_sort(list_distinct(list_filter(list_transform(
+                  list_concat(list_transform(s.notes, lambda n: n.chord), list_transform(s.frets, lambda f: f.chord),
+                    list_transform(s.romans, lambda r: r.chord), flatten(s.sequences), list_filter([s.named], lambda c: c IS NOT NULL)),
+                  lambda c: ga_path(c)), lambda p: p IS NOT NULL)))) AS ga),
+                {'notes': s.notes, 'frets': s.frets, 'romans': s.romans, 'sequences': s.sequences, 'intervals': s.intervals,
+                 'semitones': s.semitones, 'common': s.common, 'named': s.named} AS said
+              FROM batch JOIN said s ON s.id = batch.id
+              ORDER BY batch.id;
           - name: ga
             cap: 4
             workers: 2
@@ -122,111 +221,125 @@ stages:
             batching: true
             cap: 16
             sql: |
-              -- Sharps and flats as # and b, and the no-break spaces the chatbot writes as spaces.
-              CREATE MACRO norm(s) AS regexp_replace(replace(replace(replace(replace(s, '♯', '#'), '♭', 'b'), '°', 'dim'), 'ø', 'm7b5'),
-                '[\x{00A0}\x{2009}\x{202F}]', ' ', 'g');
+              CREATE MACRO norm(s) AS replace(replace(s, '♯', '#'), '♭', 'b');
               CREATE MACRO pc(n) AS (MAP {'C': 0, 'B#': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4, 'Fb': 4, 'F': 5,
                 'E#': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8, 'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11, 'Cb': 11})[n];
               CREATE MACRO pcs(l) AS list_sort(list_distinct(list_transform(l, lambda n: pc(n))));
-              CREATE MACRO root(c) AS regexp_extract(c, '^[A-G][#b]?');
-              -- A triad by pitch class and quality, whatever the spelling: Bb and A# are both 10.
-              CREATE MACRO ckey(c) AS pc(root(c)) || substr(c, length(root(c)) + 1);
-              -- Every spelling of a note, as a regex alternation.
-              CREATE MACRO spellings(n) AS array_to_string(list_filter(['C', 'B#', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'Fb', 'F',
-                'E#', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B', 'Cb'], lambda s: pc(s) = pc(n)), '|');
-              CREATE MACRO word(x) AS '(^|[^A-Za-z0-9#])(' || x || ')($|[^A-Za-z0-9#])';
-              CREATE MACRO note_re(n) AS word(spellings(n));
-              -- A triad named in the answer, in any spelling of its root: a dim one also as o, m7b5 or
-              -- diminished, a minor one also as min or minor, a major one also as maj or major; a
-              -- seventh on it counts.
-              CREATE MACRO chord_re(c) AS word('(' || spellings(root(c)) || ')' || CASE
-                WHEN c LIKE '%dim' THEN ' ?(dim|o|m7b5|diminished)'
-                WHEN c LIKE '%m' THEN ' ?(m|min|minor)7?'
-                ELSE '( ?major| ?maj7?|7)?' END);
-              -- The same, said as a chord: a major triad whose name is also a note needs major, maj, chord,
-              -- triad or a slash bass after it.
-              CREATE MACRO named_re(c) AS CASE WHEN c = root(c)
-                THEN word('(' || spellings(c) || ')( major| ?maj| chord| triad|/[A-G])') ELSE chord_re(c) END;
-              CREATE TABLE intervals(mode VARCHAR, degree INTEGER, name VARCHAR, re VARCHAR);
+              -- A triad by root pitch class and quality ('' major, m, dim): GA's Cm and the answer's C minor are both 0m.
+              CREATE MACRO ckey(name) AS pc(regexp_extract(name, '^[A-G][#b]?')) || regexp_replace(name, '^[A-G][#b]?', '');
+              CREATE MACRO key(c) AS pc(c.root) || c.triad;
+              CREATE MACRO numeral(r) AS upper(regexp_extract(r, '^[iIvV]+'));
+              CREATE TABLE intervals(mode VARCHAR, degree INTEGER, name VARCHAR);
               INSERT INTO intervals VALUES
-                ('Ionian', 2, 'major second', '(?i)major (2nd|second)'), ('Ionian', 3, 'major third', '(?i)major (3rd|third)'),
-                ('Ionian', 4, 'perfect fourth', '(?i)perfect (4th|fourth)'), ('Ionian', 5, 'perfect fifth', '(?i)perfect (5th|fifth)'),
-                ('Ionian', 6, 'major sixth', '(?i)major (6th|sixth)'), ('Ionian', 7, 'major seventh', '(?i)major (7th|seventh)'),
-                ('Aeolian', 2, 'major second', '(?i)major (2nd|second)'), ('Aeolian', 3, 'minor third', '(?i)minor (3rd|third)'),
-                ('Aeolian', 4, 'perfect fourth', '(?i)perfect (4th|fourth)'), ('Aeolian', 5, 'perfect fifth', '(?i)perfect (5th|fifth)'),
-                ('Aeolian', 6, 'minor sixth', '(?i)minor (6th|sixth)'), ('Aeolian', 7, 'minor seventh', '(?i)minor (7th|seventh)');
-              CREATE TABLE q AS SELECT id, "set", label, prompt, source, expect, ga_res,
-                chatbot.status AS chatbot_status, chatbot.ms AS chatbot_ms, chatbot.error AS chatbot_error,
-                chatbot.body.agent AS agent, chatbot.body.routing AS routing, chatbot.body.answer AS answer,
-                norm(regexp_replace(coalesce(chatbot.body.answer, ''), '[*`_]', '', 'g')) AS ans
-                FROM batch;
+                ('Ionian', 1, 'perfect unison'), ('Ionian', 2, 'major second'), ('Ionian', 3, 'major third'), ('Ionian', 4, 'perfect fourth'),
+                ('Ionian', 5, 'perfect fifth'), ('Ionian', 6, 'major sixth'), ('Ionian', 7, 'major seventh'),
+                ('Aeolian', 1, 'perfect unison'), ('Aeolian', 2, 'major second'), ('Aeolian', 3, 'minor third'), ('Aeolian', 4, 'perfect fourth'),
+                ('Aeolian', 5, 'perfect fifth'), ('Aeolian', 6, 'minor sixth'), ('Aeolian', 7, 'minor seventh');
+              -- The fields with their types spelled out, so that a batch types them alike whatever it holds:
+              -- read_json types a field from the rows it sees, and an empty list has no type of its own.
+              CREATE MACRO chord_t() AS '{"sym": "VARCHAR", "root": "VARCHAR", "q": "VARCHAR", "bass": "VARCHAR", "triad": "VARCHAR", "plain": "BOOLEAN"}';
+              CREATE TABLE q AS
+                WITH r AS (SELECT id, "set", label, prompt, to_json(batch) AS j FROM batch),
+                  t AS (SELECT *, json_transform(j -> '$.source', '{"link": "VARCHAR", "author": "VARCHAR", "content_license": "VARCHAR"}') AS source,
+                    json_transform(j -> '$.expect', '{"kind": "VARCHAR", "req": "INTEGER", "src": "INTEGER", "dst": "INTEGER", "note": "VARCHAR", "chords": ["VARCHAR"]}') AS expect,
+                    json_transform(j -> '$.said', '{"notes": [{"chord": ' || chord_t() || ', "ns": ["VARCHAR"], "said": "VARCHAR"}], "frets": [{"chord": ' || chord_t()
+                      || ', "frets": "VARCHAR", "pcs": ["INTEGER"]}], "romans": [{"roman": "VARCHAR", "chord": ' || chord_t() || '}], "sequences": [[' || chord_t()
+                      || ']], "intervals": ["VARCHAR"], "semitones": ["INTEGER"], "common": ["VARCHAR"], "named": ' || chord_t() || '}') AS said,
+                    json_transform(j -> '$.chatbot', '{"status": "INTEGER", "ms": "BIGINT", "error": "VARCHAR", "body": {"agent": "VARCHAR", "routing": "VARCHAR", "answer": "VARCHAR"}}') AS chatbot,
+                    json_transform(j -> '$.ga_res', '[{"ms": "BIGINT", "error": "VARCHAR", "body": [{"templateName": "VARCHAR", "contextualName": "VARCHAR",
+                      "romanNumeral": "VARCHAR", "scaleDegree": "INTEGER", "root": "VARCHAR", "notes": ["VARCHAR"]}]}]') AS ga_res FROM r)
+                SELECT id, "set", label, prompt, source, expect, said, ga_res,
+                  chatbot.status AS chatbot_status, chatbot.ms AS chatbot_ms, chatbot.error AS chatbot_error,
+                  chatbot.body.agent AS agent, chatbot.body.routing AS routing, chatbot.body.answer AS answer
+                FROM t;
               -- Every triad GA answered, with its question and the request (`req`, from 0) it came from.
               CREATE TABLE facts AS
                 WITH r AS (SELECT id, generate_subscripts(ga_res, 1) - 1 AS req, unnest(ga_res) AS res FROM q),
                   c AS (SELECT id, req, unnest(res.body) AS c FROM r)
                 SELECT id, req, regexp_extract(c.templateName, '^([A-Za-z]+)', 1) AS mode, norm(c.contextualName) AS name,
                   ckey(norm(c.contextualName)) AS key, c.romanNumeral AS roman, c.scaleDegree AS degree, norm(c.root) AS root,
-                  list_transform(c.notes, lambda n: norm(n)) AS notes
+                  list_transform(c.notes, lambda n: norm(n)) AS notes, pcs(list_transform(c.notes, lambda n: norm(n))) AS pcs
                 FROM c;
-              CREATE TABLE triads AS SELECT DISTINCT key, name, pcs(notes) AS pcs, array_to_string(notes, ' ') AS notes FROM facts;
-              -- Claims of the answer: a chord, then "(", ":", "=" or a verb such as "contains", then
-              -- 3 or 4 notes, the root first and a third above it.
-              CREATE TABLE said AS
-                WITH m AS (SELECT id, unnest(regexp_extract_all(ans,
-                  '[A-G][#b]?(?:maj7|m7b5|dim7|dim|aug|sus2|sus4|m7|m|7|6|9)?(?:\s+(?:major|minor|diminished|augmented))?(?:\s+(?:triad|chord))?(?:\s*[(:=]\s*|\s+(?:contains|has|is|consists of|is made of|spells|spelled)\s+)(?:the\s+notes\s+)?[A-G][#b]?(?:(?:\s*[,‑‐–—/-]\s*(?:and\s+)?|\s+(?:and\s+)?)[A-G][#b]?){2,6}')) AS m FROM q),
-                  h AS (SELECT id, m, regexp_extract(m, '^[A-G][#b]?(?:maj7|m7b5|dim7|dim|aug|sus2|sus4|m7|m|7|6|9)?(?:\s+(?:major|minor|diminished|augmented))?(?:\s+(?:triad|chord))?') AS head FROM m)
-                SELECT id, m, regexp_extract(head, '^[A-G][#b]?(?:maj7|m7b5|dim7|dim|aug|sus2|sus4|m7|m|7|6|9)?') AS sym,
-                  trim(regexp_extract(head, '\s+(major|minor|diminished|augmented)', 1)) AS quality,
-                  regexp_extract_all(substr(m, length(head) + 1), '[A-G][#b]?') AS ns
-                FROM h;
-              CREATE TABLE chord_claims AS SELECT id, m AS snippet, ns,
-                sym || CASE WHEN sym = root(sym) THEN
-                  CASE quality WHEN 'minor' THEN 'm' WHEN 'diminished' THEN 'dim' WHEN 'augmented' THEN 'aug' ELSE '' END
-                  ELSE '' END AS chord
-                FROM said
-                WHERE len(ns) IN (3, 4) AND pc(ns[1]) = pc(root(sym)) AND (pc(ns[2]) - pc(ns[1]) + 12) % 12 IN (3, 4);
+              -- GA's pitch-class set of each triad it named, the set every symbol of the answer is compared with.
+              CREATE TABLE ga AS SELECT key, min(name) AS name, min(pcs) AS pcs, min(array_to_string(notes, ' ')) AS notes FROM facts GROUP BY key;
+              CREATE TABLE notes AS SELECT id, unnest(said.notes) AS n FROM q;
+              CREATE TABLE frets AS SELECT id, unnest(said.frets) AS f FROM q;
               CREATE TABLE claims AS
-                SELECT DISTINCT c.id, 'chord' AS kind, c.chord || ' = ' || array_to_string(c.ns, ' ') AS claim,
-                  t.name || ' = ' || t.notes AS ga, c.snippet AS said, pcs(c.ns) = t.pcs AS match
-                FROM chord_claims c JOIN triads t ON t.key = ckey(c.chord)
+                -- The answer's chords with their notes, or frets: the set of the notes against GA's set for that
+                -- symbol; a voicing may leave a note out, but must sound the root, and the bass of a slash chord lowest.
+                SELECT DISTINCT n.id, 'chord notes' AS kind, n.n.chord.sym || ' = ' || array_to_string(n.n.ns, ' ') AS claim,
+                  g.name || ' = ' || g.notes AS ga, n.n.said AS said, pcs(n.n.ns) = g.pcs AS match
+                FROM notes n JOIN ga g ON g.key = key(n.n.chord) WHERE n.n.chord.plain
                 UNION ALL BY NAME
-                -- GA's expected answers.
-                SELECT DISTINCT q.id, 'expected diatonic' AS kind, 'names ' || f.name AS claim, f.name AS ga,
-                  regexp_matches(q.ans, chord_re(f.name)) AS match
-                FROM q JOIN facts f ON f.id = q.id AND f.req = q.expect.req
-                WHERE q.expect.kind = 'diatonic'
+                SELECT DISTINCT f.id, 'chord frets' AS kind, f.f.chord.sym || ' = ' || f.f.frets AS claim,
+                  g.name || ' = ' || g.notes AS ga, array_to_string(list_transform(f.f.pcs, lambda p: p::VARCHAR), ' ') AS said,
+                  list_has_all(g.pcs, f.f.pcs) AND list_contains(f.f.pcs, pc(f.f.chord.root))
+                    AND (f.f.chord.bass IS NULL OR pc(f.f.chord.bass) = f.f.pcs[1]) AS match
+                FROM frets f JOIN ga g ON g.key = key(f.f.chord) WHERE f.f.chord.plain
                 UNION ALL BY NAME
-                SELECT DISTINCT q.id, 'expected transpose' AS kind, 'names ' || dst.name || ' for ' || src.name AS claim,
-                  dst.name || ' (' || dst.roman || ')' AS ga, regexp_matches(q.ans, chord_re(dst.name)) AS match
-                FROM q JOIN facts src ON src.id = q.id AND src.req = q.expect.src
-                    AND list_contains(list_transform(q.expect.chords, lambda c: ckey(c)), src.key)
-                  JOIN facts dst ON dst.id = q.id AND dst.req = q.expect.dst AND dst.roman = src.roman
-                WHERE q.expect.kind = 'transpose'
+                -- GA's expected answers, each compared as a value with what the answer gives.
+                -- Diatonic chords: GA's triad on each degree, and the chord the answer puts on that numeral. An
+                -- answer that pairs no numeral with a chord gives them as its first run of 7 chords with a minor
+                -- one (a scale's notes are a run of 7 too), in the order of the degrees.
+                SELECT DISTINCT d.id, 'expected diatonic' AS kind, d.roman || ' is ' || d.name AS claim, d.name || ' = ' || array_to_string(d.notes, ' ') AS ga,
+                  d.c.sym AS said, coalesce(g.pcs = d.pcs, false) AS match
+                FROM (SELECT q.id, f.roman, f.name, f.notes, f.pcs, CASE WHEN len(q.said.romans) > 0
+                      THEN (list_filter(q.said.romans, lambda r: numeral(r.roman) = numeral(f.roman))[1]).chord
+                      ELSE list_filter(q.said.sequences, lambda s: len(s) = 7 AND list_bool_or(list_transform(s, lambda c: c.triad IN ('m', 'dim'))))[1][f.degree] END AS c
+                    FROM q JOIN facts f ON f.id = q.id AND f.req = q.expect.req WHERE q.expect.kind = 'diatonic') d
+                  LEFT JOIN ga g ON g.key = key(d.c)
                 UNION ALL BY NAME
-                SELECT DISTINCT id, 'expected notes' AS kind, 'names ' || n || ' in ' || name AS claim, n AS ga,
-                  regexp_matches(ans, note_re(n)) AS match
-                FROM (SELECT q.id, q.ans, f.name, unnest(f.notes) AS n
-                  FROM q JOIN facts f ON f.id = q.id AND f.key = ckey(q.expect.chords[1]) WHERE q.expect.kind = 'notes')
+                -- Transposition: GA's triads on the same numerals in the new key, in order, and the answer's
+                -- first progression as long as the original that is not the original.
+                SELECT t.id, 'expected transpose' AS kind, array_to_string(t.src, ' ') || ' -> ' || array_to_string(t.want, ' ') AS claim,
+                  array_to_string(t.romans, ' ') AS ga, array_to_string(list_transform(t.got, lambda c: c.sym), ' ') AS said,
+                  coalesce(t.want_pcs = (SELECT list(g.pcs ORDER BY i) FROM (SELECT unnest(t.got) AS c, generate_subscripts(t.got, 1) AS i) x
+                    LEFT JOIN ga g ON g.key = key(x.c)), false) AS match
+                FROM (SELECT q.id, any_value(q.expect.chords) AS src, list(d.name ORDER BY s.i) AS want, list(d.pcs ORDER BY s.i) AS want_pcs,
+                    list(d.roman ORDER BY s.i) AS romans,
+                    list_filter(any_value(q.said.sequences), lambda x: len(x) = len(any_value(q.expect.chords))
+                      AND list_transform(x, lambda c: key(c)) <> list_transform(any_value(q.expect.chords), lambda c: ckey(c)))[1] AS got
+                  FROM q JOIN (SELECT id, unnest(expect.chords) AS c, generate_subscripts(expect.chords, 1) AS i FROM q) s ON s.id = q.id
+                    JOIN facts f ON f.id = q.id AND f.req = q.expect.src AND f.key = ckey(s.c)
+                    JOIN facts d ON d.id = q.id AND d.req = q.expect.dst AND d.roman = f.roman
+                  WHERE q.expect.kind = 'transpose' GROUP BY q.id) t
                 UNION ALL BY NAME
-                SELECT DISTINCT id, 'expected common' AS kind, 'names ' || n || ' as common to ' || a || ' and ' || b AS claim,
-                  n AS ga, regexp_matches(ans, note_re(n)) AS match
-                FROM (SELECT q.id, q.ans, a.name AS a, b.name AS b, b.notes AS bn, unnest(a.notes) AS n
-                  FROM q JOIN facts a ON a.id = q.id AND a.key = ckey(q.expect.chords[1])
-                    JOIN facts b ON b.id = q.id AND b.key = ckey(q.expect.chords[2])
-                  WHERE q.expect.kind = 'common')
-                WHERE list_contains(pcs(bn), pc(n))
+                -- The notes of a chord: GA's set, and the notes the answer gives for that chord.
+                SELECT q.id, 'expected notes' AS kind, 'the notes of ' || g.name AS claim, g.notes AS ga,
+                  array_to_string(list_filter(q.said.notes, lambda n: key(n.chord) = g.key)[1].ns, ' ') AS said,
+                  coalesce(pcs(list_filter(q.said.notes, lambda n: key(n.chord) = g.key)[1].ns) = g.pcs, false) AS match
+                FROM q JOIN ga g ON g.key = ckey(q.expect.chords[1]) WHERE q.expect.kind = 'notes'
                 UNION ALL BY NAME
-                SELECT DISTINCT q.id, 'expected interval' AS kind,
-                  'names the ' || iv.name || ' (GA: ' || f.root || ' is degree ' || f.degree || ' of ' || f.mode || ')' AS claim,
-                  iv.name AS ga, regexp_matches(q.ans, iv.re) AS match
+                -- Common tones: the intersection of GA's two sets, and the notes the answer says are common.
+                SELECT q.id, 'expected common' AS kind, 'the notes common to ' || a.name || ' and ' || b.name AS claim,
+                  array_to_string(list_filter(split(a.notes, ' '), lambda n: list_contains(b.pcs, pc(n))), ' ') AS ga,
+                  array_to_string(list_distinct(q.said.common), ' ') AS said,
+                  list_sort(list_intersect(a.pcs, b.pcs)) = pcs(q.said.common) AS match
+                FROM q JOIN ga a ON a.key = ckey(q.expect.chords[1]) JOIN ga b ON b.key = ckey(q.expect.chords[2])
+                WHERE q.expect.kind = 'common'
+                UNION ALL BY NAME
+                -- An interval: GA's degree of the note in the key gives its name and its size; the answer's is
+                -- the first interval it names, and every semitone count it gives.
+                SELECT q.id, 'expected interval' AS kind, 'the interval ' || t.root || ' to ' || f.root AS claim,
+                  iv.name || ' (GA: ' || f.root || ' is degree ' || f.degree || ' of ' || t.root || ' ' || f.mode || ')' AS ga,
+                  q.said.intervals[1] AS said, coalesce(q.said.intervals[1] = iv.name, false) AS match
                 FROM q JOIN facts f ON f.id = q.id AND f.req = q.expect.req AND pc(f.root) = pc(q.expect.note)
+                  JOIN facts t ON t.id = q.id AND t.req = q.expect.req AND t.degree = 1
                   JOIN intervals iv ON iv.mode = f.mode AND iv.degree = f.degree
                 WHERE q.expect.kind = 'interval'
                 UNION ALL BY NAME
-                SELECT DISTINCT q.id, 'expected identify' AS kind,
-                  'names ' || f.name || ', the triad GA lists on ' || array_to_string(q.expect.chords, ' ') AS claim,
-                  f.name || ' = ' || array_to_string(f.notes, ' ') AS ga, regexp_matches(q.ans, named_re(f.name)) AS match
-                FROM q JOIN facts f ON f.id = q.id AND pcs(f.notes) = pcs(q.expect.chords)
+                SELECT q.id, 'expected semitones' AS kind, 'the semitones ' || t.root || ' to ' || f.root AS claim,
+                  ((pc(f.root) - pc(t.root) + 12) % 12)::VARCHAR AS ga, s::VARCHAR AS said, s = (pc(f.root) - pc(t.root) + 12) % 12 AS match
+                FROM (SELECT *, unnest(said.semitones) AS s FROM q) q JOIN facts f ON f.id = q.id AND f.req = q.expect.req AND pc(f.root) = pc(q.expect.note)
+                  JOIN facts t ON t.id = q.id AND t.req = q.expect.req AND t.degree = 1
+                WHERE q.expect.kind = 'interval'
+                UNION ALL BY NAME
+                -- A chord named from its notes: the set of the notes asked about, and GA's set for the first
+                -- chord the answer names.
+                SELECT q.id, 'expected identify' AS kind, 'the triad on ' || array_to_string(q.expect.chords, ' ') AS claim,
+                  coalesce((SELECT min(f.name || ' = ' || array_to_string(f.notes, ' ')) FROM facts f WHERE f.id = q.id AND f.pcs = pcs(q.expect.chords)), 'none') AS ga,
+                  q.said.named.sym AS said, coalesce(q.said.named.plain AND g.pcs = pcs(q.expect.chords), false) AS match
+                FROM q LEFT JOIN ga g ON g.key = key(q.said.named)
                 WHERE q.expect.kind = 'identify';
               SELECT 'claim' AS "row", id, kind, claim, ga, said, match FROM claims
               UNION ALL BY NAME
@@ -234,6 +347,9 @@ stages:
                 CASE WHEN q.chatbot_error IS NOT NULL OR q.answer IS NULL THEN 'U'
                   WHEN coalesce(n.claims, 0) = 0 THEN 'U' WHEN n.claims = n.verified THEN 'T' ELSE 'F' END AS verdict,
                 coalesce(n.claims, 0) AS claims, coalesce(n.verified, 0) AS verified,
+                -- What the answer claims that GA cannot check: chords it has no triad for (sevenths, augmented).
+                list_transform(list_filter(q.said.notes, lambda n: NOT n.chord.plain OR n.chord.triad NOT IN ('', 'm', 'dim')), lambda n: n.said)
+                  || list_transform(list_filter(q.said.frets, lambda f: NOT f.chord.plain OR f.chord.triad NOT IN ('', 'm', 'dim')), lambda f: f.chord.sym || ' ' || f.frets) AS unchecked,
                 q.chatbot_status, q.chatbot_ms, q.chatbot_error, q.agent, q.routing,
                 list_sum(list_transform(q.ga_res, lambda r: r.ms))::BIGINT AS ga_ms,
                 len(list_filter(q.ga_res, lambda r: r.error IS NOT NULL)) AS ga_errors,
@@ -252,6 +368,7 @@ stages:
                 count(*) FILTER (WHERE verdict = 'U') AS "U",
                 count(*) FILTER (WHERE "row" = 'claim') AS claims_checked,
                 count(*) FILTER (WHERE "row" = 'claim' AND match) AS claims_verified,
+                sum(len(unchecked))::BIGINT AS claims_unchecked,
                 count(*) FILTER (WHERE "row" = 'question' AND chatbot_error IS NOT NULL) AS chatbot_failures,
                 median(chatbot_ms)::BIGINT AS chatbot_ms_median,
                 max(chatbot_ms)::BIGINT AS chatbot_ms_max,
@@ -270,5 +387,6 @@ stages:
           - { from: 1, to: 2 }
           - { from: 2, to: 3 }
           - { from: 3, to: 4 }
-          - { from: 3, to: 5 }
+          - { from: 4, to: 5 }
           - { from: 4, to: 6 }
+          - { from: 5, to: 7 }
