@@ -102,9 +102,11 @@
   },
   "permissions": {
     "allow": [
-      "Bash(git fetch *)",
+      "Bash(git fetch)",
+      "Bash(git fetch origin)",
+      "Bash(git fetch origin main)",
+      "Bash(git fetch --all)",
       "Bash(nvidia-smi)",
-      "Bash(nvidia-smi --query*)",
       "Bash(gh search *)",
       "PowerShell(Get-ChildItem *)",
       "PowerShell(Select-String *)",
