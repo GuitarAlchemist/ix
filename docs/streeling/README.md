@@ -11,9 +11,9 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 ## Enrollment
 
-- **102** learnings total
+- **104** learnings total
   - `ga`: 36
-  - `ix`: 66
+  - `ix`: 68
 
 ## Faculties
 
@@ -48,9 +48,10 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 
 - Security Hardening, Layer Violation Fixes, and Dead Code Removal — Chatbot Orchestration Extraction · `ga` — `docs/solutions/compound-reviews/2026-03-07-ce-review-security-arch-hygiene.md`
 
-### ecosystem-integration (2)
+### ecosystem-integration (3)
 
 - [Federating an ix producer snapshot into ga/state/quality (GA-pull, not ix-push) · `ix`](../../docs/solutions/ecosystem-integration/2026-06-21-federate-ix-snapshot-into-ga-state-quality.md)
+- [A Demerzel submodule bump is a migration, not a chore — five ix-side breaks surfaced one per test run · `ix`](../../docs/solutions/ecosystem-integration/2026-07-29-demerzel-bump-breaks-cascade-one-per-run.md)
 - [TARS v1 is the right quarry for IX-spirited exotic math · `ix`](../../docs/solutions/ecosystem-integration/tars-v1-exotic-math-quarry.md)
 
 ### feature-implementation (3)
@@ -81,7 +82,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [LDA non-symmetric deflation produces duplicated or wrong discriminants · `ix`](../../docs/solutions/math-correctness/lda-non-symmetric-deflation.md)
 - [Sedenion log(-1) principal value needs pi on an imaginary axis · `ix`](../../docs/solutions/math-correctness/sedenion-log-negative-reals.md)
 
-### plan (27)
+### plan (28)
 
 - [feat: Add quaternions, dual quaternions, Plücker coordinates, primes, and fractal curves · `ix`](../../docs/plans/2026-03-13-002-feat-tars-math-phase1-quaternions-primes-fractals-plan.md)
 - [feat: ix Full Vision — Math Crates + Demo + MCP + Infrastructure · `ix`](../../docs/plans/2026-03-14-001-feat-full-vision-math-demo-mcp-infra-plan.md)
@@ -110,6 +111,7 @@ knowledge/plans/brainstorms). Query the corpus via the Registrar (`docs/streelin
 - [Additivity reconciliation gate — fail-closed integrity check for sharded warehouse aggregates · `ix`](../../docs/plans/2026-07-21-arch-additivity-reconciliation-gate.md)
 - [DFT-phase invariants — separate the Z-related pairs ICV cannot · `ix`](../../docs/plans/2026-07-21-feat-dft-phase-invariants.md)
 - [IX↔GA phase-similarity reconciliation — one name, two semantics · `ix`](../../docs/plans/2026-07-31-arch-ix-ga-phase-similarity-reconciliation.md)
+- [MSRV audit — what each IX package's dependency closure declares · `ix`](../../docs/plans/2026-10-17-arch-msrv-audit.md)
 
 ### runtime-errors (2)
 

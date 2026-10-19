@@ -142,7 +142,7 @@ struct IxGrothendieckDelta;
 impl VScalar for IxGrothendieckDelta {
     type State = ();
     // @ai:invariant ix_grothendieck_delta renders ix_bracelet grothendieck_delta(a,b) (target−source ICV diff in ℤ⁶) as "<±,…>"; {0,4,7}→{0,4,8} = "<+0,+0,-1,+2,-1,+0>"; NULL arg → SQL NULL [T:test conf:0.9 src:ix_duck::grothendieck::tests::delta_major_to_aug]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let an = null_mask(input, 0, n);
         let bn = null_mask(input, 1, n);
@@ -167,7 +167,7 @@ struct IxIcvL1;
 impl VScalar for IxIcvL1 {
     type State = ();
     // @ai:invariant ix_icv_l1 returns |grothendieck_delta(a,b)|₁ as BIGINT (total interval-class steps gained+lost); {0,4,7}→{0,4,8} = 4; NULL arg → SQL NULL [T:test conf:0.9 src:ix_duck::grothendieck::tests::icv_l1_major_to_aug]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let an = null_mask(input, 0, n);
         let bn = null_mask(input, 1, n);
@@ -200,7 +200,7 @@ struct IxZRelated;
 impl VScalar for IxZRelated {
     type State = ();
     // @ai:invariant ix_z_related is true iff a,b share cardinality+ICV but differ in bracelet prime form (the Z-relation); 4-Z15{0,1,4,6}↔4-Z29{0,1,3,7} = true; maj↔min (same set-class) = false; NULL arg → SQL NULL [T:test conf:0.9 src:ix_duck::grothendieck::tests::z_related_canonical_pair]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let an = null_mask(input, 0, n);
         let bn = null_mask(input, 1, n);
