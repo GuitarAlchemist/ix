@@ -27,6 +27,7 @@ ceux de cette machine.
 | `index.html` | La page du tableau de bord. Elle calcule les étapes, les comptes et les semaines à partir des lignes, de façon visible pour ses lecteurs. |
 | `control_snapshot.py` | Écrit `snapshot.json` et `public.json` dans `%LOCALAPPDATA%\ix-control`, de façon atomique ; `--every 5` les réécrit toutes les 5 s. |
 | `demo-plan.json` | Le chantier en cours et la prochaine démo, modifiés à la main au fil du travail. |
+| `say_public.py` | Donne au bot de la scène une phrase à dire sur le flux public, en anglais, français et espagnol. |
 
 `IX_CLONE` désigne le clone d'ix (par défaut `~/source/repos/ix`).
 `IX_DASH_SCRATCH` et `IX_DASH_TASK` désignent les dossiers des fichiers de
@@ -79,10 +80,13 @@ continue. Le 2026-10-18, la boucle était morte à 15 h 47 sur un dossier
 
 Une démo est un script ponctuel, lancé à l'heure de la démo, qui écrit les
 phrases que le bot doit dire dans le canal de parole public de la scène, puis
-avance `next_demo` dans le plan. Le canal contient une ligne
-`"<langue>: <texte>"` d'au plus 400 caractères, écrite de façon atomique : le
-bot la dit sur le flux. Seul ce canal atteint le flux, jamais les sous-titres
-privés.
+avance `next_demo` dans le plan.
+`say_public.py --live DOSSIER --en TEXTE --fr TEXTE --es TEXTE` écrit ce
+canal : une ligne de JSON `{en, fr, es}`, chaque texte d'au plus 400
+caractères, écrite de façon atomique. La scène la dit dans sa propre langue,
+sinon en anglais, sinon dans n'importe quelle langue présente. Seul ce canal
+atteint le flux, jamais les sous-titres privés. L'ancienne ligne
+`"<langue>: <texte>"` fonctionne toujours.
 
 ## Pas fait
 

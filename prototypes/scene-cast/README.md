@@ -27,8 +27,9 @@ OBS (scene window + scene process audio) --RTMP, loopback--> MediaMTX --HLS, loo
   and points at the HLS side alone.
 - **In the scene**: its "stream" cast mode hides the private overlays: the bot's
   captions, the private IX terminal and the HUD help. The bot speaks on the
-  stream only through a public channel, one line of `"<lang>: <text>"`, at most
-  400 characters, which IX writes atomically.
+  stream only through a public channel: one line of JSON `{en, fr, es}`, each
+  text at most 400 characters, which IX writes atomically and the scene says in
+  its own language.
 
 ## Setting it up (Windows)
 

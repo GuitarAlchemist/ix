@@ -30,8 +30,9 @@ OBS (fenêtre de la scène + son du processus de la scène) --RTMP, boucle local
   démarrage, et ne mène qu'au côté HLS.
 - **Dans la scène** : son mode de diffusion « stream » masque ce qui est privé :
   les sous-titres du bot, le terminal IX privé et l'aide du HUD. Le bot ne parle
-  sur le flux que par un canal public, une ligne `"<langue>: <texte>"` d'au plus
-  400 caractères, qu'IX écrit de façon atomique.
+  sur le flux que par un canal public : une ligne de JSON `{en, fr, es}`, chaque
+  texte d'au plus 400 caractères, qu'IX écrit de façon atomique et que la scène
+  dit dans sa propre langue.
 
 ## La mettre en place (Windows)
 

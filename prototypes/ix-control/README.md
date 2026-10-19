@@ -24,6 +24,7 @@ stands: the paths and the Artifact's asset ids are this machine's.
 | `index.html` | The dashboard page. It derives stages, counts and weeks from the rows, as calculations its readers can inspect. |
 | `control_snapshot.py` | Writes `snapshot.json` and `public.json` under `%LOCALAPPDATA%\ix-control`, atomically; `--every 5` rewrites them every 5 s. |
 | `demo-plan.json` | The work in progress and the next demo, hand-edited as the work moves. |
+| `say_public.py` | Gives the scene's bot one line to say on the public stream, in en, fr and es. |
 
 `IX_CLONE` names the ix clone (default `~/source/repos/ix`). `IX_DASH_SCRATCH`
 and `IX_DASH_TASK` name the folders that hold the result files and review
@@ -74,9 +75,12 @@ hid the gauges during a demo.
 
 A demo is a one-shot script, started at the demo's time, that writes the
 lines the bot is to say to the scene's public speech channel, and moves
-`next_demo` in the plan. The channel holds one line of `"<lang>: <text>"`, at
-most 400 characters, written atomically: the bot says it on the stream. Only
-that channel reaches the stream, never the private captions.
+`next_demo` in the plan. `say_public.py --live DIR --en TEXT --fr TEXT --es TEXT`
+writes that channel: one line of JSON `{en, fr, es}`, each text at most 400
+characters, written atomically. The scene says it in its own language, falling
+back to English, then to any language present. Only that channel reaches the
+stream, never the private captions. The older `"<lang>: <text>"` line still
+works.
 
 ## Not done
 
