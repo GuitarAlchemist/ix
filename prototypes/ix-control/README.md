@@ -59,7 +59,12 @@ show:
   writes to `viewers.json` every 5 s. A missing count, or one older than 30 s,
   gives `null`.
 
-Both schemas are provisional: a reader keys on `schema` and ignores fields it
+`next-demo.json`, schema `ix-next-demo/0`, holds only the next demo's
+`titles` and `at` (UTC, or `null` while the time is not set). It is the one
+file the player page may serve to anyone with the link, so that a viewer who
+missed a demo can see when the next one is.
+
+The schemas are provisional: a reader keys on `schema` and ignores fields it
 does not know.
 
 Every title in `demo-plan.json` is `{en, fr, es}`, so the scene can show the

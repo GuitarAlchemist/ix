@@ -309,7 +309,10 @@ if __name__ == "__main__":
             time.sleep(every)
             continue
         out = write("snapshot.json", s)
-        write("public.json", public(s))
+        p = public(s)
+        write("public.json", p)
+        # What the player page may serve to anyone with the link: the next demo's titles and time, nothing else.
+        write("next-demo.json", {"schema": "ix-next-demo/0", "titles": p["next_demo"]["titles"], "at": p["next_demo"]["at"]})
         if not every:
             print(out, len(s["prs"]), "PRs", sum(p["ci"] != "SUCCESS" for p in s["prs"]), "not green,",
                   len(s["decisions"]), "decisions,", s["horizon"]["busy"], "sessions busy")

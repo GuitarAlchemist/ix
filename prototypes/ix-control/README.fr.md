@@ -64,7 +64,13 @@ peut montrer :
   page du lecteur écrit dans `viewers.json` toutes les 5 s. Un compte absent,
   ou vieux de plus de 30 s, donne `null`.
 
-Les deux schémas sont provisoires : un lecteur se fie à `schema` et ignore les
+`next-demo.json`, schéma `ix-next-demo/0`, ne contient que les `titles` et
+l'heure `at` de la prochaine démo (en UTC, ou `null` tant que l'heure n'est
+pas fixée). C'est le seul fichier que la page du lecteur peut servir à
+quiconque a le lien, pour qu'un spectateur qui a manqué une démo voie quand
+aura lieu la suivante.
+
+Les schémas sont provisoires : un lecteur se fie à `schema` et ignore les
 champs qu'il ne connaît pas.
 
 Chaque titre de `demo-plan.json` est `{en, fr, es}`, pour que la scène montre
