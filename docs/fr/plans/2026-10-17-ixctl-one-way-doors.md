@@ -141,12 +141,13 @@ connexion ; les événements en direct n'attendent jamais (`session.go:151-153`)
 - `peer/<pair>/<canal>` porte les enveloppes `ctl` et `svc/` d'un pair, recopiées avec leur
   origine et jamais relayées plus loin (`peers.go:121-131`, `:187-197`).
 
-**Réponses.** Le statut est `{name, generation, observed_generation, settled_generation,
+**Réponses.** Le statut est `{name, epoch, generation, observed_generation, settled_generation,
 diverged, failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
 started_at, last_exit, nodes}], peers[{name, state, services}]}` (`plane.go:157-181` ;
-`settled_generation` et `failed` depuis le correctif F2.1 ci-dessous). Le plan est
-`{generation, actions[{op, service}], noop}`, l'application `{generation, actions}`, l'arrêt
-`{stopped, generation, exit}` (`plane.go:202-216`, `:392-396`).
+`settled_generation` et `failed` depuis le correctif F2.1 ci-dessous, `epoch` depuis F2.4). Le
+plan est `{generation, actions[{op, service}], noop}`, l'application
+`{generation, epoch, actions}`, l'arrêt `{stopped, generation, exit}` (`plane.go:202-216`,
+`:392-396`).
 
 **Accès.** Le plan n'écoute que sur la boucle locale (`http.go:209-220`). Il compare `Host` et
 `Origin` à des listes autorisées et exige un jeton porteur ; il n'envoie jamais d'en-tête CORS
@@ -315,6 +316,15 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   (HTTP `?peer=b`, refusé puis accepté selon les règles de b), `TestUnknownFieldRefusedOnHTTPAndWS`
   (`peer` dans le document est un champ inconnu), et `a_peer_is_named_beside_the_document` côté
   client.
+- **Corrigé (F2.4), cette tranche :** les générations sont rapportées au démarrage. La réponse
+  d'application et le statut portent `epoch` (l'époque d'instance de F1.1). Côté client Rust,
+  `wait_generation_of(epoch, g)` se termine aussitôt par `CtlError::Restarted` quand le statut
+  annonce une autre époque, au lieu d'attendre que le nouveau démarrage atteigne le même
+  numéro ; `wait_generation(g)` garde l'ancien comportement, sans portée, et un plan qui
+  n'annonce pas d'époque est attendu par numéro. En IXQL, `ix.ctl.wait` prend `epoch:` à côté
+  de `generation:`, et `pods.ixql` passe `applied.epoch`. Tests : `TestApplyConverges` (l'époque
+  de la réponse et du statut est celle du plan), et côté client
+  `a_wait_scoped_to_a_boot_ends_at_once_after_a_restart`.
 
 ### Qui l'écrit, qui le lit
 

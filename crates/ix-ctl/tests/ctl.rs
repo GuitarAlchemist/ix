@@ -43,6 +43,8 @@ struct Plane {
     settled: Option<(u64, Vec<Value>)>,
     /// `METHOD PATH` of every request that passed the checks.
     log: Vec<String>,
+    /// The boot id in status and apply replies; `None` leaves it out, as an older plane does.
+    epoch: Option<String>,
 }
 
 impl Plane {
@@ -80,6 +82,9 @@ impl Plane {
         if let Some((settled, failed)) = &self.settled {
             status["settled_generation"] = json!(settled);
             status["failed"] = json!(failed);
+        }
+        if let Some(e) = &self.epoch {
+            status["epoch"] = json!(e);
         }
         status
     }
@@ -144,10 +149,11 @@ impl Plane {
                         }
                     }
                     self.pending = Some((self.generation, Instant::now()));
-                    (
-                        200,
-                        json!({"generation": self.generation, "actions": actions}),
-                    )
+                    let mut reply = json!({"generation": self.generation, "actions": actions});
+                    if let Some(e) = &self.epoch {
+                        reply["epoch"] = json!(e);
+                    }
+                    (200, reply)
                 }
                 Err(e) => (400, json!({ "error": e })),
             },
@@ -218,6 +224,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         diverged: None,
         settled: None,
         log: Vec::new(),
+        epoch: Some("3f9a1c0b7d2e".into()),
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -473,12 +480,69 @@ fn a_peer_is_named_beside_the_document() {
     assert_eq!(1, plane.generation);
 }
 
+// F2.4: a generation means nothing across boots. A wait that names the apply reply's epoch
+// ends at once when the plane reports another boot, instead of waiting for the new boot to
+// reach the same number; against a plane that reports no epoch it waits as before.
+#[test]
+fn a_wait_scoped_to_a_boot_ends_at_once_after_a_restart() {
+    let (ctl, plane) = plane();
+    let doc = json!({"services": {"pod-a": {"state": "running"}}});
+    let applied = ctl.apply(&doc, None).unwrap();
+    let (g, epoch) = (
+        applied["generation"].as_u64().unwrap(),
+        applied["epoch"].as_str().unwrap().to_string(),
+    );
+    assert_eq!("3f9a1c0b7d2e", epoch);
+    ctl.wait_generation_of(&epoch, g, Duration::from_secs(5))
+        .expect("same boot: the wait converges");
+
+    plane.lock().unwrap().epoch = Some("0badc0ffee11".into());
+    let began = Instant::now();
+    let err = ctl
+        .wait_generation_of(&epoch, g, Duration::from_secs(5))
+        .unwrap_err();
+    assert!(began.elapsed() < Duration::from_secs(1), "ended at once");
+    match &err {
+        CtlError::Restarted {
+            generation,
+            epoch: was,
+            now,
+        } => assert_eq!(
+            (g, epoch.as_str(), "0badc0ffee11"),
+            (*generation, was.as_str(), now.as_str())
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert!(err.to_string().contains("restarted"), "{err}");
+    let err = executor(ctl.clone())
+        .run_source(&format!(
+            "a <- ix.ctl.wait(generation: {g}, epoch: \"{epoch}\", timeout_ms: 5000)"
+        ))
+        .unwrap_err();
+    assert!(err.to_string().contains("restarted"), "{err}");
+    // The unscoped wait still answers by number alone.
+    ctl.wait_generation(g, Duration::from_secs(5)).unwrap();
+
+    // An older plane reports no epoch: the scoped wait cannot tell, and waits as before.
+    plane.lock().unwrap().epoch = None;
+    ctl.wait_generation_of(&epoch, g, Duration::from_secs(5))
+        .expect("no epoch reported: waited by number");
+}
+
 #[test]
 fn argument_mistakes_fail_the_run_before_any_request() {
     let (ctl, plane) = plane();
     let exec = executor(ctl);
     for (src, why) in [
         ("a <- ix.ctl.wait(generation: 1)", "timeout_ms"),
+        (
+            r#"a <- ix.ctl.wait(service: "pod-a", nodes: 2, epoch: "x", timeout_ms: 10)"#,
+            "epoch",
+        ),
+        (
+            "a <- ix.ctl.wait(generation: 1, epoch: 7, timeout_ms: 10)",
+            "string",
+        ),
         (
             r#"a <- ix.ctl.wait(service: "pod-a", timeout_ms: 10)"#,
             "nodes",

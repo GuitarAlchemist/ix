@@ -22,9 +22,11 @@ desired <- {
 --- Pure: reads the observed state and changes nothing.
 planned <- desired → ix.ctl.plan
 
---- Answers the new generation at once; the starts run in the background.
+--- Answers the new generation at once, and the boot (`epoch`) it belongs to; the starts run in
+--- the background. The wait names both, so a plane restart ends it at once instead of letting
+--- the new boot's generation of the same number pass for this one.
 applied <- desired → ix.ctl.apply
-converged <- ix.ctl.wait(generation: applied.generation, timeout_ms: 10000)
+converged <- ix.ctl.wait(generation: applied.generation, epoch: applied.epoch, timeout_ms: 10000)
 
 --- A pod's members are the nodes of its last `stats` event.
 pod_a <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)

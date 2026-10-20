@@ -136,11 +136,12 @@ for room in the connection's queue; live events never wait (`session.go:151-153`
 - `peer/<peer>/<ch>` carries a peer's `ctl` and `svc/` envelopes, mirrored with their origin
   and never forwarded again (`peers.go:121-131`, `:187-197`).
 
-**Replies.** Status is `{name, generation, observed_generation, settled_generation, diverged,
-failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
+**Replies.** Status is `{name, epoch, generation, observed_generation, settled_generation,
+diverged, failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
 started_at, last_exit, nodes}], peers[{name, state, services}]}` (`plane.go:157-181`;
-`settled_generation` and `failed` since the F2.1 fix below). Plan is `{generation, actions[{op, service}], noop}`, apply is
-`{generation, actions}`, stop is `{stopped, generation, exit}` (`plane.go:202-216`,
+`settled_generation` and `failed` since the F2.1 fix below, `epoch` since F2.4). Plan is
+`{generation, actions[{op, service}], noop}`, apply is `{generation, epoch, actions}`, stop is
+`{stopped, generation, exit}` (`plane.go:202-216`,
 `:392-396`).
 
 **Access.** The plane listens on loopback only (`http.go:209-220`). It checks `Host` and
@@ -297,6 +298,14 @@ name `ixctl.v1`.
   document no longer says where it was sent. Tests: `TestFederationForwardsAndMirrors` (HTTP
   `?peer=b`, refused and accepted by b's rules), `TestUnknownFieldRefusedOnHTTPAndWS` (`peer`
   inside the document is an unknown field), and the client's `a_peer_is_named_beside_the_document`.
+- **Fixed (F2.4), this slice:** generations are scoped to the boot. The apply reply and the
+  status carry `epoch` (the instance epoch of F1.1). The Rust client's `wait_generation_of(epoch,
+  g)` ends at once with `CtlError::Restarted` when the status reports another epoch, instead
+  of waiting for the new boot to reach the same number; `wait_generation(g)` keeps the old,
+  unscoped behaviour, and a plane that reports no epoch is waited on by number. IXQL's
+  `ix.ctl.wait` takes `epoch:` beside `generation:`, and `pods.ixql` passes
+  `applied.epoch`. Tests: `TestApplyConverges` (the reply's and the status's epoch are the
+  plane's), the client's `a_wait_scoped_to_a_boot_ends_at_once_after_a_restart`.
 
 ### Who writes it, who reads it
 

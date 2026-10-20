@@ -67,6 +67,13 @@ pub enum CtlError {
         service: String,
         reason: String,
     },
+    /// The plane restarted since the generation was applied: it now reports boot `now`, and
+    /// the generation belonged to boot `epoch`, so its outcome is gone with that boot.
+    Restarted {
+        generation: u64,
+        epoch: String,
+        now: String,
+    },
 }
 
 impl fmt::Display for CtlError {
@@ -91,6 +98,14 @@ impl fmt::Display for CtlError {
                 service,
                 reason,
             } => write!(f, "generation {generation} diverged on {service}: {reason}"),
+            CtlError::Restarted {
+                generation,
+                epoch,
+                now,
+            } => write!(
+                f,
+                "the plane restarted: generation {generation} belonged to boot {epoch}, the plane is now boot {now}"
+            ),
         }
     }
 }
@@ -219,10 +234,46 @@ impl Ctl {
     /// and `diverged` names `generation` or a later one. That summary lets a later converged
     /// generation hide an earlier one (F2.1 in the one-way-doors doc); the settled one does not.
     /// A `diverged` that is null, or absent, never fails a wait.
+    ///
+    /// This wait does not know which boot `generation` belongs to: after a restart it waits
+    /// for the new boot to reach that number, or times out. [`Ctl::wait_generation_of`] takes
+    /// the epoch the apply reply gave and fails at once instead.
     pub fn wait_generation(&self, generation: u64, timeout: Duration) -> Result<Value, CtlError> {
+        self.wait_gen(None, generation, timeout)
+    }
+
+    /// [`Ctl::wait_generation`], scoped to the boot `epoch` (the apply reply's `epoch`, also
+    /// in status and `/health`). When the status reports another epoch the plane has
+    /// restarted and the generation's outcome is gone with its boot: the wait ends at once
+    /// with [`CtlError::Restarted`] instead of waiting for the new boot to reach the same
+    /// number. A plane that reports no epoch is waited on as [`Ctl::wait_generation`] does.
+    pub fn wait_generation_of(
+        &self,
+        epoch: &str,
+        generation: u64,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
+        self.wait_gen(Some(epoch), generation, timeout)
+    }
+
+    fn wait_gen(
+        &self,
+        epoch: Option<&str>,
+        generation: u64,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
         loop {
             let status = self.status()?;
+            if let (Some(want), Some(now)) = (epoch, status.get("epoch").and_then(Value::as_str)) {
+                if now != want {
+                    return Err(CtlError::Restarted {
+                        generation,
+                        epoch: want.to_string(),
+                        now: now.to_string(),
+                    });
+                }
+            }
             let observed = status
                 .get("observed_generation")
                 .and_then(Value::as_u64)

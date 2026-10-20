@@ -5,7 +5,7 @@
 //! planned <- desired → ix.ctl.plan
 //! applied <- ix.ctl.apply(desired)
 //! on_b    <- ix.ctl.apply(desired, peer: "b")
-//! done    <- ix.ctl.wait(generation: applied.generation, timeout_ms: 10000)
+//! done    <- ix.ctl.wait(generation: applied.generation, epoch: applied.epoch, timeout_ms: 10000)
 //! pod     <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)
 //! status  <- ix.ctl.status()
 //! stopped <- ix.ctl.stop(service: "pod-a")
@@ -48,16 +48,18 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
     })?;
 
     caps.register("ix.ctl.wait", move |a: CallArgs| {
-        expect(&a, &["generation", "service", "nodes", "timeout_ms"])?;
+        expect(&a, &["generation", "epoch", "service", "nodes", "timeout_ms"])?;
         let timeout = Duration::from_millis(count(&a, "timeout_ms")?.ok_or("needs `timeout_ms:`")?);
         match (
             count(&a, "generation")?,
+            string(&a, "epoch")?,
             string(&a, "service")?,
             count(&a, "nodes")?,
         ) {
-            (Some(g), None, None) => answer(ctl.wait_generation(g, timeout)),
-            (None, Some(s), Some(n)) => answer(ctl.wait_nodes(&s, n as usize, timeout)),
-            _ => Err("takes `generation:`, or `service:` with `nodes:`, and `timeout_ms:`".into()),
+            (Some(g), None, None, None) => answer(ctl.wait_generation(g, timeout)),
+            (Some(g), Some(e), None, None) => answer(ctl.wait_generation_of(&e, g, timeout)),
+            (None, None, Some(s), Some(n)) => answer(ctl.wait_nodes(&s, n as usize, timeout)),
+            _ => Err("takes `generation:` (with `epoch:`), or `service:` with `nodes:`, and `timeout_ms:`".into()),
         }
     })?;
     Ok(())

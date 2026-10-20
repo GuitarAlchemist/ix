@@ -134,8 +134,8 @@ func TestApplyConverges(t *testing.T) {
 	w := subscribe(t, c, "ctl", nil)
 	var r ApplyReply
 	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("pod-a", "pod-b")}), &r)
-	if r.Generation != 1 || len(r.Actions) != 2 {
-		t.Fatalf("apply %+v", r)
+	if r.Generation != 1 || len(r.Actions) != 2 || r.Epoch != in.plane.Epoch() {
+		t.Fatalf("apply %+v (epoch %q)", r, in.plane.Epoch())
 	}
 	started := map[string]bool{}
 	for len(started) < 2 {
@@ -147,8 +147,8 @@ func TestApplyConverges(t *testing.T) {
 		t.Fatalf("converged %s", e.Raw())
 	}
 	st := in.plane.Status()
-	if st.Generation != 1 || st.ObservedGeneration != 1 || st.Diverged != nil {
-		t.Fatalf("generations %d/%d, diverged %+v", st.Generation, st.ObservedGeneration, st.Diverged)
+	if st.Generation != 1 || st.ObservedGeneration != 1 || st.Diverged != nil || st.Epoch != in.plane.Epoch() {
+		t.Fatalf("generations %d/%d, diverged %+v, epoch %q", st.Generation, st.ObservedGeneration, st.Diverged, st.Epoch)
 	}
 	p, _ := in.plane.Plan(running("pod-a", "pod-b"))
 	if len(p.Actions) != 0 || len(p.Noop) != 2 {

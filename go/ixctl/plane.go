@@ -176,6 +176,7 @@ type PeerStatus struct {
 // they let a later converged generation hide an earlier pending or failed one.
 type StatusReply struct {
 	Name               string          `json:"name"`
+	Epoch              string          `json:"epoch"` // the boot these generations belong to
 	Generation         uint64          `json:"generation"`
 	ObservedGeneration uint64          `json:"observed_generation"`
 	SettledGeneration  uint64          `json:"settled_generation"`
@@ -187,7 +188,7 @@ type StatusReply struct {
 
 func (p *Plane) Status() StatusReply {
 	p.mu.Lock()
-	r := StatusReply{Name: p.name, Generation: p.gen, ObservedGeneration: p.observed, SettledGeneration: p.settled}
+	r := StatusReply{Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen, ObservedGeneration: p.observed, SettledGeneration: p.settled}
 	if p.diverged != nil {
 		d := *p.diverged
 		r.Diverged = &d
@@ -216,8 +217,11 @@ type PlanReply struct {
 	Noop       []string `json:"noop"`
 }
 
+// ApplyReply names the new generation and the boot it belongs to: a wait
+// that carries both can tell a restart from a slow apply.
 type ApplyReply struct {
 	Generation uint64   `json:"generation"`
+	Epoch      string   `json:"epoch"`
 	Actions    []Action `json:"actions"`
 }
 
@@ -319,7 +323,7 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	}
 	done := make(chan applyResult, 1)
 	go func() { done <- p.await(g, actions, cur) }()
-	return ApplyReply{Generation: g, Actions: actions}, done, nil
+	return ApplyReply{Generation: g, Epoch: p.hub.Epoch(), Actions: actions}, done, nil
 }
 
 // await watches ctl until every action is observed, then publishes the
