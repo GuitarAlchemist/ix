@@ -454,7 +454,13 @@ name `ixctl.v1`.
   since `cpu_ms` is what was used). Windows' own job time limit (user time alone, and it ends
   the job itself) is not used, so the limit and the evidence agree by construction; the Linux
   watch now feeds `cpu_ms` for the whole group too. The gate's E13 spins a Python bounded to
-  300 ms of processor time (35 checks); its job declares `cpu_ms: 60000` as well.
+  300 ms of processor time (35 checks); its job declares `cpu_ms: 60000` as well. Codex round
+  18 (one P1, three P2): a run past its processor-time limit that ended before a poll could
+  kill it (or between two) passed for a clean exit; `reap` now classifies the exit from the
+  figure it reports, so `cpu_limit` is set whenever the time used is past the limit (test: a
+  60 ms burn under 20 ms, ended before the first poll). On Linux the watch keeps the largest
+  time summed, since the sum falls when a member dies before its parent waits for it; the
+  README says a hostname is refused for `--addr` (only a loopback IP is accepted).
   Round 16's P2s: a failed launch releases the port and its listener; a requested stop's
   `service.exited` carries the cost too; the exit's code and the leader's usage travel
   together (`exitStat`), so a tree killed without its exit read reports neither; a memory

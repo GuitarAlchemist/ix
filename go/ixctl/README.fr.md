@@ -35,8 +35,9 @@ go test ./...                  # la suite unitaire (faux services, sessions en m
 {"event":"ready","name":"local","addr":"127.0.0.1:52011","pid":4242,"state_file":".../ixctl/local.json","ms_to_ready":3.1}
 ```
 
-L'écoute est en boucle locale seulement (`--addr` doit résoudre vers 127.0.0.1, `::1` ou
-`localhost`). Une instance par nom et par dossier d'état : un fichier verrou est tenu toute la vie
+L'écoute est en boucle locale seulement (`--addr` doit être une IP de boucle locale, 127.0.0.0/8
+ou `::1` ; un nom d'hôte, `localhost` compris, est refusé). Une instance par nom et par dossier
+d'état : un fichier verrou est tenu toute la vie
 de l'instance, et un fichier d'état `<nom>.json` (`{name, addr, pid, token}`, mode 0600) dit aux
 clients où se connecter et avec quel jeton porteur. Le dossier d'état par défaut est
 `%LOCALAPPDATA%\ixctl` sous Windows, sinon `$XDG_STATE_HOME/ixctl` ou `~/.local/state/ixctl`. Le

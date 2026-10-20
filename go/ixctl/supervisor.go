@@ -451,6 +451,11 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 	if st.cpu > cpu {
 		cpu = st.cpu
 	}
+	// The processor-time limit is read from this very figure: a run that went past it and
+	// ended before a poll could kill it (or between two) is past it all the same.
+	if l := s.spec.Limits; reason == "" && !requested && l != nil && l.CpuMs > 0 && cpu > l.CpuMs {
+		reason = reasonCPU
+	}
 	c.tree.close()
 	drained := make(chan struct{})
 	go func() { c.io.Wait(); close(drained) }()

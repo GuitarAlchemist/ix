@@ -498,7 +498,14 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   n'est pas utilisée, de sorte que la limite et la preuve concordent par construction ; la
   veille Linux alimente aussi `cpu_ms` pour tout le groupe désormais. La E13 de la passerelle
   fait tourner un Python borné à 300 ms de temps processeur (35 vérifications) ; son job
-  déclare aussi `cpu_ms: 60000`. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
+  déclare aussi `cpu_ms: 60000`. Revue Codex 18 (un P1, trois P2) : une exécution au-delà de sa
+  limite de temps processeur qui se terminait avant qu'une lecture puisse la tuer (ou entre
+  deux) passait pour une sortie propre ; `reap` classe désormais la sortie d'après le chiffre
+  qu'elle rapporte, donc `cpu_limit` est posé dès que le temps consommé dépasse la limite
+  (test : 60 ms de calcul sous 20 ms, terminé avant la première lecture). Sous Linux la veille
+  garde le plus grand temps sommé, la somme baissant quand un membre meurt avant que son parent
+  l'attende ; le README dit qu'un nom d'hôte est refusé pour `--addr` (seule une IP de boucle
+  locale est acceptée). Revue Codex 15 (un P1, deux P2) : une sortie déjà en
   attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;
   toujours `memory_limit`, le noyau l'a dit) ; une limite au-delà de ce qu'une `time.Duration`
   ou un compte d'octets contient est refusée ; le job mural de la passerelle est borné à 1,5 s

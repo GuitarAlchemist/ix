@@ -32,7 +32,8 @@ go test ./...                  # the unit suite (fake services, in-memory sessio
 {"event":"ready","name":"local","addr":"127.0.0.1:52011","pid":4242,"state_file":".../ixctl/local.json","ms_to_ready":3.1}
 ```
 
-The listener is loopback only (`--addr` must resolve to 127.0.0.1, `::1` or `localhost`). One
+The listener is loopback only (`--addr` must be a loopback IP, 127.0.0.0/8 or `::1`; a hostname,
+`localhost` included, is refused). One
 instance per name per state directory: a lock file is held for the instance's life, and a state
 file `<name>.json` (`{name, addr, pid, token}`, mode 0600) tells clients where to connect and with
 which bearer token. The default state directory is `%LOCALAPPDATA%\ixctl` on Windows, else

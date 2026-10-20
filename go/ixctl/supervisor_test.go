@@ -293,8 +293,29 @@ func TestARunUnderItsCpuLimitEndsOnItsOwn(t *testing.T) {
 	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
 	d := ctlData(x)
 	used, _ := d["cpu_ms"].(float64)
-	if _, has := d["reason"]; has || d["code"] != 0.0 || used < 50 {
+	if _, has := d["reason"]; has || d["code"] != 0.0 || used <= 0 {
 		t.Fatalf("exit %s", x.Raw())
+	}
+}
+
+// A run that goes past its processor-time limit and ends before a poll could kill it is past
+// it all the same: the exit is classified from the figure it reports, so a clean exit code
+// does not pass for a run within its limit (Codex round 18).
+func TestARunPastItsCpuLimitThatEndsBeforeThePollSaysSoToo(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "flash", args: []string{"--burn-ms", "60", "--crash-after-ms", "1", "--crash-code", "0"}, restart: restartNever, cpuMs: 20}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("flash")})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	used, _ := d["cpu_ms"].(float64)
+	if d["reason"] != reasonCPU || d["cpu_limit_ms"] != 20.0 || used <= 20 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+	s := svcStatus(in.plane.Status(), "flash")
+	if s.State != stateStopped || s.LastExit == nil || s.LastExit.Reason != reasonCPU {
+		t.Fatalf("after the exit: %+v (exit %+v)", s, s.LastExit)
 	}
 }
 

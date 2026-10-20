@@ -25,7 +25,7 @@ type procTree struct {
 	gone chan struct{} // closed when the watch has returned
 	mu   sync.Mutex
 	peak int64 // the largest resident set the watch has summed over the group
-	cpu  int64 // the group's processor time at the watch's last read, in milliseconds
+	cpu  int64 // the largest processor time the watch has summed over the group, in milliseconds
 }
 
 // watchPoll is how often a watched group's resident set and processor time are read from /proc.
@@ -81,7 +81,12 @@ func (t *procTree) watch(memoryBytes, cpuMs int64) {
 		if rss > t.peak {
 			t.peak = rss
 		}
-		t.cpu = cpu
+		if cpu > t.cpu {
+			// The sum can fall: a member that dies takes its time with it until its parent
+			// waits for it (then it is in the parent's cutime), and a descendant reaped by
+			// PID 1 never comes back. What was seen stays seen.
+			t.cpu = cpu
+		}
 		t.mu.Unlock()
 		switch {
 		case memoryBytes > 0 && rss > memoryBytes:
@@ -110,9 +115,10 @@ func (t *procTree) drain(limit time.Duration) {
 	}
 }
 
-// usage is the largest resident set and the last processor time the watch summed over the
+// usage is the largest resident set and the largest processor time the watch summed over the
 // group's live members (0 without a watch: nothing counts a group without a cgroup, and the
-// leader's rusage then speaks for the tree, leaderUsage).
+// leader's rusage then speaks for the tree, leaderUsage). Time a descendant used between two
+// polls and took with it (reaped by PID 1) is not seen.
 func (t *procTree) usage() (peakBytes, cpuMs int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
