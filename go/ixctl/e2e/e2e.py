@@ -38,7 +38,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 PODS_IXQL = REPO / "crates" / "ix-ctl" / "examples" / "pods.ixql"
 JOB_IXQL = REPO / "crates" / "ix-ctl" / "examples" / "job.ixql"
-GOV = pathlib.Path(os.environ.get("IX_GOVERNANCE_DIR") or REPO / "governance" / "demerzel")
+# Absolute: the job runs from WORK/job, so a relative override would resolve against that.
+GOV = pathlib.Path(os.environ.get("IX_GOVERNANCE_DIR") or REPO / "governance" / "demerzel").resolve()
 EXE = ".exe" if os.name == "nt" else ""
 
 # The pipeline the job runs: what `ix pipeline new` scaffolds, one `stats` stage.
