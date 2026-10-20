@@ -84,6 +84,8 @@ pub enum CtlError {
         from: u64,
         epoch: String,
     },
+    /// The call's arguments do not fit together; nothing was sent.
+    Argument(String),
 }
 
 impl fmt::Display for CtlError {
@@ -124,6 +126,7 @@ impl fmt::Display for CtlError {
                 f,
                 "the event stream skipped events from seq {from} of boot {epoch}: {reason}"
             ),
+            CtlError::Argument(m) => f.write_str(m),
         }
     }
 }
@@ -163,6 +166,11 @@ impl From<&Event> for Value {
 /// stream (after an `overflow` gap, or at shutdown) or the connection breaks.
 pub struct Events {
     body: Box<dyn std::io::BufRead>,
+    /// The socket again, to bound a read; `None` when the stream was never opened.
+    sock: Option<std::net::TcpStream>,
+    /// How long each [`Iterator::next`] may wait for its event, pings and partial frames
+    /// included; `None` waits as long as the plane keeps the connection alive.
+    next_within: Option<Duration>,
     done: bool,
 }
 
@@ -176,10 +184,26 @@ impl Iterator for Events {
         if self.done {
             return None;
         }
+        // One deadline for the whole event: a keep-alive comment or a chunk's worth of bytes
+        // does not start the wait over.
+        let deadline = self.next_within.map(|d| Instant::now() + d);
         let mut kind = String::new();
         let mut data: Vec<String> = Vec::new();
         let mut line = String::new();
         loop {
+            if let Some(deadline) = deadline {
+                let rest = left(deadline);
+                if rest.is_zero() {
+                    self.done = true;
+                    return Some(Err(CtlError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "no event within the time given",
+                    ))));
+                }
+                if let Some(s) = &self.sock {
+                    let _ = s.set_read_timeout(Some(rest.max(Duration::from_millis(1))));
+                }
+            }
             line.clear();
             match self.body.read_line(&mut line) {
                 Ok(0) => {
@@ -220,17 +244,23 @@ impl Iterator for Events {
                 ))))
             }
         };
-        if kind == "gap" {
-            let gap = CtlError::Gap {
-                reason: doc["reason"].as_str().unwrap_or("").to_string(),
-                from: doc["from"].as_u64().unwrap_or(0),
-                epoch: doc["epoch"].as_str().unwrap_or("").to_string(),
-            };
-            return Some(Err(gap));
-        }
+        // Told apart by shape, not by the `event:` field: a service may publish an event whose
+        // kind is `gap`, and the plane writes every kind as `event: <kind>`.
         let text = |k: &str| doc.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        let Some(seq) = doc.get("seq").and_then(Value::as_u64) else {
-            return Some(Err(CtlError::Protocol("envelope has no `seq`".into())));
+        let seq = match (doc.get("seq").and_then(Value::as_u64), doc.get("ev")) {
+            (Some(seq), Some(_)) => seq,
+            _ if doc.get("reason").is_some() && doc.get("from").is_some() => {
+                return Some(Err(CtlError::Gap {
+                    reason: text("reason"),
+                    from: doc["from"].as_u64().unwrap_or(0),
+                    epoch: text("epoch"),
+                }));
+            }
+            _ => {
+                return Some(Err(CtlError::Protocol(format!(
+                    "`event: {kind}` carries neither an envelope (seq, ev) nor a gap (reason, from)"
+                ))));
+            }
         };
         Some(Ok(Event {
             channel: text("ch"),
@@ -359,19 +389,34 @@ impl Ctl {
         since: Option<u64>,
         epoch: Option<&str>,
     ) -> Result<Events, CtlError> {
-        self.events_within(channel, since, epoch, STREAM_IDLE)
+        self.open_events(channel, since, epoch, None)
     }
 
-    /// [`Ctl::events`] with each read of the stream bounded by `idle`: past it, the next item
-    /// is a [`CtlError::Io`] timeout and the iterator ends. The plane pings every 15 s, so an
-    /// `idle` below that ends an otherwise healthy stream at the first quiet moment.
+    /// [`Ctl::events`] with each event waited for at most `next_within`: past it, the next
+    /// item is a [`CtlError::Io`] timeout and the iterator ends. The plane's keep-alive pings
+    /// and a frame's first bytes do not start the wait over.
     pub fn events_within(
         &self,
         channel: &str,
         since: Option<u64>,
         epoch: Option<&str>,
-        idle: Duration,
+        next_within: Duration,
     ) -> Result<Events, CtlError> {
+        self.open_events(channel, since, epoch, Some(next_within))
+    }
+
+    fn open_events(
+        &self,
+        channel: &str,
+        since: Option<u64>,
+        epoch: Option<&str>,
+        next_within: Option<Duration>,
+    ) -> Result<Events, CtlError> {
+        if since.is_none() && epoch.is_some() {
+            return Err(CtlError::Argument(
+                "`epoch` says which boot `since` belongs to: it needs `since`".into(),
+            ));
+        }
         let mut path = format!("/v1/events?ch={}", percent(channel));
         if let Some(s) = since {
             path.push_str(&format!("&since={s}"));
@@ -380,8 +425,7 @@ impl Ctl {
             path.push_str(&format!("&epoch={}", percent(e)));
         }
         let addr = self.loopback()?;
-        let mut s =
-            http::open_stream(addr, &path, &self.token, idle.max(Duration::from_millis(1)))?;
+        let mut s = http::open_stream(addr, &path, &self.token, STREAM_IDLE)?;
         if s.status != 200 {
             let mut body = Vec::new();
             s.body.read_to_end(&mut body)?;
@@ -396,6 +440,8 @@ impl Ctl {
         }
         Ok(Events {
             body: s.body,
+            sock: s.sock,
+            next_within,
             done: false,
         })
     }

@@ -58,10 +58,12 @@ pub(crate) fn request(
 }
 
 /// A stream the plane keeps open (`/v1/events`): the status, and the body as it comes, chunks
-/// undone. Each read waits at most `idle`, which must outlast the plane's keep-alive ping.
+/// undone. Each read waits at most `idle`, which must outlast the plane's keep-alive ping;
+/// `sock` is the same socket again, for a caller that wants a shorter read timeout later.
 pub(crate) struct Stream {
     pub status: u16,
     pub body: Box<dyn BufRead>,
+    pub sock: Option<TcpStream>,
 }
 
 pub(crate) fn open_stream(
@@ -80,6 +82,7 @@ pub(crate) fn open_stream(
     );
     stream.write_all(head.as_bytes())?;
     stream.flush()?;
+    let sock = stream.try_clone()?;
     let mut r = BufReader::new(stream);
     let (status, length, chunked) = read_head(&mut r)?;
     if status != 200 {
@@ -88,6 +91,7 @@ pub(crate) fn open_stream(
         return Ok(Stream {
             status,
             body: Box::new(io::Cursor::new(body)),
+            sock: None,
         });
     }
     let body: Box<dyn BufRead> = if chunked {
@@ -99,7 +103,11 @@ pub(crate) fn open_stream(
     } else {
         Box::new(r)
     };
-    Ok(Stream { status, body })
+    Ok(Stream {
+        status,
+        body,
+        sock: Some(sock),
+    })
 }
 
 /// Undoes HTTP chunked transfer encoding as the bytes come: Go's server streams `/v1/events`

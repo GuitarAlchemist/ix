@@ -172,7 +172,9 @@ plan est `{generation, actions[{op, service}], noop}`, l'application
 - **Lit le côté SSE :** les tests (`http_test.go`) et, depuis le 2026-10-20, `crates/ix-ctl`
   (`Ctl::events`, IXQL `ix.ctl.events`) : il lit `id`, `event`, `data`, les champs `ch`, `seq`,
   `epoch`, `origin`, `ev.{kind, t, data}` de l'enveloppe, et `reason`, `from`, `epoch` d'un
-  événement `gap`. Les attentes ne s'en servent pas encore.
+  événement `gap` (un trou se distingue d'une enveloppe par ces champs, pas par `event: gap`,
+  qu'un événement de service de type `gap` porterait aussi). Les attentes ne s'en servent pas
+  encore.
 - **Lit le côté HTTP :** `crates/ix-ctl`. Il lit `settled_generation` et `failed[]` quand ils
   sont présents, sinon `observed_generation` et
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` dans

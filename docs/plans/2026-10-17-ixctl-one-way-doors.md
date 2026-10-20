@@ -165,8 +165,9 @@ line, `{event: "ready", name, addr, pid, state_file, ms_to_ready}` (`main.go:129
   `ixctl bench` (`bench.go:169-379`).
 - **Reads the SSE side:** tests (`http_test.go`) and, since 2026-10-20, `crates/ix-ctl`
   (`Ctl::events`, IXQL `ix.ctl.events`): it reads `id`, `event`, `data`, the envelope's `ch`,
-  `seq`, `epoch`, `origin`, `ev.{kind, t, data}`, and a `gap` event's `reason`, `from`, `epoch`.
-  The waits do not use it yet.
+  `seq`, `epoch`, `origin`, `ev.{kind, t, data}`, and a `gap` event's `reason`, `from`, `epoch`
+  (a gap is told from an envelope by those fields, not by `event: gap`, which a service event
+  of kind `gap` would also carry). The waits do not use it yet.
 - **Reads the HTTP side:** `crates/ix-ctl`. It reads `settled_generation` and `failed[]` when
   present, else `observed_generation` and
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` from

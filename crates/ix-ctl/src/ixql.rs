@@ -13,7 +13,8 @@
 //! ```
 //!
 //! `ix.ctl.events` reads the plane's event stream and stops at `max:` events, at the end of
-//! the stream, or after `timeout_ms:` without a next event: `{events[], gap, ended}`.
+//! the stream, or after `timeout_ms:` without a next event (the plane's keep-alive pings do
+//! not count as one): `{events[], gap, ended}`. `max: 0` opens nothing; `epoch:` needs `since:`.
 //!
 //! Arguments are checked before any request: a misspelt name, a missing timeout or a value
 //! piped into a call that would ignore it fails the run instead of being dropped.
@@ -59,6 +60,12 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
         let channel = string(&a, "channel")?.unwrap_or_default();
         let since = count(&a, "since")?;
         let epoch = string(&a, "epoch")?;
+        if max == 0 {
+            // Nothing asked for: nothing opened, nothing waited for.
+            return Ok(Produced::plain(
+                json!({"events": [], "gap": Value::Null, "ended": false}),
+            ));
+        }
         let stream = c
             .events_within(&channel, since, epoch.as_deref(), idle)
             .map_err(|e| e.to_string())?;

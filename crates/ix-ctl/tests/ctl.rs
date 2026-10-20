@@ -53,9 +53,13 @@ struct Plane {
     /// How long every answer is held back after the request is read: a plane that accepts
     /// and stalls.
     stall: Duration,
-    /// What `GET /v1/events` streams: envelopes, then `gap` if set, then the end of the stream.
+    /// What `GET /v1/events` streams: `pings` keep-alive comments `ping_every` apart, the
+    /// envelopes after `since` (none without a `since`: the real plane starts live), then `gap`
+    /// if set, then the end of the stream.
     events: Vec<Value>,
     gap: Option<Value>,
+    pings: u32,
+    ping_every: Duration,
 }
 
 impl Plane {
@@ -253,6 +257,8 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         stall: Duration::ZERO,
         events: Vec::new(),
         gap: None,
+        pings: 1,
+        ping_every: Duration::ZERO,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -261,6 +267,26 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         }
     });
     (Ctl::new(format!("127.0.0.1:{port}"), TOKEN), plane)
+}
+
+/// A query value with its percent-encoding undone.
+fn unpercent(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("");
+            if let Ok(v) = u8::from_str_radix(hex, 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
@@ -317,14 +343,18 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
             query
                 .split('&')
                 .find_map(|kv| kv.strip_prefix(&format!("{k}=")))
-                .unwrap_or("")
-                .to_string()
+                .map(unpercent)
         };
-        let (prefix, since) = (arg("ch"), arg("since").parse::<u64>().unwrap_or(0));
-        let mut frames = vec![": ping\n\n".to_string()];
+        let prefix = arg("ch").unwrap_or_default();
+        // Absent `since` is live: nothing of the past is sent, as the real plane does.
+        let since = arg("since").and_then(|s| s.parse::<u64>().ok());
+        let (pings, ping_every) = (plane.pings, plane.ping_every);
+        let mut frames = Vec::new();
         for e in plane.events.iter().filter(|e| {
-            e["ch"].as_str().unwrap_or("").starts_with(&prefix)
-                && e["seq"].as_u64().unwrap_or(0) > since
+            since.is_some_and(|since| {
+                e["ch"].as_str().unwrap_or("").starts_with(&prefix)
+                    && e["seq"].as_u64().unwrap_or(0) > since
+            })
         }) {
             frames.push(format!(
                 "id: {}:{}\nevent: {}\ndata: {e}\n\n",
@@ -342,6 +372,11 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
             w,
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
         )?;
+        for _ in 0..pings {
+            std::thread::sleep(ping_every);
+            w.write_all(b"8\r\n: ping\n\n\r\n")?;
+            w.flush()?;
+        }
         for frame in frames {
             write!(w, "{:x}\r\n{frame}\r\n", frame.len())?;
             w.flush()?;
@@ -719,14 +754,41 @@ fn the_event_stream_is_read_as_it_comes() {
         items[2]
     );
     // Every channel, from the start.
-    let all: Vec<_> = ctl.events("", None, None).unwrap().collect();
+    let all: Vec<_> = ctl.events("", Some(0), None).unwrap().collect();
     assert_eq!(5, all.len());
     assert_eq!("svc/pod-a", all[1].as_ref().unwrap().channel);
-    assert!(plane
+    // A service's own event whose kind is `gap` is an event: the plane's gap is told apart by
+    // its shape, not by the `event:` field. The channel prefix travels percent-encoded.
+    plane
         .lock()
         .unwrap()
-        .log
-        .contains(&"GET /v1/events?ch=ctl&since=1".to_string()));
+        .events
+        .push(env(5, "svc/pod-a", "gap", json!({"lost": 2})));
+    let svc: Vec<_> = ctl.events("svc/", Some(0), None).unwrap().collect();
+    assert_eq!(3, svc.len(), "{svc:?}");
+    let own = svc[1].as_ref().unwrap();
+    assert_eq!(
+        ("gap", 5, "svc/pod-a"),
+        (own.kind.as_str(), own.seq, own.channel.as_str())
+    );
+    assert!(matches!(&svc[2], Err(CtlError::Gap { from: 5, .. })));
+    // Without `since` the stream is live: nothing of the past comes, here only the gap.
+    let live: Vec<_> = ctl.events("ctl", None, None).unwrap().collect();
+    assert_eq!(1, live.len(), "{live:?}");
+    assert!(matches!(&live[0], Err(CtlError::Gap { .. })));
+    {
+        let log = &plane.lock().unwrap().log;
+        for path in [
+            "GET /v1/events?ch=ctl&since=1",
+            "GET /v1/events?ch=svc%2F&since=0",
+            "GET /v1/events?ch=ctl",
+        ] {
+            assert!(log.contains(&path.to_string()), "{path} in {log:?}");
+        }
+    }
+    // `epoch` qualifies `since`: alone it is refused before any request.
+    let err = ctl.events("ctl", None, Some("3f9a1c0b7d2e")).err().unwrap();
+    assert!(matches!(err, CtlError::Argument(_)), "{err}");
     let err = Ctl::new(
         ctl.addr(),
         "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0",
@@ -740,7 +802,8 @@ fn the_event_stream_is_read_as_it_comes() {
     let out = executor(ctl.clone())
         .run_source(
             "two <- ix.ctl.events(channel: \"ctl\", since: 1, max: 2, timeout_ms: 2000)\n\
-             all <- ix.ctl.events(channel: \"ctl\", since: 1, max: 10, timeout_ms: 2000)\n",
+             all <- ix.ctl.events(channel: \"ctl\", since: 1, max: 10, timeout_ms: 2000)\n\
+             none <- ix.ctl.events(channel: \"ctl\", since: 1, max: 0, timeout_ms: 2000)\n",
         )
         .expect("the IXQL reads");
     let two = out.binding("two").unwrap();
@@ -749,6 +812,19 @@ fn the_event_stream_is_read_as_it_comes() {
         (json!(false), &Value::Null),
         (two["ended"].clone(), &two["gap"])
     );
+    // `max: 0` asks for nothing and opens nothing: it cannot block.
+    assert_eq!(
+        &json!({"events": [], "gap": null, "ended": false}),
+        out.binding("none").unwrap()
+    );
+    let opened = plane
+        .lock()
+        .unwrap()
+        .log
+        .iter()
+        .filter(|l| l.starts_with("GET /v1/events?ch=ctl&since=1"))
+        .count();
+    assert_eq!(3, opened, "the direct read and the two IXQL reads, no more");
     let all = out.binding("all").unwrap();
     let seqs: Vec<Value> = all["events"]
         .as_array()
@@ -759,6 +835,34 @@ fn the_event_stream_is_read_as_it_comes() {
     assert_eq!(vec![json!(3), json!(4)], seqs);
     assert_eq!(json!("overflow"), all["gap"]["reason"]);
     assert_eq!(json!(true), all["ended"]);
+}
+
+// `events_within` bounds the wait for one event, not one read: a plane that only ever sends
+// keep-alive comments ends the read about on time instead of being kept alive by them.
+#[test]
+fn a_bounded_event_read_is_not_kept_alive_by_pings() {
+    let (ctl, plane) = plane();
+    {
+        let mut p = plane.lock().unwrap();
+        p.pings = 20;
+        p.ping_every = Duration::from_millis(60);
+    }
+    let started = Instant::now();
+    let items: Vec<_> = ctl
+        .events_within("ctl", Some(0), None, Duration::from_millis(250))
+        .unwrap()
+        .collect();
+    let took = started.elapsed();
+    assert_eq!(1, items.len(), "{items:?}");
+    assert!(
+        matches!(&items[0], Err(CtlError::Io(e))
+            if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock)),
+        "{items:?}"
+    );
+    assert!(
+        took >= Duration::from_millis(250) && took < Duration::from_millis(1000),
+        "took {took:?}"
+    );
 }
 
 // A wait's timeout bounds the request in flight too: against a plane that accepts and then
@@ -869,6 +973,10 @@ fn argument_mistakes_fail_the_run_before_any_request() {
         (
             r#"e <- ix.ctl.events(channel: "ctl", max: 1, since: "a", timeout_ms: 10)"#,
             "whole number",
+        ),
+        (
+            r#"e <- ix.ctl.events(channel: "ctl", epoch: "x", max: 1, timeout_ms: 10)"#,
+            "needs `since`",
         ),
         (
             r#"a <- ix.ctl.wait(service: "pod-a", nodes: 2, epoch: "x", timeout_ms: 10)"#,
