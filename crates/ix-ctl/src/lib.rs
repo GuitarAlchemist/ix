@@ -30,8 +30,8 @@
 //! The token is only ever sent to a loopback address, in a header. Both waits poll
 //! `/v1/status` every 25 ms; [`Ctl::events`] reads the plane's event stream. The gate's M1
 //! measures what a wait on the stream would gain: on a real start, `converged` reaches a live
-//! reader 2–3 ms after the apply reply, the poll sees it 26–28 ms after (one poll period). The
-//! waits move to the stream when that period matters to a caller.
+//! reader 2–3 ms after the apply reply, the poll sees it 12–28 ms after, depending on where in
+//! its period it lands. The waits move to the stream when that period matters to a caller.
 
 mod http;
 mod ixql;
@@ -39,10 +39,12 @@ mod ixql;
 pub use ixql::register;
 
 use serde_json::{json, Value};
+use std::cell::Cell;
 use std::fmt;
 use std::io::{BufRead, Read};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// How often a wait reads the status again.
@@ -168,11 +170,14 @@ impl From<&Event> for Value {
 /// stream (after an `overflow` gap, or at shutdown) or the connection breaks.
 pub struct Events {
     body: Box<dyn std::io::BufRead>,
-    /// The socket again, to bound a read; `None` when the stream was never opened.
-    sock: Option<std::net::TcpStream>,
+    /// The instant the socket's reads must not wait past; set per [`Iterator::next`] when
+    /// `next_within` is `Some`, else never.
+    deadline: http::Deadline,
     /// How long each [`Iterator::next`] may wait for its event, pings and partial frames
     /// included; `None` waits as long as the plane keeps the connection alive.
     next_within: Option<Duration>,
+    /// Whether the next call is the first: it keeps the deadline the stream was opened under.
+    first: bool,
     done: bool,
 }
 
@@ -186,26 +191,21 @@ impl Iterator for Events {
         if self.done {
             return None;
         }
-        // One deadline for the whole event: a keep-alive comment or a chunk's worth of bytes
-        // does not start the wait over.
-        let deadline = self.next_within.map(|d| Instant::now() + d);
+        // One deadline for the whole event, enforced on the socket under the readers: a
+        // keep-alive comment, a chunk's worth of bytes or a line in pieces does not start the
+        // wait over, and bytes already buffered are read whatever the clock says. The first
+        // call keeps the deadline the stream was opened under.
+        if let Some(d) = self.next_within {
+            if self.first {
+                self.first = false;
+            } else {
+                self.deadline.set(Some(Instant::now() + d));
+            }
+        }
         let mut kind = String::new();
         let mut data: Vec<String> = Vec::new();
         let mut line = String::new();
         loop {
-            if let Some(deadline) = deadline {
-                let rest = left(deadline);
-                if rest.is_zero() {
-                    self.done = true;
-                    return Some(Err(CtlError::Io(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "no event within the time given",
-                    ))));
-                }
-                if let Some(s) = &self.sock {
-                    let _ = s.set_read_timeout(Some(rest.max(Duration::from_millis(1))));
-                }
-            }
             line.clear();
             match self.body.read_line(&mut line) {
                 Ok(0) => {
@@ -427,7 +427,10 @@ impl Ctl {
             path.push_str(&format!("&epoch={}", percent(e)));
         }
         let addr = self.loopback()?;
-        let mut s = http::open_stream(addr, &path, &self.token, STREAM_IDLE)?;
+        // A bounded stream is bounded from the connect on: a plane that accepts and withholds
+        // its headers ends the first read on time, not after the idle timeout.
+        let deadline: http::Deadline = Rc::new(Cell::new(next_within.map(|d| Instant::now() + d)));
+        let mut s = http::open_stream(addr, &path, &self.token, STREAM_IDLE, &deadline)?;
         if s.status != 200 {
             let mut body = Vec::new();
             s.body.read_to_end(&mut body)?;
@@ -442,8 +445,9 @@ impl Ctl {
         }
         Ok(Events {
             body: s.body,
-            sock: s.sock,
+            deadline,
             next_within,
+            first: true,
             done: false,
         })
     }

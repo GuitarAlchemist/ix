@@ -170,8 +170,8 @@ line, `{event: "ready", name, addr, pid, state_file, ms_to_ready}` (`main.go:129
   of kind `gap` would also carry). The waits do not use it yet: they poll `/v1/status` every
   25 ms, and the gate's M1 measures the difference on a real start (Windows, 2026-10-20):
   `converged` reaches a live stream reader 3.4 ms after the apply reply, the 25 ms poll sees
-  it 27.9 ms after (Linux in a container: 1.5 ms and 26.2 ms). One poll period is what a
-  stream wait would gain.
+  it 12 to 28 ms after, depending on where in its period it lands (Linux in a container:
+  1.5 ms and 26.2 ms). Up to one poll period is what a stream wait would gain.
 - **Reads the HTTP side:** `crates/ix-ctl`. It reads `settled_generation` and `failed[]` when
   present, else `observed_generation` and
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` from

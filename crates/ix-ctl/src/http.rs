@@ -4,9 +4,11 @@
 //! body is read by `Content-Length`, by chunks when the plane streams it (Go's server does for
 //! an answer past its buffer), or to the end of the stream.
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::cell::Cell;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 /// How long a connection may take to open.
 const CONNECT: Duration = Duration::from_secs(2);
@@ -58,23 +60,60 @@ pub(crate) fn request(
 }
 
 /// A stream the plane keeps open (`/v1/events`): the status, and the body as it comes, chunks
-/// undone. Each read waits at most `idle`, which must outlast the plane's keep-alive ping;
-/// `sock` is the same socket again, for a caller that wants a shorter read timeout later.
+/// undone.
 pub(crate) struct Stream {
     pub status: u16,
     pub body: Box<dyn BufRead>,
-    pub sock: Option<TcpStream>,
 }
 
+/// The instant a stream's reads must not wait past, shared between the reader of the stream
+/// and the socket under it; `None` leaves the socket's own read timeout in force.
+pub(crate) type Deadline = Rc<Cell<Option<Instant>>>;
+
+/// The socket under a stream. Every read of it, however the readers above split the bytes
+/// (chunk sizes, a line in pieces, a payload), waits only until the deadline when one is set,
+/// and fails once it has passed. Bytes the readers above already hold are theirs to drain.
+struct Paced {
+    sock: TcpStream,
+    deadline: Deadline,
+}
+
+impl Read for Paced {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline.get() {
+            let rest = deadline.saturating_duration_since(Instant::now());
+            if rest.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "no event within the time given",
+                ));
+            }
+            self.sock
+                .set_read_timeout(Some(rest.max(Duration::from_millis(1))))?;
+        }
+        self.sock.read(buf)
+    }
+}
+
+/// Opens `GET path` as an event stream. Without a deadline each read waits at most `idle`,
+/// which must outlast the plane's keep-alive ping; with one, the connect, the head and every
+/// read of the body are bounded by it.
 pub(crate) fn open_stream(
     addr: SocketAddr,
     path: &str,
     token: &str,
     idle: Duration,
+    deadline: &Deadline,
 ) -> io::Result<Stream> {
-    let mut stream = TcpStream::connect_timeout(&addr, CONNECT)?;
+    let cap = |d: Duration| match deadline.get() {
+        Some(at) => d
+            .min(at.saturating_duration_since(Instant::now()))
+            .max(Duration::from_millis(1)),
+        None => d,
+    };
+    let mut stream = TcpStream::connect_timeout(&addr, cap(CONNECT))?;
     stream.set_read_timeout(Some(idle))?;
-    stream.set_write_timeout(Some(IO))?;
+    stream.set_write_timeout(Some(cap(IO)))?;
     stream.set_nodelay(true)?;
     let head = format!(
         "GET {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\n\
@@ -82,8 +121,10 @@ pub(crate) fn open_stream(
     );
     stream.write_all(head.as_bytes())?;
     stream.flush()?;
-    let sock = stream.try_clone()?;
-    let mut r = BufReader::new(stream);
+    let mut r = BufReader::new(Paced {
+        sock: stream,
+        deadline: deadline.clone(),
+    });
     let (status, length, chunked) = read_head(&mut r)?;
     if status != 200 {
         // The refusal is a short JSON body: hand it over whole.
@@ -91,7 +132,6 @@ pub(crate) fn open_stream(
         return Ok(Stream {
             status,
             body: Box::new(io::Cursor::new(body)),
-            sock: None,
         });
     }
     let body: Box<dyn BufRead> = if chunked {
@@ -103,11 +143,7 @@ pub(crate) fn open_stream(
     } else {
         Box::new(r)
     };
-    Ok(Stream {
-        status,
-        body,
-        sock: Some(sock),
-    })
+    Ok(Stream { status, body })
 }
 
 /// Undoes HTTP chunked transfer encoding as the bytes come: Go's server streams `/v1/events`

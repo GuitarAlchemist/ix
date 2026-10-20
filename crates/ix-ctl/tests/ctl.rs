@@ -60,6 +60,8 @@ struct Plane {
     gap: Option<Value>,
     pings: u32,
     ping_every: Duration,
+    /// When set, every byte of a frame is written on its own, this far apart.
+    trickle: Option<Duration>,
 }
 
 impl Plane {
@@ -259,6 +261,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         gap: None,
         pings: 1,
         ping_every: Duration::ZERO,
+        trickle: None,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -269,24 +272,27 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
     (Ctl::new(format!("127.0.0.1:{port}"), TOKEN), plane)
 }
 
-/// A query value with its percent-encoding undone.
-fn unpercent(s: &str) -> String {
+/// A query value as Go's `URL.Query()` reads it: `+` is a space, `%XX` a byte, and a
+/// malformed escape makes the pair worthless (`None`: Go drops it).
+fn unpercent(s: &str) -> Option<String> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            let hex = std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("");
-            if let Ok(v) = u8::from_str_radix(hex, 16) {
-                out.push(v);
-                i += 3;
-                continue;
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' => {
+                let hex = b
+                    .get(i + 1..i + 3)
+                    .and_then(|h| std::str::from_utf8(h).ok())?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 2;
             }
+            c => out.push(c),
         }
-        out.push(b[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    Some(String::from_utf8_lossy(&out).into_owned())
 }
 
 fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
@@ -343,12 +349,13 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
             query
                 .split('&')
                 .find_map(|kv| kv.strip_prefix(&format!("{k}=")))
-                .map(unpercent)
+                .and_then(unpercent)
         };
         let prefix = arg("ch").unwrap_or_default();
         // Absent `since` is live: nothing of the past is sent, as the real plane does.
         let since = arg("since").and_then(|s| s.parse::<u64>().ok());
-        let (pings, ping_every) = (plane.pings, plane.ping_every);
+        let (pings, ping_every, trickle, stall) =
+            (plane.pings, plane.ping_every, plane.trickle, plane.stall);
         let mut frames = Vec::new();
         for e in plane.events.iter().filter(|e| {
             since.is_some_and(|since| {
@@ -368,6 +375,8 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
         }
         drop(plane);
         let mut w = stream;
+        // A stalling plane accepts and withholds its headers.
+        std::thread::sleep(stall);
         write!(
             w,
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
@@ -378,9 +387,21 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
             w.flush()?;
         }
         for frame in frames {
-            write!(w, "{:x}\r\n{frame}\r\n", frame.len())?;
-            w.flush()?;
-            std::thread::sleep(Duration::from_millis(5));
+            let wire = format!("{:x}\r\n{frame}\r\n", frame.len());
+            match trickle {
+                Some(every) => {
+                    for b in wire.as_bytes() {
+                        w.write_all(std::slice::from_ref(b))?;
+                        w.flush()?;
+                        std::thread::sleep(every);
+                    }
+                }
+                None => {
+                    w.write_all(wire.as_bytes())?;
+                    w.flush()?;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
         }
         w.write_all(b"0\r\n\r\n")?;
         return w.flush();
@@ -865,6 +886,47 @@ fn a_bounded_event_read_is_not_kept_alive_by_pings() {
     );
 }
 
+// The bound holds under the readers too: a frame that arrives a byte at a time (every socket
+// read gets bytes, none completes a line) ends the read at the deadline, not when the frame
+// is whole; and a plane that accepts the connection and withholds its headers is bounded by
+// the same deadline, not by the 40 s idle timeout.
+#[test]
+fn a_bounded_event_read_ends_mid_frame_and_mid_open_on_time() {
+    let (ctl, plane) = plane();
+    {
+        let mut p = plane.lock().unwrap();
+        p.pings = 0;
+        p.trickle = Some(Duration::from_millis(20)); // a 300-byte frame takes 6 s
+        p.events = vec![
+            json!({"ch": "ctl", "seq": 1, "epoch": "e", "origin": "fake",
+            "ev": {"kind": "converged", "data": {"note": "x".repeat(200)}}}),
+        ];
+    }
+    let started = Instant::now();
+    let items: Vec<_> = ctl
+        .events_within("ctl", Some(0), None, Duration::from_millis(250))
+        .unwrap()
+        .collect();
+    let took = started.elapsed();
+    assert!(
+        matches!(&items[..], [Err(CtlError::Io(_))]) && took < Duration::from_millis(1000),
+        "{items:?} after {took:?}"
+    );
+
+    let (stalled, stalling) = self::plane();
+    stalling.lock().unwrap().stall = Duration::from_secs(3);
+    let started = Instant::now();
+    let err = stalled
+        .events_within("ctl", Some(0), None, Duration::from_millis(200))
+        .err()
+        .expect("the open is bounded");
+    let took = started.elapsed();
+    assert!(
+        matches!(err, CtlError::Io(_)) && took < Duration::from_millis(1000),
+        "{err} after {took:?}"
+    );
+}
+
 // A wait's timeout bounds the request in flight too: against a plane that accepts and then
 // stalls, a short wait ends about when it said it would, not after the client's 15 s read
 // timeout, and a zero wait still asks once.
@@ -976,6 +1038,10 @@ fn argument_mistakes_fail_the_run_before_any_request() {
         ),
         (
             r#"e <- ix.ctl.events(channel: "ctl", epoch: "x", max: 1, timeout_ms: 10)"#,
+            "needs `since`",
+        ),
+        (
+            r#"e <- ix.ctl.events(channel: "ctl", epoch: "x", max: 0, timeout_ms: 10)"#,
             "needs `since`",
         ),
         (

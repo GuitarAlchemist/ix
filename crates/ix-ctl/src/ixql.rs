@@ -60,6 +60,11 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
         let channel = string(&a, "channel")?.unwrap_or_default();
         let since = count(&a, "since")?;
         let epoch = string(&a, "epoch")?;
+        if epoch.is_some() && since.is_none() {
+            return Err(
+                "`epoch:` needs `since`: it says which boot that sequence number belongs to".into(),
+            );
+        }
         if max == 0 {
             // Nothing asked for: nothing opened, nothing waited for.
             return Ok(Produced::plain(
