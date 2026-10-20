@@ -136,6 +136,14 @@ func (s *service) setState(state string) {
 	s.mu.Unlock()
 }
 
+// cur is the state under mu: want writes it from the apply goroutine, so the supervisor
+// goroutine reads it here rather than bare.
+func (s *service) cur() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state
+}
+
 func (s *service) ctl(kind string, data map[string]any) {
 	data["service"] = s.spec.Name
 	s.hub.Publish("ctl", event(kind, data))
@@ -161,7 +169,7 @@ func (s *service) run(ctx context.Context) {
 			s.onExit(code)
 		case <-backoff:
 			s.timer = nil
-			if s.state == stateRestarting {
+			if s.cur() == stateRestarting {
 				s.launch(true)
 			}
 		}
@@ -171,7 +179,7 @@ func (s *service) run(ctx context.Context) {
 func (s *service) command(want command) {
 	switch want.state {
 	case desiredRunning:
-		if s.proc != nil || s.state == stateRestarting {
+		if s.proc != nil || s.cur() == stateRestarting {
 			// Already on its way: the run keeps the generation that launched it.
 			return
 		}
@@ -186,7 +194,7 @@ func (s *service) command(want command) {
 		switch {
 		case s.proc != nil:
 			s.stopTree()
-		case s.state == stateRestarting || s.state == stateFailed:
+		case s.cur() == stateRestarting || s.cur() == stateFailed:
 			s.cancelTimer()
 			s.setState(stateStopped)
 			s.ctl("service.stopped", map[string]any{})
@@ -332,7 +340,7 @@ func (s *service) halt() {
 		s.stopTree()
 		return
 	}
-	if s.state != stateStopped {
+	if s.cur() != stateStopped {
 		s.setState(stateStopped)
 		s.ctl("service.stopped", map[string]any{})
 	}
