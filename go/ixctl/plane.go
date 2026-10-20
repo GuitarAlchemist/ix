@@ -152,14 +152,16 @@ func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, err
 }
 
 type ServiceStatus struct {
-	Name      string          `json:"name"`
-	Desired   string          `json:"desired"`
-	State     string          `json:"state"`
-	Pid       *int            `json:"pid"`
-	Restarts  int             `json:"restarts"`
-	StartedAt *int64          `json:"started_at"`
-	LastExit  *exitInfo       `json:"last_exit"`
-	Nodes     json.RawMessage `json:"nodes"`
+	Name      string `json:"name"`
+	Desired   string `json:"desired"`
+	State     string `json:"state"`
+	Pid       *int   `json:"pid"`
+	Restarts  int    `json:"restarts"`
+	StartedAt *int64 `json:"started_at"`
+	// Generation is the apply that launched the current or last run; absent before any.
+	Generation uint64          `json:"generation,omitempty"`
+	LastExit   *exitInfo       `json:"last_exit"`
+	Nodes      json.RawMessage `json:"nodes"`
 }
 
 type PeerStatus struct {
@@ -319,7 +321,7 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	p.mu.Unlock()
 	p.journal.record(g, d, actions)
 	for _, n := range d.names() {
-		p.svcs[n].want(d.Services[n].State)
+		p.svcs[n].want(d.Services[n].State, g)
 	}
 	done := make(chan applyResult, 1)
 	go func() { done <- p.await(g, actions, cur) }()

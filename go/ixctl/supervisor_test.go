@@ -54,6 +54,10 @@ func TestCrashRestartsWithBackoffThenFails(t *testing.T) {
 	if s.State != stateFailed || s.Restarts != 2 || s.LastExit == nil || s.LastExit.Code != 3 {
 		t.Fatalf("status %+v", s)
 	}
+	// Every restart belonged to the run generation 1 started.
+	if s.Generation != 1 || s.LastExit.Generation != 1 {
+		t.Fatalf("run generation %d, exit generation %d, want 1 and 1", s.Generation, s.LastExit.Generation)
+	}
 	// A failed service starts again only on a new apply.
 	time.Sleep(300 * time.Millisecond)
 	if s := svcStatus(in.plane.Status(), "crashy"); s.State != stateFailed {
@@ -69,12 +73,20 @@ func TestRestartNeverStops(t *testing.T) {
 	c := dial(t, in)
 	w := subscribe(t, c, "ctl", nil)
 	do(t, c, Request{Op: "apply", Desired: running("once")})
-	waitEnv(t, w, 5*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	x := waitEnv(t, w, 5*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	if d := ctlData(x); d["generation"] != 1.0 || d["requested"] != false {
+		t.Fatalf("exit %s", x.Raw())
+	}
 	e := waitEnv(t, w, 5*time.Second, "next", func(e *Envelope) bool {
 		return e.Ev.Kind == "service.stopped" || e.Ev.Kind == "service.restarting"
 	})
 	if e.Ev.Kind != "service.stopped" {
 		t.Fatalf("restart never: %s", e.Raw())
+	}
+	// A job: stopped by its own exit, desired still running, the exit naming its generation.
+	s := svcStatus(in.plane.Status(), "once")
+	if s.State != stateStopped || s.Desired != desiredRunning || s.LastExit == nil || s.LastExit.Generation != 1 || s.Generation != 1 {
+		t.Fatalf("after the exit: %+v (exit %+v)", s, s.LastExit)
 	}
 }
 

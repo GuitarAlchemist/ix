@@ -23,9 +23,9 @@
 //! ```
 //!
 //! A job is a service declared with `restart: never`: it runs to its end and the plane leaves
-//! it `stopped`, its `last_exit` saying how. [`Ctl::wait_exit`] waits for that end; the
-//! generation's convergence only says the job was launched (`examples/job.ixql` runs the real
-//! `ix pipeline run` that way).
+//! it `stopped`, its `last_exit` saying how. [`Ctl::wait_exit_of`] waits for the end of the run
+//! a generation started; the generation's convergence only says the job was launched
+//! (`examples/job.ixql` runs the real `ix pipeline run` that way).
 //!
 //! [`register`] exposes the same verbs to IXQL as `ix.ctl.status`, `ix.ctl.plan`,
 //! `ix.ctl.apply`, `ix.ctl.stop` and `ix.ctl.wait`.
@@ -673,7 +673,7 @@ impl Ctl {
         nodes: usize,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
-        self.wait_service_on(None, service, timeout, |e| nodes_decision(e, nodes))
+        self.wait_service_on(None, service, None, timeout, |e| nodes_decision(e, nodes))
     }
 
     /// [`Ctl::wait_nodes`] for a service of `peer`, read from that peer's status. A 502 or
@@ -685,7 +685,9 @@ impl Ctl {
         nodes: usize,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
-        self.wait_service_on(Some(peer), service, timeout, |e| nodes_decision(e, nodes))
+        self.wait_service_on(Some(peer), service, None, timeout, |e| {
+            nodes_decision(e, nodes)
+        })
     }
 
     /// Waits until `service` has exited, and answers its entry in the status: state `stopped`
@@ -702,7 +704,7 @@ impl Ctl {
     /// first, or an earlier run's exit answers for this one. A service that never ran has no
     /// `last_exit`, and the wait runs out with [`CtlError::Wait`].
     pub fn wait_exit(&self, service: &str, timeout: Duration) -> Result<Value, CtlError> {
-        self.wait_service_on(None, service, timeout, exit_decision)
+        self.wait_service_on(None, service, None, timeout, |e| exit_decision(e, None))
     }
 
     /// [`Ctl::wait_exit`] for a service of `peer`, read from that peer's status. A 502 or 503
@@ -713,15 +715,57 @@ impl Ctl {
         service: &str,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
-        self.wait_service_on(Some(peer), service, timeout, exit_decision)
+        self.wait_service_on(Some(peer), service, None, timeout, |e| {
+            exit_decision(e, None)
+        })
+    }
+
+    /// [`Ctl::wait_exit`] for the run that `generation` started: the plane stamps each exit
+    /// with the generation of the apply that launched the run it ends (`last_exit.generation`,
+    /// kept across the run's restarts), so an earlier run's exit, still in the status while
+    /// this run is about to be launched, is pending rather than answered. That closes the
+    /// window between an apply and its launch that [`Ctl::wait_exit`] leaves open. With
+    /// `epoch` (the apply reply's), a plane that reports another boot ends the wait with
+    /// [`CtlError::Restarted`], as [`Ctl::wait_generation_of`] does. A plane whose exits name
+    /// no generation is waited on as [`Ctl::wait_exit`] does.
+    pub fn wait_exit_of(
+        &self,
+        service: &str,
+        generation: u64,
+        epoch: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
+        let scope = epoch.map(|e| (generation, e));
+        self.wait_service_on(None, service, scope, timeout, |e| {
+            exit_decision(e, Some(generation))
+        })
+    }
+
+    /// [`Ctl::wait_exit_of`] for a service of `peer` (the generation and epoch are the
+    /// peer's, from an apply made through it), read from that peer's status.
+    pub fn wait_exit_of_at(
+        &self,
+        peer: &str,
+        service: &str,
+        generation: u64,
+        epoch: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
+        let scope = epoch.map(|e| (generation, e));
+        self.wait_service_on(Some(peer), service, scope, timeout, |e| {
+            exit_decision(e, Some(generation))
+        })
     }
 
     /// Polls the status until `decide` is done with `service`'s entry, which is answered;
-    /// `Failed` ends the wait at once, `Pending` says what the timeout message reports.
+    /// `Failed` ends the wait at once, `Pending` says what the timeout message reports. With
+    /// `scope`, a generation and the boot it belongs to, a status that reports another boot
+    /// ends the wait with [`CtlError::Restarted`].
     fn wait_service_on(
         &self,
         peer: Option<&str>,
         service: &str,
+        scope: Option<(u64, &str)>,
         timeout: Duration,
         decide: impl Fn(&Value) -> Decision,
     ) -> Result<Value, CtlError> {
@@ -742,6 +786,17 @@ impl Ctl {
                 }
                 Err(e) => return Err(e),
             };
+            if let (Some((generation, want)), Some(now)) =
+                (scope, status.get("epoch").and_then(Value::as_str))
+            {
+                if now != want {
+                    return Err(CtlError::Restarted {
+                        generation,
+                        epoch: want.to_string(),
+                        now: now.to_string(),
+                    });
+                }
+            }
             let entry = status
                 .get("services")
                 .and_then(Value::as_array)
@@ -832,12 +887,21 @@ fn nodes_decision(entry: &Value, nodes: usize) -> Decision {
 }
 
 /// [`Ctl::wait_exit`]: `stopped` or `failed` with a `last_exit`. A `stopped` service without
-/// one never ran, and a `restarting` one is between two runs: both are pending.
-fn exit_decision(entry: &Value) -> Decision {
+/// one never ran, and a `restarting` one is between two runs: both are pending. With
+/// `generation`, an exit the plane stamps with another generation is an earlier run's and is
+/// pending too; an exit without one (an older plane) is taken as it is.
+fn exit_decision(entry: &Value, generation: Option<u64>) -> Decision {
     let state = entry.get("state").and_then(Value::as_str).unwrap_or("");
-    let exited = entry.get("last_exit").is_some_and(Value::is_object);
-    match state {
-        "stopped" | "failed" if exited => Decision::Done,
+    let exit = entry.get("last_exit").filter(|e| e.is_object());
+    match (state, exit) {
+        ("stopped" | "failed", Some(exit)) => {
+            match (generation, exit.get("generation").and_then(Value::as_u64)) {
+                (Some(want), Some(got)) if got != want => Decision::Pending(format!(
+                    "last exited from generation {got}'s run, not generation {want}'s"
+                )),
+                _ => Decision::Done,
+            }
+        }
         _ => Decision::Pending(format!("has not exited: state `{state}`")),
     }
 }

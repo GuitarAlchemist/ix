@@ -131,8 +131,9 @@ connexion ; les événements en direct n'attendent jamais (`session.go:151-153`)
 **Canaux et types d'événements.**
 
 - `ctl` porte les événements du plan lui-même, chacun avec `service` quand il s'applique :
-  `service.starting {restart}`, `service.started {pid, restarts}`,
-  `service.exited {pid, code, requested}`, `service.stopped {pid?, code?, ms?}`,
+  `service.starting {restart}`, `service.started {pid, restarts, generation}`,
+  `service.exited {pid, code, requested, generation}`, `service.stopped {pid?, code?, ms?}`
+  (`generation` est l'application qui a lancé l'exécution, depuis la tranche des jobs),
   `service.restarting {attempt, in_ms}`, `service.failed {reason, restarts_in_window?, code?}`
   (`supervisor.go:121-124`, `:168-198`, `:300-348`) ; puis `converged {generation}` et
   `diverged {generation, service, reason}` (`plane.go:379`, `:387`) ; puis
@@ -148,8 +149,10 @@ connexion ; les événements en direct n'attendent jamais (`session.go:151-153`)
 
 **Réponses.** Le statut est `{name, epoch, generation, observed_generation, settled_generation,
 diverged, failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
-started_at, last_exit, nodes}], peers[{name, state, services}]}` (`plane.go:157-181` ;
-`settled_generation` et `failed` depuis le correctif F2.1 ci-dessous, `epoch` depuis F2.4 ;
+started_at, generation?, last_exit{code, at, generation?}, nodes}], peers[{name, state,
+services}]}` (`plane.go:157-181` ; `settled_generation` et `failed` depuis le correctif F2.1
+ci-dessous, `epoch` depuis F2.4 ; la `generation` d'un service et celle de son `last_exit` sont
+l'application qui a lancé l'exécution courante ou la dernière, depuis la tranche des jobs ;
 `last_exit.code` est le code de sortie, ou sous Unix 128 plus le signal qui a tué le processus,
 la convention du shell). Le
 plan est `{generation, actions[{op, service}], noop}`, l'application
@@ -399,9 +402,16 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   génération qui l'a démarré dit « lancé », pas « terminé » (`await` s'arrête sur
   `service.started`) : `crates/ix-ctl` gagne donc `wait_exit` / `wait_exit_at` et, en IXQL,
   `ix.ctl.wait(service:, exit: true)`, qui répondent l'entrée du service dans le statut dès
-  qu'il est `stopped` ou `failed` avec un `last_exit`. La sortie répondue est la dernière que le
-  plan a vue, et le statut ne dit pas à quel démarrage elle appartient : un programme attend
-  d'abord la génération du démarrage ; `crates/ix-ctl/examples/job.ixql` le fait. La vérification
+  qu'il est `stopped` ou `failed` avec un `last_exit`. La sortie que répond `wait_exit` est la
+  dernière que le plan a vue, qui entre une application et son lancement est encore celle de
+  l'exécution précédente ; le plan marque donc chaque exécution de la génération de
+  l'application qui l'a lancée (la `generation` d'un service et celle de son `last_exit` dans le
+  statut, `generation` sur `service.started` et `service.exited`, conservée à travers les
+  redémarrages de l'exécution), et `wait_exit_of(service, generation, epoch)` /
+  `ix.ctl.wait(service:, exit: true, generation:, epoch:)` ne répondent que la sortie de cette
+  exécution, celle d'une exécution antérieure restant en attente et un autre démarrage donnant
+  un `Restarted` ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
+  `applied.epoch`. La vérification
   E10 de la passerelle lance le vrai `ix pipeline run --json` (une étape `stats`, à travers la
   porte constitutionnelle Demerzel) comme job sous le plan et relit son NDJSON depuis `svc/job` ;
   un job dont le fichier de pipeline manque sort avec le code 10, sa génération converge quand

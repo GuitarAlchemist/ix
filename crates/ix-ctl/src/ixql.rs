@@ -7,7 +7,7 @@
 //! on_b    <- ix.ctl.apply(desired, peer: "b")
 //! done    <- ix.ctl.wait(generation: applied.generation, epoch: applied.epoch, timeout_ms: 10000)
 //! pod     <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)
-//! exited  <- ix.ctl.wait(service: "job", exit: true, timeout_ms: 60000)
+//! exited  <- ix.ctl.wait(service: "job", exit: true, generation: applied.generation, epoch: applied.epoch, timeout_ms: 60000)
 //! status  <- ix.ctl.status()
 //! stopped <- ix.ctl.stop(service: "pod-a")
 //! seen    <- ix.ctl.events(channel: "ctl", since: 0, max: 20, timeout_ms: 2000)
@@ -19,8 +19,9 @@
 //!
 //! `ix.ctl.wait(service:, exit: true)` answers the service's status entry once it has exited
 //! (state `stopped` or `failed`, with `last_exit`): how a job, a service with `restart: never`,
-//! is waited to its end. The exit is the last one the plane saw, so wait for the generation
-//! that started the job first.
+//! is waited to its end. With `generation:` (and `epoch:`), the apply that started the job,
+//! only that run's exit answers; without it, the last exit the plane saw does, an earlier
+//! run's included.
 //!
 //! Arguments are checked before any request: a misspelt name, a missing timeout or a value
 //! piped into a call that would ignore it fails the run instead of being dropped.
@@ -143,7 +144,11 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
                 Some(p) => ctl.wait_exit_at(p, &s, timeout),
                 None => ctl.wait_exit(&s, timeout),
             }),
-            _ => Err("takes `generation:` (with `epoch:`), `service:` with `nodes:`, or `service:` with `exit: true`, and `timeout_ms:`; `peer:` reads that peer".into()),
+            (Some(g), epoch, Some(s), None, Some(true)) => answer(match peer.as_deref() {
+                Some(p) => ctl.wait_exit_of_at(p, &s, g, epoch.as_deref(), timeout),
+                None => ctl.wait_exit_of(&s, g, epoch.as_deref(), timeout),
+            }),
+            _ => Err("takes `generation:` (with `epoch:`), `service:` with `nodes:`, or `service:` with `exit: true` (and the `generation:` that started it, with `epoch:`), and `timeout_ms:`; `peer:` reads that peer".into()),
         }
     })?;
     Ok(())

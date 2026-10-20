@@ -532,27 +532,33 @@ def run():
             except (ValueError, KeyError, TypeError):
                 pass
     events = [p.get("event") for p in printed if isinstance(p, dict)]
+    applied_g = ((out or {}).get("applied") or {}).get("generation")
     check("E10.job_runs_to_its_end",
           code == 0 and exited.get("state") == "stopped" and exited.get("desired") == "running"
           and (exited.get("last_exit") or {}).get("code") == 0 and exited.get("pid") is None
+          and applied_g and (exited.get("last_exit") or {}).get("generation") == applied_g
+          and exited.get("generation") == applied_g
           and exited.get("restarts") == 0 and "start" in events and events[-1:] == ["done"]
           and output.get("gap") is None and (JOBDIR / "ix.lock").exists(),
           code=code, ms=round(ms, 1),
-          exited={k: exited.get(k) for k in ("state", "desired", "last_exit", "restarts")},
-          printed_events=events, gap=output.get("gap"), lock=(JOBDIR / "ix.lock").exists(),
-          stderr=err[-200:])
+          exited={k: exited.get(k) for k in ("state", "desired", "generation", "last_exit", "restarts")},
+          applied_generation=applied_g, printed_events=events, gap=output.get("gap"),
+          lock=(JOBDIR / "ix.lock").exists(), stderr=err[-200:])
     # A job that fails (its pipeline file does not exist: `ix` exits 10) is left stopped with
     # that code and is not restarted. Its start converges all the same: converged means launched.
+    # The exit wait is scoped to the apply's generation and boot, so no earlier exit can answer.
     _, r = call(sa, "POST", "/v1/apply", {"services": {"job-bad": {"state": "running"}}})
     _, settled_ms = wait_until(lambda: status(sa)["settled_generation"] >= r["generation"], 15)
     prog = write_ixql("job-bad.ixql",
-                      'exited <- ix.ctl.wait(service: "job-bad", exit: true, timeout_ms: 60000)\n')
+                      f'exited <- ix.ctl.wait(service: "job-bad", exit: true, generation: {r["generation"]}, '
+                      f'epoch: "{r["epoch"]}", timeout_ms: 60000)\n')
     code, out, err, ms = ixql("job-bad", prog, STATE / "a.json")
     bad = (out or {}).get("exited") or {}
     failed = [d["generation"] for d in status(sa)["failed"]]
     check("E10.failed_job_stays_stopped",
           code == 0 and settled_ms is not None and r["generation"] not in failed
           and bad.get("state") == "stopped" and (bad.get("last_exit") or {}).get("code") == 10
+          and (bad.get("last_exit") or {}).get("generation") == r["generation"]
           and bad.get("restarts") == 0,
           code=code, ms=round(ms, 1), settled_ms=settled_ms, generation=r["generation"],
           failed_generations=failed,

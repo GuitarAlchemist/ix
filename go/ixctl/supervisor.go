@@ -34,6 +34,15 @@ const (
 type exitInfo struct {
 	Code int   `json:"code"`
 	At   int64 `json:"at"`
+	// Generation is the apply that launched the run this exit ends (a restart keeps its
+	// run's generation), so a waiter can tell this run's exit from an earlier run's.
+	Generation uint64 `json:"generation,omitempty"`
+}
+
+// command is one desired state handed to the supervisor, with the generation that asked.
+type command struct {
+	state      string
+	generation uint64
 }
 
 // service supervises one declared service: one process tree at a time.
@@ -49,10 +58,11 @@ type service struct {
 	pid       int
 	restarts  int
 	startedAt int64
+	startGen  uint64 // the generation that launched the current or last run; 0 before any
 	lastExit  *exitInfo
 	nodes     json.RawMessage
 
-	cmds chan string // desired states, in apply order
+	cmds chan command // desired states, in apply order
 
 	// owned by run
 	proc   *child
@@ -73,16 +83,17 @@ func newService(spec ServiceSpec, hub *Hub) *service {
 	return &service{
 		spec: spec, hub: hub, ch: "svc/" + spec.Name,
 		desired: desiredStopped, state: stateStopped,
-		cmds: make(chan string, 1024),
+		cmds: make(chan command, 1024),
 	}
 }
 
-// want records a desired state and hands it to the supervisor.
-func (s *service) want(state string) {
+// want records a desired state and hands it to the supervisor, with the generation of
+// the apply that asked for it.
+func (s *service) want(state string, generation uint64) {
 	s.mu.Lock()
 	s.desired = state
 	s.mu.Unlock()
-	s.cmds <- state
+	s.cmds <- command{state: state, generation: generation}
 }
 
 func (s *service) observed() (desired, state string) {
@@ -94,7 +105,7 @@ func (s *service) observed() (desired, state string) {
 func (s *service) status() ServiceStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := ServiceStatus{Name: s.spec.Name, Desired: s.desired, State: s.state, Restarts: s.restarts, Nodes: s.nodes}
+	st := ServiceStatus{Name: s.spec.Name, Desired: s.desired, State: s.state, Restarts: s.restarts, Generation: s.startGen, Nodes: s.nodes}
 	if s.pid != 0 {
 		pid := s.pid
 		st.Pid = &pid
@@ -151,13 +162,17 @@ func (s *service) run(ctx context.Context) {
 	}
 }
 
-func (s *service) command(want string) {
-	switch want {
+func (s *service) command(want command) {
+	switch want.state {
 	case desiredRunning:
 		if s.proc != nil || s.state == stateRestarting {
 			return
 		}
 		s.recent = nil
+		// The run about to start, and every restart of it, belongs to this generation.
+		s.mu.Lock()
+		s.startGen = want.generation
+		s.mu.Unlock()
 		s.launch(false)
 	case desiredStopped:
 		switch {
@@ -194,9 +209,9 @@ func (s *service) launch(restart bool) {
 		s.restarts++
 	}
 	s.state, s.pid, s.startedAt = stateRunning, c.pid, now
-	restarts := s.restarts
+	restarts, gen := s.restarts, s.startGen
 	s.mu.Unlock()
-	s.ctl("service.started", map[string]any{"pid": c.pid, "restarts": restarts})
+	s.ctl("service.started", map[string]any{"pid": c.pid, "restarts": restarts, "generation": gen})
 }
 
 func (s *service) start() (*child, error) {
@@ -271,8 +286,8 @@ func (s *service) reap(code int) *exitInfo {
 	case <-time.After(drainLimit):
 	}
 	s.proc = nil
-	e := &exitInfo{Code: code, At: time.Now().UnixMilli()}
 	s.mu.Lock()
+	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen}
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
 	return e
@@ -295,10 +310,10 @@ func (s *service) stopTree() {
 			code = -1
 		}
 	}
-	s.reap(code)
+	e := s.reap(code)
 	s.setState(stateStopped)
 	ms := time.Since(t0).Milliseconds()
-	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": true})
+	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": true, "generation": e.Generation})
 	s.ctl("service.stopped", map[string]any{"pid": pid, "code": code, "ms": ms})
 }
 
@@ -318,8 +333,8 @@ func (s *service) halt() {
 // onExit handles an exit nobody asked for, by the restart policy.
 func (s *service) onExit(code int) {
 	pid := s.proc.pid
-	s.reap(code)
-	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": false})
+	e := s.reap(code)
+	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": false, "generation": e.Generation})
 	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && code == 0) {
 		s.setState(stateStopped)
 		s.ctl("service.stopped", map[string]any{"pid": pid, "code": code})

@@ -162,8 +162,9 @@ func TestApplyConverges(t *testing.T) {
 
 	var sr StopReply
 	json.Unmarshal(do(t, c, Request{Op: "stop", Service: "pod-a"}), &sr)
-	if sr.Stopped != "pod-a" || sr.Generation != 2 || sr.Exit == nil {
-		t.Fatalf("stop %+v", sr)
+	// The exit names the generation that launched the run it ends, not the stop's.
+	if sr.Stopped != "pod-a" || sr.Generation != 2 || sr.Exit == nil || sr.Exit.Generation != 1 {
+		t.Fatalf("stop %+v (exit %+v)", sr, sr.Exit)
 	}
 	if s := svcStatus(in.plane.Status(), "pod-a"); s.State != stateStopped || s.Pid != nil {
 		t.Fatalf("after stop: %+v", s)

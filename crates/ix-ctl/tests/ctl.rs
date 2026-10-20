@@ -23,6 +23,8 @@ const TOKEN: &str = "5f1c0de2a9b84e7d93c6f0a1b2c3d4e5f60718293a4b5c6d7e8f9011223
 const CONVERGE: Duration = Duration::from_millis(120);
 /// How long a started pod takes to report its nodes.
 const NODES: Duration = Duration::from_millis(200);
+/// How long the fake's supervisor takes to launch a service after the apply that asked.
+const LAUNCH: Duration = Duration::from_millis(80);
 
 #[derive(Default)]
 struct Svc {
@@ -31,6 +33,11 @@ struct Svc {
     last_exit: Value,
     /// Gave up restarting: state `failed`, whatever `since` says.
     failed: bool,
+    /// The generation whose apply launched the current or last run.
+    start_gen: u64,
+    /// An apply asked for a start the supervisor has not made yet: until then the status still
+    /// shows the service stopped, with the earlier run's exit, as the real plane's does.
+    launch_at: Option<Instant>,
 }
 
 struct Plane {
@@ -73,6 +80,12 @@ impl Plane {
             if at.elapsed() >= CONVERGE {
                 self.observed = g;
                 self.pending = None;
+            }
+        }
+        for s in self.services.values_mut() {
+            if let Some(at) = s.launch_at.filter(|at| Instant::now() >= *at) {
+                s.since = Some(at);
+                s.launch_at = None;
             }
         }
         let services: Vec<Value> = self
@@ -121,7 +134,8 @@ impl Plane {
         }
         let (mut actions, mut noop) = (Vec::new(), Vec::new());
         for (name, want) in wanted {
-            let running = self.services[name].since.is_some();
+            let svc = &self.services[name];
+            let running = svc.since.is_some() || svc.launch_at.is_some();
             match (want.get("state").and_then(Value::as_str), running) {
                 (Some("running"), false) => actions.push(json!({"op": "start", "service": name})),
                 (Some("stopped"), true) => actions.push(json!({"op": "stop", "service": name})),
@@ -136,16 +150,18 @@ impl Plane {
         let s = self.services.get_mut(name).expect("checked by the caller");
         s.desired = "stopped";
         s.since = None;
-        s.last_exit = json!({"code": 0, "at": unix_ms()});
+        s.launch_at = None;
+        s.last_exit = json!({"code": 0, "at": unix_ms(), "generation": s.start_gen});
         s.last_exit.clone()
     }
 
     /// The service's process ended on its own with `code`, nobody having asked: the way a job
-    /// ends. The plane records the exit and, with `restart: never`, leaves `desired` as it was.
+    /// ends. The plane records the exit, stamped with the generation that launched the run,
+    /// and, with `restart: never`, leaves `desired` as it was.
     fn exit(&mut self, name: &str, code: i64) {
         let s = self.services.get_mut(name).expect("declared");
         s.since = None;
-        s.last_exit = json!({"code": code, "at": unix_ms()});
+        s.last_exit = json!({"code": code, "at": unix_ms(), "generation": s.start_gen});
     }
 
     fn route(&mut self, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
@@ -184,7 +200,8 @@ impl Plane {
                         if a["op"] == "start" {
                             let s = self.services.get_mut(name).unwrap();
                             s.desired = "running";
-                            s.since = Some(Instant::now());
+                            s.launch_at = Some(Instant::now() + LAUNCH);
+                            s.start_gen = self.generation;
                         } else {
                             self.stop(name);
                         }
@@ -1087,6 +1104,14 @@ fn argument_mistakes_fail_the_run_before_any_request() {
         ),
         (r#"a <- ix.ctl.wait(exit: true, timeout_ms: 10)"#, "service"),
         (
+            r#"a <- ix.ctl.wait(service: "pod-a", exit: true, generation: "x", timeout_ms: 10)"#,
+            "whole number",
+        ),
+        (
+            r#"a <- ix.ctl.wait(service: "pod-a", exit: true, generation: 1, epoch: 7, timeout_ms: 10)"#,
+            "string",
+        ),
+        (
             "a <- ix.ctl.wait(generation: 1.5, timeout_ms: 10)",
             "whole number",
         ),
@@ -1201,6 +1226,70 @@ fn a_job_is_waited_to_its_exit() {
         .unwrap();
     assert_eq!(&entry, out.binding("j").unwrap());
 
+    // Applied again, the job runs again under generation 2. Until the supervisor launches it
+    // the status still shows it stopped with generation 1's exit: the unscoped wait answers that
+    // exit at once and takes it for this run's; the wait scoped to generation 2 does not, and
+    // answers once that run has ended.
+    let applied = ctl
+        .apply(&json!({"services": {"pod-a": {"state": "running"}}}), None)
+        .unwrap();
+    assert_eq!(json!(2), applied["generation"]);
+    let stale = ctl
+        .wait_exit("pod-a", Duration::from_millis(20))
+        .expect("the first run's exit, taken for this one");
+    assert_eq!(json!(1), stale["last_exit"]["generation"]);
+    assert_eq!(json!("stopped"), stale["state"]);
+    let err = ctl
+        .wait_exit_of("pod-a", 2, Some("3f9a1c0b7d2e"), Duration::from_millis(150))
+        .unwrap_err();
+    let text = err.to_string();
+    assert!(
+        matches!(err, CtlError::Wait(_)) && text.contains("has not exited: state `")
+            || text.contains("generation 1's run, not generation 2's"),
+        "{err}"
+    );
+    let ender = std::thread::spawn({
+        let plane = plane.clone();
+        move || {
+            std::thread::sleep(Duration::from_millis(150));
+            plane.lock().unwrap().exit("pod-a", 0);
+        }
+    });
+    let out = executor(ctl.clone())
+        .run_source(
+            "j <- ix.ctl.wait(service: \"pod-a\", exit: true, generation: 2, \
+             epoch: \"3f9a1c0b7d2e\", timeout_ms: 2000)",
+        )
+        .expect("the second run's exit");
+    ender.join().unwrap();
+    let second = out.binding("j").unwrap();
+    assert_eq!(json!(2), second["last_exit"]["generation"]);
+    assert_eq!(json!(0), second["last_exit"]["code"]);
+    // Scoped to a boot, the wait ends at once when the plane reports another one.
+    plane.lock().unwrap().epoch = Some("0ther0ther00".into());
+    let err = ctl
+        .wait_exit_of("pod-a", 2, Some("3f9a1c0b7d2e"), Duration::from_secs(2))
+        .unwrap_err();
+    assert!(
+        matches!(&err, CtlError::Restarted { generation: 2, now, .. } if now == "0ther0ther00"),
+        "{err}"
+    );
+    // Without the epoch, or on a plane whose exits name no generation, the number alone counts.
+    let again = ctl
+        .wait_exit_of("pod-a", 2, None, Duration::from_millis(50))
+        .unwrap();
+    assert_eq!(second["last_exit"], again["last_exit"]);
+    plane
+        .lock()
+        .unwrap()
+        .services
+        .get_mut("pod-a")
+        .unwrap()
+        .last_exit = json!({"code": 0, "at": 1});
+    ctl.wait_exit_of("pod-a", 9, None, Duration::from_millis(50))
+        .expect("an exit without a generation is taken as it is");
+    plane.lock().unwrap().epoch = Some("3f9a1c0b7d2e".into());
+
     // A service the plane gave up on has exited for good.
     {
         let mut p = plane.lock().unwrap();
@@ -1289,8 +1378,8 @@ fn a_peers_job_is_waited_to_its_exit() {
             "name": "b", "epoch": "b00b00b00b00", "generation": 1, "observed_generation": 1,
             "settled_generation": 1, "failed": [], "services": [
                 {"name": "job", "desired": "running", "state": "stopped", "pid": null, "restarts": 0,
-                 "started_at": 1_760_000_000_000u64,
-                 "last_exit": {"code": 0, "at": 1_760_000_001_000u64}, "nodes": []}],
+                 "started_at": 1_760_000_000_000u64, "generation": 1,
+                 "last_exit": {"code": 0, "at": 1_760_000_001_000u64, "generation": 1}, "nodes": []}],
             "peers": [],
         }));
         p.peer_down_for = 2;
@@ -1299,13 +1388,37 @@ fn a_peers_job_is_waited_to_its_exit() {
         .wait_exit_at("b", "job", Duration::from_secs(2))
         .expect("two 502s, then b's job");
     assert_eq!(json!(0), entry["last_exit"]["code"]);
+    // Scoped to b's generation and boot: b's epoch is compared, not this plane's.
+    let scoped = ctl
+        .wait_exit_of_at("b", "job", 1, Some("b00b00b00b00"), Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(entry, scoped);
+    let err = ctl
+        .wait_exit_of_at(
+            "b",
+            "job",
+            2,
+            Some("b00b00b00b00"),
+            Duration::from_millis(60),
+        )
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("generation 1's run, not generation 2's"),
+        "{err}"
+    );
     let out = executor(ctl)
-        .run_source(r#"j <- ix.ctl.wait(service: "job", exit: true, peer: "b", timeout_ms: 2000)"#)
+        .run_source(
+            "j <- ix.ctl.wait(service: \"job\", exit: true, peer: \"b\", timeout_ms: 2000)\n\
+             k <- ix.ctl.wait(service: \"job\", exit: true, generation: 1, epoch: \"b00b00b00b00\", \
+             peer: \"b\", timeout_ms: 2000)\n",
+        )
         .unwrap();
     assert_eq!(&entry, out.binding("j").unwrap());
+    assert_eq!(&entry, out.binding("k").unwrap());
     let log = &plane.lock().unwrap().log;
     assert!(
-        log.iter().filter(|r| *r == "GET /v1/status?peer=b").count() >= 4,
+        log.iter().filter(|r| *r == "GET /v1/status?peer=b").count() >= 6,
         "{log:?}"
     );
 }

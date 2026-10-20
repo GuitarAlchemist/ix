@@ -126,8 +126,9 @@ for room in the connection's queue; live events never wait (`session.go:151-153`
 **Channels and event kinds.**
 
 - `ctl` carries the plane's own events, each with `service` where it applies:
-  `service.starting {restart}`, `service.started {pid, restarts}`,
-  `service.exited {pid, code, requested}`, `service.stopped {pid?, code?, ms?}`,
+  `service.starting {restart}`, `service.started {pid, restarts, generation}`,
+  `service.exited {pid, code, requested, generation}`, `service.stopped {pid?, code?, ms?}`
+  (`generation` is the apply that launched the run, since the jobs slice),
   `service.restarting {attempt, in_ms}`, `service.failed {reason, restarts_in_window?, code?}`
   (`supervisor.go:121-124`, `:168-198`, `:300-348`); then `converged {generation}` and
   `diverged {generation, service, reason}` (`plane.go:379`, `:387`); then
@@ -143,10 +144,11 @@ for room in the connection's queue; live events never wait (`session.go:151-153`
 
 **Replies.** Status is `{name, epoch, generation, observed_generation, settled_generation,
 diverged, failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
-started_at, last_exit, nodes}], peers[{name, state, services}]}` (`plane.go:157-181`;
-`settled_generation` and `failed` since the F2.1 fix below, `epoch` since F2.4; `last_exit.code`
-is the exit status, or on Unix 128 plus the signal that ended the process, the shell's
-convention). Plan is
+started_at, generation?, last_exit{code, at, generation?}, nodes}], peers[{name, state,
+services}]}` (`plane.go:157-181`; `settled_generation` and `failed` since the F2.1 fix below,
+`epoch` since F2.4; a service's `generation` and its `last_exit.generation` are the apply that
+launched the current or last run, since the jobs slice; `last_exit.code` is the exit status, or
+on Unix 128 plus the signal that ended the process, the shell's convention). Plan is
 `{generation, actions[{op, service}], noop}`, apply is `{generation, epoch, actions}`, stop is
 `{stopped, generation, exit}` (`plane.go:202-216`,
 `:392-396`).
@@ -373,9 +375,14 @@ name `ixctl.v1`.
   start's generation says launched, not ended (`await` ends on `service.started`), so
   `crates/ix-ctl` gained `wait_exit` / `wait_exit_at` and IXQL's
   `ix.ctl.wait(service:, exit: true)`: they answer the service's status entry once it is
-  `stopped` or `failed` with a `last_exit`. The exit answered is the last one the plane saw, and
-  the status does not say which start it belongs to, so a program waits for the start's
-  generation first; `crates/ix-ctl/examples/job.ixql` does. Gate E10 runs the real
+  `stopped` or `failed` with a `last_exit`. The exit `wait_exit` answers is the last one the
+  plane saw, which between an apply and its launch is still the earlier run's; so the plane
+  stamps each run with the generation of the apply that launched it (a service's `generation`
+  and its `last_exit.generation` in status, `generation` on `service.started` and
+  `service.exited`, kept across the run's restarts), and `wait_exit_of(service, generation,
+  epoch)` / `ix.ctl.wait(service:, exit: true, generation:, epoch:)` answer that run's exit
+  only, an earlier run's being pending and another boot a `Restarted`;
+  `crates/ix-ctl/examples/job.ixql` passes `applied.generation` and `applied.epoch`. Gate E10 runs the real
   `ix pipeline run --json` (one `stats` stage, through the Demerzel constitution gate) as a job
   under the plane and reads its NDJSON back from `svc/job`; a job whose pipeline file is missing
   exits 10, its generation converges all the same, and it stays `stopped` with that code. Tests:
