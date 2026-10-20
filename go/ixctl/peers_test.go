@@ -63,6 +63,14 @@ func TestFederationForwardsAndMirrors(t *testing.T) {
 	if code != 200 || len(pr.Actions) != 0 || len(pr.Noop) != 1 || pr.Noop[0] != "pod-x" {
 		t.Fatalf("HTTP plan?peer=b on b's running service: %d %s", code, body)
 	}
+	// Status routes too, so a client that applied through a peer can wait on
+	// that peer's generation and epoch rather than on this plane's.
+	var bst StatusReply
+	code, _, body = httpDo(t, a, "GET", "/v1/status?peer=b", nil, nil)
+	json.Unmarshal(body, &bst)
+	if code != 200 || bst.Name != "b" || bst.Epoch != b.plane.Epoch() || bst.Epoch == a.plane.Epoch() {
+		t.Fatalf("HTTP status?peer=b: %d %s (b's epoch %s)", code, body, b.plane.Epoch())
+	}
 
 	var sr StopReply
 	json.Unmarshal(do(t, c, Request{Op: "stop", Peer: "b", Service: "pod-x"}), &sr)

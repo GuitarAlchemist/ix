@@ -57,6 +57,14 @@ func (s *session) Handle(frame []byte) {
 		s.reply(req.ID, nil, err)
 		return
 	}
+	// Request.Peer cannot tell an absent peer from an empty one; the frame can.
+	var named struct {
+		Peer *string `json:"peer"`
+	}
+	if json.Unmarshal(frame, &named) == nil && named.Peer != nil && *named.Peer == "" {
+		s.reply(req.ID, nil, errEmptyPeer)
+		return
+	}
 	switch req.Op {
 	case "subscribe":
 		s.subscribe(req)

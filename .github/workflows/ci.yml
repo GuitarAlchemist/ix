@@ -65,7 +65,7 @@ jobs:
           done
 
       # The control plane's end-to-end gate: the Go plane, the Rust client and
-      # the ix-stream pod as two federated instances on loopback, 26 checks.
+      # the ix-stream pod as two federated instances on loopback, 28 checks.
       # It runs where the plane's process code is complete today (Windows job
       # objects) and on the row whose cargo cache already holds the examples.
       - uses: actions/setup-go@v5
@@ -119,8 +119,11 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # The race detector needs cgo, which the Windows runner has no C
+      # toolchain for; the hub, cursors and sessions are the same code on
+      # both, so one row under -race covers them.
       - name: go test
-        run: go test ./... -count=1
+        run: go test ./... -count=1 ${{ matrix.os == 'ubuntu-latest' && '-race' || '' }}
 
   # Feature-gated code is invisible to the job above. `cargo build --workspace`
   # and `cargo test --workspace` compile the DEFAULT feature set, so a module

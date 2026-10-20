@@ -24,8 +24,8 @@ use std::time::Duration;
 pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationError> {
     let c = ctl.clone();
     caps.register("ix.ctl.status", move |a: CallArgs| {
-        expect(&a, &[])?;
-        answer(c.status())
+        expect(&a, &["peer"])?;
+        answer(c.status_of(string(&a, "peer")?.as_deref()))
     })?;
 
     let c = ctl.clone();
@@ -48,18 +48,25 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
     })?;
 
     caps.register("ix.ctl.wait", move |a: CallArgs| {
-        expect(&a, &["generation", "epoch", "service", "nodes", "timeout_ms"])?;
+        expect(&a, &["generation", "epoch", "service", "nodes", "peer", "timeout_ms"])?;
         let timeout = Duration::from_millis(count(&a, "timeout_ms")?.ok_or("needs `timeout_ms:`")?);
+        let peer = string(&a, "peer")?;
         match (
             count(&a, "generation")?,
             string(&a, "epoch")?,
             string(&a, "service")?,
             count(&a, "nodes")?,
         ) {
-            (Some(g), None, None, None) => answer(ctl.wait_generation(g, timeout)),
-            (Some(g), Some(e), None, None) => answer(ctl.wait_generation_of(&e, g, timeout)),
-            (None, None, Some(s), Some(n)) => answer(ctl.wait_nodes(&s, n as usize, timeout)),
-            _ => Err("takes `generation:` (with `epoch:`), or `service:` with `nodes:`, and `timeout_ms:`".into()),
+            (Some(g), epoch, None, None) => answer(match (peer.as_deref(), epoch.as_deref()) {
+                (Some(p), epoch) => ctl.wait_generation_at(p, epoch, g, timeout),
+                (None, Some(e)) => ctl.wait_generation_of(e, g, timeout),
+                (None, None) => ctl.wait_generation(g, timeout),
+            }),
+            (None, None, Some(s), Some(n)) => answer(match peer.as_deref() {
+                Some(p) => ctl.wait_nodes_at(p, &s, n as usize, timeout),
+                None => ctl.wait_nodes(&s, n as usize, timeout),
+            }),
+            _ => Err("takes `generation:` (with `epoch:`), or `service:` with `nodes:`, and `timeout_ms:`; `peer:` reads that peer".into()),
         }
     })?;
     Ok(())

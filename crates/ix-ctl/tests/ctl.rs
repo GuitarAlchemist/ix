@@ -45,6 +45,9 @@ struct Plane {
     log: Vec<String>,
     /// The boot id in status and apply replies; `None` leaves it out, as an older plane does.
     epoch: Option<String>,
+    /// What `GET /v1/status?peer=b` answers: the peer's own status, relayed. `None` means
+    /// this plane has no peers, and every routed op is refused.
+    peer_status: Option<Value>,
 }
 
 impl Plane {
@@ -124,6 +127,11 @@ impl Plane {
         // Routing rides beside the document, as `?peer=`; this plane has no peers.
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
         if query.starts_with("peer=") {
+            if let (("GET", "/v1/status", "peer=b"), Some(s)) =
+                ((method, path, query), &self.peer_status)
+            {
+                return (200, s.clone());
+            }
             return (400, json!({"error": "this plane has no peers"}));
         }
         match (method, path) {
@@ -225,6 +233,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         settled: None,
         log: Vec::new(),
         epoch: Some("3f9a1c0b7d2e".into()),
+        peer_status: None,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -529,6 +538,100 @@ fn a_wait_scoped_to_a_boot_ends_at_once_after_a_restart() {
         .expect("no epoch reported: waited by number");
 }
 
+// A generation applied through a peer is that peer's: its reply carries the peer's epoch and
+// number, so the wait reads the peer's status (`?peer=`) too. Read from this plane instead,
+// the epochs differ and the wait would report a restart that never happened.
+#[test]
+fn a_wait_for_a_generation_applied_through_a_peer_asks_that_peer() {
+    let (ctl, plane) = plane();
+    plane.lock().unwrap().peer_status = Some(json!({
+        "name": "b", "epoch": "b00b00b00b00", "generation": 3, "observed_generation": 3,
+        "settled_generation": 3, "failed": [], "services": [
+            {"name": "pod-x", "desired": "running", "state": "running", "pid": 7, "restarts": 0,
+             "started_at": 1_760_000_000_000u64, "last_exit": null, "nodes": pod_nodes()}],
+        "peers": [],
+    }));
+    let status = ctl
+        .wait_generation_at("b", Some("b00b00b00b00"), 3, Duration::from_secs(2))
+        .expect("b's generation 3 has settled on b");
+    assert_eq!("b", status["name"]);
+    let entry = ctl
+        .wait_nodes_at("b", "pod-x", 4, Duration::from_secs(2))
+        .unwrap();
+    assert_eq!("pod-x", entry["name"]);
+    assert_eq!("b", ctl.status_of(Some("b")).unwrap()["name"]);
+
+    // The same wait asked of this plane compares b's epoch with this plane's.
+    let err = ctl
+        .wait_generation_of("b00b00b00b00", 3, Duration::from_secs(2))
+        .unwrap_err();
+    assert!(matches!(err, CtlError::Restarted { .. }), "{err}");
+
+    let out = executor(ctl.clone())
+        .run_source(
+            "done <- ix.ctl.wait(generation: 3, epoch: \"b00b00b00b00\", peer: \"b\", timeout_ms: 2000)\n\
+             pod <- ix.ctl.wait(service: \"pod-x\", nodes: 4, peer: \"b\", timeout_ms: 2000)\n\
+             bst <- ix.ctl.status(peer: \"b\")\n",
+        )
+        .expect("the IXQL waits read b through the peer");
+    assert_eq!(json!("b"), out.binding("bst").unwrap()["name"]);
+    assert_eq!(json!("pod-x"), out.binding("pod").unwrap()["name"]);
+    let log = &plane.lock().unwrap().log;
+    assert!(
+        log.iter().filter(|r| *r == "GET /v1/status?peer=b").count() >= 5,
+        "{log:?}"
+    );
+}
+
+// A plane that restarts while a scoped wait polls it listens at a new address with a new
+// token. A handle made from the state file re-reads the file when the old plane stops
+// answering, reaches the new boot and reports the restart; a handle made from an address
+// alone has nothing to re-read, and the connection error stands.
+#[test]
+fn a_scoped_wait_follows_the_state_file_across_a_restart() {
+    // The old boot's address: nothing listens there any more.
+    let gone = TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead_addr = format!("127.0.0.1:{}", gone.local_addr().unwrap().port());
+    drop(gone);
+    let state = tmp(&format!("ix-ctl-restart-{}.json", std::process::id()));
+    let state_doc = |addr: &str| json!({"name": "fake", "addr": addr, "pid": 1, "token": TOKEN});
+    std::fs::write(&state, state_doc(&dead_addr).to_string()).unwrap();
+    let ctl = Ctl::from_state(&state).unwrap();
+
+    // The new boot comes up a little later and writes the state file again.
+    let (live, plane) = plane();
+    let live_addr = live.addr().to_string();
+    let rewrite = std::thread::spawn({
+        let state = state.clone();
+        move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::write(&state, state_doc(&live_addr).to_string()).unwrap();
+        }
+    });
+    let began = Instant::now();
+    let err = ctl
+        .wait_generation_of("0ld0ld0ld0ld", 3, Duration::from_secs(20))
+        .unwrap_err();
+    let took = began.elapsed();
+    rewrite.join().unwrap();
+    let _ = std::fs::remove_file(&state);
+    assert!(
+        matches!(&err, CtlError::Restarted { now, .. } if now == "3f9a1c0b7d2e"),
+        "{err} after {took:?}"
+    );
+    assert!(took < Duration::from_secs(12), "{took:?}");
+    assert!(plane
+        .lock()
+        .unwrap()
+        .log
+        .contains(&"GET /v1/status".to_string()));
+
+    let err = Ctl::new(dead_addr, TOKEN)
+        .wait_generation_of("0ld0ld0ld0ld", 3, Duration::from_millis(50))
+        .unwrap_err();
+    assert!(matches!(err, CtlError::Io(_)), "{err}");
+}
+
 #[test]
 fn argument_mistakes_fail_the_run_before_any_request() {
     let (ctl, plane) = plane();
@@ -562,6 +665,11 @@ fn argument_mistakes_fail_the_run_before_any_request() {
         ("a <- ix.ctl.apply({ services: {} }, to: \"b\")", "to"),
         ("a <- { services: {} } → ix.ctl.status", "piped"),
         (r#"a <- ix.ctl.status("pod-a")"#, "named"),
+        ("a <- ix.ctl.status(peer: 1)", "string"),
+        (
+            r#"a <- ix.ctl.wait(generation: 1, peer: 2, timeout_ms: 10)"#,
+            "string",
+        ),
     ] {
         let err = exec.run_source(src).unwrap_err().to_string();
         assert!(err.contains(why), "{src}: {err}");

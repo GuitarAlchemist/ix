@@ -1,6 +1,6 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
-federated instances on loopback. 26 checks, E1..E8 plus a restart loop.
+federated instances on loopback. 28 checks, E1..E8 plus a restart loop.
 
     python go/ixctl/e2e/e2e.py --build            # build the three binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod and ixql-ctl already built there
@@ -202,15 +202,23 @@ LIVE = []  # every plane started by up(); reap() kills what a failed run leaves 
 
 
 def reap():
-    """Kill the planes still running (their pods die with them) and drop the state files, which
-    hold the bearer tokens. A run that ends in finish() leaves nothing for this to do."""
+    """Kill the processes still running (a plane's pods die with it) and drop the state files,
+    which hold the bearer tokens, and any temporary copy of one. A run that ends in finish()
+    leaves nothing for this to do. One process that will not die does not stop the rest."""
     for p in LIVE:
-        if p.poll() is None:
-            p.kill()
-            p.wait(5)
+        try:
+            if p.poll() is None:
+                p.kill()
+                p.wait(5)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"reap: pid {p.pid}: {e}", file=sys.stderr)
     if STATE is not None:
-        for f in STATE.glob("*.json"):
-            f.unlink(missing_ok=True)
+        for pattern in ("*.json", "*.json.tmp"):
+            for f in STATE.glob(pattern):
+                try:
+                    f.unlink()
+                except OSError as e:
+                    print(f"reap: {f.name}: {e}", file=sys.stderr)
 
 
 def up(name, spec):
@@ -428,6 +436,28 @@ def run():
           and a_before["state"] == a_after["state"] == "stopped" and a_after["pid"] is None,
           reply=fwd, b_pod_pid=b_pod["pid"], b_nodes=len(b_pod["nodes"] or []), a_pod=a_after["state"],
           ms_to_b_nodes=ms)
+    # The forwarded reply carries B's generation and epoch, so the wait for it reads B too
+    # (`peer:`); asked of A, the same wait compares B's epoch with A's and reports a restart.
+    prog = write_ixql("fwd-wait.ixql",
+                      f'done <- ix.ctl.wait(generation: {fwd["generation"]}, epoch: "{fwd["epoch"]}", '
+                      'peer: "b", timeout_ms: 10000)\n'
+                      'pod <- ix.ctl.wait(service: "pod-a", nodes: 3, peer: "b", timeout_ms: 10000)\n'
+                      'bst <- ix.ctl.status(peer: "b")\n')
+    code, out4, err, ms = ixql("fwd-wait", prog, STATE / "a.json")
+    prog = write_ixql("fwd-wait-local.ixql",
+                      f'done <- ix.ctl.wait(generation: {fwd["generation"]}, epoch: "{fwd["epoch"]}", '
+                      "timeout_ms: 10000)\n")
+    code_local, _, err_local, ms_local = ixql("fwd-wait-local", prog, STATE / "a.json")
+    code_http, bst = call(sa, "GET", "/v1/status?peer=b")
+    code_empty, empty = call(sa, "GET", "/v1/status?peer=")
+    check("E3.forwarded_wait_asks_the_peer",
+          code == 0 and out4["done"]["epoch"] == fwd["epoch"] and out4["done"]["name"] == "b"
+          and len(out4["pod"]["nodes"]) == 3 and out4["bst"]["name"] == "b"
+          and code_local == 1 and "restarted" in err_local and ms_local < 3000
+          and code_http == 200 and bst["name"] == "b" and bst["epoch"] == fwd["epoch"]
+          and code_empty == 400 and "empty" in (empty or {}).get("error", ""),
+          ms=round(ms, 1), stderr=err[-160:], local_wait=(code_local, round(ms_local, 1), err_local[-120:]),
+          http_status_peer=(code_http, (bst or {}).get("name")), empty_peer=(code_empty, empty))
     _, mirrored = sse(sa, "peer/b/", 1.5)
     chans = sorted({e["ch"] for e in mirrored})
     metas = [e["ev"]["data"].get("name") for e in mirrored
@@ -452,6 +482,17 @@ def run():
     # back up, and a wait scoped to the old boot ends at once with Restarted instead of waiting
     # for the new boot to reach that generation.
     b0 = status(sb)
+    # A waiter made from B's state file, polling the old boot for a generation it will never
+    # reach, is already running when B goes down: it must find the new boot through the state
+    # file and report the restart, not the dead address.
+    stale = write_ixql("stale-waiter.ixql",
+                       f'done <- ix.ctl.wait(generation: {b0["generation"] + 5}, epoch: "{b0["epoch"]}", '
+                       "timeout_ms: 20000)\n")
+    waiter = subprocess.Popen([str(IXQLCTL), str(stale), "--state", str(STATE / "b.json")],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(WORK))
+    LIVE.append(waiter)
+    t_waiter = time.perf_counter()
+    time.sleep(0.3)
     call(sb, "POST", "/v1/shutdown", {})
     exit_b = pb.wait(10)
     pb, _, sb, ms_b2 = up("b", spec_b)
@@ -470,6 +511,18 @@ def run():
     code, _, err, ms = ixql("stale-wait", prog, STATE / "b.json")
     check("E8.stale_wait_ends_at_once", code == 1 and "restarted" in err and ms < 3000,
           code=code, ms=round(ms, 1), stderr=err[-200:])
+    try:
+        w_out, w_err = waiter.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        waiter.kill()
+        w_out, w_err = waiter.communicate()
+    w_ms = (time.perf_counter() - t_waiter) * 1000
+    (RUNS / "ixql-stale-waiter.stdout").write_bytes(w_out)
+    (RUNS / "ixql-stale-waiter.stderr").write_bytes(w_err)
+    w_err = w_err.decode("utf-8", "replace").strip()
+    check("E8.waiter_follows_the_state_file",
+          waiter.returncode == 1 and "restarted" in w_err and b1["epoch"] in w_err and w_ms < 12000,
+          code=waiter.returncode, ms=round(w_ms, 1), stderr=w_err[-200:])
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

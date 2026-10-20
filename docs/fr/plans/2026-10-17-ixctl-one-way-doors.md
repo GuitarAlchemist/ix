@@ -58,9 +58,12 @@ trois : une **époque d'instance**, un identifiant choisi à chaque démarrage (
 **Transports.** Un même plan sert trois faces, et chaque requête passe d'abord les mêmes
 contrôles (`go/ixctl/http.go:44-59`, `:64-86`) :
 
-- JSON sur HTTP : `GET /health` (sans jeton), `GET /v1/status`, `POST /v1/plan` et
-  `POST /v1/apply` (le corps est le document ; `?peer=` nomme un pair, correctif F2.3),
-  `POST /v1/stop` avec `{service, peer?}`, et `POST /v1/shutdown`. Un refus
+- JSON sur HTTP : `GET /health` (sans jeton), `GET /v1/status` (`?peer=` lit le statut de ce
+  pair, depuis la revue Codex du 2026-10-20 : une génération appliquée via un pair s'attend
+  chez lui), `POST /v1/plan` et `POST /v1/apply` (le corps est le document ; `?peer=` nomme un
+  pair, correctif F2.3), `POST /v1/stop` avec `{service, peer?}`, et `POST /v1/shutdown`. Un
+  pair nommé mais vide est refusé sur tous les transports (400 `peer must not be empty`) : ce
+  n'est pas « local ». Un refus
   est `{"error": "..."}` avec le statut 400, 401, 403, 500, 502 ou 503 (`http.go:134-136`,
   `plane.go:295`, `peers.go:54-62`).
 - SSE : `GET /v1/events?ch=PREFIXE&since=SEQ[&epoch=EPOQUE]`, ou `Last-Event-ID`. Chaque
@@ -170,7 +173,10 @@ plan est `{generation, actions[{op, service}], noop}`, l'application
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` dans
   la réponse d'application et `error` dans un refus (`crates/ix-ctl/src/lib.rs:215-317`), ainsi
   que `addr` et `token` dans le fichier d'état (`lib.rs:142-164`). Ses attentes interrogent
-  `/v1/status` à intervalles ; elles ne s'abonnent pas encore (`lib.rs:30-31`).
+  `/v1/status` à intervalles ; elles ne s'abonnent pas encore (`lib.rs:30-31`). Une attente
+  limitée à un démarrage, sur un client construit depuis le fichier d'état, relit ce fichier
+  quand le plan cesse de répondre (pas de connexion, ou 401) : un plan qui redémarre sous
+  l'attente est signalé redémarré plutôt qu'injoignable (revue Codex, 2026-10-20).
 
 Aucun programme hors d'un seul binaire Go ne lit donc le côté WebSocket ou SSE. Le seul contrat
 entre langages, aujourd'hui, ce sont les réponses HTTP.

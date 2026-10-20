@@ -43,16 +43,28 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 	}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /health", s.health)
-	m.HandleFunc("GET /v1/status", s.op(func(*http.Request) (Request, error) { return Request{Op: "status"}, nil }))
+	m.HandleFunc("GET /v1/status", s.op(func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		return Request{Op: "status", Peer: peer}, err
+	}))
 	m.HandleFunc("POST /v1/plan", s.op(desiredOp("plan")))
 	m.HandleFunc("POST /v1/apply", s.op(desiredOp("apply")))
 	m.HandleFunc("POST /v1/stop", s.op(func(r *http.Request) (Request, error) {
 		var body struct {
-			Service string `json:"service"`
-			Peer    string `json:"peer"`
+			Service string  `json:"service"`
+			Peer    *string `json:"peer"`
 		}
-		err := decodeBody(r, &body)
-		return Request{Op: "stop", Service: body.Service, Peer: body.Peer}, err
+		if err := decodeBody(r, &body); err != nil {
+			return Request{}, err
+		}
+		req := Request{Op: "stop", Service: body.Service}
+		if body.Peer != nil {
+			if *body.Peer == "" {
+				return Request{}, errEmptyPeer
+			}
+			req.Peer = *body.Peer
+		}
+		return req, nil
 	}))
 	m.HandleFunc("POST /v1/shutdown", s.op(func(*http.Request) (Request, error) { return Request{Op: "shutdown"}, nil }))
 	m.HandleFunc("GET /v1/events", s.events)
@@ -91,15 +103,37 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 		"uptime_ms": time.Since(s.started).Milliseconds()})
 }
 
+// errEmptyPeer: a peer that is named must name someone. An empty one is not
+// "local": the op would run on the wrong instance, and on every transport
+// alike it is refused instead.
+var errEmptyPeer = badRequest("peer must not be empty")
+
+// peerQuery is `?peer=` as the op's peer: absent means local, present means
+// that peer, and present but empty (or given twice) is refused.
+func peerQuery(r *http.Request) (string, error) {
+	v, present := r.URL.Query()["peer"]
+	switch {
+	case !present:
+		return "", nil
+	case len(v) != 1 || v[0] == "":
+		return "", errEmptyPeer
+	}
+	return v[0], nil
+}
+
 // desiredOp reads a desired-state document from the body; `?peer=` beside it
 // says which peer the op is for, the way the WebSocket frame's peer does.
 func desiredOp(op string) func(*http.Request) (Request, error) {
 	return func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		if err != nil {
+			return Request{}, err
+		}
 		var d Desired
 		if err := decodeBody(r, &d); err != nil {
 			return Request{}, err
 		}
-		return Request{Op: op, Desired: &d, Peer: r.URL.Query().Get("peer")}, nil
+		return Request{Op: op, Desired: &d, Peer: peer}, nil
 	}
 }
 

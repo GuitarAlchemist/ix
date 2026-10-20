@@ -56,9 +56,12 @@ addition serves all three: an **instance epoch**, an id chosen at each boot (F1.
 **Transports.** One plane serves three faces, and every request passes the same checks first
 (`go/ixctl/http.go:44-59`, `:64-86`):
 
-- JSON over HTTP: `GET /health` (no token), `GET /v1/status`, `POST /v1/plan` and
-  `POST /v1/apply` (the body is the document; `?peer=` names a peer, F2.3 fix), `POST /v1/stop`
-  with `{service, peer?}`, and `POST /v1/shutdown`. A refusal
+- JSON over HTTP: `GET /health` (no token), `GET /v1/status` (`?peer=` reads that peer's
+  status, since the Codex review of 2026-10-20: a generation applied through a peer is waited
+  on there), `POST /v1/plan` and `POST /v1/apply` (the body is the document; `?peer=` names a
+  peer, F2.3 fix), `POST /v1/stop` with `{service, peer?}`, and `POST /v1/shutdown`. A peer that
+  is named but empty is refused on every transport (400 `peer must not be empty`): it is not
+  "local". A refusal
   is `{"error": "..."}` with status 400, 401, 403, 500, 502 or 503 (`http.go:134-136`,
   `plane.go:295`, `peers.go:54-62`).
 - SSE: `GET /v1/events?ch=PREFIX&since=SEQ[&epoch=EPOCH]`, or `Last-Event-ID`. Each event is
@@ -164,7 +167,9 @@ line, `{event: "ready", name, addr, pid, state_file, ms_to_ready}` (`main.go:129
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` from
   apply and `error` from a refusal (`crates/ix-ctl/src/lib.rs:215-317`), and `addr` and `token`
   from the state file (`lib.rs:142-164`). Its waits poll `/v1/status`; they do not subscribe yet
-  (`lib.rs:30-31`).
+  (`lib.rs:30-31`). A wait scoped to a boot, on a handle made from the state file, re-reads that
+  file when the plane stops answering (no connection, or 401), so a plane that restarts under
+  the wait is reported as restarted rather than unreachable (Codex review, 2026-10-20).
 
 So no program outside one Go binary reads the WebSocket or SSE side. The only contract across
 languages today is the HTTP replies.

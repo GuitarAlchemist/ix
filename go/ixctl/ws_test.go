@@ -170,6 +170,41 @@ func TestUnknownFieldRefusedOnHTTPAndWS(t *testing.T) {
 			t.Fatalf("WS %s: %s, want the refusal %q", doc, b, he.Error)
 		}
 	}
+	// A peer that is named but empty is not "local": refused the same way on
+	// every transport, before anything runs.
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/v1/status?peer=", nil},
+		{"POST", "/v1/plan?peer=", running("pod")},
+		{"POST", "/v1/apply?peer=", running("pod")},
+		{"POST", "/v1/apply?peer=b&peer=c", running("pod")},
+		{"POST", "/v1/stop", json.RawMessage(`{"service":"pod","peer":""}`)},
+	} {
+		code, _, body := httpDo(t, in, c.method, c.path, c.body, nil)
+		if code != 400 || !strings.Contains(string(body), "peer must not be empty") {
+			t.Fatalf("HTTP %s %s with an empty peer: %d %s", c.method, c.path, code, body)
+		}
+	}
+	for _, frame := range []string{
+		`{"id":90,"op":"status","peer":""}`,
+		`{"id":90,"op":"apply","peer":"","desired":{"services":{"pod":{"state":"running"}}}}`,
+		`{"id":90,"op":"stop","service":"pod","peer":""}`,
+	} {
+		if err := conn.Write(ctx, websocket.MessageText, []byte(frame)); err != nil {
+			t.Fatal(err)
+		}
+		_, b, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f Frame
+		json.Unmarshal(b, &f)
+		if f.Re == nil || *f.Re != 90 || f.OK || !strings.Contains(f.Error, "peer must not be empty") {
+			t.Fatalf("WS %s: %s, want the empty-peer refusal", frame, b)
+		}
+	}
 	var st StatusReply
 	json.Unmarshal(do(t, dial(t, in), Request{Op: "status"}), &st)
 	if st.Generation != 0 {

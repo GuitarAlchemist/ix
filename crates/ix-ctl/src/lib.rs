@@ -131,6 +131,9 @@ impl From<std::io::Error> for CtlError {
 pub struct Ctl {
     addr: String,
     token: String,
+    /// The state file this handle came from, if any: a wait scoped to a boot re-reads it when
+    /// the plane stops answering, since a restarted plane has a new address and token.
+    state: Option<PathBuf>,
 }
 
 impl fmt::Debug for Ctl {
@@ -139,6 +142,7 @@ impl fmt::Debug for Ctl {
         f.debug_struct("Ctl")
             .field("addr", &self.addr)
             .field("token", &"<redacted>")
+            .field("state", &self.state)
             .finish()
     }
 }
@@ -149,13 +153,20 @@ impl Ctl {
         Self {
             addr: addr.into(),
             token: token.into(),
+            state: None,
         }
     }
 
     /// The plane described by its state file, `{"name", "addr", "pid", "token"}`, which
-    /// `ixctl up` writes on ready and removes on a clean exit.
+    /// `ixctl up` writes on ready and removes on a clean exit. The handle remembers the path:
+    /// see [`Ctl::wait_generation_of`].
     pub fn from_state(path: impl AsRef<Path>) -> Result<Self, CtlError> {
-        let path = path.as_ref();
+        let mut ctl = Self::read_state(path.as_ref())?;
+        ctl.state = Some(path.as_ref().to_path_buf());
+        Ok(ctl)
+    }
+
+    fn read_state(path: &Path) -> Result<Self, CtlError> {
         let state = |reason: String| CtlError::State {
             path: path.to_path_buf(),
             reason,
@@ -184,7 +195,13 @@ impl Ctl {
 
     /// `GET /v1/status`: the generations, every service with its state and nodes, the peers.
     pub fn status(&self) -> Result<Value, CtlError> {
-        self.call("GET", "/v1/status", None)
+        self.status_of(None)
+    }
+
+    /// [`Ctl::status`], or with `peer` that peer's status as this plane relays it
+    /// (`GET /v1/status?peer=`): its own name, epoch and generations.
+    pub fn status_of(&self, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.call("GET", &routed("/v1/status", peer), None)
     }
 
     /// `POST /v1/plan`: the actions `desired` would take, changing nothing. With `peer`, the
@@ -239,7 +256,7 @@ impl Ctl {
     /// for the new boot to reach that number, or times out. [`Ctl::wait_generation_of`] takes
     /// the epoch the apply reply gave and fails at once instead.
     pub fn wait_generation(&self, generation: u64, timeout: Duration) -> Result<Value, CtlError> {
-        self.wait_gen(None, generation, timeout)
+        self.wait_gen(None, None, generation, timeout)
     }
 
     /// [`Ctl::wait_generation`], scoped to the boot `epoch` (the apply reply's `epoch`, also
@@ -247,24 +264,74 @@ impl Ctl {
     /// restarted and the generation's outcome is gone with its boot: the wait ends at once
     /// with [`CtlError::Restarted`] instead of waiting for the new boot to reach the same
     /// number. A plane that reports no epoch is waited on as [`Ctl::wait_generation`] does.
+    ///
+    /// A restarted plane listens at a new address with a new token, so a handle made with
+    /// [`Ctl::from_state`] re-reads its state file when the plane stops answering (no
+    /// connection, or a 401) and goes on against what the file names now; that is how the
+    /// restart is seen rather than reported as `plane unreachable`. A handle made with
+    /// [`Ctl::new`] has nothing to re-read, and the connection error stands.
     pub fn wait_generation_of(
         &self,
         epoch: &str,
         generation: u64,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
-        self.wait_gen(Some(epoch), generation, timeout)
+        self.wait_gen(None, Some(epoch), generation, timeout)
+    }
+
+    /// [`Ctl::wait_generation`] / [`Ctl::wait_generation_of`] for a generation that was
+    /// applied through `peer` ([`Ctl::apply`] with a peer): the status read is that peer's
+    /// (`GET /v1/status?peer=`), whose generations and epoch the apply reply carried. Waiting
+    /// on this plane instead would compare the peer's epoch with this plane's and end with a
+    /// false [`CtlError::Restarted`], or accept an unrelated local generation.
+    pub fn wait_generation_at(
+        &self,
+        peer: &str,
+        epoch: Option<&str>,
+        generation: u64,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
+        self.wait_gen(Some(peer), epoch, generation, timeout)
+    }
+
+    /// Whether `err` is one a restarted plane produces: nothing listening at the old
+    /// address, or the old token refused. Only then is the state file worth re-reading.
+    fn plane_may_have_moved(&self, err: &CtlError) -> bool {
+        self.state.is_some() && matches!(err, CtlError::Io(_) | CtlError::Http { status: 401, .. })
+    }
+
+    /// The handle the state file names now, if it is readable and names another plane.
+    fn refreshed(&self) -> Option<Ctl> {
+        let path = self.state.as_deref()?;
+        let fresh = Self::read_state(path).ok()?;
+        (fresh.addr != self.addr || fresh.token != self.token).then(|| Ctl {
+            state: self.state.clone(),
+            ..fresh
+        })
     }
 
     fn wait_gen(
         &self,
+        peer: Option<&str>,
         epoch: Option<&str>,
         generation: u64,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
+        let mut me = self.clone();
         loop {
-            let status = self.status()?;
+            let status = match me.status_of(peer) {
+                Ok(status) => status,
+                Err(e) if epoch.is_some() && me.plane_may_have_moved(&e) => match me.refreshed() {
+                    Some(fresh) => {
+                        me = fresh;
+                        continue;
+                    }
+                    None if pause(deadline) => return Err(e),
+                    None => continue,
+                },
+                Err(e) => return Err(e),
+            };
             if let (Some(want), Some(now)) = (epoch, status.get("epoch").and_then(Value::as_str)) {
                 if now != want {
                     return Err(CtlError::Restarted {
@@ -339,9 +406,30 @@ impl Ctl {
         nodes: usize,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
+        self.wait_nodes_on(None, service, nodes, timeout)
+    }
+
+    /// [`Ctl::wait_nodes`] for a service of `peer`, read from that peer's status.
+    pub fn wait_nodes_at(
+        &self,
+        peer: &str,
+        service: &str,
+        nodes: usize,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
+        self.wait_nodes_on(Some(peer), service, nodes, timeout)
+    }
+
+    fn wait_nodes_on(
+        &self,
+        peer: Option<&str>,
+        service: &str,
+        nodes: usize,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
         loop {
-            let status = self.status()?;
+            let status = self.status_of(peer)?;
             let entry = status
                 .get("services")
                 .and_then(Value::as_array)
