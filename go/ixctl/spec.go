@@ -164,11 +164,12 @@ func resolveCommand(path string) string {
 const desiredSchema = "ixctl-desired/0"
 
 // Desired is a desired-state document: the state each named service should be
-// in. Services it does not name are left as they are.
+// in. Services it does not name are left as they are. It says what is wanted,
+// never where: routing (`peer`) travels beside it, in the WebSocket frame or
+// as `?peer=` on HTTP, so a journaled document holds no address.
 type Desired struct {
 	Schema   string                    `json:"schema,omitempty"`
 	Services map[string]DesiredService `json:"services"`
-	Peer     string                    `json:"peer,omitempty"`
 }
 
 type DesiredService struct {

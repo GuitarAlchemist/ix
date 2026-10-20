@@ -58,8 +58,9 @@ trois : une **époque d'instance**, un identifiant choisi à chaque démarrage (
 **Transports.** Un même plan sert trois faces, et chaque requête passe d'abord les mêmes
 contrôles (`go/ixctl/http.go:44-59`, `:64-86`) :
 
-- JSON sur HTTP : `GET /health` (sans jeton), `GET /v1/status`, `POST /v1/plan`,
-  `POST /v1/apply`, `POST /v1/stop` avec `{service, peer?}`, et `POST /v1/shutdown`. Un refus
+- JSON sur HTTP : `GET /health` (sans jeton), `GET /v1/status`, `POST /v1/plan` et
+  `POST /v1/apply` (le corps est le document ; `?peer=` nomme un pair, correctif F2.3),
+  `POST /v1/stop` avec `{service, peer?}`, et `POST /v1/shutdown`. Un refus
   est `{"error": "..."}` avec le statut 400, 401, 403, 500, 502 ou 503 (`http.go:134-136`,
   `plane.go:295`, `peers.go:54-62`).
 - SSE : `GET /v1/events?ch=PREFIXE&since=SEQ[&epoch=EPOQUE]`, ou `Last-Event-ID`. Chaque
@@ -264,8 +265,7 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
 
 ```json
 {"schema": "ixctl-desired/0",
- "services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}},
- "peer": "b"}
+ "services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}}}
 ```
 
 (`go/ixctl/spec.go:161-175`)
@@ -280,8 +280,10 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   (`spec.go:161-162`). Les appelants internes du plan en dépendent : le démarrage automatique
   n'applique que les services marqués `autostart` (`plane.go:83-91`), et `stop` applique
   `{nom: stopped}` (`plane.go:403`).
-- **`peer` relève du routage, pas de l'état.** Quand il est présent, toute l'opération part vers
-  ce pair, sans `peer` (`plane.go:101-108`, `:148-153`, `http.go:99`).
+- **`peer` relève du routage, pas de l'état.** Il se trouvait dans le document ; depuis le
+  correctif F2.3 il voyage à côté, comme le `peer` de la trame en WebSocket et `?peer=` en HTTP,
+  et toute l'opération part vers ce pair (`plane.go`, `Request` et `forward` ; `http.go`,
+  `desiredOp`). Un document qui porte `peer` est refusé comme champ inconnu.
 - **Générations.** `apply` incrémente un compteur de l'instance et le renvoie aussitôt
   (`plane.go:298-313`) ; `plan` est pur et renvoie le compteur courant (`plane.go:251-262`). Le
   compteur vit en mémoire et repart de 0 à chaque démarrage (`plane.go:29`, `:41-47`). L'issue de
@@ -305,6 +307,14 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   Le programme d'exemple `crates/ix-ctl/examples/pods.ixql` l'envoie, de sorte que le client Rust
   et le gate E2E l'exercent. Test : `TestUnknownFieldRefusedOnHTTPAndWS` (`ixctl-desired/9`
   refusé, `ixctl-desired/0` et l'absence de schéma acceptés, en HTTP et en WebSocket).
+- **Corrigé (F2.3), cette tranche :** `peer` est sorti du document. En WebSocket, c'était déjà un
+  champ de la trame ; en HTTP, c'est désormais `?peer=` sur `/v1/plan` et `/v1/apply`, le corps
+  étant le document seul. Le client Rust prend `peer: Option<&str>` sur `plan` et `apply`, et
+  `ix.ctl.plan` / `ix.ctl.apply` en IXQL prennent `peer:` à côté du document. Un document
+  journalisé ou stocké ne dit plus où il a été envoyé. Tests : `TestFederationForwardsAndMirrors`
+  (HTTP `?peer=b`, refusé puis accepté selon les règles de b), `TestUnknownFieldRefusedOnHTTPAndWS`
+  (`peer` dans le document est un champ inconnu), et `a_peer_is_named_beside_the_document` côté
+  client.
 
 ### Qui l'écrit, qui le lit
 

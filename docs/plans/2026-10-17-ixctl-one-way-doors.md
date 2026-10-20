@@ -56,8 +56,9 @@ addition serves all three: an **instance epoch**, an id chosen at each boot (F1.
 **Transports.** One plane serves three faces, and every request passes the same checks first
 (`go/ixctl/http.go:44-59`, `:64-86`):
 
-- JSON over HTTP: `GET /health` (no token), `GET /v1/status`, `POST /v1/plan`,
-  `POST /v1/apply`, `POST /v1/stop` with `{service, peer?}`, and `POST /v1/shutdown`. A refusal
+- JSON over HTTP: `GET /health` (no token), `GET /v1/status`, `POST /v1/plan` and
+  `POST /v1/apply` (the body is the document; `?peer=` names a peer, F2.3 fix), `POST /v1/stop`
+  with `{service, peer?}`, and `POST /v1/shutdown`. A refusal
   is `{"error": "..."}` with status 400, 401, 403, 500, 502 or 503 (`http.go:134-136`,
   `plane.go:295`, `peers.go:54-62`).
 - SSE: `GET /v1/events?ch=PREFIX&since=SEQ[&epoch=EPOCH]`, or `Last-Event-ID`. Each event is
@@ -252,8 +253,7 @@ name `ixctl.v1`.
 
 ```json
 {"schema": "ixctl-desired/0",
- "services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}},
- "peer": "b"}
+ "services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}}}
 ```
 
 (`go/ixctl/spec.go:161-175`)
@@ -265,8 +265,10 @@ name `ixctl.v1`.
 - **The document is partial.** "Services it does not name are left as they are"
   (`spec.go:161-162`). The plane's own callers rely on it: autostart applies only the autostart
   services (`plane.go:83-91`), and `stop` applies `{name: stopped}` (`plane.go:403`).
-- **`peer` is routing, not state.** When it is set, the whole op goes to that peer, with `peer`
-  removed (`plane.go:101-108`, `:148-153`, `http.go:99`).
+- **`peer` is routing, not state.** It used to sit inside the document; since the F2.3 fix it
+  travels beside it, as the frame's `peer` on WebSocket and `?peer=` on HTTP, and the whole op
+  goes to that peer (`plane.go`, `Request` and `forward`; `http.go`, `desiredOp`). A document
+  that carries `peer` is refused as an unknown field.
 - **Generations.** `apply` bumps a counter of the instance and answers it at once
   (`plane.go:298-313`); `plan` is pure and answers the current one (`plane.go:251-262`). The
   counter lives in memory and starts at 0 at each boot (`plane.go:29`, `:41-47`). Each apply's
@@ -288,6 +290,13 @@ name `ixctl.v1`.
   example program `crates/ix-ctl/examples/pods.ixql` sends it, so the Rust client and the E2E
   gate exercise it. Test: `TestUnknownFieldRefusedOnHTTPAndWS` (refused `ixctl-desired/9`,
   accepted `ixctl-desired/0` and no schema, on HTTP and WebSocket).
+- **Fixed (F2.3), this slice:** `peer` left the document. On WebSocket it was already a field of
+  the frame; on HTTP it is now `?peer=` on `/v1/plan` and `/v1/apply`, the body being the
+  document alone. The Rust client takes `peer: Option<&str>` on `plan` and `apply`, and IXQL's
+  `ix.ctl.plan` / `ix.ctl.apply` take `peer:` beside the document. A journaled or stored
+  document no longer says where it was sent. Tests: `TestFederationForwardsAndMirrors` (HTTP
+  `?peer=b`, refused and accepted by b's rules), `TestUnknownFieldRefusedOnHTTPAndWS` (`peer`
+  inside the document is an unknown field), and the client's `a_peer_is_named_beside_the_document`.
 
 ### Who writes it, who reads it
 

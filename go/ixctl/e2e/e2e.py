@@ -376,9 +376,9 @@ def main():
           and ms < 3000, apply=r, ms_to_failed=fail_ms, transitions=seen,
           rust_wait_ms=round(ms, 1), stderr=err[:200])
 
-    # E3: an apply forwarded from A lands on B only.
+    # E3: an apply forwarded from A lands on B only. The peer is named beside the document.
     a_before = svc(status(sa), "pod-a")
-    code, fwd = call(sa, "POST", "/v1/apply", {**doc, "peer": "b"})
+    code, fwd = call(sa, "POST", "/v1/apply?peer=b", doc)
     _, ms = wait_until(lambda: len(svc(status(sb), "pod-a")["nodes"] or []) == 3, 10)
     b_pod = svc(status(sb), "pod-a")
     a_after = svc(status(sa), "pod-a")

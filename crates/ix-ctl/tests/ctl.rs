@@ -116,6 +116,11 @@ impl Plane {
 
     fn route(&mut self, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
         let doc: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+        // Routing rides beside the document, as `?peer=`; this plane has no peers.
+        let (path, query) = path.split_once('?').unwrap_or((path, ""));
+        if query.starts_with("peer=") {
+            return (400, json!({"error": "this plane has no peers"}));
+        }
         match (method, path) {
             ("GET", "/v1/status") => (200, self.status()),
             ("POST", "/v1/plan") => match self.plan(&doc) {
@@ -407,7 +412,7 @@ fn a_wrong_token_surfaces_as_a_401() {
 #[test]
 fn an_undeclared_service_surfaces_as_a_400_and_nothing_is_applied() {
     let (ctl, plane) = plane();
-    match ctl.plan(&json!({"services": {"nope": {"state": "running"}}})) {
+    match ctl.plan(&json!({"services": {"nope": {"state": "running"}}}), None) {
         Err(CtlError::Http { status, message }) => {
             assert_eq!(400, status);
             assert!(message.contains("nope"), "{message}");
@@ -425,6 +430,47 @@ fn an_undeclared_service_surfaces_as_a_400_and_nothing_is_applied() {
     let plane = plane.lock().unwrap();
     assert_eq!(0, plane.generation);
     assert!(plane.services.values().all(|s| s.since.is_none()));
+}
+
+// F2.3: routing is not state. The peer is named beside the document, as `?peer=` on the
+// request and `peer:` in IXQL, and the document itself goes out without it.
+#[test]
+fn a_peer_is_named_beside_the_document() {
+    let (ctl, plane) = plane();
+    let doc = json!({"services": {"pod-a": {"state": "running"}}});
+    match ctl.apply(&doc, Some("b")) {
+        Err(CtlError::Http {
+            status: 400,
+            message,
+        }) => {
+            assert!(message.contains("no peers"), "{message}")
+        }
+        other => panic!("{other:?}"),
+    }
+    let err = executor(ctl.clone())
+        .run_source(
+            r#"a <- ix.ctl.plan({ services: { "pod-a": { state: "running" } } }, peer: "b")"#,
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("no peers"), "{err}");
+    assert_eq!(
+        0,
+        ctl.apply(&doc, None).unwrap()["generation"]
+            .as_u64()
+            .unwrap()
+            - 1
+    );
+
+    let plane = plane.lock().unwrap();
+    assert_eq!(
+        [
+            "POST /v1/apply?peer=b",
+            "POST /v1/plan?peer=b",
+            "POST /v1/apply"
+        ],
+        plane.log[..]
+    );
+    assert_eq!(1, plane.generation);
 }
 
 #[test]
@@ -448,6 +494,8 @@ fn argument_mistakes_fail_the_run_before_any_request() {
         ),
         ("a <- ix.ctl.plan()", "document"),
         ("a <- ix.ctl.apply({ pods: {} })", "services"),
+        ("a <- ix.ctl.apply({ services: {} }, peer: 3)", "string"),
+        ("a <- ix.ctl.apply({ services: {} }, to: \"b\")", "to"),
         ("a <- { services: {} } → ix.ctl.status", "piped"),
         (r#"a <- ix.ctl.status("pod-a")"#, "named"),
     ] {

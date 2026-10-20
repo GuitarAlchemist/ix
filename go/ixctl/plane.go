@@ -106,12 +106,8 @@ func (p *Plane) Epoch() string { return p.hub.Epoch() }
 
 // Request is the one entry point every transport uses.
 func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
-	peer := req.Peer
-	if peer == "" && req.Desired != nil {
-		peer = req.Desired.Peer
-	}
-	if peer != "" {
-		return p.forward(ctx, peer, req)
+	if req.Peer != "" {
+		return p.forward(ctx, req.Peer, req)
 	}
 	switch req.Op {
 	case "status":
@@ -152,13 +148,7 @@ func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, err
 	default:
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
-	fwd := Request{Op: req.Op, Service: req.Service}
-	if req.Desired != nil {
-		d := *req.Desired
-		d.Peer = ""
-		fwd.Desired = &d
-	}
-	return l.forward(ctx, fwd)
+	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired})
 }
 
 type ServiceStatus struct {

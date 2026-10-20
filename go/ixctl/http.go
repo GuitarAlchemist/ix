@@ -91,13 +91,15 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 		"uptime_ms": time.Since(s.started).Milliseconds()})
 }
 
+// desiredOp reads a desired-state document from the body; `?peer=` beside it
+// says which peer the op is for, the way the WebSocket frame's peer does.
 func desiredOp(op string) func(*http.Request) (Request, error) {
 	return func(r *http.Request) (Request, error) {
 		var d Desired
 		if err := decodeBody(r, &d); err != nil {
 			return Request{}, err
 		}
-		return Request{Op: op, Desired: &d, Peer: d.Peer}, nil
+		return Request{Op: op, Desired: &d, Peer: r.URL.Query().Get("peer")}, nil
 	}
 }
 

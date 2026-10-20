@@ -4,6 +4,7 @@
 //! desired <- { services: { "pod-a": { state: "running" } } }
 //! planned <- desired → ix.ctl.plan
 //! applied <- ix.ctl.apply(desired)
+//! on_b    <- ix.ctl.apply(desired, peer: "b")
 //! done    <- ix.ctl.wait(generation: applied.generation, timeout_ms: 10000)
 //! pod     <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)
 //! status  <- ix.ctl.status()
@@ -29,12 +30,14 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
 
     let c = ctl.clone();
     caps.register("ix.ctl.plan", move |a: CallArgs| {
-        answer(c.plan(&document(a)?))
+        let (doc, peer) = document(a)?;
+        answer(c.plan(&doc, peer.as_deref()))
     })?;
 
     let c = ctl.clone();
     caps.register("ix.ctl.apply", move |a: CallArgs| {
-        answer(c.apply(&document(a)?))
+        let (doc, peer) = document(a)?;
+        answer(c.apply(&doc, peer.as_deref()))
     })?;
 
     let c = ctl.clone();
@@ -72,17 +75,14 @@ fn expect(a: &CallArgs, named: &[&str]) -> Result<(), String> {
     if !a.positional.is_empty() {
         return Err("takes named arguments only".into());
     }
-    match a.named.keys().find(|k| !named.contains(&k.as_str())) {
-        Some(k) => Err(format!("has no argument `{k}`")),
-        None => Ok(()),
-    }
+    expect_named(a, named)
 }
 
-/// The desired-state document: the piped value, or the one positional value.
-fn document(a: CallArgs) -> Result<Value, String> {
-    if let Some(k) = a.named.keys().next() {
-        return Err(format!("has no argument `{k}`"));
-    }
+/// The desired-state document, the piped value or the one positional value, and the peer it
+/// is for (`peer:`), if any. The peer rides beside the document, never inside it.
+fn document(a: CallArgs) -> Result<(Value, Option<String>), String> {
+    expect_named(&a, &["peer"])?;
+    let peer = string(&a, "peer")?;
     let doc = match (a.piped, a.positional.len()) {
         (Some(v), 0) => v,
         (None, 1) => a.positional.into_iter().next().expect("one value"),
@@ -92,7 +92,15 @@ fn document(a: CallArgs) -> Result<Value, String> {
     if !doc.get("services").is_some_and(Value::is_object) {
         return Err("the desired-state document needs a `services` record".into());
     }
-    Ok(doc)
+    Ok((doc, peer))
+}
+
+/// No named argument outside `named`.
+fn expect_named(a: &CallArgs, named: &[&str]) -> Result<(), String> {
+    match a.named.keys().find(|k| !named.contains(&k.as_str())) {
+        Some(k) => Err(format!("has no argument `{k}`")),
+        None => Ok(()),
+    }
 }
 
 fn string(a: &CallArgs, name: &str) -> Result<Option<String>, String> {

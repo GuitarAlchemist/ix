@@ -143,6 +143,8 @@ func TestUnknownFieldRefusedOnHTTPAndWS(t *testing.T) {
 		{`{"services":{"pod":{"state":"running"}},"schema":"ixctl-desired/9"}`, `schema "ixctl-desired/9" is not "ixctl-desired/0"`},
 		{`{"services":{"pod":{"state":"running","replicas":2}}}`, "unknown field"},
 		{`{"services":{"pod":{"state":"running"}},"version":1}`, "unknown field"},
+		// Routing is not state: a peer is named beside the document (F2.3).
+		{`{"services":{"pod":{"state":"running"}},"peer":"b"}`, "unknown field"},
 	} {
 		doc := c.doc
 		code, _, body := httpDo(t, in, "POST", "/v1/apply", json.RawMessage(doc), nil)

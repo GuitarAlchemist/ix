@@ -13,7 +13,7 @@
 //!
 //! let ctl = Ctl::from_state("C:/Users/me/AppData/Local/ixctl/local.json")?;
 //! let desired = json!({ "services": { "pod-a": { "state": "running" } } });
-//! let applied = ctl.apply(&desired)?;
+//! let applied = ctl.apply(&desired, None)?;
 //! let g = applied["generation"].as_u64().unwrap();
 //! ctl.wait_generation(g, Duration::from_secs(10))?;
 //! let pod = ctl.wait_nodes("pod-a", 4, Duration::from_secs(10))?;
@@ -172,9 +172,10 @@ impl Ctl {
         self.call("GET", "/v1/status", None)
     }
 
-    /// `POST /v1/plan`: the actions `desired` would take, changing nothing.
-    pub fn plan(&self, desired: &Value) -> Result<Value, CtlError> {
-        self.call("POST", "/v1/plan", Some(desired))
+    /// `POST /v1/plan`: the actions `desired` would take, changing nothing. With `peer`, the
+    /// plane forwards it to that peer (`?peer=` beside the document), which decides.
+    pub fn plan(&self, desired: &Value, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.call("POST", &routed("/v1/plan", peer), Some(desired))
     }
 
     /// `POST /v1/apply`: answers the new generation and its actions at once; they run in the
@@ -186,8 +187,11 @@ impl Ctl {
     /// plane's one writer; with other writers a moved generation may be theirs. Applying the
     /// same document again leaves the services in the state it names, but it is a second
     /// apply, not a confirmation of the first.
-    pub fn apply(&self, desired: &Value) -> Result<Value, CtlError> {
-        self.call("POST", "/v1/apply", Some(desired))
+    ///
+    /// With `peer`, the plane forwards the document to that peer (`?peer=` beside it), which
+    /// decides. The document itself never names a peer: it says what is wanted, not where.
+    pub fn apply(&self, desired: &Value, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.call("POST", &routed("/v1/apply", peer), Some(desired))
     }
 
     /// `POST /v1/stop`: answers once the service's process tree is gone. With `peer`, the
@@ -346,6 +350,24 @@ impl Ctl {
             _ => Err(CtlError::NotLoopback(self.addr.clone())),
         }
     }
+}
+
+/// `path`, with `?peer=<name>` when a peer is named. A peer name is `[a-z0-9-]` on the plane;
+/// anything else is percent-encoded so the query stays one argument.
+fn routed(path: &str, peer: Option<&str>) -> String {
+    let Some(peer) = peer else {
+        return path.to_string();
+    };
+    let mut out = format!("{path}?peer=");
+    for b in peer.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Sleeps one poll, or less near `deadline`. True when the deadline has passed.

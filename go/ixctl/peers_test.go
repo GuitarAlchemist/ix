@@ -52,6 +52,17 @@ func TestFederationForwardsAndMirrors(t *testing.T) {
 	if _, err := c.Do(t.Context(), Request{Op: "plan", Peer: "b", Desired: running("nope")}); err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("b's refusal relayed: %v", err)
 	}
+	// On HTTP the peer is named beside the document, as ?peer=; the body stays
+	// the document alone (F2.3).
+	if code, _, body := httpDo(t, a, "POST", "/v1/plan?peer=b", running("nope"), nil); code != 400 || !strings.Contains(string(body), "nope") {
+		t.Fatalf("HTTP plan?peer=b refusal: %d %s", code, body)
+	}
+	code, _, body := httpDo(t, a, "POST", "/v1/plan?peer=b", running("pod-x"), nil)
+	var pr PlanReply
+	json.Unmarshal(body, &pr)
+	if code != 200 || len(pr.Actions) != 0 || len(pr.Noop) != 1 || pr.Noop[0] != "pod-x" {
+		t.Fatalf("HTTP plan?peer=b on b's running service: %d %s", code, body)
+	}
 
 	var sr StopReply
 	json.Unmarshal(do(t, c, Request{Op: "stop", Peer: "b", Service: "pod-x"}), &sr)
