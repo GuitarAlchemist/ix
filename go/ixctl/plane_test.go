@@ -287,6 +287,69 @@ func TestLaunchFailureDiverges(t *testing.T) {
 // F2.1 of the one-way-doors doc: generation 1 fails on one service, generation 2 starts
 // another and converges. observed_generation alone then reads 1 as done; settled_generation
 // and failed say what happened to each generation.
+// An apply that finds a service on its way (a start the supervisor has not made yet, a restart
+// in its backoff) says noop and launches nothing; the run keeps the generation that launched
+// it, and only that generation's service.started settles a start.
+func TestAnApplyDuringAStartOrABackoffIsANoop(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "crashy", args: []string{"--crash-after-ms", "300"}, max: 3}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	var r1, r2, r3, r4 ApplyReply
+	// Two applies in a row: the second finds the first's start under way.
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &r1)
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &r2)
+	if len(r1.Actions) != 1 || len(r2.Actions) != 0 {
+		t.Fatalf("actions %v then %v", r1.Actions, r2.Actions)
+	}
+	// The noop apply converges at once, maybe before the first's service.started: take the
+	// three events in whatever order they come.
+	seen := map[string]bool{}
+	for len(seen) < 3 {
+		e := waitEnv(t, w, 5*time.Second, "started or converged", func(e *Envelope) bool {
+			return e.Ev.Kind == "service.started" || e.Ev.Kind == "converged"
+		})
+		switch {
+		case e.Ev.Kind == "service.started":
+			if g := ctlData(e)["generation"]; g != float64(r1.Generation) {
+				t.Fatalf("the run is stamped %v, want %d", g, r1.Generation)
+			}
+			seen["started"] = true
+		case genOf(e) == r1.Generation:
+			seen["converged 1"] = true
+		case genOf(e) == r2.Generation:
+			seen["converged 2"] = true
+		default:
+			t.Fatalf("unexpected %s", e.Raw())
+		}
+	}
+	if s := svcStatus(in.plane.Status(), "crashy"); s.Generation != r1.Generation {
+		t.Fatalf("status %+v", s)
+	}
+	// In the backoff after the crash: an apply is a noop too, and the restart stays the run's.
+	waitEnv(t, w, 5*time.Second, "restarting", func(e *Envelope) bool { return e.Ev.Kind == "service.restarting" })
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &r3)
+	if len(r3.Actions) != 0 {
+		t.Fatalf("apply in the backoff: %v", r3.Actions)
+	}
+	waitEnv(t, w, 5*time.Second, "converged", func(e *Envelope) bool { return e.Ev.Kind == "converged" && genOf(e) == r3.Generation })
+	restarted := waitEnv(t, w, 5*time.Second, "restarted", func(e *Envelope) bool { return e.Ev.Kind == "service.started" })
+	if g := ctlData(restarted)["generation"]; g != float64(r1.Generation) || ctlData(restarted)["restarts"] != 1.0 {
+		t.Fatalf("the restart is stamped %v, want %d: %s", g, r1.Generation, restarted.Raw())
+	}
+	// Stopped, a new apply is a real start, stamped with its own generation.
+	do(t, c, Request{Op: "stop", Service: "crashy"})
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &r4)
+	if len(r4.Actions) != 1 {
+		t.Fatalf("apply after a stop: %v", r4.Actions)
+	}
+	fresh := waitEnv(t, w, 5*time.Second, "fresh start", func(e *Envelope) bool { return e.Ev.Kind == "service.started" })
+	if g := ctlData(fresh)["generation"]; g != float64(r4.Generation) {
+		t.Fatalf("the new run is stamped %v, want %d", g, r4.Generation)
+	}
+	waitEnv(t, w, 5*time.Second, "converged", func(e *Envelope) bool { return e.Ev.Kind == "converged" && genOf(e) == r4.Generation })
+}
+
 func TestALaterGenerationDoesNotHideAFailedOne(t *testing.T) {
 	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
 		{"name": "ghost", "command": "no-such-binary"},

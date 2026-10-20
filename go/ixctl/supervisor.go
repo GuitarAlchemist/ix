@@ -88,10 +88,16 @@ func newService(spec ServiceSpec, hub *Hub) *service {
 }
 
 // want records a desired state and hands it to the supervisor, with the generation of
-// the apply that asked for it.
+// the apply that asked for it. A start the supervisor has not made yet shows at once: the
+// service is `starting`, stamped with this generation, so a plan that follows sees it on its
+// way and says noop instead of claiming a start this generation would not make.
 func (s *service) want(state string, generation uint64) {
 	s.mu.Lock()
 	s.desired = state
+	if state == desiredRunning && (s.state == stateStopped || s.state == stateFailed) {
+		s.state = stateStarting
+		s.startGen = generation
+	}
 	s.mu.Unlock()
 	s.cmds <- command{state: state, generation: generation}
 }
@@ -166,10 +172,12 @@ func (s *service) command(want command) {
 	switch want.state {
 	case desiredRunning:
 		if s.proc != nil || s.state == stateRestarting {
+			// Already on its way: the run keeps the generation that launched it.
 			return
 		}
 		s.recent = nil
-		// The run about to start, and every restart of it, belongs to this generation.
+		// The run about to start, and every restart of it, belongs to this generation (want
+		// stamped it already; a stop queued between the two could not have changed it).
 		s.mu.Lock()
 		s.startGen = want.generation
 		s.mu.Unlock()

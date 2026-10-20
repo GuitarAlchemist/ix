@@ -382,7 +382,13 @@ name `ixctl.v1`.
   `service.exited`, kept across the run's restarts), and `wait_exit_of(service, generation,
   epoch)` / `ix.ctl.wait(service:, exit: true, generation:, epoch:)` answer that run's exit
   only, an earlier run's being pending and another boot a `Restarted`;
-  `crates/ix-ctl/examples/job.ixql` passes `applied.generation` and `applied.epoch`. Gate E10 runs the real
+  `crates/ix-ctl/examples/job.ixql` passes `applied.generation` and `applied.epoch`. Only a
+  generation whose apply had a `start` action launched a run: the supervisor marks a service
+  `starting`, stamped with the apply's generation, the moment the apply asks (`want`), so a plan
+  that follows sees it on its way and says noop, as it does for a service `running` or in a
+  restart's backoff, and `await` settles a start only on the `service.started` stamped with its
+  own generation (Codex round 11, P1: before this, two applies in a row could both claim one
+  start, the second converging on the first's run). Gate E10 runs the real
   `ix pipeline run --json` (one `stats` stage, through the Demerzel constitution gate) as a job
   under the plane and reads its NDJSON back from `svc/job`; a job whose pipeline file is missing
   exits 10, its generation converges all the same, and it stays `stopped` with that code. Tests:
@@ -442,7 +448,7 @@ header; the lock dies with the process. It holds three kinds of line (`plane.go:
 ```json
 {"epoch":"3f9a1c0b7d2e","kind":"boot","name":"local","schema":"ixctl-journal/0","t":1760699999000}
 {"actions":[{"op":"start","service":"pod-a"}],"desired":{"services":{"pod-a":{"state":"running"}}},"generation":1,"kind":"apply","t":1760700000000}
-{"ch":"ctl","seq":3,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000412,"ev":{"kind":"service.started","t":1760700000412,"data":{"pid":4242,"restarts":0,"service":"pod-a"}}}
+{"ch":"ctl","seq":3,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000412,"ev":{"kind":"service.started","t":1760700000412,"data":{"generation":1,"pid":4242,"restarts":0,"service":"pod-a"}}}
 ```
 
 - A `boot` header, written when the journal is opened, before any other line of that boot. It

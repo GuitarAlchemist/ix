@@ -282,7 +282,10 @@ func (p *Plane) plan(d *Desired) ([]Action, []string) {
 		desired, state := p.svcs[n].observed()
 		switch d.Services[n].State {
 		case desiredRunning:
-			if desired == desiredRunning && state == stateRunning {
+			// Running, or on its way (a start the supervisor has not made yet, a restart in
+			// its backoff): nothing to start. Only a stopped or failed service, or one being
+			// stopped, takes a start.
+			if desired == desiredRunning && (state == stateRunning || state == stateStarting || state == stateRestarting) {
 				noop = append(noop, n)
 			} else {
 				actions = append(actions, Action{Op: "start", Service: n})
@@ -329,7 +332,8 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 }
 
 // await watches ctl until every action is observed, then publishes the
-// outcome. A start is observed by service.started, a stop by service.stopped
+// outcome. A start is observed by the service.started stamped with this
+// generation (an earlier run's does not settle it), a stop by service.stopped
 // (the tree is gone by then).
 func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 	pending := map[string]string{}
@@ -355,8 +359,8 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 		if gap != nil {
 			// Events were lost: fall back on the observed state.
 			for n, op := range pending {
-				_, state := p.svcs[n].observed()
-				if (op == "start" && state == stateRunning) || (op == "stop" && state == stateStopped) {
+				st := p.svcs[n].status()
+				if (op == "start" && st.State == stateRunning && st.Generation == g) || (op == "stop" && st.State == stateStopped) {
 					delete(pending, n)
 				}
 			}
@@ -364,8 +368,9 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 		}
 		for _, env := range envs {
 			var data struct {
-				Service string `json:"service"`
-				Reason  string `json:"reason"`
+				Service    string `json:"service"`
+				Reason     string `json:"reason"`
+				Generation uint64 `json:"generation"`
 			}
 			json.Unmarshal(env.Ev.Data, &data)
 			op, ok := pending[data.Service]
@@ -373,7 +378,7 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 				continue
 			}
 			switch {
-			case env.Ev.Kind == "service.started" && op == "start",
+			case env.Ev.Kind == "service.started" && op == "start" && data.Generation == g,
 				env.Ev.Kind == "service.stopped" && op == "stop":
 				delete(pending, data.Service)
 			case env.Ev.Kind == "service.failed" && op == "start":

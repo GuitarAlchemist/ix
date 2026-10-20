@@ -699,10 +699,10 @@ impl Ctl {
     /// wait says it ended. A service that restarts on failure is `restarting` between two
     /// runs and is waited through; it has exited for good once it is `failed`.
     ///
-    /// The exit answered is the last one the plane saw for the service, and the status does
-    /// not say which start it belongs to: wait for the generation that started the service
-    /// first, or an earlier run's exit answers for this one. A service that never ran has no
-    /// `last_exit`, and the wait runs out with [`CtlError::Wait`].
+    /// The exit answered is the last one the plane saw for the service, whichever run it
+    /// ended: between an apply and its launch that is still the earlier run's. To wait for one
+    /// run's exit, use [`Ctl::wait_exit_of`] with the generation that started it. A service
+    /// that never ran has no `last_exit`, and the wait runs out with [`CtlError::Wait`].
     pub fn wait_exit(&self, service: &str, timeout: Duration) -> Result<Value, CtlError> {
         self.wait_service_on(None, service, None, timeout, |e| exit_decision(e, None))
     }
@@ -728,6 +728,11 @@ impl Ctl {
     /// `epoch` (the apply reply's), a plane that reports another boot ends the wait with
     /// [`CtlError::Restarted`], as [`Ctl::wait_generation_of`] does. A plane whose exits name
     /// no generation is waited on as [`Ctl::wait_exit`] does.
+    ///
+    /// Only a generation whose apply had a `start` action for the service launched a run: an
+    /// apply that found the service already starting, running or restarting says noop and
+    /// launches nothing, so a wait on that generation's run stays pending until `timeout`.
+    /// Check `actions` in the apply reply, or the service's `generation` in the status.
     pub fn wait_exit_of(
         &self,
         service: &str,

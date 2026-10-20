@@ -72,6 +72,9 @@ struct Plane {
     ping_every: Duration,
     /// When set, every byte of a frame is written on its own, this far apart.
     trickle: Option<Duration>,
+    /// While set, no pending launch is made, however long ago the apply asked: a test holds
+    /// the window between an apply and its launch open for as long as it needs it.
+    hold_launch: bool,
 }
 
 impl Plane {
@@ -83,7 +86,10 @@ impl Plane {
             }
         }
         for s in self.services.values_mut() {
-            if let Some(at) = s.launch_at.filter(|at| Instant::now() >= *at) {
+            if let Some(at) = s
+                .launch_at
+                .filter(|at| !self.hold_launch && Instant::now() >= *at)
+            {
                 s.since = Some(at);
                 s.launch_at = None;
             }
@@ -291,6 +297,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         pings: 1,
         ping_every: Duration::ZERO,
         trickle: None,
+        hold_launch: false,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -1229,7 +1236,9 @@ fn a_job_is_waited_to_its_exit() {
     // Applied again, the job runs again under generation 2. Until the supervisor launches it
     // the status still shows it stopped with generation 1's exit: the unscoped wait answers that
     // exit at once and takes it for this run's; the wait scoped to generation 2 does not, and
-    // answers once that run has ended.
+    // answers once that run has ended. The fake holds the launch until the stale answer is in,
+    // so the window is as long as this test needs, not a race against the clock.
+    plane.lock().unwrap().hold_launch = true;
     let applied = ctl
         .apply(&json!({"services": {"pod-a": {"state": "running"}}}), None)
         .unwrap();
@@ -1239,6 +1248,7 @@ fn a_job_is_waited_to_its_exit() {
         .expect("the first run's exit, taken for this one");
     assert_eq!(json!(1), stale["last_exit"]["generation"]);
     assert_eq!(json!("stopped"), stale["state"]);
+    plane.lock().unwrap().hold_launch = false;
     let err = ctl
         .wait_exit_of("pod-a", 2, Some("3f9a1c0b7d2e"), Duration::from_millis(150))
         .unwrap_err();

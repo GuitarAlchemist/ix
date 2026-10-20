@@ -410,7 +410,13 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   redémarrages de l'exécution), et `wait_exit_of(service, generation, epoch)` /
   `ix.ctl.wait(service:, exit: true, generation:, epoch:)` ne répondent que la sortie de cette
   exécution, celle d'une exécution antérieure restant en attente et un autre démarrage donnant
-  un `Restarted` ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
+  un `Restarted` ; seule une génération dont l'application a eu une action `start` a lancé une
+  exécution : le superviseur marque un service `starting`, estampillé de la génération de
+  l'application, dès que celle-ci le demande (`want`), de sorte qu'un plan qui suit le voit en
+  route et dit noop, comme pour un service `running` ou dans le délai d'un redémarrage, et
+  `await` ne règle un démarrage que sur le `service.started` portant sa propre génération (revue
+  Codex 11, P1 : avant, deux applications à la suite pouvaient revendiquer le même démarrage, la
+  seconde convergeant sur l'exécution de la première) ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
   `applied.epoch`. La vérification
   E10 de la passerelle lance le vrai `ix pipeline run --json` (une étape `stats`, à travers la
   porte constitutionnelle Demerzel) comme job sous le plan et relit son NDJSON depuis `svc/job` ;
@@ -475,7 +481,7 @@ ligne `boot` depuis le correctif F3.1) :
 ```json
 {"epoch":"3f9a1c0b7d2e","kind":"boot","name":"local","schema":"ixctl-journal/0","t":1760699999000}
 {"actions":[{"op":"start","service":"pod-a"}],"desired":{"services":{"pod-a":{"state":"running"}}},"generation":1,"kind":"apply","t":1760700000000}
-{"ch":"ctl","seq":3,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000412,"ev":{"kind":"service.started","t":1760700000412,"data":{"pid":4242,"restarts":0,"service":"pod-a"}}}
+{"ch":"ctl","seq":3,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000412,"ev":{"kind":"service.started","t":1760700000412,"data":{"generation":1,"pid":4242,"restarts":0,"service":"pod-a"}}}
 ```
 
 - Un en-tête `boot`, écrit à l'ouverture du journal, avant toute autre ligne de ce démarrage.
