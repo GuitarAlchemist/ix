@@ -44,8 +44,85 @@ func TestPlanIsPure(t *testing.T) {
 		}
 	}
 	j, _ := os.ReadFile(filepath.Join(filepath.Dir(in.stateFile), "local.journal.jsonl"))
-	if len(j) != 0 {
-		t.Fatalf("plan wrote the journal: %s", j)
+	if lines := journalLines(t, j); len(lines) != 1 || lines[0]["kind"] != "boot" {
+		t.Fatalf("plan wrote the journal (only the boot line belongs there): %s", j)
+	}
+}
+
+// journalLines parses a journal file, one JSON object per line.
+func journalLines(t *testing.T, b []byte) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("journal line %q: %v", line, err)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// F3.1: generations and seqs restart at 1 at each boot while the journal file
+// keeps growing. Each boot now opens with a header line carrying the instance
+// epoch, and every ctl envelope after it carries the same epoch, so two boots'
+// `generation 1` read apart.
+func TestJournalBootHeaderTellsBootsApart(t *testing.T) {
+	stateDir := t.TempDir()
+	var epochs []string
+	for boot := 0; boot < 2; boot++ {
+		in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod-a", args: []string{"--nodes", "2"}}), stateDir)
+		c := dial(t, in)
+		w := subscribe(t, c, "ctl", nil)
+		var r ApplyReply
+		json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("pod-a")}), &r)
+		if r.Generation != 1 {
+			t.Fatalf("boot %d: apply generation %d, want 1 (generations restart per boot)", boot, r.Generation)
+		}
+		waitEnv(t, w, 10*time.Second, "converged", func(e *Envelope) bool { return e.Ev.Kind == "converged" })
+		epochs = append(epochs, in.plane.hub.Epoch())
+		in.close()
+	}
+	if epochs[0] == epochs[1] {
+		t.Fatalf("two boots drew the same epoch %q", epochs[0])
+	}
+
+	j, err := os.ReadFile(filepath.Join(stateDir, "local.journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := journalLines(t, j)
+	boot, applies := -1, 0
+	for i, m := range lines {
+		switch {
+		case m["kind"] == "boot":
+			boot++
+			if boot > 1 {
+				t.Fatalf("line %d: a third boot line", i)
+			}
+			if m["schema"] != journalSchema || m["name"] != "local" || m["epoch"] != epochs[boot] || m["t"] == nil {
+				t.Fatalf("line %d: boot header %v, want schema %q name local epoch %q", i, m, journalSchema, epochs[boot])
+			}
+		case boot < 0:
+			t.Fatalf("line %d: %v before any boot line", i, m)
+		case m["kind"] == "apply":
+			applies++
+			if m["generation"] != 1.0 {
+				t.Fatalf("line %d: apply generation %v, want 1", i, m["generation"])
+			}
+		case m["ch"] == "ctl":
+			if m["epoch"] != epochs[boot] {
+				t.Fatalf("line %d: ctl envelope epoch %v under boot %q", i, m["epoch"], epochs[boot])
+			}
+		default:
+			t.Fatalf("line %d: unknown line %v", i, m)
+		}
+	}
+	if boot != 1 || applies != 2 {
+		t.Fatalf("saw %d boot lines and %d apply records, want 2 and 2", boot+1, applies)
 	}
 }
 

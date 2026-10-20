@@ -55,6 +55,7 @@ func NewPlane(spec *Spec, name, journalPath string) (*Plane, error) {
 			return nil, err
 		}
 		p.journal = j
+		j.boot(name, p.hub.Epoch())
 		p.hub.tap = func(env *Envelope) {
 			if env.Ch == "ctl" {
 				j.write(env.Raw())
@@ -462,7 +463,14 @@ func event(kind string, data any) Event {
 	return Event{Kind: kind, T: time.Now().UnixMilli(), Data: b}
 }
 
+// journalSchema names the journal's line format; a reader checks it on the
+// boot line before trusting the lines that follow.
+const journalSchema = "ixctl-journal/0"
+
 // journal appends every applied document and every ctl event, as JSON lines.
+// Each boot opens with a header line carrying the instance epoch, so the
+// generations and seqs that restart at 1 read as (epoch, generation) and
+// (epoch, seq) across the file.
 type journal struct {
 	mu sync.Mutex
 	f  *os.File
@@ -485,6 +493,16 @@ func (j *journal) write(b []byte) {
 	if j.f != nil {
 		j.f.Write(append(b[:len(b):len(b)], '\n'))
 	}
+}
+
+// boot writes the header line that opens this boot's section of the file.
+func (j *journal) boot(name, epoch string) {
+	if j == nil {
+		return
+	}
+	b, _ := json.Marshal(map[string]any{
+		"t": time.Now().UnixMilli(), "kind": "boot", "schema": journalSchema, "name": name, "epoch": epoch})
+	j.write(b)
 }
 
 func (j *journal) record(g uint64, d *Desired, actions []Action) {

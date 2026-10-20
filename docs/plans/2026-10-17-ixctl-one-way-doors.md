@@ -364,15 +364,20 @@ would push a race onto every writer. Drop the rule instead: a generation's outco
 
 There is one file per instance name, `<state dir>/<name>.journal.jsonl`. It is opened
 append-only with mode 0600, and kept from one boot to the next (`main.go:170`,
-`plane.go:446-452`). It holds two kinds of line (`plane.go:48-60`, `:465-472`):
+`plane.go:446-452`). It holds three kinds of line (`plane.go:48-60`, `:465-472`; the `boot`
+line since the F3.1 fix):
 
 ```json
+{"epoch":"3f9a1c0b7d2e","kind":"boot","name":"local","schema":"ixctl-journal/0","t":1760699999000}
 {"actions":[{"op":"start","service":"pod-a"}],"desired":{"services":{"pod-a":{"state":"running"}}},"generation":1,"kind":"apply","t":1760700000000}
-{"ch":"ctl","seq":3,"origin":"local","t":1760700000412,"ev":{"kind":"service.started","data":{"pid":4242,"restarts":0,"service":"pod-a"}}}
+{"ch":"ctl","seq":3,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000412,"ev":{"kind":"service.started","t":1760700000412,"data":{"pid":4242,"restarts":0,"service":"pod-a"}}}
 ```
 
+- A `boot` header, written when the journal is opened, before any other line of that boot. It
+  carries the schema name, the instance name, the instance epoch of F1.1 and the time. Every
+  `generation` and `seq` below it, down to the next `boot` line, belongs to that epoch.
 - An `apply` record, written once the generation is bumped and before any service acts. Its
-  keys come out sorted, because it is marshalled from a Go map.
+  keys come out sorted, because it is marshalled from a Go map, as the `boot` header's are.
 - Every envelope whose channel is exactly `ctl`, byte for byte as door 1 sends it. `svc/` lines
   and mirrored `peer/<peer>/ctl` envelopes are not journaled.
 - Each line is one `Write` on an `O_APPEND` file (`plane.go:454-463`). There is no fsync, and
@@ -386,10 +391,20 @@ append-only with mode 0600, and kept from one boot to the next (`main.go:170`,
 - **Writes:** the plane only.
 - **Reads:** no program. Three tests grep it: for `"kind":"apply"`, `"generation":2` and three
   `ctl` kinds (`plane_test.go:90-99`), and to check that no token appears in it
-  (`peers_test.go:65-72`, `http_test.go:211-213`).
+  (`peers_test.go:65-72`, `http_test.go:211-213`). One test parses it line by line
+  (`TestJournalBootHeaderTellsBootsApart`, F3.1 fix).
 
 ### Findings
 
+- **Fixed (F3.1), this slice:** option B below, as recommended. Each boot opens its section of
+  the file with `{"kind":"boot","schema":"ixctl-journal/0","name","epoch","t"}` (`plane.go`,
+  `journal.boot`, called from `NewPlane` right after the file is opened). Nothing else changed:
+  the `apply` records and the `ctl` envelopes are as before, and the envelopes already carry
+  `epoch` since F1.1. A reader now reads (epoch, generation) and (epoch, seq). Test: two boots
+  of one instance in one state dir, both applying generation 1; the file holds two `boot` lines
+  with distinct epochs, every `ctl` envelope carries the epoch of the `boot` line above it, and
+  no line comes before the first header (`TestJournalBootHeaderTellsBootsApart`).
+  `TestPlanIsPure` now expects exactly the boot line in a journal that saw only plans.
 - **F3.1 Identities repeat inside one file.** `generation` and `seq` restart at each boot while
   the file keeps growing, so `generation: 1` and `seq: 3` occur once per boot, and only line
   order tells them apart. No line marks a boot.

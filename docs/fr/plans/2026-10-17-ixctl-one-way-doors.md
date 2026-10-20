@@ -384,15 +384,22 @@ pas un préalable.
 
 Il y a un fichier par nom d'instance, `<répertoire d'état>/<nom>.journal.jsonl`. Il est ouvert
 en ajout seul, avec le mode 0600, et conservé d'un démarrage à l'autre (`main.go:170`,
-`plane.go:446-452`). Il contient deux sortes de lignes (`plane.go:48-60`, `:465-472`) :
+`plane.go:446-452`). Il contient trois sortes de lignes (`plane.go:48-60`, `:465-472` ; la
+ligne `boot` depuis le correctif F3.1) :
 
 ```json
+{"epoch":"3f9a1c0b7d2e","kind":"boot","name":"local","schema":"ixctl-journal/0","t":1760699999000}
 {"actions":[{"op":"start","service":"pod-a"}],"desired":{"services":{"pod-a":{"state":"running"}}},"generation":1,"kind":"apply","t":1760700000000}
-{"ch":"ctl","seq":3,"origin":"local","t":1760700000412,"ev":{"kind":"service.started","data":{"pid":4242,"restarts":0,"service":"pod-a"}}}
+{"ch":"ctl","seq":3,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000412,"ev":{"kind":"service.started","t":1760700000412,"data":{"pid":4242,"restarts":0,"service":"pod-a"}}}
 ```
 
+- Un en-tête `boot`, écrit à l'ouverture du journal, avant toute autre ligne de ce démarrage.
+  Il porte le nom du schéma, le nom de l'instance, l'époque d'instance de F1.1 et l'heure. Chaque
+  `generation` et chaque `seq` en dessous, jusqu'à la ligne `boot` suivante, appartient à cette
+  époque.
 - Un enregistrement `apply`, écrit une fois la génération incrémentée et avant qu'un service
-  n'agisse. Ses clés sortent triées, parce qu'il est sérialisé depuis une table Go.
+  n'agisse. Ses clés sortent triées, parce qu'il est sérialisé depuis une table Go, comme celles
+  de l'en-tête `boot`.
 - Chaque enveloppe dont le canal est exactement `ctl`, octet pour octet comme la porte 1
   l'envoie. Les lignes `svc/` et les enveloppes miroirs `peer/<pair>/ctl` ne sont pas
   journalisées.
@@ -408,10 +415,22 @@ en ajout seul, avec le mode 0600, et conservé d'un démarrage à l'autre (`main
 - **Écrit :** le plan seulement.
 - **Lisent :** aucun programme. Trois tests le parcourent avec grep : pour `"kind":"apply"`,
   `"generation":2` et trois types `ctl` (`plane_test.go:90-99`), et pour vérifier qu'aucun jeton
-  n'y figure (`peers_test.go:65-72`, `http_test.go:211-213`).
+  n'y figure (`peers_test.go:65-72`, `http_test.go:211-213`). Un test l'analyse ligne par ligne
+  (`TestJournalBootHeaderTellsBootsApart`, correctif F3.1).
 
 ### Constats
 
+- **Corrigé (F3.1), cette tranche :** l'option B ci-dessous, comme recommandé. Chaque démarrage
+  ouvre sa section du fichier par `{"kind":"boot","schema":"ixctl-journal/0","name","epoch","t"}`
+  (`plane.go`, `journal.boot`, appelé depuis `NewPlane` juste après l'ouverture du fichier). Rien
+  d'autre ne change : les enregistrements `apply` et les enveloppes `ctl` sont comme avant, et
+  les enveloppes portent déjà `epoch` depuis F1.1. Un lecteur lit désormais (époque, génération)
+  et (époque, seq). Test : deux démarrages d'une même instance dans un même répertoire d'état,
+  chacun appliquant la génération 1 ; le fichier contient deux lignes `boot` d'époques
+  distinctes, chaque enveloppe `ctl` porte l'époque de la ligne `boot` au-dessus d'elle, et
+  aucune ligne ne précède le premier en-tête (`TestJournalBootHeaderTellsBootsApart`).
+  `TestPlanIsPure` attend maintenant exactement la ligne `boot` dans un journal qui n'a vu que
+  des plans.
 - **F3.1 Les identités se répètent dans un même fichier.** `generation` et `seq` repartent à
   chaque démarrage tandis que le fichier continue de grandir : `generation: 1` et `seq: 3`
   apparaissent une fois par démarrage, et seul l'ordre des lignes les distingue. Aucune ligne ne
