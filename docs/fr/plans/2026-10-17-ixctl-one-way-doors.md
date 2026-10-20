@@ -174,7 +174,11 @@ plan est `{generation, actions[{op, service}], noop}`, l'application
   `epoch`, `origin`, `ev.{kind, t, data}` de l'enveloppe, et `reason`, `from`, `epoch` d'un
   événement `gap` (un trou se distingue d'une enveloppe par ces champs, pas par `event: gap`,
   qu'un événement de service de type `gap` porterait aussi). Les attentes ne s'en servent pas
-  encore.
+  encore : elles sondent `/v1/status` toutes les 25 ms, et la mesure M1 de la passerelle
+  chiffre l'écart sur un vrai démarrage (Windows, 2026-10-20) : `converged` atteint un lecteur
+  du flux en direct 3,4 ms après la réponse de l'apply, le sondage à 25 ms le voit 27,9 ms
+  après (Linux en conteneur : 1,5 ms et 26,2 ms). Une période de sondage, voilà ce qu'une
+  attente par flux gagnerait.
 - **Lit le côté HTTP :** `crates/ix-ctl`. Il lit `settled_generation` et `failed[]` quand ils
   sont présents, sinon `observed_generation` et
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` dans

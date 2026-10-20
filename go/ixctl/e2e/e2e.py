@@ -1,6 +1,6 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
-federated instances on loopback. 29 checks, E1..E9 plus a restart loop.
+federated instances on loopback. 30 checks, E1..E9, a restart loop and the M1 measurement.
 
     python go/ixctl/e2e/e2e.py --build            # build the three binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod and ixql-ctl already built there
@@ -418,6 +418,60 @@ def run():
           code == 0 and rust_seen == [(e["seq"], e["ev"]["kind"]) for e in ctl[:n]]
           and (out_ev["seen"]["ended"] is False) and out_ev["seen"]["gap"] is None,
           code=code, ms=round(ms, 1), n=n, rust_seen=rust_seen[:4], stderr=err[-160:])
+
+    # M1: what a wait built on the stream would gain over the polling one. A live reader on
+    # `ctl` (no `since`) and a 25 ms status poll (the Rust client's POLL) watch the same apply,
+    # a real start (pod-a was stopped at E5); each reports when it saw the generation settle,
+    # measured from the apply's return. The pod is stopped again afterwards.
+    seen_converged = {}
+    reader_done = threading.Event()
+
+    def live_reader():
+        host, port = sa["addr"].rsplit(":", 1)
+        sock = socket.create_connection((host, int(port)), timeout=5)
+        sock.sendall((f"GET /v1/events?ch=ctl HTTP/1.1\r\nHost: {sa['addr']}\r\n"
+                      f"Authorization: Bearer {sa['token']}\r\nAccept: text/event-stream\r\n\r\n")
+                     .encode())
+        sock.settimeout(0.05)
+        buf = b""
+        while not reader_done.is_set():
+            try:
+                chunk = sock.recv(65536)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            buf += chunk
+            now = time.perf_counter()
+            for line in buf.decode("utf-8", "replace").splitlines():
+                if line.startswith("data: ") and '"converged"' in line:
+                    try:
+                        e = json.loads(line[6:])
+                    except ValueError:
+                        continue
+                    seen_converged.setdefault(e["ev"]["data"]["generation"], now)
+        sock.close()
+
+    threading.Thread(target=live_reader, daemon=True).start()
+    time.sleep(0.15)  # the subscription has no reply; give the plane time to register it
+    t_apply = time.perf_counter()
+    _, r = call(sa, "POST", "/v1/apply", {"services": {"pod-a": {"state": "running"}}})
+    t_reply = time.perf_counter()
+    g = r["generation"]
+    polled = None
+    while time.perf_counter() - t_reply < 5:
+        if status(sa).get("settled_generation", 0) >= g:
+            polled = time.perf_counter()
+            break
+        time.sleep(0.025)
+    wait_until(lambda: g in seen_converged, 5)
+    reader_done.set()
+    call(sa, "POST", "/v1/stop", {"service": "pod-a"})
+    check("M1.stream_and_poll_both_see_the_generation", g in seen_converged and polled is not None,
+          generation=g, actions=len(r["actions"]),
+          apply_reply_ms=round((t_reply - t_apply) * 1000, 1),
+          stream_after_reply_ms=round((seen_converged[g] - t_reply) * 1000, 1) if g in seen_converged else None,
+          poll_25ms_after_reply_ms=round((polled - t_reply) * 1000, 1) if polled else None)
 
     # A real pod that keeps crashing: restarts with backoff, then failed. A pod reports its
     # nodes as soon as it runs, so the crash loop is watched on status, and the Rust wait is

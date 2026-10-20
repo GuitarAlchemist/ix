@@ -28,8 +28,10 @@
 //! # What the client refuses
 //!
 //! The token is only ever sent to a loopback address, in a header. Both waits poll
-//! `/v1/status` for now; [`Ctl::events`] reads the plane's event stream, and the waits move to
-//! it once a wait built on it has been measured against the polling one.
+//! `/v1/status` every 25 ms; [`Ctl::events`] reads the plane's event stream. The gate's M1
+//! measures what a wait on the stream would gain: on a real start, `converged` reaches a live
+//! reader 2–3 ms after the apply reply, the poll sees it 26–28 ms after (one poll period). The
+//! waits move to the stream when that period matters to a caller.
 
 mod http;
 mod ixql;
