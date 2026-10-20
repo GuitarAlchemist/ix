@@ -1,6 +1,6 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
-federated instances on loopback. 24 checks, E1..E7 plus a restart loop.
+federated instances on loopback. 26 checks, E1..E8 plus a restart loop.
 
     python go/ixctl/e2e/e2e.py --build            # build the three binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod and ixql-ctl already built there
@@ -148,10 +148,15 @@ def svc(s, name):
     return next(x for x in s["services"] if x["name"] == name)
 
 
+def journal_lines(name):
+    """A plane's journal, parsed line by line, in order."""
+    text = (STATE / f"{name}.journal.jsonl").read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line]
+
+
 def journal_applies(name):
     """The apply records of a plane's journal, in order."""
-    lines = (STATE / f"{name}.journal.jsonl").read_text(encoding="utf-8").splitlines()
-    return [m for m in map(json.loads, lines) if m.get("kind") == "apply"]
+    return [m for m in journal_lines(name) if m.get("kind") == "apply"]
 
 
 def peer(s, name):
@@ -441,6 +446,30 @@ def run():
     check("E3.forwarded_stop_from_rust",
           code == 0 and not alive(b_pod["pid"]) and svc(status(sb), "pod-a")["state"] == "stopped",
           code=code, ms=round(ms, 1), reply=(out3 or {}).get("stopped"), stderr=err[:200])
+
+    # E8: plane B restarts under its name. Its lock and state file are free again, the new boot
+    # draws another epoch and opens a second section of the same journal, A's peer link comes
+    # back up, and a wait scoped to the old boot ends at once with Restarted instead of waiting
+    # for the new boot to reach that generation.
+    b0 = status(sb)
+    call(sb, "POST", "/v1/shutdown", {})
+    exit_b = pb.wait(10)
+    pb, _, sb, ms_b2 = up("b", spec_b)
+    tokens.append(sb["token"])
+    b1 = status(sb)
+    _, up_ms = wait_until(lambda: (peer(status(sa), "b") or {}).get("state") == "up", 15)
+    boots = [m for m in journal_lines("b") if m.get("kind") == "boot"]
+    check("E8.restart_under_the_same_name",
+          exit_b == 0 and b1["name"] == "b" and b1["epoch"] != b0["epoch"] and b1["generation"] == 0
+          and up_ms is not None and len(boots) == 2 and boots[1]["epoch"] == b1["epoch"],
+          exit=exit_b, epochs=[b0["epoch"], b1["epoch"]], peer_up_ms=up_ms, boot_lines=len(boots),
+          ready_ms=round(ms_b2, 1), old_generation=b0["generation"])
+    prog = write_ixql("stale-wait.ixql",
+                      f'done <- ix.ctl.wait(generation: {b0["generation"]}, epoch: "{b0["epoch"]}", '
+                      "timeout_ms: 10000)\n")
+    code, _, err, ms = ixql("stale-wait", prog, STATE / "b.json")
+    check("E8.stale_wait_ends_at_once", code == 1 and "restarted" in err and ms < 3000,
+          code=code, ms=round(ms, 1), stderr=err[-200:])
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

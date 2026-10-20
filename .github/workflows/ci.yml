@@ -65,7 +65,7 @@ jobs:
           done
 
       # The control plane's end-to-end gate: the Go plane, the Rust client and
-      # the ix-stream pod as two federated instances on loopback, 24 checks.
+      # the ix-stream pod as two federated instances on loopback, 26 checks.
       # It runs where the plane's process code is complete today (Windows job
       # objects) and on the row whose cargo cache already holds the examples.
       - uses: actions/setup-go@v5
