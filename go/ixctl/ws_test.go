@@ -181,16 +181,24 @@ func TestUnknownFieldRefusedOnHTTPAndWS(t *testing.T) {
 		{"POST", "/v1/apply?peer=", running("pod")},
 		{"POST", "/v1/apply?peer=b&peer=c", running("pod")},
 		{"POST", "/v1/stop", json.RawMessage(`{"service":"pod","peer":""}`)},
+		{"POST", "/v1/stop", json.RawMessage(`{"service":"pod","peer":null}`)},
+		{"POST", "/v1/stop", json.RawMessage(`{"service":"pod","peer":7}`)},
 	} {
 		code, _, body := httpDo(t, in, c.method, c.path, c.body, nil)
 		if code != 400 || !strings.Contains(string(body), "peer must not be empty") {
 			t.Fatalf("HTTP %s %s with an empty peer: %d %s", c.method, c.path, code, body)
 		}
 	}
+	// A malformed query is refused too: URL.Query() would drop the pair and
+	// the op would read as local.
+	if code, _, body := httpDo(t, in, "GET", "/v1/status?peer=b;peer=c", nil, nil); code != 400 || !strings.Contains(string(body), "bad query") {
+		t.Fatalf("HTTP status with a malformed query: %d %s", code, body)
+	}
 	for _, frame := range []string{
 		`{"id":90,"op":"status","peer":""}`,
 		`{"id":90,"op":"apply","peer":"","desired":{"services":{"pod":{"state":"running"}}}}`,
 		`{"id":90,"op":"stop","service":"pod","peer":""}`,
+		`{"id":90,"op":"apply","peer":null,"desired":{"services":{"pod":{"state":"running"}}}}`,
 	} {
 		if err := conn.Write(ctx, websocket.MessageText, []byte(frame)); err != nil {
 			t.Fatal(err)

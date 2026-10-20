@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -51,20 +52,14 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 	m.HandleFunc("POST /v1/apply", s.op(desiredOp("apply")))
 	m.HandleFunc("POST /v1/stop", s.op(func(r *http.Request) (Request, error) {
 		var body struct {
-			Service string  `json:"service"`
-			Peer    *string `json:"peer"`
+			Service string          `json:"service"`
+			Peer    json.RawMessage `json:"peer"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			return Request{}, err
 		}
-		req := Request{Op: "stop", Service: body.Service}
-		if body.Peer != nil {
-			if *body.Peer == "" {
-				return Request{}, errEmptyPeer
-			}
-			req.Peer = *body.Peer
-		}
-		return req, nil
+		peer, err := peerField(body.Peer)
+		return Request{Op: "stop", Service: body.Service, Peer: peer}, err
 	}))
 	m.HandleFunc("POST /v1/shutdown", s.op(func(*http.Request) (Request, error) { return Request{Op: "shutdown"}, nil }))
 	m.HandleFunc("GET /v1/events", s.events)
@@ -103,15 +98,21 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) {
 		"uptime_ms": time.Since(s.started).Milliseconds()})
 }
 
-// errEmptyPeer: a peer that is named must name someone. An empty one is not
-// "local": the op would run on the wrong instance, and on every transport
-// alike it is refused instead.
+// errEmptyPeer: a peer that is named must name someone. An empty one (or a
+// null, or a number) is not "local": the op would run on the wrong instance,
+// and on every transport alike it is refused instead.
 var errEmptyPeer = badRequest("peer must not be empty")
 
 // peerQuery is `?peer=` as the op's peer: absent means local, present means
-// that peer, and present but empty (or given twice) is refused.
+// that peer, and present but empty (or given twice) is refused. The query is
+// parsed strictly: `URL.Query()` drops a malformed pair without a word, and a
+// dropped `peer` would read as "local".
 func peerQuery(r *http.Request) (string, error) {
-	v, present := r.URL.Query()["peer"]
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return "", badRequest("bad query: %v", err)
+	}
+	v, present := q["peer"]
 	switch {
 	case !present:
 		return "", nil
@@ -119,6 +120,20 @@ func peerQuery(r *http.Request) (string, error) {
 		return "", errEmptyPeer
 	}
 	return v[0], nil
+}
+
+// peerField is a JSON `peer` member as the op's peer: absent means local,
+// a non-empty string means that peer, and anything else present (an empty
+// string, null, another type) is refused rather than read as "local".
+func peerField(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil || s == "" {
+		return "", errEmptyPeer
+	}
+	return s, nil
 }
 
 // desiredOp reads a desired-state document from the body; `?peer=` beside it

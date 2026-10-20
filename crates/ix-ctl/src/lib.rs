@@ -284,6 +284,11 @@ impl Ctl {
     /// (`GET /v1/status?peer=`), whose generations and epoch the apply reply carried. Waiting
     /// on this plane instead would compare the peer's epoch with this plane's and end with a
     /// false [`CtlError::Restarted`], or accept an unrelated local generation.
+    ///
+    /// The peer's status comes through this plane's link to it; while that link is down (the
+    /// peer, or this plane, restarted a moment ago) the plane answers 502 or 503, and the wait
+    /// keeps asking until its deadline instead of failing on the first one. A 400, the peer is
+    /// not declared, is final.
     pub fn wait_generation_at(
         &self,
         peer: &str,
@@ -323,13 +328,28 @@ impl Ctl {
             let status = match me.status_of(peer) {
                 Ok(status) => status,
                 Err(e) if epoch.is_some() && me.plane_may_have_moved(&e) => match me.refreshed() {
-                    Some(fresh) => {
+                    Some(fresh) if Instant::now() < deadline => {
                         me = fresh;
                         continue;
                     }
+                    Some(_) => return Err(e),
                     None if pause(deadline) => return Err(e),
                     None => continue,
                 },
+                // A peer's status comes through this plane's link to it, which is down for
+                // a moment when either restarts (502/503). The peer's new boot is behind that
+                // moment, so the wait keeps asking until its deadline; a 400 (no such peer)
+                // stays final.
+                Err(
+                    e @ CtlError::Http {
+                        status: 502 | 503, ..
+                    },
+                ) if peer.is_some() => {
+                    if pause(deadline) {
+                        return Err(e);
+                    }
+                    continue;
+                }
                 Err(e) => return Err(e),
             };
             if let (Some(want), Some(now)) = (epoch, status.get("epoch").and_then(Value::as_str)) {

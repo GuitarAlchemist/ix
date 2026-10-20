@@ -492,7 +492,10 @@ def run():
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(WORK))
     LIVE.append(waiter)
     t_waiter = time.perf_counter()
-    time.sleep(0.3)
+    # The client polls every 25 ms once it has read the state file; a second is many polls of
+    # the old boot even on a slow machine (its first poll is not observable from here; the
+    # client's own test covers the re-read with a dead address and an old token).
+    time.sleep(1.0)
     call(sb, "POST", "/v1/shutdown", {})
     exit_b = pb.wait(10)
     pb, _, sb, ms_b2 = up("b", spec_b)

@@ -48,6 +48,8 @@ struct Plane {
     /// What `GET /v1/status?peer=b` answers: the peer's own status, relayed. `None` means
     /// this plane has no peers, and every routed op is refused.
     peer_status: Option<Value>,
+    /// How many more routed status reads answer 502, the link to b being down.
+    peer_down_for: u32,
 }
 
 impl Plane {
@@ -130,6 +132,13 @@ impl Plane {
             if let (("GET", "/v1/status", "peer=b"), Some(s)) =
                 ((method, path, query), &self.peer_status)
             {
+                if self.peer_down_for > 0 {
+                    self.peer_down_for -= 1;
+                    return (
+                        502,
+                        json!({"error": "peer \"b\" is down: link reconnecting"}),
+                    );
+                }
                 return (200, s.clone());
             }
             return (400, json!({"error": "this plane has no peers"}));
@@ -234,6 +243,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         log: Vec::new(),
         epoch: Some("3f9a1c0b7d2e".into()),
         peer_status: None,
+        peer_down_for: 0,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -576,11 +586,37 @@ fn a_wait_for_a_generation_applied_through_a_peer_asks_that_peer() {
         .expect("the IXQL waits read b through the peer");
     assert_eq!(json!("b"), out.binding("bst").unwrap()["name"]);
     assert_eq!(json!("pod-x"), out.binding("pod").unwrap()["name"]);
-    let log = &plane.lock().unwrap().log;
-    assert!(
-        log.iter().filter(|r| *r == "GET /v1/status?peer=b").count() >= 5,
-        "{log:?}"
-    );
+    {
+        let log = &plane.lock().unwrap().log;
+        assert!(
+            log.iter().filter(|r| *r == "GET /v1/status?peer=b").count() >= 5,
+            "{log:?}"
+        );
+    }
+
+    // The link to b is down for a moment (b, or this plane, restarted): the plane answers
+    // 502 until it is back, and the wait rides that out instead of failing on the first one.
+    plane.lock().unwrap().peer_down_for = 3;
+    let status = ctl
+        .wait_generation_at("b", Some("b00b00b00b00"), 3, Duration::from_secs(2))
+        .expect("three 502s, then b's status");
+    assert_eq!("b", status["name"]);
+    assert_eq!(0, plane.lock().unwrap().peer_down_for);
+    // Past the deadline the 502 is what the wait reports; a 400 (no such peer) is final at once.
+    plane.lock().unwrap().peer_down_for = 1000;
+    let began = Instant::now();
+    let err = ctl
+        .wait_generation_at("b", Some("b00b00b00b00"), 3, Duration::from_millis(150))
+        .unwrap_err();
+    assert!(matches!(err, CtlError::Http { status: 502, .. }), "{err}");
+    assert!(began.elapsed() >= Duration::from_millis(150));
+    plane.lock().unwrap().peer_down_for = 0;
+    let began = Instant::now();
+    let err = ctl
+        .wait_generation_at("zz", Some("b00b00b00b00"), 3, Duration::from_secs(5))
+        .unwrap_err();
+    assert!(matches!(err, CtlError::Http { status: 400, .. }), "{err}");
+    assert!(began.elapsed() < Duration::from_secs(1));
 }
 
 // A plane that restarts while a scoped wait polls it listens at a new address with a new
@@ -589,23 +625,27 @@ fn a_wait_for_a_generation_applied_through_a_peer_asks_that_peer() {
 // alone has nothing to re-read, and the connection error stands.
 #[test]
 fn a_scoped_wait_follows_the_state_file_across_a_restart() {
-    // The old boot's address: nothing listens there any more.
+    // The new boot, already listening; the state file will name it a little later.
+    let (live, plane) = plane();
+    let live_addr = live.addr().to_string();
+    // The old boot's address and token: nothing listens there any more, and its token would
+    // be a 401 on the new boot, so a status the new boot logs proves the handle was re-read.
     let gone = TcpListener::bind("127.0.0.1:0").unwrap();
     let dead_addr = format!("127.0.0.1:{}", gone.local_addr().unwrap().port());
     drop(gone);
+    assert_ne!(dead_addr, live_addr);
+    let old_token = "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0";
     let state = tmp(&format!("ix-ctl-restart-{}.json", std::process::id()));
-    let state_doc = |addr: &str| json!({"name": "fake", "addr": addr, "pid": 1, "token": TOKEN});
-    std::fs::write(&state, state_doc(&dead_addr).to_string()).unwrap();
+    let state_doc =
+        |addr: &str, token: &str| json!({"name": "fake", "addr": addr, "pid": 1, "token": token});
+    std::fs::write(&state, state_doc(&dead_addr, old_token).to_string()).unwrap();
     let ctl = Ctl::from_state(&state).unwrap();
 
-    // The new boot comes up a little later and writes the state file again.
-    let (live, plane) = plane();
-    let live_addr = live.addr().to_string();
     let rewrite = std::thread::spawn({
         let state = state.clone();
         move || {
             std::thread::sleep(Duration::from_millis(300));
-            std::fs::write(&state, state_doc(&live_addr).to_string()).unwrap();
+            std::fs::write(&state, state_doc(&live_addr, TOKEN).to_string()).unwrap();
         }
     });
     let began = Instant::now();
