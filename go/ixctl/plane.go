@@ -248,6 +248,9 @@ type applyResult struct {
 }
 
 func (p *Plane) validate(d *Desired) error {
+	if d.Schema != "" && d.Schema != desiredSchema {
+		return badRequest("desired-state schema %q is not %q", d.Schema, desiredSchema)
+	}
 	if len(d.Services) == 0 {
 		return badRequest("desired-state document names no service")
 	}

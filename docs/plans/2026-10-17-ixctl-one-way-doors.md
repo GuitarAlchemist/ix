@@ -251,12 +251,15 @@ name `ixctl.v1`.
 ### Shape today
 
 ```json
-{"services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}},
+{"schema": "ixctl-desired/0",
+ "services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}},
  "peer": "b"}
 ```
 
 (`go/ixctl/spec.go:161-175`)
 
+- `schema` is optional and names this format (since the F2.2 fix below). A document naming
+  another schema is a 400; one naming none is read as `ixctl-desired/0`.
 - `services` maps a declared service name to `{state}`, and `state` is `running` or `stopped`.
   An empty map, an undeclared name or another state is a 400 (`plane.go:234-249`).
 - **The document is partial.** "Services it does not name are left as they are"
@@ -279,6 +282,12 @@ name `ixctl.v1`.
 - **Fixed (F2.2), commit `09193b7`:** both transports go through one strict decoder
   (`decodeStrict`); an unknown field gets the same refusal on HTTP and WebSocket. Envelope and
   schema unchanged.
+- **Fixed (F2.2, the version field), this slice:** the document may carry
+  `"schema": "ixctl-desired/0"` (`spec.go`, `desiredSchema`); `validate` refuses another value
+  with the same 400 on both transports, and still accepts a document that names none. The
+  example program `crates/ix-ctl/examples/pods.ixql` sends it, so the Rust client and the E2E
+  gate exercise it. Test: `TestUnknownFieldRefusedOnHTTPAndWS` (refused `ixctl-desired/9`,
+  accepted `ixctl-desired/0` and no schema, on HTTP and WebSocket).
 
 ### Who writes it, who reads it
 

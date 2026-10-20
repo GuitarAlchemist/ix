@@ -9,7 +9,10 @@
 ---
 --- The runner prints every binding below as JSON.
 
+--- `schema` is optional; a plane that speaks another schema refuses the document instead of
+--- misreading it.
 desired <- {
+    schema: "ixctl-desired/0",
     services: {
       "pod-a": { state: "running" },
       "pod-b": { state: "running" }

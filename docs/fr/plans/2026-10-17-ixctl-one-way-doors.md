@@ -263,12 +263,16 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
 ### Forme actuelle
 
 ```json
-{"services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}},
+{"schema": "ixctl-desired/0",
+ "services": {"pod-a": {"state": "running"}, "pod-b": {"state": "stopped"}},
  "peer": "b"}
 ```
 
 (`go/ixctl/spec.go:161-175`)
 
+- `schema` est facultatif et nomme ce format (depuis le correctif F2.2 ci-dessous). Un document
+  qui nomme un autre schéma reçoit un 400 ; un document qui n'en nomme aucun est lu comme
+  `ixctl-desired/0`.
 - `services` associe un nom de service déclaré à `{state}`, et `state` vaut `running` ou
   `stopped`. Une table vide, un nom non déclaré ou un autre état donnent un 400
   (`plane.go:234-249`).
@@ -295,6 +299,12 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
 - **Corrigé (F2.2), commit `09193b7` :** les deux transports passent par un même décodeur strict
   (`decodeStrict`) ; un champ inconnu reçoit le même refus en HTTP et en WebSocket. Enveloppe et
   schéma inchangés.
+- **Corrigé (F2.2, le champ de version), cette tranche :** le document peut porter
+  `"schema": "ixctl-desired/0"` (`spec.go`, `desiredSchema`) ; `validate` refuse une autre valeur
+  par le même 400 sur les deux transports, et accepte toujours un document qui n'en nomme aucun.
+  Le programme d'exemple `crates/ix-ctl/examples/pods.ixql` l'envoie, de sorte que le client Rust
+  et le gate E2E l'exercent. Test : `TestUnknownFieldRefusedOnHTTPAndWS` (`ixctl-desired/9`
+  refusé, `ixctl-desired/0` et l'absence de schéma acceptés, en HTTP et en WebSocket).
 
 ### Qui l'écrit, qui le lit
 

@@ -158,9 +158,15 @@ func resolveCommand(path string) string {
 	return path
 }
 
+// desiredSchema names the desired-state document's format. A document may
+// carry it as `schema`; one that names another schema is refused, one that
+// names none is read as this one.
+const desiredSchema = "ixctl-desired/0"
+
 // Desired is a desired-state document: the state each named service should be
 // in. Services it does not name are left as they are.
 type Desired struct {
+	Schema   string                    `json:"schema,omitempty"`
 	Services map[string]DesiredService `json:"services"`
 	Peer     string                    `json:"peer,omitempty"`
 }

@@ -126,8 +126,9 @@ func TestWSSessionErrors(t *testing.T) {
 	}
 }
 
-// The same desired-state document with one unknown field gets the same
-// refusal on POST /v1/apply and on an ixctl.v1 apply, and nothing is applied.
+// The same desired-state document with one unknown field, or another schema,
+// gets the same refusal on POST /v1/apply and on an ixctl.v1 apply, and
+// nothing is applied.
 func TestUnknownFieldRefusedOnHTTPAndWS(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -138,17 +139,19 @@ func TestUnknownFieldRefusedOnHTTPAndWS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.CloseNow()
-	for i, doc := range []string{
-		`{"services":{"pod":{"state":"running"}},"schema":"ixctl-desired/9"}`,
-		`{"services":{"pod":{"state":"running","replicas":2}}}`,
+	for i, c := range []struct{ doc, refusal string }{
+		{`{"services":{"pod":{"state":"running"}},"schema":"ixctl-desired/9"}`, `schema "ixctl-desired/9" is not "ixctl-desired/0"`},
+		{`{"services":{"pod":{"state":"running","replicas":2}}}`, "unknown field"},
+		{`{"services":{"pod":{"state":"running"}},"version":1}`, "unknown field"},
 	} {
+		doc := c.doc
 		code, _, body := httpDo(t, in, "POST", "/v1/apply", json.RawMessage(doc), nil)
 		var he struct {
 			Error string `json:"error"`
 		}
 		json.Unmarshal(body, &he)
-		if code != 400 || !strings.Contains(he.Error, "unknown field") {
-			t.Fatalf("HTTP %s: %d %s", doc, code, body)
+		if code != 400 || !strings.Contains(he.Error, c.refusal) {
+			t.Fatalf("HTTP %s: %d %s, want %q", doc, code, body, c.refusal)
 		}
 
 		id := int64(i + 1)
@@ -169,5 +172,24 @@ func TestUnknownFieldRefusedOnHTTPAndWS(t *testing.T) {
 	json.Unmarshal(do(t, dial(t, in), Request{Op: "status"}), &st)
 	if st.Generation != 0 {
 		t.Fatalf("a refused document was applied: generation %d", st.Generation)
+	}
+
+	// The document's own schema name is accepted on both transports, and so is
+	// a document that names none.
+	withSchema := json.RawMessage(`{"schema":"ixctl-desired/0","services":{"pod":{"state":"stopped"}}}`)
+	code, _, body := httpDo(t, in, "POST", "/v1/apply", withSchema, nil)
+	var ar ApplyReply
+	json.Unmarshal(body, &ar)
+	if code != 200 || ar.Generation != 1 {
+		t.Fatalf("HTTP apply with schema: %d %s", code, body)
+	}
+	c := dial(t, in)
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: &Desired{Schema: desiredSchema, Services: map[string]DesiredService{"pod": {State: desiredStopped}}}}), &ar)
+	if ar.Generation != 2 {
+		t.Fatalf("WS apply with schema: generation %d, want 2", ar.Generation)
+	}
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("pod")}), &ar)
+	if ar.Generation != 3 {
+		t.Fatalf("WS apply without schema: generation %d, want 3", ar.Generation)
 	}
 }
