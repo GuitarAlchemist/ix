@@ -128,6 +128,12 @@ jobs:
           # stayed green (ix#350 review). It is the slow row.
           - crate: ix-agent
             features: maintain-gate
+          # `wasm` links ix-wasm, whose `wasm.run` skill registers at link time. No workspace
+          # member enables it, on purpose: a dev edge from ix-wasm back to ix-stream made the
+          # dep graph cyclic, and one from ix-skill put `ix_wasm_run` on ix-agent's test-time
+          # MCP surface through feature unification. The Go and Zig stages are #[ignore].
+          - crate: ix-stream
+            features: wasm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
