@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"time"
 )
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -43,6 +45,11 @@ type ServiceSpec struct {
 type Limits struct {
 	// WallMs is the longest a run may last, in milliseconds, from its launch; 0 is no limit.
 	WallMs int64 `json:"wall_ms,omitempty"`
+	// MemoryMB is the most memory the run's whole tree may hold, in MiB; 0 is no limit. On
+	// Windows the job object enforces it (commits past it fail) and reports it; on Linux the
+	// plane reads the group's resident set from /proc every 100 ms. Either way the run is
+	// killed once past it.
+	MemoryMB int64 `json:"memory_mb,omitempty"`
 }
 
 type PeerSpec struct {
@@ -54,6 +61,10 @@ const (
 	restartNever     = "never"
 	restartOnFailure = "on-failure"
 	restartAlways    = "always"
+
+	// The largest limits that still fit a time.Duration and a byte count.
+	maxWallMs   = math.MaxInt64 / int64(time.Millisecond)
+	maxMemoryMB = math.MaxInt64 >> 20
 )
 
 // LoadSpec reads and validates a spec file. Relative commands, dirs and peer
@@ -114,8 +125,13 @@ func (s *Spec) validate() error {
 		} else if *sv.MaxRestarts < 0 {
 			return fmt.Errorf("service %q: max_restarts must be >= 0", sv.Name)
 		}
-		if sv.Limits != nil && sv.Limits.WallMs < 0 {
-			return fmt.Errorf("service %q: limits.wall_ms must be >= 0", sv.Name)
+		if l := sv.Limits; l != nil {
+			if l.WallMs < 0 || l.WallMs > maxWallMs {
+				return fmt.Errorf("service %q: limits.wall_ms must be 0..%d", sv.Name, maxWallMs)
+			}
+			if l.MemoryMB < 0 || l.MemoryMB > maxMemoryMB {
+				return fmt.Errorf("service %q: limits.memory_mb must be 0..%d", sv.Name, maxMemoryMB)
+			}
 		}
 		sv.Command = s.abs(sv.Command)
 		if sv.Dir == "" {

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -16,7 +18,14 @@ import (
 // procTree is a service's process tree: its own process group.
 type procTree struct {
 	pgid int
+	over chan string   // the limit the tree went past, once; nil when none is watched
+	done chan struct{} // closed by close: ends the memory watch
+	mu   sync.Mutex
+	peak int64 // the largest resident set the watch has summed over the group
 }
+
+// memoryPoll is how often a watched group's resident set is read from /proc.
+const memoryPoll = 100 * time.Millisecond
 
 // startTree starts cmd as the leader of a new process group. A stop kills the
 // group. A plane that dies hard takes the leader with it on Linux (Pdeathsig),
@@ -26,7 +35,11 @@ type procTree struct {
 // forked exits, which the runtime does not promise to keep alive. Containing
 // the whole tree past the plane's death needs a cgroup or a death pipe the
 // service cooperates with; Windows job objects do it today (proc_windows.go).
-func startTree(cmd *exec.Cmd) (*procTree, error) {
+// With a memory limit, a goroutine sums the group's resident set from /proc
+// every memoryPoll and reports the limit gone past on `exceeded`: nothing in
+// the kernel bounds a group without a cgroup, so a spike shorter than one
+// poll is not seen.
+func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
@@ -35,7 +48,119 @@ func startTree(cmd *exec.Cmd) (*procTree, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &procTree{pgid: cmd.Process.Pid}, nil
+	t := &procTree{pgid: cmd.Process.Pid, done: make(chan struct{})}
+	if limits != nil && limits.MemoryMB > 0 {
+		t.over = make(chan string, 1)
+		go t.watchMemory(limits.MemoryMB << 20)
+	}
+	return t, nil
+}
+
+// watchMemory reads the group's resident set every memoryPoll until the tree is closed or
+// has no live member, keeps the peak, and reports the limit gone past, once.
+func (t *procTree) watchMemory(limit int64) {
+	tick := time.NewTicker(memoryPoll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-t.done:
+			return
+		case <-tick.C:
+		}
+		rss, live := groupRSS(t.pgid)
+		if !live {
+			return
+		}
+		t.mu.Lock()
+		if rss > t.peak {
+			t.peak = rss
+		}
+		t.mu.Unlock()
+		if rss > limit {
+			t.over <- reasonMemory
+			return
+		}
+	}
+}
+
+// exceeded yields the limit the tree went past, once; nil when none is watched.
+func (t *procTree) exceeded() <-chan string { return t.over }
+
+// peakBytes is the largest resident set the memory watch summed over the group; 0 without a
+// watch (the leader's own peak comes from rusage, see maxRSS).
+func (t *procTree) peakBytes() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.peak
+}
+
+// maxRSS is the leader's peak resident set as the kernel accounted it at exit (rusage;
+// kilobytes on Linux, bytes elsewhere); 0 when unknown.
+func maxRSS(ps *os.ProcessState) int64 {
+	if ps == nil {
+		return 0
+	}
+	ru, ok := ps.SysUsage().(*syscall.Rusage)
+	if !ok {
+		return 0
+	}
+	if runtime.GOOS == "linux" {
+		return int64(ru.Maxrss) * 1024
+	}
+	return int64(ru.Maxrss)
+}
+
+// groupRSS sums the resident set of the live members of group pgid from /proc (statm's
+// second field, in pages) and reports whether any live member was found.
+func groupRSS(pgid int) (int64, bool) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0, true
+	}
+	page := int64(os.Getpagesize())
+	var sum int64
+	live := false
+	for _, e := range entries {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		if g, zombie, ok := statOf(e.Name()); !ok || g != pgid || zombie {
+			continue
+		}
+		live = true
+		b, err := os.ReadFile("/proc/" + e.Name() + "/statm")
+		if err != nil {
+			continue
+		}
+		if f := strings.Fields(string(b)); len(f) >= 2 {
+			if pages, err := strconv.ParseInt(f[1], 10, 64); err == nil {
+				sum += pages * page
+			}
+		}
+	}
+	return sum, live
+}
+
+// statOf reads a process's group and zombie state from /proc/<pid>/stat (state and pgrp are
+// the first and third fields after the command's closing parenthesis).
+func statOf(pid string) (pgid int, zombie, ok bool) {
+	b, err := os.ReadFile("/proc/" + pid + "/stat")
+	if err != nil {
+		return 0, false, false
+	}
+	i := bytes.LastIndexByte(b, ')')
+	if i < 0 {
+		return 0, false, false
+	}
+	f := strings.Fields(string(b[i+1:]))
+	if len(f) < 3 {
+		return 0, false, false
+	}
+	g, err := strconv.Atoi(f[2])
+	if err != nil {
+		return 0, false, false
+	}
+	return g, f[0] == "Z", true
 }
 
 func (t *procTree) kill() error {
@@ -74,26 +199,20 @@ func groupHasLive(pgid int) bool {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
-		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
-		if err != nil {
-			continue
-		}
-		i := bytes.LastIndexByte(b, ')')
-		if i < 0 {
-			continue
-		}
-		f := strings.Fields(string(b[i+1:]))
-		if len(f) < 3 {
-			continue
-		}
-		if g, err := strconv.Atoi(f[2]); err == nil && g == pgid && f[0] != "Z" {
+		if g, zombie, ok := statOf(e.Name()); ok && g == pgid && !zombie {
 			return true
 		}
 	}
 	return false
 }
 
-func (t *procTree) close() {}
+func (t *procTree) close() {
+	select {
+	case <-t.done:
+	default:
+		close(t.done)
+	}
+}
 
 // exitCode is the shell's reading of how a child ended: its exit status, or
 // 128 plus the signal that ended it (137 for SIGKILL), rather than -1 for

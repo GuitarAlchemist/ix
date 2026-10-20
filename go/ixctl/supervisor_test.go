@@ -230,6 +230,45 @@ func TestARunPastItsWallLimitIsKilledAndSaysSo(t *testing.T) {
 	}
 }
 
+// A run that holds more than limits.memory_mb is killed by the plane and its exit says so,
+// with the peak the OS counted; a job so ended stays stopped.
+func TestARunPastItsMemoryLimitIsKilledAndSaysSo(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "hog", args: []string{"--hog-mb", "256"}, restart: restartNever, memMB: 48}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("hog")})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	if d["reason"] != reasonMemory || d["memory_mb"] != 48.0 || d["requested"] != false || d["code"] == 0.0 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+	e := waitEnv(t, w, 5*time.Second, "next", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.stopped" || e.Ev.Kind == "service.restarting"
+	})
+	if e.Ev.Kind != "service.stopped" {
+		t.Fatalf("a job killed at its limit is not restarted: %s", e.Raw())
+	}
+	s := svcStatus(in.plane.Status(), "hog")
+	if s.State != stateStopped || s.LastExit == nil || s.LastExit.Reason != reasonMemory || s.LastExit.PeakMemoryBytes <= 0 {
+		t.Fatalf("after the kill: %+v (exit %+v)", s, s.LastExit)
+	}
+}
+
+// A run that ends on its own reports the memory it peaked at, limit or not.
+func TestAnExitReportsItsPeakMemory(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "once", args: []string{"--hog-mb", "32", "--crash-after-ms", "200"}, restart: restartNever}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("once")})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	if peak, _ := d["peak_memory_bytes"].(float64); peak < 32<<20 || d["reason"] != nil {
+		t.Fatalf("exit %s", x.Raw())
+	}
+}
+
 // With a restart policy, a run killed at its limit is a failure: the service restarts.
 func TestARunPastItsWallLimitRestarts(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil,

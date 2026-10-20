@@ -418,12 +418,24 @@ name `ixctl.v1`.
   requested stop. The restart policy then applies as to any failure: a job (`restart: never`)
   stays `stopped` with that reason, `on-failure` and `always` restart with backoff, and the
   run counts toward `max_restarts`. The Rust client passes `last_exit` through unchanged, so
-  `Ctl::wait_exit*` and `ix.ctl.wait(exit: true)` carry the reason. Other limits (memory,
-  processes) are later slices: Windows job objects can enforce them; Linux needs a trampoline
-  or cgroups. Tests: `TestARunPastItsWallLimitIsKilledAndSaysSo`,
-  `TestARunPastItsWallLimitRestarts`, spec refuses a negative or unknown limit (Go);
-  `a_run_killed_at_its_wall_limit_says_so_in_its_exit` (client); E11 (gate: a Python sleep
-  bounded to 400 ms, killed, its process gone, `restarts` 0).
+  `Ctl::wait_exit*` and `ix.ctl.wait(exit: true)` carry the reason. `limits.memory_mb` bounds
+  the memory the run's whole tree holds: on Windows the job object enforces it (a commit past
+  it fails) and posts it to a completion port the plane listens to; on Linux the plane sums
+  the group's resident set from /proc every 100 ms (nothing bounds a group without a cgroup,
+  so a spike shorter than a poll is not seen). Either way the run is killed, reason
+  `memory_limit` (with `memory_mb`); a process that died of the refused commit before the
+  kill gets the reason too. Every exit carries `peak_memory_bytes` when the OS counted one
+  (the job's peak commit on Windows; the leader's rusage peak, or the group's polled peak
+  under a watch, on Linux). Codex round 15 (one P1, two P2): an exit already waiting when a
+  limit fires is the run's own end (not `wall_limit`; still `memory_limit`, the kernel said
+  so); a limit past what a `time.Duration` or a byte count holds is refused; the gate's wall
+  job is bounded to 1.5 s so its pid is read before the kill on a loaded runner. A process
+  limit is a later slice. Tests:
+  `TestARunPastItsWallLimitIsKilledAndSaysSo`, `TestARunPastItsWallLimitRestarts`,
+  `TestARunPastItsMemoryLimitIsKilledAndSaysSo`, `TestAnExitReportsItsPeakMemory`, spec
+  refuses a negative or unknown limit (Go); `a_run_killed_at_its_wall_limit_says_so_in_its_exit`
+  (client); E11 and E12 (gate: a Python sleep bounded to 400 ms, killed, its process gone,
+  `restarts` 0; a Python holding 256 MiB bounded to 64 MiB, killed, peak reported).
 
 ### What freezing locks in
 

@@ -37,13 +37,21 @@ type exitInfo struct {
 	// Generation is the apply that launched the run this exit ends (a restart keeps its
 	// run's generation), so a waiter can tell this run's exit from an earlier run's.
 	Generation uint64 `json:"generation,omitempty"`
-	// Reason names the limit the plane killed the run for (reasonWall); absent when the
-	// process ended on its own or on a requested stop.
+	// Reason names the limit the plane killed the run for (reasonWall, reasonMemory); absent
+	// when the process ended on its own or on a requested stop.
 	Reason string `json:"reason,omitempty"`
+	// PeakMemoryBytes is the most memory the run held at once, as the OS accounted it: the
+	// job's peak commit charge on Windows; on Linux the leader's peak resident set (rusage),
+	// or the group's largest polled resident set when a memory limit was watched. Absent
+	// when unknown.
+	PeakMemoryBytes int64 `json:"peak_memory_bytes,omitempty"`
 }
 
-// reasonWall is the exit reason of a run killed for lasting past limits.wall_ms.
-const reasonWall = "wall_limit"
+// Exit reasons: the limit a run was killed for.
+const (
+	reasonWall   = "wall_limit"   // lasted past limits.wall_ms
+	reasonMemory = "memory_limit" // held more than limits.memory_mb
+)
 
 // command is one desired state handed to the supervisor, with the generation that asked.
 type command struct {
@@ -94,6 +102,7 @@ type child struct {
 	stdin  *os.File
 	pid    int
 	exited chan int // the main process's exit code
+	rss    int64    // the leader's peak resident set at exit (maxRSS), set before exited is sent
 	io     sync.WaitGroup
 }
 
@@ -224,6 +233,10 @@ func (s *service) run(ctx context.Context) {
 		if s.wall != nil {
 			wall = s.wall.C
 		}
+		var over <-chan string
+		if s.proc != nil {
+			over = s.proc.tree.exceeded()
+		}
 		select {
 		case <-ctx.Done():
 			s.halt()
@@ -234,7 +247,9 @@ func (s *service) run(ctx context.Context) {
 			s.ended(code, "")
 		case <-wall:
 			s.wall = nil
-			s.onWall()
+			s.onLimit(reasonWall)
+		case reason := <-over:
+			s.onLimit(reason)
 		case <-backoff:
 			s.timer = nil
 			if s.cur() == stateRestarting {
@@ -361,7 +376,7 @@ func (s *service) start() (*child, error) {
 		return nil, err
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW
-	tree, err := startTree(cmd)
+	tree, err := startTree(cmd, s.spec.Limits)
 	inR.Close()
 	outW.Close()
 	errW.Close()
@@ -382,6 +397,7 @@ func (s *service) start() (*child, error) {
 		} else if ee := (*exec.ExitError)(nil); errors.As(err, &ee) {
 			code = exitCode(ee)
 		}
+		c.rss = maxRSS(cmd.ProcessState)
 		c.exited <- code
 	}()
 	return c, nil
@@ -399,6 +415,10 @@ func (s *service) reap(code int, reason string) *exitInfo {
 	c.stdin.Close()
 	c.tree.kill()
 	c.tree.waitGone(treeGoneLimit)
+	peak := c.tree.peakBytes() // before close: the job is gone after
+	if c.rss > peak {
+		peak = c.rss
+	}
 	c.tree.close()
 	drained := make(chan struct{})
 	go func() { c.io.Wait(); close(drained) }()
@@ -408,7 +428,7 @@ func (s *service) reap(code int, reason string) *exitInfo {
 	}
 	s.proc = nil
 	s.mu.Lock()
-	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason}
+	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason, PeakMemoryBytes: peak}
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
 	return e
@@ -455,9 +475,21 @@ func (s *service) halt() {
 	}
 }
 
-// onWall ends a run that has lasted past limits.wall_ms: the tree is killed, and the exit,
-// marked with the reason, goes through the restart policy as a failure does.
-func (s *service) onWall() {
+// onLimit ends a run that went past a limit of its spec (reason): the tree is killed, and
+// the exit, marked with the reason, goes through the restart policy as a failure does. An
+// exit already waiting when the limit fired (the select picks at random between the two) is
+// the run's own end: in time for the wall limit, so not marked with it; past the memory
+// limit all the same, since the kernel said so.
+func (s *service) onLimit(reason string) {
+	select {
+	case code := <-s.proc.exited:
+		if reason == reasonWall {
+			reason = ""
+		}
+		s.ended(code, reason)
+		return
+	default:
+	}
 	s.proc.tree.kill()
 	var code int
 	select {
@@ -465,17 +497,31 @@ func (s *service) onWall() {
 	case <-time.After(treeGoneLimit):
 		code = -1
 	}
-	s.ended(code, reasonWall)
+	s.ended(code, reason)
 }
 
 // ended handles an exit nobody asked for, by the restart policy. reason names the limit the
-// plane killed the run for, or is empty when the run ended on its own.
+// plane killed the run for, or is empty when the run ended on its own: then a limit the tree
+// reported just before (a commit refused past the memory limit, which the process died of)
+// is the reason all the same.
 func (s *service) ended(code int, reason string) {
 	pid := s.proc.pid
+	if reason == "" {
+		select {
+		case reason = <-s.proc.tree.exceeded():
+		default:
+		}
+	}
 	e := s.reap(code, reason)
 	exited := map[string]any{"pid": pid, "code": code, "requested": false, "generation": e.Generation}
-	if reason != "" {
+	switch reason {
+	case reasonWall:
 		exited["reason"], exited["wall_ms"] = reason, s.spec.Limits.WallMs
+	case reasonMemory:
+		exited["reason"], exited["memory_mb"] = reason, s.spec.Limits.MemoryMB
+	}
+	if e.PeakMemoryBytes > 0 {
+		exited["peak_memory_bytes"] = e.PeakMemoryBytes
 	}
 	s.ctl("service.exited", exited)
 	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && code == 0 && reason == "") {

@@ -452,12 +452,26 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   ensuite comme à tout échec : un job (`restart: never`) reste `stopped` avec cette raison,
   `on-failure` et `always` redémarrent avec recul, et l'exécution compte dans `max_restarts`.
   Le client Rust transmet `last_exit` tel quel, donc `Ctl::wait_exit*` et
-  `ix.ctl.wait(exit: true)` portent la raison. Les autres limites (mémoire, processus) sont des
-  tranches ultérieures : les job objects Windows savent les imposer ; Linux demande un
-  tremplin ou des cgroups. Tests : `TestARunPastItsWallLimitIsKilledAndSaysSo`,
-  `TestARunPastItsWallLimitRestarts`, la spec refuse une limite négative ou inconnue (Go) ;
-  `a_run_killed_at_its_wall_limit_says_so_in_its_exit` (client) ; E11 (passerelle : un sleep
-  Python borné à 400 ms, tué, son processus disparu, `restarts` à 0).
+  `ix.ctl.wait(exit: true)` portent la raison. `limits.memory_mb` borne la mémoire que tient
+  l'arbre entier de l'exécution : sous Windows le job object l'impose (un commit au-delà
+  échoue) et le signale à un port d'achèvement que le plan écoute ; sous Linux le plan somme
+  l'ensemble résident du groupe depuis /proc toutes les 100 ms (rien ne borne un groupe sans
+  cgroup, donc un pic plus court qu'une lecture passe inaperçu). Dans les deux cas l'exécution
+  est tuée, raison `memory_limit` (avec `memory_mb`) ; un processus mort du commit refusé avant
+  la mise à mort reçoit la raison aussi. Chaque sortie porte `peak_memory_bytes` quand l'OS l'a
+  compté (le pic de commit du job sous Windows ; le pic rusage du meneur, ou le pic sommé du
+  groupe sous surveillance, sous Linux). Revue Codex 15 (un P1, deux P2) : une sortie déjà en
+  attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;
+  toujours `memory_limit`, le noyau l'a dit) ; une limite au-delà de ce qu'une `time.Duration`
+  ou un compte d'octets contient est refusée ; le job mural de la passerelle est borné à 1,5 s
+  pour que son pid soit lu avant la mise à mort sur un runner chargé. Une limite de processus
+  est une tranche ultérieure.
+  Tests : `TestARunPastItsWallLimitIsKilledAndSaysSo`, `TestARunPastItsWallLimitRestarts`,
+  `TestARunPastItsMemoryLimitIsKilledAndSaysSo`, `TestAnExitReportsItsPeakMemory`, la spec
+  refuse une limite négative ou inconnue (Go) ;
+  `a_run_killed_at_its_wall_limit_says_so_in_its_exit` (client) ; E11 et E12 (passerelle : un
+  sleep Python borné à 400 ms, tué, son processus disparu, `restarts` à 0 ; un Python tenant
+  256 Mio borné à 64 Mio, tué, pic rapporté).
 
 ### Ce que le figer verrouille
 

@@ -40,8 +40,17 @@ func fakeService(args []string) int {
 	crashCode := fs.Int("crash-code", 3, "exit code of a crash")
 	spawn := fs.Bool("spawn-child", false, "start a grandchild and report its pid")
 	ignoreStdin := fs.Bool("ignore-stdin", false, "keep running after stdin closes")
+	hogMB := fs.Int("hog-mb", 0, "hold this much memory, touched, for the whole run")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	var hog []byte
+	if *hogMB > 0 {
+		hog = make([]byte, *hogMB<<20)
+		for i := range hog {
+			hog[i] = 1
+		}
+		defer func() { hog[0] = 0 }() // kept alive
 	}
 	var mu sync.Mutex
 	emit := func(kind string, data map[string]any) {
@@ -90,6 +99,7 @@ type fakeSvc struct {
 	restart string
 	max     int
 	wallMs  int64 // limits.wall_ms, when > 0
+	memMB   int64 // limits.memory_mb, when > 0
 }
 
 func testExe(t testing.TB) string {
@@ -125,8 +135,8 @@ func fakeSpec(t testing.TB, name string, peers []PeerSpec, svcs ...fakeSvc) *Spe
 			m := s.max
 			j.MaxRestarts = &m
 		}
-		if s.wallMs > 0 {
-			j.Limits = &Limits{WallMs: s.wallMs}
+		if s.wallMs > 0 || s.memMB > 0 {
+			j.Limits = &Limits{WallMs: s.wallMs, MemoryMB: s.memMB}
 		}
 		doc.Services = append(doc.Services, j)
 	}

@@ -691,9 +691,11 @@ impl Ctl {
     }
 
     /// Waits until `service` has exited, and answers its entry in the status: state `stopped`
-    /// or `failed`, with `last_exit` saying how (`code`, `at` in Unix milliseconds, and
-    /// `reason` when the plane killed the run for a limit of its spec: `wall_limit` for a run
-    /// that lasted past `limits.wall_ms`; absent when the process ended on its own).
+    /// or `failed`, with `last_exit` saying how (`code`, `at` in Unix milliseconds,
+    /// `peak_memory_bytes` when the OS counted one, and `reason` when the plane killed the run
+    /// for a limit of its spec: `wall_limit` for a run that lasted past `limits.wall_ms`,
+    /// `memory_limit` for one that held more than `limits.memory_mb`; absent when the process
+    /// ended on its own).
     ///
     /// This is how a job is waited for: a service declared with `restart: never` runs to its
     /// end and the plane leaves it `stopped`, its `desired` still `running`. Converging the
