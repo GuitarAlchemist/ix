@@ -103,6 +103,7 @@ type fakeSvc struct {
 	max     int
 	wallMs  int64 // limits.wall_ms, when > 0
 	memMB   int64 // limits.memory_mb, when > 0
+	cpuMs   int64 // limits.cpu_ms, when > 0
 }
 
 func testExe(t testing.TB) string {
@@ -138,8 +139,8 @@ func fakeSpec(t testing.TB, name string, peers []PeerSpec, svcs ...fakeSvc) *Spe
 			m := s.max
 			j.MaxRestarts = &m
 		}
-		if s.wallMs > 0 || s.memMB > 0 {
-			j.Limits = &Limits{WallMs: s.wallMs, MemoryMB: s.memMB}
+		if s.wallMs > 0 || s.memMB > 0 || s.cpuMs > 0 {
+			j.Limits = &Limits{WallMs: s.wallMs, MemoryMB: s.memMB, CpuMs: s.cpuMs}
 		}
 		doc.Services = append(doc.Services, j)
 	}

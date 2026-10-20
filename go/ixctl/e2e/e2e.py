@@ -1,7 +1,8 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
 federated instances on loopback, plus the `ix` binary run as a job (E10) and runs killed at their
-wall and memory limits (E11, E12). 34 checks, E1..E12, a restart loop and the M1 measurement.
+wall, memory and processor-time limits (E11, E12, E13). 35 checks, E1..E13, a restart loop and
+the M1 measurement.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -306,7 +307,7 @@ def job(service, pipeline):
     return {"name": service, "command": str(IX),
             "args": ["pipeline", "run", "--file", str(pipeline), "--json"],
             "dir": str(JOBDIR), "env": {"IX_GOVERNANCE_DIR": str(GOV), "IX_ROOT": str(REPO)},
-            "restart": "never", "limits": {"wall_ms": 120_000, "memory_mb": 2048}}
+            "restart": "never", "limits": {"wall_ms": 120_000, "memory_mb": 2048, "cpu_ms": 60_000}}
 
 
 def main():
@@ -366,6 +367,10 @@ def run():
         {"name": "hog", "command": sys.executable,
          "args": ["-c", "c = [b'x' * (4 << 20) for _ in range(64)]; import time; time.sleep(60)"],
          "restart": "never", "limits": {"memory_mb": 64}},
+        # A job that would spin for a minute, bounded to 300 ms of processor time.
+        {"name": "spinner", "command": sys.executable,
+         "args": ["-c", "import time; end = time.monotonic() + 60\nwhile time.monotonic() < end: pass"],
+         "restart": "never", "limits": {"cpu_ms": 300}},
     ], [{"name": "b", "state_file": str(STATE / "b.json")}])
 
     pb, ready_b, sb, ms_b = up("b", spec_b)
@@ -626,6 +631,28 @@ def run():
           and hg.get("restarts") == 0 and hg.get("pid") is None and killed_after_ms < 15000,
           code=code, ms=round(ms, 1), killed_after_ms=killed_after_ms,
           exited={k: hg.get(k) for k in ("state", "desired", "generation", "last_exit", "restarts")},
+          stderr=err[-200:])
+
+    # E13: a processor-time limit. A run that uses more than `limits.cpu_ms` is killed (the
+    # plane reads every 100 ms the same accounting the exit reports as `cpu_ms`: the job's on
+    # Windows, the group's /proc stat on Linux), its exit names the limit and the time used is
+    # past it by construction; the job stays stopped.
+    _, r = call(sa, "POST", "/v1/apply", {"services": {"spinner": {"state": "running"}}})
+    t_apply = time.monotonic()
+    prog = write_ixql("spinner.ixql",
+                      f'exited <- ix.ctl.wait(service: "spinner", exit: true, generation: {r["generation"]}, '
+                      f'epoch: "{r["epoch"]}", timeout_ms: 60000)\n')
+    code, out, err, ms = ixql("spinner", prog, STATE / "a.json")
+    killed_after_ms = round((time.monotonic() - t_apply) * 1000, 1)
+    sp = (out or {}).get("exited") or {}
+    le = sp.get("last_exit") or {}
+    check("E13.cpu_limit_kills_the_run",
+          code == 0 and sp.get("state") == "stopped" and sp.get("desired") == "running"
+          and le.get("reason") == "cpu_limit" and le.get("generation") == r["generation"]
+          and le.get("code") not in (None, 0) and (le.get("cpu_ms") or 0) > 300
+          and sp.get("restarts") == 0 and sp.get("pid") is None and killed_after_ms < 15000,
+          code=code, ms=round(ms, 1), killed_after_ms=killed_after_ms,
+          exited={k: sp.get(k) for k in ("state", "desired", "generation", "last_exit", "restarts")},
           stderr=err[-200:])
 
     # A real pod that keeps crashing: restarts with backoff, then failed. A pod reports its

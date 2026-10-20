@@ -445,7 +445,16 @@ name `ixctl.v1`.
   its reason empty whatever the monitor holds (the plane ended the run, not a limit). For a
   32-bit Windows (no target of the repo): the notification structure is padded to the SDK's
   48 bytes and its size asserted at compile time, the hard cap saturates at the address
-  space, and the spec's error message no longer overflows `int`.
+  space, and the spec's error message no longer overflows `int`. `limits.cpu_ms`, the third
+  limit, bounds the processor time, user and kernel, the whole tree uses: the plane reads it
+  every 100 ms from the very accounting the exit reports as `cpu_ms` (the job's on Windows,
+  the group's `/proc/<pid>/stat` times on Linux, waited-for children included, in
+  `AT_CLKTCK` ticks), so a run is killed once the figure it would report goes past the limit,
+  at most a poll late, reason `cpu_limit` (the limit travels as `cpu_limit_ms` on the event,
+  since `cpu_ms` is what was used). Windows' own job time limit (user time alone, and it ends
+  the job itself) is not used, so the limit and the evidence agree by construction; the Linux
+  watch now feeds `cpu_ms` for the whole group too. The gate's E13 spins a Python bounded to
+  300 ms of processor time (35 checks); its job declares `cpu_ms: 60000` as well.
   Round 16's P2s: a failed launch releases the port and its listener; a requested stop's
   `service.exited` carries the cost too; the exit's code and the leader's usage travel
   together (`exitStat`), so a tree killed without its exit read reports neither; a memory

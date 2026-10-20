@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,20 +14,22 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // procTree is a service's process tree: its own process group.
 type procTree struct {
 	pgid int
 	over chan string   // the limit the tree went past, once; nil when none is watched
-	done chan struct{} // closed by close: ends the memory watch
-	gone chan struct{} // closed when the memory watch has returned
+	done chan struct{} // closed by close: ends the watch
+	gone chan struct{} // closed when the watch has returned
 	mu   sync.Mutex
 	peak int64 // the largest resident set the watch has summed over the group
+	cpu  int64 // the group's processor time at the watch's last read, in milliseconds
 }
 
-// memoryPoll is how often a watched group's resident set is read from /proc.
-const memoryPoll = 100 * time.Millisecond
+// watchPoll is how often a watched group's resident set and processor time are read from /proc.
+const watchPoll = 100 * time.Millisecond
 
 // startTree starts cmd as the leader of a new process group. A stop kills the
 // group. A plane that dies hard takes the leader with it on Linux (Pdeathsig),
@@ -36,10 +39,10 @@ const memoryPoll = 100 * time.Millisecond
 // forked exits, which the runtime does not promise to keep alive. Containing
 // the whole tree past the plane's death needs a cgroup or a death pipe the
 // service cooperates with; Windows job objects do it today (proc_windows.go).
-// With a memory limit, a goroutine sums the group's resident set from /proc
-// every memoryPoll and reports the limit gone past on `exceeded`: nothing in
-// the kernel bounds a group without a cgroup, so a spike shorter than one
-// poll is not seen.
+// With a memory or processor-time limit, a goroutine sums the group's
+// resident set and processor time from /proc every watchPoll and reports the
+// limit gone past on `exceeded`: nothing in the kernel bounds a group without
+// a cgroup, so a spike shorter than one poll is not seen.
 func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -50,18 +53,19 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 		return nil, err
 	}
 	t := &procTree{pgid: cmd.Process.Pid, done: make(chan struct{})}
-	if limits != nil && limits.MemoryMB > 0 {
+	if limits != nil && (limits.MemoryMB > 0 || limits.CpuMs > 0) {
 		t.over, t.gone = make(chan string, 1), make(chan struct{})
-		go t.watchMemory(limits.MemoryMB << 20)
+		go t.watch(limits.MemoryMB<<20, limits.CpuMs)
 	}
 	return t, nil
 }
 
-// watchMemory reads the group's resident set every memoryPoll until the tree is closed or
-// has no live member, keeps the peak, and reports the limit gone past, once.
-func (t *procTree) watchMemory(limit int64) {
+// watch reads the group's resident set and processor time every watchPoll until the tree is
+// closed or has no live member, keeps the peak and the last processor time, and reports a
+// limit gone past, once (0 is no limit).
+func (t *procTree) watch(memoryBytes, cpuMs int64) {
 	defer close(t.gone)
-	tick := time.NewTicker(memoryPoll)
+	tick := time.NewTicker(watchPoll)
 	defer tick.Stop()
 	for {
 		select {
@@ -69,7 +73,7 @@ func (t *procTree) watchMemory(limit int64) {
 			return
 		case <-tick.C:
 		}
-		rss, live := groupRSS(t.pgid)
+		rss, cpu, live := groupUsage(t.pgid)
 		if !live {
 			return
 		}
@@ -77,9 +81,14 @@ func (t *procTree) watchMemory(limit int64) {
 		if rss > t.peak {
 			t.peak = rss
 		}
+		t.cpu = cpu
 		t.mu.Unlock()
-		if rss > limit {
+		switch {
+		case memoryBytes > 0 && rss > memoryBytes:
 			t.over <- reasonMemory
+			return
+		case cpuMs > 0 && cpu > cpuMs:
+			t.over <- reasonCPU
 			return
 		}
 	}
@@ -88,8 +97,8 @@ func (t *procTree) watchMemory(limit int64) {
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
 
-// drain waits, at most limit, until the memory watch has returned (it does within a poll of
-// the group's last live member going), so what `exceeded` holds is final; at once without a
+// drain waits, at most limit, until the watch has returned (it does within a poll of the
+// group's last live member going), so what `exceeded` holds is final; at once without a
 // watch.
 func (t *procTree) drain(limit time.Duration) {
 	if t.gone == nil {
@@ -101,13 +110,13 @@ func (t *procTree) drain(limit time.Duration) {
 	}
 }
 
-// usage is the largest resident set the memory watch summed over the group (0 without a
-// watch); nothing counts the group's processor time without a cgroup, so that is 0 here and
-// comes from the leader's rusage (leaderUsage).
+// usage is the largest resident set and the last processor time the watch summed over the
+// group's live members (0 without a watch: nothing counts a group without a cgroup, and the
+// leader's rusage then speaks for the tree, leaderUsage).
 func (t *procTree) usage() (peakBytes, cpuMs int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.peak, 0
+	return t.peak, t.cpu
 }
 
 // leaderUsage is the leader's peak resident set (kilobytes on Linux, bytes elsewhere) and
@@ -129,57 +138,109 @@ func leaderUsage(ps *os.ProcessState) (rssBytes, cpuMs int64) {
 	return rssBytes, cpuMs
 }
 
-// groupRSS sums the resident set of the live members of group pgid from /proc (statm's
-// second field, in pages) and reports whether any live member was found.
-func groupRSS(pgid int) (int64, bool) {
+// groupUsage sums, over the live members of group pgid, the resident set (statm's second
+// field, in pages) and the processor time (stat's utime, stime and the cutime, cstime of the
+// children each has waited for, which are dead and so counted nowhere else), in milliseconds,
+// and reports whether any live member was found.
+func groupUsage(pgid int) (rssBytes, cpuMs int64, live bool) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return 0, true
+		return 0, 0, true
 	}
 	page := int64(os.Getpagesize())
-	var sum int64
-	live := false
+	var ticks int64
 	for _, e := range entries {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
-		if g, zombie, ok := statOf(e.Name()); !ok || g != pgid || zombie {
+		st, ok := statOf(e.Name())
+		if !ok || st.pgid != pgid || st.zombie {
 			continue
 		}
 		live = true
+		ticks += st.ticks
 		b, err := os.ReadFile("/proc/" + e.Name() + "/statm")
 		if err != nil {
 			continue
 		}
 		if f := strings.Fields(string(b)); len(f) >= 2 {
 			if pages, err := strconv.ParseInt(f[1], 10, 64); err == nil {
-				sum += pages * page
+				rssBytes += pages * page
 			}
 		}
 	}
-	return sum, live
+	return rssBytes, ticks * 1000 / clockTicks(), live
 }
 
-// statOf reads a process's group and zombie state from /proc/<pid>/stat (state and pgrp are
-// the first and third fields after the command's closing parenthesis).
-func statOf(pid string) (pgid int, zombie, ok bool) {
+// procStat is what the watch reads of /proc/<pid>/stat.
+type procStat struct {
+	pgid   int
+	zombie bool
+	ticks  int64 // utime + stime + cutime + cstime, in clock ticks
+}
+
+// statOf reads a process's group, zombie state and processor time from /proc/<pid>/stat:
+// after the command's closing parenthesis, the state is field 1, the group field 3 and the
+// times fields 12 to 15 (14 to 17 of the whole line).
+func statOf(pid string) (procStat, bool) {
 	b, err := os.ReadFile("/proc/" + pid + "/stat")
 	if err != nil {
-		return 0, false, false
+		return procStat{}, false
 	}
 	i := bytes.LastIndexByte(b, ')')
 	if i < 0 {
-		return 0, false, false
+		return procStat{}, false
 	}
 	f := strings.Fields(string(b[i+1:]))
-	if len(f) < 3 {
-		return 0, false, false
+	if len(f) < 15 {
+		return procStat{}, false
 	}
 	g, err := strconv.Atoi(f[2])
 	if err != nil {
-		return 0, false, false
+		return procStat{}, false
 	}
-	return g, f[0] == "Z", true
+	st := procStat{pgid: g, zombie: f[0] == "Z"}
+	for _, k := range []int{11, 12, 13, 14} {
+		n, err := strconv.ParseInt(f[k], 10, 64)
+		if err != nil {
+			return procStat{}, false
+		}
+		st.ticks += n
+	}
+	return st, true
+}
+
+var (
+	clockTicksOnce sync.Once
+	clockTicksHz   int64
+)
+
+// clockTicks is the unit of /proc's processor times (sysconf(_SC_CLK_TCK)), read from the
+// AT_CLKTCK entry of this process's auxiliary vector; 100, the kernel's USER_HZ everywhere
+// that matters, when it cannot be read.
+func clockTicks() int64 {
+	clockTicksOnce.Do(func() {
+		clockTicksHz = 100
+		const atClktck = 17
+		b, err := os.ReadFile("/proc/self/auxv")
+		if err != nil {
+			return
+		}
+		word := int(unsafe.Sizeof(uintptr(0)))
+		for i := 0; i+2*word <= len(b); i += 2 * word {
+			var key, val uint64
+			if word == 8 {
+				key, val = binary.NativeEndian.Uint64(b[i:]), binary.NativeEndian.Uint64(b[i+8:])
+			} else {
+				key, val = uint64(binary.NativeEndian.Uint32(b[i:])), uint64(binary.NativeEndian.Uint32(b[i+4:]))
+			}
+			if key == atClktck && val > 0 {
+				clockTicksHz = int64(val)
+				return
+			}
+		}
+	})
+	return clockTicksHz
 }
 
 func (t *procTree) kill() error {
@@ -218,7 +279,7 @@ func groupHasLive(pgid int) bool {
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
-		if g, zombie, ok := statOf(e.Name()); ok && g == pgid && !zombie {
+		if st, ok := statOf(e.Name()); ok && st.pgid == pgid && !st.zombie {
 			return true
 		}
 	}

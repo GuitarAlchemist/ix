@@ -50,6 +50,11 @@ type Limits struct {
 	// plane reads the group's resident set from /proc every 100 ms. Either way the run is
 	// killed once past it.
 	MemoryMB int64 `json:"memory_mb,omitempty"`
+	// CpuMs is the most processor time, user and kernel, the run's whole tree may use, in
+	// milliseconds; 0 is no limit. The plane reads it every 100 ms from the same accounting
+	// the exit reports as `cpu_ms` (the job's on Windows, the group's /proc stat on Linux), so
+	// a run is killed once the figure it would report goes past the limit, at most a poll late.
+	CpuMs int64 `json:"cpu_ms,omitempty"`
 }
 
 type PeerSpec struct {
@@ -62,7 +67,7 @@ const (
 	restartOnFailure = "on-failure"
 	restartAlways    = "always"
 
-	// The largest limits that still fit a time.Duration and a byte count.
+	// The largest limits that still fit a time.Duration (wall and processor time) and a byte count.
 	maxWallMs   = math.MaxInt64 / int64(time.Millisecond)
 	maxMemoryMB = math.MaxInt64 >> 20
 )
@@ -131,6 +136,9 @@ func (s *Spec) validate() error {
 			}
 			if l.MemoryMB < 0 || l.MemoryMB > maxMemoryMB {
 				return fmt.Errorf("service %q: limits.memory_mb must be 0..%d", sv.Name, int64(maxMemoryMB))
+			}
+			if l.CpuMs < 0 || l.CpuMs > maxWallMs {
+				return fmt.Errorf("service %q: limits.cpu_ms must be 0..%d", sv.Name, maxWallMs)
 			}
 		}
 		sv.Command = s.abs(sv.Command)

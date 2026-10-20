@@ -60,7 +60,7 @@ les pairs avec lesquels elle se fédère. Les champs inconnus sont refusés.
       "restart": "on-failure",
       "max_restarts": 5,
       "autostart": false,
-      "limits": {"wall_ms": 120000, "memory_mb": 2048}
+      "limits": {"wall_ms": 120000, "memory_mb": 2048, "cpu_ms": 60000}
     },
     {
       "name": "job",
@@ -84,14 +84,17 @@ les pairs avec lesquels elle se fédère. Les champs inconnus sont refusés.
 | `autostart` | Démarrer le service au démarrage du plan, en génération 1. |
 | `limits.wall_ms` | Durée maximale d'une exécution, depuis son lancement. 0 ou absent : pas de limite. |
 | `limits.memory_mb` | Mémoire maximale que tout l'arbre de processus peut tenir, en MiB. 0 ou absent : pas de limite. |
+| `limits.cpu_ms` | Temps processeur maximal, utilisateur et noyau, que tout l'arbre peut consommer, en millisecondes. 0 ou absent : pas de limite. |
 | `peers[].state_file` | Le fichier d'état d'une instance pair ; le lien y lit son adresse et son jeton et se reconnecte avec délai croissant (200 ms à 5 s). |
 
 ### Limites
 
 Une exécution qui dépasse une limite est tuée, tout son arbre avec elle, et sa sortie nomme la
-limite : `reason` vaut `wall_limit` ou `memory_limit` sur `service.exited` et dans `last_exit`, à
-côté de la limite posée (`wall_ms` ou `memory_mb`). La politique de redémarrage s'applique ensuite
-comme à tout échec : un job ainsi terminé reste `stopped`, un service redémarre avec délai.
+limite : `reason` vaut `wall_limit`, `memory_limit` ou `cpu_limit` sur `service.exited` et dans
+`last_exit`, à côté de la limite posée sur l'événement (`wall_ms`, `memory_mb`, ou
+`cpu_limit_ms`, puisque `cpu_ms` est ce que l'exécution a consommé). La politique de redémarrage
+s'applique ensuite comme à tout échec : un job ainsi terminé reste `stopped`, un service redémarre
+avec délai.
 
 - **Le temps mur** est une minuterie armée au lancement.
 - **La mémoire**, sous Windows, est une *limite de notification* du job object à `memory_mb` (le
@@ -101,11 +104,17 @@ comme à tout échec : un job ainsi terminé reste `stopped`, un service redéma
   groupe de processus dans `/proc`. La sortie d'une exécution n'est classée qu'une fois son
   moniteur drainé (une seconde au plus), donc une sortie à l'heure n'est jamais lue comme une
   limite.
+- **Le temps processeur** est lu toutes les 100 ms dans la même comptabilité que la sortie
+  rapporte en `cpu_ms` (temps utilisateur + noyau du job sous Windows ; les temps de
+  `/proc/<pid>/stat` du groupe sous Linux, enfants attendus compris) : l'exécution est tuée dès
+  que le chiffre qu'elle rapporterait dépasse la limite, au plus une lecture en retard. La
+  limite de temps propre au job object Windows ne compte que le temps utilisateur et termine le
+  job elle-même ; le plan ne s'en sert pas.
 
 Chaque sortie porte aussi ce que l'exécution a coûté : `peak_memory_bytes` (Windows : le pic de
 commit du job ; Linux : le plus grand du pic sondé et du `ru_maxrss` du meneur) et `cpu_ms`
-(Windows : temps utilisateur + noyau du job ; Linux : `ru_utime + ru_stime` du meneur), quand la
-plateforme a pu les mesurer.
+(Windows : temps utilisateur + noyau du job ; Linux : le plus grand du temps sondé du groupe et
+du `ru_utime + ru_stime` du meneur), quand la plateforme a pu les mesurer.
 
 ## État désiré, plan et apply
 
@@ -181,7 +190,7 @@ Les événements arrivent en enveloppes :
 
 | Canal | Porte |
 |---|---|
-| `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`, `peak_memory_bytes`, `cpu_ms`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
+| `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`, `peak_memory_bytes`, `cpu_ms`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne est transmise comme cet événement (`t` en ms Unix sur l'horloge du service ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
 | `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir. `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 
@@ -197,8 +206,8 @@ programme devrait lire (porte 3).
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le
 vrai plan, le vrai client Rust via son exemple `ixql-ctl`, l'exemple `pod` d'ix-stream en deux
 instances fédérées, le vrai `ix pipeline run` comme job, et des exécutions tuées à leurs limites
-de temps mur et de mémoire. 34 vérifications, E1..E12, une boucle de redémarrage et la mesure M1
-(ce qu'une attente sur le flux gagnerait sur la sonde à 25 ms).
+de temps mur, de mémoire et de temps processeur. 35 vérifications, E1..E13, une boucle de
+redémarrage et la mesure M1 (ce qu'une attente sur le flux gagnerait sur la sonde à 25 ms).
 
 ```sh
 python go/ixctl/e2e/e2e.py --build            # construit ixctl, pod, ixql-ctl et ix, puis lance
@@ -217,4 +226,6 @@ Le job lit la constitution Demerzel dans le sous-module `governance/demerzel`
   que pour le meneur.
 - Un seul commit refusé au-delà du plafond mémoire Windows dépend encore du message au mieux du
   noyau ; la notification à `memory_mb` est le chemin garanti.
-- Pas encore de limite de temps CPU ni de nombre de processus.
+- La limite de temps processeur est une sonde : une exécution peut consommer jusqu'à une
+  période de lecture sur tous les cœurs de la machine au-delà, avant la mise à mort. Pas encore
+  de limite de nombre de processus.

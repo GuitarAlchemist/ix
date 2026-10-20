@@ -255,6 +255,49 @@ func TestARunPastItsMemoryLimitIsKilledAndSaysSo(t *testing.T) {
 	}
 }
 
+// A run that uses more processor time than its limit is killed, its exit names the limit
+// (with the limit under `cpu_limit_ms`, since `cpu_ms` is what it used, past the limit by
+// construction) and a job so ended stays stopped.
+func TestARunPastItsCpuLimitIsKilledAndSaysSo(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "spinner", args: []string{"--burn-ms", "20000"}, restart: restartNever, cpuMs: 200}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("spinner")})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	used, _ := d["cpu_ms"].(float64)
+	if d["reason"] != reasonCPU || d["cpu_limit_ms"] != 200.0 || d["requested"] != false || d["code"] == 0.0 || used <= 200 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+	e := waitEnv(t, w, 5*time.Second, "next", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.stopped" || e.Ev.Kind == "service.restarting"
+	})
+	if e.Ev.Kind != "service.stopped" {
+		t.Fatalf("a job killed at its limit is not restarted: %s", e.Raw())
+	}
+	s := svcStatus(in.plane.Status(), "spinner")
+	if s.State != stateStopped || s.LastExit == nil || s.LastExit.Reason != reasonCPU || s.LastExit.CpuMs <= 200 {
+		t.Fatalf("after the kill: %+v (exit %+v)", s, s.LastExit)
+	}
+}
+
+// A run under a processor-time limit it never reaches ends as any other, its exit without a
+// reason and with the time it did use.
+func TestARunUnderItsCpuLimitEndsOnItsOwn(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "brief", args: []string{"--burn-ms", "150", "--crash-after-ms", "50", "--crash-code", "0"}, restart: restartNever, cpuMs: 5000}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("brief")})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	used, _ := d["cpu_ms"].(float64)
+	if _, has := d["reason"]; has || d["code"] != 0.0 || used < 50 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+}
+
 // A requested stop reports what the run cost too.
 func TestAStopReportsTheRunsUsage(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil,

@@ -487,7 +487,18 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   tienne le moniteur (c'est le plan qui a terminé l'exécution, pas une limite). Pour un Windows
   32 bits (aucune cible du dépôt) : la structure de notification est complétée aux 48 octets
   du SDK et sa taille vérifiée à la compilation, le plafond dur sature à l'espace d'adressage,
-  et le message d'erreur de la spec ne déborde plus `int`. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
+  et le message d'erreur de la spec ne déborde plus `int`. `limits.cpu_ms`, la troisième
+  limite, borne le temps processeur, utilisateur et noyau, que tout l'arbre consomme : le plan
+  le lit toutes les 100 ms dans la comptabilité même que la sortie rapporte en `cpu_ms` (celle
+  du job sous Windows, les temps de `/proc/<pid>/stat` du groupe sous Linux, enfants attendus
+  compris, en pas `AT_CLKTCK`), si bien qu'une exécution est tuée dès que le chiffre qu'elle
+  rapporterait dépasse la limite, au plus une lecture en retard, raison `cpu_limit` (la limite
+  voyage en `cpu_limit_ms` sur l'événement, `cpu_ms` étant ce qui a été consommé). La limite de
+  temps propre au job object Windows (temps utilisateur seul, et elle termine le job elle-même)
+  n'est pas utilisée, de sorte que la limite et la preuve concordent par construction ; la
+  veille Linux alimente aussi `cpu_ms` pour tout le groupe désormais. La E13 de la passerelle
+  fait tourner un Python borné à 300 ms de temps processeur (35 vérifications) ; son job
+  déclare aussi `cpu_ms: 60000`. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
   attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;
   toujours `memory_limit`, le noyau l'a dit) ; une limite au-delà de ce qu'une `time.Duration`
   ou un compte d'octets contient est refusée ; le job mural de la passerelle est borné à 1,5 s

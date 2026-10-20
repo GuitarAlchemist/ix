@@ -37,8 +37,8 @@ type exitInfo struct {
 	// Generation is the apply that launched the run this exit ends (a restart keeps its
 	// run's generation), so a waiter can tell this run's exit from an earlier run's.
 	Generation uint64 `json:"generation,omitempty"`
-	// Reason names the limit the plane killed the run for (reasonWall, reasonMemory); absent
-	// when the process ended on its own or on a requested stop.
+	// Reason names the limit the plane killed the run for (reasonWall, reasonMemory,
+	// reasonCPU); absent when the process ended on its own or on a requested stop.
 	Reason string `json:"reason,omitempty"`
 	// PeakMemoryBytes is the most memory the run held at once, as the OS accounted it: the
 	// job's peak commit charge on Windows; on Linux the leader's peak resident set (rusage),
@@ -56,6 +56,7 @@ type exitInfo struct {
 const (
 	reasonWall   = "wall_limit"   // lasted past limits.wall_ms
 	reasonMemory = "memory_limit" // held more than limits.memory_mb
+	reasonCPU    = "cpu_limit"    // used more processor time than limits.cpu_ms
 )
 
 // command is one desired state handed to the supervisor, with the generation that asked.
@@ -474,6 +475,9 @@ func (s *service) exitData(pid int, requested bool, e *exitInfo) map[string]any 
 		d["reason"], d["wall_ms"] = e.Reason, s.spec.Limits.WallMs
 	case reasonMemory:
 		d["reason"], d["memory_mb"] = e.Reason, s.spec.Limits.MemoryMB
+	case reasonCPU:
+		// `cpu_ms` is what the run used, so the limit travels as `cpu_limit_ms`.
+		d["reason"], d["cpu_limit_ms"] = e.Reason, s.spec.Limits.CpuMs
 	}
 	if e.PeakMemoryBytes > 0 {
 		d["peak_memory_bytes"] = e.PeakMemoryBytes
@@ -528,8 +532,8 @@ func (s *service) halt() {
 // onLimit ends a run that went past a limit of its spec (reason): the tree is killed, and
 // the exit, marked with the reason, goes through the restart policy as a failure does. An
 // exit already waiting when the limit fired (the select picks at random between the two) is
-// the run's own end: in time for the wall limit, so not marked with it; past the memory
-// limit all the same, since the kernel said so.
+// the run's own end: in time for the wall limit, so not marked with it; past the memory or
+// processor-time limit all the same, since the accounting said so.
 func (s *service) onLimit(reason string) {
 	select {
 	case st := <-s.proc.exited:
