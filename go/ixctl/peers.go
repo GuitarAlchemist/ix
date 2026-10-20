@@ -27,6 +27,7 @@ type peerLink struct {
 	services json.RawMessage
 	token    string            // the peer instance we last saw
 	since    map[string]uint64 // last mirrored seq per subscribed prefix
+	epoch    string            // the peer boot those seqs belong to
 }
 
 func newPeerLink(spec PeerSpec, hub *Hub) *peerLink {
@@ -123,11 +124,12 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 			since[p] = &s
 		}
 	}
+	epoch := l.epoch
 	l.mu.Unlock()
 
 	merged := make(chan peerFrame, 1024)
 	for _, prefix := range []string{"ctl", "svc/"} {
-		_, frames, err := c.Subscribe(ctx, prefix, since[prefix], 1024)
+		_, frames, err := c.SubscribeFrom(ctx, prefix, since[prefix], epoch, 1024)
 		if err != nil {
 			return false, err
 		}
@@ -188,7 +190,7 @@ type peerFrame struct {
 // itself mirrored (another origin, or a peer/ channel) are never forwarded.
 func (l *peerLink) mirror(origin, prefix string, env *Envelope) {
 	l.mu.Lock()
-	l.since[prefix] = env.Seq
+	l.since[prefix], l.epoch = env.Seq, env.Epoch
 	l.mu.Unlock()
 	if env.Origin != origin || strings.HasPrefix(env.Ch, "peer/") {
 		return

@@ -110,12 +110,12 @@ func (s *session) subscribe(req Request) {
 		s.reply(req.ID, nil, badRequest("subscription %d already exists", req.ID))
 		return
 	}
-	cur := s.b.Subscribe(req.Ch, req.Since)
+	cur := s.b.Subscribe(req.Ch, req.Since, req.Epoch)
 	ctx, cancel := context.WithCancel(s.ctx)
 	e := &subEntry{prefix: req.Ch, cancel: cancel}
 	s.subs[req.ID] = e
 	s.mu.Unlock()
-	s.reply(req.ID, map[string]any{"sub": req.ID, "head": cur.Head()}, nil)
+	s.reply(req.ID, map[string]any{"sub": req.ID, "head": cur.Head(), "epoch": cur.Epoch()}, nil)
 	go s.pump(ctx, e, req.ID, cur)
 }
 

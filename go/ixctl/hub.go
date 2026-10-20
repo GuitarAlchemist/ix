@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,10 +23,13 @@ type Event struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// Envelope carries every event on every transport.
+// Envelope carries every event on every transport. Seq counts from 1 at each
+// boot of the instance; Epoch names the boot, so a seq kept across a restart
+// is never mistaken for one of the new boot.
 type Envelope struct {
 	Ch     string `json:"ch"`
 	Seq    uint64 `json:"seq"`
+	Epoch  string `json:"epoch"`
 	Origin string `json:"origin"`
 	T      int64  `json:"t"`
 	Ev     Event  `json:"ev"`
@@ -40,20 +45,26 @@ func (e *Envelope) Raw() []byte {
 	return e.raw
 }
 
-// Gap tells a subscriber that envelopes from From on are not coming.
+// Gap tells a subscriber that envelopes from From on are not coming. Epoch is
+// the instance's current epoch, so a subscriber that resumed with a seq of an
+// earlier boot ("epoch-changed", or "since-ahead" when it named no epoch)
+// learns the new one even on SSE, where there is no subscribe reply.
 type Gap struct {
-	Reason string `json:"reason"` // "since-too-old" | "overflow"
+	Reason string `json:"reason"` // "since-too-old" | "overflow" | "epoch-changed" | "since-ahead"
 	From   uint64 `json:"from"`   // first seq the subscriber did not get
 	Oldest uint64 `json:"oldest,omitempty"`
+	Epoch  string `json:"epoch,omitempty"`
 }
 
 // Request is one operation, whichever transport carried it. On WebSocket it
-// is also the client frame, so it carries the subscription fields.
+// is also the client frame, so it carries the subscription fields. Epoch says
+// which boot Since belongs to; without it a Since below the head is trusted.
 type Request struct {
 	ID      int64    `json:"id,omitempty"`
 	Op      string   `json:"op"`
 	Ch      string   `json:"ch,omitempty"`
 	Since   *uint64  `json:"since,omitempty"`
+	Epoch   string   `json:"epoch,omitempty"`
 	Desired *Desired `json:"desired,omitempty"`
 	Service string   `json:"service,omitempty"`
 	Peer    string   `json:"peer,omitempty"`
@@ -65,7 +76,8 @@ type Request struct {
 // carried a request.
 type Broker interface {
 	Publish(ch string, ev Event) *Envelope
-	Subscribe(prefix string, since *uint64) *Cursor
+	Subscribe(prefix string, since *uint64, epoch string) *Cursor
+	Epoch() string
 	Request(ctx context.Context, req Request) (any, error)
 }
 
@@ -94,6 +106,7 @@ func statusOf(err error) int {
 // subscriber that falls more than the ring behind gets a gap.
 type Hub struct {
 	origin string
+	epoch  string // this boot's id, in every envelope and gap
 
 	mu   sync.Mutex
 	ring [ringSize]*Envelope
@@ -103,8 +116,20 @@ type Hub struct {
 }
 
 func NewHub(origin string) *Hub {
-	return &Hub{origin: origin, wake: make(chan struct{})}
+	return &Hub{origin: origin, epoch: newEpoch(), wake: make(chan struct{})}
 }
+
+// newEpoch draws a boot id: 12 hex characters, never repeated in practice.
+func newEpoch() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		panic("epoch: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}
+
+// Epoch is this boot's id.
+func (h *Hub) Epoch() string { return h.epoch }
 
 // Publish stamps an event with this instance as origin.
 func (h *Hub) Publish(ch string, ev Event) *Envelope {
@@ -132,12 +157,14 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event) *Envelope {
 
 	h.mu.Lock()
 	h.head++
-	env := &Envelope{Ch: ch, Seq: h.head, Origin: origin, T: t, Ev: ev}
+	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, T: t, Ev: ev}
 	b = append(b, `{"ch":`...)
 	b = append(b, chRaw...)
 	b = append(b, `,"seq":`...)
 	b = strconv.AppendUint(b, env.Seq, 10)
-	b = append(b, `,"origin":`...)
+	b = append(b, `,"epoch":"`...)
+	b = append(b, h.epoch...) // hex, needs no escaping
+	b = append(b, `","origin":`...)
 	b = append(b, orRaw...)
 	b = append(b, `,"t":`...)
 	b = strconv.AppendInt(b, t, 10)
@@ -169,18 +196,30 @@ type Cursor struct {
 	next   uint64 // next seq wanted
 	start  uint64 // head when the cursor was made
 	replay bool   // since was given: a first gap is since-too-old
+	stale  *Gap   // since came from another boot: told first, then replay from the oldest
 }
 
 // Subscribe returns a cursor over envelopes whose channel starts with prefix.
 // With since nil it starts live; otherwise it replays every envelope with
-// seq > *since still in the ring, then goes live.
-func (h *Hub) Subscribe(prefix string, since *uint64) *Cursor {
+// seq > *since still in the ring, then goes live. A since of another boot
+// (epoch names a different one, or no epoch and since is past the head) is
+// answered with a gap naming this epoch, then everything the ring still holds.
+func (h *Hub) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	c := &Cursor{h: h, prefix: prefix, next: h.head + 1, start: h.head}
-	if since != nil && *since < h.head {
+	switch {
+	case since == nil:
+	case epoch != "" && epoch != h.epoch:
+		c.stale = &Gap{Reason: "epoch-changed", From: 1, Epoch: h.epoch}
+	case epoch == "" && *since > h.head:
+		c.stale = &Gap{Reason: "since-ahead", From: 1, Epoch: h.epoch}
+	case *since < h.head:
 		c.next = *since + 1
 		c.replay = true
+	}
+	if c.stale != nil {
+		c.next = 1
 	}
 	return c
 }
@@ -188,6 +227,9 @@ func (h *Hub) Subscribe(prefix string, since *uint64) *Cursor {
 // Head is the hub's head when the cursor was made: envelopes up to it are
 // replay, later ones are live.
 func (c *Cursor) Head() uint64 { return c.start }
+
+// Epoch is the hub's boot id.
+func (c *Cursor) Epoch() string { return c.h.epoch }
 
 // Next blocks until matching envelopes (at most max) or a gap are available.
 func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
@@ -197,6 +239,12 @@ func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
 		oldest := uint64(1)
 		if h.head > ringSize {
 			oldest = h.head - ringSize + 1
+		}
+		if g := c.stale; g != nil {
+			g.Oldest = oldest
+			c.stale, c.next = nil, oldest
+			h.mu.Unlock()
+			return nil, g, nil
 		}
 		if c.next < oldest {
 			g := &Gap{Reason: "overflow", From: c.next, Oldest: oldest}

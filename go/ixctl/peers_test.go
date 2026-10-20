@@ -77,7 +77,7 @@ func TestFederationForwardsAndMirrors(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	for _, in := range []*instance{a, b} {
 		zero := uint64(0)
-		cur := in.plane.Subscribe("peer/", &zero)
+		cur := in.plane.Subscribe("peer/", &zero, "")
 		for {
 			envs, gap, err := cur.Next(shortCtx(t), 4096)
 			if err != nil || gap != nil {

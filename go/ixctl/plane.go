@@ -96,9 +96,12 @@ func (p *Plane) Start() {
 
 func (p *Plane) Publish(ch string, ev Event) *Envelope { return p.hub.Publish(ch, ev) }
 
-func (p *Plane) Subscribe(prefix string, since *uint64) *Cursor {
-	return p.hub.Subscribe(prefix, since)
+func (p *Plane) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
+	return p.hub.Subscribe(prefix, since, epoch)
 }
+
+// Epoch is this boot's id, from the hub.
+func (p *Plane) Epoch() string { return p.hub.Epoch() }
 
 // Request is the one entry point every transport uses.
 func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
@@ -310,7 +313,7 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	p.applyMu.Lock()
 	defer p.applyMu.Unlock()
 	head := p.hub.Head()
-	cur := p.hub.Subscribe("ctl", &head)
+	cur := p.hub.Subscribe("ctl", &head, p.hub.Epoch())
 	actions, _ := p.plan(d)
 	p.mu.Lock()
 	p.gen++

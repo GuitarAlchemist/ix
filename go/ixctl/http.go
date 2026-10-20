@@ -87,7 +87,8 @@ func (s *server) authorized(r *http.Request) bool {
 
 func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "name": s.name, "version": version, "uptime_ms": time.Since(s.started).Milliseconds()})
+		"ok": true, "name": s.name, "version": version, "epoch": s.b.Epoch(),
+		"uptime_ms": time.Since(s.started).Milliseconds()})
 }
 
 func desiredOp(op string) func(*http.Request) (Request, error) {
@@ -144,15 +145,20 @@ func httpError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
 }
 
-// events is the SSE stream: id = seq, event = ev.kind, data = envelope.
-// Last-Event-ID works like since. A slow reader that falls off the ring gets
-// a gap event and the stream ends.
+// events is the SSE stream: id = epoch:seq, event = ev.kind, data = envelope.
+// Last-Event-ID works like since, and may carry the epoch the same way
+// (`epoch:seq`; a bare seq is read with the `epoch` query parameter, if any).
+// A slow reader that falls off the ring gets a gap event and the stream ends.
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("ch")
+	epoch := r.URL.Query().Get("epoch")
 	var since *uint64
 	for _, v := range []string{r.Header.Get("Last-Event-ID"), r.URL.Query().Get("since")} {
 		if v == "" {
 			continue
+		}
+		if e, seq, ok := strings.Cut(v, ":"); ok {
+			epoch, v = e, seq
 		}
 		n, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
@@ -176,7 +182,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)
 	defer stop()
-	cur := s.b.Subscribe(prefix, since)
+	cur := s.b.Subscribe(prefix, since, epoch)
 	for {
 		wctx, wcancel := context.WithTimeout(ctx, 15*time.Second)
 		envs, gap, err := cur.Next(wctx, 256)
@@ -201,6 +207,8 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		var sb strings.Builder
 		for _, env := range envs {
 			sb.WriteString("id: ")
+			sb.WriteString(env.Epoch)
+			sb.WriteByte(':')
 			sb.WriteString(strconv.FormatUint(env.Seq, 10))
 			sb.WriteString("\nevent: ")
 			sb.WriteString(strings.NewReplacer("\r", " ", "\n", " ").Replace(env.Ev.Kind))

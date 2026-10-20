@@ -60,7 +60,8 @@ addition serves all three: an **instance epoch**, an id chosen at each boot (F1.
   `POST /v1/apply`, `POST /v1/stop` with `{service, peer?}`, and `POST /v1/shutdown`. A refusal
   is `{"error": "..."}` with status 400, 401, 403, 500, 502 or 503 (`http.go:134-136`,
   `plane.go:295`, `peers.go:54-62`).
-- SSE: `GET /v1/events?ch=PREFIX&since=SEQ`, or `Last-Event-ID`. Each event is `id: <seq>`,
+- SSE: `GET /v1/events?ch=PREFIX&since=SEQ[&epoch=EPOCH]`, or `Last-Event-ID`. Each event is
+  `id: <epoch>:<seq>` (a bare `<seq>` was the shape before the F1.1 fix below),
   `event: <ev.kind>`, `data: <envelope>`. A gap is `event: gap` with the gap object, and
   `: ping` comes after 15 s of silence (`http.go:138-207`).
 - WebSocket: `GET /v1/ws`. Subprotocol `ixctl.v1` is required; without it the connection is
@@ -71,16 +72,17 @@ addition serves all three: an **instance epoch**, an id chosen at each boot (F1.
 built by hand at `hub.go:131-146`):
 
 ```json
-{"ch":"svc/pod-a","seq":42,"origin":"local","t":1760700000000,
+{"ch":"svc/pod-a","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,
  "ev":{"kind":"stats","t":1,"data":{"nodes":[{"name":"src","emitted":20}],"final":false}}}
 ```
 
 (The pod's `stats` data is shortened here; each node carries ten fields,
 `crates/ix-stream/src/lib.rs:125-134`.)
 
-`seq` belongs to one instance and starts at 1 at each boot (`hub.go:100`, `:134`). `t` is Unix
-milliseconds at publish, or the peer's own `t` for a mirrored envelope (`hub.go:109-130`). The
-replay ring holds 4096 envelopes (`hub.go:15`).
+`seq` belongs to one instance and starts at 1 at each boot (`hub.go:100`, `:134`); `epoch`
+names that boot (12 hex characters drawn at start, F1.1 fix). `t` is Unix milliseconds at
+publish, or the peer's own `t` for a mirrored envelope (`hub.go:109-130`). The replay ring
+holds 4096 envelopes (`hub.go:15`).
 
 **Client frames** (WebSocket). One `Request` shape serves every op (`hub.go:50-61`):
 
@@ -100,16 +102,19 @@ with `peer` is refused: a peer's channels are read as mirrors (`session.go:102-1
 `client.go:28-39`):
 
 ```json
-{"re":7,"ok":true,"data":{"sub":7,"head":41}}
+{"re":7,"ok":true,"data":{"sub":7,"head":41,"epoch":"3f9a1c0b7d2e"}}
 {"re":8,"ok":false,"error":"unknown service \"pod-z\""}
-{"sub":7,"env":{"ch":"ctl","seq":42,"origin":"local","t":1760700000000,"ev":{}}}
+{"sub":7,"env":{"ch":"ctl","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,"ev":{}}}
 {"sub":7,"gap":{"reason":"since-too-old","from":12,"oldest":310}}
+{"sub":7,"gap":{"reason":"epoch-changed","from":1,"oldest":1,"epoch":"3f9a1c0b7d2e"}}
 ```
 
-A gap is `since-too-old` (a replay asked for more than the ring holds; the subscription goes on)
-or `overflow` (a reader fell behind; the subscription ends) (`hub.go:43-48`,
-`session.go:151-196`). Replay waits for room in the connection's queue; live events never wait
-(`session.go:151-153`).
+A gap is `since-too-old` (a replay asked for more than the ring holds; the subscription goes on),
+`overflow` (a reader fell behind; the subscription ends), or, since the F1.1 fix,
+`epoch-changed` (the `since` named another boot's epoch) or `since-ahead` (a `since` with no
+epoch is past this boot's head); those two carry the current `epoch`, and the subscription goes
+on with everything the ring still holds (`hub.go:43-52`, `session.go:151-196`). Replay waits
+for room in the connection's queue; live events never wait (`session.go:151-153`).
 
 **Channels and event kinds.**
 
@@ -160,6 +165,17 @@ languages today is the HTTP replies.
 
 ### Findings
 
+- **Fixed (F1.1), this slice:** the hub draws an **instance epoch** at boot (12 hex characters)
+  and stamps it on every envelope (`epoch`), the subscribe reply (`data.epoch`), `/health`, every
+  SSE id (`<epoch>:<seq>`) and every gap. A `subscribe` may say which boot its `since` belongs
+  to (`epoch`; `Last-Event-ID` carries it as `<epoch>:<seq>`, or `?epoch=` beside `?since=`). A
+  `since` of another boot gets a gap `epoch-changed`, a bare `since` past the head a gap
+  `since-ahead`, both naming the current epoch, then everything the ring still holds. A bare
+  `since` below the head is still trusted: nothing can tell it apart, so a client that wants the
+  guarantee sends the epoch. The peer links send the epoch of the last mirrored envelope. The
+  journal lines now carry `epoch`, which tells one boot's seqs from the next (F3.1).
+  Tests: `TestHubSinceFromAnotherBoot`, `TestSSEReplayWithLastEventID` (stale id case),
+  `TestHubEnvelopeShape`.
 - **F1.1 A `since` from an earlier boot is read as one of this boot.** `Subscribe` replays only
   when `since < head`, and starts live when `since >= head` (`hub.go:174-186`). After a restart,
   a client that resumes with its last seq, as a standard SSE reconnect does with

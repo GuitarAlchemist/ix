@@ -62,8 +62,9 @@ contrôles (`go/ixctl/http.go:44-59`, `:64-86`) :
   `POST /v1/apply`, `POST /v1/stop` avec `{service, peer?}`, et `POST /v1/shutdown`. Un refus
   est `{"error": "..."}` avec le statut 400, 401, 403, 500, 502 ou 503 (`http.go:134-136`,
   `plane.go:295`, `peers.go:54-62`).
-- SSE : `GET /v1/events?ch=PREFIXE&since=SEQ`, ou `Last-Event-ID`. Chaque événement est
-  `id: <seq>`, `event: <ev.kind>`, `data: <enveloppe>`. Un trou est `event: gap` avec l'objet
+- SSE : `GET /v1/events?ch=PREFIXE&since=SEQ[&epoch=EPOQUE]`, ou `Last-Event-ID`. Chaque
+  événement est `id: <epoch>:<seq>` (un `<seq>` nu était la forme avant le correctif F1.1
+  ci-dessous), `event: <ev.kind>`, `data: <enveloppe>`. Un trou est `event: gap` avec l'objet
   du trou, et `: ping` arrive après 15 s de silence (`http.go:138-207`).
 - WebSocket : `GET /v1/ws`. Le sous-protocole `ixctl.v1` est exigé ; sans lui, la connexion est
   fermée pour violation de politique (`ws.go:14-29`, `client.go:16`). La limite de lecture du
@@ -73,14 +74,15 @@ contrôles (`go/ixctl/http.go:44-59`, `:64-86`) :
 l'encodage est construit à la main à `hub.go:131-146`) :
 
 ```json
-{"ch":"svc/pod-a","seq":42,"origin":"local","t":1760700000000,
+{"ch":"svc/pod-a","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,
  "ev":{"kind":"stats","t":1,"data":{"nodes":[{"name":"src","emitted":20}],"final":false}}}
 ```
 
 (Les données `stats` du pod sont abrégées ici ; chaque nœud porte dix champs,
 `crates/ix-stream/src/lib.rs:125-134`.)
 
-`seq` appartient à une instance et repart de 1 à chaque démarrage (`hub.go:100`, `:134`). `t`
+`seq` appartient à une instance et repart de 1 à chaque démarrage (`hub.go:100`, `:134`) ;
+`epoch` nomme ce démarrage (12 caractères hexadécimaux tirés au lancement, correctif F1.1). `t`
 est en millisecondes Unix au moment de la publication, ou le `t` du pair pour une enveloppe
 miroir (`hub.go:109-130`). L'anneau de rejeu garde 4096 enveloppes (`hub.go:15`).
 
@@ -104,16 +106,20 @@ Les opérations sont `subscribe` et `unsubscribe` (`session.go:59-63`), puis `st
 union, `client.go:28-39`) :
 
 ```json
-{"re":7,"ok":true,"data":{"sub":7,"head":41}}
+{"re":7,"ok":true,"data":{"sub":7,"head":41,"epoch":"3f9a1c0b7d2e"}}
 {"re":8,"ok":false,"error":"unknown service \"pod-z\""}
-{"sub":7,"env":{"ch":"ctl","seq":42,"origin":"local","t":1760700000000,"ev":{}}}
+{"sub":7,"env":{"ch":"ctl","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,"ev":{}}}
 {"sub":7,"gap":{"reason":"since-too-old","from":12,"oldest":310}}
+{"sub":7,"gap":{"reason":"epoch-changed","from":1,"oldest":1,"epoch":"3f9a1c0b7d2e"}}
 ```
 
 Un trou est `since-too-old` (un rejeu demandait plus que ce que l'anneau garde ; l'abonnement
-continue) ou `overflow` (un lecteur a pris du retard ; l'abonnement prend fin) (`hub.go:43-48`,
-`session.go:151-196`). Le rejeu attend de la place dans la file de la connexion ; les
-événements en direct n'attendent jamais (`session.go:151-153`).
+continue), `overflow` (un lecteur a pris du retard ; l'abonnement prend fin), ou, depuis le
+correctif F1.1, `epoch-changed` (le `since` nommait l'époque d'un autre démarrage) ou
+`since-ahead` (un `since` sans époque dépasse la tête de ce démarrage) ; ces deux-là portent
+l'`epoch` courante, et l'abonnement continue avec tout ce que l'anneau garde encore
+(`hub.go:43-52`, `session.go:151-196`). Le rejeu attend de la place dans la file de la
+connexion ; les événements en direct n'attendent jamais (`session.go:151-153`).
 
 **Canaux et types d'événements.**
 
@@ -165,6 +171,18 @@ entre langages, aujourd'hui, ce sont les réponses HTTP.
 
 ### Constats
 
+- **Corrigé (F1.1), cette tranche :** le hub tire une **époque d'instance** au démarrage
+  (12 caractères hexadécimaux) et la pose sur chaque enveloppe (`epoch`), la réponse
+  d'abonnement (`data.epoch`), `/health`, chaque id SSE (`<epoch>:<seq>`) et chaque trou. Un
+  `subscribe` peut dire à quel démarrage appartient son `since` (`epoch` ; `Last-Event-ID` le
+  porte sous la forme `<epoch>:<seq>`, ou `?epoch=` à côté de `?since=`). Un `since` d'un autre
+  démarrage reçoit un trou `epoch-changed`, un `since` nu au-delà de la tête un trou
+  `since-ahead`, tous deux nommant l'époque courante, puis tout ce que l'anneau garde encore. Un
+  `since` nu sous la tête reste cru : rien ne permet de le distinguer, donc un client qui veut
+  la garantie envoie l'époque. Les liens de pair envoient l'époque de la dernière enveloppe
+  reflétée. Les lignes du journal portent désormais `epoch`, ce qui distingue les `seq` d'un
+  démarrage de ceux du suivant (F3.1). Tests : `TestHubSinceFromAnotherBoot`,
+  `TestSSEReplayWithLastEventID` (cas de l'id périmé), `TestHubEnvelopeShape`.
 - **F1.1 Un `since` d'un démarrage précédent est lu comme un `since` de celui-ci.**
   `Subscribe` ne rejoue que si `since < head`, et part en direct si `since >= head`
   (`hub.go:174-186`). Après un redémarrage, un client qui reprend avec son dernier numéro de

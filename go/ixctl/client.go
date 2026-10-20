@@ -196,9 +196,16 @@ func (cl *Client) Do(ctx context.Context, req Request) (json.RawMessage, error) 
 // Subscribe opens a subscription; its events and gaps arrive on the channel,
 // which is closed with the connection. A full channel holds the reader back.
 func (cl *Client) Subscribe(ctx context.Context, prefix string, since *uint64, buf int) (int64, <-chan Frame, error) {
+	return cl.SubscribeFrom(ctx, prefix, since, "", buf)
+}
+
+// SubscribeFrom is Subscribe with the epoch since belongs to: a plane that
+// has rebooted since then answers with an epoch-changed gap, then replays
+// what it still holds, instead of reading since as one of its own seqs.
+func (cl *Client) SubscribeFrom(ctx context.Context, prefix string, since *uint64, epoch string, buf int) (int64, <-chan Frame, error) {
 	frames := make(chan Frame, buf)
 	id, reply := cl.register(frames)
-	if err := cl.send(ctx, Request{ID: id, Op: "subscribe", Ch: prefix, Since: since}); err != nil {
+	if err := cl.send(ctx, Request{ID: id, Op: "subscribe", Ch: prefix, Since: since, Epoch: epoch}); err != nil {
 		cl.forget(id)
 		return 0, nil, err
 	}
