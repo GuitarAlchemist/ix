@@ -9,18 +9,22 @@
 //! pod     <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)
 //! status  <- ix.ctl.status()
 //! stopped <- ix.ctl.stop(service: "pod-a")
+//! seen    <- ix.ctl.events(channel: "ctl", since: 0, max: 20, timeout_ms: 2000)
 //! ```
+//!
+//! `ix.ctl.events` reads the plane's event stream and stops at `max:` events, at the end of
+//! the stream, or after `timeout_ms:` without a next event: `{events[], gap, ended}`.
 //!
 //! Arguments are checked before any request: a misspelt name, a missing timeout or a value
 //! piped into a call that would ignore it fails the run instead of being dropped.
 
-use crate::Ctl;
+use crate::{Ctl, CtlError};
 use ix_ixql::{CallArgs, Capabilities, Produced, RegistrationError};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::Duration;
 
-/// Registers `ix.ctl.status`, `ix.ctl.plan`, `ix.ctl.apply`, `ix.ctl.stop` and `ix.ctl.wait`
-/// against `ctl`.
+/// Registers `ix.ctl.status`, `ix.ctl.plan`, `ix.ctl.apply`, `ix.ctl.stop`, `ix.ctl.wait` and
+/// `ix.ctl.events` against `ctl`.
 pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationError> {
     let c = ctl.clone();
     caps.register("ix.ctl.status", move |a: CallArgs| {
@@ -45,6 +49,50 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
         expect(&a, &["service", "peer"])?;
         let service = string(&a, "service")?.ok_or("needs `service:`")?;
         answer(c.stop(&service, string(&a, "peer")?.as_deref()))
+    })?;
+
+    let c = ctl.clone();
+    caps.register("ix.ctl.events", move |a: CallArgs| {
+        expect(&a, &["channel", "since", "epoch", "max", "timeout_ms"])?;
+        let idle = Duration::from_millis(count(&a, "timeout_ms")?.ok_or("needs `timeout_ms:`")?);
+        let max = count(&a, "max")?.ok_or("needs `max:`")? as usize;
+        let channel = string(&a, "channel")?.unwrap_or_default();
+        let since = count(&a, "since")?;
+        let epoch = string(&a, "epoch")?;
+        let stream = c
+            .events_within(&channel, since, epoch.as_deref(), idle)
+            .map_err(|e| e.to_string())?;
+        let (mut events, mut gap, mut ended) = (Vec::new(), Value::Null, true);
+        for item in stream {
+            match item {
+                Ok(e) => {
+                    events.push(Value::from(&e));
+                    if events.len() >= max {
+                        ended = false;
+                        break;
+                    }
+                }
+                Err(CtlError::Gap {
+                    reason,
+                    from,
+                    epoch,
+                }) => gap = json!({"reason": reason, "from": from, "epoch": epoch}),
+                // The plane went quiet for `timeout_ms`: what came so far is the answer.
+                Err(CtlError::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    ended = false;
+                    break;
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(Produced::plain(
+            json!({"events": events, "gap": gap, "ended": ended}),
+        ))
     })?;
 
     caps.register("ix.ctl.wait", move |a: CallArgs| {

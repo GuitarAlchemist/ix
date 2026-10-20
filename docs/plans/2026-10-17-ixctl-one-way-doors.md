@@ -163,7 +163,10 @@ line, `{event: "ready", name, addr, pid, state_file, ms_to_ready}` (`main.go:129
   lines. Today the only service is the `ix-stream` pod (`crates/ix-stream/examples/pod.rs:7-12`).
 - **Reads the WebSocket side:** only `go/ixctl` itself: its peer links (`peers.go:93-180`) and
   `ixctl bench` (`bench.go:169-379`).
-- **Reads the SSE side:** tests only (`http_test.go`).
+- **Reads the SSE side:** tests (`http_test.go`) and, since 2026-10-20, `crates/ix-ctl`
+  (`Ctl::events`, IXQL `ix.ctl.events`): it reads `id`, `event`, `data`, the envelope's `ch`,
+  `seq`, `epoch`, `origin`, `ev.{kind, t, data}`, and a `gap` event's `reason`, `from`, `epoch`.
+  The waits do not use it yet.
 - **Reads the HTTP side:** `crates/ix-ctl`. It reads `settled_generation` and `failed[]` when
   present, else `observed_generation` and
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` from
@@ -175,8 +178,8 @@ line, `{event: "ready", name, addr, pid, state_file, ms_to_ready}` (`main.go:129
   scoped to a peer keeps asking through a 502 or 503 (this plane's link to the peer is down
   while one of them restarts) until its deadline; a 400 (no such peer) is final.
 
-So no program outside one Go binary reads the WebSocket or SSE side. The only contract across
-languages today is the HTTP replies.
+So no program outside one Go binary reads the WebSocket side, and one Rust client reads the
+SSE side. The contract across languages today is the HTTP replies and the SSE envelope.
 
 ### Findings
 

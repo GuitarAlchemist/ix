@@ -28,7 +28,8 @@
 //! # What the client refuses
 //!
 //! The token is only ever sent to a loopback address, in a header. Both waits poll
-//! `/v1/status` for now; they move to a subscription when the plane's events are read here.
+//! `/v1/status` for now; [`Ctl::events`] reads the plane's event stream, and the waits move to
+//! it once a wait built on it has been measured against the polling one.
 
 mod http;
 mod ixql;
@@ -37,6 +38,7 @@ pub use ixql::register;
 
 use serde_json::{json, Value};
 use std::fmt;
+use std::io::{BufRead, Read};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -74,6 +76,14 @@ pub enum CtlError {
         epoch: String,
         now: String,
     },
+    /// The event stream skipped events: `from` is the first sequence number not delivered,
+    /// `reason` the plane's (`overflow`, `since-too-old`, `epoch-changed`, `since-ahead`) and
+    /// `epoch` the boot it speaks of. After `overflow` the plane ends the stream.
+    Gap {
+        reason: String,
+        from: u64,
+        epoch: String,
+    },
 }
 
 impl fmt::Display for CtlError {
@@ -106,7 +116,131 @@ impl fmt::Display for CtlError {
                 f,
                 "the plane restarted: generation {generation} belonged to boot {epoch}, the plane is now boot {now}"
             ),
+            CtlError::Gap {
+                reason,
+                from,
+                epoch,
+            } => write!(
+                f,
+                "the event stream skipped events from seq {from} of boot {epoch}: {reason}"
+            ),
         }
+    }
+}
+
+/// One event from the plane's stream (`GET /v1/events`): the envelope's fields, flattened.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Event {
+    /// The channel it was published on: `ctl`, `svc/<name>`, `peer/<name>/...`.
+    pub channel: String,
+    /// Its sequence number, counted from 1 at each boot of the plane.
+    pub seq: u64,
+    /// The boot it belongs to.
+    pub epoch: String,
+    /// The instance that produced it (a peer's name for a mirrored event).
+    pub origin: String,
+    /// What happened: `converged`, `diverged`, `service.started`, ...
+    pub kind: String,
+    /// When, in Unix milliseconds on the emitter's clock, when the emitter said.
+    pub t: Option<i64>,
+    /// The event's own payload.
+    pub data: Value,
+}
+
+impl From<&Event> for Value {
+    /// The event as JSON, the envelope's fields flattened: `{channel, seq, epoch, origin,
+    /// kind, t, data}`.
+    fn from(e: &Event) -> Value {
+        json!({
+            "channel": e.channel, "seq": e.seq, "epoch": e.epoch, "origin": e.origin,
+            "kind": e.kind, "t": e.t, "data": e.data,
+        })
+    }
+}
+
+/// The plane's event stream, read as it comes. Each item is an [`Event`], or a
+/// [`CtlError::Gap`] where the plane skipped some; the iterator ends when the plane closes the
+/// stream (after an `overflow` gap, or at shutdown) or the connection breaks.
+pub struct Events {
+    body: Box<dyn std::io::BufRead>,
+    done: bool,
+}
+
+/// How long one read of the stream may wait: past the plane's 15 s keep-alive ping.
+const STREAM_IDLE: Duration = Duration::from_secs(40);
+
+impl Iterator for Events {
+    type Item = Result<Event, CtlError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let mut kind = String::new();
+        let mut data: Vec<String> = Vec::new();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match self.body.read_line(&mut line) {
+                Ok(0) => {
+                    self.done = true;
+                    return None;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    self.done = true;
+                    return Some(Err(CtlError::Io(e)));
+                }
+            }
+            let text = line.trim_end_matches(['\r', '\n']);
+            if text.is_empty() {
+                if data.is_empty() {
+                    continue; // a keep-alive comment's blank line, or stray
+                }
+                break;
+            }
+            if let Some(rest) = text.strip_prefix(':') {
+                let _ = rest; // a comment: the plane's ping
+                continue;
+            }
+            let (field, value) = text.split_once(':').unwrap_or((text, ""));
+            let value = value.strip_prefix(' ').unwrap_or(value);
+            match field {
+                "event" => kind = value.to_string(),
+                "data" => data.push(value.to_string()),
+                _ => {} // `id` repeats the envelope's epoch and seq; `retry` is for browsers
+            }
+        }
+        let text = data.join("\n");
+        let doc: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                return Some(Err(CtlError::Protocol(format!(
+                    "event data is not JSON: {e}"
+                ))))
+            }
+        };
+        if kind == "gap" {
+            let gap = CtlError::Gap {
+                reason: doc["reason"].as_str().unwrap_or("").to_string(),
+                from: doc["from"].as_u64().unwrap_or(0),
+                epoch: doc["epoch"].as_str().unwrap_or("").to_string(),
+            };
+            return Some(Err(gap));
+        }
+        let text = |k: &str| doc.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let Some(seq) = doc.get("seq").and_then(Value::as_u64) else {
+            return Some(Err(CtlError::Protocol("envelope has no `seq`".into())));
+        };
+        Some(Ok(Event {
+            channel: text("ch"),
+            seq,
+            epoch: text("epoch"),
+            origin: text("origin"),
+            kind: doc["ev"]["kind"].as_str().unwrap_or("").to_string(),
+            t: doc["ev"].get("t").and_then(Value::as_i64),
+            data: doc["ev"].get("data").cloned().unwrap_or(Value::Null),
+        }))
     }
 }
 
@@ -212,6 +346,58 @@ impl Ctl {
         within: Option<Duration>,
     ) -> Result<Value, CtlError> {
         self.call_within("GET", &routed("/v1/status", peer), None, within)
+    }
+
+    /// `GET /v1/events`: the plane's events on channels under `channel` (a prefix: `ctl`,
+    /// `svc/`, `peer/b/`), as they come. With `since`, the events after that sequence number
+    /// are replayed first, from the plane's ring; `epoch` says which boot `since` belongs to,
+    /// so a number kept across a restart is reported as a [`CtlError::Gap`] instead of being
+    /// trusted. The stream stays open until the plane closes it.
+    pub fn events(
+        &self,
+        channel: &str,
+        since: Option<u64>,
+        epoch: Option<&str>,
+    ) -> Result<Events, CtlError> {
+        self.events_within(channel, since, epoch, STREAM_IDLE)
+    }
+
+    /// [`Ctl::events`] with each read of the stream bounded by `idle`: past it, the next item
+    /// is a [`CtlError::Io`] timeout and the iterator ends. The plane pings every 15 s, so an
+    /// `idle` below that ends an otherwise healthy stream at the first quiet moment.
+    pub fn events_within(
+        &self,
+        channel: &str,
+        since: Option<u64>,
+        epoch: Option<&str>,
+        idle: Duration,
+    ) -> Result<Events, CtlError> {
+        let mut path = format!("/v1/events?ch={}", percent(channel));
+        if let Some(s) = since {
+            path.push_str(&format!("&since={s}"));
+        }
+        if let Some(e) = epoch {
+            path.push_str(&format!("&epoch={}", percent(e)));
+        }
+        let addr = self.loopback()?;
+        let mut s =
+            http::open_stream(addr, &path, &self.token, idle.max(Duration::from_millis(1)))?;
+        if s.status != 200 {
+            let mut body = Vec::new();
+            s.body.read_to_end(&mut body)?;
+            let message = serde_json::from_slice::<Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string))
+                .unwrap_or_else(|| String::from_utf8_lossy(&body).trim().to_string());
+            return Err(CtlError::Http {
+                status: s.status,
+                message,
+            });
+        }
+        Ok(Events {
+            body: s.body,
+            done: false,
+        })
     }
 
     /// `POST /v1/plan`: the actions `desired` would take, changing nothing. With `peer`, the
@@ -552,8 +738,13 @@ fn routed(path: &str, peer: Option<&str>) -> String {
     let Some(peer) = peer else {
         return path.to_string();
     };
-    let mut out = format!("{path}?peer=");
-    for b in peer.bytes() {
+    format!("{path}?peer={}", percent(peer))
+}
+
+/// `s` as one query argument: unreserved bytes as they are, the rest percent-encoded.
+fn percent(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
         match b {
             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(b as char)

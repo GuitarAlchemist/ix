@@ -1,6 +1,6 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
-federated instances on loopback. 28 checks, E1..E8 plus a restart loop.
+federated instances on loopback. 29 checks, E1..E9 plus a restart loop.
 
     python go/ixctl/e2e/e2e.py --build            # build the three binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod and ixql-ctl already built there
@@ -407,6 +407,17 @@ def run():
     kinds = [e["ev"]["kind"] for e in ctl]
     check("E2.ctl_says_diverged", "diverged" in kinds and "service.failed" in kinds,
           kinds_tail=kinds[-8:])
+    # E9: the Rust client reads the same stream (chunked SSE, keep-alive comment) and stops at
+    # `max:`; what it read is what the bare socket read, seq for seq.
+    n = min(len(ctl), 6)
+    prog = write_ixql("events.ixql",
+                      f'seen <- ix.ctl.events(channel: "ctl", since: 0, max: {n}, timeout_ms: 2000)\n')
+    code, out_ev, err, ms = ixql("events", prog, STATE / "a.json")
+    rust_seen = [(e["seq"], e["kind"]) for e in ((out_ev or {}).get("seen") or {}).get("events", [])]
+    check("E9.rust_reads_the_event_stream",
+          code == 0 and rust_seen == [(e["seq"], e["ev"]["kind"]) for e in ctl[:n]]
+          and (out_ev["seen"]["ended"] is False) and out_ev["seen"]["gap"] is None,
+          code=code, ms=round(ms, 1), n=n, rust_seen=rust_seen[:4], stderr=err[-160:])
 
     # A real pod that keeps crashing: restarts with backoff, then failed. A pod reports its
     # nodes as soon as it runs, so the crash loop is watched on status, and the Rust wait is

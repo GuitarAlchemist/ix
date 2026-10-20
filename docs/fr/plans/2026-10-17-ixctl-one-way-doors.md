@@ -169,7 +169,10 @@ plan est `{generation, actions[{op, service}], noop}`, l'application
   (`crates/ix-stream/examples/pod.rs:7-12`).
 - **Lit le côté WebSocket :** seulement `go/ixctl` lui-même, par ses liens de pair
   (`peers.go:93-180`) et `ixctl bench` (`bench.go:169-379`).
-- **Lit le côté SSE :** les tests seulement (`http_test.go`).
+- **Lit le côté SSE :** les tests (`http_test.go`) et, depuis le 2026-10-20, `crates/ix-ctl`
+  (`Ctl::events`, IXQL `ix.ctl.events`) : il lit `id`, `event`, `data`, les champs `ch`, `seq`,
+  `epoch`, `origin`, `ev.{kind, t, data}` de l'enveloppe, et `reason`, `from`, `epoch` d'un
+  événement `gap`. Les attentes ne s'en servent pas encore.
 - **Lit le côté HTTP :** `crates/ix-ctl`. Il lit `settled_generation` et `failed[]` quand ils
   sont présents, sinon `observed_generation` et
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` dans
@@ -183,8 +186,9 @@ plan est `{generation, actions[{op, service}], noop}`, l'application
   pair est coupé pendant que l'un des deux redémarre) jusqu'à son échéance ; un 400 (pair
   inconnu) est définitif.
 
-Aucun programme hors d'un seul binaire Go ne lit donc le côté WebSocket ou SSE. Le seul contrat
-entre langages, aujourd'hui, ce sont les réponses HTTP.
+Aucun programme hors d'un seul binaire Go ne lit donc le côté WebSocket, et un client Rust lit
+le côté SSE. Le contrat entre langages, aujourd'hui, ce sont les réponses HTTP et l'enveloppe
+SSE.
 
 ### Constats
 

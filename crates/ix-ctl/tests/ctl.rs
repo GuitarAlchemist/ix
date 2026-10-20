@@ -53,6 +53,9 @@ struct Plane {
     /// How long every answer is held back after the request is read: a plane that accepts
     /// and stalls.
     stall: Duration,
+    /// What `GET /v1/events` streams: envelopes, then `gap` if set, then the end of the stream.
+    events: Vec<Value>,
+    gap: Option<Value>,
 }
 
 impl Plane {
@@ -248,6 +251,8 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         peer_status: None,
         peer_down_for: 0,
         stall: Duration::ZERO,
+        events: Vec::new(),
+        gap: None,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -303,6 +308,47 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
         (403, json!({"error": "foreign Origin"}))
     } else if headers.get("authorization") != Some(&format!("Bearer {TOKEN}")) {
         (401, json!({"error": "missing or wrong token"}))
+    } else if method == "GET" && path.starts_with("/v1/events") {
+        // The event stream, as Go's server sends it: chunked, a comment first, one SSE event
+        // per envelope under the `ch` prefix and after `since`, then the gap if any, then the end.
+        plane.log.push(format!("{method} {path}"));
+        let query = path.split_once('?').map_or("", |(_, q)| q);
+        let arg = |k: &str| {
+            query
+                .split('&')
+                .find_map(|kv| kv.strip_prefix(&format!("{k}=")))
+                .unwrap_or("")
+                .to_string()
+        };
+        let (prefix, since) = (arg("ch"), arg("since").parse::<u64>().unwrap_or(0));
+        let mut frames = vec![": ping\n\n".to_string()];
+        for e in plane.events.iter().filter(|e| {
+            e["ch"].as_str().unwrap_or("").starts_with(&prefix)
+                && e["seq"].as_u64().unwrap_or(0) > since
+        }) {
+            frames.push(format!(
+                "id: {}:{}\nevent: {}\ndata: {e}\n\n",
+                e["epoch"].as_str().unwrap_or(""),
+                e["seq"],
+                e["ev"]["kind"].as_str().unwrap_or("")
+            ));
+        }
+        if let Some(g) = &plane.gap {
+            frames.push(format!("event: gap\ndata: {g}\n\n"));
+        }
+        drop(plane);
+        let mut w = stream;
+        write!(
+            w,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+        )?;
+        for frame in frames {
+            write!(w, "{:x}\r\n{frame}\r\n", frame.len())?;
+            w.flush()?;
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        w.write_all(b"0\r\n\r\n")?;
+        return w.flush();
     } else {
         plane.log.push(format!("{method} {path}"));
         plane.route(&method, &path, &body)
@@ -633,6 +679,88 @@ fn a_wait_for_a_generation_applied_through_a_peer_asks_that_peer() {
     assert!(began.elapsed() < Duration::from_secs(1));
 }
 
+// The plane's event stream is read as it comes: chunks undone, keep-alive comments skipped,
+// only the channels under the prefix and after `since`, a gap as an error item, and the end of
+// the stream as the end of the iterator. A wrong token is the usual 401.
+#[test]
+fn the_event_stream_is_read_as_it_comes() {
+    let (ctl, plane) = plane();
+    let env = |seq: u64, ch: &str, kind: &str, data: Value| {
+        json!({"ch": ch, "seq": seq, "epoch": "3f9a1c0b7d2e", "origin": "fake", "t": 1_760_000_000_000u64 + seq,
+               "ev": {"kind": kind, "t": 1_760_000_000_000u64 + seq, "data": data}})
+    };
+    {
+        let mut p = plane.lock().unwrap();
+        p.events = vec![
+            env(1, "ctl", "boot", json!({})),
+            env(2, "svc/pod-a", "service.started", json!({"pid": 7})),
+            env(3, "ctl", "converged", json!({"generation": 1})),
+            env(4, "ctl", "converged", json!({"generation": 2})),
+        ];
+        p.gap = Some(json!({"reason": "overflow", "from": 5, "epoch": "3f9a1c0b7d2e"}));
+    }
+    let items: Vec<_> = ctl.events("ctl", Some(1), None).unwrap().collect();
+    assert_eq!(3, items.len(), "{items:?}");
+    let got: Vec<(u64, &str)> = items[..2]
+        .iter()
+        .map(|i| i.as_ref().unwrap())
+        .map(|e| (e.seq, e.kind.as_str()))
+        .collect();
+    assert_eq!(vec![(3, "converged"), (4, "converged")], got);
+    let e = items[1].as_ref().unwrap();
+    assert_eq!(
+        ("ctl", "3f9a1c0b7d2e", "fake", Some(1_760_000_000_004i64)),
+        (e.channel.as_str(), e.epoch.as_str(), e.origin.as_str(), e.t)
+    );
+    assert_eq!(json!({"generation": 2}), e.data);
+    assert!(
+        matches!(&items[2], Err(CtlError::Gap { reason, from: 5, .. }) if reason == "overflow"),
+        "{:?}",
+        items[2]
+    );
+    // Every channel, from the start.
+    let all: Vec<_> = ctl.events("", None, None).unwrap().collect();
+    assert_eq!(5, all.len());
+    assert_eq!("svc/pod-a", all[1].as_ref().unwrap().channel);
+    assert!(plane
+        .lock()
+        .unwrap()
+        .log
+        .contains(&"GET /v1/events?ch=ctl&since=1".to_string()));
+    let err = Ctl::new(
+        ctl.addr(),
+        "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0",
+    )
+    .events("ctl", None, None)
+    .err()
+    .expect("a wrong token is refused");
+    assert!(matches!(err, CtlError::Http { status: 401, .. }), "{err}");
+
+    // Through IXQL: `max:` stops the read early; the gap and the end are reported.
+    let out = executor(ctl.clone())
+        .run_source(
+            "two <- ix.ctl.events(channel: \"ctl\", since: 1, max: 2, timeout_ms: 2000)\n\
+             all <- ix.ctl.events(channel: \"ctl\", since: 1, max: 10, timeout_ms: 2000)\n",
+        )
+        .expect("the IXQL reads");
+    let two = out.binding("two").unwrap();
+    assert_eq!(2, two["events"].as_array().unwrap().len());
+    assert_eq!(
+        (json!(false), &Value::Null),
+        (two["ended"].clone(), &two["gap"])
+    );
+    let all = out.binding("all").unwrap();
+    let seqs: Vec<Value> = all["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["seq"].clone())
+        .collect();
+    assert_eq!(vec![json!(3), json!(4)], seqs);
+    assert_eq!(json!("overflow"), all["gap"]["reason"]);
+    assert_eq!(json!(true), all["ended"]);
+}
+
 // A wait's timeout bounds the request in flight too: against a plane that accepts and then
 // stalls, a short wait ends about when it said it would, not after the client's 15 s read
 // timeout, and a zero wait still asks once.
@@ -730,6 +858,18 @@ fn argument_mistakes_fail_the_run_before_any_request() {
     let exec = executor(ctl);
     for (src, why) in [
         ("a <- ix.ctl.wait(generation: 1)", "timeout_ms"),
+        (
+            r#"e <- ix.ctl.events(channel: "ctl", max: 1)"#,
+            "timeout_ms",
+        ),
+        (
+            r#"e <- ix.ctl.events(channel: "ctl", timeout_ms: 10)"#,
+            "max",
+        ),
+        (
+            r#"e <- ix.ctl.events(channel: "ctl", max: 1, since: "a", timeout_ms: 10)"#,
+            "whole number",
+        ),
         (
             r#"a <- ix.ctl.wait(service: "pod-a", nodes: 2, epoch: "x", timeout_ms: 10)"#,
             "epoch",
