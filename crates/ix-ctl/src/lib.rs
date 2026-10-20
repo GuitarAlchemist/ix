@@ -429,7 +429,8 @@ impl Ctl {
         self.wait_nodes_on(None, service, nodes, timeout)
     }
 
-    /// [`Ctl::wait_nodes`] for a service of `peer`, read from that peer's status.
+    /// [`Ctl::wait_nodes`] for a service of `peer`, read from that peer's status. A 502 or
+    /// 503 (the link to the peer is down for a moment) is asked again until the deadline.
     pub fn wait_nodes_at(
         &self,
         peer: &str,
@@ -449,7 +450,21 @@ impl Ctl {
     ) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
         loop {
-            let status = self.status_of(peer)?;
+            let status = match self.status_of(peer) {
+                Ok(status) => status,
+                // The link to the peer is down for a moment (see `wait_gen`): ask again.
+                Err(
+                    e @ CtlError::Http {
+                        status: 502 | 503, ..
+                    },
+                ) if peer.is_some() => {
+                    if pause(deadline) {
+                        return Err(e);
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             let entry = status
                 .get("services")
                 .and_then(Value::as_array)
@@ -529,12 +544,13 @@ fn routed(path: &str, peer: Option<&str>) -> String {
     out
 }
 
-/// Sleeps one poll, or less near `deadline`. True when the deadline has passed.
+/// Sleeps one poll, or less near `deadline`. True when the deadline has passed, before or
+/// after the sleep: a wait never asks again past its timeout.
 fn pause(deadline: Instant) -> bool {
     let now = Instant::now();
     if now >= deadline {
         return true;
     }
     std::thread::sleep(POLL.min(deadline - now));
-    false
+    Instant::now() >= deadline
 }

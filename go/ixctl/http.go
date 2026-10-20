@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type server struct {
 	origins map[string]bool
 	started time.Time
 	mux     *http.ServeMux
+	ops     atomic.Int64 // JSON ops served (any outcome); /health shows it, so a test can see a client poll
 
 	ctx    context.Context // cancelled at shutdown: ends SSE streams and WebSockets
 	cancel context.CancelFunc
@@ -95,7 +97,7 @@ func (s *server) authorized(r *http.Request) bool {
 func (s *server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "name": s.name, "version": version, "epoch": s.b.Epoch(),
-		"uptime_ms": time.Since(s.started).Milliseconds()})
+		"uptime_ms": time.Since(s.started).Milliseconds(), "ops": s.ops.Load()})
 }
 
 // errEmptyPeer: a peer that is named must name someone. An empty one (or a
@@ -154,6 +156,7 @@ func desiredOp(op string) func(*http.Request) (Request, error) {
 
 func (s *server) op(build func(*http.Request) (Request, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		s.ops.Add(1)
 		req, err := build(r)
 		if err != nil {
 			httpError(w, 400, err.Error())

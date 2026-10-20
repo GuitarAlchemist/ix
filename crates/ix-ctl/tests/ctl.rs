@@ -610,6 +610,12 @@ fn a_wait_for_a_generation_applied_through_a_peer_asks_that_peer() {
         .unwrap_err();
     assert!(matches!(err, CtlError::Http { status: 502, .. }), "{err}");
     assert!(began.elapsed() >= Duration::from_millis(150));
+    // The node wait through a peer rides out the same moment.
+    plane.lock().unwrap().peer_down_for = 3;
+    let entry = ctl
+        .wait_nodes_at("b", "pod-x", 4, Duration::from_secs(2))
+        .expect("three 502s, then pod-x on b");
+    assert_eq!("pod-x", entry["name"]);
     plane.lock().unwrap().peer_down_for = 0;
     let began = Instant::now();
     let err = ctl
@@ -628,8 +634,8 @@ fn a_scoped_wait_follows_the_state_file_across_a_restart() {
     // The new boot, already listening; the state file will name it a little later.
     let (live, plane) = plane();
     let live_addr = live.addr().to_string();
-    // The old boot's address and token: nothing listens there any more, and its token would
-    // be a 401 on the new boot, so a status the new boot logs proves the handle was re-read.
+    // The old boot's address and token: nothing listens there any more, and its token is a
+    // 401 on the new boot, so a status the new boot logs proves the handle was re-read twice.
     let gone = TcpListener::bind("127.0.0.1:0").unwrap();
     let dead_addr = format!("127.0.0.1:{}", gone.local_addr().unwrap().port());
     drop(gone);
@@ -641,9 +647,13 @@ fn a_scoped_wait_follows_the_state_file_across_a_restart() {
     std::fs::write(&state, state_doc(&dead_addr, old_token).to_string()).unwrap();
     let ctl = Ctl::from_state(&state).unwrap();
 
+    // The file moves twice: first to the new address with the old token (the new boot answers
+    // 401, the second cause for a re-read), then to the new token.
     let rewrite = std::thread::spawn({
         let state = state.clone();
         move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::write(&state, state_doc(&live_addr, old_token).to_string()).unwrap();
             std::thread::sleep(Duration::from_millis(300));
             std::fs::write(&state, state_doc(&live_addr, TOKEN).to_string()).unwrap();
         }

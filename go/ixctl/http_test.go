@@ -176,6 +176,29 @@ func TestSSEReplayWithLastEventID(t *testing.T) {
 	}
 }
 
+// /health counts the JSON ops served, whatever their outcome, and not itself: a
+// test outside the process can see a client poll the plane.
+func TestHealthCountsOps(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil), "")
+	ops := func() int64 {
+		_, _, body := httpDo(t, in, "GET", "/health", nil, map[string]string{"Authorization": ""})
+		var h struct {
+			Ops int64 `json:"ops"`
+		}
+		if err := json.Unmarshal(body, &h); err != nil {
+			t.Fatalf("health %s: %v", body, err)
+		}
+		return h.Ops
+	}
+	n0 := ops()
+	httpDo(t, in, "GET", "/v1/status", nil, nil)
+	httpDo(t, in, "GET", "/v1/status?peer=", nil, nil) // refused, counted all the same
+	httpDo(t, in, "GET", "/health", nil, map[string]string{"Authorization": ""})
+	if n := ops(); n != n0+2 {
+		t.Fatalf("ops %d after two, want %d", n, n0+2)
+	}
+}
+
 // ixctl up as its own process: ready line, state file with a token, health,
 // and a clean shutdown that removes the state file.
 func TestUpReadyAndShutdown(t *testing.T) {

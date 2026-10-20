@@ -488,14 +488,15 @@ def run():
     stale = write_ixql("stale-waiter.ixql",
                        f'done <- ix.ctl.wait(generation: {b0["generation"] + 5}, epoch: "{b0["epoch"]}", '
                        "timeout_ms: 20000)\n")
+    ops0 = call(sb, "GET", "/health")[1]["ops"]
     waiter = subprocess.Popen([str(IXQLCTL), str(stale), "--state", str(STATE / "b.json")],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(WORK))
     LIVE.append(waiter)
     t_waiter = time.perf_counter()
-    # The client polls every 25 ms once it has read the state file; a second is many polls of
-    # the old boot even on a slow machine (its first poll is not observable from here; the
-    # client's own test covers the re-read with a dead address and an old token).
-    time.sleep(1.0)
+    # The old boot counts the ops it serves (/health is not one): the shutdown waits until the
+    # waiter has polled it a few times, so the check cannot pass on a waiter that only ever saw
+    # the new boot.
+    old_polls, polls_ms = wait_until(lambda: call(sb, "GET", "/health")[1]["ops"] - ops0 >= 3, 10)
     call(sb, "POST", "/v1/shutdown", {})
     exit_b = pb.wait(10)
     pb, _, sb, ms_b2 = up("b", spec_b)
@@ -524,8 +525,10 @@ def run():
     (RUNS / "ixql-stale-waiter.stderr").write_bytes(w_err)
     w_err = w_err.decode("utf-8", "replace").strip()
     check("E8.waiter_follows_the_state_file",
-          waiter.returncode == 1 and "restarted" in w_err and b1["epoch"] in w_err and w_ms < 12000,
-          code=waiter.returncode, ms=round(w_ms, 1), stderr=w_err[-200:])
+          old_polls and waiter.returncode == 1 and "restarted" in w_err and b1["epoch"] in w_err
+          and w_ms < 12000,
+          code=waiter.returncode, ms=round(w_ms, 1), old_boot_polls_after_ms=polls_ms,
+          stderr=w_err[-200:])
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)
