@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 )
@@ -84,35 +86,65 @@ func TestAStopQueuedBeforeAPreMarkedStartStillStops(t *testing.T) {
 	s.setState(stateFailed)
 	s.want(desiredStopped, 2)
 	s.want(desiredRunning, 3)
+	s.want(desiredStopped, 4)
 	if st := s.cur(); st != stateStarting || s.startGen != 3 {
 		t.Fatalf("after the wants: %s, generation %d", st, s.startGen)
 	}
-	s.command(<-s.cmds) // the stop
-	if st := s.cur(); st != stateStopped {
-		t.Fatalf("after the stop: %s", st)
+	s.command(<-s.cmds) // the stop: the start is still queued, so the service stays on its way
+	if st := s.cur(); st != stateStarting || s.startGen != 3 {
+		t.Fatalf("after the stop: %s, generation %d", st, s.startGen)
 	}
 	s.command(<-s.cmds) // the start, which cannot launch
 	if st := s.cur(); st != stateFailed {
 		t.Fatalf("after the start: %s", st)
 	}
+	s.command(<-s.cmds) // the second stop, on a failed service
+	if st := s.cur(); st != stateStopped {
+		t.Fatalf("after the second stop: %s", st)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	var kinds []string
-	var failedGen any
-	for len(kinds) < 3 {
+	var got []string // kind:generation, so each stop's apply has its own event to settle on
+	for len(got) < 4 {
 		envs, _, err := cur.Next(ctx, 8)
 		if err != nil {
-			t.Fatalf("events so far %v: %v", kinds, err)
+			t.Fatalf("events so far %v: %v", got, err)
 		}
 		for _, e := range envs {
-			kinds = append(kinds, e.Ev.Kind)
-			if e.Ev.Kind == "service.failed" {
-				failedGen = ctlData(e)["generation"]
-			}
+			got = append(got, fmt.Sprintf("%s:%v", e.Ev.Kind, ctlData(e)["generation"]))
 		}
 	}
-	if kinds[0] != "service.stopped" || kinds[1] != "service.starting" || kinds[2] != "service.failed" || failedGen != 3.0 {
-		t.Fatalf("events %v, failed generation %v", kinds, failedGen)
+	want := []string{"service.stopped:2", "service.starting:<nil>", "service.failed:3", "service.stopped:4"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("events %v, want %v", got, want)
+	}
+}
+
+// A stop between two starts, all three queued: once the stop is done the service shows
+// `starting` for the queued start (not `stopped`), stamped with it, so no plan meanwhile
+// announces a start of its own; the queued start then launches under its generation.
+func TestAStopKeepsAQueuedStartVisible(t *testing.T) {
+	spec := fakeSpec(t, "local", nil, fakeSvc{name: "pod", args: []string{"--nodes", "1"}})
+	h := NewHub("local")
+	s := newService(spec.Services[0], h)
+	t.Cleanup(s.halt)
+	s.want(desiredRunning, 1)
+	s.want(desiredStopped, 2)
+	s.want(desiredRunning, 3)
+	s.command(<-s.cmds) // the first start
+	if st := s.cur(); st != stateRunning || s.proc == nil || s.startGen != 1 {
+		t.Fatalf("after the first start: %s, generation %d", st, s.startGen)
+	}
+	s.command(<-s.cmds) // the stop
+	if st := s.cur(); st != stateStarting || s.proc != nil || s.startGen != 3 || s.lastExit == nil || s.lastExit.Generation != 1 {
+		t.Fatalf("after the stop: %s, generation %d, exit %+v", st, s.startGen, s.lastExit)
+	}
+	if d, st := s.observed(); d != desiredRunning || st != stateStarting {
+		t.Fatalf("a plan would see %s/%s and announce a start", d, st)
+	}
+	s.command(<-s.cmds) // the queued start
+	if st := s.cur(); st != stateRunning || s.proc == nil || s.startGen != 3 || s.queued != 0 {
+		t.Fatalf("after the queued start: %s, generation %d, queued %d", st, s.startGen, s.queued)
 	}
 }
 

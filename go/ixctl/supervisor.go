@@ -59,8 +59,14 @@ type service struct {
 	restarts  int
 	startedAt int64
 	startGen  uint64 // the generation that launched the current or last run; 0 before any
-	lastExit  *exitInfo
-	nodes     json.RawMessage
+	// `running` wants queued and not yet read, and the generation of the last of them: while
+	// one is queued the service shows `starting` whenever its process is gone, so a plan sees
+	// the start on its way and does not announce another.
+	queued     int
+	tailGen    uint64
+	failReason string // of the last service.failed; what a start settles on when its event is lost
+	lastExit   *exitInfo
+	nodes      json.RawMessage
 
 	cmds chan command // desired states, in apply order
 
@@ -94,12 +100,42 @@ func newService(spec ServiceSpec, hub *Hub) *service {
 func (s *service) want(state string, generation uint64) {
 	s.mu.Lock()
 	s.desired = state
-	if state == desiredRunning && (s.state == stateStopped || s.state == stateFailed) {
-		s.state = stateStarting
-		s.startGen = generation
+	if state == desiredRunning {
+		s.queued++
+		s.tailGen = generation
+		if s.state == stateStopped || s.state == stateFailed {
+			s.state = stateStarting
+			s.startGen = generation
+		}
 	}
 	s.mu.Unlock()
 	s.cmds <- command{state: state, generation: generation}
+}
+
+// setDesired records the document's state for a service the plan found already there.
+func (s *service) setDesired(state string) {
+	s.mu.Lock()
+	s.desired = state
+	s.mu.Unlock()
+}
+
+// settle moves a service whose process is gone to state, unless a `running` want is still
+// queued behind this command: then it shows `starting`, stamped with that want's generation,
+// so no plan in between announces a start the queued one will make.
+func (s *service) settle(state string) {
+	s.mu.Lock()
+	if s.queued > 0 {
+		s.state, s.startGen = stateStarting, s.tailGen
+	} else {
+		s.state = state
+	}
+	s.mu.Unlock()
+}
+
+func (s *service) lastFailure() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failReason
 }
 
 func (s *service) observed() (desired, state string) {
@@ -179,6 +215,9 @@ func (s *service) run(ctx context.Context) {
 func (s *service) command(want command) {
 	switch want.state {
 	case desiredRunning:
+		s.mu.Lock()
+		s.queued--
+		s.mu.Unlock()
 		if s.proc != nil || s.cur() == stateRestarting {
 			// Already on its way: the run keeps the generation that launched it.
 			return
@@ -191,16 +230,17 @@ func (s *service) command(want command) {
 		s.mu.Unlock()
 		s.launch(false)
 	case desiredStopped:
-		// `starting` with no process is a start a later want pre-marked (see want): this
-		// stop, queued before it, still ends as stopped; the start then runs after it.
-		switch st := s.cur(); {
-		case s.proc != nil:
-			s.stopTree()
-		case st == stateRestarting || st == stateFailed || st == stateStarting:
-			s.cancelTimer()
-			s.setState(stateStopped)
-			s.ctl("service.stopped", map[string]any{})
+		if s.proc != nil {
+			s.stopTree(want.generation)
+			return
 		}
+		// No process: restarting, failed, a start a later want pre-marked (see want), or
+		// stopped already (the run ended between the plan and this command). This stop ends
+		// as stopped all the same and says so, stamped, so its apply settles on its own
+		// event and on no other stop's.
+		s.cancelTimer()
+		s.settle(stateStopped)
+		s.ctl("service.stopped", map[string]any{"generation": want.generation})
 	}
 }
 
@@ -209,9 +249,10 @@ func (s *service) command(want command) {
 // read `failed` and then take an unstamped event for its own.
 func (s *service) fail(data map[string]any) {
 	s.mu.Lock()
-	s.state = stateFailed
+	s.failReason, _ = data["reason"].(string)
 	data["generation"] = s.startGen
 	s.mu.Unlock()
+	s.settle(stateFailed)
 	s.ctl("service.failed", data)
 }
 
@@ -322,8 +363,8 @@ func (s *service) reap(code int) *exitInfo {
 }
 
 // stopTree is a requested stop: close stdin, give the tree stopGrace to
-// leave, then kill all of it.
-func (s *service) stopTree() {
+// leave, then kill all of it. generation is the stop's apply's (0 for a shutdown).
+func (s *service) stopTree(generation uint64) {
 	t0 := time.Now()
 	pid := s.proc.pid
 	s.proc.stdin.Close()
@@ -339,17 +380,21 @@ func (s *service) stopTree() {
 		}
 	}
 	e := s.reap(code)
-	s.setState(stateStopped)
+	s.settle(stateStopped)
 	ms := time.Since(t0).Milliseconds()
 	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": true, "generation": e.Generation})
-	s.ctl("service.stopped", map[string]any{"pid": pid, "code": code, "ms": ms})
+	stopped := map[string]any{"pid": pid, "code": code, "ms": ms}
+	if generation != 0 {
+		stopped["generation"] = generation
+	}
+	s.ctl("service.stopped", stopped)
 }
 
 // halt stops the service for good: the plane is shutting down.
 func (s *service) halt() {
 	s.cancelTimer()
 	if s.proc != nil {
-		s.stopTree()
+		s.stopTree(0)
 		return
 	}
 	if s.cur() != stateStopped {
@@ -364,8 +409,10 @@ func (s *service) onExit(code int) {
 	e := s.reap(code)
 	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": false, "generation": e.Generation})
 	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && code == 0) {
-		s.setState(stateStopped)
-		s.ctl("service.stopped", map[string]any{"pid": pid, "code": code})
+		// The run's own end: stamped with the run's generation, which no stop's apply
+		// carries, so a stop queued meanwhile settles on its own event only.
+		s.settle(stateStopped)
+		s.ctl("service.stopped", map[string]any{"pid": pid, "code": code, "generation": e.Generation})
 		return
 	}
 	now := time.Now()

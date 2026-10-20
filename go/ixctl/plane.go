@@ -308,13 +308,15 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	if err := p.validate(d); err != nil {
 		return ApplyReply{}, nil, err
 	}
+	p.applyMu.Lock()
+	defer p.applyMu.Unlock()
+	// Under applyMu, as Shutdown closes quit under it: no apply pre-marks a start or queues
+	// a want on a supervisor that is being reaped.
 	select {
 	case <-p.quit:
 		return ApplyReply{}, nil, &opError{status: 503, msg: "shutting down"}
 	default:
 	}
-	p.applyMu.Lock()
-	defer p.applyMu.Unlock()
 	head := p.hub.Head()
 	cur := p.hub.Subscribe("ctl", &head, p.hub.Epoch())
 	actions, noop := p.plan(d)
@@ -323,13 +325,14 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	g := p.gen
 	p.mu.Unlock()
 	p.journal.record(g, d, actions)
+	// A noop asks nothing of the supervisor: a `running` want on a service already on its
+	// way would launch it under this generation if it exited before the want was read, a run
+	// no action announced; a `stopped` want on a stopped service would answer a
+	// service.stopped nobody waits for. Only `desired` follows the document.
 	skip := map[string]bool{}
 	for _, n := range noop {
-		// A `running` the plan found already on its way asks nothing of the supervisor: a
-		// want would launch the service under this generation if it exited before the
-		// want was read, a run no action announced. A `stopped` noop still goes, so
-		// `desired` follows the document.
-		skip[n] = d.Services[n].State == desiredRunning
+		skip[n] = true
+		p.svcs[n].setDesired(d.Services[n].State)
 	}
 	for _, n := range d.names() {
 		if !skip[n] {
@@ -344,7 +347,8 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 // await watches ctl until every action is observed, then publishes the
 // outcome. A start is observed by the service.started or service.failed
 // stamped with this generation (an earlier run's settles nothing), a stop by
-// service.stopped (the tree is gone by then).
+// the service.stopped stamped with it (the tree is gone by then; another
+// stop's, or a run's own end, settles nothing).
 func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 	pending := map[string]string{}
 	for _, a := range actions {
@@ -370,8 +374,16 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			// Events were lost: fall back on the observed state.
 			for n, op := range pending {
 				st := p.svcs[n].status()
-				if (op == "start" && st.State == stateRunning && st.Generation == g) || (op == "stop" && st.State == stateStopped) {
+				switch {
+				case op == "start" && st.State == stateRunning && st.Generation == g,
+					op == "stop" && st.State == stateStopped:
 					delete(pending, n)
+				case op == "start" && st.State == stateFailed && st.Generation == g:
+					res = applyResult{Generation: g, Service: n, Reason: p.svcs[n].lastFailure()}
+					pending = nil
+				}
+				if res.Reason != "" {
+					break
 				}
 			}
 			continue
@@ -389,7 +401,7 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			}
 			switch {
 			case env.Ev.Kind == "service.started" && op == "start" && data.Generation == g,
-				env.Ev.Kind == "service.stopped" && op == "stop":
+				env.Ev.Kind == "service.stopped" && op == "stop" && data.Generation == g:
 				delete(pending, data.Service)
 			case env.Ev.Kind == "service.failed" && op == "start" && data.Generation == g:
 				res = applyResult{Generation: g, Service: data.Service, Reason: data.Reason}
@@ -464,7 +476,11 @@ func (p *Plane) Quit() <-chan struct{} { return p.quit }
 // closes the journal. It returns once all of it is done.
 func (p *Plane) Shutdown() {
 	p.downOnce.Do(func() {
+		// Under applyMu: an apply that passed its quit check has queued its wants before
+		// the supervisors are cancelled, and none passes it afterwards.
+		p.applyMu.Lock()
 		p.RequestShutdown()
+		p.applyMu.Unlock()
 		p.cancel()
 		p.wg.Wait()
 		p.journal.close()

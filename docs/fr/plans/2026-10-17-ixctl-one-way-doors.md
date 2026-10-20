@@ -422,7 +422,17 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   noop) ; un stop mis en file sur un service `failed` avant qu'un start ne le pré-marque
   `starting` finit quand même `stopped` ; et `service.failed` porte la génération de
   l'exécution qui a échoué, prise sous le verrou avec la transition, de sorte qu'`await` ne
-  règle un démarrage que sur son propre échec ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
+  règle un démarrage que sur son propre échec. La revue Codex 13 a étendu la même règle aux
+  arrêts et aux files : chaque `service.stopped` qu'une commande d'arrêt produit porte la
+  génération de cet arrêt (la fin propre d'une exécution porte celle de l'exécution ; un
+  arrêt du plan, aucune) et `await` ne règle un arrêt que sur son propre événement ; un noop
+  `stopped` n'est pas transmis au superviseur non plus (seul `desired` suit le document) ; un
+  service dont le processus a disparu alors qu'un want `running` est encore en file derrière
+  affiche `starting`, estampillé de la génération de ce want, pour qu'aucun plan entre-temps
+  n'annonce un démarrage que celui en file fera ; `Apply` vérifie l'arrêt du plan sous
+  `applyMu`, que `Shutdown` prend pour fermer `quit` ; et le repli sur perte d'événements fait
+  diverger un démarrage sur un service `failed` estampillé de sa génération, avec la raison de
+  l'échec ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
   `applied.epoch`. La vérification
   E10 de la passerelle lance le vrai `ix pipeline run --json` (une étape `stats`, à travers la
   porte constitutionnelle Demerzel) comme job sous le plan et relit son NDJSON depuis `svc/job` ;
