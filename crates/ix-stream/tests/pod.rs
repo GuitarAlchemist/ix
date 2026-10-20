@@ -8,20 +8,23 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-/// `cargo test` builds the examples beside the test binaries: `target/<profile>/examples`.
+/// `cargo test` builds the examples into `target/<profile>/examples`. The test binary itself sits
+/// in `target/<profile>/deps` on stable, deeper under `target/<profile>/build/<pkg>/<hash>/` on
+/// nightly-2026-08's layout, so the examples folder is looked for up the ancestors.
 fn pod() -> Command {
     let exe = std::env::current_exe().unwrap();
+    let name = format!("pod{}", std::env::consts::EXE_SUFFIX);
     let path: PathBuf = exe
-        .parent()
-        .and_then(|deps| deps.parent())
-        .unwrap()
-        .join("examples")
-        .join(format!("pod{}", std::env::consts::EXE_SUFFIX));
-    assert!(
-        path.exists(),
-        "{} is missing: `cargo test -p ix-stream` builds it, `--test pod` alone does not",
-        path.display()
-    );
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("examples").join(&name))
+        .find(|candidate| candidate.exists())
+        .unwrap_or_else(|| {
+            panic!(
+                "examples/{name} is missing above {}: `cargo test -p ix-stream` builds it, `--test pod` alone does not",
+                exe.display()
+            )
+        });
     Command::new(path)
 }
 
