@@ -350,6 +350,40 @@ func TestAnApplyDuringAStartOrABackoffIsANoop(t *testing.T) {
 	waitEnv(t, w, 5*time.Second, "converged", func(e *Envelope) bool { return e.Ev.Kind == "converged" && genOf(e) == r4.Generation })
 }
 
+// A `running` the plan found running asks nothing of the supervisor: when the job ends before
+// the supervisor would have read that want, nothing relaunches it under the noop generation.
+func TestANoopApplyLaunchesNothingWhenTheJobEnds(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "once", args: []string{"--crash-after-ms", "400"}, restart: restartNever}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	var r1, r2 ApplyReply
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("once")}), &r1)
+	waitEnv(t, w, 5*time.Second, "started", func(e *Envelope) bool { return e.Ev.Kind == "service.started" })
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("once")}), &r2)
+	if len(r2.Actions) != 0 {
+		t.Fatalf("apply on a running job: %+v", r2)
+	}
+	waitEnv(t, w, 5*time.Second, "converged", func(e *Envelope) bool { return e.Ev.Kind == "converged" && genOf(e) == r2.Generation })
+	waitEnv(t, w, 5*time.Second, "exited", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	time.Sleep(400 * time.Millisecond)
+	s := svcStatus(in.plane.Status(), "once")
+	if s.State != stateStopped || s.Pid != nil || s.Generation != r1.Generation || s.Desired != desiredRunning {
+		t.Fatalf("after the job ended: %+v", s)
+	}
+	j, err := os.ReadFile(filepath.Join(filepath.Dir(in.stateFile), "local.journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(j), `"kind":"service.started"`); n != 1 {
+		t.Fatalf("%d starts in the journal, want 1 (the noop generation relaunched the job)", n)
+	}
+	// The ended job takes a start again, from an apply that plans one.
+	if p, _ := in.plane.Plan(running("once")); len(p.Actions) != 1 {
+		t.Fatalf("plan on the ended job: %+v", p)
+	}
+}
+
 func TestALaterGenerationDoesNotHideAFailedOne(t *testing.T) {
 	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
 		{"name": "ghost", "command": "no-such-binary"},

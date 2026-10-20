@@ -191,15 +191,28 @@ func (s *service) command(want command) {
 		s.mu.Unlock()
 		s.launch(false)
 	case desiredStopped:
-		switch {
+		// `starting` with no process is a start a later want pre-marked (see want): this
+		// stop, queued before it, still ends as stopped; the start then runs after it.
+		switch st := s.cur(); {
 		case s.proc != nil:
 			s.stopTree()
-		case s.cur() == stateRestarting || s.cur() == stateFailed:
+		case st == stateRestarting || st == stateFailed || st == stateStarting:
 			s.cancelTimer()
 			s.setState(stateStopped)
 			s.ctl("service.stopped", map[string]any{})
 		}
 	}
+}
+
+// fail moves the service to `failed` and publishes service.failed with data, stamped with
+// the generation of the run that failed, taken under mu with the transition so no apply can
+// read `failed` and then take an unstamped event for its own.
+func (s *service) fail(data map[string]any) {
+	s.mu.Lock()
+	s.state = stateFailed
+	data["generation"] = s.startGen
+	s.mu.Unlock()
+	s.ctl("service.failed", data)
 }
 
 func (s *service) cancelTimer() {
@@ -214,8 +227,7 @@ func (s *service) launch(restart bool) {
 	s.ctl("service.starting", map[string]any{"restart": restart})
 	c, err := s.start()
 	if err != nil {
-		s.setState(stateFailed)
-		s.ctl("service.failed", map[string]any{"reason": "launch: " + err.Error()})
+		s.fail(map[string]any{"reason": "launch: " + err.Error()})
 		return
 	}
 	s.proc = c
@@ -365,9 +377,7 @@ func (s *service) onExit(code int) {
 	}
 	s.recent = kept
 	if len(s.recent) >= *s.spec.MaxRestarts {
-		s.setState(stateFailed)
-		s.ctl("service.failed", map[string]any{
-			"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": code})
+		s.fail(map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": code})
 		return
 	}
 	delay := backoffMin << len(s.recent)

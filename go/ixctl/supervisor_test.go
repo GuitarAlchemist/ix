@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -65,6 +66,54 @@ func TestCrashRestartsWithBackoffThenFails(t *testing.T) {
 	}
 	do(t, c, Request{Op: "apply", Desired: running("crashy")})
 	waitEnv(t, w, 5*time.Second, "fresh start", func(e *Envelope) bool { return e.Ev.Kind == "service.started" })
+}
+
+// A stop queued on a failed service, then a start: the start pre-marks the service
+// `starting` before the stop is read, and the stop still ends as stopped (its apply
+// converges) before the start runs; a launch failure is stamped with the start's generation.
+func TestAStopQueuedBeforeAPreMarkedStartStillStops(t *testing.T) {
+	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
+		{"name": "ghost", "command": "no-such-binary"}}})
+	spec, err := ParseSpec(doc, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHub("local")
+	cur := h.Subscribe("ctl", nil, h.Epoch())
+	s := newService(spec.Services[0], h)
+	s.setState(stateFailed)
+	s.want(desiredStopped, 2)
+	s.want(desiredRunning, 3)
+	if st := s.cur(); st != stateStarting || s.startGen != 3 {
+		t.Fatalf("after the wants: %s, generation %d", st, s.startGen)
+	}
+	s.command(<-s.cmds) // the stop
+	if st := s.cur(); st != stateStopped {
+		t.Fatalf("after the stop: %s", st)
+	}
+	s.command(<-s.cmds) // the start, which cannot launch
+	if st := s.cur(); st != stateFailed {
+		t.Fatalf("after the start: %s", st)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var kinds []string
+	var failedGen any
+	for len(kinds) < 3 {
+		envs, _, err := cur.Next(ctx, 8)
+		if err != nil {
+			t.Fatalf("events so far %v: %v", kinds, err)
+		}
+		for _, e := range envs {
+			kinds = append(kinds, e.Ev.Kind)
+			if e.Ev.Kind == "service.failed" {
+				failedGen = ctlData(e)["generation"]
+			}
+		}
+	}
+	if kinds[0] != "service.stopped" || kinds[1] != "service.starting" || kinds[2] != "service.failed" || failedGen != 3.0 {
+		t.Fatalf("events %v, failed generation %v", kinds, failedGen)
+	}
 }
 
 func TestRestartNeverStops(t *testing.T) {

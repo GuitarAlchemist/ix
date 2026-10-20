@@ -317,14 +317,24 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	defer p.applyMu.Unlock()
 	head := p.hub.Head()
 	cur := p.hub.Subscribe("ctl", &head, p.hub.Epoch())
-	actions, _ := p.plan(d)
+	actions, noop := p.plan(d)
 	p.mu.Lock()
 	p.gen++
 	g := p.gen
 	p.mu.Unlock()
 	p.journal.record(g, d, actions)
+	skip := map[string]bool{}
+	for _, n := range noop {
+		// A `running` the plan found already on its way asks nothing of the supervisor: a
+		// want would launch the service under this generation if it exited before the
+		// want was read, a run no action announced. A `stopped` noop still goes, so
+		// `desired` follows the document.
+		skip[n] = d.Services[n].State == desiredRunning
+	}
 	for _, n := range d.names() {
-		p.svcs[n].want(d.Services[n].State, g)
+		if !skip[n] {
+			p.svcs[n].want(d.Services[n].State, g)
+		}
 	}
 	done := make(chan applyResult, 1)
 	go func() { done <- p.await(g, actions, cur) }()
@@ -332,9 +342,9 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 }
 
 // await watches ctl until every action is observed, then publishes the
-// outcome. A start is observed by the service.started stamped with this
-// generation (an earlier run's does not settle it), a stop by service.stopped
-// (the tree is gone by then).
+// outcome. A start is observed by the service.started or service.failed
+// stamped with this generation (an earlier run's settles nothing), a stop by
+// service.stopped (the tree is gone by then).
 func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 	pending := map[string]string{}
 	for _, a := range actions {
@@ -381,7 +391,7 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			case env.Ev.Kind == "service.started" && op == "start" && data.Generation == g,
 				env.Ev.Kind == "service.stopped" && op == "stop":
 				delete(pending, data.Service)
-			case env.Ev.Kind == "service.failed" && op == "start":
+			case env.Ev.Kind == "service.failed" && op == "start" && data.Generation == g:
 				res = applyResult{Generation: g, Service: data.Service, Reason: data.Reason}
 				pending = nil
 			}

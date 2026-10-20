@@ -388,7 +388,12 @@ name `ixctl.v1`.
   that follows sees it on its way and says noop, as it does for a service `running` or in a
   restart's backoff, and `await` settles a start only on the `service.started` stamped with its
   own generation (Codex round 11, P1: before this, two applies in a row could both claim one
-  start, the second converging on the first's run). Gate E10 runs the real
+  start, the second converging on the first's run). Codex round 12 closed the three gaps left:
+  a `running` the plan found on its way is not handed to the supervisor at all (a job that
+  ended before the want was read would have been relaunched under the noop generation); a stop
+  queued on a `failed` service before a start pre-marked it `starting` still ends as stopped;
+  and `service.failed` is stamped with the failed run's generation, taken under the lock with
+  the transition, so `await` settles a start on its own failure only. Gate E10 runs the real
   `ix pipeline run --json` (one `stats` stage, through the Demerzel constitution gate) as a job
   under the plane and reads its NDJSON back from `svc/job`; a job whose pipeline file is missing
   exits 10, its generation converges all the same, and it stays `stopped` with that code. Tests:

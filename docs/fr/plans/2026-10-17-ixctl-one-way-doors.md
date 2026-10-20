@@ -416,7 +416,13 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   route et dit noop, comme pour un service `running` ou dans le délai d'un redémarrage, et
   `await` ne règle un démarrage que sur le `service.started` portant sa propre génération (revue
   Codex 11, P1 : avant, deux applications à la suite pouvaient revendiquer le même démarrage, la
-  seconde convergeant sur l'exécution de la première) ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
+  seconde convergeant sur l'exécution de la première). La revue Codex 12 a fermé les trois
+  écarts restants : un `running` que le plan a trouvé en route n'est plus transmis au
+  superviseur (un job terminé avant la lecture du want aurait été relancé sous la génération
+  noop) ; un stop mis en file sur un service `failed` avant qu'un start ne le pré-marque
+  `starting` finit quand même `stopped` ; et `service.failed` porte la génération de
+  l'exécution qui a échoué, prise sous le verrou avec la transition, de sorte qu'`await` ne
+  règle un démarrage que sur son propre échec ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
   `applied.epoch`. La vérification
   E10 de la passerelle lance le vrai `ix pipeline run --json` (une étape `stats`, à travers la
   porte constitutionnelle Demerzel) comme job sous le plan et relit son NDJSON depuis `svc/job` ;
