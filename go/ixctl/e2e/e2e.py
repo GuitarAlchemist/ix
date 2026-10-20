@@ -1,6 +1,6 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
-federated instances on loopback. 23 checks, E1..E7 plus a restart loop.
+federated instances on loopback. 24 checks, E1..E7 plus a restart loop.
 
     python go/ixctl/e2e/e2e.py --build            # build the three binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod and ixql-ctl already built there
@@ -148,6 +148,12 @@ def svc(s, name):
     return next(x for x in s["services"] if x["name"] == name)
 
 
+def journal_applies(name):
+    """The apply records of a plane's journal, in order."""
+    lines = (STATE / f"{name}.journal.jsonl").read_text(encoding="utf-8").splitlines()
+    return [m for m in map(json.loads, lines) if m.get("kind") == "apply"]
+
+
 def peer(s, name):
     return next((x for x in s.get("peers", []) if x["name"] == name), None)
 
@@ -187,6 +193,20 @@ def sse(st, ch, seconds):
 
 # --- running things ---------------------------------------------------------------------------
 
+LIVE = []  # every plane started by up(); reap() kills what a failed run leaves behind
+
+
+def reap():
+    """Kill the planes still running (their pods die with them) and drop the state files, which
+    hold the bearer tokens. A run that ends in finish() leaves nothing for this to do."""
+    for p in LIVE:
+        if p.poll() is None:
+            p.kill()
+            p.wait(5)
+    if STATE is not None:
+        for f in STATE.glob("*.json"):
+            f.unlink(missing_ok=True)
+
 
 def up(name, spec):
     out = open(RUNS / f"plane-{name}.stdout", "wb", buffering=0)
@@ -195,6 +215,7 @@ def up(name, spec):
     p = subprocess.Popen(
         [str(IXCTL), "up", str(spec), "--name", name, "--state", str(STATE)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, cwd=str(WORK))
+    LIVE.append(p)
     line = p.stdout.readline()
     parent_ms = (time.perf_counter() - t0) * 1000
     out.write(line)
@@ -236,6 +257,13 @@ def pod(service, label, nodes, rate=20, extra=()):
 
 
 def main():
+    try:
+        return run()
+    finally:
+        reap()
+
+
+def run():
     global WORK, BIN, STATE, RUNS, IXCTL, POD, IXQLCTL
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--build", action="store_true", help="build ixctl, pod and ixql-ctl from this tree first")
@@ -295,6 +323,14 @@ def main():
     check("E1.apply_ack_generation",
           out["applied"]["generation"] == g0 + 1 and out["applied"]["actions"] == starts,
           applied=out["applied"])
+    # The document the Rust client sent reached the journal with its schema field: a client
+    # that dropped it would still be accepted (no schema reads as this one), so ask the record.
+    # The stops that pods.ixql goes on to make are the plane's own documents, without one.
+    applies = journal_applies("a")
+    check("E1.schema_journaled",
+          applies and applies[0]["generation"] == out["applied"]["generation"]
+          and applies[0]["desired"].get("schema") == "ixctl-desired/0",
+          first_apply={k: applies[0].get(k) for k in ("generation", "desired")} if applies else None)
     check("E1.converged_observed",
           out["converged"]["observed_generation"] >= out["applied"]["generation"],
           observed=out["converged"]["observed_generation"])

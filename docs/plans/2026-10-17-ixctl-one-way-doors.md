@@ -107,15 +107,17 @@ with `peer` is refused: a peer's channels are read as mirrors (`session.go:102-1
 {"re":7,"ok":true,"data":{"sub":7,"head":41,"epoch":"3f9a1c0b7d2e"}}
 {"re":8,"ok":false,"error":"unknown service \"pod-z\""}
 {"sub":7,"env":{"ch":"ctl","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,"ev":{}}}
-{"sub":7,"gap":{"reason":"since-too-old","from":12,"oldest":310}}
+{"sub":7,"gap":{"reason":"since-too-old","from":12,"oldest":310,"epoch":"3f9a1c0b7d2e"}}
 {"sub":7,"gap":{"reason":"epoch-changed","from":1,"oldest":1,"epoch":"3f9a1c0b7d2e"}}
 ```
 
 A gap is `since-too-old` (a replay asked for more than the ring holds; the subscription goes on),
 `overflow` (a reader fell behind; the subscription ends), or, since the F1.1 fix,
 `epoch-changed` (the `since` named another boot's epoch) or `since-ahead` (a `since` with no
-epoch is past this boot's head); those two carry the current `epoch`, and the subscription goes
-on with everything the ring still holds (`hub.go:43-52`, `session.go:151-196`). Replay waits
+epoch is past this boot's head); for those two the subscription goes on with everything the
+ring still holds (`hub.go:43-52`, `session.go:151-196`). Every gap carries the current `epoch`
+(the first two since the Codex review of 2026-10-20: an SSE reader gets no subscribe reply, so
+a gap was its only way to learn it). Replay waits
 for room in the connection's queue; live events never wait (`session.go:151-153`).
 
 **Channels and event kinds.**
@@ -391,8 +393,11 @@ would push a race onto every writer. Drop the rule instead: a generation's outco
 
 There is one file per instance name, `<state dir>/<name>.journal.jsonl`. It is opened
 append-only with mode 0600, and kept from one boot to the next (`main.go:170`,
-`plane.go:446-452`). It holds three kinds of line (`plane.go:48-60`, `:465-472`; the `boot`
-line since the F3.1 fix):
+`plane.go:446-452`). Since the Codex review of 2026-10-20 the instance also holds an OS lock on
+`<state dir>/<name>.lock` for its whole life, taken before the state-file check, so two
+startups of one name cannot both open the journal and interleave their records under one boot
+header; the lock dies with the process. It holds three kinds of line (`plane.go:48-60`,
+`:465-472`; the `boot` line since the F3.1 fix):
 
 ```json
 {"epoch":"3f9a1c0b7d2e","kind":"boot","name":"local","schema":"ixctl-journal/0","t":1760699999000}

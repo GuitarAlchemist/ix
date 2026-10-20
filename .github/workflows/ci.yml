@@ -64,9 +64,63 @@ jobs:
             echo "ok $name"
           done
 
+      # The control plane's end-to-end gate: the Go plane, the Rust client and
+      # the ix-stream pod as two federated instances on loopback, 24 checks.
+      # It runs where the plane's process code is complete today (Windows job
+      # objects) and on the row whose cargo cache already holds the examples.
+      - uses: actions/setup-go@v5
+        if: matrix.os == 'windows-latest' && matrix.rust == 'stable'
+        with:
+          go-version-file: go/ixctl/go.mod
+          cache-dependency-path: go/ixctl/go.sum
+
+      - name: ixctl end-to-end gate
+        if: matrix.os == 'windows-latest' && matrix.rust == 'stable'
+        run: python go/ixctl/e2e/e2e.py --build --work "$env:RUNNER_TEMP/ixctl-e2e"
+
+      - uses: actions/upload-artifact@v4
+        if: failure() && matrix.os == 'windows-latest' && matrix.rust == 'stable'
+        with:
+          name: ixctl-e2e
+          path: |
+            ${{ runner.temp }}/ixctl-e2e/results.json
+            ${{ runner.temp }}/ixctl-e2e/runs/
+          if-no-files-found: ignore
+
       - name: Build docs
         if: matrix.rust == 'stable'
         run: cargo doc --workspace --no-deps
+
+  # `go/ixctl`, the control plane, is Go: nothing in the job above compiles or
+  # tests it, and no Rust test wraps `go`. Until this job existed the plane's
+  # Linux process code (`proc_other.go`) had never run anywhere. Fast (under a
+  # minute), so it runs on every push.
+  ixctl-go:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: go/ixctl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/ixctl/go.mod
+          cache-dependency-path: go/ixctl/go.sum
+
+      - name: gofmt
+        shell: bash
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
 
   # Feature-gated code is invisible to the job above. `cargo build --workspace`
   # and `cargo test --workspace` compile the DEFAULT feature set, so a module

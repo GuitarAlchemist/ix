@@ -73,7 +73,7 @@ func TestHubSinceTooOld(t *testing.T) {
 	since := uint64(0)
 	cur := h.Subscribe("", &since, "")
 	_, gap, err := cur.Next(context.Background(), 10)
-	if err != nil || gap == nil || gap.Reason != "since-too-old" || gap.From != 1 || gap.Oldest != 11 {
+	if err != nil || gap == nil || gap.Reason != "since-too-old" || gap.From != 1 || gap.Oldest != 11 || gap.Epoch != h.Epoch() {
 		t.Fatalf("gap %+v err %v", gap, err)
 	}
 	envs, _, _ := cur.Next(context.Background(), 1)
@@ -182,7 +182,7 @@ func TestMemSessionOverflowGap(t *testing.T) {
 		}
 	}
 	g := frames[sessionQueue]
-	if g.Gap == nil || g.Gap.Reason != "overflow" || g.Gap.From != sessionQueue || *g.Sub != 7 {
+	if g.Gap == nil || g.Gap.Reason != "overflow" || g.Gap.From != sessionQueue || g.Gap.Epoch != h.Epoch() || *g.Sub != 7 {
 		t.Fatalf("gap frame: %+v", g)
 	}
 	publishN(h, "svc/x", 5)

@@ -249,7 +249,7 @@ func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
 			return nil, g, nil
 		}
 		if c.next < oldest {
-			g := &Gap{Reason: "overflow", From: c.next, Oldest: oldest}
+			g := &Gap{Reason: "overflow", From: c.next, Oldest: oldest, Epoch: h.epoch}
 			if c.replay {
 				g.Reason = "since-too-old"
 			}

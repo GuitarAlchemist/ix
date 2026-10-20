@@ -123,6 +123,7 @@ type instance struct {
 	addr      string
 	token     string
 	stateFile string
+	lock      *os.File // the per-name lock, held until close
 	ready     readyLine
 }
 
@@ -154,23 +155,39 @@ func startInstance(spec *Spec, name, addr, stateDir string) (*instance, error) {
 		return nil, err
 	}
 	statePath := filepath.Join(stateDir, name+".json")
+	// One instance per name per state dir, held as an OS lock for the
+	// instance's life. The state-file check below is advisory: two startups
+	// could both pass it before either wrote the file, then append their boot
+	// headers and records to one journal, interleaved. The lock dies with the
+	// process, so a crash leaves nothing to clean up.
+	lock, held, err := lockFile(filepath.Join(stateDir, name+".lock"))
+	if err != nil {
+		return nil, err
+	}
+	if !held {
+		return nil, fmt.Errorf("instance %q is already starting or running (its lock in %s is held)", name, stateDir)
+	}
+	fail := func(err error) (*instance, error) {
+		lock.Close()
+		return nil, err
+	}
 	if st, err := readStateFile(statePath); err == nil && instanceAlive(st) {
-		return nil, fmt.Errorf("instance %q already runs at %s (pid %d)", name, st.Addr, st.Pid)
+		return fail(fmt.Errorf("instance %q already runs at %s (pid %d)", name, st.Addr, st.Pid))
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	tok := make([]byte, 32)
 	if _, err := rand.Read(tok); err != nil {
 		ln.Close()
-		return nil, err
+		return fail(err)
 	}
-	in := &instance{addr: ln.Addr().String(), token: hex.EncodeToString(tok), stateFile: statePath}
+	in := &instance{addr: ln.Addr().String(), token: hex.EncodeToString(tok), stateFile: statePath, lock: lock}
 	in.plane, err = NewPlane(spec, name, filepath.Join(stateDir, name+".journal.jsonl"))
 	if err != nil {
 		ln.Close()
-		return nil, err
+		return fail(err)
 	}
 	in.web = newServer(in.plane, name, in.token, ln.Addr().(*net.TCPAddr))
 	in.srv = &http.Server{Handler: in.web, ReadHeaderTimeout: 5 * time.Second}
@@ -179,14 +196,14 @@ func startInstance(spec *Spec, name, addr, stateDir string) (*instance, error) {
 	if err := writeFileAtomic(statePath, b); err != nil {
 		in.srv.Close()
 		in.plane.Shutdown()
-		return nil, err
+		return fail(err)
 	}
 	in.ready = readyLine{Event: "ready", Name: name, Addr: in.addr, Pid: os.Getpid(), StateFile: statePath}
 	return in, nil
 }
 
 // close stops every service tree, then the transports, then removes the
-// state file.
+// state file and lets go of the name.
 func (in *instance) close() {
 	in.plane.Shutdown()
 	in.web.cancel()
@@ -195,6 +212,9 @@ func (in *instance) close() {
 	cancel()
 	in.srv.Close()
 	os.Remove(in.stateFile)
+	if in.lock != nil {
+		in.lock.Close()
+	}
 }
 
 // instanceAlive asks a state file's address whether that instance still runs.

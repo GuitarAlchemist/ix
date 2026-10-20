@@ -85,7 +85,7 @@ func TestWSOverflowGivesGapFrame(t *testing.T) {
 			t.Fatalf("no gap frame; last seq %d", last)
 		}
 	}
-	if gap.Reason != "overflow" || gap.From != last+1 {
+	if gap.Reason != "overflow" || gap.From != last+1 || gap.Epoch != in.plane.Epoch() {
 		t.Fatalf("gap %+v after seq %d", gap, last)
 	}
 	t.Logf("overflow after %d events", last)

@@ -95,7 +95,7 @@ func TestJournalBootHeaderTellsBootsApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := journalLines(t, j)
-	boot, applies := -1, 0
+	boot, applies, ctl := -1, 0, make([]int, 2)
 	for i, m := range lines {
 		switch {
 		case m["kind"] == "boot":
@@ -114,6 +114,7 @@ func TestJournalBootHeaderTellsBootsApart(t *testing.T) {
 				t.Fatalf("line %d: apply generation %v, want 1", i, m["generation"])
 			}
 		case m["ch"] == "ctl":
+			ctl[boot]++
 			if m["epoch"] != epochs[boot] {
 				t.Fatalf("line %d: ctl envelope epoch %v under boot %q", i, m["epoch"], epochs[boot])
 			}
@@ -123,6 +124,10 @@ func TestJournalBootHeaderTellsBootsApart(t *testing.T) {
 	}
 	if boot != 1 || applies != 2 {
 		t.Fatalf("saw %d boot lines and %d apply records, want 2 and 2", boot+1, applies)
+	}
+	// The epoch check above is vacuous unless each boot's section holds ctl records.
+	if ctl[0] == 0 || ctl[1] == 0 {
+		t.Fatalf("ctl envelopes per boot %v, want at least one under each header", ctl)
 	}
 }
 

@@ -65,12 +65,15 @@ fn main() {
     }
 
     // The bus stamps events in seconds since it was made; `ixctl` wants Unix milliseconds
-    // (`ev.t`), so the bus's birth is pinned to the wall clock once, here.
+    // (`ev.t`), so the bus's birth is pinned to the wall clock once, here: the wall clock is
+    // read after the bus exists and the bus's own age is taken off, so a pause between the
+    // two reads does not shift every timestamp.
+    let bus = Bus::new();
     let born_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock before 1970")
-        .as_millis() as f64;
-    let bus = Bus::new();
+        .as_millis() as f64
+        - bus.elapsed() * 1000.0;
     let events = bus.subscribe(&[], 1 << 16);
     let q = quit.clone();
     let printer = std::thread::spawn(move || {

@@ -111,16 +111,18 @@ union, `client.go:28-39`) :
 {"re":7,"ok":true,"data":{"sub":7,"head":41,"epoch":"3f9a1c0b7d2e"}}
 {"re":8,"ok":false,"error":"unknown service \"pod-z\""}
 {"sub":7,"env":{"ch":"ctl","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,"ev":{}}}
-{"sub":7,"gap":{"reason":"since-too-old","from":12,"oldest":310}}
+{"sub":7,"gap":{"reason":"since-too-old","from":12,"oldest":310,"epoch":"3f9a1c0b7d2e"}}
 {"sub":7,"gap":{"reason":"epoch-changed","from":1,"oldest":1,"epoch":"3f9a1c0b7d2e"}}
 ```
 
 Un trou est `since-too-old` (un rejeu demandait plus que ce que l'anneau garde ; l'abonnement
 continue), `overflow` (un lecteur a pris du retard ; l'abonnement prend fin), ou, depuis le
 correctif F1.1, `epoch-changed` (le `since` nommait l'époque d'un autre démarrage) ou
-`since-ahead` (un `since` sans époque dépasse la tête de ce démarrage) ; ces deux-là portent
-l'`epoch` courante, et l'abonnement continue avec tout ce que l'anneau garde encore
-(`hub.go:43-52`, `session.go:151-196`). Le rejeu attend de la place dans la file de la
+`since-ahead` (un `since` sans époque dépasse la tête de ce démarrage) ; pour ces deux-là
+l'abonnement continue avec tout ce que l'anneau garde encore (`hub.go:43-52`,
+`session.go:151-196`). Tout trou porte l'`epoch` courante (les deux premiers depuis la revue
+Codex du 2026-10-20 : un lecteur SSE n'a pas de réponse d'abonnement, un trou était donc sa
+seule façon de l'apprendre). Le rejeu attend de la place dans la file de la
 connexion ; les événements en direct n'attendent jamais (`session.go:151-153`).
 
 **Canaux et types d'événements.**
@@ -414,7 +416,11 @@ pas un préalable.
 
 Il y a un fichier par nom d'instance, `<répertoire d'état>/<nom>.journal.jsonl`. Il est ouvert
 en ajout seul, avec le mode 0600, et conservé d'un démarrage à l'autre (`main.go:170`,
-`plane.go:446-452`). Il contient trois sortes de lignes (`plane.go:48-60`, `:465-472` ; la
+`plane.go:446-452`). Depuis la revue Codex du 2026-10-20, l'instance tient aussi un verrou
+système sur `<répertoire d'état>/<nom>.lock` pendant toute sa vie, pris avant la vérification
+du fichier d'état, pour que deux démarrages d'un même nom ne puissent pas ouvrir le journal
+tous les deux et entrelacer leurs enregistrements sous un seul en-tête de démarrage ; le verrou
+meurt avec le processus. Il contient trois sortes de lignes (`plane.go:48-60`, `:465-472` ; la
 ligne `boot` depuis le correctif F3.1) :
 
 ```json

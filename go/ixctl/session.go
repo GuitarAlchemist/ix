@@ -189,7 +189,7 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor) 
 				return
 			default:
 				s.dropIf(id, e)
-				s.send(s.ctx, gapFrame(id, &Gap{Reason: "overflow", From: env.Seq}))
+				s.send(s.ctx, gapFrame(id, &Gap{Reason: "overflow", From: env.Seq, Epoch: cur.Epoch()}))
 				return
 			}
 		}
