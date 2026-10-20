@@ -27,8 +27,11 @@ type Plane struct {
 	applyMu  sync.Mutex // one apply at a time: generations are a total order
 	mu       sync.Mutex
 	gen      uint64
-	observed uint64
-	diverged *Diverged // the diverged apply of highest generation, if any
+	observed uint64          // the highest generation that converged
+	settled  uint64          // every generation <= settled has ended, converged or diverged
+	ended    map[uint64]bool // generations above settled that have ended
+	diverged *Diverged       // the diverged apply of highest generation, if any
+	failed   []Diverged      // every diverged apply since boot, by generation
 
 	quit     chan struct{} // closed when a shutdown is requested
 	quitOnce sync.Once
@@ -42,7 +45,7 @@ func NewPlane(spec *Spec, name, journalPath string) (*Plane, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &Plane{
 		name: name, spec: spec, hub: NewHub(name),
-		svcs: map[string]*service{}, peers: map[string]*peerLink{},
+		svcs: map[string]*service{}, peers: map[string]*peerLink{}, ended: map[uint64]bool{},
 		started: time.Now(), ctx: ctx, cancel: cancel, quit: make(chan struct{}),
 	}
 	if journalPath != "" {
@@ -171,22 +174,31 @@ type PeerStatus struct {
 	Services json.RawMessage `json:"services"`
 }
 
+// StatusReply summarises the generations. Every generation <= SettledGeneration has
+// ended, converged or diverged, and Failed lists the diverged ones since boot, lowest
+// generation first: g has failed iff Failed names it, and is done iff g <=
+// SettledGeneration and Failed does not name it. ObservedGeneration (the highest that
+// converged) and Diverged (the highest that failed) stay for older readers; on their own
+// they let a later converged generation hide an earlier pending or failed one.
 type StatusReply struct {
 	Name               string          `json:"name"`
 	Generation         uint64          `json:"generation"`
 	ObservedGeneration uint64          `json:"observed_generation"`
+	SettledGeneration  uint64          `json:"settled_generation"`
 	Diverged           *Diverged       `json:"diverged"`
+	Failed             []Diverged      `json:"failed"`
 	Services           []ServiceStatus `json:"services"`
 	Peers              []PeerStatus    `json:"peers"`
 }
 
 func (p *Plane) Status() StatusReply {
 	p.mu.Lock()
-	r := StatusReply{Name: p.name, Generation: p.gen, ObservedGeneration: p.observed}
+	r := StatusReply{Name: p.name, Generation: p.gen, ObservedGeneration: p.observed, SettledGeneration: p.settled}
 	if p.diverged != nil {
 		d := *p.diverged
 		r.Diverged = &d
 	}
+	r.Failed = append([]Diverged{}, p.failed...)
 	p.mu.Unlock()
 	r.Services = make([]ServiceStatus, 0, len(p.order))
 	for _, n := range p.order {
@@ -215,8 +227,8 @@ type ApplyReply struct {
 	Actions    []Action `json:"actions"`
 }
 
-// Diverged names an apply that will not converge: generation g has failed
-// iff observed_generation < g and diverged.generation >= g.
+// Diverged names an apply that will not converge. Status lists them all in
+// Failed, so a later generation that converges never hides an earlier failure.
 type Diverged struct {
 	Generation uint64 `json:"generation"`
 	Service    string `json:"service"`
@@ -370,21 +382,30 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			}
 		}
 	}
+	p.mu.Lock()
 	if res.Converged {
-		p.mu.Lock()
 		if g > p.observed {
 			p.observed = g
 		}
-		p.mu.Unlock()
-		p.hub.Publish("ctl", event("converged", map[string]any{"generation": g}))
 	} else {
 		d := Diverged{Generation: g, Service: res.Service, Reason: res.Reason}
-		p.mu.Lock()
+		p.failed = append(p.failed, d)
 		if p.diverged == nil || g > p.diverged.Generation {
 			p.diverged = &d
 		}
-		p.mu.Unlock()
-		p.hub.Publish("ctl", event("diverged", d))
+	}
+	// Generations end in any order; settled only moves past an unbroken run of ended ones,
+	// so a later generation never counts an earlier, still pending one as done.
+	p.ended[g] = true
+	for p.ended[p.settled+1] {
+		delete(p.ended, p.settled+1)
+		p.settled++
+	}
+	p.mu.Unlock()
+	if res.Converged {
+		p.hub.Publish("ctl", event("converged", map[string]any{"generation": g}))
+	} else {
+		p.hub.Publish("ctl", event("diverged", Diverged{Generation: g, Service: res.Service, Reason: res.Reason}))
 	}
 	return res
 }

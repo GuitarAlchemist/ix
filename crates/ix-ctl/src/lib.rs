@@ -200,18 +200,21 @@ impl Ctl {
         self.call("POST", "/v1/stop", Some(&body))
     }
 
-    /// Waits until the plane has observed `generation`, and answers the status that showed it.
+    /// Waits until the plane has settled `generation`, and answers the status that showed it.
     ///
-    /// Each poll of the status decides one of three things:
-    /// - done, `Ok(status)`, once `observed_generation >= generation`: this generation
-    ///   converged, or a later one did and superseded it;
-    /// - failed, [`CtlError::Diverged`] at once, while `observed_generation < generation` and
-    ///   the status's `diverged` (the most recent apply that diverged) names `generation` or a
-    ///   later one;
+    /// Each poll of the status decides one of three things. With a plane that reports
+    /// `settled_generation` and `failed` (every generation `<= settled_generation` has ended,
+    /// `failed` lists the diverged ones since boot):
+    /// - failed, [`CtlError::Diverged`] at once, when `failed` names `generation`;
+    /// - done, `Ok(status)`, once `settled_generation >= generation`;
     /// - pending otherwise, until `timeout` ends the wait with [`CtlError::Wait`].
     ///
-    /// A `diverged` that is null, or absent as from a plane older than the field, never fails
-    /// a wait.
+    /// An older plane has only `observed_generation` (the highest that converged) and
+    /// `diverged` (the highest that failed); there the generation is done once
+    /// `observed_generation >= generation`, and failed while `observed_generation < generation`
+    /// and `diverged` names `generation` or a later one. That summary lets a later converged
+    /// generation hide an earlier one (F2.1 in the one-way-doors doc); the settled one does not.
+    /// A `diverged` that is null, or absent, never fails a wait.
     pub fn wait_generation(&self, generation: u64, timeout: Duration) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -220,29 +223,48 @@ impl Ctl {
                 .get("observed_generation")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| CtlError::Protocol("status has no `observed_generation`".into()))?;
-            if observed >= generation {
-                return Ok(status);
-            }
-            if let Some(d) = status.get("diverged").filter(|d| !d.is_null()) {
+            let divergence = |d: &Value| -> Result<CtlError, CtlError> {
                 let field = |name: &str| {
                     d.get(name).ok_or_else(|| {
                         CtlError::Protocol(format!("status `diverged` has no `{name}`"))
                     })
                 };
-                let failed = field("generation")?.as_u64().ok_or_else(|| {
-                    CtlError::Protocol("status `diverged.generation` is not a count".into())
-                })?;
-                if failed >= generation {
-                    let text = |name: &str| {
-                        field(name)?.as_str().map(str::to_string).ok_or_else(|| {
-                            CtlError::Protocol(format!("status `diverged.{name}` is not a string"))
-                        })
-                    };
-                    return Err(CtlError::Diverged {
-                        generation: failed,
-                        service: text("service")?,
-                        reason: text("reason")?,
-                    });
+                let text = |name: &str| {
+                    field(name)?.as_str().map(str::to_string).ok_or_else(|| {
+                        CtlError::Protocol(format!("status `diverged.{name}` is not a string"))
+                    })
+                };
+                Ok(CtlError::Diverged {
+                    generation: field("generation")?.as_u64().ok_or_else(|| {
+                        CtlError::Protocol("status `diverged.generation` is not a count".into())
+                    })?,
+                    service: text("service")?,
+                    reason: text("reason")?,
+                })
+            };
+            if let Some(settled) = status.get("settled_generation").and_then(Value::as_u64) {
+                let failed = status
+                    .get("failed")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| CtlError::Protocol("status has no `failed` list".into()))?;
+                if let Some(d) = failed
+                    .iter()
+                    .find(|d| d.get("generation").and_then(Value::as_u64) == Some(generation))
+                {
+                    return Err(divergence(d)?);
+                }
+                if settled >= generation {
+                    return Ok(status);
+                }
+            } else {
+                if observed >= generation {
+                    return Ok(status);
+                }
+                if let Some(d) = status.get("diverged").filter(|d| !d.is_null()) {
+                    let err = divergence(d)?;
+                    if matches!(err, CtlError::Diverged { generation: g, .. } if g >= generation) {
+                        return Err(err);
+                    }
                 }
             }
             if pause(deadline) {

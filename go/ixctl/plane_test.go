@@ -200,3 +200,46 @@ func TestLaunchFailureDiverges(t *testing.T) {
 		t.Fatalf("after a later converged apply: observed %d diverged %+v", st.ObservedGeneration, st.Diverged)
 	}
 }
+
+// F2.1 of the one-way-doors doc: generation 1 fails on one service, generation 2 starts
+// another and converges. observed_generation alone then reads 1 as done; settled_generation
+// and failed say what happened to each generation.
+func TestALaterGenerationDoesNotHideAFailedOne(t *testing.T) {
+	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
+		{"name": "ghost", "command": "no-such-binary"},
+		{"name": "ok", "command": testExe(t), "env": map[string]string{"IXCTL_TEST_ROLE": "fake"}},
+	}})
+	spec, err := ParseSpec(doc, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := newTestInstance(t, spec, "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+
+	var failed, later ApplyReply
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("ghost")}), &failed)
+	waitEnv(t, w, 5*time.Second, "diverged", func(e *Envelope) bool { return e.Ev.Kind == "diverged" && genOf(e) == failed.Generation })
+	st := in.plane.Status()
+	if st.SettledGeneration != failed.Generation || len(st.Failed) != 1 || st.Failed[0].Generation != failed.Generation ||
+		st.Failed[0].Service != "ghost" || !strings.HasPrefix(st.Failed[0].Reason, "launch: ") {
+		t.Fatalf("after the failed apply: settled %d failed %+v", st.SettledGeneration, st.Failed)
+	}
+
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("ok")}), &later)
+	waitEnv(t, w, 5*time.Second, "converged", func(e *Envelope) bool { return e.Ev.Kind == "converged" && genOf(e) == later.Generation })
+	st = in.plane.Status()
+	// The old summary reads generation 1 as done...
+	if st.ObservedGeneration != later.Generation || st.Diverged == nil || st.Diverged.Generation != failed.Generation {
+		t.Fatalf("old summary after the later apply: observed %d diverged %+v", st.ObservedGeneration, st.Diverged)
+	}
+	// ...the new one still names it failed, and 2 as the only settled, converged one.
+	if st.SettledGeneration != later.Generation || len(st.Failed) != 1 || st.Failed[0].Generation != failed.Generation {
+		t.Fatalf("new summary after the later apply: settled %d failed %+v", st.SettledGeneration, st.Failed)
+	}
+	code, _, body := httpDo(t, in, "GET", "/v1/status", nil, nil)
+	if code != 200 || !strings.Contains(string(body), `"settled_generation":2`) ||
+		!strings.Contains(string(body), `"failed":[{"generation":1,"service":"ghost"`) {
+		t.Fatalf("HTTP status %d %s", code, body)
+	}
+}

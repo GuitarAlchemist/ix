@@ -132,9 +132,10 @@ continue) ou `overflow` (un lecteur a pris du retard ; l'abonnement prend fin) (
 - `peer/<pair>/<canal>` porte les enveloppes `ctl` et `svc/` d'un pair, recopiées avec leur
   origine et jamais relayées plus loin (`peers.go:121-131`, `:187-197`).
 
-**Réponses.** Le statut est `{name, generation, observed_generation, diverged,
-services[{name, desired, state, pid, restarts, started_at, last_exit, nodes}],
-peers[{name, state, services}]}` (`plane.go:157-181`). Le plan est
+**Réponses.** Le statut est `{name, generation, observed_generation, settled_generation,
+diverged, failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
+started_at, last_exit, nodes}], peers[{name, state, services}]}` (`plane.go:157-181` ;
+`settled_generation` et `failed` depuis le correctif F2.1 ci-dessous). Le plan est
 `{generation, actions[{op, service}], noop}`, l'application `{generation, actions}`, l'arrêt
 `{stopped, generation, exit}` (`plane.go:202-216`, `:392-396`).
 
@@ -152,7 +153,8 @@ peers[{name, state, services}]}` (`plane.go:157-181`). Le plan est
 - **Lit le côté WebSocket :** seulement `go/ixctl` lui-même, par ses liens de pair
   (`peers.go:93-180`) et `ixctl bench` (`bench.go:169-379`).
 - **Lit le côté SSE :** les tests seulement (`http_test.go`).
-- **Lit le côté HTTP :** `crates/ix-ctl`. Il lit `observed_generation`,
+- **Lit le côté HTTP :** `crates/ix-ctl`. Il lit `settled_generation` et `failed[]` quand ils
+  sont présents, sinon `observed_generation` et
   `diverged.{generation, service, reason}`, `services[].{name, state, nodes}`, `generation` dans
   la réponse d'application et `error` dans un refus (`crates/ix-ctl/src/lib.rs:215-317`), ainsi
   que `addr` et `token` dans le fichier d'état (`lib.rs:142-164`). Ses attentes interrogent
@@ -275,6 +277,16 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
 
 ### Constats
 
+- **Corrigé (F2.1), cette tranche :** le statut gagne `settled_generation` (toute génération
+  inférieure ou égale est terminée, convergée ou divergée ; il n'avance qu'au-delà d'une suite
+  ininterrompue de générations terminées) et `failed` (chaque application divergée depuis le
+  démarrage, par génération croissante). Le `wait_generation(g)` de `crates/ix-ctl` échoue quand
+  `failed` nomme g, est terminé dès que `settled_generation >= g`, et attend sinon ; face à un
+  plan plus ancien, il retombe sur l'ancienne règle. `observed_generation` et `diverged` sont
+  inchangés. Tests : `TestALaterGenerationDoesNotHideAFailedOne` (plan) et
+  `a_later_generation_does_not_hide_a_failed_one` (client). Le constat ci-dessous est gardé tel
+  qu'écrit ; le cas concurrent (B converge pendant que A démarre encore) relève de la même règle
+  mais n'a pas de test, `service.started` suivant le lancement à quelques millisecondes.
 - **F2.1 Une génération ultérieure peut masquer un échec.** La règle de remplacement vient d'un
   état désiré total (l'`observedGeneration` de Kubernetes), où la génération g+1 reformule tout
   ce que demandait g. Ici, le document est partiel. Supposons que g démarre A et que g+1 démarre

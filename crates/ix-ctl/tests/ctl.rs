@@ -38,6 +38,9 @@ struct Plane {
     services: BTreeMap<String, Svc>,
     /// The status's `diverged`; `None` leaves the field out, as a plane older than it does.
     diverged: Option<Value>,
+    /// The status's `settled_generation` and `failed`; `None` leaves both out, as a plane
+    /// older than them does.
+    settled: Option<(u64, Vec<Value>)>,
     /// `METHOD PATH` of every request that passed the checks.
     log: Vec<String>,
 }
@@ -73,6 +76,10 @@ impl Plane {
         });
         if let Some(d) = &self.diverged {
             status["diverged"] = d.clone();
+        }
+        if let Some((settled, failed)) = &self.settled {
+            status["settled_generation"] = json!(settled);
+            status["failed"] = json!(failed);
         }
         status
     }
@@ -204,6 +211,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         pending: None,
         services,
         diverged: None,
+        settled: None,
         log: Vec::new(),
     }));
     let shared = plane.clone();
@@ -528,6 +536,54 @@ fn a_diverged_generation_fails_the_wait_at_once() {
             .wait_generation(2, Duration::from_millis(60))
             .unwrap_err();
         assert!(matches!(err, CtlError::Wait(_)), "{err:?}");
+    }
+}
+
+/// F2.1 of the one-way-doors doc. Generation 1 failed, generation 2 converged: the old summary
+/// (`observed_generation` 2, `diverged` 1) reads 1 as done, while `settled_generation` and
+/// `failed` name it failed. And a generation that converged ahead of a pending one does not
+/// settle it.
+#[test]
+fn a_later_generation_does_not_hide_a_failed_one() {
+    let (ctl, plane) = plane();
+    let launch = json!({"generation": 1, "service": "pod-a", "reason": "launch: not found"});
+    {
+        let mut p = plane.lock().unwrap();
+        p.generation = 2;
+        p.observed = 2;
+        p.diverged = Some(launch.clone());
+        p.settled = Some((2, vec![launch.clone()]));
+    }
+    let began = Instant::now();
+    let err = ctl.wait_generation(1, Duration::from_secs(5)).unwrap_err();
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        began.elapsed()
+    );
+    assert_eq!(
+        "generation 1 diverged on pod-a: launch: not found",
+        err.to_string()
+    );
+    let done = ctl.wait_generation(2, Duration::from_secs(5)).unwrap();
+    assert_eq!(json!(2), done["settled_generation"]);
+    let err = executor(ctl.clone())
+        .run_source("a <- ix.ctl.wait(generation: 1, timeout_ms: 5000)")
+        .unwrap_err();
+    assert!(err.to_string().contains("generation 1 diverged"), "{err}");
+
+    // Generation 2 converged while 1 is still pending: nothing is settled yet, so neither
+    // wait is done, where `observed_generation` 2 alone would have called both done.
+    {
+        let mut p = plane.lock().unwrap();
+        p.diverged = None;
+        p.settled = Some((0, vec![]));
+    }
+    for g in [1, 2] {
+        let err = ctl
+            .wait_generation(g, Duration::from_millis(60))
+            .unwrap_err();
+        assert!(matches!(err, CtlError::Wait(_)), "generation {g}: {err:?}");
     }
 }
 
