@@ -7,6 +7,7 @@
 //! on_b    <- ix.ctl.apply(desired, peer: "b")
 //! done    <- ix.ctl.wait(generation: applied.generation, epoch: applied.epoch, timeout_ms: 10000)
 //! pod     <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)
+//! exited  <- ix.ctl.wait(service: "job", exit: true, timeout_ms: 60000)
 //! status  <- ix.ctl.status()
 //! stopped <- ix.ctl.stop(service: "pod-a")
 //! seen    <- ix.ctl.events(channel: "ctl", since: 0, max: 20, timeout_ms: 2000)
@@ -15,6 +16,11 @@
 //! `ix.ctl.events` reads the plane's event stream and stops at `max:` events, at the end of
 //! the stream, or after `timeout_ms:` without a next event (the plane's keep-alive pings do
 //! not count as one): `{events[], gap, ended}`. `max: 0` opens nothing; `epoch:` needs `since:`.
+//!
+//! `ix.ctl.wait(service:, exit: true)` answers the service's status entry once it has exited
+//! (state `stopped` or `failed`, with `last_exit`): how a job, a service with `restart: never`,
+//! is waited to its end. The exit is the last one the plane saw, so wait for the generation
+//! that started the job first.
 //!
 //! Arguments are checked before any request: a misspelt name, a missing timeout or a value
 //! piped into a call that would ignore it fails the run instead of being dropped.
@@ -108,25 +114,36 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
     })?;
 
     caps.register("ix.ctl.wait", move |a: CallArgs| {
-        expect(&a, &["generation", "epoch", "service", "nodes", "peer", "timeout_ms"])?;
+        expect(
+            &a,
+            &["generation", "epoch", "service", "nodes", "exit", "peer", "timeout_ms"],
+        )?;
         let timeout = Duration::from_millis(count(&a, "timeout_ms")?.ok_or("needs `timeout_ms:`")?);
         let peer = string(&a, "peer")?;
+        if flag(&a, "exit")? == Some(false) {
+            return Err("`exit:` is `true`, or left out".into());
+        }
         match (
             count(&a, "generation")?,
             string(&a, "epoch")?,
             string(&a, "service")?,
             count(&a, "nodes")?,
+            flag(&a, "exit")?,
         ) {
-            (Some(g), epoch, None, None) => answer(match (peer.as_deref(), epoch.as_deref()) {
+            (Some(g), epoch, None, None, None) => answer(match (peer.as_deref(), epoch.as_deref()) {
                 (Some(p), epoch) => ctl.wait_generation_at(p, epoch, g, timeout),
                 (None, Some(e)) => ctl.wait_generation_of(e, g, timeout),
                 (None, None) => ctl.wait_generation(g, timeout),
             }),
-            (None, None, Some(s), Some(n)) => answer(match peer.as_deref() {
+            (None, None, Some(s), Some(n), None) => answer(match peer.as_deref() {
                 Some(p) => ctl.wait_nodes_at(p, &s, n as usize, timeout),
                 None => ctl.wait_nodes(&s, n as usize, timeout),
             }),
-            _ => Err("takes `generation:` (with `epoch:`), or `service:` with `nodes:`, and `timeout_ms:`; `peer:` reads that peer".into()),
+            (None, None, Some(s), None, Some(true)) => answer(match peer.as_deref() {
+                Some(p) => ctl.wait_exit_at(p, &s, timeout),
+                None => ctl.wait_exit(&s, timeout),
+            }),
+            _ => Err("takes `generation:` (with `epoch:`), `service:` with `nodes:`, or `service:` with `exit: true`, and `timeout_ms:`; `peer:` reads that peer".into()),
         }
     })?;
     Ok(())
@@ -177,6 +194,14 @@ fn string(a: &CallArgs, name: &str) -> Result<Option<String>, String> {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
         Some(_) => Err(format!("`{name}:` must be a string")),
+    }
+}
+
+fn flag(a: &CallArgs, name: &str) -> Result<Option<bool>, String> {
+    match a.named.get(name) {
+        None => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(v) => Err(format!("`{name}:` must be a boolean, not {v}")),
     }
 }
 

@@ -390,6 +390,24 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
 - **F2.4 Une génération ne veut rien dire d'un démarrage à l'autre.** Un client qui détient g
   d'avant un redémarrage attend jusqu'à son délai (`lib.rs:248-253`), ou, une fois que le
   nouveau démarrage atteint g, prend l'issue d'un autre document pour la sienne.
+- **Les jobs, cette tranche (pas de nouvelle porte) :** un service déclaré avec
+  `restart: never` est un job. Il court jusqu'à sa fin et le plan le laisse `stopped`,
+  `last_exit` disant comment, son `desired` toujours `running` (`supervisor.go`, `onExit`). Le
+  document ne change pas : `running` veut dire « démarre-le », donc un plan sur un job terminé
+  dit de nouveau `start`, et réappliquer le même document le relance ; le « réappliquer ne
+  démarre rien » de E7 vaut pour les services, pas pour les jobs terminés. La convergence de la
+  génération qui l'a démarré dit « lancé », pas « terminé » (`await` s'arrête sur
+  `service.started`) : `crates/ix-ctl` gagne donc `wait_exit` / `wait_exit_at` et, en IXQL,
+  `ix.ctl.wait(service:, exit: true)`, qui répondent l'entrée du service dans le statut dès
+  qu'il est `stopped` ou `failed` avec un `last_exit`. La sortie répondue est la dernière que le
+  plan a vue, et le statut ne dit pas à quel démarrage elle appartient : un programme attend
+  d'abord la génération du démarrage ; `crates/ix-ctl/examples/job.ixql` le fait. La vérification
+  E10 de la passerelle lance le vrai `ix pipeline run --json` (une étape `stats`, à travers la
+  porte constitutionnelle Demerzel) comme job sous le plan et relit son NDJSON depuis `svc/job` ;
+  un job dont le fichier de pipeline manque sort avec le code 10, sa génération converge quand
+  même, et il reste `stopped` avec ce code. Tests : `a_job_is_waited_to_its_exit`,
+  `job_ixql_runs_a_job_to_its_end`, `a_peers_job_is_waited_to_its_exit` (client) ; E10
+  (passerelle).
 
 ### Ce que le figer verrouille
 

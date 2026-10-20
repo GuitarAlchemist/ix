@@ -1,0 +1,32 @@
+--- ## One job, driven from IXQL
+--- A job is a declared service that runs to its end: `restart: never`, so once it exits the
+--- plane leaves it `stopped`, its `last_exit` saying how, and does not start it again. Here the
+--- job is `ix pipeline run` on a pipeline file: the real IX pipeline runner, under the plane.
+---
+---   ixctl up spec.json          -- a spec declaring `job` as
+---                               --   ix pipeline run --file <ix.yaml> --json
+---                               -- with `restart: never`
+---   cargo run -p ix-ctl --example ixql-ctl -- crates/ix-ctl/examples/job.ixql --state <state file>
+---
+--- The runner prints every binding below as JSON.
+
+desired <- {
+    schema: "ixctl-desired/0",
+    services: { "job": { state: "running" } }
+  }
+
+--- Answers the new generation at once; the start runs in the background.
+applied <- desired → ix.ctl.apply
+
+--- Converged means launched: the plane observed the start, not the end. A job's `desired`
+--- stays `running` after it ends, so applying this document again would run it again.
+started <- ix.ctl.wait(generation: applied.generation, epoch: applied.epoch, timeout_ms: 30000)
+
+--- Answers the job's status entry once it has exited: state `stopped`, `last_exit.code` its
+--- exit code. The exit answered is the last one the plane saw; after the wait above, this run's.
+exited <- ix.ctl.wait(service: "job", exit: true, timeout_ms: 120000)
+
+--- What the job printed. A stdout line that is not a `{kind, ...}` event reaches `svc/job` as a
+--- `log` event carrying the line; `ix pipeline run --json` prints one `{"event": ...}` object per
+--- line, `done` last. Replayed from the plane's ring, from the start of this boot.
+output <- ix.ctl.events(channel: "svc/job", since: 0, epoch: applied.epoch, max: 100, timeout_ms: 1000)

@@ -365,6 +365,22 @@ name `ixctl.v1`.
 - **F2.4 A generation means nothing across boots.** A client that holds g from before a restart
   waits until its timeout (`lib.rs:248-253`), or, once the new boot reaches g, takes another
   document's outcome for its own.
+- **Jobs, this slice (no new door):** a service declared with `restart: never` is a job. It runs
+  to its end and the plane leaves it `stopped`, `last_exit` saying how, its `desired` still
+  `running` (`supervisor.go`, `onExit`). The document does not change: `running` means "start
+  it", so a plan on an ended job says `start` again and re-applying the same document re-runs
+  it; E7's "re-applying starts nothing" holds for services, not for ended jobs. Converging the
+  start's generation says launched, not ended (`await` ends on `service.started`), so
+  `crates/ix-ctl` gained `wait_exit` / `wait_exit_at` and IXQL's
+  `ix.ctl.wait(service:, exit: true)`: they answer the service's status entry once it is
+  `stopped` or `failed` with a `last_exit`. The exit answered is the last one the plane saw, and
+  the status does not say which start it belongs to, so a program waits for the start's
+  generation first; `crates/ix-ctl/examples/job.ixql` does. Gate E10 runs the real
+  `ix pipeline run --json` (one `stats` stage, through the Demerzel constitution gate) as a job
+  under the plane and reads its NDJSON back from `svc/job`; a job whose pipeline file is missing
+  exits 10, its generation converges all the same, and it stays `stopped` with that code. Tests:
+  `a_job_is_waited_to_its_exit`, `job_ixql_runs_a_job_to_its_end`,
+  `a_peers_job_is_waited_to_its_exit` (client); E10 (gate).
 
 ### What freezing locks in
 

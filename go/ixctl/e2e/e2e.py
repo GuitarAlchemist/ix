@@ -1,15 +1,19 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
-federated instances on loopback. 30 checks, E1..E9, a restart loop and the M1 measurement.
+federated instances on loopback, plus the `ix` binary run as a job (E10). 32 checks, E1..E10, a
+restart loop and the M1 measurement.
 
-    python go/ixctl/e2e/e2e.py --build            # build the three binaries, then run the gate
-    python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod and ixql-ctl already built there
+    python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
+    python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
     python go/ixctl/e2e/e2e.py --build --work D   # keep binaries, state, runs and results.json in D
 
-Paths are relative to this file: the repo root is three levels up, `pods.ixql` comes from
-`crates/ix-ctl/examples`. Everything the gate writes goes under the work folder (by default
-`ixctl-e2e` in the system temp folder): `bin/`, `state/` (the planes' state files and journals),
-`runs/` (each IXQL program with its stdout and stderr, each plane's output) and `results.json`.
+Paths are relative to this file: the repo root is three levels up, `pods.ixql` and `job.ixql`
+come from `crates/ix-ctl/examples`, and the job's `ix pipeline run` reads the Demerzel
+constitution from `governance/demerzel` (the submodule; `IX_GOVERNANCE_DIR` overrides it).
+Everything the gate writes goes under the work folder (by default `ixctl-e2e` in the system temp
+folder): `bin/`, `state/` (the planes' state files and journals), `runs/` (each IXQL program
+with its stdout and stderr, each plane's output), `job/` (the job's `ix.yaml`, its `ix.lock` and
+provenance) and `results.json`.
 Tokens are read from the state files and kept in memory only: nothing here prints one, and the
 last check scans every file written for them.
 
@@ -33,11 +37,30 @@ import time
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 PODS_IXQL = REPO / "crates" / "ix-ctl" / "examples" / "pods.ixql"
+JOB_IXQL = REPO / "crates" / "ix-ctl" / "examples" / "job.ixql"
+GOV = pathlib.Path(os.environ.get("IX_GOVERNANCE_DIR") or REPO / "governance" / "demerzel")
 EXE = ".exe" if os.name == "nt" else ""
 
+# The pipeline the job runs: what `ix pipeline new` scaffolds, one `stats` stage.
+JOB_PIPELINE = """version: '1'
+params: {}
+stages:
+  load:
+    skill: stats
+    args:
+      data:
+      - 1.0
+      - 2.0
+      - 3.0
+      - 4.0
+      - 5.0
+    deps: []
+    cache: null
+"""
+
 # Set by main() from the arguments.
-WORK = BIN = STATE = RUNS = None
-IXCTL = POD = IXQLCTL = None
+WORK = BIN = STATE = RUNS = JOBDIR = None
+IXCTL = POD = IXQLCTL = IX = None
 
 results = {"checks": {}, "measures": {}, "notes": []}
 
@@ -101,13 +124,14 @@ def wait_until(pred, timeout, step=0.01):
 
 
 def build():
-    """Build the plane, the pod and the IXQL client from this tree into BIN."""
+    """Build the plane, the pod, the IXQL client and the `ix` CLI from this tree into BIN."""
     t0 = time.perf_counter()
     subprocess.run(["go", "build", "-o", str(BIN / ("ixctl" + EXE)), "."],
                    cwd=str(REPO / "go" / "ixctl"), check=True)
     env = {**os.environ, "CARGO_PROFILE_DEV_DEBUG": "0", "CARGO_INCREMENTAL": "0"}
     r = subprocess.run(["cargo", "build", "-q", "-p", "ix-stream", "--example", "pod",
-                        "-p", "ix-ctl", "--example", "ixql-ctl", "--message-format=json"],
+                        "-p", "ix-ctl", "--example", "ixql-ctl", "-p", "ix-skill", "--bin", "ix",
+                        "--message-format=json"],
                        cwd=str(REPO), env=env, check=True, capture_output=True)
     copied = []
     for line in r.stdout.decode("utf-8", "replace").splitlines():
@@ -274,6 +298,15 @@ def pod(service, label, nodes, rate=20, extra=()):
             "restart": "on-failure"}
 
 
+def job(service, pipeline):
+    """A job: `ix pipeline run` on `pipeline`, run once (`restart: never`) in JOBDIR, where its
+    `ix.lock` and provenance land. The constitution gate reads GOV."""
+    return {"name": service, "command": str(IX),
+            "args": ["pipeline", "run", "--file", str(pipeline), "--json"],
+            "dir": str(JOBDIR), "env": {"IX_GOVERNANCE_DIR": str(GOV), "IX_ROOT": str(REPO)},
+            "restart": "never"}
+
+
 def main():
     try:
         return run()
@@ -282,7 +315,7 @@ def main():
 
 
 def run():
-    global WORK, BIN, STATE, RUNS, IXCTL, POD, IXQLCTL
+    global WORK, BIN, STATE, RUNS, JOBDIR, IXCTL, POD, IXQLCTL, IX
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--build", action="store_true", help="build ixctl, pod and ixql-ctl from this tree first")
     ap.add_argument("--bin", type=pathlib.Path, help="folder holding prebuilt ixctl, pod and ixql-ctl (default: <work>/bin)")
@@ -292,19 +325,25 @@ def run():
 
     WORK = args.work.resolve()
     BIN = (args.bin or WORK / "bin").resolve()
-    STATE, RUNS = WORK / "state", WORK / "runs"
+    STATE, RUNS, JOBDIR = WORK / "state", WORK / "runs", WORK / "job"
     IXCTL, POD, IXQLCTL = BIN / ("ixctl" + EXE), BIN / ("pod" + EXE), BIN / ("ixql-ctl" + EXE)
+    IX = BIN / ("ix" + EXE)
 
-    for d in (STATE, RUNS):
+    for d in (STATE, RUNS, JOBDIR):
         if d.exists():
             shutil.rmtree(d)
         d.mkdir(parents=True)
     if args.build:
         BIN.mkdir(parents=True, exist_ok=True)
         build()
-    for exe in (IXCTL, POD, IXQLCTL):
+    for exe in (IXCTL, POD, IXQLCTL, IX):
         assert exe.exists(), f"missing {exe} (build it, or pass --build)"
-    assert PODS_IXQL.exists(), f"missing {PODS_IXQL}"
+    for f in (PODS_IXQL, JOB_IXQL):
+        assert f.exists(), f"missing {f}"
+    constitution = GOV / "constitutions" / "default.constitution.md"
+    assert constitution.exists(), (f"missing {constitution}: init the governance/demerzel "
+                                   "submodule, or point IX_GOVERNANCE_DIR at a checkout")
+    (JOBDIR / "ix.yaml").write_text(JOB_PIPELINE, encoding="utf-8")
 
     spec_b = spec("b", [pod("pod-a", "b/pod-a", 3)],
                   [{"name": "a", "state_file": str(STATE / "a.json")}])
@@ -313,6 +352,8 @@ def run():
         pod("pod-b", "a/pod-b", 4),
         {**pod("crashy", "a/crashy", 2, 5, ["--crash-after", "0.15"]), "max_restarts": 2},
         {"name": "missing", "command": str(BIN / ("does-not-exist" + EXE)), "restart": "never"},
+        job("job", JOBDIR / "ix.yaml"),
+        job("job-bad", JOBDIR / "does-not-exist.yaml"),
     ], [{"name": "b", "state_file": str(STATE / "b.json")}])
 
     pb, ready_b, sb, ms_b = up("b", spec_b)
@@ -472,6 +513,50 @@ def run():
           apply_reply_ms=round((t_reply - t_apply) * 1000, 1),
           stream_after_reply_ms=round((seen_converged[g] - t_reply) * 1000, 1) if g in seen_converged else None,
           poll_25ms_after_reply_ms=round((polled - t_reply) * 1000, 1) if polled else None)
+
+    # E10: a job. A service declared with `restart: never` runs to its end: here the real
+    # `ix pipeline run --json` (one `stats` stage, through the Demerzel constitution gate) under
+    # the plane, driven by job.ixql through the Rust client. The start's generation converging
+    # says launched; the exit wait says ended, with the exit code; the NDJSON the job printed
+    # reached `svc/job` as `log` events and is read back from the ring.
+    code, out, err, ms = ixql("job", JOB_IXQL, STATE / "a.json", timeout=180)
+    measure("job_ixql_ms", round(ms, 1))
+    exited = (out or {}).get("exited") or {}
+    output = (out or {}).get("output") or {}
+    printed = []
+    for e in output.get("events", []):
+        if e.get("kind") == "log":
+            try:
+                printed.append(json.loads(e["data"]["line"]))
+            except (ValueError, KeyError, TypeError):
+                pass
+    events = [p.get("event") for p in printed if isinstance(p, dict)]
+    check("E10.job_runs_to_its_end",
+          code == 0 and exited.get("state") == "stopped" and exited.get("desired") == "running"
+          and (exited.get("last_exit") or {}).get("code") == 0 and exited.get("pid") is None
+          and exited.get("restarts") == 0 and "start" in events and events[-1:] == ["done"]
+          and output.get("gap") is None and (JOBDIR / "ix.lock").exists(),
+          code=code, ms=round(ms, 1),
+          exited={k: exited.get(k) for k in ("state", "desired", "last_exit", "restarts")},
+          printed_events=events, gap=output.get("gap"), lock=(JOBDIR / "ix.lock").exists(),
+          stderr=err[-200:])
+    # A job that fails (its pipeline file does not exist: `ix` exits 10) is left stopped with
+    # that code and is not restarted. Its start converges all the same: converged means launched.
+    _, r = call(sa, "POST", "/v1/apply", {"services": {"job-bad": {"state": "running"}}})
+    _, settled_ms = wait_until(lambda: status(sa)["settled_generation"] >= r["generation"], 15)
+    prog = write_ixql("job-bad.ixql",
+                      'exited <- ix.ctl.wait(service: "job-bad", exit: true, timeout_ms: 60000)\n')
+    code, out, err, ms = ixql("job-bad", prog, STATE / "a.json")
+    bad = (out or {}).get("exited") or {}
+    failed = [d["generation"] for d in status(sa)["failed"]]
+    check("E10.failed_job_stays_stopped",
+          code == 0 and settled_ms is not None and r["generation"] not in failed
+          and bad.get("state") == "stopped" and (bad.get("last_exit") or {}).get("code") == 10
+          and bad.get("restarts") == 0,
+          code=code, ms=round(ms, 1), settled_ms=settled_ms, generation=r["generation"],
+          failed_generations=failed,
+          exited={k: bad.get(k) for k in ("state", "desired", "last_exit", "restarts")},
+          stderr=err[-200:])
 
     # A real pod that keeps crashing: restarts with backoff, then failed. A pod reports its
     # nodes as soon as it runs, so the crash loop is watched on status, and the Rust wait is

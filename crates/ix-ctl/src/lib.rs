@@ -22,12 +22,17 @@
 //! # Ok::<(), ix_ctl::CtlError>(())
 //! ```
 //!
+//! A job is a service declared with `restart: never`: it runs to its end and the plane leaves
+//! it `stopped`, its `last_exit` saying how. [`Ctl::wait_exit`] waits for that end; the
+//! generation's convergence only says the job was launched (`examples/job.ixql` runs the real
+//! `ix pipeline run` that way).
+//!
 //! [`register`] exposes the same verbs to IXQL as `ix.ctl.status`, `ix.ctl.plan`,
 //! `ix.ctl.apply`, `ix.ctl.stop` and `ix.ctl.wait`.
 //!
 //! # What the client refuses
 //!
-//! The token is only ever sent to a loopback address, in a header. Both waits poll
+//! The token is only ever sent to a loopback address, in a header. The waits poll
 //! `/v1/status` every 25 ms; [`Ctl::events`] reads the plane's event stream. The gate's M1
 //! measures what a wait on the stream would gain: on a real start, `converged` reaches a live
 //! reader 2–3 ms after the apply reply, the poll sees it 12–28 ms after, depending on where in
@@ -668,7 +673,7 @@ impl Ctl {
         nodes: usize,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
-        self.wait_nodes_on(None, service, nodes, timeout)
+        self.wait_service_on(None, service, timeout, |e| nodes_decision(e, nodes))
     }
 
     /// [`Ctl::wait_nodes`] for a service of `peer`, read from that peer's status. A 502 or
@@ -680,15 +685,45 @@ impl Ctl {
         nodes: usize,
         timeout: Duration,
     ) -> Result<Value, CtlError> {
-        self.wait_nodes_on(Some(peer), service, nodes, timeout)
+        self.wait_service_on(Some(peer), service, timeout, |e| nodes_decision(e, nodes))
     }
 
-    fn wait_nodes_on(
+    /// Waits until `service` has exited, and answers its entry in the status: state `stopped`
+    /// or `failed`, with `last_exit` saying how (`code`, and `at` in Unix milliseconds).
+    ///
+    /// This is how a job is waited for: a service declared with `restart: never` runs to its
+    /// end and the plane leaves it `stopped`, its `desired` still `running`. Converging the
+    /// generation that started it ([`Ctl::wait_generation`]) only says it was launched; this
+    /// wait says it ended. A service that restarts on failure is `restarting` between two
+    /// runs and is waited through; it has exited for good once it is `failed`.
+    ///
+    /// The exit answered is the last one the plane saw for the service, and the status does
+    /// not say which start it belongs to: wait for the generation that started the service
+    /// first, or an earlier run's exit answers for this one. A service that never ran has no
+    /// `last_exit`, and the wait runs out with [`CtlError::Wait`].
+    pub fn wait_exit(&self, service: &str, timeout: Duration) -> Result<Value, CtlError> {
+        self.wait_service_on(None, service, timeout, exit_decision)
+    }
+
+    /// [`Ctl::wait_exit`] for a service of `peer`, read from that peer's status. A 502 or 503
+    /// (the link to the peer is down for a moment) is asked again until the deadline.
+    pub fn wait_exit_at(
+        &self,
+        peer: &str,
+        service: &str,
+        timeout: Duration,
+    ) -> Result<Value, CtlError> {
+        self.wait_service_on(Some(peer), service, timeout, exit_decision)
+    }
+
+    /// Polls the status until `decide` is done with `service`'s entry, which is answered;
+    /// `Failed` ends the wait at once, `Pending` says what the timeout message reports.
+    fn wait_service_on(
         &self,
         peer: Option<&str>,
         service: &str,
-        nodes: usize,
         timeout: Duration,
+        decide: impl Fn(&Value) -> Decision,
     ) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -714,22 +749,16 @@ impl Ctl {
                 .iter()
                 .find(|s| s.get("name").and_then(Value::as_str) == Some(service))
                 .ok_or_else(|| CtlError::NotDeclared(service.to_string()))?;
-            let state = entry.get("state").and_then(Value::as_str).unwrap_or("");
-            let have = entry
-                .get("nodes")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len);
-            if state == "running" && have >= nodes {
-                return Ok(entry.clone());
-            }
-            if state == "failed" {
-                return Err(CtlError::Wait(format!(
-                    "service `{service}` failed with {have} of {nodes} nodes"
-                )));
-            }
+            let pending = match decide(entry) {
+                Decision::Done => return Ok(entry.clone()),
+                Decision::Failed(why) => {
+                    return Err(CtlError::Wait(format!("service `{service}` {why}")))
+                }
+                Decision::Pending(what) => what,
+            };
             if pause(deadline) {
                 return Err(CtlError::Wait(format!(
-                    "service `{service}` has {have} of {nodes} nodes in state `{state}` after {} ms",
+                    "service `{service}` {pending} after {} ms",
                     timeout.as_millis()
                 )));
             }
@@ -775,6 +804,41 @@ impl Ctl {
             Some(first) if addrs.iter().all(|a| a.ip().is_loopback()) => Ok(*first),
             _ => Err(CtlError::NotLoopback(self.addr.clone())),
         }
+    }
+}
+
+/// What one status read says about the service a wait is for.
+enum Decision {
+    /// The condition holds: the wait answers this entry.
+    Done,
+    /// It never will: the wait fails with this reason.
+    Failed(String),
+    /// Not yet: what the wait would report if it ran out now.
+    Pending(String),
+}
+
+/// [`Ctl::wait_nodes`]: running with at least `nodes` nodes; `failed` never will.
+fn nodes_decision(entry: &Value, nodes: usize) -> Decision {
+    let state = entry.get("state").and_then(Value::as_str).unwrap_or("");
+    let have = entry
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    match state {
+        "running" if have >= nodes => Decision::Done,
+        "failed" => Decision::Failed(format!("failed with {have} of {nodes} nodes")),
+        _ => Decision::Pending(format!("has {have} of {nodes} nodes in state `{state}`")),
+    }
+}
+
+/// [`Ctl::wait_exit`]: `stopped` or `failed` with a `last_exit`. A `stopped` service without
+/// one never ran, and a `restarting` one is between two runs: both are pending.
+fn exit_decision(entry: &Value) -> Decision {
+    let state = entry.get("state").and_then(Value::as_str).unwrap_or("");
+    let exited = entry.get("last_exit").is_some_and(Value::is_object);
+    match state {
+        "stopped" | "failed" if exited => Decision::Done,
+        _ => Decision::Pending(format!("has not exited: state `{state}`")),
     }
 }
 

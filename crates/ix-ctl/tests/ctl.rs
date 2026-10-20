@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const PODS: &str = include_str!("../examples/pods.ixql");
+const JOB: &str = include_str!("../examples/job.ixql");
 const TOKEN: &str = "5f1c0de2a9b84e7d93c6f0a1b2c3d4e5f60718293a4b5c6d7e8f9011223344aa";
 /// How long the fake takes to observe an applied generation.
 const CONVERGE: Duration = Duration::from_millis(120);
@@ -28,6 +29,8 @@ struct Svc {
     desired: &'static str,
     since: Option<Instant>,
     last_exit: Value,
+    /// Gave up restarting: state `failed`, whatever `since` says.
+    failed: bool,
 }
 
 struct Plane {
@@ -77,6 +80,7 @@ impl Plane {
             .iter()
             .map(|(name, s)| {
                 let (state, nodes) = match s.since {
+                    _ if s.failed => ("failed", vec![]),
                     None => ("stopped", vec![]),
                     Some(t) if t.elapsed() < NODES => ("starting", vec![]),
                     Some(_) => ("running", pod_nodes()),
@@ -134,6 +138,14 @@ impl Plane {
         s.since = None;
         s.last_exit = json!({"code": 0, "at": unix_ms()});
         s.last_exit.clone()
+    }
+
+    /// The service's process ended on its own with `code`, nobody having asked: the way a job
+    /// ends. The plane records the exit and, with `restart: never`, leaves `desired` as it was.
+    fn exit(&mut self, name: &str, code: i64) {
+        let s = self.services.get_mut(name).expect("declared");
+        s.since = None;
+        s.last_exit = json!({"code": code, "at": unix_ms()});
     }
 
     fn route(&mut self, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
@@ -936,11 +948,13 @@ fn a_wait_ends_on_time_against_a_plane_that_stalls() {
     for (timeout, kind) in [
         (Duration::from_millis(200), "generation"),
         (Duration::from_millis(200), "nodes"),
+        (Duration::from_millis(200), "exit"),
         (Duration::ZERO, "generation"),
     ] {
         let began = Instant::now();
         let err = match kind {
             "generation" => ctl.wait_generation(1, timeout).unwrap_err(),
+            "exit" => ctl.wait_exit("pod-a", timeout).unwrap_err(),
             _ => ctl.wait_nodes("pod-a", 1, timeout).unwrap_err(),
         };
         let took = began.elapsed();
@@ -1056,6 +1070,23 @@ fn argument_mistakes_fail_the_run_before_any_request() {
             "nodes",
         ),
         (
+            r#"a <- ix.ctl.wait(service: "pod-a", nodes: 2, exit: true, timeout_ms: 10)"#,
+            "`exit: true`",
+        ),
+        (
+            "a <- ix.ctl.wait(generation: 1, exit: true, timeout_ms: 10)",
+            "`exit: true`",
+        ),
+        (
+            r#"a <- ix.ctl.wait(service: "pod-a", exit: false, timeout_ms: 10)"#,
+            "`true`",
+        ),
+        (
+            r#"a <- ix.ctl.wait(service: "pod-a", exit: 1, timeout_ms: 10)"#,
+            "boolean",
+        ),
+        (r#"a <- ix.ctl.wait(exit: true, timeout_ms: 10)"#, "service"),
+        (
             "a <- ix.ctl.wait(generation: 1.5, timeout_ms: 10)",
             "whole number",
         ),
@@ -1108,6 +1139,174 @@ fn a_wait_that_runs_out_says_what_it_saw() {
     assert!(
         matches!(err, CtlError::NotDeclared(ref n) if n == "ghost"),
         "{err:?}"
+    );
+}
+
+// A job ends on its own: the plane records its exit and, with `restart: never`, leaves it
+// stopped with `desired` still `running`. The exit wait answers that entry; a service that gave
+// up restarting (`failed`) answers too; one still running, or never run, runs the wait out.
+#[test]
+fn a_job_is_waited_to_its_exit() {
+    let (ctl, plane) = plane();
+    let applied = ctl
+        .apply(&json!({"services": {"pod-a": {"state": "running"}}}), None)
+        .unwrap();
+    ctl.wait_generation(
+        applied["generation"].as_u64().unwrap(),
+        Duration::from_secs(2),
+    )
+    .expect("the start converged");
+    // Still starting, or running: the wait runs out and says so.
+    let err = ctl
+        .wait_exit("pod-a", Duration::from_millis(60))
+        .unwrap_err();
+    let text = err.to_string();
+    assert!(
+        matches!(err, CtlError::Wait(_))
+            && text.contains("`pod-a` has not exited: state `")
+            && text.contains("after 60 ms")
+            && !text.contains("stopped"),
+        "{err}"
+    );
+    let ender = std::thread::spawn({
+        let plane = plane.clone();
+        move || {
+            std::thread::sleep(Duration::from_millis(150));
+            plane.lock().unwrap().exit("pod-a", 3);
+        }
+    });
+    let began = Instant::now();
+    let entry = ctl
+        .wait_exit("pod-a", Duration::from_secs(2))
+        .expect("the job exited");
+    ender.join().unwrap();
+    assert!(began.elapsed() >= Duration::from_millis(150));
+    assert_eq!(json!("stopped"), entry["state"]);
+    assert_eq!(
+        json!("running"),
+        entry["desired"],
+        "nobody asked for the stop"
+    );
+    assert_eq!(json!(3), entry["last_exit"]["code"]);
+    assert!(entry["pid"].is_null());
+    // The exit stays in the status: a wait that comes later answers it at once. That is why
+    // a job's exit is waited for after the generation that started it has converged.
+    let again = ctl
+        .wait_exit("pod-a", Duration::from_millis(50))
+        .expect("the same exit, again");
+    assert_eq!(entry["last_exit"], again["last_exit"]);
+    // The IXQL form answers the same entry.
+    let out = executor(ctl.clone())
+        .run_source(r#"j <- ix.ctl.wait(service: "pod-a", exit: true, timeout_ms: 50)"#)
+        .unwrap();
+    assert_eq!(&entry, out.binding("j").unwrap());
+
+    // A service the plane gave up on has exited for good.
+    {
+        let mut p = plane.lock().unwrap();
+        p.exit("pod-b", 1);
+        p.services.get_mut("pod-b").unwrap().failed = true;
+    }
+    let failed = ctl
+        .wait_exit("pod-b", Duration::from_millis(50))
+        .expect("failed is an exit");
+    assert_eq!(json!("failed"), failed["state"]);
+    assert_eq!(json!(1), failed["last_exit"]["code"]);
+
+    // One that never ran has no exit to answer; one the plane does not declare is refused.
+    let (fresh, _plane) = self::plane();
+    let err = fresh
+        .wait_exit("pod-b", Duration::from_millis(50))
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("`pod-b` has not exited: state `stopped` after 50 ms"),
+        "{err}"
+    );
+    let err = fresh
+        .wait_exit("ghost", Duration::from_millis(50))
+        .unwrap_err();
+    assert!(
+        matches!(err, CtlError::NotDeclared(ref n) if n == "ghost"),
+        "{err:?}"
+    );
+}
+
+// job.ixql against the fake: the job is launched, converges, exits while the program waits for
+// it, and its output is asked for from the start of the boot.
+#[test]
+fn job_ixql_runs_a_job_to_its_end() {
+    let (ctl, plane) = plane();
+    plane.lock().unwrap().services.insert(
+        "job".into(),
+        Svc {
+            desired: "stopped",
+            last_exit: Value::Null,
+            ..Svc::default()
+        },
+    );
+    let ender = std::thread::spawn({
+        let plane = plane.clone();
+        move || {
+            std::thread::sleep(CONVERGE + Duration::from_millis(200));
+            plane.lock().unwrap().exit("job", 0);
+        }
+    });
+    let out = executor(ctl).run_source(JOB).expect("job.ixql runs");
+    ender.join().unwrap();
+    let b = |name: &str| out.binding(name).unwrap_or_else(|| panic!("no `{name}`"));
+    assert_eq!(
+        json!([{"op": "start", "service": "job"}]),
+        b("applied")["actions"]
+    );
+    assert_eq!(
+        b("applied")["generation"],
+        b("started")["observed_generation"]
+    );
+    assert_eq!(json!("stopped"), b("exited")["state"]);
+    assert_eq!(json!("running"), b("exited")["desired"]);
+    assert_eq!(json!(0), b("exited")["last_exit"]["code"]);
+    // The fake has no ring: the replay is empty and the stream ends.
+    assert_eq!(
+        &json!({"events": [], "gap": null, "ended": true}),
+        b("output")
+    );
+    let log = plane.lock().unwrap().log.clone();
+    assert!(
+        log.iter()
+            .any(|r| r.starts_with("GET /v1/events?ch=svc%2Fjob&since=0&epoch=3f9a1c0b7d2e")),
+        "{log:?}"
+    );
+}
+
+// A job on a peer is waited for through this plane, and the wait rides out a blinking link.
+#[test]
+fn a_peers_job_is_waited_to_its_exit() {
+    let (ctl, plane) = plane();
+    {
+        let mut p = plane.lock().unwrap();
+        p.peer_status = Some(json!({
+            "name": "b", "epoch": "b00b00b00b00", "generation": 1, "observed_generation": 1,
+            "settled_generation": 1, "failed": [], "services": [
+                {"name": "job", "desired": "running", "state": "stopped", "pid": null, "restarts": 0,
+                 "started_at": 1_760_000_000_000u64,
+                 "last_exit": {"code": 0, "at": 1_760_000_001_000u64}, "nodes": []}],
+            "peers": [],
+        }));
+        p.peer_down_for = 2;
+    }
+    let entry = ctl
+        .wait_exit_at("b", "job", Duration::from_secs(2))
+        .expect("two 502s, then b's job");
+    assert_eq!(json!(0), entry["last_exit"]["code"]);
+    let out = executor(ctl)
+        .run_source(r#"j <- ix.ctl.wait(service: "job", exit: true, peer: "b", timeout_ms: 2000)"#)
+        .unwrap();
+    assert_eq!(&entry, out.binding("j").unwrap());
+    let log = &plane.lock().unwrap().log;
+    assert!(
+        log.iter().filter(|r| *r == "GET /v1/status?peer=b").count() >= 4,
+        "{log:?}"
     );
 }
 
