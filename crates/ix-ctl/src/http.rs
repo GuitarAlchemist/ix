@@ -19,16 +19,21 @@ pub(crate) struct Response {
     pub body: Vec<u8>,
 }
 
+/// One request. `within` caps every socket timeout (connect, each read, each write) at what is
+/// left of a wait's deadline, down to a millisecond, so a wait never blocks past its timeout on
+/// a plane that accepts and stalls; `None` leaves the defaults.
 pub(crate) fn request(
     addr: SocketAddr,
     method: &str,
     path: &str,
     token: &str,
     body: Option<&[u8]>,
+    within: Option<Duration>,
 ) -> io::Result<Response> {
-    let mut stream = TcpStream::connect_timeout(&addr, CONNECT)?;
-    stream.set_read_timeout(Some(IO))?;
-    stream.set_write_timeout(Some(IO))?;
+    let cap = |d: Duration| within.map_or(d, |w| d.min(w).max(Duration::from_millis(1)));
+    let mut stream = TcpStream::connect_timeout(&addr, cap(CONNECT))?;
+    stream.set_read_timeout(Some(cap(IO)))?;
+    stream.set_write_timeout(Some(cap(IO)))?;
     stream.set_nodelay(true)?;
 
     // `SocketAddr` prints as `127.0.0.1:port` or `[::1]:port`: the two spellings of a loopback

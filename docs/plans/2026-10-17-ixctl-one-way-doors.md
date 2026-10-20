@@ -144,7 +144,9 @@ for room in the connection's queue; live events never wait (`session.go:151-153`
 **Replies.** Status is `{name, epoch, generation, observed_generation, settled_generation,
 diverged, failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
 started_at, last_exit, nodes}], peers[{name, state, services}]}` (`plane.go:157-181`;
-`settled_generation` and `failed` since the F2.1 fix below, `epoch` since F2.4). Plan is
+`settled_generation` and `failed` since the F2.1 fix below, `epoch` since F2.4; `last_exit.code`
+is the exit status, or on Unix 128 plus the signal that ended the process, the shell's
+convention). Plan is
 `{generation, actions[{op, service}], noop}`, apply is `{generation, epoch, actions}`, stop is
 `{stopped, generation, exit}` (`plane.go:202-216`,
 `:392-396`).

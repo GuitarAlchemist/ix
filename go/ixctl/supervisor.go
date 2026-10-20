@@ -249,7 +249,7 @@ func (s *service) start() (*child, error) {
 		if err := cmd.Wait(); err == nil {
 			code = 0
 		} else if ee := (*exec.ExitError)(nil); errors.As(err, &ee) {
-			code = ee.ExitCode()
+			code = exitCode(ee)
 		}
 		c.exited <- code
 	}()

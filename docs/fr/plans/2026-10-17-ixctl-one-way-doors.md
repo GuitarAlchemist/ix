@@ -149,7 +149,9 @@ connexion ; les événements en direct n'attendent jamais (`session.go:151-153`)
 **Réponses.** Le statut est `{name, epoch, generation, observed_generation, settled_generation,
 diverged, failed[{generation, service, reason}], services[{name, desired, state, pid, restarts,
 started_at, last_exit, nodes}], peers[{name, state, services}]}` (`plane.go:157-181` ;
-`settled_generation` et `failed` depuis le correctif F2.1 ci-dessous, `epoch` depuis F2.4). Le
+`settled_generation` et `failed` depuis le correctif F2.1 ci-dessous, `epoch` depuis F2.4 ;
+`last_exit.code` est le code de sortie, ou sous Unix 128 plus le signal qui a tué le processus,
+la convention du shell). Le
 plan est `{generation, actions[{op, service}], noop}`, l'application
 `{generation, epoch, actions}`, l'arrêt `{stopped, generation, exit}` (`plane.go:202-216`,
 `:392-396`).

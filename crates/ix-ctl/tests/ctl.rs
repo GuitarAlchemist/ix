@@ -50,6 +50,9 @@ struct Plane {
     peer_status: Option<Value>,
     /// How many more routed status reads answer 502, the link to b being down.
     peer_down_for: u32,
+    /// How long every answer is held back after the request is read: a plane that accepts
+    /// and stalls.
+    stall: Duration,
 }
 
 impl Plane {
@@ -244,6 +247,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         epoch: Some("3f9a1c0b7d2e".into()),
         peer_status: None,
         peer_down_for: 0,
+        stall: Duration::ZERO,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -303,7 +307,11 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
         plane.log.push(format!("{method} {path}"));
         plane.route(&method, &path, &body)
     };
+    let stall = plane.stall;
     drop(plane);
+    if !stall.is_zero() {
+        std::thread::sleep(stall);
+    }
 
     let text = value.to_string();
     let mut w = stream;
@@ -623,6 +631,40 @@ fn a_wait_for_a_generation_applied_through_a_peer_asks_that_peer() {
         .unwrap_err();
     assert!(matches!(err, CtlError::Http { status: 400, .. }), "{err}");
     assert!(began.elapsed() < Duration::from_secs(1));
+}
+
+// A wait's timeout bounds the request in flight too: against a plane that accepts and then
+// stalls, a short wait ends about when it said it would, not after the client's 15 s read
+// timeout, and a zero wait still asks once.
+#[test]
+fn a_wait_ends_on_time_against_a_plane_that_stalls() {
+    let (ctl, plane) = plane();
+    plane.lock().unwrap().stall = Duration::from_secs(5);
+    for (timeout, kind) in [
+        (Duration::from_millis(200), "generation"),
+        (Duration::from_millis(200), "nodes"),
+        (Duration::ZERO, "generation"),
+    ] {
+        let began = Instant::now();
+        let err = match kind {
+            "generation" => ctl.wait_generation(1, timeout).unwrap_err(),
+            _ => ctl.wait_nodes("pod-a", 1, timeout).unwrap_err(),
+        };
+        let took = began.elapsed();
+        assert!(matches!(err, CtlError::Io(_)), "{kind}: {err}");
+        assert!(
+            took < timeout + Duration::from_millis(400),
+            "{kind} with {timeout:?} took {took:?}"
+        );
+    }
+    // The requests did reach the plane: the first is logged before its stall; the fake plane
+    // serves one connection at a time, so the others are read, and logged, only once the earlier
+    // stalls have been slept off.
+    assert!(plane
+        .lock()
+        .unwrap()
+        .log
+        .contains(&"GET /v1/status".to_string()));
 }
 
 // A plane that restarts while a scoped wait polls it listens at a new address with a new

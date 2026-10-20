@@ -69,9 +69,14 @@ def alive(pid):
     if os.name != "nt":
         try:
             os.kill(pid, 0)
-            return True
         except OSError:
             return False
+        try:
+            # A zombie (exited, not yet reaped by a PID 1 that does not reap) is not alive.
+            stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
+            return stat[stat.rindex(")") + 2] != "Z"
+        except (OSError, ValueError, IndexError):
+            return True
     h = k32.OpenProcess(0x1000, 0, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
     if not h:
         return False

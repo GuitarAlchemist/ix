@@ -104,6 +104,10 @@ func (t *procTree) waitGone(limit time.Duration) bool {
 	}
 }
 
+// exitCode is the child's exit code; a terminated process reports the code
+// TerminateProcess gave it.
+func exitCode(ee *exec.ExitError) int { return ee.ExitCode() }
+
 func (t *procTree) close() {
 	windows.CloseHandle(t.job)
 }

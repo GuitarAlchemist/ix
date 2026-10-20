@@ -201,7 +201,17 @@ impl Ctl {
     /// [`Ctl::status`], or with `peer` that peer's status as this plane relays it
     /// (`GET /v1/status?peer=`): its own name, epoch and generations.
     pub fn status_of(&self, peer: Option<&str>) -> Result<Value, CtlError> {
-        self.call("GET", &routed("/v1/status", peer), None)
+        self.status_within(peer, None)
+    }
+
+    /// [`Ctl::status_of`] with every socket timeout capped at `within`: a wait's poll, bounded
+    /// by what is left of its deadline.
+    fn status_within(
+        &self,
+        peer: Option<&str>,
+        within: Option<Duration>,
+    ) -> Result<Value, CtlError> {
+        self.call_within("GET", &routed("/v1/status", peer), None, within)
     }
 
     /// `POST /v1/plan`: the actions `desired` would take, changing nothing. With `peer`, the
@@ -325,7 +335,7 @@ impl Ctl {
         let deadline = Instant::now() + timeout;
         let mut me = self.clone();
         loop {
-            let status = match me.status_of(peer) {
+            let status = match me.status_within(peer, Some(left(deadline))) {
                 Ok(status) => status,
                 Err(e) if epoch.is_some() && me.plane_may_have_moved(&e) => match me.refreshed() {
                     Some(fresh) if Instant::now() < deadline => {
@@ -450,7 +460,7 @@ impl Ctl {
     ) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
         loop {
-            let status = match self.status_of(peer) {
+            let status = match self.status_within(peer, Some(left(deadline))) {
                 Ok(status) => status,
                 // The link to the peer is down for a moment (see `wait_gen`): ask again.
                 Err(
@@ -495,9 +505,19 @@ impl Ctl {
     }
 
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, CtlError> {
+        self.call_within(method, path, body, None)
+    }
+
+    fn call_within(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        within: Option<Duration>,
+    ) -> Result<Value, CtlError> {
         let addr = self.loopback()?;
         let body = body.map(|b| b.to_string().into_bytes());
-        let r = http::request(addr, method, path, &self.token, body.as_deref())?;
+        let r = http::request(addr, method, path, &self.token, body.as_deref(), within)?;
         let parsed = serde_json::from_slice::<Value>(&r.body);
         if !(200..300).contains(&r.status) {
             let message = match &parsed {
@@ -542,6 +562,12 @@ fn routed(path: &str, peer: Option<&str>) -> String {
         }
     }
     out
+}
+
+/// What is left until `deadline`; zero once it has passed. A poll's socket timeouts are
+/// capped at it, so the request in flight ends with the wait, not seconds after it.
+fn left(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now())
 }
 
 /// Sleeps one poll, or less near `deadline`. True when the deadline has passed, before or
