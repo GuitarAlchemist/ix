@@ -86,28 +86,32 @@ func (t *procTree) watchMemory(limit int64) {
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
 
-// peakBytes is the largest resident set the memory watch summed over the group; 0 without a
-// watch (the leader's own peak comes from rusage, see maxRSS).
-func (t *procTree) peakBytes() int64 {
+// usage is the largest resident set the memory watch summed over the group (0 without a
+// watch); nothing counts the group's processor time without a cgroup, so that is 0 here and
+// comes from the leader's rusage (leaderUsage).
+func (t *procTree) usage() (peakBytes, cpuMs int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.peak
+	return t.peak, 0
 }
 
-// maxRSS is the leader's peak resident set as the kernel accounted it at exit (rusage;
-// kilobytes on Linux, bytes elsewhere); 0 when unknown.
-func maxRSS(ps *os.ProcessState) int64 {
+// leaderUsage is the leader's peak resident set (kilobytes on Linux, bytes elsewhere) and
+// its processor time, user and system, with that of the children it waited for, as the
+// kernel accounted them at exit (rusage); 0 when unknown.
+func leaderUsage(ps *os.ProcessState) (rssBytes, cpuMs int64) {
 	if ps == nil {
-		return 0
+		return 0, 0
 	}
 	ru, ok := ps.SysUsage().(*syscall.Rusage)
 	if !ok {
-		return 0
+		return 0, 0
 	}
+	rssBytes = int64(ru.Maxrss)
 	if runtime.GOOS == "linux" {
-		return int64(ru.Maxrss) * 1024
+		rssBytes *= 1024
 	}
-	return int64(ru.Maxrss)
+	cpuMs = (int64(ru.Utime.Sec)+int64(ru.Stime.Sec))*1000 + (int64(ru.Utime.Usec)+int64(ru.Stime.Usec))/1000
+	return rssBytes, cpuMs
 }
 
 // groupRSS sums the resident set of the live members of group pgid from /proc (statm's

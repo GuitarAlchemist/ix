@@ -426,7 +426,11 @@ name `ixctl.v1`.
   `memory_limit` (with `memory_mb`); a process that died of the refused commit before the
   kill gets the reason too. Every exit carries `peak_memory_bytes` when the OS counted one
   (the job's peak commit on Windows; the leader's rusage peak, or the group's polled peak
-  under a watch, on Linux). Codex round 15 (one P1, two P2): an exit already waiting when a
+  under a watch, on Linux) and `cpu_ms`, the processor time it used (the job's total on
+  Windows; the leader's rusage with the children it waited for on Linux): what a run cost,
+  next to how it ended. The gate's real `ix pipeline run` job declares `wall_ms: 120000,
+  memory_mb: 2048`, as every job under the factory is meant to, and E10 reads its cost back.
+  Codex round 15 (one P1, two P2): an exit already waiting when a
   limit fires is the run's own end (not `wall_limit`; still `memory_limit`, the kernel said
   so); a limit past what a `time.Duration` or a byte count holds is refused; the gate's wall
   job is bounded to 1.5 s so its pid is read before the kill on a loaded runner. A process

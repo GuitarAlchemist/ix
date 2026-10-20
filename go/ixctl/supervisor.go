@@ -45,6 +45,11 @@ type exitInfo struct {
 	// or the group's largest polled resident set when a memory limit was watched. Absent
 	// when unknown.
 	PeakMemoryBytes int64 `json:"peak_memory_bytes,omitempty"`
+	// CpuMs is the processor time the run used, user and kernel, in milliseconds, as the OS
+	// accounted it: the job's total on Windows (every process of the tree); on Linux the
+	// leader's rusage with the children it waited for. Absent when unknown or under a
+	// millisecond.
+	CpuMs int64 `json:"cpu_ms,omitempty"`
 }
 
 // Exit reasons: the limit a run was killed for.
@@ -102,7 +107,8 @@ type child struct {
 	stdin  *os.File
 	pid    int
 	exited chan int // the main process's exit code
-	rss    int64    // the leader's peak resident set at exit (maxRSS), set before exited is sent
+	rss    int64    // the leader's peak resident set at exit (leaderUsage), set before exited is sent
+	cpu    int64    // and its processor time in milliseconds
 	io     sync.WaitGroup
 }
 
@@ -397,7 +403,7 @@ func (s *service) start() (*child, error) {
 		} else if ee := (*exec.ExitError)(nil); errors.As(err, &ee) {
 			code = exitCode(ee)
 		}
-		c.rss = maxRSS(cmd.ProcessState)
+		c.rss, c.cpu = leaderUsage(cmd.ProcessState)
 		c.exited <- code
 	}()
 	return c, nil
@@ -415,9 +421,12 @@ func (s *service) reap(code int, reason string) *exitInfo {
 	c.stdin.Close()
 	c.tree.kill()
 	c.tree.waitGone(treeGoneLimit)
-	peak := c.tree.peakBytes() // before close: the job is gone after
+	peak, cpu := c.tree.usage() // before close: the job is gone after
 	if c.rss > peak {
 		peak = c.rss
+	}
+	if c.cpu > cpu {
+		cpu = c.cpu
 	}
 	c.tree.close()
 	drained := make(chan struct{})
@@ -428,7 +437,7 @@ func (s *service) reap(code int, reason string) *exitInfo {
 	}
 	s.proc = nil
 	s.mu.Lock()
-	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason, PeakMemoryBytes: peak}
+	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu}
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
 	return e
@@ -522,6 +531,9 @@ func (s *service) ended(code int, reason string) {
 	}
 	if e.PeakMemoryBytes > 0 {
 		exited["peak_memory_bytes"] = e.PeakMemoryBytes
+	}
+	if e.CpuMs > 0 {
+		exited["cpu_ms"] = e.CpuMs
 	}
 	s.ctl("service.exited", exited)
 	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && code == 0 && reason == "") {

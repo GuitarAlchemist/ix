@@ -136,15 +136,21 @@ func (t *procTree) listen() {
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
 
-// peakBytes is the most memory the job has held at once (its peak commit charge), as the
-// kernel counted it; 0 when it cannot be read.
-func (t *procTree) peakBytes() int64 {
+// usage is what the job's processes, exited ones included, have used as the kernel counted
+// it: the most memory held at once (peak commit charge) and the processor time, user and
+// kernel, in milliseconds; 0 for what cannot be read. Read before close.
+func (t *procTree) usage() (peakBytes, cpuMs int64) {
 	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	if err := windows.QueryInformationJobObject(t.job, windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)), nil); err != nil {
-		return 0
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)), nil); err == nil {
+		peakBytes = int64(info.PeakJobMemoryUsed)
 	}
-	return int64(info.PeakJobMemoryUsed)
+	var acc jobAccounting
+	if err := windows.QueryInformationJobObject(t.job, windows.JobObjectBasicAccountingInformation,
+		uintptr(unsafe.Pointer(&acc)), uint32(unsafe.Sizeof(acc)), nil); err == nil {
+		cpuMs = (acc.TotalUserTime + acc.TotalKernelTime) / 10_000 // 100 ns units
+	}
+	return peakBytes, cpuMs
 }
 
 func (t *procTree) kill() error {
@@ -192,9 +198,9 @@ func (t *procTree) close() {
 	windows.CloseHandle(t.job)
 }
 
-// maxRSS is the leader's peak resident set as the OS accounted it at exit; Windows does not
-// report one through ProcessState (the job's peak covers the tree instead).
-func maxRSS(*os.ProcessState) int64 { return 0 }
+// leaderUsage is the leader's peak resident set and processor time as the OS accounted them
+// at exit; on Windows the job's accounting covers the whole tree instead (usage).
+func leaderUsage(*os.ProcessState) (rssBytes, cpuMs int64) { return 0, 0 }
 
 // hrnow is a machine-wide clock in nanoseconds (QueryPerformanceCounter).
 // Go's time.Now on Windows ticks in steps of about 0.5 ms, too coarse to

@@ -691,8 +691,8 @@ impl Ctl {
     }
 
     /// Waits until `service` has exited, and answers its entry in the status: state `stopped`
-    /// or `failed`, with `last_exit` saying how (`code`, `at` in Unix milliseconds,
-    /// `peak_memory_bytes` when the OS counted one, and `reason` when the plane killed the run
+    /// or `failed`, with `last_exit` saying how (`code`, `at` in Unix milliseconds, what the
+    /// run cost as the OS counted it, `peak_memory_bytes` and `cpu_ms`, and `reason` when the plane killed the run
     /// for a limit of its spec: `wall_limit` for a run that lasted past `limits.wall_ms`,
     /// `memory_limit` for one that held more than `limits.memory_mb`; absent when the process
     /// ended on its own).

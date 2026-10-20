@@ -460,7 +460,11 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   est tuée, raison `memory_limit` (avec `memory_mb`) ; un processus mort du commit refusé avant
   la mise à mort reçoit la raison aussi. Chaque sortie porte `peak_memory_bytes` quand l'OS l'a
   compté (le pic de commit du job sous Windows ; le pic rusage du meneur, ou le pic sommé du
-  groupe sous surveillance, sous Linux). Revue Codex 15 (un P1, deux P2) : une sortie déjà en
+  groupe sous surveillance, sous Linux) et `cpu_ms`, le temps processeur consommé (le total du
+  job sous Windows ; le rusage du meneur avec les enfants qu'il a attendus sous Linux) : ce
+  qu'une exécution a coûté, à côté de la façon dont elle s'est terminée. Le vrai job
+  `ix pipeline run` de la passerelle déclare `wall_ms: 120000, memory_mb: 2048`, comme tout job
+  de l'usine est censé le faire, et E10 relit son coût. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
   attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;
   toujours `memory_limit`, le noyau l'a dit) ; une limite au-delà de ce qu'une `time.Duration`
   ou un compte d'octets contient est refusée ; le job mural de la passerelle est borné à 1,5 s

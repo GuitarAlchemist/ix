@@ -255,17 +255,24 @@ func TestARunPastItsMemoryLimitIsKilledAndSaysSo(t *testing.T) {
 	}
 }
 
-// A run that ends on its own reports the memory it peaked at, limit or not.
-func TestAnExitReportsItsPeakMemory(t *testing.T) {
+// A run that ends on its own reports what it used, limit or not: the memory it peaked at and
+// its processor time.
+func TestAnExitReportsItsUsage(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil,
-		fakeSvc{name: "once", args: []string{"--hog-mb", "32", "--crash-after-ms", "200"}, restart: restartNever}), "")
+		fakeSvc{name: "once", args: []string{"--hog-mb", "32", "--burn-ms", "300", "--crash-after-ms", "200"}, restart: restartNever}), "")
 	c := dial(t, in)
 	w := subscribe(t, c, "ctl", nil)
 	do(t, c, Request{Op: "apply", Desired: running("once")})
 	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
 	d := ctlData(x)
-	if peak, _ := d["peak_memory_bytes"].(float64); peak < 32<<20 || d["reason"] != nil {
+	peak, _ := d["peak_memory_bytes"].(float64)
+	cpu, _ := d["cpu_ms"].(float64)
+	if peak < 32<<20 || cpu < 100 || d["reason"] != nil {
 		t.Fatalf("exit %s", x.Raw())
+	}
+	s := svcStatus(in.plane.Status(), "once")
+	if s.LastExit == nil || s.LastExit.CpuMs < 100 || s.LastExit.PeakMemoryBytes < 32<<20 {
+		t.Fatalf("status exit %+v", s.LastExit)
 	}
 }
 

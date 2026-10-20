@@ -41,8 +41,11 @@ func fakeService(args []string) int {
 	spawn := fs.Bool("spawn-child", false, "start a grandchild and report its pid")
 	ignoreStdin := fs.Bool("ignore-stdin", false, "keep running after stdin closes")
 	hogMB := fs.Int("hog-mb", 0, "hold this much memory, touched, for the whole run")
+	burnMS := fs.Int("burn-ms", 0, "spin on one core for this long at start")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	for end := time.Now().Add(time.Duration(*burnMS) * time.Millisecond); time.Now().Before(end); {
 	}
 	var hog []byte
 	if *hogMB > 0 {

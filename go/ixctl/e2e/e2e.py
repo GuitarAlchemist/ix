@@ -301,11 +301,12 @@ def pod(service, label, nodes, rate=20, extra=()):
 
 def job(service, pipeline):
     """A job: `ix pipeline run` on `pipeline`, run once (`restart: never`) in JOBDIR, where its
-    `ix.lock` and provenance land. The constitution gate reads GOV."""
+    `ix.lock` and provenance land. The constitution gate reads GOV. Bounded, as every job under
+    the factory is meant to be: two minutes, two GiB."""
     return {"name": service, "command": str(IX),
             "args": ["pipeline", "run", "--file", str(pipeline), "--json"],
             "dir": str(JOBDIR), "env": {"IX_GOVERNANCE_DIR": str(GOV), "IX_ROOT": str(REPO)},
-            "restart": "never"}
+            "restart": "never", "limits": {"wall_ms": 120_000, "memory_mb": 2048}}
 
 
 def main():
@@ -547,7 +548,11 @@ def run():
           and applied_g and (exited.get("last_exit") or {}).get("generation") == applied_g
           and exited.get("generation") == applied_g
           and exited.get("restarts") == 0 and "start" in events and events[-1:] == ["done"]
-          and output.get("gap") is None and (JOBDIR / "ix.lock").exists(),
+          and output.get("gap") is None and (JOBDIR / "ix.lock").exists()
+          # what the run cost, as the OS counted it, with no limit reached
+          and (exited.get("last_exit") or {}).get("peak_memory_bytes", 0) > 0
+          and (exited.get("last_exit") or {}).get("cpu_ms", 0) > 0
+          and "reason" not in (exited.get("last_exit") or {}),
           code=code, ms=round(ms, 1),
           exited={k: exited.get(k) for k in ("state", "desired", "generation", "last_exit", "restarts")},
           applied_generation=applied_g, printed_events=events, gap=output.get("gap"),
