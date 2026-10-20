@@ -57,7 +57,7 @@ fn a_pod_prints_its_shape_then_stats_and_stops_when_stdin_closes() {
             let v = serde_json::from_str(&line)
                 .unwrap_or_else(|e| panic!("not one JSON event per line: {line:?}: {e}"));
             if tx.send(v).is_err() {
-                return;
+                break;
             }
         }
     });
