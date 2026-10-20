@@ -75,11 +75,12 @@ l'encodage est construit à la main à `hub.go:131-146`) :
 
 ```json
 {"ch":"svc/pod-a","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,
- "ev":{"kind":"stats","t":1,"data":{"nodes":[{"name":"src","emitted":20}],"final":false}}}
+ "ev":{"kind":"stats","t":1760699999980,"data":{"nodes":[{"name":"src","emitted":20}],"final":false}}}
 ```
 
 (Les données `stats` du pod sont abrégées ici ; chaque nœud porte dix champs,
-`crates/ix-stream/src/lib.rs:125-134`.)
+`crates/ix-stream/src/lib.rs:125-134`. `ev.t` est en millisecondes Unix sur l'horloge du pod
+lui-même, correctif F1.2.)
 
 `seq` appartient à une instance et repart de 1 à chaque démarrage (`hub.go:100`, `:134`) ;
 `epoch` nomme ce démarrage (12 caractères hexadécimaux tirés au lancement, correctif F1.1). `t`
@@ -131,8 +132,9 @@ connexion ; les événements en direct n'attendent jamais (`session.go:151-153`)
   `diverged {generation, service, reason}` (`plane.go:379`, `:387`) ; puis
   `peer.up {peer, addr, origin}` et `peer.down {peer, reason}` (`peers.go:78`, `:154`).
 - `svc/<nom>` porte un événement par ligne de sortie du service. Une ligne de stdout qui est un
-  objet JSON avec un `kind` de type chaîne passe telle quelle, sous la forme `{kind, t?, data}` ;
-  toute autre ligne de stdout devient `log {line}`, et une ligne de stderr `stderr {line}`
+  objet JSON avec un `kind` de type chaîne passe telle quelle, sous la forme `{kind, t?, data}`,
+  `t` étant en millisecondes Unix sur l'horloge du service, arrondi à l'entier (correctif
+  F1.2) ; toute autre ligne de stdout devient `log {line}`, et une ligne de stderr `stderr {line}`
   (`supervisor.go:351-414`). Un événement `stats {nodes: [...]}` fixe aussi les `nodes` du
   service dans le statut (`supervisor.go:375-384`).
 - `peer/<pair>/<canal>` porte les enveloppes `ctl` et `svc/` d'un pair, recopiées avec leur
@@ -183,6 +185,16 @@ entre langages, aujourd'hui, ce sont les réponses HTTP.
   reflétée. Les lignes du journal portent désormais `epoch`, ce qui distingue les `seq` d'un
   démarrage de ceux du suivant (F3.1). Tests : `TestHubSinceFromAnotherBoot`,
   `TestSSEReplayWithLastEventID` (cas de l'id périmé), `TestHubEnvelopeShape`.
+- **Corrigé (F1.2), cette tranche :** `ev.t` est en **millisecondes Unix sur l'horloge de
+  l'émetteur**, ou absent s'il n'en a pas donné ; le `t` de l'enveloppe reste l'horloge du plan
+  à la publication. Le superviseur arrondit le `t` d'un service au lieu de le tronquer, et
+  écarte un `t` qui n'est pas un nombre fini (`supervisor.go`, `parseEventLine`). Les événements
+  `ctl` du plan portent désormais un `t` (`plane.go`, `event`). Le pod fixe une fois la
+  naissance de son bus sur l'horloge murale et écrit des millisecondes Unix
+  (`crates/ix-stream/examples/pod.rs`) ; `bus.rs` n'est pas touché et compte toujours les
+  secondes depuis la création du bus. `ixctl bench` lisait déjà `ev.t` comme des millisecondes
+  Unix pour sa latence de diffusion (`bench.go:251-252`) : il reçoit maintenant un vrai nombre du
+  pod. Test : `TestParseEventLine` (arrondi ; un non-nombre est écarté).
 - **F1.1 Un `since` d'un démarrage précédent est lu comme un `since` de celui-ci.**
   `Subscribe` ne rejoue que si `since < head`, et part en direct si `since >= head`
   (`hub.go:174-186`). Après un redémarrage, un client qui reprend avec son dernier numéro de

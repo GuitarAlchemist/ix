@@ -456,9 +456,10 @@ func (p *Plane) Shutdown() {
 	})
 }
 
+// event is one of the plane's own events; its t is Unix milliseconds now.
 func event(kind string, data any) Event {
 	b, _ := json.Marshal(data)
-	return Event{Kind: kind, Data: b}
+	return Event{Kind: kind, T: time.Now().UnixMilli(), Data: b}
 }
 
 // journal appends every applied document and every ctl event, as JSON lines.

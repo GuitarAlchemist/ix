@@ -5,7 +5,8 @@
 //! ```
 //!
 //! A source sends `--rate` values per second through `--nodes` − 2 stages to a sink. Every bus
-//! event is one JSON line on stdout: `meta` with the graph's shape first, then `stats` every
+//! event is one JSON line on stdout, `{kind, t, data}` with `t` in Unix milliseconds on this
+//! process's clock: `meta` with the graph's shape first, then `stats` every
 //! 200 ms (the nodes `ixctl` shows as the pod's members), and `done` at the end. The pod stops
 //! when its stdin closes, which is how `ixctl` asks it to, and exits 0 once the graph has run
 //! down. With `--crash-after S` it exits with code 101 after S seconds instead, so the plane's
@@ -16,7 +17,7 @@ use serde_json::json;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The longest the source sleeps before it looks at the stop flag again.
 const TICK: Duration = Duration::from_millis(50);
@@ -63,13 +64,21 @@ fn main() {
         });
     }
 
+    // The bus stamps events in seconds since it was made; `ixctl` wants Unix milliseconds
+    // (`ev.t`), so the bus's birth is pinned to the wall clock once, here.
+    let born_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock before 1970")
+        .as_millis() as f64;
     let bus = Bus::new();
     let events = bus.subscribe(&[], 1 << 16);
     let q = quit.clone();
     let printer = std::thread::spawn(move || {
         let mut stdout = std::io::stdout().lock();
         for e in events {
-            if writeln!(stdout, "{}", e.json())
+            let t = (born_ms + e.t * 1000.0).round() as i64;
+            let line = json!({ "kind": e.kind, "t": t, "data": e.data });
+            if writeln!(stdout, "{line}")
                 .and_then(|()| stdout.flush())
                 .is_err()
             {

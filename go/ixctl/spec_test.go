@@ -66,4 +66,12 @@ func TestParseEventLine(t *testing.T) {
 	if ev.T != 12 || string(ev.Data) != `{"nodes":[1]}` {
 		t.Errorf("t and data kept: %+v", ev)
 	}
+	// t is milliseconds: a fractional value is rounded, not truncated (F1.2), and a
+	// value that is not a finite number is dropped rather than read as 0.
+	for raw, want := range map[string]int64{`1760700000000.6`: 1760700000001, `0.4`: 0, `"12"`: 0, `null`: 0, `1e400`: 0} {
+		ev, ok := parseEventLine([]byte(`{"kind":"stats","t":` + raw + `}`))
+		if !ok || ev.T != want {
+			t.Errorf("t %s: got %d ok %v, want %d", raw, ev.T, ok, want)
+		}
+	}
 }

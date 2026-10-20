@@ -73,11 +73,12 @@ built by hand at `hub.go:131-146`):
 
 ```json
 {"ch":"svc/pod-a","seq":42,"epoch":"3f9a1c0b7d2e","origin":"local","t":1760700000000,
- "ev":{"kind":"stats","t":1,"data":{"nodes":[{"name":"src","emitted":20}],"final":false}}}
+ "ev":{"kind":"stats","t":1760699999980,"data":{"nodes":[{"name":"src","emitted":20}],"final":false}}}
 ```
 
 (The pod's `stats` data is shortened here; each node carries ten fields,
-`crates/ix-stream/src/lib.rs:125-134`.)
+`crates/ix-stream/src/lib.rs:125-134`. `ev.t` is Unix milliseconds on the pod's own clock,
+F1.2 fix.)
 
 `seq` belongs to one instance and starts at 1 at each boot (`hub.go:100`, `:134`); `epoch`
 names that boot (12 hex characters drawn at start, F1.1 fix). `t` is Unix milliseconds at
@@ -126,7 +127,8 @@ for room in the connection's queue; live events never wait (`session.go:151-153`
   `diverged {generation, service, reason}` (`plane.go:379`, `:387`); then
   `peer.up {peer, addr, origin}` and `peer.down {peer, reason}` (`peers.go:78`, `:154`).
 - `svc/<name>` carries one event per line of the service's output. A stdout line that is a
-  JSON object with a string `kind` passes through as `{kind, t?, data}`; any other stdout line
+  JSON object with a string `kind` passes through as `{kind, t?, data}`, `t` being Unix
+  milliseconds on the service's clock, rounded to an integer (F1.2 fix); any other stdout line
   becomes `log {line}`, and a stderr line `stderr {line}` (`supervisor.go:351-414`). A
   `stats {nodes: [...]}` event also sets the service's `nodes` in status
   (`supervisor.go:375-384`).
@@ -176,6 +178,15 @@ languages today is the HTTP replies.
   journal lines now carry `epoch`, which tells one boot's seqs from the next (F3.1).
   Tests: `TestHubSinceFromAnotherBoot`, `TestSSEReplayWithLastEventID` (stale id case),
   `TestHubEnvelopeShape`.
+- **Fixed (F1.2), this slice:** `ev.t` is **Unix milliseconds on the emitter's own clock**, or
+  absent when it gave none; the envelope's `t` stays the plane's clock at publish. The
+  supervisor rounds a service's `t` instead of truncating it and drops one that is not a finite
+  number (`supervisor.go`, `parseEventLine`). The plane's own `ctl` events now carry `t`
+  (`plane.go`, `event`). The pod pins its bus's birth to the wall clock once and writes Unix
+  milliseconds (`crates/ix-stream/examples/pod.rs`); `bus.rs` is untouched and still counts
+  seconds since the bus was made. `ixctl bench` already read `ev.t` as Unix milliseconds for
+  its fan-out latency (`bench.go:251-252`), so it now gets a true number from the pod. Test:
+  `TestParseEventLine` (rounding; a non-number is dropped).
 - **F1.1 A `since` from an earlier boot is read as one of this boot.** `Subscribe` replays only
   when `since < head`, and starts live when `since >= head` (`hub.go:174-186`). After a restart,
   a client that resumes with its last seq, as a standard SSE reconnect does with

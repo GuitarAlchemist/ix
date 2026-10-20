@@ -16,7 +16,9 @@ import (
 // ringSize is how many envelopes an instance keeps for replay.
 const ringSize = 4096
 
-// Event is what a service (or the plane itself) says: {kind, t?, data}.
+// Event is what a service (or the plane itself) says: {kind, t?, data}. T is
+// Unix milliseconds on the emitter's own clock, or absent when it gave none;
+// the envelope's T is the plane's clock at publish.
 type Event struct {
 	Kind string          `json:"kind"`
 	T    int64           `json:"t,omitempty"`

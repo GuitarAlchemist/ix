@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"sort"
@@ -403,9 +404,11 @@ func parseEventLine(line []byte) (Event, bool) {
 	if json.Unmarshal(raw.Kind, &ev.Kind) != nil {
 		return Event{}, false
 	}
+	// t is Unix milliseconds on the service's clock: rounded, never truncated,
+	// and dropped when it is not a finite number.
 	var t float64
-	if len(raw.T) > 0 && json.Unmarshal(raw.T, &t) == nil {
-		ev.T = int64(t)
+	if len(raw.T) > 0 && json.Unmarshal(raw.T, &t) == nil && !math.IsNaN(t) && !math.IsInf(t, 0) {
+		ev.T = int64(math.Round(t))
 	}
 	if len(raw.Data) > 0 && !bytes.Equal(raw.Data, []byte("null")) {
 		ev.Data = raw.Data
