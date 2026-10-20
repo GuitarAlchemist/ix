@@ -66,22 +66,22 @@ jobs:
 
       # The control plane's end-to-end gate: the Go plane, the Rust client and
       # the ix-stream pod as two federated instances on loopback, 28 checks.
-      # It runs where the plane's process code is complete today (Windows job
-      # objects) and on the row whose cargo cache already holds the examples.
+      # It runs on both OS rows (Windows job objects; Linux process groups and
+      # PR_SET_PDEATHSIG) on the toolchain whose cargo cache holds the examples.
       - uses: actions/setup-go@v5
-        if: matrix.os == 'windows-latest' && matrix.rust == 'stable'
+        if: matrix.rust == 'stable'
         with:
           go-version-file: go/ixctl/go.mod
           cache-dependency-path: go/ixctl/go.sum
 
       - name: ixctl end-to-end gate
-        if: matrix.os == 'windows-latest' && matrix.rust == 'stable'
-        run: python go/ixctl/e2e/e2e.py --build --work "$env:RUNNER_TEMP/ixctl-e2e"
+        if: matrix.rust == 'stable'
+        run: python go/ixctl/e2e/e2e.py --build --work "${{ runner.temp }}/ixctl-e2e"
 
       - uses: actions/upload-artifact@v4
-        if: failure() && matrix.os == 'windows-latest' && matrix.rust == 'stable'
+        if: failure() && matrix.rust == 'stable'
         with:
-          name: ixctl-e2e
+          name: ixctl-e2e-${{ matrix.os }}
           path: |
             ${{ runner.temp }}/ixctl-e2e/results.json
             ${{ runner.temp }}/ixctl-e2e/runs/
