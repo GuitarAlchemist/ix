@@ -176,7 +176,10 @@ plan est `{generation, actions[{op, service}], noop}`, l'application
   `/v1/status` à intervalles ; elles ne s'abonnent pas encore (`lib.rs:30-31`). Une attente
   limitée à un démarrage, sur un client construit depuis le fichier d'état, relit ce fichier
   quand le plan cesse de répondre (pas de connexion, ou 401) : un plan qui redémarre sous
-  l'attente est signalé redémarré plutôt qu'injoignable (revue Codex, 2026-10-20).
+  l'attente est signalé redémarré plutôt qu'injoignable (revue Codex, 2026-10-20). Une attente
+  limitée à un pair continue d'interroger à travers un 502 ou un 503 (le lien de ce plan vers le
+  pair est coupé pendant que l'un des deux redémarre) jusqu'à son échéance ; un 400 (pair
+  inconnu) est définitif.
 
 Aucun programme hors d'un seul binaire Go ne lit donc le côté WebSocket ou SSE. Le seul contrat
 entre langages, aujourd'hui, ce sont les réponses HTTP.

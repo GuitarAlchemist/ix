@@ -169,7 +169,9 @@ line, `{event: "ready", name, addr, pid, state_file, ms_to_ready}` (`main.go:129
   from the state file (`lib.rs:142-164`). Its waits poll `/v1/status`; they do not subscribe yet
   (`lib.rs:30-31`). A wait scoped to a boot, on a handle made from the state file, re-reads that
   file when the plane stops answering (no connection, or 401), so a plane that restarts under
-  the wait is reported as restarted rather than unreachable (Codex review, 2026-10-20).
+  the wait is reported as restarted rather than unreachable (Codex review, 2026-10-20). A wait
+  scoped to a peer keeps asking through a 502 or 503 (this plane's link to the peer is down
+  while one of them restarts) until its deadline; a 400 (no such peer) is final.
 
 So no program outside one Go binary reads the WebSocket or SSE side. The only contract across
 languages today is the HTTP replies.
