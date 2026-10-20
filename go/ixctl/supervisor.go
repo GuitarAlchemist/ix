@@ -424,8 +424,10 @@ func (s *service) start() (*child, error) {
 // behind is killed, and its output is drained. reason names the limit the plane killed the
 // run for; empty, the run ended on its own, unless the tree's monitor, read once every
 // process is gone and its messages are in, says it went past a limit (a commit refused
-// past the memory limit, which the process died of): then that is the reason.
-func (s *service) reap(st exitStat, reason string) *exitInfo {
+// past the memory limit, which the process died of): then that is the reason. A requested
+// stop (requested) keeps its reason empty whatever the monitor holds: the plane ended the run,
+// not a limit.
+func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 	if s.wall != nil {
 		s.wall.Stop()
 		s.wall = nil
@@ -435,7 +437,7 @@ func (s *service) reap(st exitStat, reason string) *exitInfo {
 	c.tree.kill()
 	c.tree.waitGone(treeGoneLimit)
 	c.tree.drain(monitorLimit)
-	if reason == "" {
+	if reason == "" && !requested {
 		select {
 		case reason = <-c.tree.exceeded():
 		default:
@@ -499,7 +501,7 @@ func (s *service) stopTree(generation uint64) {
 			st = exitStat{code: -1}
 		}
 	}
-	e := s.reap(st, "")
+	e := s.reap(st, "", true)
 	s.settle(stateStopped)
 	ms := time.Since(t0).Milliseconds()
 	s.ctl("service.exited", s.exitData(pid, true, e))
@@ -553,7 +555,7 @@ func (s *service) onLimit(reason string) {
 // tree's monitor whether a limit was gone past all the same).
 func (s *service) ended(st exitStat, reason string) {
 	pid := s.proc.pid
-	e := s.reap(st, reason)
+	e := s.reap(st, reason, false)
 	s.ctl("service.exited", s.exitData(pid, false, e))
 	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && e.Code == 0 && e.Reason == "") {
 		// The run's own end: stamped with the run's generation, which no stop's apply

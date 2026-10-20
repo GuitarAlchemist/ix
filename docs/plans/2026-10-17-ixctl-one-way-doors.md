@@ -433,7 +433,19 @@ name `ixctl.v1`.
   under a watch, on Linux) and `cpu_ms`, the processor time it used (the job's total on
   Windows; the leader's rusage with the children it waited for on Linux): what a run cost,
   next to how it ended. The gate's real `ix pipeline run` job declares `wall_ms: 120000,
-  memory_mb: 2048`, as every job under the factory is meant to, and E10 reads its cost back.
+  memory_mb: 2048`, as every job under the factory is meant to, and E10 reads its cost back
+  (the peak is required; `cpu_ms` is recorded, since Windows charges processor time in
+  15.6 ms ticks and a run that short may get none: Codex round 17, P2). Round 17 (one P1,
+  five P2): the Windows listener took the port from the tree's field while `close` zeroed it
+  on another goroutine (a data race `-race` would have caught on a Windows row); it now
+  takes the handle by value, and `drain` posts a marker to the port behind the job's messages
+  (a port's packets are read in posting order) so the listener returns once it has read them
+  all, instead of waiting for ACTIVE_PROCESS_ZERO (best effort too) or the full second;
+  `close` drains first, so no read of the port outlives its handle. A requested stop keeps
+  its reason empty whatever the monitor holds (the plane ended the run, not a limit). For a
+  32-bit Windows (no target of the repo): the notification structure is padded to the SDK's
+  48 bytes and its size asserted at compile time, the hard cap saturates at the address
+  space, and the spec's error message no longer overflows `int`.
   Round 16's P2s: a failed launch releases the port and its listener; a requested stop's
   `service.exited` carries the cost too; the exit's code and the leader's usage travel
   together (`exitStat`), so a tree killed without its exit read reports neither; a memory

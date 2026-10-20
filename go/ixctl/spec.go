@@ -130,7 +130,7 @@ func (s *Spec) validate() error {
 				return fmt.Errorf("service %q: limits.wall_ms must be 0..%d", sv.Name, maxWallMs)
 			}
 			if l.MemoryMB < 0 || l.MemoryMB > maxMemoryMB {
-				return fmt.Errorf("service %q: limits.memory_mb must be 0..%d", sv.Name, maxMemoryMB)
+				return fmt.Errorf("service %q: limits.memory_mb must be 0..%d", sv.Name, int64(maxMemoryMB))
 			}
 		}
 		sv.Command = s.abs(sv.Command)

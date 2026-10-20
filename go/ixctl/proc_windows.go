@@ -46,7 +46,9 @@ type jobPort struct {
 
 // jobNotificationLimit mirrors JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION (Windows 8+): a
 // limit the job may exceed, whose JOB_OBJECT_MSG_NOTIFICATION_LIMIT the system guarantees to
-// deliver, unlike the other messages.
+// deliver, unlike the other messages. The SDK aligns its 64-bit members to 8 on x86 too, so
+// the structure is 48 bytes on every Windows target; Go/386 aligns them to 4, hence the
+// explicit tail padding, and the two assertions below hold the size.
 type jobNotificationLimit struct {
 	IoReadBytesLimit             uint64
 	IoWriteBytesLimit            uint64
@@ -55,7 +57,17 @@ type jobNotificationLimit struct {
 	RateControlTolerance         uint32
 	RateControlToleranceInterval uint32
 	LimitFlags                   uint32
+	_                            uint32
 }
+
+var (
+	_ [48 - unsafe.Sizeof(jobNotificationLimit{})]byte
+	_ [unsafe.Sizeof(jobNotificationLimit{}) - 48]byte
+)
+
+// drainKey is the completion key of the packet `drain` posts to the port itself; the job
+// posts its own handle as key, never this.
+const drainKey = ^uintptr(0)
 
 // memoryCap is the hard job memory limit set above limits.memory_mb: the kill on the
 // guaranteed notification enforces the limit, the cap bounds how far one commit can overshoot
@@ -93,7 +105,11 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	if memory > 0 {
 		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_JOB_MEMORY
-		info.JobMemoryLimit = uintptr(memoryCap(memory))
+		hard := memoryCap(memory)
+		if most := uint64(^uintptr(0)); hard > most {
+			hard = most // 386: a limit near the address space leaves the cap less than an eighth
+		}
+		info.JobMemoryLimit = uintptr(hard)
 	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
@@ -120,7 +136,7 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 			return nil, fmt.Errorf("set job notification limit: %w", err)
 		}
 		t.over, t.gone = make(chan string, 1), make(chan struct{})
-		go t.listen()
+		go t.listen(port)
 	}
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -152,17 +168,21 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	return t, nil
 }
 
-// listen reads the job's completion messages until the port is closed or the job is empty
-// (ACTIVE_PROCESS_ZERO, posted after every message of the processes before it), and reports
-// a memory limit gone past on `over`, once: the guaranteed notification limit, or the hard
-// cap's best-effort message.
-func (t *procTree) listen() {
+// listen reads the job's completion messages until `drain`'s marker (posted behind them: a
+// port's packets are read in the order they were posted), the job's ACTIVE_PROCESS_ZERO (best
+// effort, so not waited for) or the port's closing, and reports a memory limit gone past on
+// `over`, once: the guaranteed notification limit, or the hard cap's best-effort message. It
+// takes the port by value: `close` zeroes the field, on its own goroutine.
+func (t *procTree) listen(port windows.Handle) {
 	defer close(t.gone)
 	for {
 		var code uint32
 		var key uintptr
 		var ov *windows.Overlapped
-		if err := windows.GetQueuedCompletionStatus(t.port, &code, &key, &ov, windows.INFINITE); err != nil {
+		if err := windows.GetQueuedCompletionStatus(port, &code, &key, &ov, windows.INFINITE); err != nil {
+			return
+		}
+		if key == drainKey {
 			return
 		}
 		switch code {
@@ -180,11 +200,20 @@ func (t *procTree) listen() {
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
 
-// drain waits, at most limit, until the monitor has read every message the job posted (it
-// ends on the job's last exit), so what `exceeded` holds is final; at once without a watch.
+// drain posts a marker to the port, behind every message the job has posted, and waits, at
+// most limit, until the listener has read up to it, so what `exceeded` holds is final; at
+// once without a watch, or once the listener has already returned.
 func (t *procTree) drain(limit time.Duration) {
 	if t.gone == nil {
 		return
+	}
+	select {
+	case <-t.gone:
+		return
+	default:
+	}
+	if windows.PostQueuedCompletionStatus(t.port, 0, drainKey, nil) != nil {
+		return // the port is gone, and so is the listener, or will be
 	}
 	select {
 	case <-t.gone:
@@ -246,9 +275,11 @@ func (t *procTree) waitGone(limit time.Duration) bool {
 // TerminateProcess gave it.
 func exitCode(ee *exec.ExitError) int { return ee.ExitCode() }
 
-// close releases the port (which ends listen) and the job; safe to call more than once.
+// close releases the port and the job; safe to call more than once. The listener is let
+// reach the drain marker first, so no read of the port outlives its handle.
 func (t *procTree) close() {
 	if t.port != 0 {
+		t.drain(monitorLimit)
 		windows.CloseHandle(t.port)
 		t.port = 0
 	}

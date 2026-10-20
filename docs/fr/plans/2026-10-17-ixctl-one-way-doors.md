@@ -474,7 +474,20 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   une limite mémoire au-delà de ce que la plateforme adresse est refusée ; la E11 de la
   passerelle chronomètre depuis avant la requête d'application. Le vrai job
   `ix pipeline run` de la passerelle déclare `wall_ms: 120000, memory_mb: 2048`, comme tout job
-  de l'usine est censé le faire, et E10 relit son coût. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
+  de l'usine est censé le faire, et E10 relit son coût (le pic est exigé ; `cpu_ms` est
+  enregistré, car Windows compte le temps processeur par pas de 15,6 ms et une exécution si
+  courte peut n'en recevoir aucun : revue Codex 17, P2). Revue 17 (un P1, cinq P2) :
+  l'écouteur Windows lisait le port dans le champ de l'arbre pendant que `close` le remettait à
+  zéro sur une autre goroutine (une course de données que `-race` aurait vue sur une ligne
+  Windows) ; il prend désormais le handle par valeur, et `drain` poste un marqueur sur le port
+  derrière les messages du job (les paquets d'un port se lisent dans l'ordre de leur dépôt),
+  si bien que l'écouteur revient dès qu'il les a tous lus, au lieu d'attendre
+  ACTIVE_PROCESS_ZERO (au mieux lui aussi) ou la seconde entière ; `close` draine d'abord, donc
+  aucune lecture du port ne survit à son handle. Un arrêt demandé garde sa raison vide quoi que
+  tienne le moniteur (c'est le plan qui a terminé l'exécution, pas une limite). Pour un Windows
+  32 bits (aucune cible du dépôt) : la structure de notification est complétée aux 48 octets
+  du SDK et sa taille vérifiée à la compilation, le plafond dur sature à l'espace d'adressage,
+  et le message d'erreur de la spec ne déborde plus `int`. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
   attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;
   toujours `memory_limit`, le noyau l'a dit) ; une limite au-delà de ce qu'une `time.Duration`
   ou un compte d'octets contient est refusée ; le job mural de la passerelle est borné à 1,5 s

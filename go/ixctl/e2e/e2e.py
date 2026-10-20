@@ -551,11 +551,12 @@ def run():
           and exited.get("generation") == applied_g
           and exited.get("restarts") == 0 and "start" in events and events[-1:] == ["done"]
           and output.get("gap") is None and (JOBDIR / "ix.lock").exists()
-          # what the run cost, as the OS counted it, with no limit reached
+          # what the run cost, as the OS counted it, with no limit reached. `cpu_ms` is recorded,
+          # not required: Windows charges processor time in ~15.6 ms ticks, and a run this short
+          # may end inside one; the Go suite burns CPU for that assertion.
           and (exited.get("last_exit") or {}).get("peak_memory_bytes", 0) > 0
-          and (exited.get("last_exit") or {}).get("cpu_ms", 0) > 0
           and "reason" not in (exited.get("last_exit") or {}),
-          code=code, ms=round(ms, 1),
+          code=code, ms=round(ms, 1), cpu_ms=(exited.get("last_exit") or {}).get("cpu_ms"),
           exited={k: exited.get(k) for k in ("state", "desired", "generation", "last_exit", "restarts")},
           applied_generation=applied_g, printed_events=events, gap=output.get("gap"),
           lock=(JOBDIR / "ix.lock").exists(), stderr=err[-200:])
