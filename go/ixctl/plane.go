@@ -371,16 +371,19 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			break
 		}
 		if gap != nil {
-			// Events were lost: fall back on the observed state.
+			// Events were lost: fall back on the observed state. A start's failure is asked
+			// of the service by generation, not read off its state: a start queued behind
+			// may own the state again by now (`settle`).
 			for n, op := range pending {
 				st := p.svcs[n].status()
+				reason, failed := p.svcs[n].failure(g)
 				switch {
+				case op == "start" && failed:
+					res = applyResult{Generation: g, Service: n, Reason: reason}
+					pending = nil
 				case op == "start" && st.State == stateRunning && st.Generation == g,
 					op == "stop" && st.State == stateStopped:
 					delete(pending, n)
-				case op == "start" && st.State == stateFailed && st.Generation == g:
-					res = applyResult{Generation: g, Service: n, Reason: p.svcs[n].lastFailure()}
-					pending = nil
 				}
 				if res.Reason != "" {
 					break
@@ -410,6 +413,12 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 			if res.Reason != "" {
 				break
 			}
+		}
+	}
+	// This generation has settled: its starts' failures, read or not, are of no use now.
+	for _, a := range actions {
+		if a.Op == "start" {
+			p.svcs[a.Service].forget(g)
 		}
 	}
 	p.mu.Lock()

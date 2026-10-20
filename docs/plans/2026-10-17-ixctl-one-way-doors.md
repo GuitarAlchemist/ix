@@ -401,7 +401,11 @@ name `ixctl.v1`.
   still queued behind shows `starting`, stamped with that want's generation, so no plan in
   between announces a start the queued one will make; `Apply` checks for shutdown under
   `applyMu`, which `Shutdown` takes to close `quit`; and the gap fallback diverges a start on a
-  `failed` service stamped with its generation, with the failure's reason. Gate E10 runs the real
+  `failed` service stamped with its generation, with the failure's reason. Codex round 14 (one
+  P2): the service keeps its failures by generation, so a start whose `service.failed` was lost
+  from the ring diverges on its own failure even once a queued start owns the state again (the
+  fallback used to read the visible state, which said `starting` for the later one and waited
+  60 s); an apply forgets its starts' failures when it settles. Gate E10 runs the real
   `ix pipeline run --json` (one `stats` stage, through the Demerzel constitution gate) as a job
   under the plane and reads its NDJSON back from `svc/job`; a job whose pipeline file is missing
   exits 10, its generation converges all the same, and it stays `stopped` with that code. Tests:

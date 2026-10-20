@@ -62,11 +62,16 @@ type service struct {
 	// `running` wants queued and not yet read, and the generation of the last of them: while
 	// one is queued the service shows `starting` whenever its process is gone, so a plan sees
 	// the start on its way and does not announce another.
-	queued     int
-	tailGen    uint64
-	failReason string // of the last service.failed; what a start settles on when its event is lost
-	lastExit   *exitInfo
-	nodes      json.RawMessage
+	queued  int
+	tailGen uint64
+	// Failure reasons by the generation of the run that failed, kept until that generation's
+	// apply has read them (`forget`): a start whose service.failed was lost from the ring still
+	// settles on its own failure, even after a queued start has moved the service on to
+	// `starting` again. Bounded by keptFailures: a failure after its apply settled (a run out
+	// of restarts) is never read.
+	failures map[uint64]string
+	lastExit *exitInfo
+	nodes    json.RawMessage
 
 	cmds chan command // desired states, in apply order
 
@@ -132,10 +137,23 @@ func (s *service) settle(state string) {
 	s.mu.Unlock()
 }
 
-func (s *service) lastFailure() string {
+// keptFailures bounds the failures a service remembers by generation.
+const keptFailures = 16
+
+// failure is the reason the run generation g asked for failed, if it did and no apply has
+// forgotten it yet; whatever state the service shows now.
+func (s *service) failure(g uint64) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.failReason
+	r, ok := s.failures[g]
+	return r, ok
+}
+
+// forget drops generation g's failure once its apply has settled.
+func (s *service) forget(g uint64) {
+	s.mu.Lock()
+	delete(s.failures, g)
+	s.mu.Unlock()
 }
 
 func (s *service) observed() (desired, state string) {
@@ -249,7 +267,19 @@ func (s *service) command(want command) {
 // read `failed` and then take an unstamped event for its own.
 func (s *service) fail(data map[string]any) {
 	s.mu.Lock()
-	s.failReason, _ = data["reason"].(string)
+	if s.failures == nil {
+		s.failures = map[uint64]string{}
+	}
+	s.failures[s.startGen], _ = data["reason"].(string)
+	for len(s.failures) > keptFailures {
+		oldest := s.startGen
+		for g := range s.failures {
+			if g < oldest {
+				oldest = g
+			}
+		}
+		delete(s.failures, oldest)
+	}
 	data["generation"] = s.startGen
 	s.mu.Unlock()
 	s.settle(stateFailed)

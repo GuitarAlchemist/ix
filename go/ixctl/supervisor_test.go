@@ -73,6 +73,35 @@ func TestCrashRestartsWithBackoffThenFails(t *testing.T) {
 // A stop queued on a failed service, then a start: the start pre-marks the service
 // `starting` before the stop is read, and the stop still ends as stopped (its apply
 // converges) before the start runs; a launch failure is stamped with the start's generation.
+func TestALaunchFailureIsKeptForItsGenerationWhileAQueuedStartMovesOn(t *testing.T) {
+	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
+		{"name": "ghost", "command": "no-such-binary"}}})
+	spec, err := ParseSpec(doc, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newService(spec.Services[0], NewHub("local"))
+	s.want(desiredRunning, 1)
+	s.want(desiredStopped, 2)
+	s.want(desiredRunning, 3)
+	s.command(<-s.cmds) // the first start, which cannot launch
+	// The queued start owns the state again, so the failure is not visible there...
+	if st := s.cur(); st != stateStarting || s.startGen != 3 {
+		t.Fatalf("after the failed start: %s, generation %d", st, s.startGen)
+	}
+	// ...but generation 1's apply can still ask for it by generation, until it has settled.
+	if r, ok := s.failure(1); !ok || r == "" {
+		t.Fatalf("failure(1) = %q, %v", r, ok)
+	}
+	if r, ok := s.failure(3); ok {
+		t.Fatalf("failure(3) = %q: generation 3 has not run", r)
+	}
+	s.forget(1)
+	if _, ok := s.failure(1); ok {
+		t.Fatal("failure(1) still there after forget")
+	}
+}
+
 func TestAStopQueuedBeforeAPreMarkedStartStillStops(t *testing.T) {
 	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
 		{"name": "ghost", "command": "no-such-binary"}}})

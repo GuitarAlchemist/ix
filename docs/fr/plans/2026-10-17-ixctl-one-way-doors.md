@@ -433,7 +433,11 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   `applyMu`, que `Shutdown` prend pour fermer `quit` ; et le repli sur perte d'événements fait
   diverger un démarrage sur un service `failed` estampillé de sa génération, avec la raison de
   l'échec ; `crates/ix-ctl/examples/job.ixql` passe `applied.generation` et
-  `applied.epoch`. La vérification
+  `applied.epoch`. Revue Codex 14 (un P2) : le service garde ses échecs par génération, si bien
+  qu'un démarrage dont le `service.failed` a été perdu de l'anneau diverge sur son propre échec
+  même quand un démarrage en file possède à nouveau l'état (le repli lisait l'état visible, qui
+  disait `starting` pour le suivant, et attendait 60 s) ; une application oublie les échecs de
+  ses démarrages quand elle se règle. La vérification
   E10 de la passerelle lance le vrai `ix pipeline run --json` (une étape `stats`, à travers la
   porte constitutionnelle Demerzel) comme job sous le plan et relit son NDJSON depuis `svc/job` ;
   un job dont le fichier de pipeline manque sort avec le code 10, sa génération converge quand
