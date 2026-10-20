@@ -55,6 +55,9 @@ show:
 - the machine gauges from the probe host (prototype/probes, PR #390). A stale
   or missing sample gives `null`, so the scene shows no gauge rather than an
   old one;
+- `machine.stream`, from the `stream` probe: `up` (the HLS playlist answers on
+  loopback), `front_up`, `latency_ms`, `segments` and `viewers`, with `labels`
+  in en/fr/es. Absent until the probe has sampled;
 - `viewers`, the stream's viewer count, which the player page's front door
   writes to `viewers.json` every 5 s. A missing count, or one older than 30 s,
   gives `null`.

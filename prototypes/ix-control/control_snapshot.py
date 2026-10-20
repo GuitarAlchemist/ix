@@ -275,10 +275,16 @@ def machine():
                   "labels": labels.get(m[5:-8], {}), "cpu_pct": round(last[m]["value"], 1),
                   "ram_gb": round((val(m.replace("_cpu_pct", "_ram_mb")) or 0) / 1024, 1)}
                  for m in sorted(last) if m and m.startswith("proc_") and m.endswith("_cpu_pct")]
+    # The `stream` probe (probes/stream): the cast as seen from this machine. Absent until it has sampled.
+    stream = None
+    if "stream_hls_up" in last:
+        stream = {"labels": {"en": "Stream", "fr": "Flux", "es": "Transmisión"},
+                  "up": last["stream_hls_up"]["value"] == 1, "front_up": val("stream_front_up") == 1,
+                  "latency_ms": val("stream_hls_ms"), "segments": val("stream_segments"), "viewers": val("stream_viewers")}
     return {"at": at, "cpu_pct": cpu[-1] if cpu else None, "cpu_history": cpu[-30:], "processes": processes,
             "ram_used_pct": round(100 * (total - free) / total), "ram_total_gb": round(total / 1024),
             "cpu_logical": int(last["cpu_logical"]["value"]) if "cpu_logical" in last else None,
-            "gpu": gpu, "disks": disks}
+            "gpu": gpu, "disks": disks, "stream": stream}
 
 
 def local_hm(utc):

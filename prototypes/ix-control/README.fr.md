@@ -60,6 +60,10 @@ peut montrer :
 - les jauges de la machine, venues de l'hôte de sondes (prototype/probes,
   PR #390). Une mesure périmée ou absente donne `null` : la scène n'affiche
   alors pas de jauge plutôt qu'une ancienne ;
+- `machine.stream`, venu de la sonde `stream` : `up` (la liste de lecture HLS
+  répond sur la boucle locale), `front_up`, `latency_ms`, `segments` et
+  `viewers`, avec des `labels` en/fr/es. Absent tant que la sonde n'a pas
+  mesuré ;
 - `viewers`, le nombre de spectateurs du flux, que la porte d'entrée de la
   page du lecteur écrit dans `viewers.json` toutes les 5 s. Un compte absent,
   ou vieux de plus de 30 s, donne `null`.
