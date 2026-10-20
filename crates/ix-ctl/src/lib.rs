@@ -176,8 +176,6 @@ pub struct Events {
     /// How long each [`Iterator::next`] may wait for its event, pings and partial frames
     /// included; `None` waits as long as the plane keeps the connection alive.
     next_within: Option<Duration>,
-    /// Whether the next call is the first: it keeps the deadline the stream was opened under.
-    first: bool,
     done: bool,
 }
 
@@ -193,14 +191,11 @@ impl Iterator for Events {
         }
         // One deadline for the whole event, enforced on the socket under the readers: a
         // keep-alive comment, a chunk's worth of bytes or a line in pieces does not start the
-        // wait over, and bytes already buffered are read whatever the clock says. The first
-        // call keeps the deadline the stream was opened under.
+        // wait over, and bytes already buffered are read whatever the clock says. Each call
+        // gets its own: the open had the same time, and a slow open does not eat the first
+        // event's.
         if let Some(d) = self.next_within {
-            if self.first {
-                self.first = false;
-            } else {
-                self.deadline.set(Some(Instant::now() + d));
-            }
+            self.deadline.set(Some(Instant::now() + d));
         }
         let mut kind = String::new();
         let mut data: Vec<String> = Vec::new();
@@ -428,7 +423,7 @@ impl Ctl {
         }
         let addr = self.loopback()?;
         // A bounded stream is bounded from the connect on: a plane that accepts and withholds
-        // its headers ends the first read on time, not after the idle timeout.
+        // its headers fails the open within `next_within`, not after the idle timeout.
         let deadline: http::Deadline = Rc::new(Cell::new(next_within.map(|d| Instant::now() + d)));
         let mut s = http::open_stream(addr, &path, &self.token, STREAM_IDLE, &deadline)?;
         if s.status != 200 {
@@ -447,7 +442,6 @@ impl Ctl {
             body: s.body,
             deadline,
             next_within,
-            first: true,
             done: false,
         })
     }

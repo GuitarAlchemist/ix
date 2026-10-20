@@ -348,8 +348,7 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
         let arg = |k: &str| {
             query
                 .split('&')
-                .find_map(|kv| kv.strip_prefix(&format!("{k}=")))
-                .and_then(unpercent)
+                .find_map(|kv| kv.strip_prefix(&format!("{k}=")).and_then(unpercent))
         };
         let prefix = arg("ch").unwrap_or_default();
         // Absent `since` is live: nothing of the past is sent, as the real plane does.
