@@ -62,8 +62,8 @@ struct IxPetriAnalyze;
 impl VScalar for IxPetriAnalyze {
     type State = ();
     // @ai:invariant ix_petri_analyze(net, max_states) returns serde_json of ix_petri::analyze_json(net, max_states) byte-for-byte; a refused net/JSON/budget, or a chunk whose results pass CHUNK_OUTPUT_BUDGET_BYTES, is a SQL error whose text holds no NUL; NULL arg -> NULL. Only duck-feature tests exercise it (sql_equals_rust_wire_bytes, nul_in_refusal_text_is_a_sql_error_not_an_abort, a_chunk_of_results_over_its_budget_is_a_sql_error), CI compiles neither and the drift snapshot lists neither [P:assumed conf:0.7]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn Error>> {
-        analyze_rows(input, output).map_err(sql_error)
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn Error>> {
+        unsafe { analyze_rows(input, output) }.map_err(sql_error)
     }
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
