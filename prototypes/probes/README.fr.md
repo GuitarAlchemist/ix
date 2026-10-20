@@ -29,6 +29,16 @@ donné. Une ligne qui n'est pas un tel objet devient plutôt un événement
 L'hôte transmet l'intervalle d'échantillonnage à la probe dans
 `PROBE_INTERVAL_MS`.
 
+Les probes présentes : `sysinfo` (RAM, CPU), `gpu` (nvidia-smi), `disk`, les
+probes `proc-*` faites à partir du modèle de processus, et `stream`, qui
+surveille la diffusion de la scène depuis cette machine seulement :
+`stream_hls_up` et `stream_hls_ms` (la liste de lecture HLS sur la boucle
+locale répond 200, et en combien de temps), `stream_segments`,
+`stream_front_up` (la porte d'entrée de la page du lecteur répond) et
+`stream_viewers`, lu dans le compte que la porte d'entrée écrit, et omis
+quand il date de plus de 30 s. Elle ne consulte jamais le lien public : la
+probe n'ajoute rien à ce que le flux montre.
+
 L'hôte écrit :
 
 - `out/probes.jsonl` — les enregistrements ;

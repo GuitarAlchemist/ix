@@ -27,6 +27,15 @@ object becomes a `bad_line` event instead. What a probe writes on stderr
 becomes `stderr` events. The host passes the sampling interval to the probe as
 `PROBE_INTERVAL_MS`.
 
+The probes here: `sysinfo` (RAM, CPU), `gpu` (nvidia-smi), `disk`, the
+`proc-*` probes made from the process template, and `stream`, which watches the
+scene cast from this machine only: `stream_hls_up` and `stream_hls_ms` (the HLS
+playlist on loopback answers 200, and how long it took), `stream_segments`,
+`stream_front_up` (the player page's front door answers at all) and
+`stream_viewers`, read from the count the front door writes and skipped when it
+is older than 30 s. It never fetches the public link, so the probe adds nothing
+to what the stream shows.
+
 The host writes:
 
 - `out/probes.jsonl` — the records;
