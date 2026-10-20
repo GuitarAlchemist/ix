@@ -444,6 +444,20 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   même, et il reste `stopped` avec ce code. Tests : `a_job_is_waited_to_its_exit`,
   `job_ixql_runs_a_job_to_its_end`, `a_peers_job_is_waited_to_its_exit` (client) ; E10
   (passerelle).
+- **Limites, cette tranche (pas de nouvelle porte ; la spec d'instance n'est pas l'une des
+  trois) :** un service peut déclarer `limits: {"wall_ms": N}`. Une exécution qui dure au-delà
+  est tuée par le plan, son arbre avec elle, et la sortie nomme la limite : `last_exit.reason`
+  et `service.exited.reason` valent `wall_limit` (avec `wall_ms`), absents quand le processus
+  s'est terminé de lui-même ou sur un arrêt demandé. La politique de redémarrage s'applique
+  ensuite comme à tout échec : un job (`restart: never`) reste `stopped` avec cette raison,
+  `on-failure` et `always` redémarrent avec recul, et l'exécution compte dans `max_restarts`.
+  Le client Rust transmet `last_exit` tel quel, donc `Ctl::wait_exit*` et
+  `ix.ctl.wait(exit: true)` portent la raison. Les autres limites (mémoire, processus) sont des
+  tranches ultérieures : les job objects Windows savent les imposer ; Linux demande un
+  tremplin ou des cgroups. Tests : `TestARunPastItsWallLimitIsKilledAndSaysSo`,
+  `TestARunPastItsWallLimitRestarts`, la spec refuse une limite négative ou inconnue (Go) ;
+  `a_run_killed_at_its_wall_limit_says_so_in_its_exit` (client) ; E11 (passerelle : un sleep
+  Python borné à 400 ms, tué, son processus disparu, `restarts` à 0).
 
 ### Ce que le figer verrouille
 

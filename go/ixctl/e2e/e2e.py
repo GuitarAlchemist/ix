@@ -1,7 +1,7 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
-federated instances on loopback, plus the `ix` binary run as a job (E10). 32 checks, E1..E10, a
-restart loop and the M1 measurement.
+federated instances on loopback, plus the `ix` binary run as a job (E10) and a run killed at its
+wall limit (E11). 33 checks, E1..E11, a restart loop and the M1 measurement.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -355,6 +355,9 @@ def run():
         {"name": "missing", "command": str(BIN / ("does-not-exist" + EXE)), "restart": "never"},
         job("job", JOBDIR / "ix.yaml"),
         job("job-bad", JOBDIR / "does-not-exist.yaml"),
+        # A job that would run for a minute, bounded to 400 ms.
+        {"name": "sleepy", "command": sys.executable, "args": ["-c", "import time; time.sleep(60)"],
+         "restart": "never", "limits": {"wall_ms": 400}},
     ], [{"name": "b", "state_file": str(STATE / "b.json")}])
 
     pb, ready_b, sb, ms_b = up("b", spec_b)
@@ -563,6 +566,30 @@ def run():
           code=code, ms=round(ms, 1), settled_ms=settled_ms, generation=r["generation"],
           failed_generations=failed,
           exited={k: bad.get(k) for k in ("state", "desired", "last_exit", "restarts")},
+          stderr=err[-200:])
+
+    # E11: a wall limit. A run that lasts past `limits.wall_ms` is killed by the plane, its tree
+    # with it, and its exit names the limit (`last_exit.reason`); a job so ended stays stopped,
+    # never restarted. The exit wait, scoped to the start's generation, answers it.
+    _, r = call(sa, "POST", "/v1/apply", {"services": {"sleepy": {"state": "running"}}})
+    t_apply = time.monotonic()
+    sleepy_pid, _ = wait_until(lambda: svc(status(sa), "sleepy").get("pid"), 5)
+    prog = write_ixql("sleepy.ixql",
+                      f'exited <- ix.ctl.wait(service: "sleepy", exit: true, generation: {r["generation"]}, '
+                      f'epoch: "{r["epoch"]}", timeout_ms: 60000)\n')
+    code, out, err, ms = ixql("sleepy", prog, STATE / "a.json")
+    killed_after_ms = round((time.monotonic() - t_apply) * 1000, 1)
+    sl = (out or {}).get("exited") or {}
+    le = sl.get("last_exit") or {}
+    gone = not alive(sleepy_pid)
+    check("E11.wall_limit_kills_the_run",
+          code == 0 and sleepy_pid and gone and sl.get("state") == "stopped"
+          and sl.get("desired") == "running" and le.get("reason") == "wall_limit"
+          and le.get("generation") == r["generation"] and le.get("code") not in (None, 0)
+          and sl.get("restarts") == 0 and sl.get("pid") is None and killed_after_ms < 10000,
+          code=code, ms=round(ms, 1), killed_after_ms=killed_after_ms, pid=sleepy_pid,
+          process_gone=gone,
+          exited={k: sl.get(k) for k in ("state", "desired", "generation", "last_exit", "restarts")},
           stderr=err[-200:])
 
     # A real pod that keeps crashing: restarts with backoff, then failed. A pod reports its

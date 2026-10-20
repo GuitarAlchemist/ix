@@ -37,7 +37,13 @@ type exitInfo struct {
 	// Generation is the apply that launched the run this exit ends (a restart keeps its
 	// run's generation), so a waiter can tell this run's exit from an earlier run's.
 	Generation uint64 `json:"generation,omitempty"`
+	// Reason names the limit the plane killed the run for (reasonWall); absent when the
+	// process ended on its own or on a requested stop.
+	Reason string `json:"reason,omitempty"`
 }
+
+// reasonWall is the exit reason of a run killed for lasting past limits.wall_ms.
+const reasonWall = "wall_limit"
 
 // command is one desired state handed to the supervisor, with the generation that asked.
 type command struct {
@@ -79,6 +85,7 @@ type service struct {
 	proc   *child
 	recent []time.Time // restarts inside the window
 	timer  *time.Timer
+	wall   *time.Timer // the current run's wall limit, when the spec sets one
 }
 
 // child is one launched process tree.
@@ -213,6 +220,10 @@ func (s *service) run(ctx context.Context) {
 		if s.timer != nil {
 			backoff = s.timer.C
 		}
+		var wall <-chan time.Time
+		if s.wall != nil {
+			wall = s.wall.C
+		}
 		select {
 		case <-ctx.Done():
 			s.halt()
@@ -220,7 +231,10 @@ func (s *service) run(ctx context.Context) {
 		case want := <-s.cmds:
 			s.command(want)
 		case code := <-exited:
-			s.onExit(code)
+			s.ended(code, "")
+		case <-wall:
+			s.wall = nil
+			s.onWall()
 		case <-backoff:
 			s.timer = nil
 			if s.cur() == stateRestarting {
@@ -302,6 +316,9 @@ func (s *service) launch(restart bool) {
 		return
 	}
 	s.proc = c
+	if l := s.spec.Limits; l != nil && l.WallMs > 0 {
+		s.wall = time.NewTimer(time.Duration(l.WallMs) * time.Millisecond)
+	}
 	now := time.Now().UnixMilli()
 	s.mu.Lock()
 	if restart {
@@ -371,8 +388,13 @@ func (s *service) start() (*child, error) {
 }
 
 // reap finishes a tree whose main process has exited: whatever it left
-// behind is killed, and its output is drained.
-func (s *service) reap(code int) *exitInfo {
+// behind is killed, and its output is drained. reason names the limit the plane killed the
+// run for, or is empty.
+func (s *service) reap(code int, reason string) *exitInfo {
+	if s.wall != nil {
+		s.wall.Stop()
+		s.wall = nil
+	}
 	c := s.proc
 	c.stdin.Close()
 	c.tree.kill()
@@ -386,7 +408,7 @@ func (s *service) reap(code int) *exitInfo {
 	}
 	s.proc = nil
 	s.mu.Lock()
-	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen}
+	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason}
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
 	return e
@@ -409,7 +431,7 @@ func (s *service) stopTree(generation uint64) {
 			code = -1
 		}
 	}
-	e := s.reap(code)
+	e := s.reap(code, "")
 	s.settle(stateStopped)
 	ms := time.Since(t0).Milliseconds()
 	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": true, "generation": e.Generation})
@@ -433,16 +455,38 @@ func (s *service) halt() {
 	}
 }
 
-// onExit handles an exit nobody asked for, by the restart policy.
-func (s *service) onExit(code int) {
+// onWall ends a run that has lasted past limits.wall_ms: the tree is killed, and the exit,
+// marked with the reason, goes through the restart policy as a failure does.
+func (s *service) onWall() {
+	s.proc.tree.kill()
+	var code int
+	select {
+	case code = <-s.proc.exited:
+	case <-time.After(treeGoneLimit):
+		code = -1
+	}
+	s.ended(code, reasonWall)
+}
+
+// ended handles an exit nobody asked for, by the restart policy. reason names the limit the
+// plane killed the run for, or is empty when the run ended on its own.
+func (s *service) ended(code int, reason string) {
 	pid := s.proc.pid
-	e := s.reap(code)
-	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": false, "generation": e.Generation})
-	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && code == 0) {
+	e := s.reap(code, reason)
+	exited := map[string]any{"pid": pid, "code": code, "requested": false, "generation": e.Generation}
+	if reason != "" {
+		exited["reason"], exited["wall_ms"] = reason, s.spec.Limits.WallMs
+	}
+	s.ctl("service.exited", exited)
+	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && code == 0 && reason == "") {
 		// The run's own end: stamped with the run's generation, which no stop's apply
 		// carries, so a stop queued meanwhile settles on its own event only.
 		s.settle(stateStopped)
-		s.ctl("service.stopped", map[string]any{"pid": pid, "code": code, "generation": e.Generation})
+		stopped := map[string]any{"pid": pid, "code": code, "generation": e.Generation}
+		if reason != "" {
+			stopped["reason"] = reason
+		}
+		s.ctl("service.stopped", stopped)
 		return
 	}
 	now := time.Now()

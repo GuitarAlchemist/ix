@@ -89,6 +89,7 @@ type fakeSvc struct {
 	args    []string
 	restart string
 	max     int
+	wallMs  int64 // limits.wall_ms, when > 0
 }
 
 func testExe(t testing.TB) string {
@@ -110,6 +111,7 @@ func fakeSpec(t testing.TB, name string, peers []PeerSpec, svcs ...fakeSvc) *Spe
 		Env         map[string]string `json:"env"`
 		Restart     string            `json:"restart,omitempty"`
 		MaxRestarts *int              `json:"max_restarts,omitempty"`
+		Limits      *Limits           `json:"limits,omitempty"`
 	}
 	doc := struct {
 		Name     string     `json:"name"`
@@ -122,6 +124,9 @@ func fakeSpec(t testing.TB, name string, peers []PeerSpec, svcs ...fakeSvc) *Spe
 		if s.max > 0 {
 			m := s.max
 			j.MaxRestarts = &m
+		}
+		if s.wallMs > 0 {
+			j.Limits = &Limits{WallMs: s.wallMs}
 		}
 		doc.Services = append(doc.Services, j)
 	}

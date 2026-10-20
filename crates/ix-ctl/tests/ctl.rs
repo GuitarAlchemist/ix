@@ -170,6 +170,14 @@ impl Plane {
         s.last_exit = json!({"code": code, "at": unix_ms(), "generation": s.start_gen});
     }
 
+    /// The plane killed the run for a limit of the spec: the exit names it (`reason`).
+    fn kill_for(&mut self, name: &str, code: i64, reason: &str) {
+        let s = self.services.get_mut(name).expect("declared");
+        s.since = None;
+        s.last_exit =
+            json!({"code": code, "at": unix_ms(), "generation": s.start_gen, "reason": reason});
+    }
+
     fn route(&mut self, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
         let doc: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
         // Routing rides beside the document, as `?peer=`; this plane has no peers.
@@ -1171,6 +1179,36 @@ fn a_wait_that_runs_out_says_what_it_saw() {
     assert!(
         matches!(err, CtlError::NotDeclared(ref n) if n == "ghost"),
         "{err:?}"
+    );
+}
+
+// A run the plane killed for a limit of the spec (`limits.wall_ms`) ends like any other, its
+// exit naming the limit: the exit wait passes `last_exit.reason` through, so a program can tell
+// a job that ran out of time from one that failed on its own.
+#[test]
+fn a_run_killed_at_its_wall_limit_says_so_in_its_exit() {
+    let (ctl, plane) = plane();
+    let applied = ctl
+        .apply(&json!({"services": {"pod-a": {"state": "running"}}}), None)
+        .unwrap();
+    let g = applied["generation"].as_u64().unwrap();
+    ctl.wait_generation(g, Duration::from_secs(2))
+        .expect("the start converged");
+    plane.lock().unwrap().kill_for("pod-a", 1, "wall_limit");
+    let entry = ctl
+        .wait_exit_of("pod-a", g, None, Duration::from_secs(2))
+        .expect("the run ended");
+    assert_eq!(json!("stopped"), entry["state"]);
+    assert_eq!(json!("wall_limit"), entry["last_exit"]["reason"]);
+    assert_eq!(json!(1), entry["last_exit"]["code"]);
+    assert_eq!(json!(g), entry["last_exit"]["generation"]);
+    // The IXQL form carries the reason too.
+    let out = executor(ctl.clone())
+        .run_source(r#"j <- ix.ctl.wait(service: "pod-a", exit: true, timeout_ms: 50)"#)
+        .unwrap();
+    assert_eq!(
+        json!("wall_limit"),
+        out.binding("j").unwrap()["last_exit"]["reason"]
     );
 }
 

@@ -411,6 +411,19 @@ name `ixctl.v1`.
   exits 10, its generation converges all the same, and it stays `stopped` with that code. Tests:
   `a_job_is_waited_to_its_exit`, `job_ixql_runs_a_job_to_its_end`,
   `a_peers_job_is_waited_to_its_exit` (client); E10 (gate).
+- **Limits, this slice (no new door; the instance spec is not one of the three):** a service
+  may declare `limits: {"wall_ms": N}`. A run that lasts past it is killed by the plane, its
+  tree with it, and the exit names the limit: `last_exit.reason` and `service.exited.reason`
+  are `wall_limit` (with `wall_ms`), absent when the process ended on its own or on a
+  requested stop. The restart policy then applies as to any failure: a job (`restart: never`)
+  stays `stopped` with that reason, `on-failure` and `always` restart with backoff, and the
+  run counts toward `max_restarts`. The Rust client passes `last_exit` through unchanged, so
+  `Ctl::wait_exit*` and `ix.ctl.wait(exit: true)` carry the reason. Other limits (memory,
+  processes) are later slices: Windows job objects can enforce them; Linux needs a trampoline
+  or cgroups. Tests: `TestARunPastItsWallLimitIsKilledAndSaysSo`,
+  `TestARunPastItsWallLimitRestarts`, spec refuses a negative or unknown limit (Go);
+  `a_run_killed_at_its_wall_limit_says_so_in_its_exit` (client); E11 (gate: a Python sleep
+  bounded to 400 ms, killed, its process gone, `restarts` 0).
 
 ### What freezing locks in
 

@@ -200,6 +200,52 @@ func TestRestartNeverStops(t *testing.T) {
 	}
 }
 
+// A run that lasts past limits.wall_ms is killed by the plane and its exit says so; a job so
+// ended stays stopped, with the reason in its last_exit.
+func TestARunPastItsWallLimitIsKilledAndSaysSo(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "sleepy", restart: restartNever, wallMs: 300}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	t0 := time.Now()
+	do(t, c, Request{Op: "apply", Desired: running("sleepy")})
+	x := waitEnv(t, w, 5*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	took := time.Since(t0)
+	d := ctlData(x)
+	if d["reason"] != reasonWall || d["wall_ms"] != 300.0 || d["requested"] != false || d["generation"] != 1.0 || d["code"] == 0.0 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+	if took < 300*time.Millisecond || took > 3*time.Second {
+		t.Fatalf("killed after %v, limit 300 ms", took)
+	}
+	e := waitEnv(t, w, 5*time.Second, "next", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.stopped" || e.Ev.Kind == "service.restarting"
+	})
+	if e.Ev.Kind != "service.stopped" || ctlData(e)["reason"] != reasonWall {
+		t.Fatalf("a job killed at its limit is not restarted: %s", e.Raw())
+	}
+	s := svcStatus(in.plane.Status(), "sleepy")
+	if s.State != stateStopped || s.Desired != desiredRunning || s.LastExit == nil || s.LastExit.Reason != reasonWall || s.LastExit.Generation != 1 || s.Pid != nil {
+		t.Fatalf("after the kill: %+v (exit %+v)", s, s.LastExit)
+	}
+}
+
+// With a restart policy, a run killed at its limit is a failure: the service restarts.
+func TestARunPastItsWallLimitRestarts(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "sleepy", restart: restartOnFailure, wallMs: 100, max: 5}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("sleepy")})
+	waitEnv(t, w, 5*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	e := waitEnv(t, w, 5*time.Second, "next", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.stopped" || e.Ev.Kind == "service.restarting"
+	})
+	if e.Ev.Kind != "service.restarting" {
+		t.Fatalf("on-failure after a wall kill: %s", e.Raw())
+	}
+}
+
 func childPid(t *testing.T, w *frameWaiter) int {
 	t.Helper()
 	e := waitEnv(t, w, 10*time.Second, "child event", func(e *Envelope) bool { return e.Ev.Kind == "child" })

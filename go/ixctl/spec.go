@@ -32,6 +32,17 @@ type ServiceSpec struct {
 	Restart     string            `json:"restart,omitempty"`
 	MaxRestarts *int              `json:"max_restarts,omitempty"`
 	Autostart   bool              `json:"autostart,omitempty"`
+	// Limits bounds each run of the service; absent, nothing bounds it.
+	Limits *Limits `json:"limits,omitempty"`
+}
+
+// Limits bounds one run of a service. A run past a limit is killed, its tree with it, and
+// its exit names the limit (`last_exit.reason`, and `reason` on `service.exited`); the restart
+// policy then applies as to any failure, so a job so ended stays `stopped` and a service
+// restarts with backoff.
+type Limits struct {
+	// WallMs is the longest a run may last, in milliseconds, from its launch; 0 is no limit.
+	WallMs int64 `json:"wall_ms,omitempty"`
 }
 
 type PeerSpec struct {
@@ -102,6 +113,9 @@ func (s *Spec) validate() error {
 			sv.MaxRestarts = &n
 		} else if *sv.MaxRestarts < 0 {
 			return fmt.Errorf("service %q: max_restarts must be >= 0", sv.Name)
+		}
+		if sv.Limits != nil && sv.Limits.WallMs < 0 {
+			return fmt.Errorf("service %q: limits.wall_ms must be >= 0", sv.Name)
 		}
 		sv.Command = s.abs(sv.Command)
 		if sv.Dir == "" {
