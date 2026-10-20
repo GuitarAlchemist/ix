@@ -20,6 +20,7 @@ type procTree struct {
 	pgid int
 	over chan string   // the limit the tree went past, once; nil when none is watched
 	done chan struct{} // closed by close: ends the memory watch
+	gone chan struct{} // closed when the memory watch has returned
 	mu   sync.Mutex
 	peak int64 // the largest resident set the watch has summed over the group
 }
@@ -50,7 +51,7 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	}
 	t := &procTree{pgid: cmd.Process.Pid, done: make(chan struct{})}
 	if limits != nil && limits.MemoryMB > 0 {
-		t.over = make(chan string, 1)
+		t.over, t.gone = make(chan string, 1), make(chan struct{})
 		go t.watchMemory(limits.MemoryMB << 20)
 	}
 	return t, nil
@@ -59,6 +60,7 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 // watchMemory reads the group's resident set every memoryPoll until the tree is closed or
 // has no live member, keeps the peak, and reports the limit gone past, once.
 func (t *procTree) watchMemory(limit int64) {
+	defer close(t.gone)
 	tick := time.NewTicker(memoryPoll)
 	defer tick.Stop()
 	for {
@@ -85,6 +87,19 @@ func (t *procTree) watchMemory(limit int64) {
 
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
+
+// drain waits, at most limit, until the memory watch has returned (it does within a poll of
+// the group's last live member going), so what `exceeded` holds is final; at once without a
+// watch.
+func (t *procTree) drain(limit time.Duration) {
+	if t.gone == nil {
+		return
+	}
+	select {
+	case <-t.gone:
+	case <-time.After(limit):
+	}
+}
 
 // usage is the largest resident set the memory watch summed over the group (0 without a
 // watch); nothing counts the group's processor time without a cgroup, so that is 0 here and

@@ -419,18 +419,26 @@ name `ixctl.v1`.
   stays `stopped` with that reason, `on-failure` and `always` restart with backoff, and the
   run counts toward `max_restarts`. The Rust client passes `last_exit` through unchanged, so
   `Ctl::wait_exit*` and `ix.ctl.wait(exit: true)` carry the reason. `limits.memory_mb` bounds
-  the memory the run's whole tree holds: on Windows the job object enforces it (a commit past
-  it fails) and posts it to a completion port the plane listens to; on Linux the plane sums
-  the group's resident set from /proc every 100 ms (nothing bounds a group without a cgroup,
-  so a spike shorter than a poll is not seen). Either way the run is killed, reason
-  `memory_limit` (with `memory_mb`); a process that died of the refused commit before the
-  kill gets the reason too. Every exit carries `peak_memory_bytes` when the OS counted one
+  the memory the run's whole tree holds: on Windows the job object posts a notification the
+  system guarantees (`JobObjectNotificationLimitInformation`; the other job messages are best
+  effort, per Microsoft) when the tree's commit charge goes past it, and a hard cap an eighth
+  above (at least a MiB) refuses commits in the meantime; on Linux the plane sums the group's
+  resident set from /proc every 100 ms (nothing bounds a group without a cgroup, so a spike
+  shorter than a poll is not seen). Either way the run is killed, reason `memory_limit` (with
+  `memory_mb`). The exit is classified only once the tree's processes are gone and its
+  monitor has read every message (`drain`), so a process that died of a refused commit before
+  the kill gets the reason too, as far as that best-effort message arrives (Codex round 16,
+  P1: before, a single non-blocking read raced the monitor). Every exit carries `peak_memory_bytes` when the OS counted one
   (the job's peak commit on Windows; the leader's rusage peak, or the group's polled peak
   under a watch, on Linux) and `cpu_ms`, the processor time it used (the job's total on
   Windows; the leader's rusage with the children it waited for on Linux): what a run cost,
   next to how it ended. The gate's real `ix pipeline run` job declares `wall_ms: 120000,
   memory_mb: 2048`, as every job under the factory is meant to, and E10 reads its cost back.
-  Codex round 15 (one P1, two P2): an exit already waiting when a
+  Round 16's P2s: a failed launch releases the port and its listener; a requested stop's
+  `service.exited` carries the cost too; the exit's code and the leader's usage travel
+  together (`exitStat`), so a tree killed without its exit read reports neither; a memory
+  limit past what the platform addresses is refused; the gate's E11 clocks from before the
+  apply request. Codex round 15 (one P1, two P2): an exit already waiting when a
   limit fires is the run's own end (not `wall_limit`; still `memory_limit`, the kernel said
   so); a limit past what a `time.Duration` or a byte count holds is refused; the gate's wall
   job is bounded to 1.5 s so its pid is read before the kill on a loaded runner. A process

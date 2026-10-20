@@ -453,16 +453,26 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   `on-failure` et `always` redémarrent avec recul, et l'exécution compte dans `max_restarts`.
   Le client Rust transmet `last_exit` tel quel, donc `Ctl::wait_exit*` et
   `ix.ctl.wait(exit: true)` portent la raison. `limits.memory_mb` borne la mémoire que tient
-  l'arbre entier de l'exécution : sous Windows le job object l'impose (un commit au-delà
-  échoue) et le signale à un port d'achèvement que le plan écoute ; sous Linux le plan somme
-  l'ensemble résident du groupe depuis /proc toutes les 100 ms (rien ne borne un groupe sans
-  cgroup, donc un pic plus court qu'une lecture passe inaperçu). Dans les deux cas l'exécution
-  est tuée, raison `memory_limit` (avec `memory_mb`) ; un processus mort du commit refusé avant
-  la mise à mort reçoit la raison aussi. Chaque sortie porte `peak_memory_bytes` quand l'OS l'a
+  l'arbre entier de l'exécution : sous Windows le job object émet une notification que le
+  système garantit (`JobObjectNotificationLimitInformation` ; les autres messages du job sont
+  au mieux, selon Microsoft) quand la charge de commit de l'arbre la dépasse, et un plafond dur
+  un huitième au-dessus (au moins un Mio) refuse les commits entre-temps ; sous Linux le plan
+  somme l'ensemble résident du groupe depuis /proc toutes les 100 ms (rien ne borne un groupe
+  sans cgroup, donc un pic plus court qu'une lecture passe inaperçu). Dans les deux cas
+  l'exécution est tuée, raison `memory_limit` (avec `memory_mb`). La sortie n'est classée
+  qu'une fois les processus de l'arbre disparus et son moniteur ayant lu chaque message
+  (`drain`), si bien qu'un processus mort d'un commit refusé avant la mise à mort reçoit la
+  raison aussi, pour autant que ce message au mieux arrive (revue Codex 16, P1 : avant, une
+  seule lecture non bloquante faisait la course avec le moniteur). Chaque sortie porte `peak_memory_bytes` quand l'OS l'a
   compté (le pic de commit du job sous Windows ; le pic rusage du meneur, ou le pic sommé du
   groupe sous surveillance, sous Linux) et `cpu_ms`, le temps processeur consommé (le total du
   job sous Windows ; le rusage du meneur avec les enfants qu'il a attendus sous Linux) : ce
-  qu'une exécution a coûté, à côté de la façon dont elle s'est terminée. Le vrai job
+  qu'une exécution a coûté, à côté de la façon dont elle s'est terminée. Les P2 de la revue
+  16 : un lancement raté libère le port et son écouteur ; le `service.exited` d'un arrêt
+  demandé porte aussi le coût ; le code de sortie et l'usage du meneur voyagent ensemble
+  (`exitStat`), donc un arbre tué sans que sa sortie soit lue ne rapporte ni l'un ni l'autre ;
+  une limite mémoire au-delà de ce que la plateforme adresse est refusée ; la E11 de la
+  passerelle chronomètre depuis avant la requête d'application. Le vrai job
   `ix pipeline run` de la passerelle déclare `wall_ms: 120000, memory_mb: 2048`, comme tout job
   de l'usine est censé le faire, et E10 relit son coût. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
   attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;

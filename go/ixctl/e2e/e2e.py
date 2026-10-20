@@ -360,9 +360,11 @@ def run():
         # pid from the status on a loaded runner before the kill).
         {"name": "sleepy", "command": sys.executable, "args": ["-c", "import time; time.sleep(60)"],
          "restart": "never", "limits": {"wall_ms": 1500}},
-        # A job that would hold 256 MiB (written, so resident) for a minute, bounded to 64 MiB.
+        # A job that would hold 256 MiB (written, so resident; taken 4 MiB at a time, so the
+        # tree goes past the limit rather than having one commit refused) for a minute,
+        # bounded to 64 MiB.
         {"name": "hog", "command": sys.executable,
-         "args": ["-c", "b = b'x' * (256 << 20); import time; time.sleep(60)"],
+         "args": ["-c", "c = [b'x' * (4 << 20) for _ in range(64)]; import time; time.sleep(60)"],
          "restart": "never", "limits": {"memory_mb": 64}},
     ], [{"name": "b", "state_file": str(STATE / "b.json")}])
 
@@ -581,8 +583,8 @@ def run():
     # E11: a wall limit. A run that lasts past `limits.wall_ms` (1.5 s here) is killed by the
     # plane, its tree with it, and its exit names the limit (`last_exit.reason`); a job so ended
     # stays stopped, never restarted. The exit wait, scoped to the start's generation, answers it.
+    t_apply = time.monotonic()  # before the request: the launch, so the limit, may start in it
     _, r = call(sa, "POST", "/v1/apply", {"services": {"sleepy": {"state": "running"}}})
-    t_apply = time.monotonic()
     sleepy_pid, _ = wait_until(lambda: svc(status(sa), "sleepy").get("pid"), 10)
     prog = write_ixql("sleepy.ixql",
                       f'exited <- ix.ctl.wait(service: "sleepy", exit: true, generation: {r["generation"]}, '
@@ -604,8 +606,9 @@ def run():
           stderr=err[-200:])
 
     # E12: a memory limit. A run that holds more than `limits.memory_mb` is killed (on Windows
-    # the job refuses the commit and says so; on Linux the plane reads the group's resident set
-    # from /proc), its exit names the limit and the peak the OS counted; the job stays stopped.
+    # the job's guaranteed notification says the tree went past it; on Linux the plane reads
+    # the group's resident set from /proc), its exit names the limit and the peak the OS
+    # counted; the job stays stopped.
     _, r = call(sa, "POST", "/v1/apply", {"services": {"hog": {"state": "running"}}})
     t_apply = time.monotonic()
     prog = write_ixql("hog.ixql",

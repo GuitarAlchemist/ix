@@ -106,11 +106,21 @@ type child struct {
 	tree   *procTree
 	stdin  *os.File
 	pid    int
-	exited chan int // the main process's exit code
-	rss    int64    // the leader's peak resident set at exit (leaderUsage), set before exited is sent
-	cpu    int64    // and its processor time in milliseconds
+	exited chan exitStat // how the main process ended, once
 	io     sync.WaitGroup
 }
+
+// exitStat is how a process ended, with what the OS accounted for it at that moment
+// (leaderUsage); a tree that had to be killed without its exit being read reports code -1
+// and nothing else.
+type exitStat struct {
+	code     int
+	rss, cpu int64
+}
+
+// monitorLimit bounds the wait for a tree's limit monitor to finish after its processes are
+// gone, before the exit is classified.
+const monitorLimit = time.Second
 
 func newService(spec ServiceSpec, hub *Hub) *service {
 	return &service{
@@ -227,7 +237,7 @@ func (s *service) ctl(kind string, data map[string]any) {
 
 func (s *service) run(ctx context.Context) {
 	for {
-		var exited <-chan int
+		var exited <-chan exitStat
 		if s.proc != nil {
 			exited = s.proc.exited
 		}
@@ -249,8 +259,8 @@ func (s *service) run(ctx context.Context) {
 			return
 		case want := <-s.cmds:
 			s.command(want)
-		case code := <-exited:
-			s.ended(code, "")
+		case st := <-exited:
+			s.ended(st, "")
 		case <-wall:
 			s.wall = nil
 			s.onLimit(reasonWall)
@@ -392,7 +402,7 @@ func (s *service) start() (*child, error) {
 		errR.Close()
 		return nil, err
 	}
-	c := &child{tree: tree, stdin: inW, pid: cmd.Process.Pid, exited: make(chan int, 1)}
+	c := &child{tree: tree, stdin: inW, pid: cmd.Process.Pid, exited: make(chan exitStat, 1)}
 	c.io.Add(2)
 	go func() { defer c.io.Done(); s.readLines(outR, false) }()
 	go func() { defer c.io.Done(); s.readLines(errR, true) }()
@@ -403,16 +413,19 @@ func (s *service) start() (*child, error) {
 		} else if ee := (*exec.ExitError)(nil); errors.As(err, &ee) {
 			code = exitCode(ee)
 		}
-		c.rss, c.cpu = leaderUsage(cmd.ProcessState)
-		c.exited <- code
+		st := exitStat{code: code}
+		st.rss, st.cpu = leaderUsage(cmd.ProcessState)
+		c.exited <- st
 	}()
 	return c, nil
 }
 
 // reap finishes a tree whose main process has exited: whatever it left
 // behind is killed, and its output is drained. reason names the limit the plane killed the
-// run for, or is empty.
-func (s *service) reap(code int, reason string) *exitInfo {
+// run for; empty, the run ended on its own, unless the tree's monitor, read once every
+// process is gone and its messages are in, says it went past a limit (a commit refused
+// past the memory limit, which the process died of): then that is the reason.
+func (s *service) reap(st exitStat, reason string) *exitInfo {
 	if s.wall != nil {
 		s.wall.Stop()
 		s.wall = nil
@@ -421,12 +434,19 @@ func (s *service) reap(code int, reason string) *exitInfo {
 	c.stdin.Close()
 	c.tree.kill()
 	c.tree.waitGone(treeGoneLimit)
-	peak, cpu := c.tree.usage() // before close: the job is gone after
-	if c.rss > peak {
-		peak = c.rss
+	c.tree.drain(monitorLimit)
+	if reason == "" {
+		select {
+		case reason = <-c.tree.exceeded():
+		default:
+		}
 	}
-	if c.cpu > cpu {
-		cpu = c.cpu
+	peak, cpu := c.tree.usage() // before close: the job is gone after
+	if st.rss > peak {
+		peak = st.rss
+	}
+	if st.cpu > cpu {
+		cpu = st.cpu
 	}
 	c.tree.close()
 	drained := make(chan struct{})
@@ -437,10 +457,29 @@ func (s *service) reap(code int, reason string) *exitInfo {
 	}
 	s.proc = nil
 	s.mu.Lock()
-	e := &exitInfo{Code: code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu}
+	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu}
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
 	return e
+}
+
+// exitData is the service.exited event for e: how the run ended, the limit it was killed for
+// if any (with the limit's value), and what it cost.
+func (s *service) exitData(pid int, requested bool, e *exitInfo) map[string]any {
+	d := map[string]any{"pid": pid, "code": e.Code, "requested": requested, "generation": e.Generation}
+	switch e.Reason {
+	case reasonWall:
+		d["reason"], d["wall_ms"] = e.Reason, s.spec.Limits.WallMs
+	case reasonMemory:
+		d["reason"], d["memory_mb"] = e.Reason, s.spec.Limits.MemoryMB
+	}
+	if e.PeakMemoryBytes > 0 {
+		d["peak_memory_bytes"] = e.PeakMemoryBytes
+	}
+	if e.CpuMs > 0 {
+		d["cpu_ms"] = e.CpuMs
+	}
+	return d
 }
 
 // stopTree is a requested stop: close stdin, give the tree stopGrace to
@@ -449,22 +488,22 @@ func (s *service) stopTree(generation uint64) {
 	t0 := time.Now()
 	pid := s.proc.pid
 	s.proc.stdin.Close()
-	var code int
+	var st exitStat
 	select {
-	case code = <-s.proc.exited:
+	case st = <-s.proc.exited:
 	case <-time.After(stopGrace):
 		s.proc.tree.kill()
 		select {
-		case code = <-s.proc.exited:
+		case st = <-s.proc.exited:
 		case <-time.After(treeGoneLimit):
-			code = -1
+			st = exitStat{code: -1}
 		}
 	}
-	e := s.reap(code, "")
+	e := s.reap(st, "")
 	s.settle(stateStopped)
 	ms := time.Since(t0).Milliseconds()
-	s.ctl("service.exited", map[string]any{"pid": pid, "code": code, "requested": true, "generation": e.Generation})
-	stopped := map[string]any{"pid": pid, "code": code, "ms": ms}
+	s.ctl("service.exited", s.exitData(pid, true, e))
+	stopped := map[string]any{"pid": pid, "code": e.Code, "ms": ms}
 	if generation != 0 {
 		stopped["generation"] = generation
 	}
@@ -491,58 +530,38 @@ func (s *service) halt() {
 // limit all the same, since the kernel said so.
 func (s *service) onLimit(reason string) {
 	select {
-	case code := <-s.proc.exited:
+	case st := <-s.proc.exited:
 		if reason == reasonWall {
 			reason = ""
 		}
-		s.ended(code, reason)
+		s.ended(st, reason)
 		return
 	default:
 	}
 	s.proc.tree.kill()
-	var code int
+	var st exitStat
 	select {
-	case code = <-s.proc.exited:
+	case st = <-s.proc.exited:
 	case <-time.After(treeGoneLimit):
-		code = -1
+		st = exitStat{code: -1}
 	}
-	s.ended(code, reason)
+	s.ended(st, reason)
 }
 
 // ended handles an exit nobody asked for, by the restart policy. reason names the limit the
-// plane killed the run for, or is empty when the run ended on its own: then a limit the tree
-// reported just before (a commit refused past the memory limit, which the process died of)
-// is the reason all the same.
-func (s *service) ended(code int, reason string) {
+// plane killed the run for, or is empty when the run ended on its own (reap then asks the
+// tree's monitor whether a limit was gone past all the same).
+func (s *service) ended(st exitStat, reason string) {
 	pid := s.proc.pid
-	if reason == "" {
-		select {
-		case reason = <-s.proc.tree.exceeded():
-		default:
-		}
-	}
-	e := s.reap(code, reason)
-	exited := map[string]any{"pid": pid, "code": code, "requested": false, "generation": e.Generation}
-	switch reason {
-	case reasonWall:
-		exited["reason"], exited["wall_ms"] = reason, s.spec.Limits.WallMs
-	case reasonMemory:
-		exited["reason"], exited["memory_mb"] = reason, s.spec.Limits.MemoryMB
-	}
-	if e.PeakMemoryBytes > 0 {
-		exited["peak_memory_bytes"] = e.PeakMemoryBytes
-	}
-	if e.CpuMs > 0 {
-		exited["cpu_ms"] = e.CpuMs
-	}
-	s.ctl("service.exited", exited)
-	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && code == 0 && reason == "") {
+	e := s.reap(st, reason)
+	s.ctl("service.exited", s.exitData(pid, false, e))
+	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && e.Code == 0 && e.Reason == "") {
 		// The run's own end: stamped with the run's generation, which no stop's apply
 		// carries, so a stop queued meanwhile settles on its own event only.
 		s.settle(stateStopped)
-		stopped := map[string]any{"pid": pid, "code": code, "generation": e.Generation}
-		if reason != "" {
-			stopped["reason"] = reason
+		stopped := map[string]any{"pid": pid, "code": e.Code, "generation": e.Generation}
+		if e.Reason != "" {
+			stopped["reason"] = e.Reason
 		}
 		s.ctl("service.stopped", stopped)
 		return
@@ -556,7 +575,7 @@ func (s *service) ended(code int, reason string) {
 	}
 	s.recent = kept
 	if len(s.recent) >= *s.spec.MaxRestarts {
-		s.fail(map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": code})
+		s.fail(map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": e.Code})
 		return
 	}
 	delay := backoffMin << len(s.recent)

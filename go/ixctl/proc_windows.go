@@ -26,6 +26,7 @@ type procTree struct {
 	job  windows.Handle
 	port windows.Handle // the job's completion port, when a memory limit is watched
 	over chan string    // the limit the tree went past, once
+	gone chan struct{}  // closed when listen has returned: every message is in
 }
 
 // Job completion messages (winnt.h JOB_OBJECT_MSG_*), as GetQueuedCompletionStatus reports
@@ -34,6 +35,7 @@ const (
 	jobMsgActiveProcessZero  = 4
 	jobMsgProcessMemoryLimit = 9
 	jobMsgJobMemoryLimit     = 10
+	jobMsgNotificationLimit  = 11
 )
 
 // jobPort mirrors JOBOBJECT_ASSOCIATE_COMPLETION_PORT.
@@ -42,13 +44,46 @@ type jobPort struct {
 	CompletionPort windows.Handle
 }
 
+// jobNotificationLimit mirrors JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION (Windows 8+): a
+// limit the job may exceed, whose JOB_OBJECT_MSG_NOTIFICATION_LIMIT the system guarantees to
+// deliver, unlike the other messages.
+type jobNotificationLimit struct {
+	IoReadBytesLimit             uint64
+	IoWriteBytesLimit            uint64
+	PerJobUserTimeLimit          int64
+	JobMemoryLimit               uint64
+	RateControlTolerance         uint32
+	RateControlToleranceInterval uint32
+	LimitFlags                   uint32
+}
+
+// memoryCap is the hard job memory limit set above limits.memory_mb: the kill on the
+// guaranteed notification enforces the limit, the cap bounds how far one commit can overshoot
+// it in the meantime (an eighth more, at least a MiB).
+func memoryCap(limit uint64) uint64 {
+	over := limit / 8
+	if over < 1<<20 {
+		over = 1 << 20
+	}
+	return limit + over
+}
+
 // startTree starts cmd suspended, puts it in a fresh job with
 // KILL_ON_JOB_CLOSE, then lets it run, so no grandchild can be born outside
 // the job. The child gets its own console process group: Ctrl+C reaches the
 // plane only, and the plane decides how its services stop. With a memory
-// limit, the job refuses commits past it and tells a completion port, which
-// the tree reports on `exceeded`.
+// limit, the job tells a completion port when the tree's commit charge goes
+// past it (a notification limit: the one message the system guarantees),
+// which the tree reports on `exceeded`; a hard cap an eighth above refuses
+// commits in the meantime (that message is best effort).
 func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
+	var memory uint64
+	if limits != nil && limits.MemoryMB > 0 {
+		if limits.MemoryMB > int64(^uintptr(0)>>20) {
+			return nil, fmt.Errorf("limits.memory_mb %d is more than this platform addresses", limits.MemoryMB)
+		}
+		memory = uint64(limits.MemoryMB) << 20
+	}
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create job: %w", err)
@@ -56,29 +91,35 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	t := &procTree{job: job}
 	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-	if limits != nil && limits.MemoryMB > 0 {
+	if memory > 0 {
 		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_JOB_MEMORY
-		info.JobMemoryLimit = uintptr(limits.MemoryMB) << 20
+		info.JobMemoryLimit = uintptr(memoryCap(memory))
 	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-		windows.CloseHandle(job)
+		t.close()
 		return nil, fmt.Errorf("set job limits: %w", err)
 	}
-	if limits != nil && limits.MemoryMB > 0 {
+	if memory > 0 {
 		port, err := windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 1)
 		if err != nil {
-			windows.CloseHandle(job)
+			t.close()
 			return nil, fmt.Errorf("create completion port: %w", err)
 		}
+		t.port = port
 		assoc := jobPort{CompletionKey: uintptr(job), CompletionPort: port}
 		if _, err := windows.SetInformationJobObject(job, windows.JobObjectAssociateCompletionPortInformation,
 			uintptr(unsafe.Pointer(&assoc)), uint32(unsafe.Sizeof(assoc))); err != nil {
-			windows.CloseHandle(port)
-			windows.CloseHandle(job)
+			t.close()
 			return nil, fmt.Errorf("associate completion port: %w", err)
 		}
-		t.port, t.over = port, make(chan string, 1)
+		notify := jobNotificationLimit{JobMemoryLimit: memory, LimitFlags: windows.JOB_OBJECT_LIMIT_JOB_MEMORY}
+		if _, err := windows.SetInformationJobObject(job, windows.JobObjectNotificationLimitInformation,
+			uintptr(unsafe.Pointer(&notify)), uint32(unsafe.Sizeof(notify))); err != nil {
+			t.close()
+			return nil, fmt.Errorf("set job notification limit: %w", err)
+		}
+		t.over, t.gone = make(chan string, 1), make(chan struct{})
 		go t.listen()
 	}
 	if cmd.SysProcAttr == nil {
@@ -86,7 +127,7 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	}
 	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP
 	if err := cmd.Start(); err != nil {
-		windows.CloseHandle(job)
+		t.close()
 		return nil, err
 	}
 	var cerr error
@@ -111,9 +152,12 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	return t, nil
 }
 
-// listen reads the job's completion messages until the port is closed or the job is empty,
-// and reports a memory limit gone past on `over`, once.
+// listen reads the job's completion messages until the port is closed or the job is empty
+// (ACTIVE_PROCESS_ZERO, posted after every message of the processes before it), and reports
+// a memory limit gone past on `over`, once: the guaranteed notification limit, or the hard
+// cap's best-effort message.
 func (t *procTree) listen() {
+	defer close(t.gone)
 	for {
 		var code uint32
 		var key uintptr
@@ -122,7 +166,7 @@ func (t *procTree) listen() {
 			return
 		}
 		switch code {
-		case jobMsgJobMemoryLimit, jobMsgProcessMemoryLimit:
+		case jobMsgNotificationLimit, jobMsgJobMemoryLimit, jobMsgProcessMemoryLimit:
 			select {
 			case t.over <- reasonMemory:
 			default:
@@ -135,6 +179,18 @@ func (t *procTree) listen() {
 
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
+
+// drain waits, at most limit, until the monitor has read every message the job posted (it
+// ends on the job's last exit), so what `exceeded` holds is final; at once without a watch.
+func (t *procTree) drain(limit time.Duration) {
+	if t.gone == nil {
+		return
+	}
+	select {
+	case <-t.gone:
+	case <-time.After(limit):
+	}
+}
 
 // usage is what the job's processes, exited ones included, have used as the kernel counted
 // it: the most memory held at once (peak commit charge) and the processor time, user and
@@ -190,12 +246,16 @@ func (t *procTree) waitGone(limit time.Duration) bool {
 // TerminateProcess gave it.
 func exitCode(ee *exec.ExitError) int { return ee.ExitCode() }
 
+// close releases the port (which ends listen) and the job; safe to call more than once.
 func (t *procTree) close() {
 	if t.port != 0 {
-		windows.CloseHandle(t.port) // ends listen
+		windows.CloseHandle(t.port)
 		t.port = 0
 	}
-	windows.CloseHandle(t.job)
+	if t.job != 0 {
+		windows.CloseHandle(t.job)
+		t.job = 0
+	}
 }
 
 // leaderUsage is the leader's peak resident set and processor time as the OS accounted them

@@ -255,6 +255,24 @@ func TestARunPastItsMemoryLimitIsKilledAndSaysSo(t *testing.T) {
 	}
 }
 
+// A requested stop reports what the run cost too.
+func TestAStopReportsTheRunsUsage(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "pod", args: []string{"--hog-mb", "16", "--burn-ms", "200"}}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("pod")})
+	waitEnv(t, w, 5*time.Second, "started", func(e *Envelope) bool { return e.Ev.Kind == "service.started" })
+	do(t, c, Request{Op: "stop", Service: "pod"})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	peak, _ := d["peak_memory_bytes"].(float64)
+	cpu, _ := d["cpu_ms"].(float64)
+	if d["requested"] != true || peak < 16<<20 || cpu < 50 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+}
+
 // A run that ends on its own reports what it used, limit or not: the memory it peaked at and
 // its processor time.
 func TestAnExitReportsItsUsage(t *testing.T) {
