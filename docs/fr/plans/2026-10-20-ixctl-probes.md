@@ -163,7 +163,18 @@ test start/stop juge `ctl` après chaque tour. **Compromis gardé :** l'ajout au
 s'exécutait déjà sous le verrou du hub dans `Publish` ; avec les événements de cycle de vie publiés
 sous le verrou de l'arbre, une écriture de journal bloquée retient désormais aussi les opérations
 de sondes, pas seulement les publieurs. Déplacer le journal derrière un écrivain ordonné change le
-moment où une ligne est sur disque, ce qui relève de la porte 3 : pas fait ici.
+moment où une ligne est sur disque, ce qui relève de la porte 3 : pas fait ici. Ronde 29 (du
+correctif de la ronde 28) : `shutdown` attend aussi une suppression en vol (un remove qui avait
+rencontré un arrêt en cours pouvait dire `probe.removed` après le retour du shutdown) et
+`probe.remove` est refusé une fois le plan fermé, comme `create` et `start` ; le `finishStop`
+d'une feuille est différé pour qu'une panique en chemin ne laisse pas `stopping` coincé ; les tests
+prouvent par une poignée de main que l'opération en attente a atteint le point disputé avant de
+la juger, libèrent la lecture bloquante au nettoyage, et le test start/stop exige un événement de
+cycle de vie à chaque tour. **Limite de conception, consignée :** un échantillonneur doit
+retourner. L'arrêt attend la lecture en vol pour que `probe.stopped` soit le dernier mot du tuyau,
+et le shutdown attend l'arrêt ; un kind dont la source peut pendre (un RPC, WMI en S6) borne sa
+propre lecture. L'alternative, abandonner une lecture à l'annulation, bornerait l'arrêt mais
+fuirait une goroutine par lecture pendue ; non retenue.
 
 ## Tests (les coutures convenues pour le TDD)
 

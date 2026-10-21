@@ -113,8 +113,34 @@ func blockKind(t *testing.T) *blockSampler {
 		Name: "block", Version: 1, Fields: []string{"n"},
 		Doc:        "test only: blocks in sample until released",
 		newSampler: func() sampler { return b }})
-	t.Cleanup(func() { probeKinds = saved })
+	t.Cleanup(func() {
+		probeKinds = saved
+		select { // a failed test must not leave the read blocked: the plane's cleanup shutdown waits for it
+		case <-b.release:
+		default:
+			close(b.release)
+		}
+	})
 	return b
+}
+
+// reached polls `cond` under the tree lock until it holds: the handshake that proves a
+// goroutine got to the contested path before a test judges that it is waiting there.
+func reached(t *testing.T, p *Plane, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		p.probes.mu.Lock()
+		ok := cond()
+		p.probes.mu.Unlock()
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: never reached", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // stopInProgress starts a `block@1` leaf, lets its read block, and issues a real probe.stop
@@ -157,6 +183,7 @@ func TestARemoveWaitsForAStopInProgress(t *testing.T) {
 		_, err := probeOp(t, p, Request{Op: "probe.remove", Node: "hb"})
 		removed <- err
 	}()
+	reached(t, p, "the remove's claim", func() bool { return p.probes.nodes["hb"] != nil && p.probes.nodes["hb"].removing })
 	select {
 	case err := <-removed:
 		t.Fatalf("remove returned while the stop was in progress (err %v): it must wait for probe.stopped", err)
@@ -194,6 +221,7 @@ func TestShutdownWaitsForAStopInProgress(t *testing.T) {
 		p.probes.shutdown()
 		close(down)
 	}()
+	reached(t, p, "shutdown's close of admission", func() bool { return p.probes.closed })
 	select {
 	case <-down:
 		t.Fatal("shutdown returned while a stop was in progress: its probe.stopped would follow the shutdown")
@@ -210,6 +238,70 @@ func TestShutdownWaitsForAStopInProgress(t *testing.T) {
 	}
 	if kinds := lifecycleOf(t, cur, p.probes.hub.Head(), "probe.stopped"); len(kinds) != 1 {
 		t.Fatalf("ctl said %v, want one probe.stopped (the op's; shutdown had nothing running)", kinds)
+	}
+}
+
+func TestShutdownWaitsForARemoveInProgressAndRefusesNewOnes(t *testing.T) {
+	p := probePlane(t)
+	b := blockKind(t)
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("other", "mux@1", 0, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	cur := p.Subscribe("ctl", uint64p(0), "")
+	stopped := stopInProgress(t, p, b, "hb")
+	removed := make(chan error, 1)
+	go func() {
+		_, err := probeOp(t, p, Request{Op: "probe.remove", Node: "hb"})
+		removed <- err
+	}()
+	reached(t, p, "the remove's claim", func() bool { return p.probes.nodes["hb"] != nil && p.probes.nodes["hb"].removing })
+	var headAtReturn uint64
+	down := make(chan struct{})
+	go func() {
+		p.probes.shutdown()
+		headAtReturn = p.probes.hub.Head()
+		close(down)
+	}()
+	reached(t, p, "shutdown's close of admission", func() bool { return p.probes.closed })
+	select {
+	case <-down:
+		t.Fatal("shutdown returned while a remove was in progress: its probe.removed would follow the shutdown")
+	case err := <-removed:
+		t.Fatalf("remove returned while the stop was in progress (err %v)", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(b.release)
+	select {
+	case <-down:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not return once the read had ended")
+	}
+	for _, c := range []<-chan error{stopped, removed} {
+		if err := <-c; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The remove's probe.removed was out before shutdown returned.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var removedSeq uint64
+	for removedSeq == 0 {
+		envs, _, err := cur.Next(ctx, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, env := range envs {
+			if env.Ev.Kind == "probe.removed" {
+				removedSeq = env.Seq
+			}
+		}
+	}
+	if removedSeq > headAtReturn {
+		t.Fatalf("probe.removed at seq %d, after shutdown returned at head %d", removedSeq, headAtReturn)
+	}
+	// Once closed, a remove is refused like a create or a start: the tree stays silent.
+	if _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "other"}); err == nil || !strings.Contains(err.Error(), "shutting down") {
+		t.Fatalf("remove after shutdown: err %v, want a refusal naming the shutdown", err)
 	}
 }
 
@@ -266,11 +358,17 @@ func TestLifecycleEventsFollowTheStateChangesUnderConcurrentOps(t *testing.T) {
 		// After every round, ctl's last lifecycle word (up to the head read with the state)
 		// names the state the round left: an inversion in any round is caught, not only the last.
 		state := listNodes(t, p)[0].State
-		if h := p.probes.hub.Head(); h > head {
-			head = h
-			if kinds := lifecycleOf(t, cur, head, "probe.started", "probe.stopped"); len(kinds) > 0 && kinds[len(kinds)-1] != wantLast[state] {
-				t.Fatalf("round %d left the node %s but ctl's last lifecycle event was %s", i, state, kinds[len(kinds)-1])
-			}
+		h := p.probes.hub.Head()
+		if h <= head { // two starts and two stops always move the state at least once
+			t.Fatalf("round %d published nothing", i)
+		}
+		head = h
+		kinds := lifecycleOf(t, cur, head, "probe.started", "probe.stopped")
+		if len(kinds) == 0 {
+			t.Fatalf("round %d published no lifecycle event", i)
+		}
+		if kinds[len(kinds)-1] != wantLast[state] {
+			t.Fatalf("round %d left the node %s but ctl's last lifecycle event was %s", i, state, kinds[len(kinds)-1])
 		}
 	}
 	// Now remove and create under the same name, concurrently: ctl must never say

@@ -27,7 +27,9 @@ type probeKind struct {
 }
 
 // sampler is one node's source of records: called once per interval, on the node's own
-// goroutine, never concurrently with itself.
+// goroutine, never concurrently with itself. A sample must return: a stop waits for the read
+// in flight so that probe.stopped is the pipe's last word, and the plane's shutdown waits for
+// that stop. A kind whose source can hang (an RPC, WMI) bounds its own read.
 type sampler interface {
 	sample() (map[string]any, error)
 }
@@ -424,6 +426,10 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 		t.mu.Unlock()
 		return nil, badRequest("node %q does not exist", name)
 	}
+	if t.closed { // nothing of the tree is said after shutdown has returned
+		t.mu.Unlock()
+		return nil, badRequest("the plane is shutting down")
+	}
 	if n.removing {
 		t.mu.Unlock()
 		return nil, badRequest("node %q is being removed", name)
@@ -442,7 +448,9 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 		order = append(order, nm)
 	}
 	walk(name)
+	t.removals++ // shutdown waits for every removal in flight (see finishRemoval)
 	t.mu.Unlock()
+	defer t.finishRemoval()
 	for _, nm := range order {
 		why := reason
 		if nm != name {
@@ -481,6 +489,15 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 		t.mu.Unlock()
 	}
 	return map[string]any{"node": name, "removed": len(order)}, nil
+}
+
+// finishRemoval ends a removal once its last probe.removed is out: a shutdown waiting for the
+// tree to fall silent may go on.
+func (t *probeTree) finishRemoval() {
+	t.mu.Lock()
+	t.removals--
+	t.done.Broadcast()
+	t.mu.Unlock()
 }
 
 const (
@@ -643,10 +660,10 @@ func (t *probeTree) stop(name, reason string) (any, error) {
 	// the node is `stopping`: a start is refused and a remove waits (finishStop).
 	n.stopping = true
 	t.mu.Unlock()
+	defer t.finishStop(n) // after probe.stopped is out, whatever happens on the way
 	cancel()
 	<-done
 	t.event("probe.stopped", n, map[string]any{"reason": reason})
-	t.finishStop(n)
 	return reply, nil
 }
 
@@ -677,10 +694,11 @@ func (t *probeTree) shutdown() {
 		t.stop(name, "shutdown")
 	}
 	// A leaf another op was already stopping is not in the snapshot (its state is stopped,
-	// its probe.stopped not out yet): wait for it too, so nothing of the tree is said after
-	// shutdown has returned.
+	// its probe.stopped not out yet), and a removal in flight has its probe.removed to say:
+	// wait for both, so nothing of the tree is said after shutdown has returned (a new remove
+	// is refused once closed, like a create or a start).
 	t.mu.Lock()
-	for t.anyStopping() {
+	for t.anyStopping() || t.removals > 0 {
 		t.done.Wait()
 	}
 	t.mu.Unlock()
@@ -700,11 +718,12 @@ func (t *probeTree) anyStopping() bool {
 type probeTree struct {
 	hub   *Hub
 	mu    sync.Mutex
-	done  *sync.Cond // signalled when a stop in progress has said probe.stopped (see finishStop)
+	done  *sync.Cond // signalled when a stop or a removal in progress has said its last word
 	nodes map[string]*probeNode
 	order []string // creation order, for list
 
-	closed bool // the plane is shutting down: nothing is created or started any more
+	removals int  // removals in flight (claimed, their probe.removed not all out)
+	closed   bool // the plane is shutting down: nothing is created, started or removed any more
 }
 
 func newProbeTree(hub *Hub) *probeTree {

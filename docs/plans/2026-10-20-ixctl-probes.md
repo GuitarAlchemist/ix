@@ -151,7 +151,16 @@ registered for one test), and the start/stop test judges `ctl` after every round
 kept:** the `ctl` journal append already ran under the hub lock inside `Publish`; with lifecycle
 events published under the tree lock, a stalled journal write now also holds the probe ops, not
 only the publishers. Moving the journal behind an ordered writer changes when a line is on disk,
-which is Door 3 territory: not done here.
+which is Door 3 territory: not done here. Round 29 (of the round-28 fix): `shutdown` also waits
+for a removal in flight (a remove that met a stop in progress could say `probe.removed` after the
+shutdown had returned) and `probe.remove` is refused once the plane is closed, like `create` and
+`start`; a leaf's `finishStop` is deferred so a panic on the way cannot strand `stopping`; the
+tests prove with a handshake that the waiting op reached the contested path before judging it,
+release the blocking read in cleanup, and the start/stop test requires a lifecycle event every
+round. **Design limit, recorded:** a sampler must return. The stop waits for the read in flight
+so that `probe.stopped` is the pipe's last word, and shutdown waits for the stop; a kind whose
+source can hang (an RPC, WMI in S6) bounds its own read. The alternative, abandoning a read on
+cancel, would bound the stop but leak a goroutine per hung read; not taken.
 
 ## Tests (the seams agreed for TDD)
 
