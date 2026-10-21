@@ -182,7 +182,14 @@ corrigé en revérifiant après l'attente que le nœud est toujours celui de l'a
 test d'intégration ne voit l'ordre qu'après coup), et les réceptions restantes des tests sont
 bornées. La ligne `-race` de la CI (ubuntu) a aussi attrapé une lecture non verrouillée
 préexistante dans la réponse « noop » de `probe.stop`, révélée par le test start/stop concurrent :
-l'état est désormais copié sous le verrou.
+l'état est désormais copié sous le verrou. Ronde 31 (clôture) : une suppression réclame les
+nœuds eux-mêmes, pas leurs noms — une suppression suspendue entre son arrêt et son verrou, pendant
+qu'une suppression chevauchante oubliait le nœud et qu'un create posait un nouveau nœud sous le
+même nom, aurait arrêté et oublié le remplaçant ; `removeIf` parcourt désormais les pointeurs
+réclamés, arrête via `stopIf` (sans effet si le nom ne porte plus le nœud réclamé) et revérifie le
+pointeur avant et après son attente. L'audit des verrous de Codex pour cette ronde n'a trouvé
+aucun champ mutable lu hors du verrou de l'arbre. Corrigé par construction : aucune exécution ne
+peut tenir une suppression dans cette fenêtre de façon déterministe.
 
 ## Tests (les coutures convenues pour le TDD)
 

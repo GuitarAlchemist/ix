@@ -322,6 +322,9 @@ func TestShutdownWaitsForTheRemovalsInFlight(t *testing.T) {
 	p.probes.mu.Lock()
 	p.probes.removals++
 	p.probes.mu.Unlock()
+	var once sync.Once
+	finish := func() { once.Do(p.probes.finishRemoval) }
+	t.Cleanup(finish) // a failure before the release must not leave the plane's cleanup shutdown waiting
 	down := make(chan struct{})
 	go func() {
 		p.probes.shutdown()
@@ -333,7 +336,7 @@ func TestShutdownWaitsForTheRemovalsInFlight(t *testing.T) {
 		t.Fatal("shutdown returned with a removal in flight")
 	case <-time.After(150 * time.Millisecond):
 	}
-	p.probes.finishRemoval()
+	finish()
 	select {
 	case <-down:
 	case <-time.After(2 * time.Second):

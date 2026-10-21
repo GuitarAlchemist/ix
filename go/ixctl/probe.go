@@ -438,28 +438,31 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 		t.mu.Unlock()
 		return nil, nil
 	}
-	var order []string // post-order: a child before its parent
+	// The claim is on the nodes themselves, not their names: an overlapping removal (an
+	// ancestor's, a descendant's, a lease's) may forget one of them meanwhile and a create may
+	// put a new node under the same name; that one is nobody's to stop or forget here.
+	var claimed []*probeNode // post-order: a child before its parent
 	var walk func(string)
 	walk = func(nm string) {
 		t.nodes[nm].removing = true
 		for _, c := range t.nodes[nm].children {
 			walk(c)
 		}
-		order = append(order, nm)
+		claimed = append(claimed, t.nodes[nm])
 	}
 	walk(name)
 	t.removals++ // shutdown waits for every removal in flight (see finishRemoval)
 	t.mu.Unlock()
 	defer t.finishRemoval()
-	for _, nm := range order {
+	for _, n := range claimed {
+		nm := n.spec.Name
 		why := reason
 		if nm != name {
 			why = "parent-removed"
 		}
-		t.stop(nm, why)
+		t.stopIf(nm, why, n)
 		t.mu.Lock()
-		n := t.nodes[nm]
-		if n == nil { // removed meanwhile by another op
+		if t.nodes[nm] != n { // forgotten meanwhile by another op (a replacement is not ours)
 			t.mu.Unlock()
 			continue
 		}
@@ -468,7 +471,7 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 		for n.stopping {
 			t.done.Wait()
 		}
-		if t.nodes[nm] != n { // forgotten meanwhile by an overlapping removal (an ancestor's, or a descendant's) that waited for the same stop
+		if t.nodes[nm] != n { // forgotten meanwhile by an overlapping removal that waited for the same stop
 			t.mu.Unlock()
 			continue
 		}
@@ -492,7 +495,7 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 		t.event("probe.removed", n, map[string]any{"reason": why})
 		t.mu.Unlock()
 	}
-	return map[string]any{"node": name, "removed": len(order)}, nil
+	return map[string]any{"node": name, "removed": len(claimed)}, nil
 }
 
 // finishRemoval ends a removal once its last probe.removed is out: a shutdown waiting for the
@@ -636,9 +639,15 @@ func (t *probeTree) emit(n *probeNode, fields map[string]any, failed bool) {
 
 // stop ends a node's run with a reason (`requested` from the op); a stopped node is a noop.
 func (t *probeTree) stop(name, reason string) (any, error) {
+	return t.stopIf(name, reason, nil)
+}
+
+// stopIf is stop when the node under `name` is still `want` (a removal stops the node it
+// claimed, never a replacement created under the same name meanwhile); nil wants any.
+func (t *probeTree) stopIf(name, reason string, want *probeNode) (any, error) {
 	t.mu.Lock()
 	n := t.nodes[name]
-	if n == nil {
+	if n == nil || (want != nil && n != want) {
 		t.mu.Unlock()
 		return nil, badRequest("node %q does not exist", name)
 	}

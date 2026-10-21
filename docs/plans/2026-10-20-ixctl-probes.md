@@ -167,7 +167,13 @@ rechecking that the node is still the tree's after the wait; the shutdown-waits-
 claim gained a direct test holding the removals counter (the integration test only sees the order
 after the fact), and the remaining receives in the tests are bounded. CI's `-race` row (ubuntu)
 also caught a pre-existing unlocked read in `probe.stop`'s noop reply, exposed by the concurrent
-start/stop test: the state is now copied under the lock.
+start/stop test: the state is now copied under the lock. Round 31 (closing): a removal claims
+the nodes themselves, not their names — a removal paused between its stop and its lock, while an
+overlapping removal forgot the node and a create put a new node under the same name, would have
+stopped and forgotten the replacement; `removeIf` now walks the claimed pointers, stops through
+`stopIf` (noop unless the name still holds the claimed node) and rechecks the pointer before and
+after its wait. Codex's lock audit of that round found no mutable field read outside the tree
+lock. Fixed by construction: no run can hold a removal in that window deterministically.
 
 ## Tests (the seams agreed for TDD)
 
