@@ -312,7 +312,7 @@ décision ultérieure (D9, ix#414 ; porte 3 intacte).
 |---|---|---|
 | `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Sans `since` le point est la tête (« ici ») ; `since` doit être au plus la tête et `epoch`, s'il est donné, celui de ce démarrage. Un nom existant est déplacé ; une `note` donnée remplace la sienne (une note vide l'efface), pas de `note` la garde. |
 | `bookmark.get` | `bookmark` | `{name, epoch, seq, t, note}` |
-| `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live}], count, store, max_bookmarks, max_note_len, ring}` ; `live` dit que ce démarrage l'a posé. |
+| `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live, retained}], count, store, head, oldest, max_bookmarks, max_note_len, ring}` ; `live` dit que ce démarrage l'a posé ; `retained` dit que l'anneau tient encore tout ce qui suit son point (de ce démarrage, et `seq + 1 >= oldest`, le plus ancien seq tenu), donc qu'un rejeu depuis lui s'ouvre sans trou. Les deux sont lus au même instant ; l'anneau continue de tourner. |
 | `bookmark.remove` | `bookmark` | `{bookmark, removed: true}` |
 
 `subscribe` (`ixctl.v1`) et `GET /v1/events` prennent `bookmark` à la place de `since`/`epoch` ;

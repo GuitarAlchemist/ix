@@ -224,17 +224,23 @@ func (s *bookmarkStore) get(name string) (bookmark, error) {
 	return bookmark{}, badRequest("unknown bookmark %q", name)
 }
 
-// list reports every bookmark with whether this boot made it (a replay from one that is
-// not live starts with an epoch-changed gap), the store, and the bounds a client plans
-// against.
+// list reports every bookmark with whether this boot made it (`live`: a replay from one
+// that is not live starts with an epoch-changed gap) and whether the ring still holds
+// everything after its point (`retained`: of this boot, and seq + 1 at or after the oldest
+// seq held; otherwise a replay opens with since-too-old), beside the head, that oldest seq,
+// the store, and the bounds a client plans against. The two flags are read at one instant;
+// the ring keeps turning after the reply.
 func (s *bookmarkStore) list() any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	epoch := s.hub.Epoch()
+	head, oldest := s.hub.Span()
 	out := make([]map[string]any, 0, len(s.marks))
 	for _, bm := range s.marks {
+		live := bm.Epoch == epoch
 		out = append(out, map[string]any{
-			"name": bm.Name, "epoch": bm.Epoch, "seq": bm.Seq, "t": bm.T, "note": bm.Note, "live": bm.Epoch == epoch,
+			"name": bm.Name, "epoch": bm.Epoch, "seq": bm.Seq, "t": bm.T, "note": bm.Note,
+			"live": live, "retained": live && bm.Seq+1 >= oldest,
 		})
 	}
 	store := "disk"
@@ -242,7 +248,7 @@ func (s *bookmarkStore) list() any {
 		store = "memory"
 	}
 	return map[string]any{
-		"bookmarks": out, "count": len(out), "store": store,
+		"bookmarks": out, "count": len(out), "store": store, "head": head, "oldest": oldest,
 		"max_bookmarks": maxBookmarks, "max_note_len": maxNoteLen, "ring": ringSize,
 	}
 }

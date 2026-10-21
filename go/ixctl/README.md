@@ -297,7 +297,7 @@ what the ring still holds, never a silently partial replay; a bookmark of an ear
 |---|---|---|
 | `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Without `since` the point is the head ("here"); `since` must be at or below the head and `epoch`, when given, this boot's. An existing name is moved; a `note` given replaces its note (an empty one clears it), no `note` keeps it. |
 | `bookmark.get` | `bookmark` | `{name, epoch, seq, t, note}` |
-| `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live}], count, store, max_bookmarks, max_note_len, ring}`; `live` says this boot set it. |
+| `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live, retained}], count, store, head, oldest, max_bookmarks, max_note_len, ring}`; `live` says this boot set it; `retained` says the ring still holds everything after its point (of this boot, and `seq + 1 >= oldest`, the oldest seq held), so a replay from it opens with no gap. Both are read at one instant; the ring keeps turning. |
 | `bookmark.remove` | `bookmark` | `{bookmark, removed: true}` |
 
 `subscribe` (`ixctl.v1`) and `GET /v1/events` take `bookmark` in place of `since`/`epoch`; both

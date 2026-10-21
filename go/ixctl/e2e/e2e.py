@@ -973,12 +973,18 @@ def run():
     _, blist_a = call(sa, "GET", "/v1/bookmark")
     names_a = [m["name"] for m in (blist_a or {}).get("bookmarks", [])]
     names_b = [m["name"] for m in (blist_b or {}).get("bookmarks", [])]
+    # The list says, without a replay, which bookmarks the ring still holds: `before` and
+    # `after` are retained, `old` (seq 1 after the ring turned) is not, and the list's `oldest`
+    # is the gap's.
+    retained = {m["name"]: m.get("retained") for m in (blist_a or {}).get("bookmarks", [])}
     code_rm, removed_bm = call(sa, "POST", "/v1/bookmark/remove", {"bookmark": "old"})
     check("E16.bookmark_bounds_refusals_and_peers",
           (blist or {}).get("store") == "disk" and blist.get("max_bookmarks") == 64 and blist.get("ring") == 4096
           and [m["name"] for m in blist["bookmarks"]] == ["before", "after"] and all(m["live"] for m in blist["bookmarks"])
           and code_old == 200 and old_gaps and old_gaps[0]["reason"] == "since-too-old" and old_gaps[0]["oldest"] > 1
           and from_old and from_old[0]["seq"] >= old_gaps[0]["oldest"]
+          and retained.get("before") is True and retained.get("after") is True and retained.get("old") is False
+          and (blist_a or {}).get("oldest") == old_gaps[0]["oldest"] and blist_a.get("head", 0) >= blist_a["oldest"]
           and len(refused) == 2 and "bookmark or since" in refused[0].get("error", "") and "nope" in refused[1].get("error", "")
           and code_name == 400 and "name" in (bad_name or {}).get("error", "")
           and code_ahead == 400 and "head" in (ahead or {}).get("error", "")
@@ -987,7 +993,7 @@ def run():
           and code_rm == 200 and (removed_bm or {}).get("removed") is True,
           list=blist, old=(code_old, old_gaps[:1], len(from_old)), refused=refused,
           bad_name=(code_name, bad_name), ahead=(code_ahead, ahead), forwarded=(code_fwd, fwd_bm),
-          names=(names_a, names_b))
+          names=(names_a, names_b), retained=retained, span=((blist_a or {}).get("oldest"), (blist_a or {}).get("head")))
 
     # E8: plane B restarts under its name. Its lock and state file are free again, the new boot
     # draws another epoch and opens a second section of the same journal, A's peer link comes
@@ -1030,7 +1036,7 @@ def run():
     rgaps = SSE_GAPS[gaps0:]
     check("E16.bookmark_survives_the_restart",
           code_bl == 200 and onb is not None and onb["epoch"] == b0["epoch"] and onb["live"] is False
-          and onb["note"] == "set from a"
+          and onb["retained"] is False and onb["note"] == "set from a"
           and rgaps and rgaps[0]["reason"] == "epoch-changed" and rgaps[0]["epoch"] == b1["epoch"]
           and replayed and all(e["epoch"] == b1["epoch"] for e in replayed),
           bookmark=onb, gaps=rgaps[:2], replayed=len(replayed))

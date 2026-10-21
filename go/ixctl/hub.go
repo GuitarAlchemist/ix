@@ -198,6 +198,19 @@ func (h *Hub) Head() uint64 {
 	return h.head
 }
 
+// Span is the head and the oldest seq the ring still holds, read together: a replay
+// from since gives every seq in (since, head] only when since + 1 >= oldest; otherwise
+// it opens with a since-too-old gap. Cursor.Next computes the same oldest.
+func (h *Hub) Span() (head, oldest uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	oldest = 1
+	if h.head > ringSize {
+		oldest = h.head - ringSize + 1
+	}
+	return h.head, oldest
+}
+
 // Cursor reads the ring in seq order, replay and live alike, so a
 // subscription can never see a hole without being told.
 type Cursor struct {

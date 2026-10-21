@@ -85,6 +85,24 @@ beside `since`/`epoch` is refused).
 - **Forwardable like the probe ops**: `bookmark.*` with `peer` runs on the peer, in the peer's
   sequence, in the peer's store; a replay from it is done on that peer (subscribe is local).
 
+## Review follow-up (Gaia design review, 2026-10-21): `retained` and `oldest`
+
+Gaia's design review of `3208a1a` found the one place the list under-told: `live` says a
+bookmark is of this boot, not that its samples are still held, so a client could only learn that
+a persistent bookmark pointed past the ring by starting a replay and reading its first gap. On
+the operator's go, `bookmark.list` now says it without a replay: each bookmark carries `retained`,
+and the reply carries `head` and `oldest` (the oldest seq the ring still holds, the same number a
+`since-too-old` gap reports). The criterion is Gaia's review precision, verified against the hub:
+a replay from `since` starts at `since + 1`, so a bookmark is retained when it is of this boot and
+`seq + 1 >= oldest`; the bookmark at exactly `oldest - 1` is still whole, the one below it is not.
+Both flags are read at one instant under the hub's lock (`Hub.Span`); the ring keeps turning after
+the reply, so `retained: true` is a statement about then, not a reservation. Nothing notifies when
+the ring passes a bookmark; that stays with the second slice. Tests: the two bookmark tests
+(the list before the ring turns, `oldest` 1; after a restart, `retained: false` with `live: false`;
+after the ring turned, `old` at seq 1 not retained, `edge` at `oldest - 1` retained, `gone` at
+`oldest - 2` not, `oldest` and `head` equal to the hub's); gate E16 (`before`/`after` retained,
+`old` not, the list's `oldest` equal to the gap's; B's bookmark `retained: false` after the restart).
+
 ## Decisions
 
 ### Taken in this slice (D9, provisional)
@@ -117,7 +135,7 @@ new boot.
 Unit, `go/ixctl/bookmark_test.go`, through `Plane.Request`, the WebSocket and SSE: a bookmark
 set "here" reports the head; the replay of a leaf's pipe from it is seq for seq what a live
 reader saw; the replay of everything from it is the lifecycle and both pipes after the point, in
-order; the SSE form; the list with its bounds and `live`; every refusal naming its cause (unknown
+order; the SSE form; the list with its bounds, `live`, `retained`, `head` and `oldest`; every refusal naming its cause (unknown
 name, bookmark beside since, name rule, since past the head, foreign epoch, note length,
 `max_bookmarks`); a set on an existing name moves it; persistence across a restart of the same
 state dir with the `epoch-changed` gap; a bookmark older than the ring with `since-too-old`; the

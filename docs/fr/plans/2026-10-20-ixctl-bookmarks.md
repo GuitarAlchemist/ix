@@ -91,6 +91,26 @@ est refusé).
   la séquence du pair, dans le magasin du pair ; un rejeu depuis lui se fait chez ce pair
   (subscribe est local).
 
+## Suite de revue (revue de conception Gaia, 2026-10-21) : `retained` et `oldest`
+
+La revue de conception de Gaia sur `3208a1a` a trouvé le seul endroit où la liste en disait trop
+peu : `live` dit qu'un signet est de ce démarrage, pas que ses échantillons sont encore tenus, si
+bien qu'un client ne pouvait apprendre qu'un signet persistant pointait au-delà de l'anneau qu'en
+lançant un rejeu et en lisant son premier gap. Sur le feu vert de l'opérateur, `bookmark.list` le
+dit maintenant sans rejeu : chaque signet porte `retained`, et la réponse porte `head` et `oldest`
+(le plus ancien seq que l'anneau tient encore, le même nombre qu'un gap `since-too-old` rapporte).
+Le critère est la précision de revue de Gaia, vérifiée contre le hub : un rejeu depuis `since`
+commence à `since + 1`, donc un signet est retenu quand il est de ce démarrage et que
+`seq + 1 >= oldest` ; le signet exactement à `oldest - 1` est encore entier, celui du dessous ne
+l'est pas. Les deux indicateurs sont lus au même instant sous le verrou du hub (`Hub.Span`) ;
+l'anneau continue de tourner après la réponse, donc `retained: true` parle de cet instant, ce n'est
+pas une réservation. Rien ne prévient quand l'anneau dépasse un signet ; cela reste à la seconde
+tranche. Tests : les deux tests de signets (la liste avant que l'anneau tourne, `oldest` 1 ; après
+un redémarrage, `retained: false` avec `live: false` ; après que l'anneau a tourné, `old` au seq 1
+non retenu, `edge` à `oldest - 1` retenu, `gone` à `oldest - 2` non, `oldest` et `head` égaux à ceux
+du hub) ; barrière E16 (`before`/`after` retenus, `old` non, l'`oldest` de la liste égal à celui du
+gap ; le signet de B `retained: false` après le redémarrage).
+
 ## Décisions
 
 ### Prises dans cette tranche (D9, provisoire)
@@ -124,7 +144,7 @@ son rejeu commençait par `epoch-changed` nommant le nouveau démarrage.
 Unitaires, `go/ixctl/bookmark_test.go`, par `Plane.Request`, le WebSocket et SSE : un signet posé
 « ici » rapporte la tête ; le rejeu du tuyau d'une feuille depuis lui est, seq pour seq, ce qu'un
 lecteur en direct a vu ; le rejeu de tout depuis lui est le cycle de vie et les deux tuyaux après
-le point, dans l'ordre ; la forme SSE ; la liste avec ses bornes et `live` ; chaque refus nommant
+le point, dans l'ordre ; la forme SSE ; la liste avec ses bornes, `live`, `retained`, `head` et `oldest` ; chaque refus nommant
 sa cause (nom inconnu, signet à côté de since, règle des noms, since au-delà de la tête, epoch
 étranger, longueur de la note, `max_bookmarks`) ; poser un nom existant le déplace ; persistance
 à travers un redémarrage du même dossier d'état avec le gap `epoch-changed` ; un signet plus

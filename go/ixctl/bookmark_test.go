@@ -144,23 +144,30 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 	if len(gaps) != 0 || len(envs) != 2 || envs[0].Seq != seen[3] || envs[1].Seq != seen[4] {
 		t.Errorf("SSE reconnect with Last-Event-ID beside the bookmark: %d envelopes, gaps %+v", len(envs), gaps)
 	}
-	// The list: both, in creation order, with their point and whether this boot made them.
+	// The list: both, in creation order, with their point, whether this boot made them and
+	// whether the ring still holds everything after their point (here it has not turned:
+	// the oldest seq held is 1), beside the head and that oldest seq.
 	var list struct {
 		Bookmarks []struct {
-			Name  string `json:"name"`
-			Epoch string `json:"epoch"`
-			Seq   uint64 `json:"seq"`
-			Note  string `json:"note"`
-			Live  bool   `json:"live"`
+			Name     string `json:"name"`
+			Epoch    string `json:"epoch"`
+			Seq      uint64 `json:"seq"`
+			Note     string `json:"note"`
+			Live     bool   `json:"live"`
+			Retained bool   `json:"retained"`
 		} `json:"bookmarks"`
-		Count        int `json:"count"`
-		MaxBookmarks int `json:"max_bookmarks"`
-		Ring         int `json:"ring"`
+		Count        int    `json:"count"`
+		MaxBookmarks int    `json:"max_bookmarks"`
+		Ring         int    `json:"ring"`
+		Head         uint64 `json:"head"`
+		Oldest       uint64 `json:"oldest"`
 	}
 	json.Unmarshal(do(t, c, Request{Op: "bookmark.list"}), &list)
 	if list.Count != 2 || list.MaxBookmarks != maxBookmarks || list.Ring != ringSize ||
 		list.Bookmarks[0].Name != "before" || list.Bookmarks[0].Note != "before the tree" || !list.Bookmarks[0].Live ||
-		list.Bookmarks[1].Name != "after" || list.Bookmarks[1].Seq <= list.Bookmarks[0].Seq {
+		list.Bookmarks[1].Name != "after" || list.Bookmarks[1].Seq <= list.Bookmarks[0].Seq ||
+		!list.Bookmarks[0].Retained || !list.Bookmarks[1].Retained ||
+		list.Oldest != 1 || list.Head != in.plane.hub.Head() || list.Head < list.Bookmarks[1].Seq {
 		t.Errorf("bookmark.list %+v", list)
 	}
 	// Refusals name what they refuse.
@@ -227,7 +234,8 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 	publishN(second.plane, "svc/x", 2)
 	c = dial(t, second)
 	raw := do(t, c, Request{Op: "bookmark.list"})
-	if !strings.Contains(string(raw), `"name":"mark"`) || !strings.Contains(string(raw), `"epoch":"`+oldEpoch+`"`) || !strings.Contains(string(raw), `"live":false`) {
+	if !strings.Contains(string(raw), `"name":"mark"`) || !strings.Contains(string(raw), `"epoch":"`+oldEpoch+`"`) ||
+		!strings.Contains(string(raw), `"live":false`) || !strings.Contains(string(raw), `"retained":false`) {
 		t.Fatalf("after the restart: %s", raw)
 	}
 	_, frames, err := c.SubscribeBookmark(context.Background(), "svc/", "mark", 16)
@@ -257,6 +265,34 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 	}
 	if f = <-frames; f.Env == nil || f.Env.Seq != second.plane.hub.Head()-ringSize+1 {
 		t.Fatalf("after since-too-old: %+v", f)
+	}
+	// The list says it without a replay: a bookmark is retained when it is of this boot and
+	// the replay after its point (seq + 1 on) starts at or after the oldest seq held. The one
+	// at exactly oldest - 1 is still whole, the one below it is not. (A fresh connection
+	// again: the replay above fills its buffer and holds the reader back.)
+	c.Close()
+	c = dial(t, second)
+	oldest := second.plane.hub.Head() - ringSize + 1
+	do(t, c, Request{Op: "bookmark.set", Bookmark: "edge", Since: uint64p(oldest - 1)})
+	do(t, c, Request{Op: "bookmark.set", Bookmark: "gone", Since: uint64p(oldest - 2)})
+	var held struct {
+		Bookmarks []struct {
+			Name     string `json:"name"`
+			Seq      uint64 `json:"seq"`
+			Live     bool   `json:"live"`
+			Retained bool   `json:"retained"`
+		} `json:"bookmarks"`
+		Oldest uint64 `json:"oldest"`
+		Head   uint64 `json:"head"`
+	}
+	json.Unmarshal(do(t, c, Request{Op: "bookmark.list"}), &held)
+	retained := map[string]bool{}
+	for _, bm := range held.Bookmarks {
+		retained[bm.Name] = bm.Retained
+	}
+	if held.Oldest != oldest || held.Head != second.plane.hub.Head() || len(held.Bookmarks) != 4 ||
+		retained["mark"] || retained["old"] || !retained["edge"] || retained["gone"] {
+		t.Errorf("retained after the ring turned: %+v (oldest %d)", held, oldest)
 	}
 	// The file is rewritten on every change and holds nothing but bookmarks.
 	b, _ := os.ReadFile(filepath.Join(dir, "a.bookmarks.json"))
