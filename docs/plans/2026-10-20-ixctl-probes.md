@@ -142,7 +142,16 @@ Windows) and never after the node's `probe.stopped`; `probe.created`, `probe.sta
 changes they report; a leaf's `probe.stopped` waits for its loop outside the lock, and a remove
 that meets that stop in progress waits for it (`sync.Cond` on the tree lock) before it says
 `probe.removed`; a failed read reaches the pipe whatever the filter. Tests in
-`go/ixctl/probe_order_test.go`; the contract is at v0.1.1 with G6 and G7 closed.
+`go/ixctl/probe_order_test.go`; the contract is at v0.1.1 with G6 and G7 closed. Codex round 28
+(of that commit) added: `shutdown` waits for a stop another op had in progress (its snapshot
+lists running nodes only, so that leaf's `probe.stopped` could follow the shutdown's return and
+the journal's close) — fixed with the same condition variable; the stop-in-progress tests now
+drive a real `probe.stop` through a test kind whose read blocks until released (`block@1`,
+registered for one test), and the start/stop test judges `ctl` after every round. **Trade-off
+kept:** the `ctl` journal append already ran under the hub lock inside `Publish`; with lifecycle
+events published under the tree lock, a stalled journal write now also holds the probe ops, not
+only the publishers. Moving the journal behind an ordered writer changes when a line is on disk,
+which is Door 3 territory: not done here.
 
 ## Tests (the seams agreed for TDD)
 

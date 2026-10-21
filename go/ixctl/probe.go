@@ -676,6 +676,24 @@ func (t *probeTree) shutdown() {
 	for _, name := range running {
 		t.stop(name, "shutdown")
 	}
+	// A leaf another op was already stopping is not in the snapshot (its state is stopped,
+	// its probe.stopped not out yet): wait for it too, so nothing of the tree is said after
+	// shutdown has returned.
+	t.mu.Lock()
+	for t.anyStopping() {
+		t.done.Wait()
+	}
+	t.mu.Unlock()
+}
+
+// anyStopping says whether a leaf's stop is still in progress; under t.mu.
+func (t *probeTree) anyStopping() bool {
+	for _, n := range t.nodes {
+		if n.stopping {
+			return true
+		}
+	}
+	return false
 }
 
 // probeTree is the plane's tree of nodes: one per plane, every op under one lock.

@@ -55,8 +55,9 @@ mux's `probe.stopped` and `probe.removed` are published under that same lock, in
 changes they report: after any interleaving of ops, the last lifecycle event of a node names its state,
 and a `probe.removed` never follows the `probe.created` of a later node of the same name. A leaf's
 `probe.stopped` alone is published after its loop's last tick, outside the lock; until it is out the node
-refuses `probe.start` and a `probe.remove` of it waits, so `ctl` says `probe.stopped` then `probe.removed`
-(tests `go/ixctl/probe_order_test.go`; the mux-order case was first seen as a CI failure of
+refuses `probe.start` and a `probe.remove` of it waits, so `ctl` says `probe.stopped` then `probe.removed`;
+the plane's shutdown waits for such a stop too, so nothing of the tree is said after it (tests
+`go/ixctl/probe_order_test.go`; the mux-order case was first seen as a CI failure of
 `TestAMuxMultiplexesItsChildrenStampedWithTheirSource`, the start/stop case is Codex's reasoning on the
 previous code, reproduced by no run: the test stands as its guard).
 

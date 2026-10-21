@@ -153,7 +153,17 @@ concurrents (vu d'abord comme un échec CI du test du mux sous Windows) et jamai
 rapportent ; le `probe.stopped` d'une feuille attend sa boucle hors du verrou, et un remove qui
 rencontre cet arrêt en cours l'attend (`sync.Cond` sur le verrou de l'arbre) avant de dire
 `probe.removed` ; une lecture ratée atteint le tuyau quel que soit le filtre. Tests dans
-`go/ixctl/probe_order_test.go` ; le contrat est en v0.1.1, G6 et G7 fermées.
+`go/ixctl/probe_order_test.go` ; le contrat est en v0.1.1, G6 et G7 fermées. La ronde Codex 28
+(de ce commit) a ajouté : `shutdown` attend un arrêt qu'une autre opération avait en cours (son
+instantané ne liste que les nœuds en marche, donc le `probe.stopped` de cette feuille pouvait
+suivre le retour du shutdown et la fermeture du journal) — corrigé avec la même variable de
+condition ; les tests d'arrêt en cours pilotent désormais un vrai `probe.stop` à travers un kind
+de test dont la lecture bloque jusqu'à libération (`block@1`, enregistré le temps d'un test), et le
+test start/stop juge `ctl` après chaque tour. **Compromis gardé :** l'ajout au journal `ctl`
+s'exécutait déjà sous le verrou du hub dans `Publish` ; avec les événements de cycle de vie publiés
+sous le verrou de l'arbre, une écriture de journal bloquée retient désormais aussi les opérations
+de sondes, pas seulement les publieurs. Déplacer le journal derrière un écrivain ordonné change le
+moment où une ligne est sur disque, ce qui relève de la porte 3 : pas fait ici.
 
 ## Tests (les coutures convenues pour le TDD)
 
