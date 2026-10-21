@@ -25,6 +25,7 @@ go build -o ixctl .            # Go 1.27 ; dépendances : coder/websocket, x/sys
 go test ./...                  # la suite unitaire (faux services, sessions en mémoire)
 ./ixctl up spec.json [--addr 127.0.0.1:0] [--name NOM] [--state DOSSIER]
 ./ixctl bench spec.json        # distributions de latence : start, stop, restart, RTT status, fan-out
+./ixctl probes                 # les kinds de sonde de ce binaire et les limites du système (JSON, hors ligne)
 ./ixctl version
 ```
 
@@ -174,7 +175,11 @@ au plus.
 | `GET /v1/status[?peer=NOM]` | La réponse de statut (ci-dessus), ou celle de ce pair. |
 | `POST /v1/plan[?peer=]`, `POST /v1/apply[?peer=]` | Corps : un document d'état désiré. |
 | `POST /v1/stop` | Corps `{"service": NOM, "peer"?: NOM}`. |
-| `POST /v1/shutdown` | Arrête chaque arbre, puis les transports ; le fichier d'état est retiré. |
+| `POST /v1/shutdown` | Arrête chaque arbre et chaque sonde, puis les transports ; le fichier d'état est retiré. |
+| `GET /v1/probes[?peer=]` | Les kinds de sonde et les limites du système (`probe.kinds`, ci-dessous). |
+| `GET /v1/probe[?peer=]` | L'arbre des sondes (`probe.list`). |
+| `POST /v1/probe/create[?peer=]` | Corps : un nœud (`probe.create`). |
+| `POST /v1/probe/start`, `stop`, `touch`, `remove` | Corps `{"node": NOM, "peer"?: NOM}`. |
 | `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since`. Un lecteur qui tombe de l'anneau reçoit un événement `gap` et le flux se termine. |
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
@@ -184,8 +189,8 @@ Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclar
 ### `ixctl.v1` sur le WebSocket
 
 Les trames du client sont des requêtes : `{id, op, ...}` avec `op` parmi `status`, `ping`,
-`plan`, `apply`, `stop`, `subscribe`, `unsubscribe`, et les champs de l'op (`desired`, `service`,
-`peer`, `ch`, `since`, `epoch`, `sub`). Chaque requête reçoit une trame de réponse
+`plan`, `apply`, `stop`, `subscribe`, `unsubscribe`, les sept ops `probe.*` (ci-dessous), et les
+champs de l'op (`desired`, `service`, `peer`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`). Chaque requête reçoit une trame de réponse
 `{re: id, ok, data | error}`. Les abonnements sont posés en ligne (leur réponse précède leur
 premier événement) ; les autres ops courent de leur côté, pour qu'un stop lent ne retienne jamais
 la connexion.
@@ -207,7 +212,74 @@ Les événements arrivent en enveloppes :
 |---|---|
 | `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne est transmise comme cet événement (`t` en ms Unix sur l'horloge du service ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
+| `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). Pas encore en miroir chez les pairs (décision D4, ix#402). |
 | `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir. `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
+
+`ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`),
+`probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
+une `reason` (`requested`, `expired`, `removed`, `parent-removed`, `shutdown`).
+
+## Sondes
+
+Une sonde est un échantillonneur qui tourne **dans le processus du plan**, sur un minuteur, et
+publie ce qu'il lit sur son propre canal ; un arbre de sondes filtre et multiplexe ces
+échantillons vers une racine. Le plan porte ses **kinds** de sonde, versionnés et compilés dedans
+(`nom@version`), et connaît ses propres limites : `probe.kinds` liste les deux, chaque refus nomme
+la borne touchée, et `probe.list` montre l'usage. La conception, les décisions qu'elle suppose et
+celles encore ouvertes sont sur la page des sondes,
+[`docs/fr/plans/2026-10-20-ixctl-probes.md`](../../docs/fr/plans/2026-10-20-ixctl-probes.md), et
+le travail est suivi sous l'epic ix#397. La surface est provisoire, comme les trois portes.
+
+| Kind | Champs | Lit |
+|---|---|---|
+| `heartbeat@1` | `n` | Son propre compte de ticks, depuis 1. Le kind des tests et des démonstrations. |
+| `cpu@1` | `busy_pct`, `cores` | La part d'occupation du processeur de l'hôte sur le dernier intervalle (`GetSystemTimes` ; `/proc/stat`). Le premier intervalle n'émet rien. |
+| `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | La mémoire physique de l'hôte (`GlobalMemoryStatusEx` ; `/proc/meminfo`). |
+| `mux@1` | (ceux de ses enfants) | Pas d'échantillonneur : il porte ce que ses enfants lui passent. |
+
+Un **nœud** est une instance d'un kind dans l'arbre :
+
+```json
+{"name": "hb", "kind": "heartbeat@1", "every_ms": 20, "parent": "agg", "ttl_ms": 1500,
+ "filter": {"where": [{"field": "n", "op": ">", "value": 2}], "keep": ["n"], "every": 2}}
+```
+
+`every_ms` est l'intervalle d'échantillonnage (un `mux@1` n'en a pas). `parent` nomme un nœud
+`mux@1`, en marche ou arrêté ; un échantillon émis par un nœud va sur son propre tuyau
+`probe/<nom>` et, quand son parent est en marche, remonte au parent, qui applique son propre
+filtre et le publie sur `probe/<parent>` estampillé de `src` (le nom de l'enfant). La propagation
+est synchrone : rien n'est mis en file et rien n'est perdu en montant ; la seule perte est celle
+de l'anneau, et c'est un `gap` que le lecteur voit. Un `filter` s'applique avant qu'un
+échantillon soit émis, dans cet ordre : `where` (chaque terme doit tenir ; `op` parmi `==`, `!=`,
+`<`, `<=`, `>`, `>=` ; un champ absent ou un type qui ne correspond pas vaut faux), `every` (un
+échantillon sur N de ceux qui sont passés), `keep` (les champs gardés ; `node`/`kind`/`seq`/`src`
+toujours). Un échantillon est `{node, kind, seq, src?, ...champs}` ; une erreur de lecture devient
+`{node, kind, seq, error}` et compte dans les `errors` du nœud.
+
+`ttl_ms` est un **bail** : compté depuis `probe.start`, renouvelé par `probe.touch`, et quand il
+s'épuise le nœud est retiré avec tout son sous-arbre (`probe.removed`, raison `expired`). Un nœud
+sans `ttl_ms` n'a pas de bail et `probe.touch` le refuse. `probe.remove` emporte aussi le
+sous-arbre (les descendants sont arrêtés et retirés avec la raison `parent-removed`) ;
+`probe.stop` arrête un nœud et laisse ses enfants tourner (leurs échantillons restent sur leurs
+propres tuyaux). `POST /v1/shutdown` arrête d'abord chaque nœud en marche, raison `shutdown`.
+
+| Op | Champs | Réponse |
+|---|---|---|
+| `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
+| `probe.create` | `probe` (un nœud) | `{node, kind, state: "stopped", parent?}` |
+| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, children, parent?, filter?, expires_in_ms?}], count, max_nodes}` |
+| `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (sans effet sur un nœud en marche) |
+| `probe.stop` | `node` | `{node, state: "stopped"}` |
+| `probe.touch` | `node` | `{node, ttl_ms, expires_in_ms}` |
+| `probe.remove` | `node` | `{node, removed}` (nœuds retirés, sous-arbre compté) |
+
+Les limites que `probe.kinds` rapporte (et que `ixctl probes` imprime hors ligne) : `max_nodes`
+256 dans l'arbre d'un plan, `max_depth` 8 (une feuille sous au plus autant de mux),
+`min_every_ms` 10, `max_every_ms` 3 600 000, `max_ttl_ms` (ce qu'une durée contient), `ring` 4096
+(celui du hub, partagé par tous les canaux), `max_where` 16 termes, `max_keep` 32 champs. Une
+création au-delà de l'une d'elles est refusée avec son nom (`every_ms 5 is under min_every_ms
+10`). Chaque op `probe.*` peut être relayée à un pair (`peer`) ; le cycle de vie `probe.*` du pair
+revient en miroir sur `peer/<nom>/ctl`, ses tuyaux non (D4).
 
 ## Journal
 
@@ -220,10 +292,12 @@ programme devrait lire (porte 3).
 
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le
 vrai plan, le vrai client Rust via son exemple `ixql-ctl`, l'exemple `pod` d'ix-stream en deux
-instances fédérées, le vrai `ix pipeline run` comme job, et des exécutions tuées à leurs limites
-de temps mur, de mémoire, de temps processeur et de processus. 36 vérifications, E1..E14, une
-boucle de redémarrage et la mesure M1 (ce qu'une attente sur le flux gagnerait sur la sonde à
-25 ms).
+instances fédérées, le vrai `ix pipeline run` comme job, des exécutions tuées à leurs limites
+de temps mur, de mémoire, de temps processeur et de processus, et un arbre de sondes sous le plan
+(E15 : kinds et limites, filtre et mux, expiration du bail, cpu et mem de l'hôte).
+39 vérifications, E1..E15, une boucle de redémarrage et deux mesures : M1 (ce qu'une attente sur
+le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
+et ce qu'il coûte au plan).
 
 ```sh
 python go/ixctl/e2e/e2e.py --build            # construit ixctl, pod, ixql-ctl et ix, puis lance

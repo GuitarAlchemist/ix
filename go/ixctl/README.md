@@ -23,6 +23,7 @@ go build -o ixctl .            # Go 1.27; deps: coder/websocket, x/sys
 go test ./...                  # the unit suite (fake services, in-memory sessions)
 ./ixctl up spec.json [--addr 127.0.0.1:0] [--name NAME] [--state DIR]
 ./ixctl bench spec.json        # latency distributions: start, stop, restart, status RTT, fan-out
+./ixctl probes                 # the probe kinds this binary carries and the system's limits (JSON, offline)
 ./ixctl version
 ```
 
@@ -163,7 +164,11 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/status[?peer=NAME]` | The status reply (above), or that peer's. |
 | `POST /v1/plan[?peer=]`, `POST /v1/apply[?peer=]` | Body: a desired-state document. |
 | `POST /v1/stop` | Body `{"service": NAME, "peer"?: NAME}`. |
-| `POST /v1/shutdown` | Stops every tree, then the transports; the state file is removed. |
+| `POST /v1/shutdown` | Stops every tree and every probe, then the transports; the state file is removed. |
+| `GET /v1/probes[?peer=]` | The probe kinds and the system's limits (`probe.kinds`, below). |
+| `GET /v1/probe[?peer=]` | The probe tree (`probe.list`). |
+| `POST /v1/probe/create[?peer=]` | Body: a node (`probe.create`). |
+| `POST /v1/probe/start`, `stop`, `touch`, `remove` | Body `{"node": NAME, "peer"?: NAME}`. |
 | `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`. A reader that falls off the ring gets a `gap` event and the stream ends. |
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
@@ -173,8 +178,8 @@ Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (
 ### `ixctl.v1` over the WebSocket
 
 Client frames are requests: `{id, op, ...}` with `op` one of `status`, `ping`, `plan`, `apply`,
-`stop`, `subscribe`, `unsubscribe`, and the op's fields (`desired`, `service`, `peer`, `ch`,
-`since`, `epoch`, `sub`). Every request gets one reply frame `{re: id, ok, data | error}`.
+`stop`, `subscribe`, `unsubscribe`, the seven `probe.*` ops (below), and the op's fields
+(`desired`, `service`, `peer`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`). Every request gets one reply frame `{re: id, ok, data | error}`.
 Subscriptions are set up in line (their reply precedes their first event); other ops run on their
 own so a slow stop never holds the connection.
 
@@ -195,7 +200,72 @@ it. A subscriber with `since` replays from the ring (4096 envelopes per instance
 |---|---|
 | `ctl` | The plane's own events: `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<name>` | The service's output. A stdout line that is a JSON object with a string `kind` is forwarded as that event (`t` in Unix ms on the service's clock; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
+| `probe/<node>` | A probe node's pipe: `sample` events (below). Not mirrored to peers yet (decision D4, ix#402). |
 | `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored. `subscribe` is always local; ops carry `peer` to be forwarded. |
+
+`ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`),
+`probe.started` (`expires_in_ms` when leased), `probe.stopped` and `probe.removed` with a `reason`
+(`requested`, `expired`, `removed`, `parent-removed`, `shutdown`).
+
+## Probes
+
+A probe is a sampler that runs **inside the plane's process** on a timer and publishes what it
+reads on its own channel; a tree of probes filters and multiplexes those samples toward a root.
+The plane carries its probe **kinds**, versioned and compiled in (`name@version`), and knows its
+own limits: `probe.kinds` lists both, every refusal names the bound it hit, and `probe.list` shows
+the usage. The design, the decisions it assumes and the ones still open are on the probes page,
+[`docs/plans/2026-10-20-ixctl-probes.md`](../../docs/plans/2026-10-20-ixctl-probes.md), and the
+work is tracked under epic ix#397. The surface is provisional, like the three doors.
+
+| Kind | Fields | Reads |
+|---|---|---|
+| `heartbeat@1` | `n` | Its own tick count, from 1. The kind tests and demonstrations use. |
+| `cpu@1` | `busy_pct`, `cores` | The host's processor busy share over the last interval (`GetSystemTimes`; `/proc/stat`). The first interval emits nothing. |
+| `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | The host's physical memory (`GlobalMemoryStatusEx`; `/proc/meminfo`). |
+| `mux@1` | (its children's) | No sampler: it carries what its children pass it. |
+
+A **node** is one instance of a kind in the tree:
+
+```json
+{"name": "hb", "kind": "heartbeat@1", "every_ms": 20, "parent": "agg", "ttl_ms": 1500,
+ "filter": {"where": [{"field": "n", "op": ">", "value": 2}], "keep": ["n"], "every": 2}}
+```
+
+`every_ms` is the sampling interval (a `mux@1` has none). `parent` names a running or stopped
+`mux@1` node; a sample a node emits goes on its own pipe `probe/<name>` and, when its parent is
+running, up to the parent, which applies its own filter and publishes it on `probe/<parent>`
+stamped with `src` (the child's name). Propagation is synchronous: nothing is queued and nothing
+is dropped on the way up; the only loss is the ring's, and it is a `gap` the reader sees.
+A `filter` is applied before a sample is emitted, in this order: `where` (every term must hold;
+`op` is one of `==`, `!=`, `<`, `<=`, `>`, `>=`; a missing field or a type mismatch is false),
+`every` (one sample in N of those that passed), `keep` (the fields kept, `node`/`kind`/`seq`/`src`
+always). A sample is `{node, kind, seq, src?, ...fields}`; a read error becomes
+`{node, kind, seq, error}` and counts in the node's `errors`.
+
+`ttl_ms` is a **lease**: counted from `probe.start`, renewed by `probe.touch`, and when it runs
+out the node is removed with its whole subtree (`probe.removed`, reason `expired`). A node
+without `ttl_ms` has no lease and `probe.touch` refuses it. `probe.remove` takes the subtree too
+(descendants are stopped and removed with reason `parent-removed`); `probe.stop` stops one node
+and leaves its children running (their samples stay on their own pipes). `POST /v1/shutdown`
+stops every running node first, reason `shutdown`.
+
+| Op | Fields | Reply |
+|---|---|---|
+| `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
+| `probe.create` | `probe` (a node) | `{node, kind, state: "stopped", parent?}` |
+| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, children, parent?, filter?, expires_in_ms?}], count, max_nodes}` |
+| `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (a noop on a running node) |
+| `probe.stop` | `node` | `{node, state: "stopped"}` |
+| `probe.touch` | `node` | `{node, ttl_ms, expires_in_ms}` |
+| `probe.remove` | `node` | `{node, removed}` (nodes removed, the subtree counted) |
+
+The limits `probe.kinds` reports (and `ixctl probes` prints offline): `max_nodes` 256 in one
+plane's tree, `max_depth` 8 (a leaf under at most this many muxes), `min_every_ms` 10,
+`max_every_ms` 3 600 000, `max_ttl_ms` (what a duration holds), `ring` 4096 (the hub's, shared
+with every channel), `max_where` 16 terms, `max_keep` 32 fields. A create past one of them is
+refused with its name (`every_ms 5 is under min_every_ms 10`). Every `probe.*` op is forwardable
+to a peer (`peer`); the peer's `probe.*` lifecycle comes back mirrored on `peer/<name>/ctl`,
+its pipes do not (D4).
 
 ## Journal
 
@@ -207,9 +277,11 @@ every `ctl` event's envelope. It is an audit log, not a store a program should r
 
 `e2e/e2e.py` is the end-to-end gate CI runs on Windows and Linux: the real plane, the real Rust
 client through its `ixql-ctl` example, ix-stream's `pod` example as two federated instances, the
-real `ix pipeline run` as a job, and runs killed at their wall, memory, processor-time and
-process limits. 36 checks, E1..E14, a restart loop and the M1 measurement (what a wait on the
-stream would gain over the 25 ms poll).
+real `ix pipeline run` as a job, runs killed at their wall, memory, processor-time and
+process limits, and a probe tree under the plane (E15: kinds and limits, filter and mux, lease
+expiry, the host's cpu and mem). 39 checks, E1..E15, a restart loop and two measurements: M1
+(what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
+heartbeats at 10 ms delivers, and what it costs the plane).
 
 ```sh
 python go/ixctl/e2e/e2e.py --build            # build ixctl, pod, ixql-ctl and ix, then run

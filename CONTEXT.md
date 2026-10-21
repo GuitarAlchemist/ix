@@ -174,6 +174,15 @@ contracts (see `docs/contracts/`), not runtime coupling.
   sentence while it synthesizes the next. Distinct from **voicings** (`ix-voicings`, chord shapes
   on a fretboard) (ADR-0013).
 
+- **Probe** (`ixctl`) — a sampler that runs inside the control plane's process on a timer and
+  publishes what it reads on its own channel `probe/<node>`. Its **kind** (`heartbeat@1`, `cpu@1`,
+  `mem@1`, `mux@1`) is versioned and compiled into the binary; a **node** is one instance of a
+  kind in the plane's tree, with an interval, an optional filter and an optional lease. A
+  **mux** is a node with no sampler that carries its children's filtered samples, stamped with
+  their source. A **lease** (`ttl_ms`) is counted from start, renewed by `probe.touch`, and takes
+  the node's subtree out when it runs out. Distinct from the **prototype probes** (process per
+  probe, PR #390) and from a **pipeline stage**. _Avoid_: sensor, monitor, agent.
+
 ## Conventions
 
 See `CLAUDE.md` for the authoritative build/convention/discipline rules

@@ -15,7 +15,9 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+// version is what /health, `ixctl version` and `probe.kinds` report. A release build sets it
+// from the tag: `go build -ldflags "-X main.version=0.2.0"`.
+var version = "0.1.0"
 
 // server is the HTTP face of a plane: JSON ops, SSE and the WebSocket.
 // Every request passes the same checks first, whatever its route.
@@ -64,6 +66,41 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 		return Request{Op: "stop", Service: body.Service, Peer: peer}, err
 	}))
 	m.HandleFunc("POST /v1/shutdown", s.op(func(*http.Request) (Request, error) { return Request{Op: "shutdown"}, nil }))
+	// Probes: the kinds and limits, the tree, and one route per node op. `?peer=`
+	// beside a create, a `peer` member beside a node name.
+	m.HandleFunc("GET /v1/probes", s.op(func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		return Request{Op: "probe.kinds", Peer: peer}, err
+	}))
+	m.HandleFunc("GET /v1/probe", s.op(func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		return Request{Op: "probe.list", Peer: peer}, err
+	}))
+	m.HandleFunc("POST /v1/probe/create", s.op(func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		if err != nil {
+			return Request{}, err
+		}
+		var spec NodeSpec
+		if err := decodeBody(r, &spec); err != nil {
+			return Request{}, err
+		}
+		return Request{Op: "probe.create", Probe: &spec, Peer: peer}, nil
+	}))
+	for _, op := range []string{"start", "stop", "touch", "remove"} {
+		op := op
+		m.HandleFunc("POST /v1/probe/"+op, s.op(func(r *http.Request) (Request, error) {
+			var body struct {
+				Node string          `json:"node"`
+				Peer json.RawMessage `json:"peer"`
+			}
+			if err := decodeBody(r, &body); err != nil {
+				return Request{}, err
+			}
+			peer, err := peerField(body.Peer)
+			return Request{Op: "probe." + op, Node: body.Node, Peer: peer}, err
+		}))
+	}
 	m.HandleFunc("GET /v1/events", s.events)
 	m.HandleFunc("GET /v1/ws", s.ws)
 	s.mux = m

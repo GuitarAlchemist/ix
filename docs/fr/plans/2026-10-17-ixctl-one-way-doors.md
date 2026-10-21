@@ -740,4 +740,17 @@ provisoire (ses schémas `/0`), comme les trois portes ci-dessus. `exp/ixctl` et
 ne partagent aucun commit au-delà de `main` : `exp/ix-recover` doit donc être intégrée, ou
 rebasée, d'abord.
 
+---
+
+## Provisoire : la surface des sondes (2026-10-20)
+
+L'arbre des sondes (ops `probe.*`, tuyaux `probe/<nœud>`, événements `sample`, les `limits` de
+`probe.kinds`) repose sur la porte 1 et hérite de son statut : provisoire, derrière `ixctl.v1`,
+lu par rien hors de `go/ixctl`. Il n'ajoute aucun champ à la porte 2 (les sondes ne sont pas
+dans le document d'état désiré, hypothèse sous la décision D1, ix#399) et rien à la porte 3
+au-delà des événements `probe.*` que `ctl` journalise déjà comme les autres. Ses propres
+décisions et mesures sont sur [`2026-10-20-ixctl-probes.md`](2026-10-20-ixctl-probes.md) ; il
+devient à sens unique au même déclencheur que la porte 1, ou quand un programme hors du plan
+crée des nœuds ou lit un tuyau.
+
 Une fois signées, ces décisions ont leur place dans un ADR sous `docs/adr/`.

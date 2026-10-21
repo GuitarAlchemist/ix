@@ -675,4 +675,16 @@ recoverable run; ix.lock's `run_id` as the key.
 schemas), like the three doors above. `exp/ixctl` and `exp/ix-recover` share no commit beyond
 `main`, so `exp/ix-recover` has to land, or be rebased, first.
 
+---
+
+## Provisional: the probe surface (2026-10-20)
+
+The probe tree (`probe.*` ops, `probe/<node>` pipes, `sample` events, the `limits` of
+`probe.kinds`) rides on door 1 and inherits its status: provisional, behind `ixctl.v1`, read by
+nothing outside `go/ixctl`. It adds no field to door 2 (probes are not in the desired-state
+document, an assumption under decision D1, ix#399) and nothing to door 3 beyond the `probe.*`
+events that `ctl` already journals like any other. Its own decisions and measurements are on
+[`2026-10-20-ixctl-probes.md`](2026-10-20-ixctl-probes.md); it becomes one-way at the same
+trigger as door 1, or when a program outside the plane creates nodes or reads a pipe.
+
 Once signed, these decisions belong in an ADR under `docs/adr/`.

@@ -17,6 +17,7 @@ type Plane struct {
 	svcs    map[string]*service
 	order   []string
 	peers   map[string]*peerLink
+	probes  *probeTree
 	journal *journal
 	started time.Time
 
@@ -48,6 +49,7 @@ func NewPlane(spec *Spec, name, journalPath string) (*Plane, error) {
 		svcs: map[string]*service{}, peers: map[string]*peerLink{}, ended: map[uint64]bool{},
 		started: time.Now(), ctx: ctx, cancel: cancel, quit: make(chan struct{}),
 	}
+	p.probes = newProbeTree(p.hub)
 	if journalPath != "" {
 		j, err := openJournal(journalPath)
 		if err != nil {
@@ -130,6 +132,23 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 	case "shutdown":
 		p.RequestShutdown()
 		return map[string]any{"shutdown": true}, nil
+	case "probe.kinds":
+		return kindsReply(), nil
+	case "probe.create":
+		if req.Probe == nil {
+			return nil, badRequest("probe.create needs a node under `probe`")
+		}
+		return p.probes.create(req.Probe)
+	case "probe.list":
+		return p.probes.list(), nil
+	case "probe.start":
+		return p.probes.start(req.Node)
+	case "probe.stop":
+		return p.probes.stop(req.Node, "requested")
+	case "probe.touch":
+		return p.probes.touch(req.Node)
+	case "probe.remove":
+		return p.probes.remove(req.Node, "removed")
 	case "":
 		return nil, badRequest("missing op")
 	}
@@ -144,11 +163,12 @@ func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, err
 		return nil, badRequest("unknown peer %q", peer)
 	}
 	switch req.Op {
-	case "status", "ping", "plan", "apply", "stop":
+	case "status", "ping", "plan", "apply", "stop",
+		"probe.kinds", "probe.list", "probe.create", "probe.start", "probe.stop", "probe.touch", "probe.remove":
 	default:
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
-	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired})
+	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node})
 }
 
 type ServiceStatus struct {
@@ -490,6 +510,7 @@ func (p *Plane) Shutdown() {
 		p.applyMu.Lock()
 		p.RequestShutdown()
 		p.applyMu.Unlock()
+		p.probes.shutdown()
 		p.cancel()
 		p.wg.Wait()
 		p.journal.close()

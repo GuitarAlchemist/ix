@@ -71,6 +71,9 @@ type Request struct {
 	Service string   `json:"service,omitempty"`
 	Peer    string   `json:"peer,omitempty"`
 	Sub     int64    `json:"sub,omitempty"` // unsubscribe: the subscription to drop
+	// Probe ops: the node to create, or the name of the node the op is about.
+	Probe *NodeSpec `json:"probe,omitempty"`
+	Node  string    `json:"node,omitempty"`
 }
 
 // Broker is all a transport sees of an instance: publish, subscribe with a

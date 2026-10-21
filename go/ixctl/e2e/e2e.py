@@ -1,8 +1,9 @@
 """End-to-end gate for the ixctl control plane: the real Go plane (`go/ixctl`), the real Rust
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
 federated instances on loopback, plus the `ix` binary run as a job (E10) and runs killed at their
-wall, memory, processor-time and process limits (E11..E14). 36 checks, E1..E14, a restart loop
-and the M1 measurement.
+wall, memory, processor-time and process limits (E11..E14), and a probe tree under the plane
+(E15: kinds and limits, filter and mux, lease expiry, the host's cpu and mem). 39 checks,
+E1..E15, a restart loop and the M1 and M2 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -194,8 +195,13 @@ def peer(s, name):
     return next((x for x in s.get("peers", []) if x["name"] == name), None)
 
 
+SSE_GAPS = []  # every gap event a sse() reader got, in order: {ch, reason, from, ...}
+
+
 def sse(st, ch, seconds):
-    """The envelopes /v1/events gives for `ch` (prefix) from the start, read for `seconds`."""
+    """The envelopes /v1/events gives for `ch` (prefix) from the start, read for `seconds`.
+    Gap events (a ring that no longer holds seq 1, a reader that fell behind) are not
+    envelopes: they go to SSE_GAPS, with the prefix asked, and the envelopes come back alone."""
     host, port = st["addr"].rsplit(":", 1)
     sock = socket.create_connection((host, int(port)), timeout=seconds)
     req = (
@@ -221,10 +227,46 @@ def sse(st, ch, seconds):
     for line in body.splitlines():
         if line.startswith("data: "):
             try:
-                envs.append(json.loads(line[6:]))
+                rec = json.loads(line[6:])
             except ValueError:
-                pass
+                continue
+            if "ch" in rec:
+                envs.append(rec)
+            else:
+                SSE_GAPS.append({"ch": ch, **rec})
     return head.split("\r\n")[0], envs
+
+
+def sse_async(st, ch, seconds):
+    """sse() on a thread: the reader is on the pipe before what it must see is published.
+    Returns the thread and a dict whose `r` is sse()'s result once the thread is joined."""
+    out = {}
+
+    def go():
+        out["r"] = sse(st, ch, seconds)
+
+    th = threading.Thread(target=go, daemon=True)
+    th.start()
+    return th, out
+
+
+def proc_cpu_ms(pid):
+    """Processor time a process has used so far, user plus kernel, in ms; None when unreadable."""
+    try:
+        if os.name == "nt":
+            k32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_ulonglong)] * 4
+            h = k32.OpenProcess(0x1000, 0, pid)
+            if not h:
+                return None
+            c, e, k, u = (ctypes.c_ulonglong() for _ in range(4))
+            ok = k32.GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u))
+            k32.CloseHandle(h)
+            return (k.value + u.value) / 10000 if ok else None
+        stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
+        f = stat[stat.rindex(")") + 2:].split()
+        return (int(f[11]) + int(f[12])) * 1000 / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
 
 
 # --- running things ---------------------------------------------------------------------------
@@ -761,6 +803,100 @@ def run():
     check("E3.forwarded_stop_from_rust",
           code == 0 and not alive(b_pod["pid"]) and svc(status(sb), "pod-a")["state"] == "stopped",
           code=code, ms=round(ms, 1), reply=(out3 or {}).get("stopped"), stderr=err[:200])
+
+    # E15 and M2 run here, after the E3 reads of the ring from seq 1: M2 publishes thousands of
+    # envelopes, after which the ring no longer holds the boot's first events.
+    # E15: probes. The plane carries its probe kinds and says its limits; a refusal names the
+    # bound it hit; a tree (a mux parent, a heartbeat child with a filter) puts the child's
+    # filtered samples on the parent's pipe stamped with their source; the real cpu and mem kinds
+    # read the host within range; a lease nobody touches expires and takes its node out of the
+    # tree, said on ctl.
+    code_k, kinds = call(sa, "GET", "/v1/probes")
+    kind_names = sorted(k["kind"] for k in (kinds or {}).get("kinds", []))
+    limits = (kinds or {}).get("limits") or {}
+    code_bad, bad = call(sa, "POST", "/v1/probe/create", {"name": "hb", "kind": "heartbeat@1", "every_ms": 5})
+    th, agg_env = sse_async(sa, "probe/agg", 2.5)
+    time.sleep(0.2)
+    created = [call(sa, "POST", "/v1/probe/create", n)[0] for n in (
+        {"name": "agg", "kind": "mux@1"},
+        {"name": "hb", "kind": "heartbeat@1", "every_ms": 20, "parent": "agg", "ttl_ms": 1500,
+         "filter": {"where": [{"field": "n", "op": ">", "value": 2}], "keep": ["n"], "every": 2}},
+        {"name": "cpu", "kind": "cpu@1", "every_ms": 100},
+        {"name": "mem", "kind": "mem@1", "every_ms": 100})]
+    started = [call(sa, "POST", "/v1/probe/start", {"node": n})[0] for n in ("hb", "agg", "cpu", "mem")]
+    _, mid = call(sa, "GET", "/v1/probe")
+    mid_nodes = {n["name"]: n for n in (mid or {}).get("nodes", [])}
+    th.join()
+    _, envs = agg_env["r"]
+    agg = [e["ev"]["data"] for e in envs if e["ch"] == "probe/agg" and e["ev"]["kind"] == "sample"]
+    ns = [s.get("n") for s in agg]
+    check("E15.probe_tree_filters_and_multiplexes",
+          code_k == 200 and {"heartbeat@1", "cpu@1", "mem@1", "mux@1"} <= set(kind_names)
+          and limits.get("max_nodes") == 256 and limits.get("min_every_ms") == 10
+          and code_bad == 400 and "min_every_ms" in (bad or {}).get("error", "")
+          and created == [200] * 4 and started == [200] * 4
+          and mid_nodes["hb"]["state"] == "running" and mid_nodes["hb"]["parent"] == "agg"
+          and (mid_nodes["hb"].get("expires_in_ms") or 0) > 0
+          and len(ns) >= 10 and all(isinstance(n, (int, float)) and n > 2 and n % 2 == 0 for n in ns)
+          and all(s.get("src") == "hb" and s.get("node") == "agg" and "kind" in s for s in agg),
+          kinds=kind_names, limits=limits, refusal=(code_bad, (bad or {}).get("error")),
+          agg_samples=len(ns), first_n=ns[:5], mid=mid_nodes.get("hb"))
+    _, after = call(sa, "GET", "/v1/probe")
+    after_nodes = {n["name"]: n for n in (after or {}).get("nodes", [])}
+    _, ctl = sse(sa, "ctl", 0.5)
+    lifecycle = [(e["ev"]["kind"], e["ev"]["data"].get("node"), e["ev"]["data"].get("reason"))
+                 for e in ctl if e["ch"] == "ctl" and e["ev"]["kind"].startswith("probe.")]
+    _, cpu_env = sse(sa, "probe/cpu", 0.5)
+    _, mem_env = sse(sa, "probe/mem", 0.5)
+    cpu_s = [e["ev"]["data"] for e in cpu_env if e["ev"]["kind"] == "sample"]
+    mem_s = [e["ev"]["data"] for e in mem_env if e["ev"]["kind"] == "sample"]
+    check("E15.lease_expires_and_host_kinds_read_within_range",
+          "hb" not in after_nodes and after_nodes["agg"]["state"] == "running"
+          and (after or {}).get("count") == 3
+          and ("probe.removed", "hb", "expired") in lifecycle and ("probe.started", "hb", None) in lifecycle
+          and len(cpu_s) >= 3 and all(0 <= s["busy_pct"] <= 100 and s["cores"] >= 1 for s in cpu_s)
+          and len(mem_s) >= 3 and all(s["total_bytes"] > s["avail_bytes"] > 0 and 0 < s["used_pct"] < 100
+                                      for s in mem_s),
+          count=(after or {}).get("count"), lifecycle=lifecycle[-8:],
+          cpu=cpu_s[-1] if cpu_s else None, mem=mem_s[-1] if mem_s else None)
+
+    # M2: what one mux costs. 16 heartbeat nodes at the shortest interval (10 ms) under one
+    # mux, read on the mux's pipe for 2 s: the samples per second that reach a reader (the
+    # ceiling is 1600), and the plane's processor time over the window. The tree is removed
+    # afterwards, the mux's removal taking its children.
+    n_hb, window = 16, 2.0
+    call(sa, "POST", "/v1/probe/create", {"name": "agg2", "kind": "mux@1"})
+    for i in range(n_hb):
+        call(sa, "POST", "/v1/probe/create", {"name": f"m2-{i}", "kind": "heartbeat@1", "every_ms": 10, "parent": "agg2"})
+    th, m2_env = sse_async(sa, "probe/agg2", window + 0.5)
+    gaps0 = len(SSE_GAPS)
+    time.sleep(0.2)
+    cpu0 = proc_cpu_ms(pa.pid)
+    t0 = time.perf_counter()
+    for i in range(n_hb):
+        call(sa, "POST", "/v1/probe/start", {"node": f"m2-{i}"})
+    call(sa, "POST", "/v1/probe/start", {"node": "agg2"})
+    th.join()
+    elapsed = time.perf_counter() - t0
+    cpu1 = proc_cpu_ms(pa.pid)
+    _, envs = m2_env["r"]
+    m2 = [e for e in envs if e["ch"] == "probe/agg2" and e["ev"]["kind"] == "sample"]
+    # A reader that fell behind the ring would get an `overflow` gap; `since-too-old` at the
+    # start is only the ring no longer holding seq 1 after the earlier checks.
+    gaps = [g for g in SSE_GAPS[gaps0:] if g["ch"] == "probe/agg2" and g["reason"] == "overflow"]
+    srcs = {e["ev"]["data"].get("src") for e in m2}
+    per_s = round(len(m2) / elapsed, 1)
+    _, removed = call(sa, "POST", "/v1/probe/remove", {"node": "agg2"})
+    for n in ("agg", "cpu", "mem"):
+        call(sa, "POST", "/v1/probe/remove", {"node": n})
+    measure("m2_mux_16x10ms", {"samples_per_s": per_s, "ceiling_per_s": n_hb * 100, "sources": len(srcs),
+                               "plane_cpu_ms": None if None in (cpu0, cpu1) else round(cpu1 - cpu0, 1),
+                               "window_s": round(elapsed, 2), "gaps": len(gaps)})
+    check("M2.one_mux_carries_its_children",
+          len(srcs) == n_hb and per_s > n_hb * 100 * 0.5 and not gaps
+          and (removed or {}).get("removed") == n_hb + 1 and (call(sa, "GET", "/v1/probe")[1] or {}).get("count") == 0,
+          samples_per_s=per_s, ceiling_per_s=n_hb * 100, sources=len(srcs), gaps=len(gaps),
+          plane_cpu_ms=results["measures"]["m2_mux_16x10ms"]["plane_cpu_ms"], removed=removed)
 
     # E8: plane B restarts under its name. Its lock and state file are free again, the new boot
     # draws another epoch and opens a second section of the same journal, A's peer link comes

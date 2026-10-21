@@ -26,6 +26,7 @@ var initTime = time.Now()
 const usage = `usage:
   ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR]
   ixctl bench <spec.json>
+  ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
   ixctl version`
 
 func main() { os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -43,6 +44,10 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		err = cmdBench(args[1:], stdout)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "ixctl", version)
+	case "probes":
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		err = enc.Encode(kindsReply())
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 	default:
