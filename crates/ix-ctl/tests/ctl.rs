@@ -281,8 +281,12 @@ impl Plane {
                         let mut entry = json!({
                             "name": name, "kind": n.spec["kind"], "state": n.state,
                             "every_ms": n.spec.get("every_ms").cloned().unwrap_or(json!(0)),
-                            "ttl_ms": ttl.clone(), "seq": 0, "errors": 0, "children": children,
+                            "ttl_ms": ttl.clone(), "seq": 0, "errors": 0, "bytes": 0, "children": children,
+                            "rate_per_s": rate(subtree_rate(&self.probes, name)),
                         });
+                        if n.spec["kind"] == "mux@1" {
+                            entry["max_rate_per_s"] = json!(1000);
+                        }
                         if n.state == "running" && ttl != 0 {
                             entry["expires_in_ms"] = ttl;
                         }
@@ -296,7 +300,9 @@ impl Plane {
                     .collect();
                 (
                     200,
-                    json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256}),
+                    json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256,
+                           "rate_per_s": rate(tree_rate(&self.probes)),
+                           "max_rate_per_s": 1000, "tree_rate_per_s": 2500}),
                 )
             }
             ("POST", "/v1/probe/create") => match self.probe_create(&doc) {
@@ -424,6 +430,50 @@ impl Plane {
     }
 }
 
+/// The declared rate the real plane sums at `create` (D10, ix#416): 1000 / `every_ms` per leaf,
+/// the filter's `every` dividing, a mux carrying its children's.
+fn subtree_rate(probes: &BTreeMap<String, Node>, name: &str) -> f64 {
+    let n = &probes[name];
+    let own = if n.spec["kind"] == "mux@1" {
+        0.0
+    } else {
+        let every = n.spec["every_ms"].as_f64().unwrap_or(0.0);
+        let div = n.spec["filter"]["every"]
+            .as_f64()
+            .filter(|e| *e > 1.0)
+            .unwrap_or(1.0);
+        if every > 0.0 {
+            1000.0 / every / div
+        } else {
+            0.0
+        }
+    };
+    own + probes
+        .iter()
+        .filter(|(_, c)| c.spec["parent"] == name)
+        .map(|(c, _)| subtree_rate(probes, c))
+        .sum::<f64>()
+}
+
+fn tree_rate(probes: &BTreeMap<String, Node>) -> f64 {
+    probes
+        .iter()
+        .filter(|(_, n)| n.spec.get("parent").is_none())
+        .map(|(k, _)| subtree_rate(probes, k))
+        .sum()
+}
+
+/// A rate as the wire writes it: rounded to the thousandth, a whole number as an integer (Go's
+/// encoding of a float).
+fn rate(r: f64) -> Value {
+    let r = (r * 1000.0).round() / 1000.0;
+    if r.fract() == 0.0 {
+        json!(r as u64)
+    } else {
+        json!(r)
+    }
+}
+
 /// What `probe.kinds` answers on the real plane: the compiled kinds sorted by name, the limits
 /// by the names the contract gives them, and the producer's revision.
 fn kinds_reply() -> Value {
@@ -437,7 +487,8 @@ fn kinds_reply() -> Value {
             {"kind": "mux@1", "version": 1, "fields": [], "doc": "carries what its children pass it"},
         ],
         "limits": {"max_nodes": 256, "max_depth": 8, "min_every_ms": 10, "max_every_ms": 3_600_000,
-                   "max_ttl_ms": 9_223_372_036_854u64, "ring": 4096, "max_where": 16, "max_keep": 32},
+                   "max_ttl_ms": 9_223_372_036_854u64, "ring": 4096, "max_where": 16, "max_keep": 32,
+                   "max_rate_per_s": 1000, "tree_rate_per_s": 2500},
         "version": "fake-1",
     })
 }
@@ -863,6 +914,8 @@ fn probe_kinds_lists_the_kinds_and_the_limits() {
         .collect();
     assert_eq!(["cpu@1", "heartbeat@1", "mem@1", "mux@1"], names[..]);
     assert_eq!(json!(256), kinds["limits"]["max_nodes"]);
+    assert_eq!(json!(1000), kinds["limits"]["max_rate_per_s"]);
+    assert_eq!(json!(2500), kinds["limits"]["tree_rate_per_s"]);
 
     // The client method is the same call; a peer rides beside it and this plane has none.
     assert_eq!(kinds_reply(), ctl.probe_kinds(None).unwrap());
@@ -1050,8 +1103,18 @@ fn probe_list_shows_the_tree_and_its_usage() {
     let nodes = tree["nodes"].as_array().unwrap();
     assert_eq!(
         json!({"name": "agg", "kind": "mux@1", "state": "running", "every_ms": 0, "ttl_ms": 0, "seq": 0, "errors": 0,
-               "children": 1}),
-        nodes[0]
+               "children": 1, "bytes": 0, "rate_per_s": 10, "max_rate_per_s": 1000}),
+        nodes[0],
+        "a mux says its subtree's declared rate and the budget it is held to (D10)"
+    );
+    assert_eq!(json!(10), tree["rate_per_s"]);
+    assert_eq!(json!(1000), tree["max_rate_per_s"]);
+    assert_eq!(json!(2500), tree["tree_rate_per_s"]);
+    assert_eq!(json!(10), nodes[1]["rate_per_s"]);
+    assert_eq!(json!(0), nodes[1]["bytes"]);
+    assert!(
+        nodes[1].get("max_rate_per_s").is_none(),
+        "a leaf carries no budget"
     );
     assert_eq!(json!("stopped"), nodes[1]["state"]);
     assert_eq!(json!("agg"), nodes[1]["parent"]);

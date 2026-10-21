@@ -22,7 +22,7 @@ Nothing outside `go/ixctl` and `crates/ix-ctl` should depend on them until a doo
 cd go/ixctl
 go build -o ixctl .            # Go 1.27; deps: coder/websocket, x/sys
 go test ./...                  # the unit suite (fake services, in-memory sessions)
-./ixctl up spec.json [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory]
+./ixctl up spec.json [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N]
 ./ixctl bench spec.json        # latency distributions: start, stop, restart, status RTT, fan-out
 ./ixctl probes                 # the probe kinds this binary carries and the system's limits (JSON, offline)
 ./ixctl version
@@ -265,7 +265,7 @@ closes admission (no create or start from then on) and stops every running node,
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
 | `probe.create` | `probe` (a node) | `{node, kind, state: "stopped", depth}` (`depth`: the muxes above it) |
-| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, children, parent?, filter?, expires_in_ms?}], count, max_nodes}` |
+| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (a noop on a running node) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
 | `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (the time left, on a running node) |
@@ -282,6 +282,21 @@ its pipes do not (D4). From IXQL, each op is one capability named after it
 with `ix.ctl.events(channel: "probe/<node>")`; there is no wait on a sample (D7, ix#405).
 [`crates/ix-ctl/examples/probe.ixql`](../../crates/ix-ctl/examples/probe.ixql) is the program:
 a CPU probe under a mux, ten records, the tree removed.
+
+Since D10 (ix#416) the limits also carry the plane's **budget**: `max_rate_per_s` 1 000, what one
+subtree (a mux and its descendants, or a root leaf alone) may declare to emit in records per
+second, and `tree_rate_per_s` 2 500 for the whole tree; `ixctl up --probe-rate N
+--probe-tree-rate N` sets them (the defaults are about a quarter of a core, extrapolating M2).
+The declared rate is the worst case, summed at `create` whatever the nodes' state: 1000 /
+`every_ms` per leaf, the filter's `every` dividing, `where` not counted, error records counted.
+A mux's `max_rate_per_s` narrows the budget its subtree is held to and never widens its parent's
+or the plane's; it is immutable (remove and recreate); a leaf carries none. A create that would
+cross a bound is refused in advance with the subtree's name and the bound (`subtree "agg" would
+declare 1100 records/s with "cpu-10"; its max_rate_per_s is 1000`), like `max_nodes`: nothing is
+slowed or stopped for budget, and no event is published. `probe.list` says the usage: each node's
+`rate_per_s`, each mux's `max_rate_per_s`, the tree's `rate_per_s` against `tree_rate_per_s`,
+and `bytes`, the encoded records each node emitted, measured and not bounded. CPU and RSS are the
+process's and are not attributed to probes: one process cannot separate them honestly.
 
 ## Bookmarks and replay
 
@@ -337,7 +352,9 @@ process limits, a probe tree under the plane (E15: kinds and limits, filter and 
 expiry, the host's cpu and mem) and bookmarks (E16: a replay, seq for seq, of what a probe tree's
 pipes and the `ctl` lifecycle carried after a point the operator named; bounds, refusals, a
 peer's bookmark; survival of a restart) and the IXQL probe surface (E17: `probe.ixql` through
-the Rust client, a CPU probe under a mux, ten records, the tree removed). 43 checks, E1..E17, a
+the Rust client, a CPU probe under a mux, ten records, the tree removed) and probe budgets (E18:
+the plane's budget in `limits`, a leaf past its mux's `max_rate_per_s` refused naming both, a leaf
+carries no budget, a mux cannot widen, rates and bytes on the list). 44 checks, E1..E18, a
 restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).

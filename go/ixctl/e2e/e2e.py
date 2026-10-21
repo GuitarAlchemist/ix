@@ -6,7 +6,10 @@ wall, memory, processor-time and process limits (E11..E14), and a probe tree und
 (E16: a replay, seq for seq, of what a probe tree's pipes and the ctl lifecycle carried after
 a point the operator named; bounds, refusals, a peer's bookmark; survival of a restart) and the
 IXQL probe surface (E17: `probe.ixql` through the Rust client, a CPU probe under a mux, ten
-records, the tree removed). 43 checks, E1..E17, a restart loop and the M1 and M2 measurements.
+records, the tree removed) and probe budgets (E18: `limits` say the plane's budget, a leaf
+past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
+widen, the list says rates and bytes). 44 checks, E1..E18, a restart loop and the M1 and M2
+measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -312,12 +315,12 @@ def reap():
                     print(f"reap: {f.name}: {e}", file=sys.stderr)
 
 
-def up(name, spec):
+def up(name, spec, *extra):
     out = open(RUNS / f"plane-{name}.stdout", "wb", buffering=0)
     err = open(RUNS / f"plane-{name}.stderr", "wb", buffering=0)
     t0 = time.perf_counter()
     p = subprocess.Popen(
-        [str(IXCTL), "up", str(spec), "--name", name, "--state", str(STATE)],
+        [str(IXCTL), "up", str(spec), "--name", name, "--state", str(STATE), *extra],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, cwd=str(WORK))
     LIVE.append(p)
     line = p.stdout.readline()
@@ -445,7 +448,9 @@ def run():
     ], [{"name": "b", "state_file": str(STATE / "b.json")}])
 
     pb, ready_b, sb, ms_b = up("b", spec_b)
-    pa, ready_a, sa, ms_a = up("a", spec_a)
+    # Plane a carries the operator's probe budget (D10): M2 declares exactly 1 600 records/s under
+    # one mux, the compiled default being 1 000; E18 reads these values back from `limits`.
+    pa, ready_a, sa, ms_a = up("a", spec_a, "--probe-rate", "1600", "--probe-tree-rate", "3200")
     tokens = [sa["token"], sb["token"]]
     measure("ready_ms", {"a": {"parent": round(ms_a, 1), "internal": ready_a.get("ms_to_ready")},
                          "b": {"parent": round(ms_b, 1), "internal": ready_b.get("ms_to_ready")}})
@@ -880,7 +885,8 @@ def run():
 
     # M2: what one mux costs. 16 heartbeat nodes at the shortest interval (10 ms) under one
     # mux, read on the mux's pipe for 2 s: the samples per second that reach a reader (the
-    # ceiling is 1600), and the plane's processor time over the window. The tree is removed
+    # ceiling is 1600, the subtree budget plane a was started with), and the plane's processor
+    # time over the window. The tree is removed
     # afterwards, the mux's removal taking its children.
     n_hb, window = 16, 2.0
     call(sa, "POST", "/v1/probe/create", {"name": "agg2", "kind": "mux@1"})
@@ -1089,6 +1095,43 @@ def run():
           code=code, ms=round(ms, 1), records=len(recs), seqs=seqs, srcs=sorted(s for s in srcs if s),
           ended=samples.get("ended"), gap=samples.get("gap"), gone=(out or {}).get("gone"),
           tree_status=tree_code, left_in_tree=sorted(left), stderr=err[-200:])
+
+    # E18: probe budgets (D10, ix#416). The plane says its budget in `limits` (here the operator's,
+    # `--probe-rate 1600 --probe-tree-rate 3200` at `up`); a subtree's declared
+    # rate (1000 / every_ms per leaf, the filter's `every` dividing) is summed at create, and a
+    # leaf that would take its mux past `max_rate_per_s` is refused naming the mux and the bound;
+    # a leaf carries no budget; a mux cannot widen the plane's; the list says each subtree's rate
+    # and budget and counts the bytes a running node emitted. The tree is empty here (E17 removed
+    # its own), so the tree's rate is the one subtree's.
+    _, kinds_b = call(sa, "GET", "/v1/probes")
+    lim = (kinds_b or {}).get("limits") or {}
+    bud = [call(sa, "POST", "/v1/probe/create", n)[0] for n in (
+        {"name": "bud", "kind": "mux@1", "max_rate_per_s": 150},
+        {"name": "bud-0", "kind": "heartbeat@1", "every_ms": 10, "parent": "bud"})]
+    code_over, over = call(sa, "POST", "/v1/probe/create", {"name": "bud-1", "kind": "heartbeat@1", "every_ms": 10, "parent": "bud"})
+    code_leaf, leaf = call(sa, "POST", "/v1/probe/create", {"name": "solo", "kind": "heartbeat@1", "every_ms": 10, "max_rate_per_s": 10})
+    code_wide, wide = call(sa, "POST", "/v1/probe/create", {"name": "wide", "kind": "mux@1", "max_rate_per_s": 100000})
+    started_b = [call(sa, "POST", "/v1/probe/start", {"node": n})[0] for n in ("bud", "bud-0")]
+    time.sleep(0.3)
+    _, tree_b = call(sa, "GET", "/v1/probe")
+    nodes_b = {n["name"]: n for n in (tree_b or {}).get("nodes", [])}
+    mux_b, leaf_b = nodes_b.get("bud", {}), nodes_b.get("bud-0", {})
+    _, gone_b = call(sa, "POST", "/v1/probe/remove", {"node": "bud"})
+    check("E18.probe_budget_bounds_the_declared_rate_and_counts_bytes",
+          lim.get("max_rate_per_s") == 1600 and lim.get("tree_rate_per_s") == 3200
+          and bud == [200, 200] and started_b == [200, 200]
+          and code_over == 400 and "bud" in (over or {}).get("error", "") and "max_rate_per_s is 150" in (over or {}).get("error", "")
+          and code_leaf == 400 and "leaf" in (leaf or {}).get("error", "")
+          and code_wide == 400 and "widen" in (wide or {}).get("error", "")
+          and mux_b.get("rate_per_s") == 100 and mux_b.get("max_rate_per_s") == 150
+          and leaf_b.get("rate_per_s") == 100 and "max_rate_per_s" not in leaf_b
+          and (leaf_b.get("bytes") or 0) > 0 and (mux_b.get("bytes") or 0) >= leaf_b.get("bytes", 0)
+          and (tree_b or {}).get("rate_per_s") == 100 and (tree_b or {}).get("tree_rate_per_s") == 3200
+          and (gone_b or {}).get("removed") == 2,
+          limits={k: lim.get(k) for k in ("max_rate_per_s", "tree_rate_per_s")}, created=bud, started=started_b,
+          refusals=[(code_over, (over or {}).get("error")), (code_leaf, (leaf or {}).get("error")),
+                    (code_wide, (wide or {}).get("error"))],
+          mux=mux_b, leaf=leaf_b, tree_rate=(tree_b or {}).get("rate_per_s"), gone=gone_b)
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

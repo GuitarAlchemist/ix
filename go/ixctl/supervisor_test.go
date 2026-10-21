@@ -476,7 +476,7 @@ func TestShutdownTouchesOnlyItsOwnProcesses(t *testing.T) {
 	defer func() { foreign.Process.Kill(); foreign.Wait() }()
 
 	spec := fakeSpec(t, "local", nil, fakeSvc{name: "pod", args: []string{"--spawn-child"}})
-	in, err := startInstance(spec, "", "127.0.0.1:0", t.TempDir(), "disk")
+	in, err := startInstance(spec, "", "127.0.0.1:0", t.TempDir(), "disk", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

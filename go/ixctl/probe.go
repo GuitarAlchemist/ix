@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,12 +139,38 @@ const (
 	probeMaxKeep    = 32        // fields in a filter's keep
 )
 
+// probeBudget is D10 (ix#416): what a subtree may declare to emit, in records per second, the
+// worst case summed over its leaves at `create` (1000 / every_ms each, the filter's `every`
+// dividing, `where` not counted), whatever the nodes' state; and the tree's own ceiling. Set at
+// `ixctl up`, said in `limits`; a mux may narrow its own with `max_rate_per_s`, never widen it.
+// A create that would cross a bound is refused in advance, like `max_nodes`. CPU and RSS are
+// measured on the process, never attributed to probes: one process cannot separate them.
+type probeBudget struct {
+	maxRate  int64 // `max_rate_per_s`: per subtree (a mux and its descendants; a root leaf alone)
+	treeRate int64 // `tree_rate_per_s`: the whole tree
+}
+
+// defaultProbeBudget is about a quarter of a core, extrapolating gate M2 (1 600 records/s cost
+// ~17 % of one on the measured desktop); the gate measures it again.
+var defaultProbeBudget = probeBudget{maxRate: 1000, treeRate: 2500}
+
+func (b probeBudget) validate() error {
+	if b.maxRate <= 0 {
+		return fmt.Errorf("max_rate_per_s %d must be positive", b.maxRate)
+	}
+	if b.treeRate < b.maxRate {
+		return fmt.Errorf("tree_rate_per_s %d is under max_rate_per_s %d", b.treeRate, b.maxRate)
+	}
+	return nil
+}
+
 // probeLimits is the `limits` member of `probe.kinds`.
-func probeLimits() map[string]int64 {
+func probeLimits(b probeBudget) map[string]int64 {
 	return map[string]int64{
 		"max_nodes": probeMaxNodes, "max_depth": probeMaxDepth,
 		"min_every_ms": probeMinEveryMs, "max_every_ms": probeMaxEveryMs, "max_ttl_ms": probeMaxTTLMs,
 		"ring": ringSize, "max_where": probeMaxWhere, "max_keep": probeMaxKeep,
+		"max_rate_per_s": b.maxRate, "tree_rate_per_s": b.treeRate,
 	}
 }
 
@@ -153,6 +182,8 @@ type NodeSpec struct {
 	Parent  string  `json:"parent,omitempty"`   // the mux this node feeds, or none
 	Filter  *Filter `json:"filter,omitempty"`   // what the node lets through, of what it emits
 	TTLMs   int64   `json:"ttl_ms,omitempty"`   // the lease from a start, renewed by probe.touch; 0 is none
+	// MaxRatePerS narrows the plane's budget for this mux's subtree (D10); a leaf carries none.
+	MaxRatePerS int64 `json:"max_rate_per_s,omitempty"`
 }
 
 // Filter is the smallest filter that composes: every `where` term must hold, only the
@@ -334,6 +365,7 @@ type probeNode struct {
 	seq      uint64 // records emitted, after the filter: a reader counts its losses by it
 	passed   uint64 // records the filter's where let through, for every
 	errors   uint64 // samples the sampler failed, emitted with an `error` field
+	bytes    uint64 // bytes of the records emitted, encoded (D10: measured, not bounded)
 
 	cancel context.CancelFunc // ends the run; nil when stopped
 	done   chan struct{}      // closed when the run's goroutine has returned
@@ -621,6 +653,9 @@ func (t *probeTree) emit(n *probeNode, fields map[string]any, failed bool) {
 		rec[k] = v
 	}
 	rec["node"], rec["kind"], rec["seq"] = n.spec.Name, n.kind.String(), n.seq
+	if data, err := json.Marshal(rec); err == nil {
+		n.bytes += uint64(len(data))
+	}
 	parent := t.nodes[n.spec.Parent]
 	if parent != nil && parent.state != probeRunning {
 		parent = nil
@@ -738,13 +773,90 @@ type probeTree struct {
 
 	removals int  // removals in flight (claimed, their probe.removed not all out)
 	closed   bool // the plane is shutting down: nothing is created, started or removed any more
+
+	budget probeBudget // D10: what a subtree, and the tree, may declare to emit
 }
 
 func newProbeTree(hub *Hub) *probeTree {
-	t := &probeTree{hub: hub, nodes: map[string]*probeNode{}}
+	t := &probeTree{hub: hub, nodes: map[string]*probeNode{}, budget: defaultProbeBudget}
 	t.done = sync.NewCond(&t.mu)
 	return t
 }
+
+// setBudget replaces the plane's budget, at startup; the caller holds no lock.
+func (t *probeTree) setBudget(b probeBudget) error {
+	if err := b.validate(); err != nil {
+		return err
+	}
+	t.mu.Lock()
+	t.budget = b
+	t.mu.Unlock()
+	return nil
+}
+
+// budgetNow is the budget under the lock, for `probe.kinds`.
+func (t *probeTree) budgetNow() probeBudget {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.budget
+}
+
+// leafRate is what a leaf declares to emit, in records per second: the worst case, 1000 /
+// every_ms, divided by the filter's `every` (deterministic); `where` does not count (it depends
+// on the data) and error records count as samples.
+func leafRate(spec *NodeSpec) float64 {
+	if spec.EveryMs <= 0 {
+		return 0
+	}
+	r := 1000 / float64(spec.EveryMs)
+	if spec.Filter != nil && spec.Filter.Every > 1 {
+		r /= float64(spec.Filter.Every)
+	}
+	return r
+}
+
+// subtreeRate sums the declared rates of a node and its descendants; the caller holds the lock.
+func (t *probeTree) subtreeRate(name string) float64 {
+	n := t.nodes[name]
+	if n == nil {
+		return 0
+	}
+	r := 0.0
+	if n.kind.Name != "mux" {
+		r = leafRate(&n.spec)
+	}
+	for _, c := range n.children {
+		r += t.subtreeRate(c)
+	}
+	return r
+}
+
+// treeRate sums every root's subtree; the caller holds the lock.
+func (t *probeTree) treeRate() float64 {
+	r := 0.0
+	for _, n := range t.nodes {
+		if n.spec.Parent == "" {
+			r += t.subtreeRate(n.spec.Name)
+		}
+	}
+	return r
+}
+
+// budgetOf is the budget a node's subtree is held to: the nearest `max_rate_per_s` on it or
+// above it, else the plane's; the caller holds the lock.
+func (t *probeTree) budgetOf(n *probeNode) int64 {
+	for a := n; a != nil; a = t.nodes[a.spec.Parent] {
+		if a.spec.MaxRatePerS > 0 {
+			return a.spec.MaxRatePerS
+		}
+	}
+	return t.budget.maxRate
+}
+
+// rate rounds a declared rate to the thousandth for a reply or a refusal.
+func rate(r float64) float64 { return math.Round(r*1000) / 1000 }
+
+func fmtRate(r float64) string { return strconv.FormatFloat(rate(r), 'f', -1, 64) }
 
 // create admits a node, stopped. Every refusal names the bound or the rule it hit.
 func (t *probeTree) create(spec *NodeSpec) (any, error) {
@@ -801,6 +913,36 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 			return nil, badRequest("node would sit at depth %d under %q; max_depth is %d", depth, spec.Parent, probeMaxDepth)
 		}
 	}
+	if kind.Name == "mux" {
+		if spec.MaxRatePerS < 0 {
+			return nil, badRequest("max_rate_per_s %d must be positive", spec.MaxRatePerS)
+		}
+		if spec.MaxRatePerS > 0 {
+			ceiling, holder := t.budget.maxRate, "the plane"
+			if spec.Parent != "" {
+				ceiling, holder = t.budgetOf(t.nodes[spec.Parent]), fmt.Sprintf("mux %q", spec.Parent)
+			}
+			if spec.MaxRatePerS > ceiling {
+				return nil, badRequest("max_rate_per_s %d on %q would widen %s's max_rate_per_s %d", spec.MaxRatePerS, spec.Name, holder, ceiling)
+			}
+		}
+	} else {
+		if spec.MaxRatePerS != 0 {
+			return nil, badRequest("max_rate_per_s is a mux's: leaf %q carries no budget", spec.Name)
+		}
+		r := leafRate(spec)
+		for a := t.nodes[spec.Parent]; a != nil; a = t.nodes[a.spec.Parent] {
+			if have, budget := t.subtreeRate(a.spec.Name), t.budgetOf(a); have+r > float64(budget) {
+				return nil, badRequest("subtree %q would declare %s records/s with %q; its max_rate_per_s is %d", a.spec.Name, fmtRate(have+r), spec.Name, budget)
+			}
+		}
+		if spec.Parent == "" && r > float64(t.budget.maxRate) {
+			return nil, badRequest("node %q would declare %s records/s alone; max_rate_per_s is %d", spec.Name, fmtRate(r), t.budget.maxRate)
+		}
+		if have := t.treeRate(); have+r > float64(t.budget.treeRate) {
+			return nil, badRequest("the tree would declare %s records/s with %q; tree_rate_per_s is %d", fmtRate(have+r), spec.Name, t.budget.treeRate)
+		}
+	}
 	n := &probeNode{spec: *spec, kind: kind, state: probeStopped}
 	t.nodes[spec.Name] = n
 	t.order = append(t.order, spec.Name)
@@ -823,8 +965,11 @@ func (t *probeTree) list() any {
 		n := t.nodes[name]
 		m := map[string]any{
 			"name": name, "kind": n.kind.String(), "state": n.state, "every_ms": n.spec.EveryMs,
-			"ttl_ms": n.spec.TTLMs, "seq": n.seq, "errors": n.errors,
-			"children": len(n.children),
+			"ttl_ms": n.spec.TTLMs, "seq": n.seq, "errors": n.errors, "bytes": n.bytes,
+			"children": len(n.children), "rate_per_s": rate(t.subtreeRate(name)),
+		}
+		if n.kind.Name == "mux" {
+			m["max_rate_per_s"] = t.budgetOf(n)
 		}
 		if left := n.leaseLeft(now); left != nil {
 			m["expires_in_ms"] = *left
@@ -837,11 +982,14 @@ func (t *probeTree) list() any {
 		}
 		nodes = append(nodes, m)
 	}
-	return map[string]any{"nodes": nodes, "count": len(nodes), "max_nodes": probeMaxNodes}
+	return map[string]any{
+		"nodes": nodes, "count": len(nodes), "max_nodes": probeMaxNodes,
+		"rate_per_s": rate(t.treeRate()), "max_rate_per_s": t.budget.maxRate, "tree_rate_per_s": t.budget.treeRate,
+	}
 }
 
 // kindsReply answers `probe.kinds`: the registry, sorted by name, and the limits.
-func kindsReply() map[string]any {
+func kindsReply(b probeBudget) map[string]any {
 	kinds := make([]map[string]any, 0, len(probeKinds))
 	sorted := append([]probeKind(nil), probeKinds...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].String() < sorted[j].String() })
@@ -852,5 +1000,5 @@ func kindsReply() map[string]any {
 		}
 		kinds = append(kinds, map[string]any{"kind": k.String(), "version": k.Version, "fields": fields, "doc": k.Doc})
 	}
-	return map[string]any{"kinds": kinds, "limits": probeLimits(), "version": version}
+	return map[string]any{"kinds": kinds, "limits": probeLimits(b), "version": version}
 }
