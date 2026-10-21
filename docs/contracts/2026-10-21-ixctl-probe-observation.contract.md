@@ -37,14 +37,16 @@ Every frame a subscription delivers is either an **envelope** or a **gap** (`go/
 | `ev.data.seq` | the node's own count of records emitted, from 1 at the node's creation; a stop and a start continue the count, a removal and a recreation under the same name start again at 1 | S1 |
 | `ev.data.src` | on a mux's pipe only: the child the record came from | S1 |
 | `ev.data.reason` | on `probe.stopped` / `probe.removed`: `requested`, `expired`, `removed`, `parent-removed`, `shutdown` | S1 |
-| other `ev.data` fields | the kind's measurements, whose names `probe.kinds` lists (`fields`, names only); a read that failed emits a sample with `error` (the message) and no measurements | per kind |
+| other `ev.data` fields | the kind's measurements, whose names `probe.kinds` lists (`fields`, names only); a read that failed emits a sample with `error` (the message) and no measurements, and the node's filter applies to that sample as to any other (gap G7) | per kind |
 
 Gaps: `since-too-old` (the ring no longer holds what was asked; `oldest` is the first seq still held),
 `overflow` (the reader fell behind the ring), `epoch-changed` (the seq given belongs to another boot;
 the replay is the new boot from the oldest seq its ring still holds, `oldest`: 1 while that ring has
-not turned, as in fixture 3), `since-ahead` (no epoch was given and the seq is past this boot's head;
-with an epoch the same case is `epoch-changed`). `t` and `ev.t` are two clock reads a few
-microseconds apart and may differ by a millisecond; `ev.t` is the observation's, `t` the publication's.
+not turned, as in fixture 3), `since-ahead` (no epoch was given and the seq is past this boot's head).
+With this boot's epoch and a seq past its head the plane answers no gap and starts live: a consumer
+holding a seq this boot never reached has a corrupt position, and a live start with no replay after
+a resume is the sign of it. `t` and `ev.t` are two separate clock reads and may differ; `ev.t` is
+the event's, `t` the publication's.
 
 ## The mapping
 
@@ -55,7 +57,7 @@ microseconds apart and may differ by a millisecond; `ev.t` is the observation's,
 | schema version | the protocol, `ixctl.v1`; the kind registry's `version` from `probe.kinds` | this contract's version |
 | subject identity / generation | `origin` (the plane) and `epoch` (its boot) | |
 | producer / source revision | `probe.kinds` reports the binary's version; `/health` the plane's | read once per connection, kept with the series |
-| observed-at | `ev.t` (equal to `t` for a sample) | |
+| observed-at | `ev.t` | |
 | received-at | | the consumer's own clock at read time; its difference to `t` is the clock offset to apply when judging freshness |
 | sequence | `seq` | strictly increasing within an epoch, across every channel |
 | deduplication key | | **`origin:epoch:seq`**: a frame read twice (a reconnect that resumes below the last seq kept) is the same frame; fixture 1 shows a resume from the last seq kept gives `seq + 1` first, nothing twice |
@@ -83,8 +85,14 @@ microseconds apart and may differ by a millisecond; `ev.t` is the observation's,
   decision D1 ix#399), and the new boot's `seq` restarts at 1 while the old boot's series end.
 - **ERROR**: a kind that fails a read emits a `sample` whose data is `{node, kind, seq, error}`
   (the message, no measurements) and counts it in `errors` on `probe.list`. ERROR is the state while
-  the series' latest sample carries `error`; the next sample without it is OK again. A node whose
-  kind has no sampler on this platform refuses `probe.start` instead (no series).
+  the series' latest sample is fresh and carries `error`; the next sample without it is OK again.
+  The node's filter applies to that sample too: a `where` on a measurement or an `every` can keep
+  it off the pipe while `errors` still counts it (gap G7), so a consumer that must not miss errors
+  on a filtered node reads `errors` from `probe.list` as well. A node whose kind has no sampler on
+  this platform refuses `probe.start` instead (no series).
+- **Precedence**: STALE before ERROR before OK. A series whose latest sample is old, or whose node
+  was stopped, is STALE whatever that sample carried; UNKNOWN applies only to the windows named
+  above, and ends at the first frame of the node that follows.
 
 ## Fixtures (`go/ixctl/e2e/fixtures/consumer-*.jsonl`)
 
@@ -96,7 +104,9 @@ source, or gap reason) the files hold, and asserts the invariants below on the f
 and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 
 1. **`consumer-reconnect.jsonl`**, steps `live` then `after-reconnect`. A reader of everything
-   (`ch` prefix `""`) sees `probe.created`, `probe.started`, then samples; it drops its connection
+   (`ch` prefix `""`) sees `probe.created`, `probe.started` and samples (the node's loop starts
+   before `probe.started` is published, so its first sample may precede the event; the fixture
+   check accepts either order within the step); it drops its connection
    after the sample at `seq` *L* and resumes with `since: L, epoch`. Invariants: the first frame
    after the reconnect is `seq` *L* + 1; every `seq` is the previous + 1; no gap; one `epoch`, one
    `origin`. Dedup key `origin:epoch:seq` sees nothing twice.
@@ -110,8 +120,8 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
    is restarted under its name in the same state dir; `probe.list` answers an empty tree; a reader
    resuming with the last `seq` and `epoch` it kept gets `epoch-changed` first (`from: 1`,
    `oldest: 1`, the new `epoch`), then the new boot from the oldest `seq` its ring holds, here 1:
-   `probe.created`, `probe.started`,
-   samples with `ev.data.seq` from 1. Invariants: the gap names the new boot; every envelope after
+   `probe.created`, `probe.started` and samples with `ev.data.seq` from 1 (same order caveat as
+   fixture 1). Invariants: the gap names the new boot; every envelope after
    it is of the new boot; the new boot's envelope `seq` 1 is below the old boot's last `seq`, so a
    consumer keyed on `seq` without `epoch` would merge the two boots.
 
@@ -129,11 +139,19 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   version stand in; a field would be a protocol change (door F1, one-way).
 - **G5, the tree is not persisted across a restart** (D1 ix#399): after `epoch-changed` the
   consumer waits for the tree to be recreated by whoever owns it.
-- **G6, a mux's `probe.stopped` is not its pipe's last word.** The mux's state changes under the
-  tree lock but a child's record is published after that lock is released, so one record can
-  follow the mux's `probe.stopped`; a leaf's stop waits for its loop, so a leaf has no such window.
-  Closing it means publishing under the tree lock (a plane change, a story under ix#397, not cut);
-  until then the consumer's rule above covers it.
+- **G6, the lifecycle's order is not guaranteed in two cases.** A mux's `probe.stopped` is not
+  its pipe's last word: the mux's state changes under the tree lock but a child's record is
+  published after that lock is released, so one record can follow the mux's `probe.stopped` (a
+  leaf's stop waits for its loop, so a leaf alone has no such window). And a `probe.remove` that
+  races a `probe.stop` of the same leaf finds the node already stopping, does not wait for it, and
+  publishes `probe.removed` before that stop's `probe.stopped` (and possibly before the loop's
+  last sample). Consumer's rule: `probe.removed` closes the series; a `probe.stopped` or a sample
+  of the same series read after it is ignored; a sample read after `probe.stopped` counts into the
+  stopped series. Closing both windows means publishing under the tree lock and having removal
+  wait for a stop in progress (a plane change, a story under ix#397, not cut).
+- **G7, a node's filter hides its error samples too.** `where` and `every` apply to the sample a
+  failed read emits, so a filtered node can count an error on `probe.list` without a frame on its
+  pipe. A consumer that must not miss errors on such a node reads `errors` there as well.
 
 ## Changes
 
