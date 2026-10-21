@@ -1,6 +1,6 @@
 # Contract: a probe sample read from the plane, as a consumer's observation (`ixctl.v1` → gaia#245)
 
-**Version:** v0.1.0 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
+**Version:** v0.1.1 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
 **Date:** 2026-10-21 · **Owner:** ix (`go/ixctl`, the producer side; Gaia owns the adapter, projection and UI) · **Story:** [ix#413](https://github.com/GuitarAlchemist/ix/issues/413) · **Consumer:** [gaia#245](https://github.com/GuitarAlchemist/gaia/issues/245) · **Plan:** `docs/plans/2026-10-20-ixctl-probes.md`
 
 Says how a reader of the control plane's event stream (`subscribe` over `ixctl.v1`, `GET /v1/events`,
@@ -32,12 +32,12 @@ Every frame a subscription delivers is either an **envelope** or a **gap** (`go/
 | `epoch` | the boot's id; a new one at every start of the plane | v1 protocol |
 | `origin` | the instance (plane) name that produced the event; a peer mirror keeps the origin's | v1 protocol |
 | `t` | when the plane published it, ms since the Unix epoch, the plane's clock | v1 protocol |
-| `ev.kind` | `sample` on a node's pipe; `probe.created`, `probe.started`, `probe.stopped`, `probe.removed` on `ctl` | v1 protocol |
+| `ev.kind` | `sample` on a node's pipe; `probe.created`, `probe.started`, `probe.stopped`, `probe.removed` on `ctl`, published in the order of the state changes they report (see "Order", below) | v1 protocol |
 | `ev.data.node`, `ev.data.kind` | the node's name and its kind with its version (`name@version`) | S1 (ix#407) |
 | `ev.data.seq` | the node's own count of records emitted, from 1 at the node's creation; a stop and a start continue the count, a removal and a recreation under the same name start again at 1 | S1 |
 | `ev.data.src` | on a mux's pipe only: the child the record came from | S1 |
 | `ev.data.reason` | on `probe.stopped` / `probe.removed`: `requested`, `expired`, `removed`, `parent-removed`, `shutdown` | S1 |
-| other `ev.data` fields | the kind's measurements, whose names `probe.kinds` lists (`fields`, names only); a read that failed emits a sample with `error` (the message) and no measurements, and the node's filter applies to that sample as to any other (gap G7) | per kind |
+| other `ev.data` fields | the kind's measurements, whose names `probe.kinds` lists (`fields`, names only); a read that failed emits a sample with `error` (the message) and no measurements, whatever the node's filter (`where` and `every` do not apply to it, and it does not count toward `every`) | per kind |
 
 Gaps: `since-too-old` (the ring no longer holds what was asked; `oldest` is the first seq still held),
 `overflow` (the reader fell behind the ring), `epoch-changed` (the seq given belongs to another boot;
@@ -48,13 +48,25 @@ holding a seq this boot never reached has a corrupt position, and a live start w
 a resume is the sign of it. `t` and `ev.t` are two separate clock reads and may differ; `ev.t` is
 the event's, `t` the publication's.
 
+**Order.** Every record of a node is published under the tree's lock with the `ev.data.seq` it was
+given, so a node's records reach its pipe in `seq` order even when several children feed a mux at the
+same instant, and no record of a node follows its `probe.stopped`. `probe.created`, `probe.started`, a
+mux's `probe.stopped` and `probe.removed` are published under that same lock, in the order of the state
+changes they report: after any interleaving of ops, the last lifecycle event of a node names its state,
+and a `probe.removed` never follows the `probe.created` of a later node of the same name. A leaf's
+`probe.stopped` alone is published after its loop's last tick, outside the lock; until it is out the node
+refuses `probe.start` and a `probe.remove` of it waits, so `ctl` says `probe.stopped` then `probe.removed`
+(tests `go/ixctl/probe_order_test.go`; the mux-order case was first seen as a CI failure of
+`TestAMuxMultiplexesItsChildrenStampedWithTheirSource`, the start/stop case is Codex's reasoning on the
+previous code, reproduced by no run: the test stands as its guard).
+
 ## The mapping
 
 | gaia#245 asks for | From the plane | Derived by the consumer |
 |---|---|---|
-| probe identity | `origin` + `ev.data.node` | a **series** is `origin:epoch:node:<seq of the probe.created that opened it>`: the same name is a new series after a recreation or a restart (fixtures 2 and 3) |
+| probe identity | `origin` + `ev.data.node` | a **series** is `origin:epoch:node:<seq of the probe.created that opened it>`: the same name is a new series after a recreation or a restart (fixtures 2 and 3). A consumer that did not read the `probe.created` (it joined late, or a gap swallowed it) cannot tell which series a sample belongs to until the plane stamps an instance id on samples (gap G1): it opens a provisional series at the first frame it reads and merges nothing across a gap |
 | probe version | `ev.data.kind` (`heartbeat@1`) | |
-| schema version | the protocol, `ixctl.v1`; the kind registry's `version` from `probe.kinds` | this contract's version |
+| schema version | the protocol name, `ixctl.v1` (gap G4) | this contract's version |
 | subject identity / generation | `origin` (the plane) and `epoch` (its boot) | |
 | producer / source revision | `probe.kinds` reports the binary's version; `/health` the plane's | read once per connection, kept with the series |
 | observed-at | `ev.t` | |
@@ -72,24 +84,24 @@ the event's, `t` the publication's.
   offset, and no `probe.stopped` has been read for the node since that sample.
 - **STALE**: the latest sample is older than the TTL; or `probe.stopped` was read for the node
   (`reason` says why: `requested`, `expired`, `shutdown`, `removed`, `parent-removed`) and no
-  `probe.started` since (fixture 2, step `stopped`). For a leaf, `probe.stopped` is the last thing
-  said about the node until it starts again: the stop waits for the node's loop to end before it is
-  published. For a mux it is not guaranteed: a child's record that had already passed the mux's
-  state check can be published just after the mux's `probe.stopped` (gap G6); a consumer counts a
-  sample read after a `probe.stopped` for its node into the stopped series and stays STALE. After
-  `probe.removed` the series is closed, not stale.
+  `probe.started` since (fixture 2, step `stopped`). `probe.stopped` is the last thing a node's pipe
+  says until it starts again, for a leaf (the stop waits for the node's loop to end) and for a mux
+  (its records and its stop are published under one lock); a sample read after a `probe.stopped`
+  for its node would be a plane bug, and a consumer counts it into the stopped series and stays
+  STALE. After `probe.removed` the series is closed, not stale.
 - **UNKNOWN**: before the first sample of a series; and after any gap (`epoch-changed`,
-  `since-too-old`, `overflow`) until the next `probe.created` or sample of the node, because the
-  consumer cannot say what happened in the hole. After `epoch-changed` **every** series of that
-  origin is unknown: the plane restarted with an empty tree (fixture 3; the tree is not persisted,
-  decision D1 ix#399), and the new boot's `seq` restarts at 1 while the old boot's series end.
+  `since-too-old`, `overflow`, `since-ahead`) until the next `probe.created` or sample of the node,
+  because the consumer cannot say what happened in the hole. After `epoch-changed` **every** series
+  of that origin is unknown: the plane restarted with an empty tree (fixture 3; the tree is not
+  persisted, decision D1 ix#399), and the new boot's `seq` restarts at 1 while the old boot's series
+  end.
 - **ERROR**: a kind that fails a read emits a `sample` whose data is `{node, kind, seq, error}`
-  (the message, no measurements) and counts it in `errors` on `probe.list`. ERROR is the state while
-  the series' latest sample is fresh and carries `error`; the next sample without it is OK again.
-  The node's filter applies to that sample too: a `where` on a measurement or an `every` can keep
-  it off the pipe while `errors` still counts it (gap G7), so a consumer that must not miss errors
-  on a filtered node reads `errors` from `probe.list` as well. A node whose kind has no sampler on
-  this platform refuses `probe.start` instead (no series).
+  (the message, no measurements), whatever the node's filter, and counts it in `errors` on
+  `probe.list`. ERROR is the state while the series' latest sample is fresh and carries `error`; the
+  next sample without it is OK again. `errors` on `probe.list` is a cumulative count with no time
+  and no recovery status: evidence that errors occurred since the node's creation, never the current
+  state, which is read from the pipe. A node whose kind has no sampler on this platform refuses
+  `probe.start` instead (no series).
 - **Precedence**: STALE before ERROR before OK. A series whose latest sample is old, or whose node
   was stopped, is STALE whatever that sample carried; UNKNOWN applies only to the windows named
   above, and ends at the first frame of the node that follows.
@@ -129,32 +141,37 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 
 - **G1, no node instance id.** A recreated node has the same `node` and `kind`; only the
   `probe.created` that opened it tells the series apart (fixture 2). A consumer must read `ctl`
-  beside the pipe, or the plane would have to stamp a series id on samples (a story under ix#397,
+  beside the pipe, and one that missed the `probe.created` (joined late, or lost it in a gap) cannot
+  resolve the series at all until the plane stamps an instance id on samples (a story under ix#397,
   not cut).
 - **G2, the interval is not on the sample.** `every_ms` comes from `probe.list`; a reader that
   joined late reads it there.
 - **G3, no types or units on the wire.** `probe.kinds` lists field names and a `doc` string per
   kind; types and units are the adapter's table, by `kind@version`.
 - **G4, no schema version on the envelope.** The protocol name `ixctl.v1` and this contract's
-  version stand in; a field would be a protocol change (door F1, one-way).
+  version stand in (`probe.kinds` → `version` is the binary's, a producer revision, not a schema
+  version); a field would be a protocol change (door F1, one-way).
 - **G5, the tree is not persisted across a restart** (D1 ix#399): after `epoch-changed` the
   consumer waits for the tree to be recreated by whoever owns it.
-- **G6, the lifecycle's order is not guaranteed in two cases.** A mux's `probe.stopped` is not
-  its pipe's last word: the mux's state changes under the tree lock but a child's record is
-  published after that lock is released, so one record can follow the mux's `probe.stopped` (a
-  leaf's stop waits for its loop, so a leaf alone has no such window). And a `probe.remove` that
-  races a `probe.stop` of the same leaf finds the node already stopping, does not wait for it, and
-  publishes `probe.removed` before that stop's `probe.stopped` (and possibly before the loop's
-  last sample). Consumer's rule: `probe.removed` closes the series; a `probe.stopped` or a sample
-  of the same series read after it is ignored; a sample read after `probe.stopped` counts into the
-  stopped series. Closing both windows means publishing under the tree lock and having removal
-  wait for a stop in progress (a plane change, a story under ix#397, not cut).
-- **G7, a node's filter hides its error samples too.** `where` and `every` apply to the sample a
-  failed read emits, so a filtered node can count an error on `probe.list` without a frame on its
-  pipe. A consumer that must not miss errors on such a node reads `errors` there as well.
+- **G6, closed in v0.1.1** (it named two windows: a child's record published after the mux's
+  `probe.stopped`, and a `probe.remove` racing a `probe.stop` of the same leaf saying `probe.removed`
+  before `probe.stopped`; a third, start/stop ops publishing their events in the opposite order of
+  their state changes, came from Codex's review of v0.1.0). The plane now publishes records and
+  lifecycle events under the tree lock and makes removal wait for a stop in progress: see "Order".
+  The consumer's rule stays as a defence: `probe.removed` closes the series; a `probe.stopped` or a
+  sample of the same series read after it is ignored; a sample read after `probe.stopped` counts
+  into the stopped series.
+- **G7, closed in v0.1.1** (a node's filter hid its error samples). A failed read now reaches the
+  pipe whatever the filter; `errors` on `probe.list` remains the cumulative count.
 
 ## Changes
 
+- v0.1.1 (2026-10-21): the plane closes G6 and G7 on the operator's go (records and lifecycle
+  events published under the tree lock, removal waits for a stop in progress, error samples bypass
+  the filter; `go/ixctl/probe_order_test.go`). Also from Codex's review of v0.1.0: `since-ahead`
+  listed under UNKNOWN; `errors` named as cumulative evidence, not a state; the series rule says
+  what a consumer that missed `probe.created` can and cannot do (G1); `probe.kinds` → `version`
+  moved from "schema version" to producer revision (G4).
 - v0.1.0 (2026-10-21): first draft, from Gaia's design review of PR #394 (reconnect/restart and
   same-name recreation fixtures, source identity, visible staleness, no dedup collisions) and the
   operator's go. Nothing locked; a locked field set comes with Gaia's intake (Phase 4).

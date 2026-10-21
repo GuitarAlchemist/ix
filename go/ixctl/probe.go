@@ -455,6 +455,11 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 			t.mu.Unlock()
 			continue
 		}
+		// A stop by another op may still be in progress (its loop ending, its probe.stopped
+		// not out yet): probe.removed waits for it, so ctl says stopped, then removed.
+		for n.stopping {
+			t.done.Wait()
+		}
 		delete(t.nodes, nm)
 		for i, o := range t.order {
 			if o == nm {
@@ -470,8 +475,10 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 				}
 			}
 		}
-		t.mu.Unlock()
+		// Under the lock: a create of the same name that follows cannot say probe.created
+		// before this probe.removed (which would close the series it opened).
 		t.event("probe.removed", n, map[string]any{"reason": why})
+		t.mu.Unlock()
 	}
 	return map[string]any{"node": name, "removed": len(order)}, nil
 }
@@ -530,8 +537,8 @@ func (t *probeTree) start(name string) (any, error) {
 	if left := n.leaseLeft(now); left != nil {
 		reply["expires_in_ms"], extra["expires_in_ms"] = *left, *left
 	}
+	t.event("probe.started", n, extra) // under the lock: ctl says the changes in their order
 	t.mu.Unlock()
-	t.event("probe.started", n, extra)
 	return reply, nil
 }
 
@@ -561,7 +568,12 @@ func (t *probeTree) run(ctx context.Context, n *probeNode, s sampler, done chan 
 // with the node, its kind and the record's seq), then hands it to the node's parent when
 // that mux is running, stamped `src` with this node: the multiplexing, synchronous and
 // bounded by the children's own rates (Publish never blocks; the ring is the one place a
-// slow reader loses records, and it says so with a gap).
+// slow reader loses records, and it says so with a gap). The record is published under the
+// tree's lock, with the state check and the seq it was given: a node's records reach its
+// pipe in seq order even when several children feed a mux at the same instant, and no
+// record of a node follows its probe.stopped (the stop changes the state under the same
+// lock). A failed read bypasses the filter: an error is never kept off the pipe by a
+// `where` on a measurement or by `every`, and it does not count toward `every`.
 func (t *probeTree) emit(n *probeNode, fields map[string]any, failed bool) {
 	t.mu.Lock()
 	// A record that reaches a node after its stop or removal (a leaf's last tick, a child's
@@ -572,11 +584,12 @@ func (t *probeTree) emit(n *probeNode, fields map[string]any, failed bool) {
 	}
 	if failed {
 		n.errors++
-	}
-	fields, ok := n.spec.Filter.apply(fields, &n.passed)
-	if !ok {
-		t.mu.Unlock()
-		return
+	} else {
+		var ok bool
+		if fields, ok = n.spec.Filter.apply(fields, &n.passed); !ok {
+			t.mu.Unlock()
+			return
+		}
 	}
 	n.seq++
 	rec := make(map[string]any, len(fields)+4)
@@ -588,8 +601,8 @@ func (t *probeTree) emit(n *probeNode, fields map[string]any, failed bool) {
 	if parent != nil && parent.state != probeRunning {
 		parent = nil
 	}
-	t.mu.Unlock()
 	t.hub.Publish("probe/"+n.spec.Name, event("sample", rec))
+	t.mu.Unlock()
 	if parent != nil {
 		up := make(map[string]any, len(fields)+1)
 		for k, v := range fields {
@@ -614,21 +627,36 @@ func (t *probeTree) stop(name, reason string) (any, error) {
 	}
 	cancel, done := n.cancel, n.done
 	n.cancel, n.done, n.state = nil, nil, probeStopped
-	n.stopping = cancel != nil // a mux has no run of its own to wait for
 	if n.lease != nil {
 		n.lease.Stop()
 		n.lease, n.expires = nil, time.Time{}
 	}
-	t.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		<-done
-		t.mu.Lock()
-		n.stopping = false
+	reply := map[string]any{"node": name, "state": probeStopped}
+	if cancel == nil {
+		// A mux has no run of its own to wait for: its probe.stopped is said under the lock,
+		// after its last record and in order with the other changes of its state.
+		t.event("probe.stopped", n, map[string]any{"reason": reason})
 		t.mu.Unlock()
+		return reply, nil
 	}
+	// A leaf's probe.stopped waits for its loop's last tick, outside the lock; until it is out
+	// the node is `stopping`: a start is refused and a remove waits (finishStop).
+	n.stopping = true
+	t.mu.Unlock()
+	cancel()
+	<-done
 	t.event("probe.stopped", n, map[string]any{"reason": reason})
-	return map[string]any{"node": name, "state": probeStopped}, nil
+	t.finishStop(n)
+	return reply, nil
+}
+
+// finishStop ends a leaf's stop once its probe.stopped is out: the node may start again,
+// and a remove that met the stop in progress may go on (it waits on t.done).
+func (t *probeTree) finishStop(n *probeNode) {
+	t.mu.Lock()
+	n.stopping = false
+	t.done.Broadcast()
+	t.mu.Unlock()
 }
 
 // shutdown closes admission (no create or start from here on), then stops every running
@@ -654,6 +682,7 @@ func (t *probeTree) shutdown() {
 type probeTree struct {
 	hub   *Hub
 	mu    sync.Mutex
+	done  *sync.Cond // signalled when a stop in progress has said probe.stopped (see finishStop)
 	nodes map[string]*probeNode
 	order []string // creation order, for list
 
@@ -661,7 +690,9 @@ type probeTree struct {
 }
 
 func newProbeTree(hub *Hub) *probeTree {
-	return &probeTree{hub: hub, nodes: map[string]*probeNode{}}
+	t := &probeTree{hub: hub, nodes: map[string]*probeNode{}}
+	t.done = sync.NewCond(&t.mu)
+	return t
 }
 
 // create admits a node, stopped. Every refusal names the bound or the rule it hit.

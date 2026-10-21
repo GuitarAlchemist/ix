@@ -134,6 +134,16 @@ stops at `steal` (guest time is inside user); a cpu interval whose counters did 
 emits nothing instead of a fabricated idle; `probe.started` carries `expires_in_ms` when leased.
 Codex also counted 38 gate checks; the file has 39 `check(` calls and the run prints 39.
 
+**Order on the wire (2026-10-21, on the operator's go after the S7 contract named the gaps G6 and
+G7).** A node's record is published under the tree lock with its `seq`, so a mux's records reach
+its pipe in order under concurrent children (seen first as a CI failure of the mux test on
+Windows) and never after the node's `probe.stopped`; `probe.created`, `probe.started`, a mux's
+`probe.stopped` and `probe.removed` are published under that lock too, in the order of the state
+changes they report; a leaf's `probe.stopped` waits for its loop outside the lock, and a remove
+that meets that stop in progress waits for it (`sync.Cond` on the tree lock) before it says
+`probe.removed`; a failed read reaches the pipe whatever the filter. Tests in
+`go/ixctl/probe_order_test.go`; the contract is at v0.1.1 with G6 and G7 closed.
+
 ## Tests (the seams agreed for TDD)
 
 Unit, `go/ixctl/probe_test.go`, through `Plane.Request`, the pure filters and the OS kinds by

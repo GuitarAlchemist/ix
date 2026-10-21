@@ -144,6 +144,17 @@ temps guest est dans user) ; un intervalle cpu dont les compteurs n'ont pas avan
 au lieu d'un repos fabriqué ; `probe.started` porte `expires_in_ms` quand il y a un bail. Codex a
 aussi compté 38 vérifications dans la barrière ; le fichier en a 39 et l'exécution en imprime 39.
 
+**Ordre sur le fil (2026-10-21, sur le feu vert de l'opérateur après que le contrat S7 a nommé les
+lacunes G6 et G7).** L'enregistrement d'un nœud est publié sous le verrou de l'arbre avec son
+`seq`, donc les enregistrements d'un mux atteignent son tuyau dans l'ordre sous des enfants
+concurrents (vu d'abord comme un échec CI du test du mux sous Windows) et jamais après le
+`probe.stopped` du nœud ; `probe.created`, `probe.started`, le `probe.stopped` d'un mux et
+`probe.removed` sont publiés sous ce même verrou, dans l'ordre des changements d'état qu'ils
+rapportent ; le `probe.stopped` d'une feuille attend sa boucle hors du verrou, et un remove qui
+rencontre cet arrêt en cours l'attend (`sync.Cond` sur le verrou de l'arbre) avant de dire
+`probe.removed` ; une lecture ratée atteint le tuyau quel que soit le filtre. Tests dans
+`go/ixctl/probe_order_test.go` ; le contrat est en v0.1.1, G6 et G7 fermées.
+
 ## Tests (les coutures convenues pour le TDD)
 
 Unitaires, `go/ixctl/probe_test.go`, à travers `Plane.Request`, les filtres purs et les kinds OS

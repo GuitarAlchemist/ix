@@ -259,7 +259,11 @@ de l'anneau, et c'est un `gap` que le lecteur voit. Un `filter` s'applique avant
 `!=` seulement, tout le reste refusé à la création ; un champ absent ou un type qui ne correspond
 pas vaut faux), `every` (un échantillon sur N de ceux qui sont passés), `keep` (les champs
 gardés ; `node`/`kind`/`seq`, le `src` d'un mux et l'`error` d'un échantillon raté toujours). Un échantillon est `{node, kind, seq, src?, ...champs}` ; une erreur de lecture devient
-`{node, kind, seq, error}` et compte dans les `errors` du nœud.
+`{node, kind, seq, error}`, compte dans les `errors` du nœud et atteint le tuyau quel que soit le
+filtre (`where` et `every` ne s'y appliquent pas). Les enregistrements d'un nœud atteignent son
+tuyau dans l'ordre de `seq`, et `probe.stopped` est le dernier mot de son tuyau jusqu'au prochain
+start ; les événements de cycle de vie de `ctl` viennent dans l'ordre des changements d'état qu'ils
+rapportent, quel que soit l'entrelacement des opérations.
 
 `ttl_ms` est un **bail** : compté depuis `probe.start`, renouvelé par `probe.touch`, et quand il
 s'épuise le nœud est retiré avec tout son sous-arbre (`probe.removed`, raison `expired`). Un nœud

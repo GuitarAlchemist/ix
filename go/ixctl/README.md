@@ -245,7 +245,10 @@ A `filter` is applied before a sample is emitted, in this order: `where` (every 
 with `==` or `!=` only, anything else refused at creation; a missing field or a type mismatch is
 false), `every` (one sample in N of those that passed), `keep` (the fields kept;
 `node`/`kind`/`seq`, a mux's `src` and a failed sample's `error` always). A sample is `{node, kind, seq, src?, ...fields}`; a read error becomes
-`{node, kind, seq, error}` and counts in the node's `errors`.
+`{node, kind, seq, error}`, counts in the node's `errors`, and reaches the pipe whatever the
+filter (`where` and `every` do not apply to it). A node's records reach its pipe in `seq` order,
+and `probe.stopped` is the last thing its pipe says until it starts again; `ctl`'s lifecycle
+events come in the order of the state changes they report, whatever the interleaving of the ops.
 
 `ttl_ms` is a **lease**: counted from `probe.start`, renewed by `probe.touch`, and when it runs
 out the node is removed with its whole subtree (`probe.removed`, reason `expired`). A node
