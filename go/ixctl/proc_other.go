@@ -19,13 +19,14 @@ import (
 
 // procTree is a service's process tree: its own process group.
 type procTree struct {
-	pgid int
-	over chan string   // the limit the tree went past, once; nil when none is watched
-	done chan struct{} // closed by close: ends the watch
-	gone chan struct{} // closed when the watch has returned
-	mu   sync.Mutex
-	peak int64 // the largest resident set the watch has summed over the group
-	cpu  int64 // the largest processor time the watch has summed over the group, in milliseconds
+	pgid      int
+	over      chan string   // the limit the tree went past, once; nil when none is watched
+	done      chan struct{} // closed by close: ends the watch
+	gone      chan struct{} // closed when the watch has returned
+	mu        sync.Mutex
+	peak      int64 // the largest resident set the watch has summed over the group
+	cpu       int64 // the largest processor time the watch has summed over the group, in milliseconds
+	peakProcs int64 // the most live members the watch has counted in the group
 }
 
 // watchPoll is how often a watched group's resident set and processor time are read from /proc.
@@ -53,17 +54,17 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 		return nil, err
 	}
 	t := &procTree{pgid: cmd.Process.Pid, done: make(chan struct{})}
-	if limits != nil && (limits.MemoryMB > 0 || limits.CpuMs > 0) {
+	if limits != nil && (limits.MemoryMB > 0 || limits.CpuMs > 0 || limits.Processes > 0) {
 		t.over, t.gone = make(chan string, 1), make(chan struct{})
-		go t.watch(limits.MemoryMB<<20, limits.CpuMs)
+		go t.watch(limits.MemoryMB<<20, limits.CpuMs, limits.Processes)
 	}
 	return t, nil
 }
 
-// watch reads the group's resident set and processor time every watchPoll until the tree is
-// closed or has no live member, keeps the peak and the last processor time, and reports a
-// limit gone past, once (0 is no limit).
-func (t *procTree) watch(memoryBytes, cpuMs int64) {
+// watch reads the group's resident set, processor time and live member count every watchPoll
+// until the tree is closed or has no live member, keeps their peaks, and reports a limit gone
+// past, once (0 is no limit).
+func (t *procTree) watch(memoryBytes, cpuMs, processes int64) {
 	defer close(t.gone)
 	tick := time.NewTicker(watchPoll)
 	defer tick.Stop()
@@ -73,8 +74,8 @@ func (t *procTree) watch(memoryBytes, cpuMs int64) {
 			return
 		case <-tick.C:
 		}
-		rss, cpu, live := groupUsage(t.pgid)
-		if !live {
+		rss, cpu, count := groupUsage(t.pgid)
+		if count == 0 {
 			return
 		}
 		t.mu.Lock()
@@ -87,6 +88,9 @@ func (t *procTree) watch(memoryBytes, cpuMs int64) {
 			// PID 1 never comes back. What was seen stays seen.
 			t.cpu = cpu
 		}
+		if count > t.peakProcs {
+			t.peakProcs = count
+		}
 		t.mu.Unlock()
 		switch {
 		case memoryBytes > 0 && rss > memoryBytes:
@@ -95,12 +99,35 @@ func (t *procTree) watch(memoryBytes, cpuMs int64) {
 		case cpuMs > 0 && cpu > cpuMs:
 			t.over <- reasonCPU
 			return
+		case processes > 0 && count > processes:
+			t.over <- reasonProcesses
+			return
 		}
 	}
 }
 
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
+
+// sample reads the group once more into the peaks, for a tree about to be killed before the
+// watch's next tick.
+func (t *procTree) sample() {
+	if t.gone == nil {
+		return
+	}
+	rss, cpu, count := groupUsage(t.pgid)
+	t.mu.Lock()
+	if rss > t.peak {
+		t.peak = rss
+	}
+	if cpu > t.cpu {
+		t.cpu = cpu
+	}
+	if count > t.peakProcs {
+		t.peakProcs = count
+	}
+	t.mu.Unlock()
+}
 
 // drain waits, at most limit, until the watch has returned (it does within a poll of the
 // group's last live member going), so what `exceeded` holds is final; at once without a
@@ -115,14 +142,14 @@ func (t *procTree) drain(limit time.Duration) {
 	}
 }
 
-// usage is the largest resident set and the largest processor time the watch summed over the
-// group's live members (0 without a watch: nothing counts a group without a cgroup, and the
-// leader's rusage then speaks for the tree, leaderUsage). Time a descendant used between two
-// polls and took with it (reaped by PID 1) is not seen.
-func (t *procTree) usage() (peakBytes, cpuMs int64) {
+// usage is the largest resident set, the largest processor time and the most live members
+// the watch counted over the group (0 without a watch: nothing counts a group without a
+// cgroup, and the leader's rusage then speaks for the tree, leaderUsage). Time a descendant
+// used between two polls and took with it (reaped by PID 1) is not seen.
+func (t *procTree) usage() (peakBytes, cpuMs, peakProcs int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.peak, t.cpu
+	return t.peak, t.cpu, t.peakProcs
 }
 
 // leaderUsage is the leader's peak resident set (kilobytes on Linux, bytes elsewhere) and
@@ -147,11 +174,11 @@ func leaderUsage(ps *os.ProcessState) (rssBytes, cpuMs int64) {
 // groupUsage sums, over the live members of group pgid, the resident set (statm's second
 // field, in pages) and the processor time (stat's utime, stime and the cutime, cstime of the
 // children each has waited for, which are dead and so counted nowhere else), in milliseconds,
-// and reports whether any live member was found.
-func groupUsage(pgid int) (rssBytes, cpuMs int64, live bool) {
+// and counts those members (0 when none is live; 1 without /proc, so the watch goes on).
+func groupUsage(pgid int) (rssBytes, cpuMs, live int64) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return 0, 0, true
+		return 0, 0, 1
 	}
 	page := int64(os.Getpagesize())
 	var ticks int64
@@ -163,7 +190,7 @@ func groupUsage(pgid int) (rssBytes, cpuMs int64, live bool) {
 		if !ok || st.pgid != pgid || st.zombie {
 			continue
 		}
-		live = true
+		live++
 		ticks += st.ticks
 		b, err := os.ReadFile("/proc/" + e.Name() + "/statm")
 		if err != nil {
@@ -249,7 +276,10 @@ func clockTicks() int64 {
 	return clockTicksHz
 }
 
+// kill ends every process of the group, after a last look at what it holds (a peak the watch
+// may not have ticked for).
 func (t *procTree) kill() error {
+	t.sample()
 	err := syscall.Kill(-t.pgid, syscall.SIGKILL)
 	if errors.Is(err, syscall.ESRCH) {
 		return nil

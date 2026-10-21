@@ -20,6 +20,8 @@ func TestSpecValidation(t *testing.T) {
 		"memory past int64":    `{"name":"x","services":[{"name":"a","command":"c","limits":{"memory_mb":8796093022208}}]}`,
 		"negative cpu":         `{"name":"x","services":[{"name":"a","command":"c","limits":{"cpu_ms":-1}}]}`,
 		"cpu past a Duration":  `{"name":"x","services":[{"name":"a","command":"c","limits":{"cpu_ms":9223372036855}}]}`,
+		"negative processes":   `{"name":"x","services":[{"name":"a","command":"c","limits":{"processes":-1}}]}`,
+		"processes past DWORD": `{"name":"x","services":[{"name":"a","command":"c","limits":{"processes":2147483649}}]}`,
 		"unknown limit":        `{"name":"x","services":[{"name":"a","command":"c","limits":{"cpu":1}}]}`,
 		"unknown field":        `{"name":"x","services":[{"name":"a","command":"c","shell":"rm -rf /"}]}`,
 		"duplicate peer":       `{"name":"x","services":[],"peers":[{"name":"b","state_file":"b.json"},{"name":"b","state_file":"c.json"}]}`,

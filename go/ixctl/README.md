@@ -58,7 +58,7 @@ peers it federates with. Unknown fields are refused.
       "restart": "on-failure",
       "max_restarts": 5,
       "autostart": false,
-      "limits": {"wall_ms": 120000, "memory_mb": 2048, "cpu_ms": 60000}
+      "limits": {"wall_ms": 120000, "memory_mb": 2048, "cpu_ms": 60000, "processes": 16}
     },
     {
       "name": "job",
@@ -83,15 +83,16 @@ peers it federates with. Unknown fields are refused.
 | `limits.wall_ms` | Longest a run may last, from its launch. 0 or absent: no limit. |
 | `limits.memory_mb` | Most memory the run's whole process tree may hold, in MiB. 0 or absent: no limit. |
 | `limits.cpu_ms` | Most processor time, user and kernel, the whole tree may use, in milliseconds. 0 or absent: no limit. |
+| `limits.processes` | Most processes the tree may hold at once. 0 or absent: no limit. |
 | `peers[].state_file` | The state file of a peer instance; the link reads its address and token there and reconnects with backoff (200 ms to 5 s). |
 
 ### Limits
 
 A run past a limit is killed, its whole tree with it, and its exit names the limit: `reason` is
-`wall_limit`, `memory_limit` or `cpu_limit` on `service.exited` and in `last_exit`, beside the
-limit that was set on the event (`wall_ms`, `memory_mb`, or `cpu_limit_ms`, since `cpu_ms` is
-what the run used). The restart policy then applies as to any failure, so a job so ended stays
-`stopped` and a service restarts with backoff.
+`wall_limit`, `memory_limit`, `cpu_limit` or `process_limit` on `service.exited` and in
+`last_exit`, beside the limit that was set on the event (`wall_ms`, `memory_mb`, `processes`, or
+`cpu_limit_ms`, since `cpu_ms` is what the run used). The restart policy then applies as to any
+failure, so a job so ended stays `stopped` and a service restarts with backoff.
 
 - **Wall** is a timer armed at launch.
 - **Memory** on Windows is a job-object *notification limit* at `memory_mb` (the message the
@@ -105,11 +106,21 @@ what the run used). The restart policy then applies as to any failure, so a job 
   Linux, waited-for children included), so a run is killed once the figure it would report goes
   past the limit, at most a poll late. The kernel's own job time limit on Windows counts user
   time alone and ends the job itself; the plane does not use it.
+- **Processes** are counted by the same 100 ms poll (the job's active processes on Windows, the
+  group's live members on Linux) and reported as `peak_processes`; a run whose count goes past
+  the limit is killed. On Windows the job object also refuses a process past a cap an eighth
+  above the limit (at least one), so a fork storm is bounded between two polls, and the
+  kernel's message on that refusal (best effort, like the memory cap's) names the limit too.
+  The tree is read once more as it is killed, so a peak the watch had no tick for (the cap's
+  message arrives within milliseconds of the spawn) is still reported.
 
 Every exit also carries what the run cost: `peak_memory_bytes` (Windows: the job's peak commit;
-Linux: the larger of the polled peak and the leader's `ru_maxrss`) and `cpu_ms` (Windows: the
-job's user+kernel time; Linux: the larger of the group's polled time and the leader's
-`ru_utime + ru_stime`), when the platform could measure them.
+Linux: the larger of the polled peak and the leader's `ru_maxrss`), `cpu_ms` (Windows: the job's
+user+kernel time; Linux: the larger of the group's polled time and the leader's
+`ru_utime + ru_stime`) and, under a processor-time or process limit, `peak_processes`, when the
+platform could measure them. A limit read from a reported figure (`cpu_ms`, `peak_processes`)
+is applied to that figure at the exit too: a run that went past it and ended before a poll could
+kill it still carries the reason.
 
 ## Desired state, plan and apply
 
@@ -182,7 +193,7 @@ it. A subscriber with `since` replays from the ring (4096 envelopes per instance
 
 | Channel | Carries |
 |---|---|
-| `ctl` | The plane's own events: `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`, `peak_memory_bytes`, `cpu_ms`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
+| `ctl` | The plane's own events: `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<name>` | The service's output. A stdout line that is a JSON object with a string `kind` is forwarded as that event (`t` in Unix ms on the service's clock; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
 | `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored. `subscribe` is always local; ops carry `peer` to be forwarded. |
 
@@ -196,9 +207,9 @@ every `ctl` event's envelope. It is an audit log, not a store a program should r
 
 `e2e/e2e.py` is the end-to-end gate CI runs on Windows and Linux: the real plane, the real Rust
 client through its `ixql-ctl` example, ix-stream's `pod` example as two federated instances, the
-real `ix pipeline run` as a job, and runs killed at their wall, memory and processor-time
-limits. 35 checks, E1..E13, a restart loop and the M1 measurement (what a wait on the stream
-would gain over the 25 ms poll).
+real `ix pipeline run` as a job, and runs killed at their wall, memory, processor-time and
+process limits. 36 checks, E1..E14, a restart loop and the M1 measurement (what a wait on the
+stream would gain over the 25 ms poll).
 
 ```sh
 python go/ixctl/e2e/e2e.py --build            # build ixctl, pod, ixql-ctl and ix, then run
@@ -216,5 +227,6 @@ for one. CI also runs `go vet` and `go test -race` on Linux.
   Linux memory watch is a poll, and a hard death on Linux is contained for the leader only.
 - A single commit refused past the Windows memory cap still depends on the kernel's best-effort
   message; the notification at `memory_mb` is the guaranteed path.
-- The processor-time limit is a poll: a run may use up to one poll period of the machine's
-  cores past it before the kill. No process-count limit yet.
+- The processor-time and process limits are polls: a run may use up to one poll period of the
+  machine's cores past the first before the kill, and on Linux (no cap) spawn freely for one
+  poll period past the second.

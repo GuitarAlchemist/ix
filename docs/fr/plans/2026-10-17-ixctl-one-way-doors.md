@@ -505,7 +505,23 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   (test : 60 ms de calcul sous 20 ms, terminé avant la première lecture). Sous Linux la veille
   garde le plus grand temps sommé, la somme baissant quand un membre meurt avant que son parent
   l'attende ; le README dit qu'un nom d'hôte est refusé pour `--addr` (seule une IP de boucle
-  locale est acceptée). Revue Codex 15 (un P1, deux P2) : une sortie déjà en
+  locale est acceptée). `limits.processes`, la quatrième limite, borne les processus que l'arbre
+  tient à la fois : la même veille à 100 ms les compte (les processus actifs du job sous
+  Windows, les membres vivants du groupe sous Linux), rapporte le plus grand compte en
+  `peak_processes`, et l'exécution est tuée dès que le compte dépasse la limite, raison
+  `process_limit` (la limite en `processes` sur l'événement) ; la sortie est classée d'après le
+  pic aussi, comme pour le temps processeur. Sous Windows le job object refuse aussi tout
+  processus au-delà d'un plafond un huitième au-dessus (au moins un ;
+  `JOB_OBJECT_LIMIT_ACTIVE_PROCESS`, dont le message est au mieux, comme celui du plafond
+  mémoire, et atteint le port de complétion, que l'arbre crée désormais pour une limite de
+  processus comme pour une limite mémoire), si bien qu'une tempête de forks est bornée entre
+  deux lectures ; sous Linux rien ne
+  borne un groupe sans cgroup, une tempête a donc une période de lecture. L'arbre est relu une
+  dernière fois au moment où il est tué (`kill` relève avant de terminer), si bien que le pic
+  que le message du plafond interrompt quelques millisecondes après le spawn est rapporté : sans
+  cela `peak_processes` lisait 3 sous une limite de 3, ou manquait. La E14 de la
+  passerelle tient quatre enfants endormis sous une limite de trois (36 vérifications) ; le job
+  déclare `processes: 16`. Revue Codex 15 (un P1, deux P2) : une sortie déjà en
   attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;
   toujours `memory_limit`, le noyau l'a dit) ; une limite au-delà de ce qu'une `time.Duration`
   ou un compte d'octets contient est refusée ; le job mural de la passerelle est borné à 1,5 s

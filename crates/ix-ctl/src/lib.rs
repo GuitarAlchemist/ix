@@ -695,8 +695,9 @@ impl Ctl {
     /// run cost as the OS counted it, `peak_memory_bytes` and `cpu_ms`, and `reason` when the plane killed the run
     /// for a limit of its spec: `wall_limit` for a run that lasted past `limits.wall_ms`,
     /// `memory_limit` for one that held more than `limits.memory_mb`, `cpu_limit` for one
-    /// that used more processor time than `limits.cpu_ms`; absent when the process ended on
-    /// its own).
+    /// that used more processor time than `limits.cpu_ms`, `process_limit` for one that held
+    /// more processes at once than `limits.processes`; absent when the process ended on its
+    /// own).
     ///
     /// This is how a job is waited for: a service declared with `restart: never` runs to its
     /// end and the plane leaves it `stopped`, its `desired` still `running`. Converging the

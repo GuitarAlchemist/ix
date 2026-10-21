@@ -38,7 +38,8 @@ type exitInfo struct {
 	// run's generation), so a waiter can tell this run's exit from an earlier run's.
 	Generation uint64 `json:"generation,omitempty"`
 	// Reason names the limit the plane killed the run for (reasonWall, reasonMemory,
-	// reasonCPU); absent when the process ended on its own or on a requested stop.
+	// reasonCPU, reasonProcesses); absent when the process ended on its own or on a
+	// requested stop.
 	Reason string `json:"reason,omitempty"`
 	// PeakMemoryBytes is the most memory the run held at once, as the OS accounted it: the
 	// job's peak commit charge on Windows; on Linux the leader's peak resident set (rusage),
@@ -50,13 +51,17 @@ type exitInfo struct {
 	// leader's rusage with the children it waited for. Absent when unknown or under a
 	// millisecond.
 	CpuMs int64 `json:"cpu_ms,omitempty"`
+	// PeakProcesses is the most processes the tree held at once, as the watch counted them
+	// every 100 ms (only under a processor-time or process limit). Absent when not watched.
+	PeakProcesses int64 `json:"peak_processes,omitempty"`
 }
 
 // Exit reasons: the limit a run was killed for.
 const (
-	reasonWall   = "wall_limit"   // lasted past limits.wall_ms
-	reasonMemory = "memory_limit" // held more than limits.memory_mb
-	reasonCPU    = "cpu_limit"    // used more processor time than limits.cpu_ms
+	reasonWall      = "wall_limit"    // lasted past limits.wall_ms
+	reasonMemory    = "memory_limit"  // held more than limits.memory_mb
+	reasonCPU       = "cpu_limit"     // used more processor time than limits.cpu_ms
+	reasonProcesses = "process_limit" // held more processes at once than limits.processes
 )
 
 // command is one desired state handed to the supervisor, with the generation that asked.
@@ -444,17 +449,23 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 		default:
 		}
 	}
-	peak, cpu := c.tree.usage() // before close: the job is gone after
+	peak, cpu, procs := c.tree.usage() // before close: the job is gone after
 	if st.rss > peak {
 		peak = st.rss
 	}
 	if st.cpu > cpu {
 		cpu = st.cpu
 	}
-	// The processor-time limit is read from this very figure: a run that went past it and
-	// ended before a poll could kill it (or between two) is past it all the same.
-	if l := s.spec.Limits; reason == "" && !requested && l != nil && l.CpuMs > 0 && cpu > l.CpuMs {
-		reason = reasonCPU
+	// The processor-time and process limits are read from these very figures: a run that
+	// went past one and ended before a poll could kill it (or between two) is past it all
+	// the same.
+	if l := s.spec.Limits; reason == "" && !requested && l != nil {
+		switch {
+		case l.CpuMs > 0 && cpu > l.CpuMs:
+			reason = reasonCPU
+		case l.Processes > 0 && procs > l.Processes:
+			reason = reasonProcesses
+		}
 	}
 	c.tree.close()
 	drained := make(chan struct{})
@@ -465,7 +476,8 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 	}
 	s.proc = nil
 	s.mu.Lock()
-	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu}
+	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason,
+		PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
 	return e
@@ -483,12 +495,17 @@ func (s *service) exitData(pid int, requested bool, e *exitInfo) map[string]any 
 	case reasonCPU:
 		// `cpu_ms` is what the run used, so the limit travels as `cpu_limit_ms`.
 		d["reason"], d["cpu_limit_ms"] = e.Reason, s.spec.Limits.CpuMs
+	case reasonProcesses:
+		d["reason"], d["processes"] = e.Reason, s.spec.Limits.Processes
 	}
 	if e.PeakMemoryBytes > 0 {
 		d["peak_memory_bytes"] = e.PeakMemoryBytes
 	}
 	if e.CpuMs > 0 {
 		d["cpu_ms"] = e.CpuMs
+	}
+	if e.PeakProcesses > 0 {
+		d["peak_processes"] = e.PeakProcesses
 	}
 	return d
 }

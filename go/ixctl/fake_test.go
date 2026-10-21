@@ -39,6 +39,7 @@ func fakeService(args []string) int {
 	crashMS := fs.Int("crash-after-ms", 0, "exit with --crash-code after this long")
 	crashCode := fs.Int("crash-code", 3, "exit code of a crash")
 	spawn := fs.Bool("spawn-child", false, "start a grandchild and report its pid")
+	children := fs.Int("children", 0, "start this many sleeping grandchildren")
 	ignoreStdin := fs.Bool("ignore-stdin", false, "keep running after stdin closes")
 	hogMB := fs.Int("hog-mb", 0, "hold this much memory, touched, for the whole run")
 	burnMS := fs.Int("burn-ms", 0, "spin on one core for this long at start")
@@ -74,6 +75,16 @@ func fakeService(args []string) int {
 		}
 		emit("child", map[string]any{"pid": cmd.Process.Pid})
 	}
+	for i := 0; i < *children; i++ {
+		cmd := exec.Command(os.Args[0])
+		cmd.Env = append(os.Environ(), "IXCTL_TEST_ROLE=grandchild")
+		if err := cmd.Start(); err != nil {
+			// A job's process cap refuses the spawn: say so and go on with fewer, holding
+			// what was spawned (the count stays past the limit for the watch to see).
+			fmt.Fprintln(os.Stderr, "spawn:", err)
+			break
+		}
+	}
 	go func() {
 		io.Copy(io.Discard, os.Stdin)
 		if !*ignoreStdin {
@@ -104,6 +115,7 @@ type fakeSvc struct {
 	wallMs  int64 // limits.wall_ms, when > 0
 	memMB   int64 // limits.memory_mb, when > 0
 	cpuMs   int64 // limits.cpu_ms, when > 0
+	procs   int64 // limits.processes, when > 0
 }
 
 func testExe(t testing.TB) string {
@@ -139,8 +151,8 @@ func fakeSpec(t testing.TB, name string, peers []PeerSpec, svcs ...fakeSvc) *Spe
 			m := s.max
 			j.MaxRestarts = &m
 		}
-		if s.wallMs > 0 || s.memMB > 0 || s.cpuMs > 0 {
-			j.Limits = &Limits{WallMs: s.wallMs, MemoryMB: s.memMB, CpuMs: s.cpuMs}
+		if s.wallMs > 0 || s.memMB > 0 || s.cpuMs > 0 || s.procs > 0 {
+			j.Limits = &Limits{WallMs: s.wallMs, MemoryMB: s.memMB, CpuMs: s.cpuMs, Processes: s.procs}
 		}
 		doc.Services = append(doc.Services, j)
 	}

@@ -461,6 +461,20 @@ name `ixctl.v1`.
   60 ms burn under 20 ms, ended before the first poll). On Linux the watch keeps the largest
   time summed, since the sum falls when a member dies before its parent waits for it; the
   README says a hostname is refused for `--addr` (only a loopback IP is accepted).
+  `limits.processes`, the fourth limit, bounds the processes the tree holds at once: the same
+  100 ms watch counts them (the job's active processes on Windows, the group's live members
+  on Linux), reports the most as `peak_processes`, and the run is killed once the count goes
+  past the limit, reason `process_limit` (the limit as `processes` on the event); the exit is
+  classified from the peak too, as the processor time is. On Windows the job object also
+  refuses a process past a cap an eighth above (at least one; `JOB_OBJECT_LIMIT_ACTIVE_PROCESS`,
+  whose message is best effort, like the memory cap's, and reaches the completion port, which
+  the tree now creates for a process limit as for a memory one), so a fork storm is bounded
+  between two polls; on Linux nothing bounds a group without a cgroup, so a storm has a poll
+  period. The tree is read once more as it is killed (`kill` samples before terminating), so
+  the peak the cap's message interrupts within milliseconds of the spawn is reported: without
+  it `peak_processes` read 3 under a limit of 3, or was absent.
+  Gate E14 holds four sleeping children under a limit of three (36 checks); the job declares
+  `processes: 16`.
   Round 16's P2s: a failed launch releases the port and its listener; a requested stop's
   `service.exited` carries the cost too; the exit's code and the leader's usage travel
   together (`exitStat`), so a tree killed without its exit read reports neither; a memory

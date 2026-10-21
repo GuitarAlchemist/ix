@@ -67,7 +67,7 @@ jobs:
       # The control plane's end-to-end gate: the Go plane, the Rust client and
       # the ix-stream pod as two federated instances on loopback, and the `ix`
       # CLI run as a job under the plane (E10) and runs killed at their wall,
-      # memory and processor-time limits (E11, E12, E13), 35 checks.
+      # memory, processor-time and process limits (E11..E14), 36 checks.
       # It runs on both OS rows (Windows job objects; Linux process groups and
       # PR_SET_PDEATHSIG) on the toolchain whose cargo cache holds the examples.
       - uses: actions/setup-go@v5

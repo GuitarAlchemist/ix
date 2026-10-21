@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -23,20 +24,23 @@ var (
 // procTree is a service's process tree: a job object that holds the service
 // and everything it spawns. Closing the job (or the plane dying) kills it all.
 type procTree struct {
-	job     windows.Handle
-	port    windows.Handle // the job's completion port, when a memory limit is watched
-	over    chan string    // the limit the tree went past, once; nil when none is watched
-	done    chan struct{}  // closed by close: ends the processor-time watch
-	gone    chan struct{}  // closed when listen has returned: every message is in
-	cpuGone chan struct{}  // closed when the processor-time watch has returned
+	job       windows.Handle
+	port      windows.Handle // the job's completion port, when a memory limit is watched
+	over      chan string    // the limit the tree went past, once; nil when none is watched
+	done      chan struct{}  // closed by close: ends the accounting watch
+	gone      chan struct{}  // closed when listen has returned: every message is in
+	watchGone chan struct{}  // closed when the accounting watch has returned
+	mu        sync.Mutex
+	peakProcs int64 // the most active processes the watch has seen in the job
 }
 
-// cpuPoll is how often a watched job's processor time is read.
-const cpuPoll = 100 * time.Millisecond
+// watchPoll is how often a watched job's accounting (processor time, active processes) is read.
+const watchPoll = 100 * time.Millisecond
 
 // Job completion messages (winnt.h JOB_OBJECT_MSG_*), as GetQueuedCompletionStatus reports
 // them in its byte count.
 const (
+	jobMsgActiveProcessLimit = 3
 	jobMsgActiveProcessZero  = 4
 	jobMsgProcessMemoryLimit = 9
 	jobMsgJobMemoryLimit     = 10
@@ -85,6 +89,17 @@ func memoryCap(limit uint64) uint64 {
 	return limit + over
 }
 
+// processCap is the job's active process limit set above limits.processes, the same way: the
+// plane's kill on the count enforces the limit, the cap bounds a fork storm between two polls
+// (an eighth more, at least one). The spec keeps the cap within a DWORD.
+func processCap(limit int64) uint32 {
+	over := limit / 8
+	if over < 1 {
+		over = 1
+	}
+	return uint32(limit + over)
+}
+
 // startTree starts cmd suspended, puts it in a fresh job with
 // KILL_ON_JOB_CLOSE, then lets it run, so no grandchild can be born outside
 // the job. The child gets its own console process group: Ctrl+C reaches the
@@ -116,12 +131,17 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 		}
 		info.JobMemoryLimit = uintptr(hard)
 	}
+	if limits != nil && limits.Processes > 0 {
+		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+		info.BasicLimitInformation.ActiveProcessLimit = processCap(limits.Processes)
+	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
 		t.close()
 		return nil, fmt.Errorf("set job limits: %w", err)
 	}
-	if memory > 0 {
+	if memory > 0 || (limits != nil && limits.Processes > 0) {
+		// The port hears the memory notification and the caps' refusals (process cap included).
 		port, err := windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 1)
 		if err != nil {
 			t.close()
@@ -134,11 +154,13 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 			t.close()
 			return nil, fmt.Errorf("associate completion port: %w", err)
 		}
-		notify := jobNotificationLimit{JobMemoryLimit: memory, LimitFlags: windows.JOB_OBJECT_LIMIT_JOB_MEMORY}
-		if _, err := windows.SetInformationJobObject(job, windows.JobObjectNotificationLimitInformation,
-			uintptr(unsafe.Pointer(&notify)), uint32(unsafe.Sizeof(notify))); err != nil {
-			t.close()
-			return nil, fmt.Errorf("set job notification limit: %w", err)
+		if memory > 0 {
+			notify := jobNotificationLimit{JobMemoryLimit: memory, LimitFlags: windows.JOB_OBJECT_LIMIT_JOB_MEMORY}
+			if _, err := windows.SetInformationJobObject(job, windows.JobObjectNotificationLimitInformation,
+				uintptr(unsafe.Pointer(&notify)), uint32(unsafe.Sizeof(notify))); err != nil {
+				t.close()
+				return nil, fmt.Errorf("set job notification limit: %w", err)
+			}
 		}
 		t.over, t.gone = make(chan string, 1), make(chan struct{})
 		go t.listen(port)
@@ -170,25 +192,26 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 		t.close()
 		return nil, cerr
 	}
-	if limits != nil && limits.CpuMs > 0 {
+	if limits != nil && (limits.CpuMs > 0 || limits.Processes > 0) {
 		// Once the leader is in the job: the watch ends on a job with no process.
 		if t.over == nil {
 			t.over = make(chan string, 1)
 		}
-		t.cpuGone = make(chan struct{})
-		go t.watchCPU(job, limits.CpuMs)
+		t.watchGone = make(chan struct{})
+		go t.watch(job, limits.CpuMs, limits.Processes)
 	}
 	return t, nil
 }
 
-// watchCPU reads the job's processor time, user and kernel, every cpuPoll, until the tree is
-// closed or the job has no process left, and reports the limit gone past on `over`, once.
-// The kernel's own job time limit counts user time alone and ends the job itself; this watch
-// bounds the figure the exit reports (usage), so the two agree, at the price of a poll's
+// watch reads the job's accounting every watchPoll, until the tree is closed or the job has
+// no process left: the processor time, user and kernel, and the active processes, whose peak
+// it keeps; and reports a limit gone past on `over`, once (0 is no limit). The kernel's own
+// job time limit counts user time alone and ends the job itself; this watch bounds the
+// figures the exit reports (usage), so limit and evidence agree, at the price of a poll's
 // lateness. It takes the job by value: `close` zeroes the field on its own goroutine.
-func (t *procTree) watchCPU(job windows.Handle, limitMs int64) {
-	defer close(t.cpuGone)
-	tick := time.NewTicker(cpuPoll)
+func (t *procTree) watch(job windows.Handle, cpuMs, processes int64) {
+	defer close(t.watchGone)
+	tick := time.NewTicker(watchPoll)
 	defer tick.Stop()
 	for {
 		select {
@@ -201,13 +224,26 @@ func (t *procTree) watchCPU(job windows.Handle, limitMs int64) {
 			uintptr(unsafe.Pointer(&acc)), uint32(unsafe.Sizeof(acc)), nil); err != nil || acc.ActiveProcesses == 0 {
 			return
 		}
-		if (acc.TotalUserTime+acc.TotalKernelTime)/10_000 > limitMs {
-			select {
-			case t.over <- reasonCPU:
-			default:
-			}
-			return
+		active := int64(acc.ActiveProcesses)
+		t.mu.Lock()
+		if active > t.peakProcs {
+			t.peakProcs = active
 		}
+		t.mu.Unlock()
+		var reason string
+		switch {
+		case cpuMs > 0 && (acc.TotalUserTime+acc.TotalKernelTime)/10_000 > cpuMs:
+			reason = reasonCPU
+		case processes > 0 && active > processes:
+			reason = reasonProcesses
+		default:
+			continue
+		}
+		select {
+		case t.over <- reason:
+		default:
+		}
+		return
 	}
 }
 
@@ -228,20 +264,44 @@ func (t *procTree) listen(port windows.Handle) {
 		if key == drainKey {
 			return
 		}
+		var reason string
 		switch code {
 		case jobMsgNotificationLimit, jobMsgJobMemoryLimit, jobMsgProcessMemoryLimit:
-			select {
-			case t.over <- reasonMemory:
-			default:
-			}
+			reason = reasonMemory
+		case jobMsgActiveProcessLimit:
+			reason = reasonProcesses // the cap refused a process (best effort, like the memory cap's)
 		case jobMsgActiveProcessZero:
 			return
+		default:
+			continue
+		}
+		select {
+		case t.over <- reason:
+		default:
 		}
 	}
 }
 
 // exceeded yields the limit the tree went past, once; nil when none is watched.
 func (t *procTree) exceeded() <-chan string { return t.over }
+
+// sample reads the job's active processes once more into the peak, for a tree about to be
+// killed before the watch's next tick.
+func (t *procTree) sample() {
+	if t.watchGone == nil {
+		return
+	}
+	var acc jobAccounting
+	if err := windows.QueryInformationJobObject(t.job, windows.JobObjectBasicAccountingInformation,
+		uintptr(unsafe.Pointer(&acc)), uint32(unsafe.Sizeof(acc)), nil); err != nil {
+		return
+	}
+	t.mu.Lock()
+	if n := int64(acc.ActiveProcesses); n > t.peakProcs {
+		t.peakProcs = n
+	}
+	t.mu.Unlock()
+}
 
 // drain posts a marker to the port, behind every message the job has posted, and waits, at
 // most limit, until the listener has read up to it, so what `exceeded` holds is final; at
@@ -265,9 +325,13 @@ func (t *procTree) drain(limit time.Duration) {
 }
 
 // usage is what the job's processes, exited ones included, have used as the kernel counted
-// it: the most memory held at once (peak commit charge) and the processor time, user and
-// kernel, in milliseconds; 0 for what cannot be read. Read before close.
-func (t *procTree) usage() (peakBytes, cpuMs int64) {
+// it: the most memory held at once (peak commit charge), the processor time, user and
+// kernel, in milliseconds, and the most processes active at once as the watch saw them (0
+// without a watch); 0 for what cannot be read. Read before close.
+func (t *procTree) usage() (peakBytes, cpuMs, peakProcs int64) {
+	t.mu.Lock()
+	peakProcs = t.peakProcs
+	t.mu.Unlock()
 	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	if err := windows.QueryInformationJobObject(t.job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)), nil); err == nil {
@@ -278,10 +342,13 @@ func (t *procTree) usage() (peakBytes, cpuMs int64) {
 		uintptr(unsafe.Pointer(&acc)), uint32(unsafe.Sizeof(acc)), nil); err == nil {
 		cpuMs = (acc.TotalUserTime + acc.TotalKernelTime) / 10_000 // 100 ns units
 	}
-	return peakBytes, cpuMs
+	return peakBytes, cpuMs, peakProcs
 }
 
+// kill ends every process of the job, after a last look at what it holds (a peak the watch
+// may not have ticked for: a cap's message arrives within milliseconds of the spawn).
 func (t *procTree) kill() error {
+	t.sample()
 	return windows.TerminateJobObject(t.job, 1)
 }
 
@@ -319,17 +386,17 @@ func (t *procTree) waitGone(limit time.Duration) bool {
 func exitCode(ee *exec.ExitError) int { return ee.ExitCode() }
 
 // close releases the port and the job; safe to call more than once. The watches are let
-// return first (the listener reaches the drain marker, the processor-time watch sees `done`),
-// so no read of a handle outlives it.
+// return first (the listener reaches the drain marker, the accounting watch sees `done`), so
+// no read of a handle outlives it.
 func (t *procTree) close() {
 	select {
 	case <-t.done:
 	default:
 		close(t.done)
 	}
-	if t.cpuGone != nil {
+	if t.watchGone != nil {
 		select {
-		case <-t.cpuGone:
+		case <-t.watchGone:
 		case <-time.After(monitorLimit):
 		}
 	}

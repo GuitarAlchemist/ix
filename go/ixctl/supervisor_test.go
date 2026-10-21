@@ -319,6 +319,49 @@ func TestARunPastItsCpuLimitThatEndsBeforeThePollSaysSoToo(t *testing.T) {
 	}
 }
 
+// A run that holds more processes at once than its limit is killed, its exit names the limit
+// and the most processes it held; a job so ended stays stopped. On Windows the job's cap (an
+// eighth above, at least one) refuses the last spawn: the fake goes on with four processes,
+// past the limit of three, and the watch (or the kernel's message) ends it.
+func TestARunPastItsProcessLimitIsKilledAndSaysSo(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "forky", args: []string{"--children", "4"}, restart: restartNever, procs: 3}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("forky")})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	peak, _ := d["peak_processes"].(float64)
+	if d["reason"] != reasonProcesses || d["processes"] != 3.0 || d["requested"] != false || d["code"] == 0.0 || peak <= 3 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+	e := waitEnv(t, w, 5*time.Second, "next", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.stopped" || e.Ev.Kind == "service.restarting"
+	})
+	if e.Ev.Kind != "service.stopped" {
+		t.Fatalf("a job killed at its limit is not restarted: %s", e.Raw())
+	}
+	s := svcStatus(in.plane.Status(), "forky")
+	if s.State != stateStopped || s.LastExit == nil || s.LastExit.Reason != reasonProcesses || s.LastExit.PeakProcesses <= 3 {
+		t.Fatalf("after the kill: %+v (exit %+v)", s, s.LastExit)
+	}
+}
+
+// A run under a process limit it never reaches ends as any other, its exit without a reason
+// and with the most processes it held (the leader and its two children).
+func TestARunUnderItsProcessLimitEndsOnItsOwn(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "small", args: []string{"--children", "2", "--crash-after-ms", "300", "--crash-code", "0"}, restart: restartNever, procs: 5}), "")
+	c := dial(t, in)
+	w := subscribe(t, c, "ctl", nil)
+	do(t, c, Request{Op: "apply", Desired: running("small")})
+	x := waitEnv(t, w, 10*time.Second, "exit", func(e *Envelope) bool { return e.Ev.Kind == "service.exited" })
+	d := ctlData(x)
+	if _, has := d["reason"]; has || d["code"] != 0.0 || d["peak_processes"] != 3.0 {
+		t.Fatalf("exit %s", x.Raw())
+	}
+}
+
 // A requested stop reports what the run cost too.
 func TestAStopReportsTheRunsUsage(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil,

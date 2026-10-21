@@ -55,6 +55,12 @@ type Limits struct {
 	// the exit reports as `cpu_ms` (the job's on Windows, the group's /proc stat on Linux), so
 	// a run is killed once the figure it would report goes past the limit, at most a poll late.
 	CpuMs int64 `json:"cpu_ms,omitempty"`
+	// Processes is the most processes the run's tree may hold at once; 0 is no limit. The
+	// plane counts them every 100 ms (the job's active processes on Windows, the group's live
+	// members on Linux) and kills a run once the count it would report as `peak_processes`
+	// goes past the limit. On Windows the job object also refuses a process past a cap an
+	// eighth above (at least one), so a fork storm is bounded between two polls.
+	Processes int64 `json:"processes,omitempty"`
 }
 
 type PeerSpec struct {
@@ -70,6 +76,8 @@ const (
 	// The largest limits that still fit a time.Duration (wall and processor time) and a byte count.
 	maxWallMs   = math.MaxInt64 / int64(time.Millisecond)
 	maxMemoryMB = math.MaxInt64 >> 20
+	// The largest process limit whose cap (an eighth above) still fits the job object's DWORD.
+	maxProcesses = 1 << 31
 )
 
 // LoadSpec reads and validates a spec file. Relative commands, dirs and peer
@@ -139,6 +147,9 @@ func (s *Spec) validate() error {
 			}
 			if l.CpuMs < 0 || l.CpuMs > maxWallMs {
 				return fmt.Errorf("service %q: limits.cpu_ms must be 0..%d", sv.Name, maxWallMs)
+			}
+			if l.Processes < 0 || l.Processes > maxProcesses {
+				return fmt.Errorf("service %q: limits.processes must be 0..%d", sv.Name, int64(maxProcesses))
 			}
 		}
 		sv.Command = s.abs(sv.Command)

@@ -61,7 +61,7 @@ les pairs avec lesquels elle se fédère. Les champs inconnus sont refusés.
       "restart": "on-failure",
       "max_restarts": 5,
       "autostart": false,
-      "limits": {"wall_ms": 120000, "memory_mb": 2048, "cpu_ms": 60000}
+      "limits": {"wall_ms": 120000, "memory_mb": 2048, "cpu_ms": 60000, "processes": 16}
     },
     {
       "name": "job",
@@ -86,14 +86,16 @@ les pairs avec lesquels elle se fédère. Les champs inconnus sont refusés.
 | `limits.wall_ms` | Durée maximale d'une exécution, depuis son lancement. 0 ou absent : pas de limite. |
 | `limits.memory_mb` | Mémoire maximale que tout l'arbre de processus peut tenir, en MiB. 0 ou absent : pas de limite. |
 | `limits.cpu_ms` | Temps processeur maximal, utilisateur et noyau, que tout l'arbre peut consommer, en millisecondes. 0 ou absent : pas de limite. |
+| `limits.processes` | Nombre maximal de processus que l'arbre peut tenir à la fois. 0 ou absent : pas de limite. |
 | `peers[].state_file` | Le fichier d'état d'une instance pair ; le lien y lit son adresse et son jeton et se reconnecte avec délai croissant (200 ms à 5 s). |
 
 ### Limites
 
 Une exécution qui dépasse une limite est tuée, tout son arbre avec elle, et sa sortie nomme la
-limite : `reason` vaut `wall_limit`, `memory_limit` ou `cpu_limit` sur `service.exited` et dans
-`last_exit`, à côté de la limite posée sur l'événement (`wall_ms`, `memory_mb`, ou
-`cpu_limit_ms`, puisque `cpu_ms` est ce que l'exécution a consommé). La politique de redémarrage
+limite : `reason` vaut `wall_limit`, `memory_limit`, `cpu_limit` ou `process_limit` sur
+`service.exited` et dans `last_exit`, à côté de la limite posée sur l'événement (`wall_ms`,
+`memory_mb`, `processes`, ou `cpu_limit_ms`, puisque `cpu_ms` est ce que l'exécution a
+consommé). La politique de redémarrage
 s'applique ensuite comme à tout échec : un job ainsi terminé reste `stopped`, un service redémarre
 avec délai.
 
@@ -111,11 +113,23 @@ avec délai.
   que le chiffre qu'elle rapporterait dépasse la limite, au plus une lecture en retard. La
   limite de temps propre au job object Windows ne compte que le temps utilisateur et termine le
   job elle-même ; le plan ne s'en sert pas.
+- **Les processus** sont comptés par la même lecture toutes les 100 ms (les processus actifs du
+  job sous Windows, les membres vivants du groupe sous Linux) et rapportés en `peak_processes` ;
+  une exécution dont le compte dépasse la limite est tuée. Sous Windows le job object refuse
+  aussi tout processus au-delà d'un plafond un huitième au-dessus de la limite (au moins un),
+  si bien qu'une tempête de forks est bornée entre deux lectures, et le message du noyau sur ce
+  refus (au mieux, comme celui du plafond mémoire) nomme la limite lui aussi. L'arbre est relu
+  une dernière fois au moment où il est tué, si bien qu'un pic que la veille n'a pas eu le temps
+  de lire (le message du plafond arrive quelques millisecondes après le spawn) est quand même
+  rapporté.
 
 Chaque sortie porte aussi ce que l'exécution a coûté : `peak_memory_bytes` (Windows : le pic de
-commit du job ; Linux : le plus grand du pic sondé et du `ru_maxrss` du meneur) et `cpu_ms`
+commit du job ; Linux : le plus grand du pic sondé et du `ru_maxrss` du meneur), `cpu_ms`
 (Windows : temps utilisateur + noyau du job ; Linux : le plus grand du temps sondé du groupe et
-du `ru_utime + ru_stime` du meneur), quand la plateforme a pu les mesurer.
+du `ru_utime + ru_stime` du meneur) et, sous une limite de temps processeur ou de processus,
+`peak_processes`, quand la plateforme a pu les mesurer. Une limite lue dans un chiffre rapporté
+(`cpu_ms`, `peak_processes`) s'applique aussi à ce chiffre à la sortie : une exécution qui l'a
+dépassé et s'est terminée avant qu'une lecture puisse la tuer porte quand même la raison.
 
 ## État désiré, plan et apply
 
@@ -191,7 +205,7 @@ Les événements arrivent en enveloppes :
 
 | Canal | Porte |
 |---|---|
-| `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`, `peak_memory_bytes`, `cpu_ms`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
+| `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne est transmise comme cet événement (`t` en ms Unix sur l'horloge du service ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
 | `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir. `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 
@@ -207,8 +221,9 @@ programme devrait lire (porte 3).
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le
 vrai plan, le vrai client Rust via son exemple `ixql-ctl`, l'exemple `pod` d'ix-stream en deux
 instances fédérées, le vrai `ix pipeline run` comme job, et des exécutions tuées à leurs limites
-de temps mur, de mémoire et de temps processeur. 35 vérifications, E1..E13, une boucle de
-redémarrage et la mesure M1 (ce qu'une attente sur le flux gagnerait sur la sonde à 25 ms).
+de temps mur, de mémoire, de temps processeur et de processus. 36 vérifications, E1..E14, une
+boucle de redémarrage et la mesure M1 (ce qu'une attente sur le flux gagnerait sur la sonde à
+25 ms).
 
 ```sh
 python go/ixctl/e2e/e2e.py --build            # construit ixctl, pod, ixql-ctl et ix, puis lance
@@ -227,6 +242,7 @@ Le job lit la constitution Demerzel dans le sous-module `governance/demerzel`
   que pour le meneur.
 - Un seul commit refusé au-delà du plafond mémoire Windows dépend encore du message au mieux du
   noyau ; la notification à `memory_mb` est le chemin garanti.
-- La limite de temps processeur est une sonde : une exécution peut consommer jusqu'à une
-  période de lecture sur tous les cœurs de la machine au-delà, avant la mise à mort. Pas encore
-  de limite de nombre de processus.
+- Les limites de temps processeur et de processus sont des sondes : une exécution peut consommer
+  jusqu'à une période de lecture sur tous les cœurs de la machine au-delà de la première avant
+  la mise à mort, et sous Linux (sans plafond) lancer librement des processus pendant une
+  période de lecture au-delà de la seconde.
