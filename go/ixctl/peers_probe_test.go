@@ -24,14 +24,7 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	c := dial(t, a)
 	pipes := subscribe(t, c, "peer/b/probe/", nil)
 	ctl := subscribe(t, c, "peer/b/ctl", nil)
-	hb := func(name string, export bool) {
-		extra := map[string]any{}
-		if export {
-			extra["export"] = true
-		}
-		do(t, c, Request{Op: "probe.create", Peer: "b", Probe: node(name, "heartbeat@1", 10, extra)})
-		do(t, c, Request{Op: "probe.start", Peer: "b", Node: name})
-	}
+	hb := func(name string, export bool) { probeOn(t, c, name, "heartbeat@1", export) }
 	hb("cpu", true)       // exportable and wanted: crosses
 	hb("cpu-extra", true) // exportable, not wanted: names are exact, never a prefix
 	hb("mem", false)      // wanted, not exportable: stays on B, and the status says so
@@ -95,12 +88,40 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	// same name without export stays on B.
 	do(t, c, Request{Op: "probe.remove", Peer: "b", Node: "cpu"})
 	waitStatus(t, a, 5*time.Second, "cpu absent", wantProbes("cpu:absent", "mem:not-exportable", "late:mirrored"))
-	hb("cpu", false)
+	// The unexported incarnation is a mem@1 so its samples can be told from a heartbeat's.
+	probeOn(t, c, "cpu", "mem@1", false)
 	waitStatus(t, a, 5*time.Second, "cpu not exportable", wantProbes("cpu:not-exportable", "mem:not-exportable", "late:mirrored"))
 	if f, err := pipes.next(300*time.Millisecond, func(e *Envelope) bool { return e.Ch == "peer/b/probe/cpu" }); err == nil {
 		t.Fatalf("a recreated, unexported cpu crossed the link: seq %d", f.Env.Seq)
+	} else if !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("waiting for nothing: %v", err)
 	}
+
+	// A third incarnation, exported again: the link resumes from nothing, not from the seq it
+	// last mirrored, so the unexported incarnation's samples (still in B's ring on the same
+	// channel name) are never replayed (Codex round 35).
+	do(t, c, Request{Op: "probe.remove", Peer: "b", Node: "cpu"})
+	waitStatus(t, a, 5*time.Second, "cpu absent again", wantProbes("cpu:absent", "mem:not-exportable", "late:mirrored"))
+	hb("cpu", true)
+	first := waitEnv(t, pipes, 5*time.Second, "the re-exported cpu's first mirrored sample", func(e *Envelope) bool {
+		return e.Ch == "peer/b/probe/cpu"
+	})
+	if k := dataOf(first)["kind"]; k != "heartbeat@1" {
+		t.Fatalf("the re-exported cpu's first mirrored sample is a %v: the unexported incarnation was replayed", k)
+	}
+	waitStatus(t, a, 5*time.Second, "cpu mirrored again", wantProbes("cpu:mirrored", "mem:not-exportable", "late:mirrored"))
 	_ = b
+}
+
+// probeOn creates a 10 ms node of the kind on B through A and starts it.
+func probeOn(t *testing.T, c *Client, name, kind string, export bool) {
+	t.Helper()
+	extra := map[string]any{}
+	if export {
+		extra["export"] = true
+	}
+	do(t, c, Request{Op: "probe.create", Peer: "b", Probe: node(name, kind, 10, extra)})
+	do(t, c, Request{Op: "probe.start", Peer: "b", Node: name})
 }
 
 func dataOf(e *Envelope) map[string]any {

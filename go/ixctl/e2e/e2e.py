@@ -1149,21 +1149,34 @@ def run():
     def pipe_states():
         return {p["name"]: p["state"] for p in (peer(status(sa), "b") or {}).get("probes", [])}
     states_x, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
-    _, xenvs = sse(sa, "peer/b/probe/", 1.0)
+    _, xenvs = sse(sa, "peer/b/probe/", 1.0, query="ch=peer/b/probe/")  # live, not a since=0 replay
     xchans = sorted({e["ch"] for e in xenvs})
     _, lb = call(sa, "GET", "/v1/probe?peer=b")
     flags = {n["name"]: n.get("export", False) for n in (lb or {}).get("nodes", []) if n["name"].startswith("x")}
     removed_x = [call(sa, "POST", "/v1/probe/remove", {"node": n, "peer": "b"})[0] for n in ("xcpu", "xcpu-extra", "xmem")]
     states_gone, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    # A same-name recreation without export stays on b: a live reader on a sees nothing while the
+    # peer is up and the reader got no gap (a dead link or a gap would make "nothing" vacuous).
+    gaps_before = sum(1 for g in SSE_GAPS if g.get("ch") == "peer/b/probe/")
+    code_re = call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50})[0]
+    call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
+    states_re, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "not-exportable" else None, 5)
+    _, quiet = sse(sa, "peer/b/probe/", 0.7, query="ch=peer/b/probe/")
+    peer_up = (peer(status(sa), "b") or {}).get("state") == "up"
+    gaps_after = sum(1 for g in SSE_GAPS if g.get("ch") == "peer/b/probe/")
+    code_rm = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
     check("E19.only_exported_and_wanted_probe_pipes_cross_the_link",
           made == [200, 200, 200] and started_x == [200, 200, 200]
           and (states_x or {}) == {"xcpu": "mirrored", "xmem": "not-exportable"}
           and xchans == ["peer/b/probe/xcpu"] and bool(xenvs)
           and all(e["origin"] == "b" and e["ev"]["kind"] == "sample" and e["ev"]["data"].get("node") == "xcpu" for e in xenvs)
           and flags == {"xcpu": True, "xcpu-extra": True, "xmem": False}
-          and removed_x == [200, 200, 200] and (states_gone or {}) == {"xcpu": "absent", "xmem": "absent"},
+          and removed_x == [200, 200, 200] and (states_gone or {}) == {"xcpu": "absent", "xmem": "absent"}
+          and code_re == 200 and (states_re or {}) == {"xcpu": "not-exportable", "xmem": "absent"}
+          and quiet == [] and peer_up and gaps_after == gaps_before and code_rm == 200,
           created=made, started=started_x, states=states_x, channels=xchans, samples=len(xenvs), export=flags,
-          removed=removed_x, after_remove=states_gone)
+          removed=removed_x, after_remove=states_gone, recreated=states_re, quiet=len(quiet), peer_up=peer_up,
+          gaps=[gaps_before, gaps_after])
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

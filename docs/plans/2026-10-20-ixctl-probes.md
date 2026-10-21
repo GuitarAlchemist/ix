@@ -216,9 +216,13 @@ reader, and in V1 the reader is the consumer (IXQL `ix.ctl.events` on `peer/<pee
 no remote source on a local mux. What crosses a link is the intersection of the child's `export:
 true` at create (immutable, false by default) and the parent's exact request `peers[].probes`;
 the link subscribes by exact channel name (a prefix would carry `cpu-extra` with `cpu`), from the
-peer's `probe.list` at attach and the mirrored `probe.created` / `probe.removed` after, both
-idempotent so their order needs no snapshot yet; `status.peers[].probes` says `mirrored` /
-`not-exportable` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
+peer's `probe.list` at attach and the mirrored `probe.created` / `probe.removed` after, applied
+in arrival order (an event that landed between the subscription and the list is applied after
+it, one lost to a gap is not seen: the window the cursor-bound snapshot closes in slice 4); a
+drop forgets the resume seq, so a re-exported name never replays an intervening unexported
+incarnation's samples, and frames of a subscription that is no longer the pipe's are dropped
+(Codex round 35); subscribing runs off the link's drain goroutine so a full queue cannot starve
+the reply. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
 published (samples × depth), bytes and records transported per link and per parent;
 `tree_rate_per_s` is not a federated bound. Still to ship (slices 2–4, acceptance criteria on
 ix#408): provenance `src_seq` / `src_epoch` and the series `origin:src_epoch:node:<created seq>`;

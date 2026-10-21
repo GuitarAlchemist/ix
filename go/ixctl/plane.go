@@ -209,8 +209,8 @@ type PeerStatus struct {
 	Services json.RawMessage `json:"services"`
 	// Probes: one entry per node named in the peer spec's `probes`, in that order, with what
 	// it is right now: `mirrored` (exportable and wanted, its pipe crosses), `not-exportable`
-	// (the peer holds it without export), `absent` (the peer holds no such node, or the link
-	// is down).
+	// (the peer holds it without export), `opening` (subscribing to its pipe), `absent` (the
+	// peer holds no such node, or the link is down).
 	Probes []PeerProbeStatus `json:"probes,omitempty"`
 }
 

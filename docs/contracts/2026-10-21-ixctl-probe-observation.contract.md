@@ -27,7 +27,7 @@ Every frame a subscription delivers is either an **envelope** or a **gap** (`go/
 
 | Envelope field | Meaning | Locked? |
 |---|---|---|
-| `ch` | channel: `probe/<node>` for a node's samples, `ctl` for the lifecycle, `svc/<name>` for a service's pipe | v1 protocol |
+| `ch` | channel: `probe/<node>` for a node's samples, `ctl` for the lifecycle, `svc/<name>` for a service's pipe; on a parent plane, `peer/<peer>/probe/<node>` for a peer's exported, requested pipe (v0.1.3) | v1 protocol |
 | `seq` | the instance's sequence, shared by every channel, from 1 at each boot | v1 protocol |
 | `epoch` | the boot's id; a new one at every start of the plane | v1 protocol |
 | `origin` | the instance (plane) name that produced the event; a peer mirror keeps the origin's | v1 protocol |

@@ -32,15 +32,19 @@ type peerLink struct {
 	pipes    map[string]*pipeSub // per wanted probe node, what it is now
 }
 
-// pipeSub is one wanted probe node's standing on the link.
+// pipeSub is one wanted probe node's standing on the link. gen counts its changes: a subscribe
+// or unsubscribe that completes after the pipe moved on finds another gen and stands down, and
+// a frame from a subscription that is no longer the pipe's is dropped.
 type pipeSub struct {
-	state string // pipeAbsent | pipeNotExportable | pipeMirrored
+	state string // pipeAbsent | pipeNotExportable | pipeOpening | pipeMirrored
 	sub   int64  // the subscription while mirrored
+	gen   uint64
 }
 
 const (
 	pipeAbsent        = "absent"
 	pipeNotExportable = "not-exportable"
+	pipeOpening       = "opening" // subscribing to the peer's pipe
 	pipeMirrored      = "mirrored"
 )
 
@@ -163,7 +167,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		go func() {
 			for f := range frames {
 				select {
-				case merged <- peerFrame{prefix, f}:
+				case merged <- peerFrame{prefix, f, 0}:
 				case <-c.Done():
 					return
 				}
@@ -185,18 +189,22 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		l.mu.Lock()
 		l.client, l.up = nil, false
 		for _, p := range l.pipes {
-			*p = pipeSub{state: pipeAbsent}
+			p.gen++
+			p.state, p.sub = pipeAbsent, 0
 		}
 		l.mu.Unlock()
 	}()
 
 	// The wanted probe pipes: the peer's list says which exist and are exportable now; the
-	// ctl mirror, subscribed above and live before the list is read, says every change after.
-	// An event between the two is applied after the list, and both steps are idempotent, so
-	// the order needs no snapshot here (slice 1 of S2; the cursor-bound snapshot is slice 4).
-	if err := l.reconcilePipes(ctx, c, merged); err != nil {
-		return true, err
-	}
+	// ctl mirror, subscribed above and live before the list is read, says every change after,
+	// applied in arrival order. An event that landed between the subscription and the list is
+	// applied after the list; that window, and a lifecycle event lost to a gap, are what the
+	// cursor-bound snapshot closes (slice 4 of S2); here `probe.list` is read again on every
+	// reconnect. Subscribing and unsubscribing run on their own goroutines: this loop is the
+	// one consumer of merged, and a reply the peer sends can only reach us while the client's
+	// reader is not held back by a full subscription channel, so the loop never waits on one.
+	fail := make(chan error, 1)
+	l.reconcilePipes(ctx, c, merged, fail)
 
 	for {
 		select {
@@ -207,134 +215,178 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 				return true, errors.New("mirror of " + pf.prefix + " overflowed")
 			}
 			if pf.f.Env != nil {
+				if pf.sub != 0 && !l.current(pf.prefix, pf.sub) {
+					continue // a frame of a subscription that is no longer the pipe's
+				}
 				l.mirror(st.Name, pf.prefix, pf.f.Env)
 				if pf.prefix == "ctl" && pf.f.Env.Origin == st.Name {
-					if err := l.followPipe(ctx, c, merged, pf.f.Env); err != nil {
-						return true, err
-					}
+					l.followPipe(ctx, c, merged, fail, pf.f.Env)
 				}
 				select {
 				case refresh <- struct{}{}:
 				default:
 				}
 			}
+		case err := <-fail:
+			return true, err
 		case <-c.Done():
 			return true, c.Err()
 		}
 	}
 }
 
-// reconcilePipes reads the peer's probe list once and mirrors every wanted node it exports.
-func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame) error {
+// current says whether sub is still the subscription of the pipe channel ch.
+func (l *peerLink) current(ch string, sub int64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	p := l.pipes[strings.TrimPrefix(ch, "probe/")]
+	return p != nil && p.state == pipeMirrored && p.sub == sub
+}
+
+// reconcilePipes reads the peer's probe list once, on its own goroutine, and mirrors every
+// wanted node it exports. A list that cannot be read ends the session through fail.
+func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error) {
 	if len(l.spec.Probes) == 0 {
-		return nil
+		return
 	}
-	data, err := c.Do(ctx, Request{Op: "probe.list"})
-	if err != nil {
-		return err
-	}
-	var list struct {
-		Nodes []struct {
-			Name   string `json:"name"`
-			Export bool   `json:"export"`
-		} `json:"nodes"`
-	}
-	if err := json.Unmarshal(data, &list); err != nil {
-		return err
-	}
-	for _, n := range list.Nodes {
-		if err := l.setPipe(ctx, c, merged, n.Name, n.Export); err != nil {
-			return err
+	go func() {
+		data, err := c.Do(ctx, Request{Op: "probe.list"})
+		if err != nil {
+			l.failWith(fail, err)
+			return
 		}
+		var list struct {
+			Nodes []struct {
+				Name   string `json:"name"`
+				Export bool   `json:"export"`
+			} `json:"nodes"`
+		}
+		if err := json.Unmarshal(data, &list); err != nil {
+			l.failWith(fail, err)
+			return
+		}
+		for _, n := range list.Nodes {
+			l.setPipe(ctx, c, merged, fail, n.Name, n.Export)
+		}
+	}()
+}
+
+func (l *peerLink) failWith(fail chan<- error, err error) {
+	select {
+	case fail <- err:
+	default:
 	}
-	return nil
 }
 
 // followPipe applies one of the peer's own ctl events to the wanted pipes: a probe.created
 // opens or declines the pipe by its export flag, a probe.removed closes it.
-func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peerFrame, env *Envelope) error {
+func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, env *Envelope) {
 	if env.Ev.Kind != "probe.created" && env.Ev.Kind != "probe.removed" {
-		return nil
+		return
 	}
 	var d struct {
 		Node   string `json:"node"`
 		Export bool   `json:"export"`
 	}
 	if json.Unmarshal(env.Ev.Data, &d) != nil || !l.wanted(d.Node) {
-		return nil
+		return
 	}
 	if env.Ev.Kind == "probe.removed" {
-		return l.dropPipe(ctx, c, d.Node)
+		l.dropPipe(ctx, c, d.Node, pipeAbsent)
+		return
 	}
-	return l.setPipe(ctx, c, merged, d.Node, d.Export)
+	l.setPipe(ctx, c, merged, fail, d.Node, d.Export)
 }
 
-// setPipe makes a wanted node mirrored (subscribing to its exact channel, resuming from the
-// last mirrored seq when there is one) or not-exportable. Idempotent.
-func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, node string, export bool) error {
+// setPipe makes a wanted node mirrored (opening: a subscription to its exact channel on its
+// own goroutine, live, never from a seq of an earlier incarnation of the name) or
+// not-exportable. Idempotent.
+func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, node string, export bool) {
 	if !l.wanted(node) {
-		return nil
+		return
 	}
 	if !export {
-		if err := l.dropPipe(ctx, c, node); err != nil {
-			return err
-		}
-		l.mu.Lock()
-		l.pipes[node].state = pipeNotExportable
-		l.mu.Unlock()
-		return nil
+		l.dropPipe(ctx, c, node, pipeNotExportable)
+		return
 	}
 	ch := "probe/" + node
 	l.mu.Lock()
-	if l.pipes[node].state == pipeMirrored {
+	p := l.pipes[node]
+	if p.state == pipeMirrored || p.state == pipeOpening {
 		l.mu.Unlock()
-		return nil
+		return
 	}
+	p.gen++
+	p.state, p.sub = pipeOpening, 0
+	gen := p.gen
+	// Resume only within one session of one incarnation: a seq kept across a drop would replay
+	// what an intervening incarnation of the name put on the same channel.
 	var since *uint64
 	if s, ok := l.since[ch]; ok {
 		since = &s
 	}
 	epoch := l.epoch
 	l.mu.Unlock()
-	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	id, frames, err := c.SubscribeExact(sctx, ch, since, epoch, 1024)
-	cancel()
-	if err != nil {
-		return err
-	}
 	go func() {
+		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		id, frames, err := c.SubscribeExact(sctx, ch, since, epoch, 1024)
+		cancel()
+		l.mu.Lock()
+		stale := p.gen != gen
+		if err == nil && !stale {
+			p.state, p.sub = pipeMirrored, id
+		} else if !stale {
+			p.state = pipeAbsent
+		}
+		l.mu.Unlock()
+		if err != nil {
+			l.failWith(fail, err)
+			return
+		}
+		if stale { // the pipe moved on while we subscribed: not ours any more
+			go func() { // drain what arrives until the connection closes the channel
+				for range frames {
+				}
+			}()
+			uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			c.Unsubscribe(uctx, id)
+			cancel()
+			return
+		}
 		for f := range frames {
 			select {
-			case merged <- peerFrame{ch, f}:
+			case merged <- peerFrame{ch, f, id}:
 			case <-c.Done():
 				return
 			}
 		}
 	}()
-	l.mu.Lock()
-	*l.pipes[node] = pipeSub{state: pipeMirrored, sub: id}
-	l.mu.Unlock()
-	return nil
 }
 
-// dropPipe ends a wanted node's mirror, if any, and marks it absent.
-func (l *peerLink) dropPipe(ctx context.Context, c *Client, node string) error {
+// dropPipe ends a wanted node's mirror, if any, forgets where it was, and marks it `to`.
+func (l *peerLink) dropPipe(ctx context.Context, c *Client, node, to string) {
+	ch := "probe/" + node
 	l.mu.Lock()
 	p := l.pipes[node]
 	was := *p
-	*p = pipeSub{state: pipeAbsent}
+	p.gen++
+	p.state, p.sub = to, 0
+	delete(l.since, ch)
 	l.mu.Unlock()
 	if was.state != pipeMirrored {
-		return nil
+		return
 	}
-	uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return c.Unsubscribe(uctx, was.sub)
+	go func() {
+		uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		c.Unsubscribe(uctx, was.sub) // best effort: stale frames are dropped by gen anyway
+	}()
 }
 
 type peerFrame struct {
 	prefix string
 	f      Frame
+	sub    int64 // the subscription, for a probe pipe (0 for ctl and svc/)
 }
 
 // mirror republishes one of the peer's own envelopes. Envelopes the peer

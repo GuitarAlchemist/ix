@@ -228,7 +228,9 @@ spec du pair côté parent nomme exactement les nœuds voulus (`peers[].probes`)
 tuyau de chaque nœud voulu par son nom de canal exact (`probe/cpu` ne couvre pas
 `probe/cpu-extra`), depuis le `probe.list` du pair au raccordement puis depuis les
 `probe.created` / `probe.removed` en miroir ; `status.peers[].probes` dit ce qu'est chaque nom
-demandé : `mirrored`, `not-exportable` ou `absent` (pas de tel nœud, ou lien tombé). L'agrégation
+demandé : `mirrored`, `not-exportable`, `opening` (abonnement en cours) ou `absent` (pas de tel
+nœud, ou lien tombé). Un retrait oublie la séquence de reprise : un nom ré-exporté après une
+incarnation non exportée ne rejoue jamais les échantillons de celle-ci. L'agrégation
 vit chez le lecteur : en V1 le lecteur est le consommateur de `peer/<nom>/probe/<nœud>` (IXQL
 `ix.ctl.events`), aucun nœud local ne nomme une source distante. L'export est une règle de
 fédération, pas une barrière de confidentialité : l'abonnement direct à un tuyau est inchangé.
