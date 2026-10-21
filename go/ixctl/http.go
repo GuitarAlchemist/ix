@@ -101,6 +101,37 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 			return Request{Op: "probe." + op, Node: body.Node, Peer: peer}, err
 		}))
 	}
+	// Bookmarks: the list, set and remove. `?peer=` or a `peer` member names a peer, whose
+	// own sequence the bookmark then points into; a replay from it stays local to that peer.
+	m.HandleFunc("GET /v1/bookmark", s.op(func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		return Request{Op: "bookmark.list", Peer: peer}, err
+	}))
+	m.HandleFunc("POST /v1/bookmark/set", s.op(func(r *http.Request) (Request, error) {
+		var body struct {
+			Bookmark string          `json:"bookmark"`
+			Since    *uint64         `json:"since"`
+			Epoch    string          `json:"epoch"`
+			Note     string          `json:"note"`
+			Peer     json.RawMessage `json:"peer"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			return Request{}, err
+		}
+		peer, err := peerField(body.Peer)
+		return Request{Op: "bookmark.set", Bookmark: body.Bookmark, Since: body.Since, Epoch: body.Epoch, Note: body.Note, Peer: peer}, err
+	}))
+	m.HandleFunc("POST /v1/bookmark/remove", s.op(func(r *http.Request) (Request, error) {
+		var body struct {
+			Bookmark string          `json:"bookmark"`
+			Peer     json.RawMessage `json:"peer"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			return Request{}, err
+		}
+		peer, err := peerField(body.Peer)
+		return Request{Op: "bookmark.remove", Bookmark: body.Bookmark, Peer: peer}, err
+	}))
 	m.HandleFunc("GET /v1/events", s.events)
 	m.HandleFunc("GET /v1/ws", s.ws)
 	s.mux = m
@@ -258,6 +289,15 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		since = &n
 		break
+	}
+	// `bookmark=` names the point instead: resolved through the broker, like a frame's.
+	if name := r.URL.Query().Get("bookmark"); name != "" {
+		req := Request{Bookmark: name, Since: since, Epoch: epoch}
+		if err := resolveBookmark(r.Context(), s.b, &req); err != nil {
+			httpError(w, statusOf(err), err.Error())
+			return
+		}
+		since, epoch = req.Since, req.Epoch
 	}
 	fl, ok := w.(http.Flusher)
 	if !ok {

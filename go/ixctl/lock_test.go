@@ -14,13 +14,13 @@ import (
 func TestSecondInstanceOfANameIsRefused(t *testing.T) {
 	stateDir := t.TempDir()
 	in := newTestInstance(t, fakeSpec(t, "local", nil), stateDir)
-	_, err := startInstance(fakeSpec(t, "local", nil), "", "127.0.0.1:0", stateDir)
+	_, err := startInstance(fakeSpec(t, "local", nil), "", "127.0.0.1:0", stateDir, "disk")
 	if err == nil || !strings.Contains(err.Error(), `"local"`) {
 		t.Fatalf("second instance: err %v, want a refusal naming the instance", err)
 	}
 	// The window the state-file check cannot see: no state file, the lock held.
 	os.Remove(filepath.Join(stateDir, "local.json"))
-	if _, err := startInstance(fakeSpec(t, "local", nil), "", "127.0.0.1:0", stateDir); err == nil {
+	if _, err := startInstance(fakeSpec(t, "local", nil), "", "127.0.0.1:0", stateDir, "disk"); err == nil {
 		t.Fatal("second instance started while the first holds the lock and no state file exists")
 	}
 	in.close()

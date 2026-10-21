@@ -16,7 +16,7 @@ import (
 // probePlane is a plane with no services, for the probe ops: the tree lives in the plane.
 func probePlane(t *testing.T) *Plane {
 	t.Helper()
-	p, err := NewPlane(fakeSpec(t, "a", nil), "a", "")
+	p, err := NewPlane(fakeSpec(t, "a", nil), "a", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

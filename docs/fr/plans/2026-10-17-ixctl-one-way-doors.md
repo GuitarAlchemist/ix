@@ -753,4 +753,15 @@ décisions et mesures sont sur [`2026-10-20-ixctl-probes.md`](2026-10-20-ixctl-p
 devient à sens unique au même déclencheur que la porte 1, ou quand un programme hors du plan
 crée des nœuds ou lit un tuyau.
 
+## Provisoire : signets et rejeu (2026-10-20)
+
+Les signets (ops `bookmark.*`, `bookmark` sur `subscribe` et `/v1/events`, le fichier
+`<nom>.bookmarks.json`, schéma `ixctl-bookmarks/0`) reposent de la même façon sur la porte 1. Ils
+n'ajoutent rien à la porte 2 ni à la porte 3 : un rejeu ne lit que l'anneau, et le journal reste
+un journal d'audit que rien ne rejoue. La décision qui rouvrirait la porte 3 (un journal par canal
+que le plan écrirait à la demande, rejoué au-delà de l'anneau) est consignée sur D9, ix#414, comme
+non prise ; le fichier des signets est un second magasin dans le dossier d'état, provisoire, lu
+par rien d'autre que le plan qui l'a écrit. Conception et mesures :
+[`2026-10-20-ixctl-bookmarks.md`](2026-10-20-ixctl-bookmarks.md).
+
 Une fois signées, ces décisions ont leur place dans un ADR sous `docs/adr/`.

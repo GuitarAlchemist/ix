@@ -23,7 +23,7 @@ pas signée.
 cd go/ixctl
 go build -o ixctl .            # Go 1.27 ; dépendances : coder/websocket, x/sys
 go test ./...                  # la suite unitaire (faux services, sessions en mémoire)
-./ixctl up spec.json [--addr 127.0.0.1:0] [--name NOM] [--state DOSSIER]
+./ixctl up spec.json [--addr 127.0.0.1:0] [--name NOM] [--state DOSSIER] [--bookmarks disk|memory]
 ./ixctl bench spec.json        # distributions de latence : start, stop, restart, RTT status, fan-out
 ./ixctl probes                 # les kinds de sonde de ce binaire et les limites du système (JSON, hors ligne)
 ./ixctl version
@@ -180,7 +180,10 @@ au plus.
 | `GET /v1/probe[?peer=]` | L'arbre des sondes (`probe.list`). |
 | `POST /v1/probe/create[?peer=]` | Corps : un nœud (`probe.create`). |
 | `POST /v1/probe/start`, `stop`, `touch`, `remove` | Corps `{"node": NOM, "peer"?: NOM}`. |
-| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since`. Un lecteur qui tombe de l'anneau reçoit un événement `gap` et le flux se termine. |
+| `GET /v1/bookmark[?peer=]` | Les signets (`bookmark.list`, ci-dessous). |
+| `POST /v1/bookmark/set` | Corps `{"bookmark": NOM, "since"?: SEQ, "epoch"?: E, "note"?: TEXTE, "peer"?: NOM}`. |
+| `POST /v1/bookmark/remove` | Corps `{"bookmark": NOM, "peer"?: NOM}`. |
+| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). Un lecteur qui tombe de l'anneau reçoit un événement `gap` et le flux se termine. |
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
 Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclaré), 401 (jeton),
@@ -189,8 +192,9 @@ Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclar
 ### `ixctl.v1` sur le WebSocket
 
 Les trames du client sont des requêtes : `{id, op, ...}` avec `op` parmi `status`, `ping`,
-`plan`, `apply`, `stop`, `subscribe`, `unsubscribe`, les sept ops `probe.*` (ci-dessous), et les
-champs de l'op (`desired`, `service`, `peer`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`). Chaque requête reçoit une trame de réponse
+`plan`, `apply`, `stop`, `subscribe`, `unsubscribe`, les sept ops `probe.*` et les quatre ops
+`bookmark.*` (ci-dessous), et les champs de l'op (`desired`, `service`, `peer`, `ch`, `since`,
+`epoch`, `sub`, `probe`, `node`, `bookmark`, `note`). Chaque requête reçoit une trame de réponse
 `{re: id, ok, data | error}`. Les abonnements sont posés en ligne (leur réponse précède leur
 premier événement) ; les autres ops courent de leur côté, pour qu'un stop lent ne retienne jamais
 la connexion.
@@ -285,6 +289,39 @@ création au-delà de l'une d'elles est refusée avec son nom (`every_ms 5 is un
 10`). Chaque op `probe.*` peut être relayée à un pair (`peer`) ; le cycle de vie `probe.*` du pair
 revient en miroir sur `peer/<nom>/ctl`, ses tuyaux non (D4).
 
+## Signets et rejeu
+
+Un **signet** nomme un point de la séquence de l'instance : `{name, epoch, seq, t, note}`. Le
+`seq` du hub est partagé par tous les canaux, donc un seul signet couvre les tuyaux de tout un
+arbre de sondes, ceux des services et le cycle de vie `ctl` au même instant : un rejeu depuis lui
+redonne ce que chaque lecteur a vu après ce point, dans l'ordre où c'est arrivé. Poser `before`,
+lancer l'arbre, poser `after` quand quelque chose semble anormal, puis rejouer `probe/` (les
+tuyaux) ou `` (tout) depuis `before` : ce que le pipeline a vu, après coup.
+
+Le plan possède les signets. `ixctl up --bookmarks disk` (par défaut) les garde dans
+`<nom>.bookmarks.json` à côté du journal, réécrit en entier à chaque changement (un fichier
+temporaire, puis un renommage ; mode 0600), donc ils survivent à un redémarrage ;
+`--bookmarks memory` les garde pour ce démarrage seulement. Un fichier que le plan ne peut pas
+lire comme des signets est refusé au démarrage, pas vidé. La source du rejeu est l'anneau (4096
+enveloppes) : un signet plus vieux que lui répond d'abord `since-too-old`, puis ce que l'anneau
+tient encore, jamais un rejeu silencieusement partiel ; un signet d'un démarrage antérieur répond
+d'abord `epoch-changed`, puis l'anneau du nouveau démarrage. Rejouer depuis le journal est une
+décision ultérieure (D9, ix#414 ; porte 3 intacte).
+
+| Op | Champs | Réponse |
+|---|---|---|
+| `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Sans `since` le point est la tête (« ici ») ; `since` doit être au plus la tête et `epoch`, s'il est donné, celui de ce démarrage. Un nom existant est déplacé (sa note gardée sauf si une nouvelle est donnée). |
+| `bookmark.get` | `bookmark` | `{name, epoch, seq, t, note}` |
+| `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live}], count, store, max_bookmarks, max_note_len, ring}` ; `live` dit que ce démarrage l'a posé. |
+| `bookmark.remove` | `bookmark` | `{bookmark, removed: true}` |
+
+`subscribe` (`ixctl.v1`) et `GET /v1/events` prennent `bookmark` à la place de `since`/`epoch` ;
+les deux ensemble sont refusés (« bookmark or since »). Le rejeu est tout ce qui suit le point du
+signet sur le préfixe demandé, puis le direct. Les bornes, rapportées par `bookmark.list` :
+`max_bookmarks` 64 par plan, un nom selon la règle des noms d'instance, `max_note_len` 256 ; un
+refus nomme ce qu'il a touché. Chaque op `bookmark.*` peut être relayée à un pair (`peer`), dans la
+séquence duquel le signet pointe alors ; le rejeu reste local à ce pair.
+
 ## Journal
 
 `<nom>.journal.jsonl` ajoute, en lignes JSON, un en-tête `boot` par démarrage (`schema:
@@ -297,9 +334,11 @@ programme devrait lire (porte 3).
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le
 vrai plan, le vrai client Rust via son exemple `ixql-ctl`, l'exemple `pod` d'ix-stream en deux
 instances fédérées, le vrai `ix pipeline run` comme job, des exécutions tuées à leurs limites
-de temps mur, de mémoire, de temps processeur et de processus, et un arbre de sondes sous le plan
-(E15 : kinds et limites, filtre et mux, expiration du bail, cpu et mem de l'hôte).
-39 vérifications, E1..E15, une boucle de redémarrage et deux mesures : M1 (ce qu'une attente sur
+de temps mur, de mémoire, de temps processeur et de processus, un arbre de sondes sous le plan
+(E15 : kinds et limites, filtre et mux, expiration du bail, cpu et mem de l'hôte) et des signets
+(E16 : un rejeu, seq pour seq, de ce que les tuyaux d'un arbre de sondes et le cycle de vie `ctl`
+ont porté après un point nommé par l'opérateur ; bornes, refus, signet d'un pair ; survie à un
+redémarrage). 42 vérifications, E1..E16, une boucle de redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).
 

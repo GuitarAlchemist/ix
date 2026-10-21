@@ -147,7 +147,8 @@ printing the kinds offline. Gate: E15 (two checks) and M2 in `go/ixctl/e2e/e2e.p
 
 Cross-host pipes (S2), shared sampling (S3), the Rust and IXQL surface (S4), GitHub releases with
 a probes manifest beyond the workflow skeleton (S5), the prototype's WMI kinds (S6), the Gaia
-envelope (S7), bookmarks and replay of pipeline state combined with probes (D9 / S8), actuators
-(never: ix#374).
+envelope (S7), replay from a journal past the ring (the second slice of D9 / S8; the ring-backed
+bookmarks shipped on [`2026-10-20-ixctl-bookmarks.md`](2026-10-20-ixctl-bookmarks.md)),
+actuators (never: ix#374).
 
 Once D1–D5 are resolved these decisions belong in an ADR under `docs/adr/`.

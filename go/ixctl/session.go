@@ -115,6 +115,10 @@ func (s *session) subscribe(req Request) {
 		s.reply(req.ID, nil, badRequest("subscribe is local: a peer's channels are mirrored under peer/%s/", req.Peer))
 		return
 	}
+	if err := resolveBookmark(s.ctx, s.b, &req); err != nil {
+		s.reply(req.ID, nil, err)
+		return
+	}
 	s.mu.Lock()
 	if _, dup := s.subs[req.ID]; dup {
 		s.mu.Unlock()

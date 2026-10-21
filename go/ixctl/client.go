@@ -203,9 +203,21 @@ func (cl *Client) Subscribe(ctx context.Context, prefix string, since *uint64, b
 // has rebooted since then answers with an epoch-changed gap, then replays
 // what it still holds, instead of reading since as one of its own seqs.
 func (cl *Client) SubscribeFrom(ctx context.Context, prefix string, since *uint64, epoch string, buf int) (int64, <-chan Frame, error) {
+	return cl.subscribe(ctx, Request{Op: "subscribe", Ch: prefix, Since: since, Epoch: epoch}, buf)
+}
+
+// SubscribeBookmark replays from a bookmark the plane holds: everything on prefix after
+// the point the bookmark names, then live. A bookmark of an earlier boot gives an
+// epoch-changed gap first; one older than the ring a since-too-old gap.
+func (cl *Client) SubscribeBookmark(ctx context.Context, prefix, bookmark string, buf int) (int64, <-chan Frame, error) {
+	return cl.subscribe(ctx, Request{Op: "subscribe", Ch: prefix, Bookmark: bookmark}, buf)
+}
+
+func (cl *Client) subscribe(ctx context.Context, req Request, buf int) (int64, <-chan Frame, error) {
 	frames := make(chan Frame, buf)
 	id, reply := cl.register(frames)
-	if err := cl.send(ctx, Request{ID: id, Op: "subscribe", Ch: prefix, Since: since, Epoch: epoch}); err != nil {
+	req.ID = id
+	if err := cl.send(ctx, req); err != nil {
 		cl.forget(id)
 		return 0, nil, err
 	}

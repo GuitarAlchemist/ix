@@ -297,7 +297,7 @@ func runBench(cfg benchConfig) (*benchResult, error) {
 
 // benchPlan times the pure plan in process, in batches of 100 calls.
 func benchPlan(spec *Spec) *dist {
-	p, err := NewPlane(spec, "bench-plan", "")
+	p, err := NewPlane(spec, "bench-plan", "", "")
 	if err != nil {
 		return nil
 	}

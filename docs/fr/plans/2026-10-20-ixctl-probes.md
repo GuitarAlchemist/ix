@@ -159,7 +159,9 @@ kinds hors ligne. Barrière : E15 (deux vérifications) et M2 dans `go/ixctl/e2e
 
 Les tuyaux inter-hôtes (S2), l'échantillonnage partagé (S3), la surface Rust et IXQL (S4), les
 releases GitHub avec un manifeste de sondes au-delà du squelette de workflow (S5), les kinds WMI du
-prototype (S6), l'enveloppe Gaia (S7), les signets et le rejeu de l'état des pipelines combinés
-aux sondes (D9 / S8), les actionneurs (jamais : ix#374).
+prototype (S6), l'enveloppe Gaia (S7), le rejeu depuis un journal au-delà de l'anneau (la seconde
+tranche de D9 / S8 ; les signets sur anneau sont livrés sur
+[`2026-10-20-ixctl-bookmarks.md`](2026-10-20-ixctl-bookmarks.md)), les actionneurs (jamais :
+ix#374).
 
 Une fois D1–D5 tranchées, ces décisions ont leur place dans un ADR sous `docs/adr/`.

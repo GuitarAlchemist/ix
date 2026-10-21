@@ -24,7 +24,7 @@ import (
 var initTime = time.Now()
 
 const usage = `usage:
-  ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR]
+  ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory]
   ixctl bench <spec.json>
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
   ixctl version`
@@ -81,6 +81,9 @@ type upOptions struct {
 	addr  string
 	name  string
 	state string
+	// bookmarks is the bookmark store: "disk" (a file beside the journal, kept across
+	// restarts) or "memory" (this boot only).
+	bookmarks string
 }
 
 func cmdUp(args []string, stdout io.Writer) error {
@@ -89,6 +92,7 @@ func cmdUp(args []string, stdout io.Writer) error {
 	fs.StringVar(&o.addr, "addr", "127.0.0.1:0", "loopback address to listen on")
 	fs.StringVar(&o.name, "name", "", "instance name (default: the spec's name)")
 	fs.StringVar(&o.state, "state", "", "state directory")
+	fs.StringVar(&o.bookmarks, "bookmarks", "disk", "bookmark store: disk (kept across restarts) or memory")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -101,7 +105,7 @@ func cmdUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	in, err := startInstance(spec, o.name, o.addr, o.state)
+	in, err := startInstance(spec, o.name, o.addr, o.state, o.bookmarks)
 	if err != nil {
 		return err
 	}
@@ -143,12 +147,15 @@ type readyLine struct {
 
 // startInstance listens, serves and writes the state file. The caller starts
 // the plane (supervisors, peers, autostart) once it has announced readiness.
-func startInstance(spec *Spec, name, addr, stateDir string) (*instance, error) {
+func startInstance(spec *Spec, name, addr, stateDir, bookmarks string) (*instance, error) {
 	if name == "" {
 		name = spec.Name
 	}
 	if !nameRE.MatchString(name) {
 		return nil, fmt.Errorf("instance name %q must match %s", name, nameRE)
+	}
+	if bookmarks != "disk" && bookmarks != "memory" {
+		return nil, fmt.Errorf("bookmark store %q: want disk or memory", bookmarks)
 	}
 	if err := checkLoopback(addr); err != nil {
 		return nil, err
@@ -189,7 +196,11 @@ func startInstance(spec *Spec, name, addr, stateDir string) (*instance, error) {
 		return fail(err)
 	}
 	in := &instance{addr: ln.Addr().String(), token: hex.EncodeToString(tok), stateFile: statePath, lock: lock}
-	in.plane, err = NewPlane(spec, name, filepath.Join(stateDir, name+".journal.jsonl"))
+	bookmarksPath := ""
+	if bookmarks == "disk" {
+		bookmarksPath = filepath.Join(stateDir, name+".bookmarks.json")
+	}
+	in.plane, err = NewPlane(spec, name, filepath.Join(stateDir, name+".journal.jsonl"), bookmarksPath)
 	if err != nil {
 		ln.Close()
 		return fail(err)

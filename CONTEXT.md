@@ -183,6 +183,14 @@ contracts (see `docs/contracts/`), not runtime coupling.
   the node's subtree out when it runs out. Distinct from the **prototype probes** (process per
   probe, PR #390) and from a **pipeline stage**. _Avoid_: sensor, monitor, agent.
 
+- **Bookmark** (`ixctl`) — a named point in one instance's event sequence (`{name, epoch, seq, t,
+  note}`), owned by the plane and kept in its state dir (`<name>.bookmarks.json`, or in memory
+  with `--bookmarks memory`). Because the hub's `seq` is shared by every channel, one bookmark
+  covers every pipe and the `ctl` lifecycle at one instant; a **replay** from it is a
+  subscription that starts after that point, served from the ring only (a `gap` says when the
+  ring no longer holds it). Distinct from a **checkpoint** (`ix-recover`, a run's published
+  state) and from a **generation** (an apply). _Avoid_: snapshot, cursor, savepoint.
+
 ## Conventions
 
 See `CLAUDE.md` for the authoritative build/convention/discipline rules

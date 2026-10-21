@@ -11,15 +11,16 @@ import (
 // Plane is one ixctl instance: declared services, their supervisors, the hub
 // and the peers. It reconciles desired state with observed state.
 type Plane struct {
-	name    string
-	spec    *Spec
-	hub     *Hub
-	svcs    map[string]*service
-	order   []string
-	peers   map[string]*peerLink
-	probes  *probeTree
-	journal *journal
-	started time.Time
+	name      string
+	spec      *Spec
+	hub       *Hub
+	svcs      map[string]*service
+	order     []string
+	peers     map[string]*peerLink
+	probes    *probeTree
+	bookmarks *bookmarkStore
+	journal   *journal
+	started   time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -42,7 +43,9 @@ type Plane struct {
 // awaitTimeout bounds how long an apply waits for its actions to be observed.
 const awaitTimeout = 60 * time.Second
 
-func NewPlane(spec *Spec, name, journalPath string) (*Plane, error) {
+// NewPlane builds a plane: journalPath is its audit journal (none when empty) and
+// bookmarksPath its bookmark file (an in-memory store when empty).
+func NewPlane(spec *Spec, name, journalPath, bookmarksPath string) (*Plane, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &Plane{
 		name: name, spec: spec, hub: NewHub(name),
@@ -50,6 +53,12 @@ func NewPlane(spec *Spec, name, journalPath string) (*Plane, error) {
 		started: time.Now(), ctx: ctx, cancel: cancel, quit: make(chan struct{}),
 	}
 	p.probes = newProbeTree(p.hub)
+	bms, err := newBookmarkStore(p.hub, bookmarksPath)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	p.bookmarks = bms
 	if journalPath != "" {
 		j, err := openJournal(journalPath)
 		if err != nil {
@@ -149,6 +158,14 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 		return p.probes.touch(req.Node)
 	case "probe.remove":
 		return p.probes.remove(req.Node, "removed")
+	case "bookmark.set":
+		return p.bookmarks.set(req)
+	case "bookmark.get":
+		return p.bookmarks.get(req.Bookmark)
+	case "bookmark.list":
+		return p.bookmarks.list(), nil
+	case "bookmark.remove":
+		return p.bookmarks.remove(req.Bookmark)
 	case "":
 		return nil, badRequest("missing op")
 	}
@@ -164,11 +181,13 @@ func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, err
 	}
 	switch req.Op {
 	case "status", "ping", "plan", "apply", "stop",
-		"probe.kinds", "probe.list", "probe.create", "probe.start", "probe.stop", "probe.touch", "probe.remove":
+		"probe.kinds", "probe.list", "probe.create", "probe.start", "probe.stop", "probe.touch", "probe.remove",
+		"bookmark.set", "bookmark.get", "bookmark.list", "bookmark.remove":
 	default:
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
-	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node})
+	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node,
+		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note})
 }
 
 type ServiceStatus struct {

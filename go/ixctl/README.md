@@ -21,7 +21,7 @@ Nothing outside `go/ixctl` and `crates/ix-ctl` should depend on them until a doo
 cd go/ixctl
 go build -o ixctl .            # Go 1.27; deps: coder/websocket, x/sys
 go test ./...                  # the unit suite (fake services, in-memory sessions)
-./ixctl up spec.json [--addr 127.0.0.1:0] [--name NAME] [--state DIR]
+./ixctl up spec.json [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory]
 ./ixctl bench spec.json        # latency distributions: start, stop, restart, status RTT, fan-out
 ./ixctl probes                 # the probe kinds this binary carries and the system's limits (JSON, offline)
 ./ixctl version
@@ -169,7 +169,10 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/probe[?peer=]` | The probe tree (`probe.list`). |
 | `POST /v1/probe/create[?peer=]` | Body: a node (`probe.create`). |
 | `POST /v1/probe/start`, `stop`, `touch`, `remove` | Body `{"node": NAME, "peer"?: NAME}`. |
-| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`. A reader that falls off the ring gets a `gap` event and the stream ends. |
+| `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
+| `POST /v1/bookmark/set` | Body `{"bookmark": NAME, "since"?: SEQ, "epoch"?: E, "note"?: TEXT, "peer"?: NAME}`. |
+| `POST /v1/bookmark/remove` | Body `{"bookmark": NAME, "peer"?: NAME}`. |
+| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). A reader that falls off the ring gets a `gap` event and the stream ends. |
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),
@@ -178,8 +181,9 @@ Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (
 ### `ixctl.v1` over the WebSocket
 
 Client frames are requests: `{id, op, ...}` with `op` one of `status`, `ping`, `plan`, `apply`,
-`stop`, `subscribe`, `unsubscribe`, the seven `probe.*` ops (below), and the op's fields
-(`desired`, `service`, `peer`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`). Every request gets one reply frame `{re: id, ok, data | error}`.
+`stop`, `subscribe`, `unsubscribe`, the seven `probe.*` ops and the four `bookmark.*` ops (below),
+and the op's fields (`desired`, `service`, `peer`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`,
+`bookmark`, `note`). Every request gets one reply frame `{re: id, ok, data | error}`.
 Subscriptions are set up in line (their reply precedes their first event); other ops run on their
 own so a slow stop never holds the connection.
 
@@ -271,6 +275,38 @@ refused with its name (`every_ms 5 is under min_every_ms 10`). Every `probe.*` o
 to a peer (`peer`); the peer's `probe.*` lifecycle comes back mirrored on `peer/<name>/ctl`,
 its pipes do not (D4).
 
+## Bookmarks and replay
+
+A **bookmark** names one point in the instance's sequence: `{name, epoch, seq, t, note}`. The
+hub's `seq` is shared by every channel, so one bookmark covers a whole probe tree's pipes, the
+services' pipes and the `ctl` lifecycle at the same instant: a replay from it gives back what
+every reader saw after that point, in the order it happened. Set `before`, start the tree, set
+`after` when something looks wrong, and replay `probe/` (the pipes) or `` (everything) from
+`before`: what the pipeline saw, after the fact.
+
+The plane owns the bookmarks. `ixctl up --bookmarks disk` (the default) keeps them in
+`<name>.bookmarks.json` beside the journal, rewritten whole on every change (a temporary file,
+then a rename; mode 0600), so they survive a restart; `--bookmarks memory` keeps them for the boot
+only. A file the plane cannot read as bookmarks is refused at startup, not emptied. The replay
+source is the ring (4096 envelopes): a bookmark older than it answers `since-too-old` first, then
+what the ring still holds, never a silently partial replay; a bookmark of an earlier boot answers
+`epoch-changed` first, then the new boot's ring. Replaying from the journal is a later decision
+(D9, ix#414; door 3 untouched).
+
+| Op | Fields | Reply |
+|---|---|---|
+| `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Without `since` the point is the head ("here"); `since` must be at or below the head and `epoch`, when given, this boot's. An existing name is moved (its note kept unless a new one is given). |
+| `bookmark.get` | `bookmark` | `{name, epoch, seq, t, note}` |
+| `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live}], count, store, max_bookmarks, max_note_len, ring}`; `live` says this boot set it. |
+| `bookmark.remove` | `bookmark` | `{bookmark, removed: true}` |
+
+`subscribe` (`ixctl.v1`) and `GET /v1/events` take `bookmark` in place of `since`/`epoch`; both
+together are refused ("bookmark or since"). The replay is everything after the bookmark's point
+on the prefix asked, then live. Bounds, reported by `bookmark.list`: `max_bookmarks` 64 per plane,
+a name under the instance-name rule, `max_note_len` 256; a refusal names what it hit. Every
+`bookmark.*` op is forwardable to a peer (`peer`), whose own sequence the bookmark then points
+into; the replay stays local to that peer.
+
 ## Journal
 
 `<name>.journal.jsonl` appends, as JSON lines, a `boot` header per start (`schema:
@@ -282,8 +318,10 @@ every `ctl` event's envelope. It is an audit log, not a store a program should r
 `e2e/e2e.py` is the end-to-end gate CI runs on Windows and Linux: the real plane, the real Rust
 client through its `ixql-ctl` example, ix-stream's `pod` example as two federated instances, the
 real `ix pipeline run` as a job, runs killed at their wall, memory, processor-time and
-process limits, and a probe tree under the plane (E15: kinds and limits, filter and mux, lease
-expiry, the host's cpu and mem). 39 checks, E1..E15, a restart loop and two measurements: M1
+process limits, a probe tree under the plane (E15: kinds and limits, filter and mux, lease
+expiry, the host's cpu and mem) and bookmarks (E16: a replay, seq for seq, of what a probe tree's
+pipes and the `ctl` lifecycle carried after a point the operator named; bounds, refusals, a
+peer's bookmark; survival of a restart). 42 checks, E1..E16, a restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).
 

@@ -2,8 +2,10 @@
 client (`crates/ix-ctl`, through its `ixql-ctl` example) and ix-stream's `pod` example, as two
 federated instances on loopback, plus the `ix` binary run as a job (E10) and runs killed at their
 wall, memory, processor-time and process limits (E11..E14), and a probe tree under the plane
-(E15: kinds and limits, filter and mux, lease expiry, the host's cpu and mem). 39 checks,
-E1..E15, a restart loop and the M1 and M2 measurements.
+(E15: kinds and limits, filter and mux, lease expiry, the host's cpu and mem) and bookmarks
+(E16: a replay, seq for seq, of what a probe tree's pipes and the ctl lifecycle carried after
+a point the operator named; bounds, refusals, a peer's bookmark; survival of a restart). 42
+checks, E1..E16, a restart loop and the M1 and M2 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -198,14 +200,15 @@ def peer(s, name):
 SSE_GAPS = []  # every gap event a sse() reader got, in order: {ch, reason, from, ...}
 
 
-def sse(st, ch, seconds):
+def sse(st, ch, seconds, query=None):
     """The envelopes /v1/events gives for `ch` (prefix) from the start, read for `seconds`.
+    `query` replaces the whole query string (`ch=...&bookmark=...` for a replay from a bookmark).
     Gap events (a ring that no longer holds seq 1, a reader that fell behind) are not
     envelopes: they go to SSE_GAPS, with the prefix asked, and the envelopes come back alone."""
     host, port = st["addr"].rsplit(":", 1)
     sock = socket.create_connection((host, int(port)), timeout=seconds)
     req = (
-        f"GET /v1/events?ch={ch}&since=0 HTTP/1.1\r\nHost: {st['addr']}\r\n"
+        f"GET /v1/events?{query or f'ch={ch}&since=0'} HTTP/1.1\r\nHost: {st['addr']}\r\n"
         f"Authorization: Bearer {st['token']}\r\nAccept: text/event-stream\r\n\r\n"
     )
     sock.sendall(req.encode())
@@ -224,6 +227,13 @@ def sse(st, ch, seconds):
     text = buf.decode("utf-8", "replace")
     head, _, body = text.partition("\r\n\r\n")
     envs = []
+    if not head.startswith("HTTP/1.1 200"):
+        # A refused stream (a bookmark nobody set, a bookmark beside since) is one JSON error.
+        try:
+            SSE_GAPS.append({"ch": ch, "reason": "refused", **json.loads(body)})
+        except ValueError:
+            SSE_GAPS.append({"ch": ch, "reason": "refused", "raw": body[:200]})
+        return head.split("\r\n")[0], envs
     for line in body.splitlines():
         if line.startswith("data: "):
             try:
@@ -898,6 +908,78 @@ def run():
           samples_per_s=per_s, ceiling_per_s=n_hb * 100, sources=len(srcs), gaps=len(gaps),
           plane_cpu_ms=results["measures"]["m2_mux_16x10ms"]["plane_cpu_ms"], removed=removed)
 
+    # E16: bookmarks and replay. A bookmark names one point of the instance's sequence, which
+    # every channel shares. The operator sets `before`, a probe tree starts under the plane
+    # while a live reader is on its pipes, sets `after` once something looked wrong, and takes
+    # the tree down. The replay of the pipes from `before` gives back, seq for seq, what the
+    # live reader saw; the replay of everything from `before` is the ctl lifecycle and both
+    # pipes in one ordered stream: what the pipeline saw, after the fact.
+    code_before, before = call(sa, "POST", "/v1/bookmark/set", {"bookmark": "before", "note": "before the tree"})
+    th, live_env = sse_async(sa, "probe/", 2.0)
+    time.sleep(0.2)
+    tree = [call(sa, "POST", "/v1/probe/create", n)[0] for n in (
+        {"name": "agg3", "kind": "mux@1"},
+        {"name": "hb3", "kind": "heartbeat@1", "every_ms": 20, "parent": "agg3",
+         "filter": {"where": [{"field": "n", "op": ">", "value": 2}], "keep": ["n"], "every": 2}})]
+    tree += [call(sa, "POST", "/v1/probe/start", {"node": n})[0] for n in ("agg3", "hb3")]
+    time.sleep(1.0)
+    code_after, after = call(sa, "POST", "/v1/bookmark/set", {"bookmark": "after", "note": "looked wrong here"})
+    _, torn = call(sa, "POST", "/v1/probe/remove", {"node": "agg3"})
+    th.join()
+    _, live = live_env["r"]
+    b_seq, a_seq = (before or {}).get("seq", 0), (after or {}).get("seq", 0)
+    live_seqs = [e["seq"] for e in live if b_seq < e["seq"] <= a_seq]
+    gaps0 = len(SSE_GAPS)
+    _, replay = sse(sa, "probe/", 1.0, query="ch=probe/&bookmark=before")
+    replay_seqs = [e["seq"] for e in replay if e["seq"] <= a_seq]
+    _, everything = sse(sa, "", 1.0, query="ch=&bookmark=before")
+    all_seqs = [e["seq"] for e in everything]
+    all_chans = sorted({e["ch"] for e in everything})
+    first_kinds = [(e["ch"], e["ev"]["kind"], e["ev"]["data"].get("node")) for e in everything[:2]]
+    replay_gaps = SSE_GAPS[gaps0:]
+    check("E16.bookmark_replays_what_the_pipeline_saw",
+          code_before == 200 and code_after == 200 and before["seq"] == before["head"] and a_seq > b_seq
+          and tree == [200] * 4 and (torn or {}).get("removed") == 2
+          and len(live_seqs) >= 20 and replay_seqs == live_seqs and not replay_gaps
+          and all_seqs == sorted(all_seqs) and len(set(all_seqs)) == len(all_seqs) and all_seqs[0] > b_seq
+          and first_kinds == [("ctl", "probe.created", "agg3"), ("ctl", "probe.created", "hb3")]
+          and {"ctl", "probe/agg3", "probe/hb3"} <= set(all_chans),
+          before=before, after=after, live=len(live_seqs), replayed=len(replay_seqs),
+          everything=len(all_seqs), channels=all_chans[:8], first=first_kinds, gaps=replay_gaps[:2])
+    # The bounds, said by the plane; a bookmark older than the ring says so (since-too-old, then
+    # what the ring still holds) instead of a silently partial replay; refusals name their cause;
+    # a bookmark set through A on B is B's: in B's sequence, in B's list, not in A's.
+    _, blist = call(sa, "GET", "/v1/bookmark")
+    code_old, old = call(sa, "POST", "/v1/bookmark/set", {"bookmark": "old", "since": 1})
+    gaps0 = len(SSE_GAPS)
+    _, from_old = sse(sa, "probe/", 0.5, query="ch=probe/&bookmark=old")
+    old_gaps = SSE_GAPS[gaps0:]
+    _, _ = sse(sa, "probe/", 0.3, query="ch=probe/&bookmark=before&since=5")
+    _, _ = sse(sa, "probe/", 0.3, query="ch=probe/&bookmark=nope")
+    refused = SSE_GAPS[gaps0 + len(old_gaps):]
+    code_name, bad_name = call(sa, "POST", "/v1/bookmark/set", {"bookmark": "Not a name"})
+    code_ahead, ahead = call(sa, "POST", "/v1/bookmark/set", {"bookmark": "ahead", "since": 1 << 40})
+    code_fwd, fwd_bm = call(sa, "POST", "/v1/bookmark/set", {"bookmark": "onb", "peer": "b", "note": "set from a"})
+    _, blist_b = call(sa, "GET", "/v1/bookmark?peer=b")
+    _, blist_a = call(sa, "GET", "/v1/bookmark")
+    names_a = [m["name"] for m in (blist_a or {}).get("bookmarks", [])]
+    names_b = [m["name"] for m in (blist_b or {}).get("bookmarks", [])]
+    code_rm, removed_bm = call(sa, "POST", "/v1/bookmark/remove", {"bookmark": "old"})
+    check("E16.bookmark_bounds_refusals_and_peers",
+          (blist or {}).get("store") == "disk" and blist.get("max_bookmarks") == 64 and blist.get("ring") == 4096
+          and [m["name"] for m in blist["bookmarks"]] == ["before", "after"] and all(m["live"] for m in blist["bookmarks"])
+          and code_old == 200 and old_gaps and old_gaps[0]["reason"] == "since-too-old" and old_gaps[0]["oldest"] > 1
+          and from_old and from_old[0]["seq"] >= old_gaps[0]["oldest"]
+          and len(refused) == 2 and "bookmark or since" in refused[0].get("error", "") and "nope" in refused[1].get("error", "")
+          and code_name == 400 and "name" in (bad_name or {}).get("error", "")
+          and code_ahead == 400 and "head" in (ahead or {}).get("error", "")
+          and code_fwd == 200 and fwd_bm["epoch"] == status(sb)["epoch"]
+          and "onb" in names_b and "onb" not in names_a
+          and code_rm == 200 and (removed_bm or {}).get("removed") is True,
+          list=blist, old=(code_old, old_gaps[:1], len(from_old)), refused=refused,
+          bad_name=(code_name, bad_name), ahead=(code_ahead, ahead), forwarded=(code_fwd, fwd_bm),
+          names=(names_a, names_b))
+
     # E8: plane B restarts under its name. Its lock and state file are free again, the new boot
     # draws another epoch and opens a second section of the same journal, A's peer link comes
     # back up, and a wait scoped to the old boot ends at once with Restarted instead of waiting
@@ -930,6 +1012,19 @@ def run():
           and up_ms is not None and len(boots) == 2 and boots[1]["epoch"] == b1["epoch"],
           exit=exit_b, epochs=[b0["epoch"], b1["epoch"]], peer_up_ms=up_ms, boot_lines=len(boots),
           ready_ms=round(ms_b2, 1), old_generation=b0["generation"])
+    # E16 (restart): the bookmark set on B before its restart is still listed by the new boot,
+    # marked as not live, and a replay from it says epoch-changed before this boot's ring.
+    code_bl, bl = call(sb, "GET", "/v1/bookmark")
+    onb = next((m for m in (bl or {}).get("bookmarks", []) if m["name"] == "onb"), None)
+    gaps0 = len(SSE_GAPS)
+    _, replayed = sse(sb, "", 0.5, query="ch=&bookmark=onb")
+    rgaps = SSE_GAPS[gaps0:]
+    check("E16.bookmark_survives_the_restart",
+          code_bl == 200 and onb is not None and onb["epoch"] == b0["epoch"] and onb["live"] is False
+          and onb["note"] == "set from a"
+          and rgaps and rgaps[0]["reason"] == "epoch-changed" and rgaps[0]["epoch"] == b1["epoch"]
+          and replayed and all(e["epoch"] == b1["epoch"] for e in replayed),
+          bookmark=onb, gaps=rgaps[:2], replayed=len(replayed))
     prog = write_ixql("stale-wait.ixql",
                       f'done <- ix.ctl.wait(generation: {b0["generation"]}, epoch: "{b0["epoch"]}", '
                       "timeout_ms: 10000)\n")

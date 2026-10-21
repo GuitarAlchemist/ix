@@ -170,7 +170,7 @@ func newTestInstance(t testing.TB, spec *Spec, stateDir string) *instance {
 	if stateDir == "" {
 		stateDir = t.TempDir()
 	}
-	in, err := startInstance(spec, "", "127.0.0.1:0", stateDir)
+	in, err := startInstance(spec, "", "127.0.0.1:0", stateDir, "disk")
 	if err != nil {
 		t.Fatal(err)
 	}

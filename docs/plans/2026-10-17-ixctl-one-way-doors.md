@@ -687,4 +687,15 @@ events that `ctl` already journals like any other. Its own decisions and measure
 [`2026-10-20-ixctl-probes.md`](2026-10-20-ixctl-probes.md); it becomes one-way at the same
 trigger as door 1, or when a program outside the plane creates nodes or reads a pipe.
 
+## Provisional: bookmarks and replay (2026-10-20)
+
+Bookmarks (`bookmark.*` ops, `bookmark` on `subscribe` and `/v1/events`, the file
+`<name>.bookmarks.json`, schema `ixctl-bookmarks/0`) ride on door 1 the same way. They add
+nothing to door 2 and nothing to door 3: a replay reads the ring only, and the journal stays an
+audit log that nothing replays. The decision that would reopen door 3 (a per-channel journal the
+plane writes on request, replayed past the ring) is recorded on D9, ix#414, as not taken; the
+bookmark file is a second store in the state dir, provisional, loaded by nothing but the plane
+that wrote it. Design and measurements:
+[`2026-10-20-ixctl-bookmarks.md`](2026-10-20-ixctl-bookmarks.md).
+
 Once signed, these decisions belong in an ADR under `docs/adr/`.
