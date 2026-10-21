@@ -36,6 +36,11 @@ func (c *cpuProbe) sample() (map[string]any, error) {
 		}
 		vals = append(vals, n)
 	}
+	// user nice system idle iowait irq softirq steal [guest guest_nice]: the last two are
+	// already inside user and nice, so the total stops at steal.
+	if len(vals) > 8 {
+		vals = vals[:8]
+	}
 	var total uint64
 	for _, v := range vals {
 		total += v

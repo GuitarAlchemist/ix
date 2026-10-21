@@ -122,6 +122,28 @@ seconde l'anneau ne tient plus la seq 1, donc une lecture SSE ultérieure depuis
 d'abord un gap `since-too-old`. L'aide `sse()` de la barrière sépare maintenant les gaps des
 enveloppes (`SSE_GAPS`) ; le comportement du plan était déjà celui documenté.
 
+## Revue round 20 (Codex, lecture seule, de `2575167`)
+
+Quatre P1 et huit P2, aucun P0 ; tous traités dans le commit suivant. Les P1 étaient des courses
+entre une op qui relâche le verrou entre décider et agir et une autre qui s'intercale : `remove`
+prenait l'instantané de son sous-arbre puis relâchait, donc un `create` dessous laissait un
+orphelin et un `start` relançait un nœud sur le point d'être supprimé (son exécution fuyait) ;
+`expire` vérifiait son échéance, relâchait, puis retirait, donc un `touch` arrivé avant perdait
+quand même son nœud ; `shutdown` arrêtait les nœuds en marche sans fermer l'admission, donc un
+`start` après lui tournait au-delà de la fermeture du journal ; et le `keep` d'un mux perdait
+`src`, contre la promesse du protocole. Les correctifs gardent la forme : le sous-arbre est
+réclamé (`removing`) sous le verrou même qui décide, et les nœuds réclamés refusent `start`,
+`touch` et les nouveaux enfants ; `expire` est un `removeIf` dont la vérification d'échéance est
+sous ce verrou ; `shutdown` pose `closed` avant son instantané et `create`/`start` refusent
+ensuite ; `keep` porte toujours `src` et `error`. P2 : `emit` revérifie que le nœud est bien
+celui de l'arbre et en marche (l'échantillon d'un enfant en vol n'atterrit plus après le
+`probe.stopped` du parent) ; un nœud `stopping` refuse un start jusqu'au retour de son
+exécution ; `max_depth` admet exactement `max_depth` mux au-dessus d'un nœud ; les valeurs des
+filtres sont typées à la création ; le total de `/proc/stat` sous Linux s'arrête à `steal` (le
+temps guest est dans user) ; un intervalle cpu dont les compteurs n'ont pas avancé n'émet rien
+au lieu d'un repos fabriqué ; `probe.started` porte `expires_in_ms` quand il y a un bail. Codex a
+aussi compté 38 vérifications dans la barrière ; le fichier en a 39 et l'exécution en imprime 39.
+
 ## Tests (les coutures convenues pour le TDD)
 
 Unitaires, `go/ixctl/probe_test.go`, à travers `Plane.Request`, les filtres purs et les kinds OS

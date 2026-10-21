@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -134,8 +135,72 @@ func TestANodeIsCreatedStoppedAndEveryRefusalNamesItsBound(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "max_depth") {
 		t.Errorf("deep chain: err %v, want max_depth", err)
 	}
-	if len(listNodes(t, p)) != 2+probeMaxDepth-1 {
-		t.Errorf("%d nodes after the chain, want %d", len(listNodes(t, p)), 2+probeMaxDepth-1)
+	// A leaf may sit under max_depth muxes: agg + m0..m(max_depth-2) are max_depth muxes, so
+	// m(max_depth-1) (a mux under max_depth muxes) is admitted and the next one is refused.
+	if len(listNodes(t, p)) != 2+probeMaxDepth {
+		t.Errorf("%d nodes after the chain, want %d", len(listNodes(t, p)), 2+probeMaxDepth)
+	}
+	// Filter values are typed: an object, an array or null never matches, so they are refused
+	// at creation, and a bool only takes == or !=.
+	for _, c := range []struct {
+		value any
+		op    string
+	}{{map[string]any{"a": 1}, "=="}, {[]any{1}, "=="}, {nil, "=="}, {true, "<"}} {
+		f := map[string]any{"where": []map[string]any{{"field": "n", "op": c.op, "value": c.value}}}
+		_, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("x", "heartbeat@1", 50, map[string]any{"filter": f})})
+		if err == nil || !strings.Contains(err.Error(), "where[0]") {
+			t.Errorf("value %v with %s: err %v, want a refusal naming where[0]", c.value, c.op, err)
+		}
+	}
+}
+
+// Round-20 findings: a mux's keep never drops src; a started lease says when it expires;
+// a cpu interval with no advance emits nothing; nothing is admitted once the plane shuts down.
+func TestKeepKeepsSrcAndNothingIsAdmittedAfterShutdown(t *testing.T) {
+	p := probePlane(t)
+	for _, spec := range []*NodeSpec{
+		node("agg", "mux@1", 0, map[string]any{"filter": map[string]any{"keep": []string{"n"}}}),
+		node("hb", "heartbeat@1", 10, map[string]any{"parent": "agg", "ttl_ms": 60000}),
+	} {
+		if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: spec}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"agg", "hb"} {
+		if _, err := probeOp(t, p, Request{Op: "probe.start", Node: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, s := range readSamples(t, p, "probe/agg", 2, 2*time.Second) {
+		if s["src"] != "hb" || s["n"] == nil || len(s) != 5 {
+			t.Errorf("mux sample under keep [n]: %v, want n, src and the three stamps", s)
+		}
+	}
+	started := ctlEvents(t, p, "probe.started")
+	if len(started) != 2 || started[1]["node"] != "hb" || started[1]["expires_in_ms"] == nil || started[0]["expires_in_ms"] != nil {
+		t.Errorf("probe.started events %v: the leased one carries expires_in_ms, the other does not", started)
+	}
+	var c cpuProbe
+	if _, err := c.delta(10, 100); !errors.Is(err, errNoDelta) {
+		t.Errorf("first reading: %v, want errNoDelta", err)
+	}
+	if _, err := c.delta(10, 100); !errors.Is(err, errNoDelta) {
+		t.Errorf("no advance: %v, want errNoDelta, not a fabricated idle interval", err)
+	}
+	if f, err := c.delta(20, 200); err != nil || f["busy_pct"] != 90.0 {
+		t.Errorf("an interval of 100 with 10 idle: %v %v, want busy_pct 90", f, err)
+	}
+	p.Shutdown()
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: "hb"}); err == nil || !strings.Contains(err.Error(), "shutting down") {
+		t.Errorf("start after shutdown: %v", err)
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("late", "heartbeat@1", 10, nil)}); err == nil || !strings.Contains(err.Error(), "shutting down") {
+		t.Errorf("create after shutdown: %v", err)
+	}
+	for _, n := range listNodes(t, p) {
+		if n.State != "stopped" {
+			t.Errorf("%s is %s after shutdown", n.Name, n.State)
+		}
 	}
 }
 

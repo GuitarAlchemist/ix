@@ -114,6 +114,26 @@ longer holds seq 1, so a later SSE read from the start gets a `since-too-old` ga
 gate's `sse()` helper now keeps gaps apart from envelopes (`SSE_GAPS`); the plane's behaviour was
 already the documented one.
 
+## Review round 20 (Codex, read-only, of `2575167`)
+
+Four P1 and eight P2, no P0; all answered in the next commit. The P1s were races between an
+op that unlocks between deciding and acting and another op landing in between: `remove`
+snapshotted its subtree then unlocked, so a `create` under it left an orphan and a `start`
+restarted a node about to be deleted (its run leaked); `expire` checked its due date, unlocked,
+then removed, so a `touch` that landed first lost its node anyway; `shutdown` stopped the
+running nodes without closing admission, so a `start` after it ran past the journal's close;
+and a mux's `keep` dropped `src`, against the protocol's promise. The fixes keep the shape:
+the subtree is claimed (`removing`) under the same lock that decides, and claimed nodes refuse
+`start`, `touch` and new children; `expire` is `removeIf` with its due check inside that lock;
+`shutdown` sets `closed` before its snapshot and `create`/`start` refuse afterwards; `keep`
+always carries `src` and `error`. P2s: `emit` re-checks that the node is still the one in the
+tree and running (a child's sample in flight no longer lands after the parent's `probe.stopped`);
+a `stopping` node refuses a start until its run has returned; `max_depth` allows exactly
+`max_depth` muxes above a node; filter values are typed at creation; Linux's `/proc/stat` total
+stops at `steal` (guest time is inside user); a cpu interval whose counters did not advance
+emits nothing instead of a fabricated idle; `probe.started` carries `expires_in_ms` when leased.
+Codex also counted 38 gate checks; the file has 39 `check(` calls and the run prints 39.
+
 ## Tests (the seams agreed for TDD)
 
 Unit, `go/ixctl/probe_test.go`, through `Plane.Request`, the pure filters and the OS kinds by

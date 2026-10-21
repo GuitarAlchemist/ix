@@ -237,17 +237,21 @@ running, up to the parent, which applies its own filter and publishes it on `pro
 stamped with `src` (the child's name). Propagation is synchronous: nothing is queued and nothing
 is dropped on the way up; the only loss is the ring's, and it is a `gap` the reader sees.
 A `filter` is applied before a sample is emitted, in this order: `where` (every term must hold;
-`op` is one of `==`, `!=`, `<`, `<=`, `>`, `>=`; a missing field or a type mismatch is false),
-`every` (one sample in N of those that passed), `keep` (the fields kept, `node`/`kind`/`seq`/`src`
-always). A sample is `{node, kind, seq, src?, ...fields}`; a read error becomes
+`op` is one of `==`, `!=`, `<`, `<=`, `>`, `>=`; `value` is a number, a string or a bool, a bool
+with `==` or `!=` only, anything else refused at creation; a missing field or a type mismatch is
+false), `every` (one sample in N of those that passed), `keep` (the fields kept;
+`node`/`kind`/`seq`, a mux's `src` and a failed sample's `error` always). A sample is `{node, kind, seq, src?, ...fields}`; a read error becomes
 `{node, kind, seq, error}` and counts in the node's `errors`.
 
 `ttl_ms` is a **lease**: counted from `probe.start`, renewed by `probe.touch`, and when it runs
 out the node is removed with its whole subtree (`probe.removed`, reason `expired`). A node
 without `ttl_ms` has no lease and `probe.touch` refuses it. `probe.remove` takes the subtree too
 (descendants are stopped and removed with reason `parent-removed`); `probe.stop` stops one node
-and leaves its children running (their samples stay on their own pipes). `POST /v1/shutdown`
-stops every running node first, reason `shutdown`.
+and leaves its children running (their samples stay on their own pipes). A node a remove has
+claimed refuses a start, a touch or a new child until it is gone; a node whose stop is still
+waiting for its last tick refuses a start until `probe.stopped` is out. `POST /v1/shutdown`
+closes admission (no create or start from then on) and stops every running node, reason
+`shutdown`.
 
 | Op | Fields | Reply |
 |---|---|---|

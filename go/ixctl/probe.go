@@ -52,10 +52,10 @@ func (c *cpuProbe) delta(idle, total uint64) (map[string]any, error) {
 	}
 	di, dt := float64(idle-c.idle), float64(total-c.total)
 	c.idle, c.total = idle, total
-	busy := 0.0
-	if dt > 0 {
-		busy = 100 * (dt - di) / dt
+	if dt <= 0 { // the counters did not advance (a tick shorter than the clock's grain): no interval to report
+		return nil, errNoDelta
 	}
+	busy := 100 * (dt - di) / dt
 	if busy < 0 {
 		busy = 0
 	}
@@ -188,6 +188,18 @@ func (f *Filter) validate() error {
 		if !termOps[t.Op] {
 			return badRequest("where[%d]: unknown op %q (== != < <= > >=)", i, t.Op)
 		}
+		// A value a term can never hold against is refused here, not silently false forever.
+		switch v := t.Value.(type) {
+		case string:
+		case bool:
+			if t.Op != "==" && t.Op != "!=" {
+				return badRequest("where[%d]: a bool takes == or !=, not %q", i, t.Op)
+			}
+		default:
+			if _, ok := num(v); !ok {
+				return badRequest("where[%d]: value must be a number, a string or a bool", i)
+			}
+		}
 	}
 	if f.Every < 0 {
 		return badRequest("filter every %d must be positive (one record in every)", f.Every)
@@ -295,8 +307,15 @@ func (f *Filter) apply(fields map[string]any, passed *uint64) (map[string]any, b
 	if len(f.Keep) == 0 {
 		return fields, true
 	}
-	kept := make(map[string]any, len(f.Keep))
+	kept := make(map[string]any, len(f.Keep)+2)
 	for _, k := range f.Keep {
+		if v, ok := fields[k]; ok {
+			kept[k] = v
+		}
+	}
+	// What the protocol promises on every record survives any projection: the source a mux
+	// stamped, and the error a failed sample carries.
+	for _, k := range []string{"src", "error"} {
 		if v, ok := fields[k]; ok {
 			kept[k] = v
 		}
@@ -316,6 +335,9 @@ type probeNode struct {
 
 	cancel context.CancelFunc // ends the run; nil when stopped
 	done   chan struct{}      // closed when the run's goroutine has returned
+
+	stopping bool // a stop is waiting for the run to return: no start until it has
+	removing bool // a remove owns this node: no start, touch or child until it is gone
 
 	expires time.Time   // when the running lease ends; zero without one
 	lease   *time.Timer // fires expire at `expires`; nil without a running lease
@@ -349,16 +371,12 @@ func (t *probeTree) renew(n *probeNode, now time.Time) {
 
 // expire ends a node whose lease ran out: stopped with reason `expired`, then removed with
 // its subtree. A timer that fires after a touch moved the lease, or after a stop or remove,
-// finds nothing due and does nothing.
+// finds nothing due and does nothing: the check and the claim on the subtree happen under
+// one lock, so a touch that lands first keeps its node.
 func (t *probeTree) expire(name string) {
-	t.mu.Lock()
-	n := t.nodes[name]
-	due := n != nil && n.state == probeRunning && n.spec.TTLMs > 0 && !time.Now().Before(n.expires)
-	t.mu.Unlock()
-	if !due {
-		return
-	}
-	t.remove(name, "expired")
+	t.removeIf(name, "expired", func(n *probeNode) bool {
+		return n.state == probeRunning && n.spec.TTLMs > 0 && !time.Now().Before(n.expires)
+	})
 }
 
 // touch renews a node's lease from now and answers what is left of it.
@@ -372,6 +390,10 @@ func (t *probeTree) touch(name string) (any, error) {
 	if n.spec.TTLMs == 0 {
 		t.mu.Unlock()
 		return nil, badRequest("node %q has no lease (ttl_ms 0)", name)
+	}
+	if n.removing {
+		t.mu.Unlock()
+		return nil, badRequest("node %q is being removed", name)
 	}
 	now := time.Now()
 	if n.state == probeRunning {
@@ -389,14 +411,31 @@ func (t *probeTree) touch(name string) (any, error) {
 // (the node with `reason`, a descendant with `parent-removed`), then forgotten, with a
 // `probe.removed` event each.
 func (t *probeTree) remove(name, reason string) (any, error) {
+	return t.removeIf(name, reason, nil)
+}
+
+// removeIf is remove when `due` (if given) holds for the node, decided under the lock that
+// also claims the whole subtree (`removing`): from then on no start, touch or new child can
+// reach those nodes, so stopping and forgetting them outside the lock races nothing.
+func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (any, error) {
 	t.mu.Lock()
-	if t.nodes[name] == nil {
+	n := t.nodes[name]
+	if n == nil {
 		t.mu.Unlock()
 		return nil, badRequest("node %q does not exist", name)
+	}
+	if n.removing {
+		t.mu.Unlock()
+		return nil, badRequest("node %q is being removed", name)
+	}
+	if due != nil && !due(n) {
+		t.mu.Unlock()
+		return nil, nil
 	}
 	var order []string // post-order: a child before its parent
 	var walk func(string)
 	walk = func(nm string) {
+		t.nodes[nm].removing = true
 		for _, c := range t.nodes[nm].children {
 			walk(c)
 		}
@@ -464,7 +503,17 @@ func (t *probeTree) start(name string) (any, error) {
 		t.mu.Unlock()
 		return map[string]any{"node": name, "state": probeRunning, "noop": true}, nil
 	}
-	if n.kind.newSampler == nil && n.kind.Name != "mux" {
+	switch {
+	case t.closed:
+		t.mu.Unlock()
+		return nil, badRequest("the plane is shutting down")
+	case n.removing:
+		t.mu.Unlock()
+		return nil, badRequest("node %q is being removed", name)
+	case n.stopping:
+		t.mu.Unlock()
+		return nil, badRequest("node %q is stopping; start it again once probe.stopped is out", name)
+	case n.kind.newSampler == nil && n.kind.Name != "mux":
 		t.mu.Unlock()
 		return nil, badRequest("kind %s has no sampler on this platform", n.kind)
 	}
@@ -477,11 +526,12 @@ func (t *probeTree) start(name string) (any, error) {
 	now := time.Now()
 	t.renew(n, now)
 	reply := map[string]any{"node": name, "state": probeRunning}
+	extra := map[string]any{}
 	if left := n.leaseLeft(now); left != nil {
-		reply["expires_in_ms"] = *left
+		reply["expires_in_ms"], extra["expires_in_ms"] = *left, *left
 	}
 	t.mu.Unlock()
-	t.event("probe.started", n, nil)
+	t.event("probe.started", n, extra)
 	return reply, nil
 }
 
@@ -514,6 +564,12 @@ func (t *probeTree) run(ctx context.Context, n *probeNode, s sampler, done chan 
 // slow reader loses records, and it says so with a gap).
 func (t *probeTree) emit(n *probeNode, fields map[string]any, failed bool) {
 	t.mu.Lock()
+	// A record that reaches a node after its stop or removal (a leaf's last tick, a child's
+	// sample in flight to a mux) is not emitted: probe.stopped is the last thing a pipe says.
+	if t.nodes[n.spec.Name] != n || n.state != probeRunning {
+		t.mu.Unlock()
+		return
+	}
 	if failed {
 		n.errors++
 	}
@@ -558,24 +614,30 @@ func (t *probeTree) stop(name, reason string) (any, error) {
 	}
 	cancel, done := n.cancel, n.done
 	n.cancel, n.done, n.state = nil, nil, probeStopped
+	n.stopping = cancel != nil // a mux has no run of its own to wait for
 	if n.lease != nil {
 		n.lease.Stop()
 		n.lease, n.expires = nil, time.Time{}
 	}
 	t.mu.Unlock()
-	if cancel != nil { // a mux has no run of its own
+	if cancel != nil {
 		cancel()
 		<-done
+		t.mu.Lock()
+		n.stopping = false
+		t.mu.Unlock()
 	}
 	t.event("probe.stopped", n, map[string]any{"reason": reason})
 	return map[string]any{"node": name, "state": probeStopped}, nil
 }
 
-// shutdown stops every running node with the reason `shutdown`, children before
-// parents (a child is always created after its parent, so reverse creation order
-// does it), so no run outlives the plane and every pipe ends with its stop on ctl.
+// shutdown closes admission (no create or start from here on), then stops every running
+// node with the reason `shutdown`, children before parents (a child is always created after
+// its parent, so reverse creation order does it), so no run outlives the plane and every
+// pipe ends with its stop on ctl.
 func (t *probeTree) shutdown() {
 	t.mu.Lock()
+	t.closed = true
 	var running []string
 	for i := len(t.order) - 1; i >= 0; i-- {
 		if t.nodes[t.order[i]].state == probeRunning {
@@ -594,6 +656,8 @@ type probeTree struct {
 	mu    sync.Mutex
 	nodes map[string]*probeNode
 	order []string // creation order, for list
+
+	closed bool // the plane is shutting down: nothing is created or started any more
 }
 
 func newProbeTree(hub *Hub) *probeTree {
@@ -604,6 +668,9 @@ func newProbeTree(hub *Hub) *probeTree {
 func (t *probeTree) create(spec *NodeSpec) (any, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.closed {
+		return nil, badRequest("the plane is shutting down")
+	}
 	if !nameRE.MatchString(spec.Name) {
 		return nil, badRequest("node name %q must match %s", spec.Name, nameRE)
 	}
@@ -642,10 +709,13 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 		if parent.kind.Name != "mux" {
 			return nil, badRequest("parent %q is a %s, not a mux", spec.Parent, parent.kind)
 		}
+		if parent.removing {
+			return nil, badRequest("parent %q is being removed", spec.Parent)
+		}
 		for p := parent; p != nil; p = t.nodes[p.spec.Parent] {
 			depth++
 		}
-		if depth >= probeMaxDepth {
+		if depth > probeMaxDepth { // depth counts the muxes above: max_depth of them is allowed
 			return nil, badRequest("node would sit at depth %d under %q; max_depth is %d", depth, spec.Parent, probeMaxDepth)
 		}
 	}

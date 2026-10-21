@@ -251,9 +251,10 @@ filtre et le publie sur `probe/<parent>` estampillé de `src` (le nom de l'enfan
 est synchrone : rien n'est mis en file et rien n'est perdu en montant ; la seule perte est celle
 de l'anneau, et c'est un `gap` que le lecteur voit. Un `filter` s'applique avant qu'un
 échantillon soit émis, dans cet ordre : `where` (chaque terme doit tenir ; `op` parmi `==`, `!=`,
-`<`, `<=`, `>`, `>=` ; un champ absent ou un type qui ne correspond pas vaut faux), `every` (un
-échantillon sur N de ceux qui sont passés), `keep` (les champs gardés ; `node`/`kind`/`seq`/`src`
-toujours). Un échantillon est `{node, kind, seq, src?, ...champs}` ; une erreur de lecture devient
+`<`, `<=`, `>`, `>=` ; `value` est un nombre, une chaîne ou un booléen, un booléen avec `==` ou
+`!=` seulement, tout le reste refusé à la création ; un champ absent ou un type qui ne correspond
+pas vaut faux), `every` (un échantillon sur N de ceux qui sont passés), `keep` (les champs
+gardés ; `node`/`kind`/`seq`, le `src` d'un mux et l'`error` d'un échantillon raté toujours). Un échantillon est `{node, kind, seq, src?, ...champs}` ; une erreur de lecture devient
 `{node, kind, seq, error}` et compte dans les `errors` du nœud.
 
 `ttl_ms` est un **bail** : compté depuis `probe.start`, renouvelé par `probe.touch`, et quand il
@@ -261,7 +262,10 @@ s'épuise le nœud est retiré avec tout son sous-arbre (`probe.removed`, raison
 sans `ttl_ms` n'a pas de bail et `probe.touch` le refuse. `probe.remove` emporte aussi le
 sous-arbre (les descendants sont arrêtés et retirés avec la raison `parent-removed`) ;
 `probe.stop` arrête un nœud et laisse ses enfants tourner (leurs échantillons restent sur leurs
-propres tuyaux). `POST /v1/shutdown` arrête d'abord chaque nœud en marche, raison `shutdown`.
+propres tuyaux). Un nœud qu'un remove a réclamé refuse un start, un touch ou un nouvel enfant
+jusqu'à sa disparition ; un nœud dont le stop attend encore son dernier tick refuse un start
+jusqu'à ce que `probe.stopped` soit sorti. `POST /v1/shutdown` ferme l'admission (plus de create
+ni de start) et arrête chaque nœud en marche, raison `shutdown`.
 
 | Op | Champs | Réponse |
 |---|---|---|
