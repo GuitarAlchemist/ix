@@ -11,7 +11,20 @@
 //! status  <- ix.ctl.status()
 //! stopped <- ix.ctl.stop(service: "pod-a")
 //! seen    <- ix.ctl.events(channel: "ctl", since: 0, max: 20, timeout_ms: 2000)
+//! kinds   <- ix.ctl.probe.kinds()
+//! agg     <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1", ttl_ms: 30000 })
+//! cpu     <- ix.ctl.probe.create(probe: { name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg" })
+//! on      <- ix.ctl.probe.start(node: "agg")
+//! tree    <- ix.ctl.probe.list()
+//! samples <- ix.ctl.events(channel: "probe/agg", since: 0, epoch: status.epoch, max: 10, timeout_ms: 3000)
+//! gone    <- ix.ctl.probe.remove(node: "agg")
 //! ```
+//!
+//! The probe ops are one capability each, named after the wire's (`probe.kinds`, `.list`,
+//! `.create`, `.start`, `.stop`, `.touch`, `.remove`), with the wire's arguments: `probe:` the
+//! node record for a create, `node:` the name for the rest, `peer:` beside any of them. A
+//! pipe is read with `ix.ctl.events`, like every other channel; there is no wait on a sample
+//! (the count is `max:`, the condition is the node's own `filter`). D7, ix#405.
 //!
 //! `ix.ctl.events` reads the plane's event stream and stops at `max:` events, at the end of
 //! the stream, or after `timeout_ms:` without a next event (the plane's keep-alive pings do
@@ -51,6 +64,38 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
         let (doc, peer) = document(a)?;
         answer(c.apply(&doc, peer.as_deref()))
     })?;
+
+    let c = ctl.clone();
+    caps.register("ix.ctl.probe.kinds", move |a: CallArgs| {
+        expect(&a, &["peer"])?;
+        answer(c.probe_kinds(string(&a, "peer")?.as_deref()))
+    })?;
+
+    let c = ctl.clone();
+    caps.register("ix.ctl.probe.list", move |a: CallArgs| {
+        expect(&a, &["peer"])?;
+        answer(c.probe_list(string(&a, "peer")?.as_deref()))
+    })?;
+
+    let c = ctl.clone();
+    caps.register("ix.ctl.probe.create", move |a: CallArgs| {
+        expect(&a, &["probe", "peer"])?;
+        let spec = match a.named.get("probe") {
+            Some(v) if v.is_object() => v,
+            Some(v) => return Err(format!("`probe:` must be a record (the node), not {v}")),
+            None => return Err("needs `probe:`, the node to declare".into()),
+        };
+        answer(c.probe_create(spec, string(&a, "peer")?.as_deref()))
+    })?;
+
+    for op in ["start", "stop", "touch", "remove"] {
+        let c = ctl.clone();
+        caps.register(&format!("ix.ctl.probe.{op}"), move |a: CallArgs| {
+            expect(&a, &["node", "peer"])?;
+            let node = string(&a, "node")?.ok_or("needs `node:`, the node's name")?;
+            answer(c.probe_node(op, &node, string(&a, "peer")?.as_deref()))
+        })?;
+    }
 
     let c = ctl.clone();
     caps.register("ix.ctl.stop", move |a: CallArgs| {

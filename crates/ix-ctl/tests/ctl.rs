@@ -18,6 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const PODS: &str = include_str!("../examples/pods.ixql");
 const JOB: &str = include_str!("../examples/job.ixql");
+const PROBE: &str = include_str!("../examples/probe.ixql");
 const TOKEN: &str = "5f1c0de2a9b84e7d93c6f0a1b2c3d4e5f60718293a4b5c6d7e8f9011223344aa";
 /// How long the fake takes to observe an applied generation.
 const CONVERGE: Duration = Duration::from_millis(120);
@@ -75,7 +76,22 @@ struct Plane {
     /// While set, no pending launch is made, however long ago the apply asked: a test holds
     /// the window between an apply and its launch open for as long as it needs it.
     hold_launch: bool,
+    /// The probe tree, by node name, as `probe.create` declared it and the ops moved it.
+    probes: BTreeMap<String, Node>,
+    /// What a live read (no `since`) is sent: the envelopes after this sequence number. `None`
+    /// sends nothing, as a plane whose channels stay quiet; the real plane sends what is
+    /// published after the stream opens.
+    live_from: Option<u64>,
 }
+
+/// One node of the fake's probe tree: the spec as declared, and the state the ops set.
+struct Node {
+    spec: Value,
+    state: &'static str,
+}
+
+/// The kinds the fake has "compiled in", as `kinds_reply` lists them.
+const KINDS: [&str; 4] = ["cpu@1", "heartbeat@1", "mem@1", "mux@1"];
 
 impl Plane {
     fn status(&mut self) -> Value {
@@ -250,9 +266,167 @@ impl Plane {
                     json!({"stopped": name, "generation": self.generation, "exit": exit}),
                 )
             }
+            ("GET", "/v1/probes") => (200, kinds_reply()),
+            ("GET", "/v1/probe") => {
+                let nodes: Vec<Value> = self
+                    .probes
+                    .iter()
+                    .map(|(name, n)| {
+                        let children: Vec<&String> = self
+                            .probes
+                            .iter()
+                            .filter(|(_, c)| c.spec["parent"] == *name)
+                            .map(|(c, _)| c)
+                            .collect();
+                        let mut entry = json!({
+                            "name": name, "kind": n.spec["kind"], "state": n.state,
+                            "seq": 0, "errors": 0, "children": children,
+                        });
+                        for f in ["every_ms", "ttl_ms", "parent", "filter"] {
+                            if let Some(v) = n.spec.get(f) {
+                                entry[f] = v.clone();
+                            }
+                        }
+                        entry
+                    })
+                    .collect();
+                (
+                    200,
+                    json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256}),
+                )
+            }
+            ("POST", "/v1/probe/create") => match self.probe_create(&doc) {
+                Ok(reply) => (200, reply),
+                Err(e) => (400, json!({ "error": e })),
+            },
+            (
+                "POST",
+                "/v1/probe/start" | "/v1/probe/stop" | "/v1/probe/touch" | "/v1/probe/remove",
+            ) => {
+                if doc.get("peer").is_some() {
+                    return (400, json!({"error": "this plane has no peers"}));
+                }
+                let op = path.rsplit('/').next().unwrap();
+                match self.probe_op(op, doc["node"].as_str().unwrap_or("")) {
+                    Ok(reply) => (200, reply),
+                    Err(e) => (400, json!({ "error": e })),
+                }
+            }
             _ => (404, json!({"error": format!("no {method} {path}")})),
         }
     }
+
+    /// The node ops as the real plane answers them: `start` runs the node (a lease starts
+    /// counting), `stop` leaves it stopped, `touch` renews a lease and refuses a node without
+    /// one, `remove` takes the subtree and counts it. A name nobody declared is refused.
+    fn probe_op(&mut self, op: &str, name: &str) -> Result<Value, String> {
+        let ttl = {
+            let n = self
+                .probes
+                .get_mut(name)
+                .ok_or_else(|| format!("node {name:?} does not exist"))?;
+            let ttl = n.spec["ttl_ms"].as_u64();
+            match op {
+                "start" => n.state = "running",
+                "stop" => n.state = "stopped",
+                "touch" if ttl.is_none() => return Err(format!("node {name:?} has no lease")),
+                _ => {}
+            }
+            ttl
+        };
+        Ok(match op {
+            "start" => {
+                let mut reply = json!({"node": name, "state": "running"});
+                if let Some(ttl) = ttl {
+                    reply["expires_in_ms"] = json!(ttl);
+                }
+                reply
+            }
+            "stop" => json!({"node": name, "state": "stopped"}),
+            "touch" => json!({"node": name, "ttl_ms": ttl, "expires_in_ms": ttl}),
+            _ => {
+                let mut gone = vec![name.to_string()];
+                let mut i = 0;
+                while i < gone.len() {
+                    let parent = gone[i].clone();
+                    gone.extend(
+                        self.probes
+                            .iter()
+                            .filter(|(_, n)| n.spec["parent"] == parent)
+                            .map(|(k, _)| k.clone()),
+                    );
+                    i += 1;
+                }
+                for g in &gone {
+                    self.probes.remove(g);
+                }
+                json!({"node": name, "removed": gone.len()})
+            }
+        })
+    }
+
+    /// `probe.create` as the real plane checks it: a known kind, a fresh name, a mux as parent,
+    /// an interval within the limits for a leaf and none for a mux; every refusal names what it
+    /// hit. The node is created stopped.
+    fn probe_create(&mut self, spec: &Value) -> Result<Value, String> {
+        let name = spec["name"].as_str().filter(|n| !n.is_empty());
+        let Some(name) = name else {
+            return Err("a node needs a `name`".into());
+        };
+        let kind = spec["kind"].as_str().unwrap_or("");
+        if !KINDS.contains(&kind) {
+            return Err(format!("unknown kind {kind:?} (probe.kinds lists them)"));
+        }
+        if self.probes.contains_key(name) {
+            return Err(format!("node {name:?} exists"));
+        }
+        let every = spec["every_ms"].as_u64();
+        match (kind, every) {
+            ("mux@1", Some(_)) => return Err("a mux@1 takes no `every_ms`".into()),
+            ("mux@1", None) => {}
+            (_, None) => return Err(format!("{kind} needs `every_ms`")),
+            (_, Some(e)) if e < 10 => return Err(format!("every_ms {e} is under min_every_ms 10")),
+            _ => {}
+        }
+        let parent = spec["parent"].as_str();
+        if let Some(p) = parent {
+            match self.probes.get(p) {
+                Some(n) if n.spec["kind"] == "mux@1" => {}
+                Some(_) => return Err(format!("parent {p:?} is not a mux@1")),
+                None => return Err(format!("parent {p:?} does not exist")),
+            }
+        }
+        let mut reply = json!({"node": name, "kind": kind, "state": "stopped"});
+        if let Some(p) = parent {
+            reply["parent"] = json!(p);
+        }
+        self.probes.insert(
+            name.to_string(),
+            Node {
+                spec: spec.clone(),
+                state: "stopped",
+            },
+        );
+        Ok(reply)
+    }
+}
+
+/// What `probe.kinds` answers on the real plane: the compiled kinds sorted by name, the limits
+/// by the names the contract gives them, and the producer's revision.
+fn kinds_reply() -> Value {
+    json!({
+        "kinds": [
+            {"kind": "cpu@1", "version": 1, "fields": ["busy_pct", "cores"],
+             "doc": "the host's processor busy share over the last interval"},
+            {"kind": "heartbeat@1", "version": 1, "fields": ["n"], "doc": "its own tick count"},
+            {"kind": "mem@1", "version": 1, "fields": ["total_bytes", "avail_bytes", "used_pct"],
+             "doc": "the host's physical memory"},
+            {"kind": "mux@1", "version": 1, "fields": [], "doc": "carries what its children pass it"},
+        ],
+        "limits": {"max_nodes": 256, "max_depth": 8, "min_every_ms": 10, "max_every_ms": 3_600_000,
+                   "max_ttl_ms": 9_223_372_036_854u64, "ring": 4096, "max_where": 16, "max_keep": 32},
+        "version": "fake-1",
+    })
 }
 
 fn pod_nodes() -> Vec<Value> {
@@ -306,6 +480,8 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         ping_every: Duration::ZERO,
         trickle: None,
         hold_launch: false,
+        probes: BTreeMap::new(),
+        live_from: None,
     }));
     let shared = plane.clone();
     std::thread::spawn(move || {
@@ -395,8 +571,11 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
                 .find_map(|kv| kv.strip_prefix(&format!("{k}=")).and_then(unpercent))
         };
         let prefix = arg("ch").unwrap_or_default();
-        // Absent `since` is live: nothing of the past is sent, as the real plane does.
-        let since = arg("since").and_then(|s| s.parse::<u64>().ok());
+        // Absent `since` is live: nothing of the past is sent, as the real plane does, only
+        // what the fake is told comes after the open (`live_from`).
+        let since = arg("since")
+            .and_then(|s| s.parse::<u64>().ok())
+            .or(plane.live_from);
         let (pings, ping_every, trickle, stall) =
             (plane.pings, plane.ping_every, plane.trickle, plane.stall);
         let mut frames = Vec::new();
@@ -650,6 +829,337 @@ fn a_peer_is_named_beside_the_document() {
         plane.log[..]
     );
     assert_eq!(1, plane.generation);
+}
+
+// D7 (ix#405), S4: one IXQL capability per probe op, named after the wire's. `probe.kinds` is
+// the first: a program refuses early when the kind it wants is not compiled in, and reads the
+// limits it will be held to instead of guessing them.
+#[test]
+fn probe_kinds_lists_the_kinds_and_the_limits() {
+    let (ctl, plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source("kinds <- ix.ctl.probe.kinds()")
+        .unwrap();
+    let kinds = out.binding("kinds").unwrap();
+    assert_eq!(kinds_reply(), *kinds);
+    let names: Vec<&str> = kinds["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(["cpu@1", "heartbeat@1", "mem@1", "mux@1"], names[..]);
+    assert_eq!(json!(256), kinds["limits"]["max_nodes"]);
+
+    // The client method is the same call; a peer rides beside it and this plane has none.
+    assert_eq!(kinds_reply(), ctl.probe_kinds(None).unwrap());
+    match ctl.probe_kinds(Some("b")) {
+        Err(CtlError::Http {
+            status: 400,
+            message,
+        }) => assert!(message.contains("no peers"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        ["GET /v1/probes", "GET /v1/probes", "GET /v1/probes?peer=b"],
+        plane.lock().unwrap().log[..]
+    );
+}
+
+// D7, S4: `probe.create` takes the node record under `probe:`, as the wire does, and answers
+// the node stopped; a refusal names what it hit and the run ends there, nothing half-made.
+#[test]
+fn probe_create_declares_a_node_under_a_mux_and_refusals_name_their_cause() {
+    let (ctl, plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source(
+            r#"agg <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1" })
+               cpu <- ix.ctl.probe.create(probe: {
+                   name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg",
+                   filter: { keep: ["busy_pct"] }
+                 })"#,
+        )
+        .unwrap();
+    assert_eq!(
+        json!({"node": "agg", "kind": "mux@1", "state": "stopped"}),
+        *out.binding("agg").unwrap()
+    );
+    assert_eq!(
+        json!({"node": "cpu", "kind": "cpu@1", "state": "stopped", "parent": "agg"}),
+        *out.binding("cpu").unwrap()
+    );
+    {
+        let plane = plane.lock().unwrap();
+        assert_eq!(
+            json!({"keep": ["busy_pct"]}),
+            plane.probes["cpu"].spec["filter"],
+            "the record reaches the plane as written"
+        );
+        assert_eq!(
+            ["POST /v1/probe/create", "POST /v1/probe/create"],
+            plane.log[..]
+        );
+    }
+
+    for (src, why) in [
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "x", kind: "gpu@1", every_ms: 100 })"#,
+            "unknown kind",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "x", kind: "cpu@1", every_ms: 5 })"#,
+            "min_every_ms",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "x", kind: "cpu@1", every_ms: 100, parent: "cpu" })"#,
+            "not a mux",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1" })"#,
+            "exists",
+        ),
+    ] {
+        let err = executor(ctl.clone())
+            .run_source(src)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(why), "{src}: {err}");
+    }
+    assert_eq!(2, plane.lock().unwrap().probes.len(), "nothing half-made");
+
+    // A peer rides beside the record, as `?peer=`; this plane has none.
+    match ctl.probe_create(&json!({"name": "p", "kind": "mux@1"}), Some("b")) {
+        Err(CtlError::Http {
+            status: 400,
+            message,
+        }) => assert!(message.contains("no peers"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        Some(&"POST /v1/probe/create?peer=b".to_string()),
+        plane.lock().unwrap().log.last()
+    );
+}
+
+// D7, S4: the node ops take the name under `node:`, as the wire does. A mux starts before its
+// leaf, a lease is renewed by `touch` and refused without one, a remove takes the subtree and
+// says how many went, and a name nobody declared is refused by the plane, not guessed at.
+#[test]
+fn probe_node_ops_start_stop_touch_and_remove_the_tree() {
+    let (ctl, plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source(
+            r#"agg <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1", ttl_ms: 5000 })
+               cpu <- ix.ctl.probe.create(probe: { name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg" })
+               agg_on <- ix.ctl.probe.start(node: "agg")
+               cpu_on <- ix.ctl.probe.start(node: "cpu")
+               renewed <- ix.ctl.probe.touch(node: "agg")
+               cpu_off <- ix.ctl.probe.stop(node: "cpu")
+               gone <- ix.ctl.probe.remove(node: "agg")"#,
+        )
+        .unwrap();
+    let b = |name: &str| out.binding(name).unwrap_or_else(|| panic!("no `{name}`"));
+    assert_eq!(
+        json!({"node": "agg", "state": "running", "expires_in_ms": 5000}),
+        *b("agg_on")
+    );
+    assert_eq!(json!({"node": "cpu", "state": "running"}), *b("cpu_on"));
+    assert_eq!(
+        json!({"node": "agg", "ttl_ms": 5000, "expires_in_ms": 5000}),
+        *b("renewed")
+    );
+    assert_eq!(json!({"node": "cpu", "state": "stopped"}), *b("cpu_off"));
+    assert_eq!(json!({"node": "agg", "removed": 2}), *b("gone"));
+    {
+        let plane = plane.lock().unwrap();
+        assert!(plane.probes.is_empty(), "the subtree went with the mux");
+        assert_eq!(
+            [
+                "POST /v1/probe/create",
+                "POST /v1/probe/create",
+                "POST /v1/probe/start",
+                "POST /v1/probe/start",
+                "POST /v1/probe/touch",
+                "POST /v1/probe/stop",
+                "POST /v1/probe/remove",
+            ],
+            plane.log[..]
+        );
+    }
+
+    for (src, why) in [
+        (
+            r#"x <- ix.ctl.probe.start(node: "ghost")"#,
+            "does not exist",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "hb", kind: "heartbeat@1", every_ms: 20 })
+               t <- ix.ctl.probe.touch(node: "hb")"#,
+            "no lease",
+        ),
+    ] {
+        let err = executor(ctl.clone())
+            .run_source(src)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(why), "{src}: {err}");
+    }
+
+    // The client methods are the same calls; a peer rides in the body and this plane has none.
+    assert_eq!(
+        json!({"node": "hb", "removed": 1}),
+        ctl.probe_remove("hb", None).unwrap()
+    );
+    match ctl.probe_start("hb", Some("b")) {
+        Err(CtlError::Http {
+            status: 400,
+            message,
+        }) => assert!(message.contains("no peers"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+// D7, S4: `probe.list` is the tree as the plane holds it, with the usage against its bound.
+#[test]
+fn probe_list_shows_the_tree_and_its_usage() {
+    let (ctl, plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source(
+            r#"agg <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1" })
+               cpu <- ix.ctl.probe.create(probe: { name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg" })
+               on <- ix.ctl.probe.start(node: "agg")
+               tree <- ix.ctl.probe.list()"#,
+        )
+        .unwrap();
+    let tree = out.binding("tree").unwrap();
+    assert_eq!(json!(2), tree["count"]);
+    assert_eq!(json!(256), tree["max_nodes"]);
+    let nodes = tree["nodes"].as_array().unwrap();
+    assert_eq!(
+        json!({"name": "agg", "kind": "mux@1", "state": "running", "seq": 0, "errors": 0,
+               "children": ["cpu"]}),
+        nodes[0]
+    );
+    assert_eq!(json!("stopped"), nodes[1]["state"]);
+    assert_eq!(json!("agg"), nodes[1]["parent"]);
+    assert_eq!(json!(100), nodes[1]["every_ms"]);
+
+    assert_eq!(*tree, ctl.probe_list(None).unwrap());
+    match ctl.probe_list(Some("b")) {
+        Err(CtlError::Http {
+            status: 400,
+            message,
+        }) => assert!(message.contains("no peers"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        Some(&"GET /v1/probe?peer=b".to_string()),
+        plane.lock().unwrap().log.last()
+    );
+}
+
+// D7, S4: the example program end to end against the fake. The ring holds twelve of the mux's
+// records (one of them a read error, which reaches the pipe whatever the filter) and a leaf's
+// own record on another pipe: the read takes ten from `probe/agg` alone, in seq order, and says
+// it stopped at `max:`; the remove takes the tree. Run again over a thinner ring, the read is
+// shorter than asked and says so by its length: a partial read is never dressed as a full one.
+#[test]
+fn probe_ixql_samples_a_cpu_probe_under_a_mux_and_removes_the_tree() {
+    let (ctl, plane) = plane();
+    let env = |seq: u64, ch: &str, data: Value| {
+        json!({"ch": ch, "seq": seq, "epoch": "3f9a1c0b7d2e", "origin": "fake", "t": 1_760_000_000_000u64 + seq,
+               "ev": {"kind": "sample", "t": 1_760_000_000_000u64 + seq, "data": data}})
+    };
+    let agg = |seq: u64, n: u64, busy: f64| {
+        env(
+            seq,
+            "probe/agg",
+            json!({"node": "agg", "kind": "mux@1", "seq": n, "src": "cpu", "busy_pct": busy}),
+        )
+    };
+    let mut ring = vec![env(
+        1,
+        "probe/cpu",
+        json!({"node": "cpu", "kind": "cpu@1", "seq": 1, "busy_pct": 3.0}),
+    )];
+    for n in 1..=12u64 {
+        ring.push(if n == 4 {
+            env(n + 1, "probe/agg", json!({"node": "agg", "kind": "mux@1", "seq": n, "src": "cpu", "error": "GetSystemTimes: boom"}))
+        } else {
+            agg(n + 1, n, n as f64)
+        });
+    }
+    {
+        let mut p = plane.lock().unwrap();
+        p.events = ring.clone();
+        // The program reads live; the fake hands a live read these records as "what came after
+        // the open".
+        p.live_from = Some(0);
+    }
+
+    let out = executor(ctl.clone())
+        .run_source(PROBE)
+        .expect("probe.ixql runs");
+    let b = |name: &str| out.binding(name).unwrap_or_else(|| panic!("no `{name}`"));
+    assert_eq!(kinds_reply(), *b("kinds"));
+    assert_eq!(
+        json!({"node": "agg", "state": "running", "expires_in_ms": 30000}),
+        *b("agg_on"),
+        "the lease is the cleanup: the mux carries one"
+    );
+    assert_eq!(json!("running"), b("cpu_on")["state"]);
+    let samples = b("samples");
+    let events = samples["events"].as_array().unwrap();
+    assert_eq!(10, events.len(), "{samples}");
+    assert_eq!(
+        json!(false),
+        samples["ended"],
+        "stopped at `max:`, not at the stream's end"
+    );
+    assert_eq!(Value::Null, samples["gap"]);
+    // The client flattens an envelope to `{channel, seq, epoch, origin, kind, t, data}`.
+    let seqs: Vec<u64> = events
+        .iter()
+        .map(|e| e["data"]["seq"].as_u64().unwrap())
+        .collect();
+    assert_eq!(
+        (1..=10).collect::<Vec<u64>>(),
+        seqs,
+        "the mux's records, in order"
+    );
+    assert!(events.iter().all(|e| e["channel"] == "probe/agg"
+        && e["kind"] == "sample"
+        && e["data"]["src"] == "cpu"));
+    assert_eq!(
+        json!("GetSystemTimes: boom"),
+        events[3]["data"]["error"],
+        "a read error is a record"
+    );
+    assert_eq!(json!({"node": "agg", "removed": 2}), *b("gone"));
+    {
+        let plane = plane.lock().unwrap();
+        assert!(plane.probes.is_empty(), "the tree is gone");
+        assert!(
+            plane
+                .log
+                .iter()
+                .any(|r| r == "GET /v1/events?ch=probe%2Fagg"),
+            "a live read, no `since`: {:?}",
+            plane.log
+        );
+    }
+
+    // A thinner ring: four records, then the stream ends. The read answers four, not ten.
+    plane.lock().unwrap().events = ring[..5].to_vec();
+    let out = executor(ctl)
+        .run_source(PROBE)
+        .expect("probe.ixql runs again");
+    let samples = out.binding("samples").unwrap();
+    assert_eq!(4, samples["events"].as_array().unwrap().len(), "{samples}");
+    assert_eq!(
+        json!({"node": "agg", "removed": 2}),
+        *out.binding("gone").unwrap()
+    );
 }
 
 // F2.4: a generation means nothing across boots. A wait that names the apply reply's epoch
@@ -1146,6 +1656,38 @@ fn argument_mistakes_fail_the_run_before_any_request() {
             r#"a <- ix.ctl.wait(generation: 1, peer: 2, timeout_ms: 10)"#,
             "string",
         ),
+        (r#"k <- ix.ctl.probe.kinds(node: "hb")"#, "node"),
+        ("k <- ix.ctl.probe.kinds(peer: 1)", "string"),
+        ("k <- {} → ix.ctl.probe.kinds", "piped"),
+        (r#"k <- ix.ctl.probe.kinds("b")"#, "named"),
+        ("c <- ix.ctl.probe.create()", "probe"),
+        (r#"c <- ix.ctl.probe.create(probe: "agg")"#, "record"),
+        (
+            r#"c <- ix.ctl.probe.create(probe: { name: "a", kind: "mux@1" }, node: "a")"#,
+            "node",
+        ),
+        (
+            r#"c <- { name: "a", kind: "mux@1" } → ix.ctl.probe.create"#,
+            "piped",
+        ),
+        (
+            r#"c <- ix.ctl.probe.create(probe: { name: "a", kind: "mux@1" }, peer: 1)"#,
+            "string",
+        ),
+        ("s <- ix.ctl.probe.start()", "node"),
+        ("s <- ix.ctl.probe.stop(node: 1)", "string"),
+        (
+            r#"s <- ix.ctl.probe.touch(node: "a", ttl_ms: 10)"#,
+            "ttl_ms",
+        ),
+        (
+            r#"s <- ix.ctl.probe.remove(node: "a", force: true)"#,
+            "force",
+        ),
+        (r#"s <- "a" → ix.ctl.probe.remove"#, "piped"),
+        (r#"s <- ix.ctl.probe.remove(node: "a", peer: 2)"#, "string"),
+        (r#"l <- ix.ctl.probe.list(node: "a")"#, "node"),
+        ("l <- {} → ix.ctl.probe.list", "piped"),
     ] {
         let err = exec.run_source(src).unwrap_err().to_string();
         assert!(err.contains(why), "{src}: {err}");

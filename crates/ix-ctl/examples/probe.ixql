@@ -1,0 +1,42 @@
+--- ## A CPU probe under a mux, driven from IXQL
+--- Declares a mux and a CPU probe feeding it, starts both, reads ten of the mux's records
+--- from the plane's ring, then removes the tree. One IXQL capability per probe op, named after
+--- the wire's (`ix.ctl.probe.create`, `.start`, …); samples are read with `ix.ctl.events`,
+--- the capability every pipe is read with (D7, ix#405).
+---
+---   ixctl up spec.json          -- any plane: probes need no service
+---   cargo run -p ix-ctl --example ixql-ctl -- crates/ix-ctl/examples/probe.ixql --state <state file>
+---
+--- The runner prints every binding below as JSON.
+
+--- What this plane can sample, and the limits its tree holds a node to: a kind that is not
+--- listed is a refusal to make here, before any node exists.
+kinds <- ix.ctl.probe.kinds()
+
+--- The mux first, so the leaf's `parent:` names a node that exists. The lease (`ttl_ms`) is the
+--- cleanup: IXQL has no `finally`, a step that fails ends the run, and a program that dies
+--- leaves a tree the plane removes by itself when the lease runs out (`probe.removed`, reason
+--- `expired`). `probe.touch` would renew it.
+agg <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1", ttl_ms: 30000 })
+cpu <- ix.ctl.probe.create(probe: {
+    name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg",
+    filter: { keep: ["busy_pct"] }
+  })
+
+--- A mux carries only while running: start it before the leaf, or the first samples stay on
+--- `probe/cpu` alone.
+agg_on <- ix.ctl.probe.start(node: "agg")
+cpu_on <- ix.ctl.probe.start(node: "cpu")
+
+--- Ten records as the mux publishes them (`src: "cpu"`), live: without `since:` the read sees
+--- what comes after the stream opens, which here is everything, since `cpu@1` emits nothing on
+--- its first interval. A replay from the start of the boot (`since: 0, epoch: <the status's>`)
+--- would give a node's first records even when the stream opened late, but it would also give
+--- the records of an earlier tree of the same name in this boot: the pipe is the name's, not
+--- the node's. The read stops at `max:` records or after `timeout_ms` without a next one: fewer
+--- than ten events in the answer is a partial read, and a `gap` says the ring has turned or the
+--- plane rebooted. A read error (`{…, error}`) is a record too, whatever the filter, and counts.
+samples <- ix.ctl.events(channel: "probe/agg", max: 10, timeout_ms: 3000)
+
+--- The whole tree: `cpu` goes with reason `parent-removed`, `removed` counts 2.
+gone <- ix.ctl.probe.remove(node: "agg")

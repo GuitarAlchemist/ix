@@ -186,7 +186,17 @@ printing the kinds offline. Gate: E15 (two checks) and M2 in `go/ixctl/e2e/e2e.p
 
 ## Left out on purpose
 
-Cross-host pipes (S2), shared sampling (S3), the Rust and IXQL surface (S4), GitHub releases with
+**S4 shipped (2026-10-21, D7 ix#405 resolved):** one IXQL capability per probe op, named after
+the wire's (`ix.ctl.probe.kinds`, `.list`, `.create(probe:)`, `.start/.stop/.touch/.remove(node:)`,
+`peer:` beside any), arguments checked at the edge before any request, as the six existing
+`ix.ctl.*` capabilities; samples read with the existing `ix.ctl.events(channel: "probe/<node>")`;
+no wait on a sample (the count is `max:`, the condition is the node's own `filter`); the lease is
+the cleanup, IXQL having no `finally`. Program: `crates/ix-ctl/examples/probe.ixql`, run against a
+fake plane in `crates/ix-ctl/tests/ctl.rs` (ten records in `seq` order, a read error among them,
+a partial read told by its length, the tree removed) and against the real plane in the gate (E17).
+IXQL itself did not change: these are registrations against the existing `Capabilities`.
+
+Cross-host pipes (S2), shared sampling (S3), GitHub releases with
 a probes manifest beyond the workflow skeleton (S5), the prototype's WMI kinds (S6), the Gaia
 envelope's adapter (S7: the IX side is the draft contract
 [`2026-10-21-ixctl-probe-observation.contract.md`](../contracts/2026-10-21-ixctl-probe-observation.contract.md)

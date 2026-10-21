@@ -483,6 +483,69 @@ impl Ctl {
         self.call("POST", "/v1/stop", Some(&body))
     }
 
+    /// `GET /v1/probes`: the probe kinds this plane has compiled in, the limits its tree
+    /// applies (`max_nodes`, `min_every_ms`, …, by the names its refusals use) and the
+    /// producer's revision (`version`). With `peer`, that peer's. A program reads this first:
+    /// a kind it wants that is not listed is a refusal to make before any node exists.
+    pub fn probe_kinds(&self, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.call("GET", &routed("/v1/probes", peer), None)
+    }
+
+    /// `GET /v1/probe`: the probe tree as the plane holds it, `{nodes: [{name, kind, state,
+    /// every_ms?, ttl_ms?, parent?, filter?, seq, errors, children, expires_in_ms?}], count,
+    /// max_nodes}`. With `peer`, that peer's.
+    pub fn probe_list(&self, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.call("GET", &routed("/v1/probe", peer), None)
+    }
+
+    /// `POST /v1/probe/create`: declares `spec` (`{name, kind, every_ms?, parent?, filter?,
+    /// ttl_ms?}`) as a node of the plane's probe tree, stopped, and answers `{node, kind,
+    /// state, parent?}`. A refusal names what it hit (an unknown kind, a taken name, a bound
+    /// of `probe_kinds`'s `limits`) and leaves the tree as it was. With `peer`, that peer's
+    /// tree (`?peer=` beside the record).
+    pub fn probe_create(&self, spec: &Value, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.call("POST", &routed("/v1/probe/create", peer), Some(spec))
+    }
+
+    /// `POST /v1/probe/start`: runs the node; its lease, if it has one, starts counting.
+    /// Answers `{node, state: "running", expires_in_ms?}`, a noop on a running node.
+    pub fn probe_start(&self, node: &str, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.probe_node("start", node, peer)
+    }
+
+    /// `POST /v1/probe/stop`: stops the node and leaves its children running. Answers
+    /// `{node, state: "stopped"}` once the node's last tick is out.
+    pub fn probe_stop(&self, node: &str, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.probe_node("stop", node, peer)
+    }
+
+    /// `POST /v1/probe/touch`: renews the node's lease (`ttl_ms`), refused on a node without
+    /// one. Answers `{node, ttl_ms, expires_in_ms}`.
+    pub fn probe_touch(&self, node: &str, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.probe_node("touch", node, peer)
+    }
+
+    /// `POST /v1/probe/remove`: stops and forgets the node and its whole subtree. Answers
+    /// `{node, removed}`, the subtree counted.
+    pub fn probe_remove(&self, node: &str, peer: Option<&str>) -> Result<Value, CtlError> {
+        self.probe_node("remove", node, peer)
+    }
+
+    /// The four node ops share one wire shape: `POST /v1/probe/<op>` with `{node, peer?}`, the
+    /// peer in the body as `stop`'s is. A name nobody declared is the plane's refusal.
+    pub(crate) fn probe_node(
+        &self,
+        op: &str,
+        node: &str,
+        peer: Option<&str>,
+    ) -> Result<Value, CtlError> {
+        let mut body = json!({ "node": node });
+        if let Some(peer) = peer {
+            body["peer"] = json!(peer);
+        }
+        self.call("POST", &format!("/v1/probe/{op}"), Some(&body))
+    }
+
     /// Waits until the plane has settled `generation`, and answers the status that showed it.
     ///
     /// Each poll of the status decides one of three things. With a plane that reports

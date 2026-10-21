@@ -7,7 +7,8 @@ toward a desired-state document the way a local Terraform would (`plan` says wha
 `apply` bumps a generation and acts), bounds each run (wall clock, memory) and reports what every
 run cost. It serves one loopback HTTP/WebSocket face and federates with peer instances. The Rust
 and IXQL client is [`crates/ix-ctl`](../../crates/ix-ctl) (`ix.ctl.status`, `ix.ctl.plan`,
-`ix.ctl.apply`, `ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`).
+`ix.ctl.apply`, `ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`, and one `ix.ctl.probe.*`
+capability per probe op).
 
 The three formats it defines (the `ixctl.v1` envelope, the desired-state document, the journal)
 are **provisional**: see the one-way-doors page,
@@ -276,7 +277,11 @@ plane's tree, `max_depth` 8 (a leaf under at most this many muxes), `min_every_m
 with every channel), `max_where` 16 terms, `max_keep` 32 fields. A create past one of them is
 refused with its name (`every_ms 5 is under min_every_ms 10`). Every `probe.*` op is forwardable
 to a peer (`peer`); the peer's `probe.*` lifecycle comes back mirrored on `peer/<name>/ctl`,
-its pipes do not (D4).
+its pipes do not (D4). From IXQL, each op is one capability named after it
+(`ix.ctl.probe.create(probe: {…})`, `ix.ctl.probe.start(node: "agg")`, …) and a pipe is read
+with `ix.ctl.events(channel: "probe/<node>")`; there is no wait on a sample (D7, ix#405).
+[`crates/ix-ctl/examples/probe.ixql`](../../crates/ix-ctl/examples/probe.ixql) is the program:
+a CPU probe under a mux, ten records, the tree removed.
 
 ## Bookmarks and replay
 
@@ -331,7 +336,9 @@ real `ix pipeline run` as a job, runs killed at their wall, memory, processor-ti
 process limits, a probe tree under the plane (E15: kinds and limits, filter and mux, lease
 expiry, the host's cpu and mem) and bookmarks (E16: a replay, seq for seq, of what a probe tree's
 pipes and the `ctl` lifecycle carried after a point the operator named; bounds, refusals, a
-peer's bookmark; survival of a restart). 42 checks, E1..E16, a restart loop and two measurements: M1
+peer's bookmark; survival of a restart) and the IXQL probe surface (E17: `probe.ixql` through
+the Rust client, a CPU probe under a mux, ten records, the tree removed). 43 checks, E1..E17, a
+restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).
 

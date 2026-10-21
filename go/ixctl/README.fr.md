@@ -8,7 +8,8 @@ vers un document d'état désiré à la manière d'un Terraform local (`plan` di
 rapporte ce que chaque exécution a coûté. Il expose une seule face HTTP/WebSocket en boucle locale
 et se fédère avec des instances pairs. Le client Rust et IXQL est
 [`crates/ix-ctl`](../../crates/ix-ctl) (`ix.ctl.status`, `ix.ctl.plan`, `ix.ctl.apply`,
-`ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`).
+`ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`, et une capacité `ix.ctl.probe.*` par opération
+de sonde).
 
 Les trois formats qu'il définit (l'enveloppe `ixctl.v1`, le document d'état désiré, le journal)
 sont **provisoires** : voir la page des portes à sens unique,
@@ -291,7 +292,12 @@ Les limites que `probe.kinds` rapporte (et que `ixctl probes` imprime hors ligne
 (celui du hub, partagé par tous les canaux), `max_where` 16 termes, `max_keep` 32 champs. Une
 création au-delà de l'une d'elles est refusée avec son nom (`every_ms 5 is under min_every_ms
 10`). Chaque op `probe.*` peut être relayée à un pair (`peer`) ; le cycle de vie `probe.*` du pair
-revient en miroir sur `peer/<nom>/ctl`, ses tuyaux non (D4).
+revient en miroir sur `peer/<nom>/ctl`, ses tuyaux non (D4). Depuis IXQL, chaque op est une
+capacité qui porte son nom (`ix.ctl.probe.create(probe: {…})`, `ix.ctl.probe.start(node: "agg")`,
+…) et un tuyau se lit avec `ix.ctl.events(channel: "probe/<nœud>")` ; il n'y a pas d'attente sur
+un échantillon (D7, ix#405). Le programme est
+[`crates/ix-ctl/examples/probe.ixql`](../../crates/ix-ctl/examples/probe.ixql) : une sonde CPU
+sous un mux, dix enregistrements, l'arbre retiré.
 
 ## Signets et rejeu
 
@@ -351,7 +357,9 @@ de temps mur, de mémoire, de temps processeur et de processus, un arbre de sond
 (E15 : kinds et limites, filtre et mux, expiration du bail, cpu et mem de l'hôte) et des signets
 (E16 : un rejeu, seq pour seq, de ce que les tuyaux d'un arbre de sondes et le cycle de vie `ctl`
 ont porté après un point nommé par l'opérateur ; bornes, refus, signet d'un pair ; survie à un
-redémarrage). 42 vérifications, E1..E16, une boucle de redémarrage et deux mesures : M1 (ce qu'une attente sur
+redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Rust, une sonde CPU
+sous un mux, dix enregistrements, l'arbre retiré). 43 vérifications, E1..E17, une boucle de
+redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).
 

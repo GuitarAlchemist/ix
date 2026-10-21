@@ -204,8 +204,18 @@ kinds hors ligne. Barrière : E15 (deux vérifications) et M2 dans `go/ixctl/e2e
 
 ## Laissé de côté à dessein
 
-Les tuyaux inter-hôtes (S2), l'échantillonnage partagé (S3), la surface Rust et IXQL (S4), les
-releases GitHub avec un manifeste de sondes au-delà du squelette de workflow (S5), les kinds WMI du
+**S4 livrée (2026-10-21, D7 ix#405 tranchée) :** une capacité IXQL par opération de sonde, nommée
+comme sur le fil (`ix.ctl.probe.kinds`, `.list`, `.create(probe:)`,
+`.start/.stop/.touch/.remove(node:)`, `peer:` à côté de chacune), arguments vérifiés en bordure
+avant toute requête, comme les six capacités `ix.ctl.*` existantes ; les échantillons se lisent
+avec `ix.ctl.events(channel: "probe/<nœud>")`, déjà là ; pas d'attente sur un échantillon (le
+compte est `max:`, la condition est le `filter` du nœud) ; le bail est le nettoyage, IXQL n'ayant
+pas de `finally`. Programme : `crates/ix-ctl/examples/probe.ixql`, exécuté contre un faux plan dans
+`crates/ix-ctl/tests/ctl.rs` (dix enregistrements dans l'ordre `seq`, une erreur de lecture parmi
+eux, une lecture partielle dite par sa longueur, l'arbre retiré) et contre le vrai plan dans la
+porte (E17). IXQL n'a pas changé : ce sont des enregistrements dans le registre `Capabilities`.
+
+Les tuyaux inter-hôtes (S2), l'échantillonnage partagé (S3), les releases GitHub avec un manifeste de sondes au-delà du squelette de workflow (S5), les kinds WMI du
 prototype (S6), l'adaptateur de l'enveloppe Gaia (S7 : le côté IX est le brouillon de contrat
 [`2026-10-21-ixctl-probe-observation.contract.md`](../../contracts/2026-10-21-ixctl-probe-observation.contract.md),
 en anglais comme les autres contrats, avec trois fixtures consommateur écrites par le vrai plan,
