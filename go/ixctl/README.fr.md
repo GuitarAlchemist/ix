@@ -318,7 +318,12 @@ décision ultérieure (D9, ix#414 ; porte 3 intacte).
 `subscribe` (`ixctl.v1`) et `GET /v1/events` prennent `bookmark` à la place de `since`/`epoch` ;
 les deux ensemble sont refusés (« bookmark or since »), sauf qu'un en-tête `Last-Event-ID` à côté
 d'un `bookmark` dans la requête est une reconnexion d'un flux déjà passé le signet (un
-`EventSource` renvoie son URL d'origine avec l'en-tête) et reprend depuis l'en-tête. Le rejeu est
+`EventSource` renvoie son URL d'origine avec l'en-tête) et reprend depuis l'en-tête. Précédence
+sur `/v1/events` : l'en-tête l'emporte sur un `since` de la requête et sur un `bookmark` (un seq
+nu dans l'en-tête prend l'`epoch` de la requête, `epoch:seq` porte le sien) ; sans l'en-tête,
+`bookmark` et `since`/`epoch` sont deux points et refusés ensemble. Les en-têtes d'un flux ne
+partent qu'une fois son curseur créé : un lecteur qui les a ne manque rien de ce qui est publié
+ensuite. Le rejeu est
 tout ce qui suit le point du signet sur le préfixe demandé, puis le direct. Les bornes, rapportées
 par `bookmark.list` : `max_bookmarks` 64 par plan, un nom selon la règle des noms d'instance,
 `max_note_len` 256 caractères ; un refus nomme ce qu'il a touché, et un fichier dont les

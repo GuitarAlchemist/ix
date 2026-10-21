@@ -295,8 +295,10 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	// `bookmark=` names the point instead of since/epoch: resolved through the broker,
 	// like a frame's. A `Last-Event-ID` header is a reconnect of a stream that was already
 	// past the bookmark (an EventSource sends the original URL back with it): the header
-	// wins and the bookmark is left aside; an explicit `since`/`epoch` in the query beside
-	// the bookmark is still two points, refused.
+	// wins, over the bookmark and over a query `since` alike (a bare seq in the header takes
+	// the query `epoch`; `epoch:seq` carries its own), and the bookmark is left aside.
+	// Without the header, an explicit `since`/`epoch` in the query beside the bookmark is
+	// two points, refused.
 	if bookmark != "" && r.Header.Get("Last-Event-ID") != "" {
 		bookmark = ""
 	}
@@ -313,6 +315,10 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, "streaming unsupported")
 		return
 	}
+	// The cursor exists before the headers go out: a reader that has the headers is on
+	// the pipe, and nothing published from then on is missed (a live cursor starts at
+	// the head of the moment it is made).
+	cur := s.b.Subscribe(prefix, since, epoch)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(200)
@@ -322,7 +328,6 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)
 	defer stop()
-	cur := s.b.Subscribe(prefix, since, epoch)
 	for {
 		wctx, wcancel := context.WithTimeout(ctx, 15*time.Second)
 		envs, gap, err := cur.Next(wctx, 256)

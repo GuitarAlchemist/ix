@@ -303,7 +303,11 @@ what the ring still holds, never a silently partial replay; a bookmark of an ear
 `subscribe` (`ixctl.v1`) and `GET /v1/events` take `bookmark` in place of `since`/`epoch`; both
 together are refused ("bookmark or since"), except that a `Last-Event-ID` header beside a
 `bookmark` query is a reconnect of a stream already past the bookmark (an `EventSource` sends
-its original URL back with the header) and resumes from the header. The replay is everything
+its original URL back with the header) and resumes from the header. Precedence on
+`/v1/events`: the header wins over a query `since` and over a `bookmark` (a bare seq in the
+header takes the query `epoch`, `epoch:seq` carries its own); without the header, `bookmark`
+and `since`/`epoch` are two points and refused together. A stream's headers go out only once
+its cursor exists: a reader that has them misses nothing published from then on. The replay is everything
 after the bookmark's point on the prefix asked, then live. Bounds, reported by `bookmark.list`:
 `max_bookmarks` 64 per plane, a name under the instance-name rule, `max_note_len` 256 characters;
 a refusal names what it hit, and a file whose records break them is refused at startup. Every

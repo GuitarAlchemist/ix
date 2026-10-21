@@ -117,11 +117,26 @@ func (s *bookmarkStore) save(list []bookmark) error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
 		return fmt.Errorf("bookmarks: %w", err)
 	}
-	if err := os.Rename(tmp, s.path); err != nil {
+	if err := renameOver(tmp, s.path); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("bookmarks: %w", err)
 	}
 	return nil
+}
+
+// renameOver replaces path with tmp. On Windows the replace is refused ("Access is
+// denied") for as long as another process holds the file it replaces (an indexer or an
+// antivirus reading what the previous save wrote); a few short retries ride that out, and
+// a file that stays held is still an error.
+func renameOver(tmp, path string) error {
+	var err error
+	for i := 0; i < 20; i++ {
+		if err = os.Rename(tmp, path); err == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(5*(i+1)) * time.Millisecond)
+	}
+	return err
 }
 
 func (s *bookmarkStore) find(name string) int {

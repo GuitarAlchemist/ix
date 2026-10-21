@@ -77,6 +77,16 @@ contournaient les invariants (désormais vérifiés, le démarrage refusé en no
 l'enregistrement) ; le « lecteur en direct » de la barrière utilisait `since=0` et aurait pu
 passer par le seul rejeu (il s'abonne désormais en direct, après une poignée de main SSE, avant
 que l'arbre existe).
+
+## Revue 22 (Codex, lecture seule, de `e7cc088`)
+
+Pas de P0. Un P1 : le gestionnaire SSE envoyait ses en-têtes avant de créer son curseur, donc un
+lecteur qui prenait les en-têtes pour « sur le tuyau » (l'E16 de la barrière le fait) pouvait
+manquer ce qui était publié dans cette fenêtre ; le curseur est désormais créé d'abord. Un P2 :
+la règle de reconnexion était sous-documentée ; la précédence sur `/v1/events` est désormais
+énoncée (l'en-tête l'emporte sur un `since` de la requête et sur un `bookmark` ; un seq nu dans
+l'en-tête prend l'`epoch` de la requête ; sans l'en-tête, `bookmark` à côté de `since`/`epoch`
+est refusé).
 - **Relayable comme les ops des sondes** : `bookmark.*` avec `peer` s'exécute chez le pair, dans
   la séquence du pair, dans le magasin du pair ; un rejeu depuis lui se fait chez ce pair
   (subscribe est local).

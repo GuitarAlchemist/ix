@@ -73,6 +73,15 @@ empty note could not clear the old one (`note` is now a pointer: absent keeps, p
 checked, the startup refused with the record named); the gate's "live reader" used `since=0`
 and could have passed through the replay alone (it now subscribes live, after an SSE-ready
 handshake, before the tree exists).
+
+## Review round 22 (Codex, read-only, of `e7cc088`)
+
+No P0. One P1: the SSE handler flushed its headers before creating its cursor, so a reader that
+took the headers as "on the pipe" (the gate's E16 does) could miss what was published in that
+window; the cursor is now made first. One P2: the reconnect rule was under-documented; the
+precedence on `/v1/events` is now stated (the header wins over a query `since` and over a
+`bookmark`; a bare seq in the header takes the query `epoch`; without the header, `bookmark`
+beside `since`/`epoch` is refused).
 - **Forwardable like the probe ops**: `bookmark.*` with `peer` runs on the peer, in the peer's
   sequence, in the peer's store; a replay from it is done on that peer (subscribe is local).
 
