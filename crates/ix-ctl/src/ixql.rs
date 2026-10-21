@@ -13,10 +13,11 @@
 //! seen    <- ix.ctl.events(channel: "ctl", since: 0, max: 20, timeout_ms: 2000)
 //! kinds   <- ix.ctl.probe.kinds()
 //! agg     <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1", ttl_ms: 30000 })
+//! agg_on  <- ix.ctl.probe.start(node: "agg")
 //! cpu     <- ix.ctl.probe.create(probe: { name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg" })
-//! on      <- ix.ctl.probe.start(node: "agg")
+//! cpu_on  <- ix.ctl.probe.start(node: "cpu")
 //! tree    <- ix.ctl.probe.list()
-//! samples <- ix.ctl.events(channel: "probe/agg", since: 0, epoch: status.epoch, max: 10, timeout_ms: 3000)
+//! samples <- ix.ctl.events(channel: "probe/agg", max: 10, timeout_ms: 3000)
 //! gone    <- ix.ctl.probe.remove(node: "agg")
 //! ```
 //!

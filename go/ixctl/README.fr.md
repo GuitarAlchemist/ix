@@ -279,11 +279,11 @@ ni de start) et arrête chaque nœud en marche, raison `shutdown`.
 | Op | Champs | Réponse |
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
-| `probe.create` | `probe` (un nœud) | `{node, kind, state: "stopped", parent?}` |
+| `probe.create` | `probe` (un nœud) | `{node, kind, state: "stopped", depth}` (`depth` : les mux au-dessus) |
 | `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, children, parent?, filter?, expires_in_ms?}], count, max_nodes}` |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (sans effet sur un nœud en marche) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
-| `probe.touch` | `node` | `{node, ttl_ms, expires_in_ms}` |
+| `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (le temps restant, sur un nœud en marche) |
 | `probe.remove` | `node` | `{node, removed}` (nœuds retirés, sous-arbre compté) |
 
 Les limites que `probe.kinds` rapporte (et que `ixctl probes` imprime hors ligne) : `max_nodes`

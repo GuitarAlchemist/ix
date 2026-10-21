@@ -264,11 +264,11 @@ closes admission (no create or start from then on) and stops every running node,
 | Op | Fields | Reply |
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
-| `probe.create` | `probe` (a node) | `{node, kind, state: "stopped", parent?}` |
+| `probe.create` | `probe` (a node) | `{node, kind, state: "stopped", depth}` (`depth`: the muxes above it) |
 | `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, children, parent?, filter?, expires_in_ms?}], count, max_nodes}` |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (a noop on a running node) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
-| `probe.touch` | `node` | `{node, ttl_ms, expires_in_ms}` |
+| `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (the time left, on a running node) |
 | `probe.remove` | `node` | `{node, removed}` (nodes removed, the subtree counted) |
 
 The limits `probe.kinds` reports (and `ixctl probes` prints offline): `max_nodes` 256 in one

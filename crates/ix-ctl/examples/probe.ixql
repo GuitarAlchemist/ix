@@ -1,8 +1,8 @@
 --- ## A CPU probe under a mux, driven from IXQL
---- Declares a mux and a CPU probe feeding it, starts both, reads ten of the mux's records
---- from the plane's ring, then removes the tree. One IXQL capability per probe op, named after
---- the wire's (`ix.ctl.probe.create`, `.start`, …); samples are read with `ix.ctl.events`,
---- the capability every pipe is read with (D7, ix#405).
+--- Declares and starts a mux, declares and starts a CPU probe feeding it, reads ten of the
+--- mux's records from the plane's ring, then removes the tree. One IXQL capability per probe
+--- op, named after the wire's (`ix.ctl.probe.create`, `.start`, …); samples are read with
+--- `ix.ctl.events`, the capability every pipe is read with (D7, ix#405).
 ---
 ---   ixctl up spec.json          -- any plane: probes need no service
 ---   cargo run -p ix-ctl --example ixql-ctl -- crates/ix-ctl/examples/probe.ixql --state <state file>
@@ -13,19 +13,21 @@
 --- listed is a refusal to make here, before any node exists.
 kinds <- ix.ctl.probe.kinds()
 
---- The mux first, so the leaf's `parent:` names a node that exists. The lease (`ttl_ms`) is the
---- cleanup: IXQL has no `finally`, a step that fails ends the run, and a program that dies
---- leaves a tree the plane removes by itself when the lease runs out (`probe.removed`, reason
---- `expired`). `probe.touch` would renew it.
+--- The mux first, so the leaf's `parent:` names a node that exists, and started at once: the
+--- lease (`ttl_ms`) counts only on a running node, and it is the cleanup. IXQL has no `finally`,
+--- a step that fails ends the run, and a program that dies leaves a tree the plane removes by
+--- itself when the lease runs out (`probe.removed`, reason `expired`); `probe.touch` would renew
+--- it. Started before the leaf, the mux also carries the leaf's first samples: a mux carries
+--- only while running, else they stay on `probe/cpu` alone.
 agg <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1", ttl_ms: 30000 })
+agg_on <- ix.ctl.probe.start(node: "agg")
+
+--- The leaf under it: a listed kind, its own interval, a filter that keeps one field. A create
+--- the plane refuses ends the run here, and the lease above takes the mux with it in time.
 cpu <- ix.ctl.probe.create(probe: {
     name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg",
     filter: { keep: ["busy_pct"] }
   })
-
---- A mux carries only while running: start it before the leaf, or the first samples stay on
---- `probe/cpu` alone.
-agg_on <- ix.ctl.probe.start(node: "agg")
 cpu_on <- ix.ctl.probe.start(node: "cpu")
 
 --- Ten records as the mux publishes them (`src: "cpu"`), live: without `since:` the read sees

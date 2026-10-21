@@ -272,17 +272,21 @@ impl Plane {
                     .probes
                     .iter()
                     .map(|(name, n)| {
-                        let children: Vec<&String> = self
+                        let children = self
                             .probes
-                            .iter()
-                            .filter(|(_, c)| c.spec["parent"] == *name)
-                            .map(|(c, _)| c)
-                            .collect();
+                            .values()
+                            .filter(|c| c.spec["parent"] == *name)
+                            .count();
+                        let ttl = n.spec.get("ttl_ms").cloned().unwrap_or(json!(0));
                         let mut entry = json!({
                             "name": name, "kind": n.spec["kind"], "state": n.state,
-                            "seq": 0, "errors": 0, "children": children,
+                            "every_ms": n.spec.get("every_ms").cloned().unwrap_or(json!(0)),
+                            "ttl_ms": ttl.clone(), "seq": 0, "errors": 0, "children": children,
                         });
-                        for f in ["every_ms", "ttl_ms", "parent", "filter"] {
+                        if n.state == "running" && ttl != 0 {
+                            entry["expires_in_ms"] = ttl;
+                        }
+                        for f in ["parent", "filter"] {
                             if let Some(v) = n.spec.get(f) {
                                 entry[f] = v.clone();
                             }
@@ -320,7 +324,7 @@ impl Plane {
     /// counting), `stop` leaves it stopped, `touch` renews a lease and refuses a node without
     /// one, `remove` takes the subtree and counts it. A name nobody declared is refused.
     fn probe_op(&mut self, op: &str, name: &str) -> Result<Value, String> {
-        let ttl = {
+        let (ttl, state) = {
             let n = self
                 .probes
                 .get_mut(name)
@@ -332,7 +336,7 @@ impl Plane {
                 "touch" if ttl.is_none() => return Err(format!("node {name:?} has no lease")),
                 _ => {}
             }
-            ttl
+            (ttl, n.state)
         };
         Ok(match op {
             "start" => {
@@ -343,7 +347,13 @@ impl Plane {
                 reply
             }
             "stop" => json!({"node": name, "state": "stopped"}),
-            "touch" => json!({"node": name, "ttl_ms": ttl, "expires_in_ms": ttl}),
+            "touch" => {
+                let mut reply = json!({"node": name, "state": state, "ttl_ms": ttl});
+                if state == "running" {
+                    reply["expires_in_ms"] = json!(ttl);
+                }
+                reply
+            }
             _ => {
                 let mut gone = vec![name.to_string()];
                 let mut i = 0;
@@ -367,7 +377,7 @@ impl Plane {
 
     /// `probe.create` as the real plane checks it: a known kind, a fresh name, a mux as parent,
     /// an interval within the limits for a leaf and none for a mux; every refusal names what it
-    /// hit. The node is created stopped.
+    /// hit. The node is created stopped; the reply gives its `depth`, the muxes above it.
     fn probe_create(&mut self, spec: &Value) -> Result<Value, String> {
         let name = spec["name"].as_str().filter(|n| !n.is_empty());
         let Some(name) = name else {
@@ -396,10 +406,13 @@ impl Plane {
                 None => return Err(format!("parent {p:?} does not exist")),
             }
         }
-        let mut reply = json!({"node": name, "kind": kind, "state": "stopped"});
-        if let Some(p) = parent {
-            reply["parent"] = json!(p);
+        let mut depth = 0;
+        let mut up = parent;
+        while let Some(p) = up {
+            depth += 1;
+            up = self.probes.get(p).and_then(|n| n.spec["parent"].as_str());
         }
+        let reply = json!({"node": name, "kind": kind, "state": "stopped", "depth": depth});
         self.probes.insert(
             name.to_string(),
             Node {
@@ -881,11 +894,11 @@ fn probe_create_declares_a_node_under_a_mux_and_refusals_name_their_cause() {
         )
         .unwrap();
     assert_eq!(
-        json!({"node": "agg", "kind": "mux@1", "state": "stopped"}),
+        json!({"node": "agg", "kind": "mux@1", "state": "stopped", "depth": 0}),
         *out.binding("agg").unwrap()
     );
     assert_eq!(
-        json!({"node": "cpu", "kind": "cpu@1", "state": "stopped", "parent": "agg"}),
+        json!({"node": "cpu", "kind": "cpu@1", "state": "stopped", "depth": 1}),
         *out.binding("cpu").unwrap()
     );
     {
@@ -965,7 +978,7 @@ fn probe_node_ops_start_stop_touch_and_remove_the_tree() {
     );
     assert_eq!(json!({"node": "cpu", "state": "running"}), *b("cpu_on"));
     assert_eq!(
-        json!({"node": "agg", "ttl_ms": 5000, "expires_in_ms": 5000}),
+        json!({"node": "agg", "state": "running", "ttl_ms": 5000, "expires_in_ms": 5000}),
         *b("renewed")
     );
     assert_eq!(json!({"node": "cpu", "state": "stopped"}), *b("cpu_off"));
@@ -1036,13 +1049,15 @@ fn probe_list_shows_the_tree_and_its_usage() {
     assert_eq!(json!(256), tree["max_nodes"]);
     let nodes = tree["nodes"].as_array().unwrap();
     assert_eq!(
-        json!({"name": "agg", "kind": "mux@1", "state": "running", "seq": 0, "errors": 0,
-               "children": ["cpu"]}),
+        json!({"name": "agg", "kind": "mux@1", "state": "running", "every_ms": 0, "ttl_ms": 0, "seq": 0, "errors": 0,
+               "children": 1}),
         nodes[0]
     );
     assert_eq!(json!("stopped"), nodes[1]["state"]);
     assert_eq!(json!("agg"), nodes[1]["parent"]);
     assert_eq!(json!(100), nodes[1]["every_ms"]);
+    assert_eq!(json!(0), nodes[1]["ttl_ms"]);
+    assert_eq!(json!(0), nodes[1]["children"]);
 
     assert_eq!(*tree, ctl.probe_list(None).unwrap());
     match ctl.probe_list(Some("b")) {

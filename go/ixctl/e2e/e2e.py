@@ -1066,7 +1066,7 @@ def run():
     # E17: the IXQL probe surface (D7, ix#405), end to end through the Rust client: probe.ixql
     # declares a mux and a CPU probe feeding it, starts both, reads ten of the mux's records live
     # and removes the tree. The ten are the cpu's, in the mux's seq order, with no gap and the
-    # read stopped at `max:` (not by the idle timeout); the tree is gone from the plane's list.
+    # read stopped at `max:` (not by the idle timeout); the plane's list answers 200 with an empty tree.
     # E15 used the same names earlier in this boot and removed them: a replay from seq 0 would
     # have handed back that tree's records first, which is why the program reads live.
     code, out, err, ms = ixql("probe", PROBE_IXQL, STATE / "a.json", timeout=60)
@@ -1075,8 +1075,8 @@ def run():
     recs = samples.get("events") or []
     seqs = [(r.get("data") or {}).get("seq") for r in recs]
     srcs = {(r.get("data") or {}).get("src") for r in recs}
-    _, tree_after = call(sa, "GET", "/v1/probe")
-    left = {n["name"] for n in tree_after.get("nodes", [])}
+    tree_code, tree_after = call(sa, "GET", "/v1/probe")
+    left = {n["name"] for n in (tree_after or {}).get("nodes", [])}
     check("E17.probe_ixql_samples_a_cpu_probe_under_a_mux_and_removes_the_tree",
           code == 0 and len(recs) == 10 and samples.get("ended") is False and samples.get("gap") is None
           and all(r.get("channel") == "probe/agg" and r.get("kind") == "sample" for r in recs)
@@ -1084,11 +1084,11 @@ def run():
           and all(a < b for a, b in zip(seqs, seqs[1:]))
           and all("busy_pct" in (r.get("data") or {}) or "error" in (r.get("data") or {}) for r in recs)
           and ((out or {}).get("gone") or {}).get("removed") == 2
-          and not ({"agg", "cpu"} & left)
+          and tree_code == 200 and (tree_after or {}).get("count") == 0 and not ({"agg", "cpu"} & left)
           and any(k["kind"] == "cpu@1" for k in ((out or {}).get("kinds") or {}).get("kinds", [])),
           code=code, ms=round(ms, 1), records=len(recs), seqs=seqs, srcs=sorted(s for s in srcs if s),
           ended=samples.get("ended"), gap=samples.get("gap"), gone=(out or {}).get("gone"),
-          left_in_tree=sorted(left), stderr=err[-200:])
+          tree_status=tree_code, left_in_tree=sorted(left), stderr=err[-200:])
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

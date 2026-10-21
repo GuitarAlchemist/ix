@@ -492,7 +492,7 @@ impl Ctl {
     }
 
     /// `GET /v1/probe`: the probe tree as the plane holds it, `{nodes: [{name, kind, state,
-    /// every_ms?, ttl_ms?, parent?, filter?, seq, errors, children, expires_in_ms?}], count,
+    /// every_ms, ttl_ms, parent?, filter?, seq, errors, children, expires_in_ms?}], count,
     /// max_nodes}`. With `peer`, that peer's.
     pub fn probe_list(&self, peer: Option<&str>) -> Result<Value, CtlError> {
         self.call("GET", &routed("/v1/probe", peer), None)
@@ -500,7 +500,7 @@ impl Ctl {
 
     /// `POST /v1/probe/create`: declares `spec` (`{name, kind, every_ms?, parent?, filter?,
     /// ttl_ms?}`) as a node of the plane's probe tree, stopped, and answers `{node, kind,
-    /// state, parent?}`. A refusal names what it hit (an unknown kind, a taken name, a bound
+    /// state, depth}` (`depth`, the muxes above it). A refusal names what it hit (an unknown kind, a taken name, a bound
     /// of `probe_kinds`'s `limits`) and leaves the tree as it was. With `peer`, that peer's
     /// tree (`?peer=` beside the record).
     pub fn probe_create(&self, spec: &Value, peer: Option<&str>) -> Result<Value, CtlError> {
@@ -520,7 +520,7 @@ impl Ctl {
     }
 
     /// `POST /v1/probe/touch`: renews the node's lease (`ttl_ms`), refused on a node without
-    /// one. Answers `{node, ttl_ms, expires_in_ms}`.
+    /// one. Answers `{node, state, ttl_ms, expires_in_ms?}`, the time left only on a running node.
     pub fn probe_touch(&self, node: &str, peer: Option<&str>) -> Result<Value, CtlError> {
         self.probe_node("touch", node, peer)
     }
