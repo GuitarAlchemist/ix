@@ -75,9 +75,10 @@ type Request struct {
 	Probe *NodeSpec `json:"probe,omitempty"`
 	Node  string    `json:"node,omitempty"`
 	// Bookmark ops: the bookmark's name; on subscribe, the point to replay from in place
-	// of since/epoch. Note is bookmark.set's free text.
-	Bookmark string `json:"bookmark,omitempty"`
-	Note     string `json:"note,omitempty"`
+	// of since/epoch. Note is bookmark.set's free text: absent keeps a moved bookmark's
+	// note, present (even empty) replaces it.
+	Bookmark string  `json:"bookmark,omitempty"`
+	Note     *string `json:"note,omitempty"`
 }
 
 // Broker is all a transport sees of an instance: publish, subscribe with a

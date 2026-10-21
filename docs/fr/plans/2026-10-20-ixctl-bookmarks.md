@@ -57,9 +57,26 @@ et rien ne le rejoue (porte 3).
   `Broker` ne change pas et un transport n'entre jamais dans le plan.
 - **Des bornes que le système rapporte** : `max_bookmarks` 64 par plan, le nom selon la règle des
   noms d'instance, `max_note_len` 256, `ring` 4096 ; `bookmark.list` les rapporte avec `count` et
-  `store` ; chaque refus nomme ce qu'il a touché. Poser un nom existant déplace son point (sa
-  note gardée sauf si une nouvelle est donnée) : un signet est un curseur que l'opérateur
-  déplace, pas un journal.
+  `store` ; chaque refus nomme ce qu'il a touché. Poser un nom existant déplace son point (une
+  note donnée remplace la sienne, une note vide l'efface, pas de note la garde) : un signet est
+  un curseur que l'opérateur déplace, pas un journal. Un fichier chargé est tenu aux mêmes
+  invariants (nombre, règle des noms, noms uniques, longueur de la note, un epoch sur chaque
+  enregistrement) sinon le démarrage est refusé ; un changement que le magasin ne peut pas
+  sauver n'est pas adopté, donc un lecteur ne voit jamais un signet que le disque a refusé.
+
+## Revue 21 (Codex, lecture seule, de `1ca7ec6`)
+
+Pas de P0. Deux P1 : un `save` raté laissait la mutation visible (`set`/`remove` construisent
+maintenant une liste candidate, la sauvent, puis l'adoptent) ; un `EventSource` qui se
+reconnectait à un flux `?bookmark=` envoyait `Last-Event-ID` et était refusé avec « bookmark or
+since » (l'en-tête l'emporte désormais sur le signet ; un `since`/`epoch` explicite dans la
+requête reste refusé à côté). Quatre P2, tous pris : une note vide ne pouvait pas effacer
+l'ancienne (`note` est désormais un pointeur : absente garde, présente remplace) ;
+`max_note_len` comptait des octets (désormais des caractères) ; les enregistrements chargés
+contournaient les invariants (désormais vérifiés, le démarrage refusé en nommant
+l'enregistrement) ; le « lecteur en direct » de la barrière utilisait `since=0` et aurait pu
+passer par le seul rejeu (il s'abonne désormais en direct, après une poignée de main SSE, avant
+que l'arbre existe).
 - **Relayable comme les ops des sondes** : `bookmark.*` avec `peer` s'exécute chez le pair, dans
   la séquence du pair, dans le magasin du pair ; un rejeu depuis lui se fait chez ce pair
   (subscribe est local).

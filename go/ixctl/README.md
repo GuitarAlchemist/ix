@@ -295,15 +295,18 @@ what the ring still holds, never a silently partial replay; a bookmark of an ear
 
 | Op | Fields | Reply |
 |---|---|---|
-| `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Without `since` the point is the head ("here"); `since` must be at or below the head and `epoch`, when given, this boot's. An existing name is moved (its note kept unless a new one is given). |
+| `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Without `since` the point is the head ("here"); `since` must be at or below the head and `epoch`, when given, this boot's. An existing name is moved; a `note` given replaces its note (an empty one clears it), no `note` keeps it. |
 | `bookmark.get` | `bookmark` | `{name, epoch, seq, t, note}` |
 | `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live}], count, store, max_bookmarks, max_note_len, ring}`; `live` says this boot set it. |
 | `bookmark.remove` | `bookmark` | `{bookmark, removed: true}` |
 
 `subscribe` (`ixctl.v1`) and `GET /v1/events` take `bookmark` in place of `since`/`epoch`; both
-together are refused ("bookmark or since"). The replay is everything after the bookmark's point
-on the prefix asked, then live. Bounds, reported by `bookmark.list`: `max_bookmarks` 64 per plane,
-a name under the instance-name rule, `max_note_len` 256; a refusal names what it hit. Every
+together are refused ("bookmark or since"), except that a `Last-Event-ID` header beside a
+`bookmark` query is a reconnect of a stream already past the bookmark (an `EventSource` sends
+its original URL back with the header) and resumes from the header. The replay is everything
+after the bookmark's point on the prefix asked, then live. Bounds, reported by `bookmark.list`:
+`max_bookmarks` 64 per plane, a name under the instance-name rule, `max_note_len` 256 characters;
+a refusal names what it hit, and a file whose records break them is refused at startup. Every
 `bookmark.*` op is forwardable to a peer (`peer`), whose own sequence the bookmark then points
 into; the replay stays local to that peer.
 

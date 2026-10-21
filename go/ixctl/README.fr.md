@@ -310,17 +310,21 @@ décision ultérieure (D9, ix#414 ; porte 3 intacte).
 
 | Op | Champs | Réponse |
 |---|---|---|
-| `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Sans `since` le point est la tête (« ici ») ; `since` doit être au plus la tête et `epoch`, s'il est donné, celui de ce démarrage. Un nom existant est déplacé (sa note gardée sauf si une nouvelle est donnée). |
+| `bookmark.set` | `bookmark`, `since?`, `epoch?`, `note?` | `{bookmark, epoch, seq, t, note, head}`. Sans `since` le point est la tête (« ici ») ; `since` doit être au plus la tête et `epoch`, s'il est donné, celui de ce démarrage. Un nom existant est déplacé ; une `note` donnée remplace la sienne (une note vide l'efface), pas de `note` la garde. |
 | `bookmark.get` | `bookmark` | `{name, epoch, seq, t, note}` |
 | `bookmark.list` | | `{bookmarks: [{name, epoch, seq, t, note, live}], count, store, max_bookmarks, max_note_len, ring}` ; `live` dit que ce démarrage l'a posé. |
 | `bookmark.remove` | `bookmark` | `{bookmark, removed: true}` |
 
 `subscribe` (`ixctl.v1`) et `GET /v1/events` prennent `bookmark` à la place de `since`/`epoch` ;
-les deux ensemble sont refusés (« bookmark or since »). Le rejeu est tout ce qui suit le point du
-signet sur le préfixe demandé, puis le direct. Les bornes, rapportées par `bookmark.list` :
-`max_bookmarks` 64 par plan, un nom selon la règle des noms d'instance, `max_note_len` 256 ; un
-refus nomme ce qu'il a touché. Chaque op `bookmark.*` peut être relayée à un pair (`peer`), dans la
-séquence duquel le signet pointe alors ; le rejeu reste local à ce pair.
+les deux ensemble sont refusés (« bookmark or since »), sauf qu'un en-tête `Last-Event-ID` à côté
+d'un `bookmark` dans la requête est une reconnexion d'un flux déjà passé le signet (un
+`EventSource` renvoie son URL d'origine avec l'en-tête) et reprend depuis l'en-tête. Le rejeu est
+tout ce qui suit le point du signet sur le préfixe demandé, puis le direct. Les bornes, rapportées
+par `bookmark.list` : `max_bookmarks` 64 par plan, un nom selon la règle des noms d'instance,
+`max_note_len` 256 caractères ; un refus nomme ce qu'il a touché, et un fichier dont les
+enregistrements les enfreignent est refusé au démarrage. Chaque op `bookmark.*` peut être relayée
+à un pair (`peer`), dans la séquence duquel le signet pointe alors ; le rejeu reste local à ce
+pair.
 
 ## Journal
 

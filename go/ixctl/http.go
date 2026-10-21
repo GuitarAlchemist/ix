@@ -112,7 +112,7 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 			Bookmark string          `json:"bookmark"`
 			Since    *uint64         `json:"since"`
 			Epoch    string          `json:"epoch"`
-			Note     string          `json:"note"`
+			Note     *string         `json:"note"`
 			Peer     json.RawMessage `json:"peer"`
 		}
 		if err := decodeBody(r, &body); err != nil {
@@ -272,10 +272,12 @@ func httpError(w http.ResponseWriter, status int, msg string) {
 // (`epoch:seq`; a bare seq is read with the `epoch` query parameter, if any).
 // A slow reader that falls off the ring gets a gap event and the stream ends.
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
-	prefix := r.URL.Query().Get("ch")
-	epoch := r.URL.Query().Get("epoch")
+	q := r.URL.Query()
+	prefix := q.Get("ch")
+	epoch := q.Get("epoch")
+	bookmark := q.Get("bookmark")
 	var since *uint64
-	for _, v := range []string{r.Header.Get("Last-Event-ID"), r.URL.Query().Get("since")} {
+	for _, v := range []string{r.Header.Get("Last-Event-ID"), q.Get("since")} {
 		if v == "" {
 			continue
 		}
@@ -290,9 +292,16 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		since = &n
 		break
 	}
-	// `bookmark=` names the point instead: resolved through the broker, like a frame's.
-	if name := r.URL.Query().Get("bookmark"); name != "" {
-		req := Request{Bookmark: name, Since: since, Epoch: epoch}
+	// `bookmark=` names the point instead of since/epoch: resolved through the broker,
+	// like a frame's. A `Last-Event-ID` header is a reconnect of a stream that was already
+	// past the bookmark (an EventSource sends the original URL back with it): the header
+	// wins and the bookmark is left aside; an explicit `since`/`epoch` in the query beside
+	// the bookmark is still two points, refused.
+	if bookmark != "" && r.Header.Get("Last-Event-ID") != "" {
+		bookmark = ""
+	}
+	if bookmark != "" {
+		req := Request{Bookmark: bookmark, Since: since, Epoch: epoch}
 		if err := resolveBookmark(r.Context(), s.b, &req); err != nil {
 			httpError(w, statusOf(err), err.Error())
 			return

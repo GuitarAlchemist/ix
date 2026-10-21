@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,10 +15,13 @@ import (
 
 // sseFrames reads /v1/events with the given query for d, or until n data frames, and returns
 // the envelopes and the gaps, in order.
-func sseFrames(t *testing.T, in *instance, query string, n int, d time.Duration) ([]Envelope, []Gap) {
+func sseFrames(t *testing.T, in *instance, query string, n int, d time.Duration, header ...string) ([]Envelope, []Gap) {
 	t.Helper()
 	req, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?"+query, nil)
 	req.Header.Set("Authorization", "Bearer "+in.token)
+	for i := 0; i+1 < len(header); i += 2 {
+		req.Header.Set(header[i], header[i+1])
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	resp, err := loopbackHTTP.Do(req.WithContext(ctx))
@@ -54,6 +58,8 @@ func sseFrames(t *testing.T, in *instance, query string, n int, d time.Duration)
 	return envs, gaps
 }
 
+func strp(s string) *string { return &s }
+
 func sampleSeqs(envs []Envelope) []float64 {
 	var out []float64
 	for _, e := range envs {
@@ -79,7 +85,7 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 		Epoch    string `json:"epoch"`
 		Seq      uint64 `json:"seq"`
 	}
-	json.Unmarshal(do(t, c, Request{Op: "bookmark.set", Bookmark: "before", Note: "before the tree"}), &before)
+	json.Unmarshal(do(t, c, Request{Op: "bookmark.set", Bookmark: "before", Note: strp("before the tree")}), &before)
 	if before.Bookmark != "before" || before.Epoch != in.plane.Epoch() || before.Seq != in.plane.hub.Head() {
 		t.Fatalf("bookmark.set here: %+v (head %d)", before, in.plane.hub.Head())
 	}
@@ -126,10 +132,17 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 		!strings.Contains(joined, "probe/hb:sample") || !strings.Contains(joined, "probe/agg:sample") {
 		t.Errorf("replay of everything from before: %v", kinds)
 	}
-	// Over HTTP: `bookmark=` in place of since/epoch gives the same replay.
+	// Over HTTP: `bookmark=` in place of since/epoch gives the same replay; a reconnect of
+	// that stream (an EventSource sends the same URL back with Last-Event-ID) resumes where
+	// it was, the header winning over the bookmark.
 	envs, gaps := sseFrames(t, in, "ch=probe/hb&bookmark=before", 5, 3*time.Second)
 	if len(gaps) != 0 || len(envs) != 5 || envs[0].Seq != seen[0] || envs[4].Seq != seen[4] {
 		t.Errorf("SSE from the bookmark: %d envelopes, gaps %+v", len(envs), gaps)
+	}
+	envs, gaps = sseFrames(t, in, "ch=probe/hb&bookmark=before", 2, 3*time.Second,
+		"Last-Event-ID", in.plane.Epoch()+":"+strconv.FormatUint(seen[2], 10))
+	if len(gaps) != 0 || len(envs) != 2 || envs[0].Seq != seen[3] || envs[1].Seq != seen[4] {
+		t.Errorf("SSE reconnect with Last-Event-ID beside the bookmark: %d envelopes, gaps %+v", len(envs), gaps)
 	}
 	// The list: both, in creation order, with their point and whether this boot made them.
 	var list struct {
@@ -160,7 +173,7 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 		{Request{Op: "bookmark.set", Bookmark: "bad name!"}, "name"},
 		{Request{Op: "bookmark.set", Bookmark: "ahead", Since: uint64p(1 << 40)}, "head"},
 		{Request{Op: "bookmark.set", Bookmark: "other", Epoch: "0ddb00700000", Since: uint64p(1)}, "epoch"},
-		{Request{Op: "bookmark.set", Bookmark: "long", Note: strings.Repeat("x", maxNoteLen+1)}, "max_note"},
+		{Request{Op: "bookmark.set", Bookmark: "long", Note: strp(strings.Repeat("é", maxNoteLen+1))}, "max_note"},
 		{Request{Op: "bookmark.remove", Bookmark: "nope"}, "nope"},
 		{Request{Op: "bookmark.set"}, "bookmark"},
 	} {
@@ -174,11 +187,20 @@ func TestABookmarkReplaysEveryChannelFromOnePoint(t *testing.T) {
 	if _, err := c.Do(context.Background(), Request{Op: "bookmark.set", Bookmark: "one-too-many"}); err == nil || !strings.Contains(err.Error(), "max_bookmarks") {
 		t.Errorf("past the bound: %v", err)
 	}
-	// Setting an existing name moves it: a bookmark is a cursor the operator drags.
+	// Setting an existing name moves it: a bookmark is a cursor the operator drags. Its
+	// note stays unless a new one is given; an empty one clears it. A note of exactly the
+	// bound, in characters, is accepted.
 	do(t, c, Request{Op: "bookmark.set", Bookmark: "before"})
 	json.Unmarshal(do(t, c, Request{Op: "bookmark.list"}), &list)
-	if list.Count != maxBookmarks || list.Bookmarks[0].Name != "before" || list.Bookmarks[0].Seq < list.Bookmarks[1].Seq {
+	if list.Count != maxBookmarks || list.Bookmarks[0].Name != "before" || list.Bookmarks[0].Seq < list.Bookmarks[1].Seq ||
+		list.Bookmarks[0].Note != "before the tree" {
 		t.Errorf("after moving before: %+v", list.Bookmarks[:2])
+	}
+	do(t, c, Request{Op: "bookmark.set", Bookmark: "before", Note: strp("")})
+	do(t, c, Request{Op: "bookmark.set", Bookmark: "after", Note: strp(strings.Repeat("é", maxNoteLen))})
+	json.Unmarshal(do(t, c, Request{Op: "bookmark.list"}), &list)
+	if list.Bookmarks[0].Note != "" || len([]rune(list.Bookmarks[1].Note)) != maxNoteLen {
+		t.Errorf("notes after clearing and a full-length one: %q, %d runes", list.Bookmarks[0].Note, len([]rune(list.Bookmarks[1].Note)))
 	}
 	if raw := do(t, c, Request{Op: "bookmark.remove", Bookmark: "before"}); !strings.Contains(string(raw), `"removed":true`) {
 		t.Errorf("remove: %s", raw)
@@ -193,7 +215,7 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 	first := newTestInstance(t, fakeSpec(t, "a", nil), dir)
 	publishN(first.plane, "svc/x", 3)
 	c := dial(t, first)
-	do(t, c, Request{Op: "bookmark.set", Bookmark: "mark", Note: "boot one"})
+	do(t, c, Request{Op: "bookmark.set", Bookmark: "mark", Note: strp("boot one")})
 	oldEpoch := first.plane.Epoch()
 	if _, err := os.Stat(filepath.Join(dir, "a.bookmarks.json")); err != nil {
 		t.Fatalf("bookmarks file: %v", err)
@@ -240,6 +262,26 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "a.bookmarks.json"))
 	if !strings.Contains(string(b), `"old"`) || strings.Contains(string(b), second.token) {
 		t.Errorf("bookmarks file: %s", b)
+	}
+
+	// A file whose records break what set enforces (here a name twice, and a record
+	// without an epoch) refuses the startup, naming the file and the record, rather than
+	// being loaded or emptied; a store that cannot save keeps what a reader saw unchanged.
+	badDir := t.TempDir()
+	os.WriteFile(filepath.Join(badDir, "x.bookmarks.json"), []byte(`{"schema":"ixctl-bookmarks/0","bookmarks":[{"name":"dup","epoch":"e","seq":1,"t":1},{"name":"dup","epoch":"e","seq":2,"t":2}]}`), 0o600)
+	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk"); err == nil || !strings.Contains(err.Error(), "x.bookmarks.json") || !strings.Contains(err.Error(), "dup") {
+		t.Fatalf("a duplicate name in the file: %v", err)
+	}
+	os.WriteFile(filepath.Join(badDir, "x.bookmarks.json"), []byte(`{"schema":"ixctl-bookmarks/0","bookmarks":[{"name":"old","seq":1,"t":1}]}`), 0o600)
+	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk"); err == nil || !strings.Contains(err.Error(), "epoch") {
+		t.Fatalf("a record without an epoch: %v", err)
+	}
+	unsavable := &bookmarkStore{hub: second.plane.hub, path: filepath.Join(badDir, "no-such-dir", "x.bookmarks.json")}
+	if _, err := unsavable.set(Request{Bookmark: "lost"}); err == nil {
+		t.Fatal("a set the store could not save succeeded")
+	}
+	if _, err := unsavable.get("lost"); err == nil || len(unsavable.marks) != 0 {
+		t.Fatalf("a set that failed to save is visible: %v, %d marks", err, len(unsavable.marks))
 	}
 
 	// The store is the operator's choice at startup: `--bookmarks memory` keeps them for

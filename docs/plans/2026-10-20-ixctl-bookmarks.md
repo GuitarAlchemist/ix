@@ -56,8 +56,23 @@ seq is a number nobody names or keeps; the journal holds `ctl` only and nothing 
   unchanged and a transport never reaches into the plane.
 - **Bounds the system reports**: `max_bookmarks` 64 per plane, the name under the instance-name
   rule, `max_note_len` 256, `ring` 4096; `bookmark.list` reports them with `count` and `store`;
-  every refusal names what it hit. Setting an existing name moves its point (its note kept
-  unless a new one is given): a bookmark is a cursor the operator drags, not a log.
+  every refusal names what it hit. Setting an existing name moves its point (a note given
+  replaces its note, an empty one clears it, no note keeps it): a bookmark is a cursor the
+  operator drags, not a log. A loaded file is held to the same invariants (count, name rule,
+  unique names, note length, an epoch on every record) or the startup is refused; a change
+  the store cannot save is not adopted, so a reader never sees a bookmark the disk refused.
+
+## Review round 21 (Codex, read-only, of `1ca7ec6`)
+
+No P0. Two P1: a failed `save` left the mutation visible (`set`/`remove` now build a candidate
+list, save it, then adopt it); an `EventSource` reconnecting a `?bookmark=` stream sent
+`Last-Event-ID` and was refused with "bookmark or since" (the header now wins over the bookmark;
+an explicit `since`/`epoch` in the query is still refused beside it). Four P2, all taken: an
+empty note could not clear the old one (`note` is now a pointer: absent keeps, present replaces);
+`max_note_len` counted bytes (now characters); loaded records bypassed the invariants (now
+checked, the startup refused with the record named); the gate's "live reader" used `since=0`
+and could have passed through the replay alone (it now subscribes live, after an SSE-ready
+handshake, before the tree exists).
 - **Forwardable like the probe ops**: `bookmark.*` with `peer` runs on the peer, in the peer's
   sequence, in the peer's store; a replay from it is done on that peer (subscribe is local).
 

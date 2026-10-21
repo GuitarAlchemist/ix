@@ -200,9 +200,11 @@ def peer(s, name):
 SSE_GAPS = []  # every gap event a sse() reader got, in order: {ch, reason, from, ...}
 
 
-def sse(st, ch, seconds, query=None):
+def sse(st, ch, seconds, query=None, ready=None):
     """The envelopes /v1/events gives for `ch` (prefix) from the start, read for `seconds`.
-    `query` replaces the whole query string (`ch=...&bookmark=...` for a replay from a bookmark).
+    `query` replaces the whole query string (`ch=...&bookmark=...` for a replay from a bookmark,
+    `ch=...` alone for a live reader). `ready`, a threading.Event, is set once the stream's
+    headers are in: from then on the reader is on the pipe and nothing published is missed.
     Gap events (a ring that no longer holds seq 1, a reader that fell behind) are not
     envelopes: they go to SSE_GAPS, with the prefix asked, and the envelopes come back alone."""
     host, port = st["addr"].rsplit(":", 1)
@@ -223,7 +225,11 @@ def sse(st, ch, seconds, query=None):
         if not chunk:
             break
         buf += chunk
+        if ready is not None and not ready.is_set() and b"\r\n\r\n" in buf:
+            ready.set()
     sock.close()
+    if ready is not None:
+        ready.set()
     text = buf.decode("utf-8", "replace")
     head, _, body = text.partition("\r\n\r\n")
     envs = []
@@ -247,13 +253,13 @@ def sse(st, ch, seconds, query=None):
     return head.split("\r\n")[0], envs
 
 
-def sse_async(st, ch, seconds):
+def sse_async(st, ch, seconds, query=None, ready=None):
     """sse() on a thread: the reader is on the pipe before what it must see is published.
     Returns the thread and a dict whose `r` is sse()'s result once the thread is joined."""
     out = {}
 
     def go():
-        out["r"] = sse(st, ch, seconds)
+        out["r"] = sse(st, ch, seconds, query=query, ready=ready)
 
     th = threading.Thread(target=go, daemon=True)
     th.start()
@@ -915,8 +921,11 @@ def run():
     # live reader saw; the replay of everything from `before` is the ctl lifecycle and both
     # pipes in one ordered stream: what the pipeline saw, after the fact.
     code_before, before = call(sa, "POST", "/v1/bookmark/set", {"bookmark": "before", "note": "before the tree"})
-    th, live_env = sse_async(sa, "probe/", 2.0)
-    time.sleep(0.2)
+    # A live reader (no since): on the pipe, headers in, before the tree exists, so what it
+    # collects was delivered live, not replayed.
+    live_ready = threading.Event()
+    th, live_env = sse_async(sa, "probe/", 2.0, query="ch=probe/", ready=live_ready)
+    live_on = live_ready.wait(5)
     tree = [call(sa, "POST", "/v1/probe/create", n)[0] for n in (
         {"name": "agg3", "kind": "mux@1"},
         {"name": "hb3", "kind": "heartbeat@1", "every_ms": 20, "parent": "agg3",
@@ -939,12 +948,12 @@ def run():
     replay_gaps = SSE_GAPS[gaps0:]
     check("E16.bookmark_replays_what_the_pipeline_saw",
           code_before == 200 and code_after == 200 and before["seq"] == before["head"] and a_seq > b_seq
-          and tree == [200] * 4 and (torn or {}).get("removed") == 2
+          and live_on and tree == [200] * 4 and (torn or {}).get("removed") == 2
           and len(live_seqs) >= 20 and replay_seqs == live_seqs and not replay_gaps
           and all_seqs == sorted(all_seqs) and len(set(all_seqs)) == len(all_seqs) and all_seqs[0] > b_seq
           and first_kinds == [("ctl", "probe.created", "agg3"), ("ctl", "probe.created", "hb3")]
           and {"ctl", "probe/agg3", "probe/hb3"} <= set(all_chans),
-          before=before, after=after, live=len(live_seqs), replayed=len(replay_seqs),
+          before=before, after=after, live_on=live_on, live=len(live_seqs), replayed=len(replay_seqs),
           everything=len(all_seqs), channels=all_chans[:8], first=first_kinds, gaps=replay_gaps[:2])
     # The bounds, said by the plane; a bookmark older than the ring says so (since-too-old, then
     # what the ring still holds) instead of a silently partial replay; refusals name their cause;
