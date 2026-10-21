@@ -140,8 +140,9 @@ const (
 )
 
 // probeBudget is D10 (ix#416): what a subtree may declare to emit, in records per second, the
-// worst case summed over its leaves at `create` (1000 / every_ms each, the filter's `every`
-// dividing, `where` not counted), whatever the nodes' state; and the tree's own ceiling. Set at
+// worst case summed over its leaves at `create` (1000 / every_ms each; the filter does not lower
+// it, a failing sampler's error records bypassing it), whatever the nodes' state; and the tree's
+// own ceiling, both exact (micro-records per second, in integers). Set at
 // `ixctl up`, said in `limits`; a mux may narrow its own with `max_rate_per_s`, never widen it.
 // A create that would cross a bound is refused in advance, like `max_nodes`. CPU and RSS are
 // measured on the process, never attributed to probes: one process cannot separate them.
@@ -783,14 +784,18 @@ func newProbeTree(hub *Hub) *probeTree {
 	return t
 }
 
-// setBudget replaces the plane's budget, at startup; the caller holds no lock.
+// setBudget replaces the plane's budget, at startup, before any node exists: nothing declared
+// can end up over it. The caller holds no lock.
 func (t *probeTree) setBudget(b probeBudget) error {
 	if err := b.validate(); err != nil {
 		return err
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.nodes) > 0 {
+		return fmt.Errorf("the tree holds %d nodes: the budget is set before any", len(t.nodes))
+	}
 	t.budget = b
-	t.mu.Unlock()
 	return nil
 }
 
@@ -801,27 +806,24 @@ func (t *probeTree) budgetNow() probeBudget {
 	return t.budget
 }
 
-// leafRate is what a leaf declares to emit, in records per second: the worst case, 1000 /
-// every_ms, divided by the filter's `every` (deterministic); `where` does not count (it depends
-// on the data) and error records count as samples.
-func leafRate(spec *NodeSpec) float64 {
+// leafRate is what a leaf declares to emit, in micro-records per second (integers: the bound is
+// exact where a float sum is not): the worst case, 1000 / every_ms. The filter does not lower
+// it: a failing sampler emits an error record every interval, and errors bypass `where` and
+// `every` (they must reach the pipe).
+func leafRate(spec *NodeSpec) int64 {
 	if spec.EveryMs <= 0 {
 		return 0
 	}
-	r := 1000 / float64(spec.EveryMs)
-	if spec.Filter != nil && spec.Filter.Every > 1 {
-		r /= float64(spec.Filter.Every)
-	}
-	return r
+	return 1_000_000_000 / spec.EveryMs
 }
 
 // subtreeRate sums the declared rates of a node and its descendants; the caller holds the lock.
-func (t *probeTree) subtreeRate(name string) float64 {
+func (t *probeTree) subtreeRate(name string) int64 {
 	n := t.nodes[name]
 	if n == nil {
 		return 0
 	}
-	r := 0.0
+	r := int64(0)
 	if n.kind.Name != "mux" {
 		r = leafRate(&n.spec)
 	}
@@ -832,8 +834,8 @@ func (t *probeTree) subtreeRate(name string) float64 {
 }
 
 // treeRate sums every root's subtree; the caller holds the lock.
-func (t *probeTree) treeRate() float64 {
-	r := 0.0
+func (t *probeTree) treeRate() int64 {
+	r := int64(0)
 	for _, n := range t.nodes {
 		if n.spec.Parent == "" {
 			r += t.subtreeRate(n.spec.Name)
@@ -853,10 +855,10 @@ func (t *probeTree) budgetOf(n *probeNode) int64 {
 	return t.budget.maxRate
 }
 
-// rate rounds a declared rate to the thousandth for a reply or a refusal.
-func rate(r float64) float64 { return math.Round(r*1000) / 1000 }
+// ratePerS is a declared rate as a reply says it: records per second, to the thousandth.
+func ratePerS(micro int64) float64 { return math.Round(float64(micro)/1000) / 1000 }
 
-func fmtRate(r float64) string { return strconv.FormatFloat(rate(r), 'f', -1, 64) }
+func fmtRate(micro int64) string { return strconv.FormatFloat(ratePerS(micro), 'f', -1, 64) }
 
 // create admits a node, stopped. Every refusal names the bound or the rule it hit.
 func (t *probeTree) create(spec *NodeSpec) (any, error) {
@@ -932,14 +934,14 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 		}
 		r := leafRate(spec)
 		for a := t.nodes[spec.Parent]; a != nil; a = t.nodes[a.spec.Parent] {
-			if have, budget := t.subtreeRate(a.spec.Name), t.budgetOf(a); have+r > float64(budget) {
+			if have, budget := t.subtreeRate(a.spec.Name), t.budgetOf(a); have+r > budget*1_000_000 {
 				return nil, badRequest("subtree %q would declare %s records/s with %q; its max_rate_per_s is %d", a.spec.Name, fmtRate(have+r), spec.Name, budget)
 			}
 		}
-		if spec.Parent == "" && r > float64(t.budget.maxRate) {
+		if spec.Parent == "" && r > t.budget.maxRate*1_000_000 {
 			return nil, badRequest("node %q would declare %s records/s alone; max_rate_per_s is %d", spec.Name, fmtRate(r), t.budget.maxRate)
 		}
-		if have := t.treeRate(); have+r > float64(t.budget.treeRate) {
+		if have := t.treeRate(); have+r > t.budget.treeRate*1_000_000 {
 			return nil, badRequest("the tree would declare %s records/s with %q; tree_rate_per_s is %d", fmtRate(have+r), spec.Name, t.budget.treeRate)
 		}
 	}
@@ -966,7 +968,7 @@ func (t *probeTree) list() any {
 		m := map[string]any{
 			"name": name, "kind": n.kind.String(), "state": n.state, "every_ms": n.spec.EveryMs,
 			"ttl_ms": n.spec.TTLMs, "seq": n.seq, "errors": n.errors, "bytes": n.bytes,
-			"children": len(n.children), "rate_per_s": rate(t.subtreeRate(name)),
+			"children": len(n.children), "rate_per_s": ratePerS(t.subtreeRate(name)),
 		}
 		if n.kind.Name == "mux" {
 			m["max_rate_per_s"] = t.budgetOf(n)
@@ -984,7 +986,7 @@ func (t *probeTree) list() any {
 	}
 	return map[string]any{
 		"nodes": nodes, "count": len(nodes), "max_nodes": probeMaxNodes,
-		"rate_per_s": rate(t.treeRate()), "max_rate_per_s": t.budget.maxRate, "tree_rate_per_s": t.budget.treeRate,
+		"rate_per_s": ratePerS(t.treeRate()), "max_rate_per_s": t.budget.maxRate, "tree_rate_per_s": t.budget.treeRate,
 	}
 }
 

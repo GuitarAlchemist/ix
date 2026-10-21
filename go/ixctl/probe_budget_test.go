@@ -106,12 +106,13 @@ func TestABudgetBoundsTheDeclaredRateOfEverySubtreeAndRefusalsNameIt(t *testing.
 	leaves(t, p, "agg", "a", 10)
 	refused(t, create(t, p, node("a-10", "heartbeat@1", 10, map[string]any{"parent": "agg"})), "agg", "max_rate_per_s", "1000", "1100")
 
-	// The filter's `every` divides the declared rate; `where` does not count.
+	// The filter does not lower the worst case: a failing sampler emits an error record every
+	// interval, and errors bypass `where` and `every` (they must reach the pipe).
 	mustCreate(t, p, node("half", "mux@1", 0, nil))
 	mustCreate(t, p, node("h-0", "heartbeat@1", 10, map[string]any{"parent": "half",
 		"filter": map[string]any{"every": 2, "where": []map[string]any{{"field": "n", "op": ">", "value": 1000}}}}))
-	if rate, _, _ := listTree(t, p).find(t, "half"); rate != 50 {
-		t.Fatalf("half declares %v/s, want 50 (100 / every 2)", rate)
+	if rate, _, _ := listTree(t, p).find(t, "half"); rate != 100 {
+		t.Fatalf("half declares %v/s, want 100: `every: 2` does not lower the worst case", rate)
 	}
 
 	// A leaf carries no budget.
@@ -124,25 +125,25 @@ func TestABudgetBoundsTheDeclaredRateOfEverySubtreeAndRefusalsNameIt(t *testing.
 	refused(t, create(t, p, node("wide", "mux@1", 0, map[string]any{"max_rate_per_s": 3000})), "widen", "1000")
 	refused(t, create(t, p, node("inner", "mux@1", 0, map[string]any{"parent": "small", "max_rate_per_s": 200})), "widen", "small", "150")
 
-	// The tree's ceiling: 1000 + 50 + 100 declared so far; two more muxes take it to 2500,
-	// and the leaf that would make 2600 is refused naming the tree, not a subtree.
+	// The tree's ceiling: 1000 + 100 + 100 declared so far; two more muxes and a root leaf take
+	// it to 2 450, and the leaf that would make 2 550 is refused naming the tree, not a subtree.
 	mustCreate(t, p, node("b", "mux@1", 0, nil))
 	leaves(t, p, "b", "b", 10)
 	mustCreate(t, p, node("c", "mux@1", 0, nil))
-	leaves(t, p, "c", "c", 3)
+	leaves(t, p, "c", "c", 2)
 	mustCreate(t, p, node("root-leaf", "heartbeat@1", 20, nil)) // 50/s, a subtree of one
-	refused(t, create(t, p, node("c-3", "heartbeat@1", 10, map[string]any{"parent": "c"})), "tree_rate_per_s", "2500", "2600")
+	refused(t, create(t, p, node("c-2", "heartbeat@1", 10, map[string]any{"parent": "c"})), "tree_rate_per_s", "2500", "2550")
 
 	// The list says the usage: each subtree's declared rate and effective budget, the tree's.
 	tree := listTree(t, p)
-	if tree.RatePerS != 2500 || tree.MaxRatePerS != 1000 || tree.TreeRatePerS != 2500 {
+	if tree.RatePerS != 2450 || tree.MaxRatePerS != 1000 || tree.TreeRatePerS != 2500 {
 		t.Fatalf("tree rate %v, max_rate_per_s %d, tree_rate_per_s %d", tree.RatePerS, tree.MaxRatePerS, tree.TreeRatePerS)
 	}
 	for _, want := range []struct {
 		name   string
 		rate   float64
 		budget int64
-	}{{"agg", 1000, 1000}, {"half", 50, 1000}, {"small", 100, 150}, {"c", 300, 1000}} {
+	}{{"agg", 1000, 1000}, {"half", 100, 1000}, {"small", 100, 150}, {"c", 200, 1000}} {
 		rate, budget, _ := tree.find(t, want.name)
 		if rate != want.rate || budget == nil || *budget != want.budget {
 			t.Errorf("%s: rate %v budget %v, want %v / %d", want.name, rate, budget, want.rate, want.budget)
@@ -157,7 +158,7 @@ func TestABudgetBoundsTheDeclaredRateOfEverySubtreeAndRefusalsNameIt(t *testing.
 	if _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "agg"}); err != nil {
 		t.Fatal(err)
 	}
-	mustCreate(t, p, node("c-3", "heartbeat@1", 10, map[string]any{"parent": "c"}))
+	mustCreate(t, p, node("c-2", "heartbeat@1", 10, map[string]any{"parent": "c"}))
 }
 
 // D10: the operator sets the plane's budget at startup, narrower or wider than the compiled
@@ -193,6 +194,10 @@ func TestTheOperatorSetsThePlanesBudgetAndTheLimitsSayIt(t *testing.T) {
 	leaves(t, p, "m", "m", 2)
 	refused(t, create(t, p, node("m-2", "heartbeat@1", 10, map[string]any{"parent": "m"})), "m", "200", "300")
 	refused(t, create(t, p, node("w", "mux@1", 0, map[string]any{"max_rate_per_s": 250})), "widen", "200")
+	// The budget is frozen once a node exists: nothing declared can end up over it.
+	if err := p.SetProbeBudget(500, 1000); err == nil || !strings.Contains(err.Error(), "nodes") {
+		t.Fatalf("a budget set after a create must be refused: %v", err)
+	}
 
 	// The same budget through the instance's startup options, as `ixctl up` passes them.
 	in, err := startInstance(fakeSpec(t, "b", nil), "", "127.0.0.1:0", t.TempDir(), "disk", &probeBudget{maxRate: 300, treeRate: 600})
@@ -224,7 +229,19 @@ func TestBytesEmittedAreCountedPerNode(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	time.Sleep(250 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var seq uint64
+		for _, n := range listTree(t, p).Nodes {
+			if n.Name == "hb" {
+				seq = n.Seq
+			}
+		}
+		if seq >= 3 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if _, err := probeOp(t, p, Request{Op: "probe.stop", Node: "hb"}); err != nil {
 		t.Fatal(err)
 	}
@@ -242,5 +259,20 @@ func TestBytesEmittedAreCountedPerNode(t *testing.T) {
 	}
 	if aggBytes < hbBytes {
 		t.Fatalf("agg republished hb's records with src: %d bytes, hb %d", aggBytes, hbBytes)
+	}
+}
+
+// D10: the bound is exact. Twelve leaves at 12 ms declare 1000/s to the unit and are admitted;
+// the thirteenth is refused. A float sum would carry 1000.0000000000001 and refuse the twelfth:
+// the plane counts in micro-records per second, in integers.
+func TestTheBudgetBoundIsExactNotAFloatSum(t *testing.T) {
+	p := probePlane(t)
+	mustCreate(t, p, node("twelve", "mux@1", 0, map[string]any{"max_rate_per_s": 1000}))
+	for i := 0; i < 12; i++ {
+		mustCreate(t, p, node(fmt.Sprintf("t-%d", i), "heartbeat@1", 12, map[string]any{"parent": "twelve"}))
+	}
+	refused(t, create(t, p, node("t-12", "heartbeat@1", 12, map[string]any{"parent": "twelve"})), "twelve", "1000", "1083.333")
+	if rate, _, _ := listTree(t, p).find(t, "twelve"); rate != 1000 {
+		t.Fatalf("twelve declares %v/s, want 1000 to the thousandth", rate)
 	}
 }

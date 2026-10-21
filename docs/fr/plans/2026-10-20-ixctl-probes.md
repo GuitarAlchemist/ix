@@ -217,9 +217,10 @@ porte (E17). IXQL n'a pas changé : ce sont des enregistrements dans le registre
 
 **D10 tranchée et livrée (2026-10-21, ix#416) :** un budget borne le débit déclaré
 d'enregistrements de chaque sous-arbre (un mux et ses descendants ; une feuille à la racine
-seule), le pire cas sommé au `create` : 1000 / `every_ms` par feuille, le `every` du filtre
-divisant, `where` non compté, les enregistrements d'erreur comptés ; un nœud arrêté garde sa
-part. Défauts `max_rate_per_s` 1 000 et `tree_rate_per_s` 2 500 (environ un quart de cœur en
+seule), le pire cas sommé au `create` : 1000 / `every_ms` par feuille (le filtre ne l'abaisse pas : les enregistrements d'erreur d'un
+échantillonneur en échec contournent `where` et `every`, trouvé à l'implémentation, revue Codex
+33 ; la somme est exacte, en micro-enregistrements par seconde) ; un nœud arrêté garde sa part ;
+le budget gèle dès qu'un nœud existe. Défauts `max_rate_per_s` 1 000 et `tree_rate_per_s` 2 500 (environ un quart de cœur en
 extrapolant M2), réglés à `ixctl up --probe-rate` / `--probe-tree-rate`, dits dans `limits` ; le
 `max_rate_per_s` d'un mux resserre, n'élargit jamais, et est immuable. Une création au-delà d'une
 borne est refusée à l'avance, un 400 qui nomme le sous-arbre et la borne, sans événement, sans

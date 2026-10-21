@@ -607,7 +607,7 @@ func (j *journal) close() {
 
 // SetProbeBudget replaces the probe tree's budget (D10, ix#416) before the plane starts: what a
 // subtree may declare to emit and what the whole tree may, in records per second. Refused when
-// either is not positive or the tree's ceiling is under the subtree's.
+// either is not positive, the tree's ceiling is under the subtree's, or a node already exists.
 func (p *Plane) SetProbeBudget(maxRatePerS, treeRatePerS int64) error {
 	return p.probes.setBudget(probeBudget{maxRate: maxRatePerS, treeRate: treeRatePerS})
 }

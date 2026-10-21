@@ -304,8 +304,10 @@ qu'un sous-arbre (un mux et ses descendants, ou une feuille à la racine seule) 
 émettre en enregistrements par seconde, et `tree_rate_per_s` 2 500 pour l'arbre entier ;
 `ixctl up --probe-rate N --probe-tree-rate N` les règle (les défauts font environ un quart de
 cœur en extrapolant M2). Le débit déclaré est le pire cas, sommé au `create` quel que soit l'état
-des nœuds : 1000 / `every_ms` par feuille, le `every` du filtre divisant, `where` non compté, les
-enregistrements d'erreur comptés. Le `max_rate_per_s` d'un mux resserre le budget auquel son
+des nœuds : 1000 / `every_ms` par feuille. Le filtre ne l'abaisse pas : un échantillonneur en
+échec émet un enregistrement d'erreur à chaque intervalle, et les erreurs contournent `where` et
+`every`. La somme est exacte (micro-enregistrements par seconde, en entiers) : douze feuilles à
+12 ms remplissent 1 000 à l'unité. Le budget se règle avant tout nœud et gèle dès le premier. Le `max_rate_per_s` d'un mux resserre le budget auquel son
 sous-arbre est tenu et n'élargit jamais celui de son parent ni du plan ; il est immuable (retirer
 et recréer) ; une feuille n'en porte pas. Une création qui franchirait une borne est refusée à
 l'avance avec le nom du sous-arbre et la borne (`subtree "agg" would declare 1100 records/s with

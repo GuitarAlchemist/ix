@@ -285,7 +285,7 @@ impl Plane {
                             "rate_per_s": rate(subtree_rate(&self.probes, name)),
                         });
                         if n.spec["kind"] == "mux@1" {
-                            entry["max_rate_per_s"] = json!(1000);
+                            entry["max_rate_per_s"] = json!(budget_of(&self.probes, name));
                         }
                         if n.state == "running" && ttl != 0 {
                             entry["expires_in_ms"] = ttl;
@@ -412,6 +412,46 @@ impl Plane {
                 None => return Err(format!("parent {p:?} does not exist")),
             }
         }
+        // D10: the budget, as the real plane checks it (probe.go), its refusals worded alike.
+        let budget_arg = spec["max_rate_per_s"].as_u64().unwrap_or(0);
+        if kind == "mux@1" {
+            if budget_arg > 0 {
+                let (ceiling, holder) = match parent {
+                    Some(p) => (budget_of(&self.probes, p), format!("mux {p:?}")),
+                    None => (1000, "the plane".to_string()),
+                };
+                if budget_arg > ceiling {
+                    return Err(format!(
+                        "max_rate_per_s {budget_arg} on {name:?} would widen {holder}'s max_rate_per_s {ceiling}"
+                    ));
+                }
+            }
+        } else {
+            if spec.get("max_rate_per_s").is_some() {
+                return Err(format!(
+                    "max_rate_per_s is a mux's: leaf {name:?} carries no budget"
+                ));
+            }
+            let r = 1000.0 / every.unwrap_or(0) as f64;
+            let mut up = parent;
+            while let Some(a) = up {
+                let (have, budget) = (subtree_rate(&self.probes, a), budget_of(&self.probes, a));
+                if have + r > budget as f64 {
+                    return Err(format!(
+                        "subtree {a:?} would declare {} records/s with {name:?}; its max_rate_per_s is {budget}",
+                        rate(have + r)
+                    ));
+                }
+                up = self.probes.get(a).and_then(|n| n.spec["parent"].as_str());
+            }
+            let have = tree_rate(&self.probes);
+            if have + r > 2500.0 {
+                return Err(format!(
+                    "the tree would declare {} records/s with {name:?}; tree_rate_per_s is 2500",
+                    rate(have + r)
+                ));
+            }
+        }
         let mut depth = 0;
         let mut up = parent;
         while let Some(p) = up {
@@ -431,19 +471,16 @@ impl Plane {
 }
 
 /// The declared rate the real plane sums at `create` (D10, ix#416): 1000 / `every_ms` per leaf,
-/// the filter's `every` dividing, a mux carrying its children's.
+/// the filter not lowering it (a failing sampler's error records bypass it), a mux carrying its
+/// children's.
 fn subtree_rate(probes: &BTreeMap<String, Node>, name: &str) -> f64 {
     let n = &probes[name];
     let own = if n.spec["kind"] == "mux@1" {
         0.0
     } else {
         let every = n.spec["every_ms"].as_f64().unwrap_or(0.0);
-        let div = n.spec["filter"]["every"]
-            .as_f64()
-            .filter(|e| *e > 1.0)
-            .unwrap_or(1.0);
         if every > 0.0 {
-            1000.0 / every / div
+            1000.0 / every
         } else {
             0.0
         }
@@ -453,6 +490,20 @@ fn subtree_rate(probes: &BTreeMap<String, Node>, name: &str) -> f64 {
         .filter(|(_, c)| c.spec["parent"] == name)
         .map(|(c, _)| subtree_rate(probes, c))
         .sum::<f64>()
+}
+
+/// The budget a subtree is held to: the nearest `max_rate_per_s` on it or above it, else the
+/// plane's default.
+fn budget_of(probes: &BTreeMap<String, Node>, name: &str) -> u64 {
+    let mut up = Some(name);
+    while let Some(a) = up {
+        let n = &probes[a];
+        if let Some(b) = n.spec["max_rate_per_s"].as_u64().filter(|b| *b > 0) {
+            return b;
+        }
+        up = n.spec["parent"].as_str();
+    }
+    1000
 }
 
 fn tree_rate(probes: &BTreeMap<String, Node>) -> f64 {
@@ -2197,4 +2248,33 @@ fn the_token_goes_to_loopback_only_and_never_into_debug_output() {
     let ctl = Ctl::new("192.0.2.1:80", TOKEN);
     assert!(matches!(ctl.status(), Err(CtlError::NotLoopback(_))));
     assert!(!format!("{ctl:?}").contains(TOKEN));
+}
+
+// D10: the fake holds a create to the budget as the plane does, so a program past it fails here
+// first, worded as the plane words it.
+#[test]
+fn probe_create_is_held_to_its_mux_budget_like_the_plane() {
+    let (ctl, _plane) = plane();
+    for (src, why) in [
+        (
+            r#"m <- ix.ctl.probe.create(probe: { name: "small", kind: "mux@1", max_rate_per_s: 150 })
+               a <- ix.ctl.probe.create(probe: { name: "a", kind: "cpu@1", every_ms: 10, parent: "small" })
+               b <- ix.ctl.probe.create(probe: { name: "b", kind: "cpu@1", every_ms: 10, parent: "small" })"#,
+            "subtree \"small\" would declare 200 records/s with \"b\"; its max_rate_per_s is 150",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "solo", kind: "cpu@1", every_ms: 10, max_rate_per_s: 10 })"#,
+            "carries no budget",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "wide", kind: "mux@1", max_rate_per_s: 3000 })"#,
+            "would widen the plane's max_rate_per_s 1000",
+        ),
+    ] {
+        let err = executor(ctl.clone())
+            .run_source(src)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(why), "{src}: {err}");
+    }
 }

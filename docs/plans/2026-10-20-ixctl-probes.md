@@ -198,8 +198,10 @@ IXQL itself did not change: these are registrations against the existing `Capabi
 
 **D10 resolved and shipped (2026-10-21, ix#416):** a budget bounds the declared record rate of
 every subtree (a mux and its descendants; a root leaf alone), the worst case summed at `create`:
-1000 / `every_ms` per leaf, the filter's `every` dividing, `where` not counted, error records
-counted; a stopped node keeps its share. Defaults `max_rate_per_s` 1 000 and `tree_rate_per_s`
+1000 / `every_ms` per leaf (the filter does not lower it: a failing sampler's error records
+bypass `where` and `every`, a finding of the implementation, Codex round 33; the sum is exact, in
+micro-records per second); a stopped node keeps its share; the budget is frozen once a node
+exists. Defaults `max_rate_per_s` 1 000 and `tree_rate_per_s`
 2 500 (about a quarter of a core, extrapolating M2), set at `ixctl up --probe-rate` /
 `--probe-tree-rate`, said in `limits`; a mux's `max_rate_per_s` narrows, never widens, and is
 immutable. A create past a bound is refused in advance, a 400 naming the subtree and the bound,

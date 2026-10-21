@@ -1112,9 +1112,12 @@ def run():
     code_leaf, leaf = call(sa, "POST", "/v1/probe/create", {"name": "solo", "kind": "heartbeat@1", "every_ms": 10, "max_rate_per_s": 10})
     code_wide, wide = call(sa, "POST", "/v1/probe/create", {"name": "wide", "kind": "mux@1", "max_rate_per_s": 100000})
     started_b = [call(sa, "POST", "/v1/probe/start", {"node": n})[0] for n in ("bud", "bud-0")]
-    time.sleep(0.3)
-    _, tree_b = call(sa, "GET", "/v1/probe")
-    nodes_b = {n["name"]: n for n in (tree_b or {}).get("nodes", [])}
+    def listed():
+        _, tb = call(sa, "GET", "/v1/probe")
+        nb = {n["name"]: n for n in (tb or {}).get("nodes", [])}
+        return (tb, nb) if (nb.get("bud-0") or {}).get("bytes") else None
+    found, _ = wait_until(listed, 5)
+    tree_b, nodes_b = found if found else (call(sa, "GET", "/v1/probe")[1], {})
     mux_b, leaf_b = nodes_b.get("bud", {}), nodes_b.get("bud-0", {})
     _, gone_b = call(sa, "POST", "/v1/probe/remove", {"node": "bud"})
     check("E18.probe_budget_bounds_the_declared_rate_and_counts_bytes",
