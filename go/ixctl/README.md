@@ -289,8 +289,9 @@ second, and `tree_rate_per_s` 2 500 for the whole tree; `ixctl up --probe-rate N
 --probe-tree-rate N` sets them (the defaults are about a quarter of a core, extrapolating M2).
 The declared rate is the worst case, summed at `create` whatever the nodes' state: 1000 /
 `every_ms` per leaf. The filter does not lower it: a failing sampler emits an error record every
-interval, and errors bypass `where` and `every`. The sum is exact (micro-records per second, in
-integers): twelve leaves at 12 ms fill 1 000 to the unit. The budget is set before any node
+interval, and errors bypass `where` and `every`. The sum is exact (rationals, not floats or floored
+integers): twelve leaves at 12 ms fill 1 000 to the unit and are admitted; 32 leaves at 31 999 ms
+are over a budget of 1 by a hair and refused. The budget is set before any node
 exists and frozen from the first.
 A mux's `max_rate_per_s` narrows the budget its subtree is held to and never widens its parent's
 or the plane's; it is immutable (remove and recreate); a leaf carries none. A create that would

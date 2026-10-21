@@ -83,7 +83,7 @@ func leaves(t *testing.T, p *Plane, parent, prefix string, n int) {
 }
 
 // D10 (ix#416): a budget bounds the declared record rate of every subtree, the worst case
-// (1000 / every_ms per leaf, `every: N` dividing, `where` not counted), summed at `create`
+// (1000 / every_ms per leaf; the filter does not lower it, error records bypassing it), summed at `create`
 // whatever the node's state. The plane's defaults are in `limits`; a mux may narrow its own,
 // never widen; a leaf carries none; the tree has its own ceiling. A create that would cross a
 // bound is refused with the bound's name and the subtree's.
@@ -194,6 +194,10 @@ func TestTheOperatorSetsThePlanesBudgetAndTheLimitsSayIt(t *testing.T) {
 	leaves(t, p, "m", "m", 2)
 	refused(t, create(t, p, node("m-2", "heartbeat@1", 10, map[string]any{"parent": "m"})), "m", "200", "300")
 	refused(t, create(t, p, node("w", "mux@1", 0, map[string]any{"max_rate_per_s": 250})), "widen", "200")
+	// A budget no plane could honour is refused rather than overflowing the arithmetic.
+	if err := probePlane(t).SetProbeBudget(2_000_000_000, 4_000_000_000); err == nil || !strings.Contains(err.Error(), "over") {
+		t.Fatalf("a budget past a billion records/s must be refused: %v", err)
+	}
 	// The budget is frozen once a node exists: nothing declared can end up over it.
 	if err := p.SetProbeBudget(500, 1000); err == nil || !strings.Contains(err.Error(), "nodes") {
 		t.Fatalf("a budget set after a create must be refused: %v", err)
@@ -275,4 +279,12 @@ func TestTheBudgetBoundIsExactNotAFloatSum(t *testing.T) {
 	if rate, _, _ := listTree(t, p).find(t, "twelve"); rate != 1000 {
 		t.Fatalf("twelve declares %v/s, want 1000 to the thousandth", rate)
 	}
+
+	// Nor a floored integer sum: 32 leaves at 31 999 ms declare 1.00003125/s, over a budget of
+	// 1, where micro-records per second floored would have admitted them as exactly 1 000 000.
+	mustCreate(t, p, node("one", "mux@1", 0, map[string]any{"max_rate_per_s": 1}))
+	for i := 0; i < 31; i++ {
+		mustCreate(t, p, node(fmt.Sprintf("o-%d", i), "heartbeat@1", 31999, map[string]any{"parent": "one"}))
+	}
+	refused(t, create(t, p, node("o-31", "heartbeat@1", 31999, map[string]any{"parent": "one"})), "one", "max_rate_per_s is 1", "1.000031")
 }

@@ -1098,7 +1098,7 @@ def run():
 
     # E18: probe budgets (D10, ix#416). The plane says its budget in `limits` (here the operator's,
     # `--probe-rate 1600 --probe-tree-rate 3200` at `up`); a subtree's declared
-    # rate (1000 / every_ms per leaf, the filter's `every` dividing) is summed at create, and a
+    # rate (1000 / every_ms per leaf; the filter does not lower it) is summed at create, and a
     # leaf that would take its mux past `max_rate_per_s` is refused naming the mux and the bound;
     # a leaf carries no budget; a mux cannot widen the plane's; the list says each subtree's rate
     # and budget and counts the bytes a running node emitted. The tree is empty here (E17 removed

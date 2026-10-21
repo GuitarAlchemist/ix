@@ -306,8 +306,9 @@ qu'un sous-arbre (un mux et ses descendants, ou une feuille à la racine seule) 
 cœur en extrapolant M2). Le débit déclaré est le pire cas, sommé au `create` quel que soit l'état
 des nœuds : 1000 / `every_ms` par feuille. Le filtre ne l'abaisse pas : un échantillonneur en
 échec émet un enregistrement d'erreur à chaque intervalle, et les erreurs contournent `where` et
-`every`. La somme est exacte (micro-enregistrements par seconde, en entiers) : douze feuilles à
-12 ms remplissent 1 000 à l'unité. Le budget se règle avant tout nœud et gèle dès le premier. Le `max_rate_per_s` d'un mux resserre le budget auquel son
+`every`. La somme est exacte (en rationnels, ni flottants ni entiers tronqués) : douze feuilles à
+12 ms remplissent 1 000 à l'unité et sont admises ; 32 feuilles à 31 999 ms dépassent un budget de 1
+d'un cheveu et sont refusées. Le budget se règle avant tout nœud et gèle dès le premier. Le `max_rate_per_s` d'un mux resserre le budget auquel son
 sous-arbre est tenu et n'élargit jamais celui de son parent ni du plan ; il est immuable (retirer
 et recréer) ; une feuille n'en porte pas. Une création qui franchirait une borne est refusée à
 l'avance avec le nom du sous-arbre et la borne (`subtree "agg" would declare 1100 records/s with

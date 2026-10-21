@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,7 +143,8 @@ const (
 // probeBudget is D10 (ix#416): what a subtree may declare to emit, in records per second, the
 // worst case summed over its leaves at `create` (1000 / every_ms each; the filter does not lower
 // it, a failing sampler's error records bypassing it), whatever the nodes' state; and the tree's
-// own ceiling, both exact (micro-records per second, in integers). Set at
+// own ceiling, both compared as exact rationals (a float sum carries 1000.0000000000001 at
+// twelve leaves of 12 ms; a floored integer admits 32 leaves of 31 999 ms on a budget of 1). Set at
 // `ixctl up`, said in `limits`; a mux may narrow its own with `max_rate_per_s`, never widen it.
 // A create that would cross a bound is refused in advance, like `max_nodes`. CPU and RSS are
 // measured on the process, never attributed to probes: one process cannot separate them.
@@ -155,9 +157,16 @@ type probeBudget struct {
 // ~17 % of one on the measured desktop); the gate measures it again.
 var defaultProbeBudget = probeBudget{maxRate: 1000, treeRate: 2500}
 
+// probeMaxRatePerS caps a budget: a billion records a second is beyond any plane, and keeps the
+// arithmetic in range.
+const probeMaxRatePerS = 1_000_000_000
+
 func (b probeBudget) validate() error {
 	if b.maxRate <= 0 {
 		return fmt.Errorf("max_rate_per_s %d must be positive", b.maxRate)
+	}
+	if b.treeRate > probeMaxRatePerS {
+		return fmt.Errorf("tree_rate_per_s %d is over %d, more than any plane carries", b.treeRate, probeMaxRatePerS)
 	}
 	if b.treeRate < b.maxRate {
 		return fmt.Errorf("tree_rate_per_s %d is under max_rate_per_s %d", b.treeRate, b.maxRate)
@@ -784,8 +793,8 @@ func newProbeTree(hub *Hub) *probeTree {
 	return t
 }
 
-// setBudget replaces the plane's budget, at startup, before any node exists: nothing declared
-// can end up over it. The caller holds no lock.
+// setBudget replaces the plane's budget before any node exists (that is the gate, not the
+// plane's start): nothing declared can end up over it. The caller holds no lock.
 func (t *probeTree) setBudget(b probeBudget) error {
 	if err := b.validate(); err != nil {
 		return err
@@ -806,39 +815,45 @@ func (t *probeTree) budgetNow() probeBudget {
 	return t.budget
 }
 
-// leafRate is what a leaf declares to emit, in micro-records per second (integers: the bound is
-// exact where a float sum is not): the worst case, 1000 / every_ms. The filter does not lower
-// it: a failing sampler emits an error record every interval, and errors bypass `where` and
-// `every` (they must reach the pipe).
-func leafRate(spec *NodeSpec) int64 {
+// leafRate is what a leaf declares to emit, in records per second, as an exact rational: the
+// worst case, 1000 / every_ms. The filter does not lower it: a failing sampler emits an error
+// record every interval, and errors bypass `where` and `every` (they must reach the pipe).
+// Admission compares exact sums: a float sum carries 1000.0000000000001 at twelve leaves of
+// 12 ms and refuses the twelfth; a floored integer admits 32 leaves of 31 999 ms on a budget of 1.
+func leafRate(spec *NodeSpec) *big.Rat {
 	if spec.EveryMs <= 0 {
-		return 0
+		return new(big.Rat)
 	}
-	return 1_000_000_000 / spec.EveryMs
+	return big.NewRat(1000, spec.EveryMs)
+}
+
+// over says whether have + add exceeds a budget, exactly.
+func over(have, add *big.Rat, budget int64) bool {
+	return new(big.Rat).Add(have, add).Cmp(big.NewRat(budget, 1)) > 0
 }
 
 // subtreeRate sums the declared rates of a node and its descendants; the caller holds the lock.
-func (t *probeTree) subtreeRate(name string) int64 {
+func (t *probeTree) subtreeRate(name string) *big.Rat {
+	r := new(big.Rat)
 	n := t.nodes[name]
 	if n == nil {
-		return 0
+		return r
 	}
-	r := int64(0)
 	if n.kind.Name != "mux" {
-		r = leafRate(&n.spec)
+		r.Set(leafRate(&n.spec))
 	}
 	for _, c := range n.children {
-		r += t.subtreeRate(c)
+		r.Add(r, t.subtreeRate(c))
 	}
 	return r
 }
 
 // treeRate sums every root's subtree; the caller holds the lock.
-func (t *probeTree) treeRate() int64 {
-	r := int64(0)
+func (t *probeTree) treeRate() *big.Rat {
+	r := new(big.Rat)
 	for _, n := range t.nodes {
 		if n.spec.Parent == "" {
-			r += t.subtreeRate(n.spec.Name)
+			r.Add(r, t.subtreeRate(n.spec.Name))
 		}
 	}
 	return r
@@ -856,9 +871,17 @@ func (t *probeTree) budgetOf(n *probeNode) int64 {
 }
 
 // ratePerS is a declared rate as a reply says it: records per second, to the thousandth.
-func ratePerS(micro int64) float64 { return math.Round(float64(micro)/1000) / 1000 }
+func ratePerS(r *big.Rat) float64 {
+	f, _ := r.Float64()
+	return math.Round(f*1000) / 1000
+}
 
-func fmtRate(micro int64) string { return strconv.FormatFloat(ratePerS(micro), 'f', -1, 64) }
+// fmtRate is a declared rate as a refusal says it, to the millionth: a bound crossed by a hair
+// is still named.
+func fmtRate(r *big.Rat) string {
+	f, _ := r.Float64()
+	return strconv.FormatFloat(math.Round(f*1_000_000)/1_000_000, 'f', -1, 64)
+}
 
 // create admits a node, stopped. Every refusal names the bound or the rule it hit.
 func (t *probeTree) create(spec *NodeSpec) (any, error) {
@@ -934,15 +957,15 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 		}
 		r := leafRate(spec)
 		for a := t.nodes[spec.Parent]; a != nil; a = t.nodes[a.spec.Parent] {
-			if have, budget := t.subtreeRate(a.spec.Name), t.budgetOf(a); have+r > budget*1_000_000 {
-				return nil, badRequest("subtree %q would declare %s records/s with %q; its max_rate_per_s is %d", a.spec.Name, fmtRate(have+r), spec.Name, budget)
+			if have, budget := t.subtreeRate(a.spec.Name), t.budgetOf(a); over(have, r, budget) {
+				return nil, badRequest("subtree %q would declare %s records/s with %q; its max_rate_per_s is %d", a.spec.Name, fmtRate(have.Add(have, r)), spec.Name, budget)
 			}
 		}
-		if spec.Parent == "" && r > t.budget.maxRate*1_000_000 {
+		if spec.Parent == "" && over(new(big.Rat), r, t.budget.maxRate) {
 			return nil, badRequest("node %q would declare %s records/s alone; max_rate_per_s is %d", spec.Name, fmtRate(r), t.budget.maxRate)
 		}
-		if have := t.treeRate(); have+r > t.budget.treeRate*1_000_000 {
-			return nil, badRequest("the tree would declare %s records/s with %q; tree_rate_per_s is %d", fmtRate(have+r), spec.Name, t.budget.treeRate)
+		if have := t.treeRate(); over(have, r, t.budget.treeRate) {
+			return nil, badRequest("the tree would declare %s records/s with %q; tree_rate_per_s is %d", fmtRate(have.Add(have, r)), spec.Name, t.budget.treeRate)
 		}
 	}
 	n := &probeNode{spec: *spec, kind: kind, state: probeStopped}
