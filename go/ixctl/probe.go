@@ -639,8 +639,9 @@ func (t *probeTree) stop(name, reason string) (any, error) {
 		return nil, badRequest("node %q does not exist", name)
 	}
 	if n.state != probeRunning {
+		state := n.state // read under the lock: a concurrent start writes it (CI's -race on the order test)
 		t.mu.Unlock()
-		return map[string]any{"node": name, "state": n.state, "noop": true}, nil
+		return map[string]any{"node": name, "state": state, "noop": true}, nil
 	}
 	cancel, done := n.cancel, n.done
 	n.cancel, n.done, n.state = nil, nil, probeStopped
