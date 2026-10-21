@@ -56,8 +56,8 @@ utilise déjà pour son `Broker`.
 **Les nœuds** sont des instances dans un arbre par plan : `{name, kind, every_ms, parent, filter,
 ttl_ms}`. Un nœud publie des événements `sample` sur son propre canal du hub `probe/<nom>` ; quand
 son parent tourne, l'échantillon remonte de façon synchrone, à travers le filtre du parent, sur
-`probe/<parent>` estampillé `src`. Le cycle de vie (`probe.created/started/stopped/removed`, chacun
-avec une `reason`) est sur `ctl` comme tout événement du plan : journalisé et mis en miroir chez
+`probe/<parent>` estampillé `src`. Le cycle de vie (`probe.created/started/stopped/removed`, `stopped`
+et `removed` avec une `reason`) est sur `ctl` comme tout événement du plan : journalisé et mis en miroir chez
 les pairs sans rien ajouter.
 
 **Les filtres** s'exécutent avant l'émission : `where` (termes typés, six opérateurs, champ absent

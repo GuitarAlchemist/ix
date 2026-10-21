@@ -53,7 +53,7 @@ tests: the same light hexagon the plane already uses for its `Broker`.
 **Nodes** are instances in one tree per plane: `{name, kind, every_ms, parent, filter, ttl_ms}`.
 A node publishes `sample` events on its own hub channel `probe/<name>`; when its parent runs, the
 sample goes up synchronously, through the parent's filter, onto `probe/<parent>` stamped with
-`src`. The lifecycle (`probe.created/started/stopped/removed`, each with a `reason`) is on `ctl`
+`src`. The lifecycle (`probe.created/started/stopped/removed`, `stopped` and `removed` with a `reason`) is on `ctl`
 like every plane event, so it is journaled and mirrored to peers for free.
 
 **Filters** run before emission: `where` (typed terms, six operators, missing field = false),

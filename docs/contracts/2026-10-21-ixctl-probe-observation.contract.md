@@ -34,14 +34,17 @@ Every frame a subscription delivers is either an **envelope** or a **gap** (`go/
 | `t` | when the plane published it, ms since the Unix epoch, the plane's clock | v1 protocol |
 | `ev.kind` | `sample` on a node's pipe; `probe.created`, `probe.started`, `probe.stopped`, `probe.removed` on `ctl` | v1 protocol |
 | `ev.data.node`, `ev.data.kind` | the node's name and its kind with its version (`name@version`) | S1 (ix#407) |
-| `ev.data.seq` | the node's own count of records emitted, from 1 at each start of that node | S1 |
+| `ev.data.seq` | the node's own count of records emitted, from 1 at the node's creation; a stop and a start continue the count, a removal and a recreation under the same name start again at 1 | S1 |
 | `ev.data.src` | on a mux's pipe only: the child the record came from | S1 |
 | `ev.data.reason` | on `probe.stopped` / `probe.removed`: `requested`, `expired`, `removed`, `parent-removed`, `shutdown` | S1 |
-| other `ev.data` fields | the kind's measurements, named and typed by `probe.kinds` (`fields`) | per kind |
+| other `ev.data` fields | the kind's measurements, whose names `probe.kinds` lists (`fields`, names only); a read that failed emits a sample with `error` (the message) and no measurements | per kind |
 
 Gaps: `since-too-old` (the ring no longer holds what was asked; `oldest` is the first seq still held),
 `overflow` (the reader fell behind the ring), `epoch-changed` (the seq given belongs to another boot;
-the replay is the new boot from its seq 1), `since-ahead` (a seq this boot has not reached).
+the replay is the new boot from the oldest seq its ring still holds, `oldest`: 1 while that ring has
+not turned, as in fixture 3), `since-ahead` (no epoch was given and the seq is past this boot's head;
+with an epoch the same case is `epoch-changed`). `t` and `ev.t` are two clock reads a few
+microseconds apart and may differ by a millisecond; `ev.t` is the observation's, `t` the publication's.
 
 ## The mapping
 
@@ -56,7 +59,7 @@ the replay is the new boot from its seq 1), `since-ahead` (a seq this boot has n
 | received-at | | the consumer's own clock at read time; its difference to `t` is the clock offset to apply when judging freshness |
 | sequence | `seq` | strictly increasing within an epoch, across every channel |
 | deduplication key | | **`origin:epoch:seq`**: a frame read twice (a reconnect that resumes below the last seq kept) is the same frame; fixture 1 shows a resume from the last seq kept gives `seq + 1` first, nothing twice |
-| units | `probe.kinds` → `fields` of the kind | |
+| units | not on the wire: `probe.kinds` → `fields` lists the names only, `doc` says the kind in words (gap G3) | a per-kind table the adapter keeps, by `kind@version` |
 | sampling interval | not in the sample: `every_ms` of the node from `probe.list` | read at `probe.created`/`probe.started`, kept with the series |
 | freshness TTL | not the plane's: `ttl_ms` on a node is its **lease**, not a freshness bound | the consumer's own, suggested `3 × every_ms` |
 | state | | see below |
@@ -67,16 +70,21 @@ the replay is the new boot from its seq 1), `since-ahead` (a seq this boot has n
   offset, and no `probe.stopped` has been read for the node since that sample.
 - **STALE**: the latest sample is older than the TTL; or `probe.stopped` was read for the node
   (`reason` says why: `requested`, `expired`, `shutdown`, `removed`, `parent-removed`) and no
-  `probe.started` since. `probe.stopped` is the last thing said about a node until it starts again
-  (fixture 2, step `stopped`). After `probe.removed` the series is closed, not stale.
+  `probe.started` since (fixture 2, step `stopped`). For a leaf, `probe.stopped` is the last thing
+  said about the node until it starts again: the stop waits for the node's loop to end before it is
+  published. For a mux it is not guaranteed: a child's record that had already passed the mux's
+  state check can be published just after the mux's `probe.stopped` (gap G6); a consumer counts a
+  sample read after a `probe.stopped` for its node into the stopped series and stays STALE. After
+  `probe.removed` the series is closed, not stale.
 - **UNKNOWN**: before the first sample of a series; and after any gap (`epoch-changed`,
   `since-too-old`, `overflow`) until the next `probe.created` or sample of the node, because the
   consumer cannot say what happened in the hole. After `epoch-changed` **every** series of that
   origin is unknown: the plane restarted with an empty tree (fixture 3; the tree is not persisted,
   decision D1 ix#399), and the new boot's `seq` restarts at 1 while the old boot's series end.
-- **ERROR**: the plane publishes no error event on a pipe; a kind that fails a read counts it in
-  `errors` on `probe.list` and emits nothing for that tick. ERROR is therefore derived from
-  `probe.list` polled, not from the stream (gap G3 below).
+- **ERROR**: a kind that fails a read emits a `sample` whose data is `{node, kind, seq, error}`
+  (the message, no measurements) and counts it in `errors` on `probe.list`. ERROR is the state while
+  the series' latest sample carries `error`; the next sample without it is OK again. A node whose
+  kind has no sampler on this platform refuses `probe.start` instead (no series).
 
 ## Fixtures (`go/ixctl/e2e/fixtures/consumer-*.jsonl`)
 
@@ -101,7 +109,8 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 3. **`consumer-restart.jsonl`**, steps `resumed-after-restart`, `recreated-after-restart`. The plane
    is restarted under its name in the same state dir; `probe.list` answers an empty tree; a reader
    resuming with the last `seq` and `epoch` it kept gets `epoch-changed` first (`from: 1`,
-   `oldest: 1`, the new `epoch`), then the new boot from `seq` 1: `probe.created`, `probe.started`,
+   `oldest: 1`, the new `epoch`), then the new boot from the oldest `seq` its ring holds, here 1:
+   `probe.created`, `probe.started`,
    samples with `ev.data.seq` from 1. Invariants: the gap names the new boot; every envelope after
    it is of the new boot; the new boot's envelope `seq` 1 is below the old boot's last `seq`, so a
    consumer keyed on `seq` without `epoch` would merge the two boots.
@@ -114,12 +123,17 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   not cut).
 - **G2, the interval is not on the sample.** `every_ms` comes from `probe.list`; a reader that
   joined late reads it there.
-- **G3, no error event on a pipe.** Failed reads are a counter on `probe.list` (`errors`); ERROR
-  is polled, not streamed.
+- **G3, no types or units on the wire.** `probe.kinds` lists field names and a `doc` string per
+  kind; types and units are the adapter's table, by `kind@version`.
 - **G4, no schema version on the envelope.** The protocol name `ixctl.v1` and this contract's
   version stand in; a field would be a protocol change (door F1, one-way).
 - **G5, the tree is not persisted across a restart** (D1 ix#399): after `epoch-changed` the
   consumer waits for the tree to be recreated by whoever owns it.
+- **G6, a mux's `probe.stopped` is not its pipe's last word.** The mux's state changes under the
+  tree lock but a child's record is published after that lock is released, so one record can
+  follow the mux's `probe.stopped`; a leaf's stop waits for its loop, so a leaf has no such window.
+  Closing it means publishing under the tree lock (a plane change, a story under ix#397, not cut);
+  until then the consumer's rule above covers it.
 
 ## Changes
 

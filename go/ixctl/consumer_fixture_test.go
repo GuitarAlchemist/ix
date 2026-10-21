@@ -92,7 +92,27 @@ func collect(t *testing.T, frames <-chan Frame, step string, out *[]fixtureFrame
 	}
 }
 
+// nthSampleOf ends a step once the node's probe.started has been read and n samples with it:
+// the sampler's first tick can beat the probe.started event onto the hub, so counting samples
+// alone could end the step before its lifecycle event arrived and file it under the next step.
 func nthSampleOf(node string, n int) func(fixtureFrame) bool {
+	count, started := 0, false
+	return func(f fixtureFrame) bool {
+		if f.Env == nil {
+			return false
+		}
+		if f.Env.Ch == "probe/"+node && f.Env.Ev.Kind == "sample" {
+			count++
+		}
+		if f.Env.Ch == "ctl" && f.Env.Ev.Kind == "probe.started" && strings.Contains(string(f.Env.Ev.Data), `"node":"`+node+`"`) {
+			started = true
+		}
+		return started && count >= n
+	}
+}
+
+// resumedSamplesOf ends a step after n samples of the node, for a step that starts no node.
+func resumedSamplesOf(node string, n int) func(fixtureFrame) bool {
 	count := 0
 	return func(f fixtureFrame) bool {
 		if f.Env != nil && f.Env.Ch == "probe/"+node && f.Env.Ev.Kind == "sample" {
@@ -100,6 +120,16 @@ func nthSampleOf(node string, n int) func(fixtureFrame) bool {
 		}
 		return count >= n
 	}
+}
+
+// subCtx bounds a subscription's handshake: a plane that stops answering fails the test
+// instead of hanging it. The subscription itself outlives the context (it ends with the
+// connection).
+func subCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 func checkOrWriteFixture(t *testing.T, name string, frames []fixtureFrame) {
@@ -132,7 +162,16 @@ func checkOrWriteFixture(t *testing.T, name string, frames []fixtureFrame) {
 		if err := json.Unmarshal(sc.Bytes(), &f); err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}
+		if f.Step == "" || (f.Env == nil) == (f.Gap == nil) {
+			t.Fatalf("%s: a frame without a step, or with neither or both of env and gap: %s", path, sc.Bytes())
+		}
 		kept = append(kept, f)
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	if len(kept) == 0 {
+		t.Fatalf("%s is empty", path)
 	}
 	want, got := shapesByStep(kept), shapesByStep(frames)
 	for step := range want {
@@ -157,7 +196,7 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	// samples; it drops the connection and resumes from the last seq it kept, with the epoch:
 	// the next envelope is seq + 1, nothing twice, no gap.
 	var reconnect []fixtureFrame
-	_, frames, err := c.Subscribe(context.Background(), "", nil, 4096)
+	_, frames, err := c.Subscribe(subCtx(t), "", nil, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,11 +207,11 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	epoch := last.Epoch
 	c.Close()
 	c = dial(t, first)
-	_, frames, err = c.SubscribeFrom(context.Background(), "", uint64p(last.Seq), epoch, 4096)
+	_, frames, err = c.SubscribeFrom(subCtx(t), "", uint64p(last.Seq), epoch, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collect(t, frames, "after-reconnect", &reconnect, nthSampleOf("hb", 3))
+	collect(t, frames, "after-reconnect", &reconnect, resumedSamplesOf("hb", 3))
 	var resumed fixtureFrame
 	for _, f := range reconnect {
 		if f.Step == "after-reconnect" {
@@ -242,13 +281,15 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	second := newTestInstance(t, fakeSpec(t, "a", nil), dir)
 	c = dial(t, second)
 	var list struct {
-		Count int `json:"count"`
+		Count *int `json:"count"`
 	}
-	json.Unmarshal(do(t, c, Request{Op: "probe.list"}), &list)
-	if list.Count != 0 {
-		t.Fatalf("after the restart the tree has %d nodes, want none (not persisted)", list.Count)
+	if raw := do(t, c, Request{Op: "probe.list"}); json.Unmarshal(raw, &list) != nil || list.Count == nil {
+		t.Fatalf("probe.list after the restart: %s", raw)
 	}
-	_, frames, err = c.SubscribeFrom(context.Background(), "", uint64p(kept.Seq), kept.Epoch, 4096)
+	if *list.Count != 0 {
+		t.Fatalf("after the restart the tree has %d nodes, want none (not persisted)", *list.Count)
+	}
+	_, frames, err = c.SubscribeFrom(subCtx(t), "", uint64p(kept.Seq), kept.Epoch, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
