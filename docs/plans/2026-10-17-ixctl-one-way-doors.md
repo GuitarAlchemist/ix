@@ -482,13 +482,21 @@ name `ixctl.v1`.
   apply request. Codex round 15 (one P1, two P2): an exit already waiting when a
   limit fires is the run's own end (not `wall_limit`; still `memory_limit`, the kernel said
   so); a limit past what a `time.Duration` or a byte count holds is refused; the gate's wall
-  job is bounded to 1.5 s so its pid is read before the kill on a loaded runner. A process
-  limit is a later slice. Tests:
+  job is bounded to 1.5 s so its pid is read before the kill on a loaded runner. Codex round
+  19 (no P0/P1, four P2): on Windows the cap's message floors `peak_processes` to the cap (a
+  child gone between the refusal and the kill's sample no longer reads a peak under the limit
+  beside `process_limit`); `wait_exit`'s doc names `peak_processes` and says a reason read
+  from a figure also marks a run that ended before the poll. Tests:
   `TestARunPastItsWallLimitIsKilledAndSaysSo`, `TestARunPastItsWallLimitRestarts`,
-  `TestARunPastItsMemoryLimitIsKilledAndSaysSo`, `TestAnExitReportsItsPeakMemory`, spec
-  refuses a negative or unknown limit (Go); `a_run_killed_at_its_wall_limit_says_so_in_its_exit`
-  (client); E11 and E12 (gate: a Python sleep bounded to 400 ms, killed, its process gone,
-  `restarts` 0; a Python holding 256 MiB bounded to 64 MiB, killed, peak reported).
+  `TestARunPastItsMemoryLimitIsKilledAndSaysSo`, `TestAnExitReportsItsPeakMemory`,
+  `TestARunPastItsCpuLimitIsKilledAndSaysSo`, `TestARunUnderItsCpuLimitEndsOnItsOwn`,
+  `TestARunPastItsCpuLimitThatEndsBeforeThePollSaysSoToo`,
+  `TestARunPastItsProcessLimitIsKilledAndSaysSo`, `TestARunUnderItsProcessLimitEndsOnItsOwn`,
+  spec refuses a negative or unknown limit (Go); `a_run_killed_at_its_wall_limit_says_so_in_its_exit`
+  (client); E11 to E14 (gate: a Python sleep bounded to 400 ms, killed, its process gone,
+  `restarts` 0; a Python holding 256 MiB bounded to 64 MiB, killed, peak reported; a Python
+  spinning under 300 ms of processor time, killed, `cpu_ms` reported; a Python spawning four
+  sleepers under three, killed, `peak_processes` reported).
 
 ### What freezing locks in
 

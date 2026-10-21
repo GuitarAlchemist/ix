@@ -32,6 +32,7 @@ type procTree struct {
 	watchGone chan struct{}  // closed when the accounting watch has returned
 	mu        sync.Mutex
 	peakProcs int64 // the most active processes the watch has seen in the job
+	procCap   int64 // the job's active process cap (processCap), 0 without a process limit
 }
 
 // watchPoll is how often a watched job's accounting (processor time, active processes) is read.
@@ -134,6 +135,7 @@ func startTree(cmd *exec.Cmd, limits *Limits) (*procTree, error) {
 	if limits != nil && limits.Processes > 0 {
 		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
 		info.BasicLimitInformation.ActiveProcessLimit = processCap(limits.Processes)
+		t.procCap = int64(info.BasicLimitInformation.ActiveProcessLimit)
 	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
@@ -269,7 +271,14 @@ func (t *procTree) listen(port windows.Handle) {
 		case jobMsgNotificationLimit, jobMsgJobMemoryLimit, jobMsgProcessMemoryLimit:
 			reason = reasonMemory
 		case jobMsgActiveProcessLimit:
-			reason = reasonProcesses // the cap refused a process (best effort, like the memory cap's)
+			// The cap refused a process (best effort, like the memory cap's): the job held the
+			// cap's worth when one more was tried, whatever `sample` reads once a child has gone.
+			reason = reasonProcesses
+			t.mu.Lock()
+			if t.procCap > t.peakProcs {
+				t.peakProcs = t.procCap
+			}
+			t.mu.Unlock()
 		case jobMsgActiveProcessZero:
 			return
 		default:

@@ -525,14 +525,22 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
   attente quand une limite se déclenche est la fin propre de l'exécution (pas `wall_limit` ;
   toujours `memory_limit`, le noyau l'a dit) ; une limite au-delà de ce qu'une `time.Duration`
   ou un compte d'octets contient est refusée ; le job mural de la passerelle est borné à 1,5 s
-  pour que son pid soit lu avant la mise à mort sur un runner chargé. Une limite de processus
-  est une tranche ultérieure.
+  pour que son pid soit lu avant la mise à mort sur un runner chargé. Revue Codex 19 (aucun
+  P0/P1, quatre P2) : sous Windows le message du plafond plancher `peak_processes` au plafond
+  (un enfant disparu entre le refus et le relevé de la mise à mort ne donne plus un pic sous la
+  limite à côté de `process_limit`) ; la doc de `wait_exit` nomme `peak_processes` et dit
+  qu'une raison lue dans un chiffre marque aussi une exécution terminée avant la lecture.
   Tests : `TestARunPastItsWallLimitIsKilledAndSaysSo`, `TestARunPastItsWallLimitRestarts`,
-  `TestARunPastItsMemoryLimitIsKilledAndSaysSo`, `TestAnExitReportsItsPeakMemory`, la spec
-  refuse une limite négative ou inconnue (Go) ;
-  `a_run_killed_at_its_wall_limit_says_so_in_its_exit` (client) ; E11 et E12 (passerelle : un
+  `TestARunPastItsMemoryLimitIsKilledAndSaysSo`, `TestAnExitReportsItsPeakMemory`,
+  `TestARunPastItsCpuLimitIsKilledAndSaysSo`, `TestARunUnderItsCpuLimitEndsOnItsOwn`,
+  `TestARunPastItsCpuLimitThatEndsBeforeThePollSaysSoToo`,
+  `TestARunPastItsProcessLimitIsKilledAndSaysSo`, `TestARunUnderItsProcessLimitEndsOnItsOwn`,
+  la spec refuse une limite négative ou inconnue (Go) ;
+  `a_run_killed_at_its_wall_limit_says_so_in_its_exit` (client) ; E11 à E14 (passerelle : un
   sleep Python borné à 400 ms, tué, son processus disparu, `restarts` à 0 ; un Python tenant
-  256 Mio borné à 64 Mio, tué, pic rapporté).
+  256 Mio borné à 64 Mio, tué, pic rapporté ; un Python qui tourne sous 300 ms de temps
+  processeur, tué, `cpu_ms` rapporté ; un Python qui lance quatre dormeurs sous trois, tué,
+  `peak_processes` rapporté).
 
 ### Ce que le figer verrouille
 

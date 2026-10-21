@@ -692,12 +692,14 @@ impl Ctl {
 
     /// Waits until `service` has exited, and answers its entry in the status: state `stopped`
     /// or `failed`, with `last_exit` saying how (`code`, `at` in Unix milliseconds, what the
-    /// run cost as the OS counted it, `peak_memory_bytes` and `cpu_ms`, and `reason` when the plane killed the run
-    /// for a limit of its spec: `wall_limit` for a run that lasted past `limits.wall_ms`,
-    /// `memory_limit` for one that held more than `limits.memory_mb`, `cpu_limit` for one
-    /// that used more processor time than `limits.cpu_ms`, `process_limit` for one that held
-    /// more processes at once than `limits.processes`; absent when the process ended on its
-    /// own).
+    /// run cost as the OS counted it, `peak_memory_bytes`, `cpu_ms` and `peak_processes`, and
+    /// `reason` when the run went past a limit of its spec: `wall_limit` for a run that lasted
+    /// past `limits.wall_ms`, `memory_limit` for one that held more than `limits.memory_mb`,
+    /// `cpu_limit` for one that used more processor time than `limits.cpu_ms`, `process_limit`
+    /// for one that held more processes at once than `limits.processes`. The plane kills such
+    /// a run; one that went past `cpu_ms` or `processes` and ended before the plane's next
+    /// poll carries the reason too, read from the figure it reports. `reason` is absent when
+    /// the run ended on its own within its limits, or was stopped on request).
     ///
     /// This is how a job is waited for: a service declared with `restart: never` runs to its
     /// end and the plane leaves it `stopped`, its `desired` still `running`. Converging the
