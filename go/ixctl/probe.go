@@ -468,6 +468,10 @@ func (t *probeTree) removeIf(name, reason string, due func(*probeNode) bool) (an
 		for n.stopping {
 			t.done.Wait()
 		}
+		if t.nodes[nm] != n { // forgotten meanwhile by an overlapping removal (an ancestor's, or a descendant's) that waited for the same stop
+			t.mu.Unlock()
+			continue
+		}
 		delete(t.nodes, nm)
 		for i, o := range t.order {
 			if o == nm {

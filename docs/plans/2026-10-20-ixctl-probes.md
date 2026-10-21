@@ -160,7 +160,14 @@ release the blocking read in cleanup, and the start/stop test requires a lifecyc
 round. **Design limit, recorded:** a sampler must return. The stop waits for the read in flight
 so that `probe.stopped` is the pipe's last word, and shutdown waits for the stop; a kind whose
 source can hang (an RPC, WMI in S6) bounds its own read. The alternative, abandoning a read on
-cancel, would bound the stop but leak a goroutine per hung read; not taken.
+cancel, would bound the stop but leak a goroutine per hung read; not taken. Round 30: two
+removals overlapping on one node (a descendant's, then its ancestor's) both waited for the same
+stop and the second, waking with a stale pointer, said `probe.removed` a second time — fixed by
+rechecking that the node is still the tree's after the wait; the shutdown-waits-for-removals
+claim gained a direct test holding the removals counter (the integration test only sees the order
+after the fact), and the remaining receives in the tests are bounded. CI's `-race` row (ubuntu)
+also caught a pre-existing unlocked read in `probe.stop`'s noop reply, exposed by the concurrent
+start/stop test: the state is now copied under the lock.
 
 ## Tests (the seams agreed for TDD)
 

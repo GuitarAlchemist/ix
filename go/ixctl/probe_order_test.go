@@ -277,11 +277,18 @@ func TestShutdownWaitsForARemoveInProgressAndRefusesNewOnes(t *testing.T) {
 		t.Fatal("shutdown did not return once the read had ended")
 	}
 	for _, c := range []<-chan error{stopped, removed} {
-		if err := <-c; err != nil {
-			t.Fatal(err)
+		select {
+		case err := <-c:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("an op did not return once the read had ended")
 		}
 	}
-	// The remove's probe.removed was out before shutdown returned.
+	// The remove's probe.removed was out before shutdown returned (a necessary sign, not a
+	// proof on its own: the removal could publish between the return and the head's read;
+	// TestShutdownWaitsForTheRemovalsInFlight holds the counter itself).
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var removedSeq uint64
@@ -302,6 +309,109 @@ func TestShutdownWaitsForARemoveInProgressAndRefusesNewOnes(t *testing.T) {
 	// Once closed, a remove is refused like a create or a start: the tree stays silent.
 	if _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "other"}); err == nil || !strings.Contains(err.Error(), "shutting down") {
 		t.Fatalf("remove after shutdown: err %v, want a refusal naming the shutdown", err)
+	}
+}
+
+// The wait itself, with the counter held by the test: a removal in flight (its probe.removed not
+// out yet) keeps shutdown from returning until finishRemoval. The counter is fabricated here on
+// purpose: no interleaving of real ops can hold a removal between its last stop and its
+// publication deterministically, and the integration test above only sees the order after the
+// fact.
+func TestShutdownWaitsForTheRemovalsInFlight(t *testing.T) {
+	p := probePlane(t)
+	p.probes.mu.Lock()
+	p.probes.removals++
+	p.probes.mu.Unlock()
+	down := make(chan struct{})
+	go func() {
+		p.probes.shutdown()
+		close(down)
+	}()
+	reached(t, p, "shutdown's close of admission", func() bool { return p.probes.closed })
+	select {
+	case <-down:
+		t.Fatal("shutdown returned with a removal in flight")
+	case <-time.After(150 * time.Millisecond):
+	}
+	p.probes.finishRemoval()
+	select {
+	case <-down:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not return once the removal had finished")
+	}
+}
+
+// Two removals that overlap on one node (a descendant's, then its ancestor's) both wait for
+// the same stop in progress; the node is forgotten once and probe.removed said once for it.
+func TestOverlappingRemovalsSayProbeRemovedOnce(t *testing.T) {
+	p := probePlane(t)
+	b := blockKind(t)
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("agg", "mux@1", 0, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	cur := p.Subscribe("ctl", uint64p(0), "")
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("hb", "block@1", 10, map[string]any{"parent": "agg"})}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: "hb"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-b.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the read never started")
+	}
+	results := make(chan error, 3)
+	go func() { _, err := probeOp(t, p, Request{Op: "probe.stop", Node: "hb"}); results <- err }()
+	deadline := time.Now().Add(2 * time.Second)
+	for listNodes(t, p)[1].State != probeStopped {
+		if time.Now().After(deadline) {
+			t.Fatal("the stop never set the state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	go func() { _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "hb"}); results <- err }()
+	reached(t, p, "the child's removal claim", func() bool { return p.probes.nodes["hb"] != nil && p.probes.nodes["hb"].removing })
+	go func() { _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "agg"}); results <- err }()
+	reached(t, p, "the parent's removal claim", func() bool { return p.probes.nodes["agg"] != nil && p.probes.nodes["agg"].removing })
+	close(b.release)
+	for i := 0; i < 3; i++ {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("an op did not return once the read had ended")
+		}
+	}
+	if nodes := listNodes(t, p); len(nodes) != 0 {
+		t.Fatalf("after the removes: %+v", nodes)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	removed := map[string]int{}
+	head := p.probes.hub.Head()
+	for {
+		envs, _, err := cur.Next(ctx, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, env := range envs {
+			if env.Ev.Kind == "probe.removed" {
+				var d struct {
+					Node string `json:"node"`
+				}
+				json.Unmarshal(env.Ev.Data, &d)
+				removed[d.Node]++
+			}
+		}
+		if len(envs) > 0 && envs[len(envs)-1].Seq >= head {
+			break
+		}
+	}
+	if removed["hb"] != 1 || removed["agg"] != 1 {
+		t.Fatalf("probe.removed said %v times, want once per node", removed)
 	}
 }
 

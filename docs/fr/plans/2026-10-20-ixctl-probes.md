@@ -174,7 +174,15 @@ cycle de vie à chaque tour. **Limite de conception, consignée :** un échantil
 retourner. L'arrêt attend la lecture en vol pour que `probe.stopped` soit le dernier mot du tuyau,
 et le shutdown attend l'arrêt ; un kind dont la source peut pendre (un RPC, WMI en S6) borne sa
 propre lecture. L'alternative, abandonner une lecture à l'annulation, bornerait l'arrêt mais
-fuirait une goroutine par lecture pendue ; non retenue.
+fuirait une goroutine par lecture pendue ; non retenue. Ronde 30 : deux suppressions se
+chevauchant sur un nœud (celle d'un descendant, puis celle de son ancêtre) attendaient le même
+arrêt et la seconde, réveillée avec un pointeur périmé, disait `probe.removed` une deuxième fois —
+corrigé en revérifiant après l'attente que le nœud est toujours celui de l'arbre ; l'affirmation
+« shutdown attend les suppressions » a gagné un test direct tenant le compteur de suppressions (le
+test d'intégration ne voit l'ordre qu'après coup), et les réceptions restantes des tests sont
+bornées. La ligne `-race` de la CI (ubuntu) a aussi attrapé une lecture non verrouillée
+préexistante dans la réponse « noop » de `probe.stop`, révélée par le test start/stop concurrent :
+l'état est désormais copié sous le verrou.
 
 ## Tests (les coutures convenues pour le TDD)
 
