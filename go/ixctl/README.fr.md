@@ -90,6 +90,7 @@ les pairs avec lesquels elle se fédère. Les champs inconnus sont refusés.
 | `limits.cpu_ms` | Temps processeur maximal, utilisateur et noyau, que tout l'arbre peut consommer, en millisecondes. 0 ou absent : pas de limite. |
 | `limits.processes` | Nombre maximal de processus que l'arbre peut tenir à la fois. 0 ou absent : pas de limite. |
 | `peers[].state_file` | Le fichier d'état d'une instance pair ; le lien y lit son adresse et son jeton et se reconnecte avec délai croissant (200 ms à 5 s). |
+| `peers[].probes` | Les nœuds de sonde du pair dont cette instance veut les tuyaux en miroir sous `peer/<nom>/probe/<nœud>`, par nom exact (D4, ix#402). Un tuyau ne traverse que tant que le pair marque le nœud `export: true` ; le statut dit ce qu'est chaque nom demandé. Vide ou absent : aucun tuyau de sonde ne traverse. |
 
 ### Limites
 
@@ -217,10 +218,25 @@ Les événements arrivent en enveloppes :
 |---|---|
 | `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne est transmise comme cet événement (`t` en ms Unix sur l'horloge du service ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
-| `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). Pas encore en miroir chez les pairs (décision D4, ix#402). |
-| `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir. `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
+| `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). En miroir chez un pair seulement si ce nœud est créé avec `export: true` et que la spec de ce pair le nomme (D4, ix#402). |
+| `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir, plus les tuyaux `probe/<nœud>` que cette instance a demandés dans `peers[].probes` tant que le pair les exporte. `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 
-`ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`),
+**Tuyaux de sondes à travers le lien (D4, ix#402, tranchée le 2026-10-21 ; S2 ix#408, tranche 1).**
+Ce qui traverse est l'intersection de deux déclarations : l'enfant marque un nœud exportable à la
+création (`export: true`, immuable, faux par défaut : une disponibilité, pas une demande) et la
+spec du pair côté parent nomme exactement les nœuds voulus (`peers[].probes`). Le lien s'abonne au
+tuyau de chaque nœud voulu par son nom de canal exact (`probe/cpu` ne couvre pas
+`probe/cpu-extra`), depuis le `probe.list` du pair au raccordement puis depuis les
+`probe.created` / `probe.removed` en miroir ; `status.peers[].probes` dit ce qu'est chaque nom
+demandé : `mirrored`, `not-exportable` ou `absent` (pas de tel nœud, ou lien tombé). L'agrégation
+vit chez le lecteur : en V1 le lecteur est le consommateur de `peer/<nom>/probe/<nœud>` (IXQL
+`ix.ctl.events`), aucun nœud local ne nomme une source distante. L'export est une règle de
+fédération, pas une barrière de confidentialité : l'abonnement direct à un tuyau est inchangé.
+Pas encore dans cette tranche : la provenance source sur l'enveloppe miroir (`src_seq`,
+`src_epoch`), les trous distants relayés comme marqueur de continuité, les files bornées par
+classe et le rattrapage borné, l'instantané lié à un curseur ; voir la résolution sur ix#402.
+
+`ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`, `export` quand posé),
 `probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
 une `reason` (`requested`, `expired`, `removed`, `parent-removed`, `shutdown`).
 
@@ -280,7 +296,7 @@ ni de start) et arrête chaque nœud en marche, raison `shutdown`.
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
 | `probe.create` | `probe` (un nœud) | `{node, kind, state: "stopped", depth}` (`depth` : les mux au-dessus) |
-| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
+| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, export?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (sans effet sur un nœud en marche) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
 | `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (le temps restant, sur un nœud en marche) |
@@ -381,7 +397,7 @@ redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Ru
 sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
 plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
 les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
-44 vérifications, E1..E18, une boucle de
+45 vérifications, E1..E19 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé), une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).

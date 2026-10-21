@@ -206,6 +206,20 @@ func (cl *Client) SubscribeFrom(ctx context.Context, prefix string, since *uint6
 	return cl.subscribe(ctx, Request{Op: "subscribe", Ch: prefix, Since: since, Epoch: epoch}, buf)
 }
 
+// SubscribeExact subscribes to one channel by its exact name, not as a prefix: a peer link
+// mirroring probe/cpu must not receive probe/cpu-extra.
+func (cl *Client) SubscribeExact(ctx context.Context, ch string, since *uint64, epoch string, buf int) (int64, <-chan Frame, error) {
+	return cl.subscribe(ctx, Request{Op: "subscribe", Ch: ch, Since: since, Epoch: epoch, Exact: true}, buf)
+}
+
+// Unsubscribe drops a subscription on both sides. Frames already queued on its channel stay
+// readable; the channel itself closes with the connection.
+func (cl *Client) Unsubscribe(ctx context.Context, id int64) error {
+	_, err := cl.Do(ctx, Request{Op: "unsubscribe", Sub: id})
+	cl.forget(id)
+	return err
+}
+
 // SubscribeBookmark replays from a bookmark the plane holds: everything on prefix after
 // the point the bookmark names, then live. A bookmark of an earlier boot gives an
 // epoch-changed gap first; one older than the ring a since-too-old gap.

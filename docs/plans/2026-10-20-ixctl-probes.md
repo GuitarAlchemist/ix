@@ -211,6 +211,22 @@ Measured and not bounded: `bytes` per node; CPU and RSS stay the process's, neve
 `probe.list` says rates and budgets; the gate's E18 checks it on the real plane. Per plane (D4
 open). Grilled by voice with the operator in three rounds; the resolution is on ix#416.
 
+**D4 resolved (2026-10-21, ix#402) and S2 slice 1 shipped (ix#408):** aggregation lives with the
+reader, and in V1 the reader is the consumer (IXQL `ix.ctl.events` on `peer/<peer>/probe/<node>`),
+no remote source on a local mux. What crosses a link is the intersection of the child's `export:
+true` at create (immutable, false by default) and the parent's exact request `peers[].probes`;
+the link subscribes by exact channel name (a prefix would carry `cpu-extra` with `cpu`), from the
+peer's `probe.list` at attach and the mirrored `probe.created` / `probe.removed` after, both
+idempotent so their order needs no snapshot yet; `status.peers[].probes` says `mirrored` /
+`not-exportable` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
+published (samples × depth), bytes and records transported per link and per parent;
+`tree_rate_per_s` is not a federated bound. Still to ship (slices 2–4, acceptance criteria on
+ix#408): provenance `src_seq` / `src_epoch` and the series `origin:src_epoch:node:<created seq>`;
+remote gaps relayed as a continuity marker; per-class bounded link queues (records and bytes),
+one bounded replay then jump with a dated gap, `degraded` and `reconciled` separately; the
+cursor-bound snapshot with creation identities. Grilled by voice with Gaia's read-only review
+folded in; the resolution is on ix#402. Gate E19 checks the slice on the two federated planes.
+
 Cross-host pipes (S2), shared sampling (S3), GitHub releases with
 a probes manifest beyond the workflow skeleton (S5), the prototype's WMI kinds (S6), the Gaia
 envelope's adapter (S7: the IX side is the draft contract

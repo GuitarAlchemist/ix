@@ -287,6 +287,9 @@ impl Plane {
                         if n.spec["kind"] == "mux@1" {
                             entry["max_rate_per_s"] = json!(budget_of(&self.probes, name));
                         }
+                        if n.spec["export"] == true {
+                            entry["export"] = json!(true);
+                        }
                         if n.state == "running" && ttl != 0 {
                             entry["expires_in_ms"] = ttl;
                         }
@@ -2282,6 +2285,29 @@ fn probe_create_is_held_to_its_mux_budget_like_the_plane() {
             .to_string();
         assert!(err.contains(why), "{src}: {err}");
     }
+}
+
+// D4 (ix#402), S2 slice 1: a node marked `export: true` at create says so in `probe.list`; the
+// others carry no `export` key, as the plane encodes it.
+#[test]
+fn probe_list_says_which_nodes_are_exported() {
+    let (ctl, _plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source(
+            r#"x <- ix.ctl.probe.create(probe: { name: "xcpu", kind: "cpu@1", every_ms: 100, export: true })
+               y <- ix.ctl.probe.create(probe: { name: "xmem", kind: "mem@1", every_ms: 100 })
+               tree <- ix.ctl.probe.list()"#,
+        )
+        .unwrap();
+    let nodes = out.binding("tree").unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(json!(true), nodes[0]["export"], "{nodes:?}");
+    assert!(
+        nodes[1].get("export").is_none(),
+        "an unexported node carries no export key: {nodes:?}"
+    );
 }
 
 #[test]

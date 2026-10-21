@@ -493,9 +493,10 @@ impl Ctl {
 
     /// `GET /v1/probe`: the probe tree as the plane holds it, `{nodes: [{name, kind, state,
     /// every_ms, ttl_ms, parent?, filter?, seq, errors, bytes, children, rate_per_s,
-    /// max_rate_per_s?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s,
+    /// max_rate_per_s?, export?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s,
     /// tree_rate_per_s}`: each node's declared rate and bytes emitted, each mux's budget, the
-    /// tree's (D10, ix#416). With `peer`, that peer's.
+    /// tree's (D10, ix#416), and `export: true` on a node whose pipe federation may mirror (D4,
+    /// ix#402). With `peer`, that peer's.
     pub fn probe_list(&self, peer: Option<&str>) -> Result<Value, CtlError> {
         self.call("GET", &routed("/v1/probe", peer), None)
     }

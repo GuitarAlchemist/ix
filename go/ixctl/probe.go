@@ -194,6 +194,10 @@ type NodeSpec struct {
 	TTLMs   int64   `json:"ttl_ms,omitempty"`   // the lease from a start, renewed by probe.touch; 0 is none
 	// MaxRatePerS narrows the plane's budget for this mux's subtree (D10); a leaf carries none.
 	MaxRatePerS int64 `json:"max_rate_per_s,omitempty"`
+	// Export marks the node's pipe as available to federation (D4, ix#402): a peer that names
+	// this node in its spec mirrors it. An availability, not a request; immutable; false by
+	// default. Direct subscription to the pipe is unchanged.
+	Export bool `json:"export,omitempty"`
 }
 
 // Filter is the smallest filter that composes: every `where` term must hold, only the
@@ -976,6 +980,9 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 		t.nodes[spec.Parent].children = append(t.nodes[spec.Parent].children, spec.Name)
 		extra["parent"] = spec.Parent
 	}
+	if spec.Export {
+		extra["export"] = true
+	}
 	t.event("probe.created", n, extra)
 	return map[string]any{"node": spec.Name, "kind": kind.String(), "state": n.state, "depth": depth}, nil
 }
@@ -995,6 +1002,9 @@ func (t *probeTree) list() any {
 		}
 		if n.kind.Name == "mux" {
 			m["max_rate_per_s"] = t.budgetOf(n)
+		}
+		if n.spec.Export {
+			m["export"] = true
 		}
 		if left := n.leaseLeft(now); left != nil {
 			m["expires_in_ms"] = *left

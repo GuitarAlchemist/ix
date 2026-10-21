@@ -16,7 +16,8 @@ const (
 )
 
 // peerLink federates with one peer: it mirrors the peer's ctl and svc/
-// channels as peer/<name>/<ch>, and forwards ops to it. The peer decides.
+// channels as peer/<name>/<ch>, plus the probe pipes the spec asks for while the peer
+// exports them (D4, ix#402), and forwards ops to it. The peer decides.
 type peerLink struct {
 	spec PeerSpec
 	hub  *Hub
@@ -25,13 +26,30 @@ type peerLink struct {
 	client   *Client
 	up       bool
 	services json.RawMessage
-	token    string            // the peer instance we last saw
-	since    map[string]uint64 // last mirrored seq per subscribed prefix
-	epoch    string            // the peer boot those seqs belong to
+	token    string              // the peer instance we last saw
+	since    map[string]uint64   // last mirrored seq per subscribed prefix or exact channel
+	epoch    string              // the peer boot those seqs belong to
+	pipes    map[string]*pipeSub // per wanted probe node, what it is now
 }
 
+// pipeSub is one wanted probe node's standing on the link.
+type pipeSub struct {
+	state string // pipeAbsent | pipeNotExportable | pipeMirrored
+	sub   int64  // the subscription while mirrored
+}
+
+const (
+	pipeAbsent        = "absent"
+	pipeNotExportable = "not-exportable"
+	pipeMirrored      = "mirrored"
+)
+
 func newPeerLink(spec PeerSpec, hub *Hub) *peerLink {
-	return &peerLink{spec: spec, hub: hub, since: map[string]uint64{}}
+	l := &peerLink{spec: spec, hub: hub, since: map[string]uint64{}, pipes: map[string]*pipeSub{}}
+	for _, n := range spec.Probes {
+		l.pipes[n] = &pipeSub{state: pipeAbsent}
+	}
+	return l
 }
 
 func (l *peerLink) status() PeerStatus {
@@ -44,7 +62,16 @@ func (l *peerLink) status() PeerStatus {
 	if st.Services == nil {
 		st.Services = json.RawMessage("[]")
 	}
+	for _, n := range l.spec.Probes {
+		st.Probes = append(st.Probes, PeerProbeStatus{Name: n, State: l.pipes[n].state})
+	}
 	return st
+}
+
+// wanted says whether the spec asks for this probe node's pipe.
+func (l *peerLink) wanted(node string) bool {
+	_, ok := l.pipes[node]
+	return ok
 }
 
 func (l *peerLink) forward(ctx context.Context, req Request) (any, error) {
@@ -157,8 +184,19 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	defer func() {
 		l.mu.Lock()
 		l.client, l.up = nil, false
+		for _, p := range l.pipes {
+			*p = pipeSub{state: pipeAbsent}
+		}
 		l.mu.Unlock()
 	}()
+
+	// The wanted probe pipes: the peer's list says which exist and are exportable now; the
+	// ctl mirror, subscribed above and live before the list is read, says every change after.
+	// An event between the two is applied after the list, and both steps are idempotent, so
+	// the order needs no snapshot here (slice 1 of S2; the cursor-bound snapshot is slice 4).
+	if err := l.reconcilePipes(ctx, c, merged); err != nil {
+		return true, err
+	}
 
 	for {
 		select {
@@ -170,6 +208,11 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 			}
 			if pf.f.Env != nil {
 				l.mirror(st.Name, pf.prefix, pf.f.Env)
+				if pf.prefix == "ctl" && pf.f.Env.Origin == st.Name {
+					if err := l.followPipe(ctx, c, merged, pf.f.Env); err != nil {
+						return true, err
+					}
+				}
 				select {
 				case refresh <- struct{}{}:
 				default:
@@ -179,6 +222,114 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 			return true, c.Err()
 		}
 	}
+}
+
+// reconcilePipes reads the peer's probe list once and mirrors every wanted node it exports.
+func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame) error {
+	if len(l.spec.Probes) == 0 {
+		return nil
+	}
+	data, err := c.Do(ctx, Request{Op: "probe.list"})
+	if err != nil {
+		return err
+	}
+	var list struct {
+		Nodes []struct {
+			Name   string `json:"name"`
+			Export bool   `json:"export"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return err
+	}
+	for _, n := range list.Nodes {
+		if err := l.setPipe(ctx, c, merged, n.Name, n.Export); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// followPipe applies one of the peer's own ctl events to the wanted pipes: a probe.created
+// opens or declines the pipe by its export flag, a probe.removed closes it.
+func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peerFrame, env *Envelope) error {
+	if env.Ev.Kind != "probe.created" && env.Ev.Kind != "probe.removed" {
+		return nil
+	}
+	var d struct {
+		Node   string `json:"node"`
+		Export bool   `json:"export"`
+	}
+	if json.Unmarshal(env.Ev.Data, &d) != nil || !l.wanted(d.Node) {
+		return nil
+	}
+	if env.Ev.Kind == "probe.removed" {
+		return l.dropPipe(ctx, c, d.Node)
+	}
+	return l.setPipe(ctx, c, merged, d.Node, d.Export)
+}
+
+// setPipe makes a wanted node mirrored (subscribing to its exact channel, resuming from the
+// last mirrored seq when there is one) or not-exportable. Idempotent.
+func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, node string, export bool) error {
+	if !l.wanted(node) {
+		return nil
+	}
+	if !export {
+		if err := l.dropPipe(ctx, c, node); err != nil {
+			return err
+		}
+		l.mu.Lock()
+		l.pipes[node].state = pipeNotExportable
+		l.mu.Unlock()
+		return nil
+	}
+	ch := "probe/" + node
+	l.mu.Lock()
+	if l.pipes[node].state == pipeMirrored {
+		l.mu.Unlock()
+		return nil
+	}
+	var since *uint64
+	if s, ok := l.since[ch]; ok {
+		since = &s
+	}
+	epoch := l.epoch
+	l.mu.Unlock()
+	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	id, frames, err := c.SubscribeExact(sctx, ch, since, epoch, 1024)
+	cancel()
+	if err != nil {
+		return err
+	}
+	go func() {
+		for f := range frames {
+			select {
+			case merged <- peerFrame{ch, f}:
+			case <-c.Done():
+				return
+			}
+		}
+	}()
+	l.mu.Lock()
+	*l.pipes[node] = pipeSub{state: pipeMirrored, sub: id}
+	l.mu.Unlock()
+	return nil
+}
+
+// dropPipe ends a wanted node's mirror, if any, and marks it absent.
+func (l *peerLink) dropPipe(ctx context.Context, c *Client, node string) error {
+	l.mu.Lock()
+	p := l.pipes[node]
+	was := *p
+	*p = pipeSub{state: pipeAbsent}
+	l.mu.Unlock()
+	if was.state != pipeMirrored {
+		return nil
+	}
+	uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return c.Unsubscribe(uctx, was.sub)
 }
 
 type peerFrame struct {

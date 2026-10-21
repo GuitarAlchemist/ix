@@ -1,6 +1,6 @@
 # Contract: a probe sample read from the plane, as a consumer's observation (`ixctl.v1` → gaia#245)
 
-**Version:** v0.1.2 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
+**Version:** v0.1.3 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
 **Date:** 2026-10-21 · **Owner:** ix (`go/ixctl`, the producer side; Gaia owns the adapter, projection and UI) · **Story:** [ix#413](https://github.com/GuitarAlchemist/ix/issues/413) · **Consumer:** [gaia#245](https://github.com/GuitarAlchemist/gaia/issues/245) · **Plan:** `docs/plans/2026-10-20-ixctl-probes.md`
 
 Says how a reader of the control plane's event stream (`subscribe` over `ixctl.v1`, `GET /v1/events`,
@@ -168,6 +168,11 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 
 ## Changes
 
+- v0.1.3 (2026-10-21): D4 (ix#402) resolved, S2 (ix#408) slice 1: `probe.created` and
+  `probe.list` carry `export: true` on a node whose pipe federation may mirror; a peer that names
+  the node in `peers[].probes` reads it as `peer/<peer>/probe/<node>` with `origin` kept (the
+  source's `seq` / `epoch` are not on the mirrored envelope yet: slice 2 adds `src_seq` /
+  `src_epoch`, and the series becomes `origin:src_epoch:node:<created seq>`). G1 unchanged.
 - v0.1.2 (2026-10-21): D10 (ix#416) resolved and shipped: `probe.list` carries `bytes`,
   `rate_per_s` and a mux's `max_rate_per_s`; `probe.kinds` → `limits` carries the plane's
   `max_rate_per_s` / `tree_rate_per_s`; a create past a budget is refused in advance (400, no

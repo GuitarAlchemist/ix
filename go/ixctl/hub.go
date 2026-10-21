@@ -65,6 +65,7 @@ type Request struct {
 	ID      int64    `json:"id,omitempty"`
 	Op      string   `json:"op"`
 	Ch      string   `json:"ch,omitempty"`
+	Exact   bool     `json:"exact,omitempty"` // subscribe: Ch is one channel's exact name, not a prefix
 	Since   *uint64  `json:"since,omitempty"`
 	Epoch   string   `json:"epoch,omitempty"`
 	Desired *Desired `json:"desired,omitempty"`
@@ -216,6 +217,7 @@ func (h *Hub) Span() (head, oldest uint64) {
 type Cursor struct {
 	h      *Hub
 	prefix string
+	exact  bool   // prefix is a whole channel name: probe/cpu does not cover probe/cpu-extra
 	next   uint64 // next seq wanted
 	start  uint64 // head when the cursor was made
 	replay bool   // since was given: a first gap is since-too-old
@@ -245,6 +247,13 @@ func (h *Hub) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
 		c.next = 1
 	}
 	return c
+}
+
+func (c *Cursor) matches(ch string) bool {
+	if c.exact {
+		return ch == c.prefix
+	}
+	return strings.HasPrefix(ch, c.prefix)
 }
 
 // Head is the hub's head when the cursor was made: envelopes up to it are
@@ -283,7 +292,7 @@ func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
 		for c.next <= h.head && len(out) < max {
 			env := h.ring[c.next%ringSize]
 			c.next++
-			if strings.HasPrefix(env.Ch, c.prefix) {
+			if c.matches(env.Ch) {
 				out = append(out, env)
 			}
 		}

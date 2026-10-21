@@ -207,6 +207,16 @@ type PeerStatus struct {
 	Name     string          `json:"name"`
 	State    string          `json:"state"`
 	Services json.RawMessage `json:"services"`
+	// Probes: one entry per node named in the peer spec's `probes`, in that order, with what
+	// it is right now: `mirrored` (exportable and wanted, its pipe crosses), `not-exportable`
+	// (the peer holds it without export), `absent` (the peer holds no such node, or the link
+	// is down).
+	Probes []PeerProbeStatus `json:"probes,omitempty"`
+}
+
+type PeerProbeStatus struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
 }
 
 // StatusReply summarises the generations. Every generation <= SettledGeneration has

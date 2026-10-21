@@ -231,6 +231,24 @@ attribués. `probe.list` dit débits et budgets ; la porte E18 le vérifie sur l
 plan (D4 ouverte). Grillée à la voix avec l'opérateur en trois tours ; la résolution est sur
 ix#416.
 
+**D4 tranchée (2026-10-21, ix#402) et tranche 1 de S2 livrée (ix#408) :** l'agrégation vit chez
+le lecteur, et en V1 le lecteur est le consommateur (IXQL `ix.ctl.events` sur
+`peer/<pair>/probe/<nœud>`), aucune source distante sur un mux local. Ce qui traverse un lien est
+l'intersection du `export: true` de l'enfant à la création (immuable, faux par défaut) et de la
+demande exacte du parent `peers[].probes` ; le lien s'abonne par nom de canal exact (un préfixe
+emporterait `cpu-extra` avec `cpu`), depuis le `probe.list` du pair au raccordement puis depuis
+les `probe.created` / `probe.removed` en miroir, les deux idempotents, donc leur ordre n'exige pas
+encore d'instantané ; `status.peers[].probes` dit `mirrored` / `not-exportable` / `absent`. Trois
+chiffres tenus séparés : échantillonnage admis (D10), enveloppes publiées (échantillons ×
+profondeur), octets et enregistrements transportés par lien et par parent ; `tree_rate_per_s`
+n'est pas une borne fédérée. Reste à livrer (tranches 2 à 4, critères d'acceptation sur ix#408) :
+la provenance `src_seq` / `src_epoch` et la série `origin:src_epoch:node:<created seq>` ; les trous
+distants relayés comme marqueur de continuité ; les files du lien bornées par classe
+(enregistrements et octets), un rejeu borné puis saut avec trou daté, `degraded` et `reconciled`
+séparés ; l'instantané lié à un curseur avec identités de création. Grillée à la voix, la revue en
+lecture seule de Gaïa intégrée ; la résolution est sur ix#402. La porte E19 vérifie la tranche sur
+les deux plans fédérés.
+
 Les tuyaux inter-hôtes (S2), l'échantillonnage partagé (S3), les releases GitHub avec un manifeste de sondes au-delà du squelette de workflow (S5), les kinds WMI du
 prototype (S6), l'adaptateur de l'enveloppe Gaia (S7 : le côté IX est le brouillon de contrat
 [`2026-10-21-ixctl-probe-observation.contract.md`](../../contracts/2026-10-21-ixctl-probe-observation.contract.md),

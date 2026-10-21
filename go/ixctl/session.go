@@ -126,6 +126,7 @@ func (s *session) subscribe(req Request) {
 		return
 	}
 	cur := s.b.Subscribe(req.Ch, req.Since, req.Epoch)
+	cur.exact = req.Exact
 	ctx, cancel := context.WithCancel(s.ctx)
 	e := &subEntry{prefix: req.Ch, cancel: cancel}
 	s.subs[req.ID] = e

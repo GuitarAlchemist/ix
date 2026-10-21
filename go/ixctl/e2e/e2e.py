@@ -8,8 +8,9 @@ a point the operator named; bounds, refusals, a peer's bookmark; survival of a r
 IXQL probe surface (E17: `probe.ixql` through the Rust client, a CPU probe under a mux, ten
 records, the tree removed) and probe budgets (E18: `limits` say the plane's budget, a leaf
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
-widen, the list says rates and bytes). 44 checks, E1..E18, a restart loop and the M1 and M2
-measurements.
+widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
+only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
+what each wanted name is). 45 checks, E1..E19, a restart loop and the M1 and M2 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -445,7 +446,7 @@ def run():
                   "    except OSError as e: print('spawn refused:', e, file=sys.stderr); break\n"
                   "time.sleep(60)"],
          "restart": "never", "limits": {"processes": 3}},
-    ], [{"name": "b", "state_file": str(STATE / "b.json")}])
+    ], [{"name": "b", "state_file": str(STATE / "b.json"), "probes": ["xcpu", "xmem"]}])
 
     pb, ready_b, sb, ms_b = up("b", spec_b)
     # Plane a carries the operator's probe budget (D10): M2 declares exactly 1 600 records/s under
@@ -1135,6 +1136,34 @@ def run():
           refusals=[(code_over, (over or {}).get("error")), (code_leaf, (leaf or {}).get("error")),
                     (code_wide, (wide or {}).get("error"))],
           mux=mux_b, leaf=leaf_b, tree_rate=(tree_b or {}).get("rate_per_s"), gone=gone_b)
+
+    # E19: a probe pipe across the link (D4, ix#402; S2 slice 1). Plane a's peer spec asks for b's
+    # `xcpu` and `xmem`; b exports `xcpu` and `xcpu-extra`, not `xmem`. Only the exported AND wanted
+    # pipe crosses, by exact name (a prefix match on probe/xcpu would carry xcpu-extra), with b's
+    # origin; the status says what each wanted name is; a removal makes it absent again.
+    made = [call(sa, "POST", "/v1/probe/create?peer=b", n)[0] for n in (
+        {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True},
+        {"name": "xcpu-extra", "kind": "heartbeat@1", "every_ms": 50, "export": True},
+        {"name": "xmem", "kind": "heartbeat@1", "every_ms": 50})]
+    started_x = [call(sa, "POST", "/v1/probe/start", {"node": n, "peer": "b"})[0] for n in ("xcpu", "xcpu-extra", "xmem")]
+    def pipe_states():
+        return {p["name"]: p["state"] for p in (peer(status(sa), "b") or {}).get("probes", [])}
+    states_x, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
+    _, xenvs = sse(sa, "peer/b/probe/", 1.0)
+    xchans = sorted({e["ch"] for e in xenvs})
+    _, lb = call(sa, "GET", "/v1/probe?peer=b")
+    flags = {n["name"]: n.get("export", False) for n in (lb or {}).get("nodes", []) if n["name"].startswith("x")}
+    removed_x = [call(sa, "POST", "/v1/probe/remove", {"node": n, "peer": "b"})[0] for n in ("xcpu", "xcpu-extra", "xmem")]
+    states_gone, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    check("E19.only_exported_and_wanted_probe_pipes_cross_the_link",
+          made == [200, 200, 200] and started_x == [200, 200, 200]
+          and (states_x or {}) == {"xcpu": "mirrored", "xmem": "not-exportable"}
+          and xchans == ["peer/b/probe/xcpu"] and bool(xenvs)
+          and all(e["origin"] == "b" and e["ev"]["kind"] == "sample" and e["ev"]["data"].get("node") == "xcpu" for e in xenvs)
+          and flags == {"xcpu": True, "xcpu-extra": True, "xmem": False}
+          and removed_x == [200, 200, 200] and (states_gone or {}) == {"xcpu": "absent", "xmem": "absent"},
+          created=made, started=started_x, states=states_x, channels=xchans, samples=len(xenvs), export=flags,
+          removed=removed_x, after_remove=states_gone)
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)
