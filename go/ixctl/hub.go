@@ -66,17 +66,21 @@ type Gap struct {
 // is also the client frame, so it carries the subscription fields. Epoch says
 // which boot Since belongs to; without it a Since below the head is trusted.
 type Request struct {
-	ID      int64    `json:"id,omitempty"`
-	Op      string   `json:"op"`
-	Ch      string   `json:"ch,omitempty"`
-	Exact   bool     `json:"exact,omitempty"` // subscribe: Ch is one channel's exact name, not a prefix
-	Live    bool     `json:"live,omitempty"`  // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
-	Since   *uint64  `json:"since,omitempty"`
-	Epoch   string   `json:"epoch,omitempty"`
-	Desired *Desired `json:"desired,omitempty"`
-	Service string   `json:"service,omitempty"`
-	Peer    string   `json:"peer,omitempty"`
-	Sub     int64    `json:"sub,omitempty"` // unsubscribe: the subscription to drop
+	ID    int64  `json:"id,omitempty"`
+	Op    string `json:"op"`
+	Ch    string `json:"ch,omitempty"`
+	Exact bool   `json:"exact,omitempty"` // subscribe: Ch is one channel's exact name, not a prefix
+	Live  bool   `json:"live,omitempty"`  // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
+	// WithCursor: probe.list says the point of the plane's stream it stands at (`cursor`: the head
+	// and the epoch), read under the tree lock with the nodes, so the list is exactly what ctl
+	// says up to that seq (S2 slice 4).
+	WithCursor bool     `json:"with_cursor,omitempty"`
+	Since      *uint64  `json:"since,omitempty"`
+	Epoch      string   `json:"epoch,omitempty"`
+	Desired    *Desired `json:"desired,omitempty"`
+	Service    string   `json:"service,omitempty"`
+	Peer       string   `json:"peer,omitempty"`
+	Sub        int64    `json:"sub,omitempty"` // unsubscribe: the subscription to drop
 	// Probe ops: the node to create, or the name of the node the op is about.
 	Probe *NodeSpec `json:"probe,omitempty"`
 	Node  string    `json:"node,omitempty"`

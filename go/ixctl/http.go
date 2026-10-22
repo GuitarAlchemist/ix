@@ -74,7 +74,8 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 	}))
 	m.HandleFunc("GET /v1/probe", s.op(func(r *http.Request) (Request, error) {
 		peer, err := peerQuery(r)
-		return Request{Op: "probe.list", Peer: peer}, err
+		wc := r.URL.Query().Get("with_cursor")
+		return Request{Op: "probe.list", Peer: peer, WithCursor: wc == "1" || wc == "true"}, err
 	}))
 	m.HandleFunc("POST /v1/probe/create", s.op(func(r *http.Request) (Request, error) {
 		peer, err := peerQuery(r)

@@ -168,7 +168,7 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `POST /v1/stop` | Body `{"service": NAME, "peer"?: NAME}`. |
 | `POST /v1/shutdown` | Stops every tree and every probe, then the transports; the state file is removed. |
 | `GET /v1/probes[?peer=]` | The probe kinds and the system's limits (`probe.kinds`, below). |
-| `GET /v1/probe[?peer=]` | The probe tree (`probe.list`). |
+| `GET /v1/probe[?peer=][&with_cursor=1]` | The probe tree (`probe.list`); with `with_cursor=1`, bound to a cursor of the plane's stream. |
 | `POST /v1/probe/create[?peer=]` | Body: a node (`probe.create`). |
 | `POST /v1/probe/start`, `stop`, `touch`, `remove` | Body `{"node": NAME, "peer"?: NAME}`. |
 | `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
@@ -220,9 +220,10 @@ pipe by its exact channel name (`probe/cpu` does not cover `probe/cpu-extra`), f
 after; `status.peers[].probes` says what each wanted name is: `mirrored`, `not-exportable`,
 `opening` (subscribing), or `absent` (no such node, or the link down). A pipe starts live on
 every session and after every drop, never from a seq: the same channel name can carry another
-incarnation's records, and the link has no proof yet that it is the one it last mirrored (the
-cursor-bound list of slice 4 is that proof; slice 2 brought the identity, slice 3 the marker for
-what a live start skips, which closed contract G8; the bounded replay is still to come). Aggregation lives with the reader: in V1 the reader
+incarnation's records; since slice 4 the link knows which incarnation it mirrors (the cursor-bound
+list below, `created_seq`, on `status.peers[].probes[]`), so a resume from the last seq mirrored
+would now be sound and is left for later; slice 2 brought the identity, slice 3 the marker for what
+a live start skips (contract G8 closed) and the bounded catch-up. Aggregation lives with the reader: in V1 the reader
 is the consumer of `peer/<name>/probe/<node>` (IXQL `ix.ctl.events`), no local node names a
 remote source. Export is a federation rule, not a confidentiality barrier: direct subscription to
 a pipe is unchanged. Slice 2 adds the source's `src_seq` / `src_epoch` on every mirrored
@@ -259,9 +260,28 @@ subscription started from, at once when nothing was to be replayed; no other sub
 from `reconciled` (the link is up, the peer's probe list was applied this session and no wanted
 pipe is still opening), lifts `degraded` only when both hold, and counts the catch-ups given up in
 `jumps`. A jump of `ctl` loses the lifecycle events of its span: the state is no longer known
-reconciled (`reconciled` false, `degraded`) until the list is read again, which is the next
-session for now. Not yet: the cursor-bound snapshot (slice 4), which re-reads the list with a
-cursor in the session and closes that window; see the resolution on ix#402.
+reconciled (`reconciled` false, `degraded`) until the link reads the list again, which it does
+right after the jump, as the snapshot below; see the resolution on ix#402.
+
+**The list as a snapshot (S2 slice 4, criteria 3 and 4 of ix#408).** `probe.list` taken with
+`with_cursor` (`GET /v1/probe?with_cursor=1`, IXQL `ix.ctl.probe.list(with_cursor: true)`) says
+the point of the plane's own stream it stands at, `cursor: {seq, epoch}` (the head and the boot),
+read under the tree's lock with the nodes, where every lifecycle event is published: the list is
+exactly what `ctl` says up to that seq and nothing of what follows, so a reader can fold the
+stream from the cursor on without a hole or a repeat. Every node carries `created_seq`, the seq of
+its `probe.created`: the identity of the incarnation under that name (a same-name recreation is a
+new one). A leaf whose stop is in progress says `state: "stopping"` (its `probe.stopped` is not out
+yet: `ctl` still says running, a start is refused until it is; the event and the end of the stop
+are one step, so the list never says `stopping` once `ctl` said stopped). The link reads its list
+so: a lifecycle event at or before the cursor is already reflected and not followed; each wanted
+pipe carries the identity it mirrors (`status.peers[].probes[].created_seq` / `src_epoch`, from
+the list or from the followed `probe.created`), so a consumer keys the mirrored series
+`origin:src_epoch:node:created_seq` from the status without having read that event; after a jump
+on `ctl` the link takes a new snapshot and reconciles to it: a wanted node gone from the list is
+dropped, a name whose identity changed is reopened as the new incarnation (its live start marked
+as any), and `reconciled` holds again. Tested on a churning tree (25 snapshots folded from the
+stream, leaves stopping under the list), on the link's identities and skips, and on a jump taking
+a new snapshot; gate E23 on the two planes.
 
 `ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`, `export` when set),
 `probe.started` (`expires_in_ms` when leased), `probe.stopped` and `probe.removed` with a `reason`
@@ -320,7 +340,7 @@ closes admission (no create or start from then on) and stops every running node,
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
 | `probe.create` | `probe` (a node) | `{node, kind, state: "stopped", depth}` (`depth`: the muxes above it) |
-| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, export?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
+| `probe.list` | `with_cursor?` | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, created_seq, max_rate_per_s?, export?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s, cursor?: {seq, epoch}}` (`state` also `stopping` for a leaf whose stop is in progress; `cursor` with `with_cursor`) |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (a noop on a running node) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
 | `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (the time left, on a running node) |

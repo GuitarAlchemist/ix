@@ -275,10 +275,16 @@ dans la session, sans la clore ; le statut distingue `live` (le pair le dit, par
 qu'un abonné demande) de `reconciled` et ne lève `degraded` que lorsque les deux tiennent, `jumps`
 compté (tests Go : un rattrapage au-delà de la provision saute et est marqué, une deuxième coupure
 saute tout de suite, un flux de contrôle soutenu au-dessus du lecteur saute sans se reconnecter,
-`degraded` levé seulement en direct et réconcilié ; porte E22 ; contrat v0.1.7). Reste à livrer
-(tranche 4) : l'instantané lié à un curseur avec identités de création. Grillée à la voix, la revue en
-lecture seule de Gaïa intégrée ; la résolution est sur ix#402. La porte E19 vérifie la tranche sur
-les deux plans fédérés.
+`degraded` levé seulement en direct et réconcilié ; porte E22 ; contrat v0.1.7). La quatrième
+tranche fait de la liste un instantané (critères 3 et 4) : `probe.list` avec un curseur du flux du
+plan (`cursor: {seq, epoch}`, lu sous le verrou de l'arbre) et `created_seq` par nœud, un état
+`stopping` pour une feuille dont l'arrêt est en cours (son probe.stopped et la fin de l'arrêt
+réunis en une étape : la liste les prenait séparés) ; le lien saute les événements de cycle de vie
+que l'instantané contient, garde l'identité de chaque tuyau sur le status, et prend un nouvel
+instantané après un saut sur ctl (tests Go : 25 instantanés repliés depuis un flux qui bouge, les
+identités et les sauts du lien, un saut qui reliste ; porte E23 ; contrat v0.1.8). Grillée à la
+voix, la revue en lecture seule de Gaïa intégrée ; la résolution est sur ix#402. Les portes
+E19..E23 vérifient les tranches sur les deux plans fédérés.
 
 Les tuyaux inter-hôtes (S2), l'échantillonnage partagé (S3), les releases GitHub avec un manifeste de sondes au-delà du squelette de workflow (S5), les kinds WMI du
 prototype (S6), l'adaptateur de l'enveloppe Gaia (S7 : le côté IX est le brouillon de contrat

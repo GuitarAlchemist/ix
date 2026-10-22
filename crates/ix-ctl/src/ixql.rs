@@ -74,8 +74,9 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
 
     let c = ctl.clone();
     caps.register("ix.ctl.probe.list", move |a: CallArgs| {
-        expect(&a, &["peer"])?;
-        answer(c.probe_list(string(&a, "peer")?.as_deref()))
+        expect(&a, &["peer", "with_cursor"])?;
+        let with_cursor = flag(&a, "with_cursor")?.unwrap_or(false);
+        answer(c.probe_list_at(string(&a, "peer")?.as_deref(), with_cursor))
     })?;
 
     let c = ctl.clone();

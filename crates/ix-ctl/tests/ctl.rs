@@ -78,6 +78,9 @@ struct Plane {
     hold_launch: bool,
     /// The probe tree, by node name, as `probe.create` declared it and the ops moved it.
     probes: BTreeMap<String, Node>,
+    /// The seq the tree's last lifecycle event took: the head a `with_cursor` list stands at, and
+    /// what a node's `created_seq` is read from (S2 slice 4).
+    head: u64,
     /// What a live read (no `since`) is sent: the envelopes after this sequence number. `None`
     /// sends nothing, as a plane whose channels stay quiet; the real plane sends what is
     /// published after the stream opens.
@@ -88,6 +91,8 @@ struct Plane {
 struct Node {
     spec: Value,
     state: &'static str,
+    /// The seq of its `probe.created`: the incarnation's identity (`created_seq`).
+    created: u64,
 }
 
 /// The kinds the fake has "compiled in", as `kinds_reply` lists them.
@@ -282,7 +287,7 @@ impl Plane {
                             "name": name, "kind": n.spec["kind"], "state": n.state,
                             "every_ms": n.spec.get("every_ms").cloned().unwrap_or(json!(0)),
                             "ttl_ms": ttl.clone(), "seq": 0, "errors": 0, "bytes": 0, "children": children,
-                            "rate_per_s": rate(subtree_rate(&self.probes, name)),
+                            "rate_per_s": rate(subtree_rate(&self.probes, name)), "created_seq": n.created,
                         });
                         if n.spec["kind"] == "mux@1" {
                             entry["max_rate_per_s"] = json!(budget_of(&self.probes, name));
@@ -301,12 +306,16 @@ impl Plane {
                         entry
                     })
                     .collect();
-                (
-                    200,
-                    json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256,
-                           "rate_per_s": rate(tree_rate(&self.probes)),
-                           "max_rate_per_s": 1000, "tree_rate_per_s": 2500}),
-                )
+                let mut reply = json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256,
+                                       "rate_per_s": rate(tree_rate(&self.probes)),
+                                       "max_rate_per_s": 1000, "tree_rate_per_s": 2500});
+                if query.split('&').any(|kv| kv == "with_cursor=1") {
+                    // S2 slice 4: the head and the boot the list stands at, as the plane reads
+                    // them under the tree's lock.
+                    reply["cursor"] =
+                        json!({"seq": self.head, "epoch": self.epoch.clone().unwrap_or_default()});
+                }
+                (200, reply)
             }
             ("POST", "/v1/probe/create") => match self.probe_create(&doc) {
                 Ok(reply) => (200, reply),
@@ -347,6 +356,9 @@ impl Plane {
             }
             (ttl, n.state)
         };
+        if op != "touch" {
+            self.head += 1; // the lifecycle event the op says on ctl
+        }
         Ok(match op {
             "start" => {
                 let mut reply = json!({"node": name, "state": "running"});
@@ -467,11 +479,13 @@ impl Plane {
             up = self.probes.get(p).and_then(|n| n.spec["parent"].as_str());
         }
         let reply = json!({"node": name, "kind": kind, "state": "stopped", "depth": depth});
+        self.head += 1;
         self.probes.insert(
             name.to_string(),
             Node {
                 spec: spec.clone(),
                 state: "stopped",
+                created: self.head,
             },
         );
         Ok(reply)
@@ -604,6 +618,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         trickle: None,
         hold_launch: false,
         probes: BTreeMap::new(),
+        head: 0,
         live_from: None,
     }));
     let shared = plane.clone();
@@ -1162,9 +1177,13 @@ fn probe_list_shows_the_tree_and_its_usage() {
     let nodes = tree["nodes"].as_array().unwrap();
     assert_eq!(
         json!({"name": "agg", "kind": "mux@1", "state": "running", "every_ms": 0, "ttl_ms": 0, "seq": 0, "errors": 0,
-               "children": 1, "bytes": 0, "rate_per_s": 10, "max_rate_per_s": 1000}),
+               "children": 1, "bytes": 0, "rate_per_s": 10, "max_rate_per_s": 1000, "created_seq": 1}),
         nodes[0],
-        "a mux says its subtree's declared rate and the budget it is held to (D10)"
+        "a mux says its subtree's declared rate and the budget it is held to (D10), and the seq of its probe.created (S2 slice 4)"
+    );
+    assert!(
+        tree.get("cursor").is_none(),
+        "the plain list carries no cursor: {tree}"
     );
     assert_eq!(json!(10), tree["rate_per_s"]);
     assert_eq!(json!(1000), tree["max_rate_per_s"]);
@@ -1192,6 +1211,69 @@ fn probe_list_shows_the_tree_and_its_usage() {
     assert_eq!(
         Some(&"GET /v1/probe?peer=b".to_string()),
         plane.lock().unwrap().log.last()
+    );
+}
+
+// S2 slice 4 (criteria 3 and 4 of ix#408): `probe.list` with a cursor is a snapshot of the plane's
+// own stream, `cursor: {seq, epoch}` the head and the boot it stands at, each node naming the seq
+// of its `probe.created` (`created_seq`, the incarnation's identity); the flag rides as a query
+// argument beside the routing.
+#[test]
+fn probe_list_with_cursor_binds_the_snapshot_and_names_incarnations() {
+    let (ctl, plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source(
+            r#"agg <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1" })
+               cpu <- ix.ctl.probe.create(probe: { name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg" })
+               on <- ix.ctl.probe.start(node: "cpu")
+               snap <- ix.ctl.probe.list(with_cursor: true)
+               plain <- ix.ctl.probe.list(with_cursor: false)"#,
+        )
+        .unwrap();
+    let snap = out.binding("snap").unwrap();
+    assert_eq!(
+        json!({"seq": 3, "epoch": "3f9a1c0b7d2e"}),
+        snap["cursor"],
+        "the head after two creations and a start, in this boot"
+    );
+    let nodes = snap["nodes"].as_array().unwrap();
+    assert_eq!(json!(1), nodes[0]["created_seq"], "agg was created first");
+    assert_eq!(json!(2), nodes[1]["created_seq"], "cpu second");
+    assert_eq!(json!("running"), nodes[1]["state"]);
+    let plain = out.binding("plain").unwrap();
+    assert!(
+        plain.get("cursor").is_none(),
+        "without the cursor the list is the plain one: {plain}"
+    );
+    assert_eq!(
+        json!(2),
+        plain["nodes"][1]["created_seq"],
+        "the identity is always there"
+    );
+    assert_eq!(*snap, ctl.probe_list_at(None, true).unwrap());
+    assert_eq!(*plain, ctl.probe_list_at(None, false).unwrap());
+    assert_eq!(*plain, ctl.probe_list(None).unwrap());
+    assert!(
+        plane
+            .lock()
+            .unwrap()
+            .log
+            .iter()
+            .any(|l| l == "GET /v1/probe?with_cursor=1"),
+        "{:?}",
+        plane.lock().unwrap().log
+    );
+    match ctl.probe_list_at(Some("b"), true) {
+        Err(CtlError::Http {
+            status: 400,
+            message,
+        }) => assert!(message.contains("no peers"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        Some(&"GET /v1/probe?peer=b&with_cursor=1".to_string()),
+        plane.lock().unwrap().log.last(),
+        "the flag rides beside the routing"
     );
 }
 

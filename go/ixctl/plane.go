@@ -149,7 +149,7 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 		}
 		return p.probes.create(req.Probe)
 	case "probe.list":
-		return p.probes.list(), nil
+		return p.probes.list(req.WithCursor), nil
 	case "probe.start":
 		return p.probes.start(req.Node)
 	case "probe.stop":
@@ -187,7 +187,7 @@ func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, err
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
 	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node,
-		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note})
+		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note, WithCursor: req.WithCursor})
 }
 
 type ServiceStatus struct {
@@ -232,6 +232,13 @@ type PeerProbeStatus struct {
 	// the link was made (across sessions); each run of drops is marked on the mirrored pipe
 	// before the record that followed (`link.gap`, reason `dropped`). Absent while zero.
 	Dropped uint64 `json:"dropped,omitempty"`
+	// CreatedSeq and SrcEpoch: the identity of the incarnation the link mirrors or declined under
+	// this name, the seq and boot of its probe.created on the peer (from the peer's cursor-bound
+	// list or the followed probe.created; S2 slice 4): a consumer keys the mirrored series
+	// `origin:src_epoch:node:created_seq` from here without having read that event. Absent while
+	// the name is absent.
+	CreatedSeq uint64 `json:"created_seq,omitempty"`
+	SrcEpoch   string `json:"src_epoch,omitempty"`
 }
 
 // StatusReply summarises the generations. Every generation <= SettledGeneration has

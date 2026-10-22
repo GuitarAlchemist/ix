@@ -249,9 +249,15 @@ dropped is reopened in the session, not the session torn down; the status tells 
 says so, with a live frame a subscriber asks for) from `reconciled` and lifts `degraded` only when
 both hold, `jumps` counted (Go tests: a catch-up past the allowance jumps and is marked, a second
 outage jumps at once, a sustained control stream above the reader jumps without reconnecting,
-`degraded` lifted only when live and reconciled; gate E22; contract v0.1.7). Still to ship (slice
-4): the cursor-bound snapshot with creation identities. Grilled by voice with Gaia's read-only review
-folded in; the resolution is on ix#402. Gate E19 checks the slice on the two federated planes.
+`degraded` lifted only when live and reconciled; gate E22; contract v0.1.7). The fourth slice
+makes the list a snapshot (criteria 3 and 4): `probe.list` with a cursor of the plane's stream
+(`cursor: {seq, epoch}`, read under the tree's lock) and `created_seq` per node, a `stopping`
+state for a leaf whose stop is in progress (its probe.stopped and the end of the stop made one
+step: the list caught them apart); the link skips the lifecycle events the snapshot holds, keeps
+each pipe's identity on the status, and takes a new snapshot after a jump on ctl (Go tests: 25
+snapshots folded from a churning stream, the link's identities and skips, a jump re-listing; gate
+E23; contract v0.1.8). Grilled by voice with Gaia's read-only review folded in; the resolution is
+on ix#402. Gates E19..E23 check the slices on the two federated planes.
 
 Cross-host pipes (S2), shared sampling (S3), GitHub releases with
 a probes manifest beyond the workflow skeleton (S5), the prototype's WMI kinds (S6), the Gaia

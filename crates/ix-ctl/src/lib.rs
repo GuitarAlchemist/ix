@@ -520,10 +520,29 @@ impl Ctl {
     /// every_ms, ttl_ms, parent?, filter?, seq, errors, bytes, children, rate_per_s,
     /// max_rate_per_s?, export?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s,
     /// tree_rate_per_s}`: each node's declared rate and bytes emitted, each mux's budget, the
-    /// tree's (D10, ix#416), and `export: true` on a node whose pipe federation may mirror (D4,
-    /// ix#402). With `peer`, that peer's.
+    /// tree's (D10, ix#416), `export: true` on a node whose pipe federation may mirror (D4,
+    /// ix#402), and `created_seq`, the seq of the node's `probe.created` (the incarnation's
+    /// identity under its name, S2 slice 4). With `peer`, that peer's.
     pub fn probe_list(&self, peer: Option<&str>) -> Result<Value, CtlError> {
-        self.call("GET", &routed("/v1/probe", peer), None)
+        self.probe_list_at(peer, false)
+    }
+
+    /// `GET /v1/probe?with_cursor=1`: `probe_list` bound to a cursor of the plane's own stream
+    /// (S2 slice 4, criteria 3 and 4 of ix#408): `cursor: {seq, epoch}`, the head and the boot the
+    /// list stands at, read with the nodes under the tree's lock where every lifecycle event is
+    /// published, so the list is exactly what `ctl` says up to that seq and nothing of what
+    /// follows; a leaf whose stop is in progress (its `probe.stopped` not out yet) says `state:
+    /// "stopping"`. Without the cursor, the plain list. With `peer`, that peer's.
+    pub fn probe_list_at(&self, peer: Option<&str>, with_cursor: bool) -> Result<Value, CtlError> {
+        let mut path = routed("/v1/probe", peer);
+        if with_cursor {
+            path.push_str(if path.contains('?') {
+                "&with_cursor=1"
+            } else {
+                "?with_cursor=1"
+            });
+        }
+        self.call("GET", &path, None)
     }
 
     /// `POST /v1/probe/create`: declares `spec` (`{name, kind, every_ms?, parent?, filter?,

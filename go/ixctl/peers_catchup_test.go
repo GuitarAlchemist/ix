@@ -349,7 +349,7 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	fail := make(chan error, 1)
 	reopen := func(sub int64) int64 {
 		t.Helper()
-		l.reopenControl(ctx, c, merged, fail, peerFrame{prefix: "svc/", sub: sub, f: Frame{Gap: &Gap{Reason: "overflow"}}})
+		l.reopenControl(ctx, c, nil, merged, fail, peerFrame{prefix: "svc/", sub: sub, f: Frame{Gap: &Gap{Reason: "overflow"}}})
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			l.mu.Lock()

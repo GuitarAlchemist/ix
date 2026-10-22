@@ -179,7 +179,7 @@ au plus.
 | `POST /v1/stop` | Corps `{"service": NOM, "peer"?: NOM}`. |
 | `POST /v1/shutdown` | Arrête chaque arbre et chaque sonde, puis les transports ; le fichier d'état est retiré. |
 | `GET /v1/probes[?peer=]` | Les kinds de sonde et les limites du système (`probe.kinds`, ci-dessous). |
-| `GET /v1/probe[?peer=]` | L'arbre des sondes (`probe.list`). |
+| `GET /v1/probe[?peer=][&with_cursor=1]` | L'arbre des sondes (`probe.list`) ; avec `with_cursor=1`, lié à un curseur du flux du plan. |
 | `POST /v1/probe/create[?peer=]` | Corps : un nœud (`probe.create`). |
 | `POST /v1/probe/start`, `stop`, `touch`, `remove` | Corps `{"node": NOM, "peer"?: NOM}`. |
 | `GET /v1/bookmark[?peer=]` | Les signets (`bookmark.list`, ci-dessous). |
@@ -233,10 +233,11 @@ tuyau de chaque nœud voulu par son nom de canal exact (`probe/cpu` ne couvre pa
 demandé : `mirrored`, `not-exportable`, `opening` (abonnement en cours) ou `absent` (pas de tel
 nœud, ou lien tombé). Un tuyau démarre en direct à chaque session et après chaque retrait,
 jamais depuis une séquence : le même nom de canal peut porter les enregistrements d'une autre
-incarnation, et le lien n'a pas encore la preuve que c'est celle qu'il a reflétée en dernier (la
-liste liée à un curseur de la tranche 4 est cette preuve ; la tranche 2 a apporté l'identité, la
-tranche 3 le marqueur pour ce qu'un démarrage en direct saute, ce qui a fermé le G8 du contrat ;
-le rejeu borné reste à venir). L'agrégation
+incarnation ; depuis la tranche 4 le lien sait quelle incarnation il reflète (la liste liée à un
+curseur ci-dessous, `created_seq`, sur `status.peers[].probes[]`), si bien qu'une reprise depuis
+le dernier seq reflété serait désormais fondée et est laissée pour plus tard ; la tranche 2 a
+apporté l'identité, la tranche 3 le marqueur pour ce qu'un démarrage en direct saute (G8 du
+contrat fermé) et le rattrapage borné. L'agrégation
 vit chez le lecteur : en V1 le lecteur est le consommateur de `peer/<nom>/probe/<nœud>` (IXQL
 `ix.ctl.events`), aucun nœud local ne nomme une source distante. L'export est une règle de
 fédération, pas une barrière de confidentialité : l'abonnement direct à un tuyau est inchangé.
@@ -277,10 +278,31 @@ tout de suite s'il n'y avait rien à rejouer ; aucun autre abonné ne la reçoit
 lien est haut, la liste des sondes du pair a été appliquée dans cette session et aucun tuyau
 demandé n'est encore en ouverture), ne lève `degraded` que lorsque les deux tiennent, et compte
 dans `jumps` les rattrapages abandonnés. Un saut de `ctl` perd les événements de cycle de vie de
-son intervalle : l'état n'est plus su réconcilié (`reconciled` faux, `degraded`) jusqu'à ce que la
-liste soit relue, c'est-à-dire la session suivante pour l'instant. Pas encore : l'instantané lié à
-un curseur (tranche 4), qui relit la liste avec un curseur dans la session et ferme cette
-fenêtre ; voir la résolution sur ix#402.
+son intervalle : l'état n'est plus su réconcilié (`reconciled` faux, `degraded`) jusqu'à ce que le
+lien relise la liste, ce qu'il fait juste après le saut, comme l'instantané ci-dessous ; voir la
+résolution sur ix#402.
+
+**La liste comme instantané (S2 tranche 4, critères 3 et 4 de ix#408).** `probe.list` pris avec
+`with_cursor` (`GET /v1/probe?with_cursor=1`, IXQL `ix.ctl.probe.list(with_cursor: true)`) dit le
+point du flux du plan où il se tient, `cursor: {seq, epoch}` (la tête et le démarrage), lu sous le
+verrou de l'arbre avec les nœuds, là où chaque événement de cycle de vie est publié : la liste est
+exactement ce que `ctl` dit jusqu'à ce seq et rien de ce qui suit, si bien qu'un lecteur peut
+replier le flux à partir du curseur sans trou ni répétition. Chaque nœud porte `created_seq`, le
+seq de son `probe.created` : l'identité de l'incarnation sous ce nom (une recréation du même nom
+en est une nouvelle). Une feuille dont l'arrêt est en cours dit `state: "stopping"` (son
+`probe.stopped` n'est pas encore sorti : `ctl` dit encore running, un démarrage est refusé
+jusque-là ; l'événement et la fin de l'arrêt sont une seule étape, donc la liste ne dit jamais
+`stopping` une fois que `ctl` a dit stopped). Le lien lit sa liste ainsi : un événement de cycle
+de vie au curseur ou avant est déjà reflété et n'est pas suivi ; chaque tuyau voulu porte
+l'identité qu'il reflète (`status.peers[].probes[].created_seq` / `src_epoch`, depuis la liste ou
+depuis le `probe.created` suivi), si bien qu'un consommateur cle la série miroir
+`origin:src_epoch:node:created_seq` depuis le status sans avoir lu cet événement ; après un saut
+sur `ctl` le lien prend un nouvel instantané et s'y réconcilie : un nœud voulu disparu de la liste
+est retiré, un nom dont l'identité a changé est rouvert comme la nouvelle incarnation (son
+démarrage en direct marqué comme tout autre), et `reconciled` tient de nouveau. Testé sur un arbre
+qui bouge (25 instantanés repliés depuis le flux, des feuilles s'arrêtant sous la liste), sur les
+identités et les sauts du lien, et sur un saut prenant un nouvel instantané ; porte E23 sur les
+deux plans.
 
 `ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`, `export` quand posé),
 `probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
@@ -342,7 +364,7 @@ ni de start) et arrête chaque nœud en marche, raison `shutdown`.
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
 | `probe.create` | `probe` (un nœud) | `{node, kind, state: "stopped", depth}` (`depth` : les mux au-dessus) |
-| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, export?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
+| `probe.list` | `with_cursor?` | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, created_seq, max_rate_per_s?, export?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s, cursor?: {seq, epoch}}` (`state` aussi `stopping` pour une feuille dont l'arrêt est en cours ; `cursor` avec `with_cursor`) |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (sans effet sur un nœud en marche) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
 | `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (le temps restant, sur un nœud en marche) |

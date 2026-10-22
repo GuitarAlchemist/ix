@@ -10,7 +10,7 @@ records, the tree removed) and probe budgets (E18: `limits` say the plane's budg
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
 widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
 only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
-what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts degraded only when both hold). 50 checks, E1..E22, a restart loop and the M1, M2 and M3 measurements.
+what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts degraded only when both hold; E23: the probe list read with a cursor is a snapshot of the plane's stream with creation identities, exact against the stream folded to its cursor, the identity agreeing on b, through a and in a's status). 51 checks, E1..E23, a restart loop and the M1, M2 and M3 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -1287,6 +1287,54 @@ def run():
           and bool(benvs) and all("src_seq" not in e and "src_epoch" not in e for e in benvs) and code_rm20 == 200,
           mirrored=len(menvs), matched=matched, on_b=len(benvs),
           src_epoch_is_b=all(e.get("src_epoch") == b_epoch for e in menvs), removed=code_rm20)
+
+    # E23 (S2 slice 4, criteria 3 and 4 of ix#408): the probe list is a snapshot bound to a cursor
+    # of the plane's own stream, with creation identities. Read with `with_cursor` on b, routed
+    # through a (`?peer=b`) and in a's status (`created_seq` / `src_epoch` of the mirrored pipe),
+    # the identity of xcpu agrees; b's list folded from its own stream since the boot up to the
+    # cursor (created / started / stopped / removed on ctl, `stopping` read as running: its
+    # probe.stopped is not out yet) is exactly the list, and the fold met no gap.
+    call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True})
+    call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
+    code_lb, list_b = call(sb, "GET", "/v1/probe?with_cursor=1")
+    code_la, list_a = call(sa, "GET", "/v1/probe?peer=b&with_cursor=1")
+    st_x = next((p for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"] == "xcpu"), {})
+    b_epoch23 = status(sb)["epoch"]
+    cur23 = (list_b or {}).get("cursor") or {}
+    cur23a = (list_a or {}).get("cursor") or {}
+    node_b = next((n for n in (list_b or {}).get("nodes", []) if n["name"] == "xcpu"), {})
+    node_a = next((n for n in (list_a or {}).get("nodes", []) if n["name"] == "xcpu"), {})
+    gaps23 = len(SSE_GAPS)
+    _, fold = sse(sb, "", 0.5, query=f"ch=&since=0&epoch={b_epoch23}") if cur23.get("seq") else ("", [])
+    want23 = {}
+    for e in fold:
+        if e["seq"] > cur23.get("seq", 0) or e["ch"] != "ctl":
+            continue
+        k, d = e["ev"]["kind"], e["ev"]["data"]
+        nm = d.get("node")
+        if k == "probe.created":
+            want23[nm] = (e["seq"], bool(d.get("export")), "stopped")
+        elif k == "probe.started" and nm in want23:
+            want23[nm] = want23[nm][:2] + ("running",)
+        elif k == "probe.stopped" and nm in want23:
+            want23[nm] = want23[nm][:2] + ("stopped",)
+        elif k == "probe.removed":
+            want23.pop(nm, None)
+    got23 = {n["name"]: (n.get("created_seq"), bool(n.get("export")), "running" if n["state"] == "stopping" else n["state"])
+             for n in (list_b or {}).get("nodes", [])}
+    code_rm23 = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    check("E23.probe_list_is_a_cursor_bound_snapshot_with_identities",
+          code_lb == 200 and code_la == 200 and cur23.get("epoch") == b_epoch23 and (cur23.get("seq") or 0) > 0
+          and cur23a.get("epoch") == b_epoch23 and (cur23a.get("seq") or 0) >= cur23["seq"]
+          and (node_b.get("created_seq") or 0) > 0 and node_a.get("created_seq") == node_b.get("created_seq")
+          and st_x.get("created_seq") == node_b.get("created_seq") and st_x.get("src_epoch") == b_epoch23
+          and bool(fold) and got23 == want23 and len(SSE_GAPS) == gaps23 and code_rm23 == 200,
+          list_b=code_lb, list_a=code_la, cursor=cur23, cursor_via_a=cur23a,
+          created_seq=[node_b.get("created_seq"), node_a.get("created_seq"), st_x.get("created_seq")],
+          status_src_epoch_is_b=st_x.get("src_epoch") == b_epoch23, folded=len(fold), nodes=len(got23),
+          exact=got23 == want23, want=sorted(want23) if got23 != want23 else None, gaps=len(SSE_GAPS) - gaps23, removed=code_rm23)
 
     # M3: control under federated load (S2 slice 3, criterion 6 of ix#408). Eight 10 ms heartbeat
     # pipes b exports and a wants (800 records/s offered to the link, under b's default budget),
