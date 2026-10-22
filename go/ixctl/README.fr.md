@@ -249,7 +249,7 @@ chaque démarrage en direct (`reason: live-start`, `src_epoch` le boot lu désor
 `last_src_epoch` le boot d'avant) ou a répondu un trou sur le `ctl` / `svc/` repris du lien
 (`prefix`, `reason`, `from`, `oldest` tels qu'il les a dits : son historique a expiré) ; un trou
 local reste une trame gap. Les files du lien sont bornées par classe (critère 6 de ix#408) :
-`ctl` et `svc/` dans leur propre file, sans perte et lus d'abord ; les tuyaux demandés dans une
+`ctl` et `svc/` dans leur propre file, jamais écartés par le lien et lus d'abord (une trame de contrôle attend au plus l'application d'une trame de tuyau ; le débordement par le pair de ces abonnements clôt la session, reprise à la reconnexion, et un rejeu que son anneau ne tient plus est un trou, marqué) ; les tuyaux demandés dans une
 file bornée en enregistrements (1024) et en octets (4 Mio) que leurs relais n'attendent jamais,
 si bien qu'un parent plus lent que la charge offerte perd des enregistrements de tuyau plutôt
 que de grossir ou de retenir le cycle de vie ; chaque série de pertes est comptée sur

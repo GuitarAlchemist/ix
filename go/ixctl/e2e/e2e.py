@@ -1280,15 +1280,14 @@ def run():
     n_xl, window = 8, 2.0
     made_xl = [call(sa, "POST", "/v1/probe/create?peer=b", {"name": f"xl{i}", "kind": "heartbeat@1", "every_ms": 10, "export": True})[0]
                for i in range(n_xl)]
-    drops0 = sum(p.get("dropped", 0) for p in (peer(status(sa), "b") or {}).get("probes", []))
+    drops0 = sum(p.get("dropped", 0) for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"].startswith("xl"))
     ready_p, ready_c = threading.Event(), threading.Event()
     th_p, m3_pipes = sse_async(sa, "peer/b/probe/", window + 1.0, query="ch=peer/b/probe/", ready=ready_p)
     th_c, m3_ctl = sse_async(sa, "peer/b/ctl", window + 1.0, query="ch=peer/b/ctl", ready=ready_c)
     ready_p.wait(2)
     ready_c.wait(2)
     t0 = time.perf_counter()
-    for i in range(n_xl):
-        call(sa, "POST", "/v1/probe/start", {"node": f"xl{i}", "peer": "b"})
+    started_xl = [call(sa, "POST", "/v1/probe/start", {"node": f"xl{i}", "peer": "b"})[0] for i in range(n_xl)]
     def xl_mirrored():
         xl = [p for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"].startswith("xl")]
         return len(xl) == n_xl and all(p["state"] == "mirrored" for p in xl)
@@ -1302,24 +1301,28 @@ def run():
     _, penvs = m3_pipes["r"]
     _, cenvs = m3_ctl["r"]
     xl_samples = [e for e in penvs if e["ev"]["kind"] == "sample" and str(e["ev"]["data"].get("node", "")).startswith("xl")]
-    xl_markers = [e for e in penvs if e["ev"]["kind"] == "link.gap" and e["ev"]["data"].get("reason") == "dropped"]
+    xl_markers = [e for e in penvs if e["ev"]["kind"] == "link.gap" and e["ev"]["data"].get("reason") == "dropped"
+                  and e["ch"].startswith("peer/b/probe/xl")]
     marked = sum(e["ev"]["data"].get("dropped", 0) for e in xl_markers)
     mark_env = next((e for e in cenvs if e["ev"]["kind"] == "probe.created" and e["ev"]["data"].get("node") == "xl-mark"), None)
     mark_recv = SSE_RECV.get((mark_env["ch"], mark_env["seq"])) if mark_env else None
     ctl_ms = round((mark_recv - t_mark) * 1000, 1) if mark_recv else None
     st_m3 = peer(status(sa), "b") or {}
-    dropped = sum(p.get("dropped", 0) for p in st_m3.get("probes", [])) - drops0
+    dropped = sum(p.get("dropped", 0) for p in st_m3.get("probes", []) if p["name"].startswith("xl")) - drops0
     peer_up_m3 = st_m3.get("state") == "up"
     per_s_x = round(len(xl_samples) / elapsed, 1)
     removed_xl = [call(sa, "POST", "/v1/probe/remove", {"node": f"xl{i}", "peer": "b"})[0] for i in range(n_xl)]
     code_rm_mark = call(sa, "POST", "/v1/probe/remove", {"node": "xl-mark", "peer": "b"})[0]
     measure("m3_link_8x10ms", {"mirrored_per_s": per_s_x, "offered_per_s": n_xl * 100, "dropped": dropped, "marked": marked,
                                "ctl_ms_under_load": ctl_ms, "window_s": round(elapsed, 2)})
+    # What b offered either crossed or was counted dropped: together at least half the declared
+    # rate over the window (the window opens before the starts, so the rate is understated).
+    accounted_per_s = round((len(xl_samples) + dropped) / elapsed, 1)
     check("M3.control_crosses_under_federated_load",
-          made_xl == [200] * n_xl and bool(states_xl) and code_mark == 200 and mark_env is not None
-          and ctl_ms is not None and ctl_ms < 1000 and per_s_x > 0 and peer_up_m3 and marked <= dropped
-          and removed_xl == [200] * n_xl and code_rm_mark == 200,
-          mirrored_per_s=per_s_x, offered_per_s=n_xl * 100, dropped=dropped, marked=marked,
+          made_xl == [200] * n_xl and started_xl == [200] * n_xl and bool(states_xl) and code_mark == 200
+          and mark_env is not None and ctl_ms is not None and ctl_ms < 1000 and accounted_per_s > n_xl * 100 * 0.5
+          and peer_up_m3 and marked <= dropped and removed_xl == [200] * n_xl and code_rm_mark == 200,
+          mirrored_per_s=per_s_x, accounted_per_s=accounted_per_s, offered_per_s=n_xl * 100, dropped=dropped, marked=marked,
           ctl_ms_under_load=ctl_ms, peer_up=peer_up_m3, removed=removed_xl)
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.

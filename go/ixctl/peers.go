@@ -44,7 +44,9 @@ type peerLink struct {
 	token    string              // the peer instance we last saw
 	since    map[string]uint64   // last mirrored seq per prefix (ctl, svc/: resumed on reconnect) or pipe (recorded, never resumed)
 	epoch    string              // the peer boot those seqs belong to
-	boot     string              // the peer's epoch as its status last said it (the boot a live start reads)
+	boot     string              // the peer's boot as read in this session ("" until something named it: a marker then omits src_epoch)
+	lastBoot string              // the last boot ever named, across sessions and instances: the one an epoch-changed marker leaves
+	sess     uint64              // the session now running; an observation made by an older one is ignored
 	last     map[string]srcPoint // per pipe channel, the last frame mirrored, across sessions and peer boots: named by the next live start's marker
 	pipes    map[string]*pipeSub // per wanted probe node, what it is now
 
@@ -190,18 +192,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		}
 	}()
 
-	l.mu.Lock()
-	if st.Token != l.token { // a new peer instance: its seqs start over
-		l.token, l.since = st.Token, map[string]uint64{}
-	}
-	since := map[string]*uint64{}
-	for _, p := range []string{"ctl", "svc/"} {
-		if s, ok := l.since[p]; ok {
-			since[p] = &s
-		}
-	}
-	epoch := l.epoch
-	l.mu.Unlock()
+	since, epoch, sess := l.beginSession(st.Token)
 
 	// Two queues by class (criterion 6 of ix#408). merged holds ctl and svc/: lossless, their
 	// forwarders wait for room (the peer's own overflow of such a subscription then ends the
@@ -265,7 +256,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 			n++
 			switch {
 			case r.op == "status" && r.err == nil:
-				l.setServices(r.data)
+				l.setServices(sess, r.data)
 			case r.op == "probe.list" && r.err != nil:
 				return true, r.err
 			case r.op == "probe.list":
@@ -279,10 +270,10 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	// both, the first frame mirrored says it, in mirror). A new boot is marked by noteBoot before
 	// anything of it is mirrored.
 	if len(backlog) > 0 && backlog[0].f.Env != nil {
-		l.noteBoot(backlog[0].f.Env.Epoch)
+		l.noteBoot(sess, backlog[0].f.Env.Epoch)
 	}
 	refresh := make(chan struct{}, 1)
-	go l.refresher(c, refresh)
+	go l.refresher(c, sess, refresh)
 
 	l.mu.Lock()
 	l.client, l.up = c, true
@@ -308,23 +299,31 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	// reach us while the client's reader is not held back by a full subscription channel, so
 	// the loop never waits on one.
 	fail := make(chan error, 1)
-	q := newPipeQueue()
+	q := newPipeQueue(len(l.pipes))
 	if err := l.reconcilePipes(ctx, c, q, fail, list); err != nil {
 		return true, err
 	}
 	for _, pf := range backlog {
-		if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
+		if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
 			return true, err
 		}
 	}
 
 	for {
-		// Control first: a ctl or svc/ frame is applied while there is one, a pipe frame only
-		// when there is none, so a load of pipes never holds the lifecycle back (and a
-		// probe.removed reaches the pipe it closes before that pipe's frames pile up further).
+		// Control first: a ctl or svc/ frame (or a pipe's overflow) is applied while there is
+		// one, a pipe frame only when there is none, so a load of pipes never holds the lifecycle
+		// back (and a probe.removed reaches the pipe it closes before that pipe's frames pile up
+		// further). Preferential, not strict: a control frame that arrives while the second
+		// select is pending may wait one pipe frame's apply, never a queue of them; and a
+		// sustained control stream is applied before any pipe frame, by design.
 		select {
 		case pf := <-merged:
-			if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
+			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
+				return true, err
+			}
+			continue
+		case pf := <-q.over:
+			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
 				return true, err
 			}
 			continue
@@ -336,12 +335,16 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		}
 		select {
 		case pf := <-merged:
-			if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
+			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
+				return true, err
+			}
+		case pf := <-q.over:
+			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
 				return true, err
 			}
 		case pf := <-q.ch:
 			q.took(pf)
-			if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
+			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
 				return true, err
 			}
 		case err := <-fail:
@@ -360,7 +363,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 // expired, or it restarted): what they skip cannot be replayed, so they are relayed on the
 // peer's mirrored ctl as a continuity marker. A pipe frame that follows a run of frames its
 // forwarder dropped is preceded by the `dropped` marker, on the pipe, in order.
-func (l *peerLink) apply(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, refresh chan<- struct{}, origin string, pf peerFrame) error {
+func (l *peerLink) apply(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, refresh chan<- struct{}, sess uint64, origin string, pf peerFrame) error {
 	if pf.f.Gap != nil && pf.f.Gap.Reason == "overflow" {
 		if pf.sub == 0 {
 			return errors.New("mirror of " + pf.prefix + " overflowed")
@@ -384,7 +387,7 @@ func (l *peerLink) apply(ctx context.Context, c *Client, q *pipeQueue, fail chan
 	if d := l.pipeDelay.Load(); d > 0 && pf.sub != 0 {
 		time.Sleep(time.Duration(d)) // the test knob: a durably slow parent
 	}
-	if err := l.mirror(origin, pf.prefix, pf.f.Env); err != nil {
+	if err := l.mirror(sess, origin, pf.prefix, pf.f.Env); err != nil {
 		return err
 	}
 	if pf.prefix == "ctl" && pf.f.Env.Origin == origin {
@@ -457,24 +460,50 @@ func (l *peerLink) reopenPipe(ctx context.Context, c *Client, q *pipeQueue, fail
 	l.setPipe(ctx, c, q, fail, node, true)
 }
 
-// noteBoot records the peer's boot as last seen and, when it is not the boot the link knew,
+// noteBoot records the peer's boot as now read and, when it is not the last boot ever named,
 // says so on the peer's mirrored ctl: the link resumes nothing from a new instance, so the peer
 // answers no gap for a restart. Whichever names the boot first in a session marks the boundary
 // once: the status, the first queued frame, or the first frame mirrored (Codex round 40: the
-// status alone left a restart behind a failed status unmarked).
-func (l *peerLink) noteBoot(epoch string) {
+// status alone left a restart behind a failed status unmarked). An observation of an older
+// session is ignored (Codex round 41).
+func (l *peerLink) noteBoot(sess uint64, epoch string) {
 	if epoch == "" {
 		return
 	}
 	l.mu.Lock()
-	prev := l.boot
-	l.boot = epoch
-	l.mu.Unlock()
+	defer l.mu.Unlock()
+	if sess < l.sess {
+		return // an older session's observation (its refresher answering late): not the boot now read
+	}
+	prev := l.lastBoot
+	l.boot, l.lastBoot = epoch, epoch
 	if prev != "" && prev != epoch {
+		// Under l.mu: two boundaries cannot cross, and no marker of this boot goes out before it.
 		l.hub.Publish("peer/"+l.spec.Name+"/ctl", event(linkGapKind, map[string]any{
 			"peer": l.spec.Name, "reason": "epoch-changed", "src_epoch": epoch, "last_src_epoch": prev,
 		}))
 	}
+}
+
+// beginSession notes the instance a session connects to and says what its ctl and svc/
+// subscriptions resume from. A new instance (another token) is a boot the link has not read
+// yet: a marker published before anything of it was seen omits src_epoch rather than name the
+// boot before (Codex round 41); the boundary is marked by whatever names the new boot first,
+// from the last boot ever named.
+func (l *peerLink) beginSession(token string) (since map[string]*uint64, epoch string, sess uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sess++
+	if token != l.token { // a new peer instance: its seqs start over, its boot is not read yet
+		l.token, l.since, l.boot = token, map[string]uint64{}, ""
+	}
+	since = map[string]*uint64{}
+	for _, p := range []string{"ctl", "svc/"} {
+		if s, ok := l.since[p]; ok {
+			since[p] = &s
+		}
+	}
+	return since, l.epoch, l.sess
 }
 
 // markLiveStartLocked publishes the marker that opens a pipe's live start, before its first
@@ -616,16 +645,13 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, q *pipeQueue, fail ch
 					return
 				}
 				if f.Gap != nil && f.Gap.Reason == "overflow" {
-					// The peer dropped this subscription: this is its last frame, queued whatever
-					// the room (nothing follows it here) for the loop to reopen the pipe from.
-					pf := peerFrame{prefix: ch, f: f, sub: s.ID}
-					q.bytes.Add(int64(f.Bytes))
+					// The peer dropped this subscription: this is its last frame (nothing follows
+					// it here), handed out of band for the loop to reopen the pipe from. The slot
+					// is there by construction; were it not, the session ends rather than wait.
 					select {
-					case q.ch <- pf:
-					case <-s.Done:
-						q.bytes.Add(-int64(f.Bytes))
-					case <-c.Done():
-						q.bytes.Add(-int64(f.Bytes))
+					case q.over <- peerFrame{prefix: ch, f: f, sub: s.ID}:
+					default:
+						l.failWith(fail, errors.New("no room for the overflow of "+ch))
 					}
 					return
 				}
@@ -674,9 +700,19 @@ type peerFrame struct {
 type pipeQueue struct {
 	ch    chan peerFrame
 	bytes atomic.Int64
+	// over carries a pipe subscription's overflow gap, the peer's last frame on it, out of
+	// band: one slot per wanted pipe, since a subscription overflows at most once and the pipe
+	// is reopened (a new subscription) only once its gap was read, so a send never waits and
+	// the bounded queue holds records alone.
+	over chan peerFrame
 }
 
-func newPipeQueue() *pipeQueue { return &pipeQueue{ch: make(chan peerFrame, maxPipeQueue)} }
+func newPipeQueue(pipes int) *pipeQueue {
+	if pipes < 1 {
+		pipes = 1
+	}
+	return &pipeQueue{ch: make(chan peerFrame, maxPipeQueue), over: make(chan peerFrame, pipes)}
+}
 
 // offer queues pf if it fits both bounds, at once or not at all. The bytes are taken before the
 // record is queued and given back when it is not, so the count never understates what the queue
@@ -703,11 +739,11 @@ func (q *pipeQueue) took(pf peerFrame) { q.bytes.Add(-int64(pf.f.Bytes)) }
 // itself mirrored (another origin, or a peer/ channel) are never forwarded.
 // A frame without a seq or an epoch is malformed (the hub assigns seqs from 1,
 // every boot has an epoch): it has no provenance to mirror and ends the session.
-func (l *peerLink) mirror(origin, prefix string, env *Envelope) error {
+func (l *peerLink) mirror(sess uint64, origin, prefix string, env *Envelope) error {
 	if env.Seq == 0 || env.Epoch == "" {
 		return fmt.Errorf("frame on %s without provenance (seq %d, epoch %q)", prefix, env.Seq, env.Epoch)
 	}
-	l.noteBoot(env.Epoch) // a boot the status and the backlog did not name is marked here, first
+	l.noteBoot(sess, env.Epoch) // a boot the status and the backlog did not name is marked here, first
 	l.mu.Lock()
 	l.since[prefix], l.epoch = env.Seq, env.Epoch
 	if strings.HasPrefix(prefix, "probe/") {
@@ -722,8 +758,10 @@ func (l *peerLink) mirror(origin, prefix string, env *Envelope) error {
 }
 
 // refresher keeps the peer's service list for status, at most once per
-// peerRefresh, on demand.
-func (l *peerLink) refresher(c *Client, kick <-chan struct{}) {
+// peerRefresh, on demand. Its answers are the session's: one that lands after the next session
+// began is ignored (Codex round 41: a late status of the old boot regressed the boot and marked
+// false boundaries).
+func (l *peerLink) refresher(c *Client, sess uint64, kick <-chan struct{}) {
 	for {
 		select {
 		case <-kick:
@@ -734,7 +772,7 @@ func (l *peerLink) refresher(c *Client, kick <-chan struct{}) {
 		data, err := c.Do(ctx, Request{Op: "status"})
 		cancel()
 		if err == nil {
-			l.setServices(data)
+			l.setServices(sess, data)
 		}
 		if !waitFor(c.ctx, peerRefresh) {
 			return
@@ -742,15 +780,20 @@ func (l *peerLink) refresher(c *Client, kick <-chan struct{}) {
 	}
 }
 
-func (l *peerLink) setServices(status json.RawMessage) {
+func (l *peerLink) setServices(sess uint64, status json.RawMessage) {
 	var st struct {
 		Services json.RawMessage `json:"services"`
 		Epoch    string          `json:"epoch"`
 	}
 	if json.Unmarshal(status, &st) == nil {
 		l.mu.Lock()
-		l.services = st.Services
+		stale := sess < l.sess
+		if !stale {
+			l.services = st.Services
+		}
 		l.mu.Unlock()
-		l.noteBoot(st.Epoch)
+		if !stale {
+			l.noteBoot(sess, st.Epoch)
+		}
 	}
 }

@@ -104,6 +104,53 @@ func gapOf(t *testing.T, e *Envelope) linkGap {
 	return g
 }
 
+// A new instance of the peer (its token changed) is a boot the link has not read yet: a marker
+// published before anything of it was seen omits src_epoch rather than name the previous boot
+// (Codex round 41: the boot survived the token change, so a live start behind a failed status
+// and an empty backlog named the old boot). The first thing that names the new boot marks the
+// boundary once, from the last boot ever named; an observation of an older session (its status
+// refresher answering late) is ignored, so it can neither regress the boot nor mark a false
+// boundary.
+func TestANewInstanceNamesNoBootUntilRead(t *testing.T) {
+	l := newPeerLink(PeerSpec{Name: "b", Probes: []string{"cpu"}}, NewHub("a"))
+	l.token, l.boot, l.lastBoot, l.epoch = "t1", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa"
+	l.since["ctl"] = 40
+	l.last["probe/cpu"] = srcPoint{39, "aaaaaaaaaaaa"}
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+
+	since, _, sess := l.beginSession("t2")
+	if len(since) != 0 {
+		t.Fatalf("a new instance resumed from %v", since)
+	}
+	l.mu.Lock()
+	l.markLiveStartLocked("probe/cpu")
+	l.mu.Unlock()
+	g := gapOf(t, nextEnv(t, cur))
+	if g.Reason != "live-start" || g.SrcEpoch != "" || g.LastSrcSeq != 39 || g.LastSrcEpoch != "aaaaaaaaaaaa" {
+		t.Fatalf("live start on a boot not read yet: %+v, want no src_epoch and the last frame of the old boot", g)
+	}
+
+	// An older session's late status cannot regress the boot or mark anything.
+	l.setServices(sess-1, json.RawMessage(`{"services":[],"epoch":"aaaaaaaaaaaa"}`))
+	l.noteBoot(sess, "bbbbbbbbbbbb")
+	b := gapOf(t, nextEnv(t, cur))
+	if b.Reason != "epoch-changed" || b.SrcEpoch != "bbbbbbbbbbbb" || b.LastSrcEpoch != "aaaaaaaaaaaa" {
+		t.Fatalf("boundary: %+v", b)
+	}
+	l.setServices(sess-1, json.RawMessage(`{"services":[],"epoch":"aaaaaaaaaaaa"}`))
+	l.noteBoot(sess, "bbbbbbbbbbbb")
+	l.mu.Lock()
+	l.markLiveStartLocked("probe/cpu")
+	boot := l.boot
+	l.mu.Unlock()
+	if boot != "bbbbbbbbbbbb" {
+		t.Fatalf("boot %q after a stale observation of the old one", boot)
+	}
+	if m := gapOf(t, nextEnv(t, cur)); m.Reason != "live-start" || m.SrcEpoch != "bbbbbbbbbbbb" {
+		t.Fatalf("after the boundary: %+v, want a live start naming the new boot, nothing else", m)
+	}
+}
+
 // A gap the peer answers on a resumed ctl or svc/ subscription is relayed on the peer's
 // mirrored ctl as a marker, with what the peer said (history expired: since-too-old and the
 // oldest kept; a restart: epoch-changed and the new boot); an overflow still ends the session,
@@ -120,7 +167,7 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		{"svc/", Gap{Reason: "epoch-changed", From: 1, Oldest: 1, Epoch: "c1c1c1c1c1c1"}},
 	} {
 		gap := tc.gap
-		if err := l.apply(context.Background(), nil, nil, nil, refresh, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
+		if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
 			t.Fatalf("%s %s: %v", tc.prefix, tc.gap.Reason, err)
 		}
 		e := nextEnv(t, cur)
@@ -130,7 +177,7 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		}
 	}
 	over := Gap{Reason: "overflow", From: 9}
-	if err := l.apply(context.Background(), nil, nil, nil, refresh, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+	if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
 		t.Fatalf("overflow: %v, want the session to end", err)
 	}
 }
@@ -153,13 +200,13 @@ func nextEnv(t *testing.T, cur *Cursor) *Envelope {
 // unmarked, and a later pipe marker named the previous boot.
 func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	l := &peerLink{spec: PeerSpec{Name: "b"}, hub: NewHub("a"), since: map[string]uint64{}, last: map[string]srcPoint{}}
-	l.boot, l.epoch = "aaaaaaaaaaaa", "aaaaaaaaaaaa"
+	l.boot, l.lastBoot, l.epoch = "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa" // the boot known is the last named
 	refresh := make(chan struct{}, 1)
 	cur := l.hub.Subscribe("peer/b/", nil, "")
 	frame := func(seq uint64, epoch string) peerFrame {
 		return peerFrame{prefix: "svc/", f: Frame{Env: &Envelope{Ch: "svc/x", Seq: seq, Epoch: epoch, Origin: "b", Ev: Event{Kind: "stats"}}}}
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, refresh, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
+	if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	g := gapOf(t, nextEnv(t, cur))
@@ -169,7 +216,7 @@ func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	if e := nextEnv(t, cur); e.Ch != "peer/b/svc/x" || e.SrcEpoch != "bbbbbbbbbbbb" {
 		t.Fatalf("after the boundary: %s", e.Raw())
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, refresh, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
+	if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	if e := nextEnv(t, cur); e.Ev.Kind != "stats" {

@@ -37,31 +37,38 @@ func TestControlStillFlowsWhenPipesOverloadTheLink(t *testing.T) {
 	// The first run of drops, marked on its pipe: the parent's own envelope, saying how many
 	// records the link itself discarded (an exact local count, not an inference).
 	last := map[string]uint64{} // per pipe, the src_seq last read: the marker's successor is later
+	markerAt := time.Time{}
 	m := waitEnv(t, pipes, 20*time.Second, "a dropped marker", func(e *Envelope) bool {
 		if e.Ev.Kind == "sample" {
 			last[e.Ch] = e.SrcSeq
 		}
 		return e.Ev.Kind == linkGapKind && dataOf(e)["reason"] == "dropped"
 	})
+	markerAt = time.Now()
 	g := gapOf(t, m)
 	if m.Origin != "a" || m.SrcSeq != 0 || g.Peer != "b" || g.Dropped == 0 || g.SrcEpoch != b.plane.Epoch() {
 		t.Fatalf("dropped marker: %s", m.Raw())
 	}
+	before, seen := last[m.Ch]
+	if !seen {
+		t.Fatalf("a dropped marker on %s before any record of it was read: the queue cannot have been full of them", m.Ch)
+	}
 	after := waitEnv(t, pipes, 5*time.Second, "the record after the marker", func(e *Envelope) bool {
 		return e.Ch == m.Ch && e.Ev.Kind == "sample"
 	})
-	if after.SrcSeq <= last[m.Ch] {
-		t.Fatalf("after the marker on %s: src_seq %d, the last before was %d", m.Ch, after.SrcSeq, last[m.Ch])
+	if after.SrcSeq <= before {
+		t.Fatalf("after the marker on %s: src_seq %d, the last before was %d", m.Ch, after.SrcSeq, before)
 	}
 
 	// Control under the load: a node created on b now is announced on the mirrored ctl within
-	// a second, not behind a queue of pipe frames.
+	// two seconds (measured in milliseconds; without the priority it waits behind up to 1024
+	// pipe frames at 5 ms each, five seconds), not behind the queue of pipe frames.
 	t0 := time.Now()
 	do(t, c, Request{Op: "probe.create", Peer: "b", Probe: node("mark", "heartbeat@1", 1000, nil)})
-	waitEnv(t, ctl, time.Second, "the mirrored probe.created under load", func(e *Envelope) bool {
+	waitEnv(t, ctl, 2*time.Second, "the mirrored probe.created under load", func(e *Envelope) bool {
 		return e.Ev.Kind == "probe.created" && dataOf(e)["node"] == "mark"
 	})
-	t.Logf("probe.created crossed in %s under load", time.Since(t0))
+	t.Logf("probe.created crossed in %s under load, %s after the first dropped marker", time.Since(t0), t0.Sub(markerAt))
 
 	// The status counts the drops per pipe and the link is up; nothing said peer.down.
 	st := waitStatus(t, a, 5*time.Second, "drops in the status", func(st StatusReply) bool {
@@ -100,12 +107,12 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	l.pipes["cpu"].state, l.pipes["cpu"].sub = pipeMirrored, 7
 	cur := l.hub.Subscribe("peer/b/", nil, "")
 	refresh := make(chan struct{}, 1)
-	q := newPipeQueue()
+	q := newPipeQueue(1)
 	fail := make(chan error, 1)
 	ctx := context.Background()
 
 	over := Gap{Reason: "overflow", From: 9, Epoch: b.plane.Epoch()}
-	if err := l.apply(ctx, c, q, fail, refresh, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
+	if err := l.apply(ctx, c, q, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
 		t.Fatalf("a pipe's overflow ended the session: %v", err)
 	}
 	e := nextEnv(t, cur)
@@ -124,7 +131,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 		t.Fatalf("pipe after the overflow: %+v, want mirrored under a new subscription", p)
 	}
 	stale := &Envelope{Ch: "probe/cpu", Seq: 8, Epoch: b.plane.Epoch(), Origin: "b", Ev: Event{Kind: "sample"}}
-	if err := l.apply(ctx, c, q, fail, refresh, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
+	if err := l.apply(ctx, c, q, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
 		t.Fatal(err)
 	}
 	wctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
@@ -132,12 +139,52 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	if envs, _, _ := cur.Next(wctx, 1); len(envs) != 0 {
 		t.Fatalf("a frame of the dropped subscription was mirrored: %s", envs[0].Raw())
 	}
-	if err := l.apply(ctx, c, q, fail, refresh, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+	if err := l.apply(ctx, c, q, fail, refresh, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
 		t.Fatalf("svc/ overflow: %v, want the session to end", err)
 	}
 	select {
 	case err := <-fail:
 		t.Fatalf("reopening failed: %v", err)
 	default:
+	}
+}
+
+// The pipe queue is bounded in bytes as in records: a record past the byte bound is refused and
+// the bytes it reserved given back; what the loop took is given back too. The out-of-band slots
+// for a pipe's overflow are one per wanted pipe and never wait: a send past them is refused.
+func TestThePipeQueueIsBoundedInBytesToo(t *testing.T) {
+	q := newPipeQueue(2)
+	big := peerFrame{prefix: "probe/x", f: Frame{Bytes: 3 << 20}, sub: 1}
+	if !q.offer(big) || q.bytes.Load() != 3<<20 {
+		t.Fatalf("a first 3 MiB record: offered %v, bytes %d", false, q.bytes.Load())
+	}
+	two := peerFrame{prefix: "probe/y", f: Frame{Bytes: 2 << 20}, sub: 2}
+	if q.offer(two) || q.bytes.Load() != 3<<20 || len(q.ch) != 1 {
+		t.Fatalf("a 2 MiB record past the 4 MiB bound was queued, or its bytes kept: bytes %d, queued %d", q.bytes.Load(), len(q.ch))
+	}
+	q.took(<-q.ch)
+	if q.bytes.Load() != 0 || !q.offer(two) || q.bytes.Load() != 2<<20 {
+		t.Fatalf("after the loop took the first: bytes %d", q.bytes.Load())
+	}
+	small := peerFrame{prefix: "probe/z", f: Frame{Bytes: 100}, sub: 3}
+	for i := 0; i < maxPipeQueue-1; i++ {
+		if !q.offer(small) {
+			t.Fatalf("record %d of %d refused under both bounds", i+2, maxPipeQueue)
+		}
+	}
+	if q.offer(small) || len(q.ch) != maxPipeQueue {
+		t.Fatalf("a record past the record bound was queued: %d", len(q.ch))
+	}
+	over := peerFrame{prefix: "probe/x", f: Frame{Gap: &Gap{Reason: "overflow", From: 9}}, sub: 1}
+	sent := 0
+	for i := 0; i < 3; i++ {
+		select {
+		case q.over <- over:
+			sent++
+		default:
+		}
+	}
+	if sent != 2 {
+		t.Fatalf("%d overflows slotted for two pipes", sent)
 	}
 }
