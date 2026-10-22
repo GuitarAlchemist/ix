@@ -11,7 +11,7 @@
 //! use serde_json::json;
 //! use std::time::Duration;
 //!
-//! let ctl = Ctl::from_state("C:/Users/me/AppData/Local/ixctl/local.json")?;
+//! let ctl = Ctl::from_state("C:/Users/<you>/AppData/Local/ixctl/local.json")?;
 //! let desired = json!({ "services": { "pod-a": { "state": "running" } } });
 //! let applied = ctl.apply(&desired, None)?;
 //! let g = applied["generation"].as_u64().unwrap();
