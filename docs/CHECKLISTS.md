@@ -43,6 +43,31 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
 
 ---
 
+## Adding an `ix doctor` check
+
+Five sites, all in the same PR. Two PRs open at once each touched all five and
+conflicted on every one of them; this list exists so the next one sees them
+before opening the diff.
+
+1. `crates/ix-skill/src/doctor/<name>.rs` exposing
+   `pub fn check(root: &Path) -> super::CheckResult`. Every `Warn` or `Fail`
+   result carries a `remedy`: `every_non_ok_check_carries_a_remedy` enforces it.
+2. `pub mod <name>;` and the call inside `run()` in
+   `crates/ix-skill/src/doctor/mod.rs`.
+3. A row in the table above, in this file and in `docs/fr/CHECKLISTS.md`.
+4. The `Doctor` doc comment in `crates/ix-skill/src/main.rs`: it is the
+   `ix doctor --help` text, and it lists the checks by name.
+5. If the check has an allowlist, `state/registry/<name>.allow.json`, every
+   entry with a `reason`; a stale entry warns, a reasonless one fails.
+
+Prove it before it lands: the check must be red on this workspace before its
+fixes and green after (the fixture tests on scratch repos pin the behaviour; one
+test scans the live workspace). In CI it runs twice: through
+`doctor_is_green_on_this_workspace` (`cargo test -p ix-skill`) and as the
+`ix doctor` step of `.github/workflows/ci.yml`, where it has a line of its own.
+
+---
+
 ## Adding an MCP skill / tool
 
 1. Write the algorithm in its domain crate. Annotate the wrapper with

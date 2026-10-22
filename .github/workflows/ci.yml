@@ -44,6 +44,27 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      # The repo's own pre-PR gate, run where each check is visible by name.
+      # Until now its checks reached CI only through one test among many
+      # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-skill`), so a
+      # new check such as `silent-skips` had no line of its own in any run. The
+      # bar is the same as that test's: exit 4 (a failing check) is red, exit 1
+      # (warnings only) is reported and stays green, exit 0 is green.
+      - name: ix doctor
+        shell: bash
+        run: |
+          export IX_ROOT="$PWD"
+          export IX_GOVERNANCE_DIR="$PWD/governance/demerzel"
+          set +e
+          cargo run -q -p ix-skill --bin ix -- doctor
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then
+            echo "::warning::ix doctor reported warnings only (exit 1); see the report above"
+            exit 0
+          fi
+          exit "$code"
+
       - name: Showcase smoke tests
         # Runs all 9 advanced pipelines via the ix binary to catch skill
         # registry regressions end-to-end. ~1s total runtime.
