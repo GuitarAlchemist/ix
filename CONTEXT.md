@@ -187,6 +187,23 @@ contracts (see `docs/contracts/`), not runtime coupling.
   sentence while it synthesizes the next. Distinct from **voicings** (`ix-voicings`, chord shapes
   on a fretboard) (ADR-0013).
 
+- **Probe** (`ixctl`) — a sampler that runs inside the control plane's process on a timer and
+  publishes what it reads on its own channel `probe/<node>`. Its **kind** (`heartbeat@1`, `cpu@1`,
+  `mem@1`, `mux@1`) is versioned and compiled into the binary; a **node** is one instance of a
+  kind in the plane's tree, with an interval, an optional filter and an optional lease. A
+  **mux** is a node with no sampler that carries its children's filtered samples, stamped with
+  their source. A **lease** (`ttl_ms`) is counted from start, renewed by `probe.touch`, and takes
+  the node's subtree out when it runs out. Distinct from the **prototype probes** (process per
+  probe, PR #390) and from a **pipeline stage**. _Avoid_: sensor, monitor, agent.
+
+- **Bookmark** (`ixctl`) — a named point in one instance's event sequence (`{name, epoch, seq, t,
+  note}`), owned by the plane and kept in its state dir (`<name>.bookmarks.json`, or in memory
+  with `--bookmarks memory`). Because the hub's `seq` is shared by every channel, one bookmark
+  covers every pipe and the `ctl` lifecycle at one instant; a **replay** from it is a
+  subscription that starts after that point, served from the ring only (a `gap` says when the
+  ring no longer holds it). Distinct from a **checkpoint** (`ix-recover`, a run's published
+  state) and from a **generation** (an apply). _Avoid_: snapshot, cursor, savepoint.
+
 ## Conventions
 
 See `CLAUDE.md` for the authoritative build/convention/discipline rules

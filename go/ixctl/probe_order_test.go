@@ -1,0 +1,564 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// What a pipe says, and in what order, is the consumer's ground (the observation contract,
+// S7). Three guarantees the tree makes under its lock, each tested where the race lived:
+// a node's records reach its pipe in the order of their seq even when several children feed
+// a mux at once; a remove that meets a stop in progress waits for that stop's probe.stopped
+// before it says probe.removed; a failed read reaches the pipe whatever the node's filter,
+// so ERROR can be read from the stream.
+
+func nodeOf(t *testing.T, p *Plane, name string) *probeNode {
+	t.Helper()
+	p.probes.mu.Lock()
+	defer p.probes.mu.Unlock()
+	n := p.probes.nodes[name]
+	if n == nil {
+		t.Fatalf("no node %q", name)
+	}
+	return n
+}
+
+func TestAMuxPublishesItsRecordsInSeqOrderUnderConcurrentChildren(t *testing.T) {
+	p := probePlane(t)
+	create := func(spec *NodeSpec) {
+		t.Helper()
+		if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: spec}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	create(node("agg", "mux@1", 0, nil))
+	children := []string{"a", "b", "c", "d"}
+	for _, c := range children {
+		create(node(c, "heartbeat@1", 1000, map[string]any{"parent": "agg"}))
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: "agg"}); err != nil {
+		t.Fatal(err)
+	}
+	// The children are created, not started: the test feeds them itself, from four
+	// goroutines at once, the way four samplers would at the same instant.
+	cur := p.Subscribe("probe/agg", uint64p(0), "")
+	const each = 250
+	var wg sync.WaitGroup
+	for _, c := range children {
+		n := nodeOf(t, p, c)
+		p.probes.mu.Lock()
+		n.state = probeRunning // a child feeds its parent only while running
+		p.probes.mu.Unlock()
+		wg.Add(1)
+		go func(n *probeNode) {
+			defer wg.Done()
+			for i := 1; i <= each; i++ {
+				p.probes.emit(n, map[string]any{"n": i}, false)
+			}
+		}(n)
+	}
+	wg.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	want := uint64(len(children) * each)
+	var got uint64
+	for got < want {
+		envs, gap, err := cur.Next(ctx, 256)
+		if err != nil {
+			t.Fatalf("after %d records: %v", got, err)
+		}
+		if gap != nil {
+			t.Fatalf("gap %+v", gap)
+		}
+		for _, env := range envs {
+			var d struct {
+				Seq uint64 `json:"seq"`
+				Src string `json:"src"`
+			}
+			json.Unmarshal(env.Ev.Data, &d)
+			got++
+			if d.Seq != got {
+				t.Fatalf("the mux's record %d came with seq %d (src %s): records of one node must reach its pipe in seq order", got, d.Seq, d.Src)
+			}
+		}
+	}
+}
+
+// blockSampler is a test kind's sampler that blocks inside sample() until the test releases
+// it: a leaf's loop cannot end while a read is in flight, so a real probe.stop of the node
+// stays in progress (state stopped, probe.stopped not out) for as long as the test wants,
+// without touching the tree's fields.
+type blockSampler struct{ entered, release chan struct{} }
+
+func (b *blockSampler) sample() (map[string]any, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return map[string]any{"n": 1}, nil
+}
+
+// blockKind registers `block@1` in the kinds registry for one test (the suite is sequential:
+// no test runs in parallel) and returns its sampler.
+func blockKind(t *testing.T) *blockSampler {
+	t.Helper()
+	b := &blockSampler{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	saved := probeKinds
+	probeKinds = append(append([]probeKind(nil), saved...), probeKind{
+		Name: "block", Version: 1, Fields: []string{"n"},
+		Doc:        "test only: blocks in sample until released",
+		newSampler: func() sampler { return b }})
+	t.Cleanup(func() {
+		probeKinds = saved
+		select { // a failed test must not leave the read blocked: the plane's cleanup shutdown waits for it
+		case <-b.release:
+		default:
+			close(b.release)
+		}
+	})
+	return b
+}
+
+// reached polls `cond` under the tree lock until it holds: the handshake that proves a
+// goroutine got to the contested path before a test judges that it is waiting there.
+func reached(t *testing.T, p *Plane, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		p.probes.mu.Lock()
+		ok := cond()
+		p.probes.mu.Unlock()
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: never reached", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// stopInProgress starts a `block@1` leaf, lets its read block, and issues a real probe.stop
+// that cannot finish until the sampler is released. It returns the stop's result channel.
+func stopInProgress(t *testing.T, p *Plane, b *blockSampler, name string) <-chan error {
+	t.Helper()
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node(name, "block@1", 10, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: name}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-b.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the read never started")
+	}
+	stopped := make(chan error, 1)
+	go func() {
+		_, err := probeOp(t, p, Request{Op: "probe.stop", Node: name})
+		stopped <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for listNodes(t, p)[0].State != probeStopped { // the stop has set the state: it is in progress
+		if time.Now().After(deadline) {
+			t.Fatal("the stop never set the state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return stopped
+}
+
+func TestARemoveWaitsForAStopInProgress(t *testing.T) {
+	p := probePlane(t)
+	b := blockKind(t)
+	cur := p.Subscribe("ctl", uint64p(0), "")
+	stopped := stopInProgress(t, p, b, "hb")
+	removed := make(chan error, 1)
+	go func() {
+		_, err := probeOp(t, p, Request{Op: "probe.remove", Node: "hb"})
+		removed <- err
+	}()
+	reached(t, p, "the remove's claim", func() bool { return p.probes.nodes["hb"] != nil && p.probes.nodes["hb"].removing })
+	select {
+	case err := <-removed:
+		t.Fatalf("remove returned while the stop was in progress (err %v): it must wait for probe.stopped", err)
+	case err := <-stopped:
+		t.Fatalf("stop returned while its read was still in flight (err %v)", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	// The read ends: the loop returns, the stop says probe.stopped, then the remove may go on.
+	close(b.release)
+	for _, c := range []<-chan error{stopped, removed} {
+		select {
+		case err := <-c:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("an op did not return once the read had ended")
+		}
+	}
+	if kinds := lifecycleOf(t, cur, p.probes.hub.Head(), "probe.stopped", "probe.removed"); len(kinds) != 2 || kinds[0] != "probe.stopped" || kinds[1] != "probe.removed" {
+		t.Fatalf("ctl said %v, want probe.stopped then probe.removed", kinds)
+	}
+	if nodes := listNodes(t, p); len(nodes) != 0 {
+		t.Fatalf("after the remove: %+v", nodes)
+	}
+}
+
+func TestShutdownWaitsForAStopInProgress(t *testing.T) {
+	p := probePlane(t)
+	b := blockKind(t)
+	cur := p.Subscribe("ctl", uint64p(0), "")
+	stopped := stopInProgress(t, p, b, "hb")
+	down := make(chan struct{})
+	go func() {
+		p.probes.shutdown()
+		close(down)
+	}()
+	reached(t, p, "shutdown's close of admission", func() bool { return p.probes.closed })
+	select {
+	case <-down:
+		t.Fatal("shutdown returned while a stop was in progress: its probe.stopped would follow the shutdown")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(b.release)
+	select {
+	case <-down:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not return once the read had ended")
+	}
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if kinds := lifecycleOf(t, cur, p.probes.hub.Head(), "probe.stopped"); len(kinds) != 1 {
+		t.Fatalf("ctl said %v, want one probe.stopped (the op's; shutdown had nothing running)", kinds)
+	}
+}
+
+func TestShutdownWaitsForARemoveInProgressAndRefusesNewOnes(t *testing.T) {
+	p := probePlane(t)
+	b := blockKind(t)
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("other", "mux@1", 0, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	cur := p.Subscribe("ctl", uint64p(0), "")
+	stopped := stopInProgress(t, p, b, "hb")
+	removed := make(chan error, 1)
+	go func() {
+		_, err := probeOp(t, p, Request{Op: "probe.remove", Node: "hb"})
+		removed <- err
+	}()
+	reached(t, p, "the remove's claim", func() bool { return p.probes.nodes["hb"] != nil && p.probes.nodes["hb"].removing })
+	var headAtReturn uint64
+	down := make(chan struct{})
+	go func() {
+		p.probes.shutdown()
+		headAtReturn = p.probes.hub.Head()
+		close(down)
+	}()
+	reached(t, p, "shutdown's close of admission", func() bool { return p.probes.closed })
+	select {
+	case <-down:
+		t.Fatal("shutdown returned while a remove was in progress: its probe.removed would follow the shutdown")
+	case err := <-removed:
+		t.Fatalf("remove returned while the stop was in progress (err %v)", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(b.release)
+	select {
+	case <-down:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not return once the read had ended")
+	}
+	for _, c := range []<-chan error{stopped, removed} {
+		select {
+		case err := <-c:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("an op did not return once the read had ended")
+		}
+	}
+	// The remove's probe.removed was out before shutdown returned (a necessary sign, not a
+	// proof on its own: the removal could publish between the return and the head's read;
+	// TestShutdownWaitsForTheRemovalsInFlight holds the counter itself).
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var removedSeq uint64
+	for removedSeq == 0 {
+		envs, _, err := cur.Next(ctx, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, env := range envs {
+			if env.Ev.Kind == "probe.removed" {
+				removedSeq = env.Seq
+			}
+		}
+	}
+	if removedSeq > headAtReturn {
+		t.Fatalf("probe.removed at seq %d, after shutdown returned at head %d", removedSeq, headAtReturn)
+	}
+	// Once closed, a remove is refused like a create or a start: the tree stays silent.
+	if _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "other"}); err == nil || !strings.Contains(err.Error(), "shutting down") {
+		t.Fatalf("remove after shutdown: err %v, want a refusal naming the shutdown", err)
+	}
+}
+
+// The wait itself, with the counter held by the test: a removal in flight (its probe.removed not
+// out yet) keeps shutdown from returning until finishRemoval. The counter is fabricated here on
+// purpose: no interleaving of real ops can hold a removal between its last stop and its
+// publication deterministically, and the integration test above only sees the order after the
+// fact.
+func TestShutdownWaitsForTheRemovalsInFlight(t *testing.T) {
+	p := probePlane(t)
+	p.probes.mu.Lock()
+	p.probes.removals++
+	p.probes.mu.Unlock()
+	var once sync.Once
+	finish := func() { once.Do(p.probes.finishRemoval) }
+	t.Cleanup(finish) // a failure before the release must not leave the plane's cleanup shutdown waiting
+	down := make(chan struct{})
+	go func() {
+		p.probes.shutdown()
+		close(down)
+	}()
+	reached(t, p, "shutdown's close of admission", func() bool { return p.probes.closed })
+	select {
+	case <-down:
+		t.Fatal("shutdown returned with a removal in flight")
+	case <-time.After(150 * time.Millisecond):
+	}
+	finish()
+	select {
+	case <-down:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not return once the removal had finished")
+	}
+}
+
+// Two removals that overlap on one node (a descendant's, then its ancestor's) both wait for
+// the same stop in progress; the node is forgotten once and probe.removed said once for it.
+func TestOverlappingRemovalsSayProbeRemovedOnce(t *testing.T) {
+	p := probePlane(t)
+	b := blockKind(t)
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("agg", "mux@1", 0, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	cur := p.Subscribe("ctl", uint64p(0), "")
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("hb", "block@1", 10, map[string]any{"parent": "agg"})}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.start", Node: "hb"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-b.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the read never started")
+	}
+	results := make(chan error, 3)
+	go func() { _, err := probeOp(t, p, Request{Op: "probe.stop", Node: "hb"}); results <- err }()
+	deadline := time.Now().Add(2 * time.Second)
+	for listNodes(t, p)[1].State != probeStopped {
+		if time.Now().After(deadline) {
+			t.Fatal("the stop never set the state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	go func() { _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "hb"}); results <- err }()
+	reached(t, p, "the child's removal claim", func() bool { return p.probes.nodes["hb"] != nil && p.probes.nodes["hb"].removing })
+	go func() { _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "agg"}); results <- err }()
+	reached(t, p, "the parent's removal claim", func() bool { return p.probes.nodes["agg"] != nil && p.probes.nodes["agg"].removing })
+	close(b.release)
+	for i := 0; i < 3; i++ {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("an op did not return once the read had ended")
+		}
+	}
+	if nodes := listNodes(t, p); len(nodes) != 0 {
+		t.Fatalf("after the removes: %+v", nodes)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	removed := map[string]int{}
+	head := p.probes.hub.Head()
+	for {
+		envs, _, err := cur.Next(ctx, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, env := range envs {
+			if env.Ev.Kind == "probe.removed" {
+				var d struct {
+					Node string `json:"node"`
+				}
+				json.Unmarshal(env.Ev.Data, &d)
+				removed[d.Node]++
+			}
+		}
+		if len(envs) > 0 && envs[len(envs)-1].Seq >= head {
+			break
+		}
+	}
+	if removed["hb"] != 1 || removed["agg"] != 1 {
+		t.Fatalf("probe.removed said %v times, want once per node", removed)
+	}
+}
+
+// lifecycleOf reads cur up to the hub seq `head` and returns the kinds among `wanted`, in order.
+func lifecycleOf(t *testing.T, cur *Cursor, head uint64, wanted ...string) []string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var kinds []string
+	for {
+		envs, gap, err := cur.Next(ctx, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gap != nil {
+			t.Fatalf("gap %+v", gap)
+		}
+		for _, env := range envs {
+			for _, w := range wanted {
+				if env.Ev.Kind == w {
+					kinds = append(kinds, w)
+				}
+			}
+		}
+		if len(envs) > 0 && envs[len(envs)-1].Seq >= head {
+			return kinds
+		}
+	}
+}
+
+// ctl's lifecycle events come in the order of the state changes they report, whatever the
+// interleaving of the ops: after any number of concurrent start/stop pairs on a mux, the last
+// event of the node names its final state; after concurrent remove/create pairs under one
+// name, no probe.removed follows the probe.created that opened the series it would close.
+func TestLifecycleEventsFollowTheStateChangesUnderConcurrentOps(t *testing.T) {
+	p := probePlane(t)
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("agg", "mux@1", 0, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	cur := p.Subscribe("ctl", uint64p(0), "")
+	const rounds = 500 // start/stop rounds of four ops, then remove/create rounds: under the ring's 4096
+	wantLast := map[string]string{probeRunning: "probe.started", probeStopped: "probe.stopped"}
+	var head uint64
+	for i := 0; i < rounds; i++ {
+		var wg sync.WaitGroup
+		for _, op := range []string{"probe.start", "probe.stop", "probe.start", "probe.stop"} {
+			wg.Add(1)
+			go func(op string) {
+				defer wg.Done()
+				probeOp(t, p, Request{Op: op, Node: "agg"})
+			}(op)
+		}
+		wg.Wait()
+		// After every round, ctl's last lifecycle word (up to the head read with the state)
+		// names the state the round left: an inversion in any round is caught, not only the last.
+		state := listNodes(t, p)[0].State
+		h := p.probes.hub.Head()
+		if h <= head { // two starts and two stops always move the state at least once
+			t.Fatalf("round %d published nothing", i)
+		}
+		head = h
+		kinds := lifecycleOf(t, cur, head, "probe.started", "probe.stopped")
+		if len(kinds) == 0 {
+			t.Fatalf("round %d published no lifecycle event", i)
+		}
+		if kinds[len(kinds)-1] != wantLast[state] {
+			t.Fatalf("round %d left the node %s but ctl's last lifecycle event was %s", i, state, kinds[len(kinds)-1])
+		}
+	}
+	// Now remove and create under the same name, concurrently: ctl must never say
+	// probe.removed while no node exists, which would close the series the next
+	// probe.created opened.
+	var wg sync.WaitGroup
+	for i := 0; i < rounds/2; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); probeOp(t, p, Request{Op: "probe.remove", Node: "agg"}) }()
+		go func() {
+			defer wg.Done()
+			probeOp(t, p, Request{Op: "probe.create", Probe: node("agg", "mux@1", 0, nil)})
+		}()
+		wg.Wait()
+	}
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: node("agg", "mux@1", 0, nil)}); err != nil && !strings.Contains(err.Error(), "exists") {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	exists := true // the node existed at `head`
+	for {
+		envs, gap, err := cur.Next(ctx, 256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gap != nil {
+			t.Fatalf("gap %+v", gap)
+		}
+		for _, env := range envs {
+			switch env.Ev.Kind {
+			case "probe.created":
+				if exists {
+					t.Fatalf("probe.created while the node existed, at ctl seq %d", env.Seq)
+				}
+				exists = true
+			case "probe.removed":
+				if !exists {
+					t.Fatalf("probe.removed while no node existed, at ctl seq %d: it would close the next series", env.Seq)
+				}
+				exists = false
+			}
+		}
+		if exists && p.probes.hub.Head() == envs[len(envs)-1].Seq {
+			break
+		}
+	}
+}
+
+func TestAFailedReadReachesThePipeWhateverTheFilter(t *testing.T) {
+	p := probePlane(t)
+	spec := node("hb", "heartbeat@1", 1000, map[string]any{"filter": map[string]any{
+		"where": []map[string]any{{"field": "n", "op": ">", "value": 1}}, "every": 2, "keep": []string{"n"},
+	}})
+	if _, err := probeOp(t, p, Request{Op: "probe.create", Probe: spec}); err != nil {
+		t.Fatal(err)
+	}
+	n := nodeOf(t, p, "hb")
+	p.probes.mu.Lock()
+	n.state = probeRunning
+	p.probes.mu.Unlock()
+	p.probes.emit(n, map[string]any{"n": 1}, false)           // where: n > 1 fails, kept off the pipe
+	p.probes.emit(n, map[string]any{"error": "boom"}, true)   // a failed read: on the pipe whatever the filter
+	p.probes.emit(n, map[string]any{"n": 2}, false)           // every 2 keeps the 2nd, 4th... passing record: skipped
+	p.probes.emit(n, map[string]any{"error": "boom 2"}, true) // again, and not counted by `every`
+	p.probes.emit(n, map[string]any{"n": 3}, false)           // the 2nd passing record: kept
+	p.probes.emit(n, map[string]any{"n": 4, "x": 1}, false)   // the 3rd: skipped
+	p.probes.emit(n, map[string]any{"n": 5, "x": 1}, false)   // the 4th: kept, keep drops x
+	samples := readSamples(t, p, "probe/hb", 4, time.Second)
+	if len(samples) != 4 {
+		t.Fatalf("%d samples, want 4: %v", len(samples), samples)
+	}
+	if samples[0]["error"] != "boom" || samples[1]["error"] != "boom 2" || samples[2]["n"] != float64(3) ||
+		samples[3]["n"] != float64(5) || samples[3]["x"] != nil {
+		t.Fatalf("pipe said %v", samples)
+	}
+	if hb := listNodes(t, p)[0]; hb.Errors != 2 || hb.Seq != 4 {
+		t.Fatalf("listed %+v, want errors 2 and seq 4", hb)
+	}
+}

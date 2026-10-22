@@ -111,3 +111,4 @@ ix-loop                   = "experimental"  # agentic loops in sandboxed Lua 5.4
 ix-voice                  = "experimental"  # client + CLI of the local voice service (piper-voice, outside the workspace): say, stop, status, voices; ADR-0013
 ix-wasm                   = "experimental"  # WASI pipeline stages in any language, sandboxed in wasmi (fuel + memory caps, seeded clock); Go stages built into a content-addressed cache
 ix-stream                 = "experimental"  # JSON streams through a graph of threads over bounded channels: back-pressure, cancellation, algedonic bus, budgeted gate, SSE feed, Petri deadlock check
+ix-ctl                    = "experimental"  # Rust client of the Go control plane go/ixctl: ix.ctl.* IXQL capabilities (plan, apply, status, wait, stop) over loopback with a token; slice 1, one-way doors unsigned

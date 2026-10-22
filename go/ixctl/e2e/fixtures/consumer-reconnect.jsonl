@@ -1,0 +1,8 @@
+{"step":"live","env":{"ch":"ctl","seq":1,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072172,"ev":{"kind":"probe.created","t":1792554072172,"data":{"kind":"heartbeat@1","node":"hb"}}}}
+{"step":"live","env":{"ch":"ctl","seq":2,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072172,"ev":{"kind":"probe.started","t":1792554072172,"data":{"kind":"heartbeat@1","node":"hb"}}}}
+{"step":"live","env":{"ch":"probe/hb","seq":3,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072183,"ev":{"kind":"sample","t":1792554072183,"data":{"kind":"heartbeat@1","n":1,"node":"hb","seq":1}}}}
+{"step":"live","env":{"ch":"probe/hb","seq":4,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072193,"ev":{"kind":"sample","t":1792554072193,"data":{"kind":"heartbeat@1","n":2,"node":"hb","seq":2}}}}
+{"step":"live","env":{"ch":"probe/hb","seq":5,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072203,"ev":{"kind":"sample","t":1792554072203,"data":{"kind":"heartbeat@1","n":3,"node":"hb","seq":3}}}}
+{"step":"after-reconnect","env":{"ch":"probe/hb","seq":6,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072213,"ev":{"kind":"sample","t":1792554072213,"data":{"kind":"heartbeat@1","n":4,"node":"hb","seq":4}}}}
+{"step":"after-reconnect","env":{"ch":"probe/hb","seq":7,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072224,"ev":{"kind":"sample","t":1792554072224,"data":{"kind":"heartbeat@1","n":5,"node":"hb","seq":5}}}}
+{"step":"after-reconnect","env":{"ch":"probe/hb","seq":8,"epoch":"ec28e8abfbd2","origin":"a","t":1792554072234,"ev":{"kind":"sample","t":1792554072234,"data":{"kind":"heartbeat@1","n":6,"node":"hb","seq":6}}}}

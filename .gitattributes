@@ -11,3 +11,7 @@ crates/ix-duck/tests/fixtures/persistence/*.csv -text
 
 # ix-origami pins its FOLD fixtures by sha256, so git must never rewrite their EOLs.
 crates/ix-origami/tests/fixtures/*.fold -text
+
+# Go sources stay LF on every checkout: gofmt normalises CRLF away, so a Windows
+# runner with core.autocrlf=true would list every file as unformatted (ixctl-go job).
+*.go text eol=lf
