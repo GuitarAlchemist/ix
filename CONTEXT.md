@@ -112,6 +112,28 @@ contracts (see `docs/contracts/`), not runtime coupling.
   JSON value, never inside it. Semantics are provisional until Demerzel's spec states
   them: no verdict is an error, no matching arm stops the pipeline and is recorded in
   `RunOutcome::gates`, an unhandled `C` fails the run.
+- **Loop** (`ix-loop`) — a Lua chunk run in a fresh sandbox, reaching the world only through
+  the capabilities the host gives it (`claude`, `run`, `tasks`, `loops`), each charged to its
+  budget. Only JSON data enters or leaves it. _Avoid_: agent, script (for a running loop).
+  Distinct from what `ix-loop-detect` detects: an agent repeating itself.
+- **Second-order loop** — a loop that runs, judges or writes other loops: it starts children
+  with `run`, asks the host to judge a draft with `tasks.judge`, and can propose a draft to the
+  store. It never accepts one.
+- **Budget** (`ix_loop::Budget`) — what a loop may still spend: fuel (Lua instructions), calls
+  to the semantic node, a deadline, and its depth (at most 3). A child's budget is **carved**
+  out of its parent's, the lesser of what it asks for and what is left, and what it does not
+  spend is refunded, so the root's budget bounds the whole tree. Calls are counted, not
+  dollars: on a plan, nothing is billed per call.
+- **Semantic node** (`ix_loop::SemanticNode`) — where a loop asks a model. `ClaudeCode` runs
+  Claude Code headless on the person's plan (`claude -p`, no tools, no saved session; never
+  `--bare`, which needs an API key); `Scripted` answers in tests.
+- **Oracle** (`ix_loop::Task`) — a task family the host owns and checks (`lipogram`,
+  `acrostic`), with instances the host can draw. A loop is judged on **hidden instances**:
+  instances the host draws and has handed to no loop in the run, checked by the oracle, never
+  by the loop's own claim. _Avoid_: test, grader (for something a model wrote).
+- **Proposal** — a loop draft written to the store's `proposals/` by `loops.propose`. Only a
+  person promotes it into the library, with `ix-loop accept`; nothing a loop can reach accepts
+  (ADR-0011). _Avoid_: submission, PR.
 
 - **Stated folded state** (`ix-origami`) — a FOLD crease pattern with one folded frame whose
   `faceOrders` state the layer order. `ix-origami` checks it and never searches for one; the only
