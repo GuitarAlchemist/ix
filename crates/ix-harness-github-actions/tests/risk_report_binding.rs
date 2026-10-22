@@ -177,9 +177,10 @@ fn changed_files_the_report_discovered_itself_fail() {
     assert_eq!(code, 1, "{out}");
 }
 
-/// The step runs before `Enforce verdict`, on every event, label or not.
+/// The step runs before the PR comment and `Enforce verdict`, on every event, label or not,
+/// and the evidence is uploaded even when it fails.
 #[test]
-fn the_workflow_binds_the_report_before_enforcing_it() {
+fn the_workflow_binds_the_report_before_showing_or_enforcing_it() {
     let wf: serde_yaml::Value = serde_yaml::from_str(WORKFLOW).expect("valid workflow YAML");
     let steps = wf["jobs"]["risk-report"]["steps"]
         .as_sequence()
@@ -189,15 +190,28 @@ fn the_workflow_binds_the_report_before_enforcing_it() {
             .iter()
             .position(|s| s["run"].as_str().is_some_and(|r| r.contains(needle)))
     };
+    let named = |name: &str| {
+        steps
+            .iter()
+            .position(|s| s["name"].as_str() == Some(name))
+            .unwrap_or_else(|| panic!("a step named {name}"))
+    };
     let bind = at("scripts/risk_report_binding.py --dist dist").expect("a binding step");
     let enforce = at("agent_blackbox enforce").expect("the enforce step");
     let analyze = at("--out-dir dist)").expect("the analyze step");
+    let comment = named("Comment risk report");
+    let upload = named("Upload risk artifacts");
     assert!(
-        analyze < bind && bind < enforce,
-        "{analyze} {bind} {enforce}"
+        analyze < bind && bind < comment && bind < enforce,
+        "analyze {analyze}, bind {bind}, comment {comment}, enforce {enforce}"
     );
     assert!(
         steps[bind]["if"].is_null(),
         "the binding step runs whatever the labels say"
+    );
+    assert_eq!(
+        steps[upload]["if"].as_str(),
+        Some("always()"),
+        "the evidence of an unbound report stays downloadable"
     );
 }

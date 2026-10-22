@@ -149,6 +149,15 @@ jobs:
           fi
           PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox "${args[@]}"
 
+      # enforce reads risk-report.json, the PR comment shows risk-report.md. On #313 they
+      # described different changesets (ix#316). This fails closed unless both describe this
+      # PR's files and evidence, before either is shown or enforced; it runs whatever the
+      # labels say, since the label attests a review of the report and a report of another
+      # changeset was not reviewed.
+      - name: Bind the report to this changeset
+        shell: bash
+        run: python scripts/risk_report_binding.py --dist dist
+
       - name: Comment risk report
         uses: actions/github-script@v7
         with:
@@ -175,18 +184,12 @@ jobs:
             }
 
       - name: Upload risk artifacts
+        # The evidence of an unbound report stays downloadable.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: agent-blackbox-risk-report
           path: dist/
-
-      # enforce reads risk-report.json, the PR comment shows risk-report.md. On #313 they
-      # described different changesets (ix#316). This fails closed unless both describe this
-      # PR's files and evidence; it runs whatever the labels say, since the label attests a
-      # review of the report and a report of another changeset was not reviewed.
-      - name: Bind the report to this changeset
-        shell: bash
-        run: python scripts/risk_report_binding.py --dist dist
 
       - name: Enforce verdict
         shell: bash

@@ -42,9 +42,9 @@ ix uses a producer-reviewer split for autonomous changes:
 3. `analyze` → `dist/risk-report.json` + `dist/risk-report.md`.
 4. `harness-audit --fail-below 60` → `dist/harness-audit.json` + `.md`.
 5. `response-quality` (skipped when no `dist/agent-response.txt` is captured).
-6. Comment the merged risk + harness + response-quality body on the PR.
-7. Upload `dist/` as the `agent-blackbox-risk-report` artifact.
-8. `scripts/risk_report_binding.py --dist dist` — fails closed unless `risk-report.json` names exactly the files of `dist/changed-files.txt`, records the digests of `dist/changed-files.txt` and `dist/diff.patch` as supplied evidence, and `risk-report.md` shows the same digests (ix#316: on #313 the two reports described different changesets). It runs whether or not the label is present, since the label attests a review of this PR's report.
+6. `scripts/risk_report_binding.py --dist dist` — fails closed unless `risk-report.json` names exactly the files of `dist/changed-files.txt`, records the digests of `dist/changed-files.txt` and `dist/diff.patch` as supplied evidence, and `risk-report.md` shows the same digests (ix#316: on #313 the two reports described different changesets). It runs before the report is shown or enforced, whether or not the label is present, since the label attests a review of this PR's report.
+7. Comment the merged risk + harness + response-quality body on the PR.
+8. Upload `dist/` as the `agent-blackbox-risk-report` artifact, also when an earlier step failed.
 9. `enforce --report dist/risk-report.json` — exits nonzero on a failing verdict unless the `agent-blackbox-reviewed` label is present.
 
 ## Pinning policy
