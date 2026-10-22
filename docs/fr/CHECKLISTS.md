@@ -45,6 +45,34 @@ des barrières obligatoires pour une PR ordinaire.
 
 ---
 
+## Ajouter une vérification à `ix doctor`
+
+Cinq emplacements, tous dans la même PR. Deux PR ouvertes en même temps ont
+chacune touché les cinq et sont entrées en conflit sur chacun ; cette liste
+existe pour que la prochaine les voie avant d'ouvrir le diff.
+
+1. `crates/ix-skill/src/doctor/<nom>.rs` exposant
+   `pub fn check(root: &Path) -> super::CheckResult`. Tout résultat `Warn` ou
+   `Fail` porte un `remedy` : `every_non_ok_check_carries_a_remedy` l'impose.
+2. `pub mod <nom>;` et l'appel dans `run()` de
+   `crates/ix-skill/src/doctor/mod.rs`.
+3. Une ligne dans le tableau ci-dessus, dans ce fichier et dans
+   `docs/CHECKLISTS.md`.
+4. Le commentaire de doc de `Doctor` dans `crates/ix-skill/src/main.rs` : c'est
+   le texte de `ix doctor --help`, et il nomme les vérifications.
+5. Si la vérification a une allowlist, `state/registry/<nom>.allow.json`, chaque
+   entrée avec un `reason` ; une entrée périmée avertit, une entrée sans raison
+   échoue.
+
+Prouvez-la avant de la livrer : la vérification doit être rouge sur cet espace
+de travail avant ses correctifs et verte après (les tests sur dépôts jetables
+fixent le comportement ; un seul test balaie l'espace de travail réel). En CI
+elle s'exécute deux fois : via `doctor_is_green_on_this_workspace`
+(`cargo test -p ix-skill`) et comme étape `ix doctor` de
+`.github/workflows/ci.yml`, où elle a sa propre ligne.
+
+---
+
 ## Ajouter un skill / outil MCP
 
 1. Écrivez l'algorithme dans son crate de domaine. Annotez l'enveloppe avec
