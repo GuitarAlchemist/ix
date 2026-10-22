@@ -75,7 +75,7 @@ func collect(t *testing.T, frames <-chan Frame, step string, out *[]fixtureFrame
 }
 
 // collectSkipping is collect with frames `skip` says yes to left out of the step (they are not
-// the step's: a sample published before a stop request and read after it, see the recreation
+// the step's: a sample published before a stop took effect and read after it, see the recreation
 // step). A nil skip keeps every frame.
 func collectSkipping(t *testing.T, frames <-chan Frame, step string, out *[]fixtureFrame, skip, done func(fixtureFrame) bool) {
 	t.Helper()
@@ -253,12 +253,14 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	// follows, not by the name alone.
 	var recreation []fixtureFrame
 	do(t, c, Request{Op: "probe.stop", Node: "hb"})
-	// The live step ended on hb's third sample; a fourth tick published before the stop request
-	// may still be in the ring when this step opens, and it is the live period's, not the stop's,
-	// so the stopped step keeps lifecycle frames only (it failed one run in four on Linux under
-	// -race on that tick). The plane's own promise, no record of a node after its probe.stopped
-	// (emit checks the state under the tree's lock), is still held to: such a sample would be read
-	// into the next step and fail there.
+	// The live step ended on hb's third sample; a fourth tick published before the stop took effect
+	// (emit and stopIf take the tree's lock in turn) may still be in the ring when this step opens,
+	// and it is the live period's, not the stop's, so the stopped step keeps lifecycle frames only
+	// (it failed one run in four on Linux under -race on that tick). The plane's own promise is
+	// still held to: a sample of the old incarnation after probe.stopped would be read into the
+	// removed step and fail its fixture, or into the recreated step and fail the node-seq check
+	// below, which wants exactly the new incarnation's 1 and 2.
+	// @ai:invariant no record of a node follows its probe.stopped on the plane's stream [T:test conf:0.9 src:consumer_fixture_test.go::TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures]
 	collectSkipping(t, frames, "stopped", &recreation, func(f fixtureFrame) bool {
 		return f.Env != nil && f.Env.Ch == "probe/hb" && f.Env.Ev.Kind == "sample"
 	}, func(f fixtureFrame) bool {
@@ -272,11 +274,17 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	do(t, c, Request{Op: "probe.start", Node: "hb"})
 	collect(t, frames, "recreated", &recreation, nthSampleOf("hb", 2))
 	var firstNew *Envelope
+	var newSeqs []uint64
 	for _, f := range recreation {
 		if f.Step == "recreated" && f.Env.Ch == "probe/hb" && f.Env.Ev.Kind == "sample" {
-			firstNew = f.Env
-			break
+			if firstNew == nil {
+				firstNew = f.Env
+			}
+			newSeqs = append(newSeqs, sampleSeq(f.Env))
 		}
+	}
+	if len(newSeqs) != 2 || newSeqs[0] != 1 || newSeqs[1] != 2 {
+		t.Fatalf("recreated hb's samples carry node seqs %v, want exactly [1 2]: another one here is a record of the old incarnation after its probe.stopped", newSeqs)
 	}
 	if firstNew == nil || sampleSeq(firstNew) != 1 || firstNew.Seq <= last.Seq || firstNew.Epoch != epoch {
 		t.Fatalf("recreated hb's first sample: %+v (node seq %d), want node seq 1 past envelope seq %d", firstNew, sampleSeq(firstNew), last.Seq)
