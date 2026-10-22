@@ -2295,7 +2295,7 @@ Example 2 — "cluster crates by complexity then classify":
                     ),
                     (
                         "sentrux_exe",
-                        Prop::string().desc("Override sentrux binary path (default C:/Users/spare/bin/sentrux.exe)."),
+                        Prop::string().desc("Override sentrux binary path (default: $SENTRUX_EXE, then `sentrux` on PATH; an error names both when neither resolves)."),
                     ),
                     (
                         "timeout_secs",

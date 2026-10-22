@@ -367,17 +367,29 @@ impl AgentHandler for RenderingAuditHandler {
 
 // ── The autonomous test ─────────────────────────────────────────
 
+/// The `ga` checkout this test reads: `IX_GA_REPO` when set, else the sibling
+/// `../ga` of the workspace root, which is the layout CLAUDE.md documents for
+/// cross-repo contracts.
+fn ga_repo_root() -> PathBuf {
+    if let Some(dir) = std::env::var_os("IX_GA_REPO").filter(|v| !v.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../ga")
+}
+
 #[test]
 fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
-    let solar_system_path = PathBuf::from(
-        r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\SolarSystem.ts",
-    );
-    let force_radiant_path = PathBuf::from(
-        r"C:\Users\spare\source\repos\ga\ReactComponents\ga-react-components\src\components\PrimeRadiant\ForceRadiant.tsx",
-    );
+    let prime_radiant =
+        ga_repo_root().join("ReactComponents/ga-react-components/src/components/PrimeRadiant");
+    let solar_system_path = prime_radiant.join("SolarSystem.ts");
+    let force_radiant_path = prime_radiant.join("ForceRadiant.tsx");
 
     if !solar_system_path.exists() || !force_radiant_path.exists() {
-        eprintln!("GA repo not found at expected path — skipping cross-repo test");
+        eprintln!(
+            "skipping cross-repo test: GA frontend sources not found under {} \
+             (clone ga beside ix, or set IX_GA_REPO)",
+            prime_radiant.display()
+        );
         return;
     }
 

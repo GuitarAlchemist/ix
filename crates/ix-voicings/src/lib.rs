@@ -263,11 +263,12 @@ pub fn ga_cli_path() -> PathBuf {
             return PathBuf::from(v);
         }
     }
-    // Default: sibling `ga` repo's debug build. The smoke test overrides
-    // this via env var when running in a sandbox that doesn't have ga/
-    // next door.
-    PathBuf::from(
-        r"C:\Users\spare\source\repos\ga\Demos\Music Theory\FretboardVoicingsCLI\bin\Debug\net10.0\FretboardVoicingsCLI.exe",
+    // Default: the sibling `ga` repo's debug build, `../ga` beside this
+    // workspace (crates/ix-voicings -> workspace root -> its parent). The
+    // smoke test overrides this via env var when running in a sandbox that
+    // doesn't have ga/ next door.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "../../../ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Debug/net10.0/FretboardVoicingsCLI.exe",
     )
 }
 

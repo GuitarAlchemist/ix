@@ -37,6 +37,7 @@
 pub mod convert;
 pub mod emit;
 pub mod mcp_bridge;
+pub mod resolve;
 pub mod rules_response;
 pub mod test_gaps;
 pub mod untested;
@@ -44,6 +45,7 @@ pub mod untested;
 pub use convert::violation_to_annotation;
 pub use emit::{emit_inline, emit_sidecar, EmitOutcome};
 pub use mcp_bridge::{run_sentrux_check, run_sentrux_test_gaps, SentruxConfig};
+pub use resolve::resolve_sentrux_exe;
 pub use rules_response::{parse_check_rules_response, RuleViolation, RulesReport};
 pub use test_gaps::{parse_test_gaps_response, TestGapsReport};
 pub use untested::{
@@ -64,8 +66,8 @@ pub const DEFAULT_SIDECAR_PATH: &str = "state/quality/ai-annotations-sentrux.jso
 pub const DEFAULT_UNTESTED_SIDECAR_PATH: &str =
     "state/quality/ai-annotations-sentrux-untested.jsonl";
 
-/// Default sentrux executable path on the developer workstation.
-pub const DEFAULT_SENTRUX_EXE: &str = "C:/Users/spare/bin/sentrux.exe";
+/// Environment variable naming the sentrux executable when it is not on `PATH`.
+pub const SENTRUX_EXE_ENV: &str = "SENTRUX_EXE";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -75,6 +77,11 @@ pub enum Error {
     Serde(#[from] serde_json::Error),
     #[error("sentrux binary not found at {0}")]
     SentruxMissing(String),
+    #[error(
+        "sentrux executable not found: pass an explicit path, set $SENTRUX_EXE, \
+         or put `sentrux` on PATH"
+    )]
+    SentruxUnresolved,
     #[error("sentrux exited (code {code:?}) before responding; stderr tail: {stderr}")]
     SentruxExitedEarly { code: Option<i32>, stderr: String },
     #[error("sentrux call timed out after {0}ms")]

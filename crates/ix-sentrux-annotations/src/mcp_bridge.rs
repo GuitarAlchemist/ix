@@ -25,23 +25,13 @@ use std::time::{Duration, Instant};
 /// Configuration knobs for the sentrux MCP bridge call.
 #[derive(Debug, Clone)]
 pub struct SentruxConfig {
-    /// Path to the sentrux executable. Defaults to
-    /// [`crate::DEFAULT_SENTRUX_EXE`].
+    /// Path to the sentrux executable. Callers resolve it with
+    /// [`crate::resolve_sentrux_exe`]; there is no machine-specific default.
     pub sentrux_exe: PathBuf,
     /// Workspace to scan. Passed to sentrux's `scan` tool.
     pub workspace: PathBuf,
     /// Overall timeout for the whole initialize → check_rules dance.
     pub timeout: Duration,
-}
-
-impl Default for SentruxConfig {
-    fn default() -> Self {
-        Self {
-            sentrux_exe: PathBuf::from(crate::DEFAULT_SENTRUX_EXE),
-            workspace: PathBuf::from("."),
-            timeout: Duration::from_secs(60),
-        }
-    }
 }
 
 /// Run the full handshake and return the parsed `check_rules` report.

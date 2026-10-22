@@ -1,0 +1,15 @@
+{
+  "note": "Source lines under crates/ that may name a user's home directory (C:\\Users\\<name>, /home/<name>, /Users/<name>). Checked by `ix doctor` (see crates/ix-skill/src/doctor/hardcoded_paths.rs). An entry covers the lines of `file` whose text contains `contains`, not the whole file, and needs a non-empty `reason`. The only honest reason is that the path is the test's input: a sanitizer proving it rejects such paths, or a fixture proving this check fires. Production defaults, test guards and doc examples are fixed, not listed (ix#327, ix#328).",
+  "allow": [
+    {
+      "file": "crates/ix-autoresearch/src/milestones.rs",
+      "contains": "corpus.json",
+      "reason": "Negative inputs of `sanitize_text`: the two tests prove a Windows and a POSIX home path are rejected from milestone text. The path is the thing under test."
+    },
+    {
+      "file": "crates/ix-skill/tests/doctor_paths.rs",
+      "contains": "jane",
+      "reason": "Fixtures of this very check: the seeded lines prove each spelling is reported. The account name is fictional."
+    }
+  ]
+}
