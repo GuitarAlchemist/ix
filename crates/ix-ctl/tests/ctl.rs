@@ -281,8 +281,12 @@ impl Plane {
                         let mut entry = json!({
                             "name": name, "kind": n.spec["kind"], "state": n.state,
                             "every_ms": n.spec.get("every_ms").cloned().unwrap_or(json!(0)),
-                            "ttl_ms": ttl.clone(), "seq": 0, "errors": 0, "children": children,
+                            "ttl_ms": ttl.clone(), "seq": 0, "errors": 0, "bytes": 0, "children": children,
+                            "rate_per_s": rate(subtree_rate(&self.probes, name)),
                         });
+                        if n.spec["kind"] == "mux@1" {
+                            entry["max_rate_per_s"] = json!(budget_of(&self.probes, name));
+                        }
                         if n.state == "running" && ttl != 0 {
                             entry["expires_in_ms"] = ttl;
                         }
@@ -296,7 +300,9 @@ impl Plane {
                     .collect();
                 (
                     200,
-                    json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256}),
+                    json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256,
+                           "rate_per_s": rate(tree_rate(&self.probes)),
+                           "max_rate_per_s": 1000, "tree_rate_per_s": 2500}),
                 )
             }
             ("POST", "/v1/probe/create") => match self.probe_create(&doc) {
@@ -406,6 +412,51 @@ impl Plane {
                 None => return Err(format!("parent {p:?} does not exist")),
             }
         }
+        // D10: the budget, as the real plane checks it (probe.go), its refusals worded alike.
+        // The plane sums exact rationals; the fake's floats get a hair of slack at an exact bound.
+        let budget_arg = spec["max_rate_per_s"].as_i64().unwrap_or(0);
+        if kind == "mux@1" {
+            if budget_arg < 0 {
+                return Err(format!("max_rate_per_s {budget_arg} must be positive"));
+            }
+            if budget_arg > 0 {
+                let budget_arg = budget_arg as u64;
+                let (ceiling, holder) = match parent {
+                    Some(p) => (budget_of(&self.probes, p), format!("mux {p:?}")),
+                    None => (1000, "the plane".to_string()),
+                };
+                if budget_arg > ceiling {
+                    return Err(format!(
+                        "max_rate_per_s {budget_arg} on {name:?} would widen {holder}'s max_rate_per_s {ceiling}"
+                    ));
+                }
+            }
+        } else {
+            if budget_arg != 0 {
+                return Err(format!(
+                    "max_rate_per_s is a mux's: leaf {name:?} carries no budget"
+                ));
+            }
+            let r = 1000.0 / every.unwrap_or(0) as f64;
+            let mut up = parent;
+            while let Some(a) = up {
+                let (have, budget) = (subtree_rate(&self.probes, a), budget_of(&self.probes, a));
+                if have + r > budget as f64 + 1e-9 {
+                    return Err(format!(
+                        "subtree {a:?} would declare {} records/s with {name:?}; its max_rate_per_s is {budget}",
+                        rate(have + r)
+                    ));
+                }
+                up = self.probes.get(a).and_then(|n| n.spec["parent"].as_str());
+            }
+            let have = tree_rate(&self.probes);
+            if have + r > 2500.0 + 1e-9 {
+                return Err(format!(
+                    "the tree would declare {} records/s with {name:?}; tree_rate_per_s is 2500",
+                    rate(have + r)
+                ));
+            }
+        }
         let mut depth = 0;
         let mut up = parent;
         while let Some(p) = up {
@@ -424,6 +475,61 @@ impl Plane {
     }
 }
 
+/// The declared rate the real plane sums at `create` (D10, ix#416): 1000 / `every_ms` per leaf,
+/// the filter not lowering it (a failing sampler's error records bypass it), a mux carrying its
+/// children's.
+fn subtree_rate(probes: &BTreeMap<String, Node>, name: &str) -> f64 {
+    let n = &probes[name];
+    let own = if n.spec["kind"] == "mux@1" {
+        0.0
+    } else {
+        let every = n.spec["every_ms"].as_f64().unwrap_or(0.0);
+        if every > 0.0 {
+            1000.0 / every
+        } else {
+            0.0
+        }
+    };
+    own + probes
+        .iter()
+        .filter(|(_, c)| c.spec["parent"] == name)
+        .map(|(c, _)| subtree_rate(probes, c))
+        .sum::<f64>()
+}
+
+/// The budget a subtree is held to: the nearest `max_rate_per_s` on it or above it, else the
+/// plane's default.
+fn budget_of(probes: &BTreeMap<String, Node>, name: &str) -> u64 {
+    let mut up = Some(name);
+    while let Some(a) = up {
+        let n = &probes[a];
+        if let Some(b) = n.spec["max_rate_per_s"].as_u64().filter(|b| *b > 0) {
+            return b;
+        }
+        up = n.spec["parent"].as_str();
+    }
+    1000
+}
+
+fn tree_rate(probes: &BTreeMap<String, Node>) -> f64 {
+    probes
+        .iter()
+        .filter(|(_, n)| n.spec.get("parent").is_none())
+        .map(|(k, _)| subtree_rate(probes, k))
+        .sum()
+}
+
+/// A rate as the wire writes it: rounded to the thousandth, a whole number as an integer (Go's
+/// encoding of a float).
+fn rate(r: f64) -> Value {
+    let r = (r * 1000.0).round() / 1000.0;
+    if r.fract() == 0.0 {
+        json!(r as u64)
+    } else {
+        json!(r)
+    }
+}
+
 /// What `probe.kinds` answers on the real plane: the compiled kinds sorted by name, the limits
 /// by the names the contract gives them, and the producer's revision.
 fn kinds_reply() -> Value {
@@ -437,7 +543,8 @@ fn kinds_reply() -> Value {
             {"kind": "mux@1", "version": 1, "fields": [], "doc": "carries what its children pass it"},
         ],
         "limits": {"max_nodes": 256, "max_depth": 8, "min_every_ms": 10, "max_every_ms": 3_600_000,
-                   "max_ttl_ms": 9_223_372_036_854u64, "ring": 4096, "max_where": 16, "max_keep": 32},
+                   "max_ttl_ms": 9_223_372_036_854u64, "ring": 4096, "max_where": 16, "max_keep": 32,
+                   "max_rate_per_s": 1000, "tree_rate_per_s": 2500},
         "version": "fake-1",
     })
 }
@@ -863,6 +970,8 @@ fn probe_kinds_lists_the_kinds_and_the_limits() {
         .collect();
     assert_eq!(["cpu@1", "heartbeat@1", "mem@1", "mux@1"], names[..]);
     assert_eq!(json!(256), kinds["limits"]["max_nodes"]);
+    assert_eq!(json!(1000), kinds["limits"]["max_rate_per_s"]);
+    assert_eq!(json!(2500), kinds["limits"]["tree_rate_per_s"]);
 
     // The client method is the same call; a peer rides beside it and this plane has none.
     assert_eq!(kinds_reply(), ctl.probe_kinds(None).unwrap());
@@ -1050,8 +1159,18 @@ fn probe_list_shows_the_tree_and_its_usage() {
     let nodes = tree["nodes"].as_array().unwrap();
     assert_eq!(
         json!({"name": "agg", "kind": "mux@1", "state": "running", "every_ms": 0, "ttl_ms": 0, "seq": 0, "errors": 0,
-               "children": 1}),
-        nodes[0]
+               "children": 1, "bytes": 0, "rate_per_s": 10, "max_rate_per_s": 1000}),
+        nodes[0],
+        "a mux says its subtree's declared rate and the budget it is held to (D10)"
+    );
+    assert_eq!(json!(10), tree["rate_per_s"]);
+    assert_eq!(json!(1000), tree["max_rate_per_s"]);
+    assert_eq!(json!(2500), tree["tree_rate_per_s"]);
+    assert_eq!(json!(10), nodes[1]["rate_per_s"]);
+    assert_eq!(json!(0), nodes[1]["bytes"]);
+    assert!(
+        nodes[1].get("max_rate_per_s").is_none(),
+        "a leaf carries no budget"
     );
     assert_eq!(json!("stopped"), nodes[1]["state"]);
     assert_eq!(json!("agg"), nodes[1]["parent"]);
@@ -2134,4 +2253,61 @@ fn the_token_goes_to_loopback_only_and_never_into_debug_output() {
     let ctl = Ctl::new("192.0.2.1:80", TOKEN);
     assert!(matches!(ctl.status(), Err(CtlError::NotLoopback(_))));
     assert!(!format!("{ctl:?}").contains(TOKEN));
+}
+
+// D10: the fake holds a create to the budget as the plane does, so a program past it fails here
+// first, worded as the plane words it.
+#[test]
+fn probe_create_is_held_to_its_mux_budget_like_the_plane() {
+    let (ctl, _plane) = plane();
+    for (src, why) in [
+        (
+            r#"m <- ix.ctl.probe.create(probe: { name: "small", kind: "mux@1", max_rate_per_s: 150 })
+               a <- ix.ctl.probe.create(probe: { name: "a", kind: "cpu@1", every_ms: 10, parent: "small" })
+               b <- ix.ctl.probe.create(probe: { name: "b", kind: "cpu@1", every_ms: 10, parent: "small" })"#,
+            "subtree \"small\" would declare 200 records/s with \"b\"; its max_rate_per_s is 150",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "solo", kind: "cpu@1", every_ms: 10, max_rate_per_s: 10 })"#,
+            "carries no budget",
+        ),
+        (
+            r#"x <- ix.ctl.probe.create(probe: { name: "wide", kind: "mux@1", max_rate_per_s: 3000 })"#,
+            "would widen the plane's max_rate_per_s 1000",
+        ),
+    ] {
+        let err = executor(ctl.clone())
+            .run_source(src)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(why), "{src}: {err}");
+    }
+}
+
+#[test]
+fn probe_create_bound_is_exact_like_the_plane() {
+    let (ctl, _plane) = plane();
+    // Twelve leaves at 12 ms fill a budget of 1000 to the unit: admitted, as the plane admits them
+    // (its sum is exact; a float sum carries 1000.0000000000001 and refused the twelfth).
+    let mut src = String::from(
+        "m <- ix.ctl.probe.create(probe: { name: \"twelve\", kind: \"mux@1\", max_rate_per_s: 1000 })\n",
+    );
+    for i in 0..12 {
+        src.push_str(&format!(
+            "l{i} <- ix.ctl.probe.create(probe: {{ name: \"t-{i}\", kind: \"cpu@1\", every_ms: 12, parent: \"twelve\" }})\n"
+        ));
+    }
+    executor(ctl.clone())
+        .run_source(&src)
+        .expect("twelve leaves at 12 ms fill 1000 exactly");
+    let err = executor(ctl.clone())
+        .run_source(
+            r#"x <- ix.ctl.probe.create(probe: { name: "t-12", kind: "cpu@1", every_ms: 12, parent: "twelve" })"#,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("\"twelve\"") && err.contains("1083.333"),
+        "the thirteenth is refused naming the bound: {err}"
+    );
 }

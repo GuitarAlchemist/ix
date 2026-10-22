@@ -305,11 +305,11 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 	// being loaded or emptied; a store that cannot save keeps what a reader saw unchanged.
 	badDir := t.TempDir()
 	os.WriteFile(filepath.Join(badDir, "x.bookmarks.json"), []byte(`{"schema":"ixctl-bookmarks/0","bookmarks":[{"name":"dup","epoch":"e","seq":1,"t":1},{"name":"dup","epoch":"e","seq":2,"t":2}]}`), 0o600)
-	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk"); err == nil || !strings.Contains(err.Error(), "x.bookmarks.json") || !strings.Contains(err.Error(), "dup") {
+	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk", nil); err == nil || !strings.Contains(err.Error(), "x.bookmarks.json") || !strings.Contains(err.Error(), "dup") {
 		t.Fatalf("a duplicate name in the file: %v", err)
 	}
 	os.WriteFile(filepath.Join(badDir, "x.bookmarks.json"), []byte(`{"schema":"ixctl-bookmarks/0","bookmarks":[{"name":"old","seq":1,"t":1}]}`), 0o600)
-	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk"); err == nil || !strings.Contains(err.Error(), "epoch") {
+	if _, err := startInstance(fakeSpec(t, "x", nil), "", "127.0.0.1:0", badDir, "disk", nil); err == nil || !strings.Contains(err.Error(), "epoch") {
 		t.Fatalf("a record without an epoch: %v", err)
 	}
 	unsavable := &bookmarkStore{hub: second.plane.hub, path: filepath.Join(badDir, "no-such-dir", "x.bookmarks.json")}
@@ -322,12 +322,12 @@ func TestABookmarkSurvivesARestartAndSaysWhatItCannotReplay(t *testing.T) {
 
 	// The store is the operator's choice at startup: `--bookmarks memory` keeps them for
 	// this boot only and writes no file; anything else than disk or memory is refused.
-	if _, err := startInstance(fakeSpec(t, "m", nil), "", "127.0.0.1:0", t.TempDir(), "cloud"); err == nil || !strings.Contains(err.Error(), "memory") {
+	if _, err := startInstance(fakeSpec(t, "m", nil), "", "127.0.0.1:0", t.TempDir(), "cloud", nil); err == nil || !strings.Contains(err.Error(), "memory") {
 		t.Fatalf("store cloud: %v", err)
 	}
 	memDir := t.TempDir()
 	for boot := 1; boot <= 2; boot++ {
-		mem, err := startInstance(fakeSpec(t, "m", nil), "", "127.0.0.1:0", memDir, "memory")
+		mem, err := startInstance(fakeSpec(t, "m", nil), "", "127.0.0.1:0", memDir, "memory", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

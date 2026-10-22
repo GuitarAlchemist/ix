@@ -24,7 +24,7 @@ pas signée.
 cd go/ixctl
 go build -o ixctl .            # Go 1.27 ; dépendances : coder/websocket, x/sys
 go test ./...                  # la suite unitaire (faux services, sessions en mémoire)
-./ixctl up spec.json [--addr 127.0.0.1:0] [--name NOM] [--state DOSSIER] [--bookmarks disk|memory]
+./ixctl up spec.json [--addr 127.0.0.1:0] [--name NOM] [--state DOSSIER] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N]
 ./ixctl bench spec.json        # distributions de latence : start, stop, restart, RTT status, fan-out
 ./ixctl probes                 # les kinds de sonde de ce binaire et les limites du système (JSON, hors ligne)
 ./ixctl version
@@ -280,7 +280,7 @@ ni de start) et arrête chaque nœud en marche, raison `shutdown`.
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
 | `probe.create` | `probe` (un nœud) | `{node, kind, state: "stopped", depth}` (`depth` : les mux au-dessus) |
-| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, children, parent?, filter?, expires_in_ms?}], count, max_nodes}` |
+| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (sans effet sur un nœud en marche) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
 | `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (le temps restant, sur un nœud en marche) |
@@ -298,6 +298,26 @@ capacité qui porte son nom (`ix.ctl.probe.create(probe: {…})`, `ix.ctl.probe.
 un échantillon (D7, ix#405). Le programme est
 [`crates/ix-ctl/examples/probe.ixql`](../../crates/ix-ctl/examples/probe.ixql) : une sonde CPU
 sous un mux, dix enregistrements, l'arbre retiré.
+
+Depuis D10 (ix#416), les limites portent aussi le **budget** du plan : `max_rate_per_s` 1 000, ce
+qu'un sous-arbre (un mux et ses descendants, ou une feuille à la racine seule) peut déclarer
+émettre en enregistrements par seconde, et `tree_rate_per_s` 2 500 pour l'arbre entier ;
+`ixctl up --probe-rate N --probe-tree-rate N` les règle (les défauts font environ un quart de
+cœur en extrapolant M2). Le débit déclaré est le pire cas, sommé au `create` quel que soit l'état
+des nœuds : 1000 / `every_ms` par feuille. Le filtre ne l'abaisse pas : un échantillonneur en
+échec émet un enregistrement d'erreur à chaque intervalle, et les erreurs contournent `where` et
+`every`. La somme est exacte (en rationnels, ni flottants ni entiers tronqués) : douze feuilles à
+12 ms remplissent 1 000 à l'unité et sont admises ; 32 feuilles à 31 999 ms dépassent un budget de 1
+d'un cheveu et sont refusées. Le budget se règle avant tout nœud et gèle dès le premier. Le `max_rate_per_s` d'un mux resserre le budget auquel son
+sous-arbre est tenu et n'élargit jamais celui de son parent ni du plan ; il est immuable (retirer
+et recréer) ; une feuille n'en porte pas. Une création qui franchirait une borne est refusée à
+l'avance avec le nom du sous-arbre et la borne (`subtree "agg" would declare 1100 records/s with
+"cpu-10"; its max_rate_per_s is 1000`), comme `max_nodes` : rien n'est ralenti ni arrêté pour
+budget, et aucun événement n'est publié. `probe.list` dit l'usage : le `rate_per_s` de chaque
+nœud, le `max_rate_per_s` de chaque mux, le `rate_per_s` de l'arbre face à `tree_rate_per_s`, et
+`bytes`, les enregistrements encodés que chaque nœud a émis, mesurés et non bornés. CPU et RSS
+sont ceux du processus et ne sont pas attribués aux sondes : un seul processus ne sait pas les
+séparer honnêtement.
 
 ## Signets et rejeu
 
@@ -358,7 +378,10 @@ de temps mur, de mémoire, de temps processeur et de processus, un arbre de sond
 (E16 : un rejeu, seq pour seq, de ce que les tuyaux d'un arbre de sondes et le cycle de vie `ctl`
 ont porté après un point nommé par l'opérateur ; bornes, refus, signet d'un pair ; survie à un
 redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Rust, une sonde CPU
-sous un mux, dix enregistrements, l'arbre retiré). 43 vérifications, E1..E17, une boucle de
+sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
+plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
+les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
+44 vérifications, E1..E18, une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).

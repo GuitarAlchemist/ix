@@ -24,7 +24,7 @@ import (
 var initTime = time.Now()
 
 const usage = `usage:
-  ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory]
+  ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N]
   ixctl bench <spec.json>
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
   ixctl version`
@@ -47,7 +47,7 @@ func cli(args []string, stdout, stderr io.Writer) int {
 	case "probes":
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		err = enc.Encode(kindsReply())
+		err = enc.Encode(kindsReply(defaultProbeBudget))
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 	default:
@@ -84,6 +84,10 @@ type upOptions struct {
 	// bookmarks is the bookmark store: "disk" (a file beside the journal, kept across
 	// restarts) or "memory" (this boot only).
 	bookmarks string
+	// probeRate and probeTreeRate are the probe budget (D10): records/s a subtree may declare,
+	// and the whole tree.
+	probeRate     int64
+	probeTreeRate int64
 }
 
 func cmdUp(args []string, stdout io.Writer) error {
@@ -93,6 +97,8 @@ func cmdUp(args []string, stdout io.Writer) error {
 	fs.StringVar(&o.name, "name", "", "instance name (default: the spec's name)")
 	fs.StringVar(&o.state, "state", "", "state directory")
 	fs.StringVar(&o.bookmarks, "bookmarks", "disk", "bookmark store: disk (kept across restarts) or memory")
+	fs.Int64Var(&o.probeRate, "probe-rate", defaultProbeBudget.maxRate, "records/s a probe subtree may declare (max_rate_per_s)")
+	fs.Int64Var(&o.probeTreeRate, "probe-tree-rate", defaultProbeBudget.treeRate, "records/s the whole probe tree may declare (tree_rate_per_s)")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -105,7 +111,7 @@ func cmdUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	in, err := startInstance(spec, o.name, o.addr, o.state, o.bookmarks)
+	in, err := startInstance(spec, o.name, o.addr, o.state, o.bookmarks, &probeBudget{maxRate: o.probeRate, treeRate: o.probeTreeRate})
 	if err != nil {
 		return err
 	}
@@ -147,7 +153,7 @@ type readyLine struct {
 
 // startInstance listens, serves and writes the state file. The caller starts
 // the plane (supervisors, peers, autostart) once it has announced readiness.
-func startInstance(spec *Spec, name, addr, stateDir, bookmarks string) (*instance, error) {
+func startInstance(spec *Spec, name, addr, stateDir, bookmarks string, budget *probeBudget) (*instance, error) {
 	if name == "" {
 		name = spec.Name
 	}
@@ -156,6 +162,11 @@ func startInstance(spec *Spec, name, addr, stateDir, bookmarks string) (*instanc
 	}
 	if bookmarks != "disk" && bookmarks != "memory" {
 		return nil, fmt.Errorf("bookmark store %q: want disk or memory", bookmarks)
+	}
+	if budget != nil {
+		if err := budget.validate(); err != nil {
+			return nil, fmt.Errorf("probe budget: %w", err)
+		}
 	}
 	if err := checkLoopback(addr); err != nil {
 		return nil, err
@@ -204,6 +215,9 @@ func startInstance(spec *Spec, name, addr, stateDir, bookmarks string) (*instanc
 	if err != nil {
 		ln.Close()
 		return fail(err)
+	}
+	if budget != nil {
+		in.plane.SetProbeBudget(budget.maxRate, budget.treeRate) // validated above
 	}
 	in.web = newServer(in.plane, name, in.token, ln.Addr().(*net.TCPAddr))
 	in.srv = &http.Server{Handler: in.web, ReadHeaderTimeout: 5 * time.Second}

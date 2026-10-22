@@ -196,6 +196,21 @@ fake plane in `crates/ix-ctl/tests/ctl.rs` (ten records in `seq` order, a read e
 a partial read told by its length, the tree removed) and against the real plane in the gate (E17).
 IXQL itself did not change: these are registrations against the existing `Capabilities`.
 
+**D10 resolved and shipped (2026-10-21, ix#416):** a budget bounds the declared record rate of
+every subtree (a mux and its descendants; a root leaf alone), the worst case summed at `create`:
+1000 / `every_ms` per leaf (the filter does not lower it: a failing sampler's error records
+bypass `where` and `every`, a finding of the implementation, Codex round 33; the sum is exact, in
+rationals, Codex round 34 having shown a floored integer sum admitting 32 leaves at 31 999 ms on a
+budget of 1); a stopped node keeps its share; the budget is frozen once a node
+exists. Defaults `max_rate_per_s` 1 000 and `tree_rate_per_s`
+2 500 (about a quarter of a core, extrapolating M2), set at `ixctl up --probe-rate` /
+`--probe-tree-rate`, said in `limits`; a mux's `max_rate_per_s` narrows, never widens, and is
+immutable. A create past a bound is refused in advance, a 400 naming the subtree and the bound,
+no event, no slowing, no stop for budget (that waits for a measured quantity to become bounded).
+Measured and not bounded: `bytes` per node; CPU and RSS stay the process's, never attributed.
+`probe.list` says rates and budgets; the gate's E18 checks it on the real plane. Per plane (D4
+open). Grilled by voice with the operator in three rounds; the resolution is on ix#416.
+
 Cross-host pipes (S2), shared sampling (S3), GitHub releases with
 a probes manifest beyond the workflow skeleton (S5), the prototype's WMI kinds (S6), the Gaia
 envelope's adapter (S7: the IX side is the draft contract

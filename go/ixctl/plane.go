@@ -142,7 +142,7 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 		p.RequestShutdown()
 		return map[string]any{"shutdown": true}, nil
 	case "probe.kinds":
-		return kindsReply(), nil
+		return kindsReply(p.probes.budgetNow()), nil
 	case "probe.create":
 		if req.Probe == nil {
 			return nil, badRequest("probe.create needs a node under `probe`")
@@ -603,4 +603,11 @@ func (j *journal) close() {
 		j.f.Close()
 		j.f = nil
 	}
+}
+
+// SetProbeBudget replaces the probe tree's budget (D10, ix#416) before any node exists: what a
+// subtree may declare to emit and what the whole tree may, in records per second. Refused when
+// either is not positive, the tree's ceiling is under the subtree's, or a node already exists.
+func (p *Plane) SetProbeBudget(maxRatePerS, treeRatePerS int64) error {
+	return p.probes.setBudget(probeBudget{maxRate: maxRatePerS, treeRate: treeRatePerS})
 }

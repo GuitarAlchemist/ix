@@ -215,6 +215,22 @@ pas de `finally`. Programme : `crates/ix-ctl/examples/probe.ixql`, exécuté con
 eux, une lecture partielle dite par sa longueur, l'arbre retiré) et contre le vrai plan dans la
 porte (E17). IXQL n'a pas changé : ce sont des enregistrements dans le registre `Capabilities`.
 
+**D10 tranchée et livrée (2026-10-21, ix#416) :** un budget borne le débit déclaré
+d'enregistrements de chaque sous-arbre (un mux et ses descendants ; une feuille à la racine
+seule), le pire cas sommé au `create` : 1000 / `every_ms` par feuille (le filtre ne l'abaisse pas : les enregistrements d'erreur d'un
+échantillonneur en échec contournent `where` et `every`, trouvé à l'implémentation, revue Codex
+33 ; la somme est exacte, en rationnels, la revue Codex 34 ayant montré qu'une somme entière tronquée
+admettait 32 feuilles à 31 999 ms sur un budget de 1) ; un nœud arrêté garde sa part ;
+le budget gèle dès qu'un nœud existe. Défauts `max_rate_per_s` 1 000 et `tree_rate_per_s` 2 500 (environ un quart de cœur en
+extrapolant M2), réglés à `ixctl up --probe-rate` / `--probe-tree-rate`, dits dans `limits` ; le
+`max_rate_per_s` d'un mux resserre, n'élargit jamais, et est immuable. Une création au-delà d'une
+borne est refusée à l'avance, un 400 qui nomme le sous-arbre et la borne, sans événement, sans
+ralentissement, sans arrêt pour budget (qui attend qu'une quantité mesurée devienne bornée).
+Mesurés et non bornés : `bytes` par nœud ; CPU et RSS restent ceux du processus, jamais
+attribués. `probe.list` dit débits et budgets ; la porte E18 le vérifie sur le vrai plan. Par
+plan (D4 ouverte). Grillée à la voix avec l'opérateur en trois tours ; la résolution est sur
+ix#416.
+
 Les tuyaux inter-hôtes (S2), l'échantillonnage partagé (S3), les releases GitHub avec un manifeste de sondes au-delà du squelette de workflow (S5), les kinds WMI du
 prototype (S6), l'adaptateur de l'enveloppe Gaia (S7 : le côté IX est le brouillon de contrat
 [`2026-10-21-ixctl-probe-observation.contract.md`](../../contracts/2026-10-21-ixctl-probe-observation.contract.md),

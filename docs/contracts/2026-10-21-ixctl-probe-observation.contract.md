@@ -1,6 +1,6 @@
 # Contract: a probe sample read from the plane, as a consumer's observation (`ixctl.v1` → gaia#245)
 
-**Version:** v0.1.1 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
+**Version:** v0.1.2 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
 **Date:** 2026-10-21 · **Owner:** ix (`go/ixctl`, the producer side; Gaia owns the adapter, projection and UI) · **Story:** [ix#413](https://github.com/GuitarAlchemist/ix/issues/413) · **Consumer:** [gaia#245](https://github.com/GuitarAlchemist/gaia/issues/245) · **Plan:** `docs/plans/2026-10-20-ixctl-probes.md`
 
 Says how a reader of the control plane's event stream (`subscribe` over `ixctl.v1`, `GET /v1/events`,
@@ -76,6 +76,7 @@ previous code, reproduced by no run: the test stands as its guard).
 | deduplication key | | **`origin:epoch:seq`**: a frame read twice (a reconnect that resumes below the last seq kept) is the same frame; fixture 1 shows a resume from the last seq kept gives `seq + 1` first, nothing twice |
 | units | not on the wire: `probe.kinds` → `fields` lists the names only, `doc` says the kind in words (gap G3) | a per-kind table the adapter keeps, by `kind@version` |
 | sampling interval | not in the sample: `every_ms` of the node from `probe.list` | read at `probe.created`/`probe.started`, kept with the series |
+| declared limits (cadence, maximum rate) | `probe.list` → `rate_per_s` (what the node's subtree declares to emit, the worst case) and a mux's `max_rate_per_s`; `probe.kinds` → `limits` (`max_rate_per_s`, `tree_rate_per_s`, the plane's budget, D10 ix#416); `bytes` on the list is what the node emitted, measured | read once per series; CPU and RSS are not attributed to probes by the plane |
 | freshness TTL | not the plane's: `ttl_ms` on a node is its **lease**, not a freshness bound | the consumer's own, suggested `3 × every_ms` |
 | state | | see below |
 
@@ -167,6 +168,12 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 
 ## Changes
 
+- v0.1.2 (2026-10-21): D10 (ix#416) resolved and shipped: `probe.list` carries `bytes`,
+  `rate_per_s` and a mux's `max_rate_per_s`; `probe.kinds` → `limits` carries the plane's
+  `max_rate_per_s` / `tree_rate_per_s`; a create past a budget is refused in advance (400, no
+  event). What gaia#245 asks declared before a sample (cadence, maximum rate) is readable from the
+  list and the limits; dropped samples remain none by construction (synchronous propagation; the
+  ring's `gap` is the only loss); CPU and RSS are not attributed to probes.
 - v0.1.1 (2026-10-21): the plane closes G6 and G7 on the operator's go (records and lifecycle
   events published under the tree lock, removal waits for a stop in progress, error samples bypass
   the filter; `go/ixctl/probe_order_test.go`). Also from Codex's review of v0.1.0: `since-ahead`
