@@ -59,8 +59,8 @@ struct Args {
     #[arg(long, default_value_t = false)]
     dry_run: bool,
 
-    /// Override sentrux executable path. Default:
-    /// `C:/Users/spare/bin/sentrux.exe` (or `$SENTRUX_EXE` if set).
+    /// Override sentrux executable path. Default: `$SENTRUX_EXE`, then
+    /// `sentrux` on `PATH`; an error names both when neither resolves.
     #[arg(long)]
     sentrux_exe: Option<PathBuf>,
 
@@ -113,11 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = if let Some(fixture) = &args.from_fixture {
         load_fixture(fixture)?
     } else {
-        let sentrux_exe = args
-            .sentrux_exe
-            .clone()
-            .or_else(|| std::env::var_os("SENTRUX_EXE").map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from(ix_sentrux_annotations::DEFAULT_SENTRUX_EXE));
+        let sentrux_exe = ix_sentrux_annotations::resolve_sentrux_exe(args.sentrux_exe.clone())?;
         let cfg = SentruxConfig {
             sentrux_exe,
             workspace: args.workspace.clone(),
@@ -170,11 +166,7 @@ fn run_untested_pass(args: &Args, now: &str) -> Result<(), Box<dyn std::error::E
     let gaps = if let Some(fixture) = &args.untested_from_fixture {
         load_test_gaps_fixture(fixture)?
     } else {
-        let sentrux_exe = args
-            .sentrux_exe
-            .clone()
-            .or_else(|| std::env::var_os("SENTRUX_EXE").map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from(ix_sentrux_annotations::DEFAULT_SENTRUX_EXE));
+        let sentrux_exe = ix_sentrux_annotations::resolve_sentrux_exe(args.sentrux_exe.clone())?;
         let cfg = SentruxConfig {
             sentrux_exe,
             workspace: args.workspace.clone(),
