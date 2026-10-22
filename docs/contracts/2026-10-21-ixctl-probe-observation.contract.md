@@ -165,6 +165,13 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   into the stopped series.
 - **G7, closed in v0.1.1** (a node's filter hid its error samples). A failed read now reaches the
   pipe whatever the filter; `errors` on `probe.list` remains the cumulative count.
+- **G8, what a mirrored pipe loses across a link outage is not marked.** On a parent plane,
+  `peer/<peer>/probe/<node>` resumes from the last mirrored seq after a reconnect only when the
+  link's ctl replay proves the node is still the incarnation it last mirrored (no gap on `ctl`,
+  no `probe.created` / `probe.removed` of the name since); otherwise, and after every drop, it
+  starts live, and the records of the outage are skipped without a marker on the mirrored pipe
+  (the local ring's `gap` says nothing about them). A consumer that needs continuity reads the
+  child directly until slice 3 of S2 (ix#408) relays the loss as a continuity marker (D4 Q6).
 
 ## Changes
 
@@ -172,7 +179,7 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   `probe.list` carry `export: true` on a node whose pipe federation may mirror; a peer that names
   the node in `peers[].probes` reads it as `peer/<peer>/probe/<node>` with `origin` kept (the
   source's `seq` / `epoch` are not on the mirrored envelope yet: slice 2 adds `src_seq` /
-  `src_epoch`, and the series becomes `origin:src_epoch:node:<created seq>`). G1 unchanged.
+  `src_epoch`, and the series becomes `origin:src_epoch:node:<created seq>`). G1 unchanged; G8 opened (what a mirrored pipe loses across a link outage).
 - v0.1.2 (2026-10-21): D10 (ix#416) resolved and shipped: `probe.list` carries `bytes`,
   `rate_per_s` and a mux's `max_rate_per_s`; `probe.kinds` → `limits` carries the plane's
   `max_rate_per_s` / `tree_rate_per_s`; a create past a budget is refused in advance (400, no

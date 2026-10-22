@@ -219,11 +219,14 @@ the link subscribes by exact channel name (a prefix would carry `cpu-extra` with
 peer's `probe.list` at attach and the mirrored `probe.created` / `probe.removed` after, applied
 in arrival order (an event that landed between the subscription and the list is applied after
 it, one lost to a gap is not seen: the window the cursor-bound snapshot closes in slice 4); a
-pipe starts live on every session and after every drop, never from a seq (a name re-exported
-after an unexported incarnation would replay it), and frames of a subscription that is no
-longer the pipe's are dropped (Codex rounds 35–36); the list is read before any mirrored frame
-is applied, subscribing runs off the link's drain goroutine so a full queue cannot starve the
-reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
+pipe starts live after a drop, and after a reconnect resumes only when the ctl replay proves
+the same incarnation (no gap, no lifecycle event of the name since), else starts live (a name
+re-exported after an unexported incarnation would otherwise replay it; what a live start skips
+is contract G8 until slice 3's marker), and frames of a subscription that is no longer the
+pipe's are dropped (Codex rounds 35–37); the status and the list are read before any mirrored
+frame is applied while merged is drained into a backlog (a reconnect replay up to the ring
+cannot hold the reader back), subscribing runs off the link's drain goroutine so a full queue
+cannot starve the reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
 published (samples × depth), bytes and records transported per link and per parent;
 `tree_rate_per_s` is not a federated bound. Still to ship (slices 2–4, acceptance criteria on
 ix#408): provenance `src_seq` / `src_epoch` and the series `origin:src_epoch:node:<created seq>`;

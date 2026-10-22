@@ -216,10 +216,12 @@ names exactly the nodes it wants (`peers[].probes`). The link subscribes to each
 pipe by its exact channel name (`probe/cpu` does not cover `probe/cpu-extra`), from the peer's
 `probe.list` when the link comes up and from the mirrored `probe.created` / `probe.removed`
 after; `status.peers[].probes` says what each wanted name is: `mirrored`, `not-exportable`,
-`opening` (subscribing), or `absent` (no such node, or the link down). A pipe starts live on
-every session and after every drop, never from a seq: the same channel name can carry an
-earlier incarnation's records (slice 2 brings the identity that tells them apart, slice 3 the
-bounded replay). Aggregation lives with the reader: in V1 the reader
+`opening` (subscribing), or `absent` (no such node, or the link down). After a drop a pipe starts
+live; after a reconnect it resumes from the last seq mirrored only when the ctl replay proves
+the node is still that incarnation (no gap on `ctl`, no `probe.created` / `probe.removed` of the
+name since), else it starts live: the same channel name can carry another incarnation's
+records, and what a live start skips is not yet marked on the mirrored pipe (contract G8; slice
+2 brings the identity, slice 3 the bounded replay and the continuity marker). Aggregation lives with the reader: in V1 the reader
 is the consumer of `peer/<name>/probe/<node>` (IXQL `ix.ctl.events`), no local node names a
 remote source. Export is a federation rule, not a confidentiality barrier: direct subscription to
 a pipe is unchanged. Not yet in this slice: source provenance on the mirrored envelope

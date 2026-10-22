@@ -177,6 +177,7 @@ func TestADroppedPipeLeavesNoGoroutineBehind(t *testing.T) {
 	for i := 0; i < drops; i++ {
 		cycle()
 	}
+	// +2 absorbs a timer or an unsubscribe still ending; a leak per drop shows as +10.
 	var got int
 	for d := time.Now().Add(3 * time.Second); time.Now().Before(d); time.Sleep(20 * time.Millisecond) {
 		if got = runtime.NumGoroutine(); got <= base+2 {

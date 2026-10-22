@@ -1163,7 +1163,7 @@ def run():
     gaps_before = sum(1 for g in SSE_GAPS if g.get("ch") == "peer/b/probe/")
     ready = threading.Event()
     th, seen = sse_async(sa, "peer/b/probe/", 3.0, query="ch=peer/b/probe/", ready=ready)
-    ready.wait(2)
+    ok_ready = ready.wait(2)  # the reader is on the pipe before the unexported incarnation exists
     code_re = call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "mem@1", "every_ms": 50})[0]
     call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
     states_re, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "not-exportable" else None, 5)
@@ -1188,10 +1188,10 @@ def run():
           and removed_x == [200, 200, 200] and (states_gone or {}) == {"xcpu": "absent", "xmem": "absent"}
           and code_re == 200 and (states_re or {}) == {"xcpu": "not-exportable", "xmem": "absent"}
           and code_rx == 200 and (states_rx or {}) == {"xcpu": "mirrored", "xmem": "absent"}
-          and kinds == ["heartbeat@1"] and peer_up and gaps_after == gaps_before and code_rm == 200,
+          and ok_ready and kinds == ["heartbeat@1"] and peer_up and gaps_after == gaps_before and code_rm == 200,
           created=made, started=started_x, states=states_x, channels=xchans, samples=len(xenvs), export=flags,
           removed=removed_x, after_remove=states_gone, recreated=states_re, reexported=states_rx,
-          crossed=len(crossed), kinds=kinds, peer_up=peer_up, gaps=[gaps_before, gaps_after])
+          ready=ok_ready, crossed=len(crossed), kinds=kinds, peer_up=peer_up, gaps=[gaps_before, gaps_after])
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

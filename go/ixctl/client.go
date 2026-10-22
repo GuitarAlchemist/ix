@@ -66,7 +66,8 @@ type sub struct {
 }
 
 // Sub is an open subscription: its frames, and Done, closed when the subscription is dropped
-// (Unsubscribe) or the connection ends. Frames closes with the connection only.
+// (Unsubscribe) or the connection ends. Frames closes with the connection, and not at all once
+// the subscription was dropped first (the reader no longer knows it): a reader ends on Done.
 type Sub struct {
 	ID     int64
 	Frames <-chan Frame
@@ -244,7 +245,8 @@ func (cl *Client) SubscribeExact(ctx context.Context, ch string, since *uint64, 
 }
 
 // Unsubscribe drops a subscription on both sides and closes its Done. Frames already queued on
-// its channel stay readable; the channel itself closes with the connection.
+// its channel stay readable; the channel itself is never closed after this (the reader has
+// forgotten it), so a reader that unsubscribes ends on Done, not on the channel's close.
 func (cl *Client) Unsubscribe(ctx context.Context, id int64) error {
 	_, err := cl.Do(ctx, Request{Op: "unsubscribe", Sub: id})
 	cl.forget(id)
