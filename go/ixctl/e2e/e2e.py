@@ -10,7 +10,7 @@ records, the tree removed) and probe budgets (E18: `limits` say the plane's budg
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
 widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
 only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
-what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart). 48 checks, E1..E21, a restart loop and the M1 and M2 measurements.
+what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load). 49 checks, E1..E21, a restart loop and the M1, M2 and M3 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -204,6 +204,7 @@ def peer(s, name):
 
 
 SSE_GAPS = []  # every gap event a sse() reader got, in order: {ch, reason, from, ...}
+SSE_RECV = {}  # (ch, seq) -> wall time (time.time()) the chunk completing that envelope's line was read
 
 
 def sse(st, ch, seconds, query=None, ready=None):
@@ -212,7 +213,9 @@ def sse(st, ch, seconds, query=None, ready=None):
     `ch=...` alone for a live reader). `ready`, a threading.Event, is set once the stream's
     headers are in: from then on the reader is on the pipe and nothing published is missed.
     Gap events (a ring that no longer holds seq 1, a reader that fell behind) are not
-    envelopes: they go to SSE_GAPS, with the prefix asked, and the envelopes come back alone."""
+    envelopes: they go to SSE_GAPS, with the prefix asked, and the envelopes come back alone.
+    SSE_RECV keeps, per (ch, seq), when the chunk that completed the envelope's line was read:
+    a latency measured on the reader's side (an envelope's `t` is its source's clock)."""
     host, port = st["addr"].rsplit(":", 1)
     sock = socket.create_connection((host, int(port)), timeout=seconds)
     req = (
@@ -221,6 +224,7 @@ def sse(st, ch, seconds, query=None, ready=None):
     )
     sock.sendall(req.encode())
     buf = b""
+    marks = []  # (bytes buffered so far, wall time) per chunk read
     end = time.perf_counter() + seconds
     sock.settimeout(0.2)
     while time.perf_counter() < end:
@@ -231,22 +235,29 @@ def sse(st, ch, seconds, query=None, ready=None):
         if not chunk:
             break
         buf += chunk
+        marks.append((len(buf), time.time()))
         if ready is not None and not ready.is_set() and b"\r\n\r\n" in buf:
             ready.set()
     sock.close()
     if ready is not None:
         ready.set()
-    text = buf.decode("utf-8", "replace")
-    head, _, body = text.partition("\r\n\r\n")
+    head_b, _, body_b = buf.partition(b"\r\n\r\n")
+    head = head_b.decode("utf-8", "replace")
     envs = []
     if not head.startswith("HTTP/1.1 200"):
         # A refused stream (a bookmark nobody set, a bookmark beside since) is one JSON error.
+        body = body_b.decode("utf-8", "replace")
         try:
             SSE_GAPS.append({"ch": ch, "reason": "refused", **json.loads(body)})
         except ValueError:
             SSE_GAPS.append({"ch": ch, "reason": "refused", "raw": body[:200]})
         return head.split("\r\n")[0], envs
-    for line in body.splitlines():
+    pos, mi = len(head_b) + 4, 0
+    for raw in body_b.split(b"\n"):
+        pos += len(raw) + 1
+        while mi < len(marks) - 1 and marks[mi][0] < pos:
+            mi += 1  # the first chunk that held the whole line
+        line = raw.decode("utf-8", "replace").rstrip("\r")
         if line.startswith("data: "):
             try:
                 rec = json.loads(line[6:])
@@ -254,6 +265,8 @@ def sse(st, ch, seconds, query=None, ready=None):
                 continue
             if "ch" in rec:
                 envs.append(rec)
+                if marks:
+                    SSE_RECV[(rec["ch"], rec.get("seq"))] = marks[mi][1]
             else:
                 SSE_GAPS.append({"ch": ch, **rec})
     return head.split("\r\n")[0], envs
@@ -446,7 +459,7 @@ def run():
                   "    except OSError as e: print('spawn refused:', e, file=sys.stderr); break\n"
                   "time.sleep(60)"],
          "restart": "never", "limits": {"processes": 3}},
-    ], [{"name": "b", "state_file": str(STATE / "b.json"), "probes": ["xcpu", "xmem"]}])
+    ], [{"name": "b", "state_file": str(STATE / "b.json"), "probes": ["xcpu", "xmem"] + [f"xl{i}" for i in range(8)]}])
 
     pb, ready_b, sb, ms_b = up("b", spec_b)
     # Plane a carries the operator's probe budget (D10): M2 declares exactly 1 600 records/s under
@@ -1170,8 +1183,8 @@ def run():
         {"name": "xcpu-extra", "kind": "heartbeat@1", "every_ms": 50, "export": True},
         {"name": "xmem", "kind": "heartbeat@1", "every_ms": 50})]
     started_x = [call(sa, "POST", "/v1/probe/start", {"node": n, "peer": "b"})[0] for n in ("xcpu", "xcpu-extra", "xmem")]
-    def pipe_states():
-        return {p["name"]: p["state"] for p in (peer(status(sa), "b") or {}).get("probes", [])}
+    def pipe_states():  # the two names E19..E21 follow; the eight `xl*` are M3's
+        return {p["name"]: p["state"] for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"] in ("xcpu", "xmem")}
     states_x, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
     _, xenvs = sse(sa, "peer/b/probe/", 1.0, query="ch=peer/b/probe/")  # live, not a since=0 replay
     xchans = sorted({e["ch"] for e in xenvs})
@@ -1255,6 +1268,59 @@ def run():
           and bool(benvs) and all("src_seq" not in e and "src_epoch" not in e for e in benvs) and code_rm20 == 200,
           mirrored=len(menvs), matched=matched, on_b=len(benvs),
           src_epoch_is_b=all(e.get("src_epoch") == b_epoch for e in menvs), removed=code_rm20)
+
+    # M3: control under federated load (S2 slice 3, criterion 6 of ix#408). Eight 10 ms heartbeat
+    # pipes b exports and a wants (800 records/s offered to the link, under b's default budget),
+    # read on a for 2 s: the records mirrored per second, what the link dropped for want of room
+    # in its bounded pipe queue (`status.peers[].probes[].dropped`, each run marked `dropped` on
+    # its pipe before the record that followed), and how long a probe.created of b takes to show
+    # on a's mirrored ctl while the pipes are loaded, measured on the reader's side. The drops are
+    # a measure, not a bound checked here: on a parent that keeps up there are none; the Go test
+    # slows the parent to prove the bound and the priority. A marked drop is one the status counts.
+    n_xl, window = 8, 2.0
+    made_xl = [call(sa, "POST", "/v1/probe/create?peer=b", {"name": f"xl{i}", "kind": "heartbeat@1", "every_ms": 10, "export": True})[0]
+               for i in range(n_xl)]
+    drops0 = sum(p.get("dropped", 0) for p in (peer(status(sa), "b") or {}).get("probes", []))
+    ready_p, ready_c = threading.Event(), threading.Event()
+    th_p, m3_pipes = sse_async(sa, "peer/b/probe/", window + 1.0, query="ch=peer/b/probe/", ready=ready_p)
+    th_c, m3_ctl = sse_async(sa, "peer/b/ctl", window + 1.0, query="ch=peer/b/ctl", ready=ready_c)
+    ready_p.wait(2)
+    ready_c.wait(2)
+    t0 = time.perf_counter()
+    for i in range(n_xl):
+        call(sa, "POST", "/v1/probe/start", {"node": f"xl{i}", "peer": "b"})
+    def xl_mirrored():
+        xl = [p for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"].startswith("xl")]
+        return len(xl) == n_xl and all(p["state"] == "mirrored" for p in xl)
+    states_xl, _ = wait_until(xl_mirrored, 5)
+    time.sleep(0.5)  # the pipes are loaded when the control event is sent
+    t_mark = time.time()
+    code_mark = call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xl-mark", "kind": "heartbeat@1", "every_ms": 1000})[0]
+    th_p.join()
+    th_c.join()
+    elapsed = time.perf_counter() - t0
+    _, penvs = m3_pipes["r"]
+    _, cenvs = m3_ctl["r"]
+    xl_samples = [e for e in penvs if e["ev"]["kind"] == "sample" and str(e["ev"]["data"].get("node", "")).startswith("xl")]
+    xl_markers = [e for e in penvs if e["ev"]["kind"] == "link.gap" and e["ev"]["data"].get("reason") == "dropped"]
+    marked = sum(e["ev"]["data"].get("dropped", 0) for e in xl_markers)
+    mark_env = next((e for e in cenvs if e["ev"]["kind"] == "probe.created" and e["ev"]["data"].get("node") == "xl-mark"), None)
+    mark_recv = SSE_RECV.get((mark_env["ch"], mark_env["seq"])) if mark_env else None
+    ctl_ms = round((mark_recv - t_mark) * 1000, 1) if mark_recv else None
+    st_m3 = peer(status(sa), "b") or {}
+    dropped = sum(p.get("dropped", 0) for p in st_m3.get("probes", [])) - drops0
+    peer_up_m3 = st_m3.get("state") == "up"
+    per_s_x = round(len(xl_samples) / elapsed, 1)
+    removed_xl = [call(sa, "POST", "/v1/probe/remove", {"node": f"xl{i}", "peer": "b"})[0] for i in range(n_xl)]
+    code_rm_mark = call(sa, "POST", "/v1/probe/remove", {"node": "xl-mark", "peer": "b"})[0]
+    measure("m3_link_8x10ms", {"mirrored_per_s": per_s_x, "offered_per_s": n_xl * 100, "dropped": dropped, "marked": marked,
+                               "ctl_ms_under_load": ctl_ms, "window_s": round(elapsed, 2)})
+    check("M3.control_crosses_under_federated_load",
+          made_xl == [200] * n_xl and bool(states_xl) and code_mark == 200 and mark_env is not None
+          and ctl_ms is not None and ctl_ms < 1000 and per_s_x > 0 and peer_up_m3 and marked <= dropped
+          and removed_xl == [200] * n_xl and code_rm_mark == 200,
+          mirrored_per_s=per_s_x, offered_per_s=n_xl * 100, dropped=dropped, marked=marked,
+          ctl_ms_under_load=ctl_ms, peer_up=peer_up_m3, removed=removed_xl)
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

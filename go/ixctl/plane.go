@@ -217,6 +217,10 @@ type PeerStatus struct {
 type PeerProbeStatus struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
+	// Dropped: records of this pipe the link discarded for want of room in its pipe queue, since
+	// the link was made (across sessions); each run of drops is marked on the mirrored pipe
+	// before the record that followed (`link.gap`, reason `dropped`). Absent while zero.
+	Dropped uint64 `json:"dropped,omitempty"`
 }
 
 // StatusReply summarises the generations. Every generation <= SettledGeneration has

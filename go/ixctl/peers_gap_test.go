@@ -89,6 +89,7 @@ type linkGap struct {
 	Oldest       uint64 `json:"oldest,omitempty"`
 	LastSrcSeq   uint64 `json:"last_src_seq,omitempty"`
 	LastSrcEpoch string `json:"last_src_epoch,omitempty"`
+	Dropped      uint64 `json:"dropped,omitempty"`
 }
 
 func gapOf(t *testing.T, e *Envelope) linkGap {

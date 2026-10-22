@@ -227,7 +227,7 @@ that is no longer the pipe's are dropped (Codex rounds 35–38); the status and 
 before any mirrored frame is applied while merged is drained into a backlog (a reconnect replay
 up to the ring cannot hold the reader back; the backlog is capped in frames and in bytes, past either the session
 reconnects), subscribing runs off the link's drain goroutine so a full queue cannot starve the
-reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
+reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`, and `dropped`, the records the link discarded for want of room. Three figures kept apart: sampling admitted (D10), envelopes
 published (samples × depth), bytes and records transported per link and per parent;
 `tree_rate_per_s` is not a federated bound. Slice 2 shipped the provenance: every mirrored
 envelope carries the source's `src_seq` / `src_epoch`, so the series
@@ -236,10 +236,14 @@ are the consumer's (gate E20, contract v0.1.4). Slice 3's first cut marks what t
 in the mirrored stream: a `link.gap` envelope of the parent's own on the pipe at every live start
 (`src_epoch`, `last_src_seq` / `last_src_epoch`) and on the mirrored `ctl` when the peer came back
 as a new instance (`epoch-changed`) or answered a gap on the resumed `ctl` / `svc/` (criteria 4 and
-5 of ix#408; gate E21; contract v0.1.5 closes G8). Still to ship (criteria 6–7, then slice 4):
-per-class bounded link queues (records and bytes),
-one bounded replay then jump with a dated gap, `degraded` and `reconciled` separately; the
-cursor-bound snapshot with creation identities. Grilled by voice with Gaia's read-only review
+5 of ix#408; gate E21; contract v0.1.5 closes G8). The second cut bounds the link's queues per
+class (criterion 6): `ctl` / `svc/` in their own lossless queue read first, the pipes in a queue
+bounded in records and bytes their forwarders never wait on; drops counted per pipe on the status
+and marked `dropped` on the pipe before the record that followed, a pipe subscription the peer
+dropped reopened live and marked `overflow` without ending the session (gate M3 measures the
+load; the Go test slows the parent to prove the bound and the priority; contract v0.1.6). Still
+to ship (criterion 7, then slice 4): one bounded replay then jump with a dated gap, `degraded`
+and `reconciled` separately; the cursor-bound snapshot with creation identities. Grilled by voice with Gaia's read-only review
 folded in; the resolution is on ix#402. Gate E19 checks the slice on the two federated planes.
 
 Cross-host pipes (S2), shared sampling (S3), GitHub releases with

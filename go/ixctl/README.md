@@ -232,9 +232,15 @@ every live start (`reason: live-start`, `src_epoch` the boot now read, `last_src
 `last_src_epoch` the last frame mirrored on it before, when any) and on `peer/<name>/ctl` when
 the peer came back as a new instance (`epoch-changed`, `last_src_epoch` the boot before) or
 answered a gap on the link's resumed `ctl` / `svc/` (`prefix`, `reason`, `from`, `oldest` as it
-said: its history expired); a local gap stays a gap frame. Not yet: per-class bounded link
-queues and bounded catch-up, `degraded` / `reconciled`, the cursor-bound snapshot; see the
-resolution on ix#402.
+said: its history expired); a local gap stays a gap frame. The link's queues are bounded per
+class (criterion 6 of ix#408): `ctl` and `svc/` in their own queue, lossless and read first; the
+wanted pipes in a queue bounded in records (1024) and in bytes (4 MiB) that their forwarders
+never wait on, so a parent slower than the offered load drops pipe records rather than grow or
+hold the lifecycle back; each run of drops is counted on `status.peers[].probes[].dropped` and
+marked on the pipe (`link.gap`, `reason: dropped`, `dropped` the link's own exact count) before
+the record that followed, and a pipe subscription the peer itself dropped (`overflow`) is marked
+and reopened live without ending the session. Not yet: bounded catch-up, `degraded` /
+`reconciled`, the cursor-bound snapshot; see the resolution on ix#402.
 
 `ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`, `export` when set),
 `probe.started` (`expires_in_ms` when leased), `probe.stopped` and `probe.removed` with a `reason`
@@ -386,7 +392,7 @@ pipes and the `ctl` lifecycle carried after a point the operator named; bounds, 
 peer's bookmark; survival of a restart) and the IXQL probe surface (E17: `probe.ixql` through
 the Rust client, a CPU probe under a mux, ten records, the tree removed) and probe budgets (E18:
 the plane's budget in `limits`, a leaf past its mux's `max_rate_per_s` refused naming both, a leaf
-carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record; E21: the link marks what the mirror skips, a `link.gap` on the pipe at a live start and on the mirrored `ctl` at the peer's restart). 48 checks, E1..E21, a
+carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record; E21: the link marks what the mirror skips, a `link.gap` on the pipe at a live start and on the mirrored `ctl` at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops counted and marked, and the time a `probe.created` takes to cross under the load). 49 checks, E1..E21, a
 restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).

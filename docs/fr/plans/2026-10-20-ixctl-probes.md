@@ -250,7 +250,7 @@ miroir appliquée pendant que la file est vidée dans un arriéré (un rejeu de 
 ring ne peut pas retenir le lecteur ; l'arriéré est plafonné en trames et en octets, au-delà la session se reconnecte),
 l'abonnement s'exécute hors de la goroutine qui vide la file du lien, donc une file pleine ne
 peut pas affamer la réponse, et le relais d'un tuyau retiré se termine avec son abonnement. `status.peers[].probes` dit
-`mirrored` / `not-exportable` / `opening` / `absent`. Trois
+`mirrored` / `not-exportable` / `opening` / `absent`, et `dropped`, les enregistrements que le lien a écartés faute de place. Trois
 chiffres tenus séparés : échantillonnage admis (D10), enveloppes publiées (échantillons ×
 profondeur), octets et enregistrements transportés par lien et par parent ; `tree_rate_per_s`
 n'est pas une borne fédérée. La tranche 2 a livré la provenance : chaque enveloppe miroir porte
@@ -261,10 +261,15 @@ coupe de la tranche 3 marque ce que le miroir saute, dans le flux miroir : une e
 `link.gap` propre au parent sur le tuyau à chaque démarrage en direct (`src_epoch`,
 `last_src_seq` / `last_src_epoch`) et sur le `ctl` miroir quand le pair est revenu comme nouvelle
 instance (`epoch-changed`) ou a répondu un trou sur le `ctl` / `svc/` repris (critères 4 et 5 de
-ix#408 ; porte E21 ; le contrat v0.1.5 ferme G8). Reste à livrer (critères 6 et 7, puis tranche
-4) : les files du lien bornées par classe
-(enregistrements et octets), un rejeu borné puis saut avec trou daté, `degraded` et `reconciled`
-séparés ; l'instantané lié à un curseur avec identités de création. Grillée à la voix, la revue en
+ix#408 ; porte E21 ; le contrat v0.1.5 ferme G8). La deuxième coupe borne les files du lien par
+classe (critère 6) : `ctl` / `svc/` dans leur propre file sans perte, lue d'abord, les tuyaux dans
+une file bornée en enregistrements et en octets que leurs relais n'attendent jamais ; les pertes
+comptées par tuyau sur le statut et marquées `dropped` sur le tuyau avant l'enregistrement qui a
+suivi, un abonnement de tuyau lâché par le pair rouvert en direct et marqué `overflow` sans clore
+la session (la porte M3 mesure la charge ; le test Go ralentit le parent pour prouver la borne et
+la priorité ; contrat v0.1.6). Reste à livrer (critère 7, puis tranche 4) : un rejeu borné puis
+saut avec trou daté, `degraded` et `reconciled` séparés ; l'instantané lié à un curseur avec
+identités de création. Grillée à la voix, la revue en
 lecture seule de Gaïa intégrée ; la résolution est sur ix#402. La porte E19 vérifie la tranche sur
 les deux plans fédérés.
 

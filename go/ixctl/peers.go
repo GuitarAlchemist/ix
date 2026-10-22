@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +22,12 @@ const (
 	// gives up and reconnects.
 	maxLinkBacklog      = 16384
 	maxLinkBacklogBytes = 16 << 20
+	// maxPipeQueue and maxPipeQueueBytes bound what a session holds of the wanted probe pipes,
+	// in records and in bytes on the wire (criterion 6 of ix#408): past either, a pipe frame is
+	// dropped rather than queued, so a parent slower than the offered load loses pipe records,
+	// visibly, and never ctl or svc/, which have their own queue and go first.
+	maxPipeQueue      = 1024
+	maxPipeQueueBytes = 4 << 20
 )
 
 // peerLink federates with one peer: it mirrors the peer's ctl and svc/
@@ -40,6 +47,10 @@ type peerLink struct {
 	boot     string              // the peer's epoch as its status last said it (the boot a live start reads)
 	last     map[string]srcPoint // per pipe channel, the last frame mirrored, across sessions and peer boots: named by the next live start's marker
 	pipes    map[string]*pipeSub // per wanted probe node, what it is now
+
+	// pipeDelay is a test knob: nanoseconds the mirroring loop spends on each pipe frame, a
+	// durably slow parent (zero in production).
+	pipeDelay atomic.Int64
 }
 
 // srcPoint is one envelope of the peer, by its own seq and boot.
@@ -56,17 +67,23 @@ type srcPoint struct {
 // the link's resumed ctl or svc/ subscription (`prefix`): its reason (`since-too-old`: history
 // expired; `epoch-changed`: the peer restarted), `src_epoch`, `from`, `oldest` as the peer
 // said; or, without `prefix`, `epoch-changed` the link saw itself when the peer came back as a
-// new instance (`src_epoch` the new boot, `last_src_epoch` the one mirrored before). It is a
-// boundary, not a count: nothing says how many records the skip covered.
+// new instance (`src_epoch` the new boot, `last_src_epoch` the one mirrored before). On a pipe
+// again (criterion 6): `dropped`, before the record that followed a run of pipe frames the link
+// itself discarded for want of room in its bounded pipe queue, with their number (`dropped`: the
+// link's own exact count, never an inference from the source's seqs); and `overflow` when the
+// peer dropped the pipe's subscription (`from`, `src_epoch` as it said), the pipe then reopened
+// live and marked as at any live start. A boundary, not a count, except for what the link itself
+// discarded: nothing says how many records a skip on the source covered.
 const linkGapKind = "link.gap"
 
 // pipeSub is one wanted probe node's standing on the link. gen counts its changes: a subscribe
 // or unsubscribe that completes after the pipe moved on finds another gen and stands down, and
 // a frame from a subscription that is no longer the pipe's is dropped.
 type pipeSub struct {
-	state string // pipeAbsent | pipeNotExportable | pipeOpening | pipeMirrored
-	sub   int64  // the subscription while mirrored
-	gen   uint64
+	state   string // pipeAbsent | pipeNotExportable | pipeOpening | pipeMirrored
+	sub     int64  // the subscription while mirrored
+	gen     uint64
+	dropped uint64 // frames the link discarded for want of room, since the link was made
 }
 
 const (
@@ -95,7 +112,7 @@ func (l *peerLink) status() PeerStatus {
 		st.Services = json.RawMessage("[]")
 	}
 	for _, n := range l.spec.Probes {
-		st.Probes = append(st.Probes, PeerProbeStatus{Name: n, State: l.pipes[n].state})
+		st.Probes = append(st.Probes, PeerProbeStatus{Name: n, State: l.pipes[n].state, Dropped: l.pipes[n].dropped})
 	}
 	return st
 }
@@ -186,6 +203,12 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	epoch := l.epoch
 	l.mu.Unlock()
 
+	// Two queues by class (criterion 6 of ix#408). merged holds ctl and svc/: lossless, their
+	// forwarders wait for room (the peer's own overflow of such a subscription then ends the
+	// session, which resumes them). The pipe queue, made below once the first replies are in,
+	// holds the wanted probe pipes, bounded in records and bytes: a pipe forwarder never waits,
+	// so a load of pipes can neither hold the reader back nor grow memory; what does not fit is
+	// dropped, counted and marked. The loop reads merged first.
 	merged := make(chan peerFrame, 1024)
 	for _, prefix := range []string{"ctl", "svc/"} {
 		_, frames, err := c.SubscribeFrom(ctx, prefix, since[prefix], epoch, 1024)
@@ -195,7 +218,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		go func() {
 			for f := range frames {
 				select {
-				case merged <- peerFrame{prefix, f, 0}:
+				case merged <- peerFrame{prefix: prefix, f: f}:
 				case <-c.Done():
 					return
 				}
@@ -285,19 +308,40 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	// reach us while the client's reader is not held back by a full subscription channel, so
 	// the loop never waits on one.
 	fail := make(chan error, 1)
-	if err := l.reconcilePipes(ctx, c, merged, fail, list); err != nil {
+	q := newPipeQueue()
+	if err := l.reconcilePipes(ctx, c, q, fail, list); err != nil {
 		return true, err
 	}
 	for _, pf := range backlog {
-		if err := l.apply(ctx, c, merged, fail, refresh, st.Name, pf); err != nil {
+		if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
 			return true, err
 		}
 	}
 
 	for {
+		// Control first: a ctl or svc/ frame is applied while there is one, a pipe frame only
+		// when there is none, so a load of pipes never holds the lifecycle back (and a
+		// probe.removed reaches the pipe it closes before that pipe's frames pile up further).
 		select {
 		case pf := <-merged:
-			if err := l.apply(ctx, c, merged, fail, refresh, st.Name, pf); err != nil {
+			if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
+				return true, err
+			}
+			continue
+		case err := <-fail:
+			return true, err
+		case <-c.Done():
+			return true, c.Err()
+		default:
+		}
+		select {
+		case pf := <-merged:
+			if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
+				return true, err
+			}
+		case pf := <-q.ch:
+			q.took(pf)
+			if err := l.apply(ctx, c, q, fail, refresh, st.Name, pf); err != nil {
 				return true, err
 			}
 		case err := <-fail:
@@ -309,14 +353,20 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 }
 
 // apply mirrors one frame the link received, follows the peer's own lifecycle events on the
-// wanted pipes, and kicks the status refresher. An overflow ends the session: the peer dropped
-// that subscription, and a reconnect resumes ctl and svc/ from the last mirrored seq (a pipe
-// starts live again). The other gap reasons answer the since the link gave for ctl / svc/ at
-// subscribe time (the peer's history expired, or it restarted): what they skip cannot be
-// replayed, so they are relayed on the peer's mirrored ctl as a continuity marker.
-func (l *peerLink) apply(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, refresh chan<- struct{}, origin string, pf peerFrame) error {
+// wanted pipes, and kicks the status refresher. An overflow of ctl or svc/ ends the session:
+// the peer dropped that subscription, and a reconnect resumes both from the last mirrored seq;
+// an overflow of a pipe reopens that pipe alone, live and marked (reopenPipe). The other gap
+// reasons answer the since the link gave for ctl / svc/ at subscribe time (the peer's history
+// expired, or it restarted): what they skip cannot be replayed, so they are relayed on the
+// peer's mirrored ctl as a continuity marker. A pipe frame that follows a run of frames its
+// forwarder dropped is preceded by the `dropped` marker, on the pipe, in order.
+func (l *peerLink) apply(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, refresh chan<- struct{}, origin string, pf peerFrame) error {
 	if pf.f.Gap != nil && pf.f.Gap.Reason == "overflow" {
-		return errors.New("mirror of " + pf.prefix + " overflowed")
+		if pf.sub == 0 {
+			return errors.New("mirror of " + pf.prefix + " overflowed")
+		}
+		l.reopenPipe(ctx, c, q, fail, pf)
+		return nil
 	}
 	if pf.f.Gap != nil {
 		l.markGap(pf.prefix, pf.f.Gap)
@@ -328,11 +378,17 @@ func (l *peerLink) apply(ctx context.Context, c *Client, merged chan<- peerFrame
 	if pf.sub != 0 && !l.current(pf.prefix, pf.sub) {
 		return nil // a frame of a subscription that is no longer the pipe's
 	}
+	if pf.dropped > 0 {
+		l.markDropped(pf.prefix, pf.dropped)
+	}
+	if d := l.pipeDelay.Load(); d > 0 && pf.sub != 0 {
+		time.Sleep(time.Duration(d)) // the test knob: a durably slow parent
+	}
 	if err := l.mirror(origin, pf.prefix, pf.f.Env); err != nil {
 		return err
 	}
 	if pf.prefix == "ctl" && pf.f.Env.Origin == origin {
-		l.followPipe(ctx, c, merged, fail, pf.f.Env)
+		l.followPipe(ctx, c, q, fail, pf.f.Env)
 	}
 	select {
 	case refresh <- struct{}{}:
@@ -352,6 +408,53 @@ func (l *peerLink) markGap(prefix string, g *Gap) {
 		data["oldest"] = g.Oldest
 	}
 	l.hub.Publish("peer/"+l.spec.Name+"/ctl", event(linkGapKind, data))
+}
+
+// markDropped publishes, on a mirrored pipe, the marker for a run of n frames the link itself
+// discarded for want of room, right before the record that followed them: the count is the
+// link's own, exact.
+func (l *peerLink) markDropped(ch string, n uint64) {
+	l.mu.Lock()
+	data := map[string]any{"peer": l.spec.Name, "reason": "dropped", "dropped": n}
+	if l.boot != "" {
+		data["src_epoch"] = l.boot
+	}
+	l.mu.Unlock()
+	l.hub.Publish("peer/"+l.spec.Name+"/"+ch, event(linkGapKind, data))
+}
+
+// countDrop counts one pipe frame discarded for want of room, on the node's status.
+func (l *peerLink) countDrop(node string) {
+	l.mu.Lock()
+	if p := l.pipes[node]; p != nil {
+		p.dropped++
+	}
+	l.mu.Unlock()
+}
+
+// reopenPipe answers the peer dropping a pipe's subscription (its queue toward this link
+// overflowed, the gap its last frame): if the subscription is still the pipe's, the pipe is
+// marked `overflow` on its mirrored channel with what the peer said, the client forgets the
+// subscription (the peer already did), and the pipe is opened live again, marked at that live
+// start as any. The session goes on: ctl and svc/ were not dropped.
+func (l *peerLink) reopenPipe(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, pf peerFrame) {
+	node := strings.TrimPrefix(pf.prefix, "probe/")
+	l.mu.Lock()
+	p := l.pipes[node]
+	if p == nil || p.state != pipeMirrored || p.sub != pf.sub {
+		l.mu.Unlock()
+		return // not the pipe's subscription any more: nothing to reopen
+	}
+	p.gen++
+	p.state, p.sub = pipeAbsent, 0
+	data := map[string]any{"peer": l.spec.Name, "reason": "overflow", "src_epoch": pf.f.Gap.Epoch}
+	if pf.f.Gap.From != 0 {
+		data["from"] = pf.f.Gap.From
+	}
+	l.hub.Publish("peer/"+l.spec.Name+"/"+pf.prefix, event(linkGapKind, data)) // under l.mu, one step with the state
+	l.mu.Unlock()
+	c.forget(pf.sub)
+	l.setPipe(ctx, c, q, fail, node, true)
 }
 
 // noteBoot records the peer's boot as last seen and, when it is not the boot the link knew,
@@ -407,7 +510,7 @@ func (l *peerLink) current(ch string, sub int64) bool {
 // an absent lifecycle event proves nothing, Codex round 38); the cursor-bound list of slice 4
 // is that proof, slice 2 the created seq, slice 3 the bounded replay and the continuity
 // marker for what a live start skips (contract G8).
-func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, data json.RawMessage) error {
+func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, data json.RawMessage) error {
 	if len(l.spec.Probes) == 0 {
 		return nil
 	}
@@ -421,7 +524,7 @@ func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- 
 		return err
 	}
 	for _, n := range list.Nodes {
-		l.setPipe(ctx, c, merged, fail, n.Name, n.Export)
+		l.setPipe(ctx, c, q, fail, n.Name, n.Export)
 	}
 	return nil
 }
@@ -435,7 +538,7 @@ func (l *peerLink) failWith(fail chan<- error, err error) {
 
 // followPipe applies one of the peer's own ctl events to the wanted pipes: a probe.created
 // opens or declines the pipe by its export flag, a probe.removed closes it.
-func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, env *Envelope) {
+func (l *peerLink) followPipe(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, env *Envelope) {
 	if env.Ev.Kind != "probe.created" && env.Ev.Kind != "probe.removed" {
 		return
 	}
@@ -450,7 +553,7 @@ func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peer
 		l.dropPipe(ctx, c, d.Node, pipeAbsent)
 		return
 	}
-	l.setPipe(ctx, c, merged, fail, d.Node, d.Export)
+	l.setPipe(ctx, c, q, fail, d.Node, d.Export)
 }
 
 // setPipe makes a wanted node mirrored (opening: a subscription to its exact channel on its
@@ -458,7 +561,7 @@ func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peer
 // A live start is marked on the mirrored channel in the step that makes the pipe `mirrored`,
 // before its first frame crosses, so a reader that waited for the state sees no marker, one
 // that was on the channel sees the marker first, and a superseded subscription marks nothing.
-func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, node string, export bool) {
+func (l *peerLink) setPipe(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, node string, export bool) {
 	if !l.wanted(node) {
 		return
 	}
@@ -502,18 +605,35 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFra
 			cancel()
 			return
 		}
+		// The forwarder never waits for room in the pipe queue (the client's reader would wait
+		// behind it, ctl and the replies with it): a frame that does not fit is dropped and
+		// counted, and the next that fits carries the count, for the loop to mark before it.
+		var dropped uint64
 		for {
 			select {
 			case f, ok := <-s.Frames:
 				if !ok {
 					return
 				}
-				select {
-				case merged <- peerFrame{ch, f, s.ID}:
-				case <-s.Done:
+				if f.Gap != nil && f.Gap.Reason == "overflow" {
+					// The peer dropped this subscription: this is its last frame, queued whatever
+					// the room (nothing follows it here) for the loop to reopen the pipe from.
+					pf := peerFrame{prefix: ch, f: f, sub: s.ID}
+					q.bytes.Add(int64(f.Bytes))
+					select {
+					case q.ch <- pf:
+					case <-s.Done:
+						q.bytes.Add(-int64(f.Bytes))
+					case <-c.Done():
+						q.bytes.Add(-int64(f.Bytes))
+					}
 					return
-				case <-c.Done():
-					return
+				}
+				if q.offer(peerFrame{prefix: ch, f: f, sub: s.ID, dropped: dropped}) {
+					dropped = 0
+				} else {
+					dropped++
+					l.countDrop(node)
 				}
 			case <-s.Done: // dropped: Unsubscribe closed it, and the connection goes on
 				return
@@ -541,10 +661,43 @@ func (l *peerLink) dropPipe(ctx context.Context, c *Client, node, to string) {
 }
 
 type peerFrame struct {
-	prefix string
-	f      Frame
-	sub    int64 // the subscription, for a probe pipe (0 for ctl and svc/)
+	prefix  string
+	f       Frame
+	sub     int64  // the subscription, for a probe pipe (0 for ctl and svc/)
+	dropped uint64 // pipe frames of this subscription the link discarded right before this one
 }
+
+// pipeQueue is what a session holds of the wanted probe pipes between the link's reader and
+// the loop that mirrors, bounded in records (the channel) and in bytes on the wire (criterion
+// 6 of ix#408). A pipe forwarder never waits for room: what does not fit is dropped, counted
+// on the pipe and marked before the next frame that fits.
+type pipeQueue struct {
+	ch    chan peerFrame
+	bytes atomic.Int64
+}
+
+func newPipeQueue() *pipeQueue { return &pipeQueue{ch: make(chan peerFrame, maxPipeQueue)} }
+
+// offer queues pf if it fits both bounds, at once or not at all. The bytes are taken before the
+// record is queued and given back when it is not, so the count never understates what the queue
+// holds.
+func (q *pipeQueue) offer(pf peerFrame) bool {
+	n := int64(pf.f.Bytes)
+	if q.bytes.Add(n) > maxPipeQueueBytes {
+		q.bytes.Add(-n)
+		return false
+	}
+	select {
+	case q.ch <- pf:
+		return true
+	default:
+		q.bytes.Add(-n)
+		return false
+	}
+}
+
+// took gives back the bytes of a frame read from the queue.
+func (q *pipeQueue) took(pf peerFrame) { q.bytes.Add(-int64(pf.f.Bytes)) }
 
 // mirror republishes one of the peer's own envelopes. Envelopes the peer
 // itself mirrored (another origin, or a peer/ channel) are never forwarded.
