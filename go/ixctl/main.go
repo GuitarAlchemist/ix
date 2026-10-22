@@ -24,7 +24,7 @@ import (
 var initTime = time.Now()
 
 const usage = `usage:
-  ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N]
+  ixctl up <spec.json> [--addr 127.0.0.1:0] [--name NAME] [--state DIR] [--bookmarks disk|memory] [--probe-rate N] [--probe-tree-rate N] [--delta-journal FILE]
   ixctl bench <spec.json>
   ixctl probes              # the probe kinds this binary carries, with the system's limits (JSON, offline)
   ixctl version`
@@ -88,6 +88,9 @@ type upOptions struct {
 	// and the whole tree.
 	probeRate     int64
 	probeTreeRate int64
+	// deltaJournal is the JSONL journal the `delta@1` probe kind tails; empty leaves the kind
+	// refused at create.
+	deltaJournal string
 }
 
 func cmdUp(args []string, stdout io.Writer) error {
@@ -99,6 +102,7 @@ func cmdUp(args []string, stdout io.Writer) error {
 	fs.StringVar(&o.bookmarks, "bookmarks", "disk", "bookmark store: disk (kept across restarts) or memory")
 	fs.Int64Var(&o.probeRate, "probe-rate", defaultProbeBudget.maxRate, "records/s a probe subtree may declare (max_rate_per_s)")
 	fs.Int64Var(&o.probeTreeRate, "probe-tree-rate", defaultProbeBudget.treeRate, "records/s the whole probe tree may declare (tree_rate_per_s)")
+	fs.StringVar(&o.deltaJournal, "delta-journal", "", "JSONL journal the delta@1 probe kind tails (Delta's brain writes it); unset refuses the kind")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -115,6 +119,8 @@ func cmdUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Before the ready line: no client knows the token yet, so no node can exist.
+	in.plane.SetDeltaJournal(o.deltaJournal)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)

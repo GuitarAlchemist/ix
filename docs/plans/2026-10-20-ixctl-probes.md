@@ -46,9 +46,12 @@ plane, with their own transport.
 
 **Kinds** are compiled in, versioned, named `name@version`: `heartbeat@1` (its own tick count),
 `cpu@1` (busy share from `GetSystemTimes` / `/proc/stat`; the first interval emits nothing),
-`mem@1` (`GlobalMemoryStatusEx` / `/proc/meminfo`), `mux@1` (no sampler). A kind is a `sampler`
-port (`sample() (fields, error)`) with one OS adapter per platform and a heartbeat adapter for
-tests: the same light hexagon the plane already uses for its `Broker`.
+`mem@1` (`GlobalMemoryStatusEx` / `/proc/meminfo`), `delta@1` (tails the JSONL journal of the
+voice robot Delta named by `ixctl up --delta-journal`, one line per tick, 2026-10-22), `mux@1`
+(no sampler). A kind is a `sampler` port (`sample() (fields, error)`) with one OS adapter per
+platform and a heartbeat adapter for tests: the same light hexagon the plane already uses for
+its `Broker`. The sampler receives the plane's `kindConfig` (what `ixctl up` was told), which
+every kind but `delta@1` ignores.
 
 **Nodes** are instances in one tree per plane: `{name, kind, every_ms, parent, filter, ttl_ms}`.
 A node publishes `sample` events on its own hub channel `probe/<name>`; when its parent runs, the

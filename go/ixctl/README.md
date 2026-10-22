@@ -310,7 +310,19 @@ work is tracked under epic ix#397. The surface is provisional, like the three do
 | `heartbeat@1` | `n` | Its own tick count, from 1. The kind tests and demonstrations use. |
 | `cpu@1` | `busy_pct`, `cores` | The host's processor busy share over the last interval (`GetSystemTimes`; `/proc/stat`). The first interval emits nothing. |
 | `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | The host's physical memory (`GlobalMemoryStatusEx`; `/proc/meminfo`). |
+| `delta@1` | `event`, `journal_seq`, `t_ms`, `t`, `pid`, `offset`, and the event's own (`utterance_id`, `text`, `asr_ms`, `route`, `triage`, `triage_ms`, `parrot`, `promise`, `say_id`, `by`, `request`, `cost`, `muted`, `version`, `replaced_by`) | The JSONL journal of Delta, the voice robot, named by `ixctl up --delta-journal FILE`: one line per tick, every top-level field of the line as it is, plus `offset`, the line's byte position. Without the flag the kind is listed and refused at create. |
 | `mux@1` | (its children's) | No sampler: it carries what its children pass it. |
+
+`delta@1` is the plane *reading* a file another program writes (brickyard's `brain.exe`, which
+journals what Delta heard and said); nothing is pushed into the plane. One line per tick keeps
+the node's declared rate (1000 / `every_ms`) the bound whatever the journal's pace: a burst
+drains at that rate and nothing is dropped. A line that is not a JSON object, or is longer than
+1 MiB (`max_line`), is an error record naming its offset, and the lines after it flow; a missing
+journal is said once and waited for; a journal shorter than what was read is a new one under the
+same name, said once and read again from offset 0. `node`, `kind` and `seq` are the tree's
+stamps and win over a line field of the same name. A consumer dedups on the writer's pair
+(`pid`, `journal_seq`), which restarts with each brain, and resumes on `offset`, which belongs
+to the file.
 
 A **node** is one instance of a kind in the tree:
 

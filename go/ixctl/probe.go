@@ -27,7 +27,17 @@ type probeKind struct {
 	Doc     string   // one line on what it measures and where it reads it
 	// newSampler makes the kind's sampler for one node; nil for a mux, whose input is its
 	// children. A sampler is the port an OS reading sits behind: the tree only calls sample.
-	newSampler func() sampler
+	// It receives the plane's kind configuration (what `ixctl up` was told), which most kinds
+	// ignore.
+	newSampler func(kindConfig) sampler
+}
+
+// kindConfig is what a plane was started with that a kind's sampler needs and a node's spec
+// does not carry: one value per plane, set before the plane serves, read at every start.
+type kindConfig struct {
+	// deltaJournal is the JSONL journal the `delta@1` kind tails (`ixctl up --delta-journal`);
+	// empty refuses the kind at create, naming the flag.
+	deltaJournal string
 }
 
 // sampler is one node's source of records: called once per interval, on the node's own
@@ -102,13 +112,16 @@ func itoa(n int) string {
 var probeKinds = []probeKind{
 	{Name: "heartbeat", Version: 1, Fields: []string{"n"},
 		Doc:        "counts its own ticks: n, from 1; the kind tests and demonstrations use",
-		newSampler: func() sampler { return &heartbeat{} }},
+		newSampler: func(kindConfig) sampler { return &heartbeat{} }},
 	{Name: "cpu", Version: 1, Fields: []string{"busy_pct", "cores"},
 		Doc:        "the host's processor busy share over the last interval, 0..100, and its logical cores (GetSystemTimes on Windows, /proc/stat on Linux); the first interval emits nothing",
-		newSampler: func() sampler { return &cpuProbe{} }},
+		newSampler: func(kindConfig) sampler { return &cpuProbe{} }},
 	{Name: "mem", Version: 1, Fields: []string{"total_bytes", "avail_bytes", "used_pct"},
 		Doc:        "the host's physical memory, total and available, and the used share 0..100 (GlobalMemoryStatusEx on Windows, /proc/meminfo on Linux)",
-		newSampler: func() sampler { return memProbe{} }},
+		newSampler: func(kindConfig) sampler { return memProbe{} }},
+	{Name: "delta", Version: 1, Fields: deltaFields,
+		Doc:        "tails the voice robot Delta's JSONL journal named by `ixctl up --delta-journal` (one JSON object per line: t, t_ms, event, pid, journal_seq and the event's fields), one line per tick with its byte offset; a line that is not an object is an error record naming its offset; a missing or shrunk journal is said once",
+		newSampler: func(c kindConfig) sampler { return newJournalTail(c.deltaJournal) }},
 	{Name: "mux", Version: 1, Fields: nil,
 		Doc: "no sampler: multiplexes its children's records, each stamped with its source node as src"},
 }
@@ -600,7 +613,7 @@ func (t *probeTree) start(name string) (any, error) {
 	if n.kind.newSampler != nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		n.cancel, n.done = cancel, make(chan struct{})
-		go t.run(ctx, n, n.kind.newSampler(), n.done)
+		go t.run(ctx, n, n.kind.newSampler(t.cfg), n.done)
 	}
 	now := time.Now()
 	t.renew(n, now)
@@ -794,12 +807,21 @@ type probeTree struct {
 	closed   bool // the plane is shutting down: nothing is created, started or removed any more
 
 	budget probeBudget // D10: what a subtree, and the tree, may declare to emit
+	cfg    kindConfig  // what the samplers are told about this plane (`--delta-journal`)
 }
 
 func newProbeTree(hub *Hub) *probeTree {
 	t := &probeTree{hub: hub, nodes: map[string]*probeNode{}, budget: defaultProbeBudget}
 	t.done = sync.NewCond(&t.mu)
 	return t
+}
+
+// setDeltaJournal names the journal the `delta@1` kind tails; empty keeps the kind refused.
+// Read at every start and at create, under the lock.
+func (t *probeTree) setDeltaJournal(path string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cfg.deltaJournal = path
 }
 
 // setBudget replaces the plane's budget before any node exists (that is the gate, not the
@@ -911,6 +933,9 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 	kind, ok := lookupKind(spec.Kind)
 	if !ok {
 		return nil, badRequest("unknown kind %q (probe.kinds lists them)", spec.Kind)
+	}
+	if kind.Name == "delta" && t.cfg.deltaJournal == "" {
+		return nil, badRequest("kind delta@1 needs a journal to tail: start the plane with --delta-journal PATH")
 	}
 	if kind.Name == "mux" {
 		spec.EveryMs = 0

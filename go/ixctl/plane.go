@@ -644,3 +644,9 @@ func (j *journal) close() {
 func (p *Plane) SetProbeBudget(maxRatePerS, treeRatePerS int64) error {
 	return p.probes.setBudget(probeBudget{maxRate: maxRatePerS, treeRate: treeRatePerS})
 }
+
+// SetDeltaJournal names the JSONL journal the `delta@1` kind tails (`ixctl up --delta-journal`).
+// Without it the kind is listed by `probe.kinds` and refused at create, naming the flag.
+func (p *Plane) SetDeltaJournal(path string) {
+	p.probes.setDeltaJournal(path)
+}
