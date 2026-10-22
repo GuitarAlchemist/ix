@@ -169,6 +169,13 @@ des barrières obligatoires pour une PR ordinaire.
    ne lie `[T:test]` que si `src:` est un chemin `::` ou préfixé par `test_`.
 4. Annotez un module à la fois, et faites en sorte que chaque passe produise au
    moins une correction réelle. Ne générez jamais d'annotations en masse.
+5. Rust seulement pour un lien `[T:test]` : la barrière de dérive lit les marqueurs `@ai:` dans
+   tous les fichiers source (Go compris) mais ne résout le test cité que parmi les fonctions Rust,
+   si bien qu'un `[T:test src:…::TestX]` dans un fichier Go est un lien cassé qui fait échouer la
+   prochaine PR touchant `crates/**` (le filtre de chemins de la barrière ne la lance pas sur
+   `go/**` ; reproduire avec `cargo run -p ix-assumption-graph --bin ix-assumption-graph-drift --
+   --check state/assumptions/annotations.snapshot.json`, sortie 2). En Go, renvoyez le commentaire
+   à la ligne du contrat.
 
 ## Ajouter une vitrine ou une démo
 

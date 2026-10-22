@@ -149,6 +149,12 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
    `src:` is `::`-pathed or `test_`-prefixed.
 4. Annotate one module at a time, and make each pass drive at least one real
    fix. Never mass-generate annotations.
+5. Rust only for a `[T:test]` binding: the drift gate reads `@ai:` markers in every source file
+   (Go included) but resolves the cited test among Rust functions only, so a `[T:test src:…::TestX]`
+   in a Go file is a broken binding that fails the next `crates/**` PR (the gate's path filter does
+   not run it on `go/**`; reproduce with `cargo run -p ix-assumption-graph --bin
+   ix-assumption-graph-drift -- --check state/assumptions/annotations.snapshot.json`, exit 2). In
+   Go, point the comment at the contract row instead.
 
 ## Adding a showcase or demo
 

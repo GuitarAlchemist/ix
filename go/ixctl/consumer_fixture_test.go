@@ -256,11 +256,13 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	// The live step ended on hb's third sample; a fourth tick published before the stop took effect
 	// (emit and stopIf take the tree's lock in turn) may still be in the ring when this step opens,
 	// and it is the live period's, not the stop's, so the stopped step keeps lifecycle frames only
-	// (it failed one run in four on Linux under -race on that tick). The plane's own promise is
+	// (it failed one run in four on Linux under -race on that tick). The plane's own promise (the
+	// probe-observation contract: no record of a node follows its probe.stopped on the stream) is
 	// still held to: a sample of the old incarnation after probe.stopped would be read into the
 	// removed step and fail its fixture, or into the recreated step and fail the node-seq check
-	// below, which wants exactly the new incarnation's 1 and 2.
-	// @ai:invariant no record of a node follows its probe.stopped on the plane's stream [T:test conf:0.9 src:consumer_fixture_test.go::TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures]
+	// below, which wants exactly the new incarnation's 1 and 2. The claim carries no @ai: marker
+	// here: the drift gate resolves a test binding among Rust functions only, so one in a Go file
+	// is a broken binding (Codex round 51, reproduced: exit 2); the contract is its single source.
 	collectSkipping(t, frames, "stopped", &recreation, func(f fixtureFrame) bool {
 		return f.Env != nil && f.Env.Ch == "probe/hb" && f.Env.Ev.Kind == "sample"
 	}, func(f fixtureFrame) bool {
@@ -284,7 +286,7 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 		}
 	}
 	if len(newSeqs) != 2 || newSeqs[0] != 1 || newSeqs[1] != 2 {
-		t.Fatalf("recreated hb's samples carry node seqs %v, want exactly [1 2]: another one here is a record of the old incarnation after its probe.stopped", newSeqs)
+		t.Fatalf("recreated hb's samples carry node seqs %v, want exactly [1 2] (the new incarnation's own, in order: a higher value is a record of the old incarnation after its probe.stopped, a gap or a repeat is the new one's own numbering gone wrong)", newSeqs)
 	}
 	if firstNew == nil || sampleSeq(firstNew) != 1 || firstNew.Seq <= last.Seq || firstNew.Epoch != epoch {
 		t.Fatalf("recreated hb's first sample: %+v (node seq %d), want node seq 1 past envelope seq %d", firstNew, sampleSeq(firstNew), last.Seq)
