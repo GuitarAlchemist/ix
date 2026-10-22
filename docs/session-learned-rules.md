@@ -54,3 +54,24 @@ bound to:
   **never** mass-generate annotations or use an LLM panel as the drift oracle (≈96% TPR / <25% TNR —
   it rubber-stamps drift). `@ai:` markers are plain comments, so this applies to ga/tars/Demerzel too
   via the same extractor + the JSON-on-disk contract.
+
+## 2026-10-22 — Claude fires the reflexes, then teaches
+
+The user asked that the self-improvement commands stop depending on their memory: "si c'est moi
+qui le fais, je peux l'oublier... toi, tu le lances automatiquement et ensuite tu m'en fais part...
+ça me permet d'apprendre." Evidence that the manual loop was not running:
+
+- `.claude/hooks/correction-detector.sh` matched English openers only ("no", "don't", "stop",
+  "wait") and spoke once, then one time in five (`state/digests/.correction-counter` stood at 8). A
+  user dictating "non, pas comme ça", "plutôt", "on en a déjà parlé" was never nudged.
+- `/learnings` was named by CLAUDE.md since 2026-06-20 and by the `correct` and `digest` skills,
+  but no skill of that name existed; the notes under `docs/solutions/` were written by hand.
+- `/mattpocock-skills:retro` had no trigger at all.
+
+The rule: Claude runs the reflex at the trigger (correction → `/correct`; closing commit of a
+surprise → `/learnings`; closed review loop or PR about to be called ready → retro), then ends the
+reply with one teaching line naming what ran, why, and when the user could have typed it. The
+detector is bilingual and fires every time (fixture:
+`bash .claude/hooks/test-correction-detector.sh`, run by `karpathy-cherny-discipline.yml`); the
+`learnings` skill exists. The retro stays a rule, not a hook: no machine event knows when a loop
+is "closed".

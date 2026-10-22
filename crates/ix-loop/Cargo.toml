@@ -1,0 +1,28 @@
+[package]
+name = "ix-loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools"]
+keywords = ["agent", "loop", "lua", "sandbox", "budget"]
+description = "Agentic loops written in sandboxed Lua: budgets carved from parent to child, a semantic node (Claude Code headless), host-owned oracles, and a store where loops propose and a person accepts."
+
+[dependencies]
+ix-origami = { workspace = true }
+ix-voice = { workspace = true }
+ix-wasm = { workspace = true }
+mlua = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ix-loop"
+path = "src/main.rs"
