@@ -5,25 +5,39 @@
 //! nothing for every other contributor (ix#327: the sentrux bridge fell back to
 //! one developer's `bin/`). In a test it is a guard that always fires elsewhere,
 //! so the test passes having checked nothing (ix#328: a cross-repo render audit
-//! that never ran on CI). In a doc comment it is an example nobody else can
-//! paste. None of the three is caught by the compiler, clippy, or the test
-//! suite: the code is valid, the path is just not yours.
+//! that never ran on CI). In a doc comment or a script it is an example nobody
+//! else can paste. None of the three is caught by the compiler, clippy, or the
+//! test suite: the code is valid, the path is just not yours.
 //!
-//! This check reads every `.rs` file under `crates/` and reports each line that
-//! names a user's home directory. Portable spellings are not findings: a
-//! placeholder segment (`<you>`, `$USER`, `%USERNAME%`, `{user}`), the shared
-//! Windows accounts (`Public`, `Default`), a `~/` prefix, or a repo-relative
-//! path. A test whose *input* is such a path (a sanitizer proving it rejects
-//! them) belongs in the allowlist with a reason, keyed by file and a substring
-//! of the line, so the exemption covers that line and not the file.
+//! This check reads every source and script file under `crates/` (see
+//! [`SCANNED_EXTENSIONS`]) and reports each line that names a user's home
+//! directory. Portable spellings are not findings: a placeholder segment
+//! (`<you>`, `$USER`, `%USERNAME%`, `{user}`), the shared Windows accounts
+//! (`Public`, `Default`), a `~/` prefix, or a repo-relative path. A test whose
+//! *input* is such a path (a sanitizer proving it rejects them) belongs in the
+//! allowlist with a reason, keyed by file and a substring of the line, so the
+//! exemption covers those lines and not the file.
+//!
+//! # What counts as a home path
+//!
+//! A drive letter, `:`, one or more separators, `users` in any case, one or more
+//! separators, then the account (`C:\Users\<name>`, `c:/users/<name>`,
+//! `C:\\Users\\<name>` as escaped in a string, `C:\\\\Users\\\\<name>` as JSON
+//! inside a string, `C:/Users\<name>` mixed); or one or more `/`, then exactly
+//! `home` or `Users`, then one or more `/`, then the account. A lower-case
+//! `/users/` with no drive letter is an HTTP route, not a home.
+//!
+//! # Fail closed
+//!
+//! A directory that cannot be read, or a `crates/` that is not there, is a
+//! failed scan, not an empty one: the check reports `FAIL` rather than counting
+//! what it did manage to read.
 //!
 //! # Deliberate under-reporting
 //!
-//! Like its neighbours, every ambiguity resolves toward *not* reporting. A
-//! `/users/` segment in lower case is only a finding when a drive letter
-//! precedes it (`c:/users/`), so an HTTP route like `/users/{id}` is never one.
-//! `/home/` is matched exactly: a URL path containing it would be reported,
-//! and the allowlist is where that case goes if it ever appears.
+//! Like its neighbours, every remaining ambiguity resolves toward *not*
+//! reporting. `/home/` inside a URL path would be reported, and the allowlist
+//! is where that case goes if it ever appears.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -31,8 +45,12 @@ use std::path::{Path, PathBuf};
 /// Path of the allowlist, relative to the repo root.
 pub const ALLOWLIST_PATH: &str = "state/registry/hardcoded-paths.allow.json";
 
-/// Directory, relative to the repo root, whose `.rs` files are scanned.
+/// Directory, relative to the repo root, whose files are scanned.
 pub const SCAN_DIR: &str = "crates";
+
+/// File extensions scanned under [`SCAN_DIR`]: Rust, SQL, the scripts that sit
+/// beside them, manifests and the crate-level docs.
+pub const SCANNED_EXTENSIONS: &[&str] = &["rs", "sql", "ps1", "sh", "py", "toml", "md"];
 
 /// Windows accounts that belong to the machine, not to a person.
 const SHARED_WINDOWS_ACCOUNTS: &[&str] = &["public", "default", "default user", "all users"];
@@ -48,15 +66,18 @@ pub struct Finding {
     pub user: String,
     /// The line, trimmed and truncated for the report.
     pub excerpt: String,
+    /// The whole trimmed line; what the allowlist's `contains` is matched on.
+    #[serde(skip)]
+    pub text: String,
 }
 
-/// One allowlist entry: a line that may keep its path, and why.
+/// One allowlist entry: lines that may keep their path, and why.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AllowEntry {
     /// Repo-relative file path with forward slashes.
     pub file: String,
-    /// A substring the allowed line must contain, so the exemption covers one
-    /// line and not the whole file.
+    /// A substring the allowed lines must contain, so the exemption covers
+    /// those lines and not the whole file.
     pub contains: String,
     /// Why this path may stay. Required and non-empty.
     pub reason: String,
@@ -101,37 +122,56 @@ pub struct Census {
     pub reasonless_allowlist: Vec<String>,
 }
 
+fn is_sep(b: u8) -> bool {
+    b == b'/' || b == b'\\'
+}
+
 /// The account segment named by `line`, if the line contains a home path.
 ///
 /// Returns the first segment that is not a placeholder and not a shared
 /// Windows account.
 pub fn home_user_in(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
     let lower = line.to_ascii_lowercase();
     let mut candidates: Vec<usize> = Vec::new();
 
-    // Drive-letter forms, any case: `c:/users/`, `c:\users\`, `c:\\users\\`.
-    for marker in [":/users/", ":\\users\\", ":\\\\users\\\\"] {
+    // `users` in any case (Windows), `home` and `Users` exactly (POSIX).
+    for (needle, hay, exact) in [("users", lower.as_str(), false), ("home", line, true)] {
         let mut from = 0;
-        while let Some(i) = lower[from..].find(marker) {
+        while let Some(i) = hay[from..].find(needle) {
             let at = from + i;
-            let drive_before = at > 0 && lower.as_bytes()[at - 1].is_ascii_alphabetic();
-            if drive_before {
-                candidates.push(at + marker.len());
+            from = at + needle.len();
+
+            // One or more separators before the keyword.
+            let mut s = at;
+            while s > 0 && is_sep(bytes[s - 1]) {
+                s -= 1;
             }
-            from = at + marker.len();
-        }
-    }
-    // POSIX forms, exact case: `/home/` (Linux) and `/Users/` (macOS).
-    for marker in ["/home/", "/Users/"] {
-        let mut from = 0;
-        while let Some(i) = line[from..].find(marker) {
-            let at = from + i;
-            candidates.push(at + marker.len());
-            from = at + marker.len();
+            if s == at {
+                continue;
+            }
+            let drive = s >= 2 && bytes[s - 1] == b':' && bytes[s - 2].is_ascii_alphabetic();
+            let slashes_only = bytes[s..at].iter().all(|&b| b == b'/');
+            let posix = slashes_only && (exact || &line[at..at + needle.len()] == "Users");
+            let ok = if exact { posix } else { drive || posix };
+            if !ok {
+                continue;
+            }
+
+            // One or more separators after it, then the account.
+            let mut e = at + needle.len();
+            while e < bytes.len() && is_sep(bytes[e]) {
+                e += 1;
+            }
+            if e == at + needle.len() {
+                continue;
+            }
+            candidates.push(e);
         }
     }
 
     candidates.sort_unstable();
+    candidates.dedup();
     candidates.into_iter().find_map(|start| {
         let rest = &line[start..];
         let end = rest
@@ -168,6 +208,7 @@ pub fn findings_in(file_label: &str, src: &str) -> Vec<Finding> {
                 line: i + 1,
                 user,
                 excerpt: excerpt(line),
+                text: line.trim().to_string(),
             })
         })
         .collect()
@@ -192,8 +233,12 @@ pub fn scan(root: &Path) -> Result<Census, String> {
 
 /// Scan `root` against `allowlist`.
 pub fn scan_with_allowlist(root: &Path, allowlist: &Allowlist) -> Result<Census, String> {
+    let dir = root.join(SCAN_DIR);
+    if !dir.is_dir() {
+        return Err(format!("{} is not a directory", dir.display()));
+    }
     let mut files = Vec::new();
-    collect_rs(&root.join(SCAN_DIR), &mut files);
+    collect_sources(&dir, &mut files)?;
     files.sort();
 
     let mut census = Census {
@@ -215,7 +260,7 @@ pub fn scan_with_allowlist(root: &Path, allowlist: &Allowlist) -> Result<Census,
     let mut matched = vec![false; allowlist.allow.len()];
     for f in &census.findings {
         let hit = allowlist.allow.iter().position(|e| {
-            e.file == f.file && !e.contains.is_empty() && f.excerpt.contains(&e.contains)
+            e.file == f.file && !e.contains.is_empty() && f.text.contains(&e.contains)
         });
         match hit {
             Some(i) => {
@@ -239,22 +284,27 @@ pub fn scan_with_allowlist(root: &Path, allowlist: &Allowlist) -> Result<Census,
     Ok(census)
 }
 
-/// Every `.rs` file under `dir`, skipping build output.
-fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+/// Every scanned file under `dir`, skipping build output. Any directory or
+/// entry that cannot be read fails the scan.
+fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("reading {}: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("listing {}: {e}", dir.display()))?;
         let path = entry.path();
         if path.is_dir() {
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
             }
-            collect_rs(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
+            collect_sources(&path, out)?;
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| SCANNED_EXTENSIONS.contains(&e))
+        {
             out.push(path);
         }
     }
+    Ok(())
 }
 
 /// The check as `ix doctor` reports it.
@@ -267,10 +317,10 @@ pub fn check(root: &Path) -> super::CheckResult {
         Err(e) => {
             return CheckResult::new(NAME, Status::Fail, format!("could not scan sources: {e}"))
                 .with_remedy(
-                "this check reads crates/**/*.rs and state/registry/hardcoded-paths.allow.json \
+                    "this check reads crates/** and state/registry/hardcoded-paths.allow.json \
                      directly — a read failure means the scan did not happen, so it is a failure \
                      rather than a pass",
-            )
+                )
         }
     };
 

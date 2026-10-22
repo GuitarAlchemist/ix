@@ -81,7 +81,7 @@ fn payload_handler_matches_voicings_payload_v1_schema() {
 /// half — does the corpus file exist and yield a parseable entry at
 /// the requested index? — without speaking HTTP.
 #[test]
-fn corpus_lazy_lookup_resolves_when_present() {
+fn corpus_lazy_lookup_resolves_the_committed_corpus() {
     // The corpus is committed (.gitignore re-includes it), so a missing file
     // is a broken checkout, not an environment to skip (ix#329).
     let bass_corpus = project_root().join("state/voicings/bass-corpus.json");

@@ -393,6 +393,17 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
         return;
     }
 
+    // Work on copies: the FIX phase rewrites the sources it audits, and a
+    // `cargo test --workspace` must never dirty a sibling checkout.
+    let scratch = tempfile::tempdir().expect("scratch dir for GA source copies");
+    let copy_into_scratch = |src: &PathBuf| -> PathBuf {
+        let dst = scratch.path().join(src.file_name().expect("file name"));
+        std::fs::copy(src, &dst).expect("copy GA source into scratch");
+        dst
+    };
+    let solar_system_path = copy_into_scratch(&solar_system_path);
+    let force_radiant_path = copy_into_scratch(&force_radiant_path);
+
     // ── Phase 1: DISCOVER ──────────────────────────────────────
     //
     // Form a belief, run the audit, let BeliefMiddleware observe

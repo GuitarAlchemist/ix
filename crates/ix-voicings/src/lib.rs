@@ -263,13 +263,29 @@ pub fn ga_cli_path() -> PathBuf {
             return PathBuf::from(v);
         }
     }
-    // Default: the sibling `ga` repo's debug build, `../ga` beside this
-    // workspace (crates/ix-voicings -> workspace root -> its parent). The
-    // smoke test overrides this via env var when running in a sandbox that
-    // doesn't have ga/ next door.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-        "../../../ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Debug/net10.0/FretboardVoicingsCLI.exe",
-    )
+    // Default: the sibling `ga` repo's debug build, `../ga` beside the ix
+    // workspace. The workspace is found at runtime by walking up from the
+    // current directory (the convention `state_root` already relies on), so a
+    // binary copied to another machine still looks beside the checkout it
+    // runs in; the compile-time location is the last resort. The smoke test
+    // overrides this via env var when running in a sandbox that doesn't have
+    // ga/ next door.
+    let workspace = workspace_root_from_cwd()
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    workspace.join(GA_CLI_RELATIVE_TO_WORKSPACE_PARENT)
+}
+
+/// The GA CLI debug build, relative to the directory that holds both `ix` and `ga`.
+const GA_CLI_RELATIVE_TO_WORKSPACE_PARENT: &str =
+    "../ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Debug/net10.0/FretboardVoicingsCLI.exe";
+
+/// The ix workspace root above the current directory: the first ancestor
+/// holding a `Cargo.toml` and a `crates/` directory.
+fn workspace_root_from_cwd() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors()
+        .find(|d| d.join("Cargo.toml").is_file() && d.join("crates").is_dir())
+        .map(|d| d.to_path_buf())
 }
 
 /// Artifacts written by [`enumerate`].

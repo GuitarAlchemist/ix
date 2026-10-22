@@ -1,7 +1,8 @@
 //! `ix doctor` hardcoded-path check (ix#327, ix#328).
 //!
-//! Each seeded case was red on the live workspace before the paths it names
-//! were fixed; the last test is the one that keeps them fixed.
+//! The seeded cases pin the scanner's behaviour on throwaway workspaces; the
+//! last test scans this workspace and was red at eleven lines before those
+//! lines were fixed. It is the one that keeps them fixed.
 
 use ix_skill::doctor::hardcoded_paths::{self, AllowEntry, Allowlist};
 use ix_skill::doctor::Status;
@@ -58,6 +59,25 @@ fn forward_slash_and_lower_case_drive_forms_are_reported() {
         r#"const P: &str = "c:/users/jane/bin/tool.exe";"#,
         r#"const P: &str = r"c:\users\jane\bin\tool.exe";"#,
         r#"//!     --index "D:/Users/jane/index.bin""#,
+    ] {
+        assert_eq!(
+            hardcoded_paths::home_user_in(line).as_deref(),
+            Some("jane"),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn mixed_repeated_and_doubly_escaped_separators_are_reported() {
+    // Codex round 53: these spellings evaded the first matcher.
+    for line in [
+        r#"let p = "C:\\Users/jane/bin";"#,
+        r#"let p = "C:/Users\\jane\\bin";"#,
+        r#"let p = "C:/Users//jane/bin";"#,
+        r#"let json = "{\"path\":\"C:\\\\Users\\\\jane\\\\corpus.json\"}";"#,
+        r#"let url = "file:///C:/Users/jane/index.bin";"#,
+        r#"let verbatim = r"\\?\C:\Users\jane\index.bin";"#,
     ] {
         assert_eq!(
             hardcoded_paths::home_user_in(line).as_deref(),
@@ -180,6 +200,66 @@ fn an_allowlist_entry_matching_no_line_is_stale() {
     assert_eq!(result.status, Status::Warn, "{result:?}");
     assert!(
         result.summary.contains("match no line"),
+        "{}",
+        result.summary
+    );
+}
+
+#[test]
+fn contains_is_matched_on_the_whole_line_not_the_truncated_excerpt() {
+    // Codex round 53: a discriminator past column 120 must still exempt the line.
+    let padding = "x".repeat(130);
+    let src = format!("let p = \"/home/jane/{padding}/corpus.json\";\n");
+    let dir = repo(&[(SEED, src.as_str())]);
+    let list = allow(SEED, "corpus.json", "negative input");
+    let census = hardcoded_paths::scan_with_allowlist(dir.path(), &list).expect("scan");
+    assert_eq!(census.allowed.len(), 1, "{census:?}");
+    assert!(census.unlisted.is_empty());
+    assert!(census.stale_allowlist.is_empty());
+    assert!(census.findings[0].excerpt.ends_with('…'));
+}
+
+#[test]
+fn scripts_sql_and_docs_beside_the_crates_are_scanned_too() {
+    let dir = repo(&[
+        (
+            "crates/seed/examples.sql",
+            "LOAD '/home/jane/ix.duckdb_extension';\n",
+        ),
+        (
+            "crates/seed/run.ps1",
+            "Set-Alias x 'C:\\Users\\jane\\run.ps1'\n",
+        ),
+        (
+            "crates/seed/README.md",
+            "Example: `/home/jane/corpus.json`\n",
+        ),
+        (
+            "crates/seed/fixture.json",
+            "{\"path\": \"/home/jane/not-scanned\"}\n",
+        ),
+    ]);
+    let census = hardcoded_paths::scan(dir.path()).expect("scan");
+    assert_eq!(census.files_scanned, 3, "{census:?}");
+    let files: Vec<&str> = census.findings.iter().map(|f| f.file.as_str()).collect();
+    assert_eq!(
+        files,
+        [
+            "crates/seed/README.md",
+            "crates/seed/examples.sql",
+            "crates/seed/run.ps1"
+        ]
+    );
+}
+
+#[test]
+fn a_root_without_crates_is_a_failed_scan_not_a_clean_one() {
+    // Codex round 53: the first version swallowed read errors and reported ok.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let result = hardcoded_paths::check(dir.path());
+    assert_eq!(result.status, Status::Fail, "{result:?}");
+    assert!(
+        result.summary.contains("could not scan"),
         "{}",
         result.summary
     );

@@ -10,8 +10,12 @@ use crate::{Error, SENTRUX_EXE_ENV};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-/// File names looked up on `PATH`, in order.
+/// File names looked up on `PATH`, in order: the native spelling first, so a
+/// stray `sentrux.exe` on Unix cannot mask a working `sentrux`.
+#[cfg(windows)]
 const CANDIDATES: &[&str] = &["sentrux.exe", "sentrux"];
+#[cfg(not(windows))]
+const CANDIDATES: &[&str] = &["sentrux", "sentrux.exe"];
 
 /// Resolve the sentrux executable from `explicit`, `$SENTRUX_EXE`, then `PATH`.
 pub fn resolve_sentrux_exe(explicit: Option<PathBuf>) -> Result<PathBuf, Error> {
