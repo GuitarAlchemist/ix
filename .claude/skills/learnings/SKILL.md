@@ -52,12 +52,17 @@ A routine fix whose commit message already explains it is not a learning.
    test or gate that now binds it), `## How to find it again` (the command that reproduces the
    symptom in under a minute).
 
-5. **Index it.** Run `cargo run -q -p ix-streeling -- catalog` from a checkout whose parent
-   directory also holds the `ga` sibling (from a worktree elsewhere the catalog silently drops
-   ga's records: see `docs/solutions/workflow-patterns/streeling-catalog-drops-sibling-repo-records-from-a-worktree.md`).
-   Commit `state/streeling/catalog.jsonl` with the note when it changed. If the build is not
-   affordable right now (disk-bound), say so in the report and leave the catalog to the next
-   indexer run; the note is still found by the researcher's grep fallback.
+5. **Index it, in the same commit.** Run `cargo run -q -p ix-streeling -- catalog`, then
+   `cargo run -q -p ix-streeling -- check`, and commit `state/streeling/catalog.jsonl` with the
+   note. This step is not optional: the `Streeling Freshness` workflow runs `check` on every PR
+   that touches `docs/solutions/` and fails it when the catalog does not carry the note (PR #424
+   went red on exactly this). The indexer finds the `ga` sibling at `../ga`; from a worktree
+   outside `repos/` that path does not exist and the catalog silently drops ga's records
+   (`docs/solutions/workflow-patterns/streeling-catalog-drops-sibling-repo-records-from-a-worktree.md`),
+   so give the worktree's parent a junction first:
+   `New-Item -ItemType Junction -Path <parent>\ga -Target C:\...\repos\ga`. Read the diff before
+   committing: only ix records should change; a changed ga record means the sibling checkout is
+   on another branch than the catalog was built from.
 
 6. **Report, then teach.** One line naming the file, then one teaching line for the user:
    "🎓 Réflexe : j'ai lancé /learnings parce que <the surprise>, au commit qui la ferme. Tu peux
