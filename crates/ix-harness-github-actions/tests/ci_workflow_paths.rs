@@ -2,10 +2,11 @@
 //!
 //! A pull request that changes only prose, hooks or skills used to run the whole Rust matrix
 //! (four build-and-test rows, six gated-features rows, the DuckDB job): forty runner-minutes
-//! for files no job opens. The filter below says which files the workflow reads. Two text files
+//! for files no job opens. The filter below says which files the workflow reads. Some text files
 //! stay in because a job does read them: `go/ixctl/README.md` and `go/ixctl/README.fr.md` carry
-//! the check count the gate's E24 holds to what ran, and `docs/contracts/` holds schemas that
-//! crates `include_str!`.
+//! the check count the gate's E24 holds to what ran, `docs/contracts/` holds schemas that
+//! crates `include_str!`, and `ix doctor` reads the Markdown under `crates/` (hardcoded-paths)
+//! and `.claude/settings.json` with the hooks it wires (hooks). Skills stay out.
 use serde_yaml::Value;
 
 const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
@@ -25,6 +26,8 @@ fn triggers(patterns: &[&str], file: &str) -> bool {
             file.ends_with(suffix)
         } else if let Some(prefix) = pat.strip_suffix("**") {
             file.starts_with(prefix)
+        } else if let Some((prefix, suffix)) = pat.split_once("**") {
+            file.starts_with(prefix) && file.ends_with(suffix)
         } else {
             file == pat
         };
@@ -62,11 +65,14 @@ fn check_event(event: &str, branch: Option<&str>) {
         [
             "**",
             "!**.md",
+            "crates/**.md",
             "go/ixctl/README.md",
             "go/ixctl/README.fr.md",
             "!docs/**",
             "docs/contracts/**",
             "!.claude/**",
+            ".claude/settings.json",
+            ".claude/hooks/**",
         ],
         "{event}: the filter drifted; update the list here and the reasons above together"
     );
@@ -88,6 +94,12 @@ fn check_event(event: &str, branch: Option<&str>) {
         ".github/workflows/ci.yml",
         ".gitattributes",
         "scripts/verify.ps1",
+        // ix doctor's hardcoded-paths check scans the Markdown under crates/.
+        "crates/ix-code-tools/README.md",
+        // ix doctor's hooks check reads the wiring, parses each hook, runs each fixture.
+        ".claude/settings.json",
+        ".claude/hooks/correction-detector.sh",
+        ".claude/hooks/test-correction-detector.sh",
     ] {
         assert!(triggers(&paths, file), "{event}: must trigger for {file}");
     }
@@ -102,11 +114,8 @@ fn check_event(event: &str, branch: Option<&str>) {
         "docs/solutions/test-failures/2026-10-22-some-note.md",
         "docs/plans/2026-10-22-some-plan.md",
         "docs/adr/0011-something.md",
-        "crates/ix-code-tools/README.md",
-        ".claude/settings.json",
-        ".claude/hooks/correction-detector.sh",
-        ".claude/hooks/test-correction-detector.sh",
         ".claude/skills/learnings/SKILL.md",
+        ".claude/settings.local.json",
     ] {
         assert!(
             !triggers(&paths, file),
@@ -142,4 +151,18 @@ fn the_matcher_applies_patterns_in_order_with_the_last_hit_deciding() {
     assert!(triggers(&p, "docs/contracts/x.schema.json"));
     assert!(triggers(&p, "docs/contracts/x.contract.md"));
     assert!(!triggers(&["!**"], "anything"));
+    let crate_md = ["**", "!**.md", "crates/**.md"];
+    assert!(triggers(&crate_md, "crates/seed/README.md"));
+    assert!(!triggers(&crate_md, "docs/seed/README.md"));
+}
+
+/// The matrix runs pull requests' code; nothing in it writes to the repository.
+#[test]
+fn ci_holds_a_read_only_token() {
+    let workflow: Value = serde_yaml::from_str(WORKFLOW).expect("valid workflow YAML");
+    assert_eq!(
+        workflow["permissions"]["contents"].as_str(),
+        Some("read"),
+        "the repository's default token is write; ci.yml must ask for read"
+    );
 }

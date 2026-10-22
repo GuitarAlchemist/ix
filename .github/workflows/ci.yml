@@ -1,23 +1,28 @@
 name: CI
 
 # The jobs below read code, manifests, the Go tree, state/ and the schemas under docs/contracts/.
-# They do not read prose, hooks or skills, so a change made only of those does not run the
-# matrix (four build-and-test rows, six gated-features rows and the DuckDB job came to forty
-# runner-minutes for PR #424's seven text files). Two text files stay in because a job reads
+# They do not read prose or skills, so a change made only of those does not run the matrix
+# (four build-and-test rows, six gated-features rows and the DuckDB job came to forty
+# runner-minutes for PR #424's seven text files). Some text files stay in because a job reads
 # them: go/ixctl/README.md and README.fr.md carry the check count the gate's E24 holds to what
-# ran. Later patterns override earlier ones. The list is pinned, with the files each side must
-# and must not match, by crates/ix-harness-github-actions/tests/ci_workflow_paths.rs.
+# ran, and `ix doctor` scans the Markdown under crates/ (hardcoded-paths) and reads
+# .claude/settings.json with the hooks it wires (hooks). Later patterns override earlier ones.
+# The list is pinned, with the files each side must and must not match, by
+# crates/ix-harness-github-actions/tests/ci_workflow_paths.rs.
 on:
   push:
     branches: [main]
     paths:
       - '**'
       - '!**.md'
+      - 'crates/**.md'
       - 'go/ixctl/README.md'
       - 'go/ixctl/README.fr.md'
       - '!docs/**'
       - 'docs/contracts/**'
       - '!.claude/**'
+      - '.claude/settings.json'
+      - '.claude/hooks/**'
   # Every pull request, whatever its base: a PR stacked on an exp/* branch gets the Rust and Go
   # suites, `-race` and the ixctl gate too, instead of only once it is retargeted to main
   # (ix#423 carried eleven commits with no CI run; the local runner has no cgo, so no -race).
@@ -25,11 +30,19 @@ on:
     paths:
       - '**'
       - '!**.md'
+      - 'crates/**.md'
       - 'go/ixctl/README.md'
       - 'go/ixctl/README.fr.md'
       - '!docs/**'
       - 'docs/contracts/**'
       - '!.claude/**'
+      - '.claude/settings.json'
+      - '.claude/hooks/**'
+
+# The matrix runs the pull request's code; nothing in it writes to the repository, and the
+# repository's default token is a write token.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always

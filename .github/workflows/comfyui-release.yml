@@ -3,15 +3,15 @@
 #
 # Every trigger builds, packages and tests. Only a pushed `comfyui-knots-v*` tag
 # goes on to the `release` job, and even then the release is a DRAFT: nothing is
-# public until someone publishes it by hand. Pull requests that touch this file
-# get the same build as a dry run, with the archives kept as run artifacts.
+# public until someone publishes it by hand. Pull requests that touch this file or
+# the pack get the same build as a dry run, with the archives kept as run artifacts.
 name: ComfyUI pack release
 
 on:
   push:
     tags: ['comfyui-knots-v*']
   pull_request:
-    paths: ['.github/workflows/comfyui-release.yml']
+    paths: ['.github/workflows/comfyui-release.yml', 'integrations/comfyui/**']
   workflow_dispatch:
 
 permissions:

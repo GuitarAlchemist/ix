@@ -3,9 +3,15 @@
 ### and the probe kinds they carry.
 #
 # Same two-job shape as release.yml: `build` runs per platform and never publishes;
-# `publish` runs once, after both, and assembles one release. The tag is
-# `ixctl/v<semver>`; the binary's `version` is set from it with -ldflags, so
+# `publish` runs once, after both, and assembles one DRAFT release: nothing is public
+# until someone publishes it by hand, and it never becomes the repository's Latest. The
+# tag is `ixctl/v<semver>`; the binary's `version` is set from it with -ldflags, so
 # `ixctl version`, `/health` and `probe.kinds` all report the tag.
+#
+# Only `publish` holds a write token; `build` runs the tagged code's tests with a read
+# one. The tag reaches scripts through `env:`, never pasted into their source. A `pwsh`
+# step fails only on its last native command's exit code, so each `go` command is
+# checked where it runs. Pinned by crates/ix-harness-github-actions/tests/release_workflows.rs.
 #
 # Provenance (decision D8, ix#406): each asset ships with its SHA-256 and a
 # `probes.json` written by the binary itself (`ixctl probes`), so a consumer can
@@ -22,7 +28,12 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
+
+# A tag push and a dispatch of the same tag never race on one release.
+concurrency:
+  group: ixctl-release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -42,9 +53,11 @@ jobs:
       run:
         shell: pwsh
     steps:
+      # A dispatch names a tag: refs/tags/ keeps a branch of the same name out. A tag push
+      # builds the commit that triggered it, on both platforms, even if the tag moves.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.sha }}
 
       - uses: actions/setup-go@v5
         with:
@@ -52,16 +65,21 @@ jobs:
           cache-dependency-path: go/ixctl/go.sum
 
       - name: Build with the tag as the version
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $tag = $env:TAG
+          if ($tag -notmatch '^ixctl/v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "tag '$tag' is not ixctl/v<semver>" }
           $version = $tag -replace '^ixctl/v', ''
-          if ($version -eq $tag) { throw "tag '$tag' is not ixctl/v<semver>" }
           $env:CGO_ENABLED = '0'
           Push-Location go/ixctl
           go vet .
+          if ($LASTEXITCODE) { throw 'go vet failed' }
           go test -count=1 .
+          if ($LASTEXITCODE) { throw 'go test failed' }
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o "ixctl-${{ matrix.platform }}${{ matrix.exe }}" .
+          if ($LASTEXITCODE) { throw 'go build failed' }
           Pop-Location
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -106,6 +124,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -114,9 +134,11 @@ jobs:
 
       - name: Assemble the release body from what each platform reported
         shell: pwsh
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $tag = $env:TAG
           $repo = "${{ github.repository }}"
           $reports = Get-ChildItem dist -Filter 'report-*.md' | Sort-Object Name
           if ($reports.Count -ne 2) { throw "expected 2 platform reports, found $($reports.Count)" }
@@ -152,3 +174,6 @@ jobs:
             dist/probes-*.json
           fail_on_unmatched_files: true
           body_path: body.md
+          draft: true
+          make_latest: false
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}

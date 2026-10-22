@@ -29,6 +29,21 @@ tree was still red in three places that no single PR's CI could have shown.
 3. **A new repo-wide check meeting new code.** #425 added the hardcoded-paths doctor check; #394
    added a crate whose doc example read `C:/Users/me/...`. Each PR passed `ix doctor` alone.
 
+## What an adversarial review of the workflows added
+
+Three reviewers, each with one lens (security, triggers, release chain), read the train's
+workflow diff and found what the green rehearsal could not, because a CI filter or a release
+job only runs on events a PR does not produce:
+
+- **A paths filter that skips the job reading the files.** #424 excluded `!.claude/**` and
+  `!**.md` from CI, while `ix doctor` reads `.claude/settings.json` and the hooks (#424's own
+  check) and scans `crates/**/*.md` (#425's check). A hook-only or crate-README-only PR would
+  merge without CI and turn the next unrelated PR red. Re-included, and pinned by the test.
+- **A release step green on a failed test.** In `ixctl-release.yml`, `go vet` and `go test`
+  ran in one `pwsh` step before `go build`; GitHub's `pwsh` wrapper exits with the last native
+  command's code, and `$ErrorActionPreference = 'Stop'` does not cover native commands. Each
+  `go` command is now followed by `if ($LASTEXITCODE) { throw … }`, and the release is a draft.
+
 ## What worked
 
 - One local branch from `origin/main`, `git merge --no-ff` of each PR head in dependency order,
@@ -49,3 +64,7 @@ tree was still red in three places that no single PR's CI could have shown.
   with "Failed to load constitution" until `git submodule update --init governance/demerzel`.
 - `cargo fmt -p <crate>` rewrites files main already carries unformatted (CI runs no fmt
   check); revert those rather than widen the diff.
+- Give the train's worktree a `CARGO_TARGET_DIR` of its own. Shared with a worktree of `main`,
+  cargo served one the other's rlibs (path crates hash to the same artifact in both), and
+  `cargo build -p ix-skill` failed with E0432 on a function the train has, while `cargo check`
+  passed.
