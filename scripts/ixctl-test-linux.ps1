@@ -12,13 +12,16 @@
 #   pwsh scripts/ixctl-test-linux.ps1                 # vet + race over ./go/ixctl/...
 #   pwsh scripts/ixctl-test-linux.ps1 -Run 'TestAJump' # one test, race on
 #   pwsh scripts/ixctl-test-linux.ps1 -NoRace          # plain go test
+#   pwsh scripts/ixctl-test-linux.ps1 -Count 3         # the suite three times: a flake hunt
 #   pwsh scripts/ixctl-test-linux.ps1 -Distro Debian
 param(
     [string]$Distro = 'Ubuntu',
     [string]$Run = '',
     [switch]$NoRace,
-    [string]$Timeout = '600s'
+    [string]$Timeout = '600s',
+    [int]$Count = 1                                    # -Count 3 shakes a flake out of a timing-bound test
 )
+if ($Count -lt 1) { throw "-Count must be at least 1, got $Count" }
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $pkg = Join-Path $repo 'go\ixctl'
@@ -40,7 +43,7 @@ $runFlag = if ($Run) { "-run " + (& $q $Run) } else { '' }
 # bash will not take unquoted. The module cache lives in the distro, the sources on /mnt/c.
 # `./...` as CI's ixctl-go job (ci.yml), so a subpackage added later is covered here too.
 $go = '/usr/local/go/bin/go'
-$cmd = "export CGO_ENABLED=$cgo; cd " + (& $q $linux) + " && $go version && $go vet ./... && $go test $race -timeout $Timeout -count=1 $runFlag ./..."
+$cmd = "export CGO_ENABLED=$cgo; cd " + (& $q $linux) + " && $go version && $go vet ./... && $go test $race -timeout $Timeout -count=$Count $runFlag ./..."
 Write-Host "wsl -d $Distro -- bash -lc `"$cmd`""
 $out = wsl -d $Distro -- bash -lc $cmd 2>&1 | ForEach-Object { ($_ -join '') -replace "`0", '' }
 $code = $LASTEXITCODE
