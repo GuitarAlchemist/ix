@@ -797,6 +797,28 @@ func (l *peerLink) resnapshot(ctx context.Context, c *Client, q *pipeQueue, merg
 	if len(l.spec.Probes) == 0 {
 		return l.snapshot(ctx, c, q, fail, asked, nil) // nothing to reconcile but the state
 	}
+	var held []peerFrame
+	var bytes int
+	hold := func(pf peerFrame) error {
+		if bytes += pf.f.Bytes; len(held) == maxLinkBacklog || bytes > maxLinkBacklogBytes {
+			return fmt.Errorf("link backlog over %d frames or %d bytes while the peer's list was read again", maxLinkBacklog, maxLinkBacklogBytes)
+		}
+		held = append(held, pf)
+		l.held.Add(1)
+		return nil
+	}
+	// What merged holds now arrived before the list is asked for: taken first, so the reply never
+	// overtakes it whatever the select below picks (Codex round 46).
+	for taken := true; taken; {
+		select {
+		case pf := <-merged:
+			if err := hold(pf); err != nil {
+				return err
+			}
+		default:
+			taken = false
+		}
+	}
 	type reply struct {
 		data json.RawMessage
 		err  error
@@ -808,16 +830,12 @@ func (l *peerLink) resnapshot(ctx context.Context, c *Client, q *pipeQueue, merg
 		data, err := c.Do(rctx, Request{Op: "probe.list", WithCursor: true})
 		got <- reply{data, err}
 	}()
-	var held []peerFrame
-	var bytes int
 	for {
 		select {
 		case pf := <-merged:
-			if bytes += pf.f.Bytes; len(held) == maxLinkBacklog || bytes > maxLinkBacklogBytes {
-				return fmt.Errorf("link backlog over %d frames or %d bytes while the peer's list was read again", maxLinkBacklog, maxLinkBacklogBytes)
+			if err := hold(pf); err != nil {
+				return err
 			}
-			held = append(held, pf)
-			l.held.Add(1)
 		case pf := <-q.ch:
 			q.took(pf)
 			if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, origin, pf); err != nil {

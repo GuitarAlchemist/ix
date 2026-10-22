@@ -1452,22 +1452,26 @@ def finish(pa, pb, sa, sb, tokens):
             hits[str(f.relative_to(WORK))] = n
     journals = [str(f.relative_to(WORK)) for f in STATE.glob("*.journal.jsonl")]
     check("E4.no_token_in_outputs", not hits, files_with_token=hits, journals_scanned=journals)
-    # E24: the gate's totals as the two READMEs and this file's docstring state them ("N checks,
-    # E1..EM") against what ran, this check counted: a check added without the three texts
-    # following it fails here (Codex round 44 caught both READMEs a slice behind).
+    # E24: the gate's totals as the two READMEs, this file's docstring and the CI workflow state
+    # them ("N checks, E1..EM"; the workflow says the count alone) against what ran, this check
+    # counted, every statement of a text read: a check added without the texts following it fails
+    # here (Codex round 44 caught both READMEs a slice behind, round 46 the workflow's comment).
     import re
     key = "E24.gate_totals_match_the_docs"
     keys = list(results["checks"]) + [key]
     ran = len(keys)
     top = max(int(m.group(1)) for m in (re.match(r"E(\d+)\.", k) for k in keys) if m)
     here = HERE.parent
-    said = {}
-    for name, text in (("README.md", (here / "README.md").read_text(encoding="utf-8")),
-                       ("README.fr.md", (here / "README.fr.md").read_text(encoding="utf-8")),
-                       ("e2e.py", __doc__)):
-        m = re.search(r"(\d+) (?:checks|vérifications), E1\.\.E(\d+)", text)
-        said[name] = [int(m.group(1)), int(m.group(2))] if m else None
-    check(key, all(v == [ran, top] for v in said.values()), ran=ran, top=top, said=said)
+    texts = {"README.md": (here / "README.md").read_text(encoding="utf-8"),
+             "README.fr.md": (here / "README.fr.md").read_text(encoding="utf-8"),
+             "e2e.py": __doc__,
+             "ci.yml": (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")}
+    want = {"README.md": [[ran, top]], "README.fr.md": [[ran, top]], "e2e.py": [[ran, top]], "ci.yml": [[ran, None]]}
+    pat = re.compile(r"(\d+) (?:checks|vérifications)(?:, E1\.\.E(\d+))?")
+    said = {name: sorted({(int(n), int(e) if e else None) for n, e in pat.findall(text)}, key=str)
+            for name, text in texts.items()}
+    said = {name: [list(s) for s in v] for name, v in said.items()}
+    check(key, said == want, ran=ran, top=top, said=said)
     (STATE / "a.json").unlink(missing_ok=True)
     ok = all(c["ok"] for c in results["checks"].values())
     results["ok"] = ok

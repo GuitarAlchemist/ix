@@ -30,6 +30,13 @@ type server struct {
 	started time.Time
 	mux     *http.ServeMux
 	ops     atomic.Int64 // JSON ops served (any outcome); /health shows it, so a test can see a client poll
+	// writeDelay is a test knob: nanoseconds the WebSocket writer spends on each frame, a client
+	// whose socket drains slowly (zero in production). A subscription overflows when the session's
+	// queue fills behind that writer; on Linux the loopback buffers absorb a flood of small frames
+	// that fills it on Windows, so a test that needs the overflow sets this rather than counting on
+	// the kernel (the ixctl-go row of CI, first run for a stacked PR at 095c507, found two such
+	// tests passing on Windows alone).
+	writeDelay atomic.Int64
 
 	ctx    context.Context // cancelled at shutdown: ends SSE streams and WebSockets
 	cancel context.CancelFunc

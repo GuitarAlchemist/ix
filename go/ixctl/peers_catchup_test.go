@@ -257,6 +257,7 @@ func TestASustainedControlStreamAboveTheReaderJumpsWithoutReconnecting(t *testin
 	l := a.plane.peers["b"]
 	l.ctlDelay.Store(int64(500 * time.Microsecond))
 	l.allowFrames.Store(100)
+	b.web.writeDelay.Store(int64(time.Millisecond)) // the overflow is the peer's queue filling behind its writer, whatever the kernel buffers hold
 
 	c := dial(t, a)
 	var zero uint64
@@ -347,19 +348,19 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	l.mu.Unlock()
 	merged := make(chan peerFrame, 64)
 	fail := make(chan error, 1)
-	reopen := func(sub int64) int64 {
+	reopen := func(prefix string, sub int64) int64 {
 		t.Helper()
-		l.reopenControl(ctx, c, nil, merged, fail, peerFrame{prefix: "svc/", sub: sub, f: Frame{Gap: &Gap{Reason: "overflow"}}})
+		l.reopenControl(ctx, c, nil, merged, fail, peerFrame{prefix: prefix, sub: sub, f: Frame{Gap: &Gap{Reason: "overflow"}}})
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			l.mu.Lock()
-			now := l.ctl["svc/"].sub
+			now := l.ctl[prefix].sub
 			l.mu.Unlock()
 			if now != 0 && now != sub {
 				return now
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("svc/ was not reopened after %d", sub)
+				t.Fatalf("%s was not reopened after %d", prefix, sub)
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -379,7 +380,7 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 			}
 		}
 	}
-	sub = reopen(sub)
+	sub = reopen("svc/", sub)
 	if ms := markers(300 * time.Millisecond); len(ms) != 0 {
 		t.Fatalf("a reopen with nothing to skip was marked: %+v", ms)
 	}
@@ -393,12 +394,46 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	}
 
 	second := b.plane.Publish("svc/x", event("stats", map[string]any{"n": 1}))
-	reopen(sub)
+	reopen("svc/", sub)
 	ms := markers(2 * time.Second)
 	if len(ms) != 1 || ms[0].Reason != "jumped" || ms[0].Prefix != "svc/" || ms[0].From != first.Seq || ms[0].To < second.Seq {
 		t.Fatalf("a reopen past a new record: markers %+v, want one jumped on svc/ from %d to at least %d", ms, first.Seq, second.Seq)
 	}
 	if st := l.status(); st.Jumps != 1 {
 		t.Fatalf("status after the real jump: %+v, want one jump counted", st)
+	}
+
+	// The same on ctl, the prefix whose jump costs the reconciled state (Codex round 46): a reopen
+	// with nothing to skip keeps it, a reopen past a new record clears it once.
+	firstCtl := b.plane.Publish("ctl", event("noise", map[string]any{"n": 0}))
+	for e := nextEnvWithin(t, cur, 10*time.Second); e.Ch != "peer/b/ctl"; e = nextEnvWithin(t, cur, 10*time.Second) {
+	}
+	state := func() (int64, bool, uint64) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.ctl["ctl"].sub, l.listed, l.unlisted
+	}
+	ctlSub, listed0, gen0 := state()
+	if !listed0 {
+		t.Fatal("the link is not reconciled before the ctl reopen")
+	}
+	ctlSub = reopen("ctl", ctlSub)
+	if ms := markers(300 * time.Millisecond); len(ms) != 0 {
+		t.Fatalf("a ctl reopen with nothing to skip was marked: %+v", ms)
+	}
+	if _, listed1, gen1 := state(); !listed1 || gen1 != gen0 {
+		t.Fatalf("a ctl reopen with nothing to skip cost the reconciled state: listed %v, generation %d (was %d)", listed1, gen1, gen0)
+	}
+	secondCtl := b.plane.Publish("ctl", event("noise", map[string]any{"n": 1}))
+	reopen("ctl", ctlSub)
+	ms = markers(2 * time.Second)
+	if len(ms) != 1 || ms[0].Reason != "jumped" || ms[0].Prefix != "ctl" || ms[0].From != firstCtl.Seq || ms[0].To < secondCtl.Seq {
+		t.Fatalf("a ctl reopen past a new record: markers %+v, want one jumped on ctl from %d to at least %d", ms, firstCtl.Seq, secondCtl.Seq)
+	}
+	if _, listed2, gen2 := state(); listed2 || gen2 != gen0+1 {
+		t.Fatalf("a jump on ctl did not clear the reconciled state once: listed %v, generation %d (was %d)", listed2, gen2, gen0)
+	}
+	if st := l.status(); st.Jumps != 2 {
+		t.Fatalf("status after the ctl jump: %+v, want two jumps counted", st)
 	}
 }

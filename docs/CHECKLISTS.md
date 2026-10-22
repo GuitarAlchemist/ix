@@ -167,3 +167,23 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
 2. Re-run the `ix-streeling` indexer so `state/streeling/catalog.jsonl` stays
    current.
 3. Maintain the French translation alongside the English one, under `docs/fr/`.
+
+
+## Changing a behavioural claim about a plane or a contract
+
+A sentence that says what the plane does ("the list is exactly what `ctl` says up to the cursor",
+"a consumer keys the series from the status") is a contract term, and it drifts when it is written
+in several places: on the S2 slice-4 session two such claims lived in README EN, README FR, the
+contract and a code comment, and two of the four copies went stale before Codex read them.
+
+1. The contract under `docs/contracts/` is the single source of the claim; README paragraphs and
+   code comments **point at it** (the row or the section) instead of restating it. A restatement
+   that must stay (the one-line summary in a status field's doc comment) names the contract version.
+2. Before the commit, grep every word of the claim (`exact`, `without having read`, `outside the
+   lock`) across `docs/`, `go/ixctl/*.md` and the code comments, and update or remove every hit:
+   the Order section of the contract still said a leaf's `probe.stopped` was published outside the
+   lock one slice after that stopped being true.
+3. A count or a total that a gate knows (the number of checks, the highest check index) is asserted
+   by the gate, not typed into prose: `go/ixctl/e2e/e2e.py` E24 compares the totals in both READMEs
+   and its own docstring with what ran, so a check added without the texts following it fails.
+4. The FR mirror changes in the same commit as the EN text, paragraph for paragraph.

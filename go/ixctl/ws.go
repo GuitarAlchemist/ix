@@ -39,6 +39,9 @@ func (s *server) ws(w http.ResponseWriter, r *http.Request) {
 		for {
 			select {
 			case f := <-sess.Out():
+				if d := s.writeDelay.Load(); d > 0 {
+					time.Sleep(time.Duration(d)) // the test knob: a slow socket
+				}
 				wctx, wcancel := context.WithTimeout(ctx, wsWriteLimit)
 				err := c.Write(wctx, websocket.MessageText, f)
 				wcancel()

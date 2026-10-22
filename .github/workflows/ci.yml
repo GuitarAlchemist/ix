@@ -70,7 +70,9 @@ jobs:
       # the ix-stream pod as two federated instances on loopback, and the `ix`
       # CLI run as a job under the plane (E10) and runs killed at their wall,
       # memory, processor-time and process limits (E11..E14), a probe tree
-      # (E15) and bookmarks with their replay (E16), 42 checks.
+      # (E15), bookmarks with their replay (E16), the IXQL probe surface (E17),
+      # probe budgets (E18) and the federated probe pipes (E19..E24), 52 checks
+      # (the gate's E24 holds this count to what ran).
       # It runs on both OS rows (Windows job objects; Linux process groups and
       # PR_SET_PDEATHSIG) on the toolchain whose cargo cache holds the examples.
       - uses: actions/setup-go@v5

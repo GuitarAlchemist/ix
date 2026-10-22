@@ -276,6 +276,7 @@ func TestAJumpOnCtlTakesANewSnapshot(t *testing.T) {
 	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: []string{"mem"}}, NewHub("a"))
 	l.ctlDelay.Store(int64(500 * time.Microsecond))
 	l.allowFrames.Store(0)
+	b.web.writeDelay.Store(int64(time.Millisecond)) // the overflow is the peer's queue filling behind its writer, whatever the kernel buffers hold
 	cur := l.hub.Subscribe("peer/b/ctl", nil, "")
 	session := func() uint64 {
 		l.mu.Lock()
@@ -340,7 +341,8 @@ func TestASnapshotOlderThanAJumpDoesNotSayReconciled(t *testing.T) {
 	l.mu.Lock()
 	l.up, l.listed, l.ctl["ctl"].sub = true, true, 5
 	l.mu.Unlock()
-	l.jumpControl(context.Background(), c, nil, make(chan peerFrame, 64), fail, "ctl", 5) // ...and ctl jumps before it is answered
+	relist := make(chan struct{}, 1)
+	l.jumpControl(context.Background(), c, relist, make(chan peerFrame, 64), fail, "ctl", 5) // ...and ctl jumps before it is answered
 	if err := l.snapshot(context.Background(), c, q, fail, asked, list); err != nil {
 		t.Fatal(err)
 	}
@@ -359,6 +361,11 @@ func TestASnapshotOlderThanAJumpDoesNotSayReconciled(t *testing.T) {
 			t.Fatal("ctl was not reopened after the jump")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	select { // the jump asked the loop for that list
+	case <-relist:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the jump on ctl asked for no re-list")
 	}
 	if err := l.snapshot(context.Background(), c, q, fail, l.unlistedGen(), list); err != nil {
 		t.Fatal(err)
@@ -390,8 +397,8 @@ func TestAReListIsAppliedBeforeTheFramesReceivedWhileItWasInFlight(t *testing.T)
 	l.ctl["ctl"].sub, l.ctl["ctl"].live = 7, true // the live ctl subscription the frame below is of (a frame of one still catching up is charged to the allowance)
 	l.mu.Unlock()
 	// What reaches the link while the list is in flight: cpu's removal, past any cursor the list
-	// can stand at, queued before the list is asked for (the reply is a round trip away: the loop
-	// takes the frame first, and says so).
+	// can stand at, queued before the list is asked for (what merged holds then is taken before the
+	// request is sent, so the loop takes the frame first whatever the select picks, and says so).
 	removed := &Envelope{Ch: "ctl", Seq: 1 << 40, Epoch: epoch, Origin: "b", Ev: event("probe.removed", map[string]any{"node": "cpu", "kind": "heartbeat@1", "reason": "removed"})}
 	merged <- peerFrame{prefix: "ctl", f: Frame{Env: removed}, sub: 7}
 	if err := l.resnapshot(context.Background(), c, q, merged, fail, refresh, relist, 1, "b"); err != nil {
