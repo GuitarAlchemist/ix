@@ -263,12 +263,34 @@ pub fn ga_cli_path() -> PathBuf {
             return PathBuf::from(v);
         }
     }
-    // Default: sibling `ga` repo's debug build. The smoke test overrides
-    // this via env var when running in a sandbox that doesn't have ga/
-    // next door.
-    PathBuf::from(
-        r"C:\Users\spare\source\repos\ga\Demos\Music Theory\FretboardVoicingsCLI\bin\Debug\net10.0\FretboardVoicingsCLI.exe",
-    )
+    // Default: the sibling `ga` repo's debug build, `../ga` beside the ix
+    // workspace. The workspace is found at runtime by walking up from the
+    // current directory (the convention `state_root` already relies on), so a
+    // binary copied to another machine still looks beside the checkout it
+    // runs in; the compile-time location is the last resort. The smoke test
+    // overrides this via env var when running in a sandbox that doesn't have
+    // ga/ next door.
+    let workspace = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| ix_workspace_root_above(&cwd))
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    workspace.join(GA_CLI_RELATIVE_TO_WORKSPACE_PARENT)
+}
+
+/// The GA CLI debug build, relative to the directory that holds both `ix` and `ga`.
+const GA_CLI_RELATIVE_TO_WORKSPACE_PARENT: &str =
+    "../ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Debug/net10.0/FretboardVoicingsCLI.exe";
+
+/// The ix workspace root at or above `start`: the first ancestor holding a
+/// `Cargo.toml` and this very crate at `crates/ix-voicings/Cargo.toml`, so an
+/// unrelated workspace that also has a `crates/` directory is not mistaken for ix.
+fn ix_workspace_root_above(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|d| {
+            d.join("Cargo.toml").is_file() && d.join("crates/ix-voicings/Cargo.toml").is_file()
+        })
+        .map(|d| d.to_path_buf())
 }
 
 /// Artifacts written by [`enumerate`].
@@ -1698,6 +1720,42 @@ pub fn build_pipeline(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_ix_workspace_is_found_above_this_crate_and_not_in_a_lookalike() {
+        use std::path::Path;
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = super::ix_workspace_root_above(here).expect("ix workspace above this crate");
+        assert!(root.join("crates/ix-voicings/Cargo.toml").is_file());
+
+        // A workspace that also has `Cargo.toml` + `crates/` but is not ix.
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let scratch_path = std::env::temp_dir().join(format!(
+            "ix-voicings-lookalike-{}-{nanos}",
+            std::process::id()
+        ));
+        // Checked before the guard is armed, so a collision never deletes
+        // someone else's directory.
+        assert!(
+            !scratch_path.exists(),
+            "scratch name collided: {}",
+            scratch_path.display()
+        );
+        let lookalike = Scratch(scratch_path);
+        std::fs::create_dir_all(lookalike.0.join("crates/other")).unwrap();
+        std::fs::write(lookalike.0.join("Cargo.toml"), "[workspace]\n").unwrap();
+        let found = super::ix_workspace_root_above(&lookalike.0.join("crates/other"));
+        assert_eq!(found, None, "a workspace without ix-voicings is not ix");
+    }
+
     use super::*;
 
     fn sample_row() -> VoicingRow {

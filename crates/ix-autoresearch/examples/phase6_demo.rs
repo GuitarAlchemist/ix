@@ -13,7 +13,7 @@
 //!
 //! ```sh
 //! cargo run --release --example phase6_demo -- \
-//!     --ga-cli "C:/Users/spare/source/repos/ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Release/net10.0/FretboardVoicingsCLI.exe" \
+//!     --ga-cli "../ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Release/net10.0/FretboardVoicingsCLI.exe" \
 //!     --iterations 5
 //! ```
 //!

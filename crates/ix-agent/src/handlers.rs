@@ -3655,7 +3655,7 @@ pub fn catalog_list(_params: Value) -> Result<Value, String> {
 ///
 /// Input format:
 /// ```json
-/// { "workspace_root": "C:\\Users\\spare\\source\\repos\\ix" }
+/// { "workspace_root": "/path/to/ix" }
 /// ```
 /// `workspace_root` is optional; when absent we walk from the CWD.
 ///
@@ -7433,8 +7433,9 @@ pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
         convert::violation_to_annotation,
         emit_inline, emit_sidecar,
         mcp_bridge::{run_sentrux_check, run_sentrux_test_gaps, SentruxConfig},
+        resolve_sentrux_exe,
         untested::{business_value_paths_from_workspace, untested_high_value_annotations},
-        DEFAULT_SENTRUX_EXE, DEFAULT_UNTESTED_SIDECAR_PATH,
+        DEFAULT_UNTESTED_SIDECAR_PATH,
     };
     use std::path::PathBuf;
     use std::time::Duration;
@@ -7449,11 +7450,10 @@ pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
         .get("mode")
         .and_then(|v| v.as_str())
         .unwrap_or("dry-run");
-    let sentrux_exe = params
+    let sentrux_exe_override = params
         .get("sentrux_exe")
         .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_SENTRUX_EXE));
+        .map(PathBuf::from);
     let timeout_secs = params
         .get("timeout_secs")
         .and_then(|v| v.as_u64())
@@ -7475,6 +7475,11 @@ pub fn sentrux_annotate(params: Value) -> Result<Value, String> {
             "unknown mode '{mode}'; expected sidecar|inline|dry-run"
         ));
     }
+
+    // Explicit param, then $SENTRUX_EXE, then PATH; the error names all three
+    // (ix#327). Resolved after the mode check so a bad mode is reported even
+    // where sentrux is not installed.
+    let sentrux_exe = resolve_sentrux_exe(sentrux_exe_override).map_err(|e| e.to_string())?;
 
     let cfg = SentruxConfig {
         sentrux_exe,

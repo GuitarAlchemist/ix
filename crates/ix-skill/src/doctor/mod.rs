@@ -19,6 +19,7 @@
 //! `0` all green, `1` warnings only, `4` at least one failure.
 
 pub mod dark_features;
+pub mod hardcoded_paths;
 pub mod orphan_traits;
 pub mod registry_snapshot;
 pub mod silent_skips;
@@ -252,6 +253,7 @@ pub fn run(root: &Path, opts: Options) -> Report {
         check_orphan_traits(root),
         check_dark_features(root),
         check_silent_skips(root),
+        hardcoded_paths::check(root),
     ];
     checks.extend(check_environment(root));
     Report {
