@@ -192,7 +192,7 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   (bounded as at session start) and applied after it, so no lifecycle event received while the list
   was in flight is undone by it, two jumps in a row read it twice in order, and nothing of a session's
   re-list outlives the session; `reconciled` falls in the step that gives the catch-up of `ctl` up,
-  not once the live subscription is back. A list that is no snapshot (no `cursor`, a wanted node
+  not once the live subscription is back, and a list asked for before a later jump on `ctl` does not say `reconciled` (the re-list that jump asked for does). A list that is no snapshot (no `cursor`, a wanted node
   without `created_seq`) is refused and ends the session. Wording: the exactness of the list is for
   what `ctl` says (which nodes exist, their kind, parent and export, which are running); `stopping`,
   `expires_in_ms` and the counters are the tree's own reading at the cursor; the parent's status is a
@@ -226,8 +226,8 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   the peer's probe list applied this session, no wanted pipe still opening), `degraded` (their
   conjunction denied: lifted only when the flow is live and the state reconciled) and `jumps`
   (catch-ups given up, absent while zero); a jump of `ctl` loses the lifecycle events of its span,
-  so `reconciled` falls until the list is read again (the next session; slice 4 re-reads it with a
-  cursor in the session). Protocol: `subscribe` takes `live: true`, answered by
+  so `reconciled` falls until the list is read again (the next session at v0.1.7; since v0.1.8 the
+  link re-reads it with a cursor in the session, since v0.1.9 on its loop). Protocol: `subscribe` takes `live: true`, answered by
   one `{"sub": <id>, "live": true}` frame once the replay is past the head the subscription started
   from (at once when nothing was to be replayed); a subscriber that did not ask gets no such frame
   (the S7 fixtures are unchanged). Read as a gap by the consumer (State, UNKNOWN) on the mirrored

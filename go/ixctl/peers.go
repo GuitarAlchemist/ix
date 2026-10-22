@@ -62,6 +62,7 @@ type peerLink struct {
 	pipes    map[string]*pipeSub // per wanted probe node, what it is now
 	ctl      map[string]*ctlSub  // per control prefix (ctl, svc/): its subscription now, and whether it is live
 	listed   bool                // the peer's probe list was applied this session (false while down)
+	unlisted uint64              // times a jump on ctl cleared listed: a list asked for before the last one cannot say reconciled (snapshot)
 	cursor   srcPoint            // the point of the peer's stream the last snapshot stood at: a lifecycle event at or before it is already reflected
 	jumps    uint64              // catch-ups the link gave up on since it was made, each marked `jumped`
 
@@ -77,6 +78,17 @@ type peerLink struct {
 	// pipeDelay and ctlDelay are test knobs: nanoseconds the mirroring loop spends on each pipe
 	// frame, or on each control frame, a durably slow parent (zero in production).
 	pipeDelay, ctlDelay atomic.Int64
+	// held counts the control frames held behind a re-list since the link was made: a test
+	// observation of resnapshot taking the frame before the reply.
+	held atomic.Int64
+}
+
+// unlistedGen is the generation a list is asked for at: snapshot says reconciled only if no jump on
+// ctl cleared listed since (Codex round 45: an older list's reply restored it after a newer jump).
+func (l *peerLink) unlistedGen() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.unlisted
 }
 
 // srcPoint is one envelope of the peer, by its own seq and boot.
@@ -281,6 +293,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		ops = append(ops, "probe.list")
 	}
 	got := make(chan reply, len(ops))
+	asked := l.unlistedGen() // the control subscriptions stand (a jump at start cleared listed already): the list is asked for now
 	for _, op := range ops {
 		go func(op string) {
 			rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -353,7 +366,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	fail := make(chan error, 1)
 	q := newPipeQueue()
 	relist := make(chan struct{}, 1) // a jump on ctl asks this loop to read the list again (resnapshot)
-	if err := l.snapshot(ctx, c, q, fail, list); err != nil {
+	if err := l.snapshot(ctx, c, q, fail, asked, list); err != nil {
 		return true, err
 	}
 	for _, pf := range backlog {
@@ -664,6 +677,7 @@ func (l *peerLink) openControl(ctx context.Context, c *Client, relist chan<- str
 			// the peer's tree: not reconciled until a new snapshot is applied (jumpControl said so
 			// already when the jump is its; a reopen past the allowance says it here).
 			l.listed, resnap = false, relist != nil
+			l.unlisted++
 		}
 		data := map[string]any{"peer": l.spec.Name, "prefix": prefix, "reason": "jumped", "to": s.Head}
 		if from, ok := l.since[prefix]; ok {
@@ -751,6 +765,7 @@ func (l *peerLink) jumpControl(ctx context.Context, c *Client, relist chan<- str
 	cs.sub, cs.live = 0, false
 	if prefix == "ctl" {
 		l.listed = false
+		l.unlisted++
 	}
 	gen := cs.gen
 	l.mu.Unlock()
@@ -774,10 +789,13 @@ func (l *peerLink) jumpControl(ctx context.Context, c *Client, relist chan<- str
 // applied while the list is (Codex round 44: a probe.removed applied before an older list was
 // undone by it), two jumps in a row read the list twice in order, and nothing of it outlives the
 // session: a reply that comes once the loop is gone is dropped with the goroutine awaiting it. A
-// list that cannot be read ends the session, as at start.
+// list that cannot be read ends the session, as at start. A jump on ctl after the list was asked
+// for (another reopen past the allowance while it was in flight) leaves the state unreconciled:
+// the list cannot hold what that span lost, and the re-list it asked for follows (Codex round 45).
 func (l *peerLink) resnapshot(ctx context.Context, c *Client, q *pipeQueue, merged chan peerFrame, fail chan error, refresh chan<- struct{}, relist chan struct{}, sess uint64, origin string) error {
+	asked := l.unlistedGen()
 	if len(l.spec.Probes) == 0 {
-		return l.snapshot(ctx, c, q, fail, nil) // nothing to reconcile but the state
+		return l.snapshot(ctx, c, q, fail, asked, nil) // nothing to reconcile but the state
 	}
 	type reply struct {
 		data json.RawMessage
@@ -799,6 +817,7 @@ func (l *peerLink) resnapshot(ctx context.Context, c *Client, q *pipeQueue, merg
 				return fmt.Errorf("link backlog over %d frames or %d bytes while the peer's list was read again", maxLinkBacklog, maxLinkBacklogBytes)
 			}
 			held = append(held, pf)
+			l.held.Add(1)
 		case pf := <-q.ch:
 			q.took(pf)
 			if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, origin, pf); err != nil {
@@ -808,7 +827,7 @@ func (l *peerLink) resnapshot(ctx context.Context, c *Client, q *pipeQueue, merg
 			if r.err != nil {
 				return r.err
 			}
-			if err := l.snapshot(ctx, c, q, fail, r.data); err != nil {
+			if err := l.snapshot(ctx, c, q, fail, asked, r.data); err != nil {
 				return err
 			}
 			for _, pf := range held {
@@ -887,10 +906,12 @@ func (l *peerLink) grantReplay(prefix string, sub int64, bytes int) bool {
 // round 44: a zero identity stood for any). At session start it is read before any frame of the
 // backlog is applied (so no lifecycle event already queued is undone by a list arriving later,
 // Codex round 36); after a jump on ctl it is read again on the loop, the frames that arrive
-// meanwhile held behind it (resnapshot). Every pipe still
+// meanwhile held behind it (resnapshot). The state is reconciled only if no jump on ctl cleared it
+// since the list was asked for (asked, from unlistedGen): such a jump lost lifecycle events past the
+// list's cursor, and asked for a list of its own. Every pipe still
 // starts live: with the identity, a resume from the last mirrored seq would be sound, and is
 // left for later (what a live start skips is marked, slice 3).
-func (l *peerLink) snapshot(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, data json.RawMessage) error {
+func (l *peerLink) snapshot(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, asked uint64, data json.RawMessage) error {
 	var list struct {
 		Cursor struct {
 			Seq   uint64 `json:"seq"`
@@ -932,7 +953,7 @@ func (l *peerLink) snapshot(ctx context.Context, c *Client, q *pipeQueue, fail c
 		}
 	}
 	l.mu.Lock()
-	l.listed = true
+	l.listed = l.unlisted == asked // a jump on ctl since the list was asked for: not reconciled until its own list
 	l.mu.Unlock()
 	return nil
 }

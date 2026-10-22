@@ -10,7 +10,7 @@ records, the tree removed) and probe budgets (E18: `limits` say the plane's budg
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
 widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
 only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
-what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts degraded only when both hold; E23: the probe list read with a cursor is a snapshot of the plane's stream with creation identities, exact against the stream folded to its cursor, the identity agreeing on b, through a and in a's status). 51 checks, E1..E23, a restart loop and the M1, M2 and M3 measurements.
+what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts degraded only when both hold; E23: the probe list read with a cursor is a snapshot of the plane's stream with creation identities, exact against the stream folded to its cursor, the identity agreeing on b, through a and in a's status; E24: the totals the two READMEs and this docstring state match the checks that ran). 52 checks, E1..E24, a restart loop and the M1, M2 and M3 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -1452,6 +1452,22 @@ def finish(pa, pb, sa, sb, tokens):
             hits[str(f.relative_to(WORK))] = n
     journals = [str(f.relative_to(WORK)) for f in STATE.glob("*.journal.jsonl")]
     check("E4.no_token_in_outputs", not hits, files_with_token=hits, journals_scanned=journals)
+    # E24: the gate's totals as the two READMEs and this file's docstring state them ("N checks,
+    # E1..EM") against what ran, this check counted: a check added without the three texts
+    # following it fails here (Codex round 44 caught both READMEs a slice behind).
+    import re
+    key = "E24.gate_totals_match_the_docs"
+    keys = list(results["checks"]) + [key]
+    ran = len(keys)
+    top = max(int(m.group(1)) for m in (re.match(r"E(\d+)\.", k) for k in keys) if m)
+    here = HERE.parent
+    said = {}
+    for name, text in (("README.md", (here / "README.md").read_text(encoding="utf-8")),
+                       ("README.fr.md", (here / "README.fr.md").read_text(encoding="utf-8")),
+                       ("e2e.py", __doc__)):
+        m = re.search(r"(\d+) (?:checks|vérifications), E1\.\.E(\d+)", text)
+        said[name] = [int(m.group(1)), int(m.group(2))] if m else None
+    check(key, all(v == [ran, top] for v in said.values()), ran=ran, top=top, said=said)
     (STATE / "a.json").unlink(missing_ok=True)
     ok = all(c["ok"] for c in results["checks"].values())
     results["ok"] = ok
