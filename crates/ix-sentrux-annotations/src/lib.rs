@@ -20,7 +20,7 @@
 //!   above the violating function (skip if the same sentrux annotation
 //!   already exists at that location).
 //!
-//! Transport: the bridge spawns `sentrux.exe mcp` as a one-shot stdio
+//! Transport: the bridge spawns `sentrux mcp` (see [`resolve_sentrux_exe`]) as a one-shot stdio
 //! child and runs `initialize → notifications/initialized → scan →
 //! check_rules`, parsing JSON-RPC line-delimited frames. The wire protocol
 //! mirrors the ga-react-components Vite dev-server bridge.

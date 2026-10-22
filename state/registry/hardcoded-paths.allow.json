@@ -1,5 +1,5 @@
 {
-  "note": "Source lines under crates/ that may name a user's home directory (C:\\Users\\<name>, /home/<name>, /Users/<name>). Checked by `ix doctor` (see crates/ix-skill/src/doctor/hardcoded_paths.rs). An entry covers the lines of `file` whose text contains `contains`, not the whole file, and needs a non-empty `reason`. Honest reasons: the path is the test's input (a sanitizer proving it rejects such paths, a fixture proving this check fires), or the text is not a path at all (a URL whose path contains /home/). Production defaults, test guards and doc examples are fixed, not listed (ix#327, ix#328).",
+  "note": "Source lines under crates/ that may name a user's home directory (C:\\Users\\<name>, \\Users\\<name>, /home/<name>, /Users/<name>). Checked by `ix doctor` (see crates/ix-skill/src/doctor/hardcoded_paths.rs). An entry covers the lines of `file` whose text contains `contains`, not the whole file, and needs a non-empty `reason`. Honest reasons: the path is the test's input (a sanitizer proving it rejects such paths, a fixture proving this check fires), or the text is not a path at all (a URL whose path contains /home/). Production defaults, test guards and doc examples are fixed, not listed (ix#327, ix#328).",
   "allow": [
     {
       "file": "crates/ix-autoresearch/src/milestones.rs",

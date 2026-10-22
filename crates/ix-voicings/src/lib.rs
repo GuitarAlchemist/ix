@@ -1728,15 +1728,28 @@ mod tests {
         assert!(root.join("crates/ix-voicings/Cargo.toml").is_file());
 
         // A workspace that also has `Cargo.toml` + `crates/` but is not ix.
-        let lookalike = std::env::temp_dir().join(format!(
-            "ix-voicings-lookalike-{}-{}",
-            std::process::id(),
-            line!()
-        ));
-        std::fs::create_dir_all(lookalike.join("crates/other")).unwrap();
-        std::fs::write(lookalike.join("Cargo.toml"), "[workspace]\n").unwrap();
-        let found = super::ix_workspace_root_above(&lookalike.join("crates/other"));
-        let _ = std::fs::remove_dir_all(&lookalike);
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let lookalike = Scratch(std::env::temp_dir().join(format!(
+            "ix-voicings-lookalike-{}-{nanos}",
+            std::process::id()
+        )));
+        assert!(
+            !lookalike.0.exists(),
+            "scratch name collided: {}",
+            lookalike.0.display()
+        );
+        std::fs::create_dir_all(lookalike.0.join("crates/other")).unwrap();
+        std::fs::write(lookalike.0.join("Cargo.toml"), "[workspace]\n").unwrap();
+        let found = super::ix_workspace_root_above(&lookalike.0.join("crates/other"));
         assert_eq!(found, None, "a workspace without ix-voicings is not ix");
     }
 

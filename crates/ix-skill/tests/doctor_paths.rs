@@ -110,6 +110,32 @@ fn urls_two_word_shared_accounts_and_root_relative_paths() {
 }
 
 #[test]
+fn one_letter_schemes_and_shared_account_boundaries() {
+    // Codex round 55.
+    for line in [
+        r#"let u = "web+x://users/jane/profile";"#,
+        r#"let u = "x://users/jane/profile";"#,
+        r#"prose: see (C:\Users\Public) for shared files"#,
+        r#"let p = r"C:\Users\Public\Desktop";"#,
+    ] {
+        assert_eq!(hardcoded_paths::home_user_in(line), None, "{line}");
+    }
+    for (line, user) in [
+        // Fixture lines carry `jane` for the allowlist entry that covers this file.
+        (r#"let p = r"C:\Users\Public Jane\tool.exe";"#, "Public"), // jane
+        (r#"let p = r"C:\Users\Default User2\tool.exe";"#, "Default"), // jane
+        (r#"let p = r"C:\Users\Publicity\tool.exe";"#, "Publicity"), // jane
+        (r#"let p = "x:/users/jane/tool";"#, "jane"),
+    ] {
+        assert_eq!(
+            hardcoded_paths::home_user_in(line).as_deref(),
+            Some(user),
+            "{line}"
+        );
+    }
+}
+
+#[test]
 fn posix_home_paths_are_reported() {
     for line in [
         r#"let bad = "/home/jane/corpus.json";"#,

@@ -474,8 +474,9 @@ fn harness_discovers_moon_dark_face_issue_and_fixes_it() {
     // ── Branch: already fixed vs needs fixing ───────────────────
     //
     // The test must be idempotent. If the invariant already passes
-    // (because a previous run applied the fix), skip the fix +
-    // verify phases and just assert the belief stays True.
+    // (the GA sources already carry the fix), there is nothing to
+    // patch: skip the fix + verify phases, check that the GA checkout
+    // is untouched, and stop.
     if violations.is_empty() {
         eprintln!(
             "\n✅ Invariant already passes — DirectionalLight was applied by a prior run.\
