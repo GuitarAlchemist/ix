@@ -20,7 +20,8 @@ cargo run -p ix-skill --bin ix -- doctor --full   # plus the CI clippy + test in
 ```
 
 It checks registry-snapshot drift (no hand-typed tool counts), orphan public
-traits, and the governance/state environment. Per-change-type checklists —
+traits, the harness's hooks (`.claude/hooks/*.sh` present, parsing, their
+`test-*.sh` fixtures green), and the governance/state environment. Per-change-type checklists —
 MCP skill, DuckDB UDF, public API, `@ai:` invariant — live in
 [docs/CHECKLISTS.md](docs/CHECKLISTS.md) ([FR](docs/fr/CHECKLISTS.md)).
 

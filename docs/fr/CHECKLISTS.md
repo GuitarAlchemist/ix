@@ -30,6 +30,7 @@ mécanisée, sa place est dans `ix doctor`, pas ici.
 | `registry-snapshot` | Les skills ou outils MCP du binaire lié diffèrent de `state/registry/skills.snapshot.json` | `ix doctor --write`, puis relire le diff de **noms** |
 | `orphan-traits` | Un `pub trait` n'a ni implémenteur, ni borne générique, ni entrée d'allowlist | Le supprimer, l'implémenter, ou l'inscrire dans `state/registry/orphan-traits.allow.json` avec un `reason` |
 | `dark-features` | Une feature cargo qu'aucun membre de l'espace de travail n'active protège 100 lignes ou plus, ou au moins un test, sans entrée d'allowlist | L'activer depuis un membre de l'espace de travail, supprimer le code, ou l'inscrire dans `state/registry/dark-features.allow.json` avec un `reason` |
+| `hooks` | Un hook câblé dans `.claude/settings.json` manque, un `.claude/hooks/*.sh` ne s'analyse pas (`bash -n`), ou une fixture `.claude/hooks/test-*.sh` sort avec un code non nul ; avertit quand aucun bash n'est trouvé (le bash de Git sous Windows) | Restaurer ou retirer l'entrée du hook ; `bash -n` sur le script ; lancer la fixture à la main, ses dernières lignes sont dans `details.fixtures[].tail` |
 | `demerzel-governance` | `governance/demerzel` est absent | `git submodule update --init` |
 | `default-constitution` | Le sous-module est présent mais incomplet | Resynchroniser le sous-module |
 | `state-directory` | `state/` manque à la racine du dépôt | Vous n'êtes pas à la racine de l'espace de travail |

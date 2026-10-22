@@ -27,6 +27,7 @@ in `ix doctor` instead of here.
 | `registry-snapshot` | The linked build's skills or MCP tools differ from `state/registry/skills.snapshot.json` | `ix doctor --write`, then review the **name** diff |
 | `orphan-traits` | A `pub trait` has no implementor, no generic bound, and no allowlist entry | Delete it, implement it, or record it in `state/registry/orphan-traits.allow.json` with a `reason` |
 | `dark-features` | A cargo feature no workspace member enables gates 100+ lines or at least one test, with no allowlist entry | Enable it from a workspace member, delete the code, or record it in `state/registry/dark-features.allow.json` with a `reason` |
+| `hooks` | A hook wired in `.claude/settings.json` is missing, a `.claude/hooks/*.sh` does not parse (`bash -n`), or a fixture `.claude/hooks/test-*.sh` exits non-zero; warns when no bash is found (Git bash on Windows) | Restore or drop the hook entry; `bash -n` the script; run the fixture by hand, its last lines are in `details.fixtures[].tail` |
 | `demerzel-governance` | `governance/demerzel` is absent | `git submodule update --init` |
 | `default-constitution` | The submodule is present but incomplete | Re-sync the submodule |
 | `state-directory` | `state/` is missing from the repo root | You are not at the workspace root |

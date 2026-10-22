@@ -101,7 +101,9 @@ enum Verb {
     /// Run every repo-specific pre-PR check and say what to do about failures.
     ///
     /// The single gate from ix#185: registry-snapshot drift, orphan public
-    /// traits, and the governance/state environment. See `docs/CHECKLISTS.md`.
+    /// traits, dark features, silent skips, the harness's hooks (present,
+    /// parsing, fixtures green), and the governance/state environment. See
+    /// `docs/CHECKLISTS.md`.
     Doctor {
         /// Regenerate `state/registry/skills.snapshot.json` from this build,
         /// then re-check. Review the resulting name diff before committing.
