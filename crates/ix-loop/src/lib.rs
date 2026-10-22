@@ -174,12 +174,14 @@ impl Host {
         &self.store
     }
 
-    /// Runs `src` as a root loop with `grant`. Each root run starts with its own proposal
-    /// allowance and no instance seen, on a reused host too.
+    /// Runs `src` as a root loop with `grant`. Each root run starts with its own proposal,
+    /// say and `gh` allowances and no instance seen, on a reused host too.
     pub fn run(self: &Rc<Self>, src: &str, name: &str, grant: &Grant) -> Outcome {
         self.proposals.set(0);
         self.proposed_bytes.set(0);
         self.seen.borrow_mut().clear();
+        self.says.set(0);
+        self.gh_reads.set(0);
         let started = Instant::now();
         let budget = Rc::new(Budget::root(grant));
         let job = Job {
@@ -481,6 +483,36 @@ mod tests {
             host.store().proposals().len(),
             2 * MAX_PROPOSALS_PER_RUN as usize
         );
+    }
+
+    #[test]
+    fn a_reused_host_gives_each_root_run_its_own_say_and_gh_allowance() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Rc::new(
+            Host::new(Rc::new(Scripted::always("hi")), Store::at(dir.path()))
+                .with_voice(Box::new(world::ScriptedVoice::default()))
+                .with_github(
+                    Box::new(world::ScriptedGitHub::new(|_| Ok(json!([])))),
+                    vec!["GuitarAlchemist".into()],
+                ),
+        );
+        let drain = r#"
+            local says, reads = 0, 0
+            while pcall(say, "x") do says = says + 1 end
+            while pcall(gh.prs, "GuitarAlchemist/ix") do reads = reads + 1 end
+            return { says, reads }
+        "#;
+        let first = host.run(drain, "test", &grant()).value;
+        let second = host.run(drain, "test", &grant()).value;
+        assert_eq!(
+            first.as_ref().map(|v| v[0].clone()),
+            Ok(json!(world::MAX_SAYS_PER_RUN))
+        );
+        assert!(
+            first.as_ref().is_ok_and(|v| v[1].as_u64() > Some(0)),
+            "{first:?}"
+        );
+        assert_eq!(second, first);
     }
 
     #[test]
