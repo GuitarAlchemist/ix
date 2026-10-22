@@ -112,7 +112,7 @@ func blockKind(t *testing.T) *blockSampler {
 	probeKinds = append(append([]probeKind(nil), saved...), probeKind{
 		Name: "block", Version: 1, Fields: []string{"n"},
 		Doc:        "test only: blocks in sample until released",
-		newSampler: func() sampler { return b }})
+		newSampler: func(kindConfig) sampler { return b }})
 	t.Cleanup(func() {
 		probeKinds = saved
 		select { // a failed test must not leave the read blocked: the plane's cleanup shutdown waits for it

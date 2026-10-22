@@ -332,7 +332,20 @@ le travail est suivi sous l'epic ix#397. La surface est provisoire, comme les tr
 | `heartbeat@1` | `n` | Son propre compte de ticks, depuis 1. Le kind des tests et des démonstrations. |
 | `cpu@1` | `busy_pct`, `cores` | La part d'occupation du processeur de l'hôte sur le dernier intervalle (`GetSystemTimes` ; `/proc/stat`). Le premier intervalle n'émet rien. |
 | `mem@1` | `total_bytes`, `avail_bytes`, `used_pct` | La mémoire physique de l'hôte (`GlobalMemoryStatusEx` ; `/proc/meminfo`). |
+| `delta@1` | `event`, `journal_seq`, `t_ms`, `t`, `pid`, `offset`, et ceux de l'événement (`utterance_id`, `text`, `asr_ms`, `route`, `triage`, `triage_ms`, `parrot`, `promise`, `say_id`, `by`, `request`, `cost`, `muted`, `version`, `replaced_by`) | Le journal JSONL de Delta, le robot vocal, nommé par `ixctl up --delta-journal FICHIER` : une ligne par tick, chaque champ de premier niveau de la ligne tel quel, plus `offset`, la position en octets de la ligne. Sans le flag, le kind est listé et refusé à la création. |
 | `mux@1` | (ceux de ses enfants) | Pas d'échantillonneur : il porte ce que ses enfants lui passent. |
+
+`delta@1`, c'est le plan qui *lit* un fichier qu'un autre programme écrit (le `brain.exe` de
+brickyard, qui journalise ce que Delta a entendu et dit) ; rien n'est poussé dans le plan. Une
+ligne par tick garde le débit déclaré du nœud (1000 / `every_ms`) comme borne quel que soit le
+rythme du journal : une rafale s'écoule à ce débit et rien n'est perdu. Une ligne qui n'est pas
+un objet JSON, ou qui dépasse 1 Mio (`max_line`), est un enregistrement d'erreur qui nomme son
+offset, et les lignes suivantes passent ; un journal absent est dit une fois puis attendu ; un
+journal plus court que ce qui a été lu est un nouveau journal sous le même nom, dit une fois puis
+relu depuis l'offset 0. `node`, `kind` et `seq` sont les estampilles de l'arbre et l'emportent
+sur un champ de ligne du même nom. Un consommateur dédoublonne sur la paire de l'écrivain
+(`pid`, `journal_seq`), qui repart à chaque brain, et reprend sur `offset`, qui appartient au
+fichier.
 
 Un **nœud** est une instance d'un kind dans l'arbre :
 

@@ -48,10 +48,12 @@ plan, avec leur propre transport.
 
 **Les kinds** sont compilés dedans, versionnés, nommés `nom@version` : `heartbeat@1` (son propre
 compte de ticks), `cpu@1` (part d'occupation depuis `GetSystemTimes` / `/proc/stat` ; le premier
-intervalle n'émet rien), `mem@1` (`GlobalMemoryStatusEx` / `/proc/meminfo`), `mux@1` (pas
-d'échantillonneur). Un kind est un port `sampler` (`sample() (champs, erreur)`) avec un adaptateur
-OS par plateforme et un adaptateur heartbeat pour les tests : le même hexagone léger que le plan
-utilise déjà pour son `Broker`.
+intervalle n'émet rien), `mem@1` (`GlobalMemoryStatusEx` / `/proc/meminfo`), `delta@1` (suit le
+journal JSONL du robot vocal Delta nommé par `ixctl up --delta-journal`, une ligne par tick,
+2026-10-22), `mux@1` (pas d'échantillonneur). Un kind est un port `sampler` (`sample() (champs,
+erreur)`) avec un adaptateur OS par plateforme et un adaptateur heartbeat pour les tests : le même
+hexagone léger que le plan utilise déjà pour son `Broker`. L'échantillonneur reçoit la
+`kindConfig` du plan (ce que `ixctl up` a reçu), que tout kind sauf `delta@1` ignore.
 
 **Les nœuds** sont des instances dans un arbre par plan : `{name, kind, every_ms, parent, filter,
 ttl_ms}`. Un nœud publie des événements `sample` sur son propre canal du hub `probe/<nom>` ; quand

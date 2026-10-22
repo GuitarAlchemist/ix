@@ -1,0 +1,9 @@
+{"event":"start","journal_seq":1,"pid":98996,"t":"2026-10-22T15:40:00.1000000-04:00","t_ms":1761162000100,"version":"0.3.1"}
+{"asr_ms":2179,"event":"heard","journal_seq":2,"pid":98996,"route":"channel","t":"2026-10-22T15:40:03.6693632-04:00","t_ms":1761162003669,"text":"Quelle heure est-il ?","triage":"claude","triage_ms":207,"utterance_id":"1"}
+{"by":"claude","event":"say","journal_seq":3,"pid":98996,"request":"1","say_id":1,"t":"2026-10-22T15:40:05.0809832-04:00","t_ms":1761162005080,"text":"Il est seize heures moins vingt.","utterance_id":"1"}
+{"cost":"paid","event":"speaking","journal_seq":4,"muted":false,"pid":98996,"say_id":1,"t":"2026-10-22T15:40:05.4364335-04:00","t_ms":1761162005436}
+{"asr_ms":8263,"event":"heard","journal_seq":5,"pid":98996,"route":"dropped","t":"2026-10-22T15:40:09.2418637-04:00","t_ms":1761162009241,"text":"euh euh euh","triage":"ignore","triage_ms":172,"utterance_id":"2"}
+{"event":"spoken","journal_seq":6,"pid":98996,"say_id":1,"t":"2026-10-22T15:40:11.4093532-04:00","t_ms":1761162011409}
+{"asr_ms":1510,"event":"heard","journal_seq":7,"parrot":true,"pid":98996,"promise":"later","route":"local","t":"2026-10-22T15:40:20.0000000-04:00","t_ms":1761162020000,"text":"Répète.","triage":"local","triage_ms":90,"utterance_id":"3"}
+{"by":"local","cost":"free","event":"say","journal_seq":8,"pid":98996,"say_id":2,"t":"2026-10-22T15:40:20.5000000-04:00","t_ms":1761162020500,"text":"Il est seize heures moins vingt.","utterance_id":"3"}
+{"event":"stop","journal_seq":9,"pid":98996,"replaced_by":99120,"t":"2026-10-22T15:41:00.0000000-04:00","t_ms":1761162060000}
