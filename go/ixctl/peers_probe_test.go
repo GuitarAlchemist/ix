@@ -136,7 +136,7 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	waitStatus(t, a, 5*time.Second, "cpu absent again", wantProbes("cpu:absent", "mem:not-exportable", "late:mirrored"))
 	hb("cpu", true)
 	first := waitEnv(t, pipes, 5*time.Second, "the re-exported cpu's first mirrored sample", func(e *Envelope) bool {
-		return e.Ch == "peer/b/probe/cpu"
+		return e.Ch == "peer/b/probe/cpu" && e.Ev.Kind == "sample" // past the live start's marker
 	})
 	if k := dataOf(first)["kind"]; k != "heartbeat@1" {
 		t.Fatalf("the re-exported cpu's first mirrored sample is a %v: the unexported incarnation was replayed", k)

@@ -222,7 +222,7 @@ it, one lost to a gap is not seen: the window the cursor-bound snapshot closes i
 pipe starts live on every session and after every drop, never from a seq (a name re-exported
 after an unexported incarnation would replay it, and the ctl replay cannot prove the
 incarnation since the list's reply may overtake it: slice 4's cursor-bound list is that proof;
-what a live start skips is contract G8 until slice 3's marker), and frames of a subscription
+what a live start skips was contract G8 until slice 3's marker), and frames of a subscription
 that is no longer the pipe's are dropped (Codex rounds 35–38); the status and the list are read
 before any mirrored frame is applied while merged is drained into a backlog (a reconnect replay
 up to the ring cannot hold the reader back; the backlog is capped in frames and in bytes, past either the session
@@ -232,8 +232,12 @@ published (samples × depth), bytes and records transported per link and per par
 `tree_rate_per_s` is not a federated bound. Slice 2 shipped the provenance: every mirrored
 envelope carries the source's `src_seq` / `src_epoch`, so the series
 `origin:src_epoch:node:<src_seq of probe.created>` and the dedup key `origin:src_epoch:src_seq`
-are the consumer's (gate E20, contract v0.1.4). Still to ship (slices 3–4, acceptance criteria
-on ix#408): remote gaps relayed as a continuity marker; per-class bounded link queues (records and bytes),
+are the consumer's (gate E20, contract v0.1.4). Slice 3's first cut marks what the mirror skips,
+in the mirrored stream: a `link.gap` envelope of the parent's own on the pipe at every live start
+(`src_epoch`, `last_src_seq` / `last_src_epoch`) and on the mirrored `ctl` when the peer came back
+as a new instance (`epoch-changed`) or answered a gap on the resumed `ctl` / `svc/` (criteria 4 and
+5 of ix#408; gate E21; contract v0.1.5 closes G8). Still to ship (criteria 6–7, then slice 4):
+per-class bounded link queues (records and bytes),
 one bounded replay then jump with a dated gap, `degraded` and `reconciled` separately; the
 cursor-bound snapshot with creation identities. Grilled by voice with Gaia's read-only review
 folded in; the resolution is on ix#402. Gate E19 checks the slice on the two federated planes.

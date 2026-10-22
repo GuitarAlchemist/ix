@@ -209,7 +209,7 @@ slice 2). A subscriber with `since` replays from the ring (4096 envelopes per in
 | `ctl` | The plane's own events: `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<name>` | The service's output. A stdout line that is a JSON object with a string `kind` is forwarded as that event (`t` in Unix ms on the service's clock; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
 | `probe/<node>` | A probe node's pipe: `sample` events (below). Mirrored to a peer only when this node is created with `export: true` and that peer's spec names it (D4, ix#402). |
-| `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored, plus the probe pipes `probe/<node>` this instance asked for in `peers[].probes` while the peer exports them. `subscribe` is always local; ops carry `peer` to be forwarded. |
+| `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored, plus the probe pipes `probe/<node>` this instance asked for in `peers[].probes` while the peer exports them; and the link's own `link.gap` envelopes, the continuity markers (below). `subscribe` is always local; ops carry `peer` to be forwarded. |
 
 **Probe pipes across the link (D4, ix#402, resolved 2026-10-21; S2 ix#408, slice 1).** What crosses
 is the intersection of two declarations: the child marks a node exportable at create (`export:
@@ -221,13 +221,20 @@ after; `status.peers[].probes` says what each wanted name is: `mirrored`, `not-e
 `opening` (subscribing), or `absent` (no such node, or the link down). A pipe starts live on
 every session and after every drop, never from a seq: the same channel name can carry another
 incarnation's records, and the link has no proof yet that it is the one it last mirrored (the
-cursor-bound list of slice 4 is that proof; slice 2 brings the identity, slice 3 the bounded
-replay and the continuity marker for what a live start skips, contract G8). Aggregation lives with the reader: in V1 the reader
+cursor-bound list of slice 4 is that proof; slice 2 brought the identity, slice 3 the marker for
+what a live start skips, which closed contract G8; the bounded replay is still to come). Aggregation lives with the reader: in V1 the reader
 is the consumer of `peer/<name>/probe/<node>` (IXQL `ix.ctl.events`), no local node names a
 remote source. Export is a federation rule, not a confidentiality barrier: direct subscription to
 a pipe is unchanged. Slice 2 adds the source's `src_seq` / `src_epoch` on every mirrored
-envelope. Not yet: remote gaps relayed as a continuity marker, per-class bounded link queues
-and bounded catch-up, the cursor-bound snapshot; see the resolution on ix#402.
+envelope. Slice 3 marks what the mirror skips, in the mirrored stream itself: a `link.gap`
+envelope the parent publishes (its own origin, no provenance, never a count) on the pipe at
+every live start (`reason: live-start`, `src_epoch` the boot now read, `last_src_seq` /
+`last_src_epoch` the last frame mirrored on it before, when any) and on `peer/<name>/ctl` when
+the peer came back as a new instance (`epoch-changed`, `last_src_epoch` the boot before) or
+answered a gap on the link's resumed `ctl` / `svc/` (`prefix`, `reason`, `from`, `oldest` as it
+said: its history expired); a local gap stays a gap frame. Not yet: per-class bounded link
+queues and bounded catch-up, `degraded` / `reconciled`, the cursor-bound snapshot; see the
+resolution on ix#402.
 
 `ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`, `export` when set),
 `probe.started` (`expires_in_ms` when leased), `probe.stopped` and `probe.removed` with a `reason`
@@ -379,7 +386,7 @@ pipes and the `ctl` lifecycle carried after a point the operator named; bounds, 
 peer's bookmark; survival of a restart) and the IXQL probe surface (E17: `probe.ixql` through
 the Rust client, a CPU probe under a mux, ten records, the tree removed) and probe budgets (E18:
 the plane's budget in `limits`, a leaf past its mux's `max_rate_per_s` refused naming both, a leaf
-carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record). 46 checks, E1..E20, a
+carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record; E21: the link marks what the mirror skips, a `link.gap` on the pipe at a live start and on the mirrored `ctl` at the peer's restart). 48 checks, E1..E21, a
 restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).

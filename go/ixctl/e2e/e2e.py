@@ -10,7 +10,7 @@ records, the tree removed) and probe budgets (E18: `limits` say the plane's budg
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
 widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
 only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
-what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch). 46 checks, E1..E20, a restart loop and the M1 and M2 measurements.
+what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart). 48 checks, E1..E21, a restart loop and the M1 and M2 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -1024,6 +1024,10 @@ def run():
     # waiter has polled it a few times, so the check cannot pass on a waiter that only ever saw
     # the new boot.
     old_polls, polls_ms = wait_until(lambda: call(sb, "GET", "/health")[1]["ops"] - ops0 >= 3, 10)
+    # A live reader of b's mirrored ctl on a, on the channel before b goes down (E21 below).
+    ready_lg = threading.Event()
+    th_lg, seen_lg = sse_async(sa, "peer/b/ctl", 8.0, query="ch=peer/b/ctl", ready=ready_lg)
+    ok_ready_lg = ready_lg.wait(2)
     call(sb, "POST", "/v1/shutdown", {})
     exit_b = pb.wait(10)
     pb, _, sb, ms_b2 = up("b", spec_b)
@@ -1069,6 +1073,21 @@ def run():
           and w_ms < 12000,
           code=waiter.returncode, ms=round(w_ms, 1), old_boot_polls_after_ms=polls_ms,
           stderr=w_err[-200:])
+    # E21 (S2 slice 3, D4 ix#402 Q6): the restart is marked on b's mirrored ctl on a, by the link
+    # itself (a new instance resumes nothing, so b answers no gap): one link.gap envelope of a's
+    # own (origin a, no provenance), epoch-changed from the old boot to the new, before anything
+    # of the new boot is mirrored there.
+    th_lg.join(10)
+    lg = seen_lg.get("r", ("", []))[1]
+    marks = [e for e in lg if e["ev"]["kind"] == "link.gap"]
+    i_mark = next((i for i, e in enumerate(lg) if e["ev"]["kind"] == "link.gap"), None)
+    before_new = all(e.get("src_epoch") != b1["epoch"] for e in lg[:i_mark]) if i_mark is not None else False
+    md = marks[0]["ev"]["data"] if marks else {}
+    check("E21.restart_marked_on_the_mirrored_ctl",
+          ok_ready_lg and len(marks) == 1 and marks[0]["origin"] == "a" and "src_seq" not in marks[0]
+          and md.get("peer") == "b" and md.get("reason") == "epoch-changed"
+          and md.get("src_epoch") == b1["epoch"] and md.get("last_src_epoch") == b0["epoch"] and before_new,
+          markers=len(marks), marker=md, envelopes=len(lg), before_new_boot=before_new)
 
     # E17: the IXQL probe surface (D7, ix#405), end to end through the Rust client: probe.ixql
     # declares a mux and a CPU probe feeding it, starts both, reads ten of the mux's records live
@@ -1175,7 +1194,9 @@ def run():
     states_rx, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
     th.join(5)
     crossed = seen.get("r", ("", []))[1]
-    kinds = sorted({e["ev"]["data"].get("kind") for e in crossed})
+    samples_x = [e for e in crossed if e["ev"]["kind"] == "sample"]
+    markers_x = [e for e in crossed if e["ev"]["kind"] == "link.gap"]
+    kinds = sorted({e["ev"]["data"].get("kind") for e in samples_x})
     peer_up = (peer(status(sa), "b") or {}).get("state") == "up"
     gaps_after = sum(1 for g in SSE_GAPS if g.get("ch") == "peer/b/probe/")
     code_rm = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
@@ -1192,6 +1213,19 @@ def run():
           created=made, started=started_x, states=states_x, channels=xchans, samples=len(xenvs), export=flags,
           removed=removed_x, after_remove=states_gone, recreated=states_re, reexported=states_rx,
           ready=ok_ready, crossed=len(crossed), kinds=kinds, peer_up=peer_up, gaps=[gaps_before, gaps_after])
+    # E21 (S2 slice 3): the re-export's live start is marked on the mirrored pipe before its first
+    # sample: one link.gap of a's own, reason live-start, naming b's boot and the last frame this
+    # link mirrored of xcpu before (the first xcpu of E19, same boot); nothing of the unexported
+    # incarnation crossed, so the marker is the first envelope of the pipe the reader saw.
+    b_now = status(sb)["epoch"]
+    first_x = next((e for e in crossed if e["ch"] == "peer/b/probe/xcpu"), None)
+    mk = markers_x[0]["ev"]["data"] if markers_x else {}
+    check("E21.live_start_marked_on_the_pipe",
+          len(markers_x) == 1 and first_x is markers_x[0] and first_x["origin"] == "a" and "src_seq" not in first_x
+          and mk.get("peer") == "b" and mk.get("reason") == "live-start" and mk.get("src_epoch") == b_now
+          and mk.get("last_src_epoch") == b_now and (mk.get("last_src_seq") or 0) > 0 and bool(samples_x),
+          markers=len(markers_x), first_is_marker=(first_x is markers_x[0]) if markers_x else None,
+          marker=mk, samples=len(samples_x))
 
     # E20: provenance (S2 slice 2, D4 ix#402). A mirrored envelope on a says which of b's envelopes
     # it is: src_seq / src_epoch are b's own seq and epoch, in order and without repeats, and each
@@ -1201,6 +1235,7 @@ def run():
     call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
     wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
     _, menvs = sse(sa, "peer/b/probe/", 0.8, query="ch=peer/b/probe/")
+    menvs = [e for e in menvs if e["ev"]["kind"] != "link.gap"]  # the live start's marker is a's own
     src_seqs = [e.get("src_seq") for e in menvs]
     b_epoch = status(sb)["epoch"]
     first = min(src_seqs) if menvs and all(src_seqs) else 0

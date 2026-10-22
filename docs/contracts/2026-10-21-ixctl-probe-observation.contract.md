@@ -1,6 +1,6 @@
 # Contract: a probe sample read from the plane, as a consumer's observation (`ixctl.v1` → gaia#245)
 
-**Version:** v0.1.4 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
+**Version:** v0.1.5 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
 **Date:** 2026-10-21 · **Owner:** ix (`go/ixctl`, the producer side; Gaia owns the adapter, projection and UI) · **Story:** [ix#413](https://github.com/GuitarAlchemist/ix/issues/413) · **Consumer:** [gaia#245](https://github.com/GuitarAlchemist/gaia/issues/245) · **Plan:** `docs/plans/2026-10-20-ixctl-probes.md`
 
 Says how a reader of the control plane's event stream (`subscribe` over `ixctl.v1`, `GET /v1/events`,
@@ -31,6 +31,7 @@ Every frame a subscription delivers is either an **envelope** or a **gap** (`go/
 | `seq` | the instance's sequence, shared by every channel, from 1 at each boot | v1 protocol |
 | `epoch` | the boot's id; a new one at every start of the plane | v1 protocol |
 | `origin` | the instance (plane) name that produced the event; a peer mirror keeps the origin's | v1 protocol |
+| `ev.kind` = `link.gap` | on a mirrored channel only, the **continuity marker**: an envelope of the parent's own (`origin` the parent, no `src_seq` / `src_epoch`) saying the mirror skipped something it cannot replay. On `peer/<peer>/probe/<node>`, every live start of the pipe: `data.reason` `live-start`, `src_epoch` the source boot now read, `last_src_seq` / `last_src_epoch` the last frame mirrored on that pipe before (absent when none). On `peer/<peer>/ctl`: `epoch-changed` when the peer came back as a new instance (`src_epoch` the new boot, `last_src_epoch` the one before), or a gap the peer answered on the link's resumed `ctl` / `svc/` (`prefix`, `reason` `since-too-old`, `from`, `oldest`, `src_epoch` as the peer said). It is a boundary, never a count. A local gap stays a gap frame (`reason`, `from`), v0.1.5 | S2 (ix#408) |
 | `src_seq`, `src_epoch` | on a mirrored envelope (`peer/<peer>/...`) only: the source's own `seq` and `epoch`, so a consumer of the mirror keys the series `origin:src_epoch:node:<src_seq of the probe.created>` and dedups on `origin:src_epoch:src_seq`, as a consumer of the source would on `seq` / `epoch` (v0.1.4) | S2 (ix#408) |
 | `t` | when the plane published it, ms since the Unix epoch, the plane's clock | v1 protocol |
 | `ev.kind` | `sample` on a node's pipe; `probe.created`, `probe.started`, `probe.stopped`, `probe.removed` on `ctl`, published in the order of the state changes they report (see "Order", below) | v1 protocol |
@@ -94,7 +95,11 @@ previous code, reproduced by no run: the test stands as its guard).
   STALE. After `probe.removed` the series is closed, not stale.
 - **UNKNOWN**: before the first sample of a series; and after any gap (`epoch-changed`,
   `since-too-old`, `overflow`, `since-ahead`) until the next `probe.created` or sample of the node,
-  because the consumer cannot say what happened in the hole. After `epoch-changed` **every** series
+  because the consumer cannot say what happened in the hole. On a mirrored channel a `link.gap`
+  envelope is read as a gap: on a pipe it closes that pipe's open series (the next sample opens a
+  provisional one, keyed on `src_epoch`); on `peer/<peer>/ctl` with `epoch-changed` every series
+  of that origin ends, with `since-too-old` every series of that origin is unknown until its next
+  `probe.created` or sample (v0.1.5). After `epoch-changed` **every** series
   of that origin is unknown: the plane restarted with an empty tree (fixture 3; the tree is not
   persisted, decision D1 ix#399), and the new boot's `seq` restarts at 1 while the old boot's series
   end.
@@ -166,17 +171,21 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   into the stopped series.
 - **G7, closed in v0.1.1** (a node's filter hid its error samples). A failed read now reaches the
   pipe whatever the filter; `errors` on `probe.list` remains the cumulative count.
-- **G8, what a mirrored pipe loses across a link outage is not marked.** On a parent plane,
-  `peer/<peer>/probe/<node>` starts live on every session of the link and after every drop,
-  never from the last mirrored seq (the link has no proof that the name is still the incarnation
-  it mirrored: the cursor-bound list of slice 4 is that proof), so the records of an outage are
-  skipped without a marker on the mirrored pipe (the local ring's `gap` says nothing about
-  them). This entry makes the limit explicit for the producer side only: at run time the loss
-  stays silent for a consumer of the mirrored pipe. A consumer that needs continuity reads the
-  child directly until slice 3 of S2 (ix#408) relays the loss as a continuity marker (D4 Q6).
+- **G8, closed in v0.1.5** (what a mirrored pipe lost across a link outage was not marked: a pipe
+  starts live on every session of the link and after every drop, never from the last mirrored
+  seq, and the local ring's `gap` said nothing about it). The link now publishes a `link.gap`
+  envelope on the mirrored pipe at every live start, and on the peer's mirrored `ctl` when the
+  peer came back as a new instance or answered a gap on the resumed `ctl` / `svc/` (envelope
+  table). What stays: the marker is a boundary, not a count, and the pipe still never resumes
+  (the bounded replay and the cursor-bound list are later slices of S2).
 
 ## Changes
 
+- v0.1.5 (2026-10-22): S2 slice 3, first cut: the continuity marker `link.gap` on a mirrored
+  channel (envelope table), the parent's own envelope, at a pipe's live start and on the mirrored
+  `ctl` for the peer's restart or an answered gap; read as a gap by the consumer (State, UNKNOWN).
+  G8 closed. G1 unchanged (a mirrored series is still provisional without the mirrored
+  `probe.created`).
 - v0.1.4 (2026-10-21): S2 slice 2: a mirrored envelope carries `src_seq` / `src_epoch`, the
   source's own, so the mirrored series and dedup keys are `origin:src_epoch:node:<src_seq of
   probe.created>` and `origin:src_epoch:src_seq`; the Rust client's `Event` exposes them

@@ -243,7 +243,7 @@ n'est pas vu : la fenêtre que l'instantané lié à un curseur ferme en tranche
 démarre en direct à chaque session et après chaque retrait, jamais depuis une séquence (un nom
 ré-exporté après une incarnation non exportée la rejouerait, et le rejeu de ctl ne peut pas
 prouver l'incarnation puisque la réponse de la liste peut le devancer : la liste liée à un
-curseur de la tranche 4 est cette preuve ; ce qu'un démarrage en direct saute est le G8 du
+curseur de la tranche 4 est cette preuve ; ce qu'un démarrage en direct saute était le G8 du
 contrat jusqu'au marqueur de la tranche 3), et les trames d'un abonnement qui n'est plus celui
 du tuyau sont écartées (revues Codex 35–38) ; le statut et la liste sont lus avant toute trame
 miroir appliquée pendant que la file est vidée dans un arriéré (un rejeu de reconnexion jusqu'au
@@ -256,9 +256,13 @@ profondeur), octets et enregistrements transportés par lien et par parent ; `tr
 n'est pas une borne fédérée. La tranche 2 a livré la provenance : chaque enveloppe miroir porte
 les `src_seq` / `src_epoch` de la source, donc la série
 `origin:src_epoch:node:<src_seq du probe.created>` et la clé de dédoublonnage
-`origin:src_epoch:src_seq` sont celles du consommateur (porte E20, contrat v0.1.4). Reste à
-livrer (tranches 3 et 4, critères d'acceptation sur ix#408) : les trous distants relayés comme
-marqueur de continuité ; les files du lien bornées par classe
+`origin:src_epoch:src_seq` sont celles du consommateur (porte E20, contrat v0.1.4). La première
+coupe de la tranche 3 marque ce que le miroir saute, dans le flux miroir : une enveloppe
+`link.gap` propre au parent sur le tuyau à chaque démarrage en direct (`src_epoch`,
+`last_src_seq` / `last_src_epoch`) et sur le `ctl` miroir quand le pair est revenu comme nouvelle
+instance (`epoch-changed`) ou a répondu un trou sur le `ctl` / `svc/` repris (critères 4 et 5 de
+ix#408 ; porte E21 ; le contrat v0.1.5 ferme G8). Reste à livrer (critères 6 et 7, puis tranche
+4) : les files du lien bornées par classe
 (enregistrements et octets), un rejeu borné puis saut avec trou daté, `degraded` et `reconciled`
 séparés ; l'instantané lié à un curseur avec identités de création. Grillée à la voix, la revue en
 lecture seule de Gaïa intégrée ; la résolution est sur ix#402. La porte E19 vérifie la tranche sur

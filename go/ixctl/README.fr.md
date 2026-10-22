@@ -221,7 +221,7 @@ comme un lecteur chez l'origine (S2 tranche 2). Un abonné avec `since` rejoue d
 | `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne est transmise comme cet événement (`t` en ms Unix sur l'horloge du service ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
 | `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). En miroir chez un pair seulement si ce nœud est créé avec `export: true` et que la spec de ce pair le nomme (D4, ix#402). |
-| `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir, plus les tuyaux `probe/<nœud>` que cette instance a demandés dans `peers[].probes` tant que le pair les exporte. `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
+| `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir, plus les tuyaux `probe/<nœud>` que cette instance a demandés dans `peers[].probes` tant que le pair les exporte ; et les enveloppes `link.gap` propres au lien, les marqueurs de continuité (ci-dessous). `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 
 **Tuyaux de sondes à travers le lien (D4, ix#402, tranchée le 2026-10-21 ; S2 ix#408, tranche 1).**
 Ce qui traverse est l'intersection de deux déclarations : l'enfant marque un nœud exportable à la
@@ -234,15 +234,22 @@ demandé : `mirrored`, `not-exportable`, `opening` (abonnement en cours) ou `abs
 nœud, ou lien tombé). Un tuyau démarre en direct à chaque session et après chaque retrait,
 jamais depuis une séquence : le même nom de canal peut porter les enregistrements d'une autre
 incarnation, et le lien n'a pas encore la preuve que c'est celle qu'il a reflétée en dernier (la
-liste liée à un curseur de la tranche 4 est cette preuve ; la tranche 2 apporte l'identité, la
-tranche 3 le rejeu borné et le marqueur de continuité pour ce qu'un démarrage en direct saute,
-contrat G8). L'agrégation
+liste liée à un curseur de la tranche 4 est cette preuve ; la tranche 2 a apporté l'identité, la
+tranche 3 le marqueur pour ce qu'un démarrage en direct saute, ce qui a fermé le G8 du contrat ;
+le rejeu borné reste à venir). L'agrégation
 vit chez le lecteur : en V1 le lecteur est le consommateur de `peer/<nom>/probe/<nœud>` (IXQL
 `ix.ctl.events`), aucun nœud local ne nomme une source distante. L'export est une règle de
 fédération, pas une barrière de confidentialité : l'abonnement direct à un tuyau est inchangé.
-La tranche 2 ajoute les `src_seq` / `src_epoch` de la source sur chaque enveloppe miroir. Pas
-encore : les trous distants relayés comme marqueur de continuité, les files bornées par classe
-et le rattrapage borné, l'instantané lié à un curseur ; voir la résolution sur ix#402.
+La tranche 2 ajoute les `src_seq` / `src_epoch` de la source sur chaque enveloppe miroir. La
+tranche 3 marque ce que le miroir saute, dans le flux miroir lui-même : une enveloppe `link.gap`
+publiée par le parent (son origine à lui, sans provenance, jamais un compte) sur le tuyau à
+chaque démarrage en direct (`reason: live-start`, `src_epoch` le boot lu désormais,
+`last_src_seq` / `last_src_epoch` la dernière trame reflétée avant, s'il y en eut) et sur
+`peer/<nom>/ctl` quand le pair est revenu comme nouvelle instance (`epoch-changed`,
+`last_src_epoch` le boot d'avant) ou a répondu un trou sur le `ctl` / `svc/` repris du lien
+(`prefix`, `reason`, `from`, `oldest` tels qu'il les a dits : son historique a expiré) ; un trou
+local reste une trame gap. Pas encore : les files du lien bornées par classe et le rattrapage
+borné, `degraded` / `reconciled`, l'instantané lié à un curseur ; voir la résolution sur ix#402.
 
 `ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`, `export` quand posé),
 `probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
@@ -405,7 +412,7 @@ redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Ru
 sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
 plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
 les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
-46 vérifications, E1..E20 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement), une boucle de
+48 vérifications, E1..E21 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair), une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).

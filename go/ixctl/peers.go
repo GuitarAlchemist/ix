@@ -37,8 +37,28 @@ type peerLink struct {
 	token    string              // the peer instance we last saw
 	since    map[string]uint64   // last mirrored seq per prefix (ctl, svc/: resumed on reconnect) or pipe (recorded, never resumed)
 	epoch    string              // the peer boot those seqs belong to
+	boot     string              // the peer's epoch as its status last said it (the boot a live start reads)
+	last     map[string]srcPoint // per pipe channel, the last frame mirrored, across sessions and peer boots: named by the next live start's marker
 	pipes    map[string]*pipeSub // per wanted probe node, what it is now
 }
+
+// srcPoint is one envelope of the peer, by its own seq and boot.
+type srcPoint struct {
+	seq   uint64
+	epoch string
+}
+
+// linkGapKind is the continuity marker the link publishes in a mirrored channel, as its own
+// envelope (the parent's origin, no provenance), when the mirror skipped something it cannot
+// replay (S2 slice 3, D4 ix#402 Q6; contract G8). On a pipe, every live start: `live-start`
+// with the boot now read (`src_epoch`) and the last frame mirrored before (`last_src_seq`,
+// `last_src_epoch`, absent when none). On the peer's mirrored ctl, a gap the peer answered on
+// the link's resumed ctl or svc/ subscription (`prefix`): its reason (`since-too-old`: history
+// expired; `epoch-changed`: the peer restarted), `src_epoch`, `from`, `oldest` as the peer
+// said; or, without `prefix`, `epoch-changed` the link saw itself when the peer came back as a
+// new instance (`src_epoch` the new boot, `last_src_epoch` the one mirrored before). It is a
+// boundary, not a count: nothing says how many records the skip covered.
+const linkGapKind = "link.gap"
 
 // pipeSub is one wanted probe node's standing on the link. gen counts its changes: a subscribe
 // or unsubscribe that completes after the pipe moved on finds another gen and stands down, and
@@ -57,7 +77,7 @@ const (
 )
 
 func newPeerLink(spec PeerSpec, hub *Hub) *peerLink {
-	l := &peerLink{spec: spec, hub: hub, since: map[string]uint64{}, pipes: map[string]*pipeSub{}}
+	l := &peerLink{spec: spec, hub: hub, since: map[string]uint64{}, last: map[string]srcPoint{}, pipes: map[string]*pipeSub{}}
 	for _, n := range spec.Probes {
 		l.pipes[n] = &pipeSub{state: pipeAbsent}
 	}
@@ -232,6 +252,21 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 			return true, c.Err()
 		}
 	}
+	// The peer restarted since the link last mirrored it: a new instance's seqs start over, so
+	// the link resumed nothing and the peer answered no gap. Say so on its mirrored ctl, where a
+	// resumed ctl's epoch-changed would have been relayed, before anything of the new boot is
+	// mirrored. The boot is the status's, or the first queued frame's when the status failed.
+	l.mu.Lock()
+	prev, boot := l.epoch, l.boot
+	l.mu.Unlock()
+	if (boot == "" || boot == prev) && len(backlog) > 0 && backlog[0].f.Env != nil {
+		boot = backlog[0].f.Env.Epoch
+	}
+	if prev != "" && boot != "" && boot != prev {
+		l.hub.Publish("peer/"+l.spec.Name+"/ctl", event(linkGapKind, map[string]any{
+			"peer": l.spec.Name, "reason": "epoch-changed", "src_epoch": boot, "last_src_epoch": prev,
+		}))
+	}
 	refresh := make(chan struct{}, 1)
 	go l.refresher(c, refresh)
 
@@ -285,11 +320,16 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 // apply mirrors one frame the link received, follows the peer's own lifecycle events on the
 // wanted pipes, and kicks the status refresher. An overflow ends the session: the peer dropped
 // that subscription, and a reconnect resumes ctl and svc/ from the last mirrored seq (a pipe
-// starts live again). The other gap reasons answer a since the link gave; a pipe gives none,
-// and ctl / svc/ get theirs at subscribe time, so none reaches here (ignored as before).
+// starts live again). The other gap reasons answer the since the link gave for ctl / svc/ at
+// subscribe time (the peer's history expired, or it restarted): what they skip cannot be
+// replayed, so they are relayed on the peer's mirrored ctl as a continuity marker.
 func (l *peerLink) apply(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, refresh chan<- struct{}, origin string, pf peerFrame) error {
 	if pf.f.Gap != nil && pf.f.Gap.Reason == "overflow" {
 		return errors.New("mirror of " + pf.prefix + " overflowed")
+	}
+	if pf.f.Gap != nil {
+		l.markGap(pf.prefix, pf.f.Gap)
+		return nil
 	}
 	if pf.f.Env == nil {
 		return nil
@@ -308,6 +348,36 @@ func (l *peerLink) apply(ctx context.Context, c *Client, merged chan<- peerFrame
 	default:
 	}
 	return nil
+}
+
+// markGap relays a gap the peer answered on prefix as a continuity marker on the peer's
+// mirrored ctl (a pipe is never resumed, so only ctl and svc/ can be answered one).
+func (l *peerLink) markGap(prefix string, g *Gap) {
+	data := map[string]any{"peer": l.spec.Name, "prefix": prefix, "reason": g.Reason, "src_epoch": g.Epoch}
+	if g.From != 0 {
+		data["from"] = g.From
+	}
+	if g.Oldest != 0 {
+		data["oldest"] = g.Oldest
+	}
+	l.hub.Publish("peer/"+l.spec.Name+"/ctl", event(linkGapKind, data))
+}
+
+// markLiveStart publishes the marker that opens a pipe's live start, before its first mirrored
+// frame: the boot it reads, and the last frame the link mirrored on it before, if any.
+func (l *peerLink) markLiveStart(ch string) {
+	l.mu.Lock()
+	boot := l.boot
+	if boot == "" {
+		boot = l.epoch
+	}
+	last, had := l.last[ch]
+	l.mu.Unlock()
+	data := map[string]any{"peer": l.spec.Name, "reason": "live-start", "src_epoch": boot}
+	if had {
+		data["last_src_seq"], data["last_src_epoch"] = last.seq, last.epoch
+	}
+	l.hub.Publish("peer/"+l.spec.Name+"/"+ch, event(linkGapKind, data))
 }
 
 // current says whether sub is still the subscription of the pipe channel ch.
@@ -374,6 +444,9 @@ func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peer
 
 // setPipe makes a wanted node mirrored (opening: a subscription to its exact channel on its
 // own goroutine, live, never from a seq: see reconcilePipes) or not-exportable. Idempotent.
+// A live start is marked on the mirrored channel before the pipe reads `mirrored` and before
+// its first frame crosses, so a reader that waited for the state sees no marker, and one that
+// was on the channel sees the marker first.
 func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, node string, export bool) {
 	if !l.wanted(node) {
 		return
@@ -399,15 +472,21 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFra
 		cancel()
 		l.mu.Lock()
 		stale := p.gen != gen
-		if err == nil && !stale {
-			p.state, p.sub = pipeMirrored, s.ID
-		} else if !stale {
+		if err != nil && !stale {
 			p.state = pipeAbsent
 		}
 		l.mu.Unlock()
 		if err != nil {
 			l.failWith(fail, err)
 			return
+		}
+		if !stale {
+			l.markLiveStart(ch)
+			l.mu.Lock()
+			if stale = p.gen != gen; !stale {
+				p.state, p.sub = pipeMirrored, s.ID
+			}
+			l.mu.Unlock()
 		}
 		if stale { // the pipe moved on while we subscribed: not ours any more
 			uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -469,6 +548,9 @@ func (l *peerLink) mirror(origin, prefix string, env *Envelope) error {
 	}
 	l.mu.Lock()
 	l.since[prefix], l.epoch = env.Seq, env.Epoch
+	if strings.HasPrefix(prefix, "probe/") {
+		l.last[prefix] = srcPoint{env.Seq, env.Epoch}
+	}
 	l.mu.Unlock()
 	if env.Origin != origin || strings.HasPrefix(env.Ch, "peer/") {
 		return nil
@@ -501,10 +583,14 @@ func (l *peerLink) refresher(c *Client, kick <-chan struct{}) {
 func (l *peerLink) setServices(status json.RawMessage) {
 	var st struct {
 		Services json.RawMessage `json:"services"`
+		Epoch    string          `json:"epoch"`
 	}
 	if json.Unmarshal(status, &st) == nil {
 		l.mu.Lock()
 		l.services = st.Services
+		if st.Epoch != "" {
+			l.boot = st.Epoch
+		}
 		l.mu.Unlock()
 	}
 }

@@ -159,7 +159,8 @@ pub struct Event {
     pub data: Value,
     /// On a mirrored event (a `peer/<name>/...` channel): the source's own seq, so a consumer
     /// here keys a series (`origin:src_epoch:node:<src_seq of probe.created>`) and dedups
-    /// (`origin:src_epoch:src_seq`) as one on the origin would. `None` on the plane's own events.
+    /// (`origin:src_epoch:src_seq`) as one on the origin would. `None` on the plane's own events,
+    /// among them the `link.gap` continuity markers the plane publishes on a mirrored channel.
     pub src_seq: Option<u64>,
     /// On a mirrored event: the source's own boot id.
     pub src_epoch: Option<String>,
