@@ -149,7 +149,7 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 		}
 		return p.probes.create(req.Probe)
 	case "probe.list":
-		return p.probes.list(), nil
+		return p.probes.list(req.WithCursor), nil
 	case "probe.start":
 		return p.probes.start(req.Node)
 	case "probe.stop":
@@ -187,7 +187,7 @@ func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, err
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
 	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node,
-		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note})
+		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note, WithCursor: req.WithCursor})
 }
 
 type ServiceStatus struct {
@@ -207,6 +207,39 @@ type PeerStatus struct {
 	Name     string          `json:"name"`
 	State    string          `json:"state"`
 	Services json.RawMessage `json:"services"`
+	// Probes: one entry per node named in the peer spec's `probes`, in that order, with what
+	// it is right now: `mirrored` (exportable and wanted, its pipe crosses), `not-exportable`
+	// (the peer holds it without export), `opening` (subscribing to its pipe), `absent` (the
+	// peer holds no such node, or the link is down).
+	Probes []PeerProbeStatus `json:"probes,omitempty"`
+	// Live: the link is up and both its control subscriptions (the peer's ctl and svc/) are past
+	// their replay, so what the peer publishes now crosses as it happens. Reconciled: the link is
+	// up, the peer's probe list was applied this session and no wanted pipe is still opening, so
+	// the mirrored lifecycle and pipes stand for the peer's state. Degraded is their conjunction
+	// denied: lifted only when the flow is live and the state reconciled (criterion 7 of ix#408).
+	// Jumps counts the catch-ups the link gave up on since it was made, each marked `jumped` on
+	// the peer's mirrored ctl; absent while zero.
+	Live       bool   `json:"live"`
+	Reconciled bool   `json:"reconciled"`
+	Degraded   bool   `json:"degraded"`
+	Jumps      uint64 `json:"jumps,omitempty"`
+}
+
+type PeerProbeStatus struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+	// Dropped: records of this pipe the link discarded for want of room in its pipe queue, since
+	// the link was made (across sessions); each run of drops is marked on the mirrored pipe
+	// before the record that followed (`link.gap`, reason `dropped`). Absent while zero.
+	Dropped uint64 `json:"dropped,omitempty"`
+	// CreatedSeq and SrcEpoch: the identity of the incarnation the link mirrors or declined under
+	// this name, the seq and boot of its probe.created on the peer (from the peer's cursor-bound
+	// list or the followed probe.created; S2 slice 4): a consumer that reads this, then the pipe,
+	// keys what it reads from then on `origin:src_epoch:node:created_seq` without having read
+	// that event (a reading, not a point of the stream: a frame read before it is told apart by
+	// the mirrored probe.created or the list with its cursor). Absent while the name is absent.
+	CreatedSeq uint64 `json:"created_seq,omitempty"`
+	SrcEpoch   string `json:"src_epoch,omitempty"`
 }
 
 // StatusReply summarises the generations. Every generation <= SettledGeneration has

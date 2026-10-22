@@ -30,6 +30,12 @@ type server struct {
 	started time.Time
 	mux     *http.ServeMux
 	ops     atomic.Int64 // JSON ops served (any outcome); /health shows it, so a test can see a client poll
+	// writeDelay is a test knob: nanoseconds the WebSocket writer spends on each frame, a client
+	// whose socket drains slowly (zero in production). A subscription overflows when the session's
+	// queue fills behind that writer; on Linux the loopback buffers absorb a flood of small frames
+	// that fills it on Windows, so a test that needs the overflow sets this rather than counting on
+	// the kernel.
+	writeDelay atomic.Int64
 
 	ctx    context.Context // cancelled at shutdown: ends SSE streams and WebSockets
 	cancel context.CancelFunc
@@ -74,7 +80,8 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 	}))
 	m.HandleFunc("GET /v1/probe", s.op(func(r *http.Request) (Request, error) {
 		peer, err := peerQuery(r)
-		return Request{Op: "probe.list", Peer: peer}, err
+		wc := r.URL.Query().Get("with_cursor")
+		return Request{Op: "probe.list", Peer: peer, WithCursor: wc == "1" || wc == "true"}, err
 	}))
 	m.HandleFunc("POST /v1/probe/create", s.op(func(r *http.Request) (Request, error) {
 		peer, err := peerQuery(r)

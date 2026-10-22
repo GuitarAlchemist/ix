@@ -35,10 +35,17 @@ fn triggers(patterns: &[&str], file: &str) -> bool {
     included
 }
 
-fn check_event(event: &str) {
+/// `branch` is the one branch the event is limited to, or `None` for every base.
+fn check_event(event: &str, branch: Option<&str>) {
     let workflow: Value = serde_yaml::from_str(WORKFLOW).expect("valid workflow YAML");
     let trigger = &workflow["on"][event];
-    assert_eq!(trigger["branches"][0].as_str(), Some("main"));
+    match branch {
+        Some(b) => assert_eq!(trigger["branches"][0].as_str(), Some(b)),
+        None => assert!(
+            trigger["branches"].is_null(),
+            "{event}: a PR stacked on an exp/* branch must get CI too (ix#423)"
+        ),
+    }
     assert!(
         trigger["paths-ignore"].is_null(),
         "{event}: use `paths` with negations, so a text file a job reads can be re-included"
@@ -110,12 +117,12 @@ fn check_event(event: &str) {
 
 #[test]
 fn push_runs_for_the_inputs_the_jobs_read_and_not_for_prose() {
-    check_event("push");
+    check_event("push", Some("main"));
 }
 
 #[test]
 fn pull_request_runs_for_the_inputs_the_jobs_read_and_not_for_prose() {
-    check_event("pull_request");
+    check_event("pull_request", None);
 }
 
 #[test]

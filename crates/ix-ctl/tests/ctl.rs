@@ -78,6 +78,11 @@ struct Plane {
     hold_launch: bool,
     /// The probe tree, by node name, as `probe.create` declared it and the ops moved it.
     probes: BTreeMap<String, Node>,
+    /// The seq the tree's last lifecycle event took: the head a `with_cursor` list stands at, and
+    /// what a node's `created_seq` is read from (S2 slice 4). Moved as the plane moves it: one per
+    /// `probe.created`, `probe.started`, `probe.stopped` and `probe.removed`; a start of a running
+    /// node or a stop of a stopped one says nothing, a subtree's removal says one per node.
+    head: u64,
     /// What a live read (no `since`) is sent: the envelopes after this sequence number. `None`
     /// sends nothing, as a plane whose channels stay quiet; the real plane sends what is
     /// published after the stream opens.
@@ -88,6 +93,8 @@ struct Plane {
 struct Node {
     spec: Value,
     state: &'static str,
+    /// The seq of its `probe.created`: the incarnation's identity (`created_seq`).
+    created: u64,
 }
 
 /// The kinds the fake has "compiled in", as `kinds_reply` lists them.
@@ -282,10 +289,13 @@ impl Plane {
                             "name": name, "kind": n.spec["kind"], "state": n.state,
                             "every_ms": n.spec.get("every_ms").cloned().unwrap_or(json!(0)),
                             "ttl_ms": ttl.clone(), "seq": 0, "errors": 0, "bytes": 0, "children": children,
-                            "rate_per_s": rate(subtree_rate(&self.probes, name)),
+                            "rate_per_s": rate(subtree_rate(&self.probes, name)), "created_seq": n.created,
                         });
                         if n.spec["kind"] == "mux@1" {
                             entry["max_rate_per_s"] = json!(budget_of(&self.probes, name));
+                        }
+                        if n.spec["export"] == true {
+                            entry["export"] = json!(true);
                         }
                         if n.state == "running" && ttl != 0 {
                             entry["expires_in_ms"] = ttl;
@@ -298,12 +308,16 @@ impl Plane {
                         entry
                     })
                     .collect();
-                (
-                    200,
-                    json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256,
-                           "rate_per_s": rate(tree_rate(&self.probes)),
-                           "max_rate_per_s": 1000, "tree_rate_per_s": 2500}),
-                )
+                let mut reply = json!({"nodes": nodes, "count": nodes.len(), "max_nodes": 256,
+                                       "rate_per_s": rate(tree_rate(&self.probes)),
+                                       "max_rate_per_s": 1000, "tree_rate_per_s": 2500});
+                if query.split('&').any(|kv| kv == "with_cursor=1") {
+                    // S2 slice 4: the head and the boot the list stands at, as the plane reads
+                    // them under the tree's lock.
+                    reply["cursor"] =
+                        json!({"seq": self.head, "epoch": self.epoch.clone().unwrap_or_default()});
+                }
+                (200, reply)
             }
             ("POST", "/v1/probe/create") => match self.probe_create(&doc) {
                 Ok(reply) => (200, reply),
@@ -330,20 +344,23 @@ impl Plane {
     /// counting), `stop` leaves it stopped, `touch` renews a lease and refuses a node without
     /// one, `remove` takes the subtree and counts it. A name nobody declared is refused.
     fn probe_op(&mut self, op: &str, name: &str) -> Result<Value, String> {
-        let (ttl, state) = {
+        let (ttl, state, event) = {
             let n = self
                 .probes
                 .get_mut(name)
                 .ok_or_else(|| format!("node {name:?} does not exist"))?;
             let ttl = n.spec["ttl_ms"].as_u64();
-            match op {
-                "start" => n.state = "running",
-                "stop" => n.state = "stopped",
+            let event = match op {
+                "start" => std::mem::replace(&mut n.state, "running") != "running",
+                "stop" => std::mem::replace(&mut n.state, "stopped") != "stopped",
                 "touch" if ttl.is_none() => return Err(format!("node {name:?} has no lease")),
-                _ => {}
-            }
-            (ttl, n.state)
+                _ => false, // a touch says nothing on ctl; a removal counts its nodes below
+            };
+            (ttl, n.state, event)
         };
+        if event {
+            self.head += 1; // the lifecycle event the op says on ctl (a no-op says none)
+        }
         Ok(match op {
             "start" => {
                 let mut reply = json!({"node": name, "state": "running"});
@@ -376,6 +393,7 @@ impl Plane {
                 for g in &gone {
                     self.probes.remove(g);
                 }
+                self.head += gone.len() as u64; // one probe.removed per node of the subtree
                 json!({"node": name, "removed": gone.len()})
             }
         })
@@ -464,11 +482,13 @@ impl Plane {
             up = self.probes.get(p).and_then(|n| n.spec["parent"].as_str());
         }
         let reply = json!({"node": name, "kind": kind, "state": "stopped", "depth": depth});
+        self.head += 1;
         self.probes.insert(
             name.to_string(),
             Node {
                 spec: spec.clone(),
                 state: "stopped",
+                created: self.head,
             },
         );
         Ok(reply)
@@ -601,6 +621,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         trickle: None,
         hold_launch: false,
         probes: BTreeMap::new(),
+        head: 0,
         live_from: None,
     }));
     let shared = plane.clone();
@@ -1159,9 +1180,13 @@ fn probe_list_shows_the_tree_and_its_usage() {
     let nodes = tree["nodes"].as_array().unwrap();
     assert_eq!(
         json!({"name": "agg", "kind": "mux@1", "state": "running", "every_ms": 0, "ttl_ms": 0, "seq": 0, "errors": 0,
-               "children": 1, "bytes": 0, "rate_per_s": 10, "max_rate_per_s": 1000}),
+               "children": 1, "bytes": 0, "rate_per_s": 10, "max_rate_per_s": 1000, "created_seq": 1}),
         nodes[0],
-        "a mux says its subtree's declared rate and the budget it is held to (D10)"
+        "a mux says its subtree's declared rate and the budget it is held to (D10), and the seq of its probe.created (S2 slice 4)"
+    );
+    assert!(
+        tree.get("cursor").is_none(),
+        "the plain list carries no cursor: {tree}"
     );
     assert_eq!(json!(10), tree["rate_per_s"]);
     assert_eq!(json!(1000), tree["max_rate_per_s"]);
@@ -1189,6 +1214,69 @@ fn probe_list_shows_the_tree_and_its_usage() {
     assert_eq!(
         Some(&"GET /v1/probe?peer=b".to_string()),
         plane.lock().unwrap().log.last()
+    );
+}
+
+// S2 slice 4 (criteria 3 and 4 of ix#408): `probe.list` with a cursor is a snapshot of the plane's
+// own stream, `cursor: {seq, epoch}` the head and the boot it stands at, each node naming the seq
+// of its `probe.created` (`created_seq`, the incarnation's identity); the flag rides as a query
+// argument beside the routing.
+#[test]
+fn probe_list_with_cursor_binds_the_snapshot_and_names_incarnations() {
+    let (ctl, plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source(
+            r#"agg <- ix.ctl.probe.create(probe: { name: "agg", kind: "mux@1" })
+               cpu <- ix.ctl.probe.create(probe: { name: "cpu", kind: "cpu@1", every_ms: 100, parent: "agg" })
+               on <- ix.ctl.probe.start(node: "cpu")
+               snap <- ix.ctl.probe.list(with_cursor: true)
+               plain <- ix.ctl.probe.list(with_cursor: false)"#,
+        )
+        .unwrap();
+    let snap = out.binding("snap").unwrap();
+    assert_eq!(
+        json!({"seq": 3, "epoch": "3f9a1c0b7d2e"}),
+        snap["cursor"],
+        "the head after two creations and a start, in this boot"
+    );
+    let nodes = snap["nodes"].as_array().unwrap();
+    assert_eq!(json!(1), nodes[0]["created_seq"], "agg was created first");
+    assert_eq!(json!(2), nodes[1]["created_seq"], "cpu second");
+    assert_eq!(json!("running"), nodes[1]["state"]);
+    let plain = out.binding("plain").unwrap();
+    assert!(
+        plain.get("cursor").is_none(),
+        "without the cursor the list is the plain one: {plain}"
+    );
+    assert_eq!(
+        json!(2),
+        plain["nodes"][1]["created_seq"],
+        "the identity is always there"
+    );
+    assert_eq!(*snap, ctl.probe_list_at(None, true).unwrap());
+    assert_eq!(*plain, ctl.probe_list_at(None, false).unwrap());
+    assert_eq!(*plain, ctl.probe_list(None).unwrap());
+    assert!(
+        plane
+            .lock()
+            .unwrap()
+            .log
+            .iter()
+            .any(|l| l == "GET /v1/probe?with_cursor=1"),
+        "{:?}",
+        plane.lock().unwrap().log
+    );
+    match ctl.probe_list_at(Some("b"), true) {
+        Err(CtlError::Http {
+            status: 400,
+            message,
+        }) => assert!(message.contains("no peers"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        Some(&"GET /v1/probe?peer=b&with_cursor=1".to_string()),
+        plane.lock().unwrap().log.last(),
+        "the flag rides beside the routing"
     );
 }
 
@@ -2284,6 +2372,29 @@ fn probe_create_is_held_to_its_mux_budget_like_the_plane() {
     }
 }
 
+// D4 (ix#402), S2 slice 1: a node marked `export: true` at create says so in `probe.list`; the
+// others carry no `export` key, as the plane encodes it.
+#[test]
+fn probe_list_says_which_nodes_are_exported() {
+    let (ctl, _plane) = plane();
+    let out = executor(ctl.clone())
+        .run_source(
+            r#"x <- ix.ctl.probe.create(probe: { name: "xcpu", kind: "cpu@1", every_ms: 100, export: true })
+               y <- ix.ctl.probe.create(probe: { name: "xmem", kind: "mem@1", every_ms: 100 })
+               tree <- ix.ctl.probe.list()"#,
+        )
+        .unwrap();
+    let nodes = out.binding("tree").unwrap()["nodes"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(json!(true), nodes[0]["export"], "{nodes:?}");
+    assert!(
+        nodes[1].get("export").is_none(),
+        "an unexported node carries no export key: {nodes:?}"
+    );
+}
+
 #[test]
 fn probe_create_bound_is_exact_like_the_plane() {
     let (ctl, _plane) = plane();
@@ -2310,4 +2421,57 @@ fn probe_create_bound_is_exact_like_the_plane() {
         err.contains("\"twelve\"") && err.contains("1083.333"),
         "the thirteenth is refused naming the bound: {err}"
     );
+}
+
+// S2 slice 2 (D4 ix#402): a mirrored event says which of the source's envelopes it is, so a
+// consumer here keys the series and dedups as one on the origin would; the plane's own events
+// carry no such fields, and the flattened JSON has them only when they are there.
+#[test]
+fn a_mirrored_event_carries_its_source_provenance() {
+    let (ctl, plane) = plane();
+    plane.lock().unwrap().events = vec![
+        json!({"ch": "peer/b/probe/cpu", "seq": 9, "epoch": "3f9a1c0b7d2e", "origin": "b",
+               "src_seq": 41, "src_epoch": "b0b0b0b0b0b0", "t": 1_760_000_000_009u64,
+               "ev": {"kind": "sample", "t": 1_760_000_000_008u64, "data": {"node": "cpu", "kind": "cpu@1", "seq": 3}}}),
+        json!({"ch": "ctl", "seq": 10, "epoch": "3f9a1c0b7d2e", "origin": "fake", "t": 1_760_000_000_010u64,
+               "ev": {"kind": "converged", "data": {"generation": 1}}}),
+        // Half a pair is no provenance (the plane never writes one): read as none, shown as none.
+        json!({"ch": "peer/b/svc/x", "seq": 11, "epoch": "3f9a1c0b7d2e", "origin": "b", "src_seq": 42,
+               "t": 1_760_000_000_011u64, "ev": {"kind": "stats", "data": {}}}),
+    ];
+    let items: Vec<_> = ctl
+        .events("", Some(0), None)
+        .unwrap()
+        .map(|i| i.unwrap())
+        .collect();
+    assert_eq!(3, items.len(), "{items:?}");
+    assert_eq!(
+        (Some(41), Some("b0b0b0b0b0b0")),
+        (items[0].src_seq, items[0].src_epoch.as_deref())
+    );
+    assert_eq!(
+        (None, None),
+        (items[1].src_seq, items[1].src_epoch.as_deref())
+    );
+    let flat = Value::from(&items[0]);
+    assert_eq!(
+        (Some(41), Some("b0b0b0b0b0b0"), Some(9)),
+        (
+            flat["src_seq"].as_u64(),
+            flat["src_epoch"].as_str(),
+            flat["seq"].as_u64()
+        )
+    );
+    for i in [1, 2] {
+        let own = Value::from(&items[i]);
+        assert_eq!(
+            (None, None),
+            (items[i].src_seq, items[i].src_epoch.as_deref()),
+            "{own}"
+        );
+        assert!(
+            own.get("src_seq").is_none() && own.get("src_epoch").is_none(),
+            "{own}"
+        );
+    }
 }

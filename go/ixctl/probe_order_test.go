@@ -163,14 +163,26 @@ func stopInProgress(t *testing.T, p *Plane, b *blockSampler, name string) <-chan
 		_, err := probeOp(t, p, Request{Op: "probe.stop", Node: name})
 		stopped <- err
 	}()
+	waitListed(t, p, name, probeStopping) // the stop has set the state and the list says so: it is in progress
+	return stopped
+}
+
+// waitListed waits for the list to say node is in state (by name: the list is in creation order
+// and other nodes may come first).
+func waitListed(t *testing.T, p *Plane, node, state string) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
-	for listNodes(t, p)[0].State != probeStopped { // the stop has set the state: it is in progress
+	for {
+		for _, n := range listNodes(t, p) {
+			if n.Name == node && n.State == state {
+				return
+			}
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("the stop never set the state")
+			t.Fatalf("the list never said %s %s", node, state)
 		}
 		time.Sleep(time.Millisecond)
 	}
-	return stopped
 }
 
 func TestARemoveWaitsForAStopInProgress(t *testing.T) {
@@ -366,13 +378,7 @@ func TestOverlappingRemovalsSayProbeRemovedOnce(t *testing.T) {
 	}
 	results := make(chan error, 3)
 	go func() { _, err := probeOp(t, p, Request{Op: "probe.stop", Node: "hb"}); results <- err }()
-	deadline := time.Now().Add(2 * time.Second)
-	for listNodes(t, p)[1].State != probeStopped {
-		if time.Now().After(deadline) {
-			t.Fatal("the stop never set the state")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitListed(t, p, "hb", probeStopping)
 	go func() { _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "hb"}); results <- err }()
 	reached(t, p, "the child's removal claim", func() bool { return p.probes.nodes["hb"] != nil && p.probes.nodes["hb"].removing })
 	go func() { _, err := probeOp(t, p, Request{Op: "probe.remove", Node: "agg"}); results <- err }()

@@ -200,6 +200,14 @@ elle s'exécute deux fois : via `doctor_is_green_on_this_workspace`
    ne lie `[T:test]` que si `src:` est un chemin `::` ou préfixé par `test_`.
 4. Annotez un module à la fois, et faites en sorte que chaque passe produise au
    moins une correction réelle. Ne générez jamais d'annotations en masse.
+5. Rust seulement pour un lien `[T:test]` : la barrière de dérive lit les marqueurs `@ai:` dans
+   tous les fichiers source (Go compris) mais ne résout le test cité que parmi les fonctions Rust,
+   si bien qu'un `[T:test src:…::TestX]` dans un fichier Go est un lien cassé qui fait échouer la
+   prochaine PR touchant `crates/**` (le filtre de chemins de la barrière ne la lance pas sur
+   `go/**` ; reproduire avec `cargo run -p ix-assumption-graph --bin ix-assumption-graph-drift --
+   --check state/assumptions/annotations.snapshot.json`, sortie 2). Un marqueur sans lien de test
+   (`[P:assumed conf:0.7]`, `[U:uncertain]`) est sûr en Go : la barrière ne vérifie que les liens.
+   Pour une affirmation couverte par un test en Go, renvoyez le commentaire à la ligne du contrat.
 
 ## Ajouter une vitrine ou une démo
 
@@ -221,3 +229,38 @@ elle s'exécute deux fois : via `doctor_is_green_on_this_workspace`
    reste à jour.
 3. Maintenez la traduction française à côté de la version anglaise, sous
    `docs/fr/`.
+
+
+## Changer une affirmation de comportement sur un plan ou un contrat
+
+Une phrase qui dit ce que fait le plan (« la liste est exactement ce que `ctl` dit jusqu'au
+curseur », « un consommateur cle la série depuis le statut ») est un terme de contrat, et elle
+dérive dès qu'elle est écrite à plusieurs endroits : sur la session S2 tranche 4, deux affirmations
+de ce genre vivaient dans le README EN, le README FR, le contrat et un commentaire de code, et deux
+des quatre copies étaient périmées avant que Codex ne les lise.
+
+1. Le contrat sous `docs/contracts/` est la source unique de l'affirmation ; les paragraphes du
+   README et les commentaires de code **y renvoient** (la ligne ou la section) au lieu de la
+   reformuler. Une reformulation qui doit rester (le résumé d'une ligne dans le commentaire d'un
+   champ de statut) nomme la version du contrat.
+2. Avant le commit, chercher chaque mot de l'affirmation (`exact`, `without having read`, `outside
+   the lock`) dans `docs/`, `go/ixctl/*.md` et les commentaires de code, et mettre à jour ou retirer
+   chaque occurrence : la section Order du contrat disait encore que le `probe.stopped` d'une
+   feuille était publié hors du verrou une tranche après que cela a cessé d'être vrai.
+3. Un compte ou un total que connaît une porte (le nombre de vérifications, l'indice le plus élevé)
+   est vérifié par la porte, pas tapé dans la prose : `go/ixctl/e2e/e2e.py` E24 compare les totaux
+   des deux README, de sa propre docstring et du commentaire de porte de `.github/workflows/ci.yml`
+   (chaque énoncé de chaque texte) à ce qui a tourné, si bien qu'une vérification ajoutée sans que
+   les textes suivent fait échouer la porte.
+4. Le miroir FR change dans le même commit que le texte EN, paragraphe pour paragraphe.
+5. Un test ajouté pour l'affirmation est de l'une de deux sortes, et le message de commit dit
+   laquelle : un **correctif** a un passage rouge contre l'arbre précédent (le texte de l'échec
+   cité) ; une **épingle** protège un comportement qui tenait déjà et ne peut pas passer au rouge
+   seule (une course que l'ordonnanceur décide, un ordre que la boucle possède). Une épingle déclare
+   son rouge « par la couture » et nomme ce qu'elle protège, pour qu'un lecteur ne cherche pas un
+   échec qui n'a jamais existé (S2 tranche 4 : trois des cinq tests d'un commit étaient des épingles).
+6. Un test qui dépend du noyau passe sur un OS et échoue sur l'autre : un test qui attend un
+   débordement ou un saut pose le `writeDelay` du serveur (ou le `pipeDelay` / `ctlDelay` du lien)
+   et ne compte jamais sur le remplissage des tampons socket ; lancer
+   `pwsh scripts/ixctl-test-linux.ps1` avant le push (le premier run CI de #423 a perdu deux tests
+   de rafale sur ubuntu-latest que Windows passait).

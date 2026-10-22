@@ -231,6 +231,61 @@ attribués. `probe.list` dit débits et budgets ; la porte E18 le vérifie sur l
 plan (D4 ouverte). Grillée à la voix avec l'opérateur en trois tours ; la résolution est sur
 ix#416.
 
+**D4 tranchée (2026-10-21, ix#402) et tranche 1 de S2 livrée (ix#408) :** l'agrégation vit chez
+le lecteur, et en V1 le lecteur est le consommateur (IXQL `ix.ctl.events` sur
+`peer/<pair>/probe/<nœud>`), aucune source distante sur un mux local. Ce qui traverse un lien est
+l'intersection du `export: true` de l'enfant à la création (immuable, faux par défaut) et de la
+demande exacte du parent `peers[].probes` ; le lien s'abonne par nom de canal exact (un préfixe
+emporterait `cpu-extra` avec `cpu`), depuis le `probe.list` du pair au raccordement puis depuis
+les `probe.created` / `probe.removed` en miroir, appliqués dans l'ordre d'arrivée (un événement
+tombé entre l'abonnement et la liste est appliqué après elle, un événement perdu dans un trou
+n'est pas vu : la fenêtre que l'instantané lié à un curseur ferme en tranche 4) ; un tuyau
+démarre en direct à chaque session et après chaque retrait, jamais depuis une séquence (un nom
+ré-exporté après une incarnation non exportée la rejouerait, et le rejeu de ctl ne peut pas
+prouver l'incarnation puisque la réponse de la liste peut le devancer : la liste liée à un
+curseur de la tranche 4 est cette preuve ; ce qu'un démarrage en direct saute était le G8 du
+contrat jusqu'au marqueur de la tranche 3), et les trames d'un abonnement qui n'est plus celui
+du tuyau sont écartées (revues Codex 35–38) ; le statut et la liste sont lus avant toute trame
+miroir appliquée pendant que la file est vidée dans un arriéré (un rejeu de reconnexion jusqu'au
+ring ne peut pas retenir le lecteur ; l'arriéré est plafonné en trames et en octets, au-delà la session se reconnecte),
+l'abonnement s'exécute hors de la goroutine qui vide la file du lien, donc une file pleine ne
+peut pas affamer la réponse, et le relais d'un tuyau retiré se termine avec son abonnement. `status.peers[].probes` dit
+`mirrored` / `not-exportable` / `opening` / `absent`, et `dropped`, les enregistrements que le lien a écartés faute de place. Trois
+chiffres tenus séparés : échantillonnage admis (D10), enveloppes publiées (échantillons ×
+profondeur), octets et enregistrements transportés par lien et par parent ; `tree_rate_per_s`
+n'est pas une borne fédérée. La tranche 2 a livré la provenance : chaque enveloppe miroir porte
+les `src_seq` / `src_epoch` de la source, donc la série
+`origin:src_epoch:node:<src_seq du probe.created>` et la clé de dédoublonnage
+`origin:src_epoch:src_seq` sont celles du consommateur (porte E20, contrat v0.1.4). La première
+coupe de la tranche 3 marque ce que le miroir saute, dans le flux miroir : une enveloppe
+`link.gap` propre au parent sur le tuyau à chaque démarrage en direct (`src_epoch`,
+`last_src_seq` / `last_src_epoch`) et sur le `ctl` miroir quand le pair est revenu comme nouvelle
+instance (`epoch-changed`) ou a répondu un trou sur le `ctl` / `svc/` repris (critères 4 et 5 de
+ix#408 ; porte E21 ; le contrat v0.1.5 ferme G8). La deuxième coupe borne les files du lien par
+classe (critère 6) : `ctl` / `svc/` dans leur propre file sans perte, lue d'abord, les tuyaux dans
+une file bornée en enregistrements et en octets que leurs relais n'attendent jamais ; les pertes
+comptées par tuyau sur le statut et marquées `dropped` sur le tuyau avant l'enregistrement qui a
+suivi, un abonnement de tuyau lâché par le pair rouvert en direct et marqué `overflow` sans clore
+la session (la porte M3 mesure la charge ; le test Go ralentit le parent pour prouver la borne et
+la priorité ; contrat v0.1.6). La troisième coupe borne le rattrapage (critère 7) : une provision
+de rejeu par lien (trames, octets, temps, remplie lentement, jamais remise à zéro par une
+reconnexion), au-delà de laquelle le lien s'abonne en direct et marque le saut sur le `ctl`
+miroir (`jumped`, `from`, `to`, daté) ; un abonnement de contrôle lâché par le pair est rouvert
+dans la session, sans la clore ; le statut distingue `live` (le pair le dit, par une trame en direct
+qu'un abonné demande) de `reconciled` et ne lève `degraded` que lorsque les deux tiennent, `jumps`
+compté (tests Go : un rattrapage au-delà de la provision saute et est marqué, une deuxième coupure
+saute tout de suite, un flux de contrôle soutenu au-dessus du lecteur saute sans se reconnecter,
+`degraded` levé seulement en direct et réconcilié ; porte E22 ; contrat v0.1.7). La quatrième
+tranche fait de la liste un instantané (critères 3 et 4) : `probe.list` avec un curseur du flux du
+plan (`cursor: {seq, epoch}`, lu sous le verrou de l'arbre) et `created_seq` par nœud, un état
+`stopping` pour une feuille dont l'arrêt est en cours (son probe.stopped et la fin de l'arrêt
+réunis en une étape : la liste les prenait séparés) ; le lien saute les événements de cycle de vie
+que l'instantané contient, garde l'identité de chaque tuyau sur le status, et prend un nouvel
+instantané après un saut sur ctl (tests Go : 25 instantanés repliés depuis un flux qui bouge, les
+identités et les sauts du lien, un saut qui reliste ; porte E23 ; contrat v0.1.8). Grillée à la
+voix, la revue en lecture seule de Gaïa intégrée ; la résolution est sur ix#402. Les portes
+E19..E23 vérifient les tranches sur les deux plans fédérés.
+
 Les tuyaux inter-hôtes (S2), l'échantillonnage partagé (S3), les releases GitHub avec un manifeste de sondes au-delà du squelette de workflow (S5), les kinds WMI du
 prototype (S6), l'adaptateur de l'enveloppe Gaia (S7 : le côté IX est le brouillon de contrat
 [`2026-10-21-ixctl-probe-observation.contract.md`](../../contracts/2026-10-21-ixctl-probe-observation.contract.md),

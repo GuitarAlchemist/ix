@@ -66,6 +66,10 @@ type Limits struct {
 type PeerSpec struct {
 	Name      string `json:"name"`
 	StateFile string `json:"state_file"`
+	// Probes names the peer's probe nodes whose pipes this instance wants mirrored as
+	// peer/<name>/probe/<node> (D4, ix#402): exact names, each crossing only while the peer
+	// marks that node exportable. Empty: no probe pipe crosses.
+	Probes []string `json:"probes,omitempty"`
 }
 
 const (
@@ -172,6 +176,16 @@ func (s *Spec) validate() error {
 			return fmt.Errorf("peer %q: state_file is required", p.Name)
 		}
 		p.StateFile = s.abs(p.StateFile)
+		seenProbe := map[string]bool{}
+		for _, pr := range p.Probes {
+			if !nameRE.MatchString(pr) {
+				return fmt.Errorf("peer %q: probe name %q must match %s", p.Name, pr, nameRE)
+			}
+			if seenProbe[pr] {
+				return fmt.Errorf("peer %q: duplicate probe %q", p.Name, pr)
+			}
+			seenProbe[pr] = true
+		}
 	}
 	return nil
 }

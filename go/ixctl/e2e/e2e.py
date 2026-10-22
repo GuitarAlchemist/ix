@@ -8,8 +8,9 @@ a point the operator named; bounds, refusals, a peer's bookmark; survival of a r
 IXQL probe surface (E17: `probe.ixql` through the Rust client, a CPU probe under a mux, ten
 records, the tree removed) and probe budgets (E18: `limits` say the plane's budget, a leaf
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
-widen, the list says rates and bytes). 44 checks, E1..E18, a restart loop and the M1 and M2
-measurements.
+widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
+only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
+what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts degraded only when both hold; E23: the probe list read with a cursor is a snapshot of the plane's stream with creation identities, exact against the stream folded to its cursor, the identity agreeing on b, through a and in a's status; E24: the totals the two READMEs, this docstring and the CI workflow's comment state match the checks that ran, every statement of each text). 52 checks, E1..E24, a restart loop and the M1, M2 and M3 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -203,6 +204,7 @@ def peer(s, name):
 
 
 SSE_GAPS = []  # every gap event a sse() reader got, in order: {ch, reason, from, ...}
+SSE_RECV = {}  # (ch, seq) -> wall time (time.time()) the chunk completing that envelope's line was read
 
 
 def sse(st, ch, seconds, query=None, ready=None):
@@ -211,7 +213,9 @@ def sse(st, ch, seconds, query=None, ready=None):
     `ch=...` alone for a live reader). `ready`, a threading.Event, is set once the stream's
     headers are in: from then on the reader is on the pipe and nothing published is missed.
     Gap events (a ring that no longer holds seq 1, a reader that fell behind) are not
-    envelopes: they go to SSE_GAPS, with the prefix asked, and the envelopes come back alone."""
+    envelopes: they go to SSE_GAPS, with the prefix asked, and the envelopes come back alone.
+    SSE_RECV keeps, per (ch, seq), when the chunk that completed the envelope's line was read:
+    a latency measured on the reader's side (an envelope's `t` is its source's clock)."""
     host, port = st["addr"].rsplit(":", 1)
     sock = socket.create_connection((host, int(port)), timeout=seconds)
     req = (
@@ -220,6 +224,7 @@ def sse(st, ch, seconds, query=None, ready=None):
     )
     sock.sendall(req.encode())
     buf = b""
+    marks = []  # (bytes buffered so far, wall time) per chunk read
     end = time.perf_counter() + seconds
     sock.settimeout(0.2)
     while time.perf_counter() < end:
@@ -230,22 +235,29 @@ def sse(st, ch, seconds, query=None, ready=None):
         if not chunk:
             break
         buf += chunk
+        marks.append((len(buf), time.time()))
         if ready is not None and not ready.is_set() and b"\r\n\r\n" in buf:
             ready.set()
     sock.close()
     if ready is not None:
         ready.set()
-    text = buf.decode("utf-8", "replace")
-    head, _, body = text.partition("\r\n\r\n")
+    head_b, _, body_b = buf.partition(b"\r\n\r\n")
+    head = head_b.decode("utf-8", "replace")
     envs = []
     if not head.startswith("HTTP/1.1 200"):
         # A refused stream (a bookmark nobody set, a bookmark beside since) is one JSON error.
+        body = body_b.decode("utf-8", "replace")
         try:
             SSE_GAPS.append({"ch": ch, "reason": "refused", **json.loads(body)})
         except ValueError:
             SSE_GAPS.append({"ch": ch, "reason": "refused", "raw": body[:200]})
         return head.split("\r\n")[0], envs
-    for line in body.splitlines():
+    pos, mi = len(head_b) + 4, 0
+    for raw in body_b.split(b"\n"):
+        pos += len(raw) + 1
+        while mi < len(marks) - 1 and marks[mi][0] < pos:
+            mi += 1  # the first chunk that held the whole line
+        line = raw.decode("utf-8", "replace").rstrip("\r")
         if line.startswith("data: "):
             try:
                 rec = json.loads(line[6:])
@@ -253,6 +265,8 @@ def sse(st, ch, seconds, query=None, ready=None):
                 continue
             if "ch" in rec:
                 envs.append(rec)
+                if marks:
+                    SSE_RECV[(rec["ch"], rec.get("seq"))] = marks[mi][1]
             else:
                 SSE_GAPS.append({"ch": ch, **rec})
     return head.split("\r\n")[0], envs
@@ -445,7 +459,7 @@ def run():
                   "    except OSError as e: print('spawn refused:', e, file=sys.stderr); break\n"
                   "time.sleep(60)"],
          "restart": "never", "limits": {"processes": 3}},
-    ], [{"name": "b", "state_file": str(STATE / "b.json")}])
+    ], [{"name": "b", "state_file": str(STATE / "b.json"), "probes": ["xcpu", "xmem"] + [f"xl{i}" for i in range(8)]}])
 
     pb, ready_b, sb, ms_b = up("b", spec_b)
     # Plane a carries the operator's probe budget (D10): M2 declares exactly 1 600 records/s under
@@ -1023,8 +1037,15 @@ def run():
     # waiter has polled it a few times, so the check cannot pass on a waiter that only ever saw
     # the new boot.
     old_polls, polls_ms = wait_until(lambda: call(sb, "GET", "/health")[1]["ops"] - ops0 >= 3, 10)
+    # A live reader of b's mirrored ctl on a, on the channel before b goes down (E21 below).
+    ready_lg = threading.Event()
+    th_lg, seen_lg = sse_async(sa, "peer/b/ctl", 8.0, query="ch=peer/b/ctl", ready=ready_lg)
+    ok_ready_lg = ready_lg.wait(2)
     call(sb, "POST", "/v1/shutdown", {})
     exit_b = pb.wait(10)
+    # For E22 below: the link's standing while b is down.
+    _, down_ms = wait_until(lambda: (peer(status(sa), "b") or {}).get("state") == "down", 10)
+    pd = peer(status(sa), "b") or {}
     pb, _, sb, ms_b2 = up("b", spec_b)
     tokens.append(sb["token"])
     b1 = status(sb)
@@ -1035,6 +1056,10 @@ def run():
           and up_ms is not None and len(boots) == 2 and boots[1]["epoch"] == b1["epoch"],
           exit=exit_b, epochs=[b0["epoch"], b1["epoch"]], peer_up_ms=up_ms, boot_lines=len(boots),
           ready_ms=round(ms_b2, 1), old_generation=b0["generation"])
+    # A ctl event of the new boot, for E21 below: b's own peer.up can precede a's live
+    # resubscription (that loss is what the marker says), so one is made once the link is up.
+    call(sb, "POST", "/v1/probe/create", {"name": "mark21", "kind": "heartbeat@1", "every_ms": 50})
+    call(sb, "POST", "/v1/probe/remove", {"node": "mark21"})
     # E16 (restart): the bookmark set on B before its restart is still listed by the new boot,
     # marked as not live, and a replay from it says epoch-changed before this boot's ring.
     code_bl, bl = call(sb, "GET", "/v1/bookmark")
@@ -1068,6 +1093,38 @@ def run():
           and w_ms < 12000,
           code=waiter.returncode, ms=round(w_ms, 1), old_boot_polls_after_ms=polls_ms,
           stderr=w_err[-200:])
+    # E21 (S2 slice 3, D4 ix#402 Q6): the restart is marked on b's mirrored ctl on a, by the link
+    # itself (a new instance resumes nothing, so b answers no gap): one link.gap envelope of a's
+    # own (origin a, no provenance), epoch-changed from the old boot to the new, before anything
+    # of the new boot is mirrored there.
+    th_lg.join(10)
+    lg = seen_lg.get("r", ("", []))[1]
+    marks = [e for e in lg if e["ev"]["kind"] == "link.gap"]
+    i_mark = next((i for i, e in enumerate(lg) if e["ev"]["kind"] == "link.gap"), None)
+    before_new = all(e.get("src_epoch") != b1["epoch"] for e in lg[:i_mark]) if i_mark is not None else False
+    after_new = any(e.get("src_epoch") == b1["epoch"] for e in lg[i_mark + 1:]) if i_mark is not None else False
+    md = marks[0]["ev"]["data"] if marks else {}
+    check("E21.restart_marked_on_the_mirrored_ctl",
+          ok_ready_lg and len(marks) == 1 and marks[0]["origin"] == "a" and "src_seq" not in marks[0]
+          and md.get("peer") == "b" and md.get("reason") == "epoch-changed"
+          and md.get("src_epoch") == b1["epoch"] and md.get("last_src_epoch") == b0["epoch"] and before_new and after_new,
+          markers=len(marks), marker=md, envelopes=len(lg), before_new_boot=before_new, new_boot_after=after_new)
+    # E22 (S2 slice 3, criterion 7 of ix#408): the parent's status tells a live flow from a
+    # reconciled state and lifts degraded only when both hold. While b was down: degraded, neither
+    # live nor reconciled. Once the new boot is up: live (both control subscriptions past their
+    # replay; a new instance starts them live, so no jump is counted) and reconciled (its probe
+    # list applied, no wanted pipe still opening), degraded lifted.
+    def settled():
+        p = peer(status(sa), "b") or {}
+        return p.get("state") == "up" and p.get("live") is True and p.get("reconciled") is True and p.get("degraded") is False
+    _, settle_ms = wait_until(settled, 10)
+    pe = peer(status(sa), "b") or {}
+    check("E22.degraded_lifted_only_when_live_and_reconciled",
+          down_ms is not None and pd.get("degraded") is True and pd.get("live") is False
+          and pd.get("reconciled") is False and settle_ms is not None and pe.get("jumps", 0) == 0,
+          while_down={k: pd.get(k) for k in ("state", "live", "reconciled", "degraded")},
+          after={k: pe.get(k) for k in ("state", "live", "reconciled", "degraded", "jumps")},
+          down_ms=down_ms, settle_ms=settle_ms)
 
     # E17: the IXQL probe surface (D7, ix#405), end to end through the Rust client: probe.ixql
     # declares a mux and a CPU probe feeding it, starts both, reads ten of the mux's records live
@@ -1136,6 +1193,205 @@ def run():
                     (code_wide, (wide or {}).get("error"))],
           mux=mux_b, leaf=leaf_b, tree_rate=(tree_b or {}).get("rate_per_s"), gone=gone_b)
 
+    # E19: a probe pipe across the link (D4, ix#402; S2 slice 1). Plane a's peer spec asks for b's
+    # `xcpu` and `xmem`; b exports `xcpu` and `xcpu-extra`, not `xmem`. Only the exported AND wanted
+    # pipe crosses, by exact name (a prefix match on probe/xcpu would carry xcpu-extra), with b's
+    # origin; the status says what each wanted name is; a removal makes it absent again.
+    made = [call(sa, "POST", "/v1/probe/create?peer=b", n)[0] for n in (
+        {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True},
+        {"name": "xcpu-extra", "kind": "heartbeat@1", "every_ms": 50, "export": True},
+        {"name": "xmem", "kind": "heartbeat@1", "every_ms": 50})]
+    started_x = [call(sa, "POST", "/v1/probe/start", {"node": n, "peer": "b"})[0] for n in ("xcpu", "xcpu-extra", "xmem")]
+    def pipe_states():  # the two names E19..E21 follow; the eight `xl*` are M3's
+        return {p["name"]: p["state"] for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"] in ("xcpu", "xmem")}
+    states_x, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
+    _, xenvs = sse(sa, "peer/b/probe/", 1.0, query="ch=peer/b/probe/")  # live, not a since=0 replay
+    xchans = sorted({e["ch"] for e in xenvs})
+    _, lb = call(sa, "GET", "/v1/probe?peer=b")
+    flags = {n["name"]: n.get("export", False) for n in (lb or {}).get("nodes", []) if n["name"].startswith("x")}
+    removed_x = [call(sa, "POST", "/v1/probe/remove", {"node": n, "peer": "b"})[0] for n in ("xcpu", "xcpu-extra", "xmem")]
+    states_gone, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    # A same-name recreation without export stays on b. A live reader on a, on the pipe before the
+    # recreation and kept through its re-export, sees nothing of the unexported incarnation (a
+    # mem@1, so its samples could be told apart) and then the re-exported heartbeat's samples,
+    # while the peer is up and the reader got no gap (a dead link or a gap would make "nothing"
+    # vacuous).
+    gaps_before = sum(1 for g in SSE_GAPS if g.get("ch") == "peer/b/probe/")
+    ready = threading.Event()
+    th, seen = sse_async(sa, "peer/b/probe/", 3.0, query="ch=peer/b/probe/", ready=ready)
+    ok_ready = ready.wait(2)  # the reader is on the pipe before the unexported incarnation exists
+    code_re = call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "mem@1", "every_ms": 50})[0]
+    call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
+    states_re, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "not-exportable" else None, 5)
+    time.sleep(0.5)  # the unexported incarnation samples some ten times under the reader
+    call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    code_rx = call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True})[0]
+    call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
+    states_rx, _ = wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
+    th.join(5)
+    crossed = seen.get("r", ("", []))[1]
+    samples_x = [e for e in crossed if e["ev"]["kind"] == "sample"]
+    markers_x = [e for e in crossed if e["ev"]["kind"] == "link.gap"]
+    kinds = sorted({e["ev"]["data"].get("kind") for e in samples_x})
+    peer_up = (peer(status(sa), "b") or {}).get("state") == "up"
+    gaps_after = sum(1 for g in SSE_GAPS if g.get("ch") == "peer/b/probe/")
+    code_rm = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
+    check("E19.only_exported_and_wanted_probe_pipes_cross_the_link",
+          made == [200, 200, 200] and started_x == [200, 200, 200]
+          and (states_x or {}) == {"xcpu": "mirrored", "xmem": "not-exportable"}
+          and xchans == ["peer/b/probe/xcpu"] and bool(xenvs)
+          and all(e["origin"] == "b" and e["ev"]["kind"] == "sample" and e["ev"]["data"].get("node") == "xcpu" for e in xenvs)
+          and flags == {"xcpu": True, "xcpu-extra": True, "xmem": False}
+          and removed_x == [200, 200, 200] and (states_gone or {}) == {"xcpu": "absent", "xmem": "absent"}
+          and code_re == 200 and (states_re or {}) == {"xcpu": "not-exportable", "xmem": "absent"}
+          and code_rx == 200 and (states_rx or {}) == {"xcpu": "mirrored", "xmem": "absent"}
+          and ok_ready and kinds == ["heartbeat@1"] and peer_up and gaps_after == gaps_before and code_rm == 200,
+          created=made, started=started_x, states=states_x, channels=xchans, samples=len(xenvs), export=flags,
+          removed=removed_x, after_remove=states_gone, recreated=states_re, reexported=states_rx,
+          ready=ok_ready, crossed=len(crossed), kinds=kinds, peer_up=peer_up, gaps=[gaps_before, gaps_after])
+    # E21 (S2 slice 3): the re-export's live start is marked on the mirrored pipe before its first
+    # sample: one link.gap of a's own, reason live-start, naming b's boot and the last frame this
+    # link mirrored of xcpu before (the first xcpu of E19, same boot); nothing of the unexported
+    # incarnation crossed, so the marker is the first envelope of the pipe the reader saw.
+    b_now = status(sb)["epoch"]
+    first_x = next((e for e in crossed if e["ch"] == "peer/b/probe/xcpu"), None)
+    mk = markers_x[0]["ev"]["data"] if markers_x else {}
+    check("E21.live_start_marked_on_the_pipe",
+          len(markers_x) == 1 and first_x is markers_x[0] and first_x["origin"] == "a" and "src_seq" not in first_x
+          and mk.get("peer") == "b" and mk.get("reason") == "live-start" and mk.get("src_epoch") == b_now
+          and mk.get("last_src_epoch") == b_now and (mk.get("last_src_seq") or 0) > 0 and bool(samples_x),
+          markers=len(markers_x), first_is_marker=(first_x is markers_x[0]) if markers_x else None,
+          marker=mk, samples=len(samples_x))
+
+    # E20: provenance (S2 slice 2, D4 ix#402). A mirrored envelope on a says which of b's envelopes
+    # it is: src_seq / src_epoch are b's own seq and epoch, in order and without repeats, and each
+    # names the envelope on b that carries the same event, whole (a same-name recreation resets
+    # data.seq, so the record alone would not tell incarnations apart); b's own envelopes carry none.
+    call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True})
+    call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
+    _, menvs = sse(sa, "peer/b/probe/", 0.8, query="ch=peer/b/probe/")
+    menvs = [e for e in menvs if e["ev"]["kind"] != "link.gap"]  # the live start's marker is a's own
+    src_seqs = [e.get("src_seq") for e in menvs]
+    b_epoch = status(sb)["epoch"]
+    first = min(src_seqs) if menvs and all(src_seqs) else 0
+    _, benvs = sse(sb, "probe/xcpu", 0.5, query=f"ch=probe/xcpu&since={first - 1}&epoch={b_epoch}") if first else ("", [])
+    by_seq = {e["seq"]: e for e in benvs}
+    matched = sum(1 for e in menvs if e.get("src_seq") in by_seq and by_seq[e["src_seq"]]["ev"] == e["ev"])
+    code_rm20 = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    check("E20.mirrored_envelopes_carry_source_provenance",
+          bool(menvs) and all(src_seqs) and src_seqs == sorted(src_seqs) and len(set(src_seqs)) == len(src_seqs)
+          and all(e.get("src_epoch") == b_epoch for e in menvs) and matched == len(menvs)
+          and bool(benvs) and all("src_seq" not in e and "src_epoch" not in e for e in benvs) and code_rm20 == 200,
+          mirrored=len(menvs), matched=matched, on_b=len(benvs),
+          src_epoch_is_b=all(e.get("src_epoch") == b_epoch for e in menvs), removed=code_rm20)
+
+    # E23 (S2 slice 4, criteria 3 and 4 of ix#408): the probe list is a snapshot bound to a cursor
+    # of the plane's own stream, with creation identities. Read with `with_cursor` on b, routed
+    # through a (`?peer=b`) and in a's status (`created_seq` / `src_epoch` of the mirrored pipe),
+    # the identity of xcpu agrees; b's list folded from its own stream since the boot up to the
+    # cursor (created / started / stopped / removed on ctl, `stopping` read as running: its
+    # probe.stopped is not out yet) is exactly the list, and the fold met no gap.
+    call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True})
+    call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
+    code_lb, list_b = call(sb, "GET", "/v1/probe?with_cursor=1")
+    code_la, list_a = call(sa, "GET", "/v1/probe?peer=b&with_cursor=1")
+    st_x = next((p for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"] == "xcpu"), {})
+    b_epoch23 = status(sb)["epoch"]
+    cur23 = (list_b or {}).get("cursor") or {}
+    cur23a = (list_a or {}).get("cursor") or {}
+    node_b = next((n for n in (list_b or {}).get("nodes", []) if n["name"] == "xcpu"), {})
+    node_a = next((n for n in (list_a or {}).get("nodes", []) if n["name"] == "xcpu"), {})
+    gaps23 = len(SSE_GAPS)
+    _, fold = sse(sb, "", 0.5, query=f"ch=&since=0&epoch={b_epoch23}") if cur23.get("seq") else ("", [])
+    want23 = {}
+    for e in fold:
+        if e["seq"] > cur23.get("seq", 0) or e["ch"] != "ctl":
+            continue
+        k, d = e["ev"]["kind"], e["ev"]["data"]
+        nm = d.get("node")
+        if k == "probe.created":
+            want23[nm] = (e["seq"], bool(d.get("export")), "stopped")
+        elif k == "probe.started" and nm in want23:
+            want23[nm] = want23[nm][:2] + ("running",)
+        elif k == "probe.stopped" and nm in want23:
+            want23[nm] = want23[nm][:2] + ("stopped",)
+        elif k == "probe.removed":
+            want23.pop(nm, None)
+    got23 = {n["name"]: (n.get("created_seq"), bool(n.get("export")), "running" if n["state"] == "stopping" else n["state"])
+             for n in (list_b or {}).get("nodes", [])}
+    code_rm23 = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    check("E23.probe_list_is_a_cursor_bound_snapshot_with_identities",
+          code_lb == 200 and code_la == 200 and cur23.get("epoch") == b_epoch23 and (cur23.get("seq") or 0) > 0
+          and cur23a.get("epoch") == b_epoch23 and (cur23a.get("seq") or 0) >= cur23["seq"]
+          and (node_b.get("created_seq") or 0) > 0 and node_a.get("created_seq") == node_b.get("created_seq")
+          and st_x.get("created_seq") == node_b.get("created_seq") and st_x.get("src_epoch") == b_epoch23
+          and bool(fold) and got23 == want23 and len(SSE_GAPS) == gaps23 and code_rm23 == 200,
+          list_b=code_lb, list_a=code_la, cursor=cur23, cursor_via_a=cur23a,
+          created_seq=[node_b.get("created_seq"), node_a.get("created_seq"), st_x.get("created_seq")],
+          status_src_epoch_is_b=st_x.get("src_epoch") == b_epoch23, folded=len(fold), nodes=len(got23),
+          exact=got23 == want23, want=sorted(want23) if got23 != want23 else None, gaps=len(SSE_GAPS) - gaps23, removed=code_rm23)
+
+    # M3: control under federated load (S2 slice 3, criterion 6 of ix#408). Eight 10 ms heartbeat
+    # pipes b exports and a wants (800 records/s offered to the link, under b's default budget),
+    # read on a for the 2 s window plus a second: the records mirrored per second, what the link dropped for want of room
+    # in its bounded pipe queue (`status.peers[].probes[].dropped`, each run marked `dropped` on
+    # its pipe before the record that followed), and how long a probe.created of b takes to show
+    # on a's mirrored ctl while the pipes are loaded, measured on the reader's side. The drops are
+    # a measure, not a bound checked here: on a parent that keeps up there are none; the Go test
+    # slows the parent to prove the bound and the priority. A marked drop is one the status counts.
+    n_xl, window = 8, 2.0
+    made_xl = [call(sa, "POST", "/v1/probe/create?peer=b", {"name": f"xl{i}", "kind": "heartbeat@1", "every_ms": 10, "export": True})[0]
+               for i in range(n_xl)]
+    drops0 = sum(p.get("dropped", 0) for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"].startswith("xl"))
+    ready_p, ready_c = threading.Event(), threading.Event()
+    th_p, m3_pipes = sse_async(sa, "peer/b/probe/", window + 1.0, query="ch=peer/b/probe/", ready=ready_p)
+    th_c, m3_ctl = sse_async(sa, "peer/b/ctl", window + 1.0, query="ch=peer/b/ctl", ready=ready_c)
+    ready_p.wait(2)
+    ready_c.wait(2)
+    t0 = time.perf_counter()
+    started_xl = [call(sa, "POST", "/v1/probe/start", {"node": f"xl{i}", "peer": "b"})[0] for i in range(n_xl)]
+    def xl_mirrored():
+        xl = [p for p in (peer(status(sa), "b") or {}).get("probes", []) if p["name"].startswith("xl")]
+        return len(xl) == n_xl and all(p["state"] == "mirrored" for p in xl)
+    states_xl, _ = wait_until(xl_mirrored, 5)
+    time.sleep(0.5)  # the pipes are loaded when the control event is sent
+    t_mark = time.time()
+    code_mark = call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xl-mark", "kind": "heartbeat@1", "every_ms": 1000})[0]
+    th_p.join()
+    th_c.join()
+    elapsed = time.perf_counter() - t0
+    _, penvs = m3_pipes["r"]
+    _, cenvs = m3_ctl["r"]
+    xl_samples = [e for e in penvs if e["ev"]["kind"] == "sample" and str(e["ev"]["data"].get("node", "")).startswith("xl")]
+    xl_markers = [e for e in penvs if e["ev"]["kind"] == "link.gap" and e["ev"]["data"].get("reason") == "dropped"
+                  and e["ch"].startswith("peer/b/probe/xl")]
+    marked = sum(e["ev"]["data"].get("dropped", 0) for e in xl_markers)
+    mark_env = next((e for e in cenvs if e["ev"]["kind"] == "probe.created" and e["ev"]["data"].get("node") == "xl-mark"), None)
+    mark_recv = SSE_RECV.get((mark_env["ch"], mark_env["seq"])) if mark_env else None
+    ctl_ms = round((mark_recv - t_mark) * 1000, 1) if mark_recv else None
+    st_m3 = peer(status(sa), "b") or {}
+    dropped = sum(p.get("dropped", 0) for p in st_m3.get("probes", []) if p["name"].startswith("xl")) - drops0
+    peer_up_m3 = st_m3.get("state") == "up"
+    per_s_x = round(len(xl_samples) / elapsed, 1)
+    removed_xl = [call(sa, "POST", "/v1/probe/remove", {"node": f"xl{i}", "peer": "b"})[0] for i in range(n_xl)]
+    code_rm_mark = call(sa, "POST", "/v1/probe/remove", {"node": "xl-mark", "peer": "b"})[0]
+    measure("m3_link_8x10ms", {"mirrored_per_s": per_s_x, "offered_per_s": n_xl * 100, "dropped": dropped, "marked": marked,
+                               "ctl_ms_under_load": ctl_ms, "window_s": round(elapsed, 2)})
+    # What b offered either crossed or was counted dropped: together at least half the declared
+    # rate over the window (the window opens before the starts, so the rate is understated).
+    accounted_per_s = round((len(xl_samples) + dropped) / elapsed, 1)
+    check("M3.control_crosses_under_federated_load",
+          made_xl == [200] * n_xl and started_xl == [200] * n_xl and bool(states_xl) and code_mark == 200
+          and mark_env is not None and ctl_ms is not None and ctl_ms < 1000 and accounted_per_s > n_xl * 100 * 0.5
+          and peer_up_m3 and marked <= dropped and removed_xl == [200] * n_xl and code_rm_mark == 200,
+          mirrored_per_s=per_s_x, accounted_per_s=accounted_per_s, offered_per_s=n_xl * 100, dropped=dropped, marked=marked,
+          ctl_ms_under_load=ctl_ms, peer_up=peer_up_m3, removed=removed_xl)
+
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)
     _, _ = wait_until(lambda: svc(status(sa), "pod-a")["state"] == "running", 10)
@@ -1196,6 +1452,28 @@ def finish(pa, pb, sa, sb, tokens):
             hits[str(f.relative_to(WORK))] = n
     journals = [str(f.relative_to(WORK)) for f in STATE.glob("*.journal.jsonl")]
     check("E4.no_token_in_outputs", not hits, files_with_token=hits, journals_scanned=journals)
+    # E24: the gate's totals as the two READMEs, this file's docstring and the CI workflow state
+    # them ("N checks, E1..EM"; the workflow says the count alone) against what ran, this check
+    # counted, every statement of a text read: a check added without the texts following it fails
+    # here (Codex round 44 caught both READMEs a slice behind, round 46 the workflow's comment).
+    import re
+    key = "E24.gate_totals_match_the_docs"
+    keys = list(results["checks"]) + [key]
+    ran = len(keys)
+    top = max(int(m.group(1)) for m in (re.match(r"E(\d+)\.", k) for k in keys) if m)
+    here = HERE.parent
+    texts = {"README.md": (here / "README.md").read_text(encoding="utf-8"),
+             "README.fr.md": (here / "README.fr.md").read_text(encoding="utf-8"),
+             "e2e.py": __doc__,
+             "ci.yml": (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")}
+    want = {"README.md": [[ran, top]], "README.fr.md": [[ran, top]], "e2e.py": [[ran, top]]}
+    pat = re.compile(r"(\d+) (?:checks|vérifications)(?:, E1\.\.E(\d+))?")
+    said = {name: sorted({(int(n), int(e) if e else None) for n, e in pat.findall(text)}, key=str)
+            for name, text in texts.items()}
+    said = {name: [list(s) for s in v] for name, v in said.items()}
+    # the workflow's comment may say the count alone or with the range (Codex round 47)
+    ok = all(said[n] == w for n, w in want.items()) and said["ci.yml"] in ([[ran, None]], [[ran, top]])
+    check(key, ok, ran=ran, top=top, said=said)
     (STATE / "a.json").unlink(missing_ok=True)
     ok = all(c["ok"] for c in results["checks"].values())
     results["ok"] = ok

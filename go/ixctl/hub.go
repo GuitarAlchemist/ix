@@ -35,6 +35,10 @@ type Envelope struct {
 	Origin string `json:"origin"`
 	T      int64  `json:"t"`
 	Ev     Event  `json:"ev"`
+	// On a mirrored envelope (a peer/ channel): the source's own seq and epoch, so a consumer
+	// here can key the series and dedup as one on the origin would (S2 slice 2, D4 ix#402).
+	SrcSeq   uint64 `json:"src_seq,omitempty"`
+	SrcEpoch string `json:"src_epoch,omitempty"`
 
 	raw []byte // JSON encoding, built once at publish
 }
@@ -62,15 +66,21 @@ type Gap struct {
 // is also the client frame, so it carries the subscription fields. Epoch says
 // which boot Since belongs to; without it a Since below the head is trusted.
 type Request struct {
-	ID      int64    `json:"id,omitempty"`
-	Op      string   `json:"op"`
-	Ch      string   `json:"ch,omitempty"`
-	Since   *uint64  `json:"since,omitempty"`
-	Epoch   string   `json:"epoch,omitempty"`
-	Desired *Desired `json:"desired,omitempty"`
-	Service string   `json:"service,omitempty"`
-	Peer    string   `json:"peer,omitempty"`
-	Sub     int64    `json:"sub,omitempty"` // unsubscribe: the subscription to drop
+	ID    int64  `json:"id,omitempty"`
+	Op    string `json:"op"`
+	Ch    string `json:"ch,omitempty"`
+	Exact bool   `json:"exact,omitempty"` // subscribe: Ch is one channel's exact name, not a prefix
+	Live  bool   `json:"live,omitempty"`  // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
+	// WithCursor: probe.list says the point of the plane's stream it stands at (`cursor`: the head
+	// and the epoch), read under the tree lock with the nodes, so the list is exactly what ctl
+	// says up to that seq (S2 slice 4).
+	WithCursor bool     `json:"with_cursor,omitempty"`
+	Since      *uint64  `json:"since,omitempty"`
+	Epoch      string   `json:"epoch,omitempty"`
+	Desired    *Desired `json:"desired,omitempty"`
+	Service    string   `json:"service,omitempty"`
+	Peer       string   `json:"peer,omitempty"`
+	Sub        int64    `json:"sub,omitempty"` // unsubscribe: the subscription to drop
 	// Probe ops: the node to create, or the name of the node the op is about.
 	Probe *NodeSpec `json:"probe,omitempty"`
 	Node  string    `json:"node,omitempty"`
@@ -143,16 +153,19 @@ func (h *Hub) Epoch() string { return h.epoch }
 
 // Publish stamps an event with this instance as origin.
 func (h *Hub) Publish(ch string, ev Event) *Envelope {
-	return h.publish(ch, h.origin, 0, ev)
+	return h.publish(ch, h.origin, 0, ev, 0, "")
 }
 
-// Mirror republishes an envelope received from a peer under a local channel,
-// keeping the peer as origin and its time.
-func (h *Hub) Mirror(ch, origin string, t int64, ev Event) *Envelope {
-	return h.publish(ch, origin, t, ev)
+// Mirror republishes an envelope received from a peer under a local channel, keeping the
+// peer as origin and its time, and saying which envelope of the source it was (srcSeq,
+// srcEpoch: the source's own seq and epoch). Provenance is a pair: with either half missing
+// (a seq of 0, an empty epoch) none is written, in the struct as in the bytes; the link
+// refuses such a frame before it gets here.
+func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
+	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch)
 }
 
-func (h *Hub) publish(ch, origin string, t int64, ev Event) *Envelope {
+func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
 	evRaw, err := json.Marshal(ev)
 	if err != nil {
 		ev.Data = nil
@@ -160,14 +173,24 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event) *Envelope {
 	}
 	chRaw, _ := json.Marshal(ch)
 	orRaw, _ := json.Marshal(origin)
+	var srcRaw []byte
+	if srcSeq == 0 || srcEpoch == "" {
+		srcSeq, srcEpoch = 0, ""
+	} else {
+		epRaw, _ := json.Marshal(srcEpoch) // a peer's epoch came over the wire: escaped like any string
+		srcRaw = append(srcRaw, `,"src_seq":`...)
+		srcRaw = strconv.AppendUint(srcRaw, srcSeq, 10)
+		srcRaw = append(srcRaw, `,"src_epoch":`...)
+		srcRaw = append(srcRaw, epRaw...)
+	}
 	if t == 0 {
 		t = time.Now().UnixMilli()
 	}
-	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+64)
+	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+len(srcRaw)+64)
 
 	h.mu.Lock()
 	h.head++
-	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, T: t, Ev: ev}
+	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, T: t, Ev: ev, SrcSeq: srcSeq, SrcEpoch: srcEpoch}
 	b = append(b, `{"ch":`...)
 	b = append(b, chRaw...)
 	b = append(b, `,"seq":`...)
@@ -176,6 +199,7 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event) *Envelope {
 	b = append(b, h.epoch...) // hex, needs no escaping
 	b = append(b, `","origin":`...)
 	b = append(b, orRaw...)
+	b = append(b, srcRaw...)
 	b = append(b, `,"t":`...)
 	b = strconv.AppendInt(b, t, 10)
 	b = append(b, `,"ev":`...)
@@ -216,6 +240,7 @@ func (h *Hub) Span() (head, oldest uint64) {
 type Cursor struct {
 	h      *Hub
 	prefix string
+	exact  bool   // prefix is a whole channel name: probe/cpu does not cover probe/cpu-extra
 	next   uint64 // next seq wanted
 	start  uint64 // head when the cursor was made
 	replay bool   // since was given: a first gap is since-too-old
@@ -247,6 +272,13 @@ func (h *Hub) Subscribe(prefix string, since *uint64, epoch string) *Cursor {
 	return c
 }
 
+func (c *Cursor) matches(ch string) bool {
+	if c.exact {
+		return ch == c.prefix
+	}
+	return strings.HasPrefix(ch, c.prefix)
+}
+
 // Head is the hub's head when the cursor was made: envelopes up to it are
 // replay, later ones are live.
 func (c *Cursor) Head() uint64 { return c.start }
@@ -256,6 +288,18 @@ func (c *Cursor) Epoch() string { return c.h.epoch }
 
 // Next blocks until matching envelopes (at most max) or a gap are available.
 func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
+	return c.advance(ctx, max, false)
+}
+
+// Catch is Next for a replay: once the cursor is past the head it started from with nothing
+// more to return (the ring held no matching envelope up to it, or the last batch ended there),
+// it returns empty rather than waiting for a live envelope, so a caller knows the replay is over
+// on a quiet channel too (Codex round 43). A pending gap is returned first, as by Next.
+func (c *Cursor) Catch(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
+	return c.advance(ctx, max, true)
+}
+
+func (c *Cursor) advance(ctx context.Context, max int, catch bool) ([]*Envelope, *Gap, error) {
 	h := c.h
 	for {
 		h.mu.Lock()
@@ -283,13 +327,13 @@ func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
 		for c.next <= h.head && len(out) < max {
 			env := h.ring[c.next%ringSize]
 			c.next++
-			if strings.HasPrefix(env.Ch, c.prefix) {
+			if c.matches(env.Ch) {
 				out = append(out, env)
 			}
 		}
 		wake := h.wake
 		h.mu.Unlock()
-		if len(out) > 0 {
+		if len(out) > 0 || (catch && c.next > c.start) {
 			return out, nil, nil
 		}
 		select {

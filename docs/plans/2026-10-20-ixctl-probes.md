@@ -211,6 +211,54 @@ Measured and not bounded: `bytes` per node; CPU and RSS stay the process's, neve
 `probe.list` says rates and budgets; the gate's E18 checks it on the real plane. Per plane (D4
 open). Grilled by voice with the operator in three rounds; the resolution is on ix#416.
 
+**D4 resolved (2026-10-21, ix#402) and S2 slice 1 shipped (ix#408):** aggregation lives with the
+reader, and in V1 the reader is the consumer (IXQL `ix.ctl.events` on `peer/<peer>/probe/<node>`),
+no remote source on a local mux. What crosses a link is the intersection of the child's `export:
+true` at create (immutable, false by default) and the parent's exact request `peers[].probes`;
+the link subscribes by exact channel name (a prefix would carry `cpu-extra` with `cpu`), from the
+peer's `probe.list` at attach and the mirrored `probe.created` / `probe.removed` after, applied
+in arrival order (an event that landed between the subscription and the list is applied after
+it, one lost to a gap is not seen: the window the cursor-bound snapshot closes in slice 4); a
+pipe starts live on every session and after every drop, never from a seq (a name re-exported
+after an unexported incarnation would replay it, and the ctl replay cannot prove the
+incarnation since the list's reply may overtake it: slice 4's cursor-bound list is that proof;
+what a live start skips was contract G8 until slice 3's marker), and frames of a subscription
+that is no longer the pipe's are dropped (Codex rounds 35–38); the status and the list are read
+before any mirrored frame is applied while merged is drained into a backlog (a reconnect replay
+up to the ring cannot hold the reader back; the backlog is capped in frames and in bytes, past either the session
+reconnects), subscribing runs off the link's drain goroutine so a full queue cannot starve the
+reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`, and `dropped`, the records the link discarded for want of room. Three figures kept apart: sampling admitted (D10), envelopes
+published (samples × depth), bytes and records transported per link and per parent;
+`tree_rate_per_s` is not a federated bound. Slice 2 shipped the provenance: every mirrored
+envelope carries the source's `src_seq` / `src_epoch`, so the series
+`origin:src_epoch:node:<src_seq of probe.created>` and the dedup key `origin:src_epoch:src_seq`
+are the consumer's (gate E20, contract v0.1.4). Slice 3's first cut marks what the mirror skips,
+in the mirrored stream: a `link.gap` envelope of the parent's own on the pipe at every live start
+(`src_epoch`, `last_src_seq` / `last_src_epoch`) and on the mirrored `ctl` when the peer came back
+as a new instance (`epoch-changed`) or answered a gap on the resumed `ctl` / `svc/` (criteria 4 and
+5 of ix#408; gate E21; contract v0.1.5 closes G8). The second cut bounds the link's queues per
+class (criterion 6): `ctl` / `svc/` in their own lossless queue read first, the pipes in a queue
+bounded in records and bytes their forwarders never wait on; drops counted per pipe on the status
+and marked `dropped` on the pipe before the record that followed, a pipe subscription the peer
+dropped reopened live and marked `overflow` without ending the session (gate M3 measures the
+load; the Go test slows the parent to prove the bound and the priority; contract v0.1.6). The
+third cut bounds the catch-up (criterion 7): a replay allowance per link (frames, bytes, time,
+refilled slowly, never reset by a reconnect), past which the link subscribes live and marks the
+jump on the mirrored `ctl` (`jumped`, `from`, `to`, dated); a control subscription the peer
+dropped is reopened in the session, not the session torn down; the status tells `live` (the peer
+says so, with a live frame a subscriber asks for) from `reconciled` and lifts `degraded` only when
+both hold, `jumps` counted (Go tests: a catch-up past the allowance jumps and is marked, a second
+outage jumps at once, a sustained control stream above the reader jumps without reconnecting,
+`degraded` lifted only when live and reconciled; gate E22; contract v0.1.7). The fourth slice
+makes the list a snapshot (criteria 3 and 4): `probe.list` with a cursor of the plane's stream
+(`cursor: {seq, epoch}`, read under the tree's lock) and `created_seq` per node, a `stopping`
+state for a leaf whose stop is in progress (its probe.stopped and the end of the stop made one
+step: the list caught them apart); the link skips the lifecycle events the snapshot holds, keeps
+each pipe's identity on the status, and takes a new snapshot after a jump on ctl (Go tests: 25
+snapshots folded from a churning stream, the link's identities and skips, a jump re-listing; gate
+E23; contract v0.1.8). Grilled by voice with Gaia's read-only review folded in; the resolution is
+on ix#402. Gates E19..E23 check the slices on the two federated planes.
+
 Cross-host pipes (S2), shared sampling (S3), GitHub releases with
 a probes manifest beyond the workflow skeleton (S5), the prototype's WMI kinds (S6), the Gaia
 envelope's adapter (S7: the IX side is the draft contract

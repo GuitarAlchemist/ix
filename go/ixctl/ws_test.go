@@ -63,6 +63,10 @@ func TestWSOverflowGivesGapFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The overflow is the session's queue filling behind the writer while this client reads
+	// nothing; 20 MB of frames outrun any loopback buffer, and the writer knob makes the fill
+	// certain on every kernel rather than likely (the two peer-link flood tests needed it on Linux).
+	in.web.writeDelay.Store(int64(time.Millisecond))
 	pad := strings.Repeat("x", 1024)
 	for i := 0; i < 20000; i++ {
 		in.plane.Publish("svc/x", event("big", map[string]any{"pad": pad}))

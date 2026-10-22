@@ -157,16 +157,28 @@ pub struct Event {
     pub t: Option<i64>,
     /// The event's own payload.
     pub data: Value,
+    /// On a mirrored event (a `peer/<name>/...` channel): the source's own seq, so a consumer
+    /// here keys a series (`origin:src_epoch:node:<src_seq of probe.created>`) and dedups
+    /// (`origin:src_epoch:src_seq`) as one on the origin would. `None` on the plane's own events,
+    /// among them the `link.gap` continuity markers the plane publishes on a mirrored channel.
+    pub src_seq: Option<u64>,
+    /// On a mirrored event: the source's own boot id.
+    pub src_epoch: Option<String>,
 }
 
 impl From<&Event> for Value {
     /// The event as JSON, the envelope's fields flattened: `{channel, seq, epoch, origin,
-    /// kind, t, data}`.
+    /// kind, t, data}`, plus `src_seq` and `src_epoch` on a mirrored event only.
     fn from(e: &Event) -> Value {
-        json!({
+        let mut v = json!({
             "channel": e.channel, "seq": e.seq, "epoch": e.epoch, "origin": e.origin,
             "kind": e.kind, "t": e.t, "data": e.data,
-        })
+        });
+        if let (Some(seq), Some(epoch)) = (e.src_seq, &e.src_epoch) {
+            v["src_seq"] = json!(seq);
+            v["src_epoch"] = json!(epoch);
+        }
+        v
     }
 }
 
@@ -264,6 +276,17 @@ impl Iterator for Events {
                 ))));
             }
         };
+        // Provenance is a pair or nothing: half a pair is not a mirrored envelope's (the plane
+        // never writes one), so it is read as none rather than shown by half.
+        let src = match (
+            doc.get("src_seq").and_then(Value::as_u64),
+            doc.get("src_epoch").and_then(Value::as_str),
+        ) {
+            (Some(seq), Some(epoch)) if seq != 0 && !epoch.is_empty() => {
+                Some((seq, epoch.to_string()))
+            }
+            _ => None,
+        };
         Some(Ok(Event {
             channel: text("ch"),
             seq,
@@ -272,6 +295,8 @@ impl Iterator for Events {
             kind: doc["ev"]["kind"].as_str().unwrap_or("").to_string(),
             t: doc["ev"].get("t").and_then(Value::as_i64),
             data: doc["ev"].get("data").cloned().unwrap_or(Value::Null),
+            src_seq: src.as_ref().map(|s| s.0),
+            src_epoch: src.map(|s| s.1),
         }))
     }
 }
@@ -493,11 +518,31 @@ impl Ctl {
 
     /// `GET /v1/probe`: the probe tree as the plane holds it, `{nodes: [{name, kind, state,
     /// every_ms, ttl_ms, parent?, filter?, seq, errors, bytes, children, rate_per_s,
-    /// max_rate_per_s?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s,
+    /// max_rate_per_s?, export?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s,
     /// tree_rate_per_s}`: each node's declared rate and bytes emitted, each mux's budget, the
-    /// tree's (D10, ix#416). With `peer`, that peer's.
+    /// tree's (D10, ix#416), `export: true` on a node whose pipe federation may mirror (D4,
+    /// ix#402), and `created_seq`, the seq of the node's `probe.created` (the incarnation's
+    /// identity under its name, S2 slice 4). With `peer`, that peer's.
     pub fn probe_list(&self, peer: Option<&str>) -> Result<Value, CtlError> {
-        self.call("GET", &routed("/v1/probe", peer), None)
+        self.probe_list_at(peer, false)
+    }
+
+    /// `GET /v1/probe?with_cursor=1`: `probe_list` bound to a cursor of the plane's own stream
+    /// (S2 slice 4, criteria 3 and 4 of ix#408): `cursor: {seq, epoch}`, the head and the boot the
+    /// list stands at, read with the nodes under the tree's lock where every lifecycle event is
+    /// published, so the list is exactly what `ctl` says up to that seq and nothing of what
+    /// follows; a leaf whose stop is in progress (its `probe.stopped` not out yet) says `state:
+    /// "stopping"`. Without the cursor, the plain list. With `peer`, that peer's.
+    pub fn probe_list_at(&self, peer: Option<&str>, with_cursor: bool) -> Result<Value, CtlError> {
+        let mut path = routed("/v1/probe", peer);
+        if with_cursor {
+            path.push_str(if path.contains('?') {
+                "&with_cursor=1"
+            } else {
+                "?with_cursor=1"
+            });
+        }
+        self.call("GET", &path, None)
     }
 
     /// `POST /v1/probe/create`: declares `spec` (`{name, kind, every_ms?, parent?, filter?,

@@ -90,6 +90,7 @@ les pairs avec lesquels elle se fédère. Les champs inconnus sont refusés.
 | `limits.cpu_ms` | Temps processeur maximal, utilisateur et noyau, que tout l'arbre peut consommer, en millisecondes. 0 ou absent : pas de limite. |
 | `limits.processes` | Nombre maximal de processus que l'arbre peut tenir à la fois. 0 ou absent : pas de limite. |
 | `peers[].state_file` | Le fichier d'état d'une instance pair ; le lien y lit son adresse et son jeton et se reconnecte avec délai croissant (200 ms à 5 s). |
+| `peers[].probes` | Les nœuds de sonde du pair dont cette instance veut les tuyaux en miroir sous `peer/<nom>/probe/<nœud>`, par nom exact (D4, ix#402). Un tuyau ne traverse que tant que le pair marque le nœud `export: true` ; le statut dit ce qu'est chaque nom demandé. Vide ou absent : aucun tuyau de sonde ne traverse. |
 
 ### Limites
 
@@ -178,7 +179,7 @@ au plus.
 | `POST /v1/stop` | Corps `{"service": NOM, "peer"?: NOM}`. |
 | `POST /v1/shutdown` | Arrête chaque arbre et chaque sonde, puis les transports ; le fichier d'état est retiré. |
 | `GET /v1/probes[?peer=]` | Les kinds de sonde et les limites du système (`probe.kinds`, ci-dessous). |
-| `GET /v1/probe[?peer=]` | L'arbre des sondes (`probe.list`). |
+| `GET /v1/probe[?peer=][&with_cursor=1]` | L'arbre des sondes (`probe.list`) ; avec `with_cursor=1`, lié à un curseur du flux du plan. |
 | `POST /v1/probe/create[?peer=]` | Corps : un nœud (`probe.create`). |
 | `POST /v1/probe/start`, `stop`, `touch`, `remove` | Corps `{"node": NOM, "peer"?: NOM}`. |
 | `GET /v1/bookmark[?peer=]` | Les signets (`bookmark.list`, ci-dessous). |
@@ -208,7 +209,9 @@ Les événements arrivent en enveloppes :
 ```
 
 `seq` compte depuis 1 à chaque démarrage ; `epoch` nomme le démarrage ; `origin` est l'instance
-émettrice. Un abonné avec `since` rejoue depuis l'anneau (4096 enveloppes par instance) et reçoit
+émettrice ; une enveloppe miroir (canal `peer/`) porte aussi `src_seq` et `src_epoch`, la
+séquence et le démarrage propres à la source, pour qu'un lecteur ici identifie et dédoublonne
+comme un lecteur chez l'origine (S2 tranche 2). Un abonné avec `since` rejoue depuis l'anneau (4096 enveloppes par instance) et reçoit
 `{sub, gap}` quand c'est impossible : `since-too-old`, `overflow`, `epoch-changed`, `since-ahead`.
 
 ### Canaux et événements
@@ -217,10 +220,99 @@ Les événements arrivent en enveloppes :
 |---|---|
 | `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne est transmise comme cet événement (`t` en ms Unix sur l'horloge du service ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
-| `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). Pas encore en miroir chez les pairs (décision D4, ix#402). |
-| `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir. `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
+| `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). En miroir chez un pair seulement si ce nœud est créé avec `export: true` et que la spec de ce pair le nomme (D4, ix#402). |
+| `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir, plus les tuyaux `probe/<nœud>` que cette instance a demandés dans `peers[].probes` tant que le pair les exporte ; et les enveloppes `link.gap` propres au lien, les marqueurs de continuité (ci-dessous). `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 
-`ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`),
+**Tuyaux de sondes à travers le lien (D4, ix#402, tranchée le 2026-10-21 ; S2 ix#408, tranche 1).**
+Ce qui traverse est l'intersection de deux déclarations : l'enfant marque un nœud exportable à la
+création (`export: true`, immuable, faux par défaut : une disponibilité, pas une demande) et la
+spec du pair côté parent nomme exactement les nœuds voulus (`peers[].probes`). Le lien s'abonne au
+tuyau de chaque nœud voulu par son nom de canal exact (`probe/cpu` ne couvre pas
+`probe/cpu-extra`), depuis le `probe.list` du pair au raccordement puis depuis les
+`probe.created` / `probe.removed` en miroir ; `status.peers[].probes` dit ce qu'est chaque nom
+demandé : `mirrored`, `not-exportable`, `opening` (abonnement en cours) ou `absent` (pas de tel
+nœud, ou lien tombé). Un tuyau démarre en direct à chaque session et après chaque retrait,
+jamais depuis une séquence : le même nom de canal peut porter les enregistrements d'une autre
+incarnation ; depuis la tranche 4 le lien sait quelle incarnation il reflète (la liste liée à un
+curseur ci-dessous, `created_seq`, sur `status.peers[].probes[]`), si bien qu'une reprise depuis
+le dernier seq reflété serait désormais fondée et est laissée pour plus tard ; la tranche 2 a
+apporté l'identité, la tranche 3 le marqueur pour ce qu'un démarrage en direct saute (G8 du
+contrat fermé) et le rattrapage borné. L'agrégation
+vit chez le lecteur : en V1 le lecteur est le consommateur de `peer/<nom>/probe/<nœud>` (IXQL
+`ix.ctl.events`), aucun nœud local ne nomme une source distante. L'export est une règle de
+fédération, pas une barrière de confidentialité : l'abonnement direct à un tuyau est inchangé.
+La tranche 2 ajoute les `src_seq` / `src_epoch` de la source sur chaque enveloppe miroir. La
+tranche 3 marque ce que le miroir saute, dans le flux miroir lui-même : une enveloppe `link.gap`
+publiée par le parent (son origine à lui, sans provenance, jamais un compte) sur le tuyau à
+chaque démarrage en direct (`reason: live-start`, `src_epoch` le boot lu désormais,
+`last_src_seq` / `last_src_epoch` la dernière trame reflétée avant, s'il y en eut) et sur
+`peer/<nom>/ctl` quand le pair est revenu comme nouvelle instance (`epoch-changed`,
+`last_src_epoch` le boot d'avant) ou a répondu un trou sur le `ctl` / `svc/` repris du lien
+(`prefix`, `reason`, `from`, `oldest` tels qu'il les a dits : son historique a expiré) ; un trou
+local reste une trame gap. Les files du lien sont bornées par classe (critère 6 de ix#408) :
+`ctl` et `svc/` dans leur propre file, jamais écartés par le lien et lus d'abord (une trame de contrôle attend au plus l'application d'une trame de tuyau ; le débordement par le pair de ces abonnements les rouvre dans la session, repris ou en direct comme ci-dessous, et un rejeu que son anneau ne tient plus est un trou, marqué) ; les tuyaux demandés dans une
+file bornée en enregistrements (1024) et en octets (4 Mio) que leurs relais n'attendent jamais
+pour un enregistrement (la seule trame qu'un relais attend de déposer est le trou de débordement
+de son abonnement, sa dernière), si bien qu'un parent plus lent que la charge offerte perd des
+enregistrements de tuyau plutôt que de grossir ou de retenir le cycle de vie ; chaque série de pertes est comptée sur
+`status.peers[].probes[].dropped` et marquée sur le tuyau (`link.gap`, `reason: dropped`,
+`dropped` le compte exact du lien lui-même) avant l'enregistrement qui a suivi, et un abonnement
+de tuyau que le pair a lui-même lâché (`overflow`) est marqué et rouvert en direct sans clore la
+session. Un rattrapage de `ctl` / `svc/` (une reprise après une coupure ou après que le pair a
+lâché l'abonnement) est borné par une provision que le lien possède (critère 7) : 8192 trames et
+32 Mio par lien, remplie à nouveau en une minute, au plus 30 s par rattrapage, jamais remise à
+zéro par une reconnexion. Un rattrapage ne commence qu'avec une trame et un octet de provision et
+s'arrête à la première trame qu'elle ne couvre pas : le lien s'abonne alors en direct et marque le
+saut sur `peer/<nom>/ctl` (`link.gap`, `reason: jumped`, `prefix`, `from` le dernier seq reflété
+sur ce préfixe, `to` la tête du pair d'où part l'abonnement en direct, `src_epoch`, daté par `t`) :
+un parent qui ne suit pas rejoue une fois, borné, puis saute ; il rejoue au plus une provision par
+minute de remplissage, ne se reconnecte pour rien de cela (un abonnement de contrôle lâché est
+rouvert dans la même session) et ne grossit pas. Un départ en direct qui ne manque rien (la tête du
+pair est le dernier seq reflété sur le préfixe, dans le même démarrage) n'est pas un saut et ne
+marque rien ; l'intervalle qu'un marqueur nomme est celui de la tête que tous les canaux partagent,
+il peut donc ne contenir que des trames d'autres canaux (le marqueur sur-déclare, jamais l'inverse). Le
+`status.peers[]` du parent distingue `live` (le lien est haut et ses deux abonnements de contrôle
+ont dépassé leur rejeu : le lien demande au pair de le dire, `subscribe` avec `live: true` répondu
+par une trame `{"sub", "live": true}` une fois le rejeu passé la tête d'où l'abonnement est parti,
+tout de suite s'il n'y avait rien à rejouer ; aucun autre abonné ne la reçoit) de `reconciled` (le
+lien est haut, la liste des sondes du pair a été appliquée dans cette session et aucun tuyau
+demandé n'est encore en ouverture), ne lève `degraded` que lorsque les deux tiennent, et compte
+dans `jumps` les rattrapages abandonnés. Un saut de `ctl` perd les événements de cycle de vie de
+son intervalle : l'état n'est plus su réconcilié (`reconciled` faux, `degraded`, dès l'étape qui
+abandonne le rattrapage) jusqu'à ce que le lien relise la liste, ce qu'il fait sur sa boucle de
+session juste après que l'abonnement en direct tient, comme l'instantané ci-dessous ; voir la
+résolution sur ix#402.
+
+**La liste comme instantané (S2 tranche 4, critères 3 et 4 de ix#408).** `probe.list` pris avec
+`with_cursor` (`GET /v1/probe?with_cursor=1`, IXQL `ix.ctl.probe.list(with_cursor: true)`) dit le
+point du flux du plan où il se tient, `cursor: {seq, epoch}` (la tête et le démarrage), lu sous le
+verrou de l'arbre avec les nœuds, là où chaque événement de cycle de vie est publié : quels nœuds
+existent, leur kind, parent et export, lesquels tournent, sont exactement ce que `ctl` dit jusqu'à
+ce seq et rien de ce qui suit, si bien qu'un lecteur peut replier le flux à partir du curseur sans
+trou ni répétition (ce qu'aucun événement ne dit, `stopping`, `expires_in_ms`, les compteurs, est
+la lecture propre de l'arbre au curseur). Chaque nœud porte `created_seq`, le
+seq de son `probe.created` : l'identité de l'incarnation sous ce nom (une recréation du même nom
+en est une nouvelle). Une feuille dont l'arrêt est en cours dit `state: "stopping"` (son
+`probe.stopped` n'est pas encore sorti : `ctl` dit encore running, un démarrage est refusé
+jusque-là ; l'événement et la fin de l'arrêt sont une seule étape, donc la liste ne dit jamais
+`stopping` une fois que `ctl` a dit stopped). Le lien lit sa liste ainsi : un événement de cycle
+de vie au curseur ou avant est déjà reflété et n'est pas suivi ; une liste qui n'est pas un
+instantané (sans curseur, un nœud voulu sans `created_seq`) est refusée et met fin à la session ;
+chaque tuyau voulu porte l'identité qu'il reflète (`status.peers[].probes[].created_seq` /
+`src_epoch`, depuis la liste ou depuis le `probe.created` suivi), si bien qu'un consommateur qui
+lit le statut, puis le tuyau, cle ce qu'il lit dès lors `origin:src_epoch:node:created_seq` sans
+avoir lu cet événement (le statut est une lecture, pas un point du flux : une trame lue avant lui
+n'est distinguée que par le `probe.created` miroir ou la liste avec son curseur) ; après un saut
+sur `ctl` le lien relit la liste sur sa boucle de session, en retenant les trames de contrôle qui
+arrivent entre-temps (bornées comme au début de session) pour les appliquer après elle, et s'y
+réconcilie : un nœud voulu disparu de la liste est retiré, un nom dont l'identité a changé est
+rouvert comme la nouvelle incarnation (son démarrage en direct marqué comme tout autre), et
+`reconciled` tient de nouveau. Testé sur un arbre qui bouge (25 instantanés repliés depuis le
+flux, des feuilles s'arrêtant sous la liste), sur les identités et les sauts du lien, sur les
+trames retenues, sur `reconciled` qui tombe au saut, et sur un déluge de `ctl` qui fait sauter le
+lien et relire la liste ; porte E23 sur les deux plans.
+
+`ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`, `export` quand posé),
 `probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
 une `reason` (`requested`, `expired`, `removed`, `parent-removed`, `shutdown`).
 
@@ -280,7 +372,7 @@ ni de start) et arrête chaque nœud en marche, raison `shutdown`.
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
 | `probe.create` | `probe` (un nœud) | `{node, kind, state: "stopped", depth}` (`depth` : les mux au-dessus) |
-| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
+| `probe.list` | `with_cursor?` | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, created_seq, max_rate_per_s?, export?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s, cursor?: {seq, epoch}}` (`state` aussi `stopping` pour une feuille dont l'arrêt est en cours ; `cursor` avec `with_cursor`) |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (sans effet sur un nœud en marche) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
 | `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (le temps restant, sur un nœud en marche) |
@@ -381,7 +473,7 @@ redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Ru
 sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
 plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
 les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
-44 vérifications, E1..E18, une boucle de
+52 vérifications, E1..E24 et M3 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair ; M3 : huit tuyaux à 10 ms à travers le lien, les enregistrements reflétés, les pertes comptées et marquées, et le temps qu'un `probe.created` met à traverser sous la charge ; E22 : autour du redémarrage de b, le statut du parent distingue un flux en direct d'un état réconcilié et ne lève `degraded` que lorsque les deux tiennent ; E23 : l'identité d'une sonde concorde entre la liste de b, la liste routée de a et le statut de a, et la liste de b repliée depuis son propre flux jusqu'au curseur est exactement la liste, sans trou ; E24 : les totaux qu'annoncent les deux README, la docstring du gate et le commentaire du workflow CI (`.github/workflows/ci.yml`) correspondent aux vérifications exécutées, chaque énoncé de chaque texte, si bien qu'une vérification ajoutée sans que les textes suivent fait échouer le gate), une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).
@@ -394,7 +486,11 @@ python go/ixctl/e2e/e2e.py --build --work D   # garde binaires, état, exécutio
 
 Le job lit la constitution Demerzel dans le sous-module `governance/demerzel`
 (`IX_GOVERNANCE_DIR` la remplace). La barrière n'imprime jamais un jeton et scanne chaque fichier
-écrit pour en trouver un. La CI lance aussi `go vet` et `go test -race` sous Linux.
+écrit pour en trouver un. La CI lance aussi `go vet` et `go test -race` sous Linux ; depuis Windows,
+`pwsh scripts/ixctl-test-linux.ps1` lance la même chose dans une distro WSL avant un push (la suite
+peut passer ici et échouer là : un test qui a besoin qu'un abonnement déborde pose le bouton
+`writeDelay` du serveur, car les tampons loopback de Linux absorbent une rafale que ceux de Windows
+ne tiennent pas).
 
 ## Limites connues
 

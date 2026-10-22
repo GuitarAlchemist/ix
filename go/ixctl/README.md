@@ -87,6 +87,7 @@ peers it federates with. Unknown fields are refused.
 | `limits.cpu_ms` | Most processor time, user and kernel, the whole tree may use, in milliseconds. 0 or absent: no limit. |
 | `limits.processes` | Most processes the tree may hold at once. 0 or absent: no limit. |
 | `peers[].state_file` | The state file of a peer instance; the link reads its address and token there and reconnects with backoff (200 ms to 5 s). |
+| `peers[].probes` | The peer's probe nodes whose pipes this instance wants mirrored as `peer/<name>/probe/<node>`, by exact name (D4, ix#402). A pipe crosses only while the peer marks the node `export: true`; the status says what each wanted name is. Empty or absent: no probe pipe crosses. |
 
 ### Limits
 
@@ -167,7 +168,7 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `POST /v1/stop` | Body `{"service": NAME, "peer"?: NAME}`. |
 | `POST /v1/shutdown` | Stops every tree and every probe, then the transports; the state file is removed. |
 | `GET /v1/probes[?peer=]` | The probe kinds and the system's limits (`probe.kinds`, below). |
-| `GET /v1/probe[?peer=]` | The probe tree (`probe.list`). |
+| `GET /v1/probe[?peer=][&with_cursor=1]` | The probe tree (`probe.list`); with `with_cursor=1`, bound to a cursor of the plane's stream. |
 | `POST /v1/probe/create[?peer=]` | Body: a node (`probe.create`). |
 | `POST /v1/probe/start`, `stop`, `touch`, `remove` | Body `{"node": NAME, "peer"?: NAME}`. |
 | `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
@@ -196,7 +197,9 @@ Events arrive as envelopes:
 ```
 
 `seq` counts from 1 at each boot; `epoch` names the boot; `origin` is the instance that emitted
-it. A subscriber with `since` replays from the ring (4096 envelopes per instance) and gets
+it; a mirrored envelope (a `peer/` channel) also carries `src_seq` and `src_epoch`, the
+source's own seq and boot, so a reader here keys and dedups as one on the origin would (S2
+slice 2). A subscriber with `since` replays from the ring (4096 envelopes per instance) and gets
 `{sub, gap}` when it cannot: `since-too-old`, `overflow`, `epoch-changed`, `since-ahead`.
 
 ### Channels and events
@@ -205,10 +208,90 @@ it. A subscriber with `since` replays from the ring (4096 envelopes per instance
 |---|---|
 | `ctl` | The plane's own events: `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
 | `svc/<name>` | The service's output. A stdout line that is a JSON object with a string `kind` is forwarded as that event (`t` in Unix ms on the service's clock; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
-| `probe/<node>` | A probe node's pipe: `sample` events (below). Not mirrored to peers yet (decision D4, ix#402). |
-| `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored. `subscribe` is always local; ops carry `peer` to be forwarded. |
+| `probe/<node>` | A probe node's pipe: `sample` events (below). Mirrored to a peer only when this node is created with `export: true` and that peer's spec names it (D4, ix#402). |
+| `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored, plus the probe pipes `probe/<node>` this instance asked for in `peers[].probes` while the peer exports them; and the link's own `link.gap` envelopes, the continuity markers (below). `subscribe` is always local; ops carry `peer` to be forwarded. |
 
-`ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`),
+**Probe pipes across the link (D4, ix#402, resolved 2026-10-21; S2 ix#408, slice 1).** What crosses
+is the intersection of two declarations: the child marks a node exportable at create (`export:
+true`, immutable, false by default: an availability, not a request) and the parent's peer spec
+names exactly the nodes it wants (`peers[].probes`). The link subscribes to each wanted node's
+pipe by its exact channel name (`probe/cpu` does not cover `probe/cpu-extra`), from the peer's
+`probe.list` when the link comes up and from the mirrored `probe.created` / `probe.removed`
+after; `status.peers[].probes` says what each wanted name is: `mirrored`, `not-exportable`,
+`opening` (subscribing), or `absent` (no such node, or the link down). A pipe starts live on
+every session and after every drop, never from a seq: the same channel name can carry another
+incarnation's records; since slice 4 the link knows which incarnation it mirrors (the cursor-bound
+list below, `created_seq`, on `status.peers[].probes[]`), so a resume from the last seq mirrored
+would now be sound and is left for later; slice 2 brought the identity, slice 3 the marker for what
+a live start skips (contract G8 closed) and the bounded catch-up. Aggregation lives with the reader: in V1 the reader
+is the consumer of `peer/<name>/probe/<node>` (IXQL `ix.ctl.events`), no local node names a
+remote source. Export is a federation rule, not a confidentiality barrier: direct subscription to
+a pipe is unchanged. Slice 2 adds the source's `src_seq` / `src_epoch` on every mirrored
+envelope. Slice 3 marks what the mirror skips, in the mirrored stream itself: a `link.gap`
+envelope the parent publishes (its own origin, no provenance, never a count) on the pipe at
+every live start (`reason: live-start`, `src_epoch` the boot now read, `last_src_seq` /
+`last_src_epoch` the last frame mirrored on it before, when any) and on `peer/<name>/ctl` when
+the peer came back as a new instance (`epoch-changed`, `last_src_epoch` the boot before) or
+answered a gap on the link's resumed `ctl` / `svc/` (`prefix`, `reason`, `from`, `oldest` as it
+said: its history expired); a local gap stays a gap frame. The link's queues are bounded per
+class (criterion 6 of ix#408): `ctl` and `svc/` in their own queue, never shed by the link and read first (a control frame waits at most one pipe frame's apply; the peer's own overflow of those subscriptions reopens them in the session, resumed or live as below, and a replay its ring no longer holds is a gap, marked); the
+wanted pipes in a queue bounded in records (1024) and in bytes (4 MiB) that their forwarders
+never wait on for a record (the one frame a forwarder waits to queue is its subscription's
+overflow gap, its last), so a parent slower than the offered load drops pipe records rather than
+grow or hold the lifecycle back; each run of drops is counted on `status.peers[].probes[].dropped` and
+marked on the pipe (`link.gap`, `reason: dropped`, `dropped` the link's own exact count) before
+the record that followed, and a pipe subscription the peer itself dropped (`overflow`) is marked
+and reopened live without ending the session. A catch-up of `ctl` / `svc/` (a resume after an
+outage or after the peer dropped the subscription) is bounded by an allowance the link owns
+(criterion 7): 8192 frames and 32 MiB per link, refilled to full over a minute, at most 30 s per
+catch-up, never reset by a reconnect. A catch-up begins only with a frame and a byte of it left
+and ends at the first frame it cannot cover: the link then subscribes live instead and marks the
+jump on `peer/<name>/ctl` (`link.gap`, `reason: jumped`, `prefix`, `from` the last seq mirrored on
+that prefix, `to` the peer's head the live subscription starts from, `src_epoch`, dated by `t`),
+so a parent that cannot keep up replays once, bounded, then jumps: it replays at most one
+allowance per minute of refill, reconnects for none of it (a dropped control subscription is
+reopened in the same session) and does not grow. A live start that misses nothing (the peer's
+head is the last seq mirrored on the prefix, in the same boot) is no jump and marks nothing; the
+span a marker names is of the head every channel shares, so it may hold frames of other channels
+only (the marker over-reports, never under). The parent's `status.peers[]` tells `live` (the link is up and both control
+subscriptions are past their replay: the link asks the peer to say so, `subscribe` with
+`live: true` answered by one `{"sub", "live": true}` frame once the replay is past the head the
+subscription started from, at once when nothing was to be replayed; no other subscriber gets it)
+from `reconciled` (the link is up, the peer's probe list was applied this session and no wanted
+pipe is still opening), lifts `degraded` only when both hold, and counts the catch-ups given up in
+`jumps`. A jump of `ctl` loses the lifecycle events of its span: the state is no longer known
+reconciled (`reconciled` false, `degraded`, from the step that gives the catch-up up) until the
+link reads the list again, which it does on its session loop right after the live subscription
+stands, as the snapshot below; see the resolution on ix#402.
+
+**The list as a snapshot (S2 slice 4, criteria 3 and 4 of ix#408).** `probe.list` taken with
+`with_cursor` (`GET /v1/probe?with_cursor=1`, IXQL `ix.ctl.probe.list(with_cursor: true)`) says
+the point of the plane's own stream it stands at, `cursor: {seq, epoch}` (the head and the boot),
+read under the tree's lock with the nodes, where every lifecycle event is published: which nodes
+exist, their kind, parent and export, which are running, are exactly what `ctl` says up to that
+seq and nothing of what follows, so a reader can fold the stream from the cursor on without a
+hole or a repeat (what no event says, `stopping`, `expires_in_ms`, the counters, is the tree's own
+reading at the cursor). Every node carries `created_seq`, the seq of
+its `probe.created`: the identity of the incarnation under that name (a same-name recreation is a
+new one). A leaf whose stop is in progress says `state: "stopping"` (its `probe.stopped` is not out
+yet: `ctl` still says running, a start is refused until it is; the event and the end of the stop
+are one step, so the list never says `stopping` once `ctl` said stopped). The link reads its list
+so: a lifecycle event at or before the cursor is already reflected and not followed; a list that
+is no snapshot (no cursor, a wanted node without `created_seq`) is refused and ends the session;
+each wanted pipe carries the identity it mirrors (`status.peers[].probes[].created_seq` /
+`src_epoch`, from the list or from the followed `probe.created`), so a consumer that reads the
+status, then the pipe, keys what it reads from then on `origin:src_epoch:node:created_seq` without
+having read that event (the status is a reading, not a point of the stream: a frame read before
+it is told apart only by the mirrored `probe.created` or the list with its cursor); after a jump
+on `ctl` the link reads the list again on its session loop, holding the control frames that
+arrive meanwhile (bounded as at session start) and applying them after it, and reconciles to it:
+a wanted node gone from the list is dropped, a name whose identity changed is reopened as the new
+incarnation (its live start marked as any), and `reconciled` holds again. Tested on a churning
+tree (25 snapshots folded from the stream, leaves stopping under the list), on the link's
+identities and skips, on the held frames, on `reconciled` falling at the jump, and on a flood of
+`ctl` that makes the link jump and read the list again; gate E23 on the two planes.
+
+`ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`, `export` when set),
 `probe.started` (`expires_in_ms` when leased), `probe.stopped` and `probe.removed` with a `reason`
 (`requested`, `expired`, `removed`, `parent-removed`, `shutdown`).
 
@@ -265,7 +348,7 @@ closes admission (no create or start from then on) and stops every running node,
 |---|---|---|
 | `probe.kinds` | | `{kinds: [{kind, version, fields, doc}], limits, version}` |
 | `probe.create` | `probe` (a node) | `{node, kind, state: "stopped", depth}` (`depth`: the muxes above it) |
-| `probe.list` | | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, max_rate_per_s?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s}` |
+| `probe.list` | `with_cursor?` | `{nodes: [{name, kind, state, every_ms, ttl_ms, seq, errors, bytes, children, rate_per_s, created_seq, max_rate_per_s?, export?, parent?, filter?, expires_in_ms?}], count, max_nodes, rate_per_s, max_rate_per_s, tree_rate_per_s, cursor?: {seq, epoch}}` (`state` also `stopping` for a leaf whose stop is in progress; `cursor` with `with_cursor`) |
 | `probe.start` | `node` | `{node, state: "running", expires_in_ms?}` (a noop on a running node) |
 | `probe.stop` | `node` | `{node, state: "stopped"}` |
 | `probe.touch` | `node` | `{node, state, ttl_ms, expires_in_ms?}` (the time left, on a running node) |
@@ -358,7 +441,7 @@ pipes and the `ctl` lifecycle carried after a point the operator named; bounds, 
 peer's bookmark; survival of a restart) and the IXQL probe surface (E17: `probe.ixql` through
 the Rust client, a CPU probe under a mux, ten records, the tree removed) and probe budgets (E18:
 the plane's budget in `limits`, a leaf past its mux's `max_rate_per_s` refused naming both, a leaf
-carries no budget, a mux cannot widen, rates and bytes on the list). 44 checks, E1..E18, a
+carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record; E21: the link marks what the mirror skips, a `link.gap` on the pipe at a live start and on the mirrored `ctl` at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops counted and marked, and the time a `probe.created` takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts `degraded` only when both hold; E23: the identity of a probe agrees on b's list, a's routed list and a's status, and b's list folded from its own stream to the cursor is exactly the list, no gap; E24: the totals the two READMEs, the gate's own docstring and the CI workflow's comment (`.github/workflows/ci.yml`) state match the checks that ran, every statement of each text, so a check added without the texts following it fails the gate). 52 checks, E1..E24, a
 restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).
@@ -371,7 +454,10 @@ python go/ixctl/e2e/e2e.py --build --work D   # keep binaries, state, runs and r
 
 The job reads the Demerzel constitution from the `governance/demerzel` submodule
 (`IX_GOVERNANCE_DIR` overrides it). The gate never prints a token and scans every file it wrote
-for one. CI also runs `go vet` and `go test -race` on Linux.
+for one. CI also runs `go vet` and `go test -race` on Linux; from Windows,
+`pwsh scripts/ixctl-test-linux.ps1` runs the same in a WSL distro before a push (the suite can pass
+here and fail there: a test that needs a subscription to overflow sets the server's `writeDelay`
+knob, since Linux loopback buffers absorb a flood the Windows ones do not).
 
 ## Known limits
 

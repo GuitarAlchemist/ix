@@ -194,6 +194,10 @@ type NodeSpec struct {
 	TTLMs   int64   `json:"ttl_ms,omitempty"`   // the lease from a start, renewed by probe.touch; 0 is none
 	// MaxRatePerS narrows the plane's budget for this mux's subtree (D10); a leaf carries none.
 	MaxRatePerS int64 `json:"max_rate_per_s,omitempty"`
+	// Export marks the node's pipe as available to federation (D4, ix#402): a peer that names
+	// this node in its spec mirrors it. An availability, not a request; immutable; false by
+	// default. Direct subscription to the pipe is unchanged.
+	Export bool `json:"export,omitempty"`
 }
 
 // Filter is the smallest filter that composes: every `where` term must hold, only the
@@ -376,6 +380,7 @@ type probeNode struct {
 	passed   uint64 // records the filter's where let through, for every
 	errors   uint64 // samples the sampler failed, emitted with an `error` field
 	bytes    uint64 // bytes of the records emitted, encoded (D10: measured, not bounded)
+	created  uint64 // the seq of its probe.created: the incarnation's identity under its name (S2 slice 4)
 
 	cancel context.CancelFunc // ends the run; nil when stopped
 	done   chan struct{}      // closed when the run's goroutine has returned
@@ -550,17 +555,18 @@ func (t *probeTree) finishRemoval() {
 }
 
 const (
-	probeStopped = "stopped"
-	probeRunning = "running"
+	probeStopped  = "stopped"
+	probeRunning  = "running"
+	probeStopping = "stopping" // on the list only: a leaf's stop in progress, its probe.stopped not out yet
 )
 
-// event publishes a node's lifecycle on ctl.
-func (t *probeTree) event(kind string, n *probeNode, extra map[string]any) {
+// event publishes a node's lifecycle on ctl and returns the envelope (its seq names the change).
+func (t *probeTree) event(kind string, n *probeNode, extra map[string]any) *Envelope {
 	d := map[string]any{"node": n.spec.Name, "kind": n.kind.String()}
 	for k, v := range extra {
 		d[k] = v
 	}
-	t.hub.Publish("ctl", event(kind, d))
+	return t.hub.Publish("ctl", event(kind, d))
 }
 
 // start runs a node; a second start is a noop. Only a node with a sampler runs on its own:
@@ -716,20 +722,23 @@ func (t *probeTree) stopIf(name, reason string, want *probeNode) (any, error) {
 		return reply, nil
 	}
 	// A leaf's probe.stopped waits for its loop's last tick, outside the lock; until it is out
-	// the node is `stopping`: a start is refused and a remove waits (finishStop).
+	// the node is `stopping` (so says the list): a start is refused and a remove waits
+	// (finishStop).
 	n.stopping = true
 	t.mu.Unlock()
-	defer t.finishStop(n) // after probe.stopped is out, whatever happens on the way
 	cancel()
 	<-done
-	t.event("probe.stopped", n, map[string]any{"reason": reason})
+	t.finishStop(n, reason)
 	return reply, nil
 }
 
-// finishStop ends a leaf's stop once its probe.stopped is out: the node may start again,
-// and a remove that met the stop in progress may go on (it waits on t.done).
-func (t *probeTree) finishStop(n *probeNode) {
+// finishStop ends a leaf's stop once its run is over: its probe.stopped is said and the stop
+// ended in one step under the lock, so a list never says `stopping` once ctl said stopped (S2
+// slice 4: the list is exactly what ctl says up to its cursor); the node may start again, and a
+// remove that met the stop in progress may go on (it waits on t.done).
+func (t *probeTree) finishStop(n *probeNode, reason string) {
 	t.mu.Lock()
+	t.event("probe.stopped", n, map[string]any{"reason": reason})
 	n.stopping = false
 	t.done.Broadcast()
 	t.mu.Unlock()
@@ -976,25 +985,40 @@ func (t *probeTree) create(spec *NodeSpec) (any, error) {
 		t.nodes[spec.Parent].children = append(t.nodes[spec.Parent].children, spec.Name)
 		extra["parent"] = spec.Parent
 	}
-	t.event("probe.created", n, extra)
+	if spec.Export {
+		extra["export"] = true
+	}
+	n.created = t.event("probe.created", n, extra).Seq
 	return map[string]any{"node": spec.Name, "kind": kind.String(), "state": n.state, "depth": depth}, nil
 }
 
-// list answers `probe.list`: every node in creation order, with its usage against the bounds.
-func (t *probeTree) list() any {
+// list answers `probe.list`: every node in creation order, with its usage against the bounds and
+// the seq of its probe.created (`created_seq`, the incarnation's identity). With the cursor, the
+// reply says the head and the epoch the list stands at, read under the lock that every lifecycle
+// event is published under: the list is exactly what ctl says up to that seq, nothing of what
+// follows (S2 slice 4). A leaf whose stop is in progress says `stopping`: its probe.stopped is
+// not out yet, so ctl still says running and a start is refused until it is.
+func (t *probeTree) list(withCursor bool) any {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	nodes := make([]map[string]any, 0, len(t.order))
 	now := time.Now()
 	for _, name := range t.order {
 		n := t.nodes[name]
+		state := n.state
+		if n.stopping {
+			state = probeStopping
+		}
 		m := map[string]any{
-			"name": name, "kind": n.kind.String(), "state": n.state, "every_ms": n.spec.EveryMs,
-			"ttl_ms": n.spec.TTLMs, "seq": n.seq, "errors": n.errors, "bytes": n.bytes,
+			"name": name, "kind": n.kind.String(), "state": state, "every_ms": n.spec.EveryMs,
+			"ttl_ms": n.spec.TTLMs, "seq": n.seq, "errors": n.errors, "bytes": n.bytes, "created_seq": n.created,
 			"children": len(n.children), "rate_per_s": ratePerS(t.subtreeRate(name)),
 		}
 		if n.kind.Name == "mux" {
 			m["max_rate_per_s"] = t.budgetOf(n)
+		}
+		if n.spec.Export {
+			m["export"] = true
 		}
 		if left := n.leaseLeft(now); left != nil {
 			m["expires_in_ms"] = *left
@@ -1007,10 +1031,14 @@ func (t *probeTree) list() any {
 		}
 		nodes = append(nodes, m)
 	}
-	return map[string]any{
+	reply := map[string]any{
 		"nodes": nodes, "count": len(nodes), "max_nodes": probeMaxNodes,
 		"rate_per_s": ratePerS(t.treeRate()), "max_rate_per_s": t.budget.maxRate, "tree_rate_per_s": t.budget.treeRate,
 	}
+	if withCursor {
+		reply["cursor"] = map[string]any{"seq": t.hub.Head(), "epoch": t.hub.Epoch()}
+	}
+	return reply
 }
 
 // kindsReply answers `probe.kinds`: the registry, sorted by name, and the limits.
