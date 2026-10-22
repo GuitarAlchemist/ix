@@ -166,12 +166,12 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 - **G7, closed in v0.1.1** (a node's filter hid its error samples). A failed read now reaches the
   pipe whatever the filter; `errors` on `probe.list` remains the cumulative count.
 - **G8, what a mirrored pipe loses across a link outage is not marked.** On a parent plane,
-  `peer/<peer>/probe/<node>` resumes from the last mirrored seq after a reconnect only when the
-  link's ctl replay proves the node is still the incarnation it last mirrored (no gap on `ctl`,
-  no `probe.created` / `probe.removed` of the name since); otherwise, and after every drop, it
-  starts live, and the records of the outage are skipped without a marker on the mirrored pipe
-  (the local ring's `gap` says nothing about them). A consumer that needs continuity reads the
-  child directly until slice 3 of S2 (ix#408) relays the loss as a continuity marker (D4 Q6).
+  `peer/<peer>/probe/<node>` starts live on every session of the link and after every drop,
+  never from the last mirrored seq (the link has no proof that the name is still the incarnation
+  it mirrored: the cursor-bound list of slice 4 is that proof), so the records of an outage are
+  skipped without a marker on the mirrored pipe (the local ring's `gap` says nothing about
+  them). A consumer that needs continuity reads the child directly until slice 3 of S2 (ix#408)
+  relays the loss as a continuity marker (D4 Q6).
 
 ## Changes
 

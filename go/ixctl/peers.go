@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,10 @@ const (
 	peerBackoffMin = 200 * time.Millisecond
 	peerBackoffMax = 5 * time.Second
 	peerRefresh    = 100 * time.Millisecond // at most one status refresh per interval
+	// maxLinkBacklog bounds what a session holds of ctl and svc/ while its first replies are
+	// awaited: a resumed replay is at most the ring (4096), the rest is five seconds of
+	// lifecycle and service events; past it the session gives up and reconnects.
+	maxLinkBacklog = 16384
 )
 
 // peerLink federates with one peer: it mirrors the peer's ctl and svc/
@@ -205,6 +210,9 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	for n := 0; n < len(ops); {
 		select {
 		case pf := <-merged:
+			if len(backlog) == maxLinkBacklog {
+				return true, fmt.Errorf("link backlog over %d frames while the peer's first replies were awaited", maxLinkBacklog)
+			}
 			backlog = append(backlog, pf)
 		case r := <-got:
 			n++
@@ -247,7 +255,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	// reach us while the client's reader is not held back by a full subscription channel, so
 	// the loop never waits on one.
 	fail := make(chan error, 1)
-	if err := l.reconcilePipes(ctx, c, merged, fail, st.Name, list, backlog); err != nil {
+	if err := l.reconcilePipes(ctx, c, merged, fail, list); err != nil {
 		return true, err
 	}
 	for _, pf := range backlog {
@@ -272,7 +280,9 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 
 // apply mirrors one frame the link received, follows the peer's own lifecycle events on the
 // wanted pipes, and kicks the status refresher. An overflow ends the session: the peer dropped
-// that subscription, and a reconnect resumes it from the last mirrored seq.
+// that subscription, and a reconnect resumes ctl and svc/ from the last mirrored seq (a pipe
+// starts live again). The other gap reasons answer a since the link gave; a pipe gives none,
+// and ctl / svc/ get theirs at subscribe time, so none reaches here (ignored as before).
 func (l *peerLink) apply(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, refresh chan<- struct{}, origin string, pf peerFrame) error {
 	if pf.f.Gap != nil && pf.f.Gap.Reason == "overflow" {
 		return errors.New("mirror of " + pf.prefix + " overflowed")
@@ -304,13 +314,13 @@ func (l *peerLink) current(ch string, sub int64) bool {
 
 // reconcilePipes applies the peer's probe list, read before any frame of the backlog is
 // applied (so no lifecycle event already queued is undone by a list arriving later, Codex
-// round 36), and mirrors every wanted node it exports. A pipe resumes from its last mirrored
-// seq only when the ctl replay in the backlog proves it is still the incarnation the link last
-// mirrored: no gap on ctl, and no probe.created / probe.removed of that name since. Otherwise
-// it starts live: the same channel name may carry another incarnation's records, and the link
-// cannot tell them apart yet (slice 2 brings the created seq, slice 3 the bounded replay and
-// the continuity marker for what a live start skips).
-func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, origin string, data json.RawMessage, backlog []peerFrame) error {
+// round 36), and mirrors every wanted node it exports. Every pipe starts live: a resume from
+// the last mirrored seq would need proof that the name is still the incarnation the link
+// mirrored, and the ctl replay cannot give it (the list's reply may overtake the replay, so
+// an absent lifecycle event proves nothing, Codex round 38); the cursor-bound list of slice 4
+// is that proof, slice 2 the created seq, slice 3 the bounded replay and the continuity
+// marker for what a live start skips (contract G8).
+func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, data json.RawMessage) error {
 	if len(l.spec.Probes) == 0 {
 		return nil
 	}
@@ -323,28 +333,8 @@ func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- 
 	if err := json.Unmarshal(data, &list); err != nil {
 		return err
 	}
-	ctlGap, moved := false, map[string]bool{}
-	for _, pf := range backlog {
-		if pf.prefix != "ctl" {
-			continue
-		}
-		if pf.f.Gap != nil {
-			ctlGap = true
-		}
-		if pf.f.Env == nil || pf.f.Env.Origin != origin {
-			continue
-		}
-		if k := pf.f.Env.Ev.Kind; k == "probe.created" || k == "probe.removed" {
-			var d struct {
-				Node string `json:"node"`
-			}
-			if json.Unmarshal(pf.f.Env.Ev.Data, &d) == nil {
-				moved[d.Node] = true
-			}
-		}
-	}
 	for _, n := range list.Nodes {
-		l.setPipe(ctx, c, merged, fail, n.Name, n.Export, !ctlGap && !moved[n.Name])
+		l.setPipe(ctx, c, merged, fail, n.Name, n.Export)
 	}
 	return nil
 }
@@ -373,15 +363,12 @@ func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peer
 		l.dropPipe(ctx, c, d.Node, pipeAbsent)
 		return
 	}
-	l.setPipe(ctx, c, merged, fail, d.Node, d.Export, false)
+	l.setPipe(ctx, c, merged, fail, d.Node, d.Export)
 }
 
 // setPipe makes a wanted node mirrored (opening: a subscription to its exact channel on its
-// own goroutine) or not-exportable. Idempotent. The pipe resumes from the last seq the link
-// mirrored of it only when the caller proved that seq belongs to the node's current
-// incarnation (reconcilePipes, from the ctl replay); a node just created starts live, and a
-// live start forgets the seq, so a later resume can never reach back past it.
-func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, node string, export, resume bool) {
+// own goroutine, live, never from a seq: see reconcilePipes) or not-exportable. Idempotent.
+func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, node string, export bool) {
 	if !l.wanted(node) {
 		return
 	}
@@ -399,17 +386,10 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFra
 	p.gen++
 	p.state, p.sub = pipeOpening, 0
 	gen := p.gen
-	var since *uint64
-	epoch := ""
-	if s, ok := l.since[ch]; ok && resume {
-		since, epoch = &s, l.epoch
-	} else {
-		delete(l.since, ch)
-	}
 	l.mu.Unlock()
 	go func() {
 		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		s, err := c.SubscribeExact(sctx, ch, since, epoch, 1024)
+		s, err := c.SubscribeExact(sctx, ch, nil, "", 1024)
 		cancel()
 		l.mu.Lock()
 		stale := p.gen != gen
@@ -449,15 +429,13 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFra
 	}()
 }
 
-// dropPipe ends a wanted node's mirror, if any, forgets where it was (the seq belongs to the
-// incarnation that just ended), and marks it `to`.
+// dropPipe ends a wanted node's mirror, if any, and marks it `to`.
 func (l *peerLink) dropPipe(ctx context.Context, c *Client, node, to string) {
 	l.mu.Lock()
 	p := l.pipes[node]
 	was := *p
 	p.gen++
 	p.state, p.sub = to, 0
-	delete(l.since, "probe/"+node)
 	l.mu.Unlock()
 	if was.state != pipeMirrored {
 		return

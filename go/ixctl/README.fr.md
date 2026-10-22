@@ -229,13 +229,12 @@ tuyau de chaque nœud voulu par son nom de canal exact (`probe/cpu` ne couvre pa
 `probe/cpu-extra`), depuis le `probe.list` du pair au raccordement puis depuis les
 `probe.created` / `probe.removed` en miroir ; `status.peers[].probes` dit ce qu'est chaque nom
 demandé : `mirrored`, `not-exportable`, `opening` (abonnement en cours) ou `absent` (pas de tel
-nœud, ou lien tombé). Après un retrait, un tuyau démarre en direct ; après une reconnexion, il
-reprend depuis la dernière séquence reflétée seulement si le rejeu de `ctl` prouve que le nœud
-est toujours cette incarnation (pas de trou sur `ctl`, pas de `probe.created` / `probe.removed`
-de ce nom depuis), sinon il démarre en direct : le même nom de canal peut porter les
-enregistrements d'une autre incarnation, et ce qu'un démarrage en direct saute n'est pas encore
-marqué sur le tuyau miroir (contrat G8 ; la tranche 2 apporte l'identité, la tranche 3 le rejeu
-borné et le marqueur de continuité). L'agrégation
+nœud, ou lien tombé). Un tuyau démarre en direct à chaque session et après chaque retrait,
+jamais depuis une séquence : le même nom de canal peut porter les enregistrements d'une autre
+incarnation, et le lien n'a pas encore la preuve que c'est celle qu'il a reflétée en dernier (la
+liste liée à un curseur de la tranche 4 est cette preuve ; la tranche 2 apporte l'identité, la
+tranche 3 le rejeu borné et le marqueur de continuité pour ce qu'un démarrage en direct saute,
+contrat G8). L'agrégation
 vit chez le lecteur : en V1 le lecteur est le consommateur de `peer/<nom>/probe/<nœud>` (IXQL
 `ix.ctl.events`), aucun nœud local ne nomme une source distante. L'export est une règle de
 fédération, pas une barrière de confidentialité : l'abonnement direct à un tuyau est inchangé.
