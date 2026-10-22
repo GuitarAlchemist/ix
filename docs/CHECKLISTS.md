@@ -184,6 +184,16 @@ contract and a code comment, and two of the four copies went stale before Codex 
    the Order section of the contract still said a leaf's `probe.stopped` was published outside the
    lock one slice after that stopped being true.
 3. A count or a total that a gate knows (the number of checks, the highest check index) is asserted
-   by the gate, not typed into prose: `go/ixctl/e2e/e2e.py` E24 compares the totals in both READMEs
-   and its own docstring with what ran, so a check added without the texts following it fails.
+   by the gate, not typed into prose: `go/ixctl/e2e/e2e.py` E24 compares the totals in both READMEs,
+   its own docstring and the gate comment of `.github/workflows/ci.yml` (every statement of each
+   text) with what ran, so a check added without the texts following it fails.
 4. The FR mirror changes in the same commit as the EN text, paragraph for paragraph.
+5. A test added for the claim is one of two kinds, and the commit message says which: a **fix** has a
+   red run against the previous tree (the failure text quoted); a **pin** protects a behaviour that
+   already held and cannot go red by itself (a race the schedule decides, an order the loop owns).
+   A pin declares its red "by the seam" and names what it protects, so a reader does not look for a
+   failure that never existed (S2 slice 4: three of five tests in one commit were pins).
+6. A test that depends on the kernel passes on one OS and fails on another: a test that waits for an
+   overflow or a jump sets the server's `writeDelay` (or the link's `pipeDelay` / `ctlDelay`) and
+   never counts on socket buffers filling; run `pwsh scripts/ixctl-test-linux.ps1` before the push
+   (the first CI run of #423 lost two flood tests on ubuntu-latest that Windows passed).

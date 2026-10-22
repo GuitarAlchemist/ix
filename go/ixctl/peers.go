@@ -78,8 +78,10 @@ type peerLink struct {
 	// pipeDelay and ctlDelay are test knobs: nanoseconds the mirroring loop spends on each pipe
 	// frame, or on each control frame, a durably slow parent (zero in production).
 	pipeDelay, ctlDelay atomic.Int64
-	// held counts the control frames held behind a re-list since the link was made: a test
-	// observation of resnapshot taking the frame before the reply.
+	// held counts the control frames resnapshot held behind a re-list since the link was made,
+	// those taken before its request was sent and those its select took while the reply was
+	// awaited: a test observation. A frame queued in merged when the reply wins the select is
+	// applied by the loop after the list, in order, without passing through the count.
 	held atomic.Int64
 }
 

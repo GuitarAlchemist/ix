@@ -34,8 +34,7 @@ type server struct {
 	// whose socket drains slowly (zero in production). A subscription overflows when the session's
 	// queue fills behind that writer; on Linux the loopback buffers absorb a flood of small frames
 	// that fills it on Windows, so a test that needs the overflow sets this rather than counting on
-	// the kernel (the ixctl-go row of CI, first run for a stacked PR at 095c507, found two such
-	// tests passing on Windows alone).
+	// the kernel.
 	writeDelay atomic.Int64
 
 	ctx    context.Context // cancelled at shutdown: ends SSE streams and WebSockets

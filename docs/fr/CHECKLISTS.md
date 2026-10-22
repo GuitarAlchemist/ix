@@ -210,6 +210,18 @@ des quatre copies étaient périmées avant que Codex ne les lise.
    feuille était publié hors du verrou une tranche après que cela a cessé d'être vrai.
 3. Un compte ou un total que connaît une porte (le nombre de vérifications, l'indice le plus élevé)
    est vérifié par la porte, pas tapé dans la prose : `go/ixctl/e2e/e2e.py` E24 compare les totaux
-   des deux README et de sa propre docstring à ce qui a tourné, si bien qu'une vérification ajoutée
-   sans que les textes suivent fait échouer la porte.
+   des deux README, de sa propre docstring et du commentaire de porte de `.github/workflows/ci.yml`
+   (chaque énoncé de chaque texte) à ce qui a tourné, si bien qu'une vérification ajoutée sans que
+   les textes suivent fait échouer la porte.
 4. Le miroir FR change dans le même commit que le texte EN, paragraphe pour paragraphe.
+5. Un test ajouté pour l'affirmation est de l'une de deux sortes, et le message de commit dit
+   laquelle : un **correctif** a un passage rouge contre l'arbre précédent (le texte de l'échec
+   cité) ; une **épingle** protège un comportement qui tenait déjà et ne peut pas passer au rouge
+   seule (une course que l'ordonnanceur décide, un ordre que la boucle possède). Une épingle déclare
+   son rouge « par la couture » et nomme ce qu'elle protège, pour qu'un lecteur ne cherche pas un
+   échec qui n'a jamais existé (S2 tranche 4 : trois des cinq tests d'un commit étaient des épingles).
+6. Un test qui dépend du noyau passe sur un OS et échoue sur l'autre : un test qui attend un
+   débordement ou un saut pose le `writeDelay` du serveur (ou le `pipeDelay` / `ctlDelay` du lien)
+   et ne compte jamais sur le remplissage des tampons socket ; lancer
+   `pwsh scripts/ixctl-test-linux.ps1` avant le push (le premier run CI de #423 a perdu deux tests
+   de rafale sur ubuntu-latest que Windows passait).

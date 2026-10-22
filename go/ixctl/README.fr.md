@@ -473,7 +473,7 @@ redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Ru
 sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
 plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
 les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
-52 vérifications, E1..E24 et M3 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair ; M3 : huit tuyaux à 10 ms à travers le lien, les enregistrements reflétés, les pertes comptées et marquées, et le temps qu'un `probe.created` met à traverser sous la charge ; E22 : autour du redémarrage de b, le statut du parent distingue un flux en direct d'un état réconcilié et ne lève `degraded` que lorsque les deux tiennent ; E23 : l'identité d'une sonde concorde entre la liste de b, la liste routée de a et le statut de a, et la liste de b repliée depuis son propre flux jusqu'au curseur est exactement la liste, sans trou ; E24 : les totaux qu'annoncent les deux README et la docstring du gate correspondent aux vérifications exécutées, si bien qu'une vérification ajoutée sans que les textes suivent fait échouer le gate), une boucle de
+52 vérifications, E1..E24 et M3 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair ; M3 : huit tuyaux à 10 ms à travers le lien, les enregistrements reflétés, les pertes comptées et marquées, et le temps qu'un `probe.created` met à traverser sous la charge ; E22 : autour du redémarrage de b, le statut du parent distingue un flux en direct d'un état réconcilié et ne lève `degraded` que lorsque les deux tiennent ; E23 : l'identité d'une sonde concorde entre la liste de b, la liste routée de a et le statut de a, et la liste de b repliée depuis son propre flux jusqu'au curseur est exactement la liste, sans trou ; E24 : les totaux qu'annoncent les deux README, la docstring du gate et le commentaire du workflow CI (`.github/workflows/ci.yml`) correspondent aux vérifications exécutées, chaque énoncé de chaque texte, si bien qu'une vérification ajoutée sans que les textes suivent fait échouer le gate), une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).
@@ -486,7 +486,11 @@ python go/ixctl/e2e/e2e.py --build --work D   # garde binaires, état, exécutio
 
 Le job lit la constitution Demerzel dans le sous-module `governance/demerzel`
 (`IX_GOVERNANCE_DIR` la remplace). La barrière n'imprime jamais un jeton et scanne chaque fichier
-écrit pour en trouver un. La CI lance aussi `go vet` et `go test -race` sous Linux.
+écrit pour en trouver un. La CI lance aussi `go vet` et `go test -race` sous Linux ; depuis Windows,
+`pwsh scripts/ixctl-test-linux.ps1` lance la même chose dans une distro WSL avant un push (la suite
+peut passer ici et échouer là : un test qui a besoin qu'un abonnement déborde pose le bouton
+`writeDelay` du serveur, car les tampons loopback de Linux absorbent une rafale que ceux de Windows
+ne tiennent pas).
 
 ## Limites connues
 
