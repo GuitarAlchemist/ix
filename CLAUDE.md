@@ -119,6 +119,8 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
   - All session-specific planning must use `/digest` (written to `state/digests/latest.md`) instead of generating loose `.md` files in the repo.
   - Run the `ix-streeling` indexer after document changes to maintain [catalog.jsonl](file:///c:/Users/spare/source/repos/ix/state/streeling/catalog.jsonl).
 
+- **2026-10-22 — Claude fires the reflexes, then teaches.** Run `/correct` (on a correction), `/learnings` (at the commit that closes a surprise) and `/mattpocock-skills:retro` (when a review loop closes, before calling a PR ready) yourself at the trigger; the user dictates by voice and forgets the slash command, and `.claude/hooks/correction-detector.sh` nudges in FR/EN. End the reply with one teaching line: what ran, why, and when the user could type it themselves.
+
 ## Agent skills
 
 Per-repo config for the aihero/mattpocock engineering skills of the `mattpocock-skills` plugin (see the aihero-delta note above). Configured 2026-06-14 via `/setup-matt-pocock-skills`.
