@@ -28,12 +28,33 @@
 //! σ₁σ₂ repeated. Their closures are the figure-eight knot, the Borromean
 //! rings, and on through the family, which is how a decorative plait and a knot
 //! table meet.
+//!
+//! Most knots tied in rope are not closed braids: they have ends, and many are
+//! tied around something. Those are drawn rather than spelled: a
+//! [`RopeDiagram`] is ropes through control points and, at each crossing, which
+//! passage is in front. It answers the same three questions, and the
+//! [`catalog`] names rope knots, each tested against the knot its closure must
+//! be.
+//!
+//! ```
+//! use ix_knot::catalog::find;
+//!
+//! let eight = find("figure-eight").unwrap().diagram().unwrap();
+//! assert_eq!(eight.drawn_crossings(), 4);
+//! assert_eq!(eight.jones().to_string(), "t^-2 - t^-1 + 1 - t + t^2");
+//! ```
 
 pub mod braid;
+pub mod catalog;
+pub mod diagram;
 pub mod jones;
 pub mod layout;
 mod poly;
 
 pub use braid::{Braid, BraidError, MAX_CROSSINGS, MAX_STRANDS};
+pub use diagram::{
+    Crossing, DiagramError, Geometry, Rope, RopeDiagram, RopePath, MAX_CONTROL_POINTS,
+    MAX_DIAGRAM_CROSSINGS, MAX_ROPES,
+};
 pub use jones::{jones, Jones};
 pub use layout::{layout, LayoutError, StrandPath, MAX_POINTS};

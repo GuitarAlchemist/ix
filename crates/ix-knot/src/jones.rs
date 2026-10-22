@@ -166,7 +166,7 @@ fn closure_loops(diagram: &[u8], n: usize) -> usize {
 /// V(t) = (-A³)^(-writhe) · bracket, then A^e = t^(-e/4) = (t^(1/2))^(-e/2).
 /// Every exponent of the bracket has the parity of the crossing count, as does
 /// 3·writhe, so `e - 3·writhe` is even.
-fn normalize(bracket: &Laurent, writhe: i64) -> Jones {
+pub(crate) fn normalize(bracket: &Laurent, writhe: i64) -> Jones {
     let sign = if writhe % 2 == 0 { 1 } else { -1 };
     let shift = 3 * writhe as i32;
     let mut terms: Vec<(i32, i128)> = bracket

@@ -34,6 +34,32 @@ impl Laurent {
         out.add_scaled(self, -1, -2);
         out
     }
+
+    /// [`Self::add_scaled`], or `None` when a coefficient overflows `i128`
+    /// (`self` is then left part-way).
+    pub(crate) fn checked_add_scaled(
+        &mut self,
+        other: &Laurent,
+        coeff: i128,
+        shift: i32,
+    ) -> Option<()> {
+        for (e, c) in other.terms() {
+            let entry = self.0.entry(e + shift).or_insert(0);
+            *entry = entry.checked_add(coeff.checked_mul(c)?)?;
+            if *entry == 0 {
+                self.0.remove(&(e + shift));
+            }
+        }
+        Some(())
+    }
+
+    /// [`Self::times_loop`], or `None` on overflow.
+    pub(crate) fn checked_times_loop(&self) -> Option<Self> {
+        let mut out = Self::default();
+        out.checked_add_scaled(self, -1, 2)?;
+        out.checked_add_scaled(self, -1, -2)?;
+        Some(out)
+    }
 }
 
 #[cfg(test)]
