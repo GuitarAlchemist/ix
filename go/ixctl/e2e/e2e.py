@@ -1195,7 +1195,8 @@ def run():
 
     # E20: provenance (S2 slice 2, D4 ix#402). A mirrored envelope on a says which of b's envelopes
     # it is: src_seq / src_epoch are b's own seq and epoch, in order and without repeats, and each
-    # names the envelope on b that carries the same record; b's own envelopes carry no such fields.
+    # names the envelope on b that carries the same event, whole (a same-name recreation resets
+    # data.seq, so the record alone would not tell incarnations apart); b's own envelopes carry none.
     call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True})
     call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
     wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
@@ -1205,8 +1206,7 @@ def run():
     first = min(src_seqs) if menvs and all(src_seqs) else 0
     _, benvs = sse(sb, "probe/xcpu", 0.5, query=f"ch=probe/xcpu&since={first - 1}&epoch={b_epoch}") if first else ("", [])
     by_seq = {e["seq"]: e for e in benvs}
-    matched = sum(1 for e in menvs
-                  if by_seq.get(e.get("src_seq"), {}).get("ev", {}).get("data", {}).get("seq") == e["ev"]["data"].get("seq"))
+    matched = sum(1 for e in menvs if e.get("src_seq") in by_seq and by_seq[e["src_seq"]]["ev"] == e["ev"])
     code_rm20 = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
     wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
     check("E20.mirrored_envelopes_carry_source_provenance",

@@ -275,6 +275,17 @@ impl Iterator for Events {
                 ))));
             }
         };
+        // Provenance is a pair or nothing: half a pair is not a mirrored envelope's (the plane
+        // never writes one), so it is read as none rather than shown by half.
+        let src = match (
+            doc.get("src_seq").and_then(Value::as_u64),
+            doc.get("src_epoch").and_then(Value::as_str),
+        ) {
+            (Some(seq), Some(epoch)) if seq != 0 && !epoch.is_empty() => {
+                Some((seq, epoch.to_string()))
+            }
+            _ => None,
+        };
         Some(Ok(Event {
             channel: text("ch"),
             seq,
@@ -283,11 +294,8 @@ impl Iterator for Events {
             kind: doc["ev"]["kind"].as_str().unwrap_or("").to_string(),
             t: doc["ev"].get("t").and_then(Value::as_i64),
             data: doc["ev"].get("data").cloned().unwrap_or(Value::Null),
-            src_seq: doc.get("src_seq").and_then(Value::as_u64),
-            src_epoch: doc
-                .get("src_epoch")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            src_seq: src.as_ref().map(|s| s.0),
+            src_epoch: src.map(|s| s.1),
         }))
     }
 }

@@ -2350,13 +2350,16 @@ fn a_mirrored_event_carries_its_source_provenance() {
                "ev": {"kind": "sample", "t": 1_760_000_000_008u64, "data": {"node": "cpu", "kind": "cpu@1", "seq": 3}}}),
         json!({"ch": "ctl", "seq": 10, "epoch": "3f9a1c0b7d2e", "origin": "fake", "t": 1_760_000_000_010u64,
                "ev": {"kind": "converged", "data": {"generation": 1}}}),
+        // Half a pair is no provenance (the plane never writes one): read as none, shown as none.
+        json!({"ch": "peer/b/svc/x", "seq": 11, "epoch": "3f9a1c0b7d2e", "origin": "b", "src_seq": 42,
+               "t": 1_760_000_000_011u64, "ev": {"kind": "stats", "data": {}}}),
     ];
     let items: Vec<_> = ctl
         .events("", Some(0), None)
         .unwrap()
         .map(|i| i.unwrap())
         .collect();
-    assert_eq!(2, items.len(), "{items:?}");
+    assert_eq!(3, items.len(), "{items:?}");
     assert_eq!(
         (Some(41), Some("b0b0b0b0b0b0")),
         (items[0].src_seq, items[0].src_epoch.as_deref())
@@ -2374,9 +2377,16 @@ fn a_mirrored_event_carries_its_source_provenance() {
             flat["seq"].as_u64()
         )
     );
-    let own = Value::from(&items[1]);
-    assert!(
-        own.get("src_seq").is_none() && own.get("src_epoch").is_none(),
-        "{own}"
-    );
+    for i in [1, 2] {
+        let own = Value::from(&items[i]);
+        assert_eq!(
+            (None, None),
+            (items[i].src_seq, items[i].src_epoch.as_deref()),
+            "{own}"
+        );
+        assert!(
+            own.get("src_seq").is_none() && own.get("src_epoch").is_none(),
+            "{own}"
+        );
+    }
 }

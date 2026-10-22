@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -73,6 +74,14 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	if src.Epoch != s.SrcEpoch || dataOf(src)["seq"] != dataOf(s)["seq"] || src.SrcSeq != 0 {
 		t.Fatalf("source %d/%s data seq %v (src_seq %d), mirrored says %d/%s data seq %v",
 			src.Seq, src.Epoch, dataOf(src)["seq"], src.SrcSeq, s.SrcSeq, s.SrcEpoch, dataOf(s)["seq"])
+	}
+	// The mirrored probe.created names B's own probe.created of this node (the series' anchor).
+	ctlB := subscribe(t, dial(t, b), "ctl", &zero)
+	created := waitEnv(t, ctlB, 5*time.Second, "the source probe.created of cpu", func(x *Envelope) bool {
+		return x.Seq == e.SrcSeq
+	})
+	if created.Ev.Kind != "probe.created" || dataOf(created)["node"] != "cpu" || created.Epoch != e.SrcEpoch {
+		t.Fatalf("the mirrored probe.created names b's envelope %d/%s, which is %s %s", e.SrcSeq, e.SrcEpoch, created.Ev.Kind, created.Ev.Data)
 	}
 	// The status says what each wanted name is: mirrored, not exportable, or absent.
 	wantProbes := func(want ...string) func(StatusReply) bool {
@@ -207,4 +216,57 @@ func TestADroppedPipeLeavesNoGoroutineBehind(t *testing.T) {
 		}
 	}
 	t.Fatalf("%d goroutines after %d more drops, %d before: a dropped pipe's forwarder lives on", got, drops, base)
+}
+
+// A peer's frame without a seq or an epoch has no provenance to mirror: the hub assigns seqs
+// from 1 and every boot has an epoch, so such a frame is malformed, and it ends the session
+// rather than becoming a mirror the contract forbids (Codex round 39).
+func TestAPeerFrameWithoutProvenanceEndsTheSession(t *testing.T) {
+	l := &peerLink{spec: PeerSpec{Name: "b"}, hub: NewHub("a"), since: map[string]uint64{}}
+	refresh := make(chan struct{}, 1)
+	drain := func() {
+		select {
+		case <-refresh:
+		default:
+		}
+	}
+	for _, env := range []*Envelope{
+		{Ch: "svc/x", Seq: 0, Epoch: "b0b0b0b0b0b0", Origin: "b", Ev: Event{Kind: "stats"}},
+		{Ch: "svc/x", Seq: 7, Epoch: "", Origin: "b", Ev: Event{Kind: "stats"}},
+	} {
+		err := l.apply(context.Background(), nil, nil, nil, refresh, "b", peerFrame{prefix: "svc/x", f: Frame{Env: env}})
+		drain()
+		if err == nil || !strings.Contains(err.Error(), "provenance") {
+			t.Fatalf("frame seq %d epoch %q: %v, want a provenance error", env.Seq, env.Epoch, err)
+		}
+	}
+	if l.hub.Head() != 0 {
+		t.Fatalf("%d envelopes mirrored from malformed frames", l.hub.Head())
+	}
+	good := &Envelope{Ch: "svc/x", Seq: 7, Epoch: "b0b0b0b0b0b0", Origin: "b", Ev: Event{Kind: "stats"}}
+	err := l.apply(context.Background(), nil, nil, nil, refresh, "b", peerFrame{prefix: "svc/x", f: Frame{Env: good}})
+	drain()
+	if err != nil || l.hub.Head() != 1 {
+		t.Fatalf("a well-formed frame: %v, head %d", err, l.hub.Head())
+	}
+}
+
+// The hub writes provenance as a pair or not at all, in the struct as in the bytes.
+func TestMirrorProvenanceIsAPairInStructAndBytes(t *testing.T) {
+	h := NewHub("a")
+	for _, tc := range []struct {
+		seq   uint64
+		epoch string
+		want  bool
+	}{{0, "b0b0b0b0b0b0", false}, {7, "", false}, {7, "b0b0b0b0b0b0", true}} {
+		env := h.Mirror("peer/b/svc/x", "b", 0, Event{Kind: "stats"}, tc.seq, tc.epoch)
+		raw := string(env.Raw())
+		inRaw := strings.Contains(raw, `"src_seq":`) && strings.Contains(raw, `"src_epoch":`)
+		halfRaw := strings.Contains(raw, `"src_seq":`) != strings.Contains(raw, `"src_epoch":`)
+		inStruct := env.SrcSeq != 0 && env.SrcEpoch != ""
+		halfStruct := (env.SrcSeq != 0) != (env.SrcEpoch != "")
+		if inRaw != tc.want || inStruct != tc.want || halfRaw || halfStruct {
+			t.Fatalf("Mirror(%d, %q): struct %d/%q, raw %s", tc.seq, tc.epoch, env.SrcSeq, env.SrcEpoch, raw)
+		}
+	}
 }

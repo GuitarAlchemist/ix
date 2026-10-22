@@ -1,6 +1,6 @@
 # Contract: a probe sample read from the plane, as a consumer's observation (`ixctl.v1` → gaia#245)
 
-**Version:** v0.1.3 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
+**Version:** v0.1.4 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
 **Date:** 2026-10-21 · **Owner:** ix (`go/ixctl`, the producer side; Gaia owns the adapter, projection and UI) · **Story:** [ix#413](https://github.com/GuitarAlchemist/ix/issues/413) · **Consumer:** [gaia#245](https://github.com/GuitarAlchemist/gaia/issues/245) · **Plan:** `docs/plans/2026-10-20-ixctl-probes.md`
 
 Says how a reader of the control plane's event stream (`subscribe` over `ixctl.v1`, `GET /v1/events`,
@@ -69,11 +69,11 @@ previous code, reproduced by no run: the test stands as its guard).
 | probe identity | `origin` + `ev.data.node` | a **series** is `origin:epoch:node:<seq of the probe.created that opened it>` (on a mirrored channel, `origin:src_epoch:node:<src_seq of that probe.created>`, v0.1.4): the same name is a new series after a recreation or a restart (fixtures 2 and 3). A consumer that did not read the `probe.created` (it joined late, or a gap swallowed it) cannot tell which series a sample belongs to until the plane stamps an instance id on samples (gap G1): it opens a provisional series at the first frame it reads and merges nothing across a gap |
 | probe version | `ev.data.kind` (`heartbeat@1`) | |
 | schema version | the protocol name, `ixctl.v1` (gap G4) | this contract's version |
-| subject identity / generation | `origin` (the plane) and `epoch` (its boot) | |
+| subject identity / generation | `origin` (the plane) and `epoch` (its boot); on a mirrored channel, `origin` and **`src_epoch`**: `epoch` there is the mirror's own boot and does not change when the source restarts (v0.1.4) | |
 | producer / source revision | `probe.kinds` reports the binary's version; `/health` the plane's | read once per connection, kept with the series |
 | observed-at | `ev.t` | |
 | received-at | | the consumer's own clock at read time; its difference to `t` is the clock offset to apply when judging freshness |
-| sequence | `seq` | strictly increasing within an epoch, across every channel |
+| sequence | `seq`; on a mirrored channel **`src_seq`** (v0.1.4) | strictly increasing within an epoch, across every channel of that plane; the mirror's `seq` orders the mirror's own stream only |
 | deduplication key | | **`origin:epoch:seq`**: a frame read twice (a reconnect that resumes below the last seq kept) is the same frame; fixture 1 shows a resume from the last seq kept gives `seq + 1` first, nothing twice; on a mirrored channel the key is **`origin:src_epoch:src_seq`**, since `seq` / `epoch` there are the mirror's own (v0.1.4) |
 | units | not on the wire: `probe.kinds` → `fields` lists the names only, `doc` says the kind in words (gap G3) | a per-kind table the adapter keeps, by `kind@version` |
 | sampling interval | not in the sample: `every_ms` of the node from `probe.list` | read at `probe.created`/`probe.started`, kept with the series |
@@ -180,8 +180,10 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 - v0.1.4 (2026-10-21): S2 slice 2: a mirrored envelope carries `src_seq` / `src_epoch`, the
   source's own, so the mirrored series and dedup keys are `origin:src_epoch:node:<src_seq of
   probe.created>` and `origin:src_epoch:src_seq`; the Rust client's `Event` exposes them
-  (`src_seq`, `src_epoch`, absent on the plane's own events). G1 unchanged (no instance id on
-  samples), G8 unchanged.
+  (`src_seq`, `src_epoch`, absent on the plane's own events, read as a pair or not at all). The
+  subject-generation and sequence rows name `src_epoch` / `src_seq` on a mirrored channel. The
+  link refuses a peer frame without a seq or an epoch (it ends the session) rather than mirror
+  it without provenance. G1 unchanged (no instance id on samples), G8 unchanged.
 - v0.1.3 (2026-10-21): D4 (ix#402) resolved, S2 (ix#408) slice 1: `probe.created` and
   `probe.list` carry `export: true` on a node whose pipe federation may mirror; a peer that names
   the node in `peers[].probes` reads it as `peer/<peer>/probe/<node>` with `origin` kept (the

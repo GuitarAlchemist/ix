@@ -153,7 +153,9 @@ func (h *Hub) Publish(ch string, ev Event) *Envelope {
 
 // Mirror republishes an envelope received from a peer under a local channel, keeping the
 // peer as origin and its time, and saying which envelope of the source it was (srcSeq,
-// srcEpoch: the source's own seq and epoch).
+// srcEpoch: the source's own seq and epoch). Provenance is a pair: with either half missing
+// (a seq of 0, an empty epoch) none is written, in the struct as in the bytes; the link
+// refuses such a frame before it gets here.
 func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
 	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch)
 }
@@ -167,7 +169,9 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEp
 	chRaw, _ := json.Marshal(ch)
 	orRaw, _ := json.Marshal(origin)
 	var srcRaw []byte
-	if srcSeq != 0 {
+	if srcSeq == 0 || srcEpoch == "" {
+		srcSeq, srcEpoch = 0, ""
+	} else {
 		epRaw, _ := json.Marshal(srcEpoch) // a peer's epoch came over the wire: escaped like any string
 		srcRaw = append(srcRaw, `,"src_seq":`...)
 		srcRaw = strconv.AppendUint(srcRaw, srcSeq, 10)

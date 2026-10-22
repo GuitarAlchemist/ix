@@ -297,7 +297,9 @@ func (l *peerLink) apply(ctx context.Context, c *Client, merged chan<- peerFrame
 	if pf.sub != 0 && !l.current(pf.prefix, pf.sub) {
 		return nil // a frame of a subscription that is no longer the pipe's
 	}
-	l.mirror(origin, pf.prefix, pf.f.Env)
+	if err := l.mirror(origin, pf.prefix, pf.f.Env); err != nil {
+		return err
+	}
 	if pf.prefix == "ctl" && pf.f.Env.Origin == origin {
 		l.followPipe(ctx, c, merged, fail, pf.f.Env)
 	}
@@ -459,14 +461,20 @@ type peerFrame struct {
 
 // mirror republishes one of the peer's own envelopes. Envelopes the peer
 // itself mirrored (another origin, or a peer/ channel) are never forwarded.
-func (l *peerLink) mirror(origin, prefix string, env *Envelope) {
+// A frame without a seq or an epoch is malformed (the hub assigns seqs from 1,
+// every boot has an epoch): it has no provenance to mirror and ends the session.
+func (l *peerLink) mirror(origin, prefix string, env *Envelope) error {
+	if env.Seq == 0 || env.Epoch == "" {
+		return fmt.Errorf("frame on %s without provenance (seq %d, epoch %q)", prefix, env.Seq, env.Epoch)
+	}
 	l.mu.Lock()
 	l.since[prefix], l.epoch = env.Seq, env.Epoch
 	l.mu.Unlock()
 	if env.Origin != origin || strings.HasPrefix(env.Ch, "peer/") {
-		return
+		return nil
 	}
 	l.hub.Mirror("peer/"+l.spec.Name+"/"+env.Ch, env.Origin, env.T, env.Ev, env.Seq, env.Epoch)
+	return nil
 }
 
 // refresher keeps the peer's service list for status, at most once per

@@ -38,12 +38,19 @@ func TestFederationForwardsAndMirrors(t *testing.T) {
 	if e.Origin != "b" {
 		t.Fatalf("mirrored origin %q", e.Origin)
 	}
+	// Every mirrored envelope says which of b's it is, ctl and svc/ as much as a probe pipe.
+	if e.SrcSeq == 0 || e.SrcEpoch != b.plane.Epoch() {
+		t.Fatalf("mirrored ctl envelope carries src_seq %d, src_epoch %q (b's %s)", e.SrcSeq, e.SrcEpoch, b.plane.Epoch())
+	}
 	waitEnv(t, w, 10*time.Second, "mirrored converged", func(e *Envelope) bool {
 		return e.Ch == "peer/b/ctl" && e.Ev.Kind == "converged" && genOf(e) == 1
 	})
-	waitEnv(t, w, 10*time.Second, "mirrored stats", func(e *Envelope) bool {
+	s := waitEnv(t, w, 10*time.Second, "mirrored stats", func(e *Envelope) bool {
 		return e.Ch == "peer/b/svc/pod-x" && e.Ev.Kind == "stats"
 	})
+	if s.SrcSeq == 0 || s.SrcEpoch != b.plane.Epoch() {
+		t.Fatalf("mirrored svc envelope carries src_seq %d, src_epoch %q (b's %s)", s.SrcSeq, s.SrcEpoch, b.plane.Epoch())
+	}
 	waitStatus(t, a, 5*time.Second, "peer services", func(st StatusReply) bool {
 		return strings.Contains(string(st.Peers[0].Services), `"state":"running"`)
 	})
