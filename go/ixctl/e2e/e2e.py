@@ -1271,7 +1271,7 @@ def run():
 
     # M3: control under federated load (S2 slice 3, criterion 6 of ix#408). Eight 10 ms heartbeat
     # pipes b exports and a wants (800 records/s offered to the link, under b's default budget),
-    # read on a for 2 s: the records mirrored per second, what the link dropped for want of room
+    # read on a for the 2 s window plus a second: the records mirrored per second, what the link dropped for want of room
     # in its bounded pipe queue (`status.peers[].probes[].dropped`, each run marked `dropped` on
     # its pipe before the record that followed), and how long a probe.created of b takes to show
     # on a's mirrored ctl while the pipes are loaded, measured on the reader's side. The drops are

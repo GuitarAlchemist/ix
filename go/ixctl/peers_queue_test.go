@@ -13,8 +13,8 @@ import (
 // every pipe frame while eight 10 ms pipes offer 800 a second) fills the pipe queue; from then
 // on pipe frames are dropped, not queued without end and not held back on the reader: each run
 // of drops is marked on the mirrored pipe before the record that followed, counted per pipe in
-// the status, while a probe.created of the peer still crosses on the mirrored ctl within a
-// second and the link stays up.
+// the status, while a probe.created of the peer still crosses on the mirrored ctl within two
+// seconds (milliseconds measured) and the link stays up.
 func TestControlStillFlowsWhenPipesOverloadTheLink(t *testing.T) {
 	dirA, dirB := t.TempDir(), t.TempDir()
 	names := []string{"p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"}
@@ -49,15 +49,17 @@ func TestControlStillFlowsWhenPipesOverloadTheLink(t *testing.T) {
 	if m.Origin != "a" || m.SrcSeq != 0 || g.Peer != "b" || g.Dropped == 0 || g.SrcEpoch != b.plane.Epoch() {
 		t.Fatalf("dropped marker: %s", m.Raw())
 	}
+	// The queue is one for all pipes, so a pipe's first accepted record may already follow
+	// drops (the others filled it first): the successor is checked against the last record
+	// read on that pipe when there was one.
 	before, seen := last[m.Ch]
-	if !seen {
-		t.Fatalf("a dropped marker on %s before any record of it was read: the queue cannot have been full of them", m.Ch)
-	}
 	after := waitEnv(t, pipes, 5*time.Second, "the record after the marker", func(e *Envelope) bool {
 		return e.Ch == m.Ch && e.Ev.Kind == "sample"
 	})
-	if after.SrcSeq <= before {
+	if seen && after.SrcSeq <= before {
 		t.Fatalf("after the marker on %s: src_seq %d, the last before was %d", m.Ch, after.SrcSeq, before)
+	} else if !seen {
+		t.Logf("the first dropped marker on %s preceded any record of it read", m.Ch)
 	}
 
 	// Control under the load: a node created on b now is announced on the mirrored ctl within
@@ -107,7 +109,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	l.pipes["cpu"].state, l.pipes["cpu"].sub = pipeMirrored, 7
 	cur := l.hub.Subscribe("peer/b/", nil, "")
 	refresh := make(chan struct{}, 1)
-	q := newPipeQueue(1)
+	q := newPipeQueue()
 	fail := make(chan error, 1)
 	ctx := context.Background()
 
@@ -150,10 +152,11 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 }
 
 // The pipe queue is bounded in bytes as in records: a record past the byte bound is refused and
-// the bytes it reserved given back; what the loop took is given back too. The out-of-band slots
-// for a pipe's overflow are one per wanted pipe and never wait: a send past them is refused.
+// the bytes it reserved given back; what the loop took is given back too. A subscription's last
+// frame, the peer's overflow gap, waits for a slot behind the records instead of being refused,
+// counts no bytes, and gives up when the subscription is gone.
 func TestThePipeQueueIsBoundedInBytesToo(t *testing.T) {
-	q := newPipeQueue(2)
+	q := newPipeQueue()
 	big := peerFrame{prefix: "probe/x", f: Frame{Bytes: 3 << 20}, sub: 1}
 	if !q.offer(big) || q.bytes.Load() != 3<<20 {
 		t.Fatalf("a first 3 MiB record: offered %v, bytes %d", false, q.bytes.Load())
@@ -175,16 +178,22 @@ func TestThePipeQueueIsBoundedInBytesToo(t *testing.T) {
 	if q.offer(small) || len(q.ch) != maxPipeQueue {
 		t.Fatalf("a record past the record bound was queued: %d", len(q.ch))
 	}
-	over := peerFrame{prefix: "probe/x", f: Frame{Gap: &Gap{Reason: "overflow", From: 9}}, sub: 1}
-	sent := 0
-	for i := 0; i < 3; i++ {
-		select {
-		case q.over <- over:
-			sent++
-		default:
-		}
+	over := peerFrame{prefix: "probe/x", f: Frame{Gap: &Gap{Reason: "overflow", From: 9}, Bytes: 80}, sub: 1}
+	done, conn := make(chan struct{}), make(chan struct{})
+	put := make(chan bool, 1)
+	go func() { put <- q.putLast(over, done, conn) }()
+	select {
+	case ok := <-put:
+		t.Fatalf("the overflow gap was queued (%v) past the record bound", ok)
+	case <-time.After(100 * time.Millisecond):
 	}
-	if sent != 2 {
-		t.Fatalf("%d overflows slotted for two pipes", sent)
+	bytes := q.bytes.Load()
+	q.took(<-q.ch)
+	if ok := <-put; !ok || q.bytes.Load() != bytes-2<<20 || len(q.ch) != maxPipeQueue { // the 2 MiB record was the oldest
+		t.Fatalf("after a slot opened: put %v, bytes %d (was %d), queued %d", ok, q.bytes.Load(), bytes, len(q.ch))
+	}
+	close(done)
+	if q.putLast(over, done, conn) {
+		t.Fatal("a gone subscription's gap was queued")
 	}
 }

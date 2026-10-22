@@ -235,8 +235,9 @@ answered a gap on the link's resumed `ctl` / `svc/` (`prefix`, `reason`, `from`,
 said: its history expired); a local gap stays a gap frame. The link's queues are bounded per
 class (criterion 6 of ix#408): `ctl` and `svc/` in their own queue, never shed by the link and read first (a control frame waits at most one pipe frame's apply; the peer's own overflow of those subscriptions ends the session, resumed on reconnect, and a replay its ring no longer holds is a gap, marked); the
 wanted pipes in a queue bounded in records (1024) and in bytes (4 MiB) that their forwarders
-never wait on, so a parent slower than the offered load drops pipe records rather than grow or
-hold the lifecycle back; each run of drops is counted on `status.peers[].probes[].dropped` and
+never wait on for a record (the one frame a forwarder waits to queue is its subscription's
+overflow gap, its last), so a parent slower than the offered load drops pipe records rather than
+grow or hold the lifecycle back; each run of drops is counted on `status.peers[].probes[].dropped` and
 marked on the pipe (`link.gap`, `reason: dropped`, `dropped` the link's own exact count) before
 the record that followed, and a pipe subscription the peer itself dropped (`overflow`) is marked
 and reopened live without ending the session. Not yet: bounded catch-up, `degraded` /

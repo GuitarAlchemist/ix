@@ -299,7 +299,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	// reach us while the client's reader is not held back by a full subscription channel, so
 	// the loop never waits on one.
 	fail := make(chan error, 1)
-	q := newPipeQueue(len(l.pipes))
+	q := newPipeQueue()
 	if err := l.reconcilePipes(ctx, c, q, fail, list); err != nil {
 		return true, err
 	}
@@ -310,19 +310,14 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	}
 
 	for {
-		// Control first: a ctl or svc/ frame (or a pipe's overflow) is applied while there is
-		// one, a pipe frame only when there is none, so a load of pipes never holds the lifecycle
+		// Control first: a ctl or svc/ frame is applied while there is one, a pipe frame only
+		// when there is none, so a load of pipes never holds the lifecycle
 		// back (and a probe.removed reaches the pipe it closes before that pipe's frames pile up
 		// further). Preferential, not strict: a control frame that arrives while the second
 		// select is pending may wait one pipe frame's apply, never a queue of them; and a
 		// sustained control stream is applied before any pipe frame, by design.
 		select {
 		case pf := <-merged:
-			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
-				return true, err
-			}
-			continue
-		case pf := <-q.over:
 			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
 				return true, err
 			}
@@ -335,10 +330,6 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		}
 		select {
 		case pf := <-merged:
-			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
-				return true, err
-			}
-		case pf := <-q.over:
 			if err := l.apply(ctx, c, q, fail, refresh, sess, st.Name, pf); err != nil {
 				return true, err
 			}
@@ -634,9 +625,10 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, q *pipeQueue, fail ch
 			cancel()
 			return
 		}
-		// The forwarder never waits for room in the pipe queue (the client's reader would wait
+		// The forwarder never waits for room for a record (the client's reader would wait
 		// behind it, ctl and the replies with it): a frame that does not fit is dropped and
-		// counted, and the next that fits carries the count, for the loop to mark before it.
+		// counted, and the next that fits carries the count, for the loop to mark before it. The
+		// one frame it waits to hand over is the subscription's overflow gap, its last.
 		var dropped uint64
 		for {
 			select {
@@ -646,13 +638,8 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, q *pipeQueue, fail ch
 				}
 				if f.Gap != nil && f.Gap.Reason == "overflow" {
 					// The peer dropped this subscription: this is its last frame (nothing follows
-					// it here), handed out of band for the loop to reopen the pipe from. The slot
-					// is there by construction; were it not, the session ends rather than wait.
-					select {
-					case q.over <- peerFrame{prefix: ch, f: f, sub: s.ID}:
-					default:
-						l.failWith(fail, errors.New("no room for the overflow of "+ch))
-					}
+					// it here), queued behind its records for the loop to reopen the pipe from.
+					q.putLast(peerFrame{prefix: ch, f: f, sub: s.ID}, s.Done, c.Done())
 					return
 				}
 				if q.offer(peerFrame{prefix: ch, f: f, sub: s.ID, dropped: dropped}) {
@@ -695,23 +682,31 @@ type peerFrame struct {
 
 // pipeQueue is what a session holds of the wanted probe pipes between the link's reader and
 // the loop that mirrors, bounded in records (the channel) and in bytes on the wire (criterion
-// 6 of ix#408). A pipe forwarder never waits for room: what does not fit is dropped, counted
-// on the pipe and marked before the next frame that fits.
+// 6 of ix#408). A pipe forwarder never waits for room for a record: what does not fit is
+// dropped, counted on the pipe and marked before the next frame that fits; a subscription's
+// last frame, the peer's overflow gap, is the one it waits to queue (putLast).
 type pipeQueue struct {
 	ch    chan peerFrame
 	bytes atomic.Int64
-	// over carries a pipe subscription's overflow gap, the peer's last frame on it, out of
-	// band: one slot per wanted pipe, since a subscription overflows at most once and the pipe
-	// is reopened (a new subscription) only once its gap was read, so a send never waits and
-	// the bounded queue holds records alone.
-	over chan peerFrame
 }
 
-func newPipeQueue(pipes int) *pipeQueue {
-	if pipes < 1 {
-		pipes = 1
+func newPipeQueue() *pipeQueue { return &pipeQueue{ch: make(chan peerFrame, maxPipeQueue)} }
+
+// putLast queues a subscription's last frame, the peer's overflow gap, behind every record of
+// it already queued, waiting for a slot (the record bound holds; the gap carries no record, so
+// no bytes are counted) until the subscription or the connection is gone. The forwarder that
+// waits here has nothing left to forward: the peer dropped the subscription, so the client's
+// reader is never held behind it. Codex round 42: a slot of its own per pipe could be taken by
+// a stale subscription's gap after a remove and recreate, and ended the session.
+func (q *pipeQueue) putLast(pf peerFrame, done, conn <-chan struct{}) bool {
+	select {
+	case q.ch <- pf:
+		return true
+	case <-done:
+		return false
+	case <-conn:
+		return false
 	}
-	return &pipeQueue{ch: make(chan peerFrame, maxPipeQueue), over: make(chan peerFrame, pipes)}
 }
 
 // offer queues pf if it fits both bounds, at once or not at all. The bytes are taken before the
