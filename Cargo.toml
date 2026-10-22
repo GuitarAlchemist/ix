@@ -89,6 +89,7 @@ members = [
     "crates/ix-ixql",
     "crates/ix-origami",
     "crates/ix-voice",
+    "crates/ix-wasm",
 ]
 
 [workspace.package]

@@ -134,6 +134,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | ix-acoustic-tune | Experimental | Acoustic auto-tuning: CMA-ES / ask-tell optimizers + spectral features and losses for synth sound-matching |
 | ix-origami | Experimental | Checks of a flat folded state read from a FOLD file: Kawasaki/Maekawa, face isometry, and the stated layer order (adjacency, cell cycles, taco-tortilla, taco-taco); replays `.origami` folding sequences into a checked folded state |
 | ix-voice | Experimental | Client and CLI of the local voice service (`piper-voice`, outside the workspace): speak text aloud sentence by sentence, stop, list the voices (ADR-0013) |
+| ix-wasm | Experimental | Pipeline stages in any language that targets WASI, run in `wasmi`: JSON on stdin and stdout, no files, no network, a seeded clock and random source, fuel and memory caps; builds Go and Zig stages into a content-addressed cache; the `wasm.run` skill (not yet on the MCP surface) |
 
 ### Internal Crates
 

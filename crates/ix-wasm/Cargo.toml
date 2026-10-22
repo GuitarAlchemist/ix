@@ -1,0 +1,27 @@
+[package]
+name = "ix-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# wasmi needs 1.86 and its `wat` parser 1.88, above the workspace's declared 1.80.
+rust-version = "1.88"
+categories = ["wasm", "development-tools"]
+keywords = ["wasm", "wasi", "sandbox", "pipeline", "go"]
+description = "Pipeline stages in any language that targets WASI, run sandboxed in wasmi: JSON in on stdin, JSON out on stdout, no files, no network, a seeded clock and random source, fuel and memory caps. Builds Go stages into a content-addressed cache."
+
+[dependencies]
+blake3 = { workspace = true }
+# `wasm.run`, the ix-pipeline skill (src/skill.rs), registered at link time.
+ix-registry = { workspace = true }
+ix-skill-macros = { workspace = true }
+ix-types = { workspace = true }
+linkme = { workspace = true }
+serde_json = { workspace = true }
+# auto-dispatch: without it an unoptimized build dispatches by tail calls LLVM does not make,
+# and the host's stack overflows on the first long loop.
+wasmi = { version = "2.0.0", default-features = false, features = ["std", "validate", "wat", "deterministic", "auto-dispatch"] }
+
+[dev-dependencies]
+ix-pipeline = { workspace = true }
+tempfile = { workspace = true }
