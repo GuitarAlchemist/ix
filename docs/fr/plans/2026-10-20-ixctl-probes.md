@@ -239,11 +239,13 @@ demande exacte du parent `peers[].probes` ; le lien s'abonne par nom de canal ex
 emporterait `cpu-extra` avec `cpu`), depuis le `probe.list` du pair au raccordement puis depuis
 les `probe.created` / `probe.removed` en miroir, appliqués dans l'ordre d'arrivée (un événement
 tombé entre l'abonnement et la liste est appliqué après elle, un événement perdu dans un trou
-n'est pas vu : la fenêtre que l'instantané lié à un curseur ferme en tranche 4) ; un retrait
-oublie la séquence de reprise, donc un nom ré-exporté ne rejoue jamais les échantillons d'une
-incarnation non exportée intermédiaire, et les trames d'un abonnement qui n'est plus celui du
-tuyau sont écartées (revue Codex 35) ; l'abonnement s'exécute hors de la goroutine qui vide la
-file du lien, donc une file pleine ne peut pas affamer la réponse. `status.peers[].probes` dit
+n'est pas vu : la fenêtre que l'instantané lié à un curseur ferme en tranche 4) ; un tuyau
+démarre en direct à chaque session et après chaque retrait, jamais depuis une séquence (un nom
+ré-exporté après une incarnation non exportée la rejouerait), et les trames d'un abonnement qui
+n'est plus celui du tuyau sont écartées (revues Codex 35–36) ; la liste est lue avant toute
+trame miroir appliquée, l'abonnement s'exécute hors de la goroutine qui vide la file du lien,
+donc une file pleine ne peut pas affamer la réponse, et le relais d'un tuyau retiré se termine
+avec son abonnement. `status.peers[].probes` dit
 `mirrored` / `not-exportable` / `opening` / `absent`. Trois
 chiffres tenus séparés : échantillonnage admis (D10), enveloppes publiées (échantillons ×
 profondeur), octets et enregistrements transportés par lien et par parent ; `tree_rate_per_s`

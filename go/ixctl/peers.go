@@ -27,7 +27,7 @@ type peerLink struct {
 	up       bool
 	services json.RawMessage
 	token    string              // the peer instance we last saw
-	since    map[string]uint64   // last mirrored seq per subscribed prefix or exact channel
+	since    map[string]uint64   // last mirrored seq per prefix (ctl, svc/: resumed on reconnect) or pipe (recorded, never resumed)
 	epoch    string              // the peer boot those seqs belong to
 	pipes    map[string]*pipeSub // per wanted probe node, what it is now
 }
@@ -195,16 +195,20 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		l.mu.Unlock()
 	}()
 
-	// The wanted probe pipes: the peer's list says which exist and are exportable now; the
-	// ctl mirror, subscribed above and live before the list is read, says every change after,
-	// applied in arrival order. An event that landed between the subscription and the list is
-	// applied after the list; that window, and a lifecycle event lost to a gap, are what the
-	// cursor-bound snapshot closes (slice 4 of S2); here `probe.list` is read again on every
-	// reconnect. Subscribing and unsubscribing run on their own goroutines: this loop is the
-	// one consumer of merged, and a reply the peer sends can only reach us while the client's
-	// reader is not held back by a full subscription channel, so the loop never waits on one.
+	// The wanted probe pipes: the peer's list, read here before any mirrored frame is applied,
+	// says which exist and are exportable now; the ctl mirror, subscribed above and so live
+	// before the list, says every change after, applied in arrival order. A lifecycle event
+	// older than the list is applied after it (it may reopen a pipe the list no longer has,
+	// until its removal follows a moment later), and one lost to a gap is not seen: that
+	// window is what the cursor-bound snapshot closes (slice 4 of S2); `probe.list` is read
+	// again on every reconnect. Subscribing and unsubscribing run on their own goroutines:
+	// this loop is the one consumer of merged, and a reply the peer sends can only reach us
+	// while the client's reader is not held back by a full subscription channel, so the loop
+	// never waits on one.
 	fail := make(chan error, 1)
-	l.reconcilePipes(ctx, c, merged, fail)
+	if err := l.reconcilePipes(ctx, c, merged, fail); err != nil {
+		return true, err
+	}
 
 	for {
 		select {
@@ -243,32 +247,33 @@ func (l *peerLink) current(ch string, sub int64) bool {
 	return p != nil && p.state == pipeMirrored && p.sub == sub
 }
 
-// reconcilePipes reads the peer's probe list once, on its own goroutine, and mirrors every
-// wanted node it exports. A list that cannot be read ends the session through fail.
-func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error) {
+// reconcilePipes reads the peer's probe list, synchronously, and mirrors every wanted node it
+// exports; nothing of merged is applied before it returns, so no lifecycle event already
+// queued can be undone by a list that arrives later (Codex round 36). A list that cannot be
+// read ends the session.
+func (l *peerLink) reconcilePipes(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error) error {
 	if len(l.spec.Probes) == 0 {
-		return
+		return nil
 	}
-	go func() {
-		data, err := c.Do(ctx, Request{Op: "probe.list"})
-		if err != nil {
-			l.failWith(fail, err)
-			return
-		}
-		var list struct {
-			Nodes []struct {
-				Name   string `json:"name"`
-				Export bool   `json:"export"`
-			} `json:"nodes"`
-		}
-		if err := json.Unmarshal(data, &list); err != nil {
-			l.failWith(fail, err)
-			return
-		}
-		for _, n := range list.Nodes {
-			l.setPipe(ctx, c, merged, fail, n.Name, n.Export)
-		}
-	}()
+	lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	data, err := c.Do(lctx, Request{Op: "probe.list"})
+	cancel()
+	if err != nil {
+		return err
+	}
+	var list struct {
+		Nodes []struct {
+			Name   string `json:"name"`
+			Export bool   `json:"export"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return err
+	}
+	for _, n := range list.Nodes {
+		l.setPipe(ctx, c, merged, fail, n.Name, n.Export)
+	}
+	return nil
 }
 
 func (l *peerLink) failWith(fail chan<- error, err error) {
@@ -299,8 +304,10 @@ func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peer
 }
 
 // setPipe makes a wanted node mirrored (opening: a subscription to its exact channel on its
-// own goroutine, live, never from a seq of an earlier incarnation of the name) or
-// not-exportable. Idempotent.
+// own goroutine) or not-exportable. Idempotent. A pipe always starts live, never from a seq:
+// the same channel name may carry an earlier incarnation's records, and the link cannot yet
+// tell incarnations apart (slice 2 brings the created seq, slice 3 the bounded replay), so a
+// resume across a drop or a reconnect would replay what an unexported incarnation emitted.
 func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, node string, export bool) {
 	if !l.wanted(node) {
 		return
@@ -319,22 +326,15 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFra
 	p.gen++
 	p.state, p.sub = pipeOpening, 0
 	gen := p.gen
-	// Resume only within one session of one incarnation: a seq kept across a drop would replay
-	// what an intervening incarnation of the name put on the same channel.
-	var since *uint64
-	if s, ok := l.since[ch]; ok {
-		since = &s
-	}
-	epoch := l.epoch
 	l.mu.Unlock()
 	go func() {
 		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		id, frames, err := c.SubscribeExact(sctx, ch, since, epoch, 1024)
+		s, err := c.SubscribeExact(sctx, ch, nil, "", 1024)
 		cancel()
 		l.mu.Lock()
 		stale := p.gen != gen
 		if err == nil && !stale {
-			p.state, p.sub = pipeMirrored, id
+			p.state, p.sub = pipeMirrored, s.ID
 		} else if !stale {
 			p.state = pipeAbsent
 		}
@@ -344,34 +344,38 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFra
 			return
 		}
 		if stale { // the pipe moved on while we subscribed: not ours any more
-			go func() { // drain what arrives until the connection closes the channel
-				for range frames {
-				}
-			}()
 			uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			c.Unsubscribe(uctx, id)
+			c.Unsubscribe(uctx, s.ID)
 			cancel()
 			return
 		}
-		for f := range frames {
+		for {
 			select {
-			case merged <- peerFrame{ch, f, id}:
-			case <-c.Done():
+			case f, ok := <-s.Frames:
+				if !ok {
+					return
+				}
+				select {
+				case merged <- peerFrame{ch, f, s.ID}:
+				case <-s.Done:
+					return
+				case <-c.Done():
+					return
+				}
+			case <-s.Done: // dropped: Unsubscribe closed it, and the connection goes on
 				return
 			}
 		}
 	}()
 }
 
-// dropPipe ends a wanted node's mirror, if any, forgets where it was, and marks it `to`.
+// dropPipe ends a wanted node's mirror, if any, and marks it `to`.
 func (l *peerLink) dropPipe(ctx context.Context, c *Client, node, to string) {
-	ch := "probe/" + node
 	l.mu.Lock()
 	p := l.pipes[node]
 	was := *p
 	p.gen++
 	p.state, p.sub = to, 0
-	delete(l.since, ch)
 	l.mu.Unlock()
 	if was.state != pipeMirrored {
 		return
@@ -379,7 +383,7 @@ func (l *peerLink) dropPipe(ctx context.Context, c *Client, node, to string) {
 	go func() {
 		uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		c.Unsubscribe(uctx, was.sub) // best effort: stale frames are dropped by gen anyway
+		c.Unsubscribe(uctx, was.sub) // best effort: stale frames are dropped by gen anyway; its Done ends the forwarder
 	}()
 }
 

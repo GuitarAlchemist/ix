@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -145,4 +146,42 @@ func TestPeerProbesAreValidatedInTheSpec(t *testing.T) {
 			t.Fatalf("probes %s: %v, want %q", tc.probes, err, tc.want)
 		}
 	}
+}
+
+// A dropped pipe leaves nothing behind: its forwarder ends with the subscription (Codex round
+// 36: Unsubscribe removed the channel the client's reader would have closed with the
+// connection, so every drop left a goroutine ranging over it for the life of the process).
+func TestADroppedPipeLeavesNoGoroutineBehind(t *testing.T) {
+	dirA, dirB := t.TempDir(), t.TempDir()
+	specB := fakeSpec(t, "b", nil)
+	specA := fakeSpec(t, "a", []PeerSpec{{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: []string{"cpu"}}})
+	newTestInstance(t, specB, dirB)
+	a := newTestInstance(t, specA, dirA)
+	waitStatus(t, a, 10*time.Second, "peer b up", func(st StatusReply) bool { return st.Peers[0].State == "up" })
+	c := dial(t, a)
+	state := func(want string) func(StatusReply) bool {
+		return func(st StatusReply) bool {
+			return len(st.Peers[0].Probes) == 1 && st.Peers[0].Probes[0].State == want
+		}
+	}
+	cycle := func() {
+		probeOn(t, c, "cpu", "heartbeat@1", true)
+		waitStatus(t, a, 5*time.Second, "cpu mirrored", state(pipeMirrored))
+		do(t, c, Request{Op: "probe.remove", Peer: "b", Node: "cpu"})
+		waitStatus(t, a, 5*time.Second, "cpu absent", state(pipeAbsent))
+	}
+	cycle()
+	time.Sleep(300 * time.Millisecond) // the first drop's unsubscribe and the node's end settle
+	base := runtime.NumGoroutine()
+	const drops = 10
+	for i := 0; i < drops; i++ {
+		cycle()
+	}
+	var got int
+	for d := time.Now().Add(3 * time.Second); time.Now().Before(d); time.Sleep(20 * time.Millisecond) {
+		if got = runtime.NumGoroutine(); got <= base+2 {
+			return
+		}
+	}
+	t.Fatalf("%d goroutines after %d more drops, %d before: a dropped pipe's forwarder lives on", got, drops, base)
 }
