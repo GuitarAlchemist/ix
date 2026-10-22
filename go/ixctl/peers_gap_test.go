@@ -168,7 +168,7 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		{"svc/", Gap{Reason: "epoch-changed", From: 1, Oldest: 1, Epoch: "c1c1c1c1c1c1"}},
 	} {
 		gap := tc.gap
-		if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
+		if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
 			t.Fatalf("%s %s: %v", tc.prefix, tc.gap.Reason, err)
 		}
 		e := nextEnv(t, cur)
@@ -178,7 +178,7 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		}
 	}
 	over := Gap{Reason: "overflow", From: 9}
-	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
 		t.Fatalf("overflow of no subscription of ours: %v, want the session to end", err)
 	}
 }
@@ -207,7 +207,7 @@ func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	frame := func(seq uint64, epoch string) peerFrame {
 		return peerFrame{prefix: "svc/", f: Frame{Env: &Envelope{Ch: "svc/x", Seq: seq, Epoch: epoch, Origin: "b", Ev: Event{Kind: "stats"}}}}
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
+	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	g := gapOf(t, nextEnv(t, cur))
@@ -217,7 +217,7 @@ func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	if e := nextEnv(t, cur); e.Ch != "peer/b/svc/x" || e.SrcEpoch != "bbbbbbbbbbbb" {
 		t.Fatalf("after the boundary: %s", e.Raw())
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
+	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	if e := nextEnv(t, cur); e.Ev.Kind != "stats" {

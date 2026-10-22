@@ -260,28 +260,36 @@ subscription started from, at once when nothing was to be replayed; no other sub
 from `reconciled` (the link is up, the peer's probe list was applied this session and no wanted
 pipe is still opening), lifts `degraded` only when both hold, and counts the catch-ups given up in
 `jumps`. A jump of `ctl` loses the lifecycle events of its span: the state is no longer known
-reconciled (`reconciled` false, `degraded`) until the link reads the list again, which it does
-right after the jump, as the snapshot below; see the resolution on ix#402.
+reconciled (`reconciled` false, `degraded`, from the step that gives the catch-up up) until the
+link reads the list again, which it does on its session loop right after the live subscription
+stands, as the snapshot below; see the resolution on ix#402.
 
 **The list as a snapshot (S2 slice 4, criteria 3 and 4 of ix#408).** `probe.list` taken with
 `with_cursor` (`GET /v1/probe?with_cursor=1`, IXQL `ix.ctl.probe.list(with_cursor: true)`) says
 the point of the plane's own stream it stands at, `cursor: {seq, epoch}` (the head and the boot),
-read under the tree's lock with the nodes, where every lifecycle event is published: the list is
-exactly what `ctl` says up to that seq and nothing of what follows, so a reader can fold the
-stream from the cursor on without a hole or a repeat. Every node carries `created_seq`, the seq of
+read under the tree's lock with the nodes, where every lifecycle event is published: which nodes
+exist, their kind, parent and export, which are running, are exactly what `ctl` says up to that
+seq and nothing of what follows, so a reader can fold the stream from the cursor on without a
+hole or a repeat (what no event says, `stopping`, `expires_in_ms`, the counters, is the tree's own
+reading at the cursor). Every node carries `created_seq`, the seq of
 its `probe.created`: the identity of the incarnation under that name (a same-name recreation is a
 new one). A leaf whose stop is in progress says `state: "stopping"` (its `probe.stopped` is not out
 yet: `ctl` still says running, a start is refused until it is; the event and the end of the stop
 are one step, so the list never says `stopping` once `ctl` said stopped). The link reads its list
-so: a lifecycle event at or before the cursor is already reflected and not followed; each wanted
-pipe carries the identity it mirrors (`status.peers[].probes[].created_seq` / `src_epoch`, from
-the list or from the followed `probe.created`), so a consumer keys the mirrored series
-`origin:src_epoch:node:created_seq` from the status without having read that event; after a jump
-on `ctl` the link takes a new snapshot and reconciles to it: a wanted node gone from the list is
-dropped, a name whose identity changed is reopened as the new incarnation (its live start marked
-as any), and `reconciled` holds again. Tested on a churning tree (25 snapshots folded from the
-stream, leaves stopping under the list), on the link's identities and skips, and on a jump taking
-a new snapshot; gate E23 on the two planes.
+so: a lifecycle event at or before the cursor is already reflected and not followed; a list that
+is no snapshot (no cursor, a wanted node without `created_seq`) is refused and ends the session;
+each wanted pipe carries the identity it mirrors (`status.peers[].probes[].created_seq` /
+`src_epoch`, from the list or from the followed `probe.created`), so a consumer that reads the
+status, then the pipe, keys what it reads from then on `origin:src_epoch:node:created_seq` without
+having read that event (the status is a reading, not a point of the stream: a frame read before
+it is told apart only by the mirrored `probe.created` or the list with its cursor); after a jump
+on `ctl` the link reads the list again on its session loop, holding the control frames that
+arrive meanwhile (bounded as at session start) and applying them after it, and reconciles to it:
+a wanted node gone from the list is dropped, a name whose identity changed is reopened as the new
+incarnation (its live start marked as any), and `reconciled` holds again. Tested on a churning
+tree (25 snapshots folded from the stream, leaves stopping under the list), on the link's
+identities and skips, on the held frames, on `reconciled` falling at the jump, and on a flood of
+`ctl` that makes the link jump and read the list again; gate E23 on the two planes.
 
 `ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`, `export` when set),
 `probe.started` (`expires_in_ms` when leased), `probe.stopped` and `probe.removed` with a `reason`
@@ -433,7 +441,7 @@ pipes and the `ctl` lifecycle carried after a point the operator named; bounds, 
 peer's bookmark; survival of a restart) and the IXQL probe surface (E17: `probe.ixql` through
 the Rust client, a CPU probe under a mux, ten records, the tree removed) and probe budgets (E18:
 the plane's budget in `limits`, a leaf past its mux's `max_rate_per_s` refused naming both, a leaf
-carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record; E21: the link marks what the mirror skips, a `link.gap` on the pipe at a live start and on the mirrored `ctl` at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops counted and marked, and the time a `probe.created` takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts `degraded` only when both hold). 50 checks, E1..E22, a
+carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record; E21: the link marks what the mirror skips, a `link.gap` on the pipe at a live start and on the mirrored `ctl` at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops counted and marked, and the time a `probe.created` takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts `degraded` only when both hold; E23: the identity of a probe agrees on b's list, a's routed list and a's status, and b's list folded from its own stream to the cursor is exactly the list, no gap). 51 checks, E1..E23, a
 restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -44,7 +45,8 @@ func TestTheListIsExactAtItsCursor(t *testing.T) {
 		op := func(req Request) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			c.Do(ctx, req) // a refusal (a name taken, a node gone) is part of the churn
+			c.Do(ctx, req)               // a refusal (a name taken, a node gone) is part of the churn
+			time.Sleep(time.Millisecond) // throttled: the whole run must fit the ring the fold reads
 		}
 		op(Request{Op: "probe.create", Probe: node("agg", "mux@1", 0, nil)})
 		for i := 0; ; i++ {
@@ -204,7 +206,7 @@ func TestTheLinkReadsTheListAsASnapshotWithIdentities(t *testing.T) {
 	}
 	// A probe.removed of cpu at 9 is before the cursor: the list already reflects what followed
 	// it (cpu is there), so it is not followed.
-	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", ctl(9, "probe.removed", "cpu", map[string]any{"reason": "removed"})); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", ctl(9, "probe.removed", "cpu", map[string]any{"reason": "removed"})); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -212,12 +214,12 @@ func TestTheLinkReadsTheListAsASnapshotWithIdentities(t *testing.T) {
 		t.Fatalf("a probe.removed before the cursor was followed: %+v", p)
 	}
 	// One at 11 is after the cursor: followed.
-	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", ctl(11, "probe.removed", "cpu", map[string]any{"reason": "removed"})); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", ctl(11, "probe.removed", "cpu", map[string]any{"reason": "removed"})); err != nil {
 		t.Fatal(err)
 	}
 	waitPipe("cpu absent", func(p pipeSub) bool { return p.state == pipeAbsent })
 	// A probe.created at 12, exported: followed, and the identity is the event's.
-	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", ctl(12, "probe.created", "cpu", map[string]any{"export": true})); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", ctl(12, "probe.created", "cpu", map[string]any{"export": true})); err != nil {
 		t.Fatal(err)
 	}
 	second := waitPipe("cpu mirrored from the event", func(p pipeSub) bool { return p.state == pipeMirrored })
@@ -262,50 +264,143 @@ func TestTheLinkReadsTheListAsASnapshotWithIdentities(t *testing.T) {
 	}
 }
 
-// A jump on ctl loses the lifecycle events of its span, so the link takes a new snapshot right
-// after it: here the peer holds an exported cpu the link never heard of (no list was read); the
-// jump is marked, the list is read with a cursor, cpu is mirrored and the state is reconciled
-// again.
+// A jump on ctl loses the lifecycle events of its span, so the link reads the list again, on its
+// own loop, right after the live subscription stands: here b's ctl floods a parent that spends half
+// a millisecond per control frame and may not catch up at all (allowance zero), so the peer drops
+// the link's ctl subscription, the link reopens it live, marked `jumped`, and the exported `mem`
+// created under the flood, whose probe.created the link may never see, is mirrored from the new
+// snapshot; the status settles live and reconciled, the jump counted, and nothing reconnected.
 func TestAJumpOnCtlTakesANewSnapshot(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json"), Probes: []string{"mem"}}, NewHub("a"))
+	l.ctlDelay.Store(int64(500 * time.Microsecond))
+	l.allowFrames.Store(0)
+	own := l.hub.Subscribe("ctl", nil, "")
+	cur := l.hub.Subscribe("peer/b/ctl", nil, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go l.run(ctx)
+	waitLinkStatus(t, l, func(st PeerStatus) bool {
+		return st.State == "up" && st.Reconciled && st.Probes[0].State == pipeAbsent
+	})
+	for i := 1; i <= 8000; i++ {
+		b.plane.Publish("ctl", event("noise", map[string]any{"n": i}))
+	}
+	do(t, dial(t, b), Request{Op: "probe.create", Probe: node("mem", "heartbeat@1", 10, map[string]any{"export": true})})
+	st := waitLinkStatus(t, l, func(st PeerStatus) bool {
+		p := st.Probes[0]
+		return st.Live && st.Reconciled && !st.Degraded && st.Jumps >= 1 && p.State == pipeMirrored && p.CreatedSeq != 0 && p.SrcEpoch == b.plane.Epoch()
+	})
+	t.Logf("%d jumps under the flood, mem created at %d", st.Jumps, st.Probes[0].CreatedSeq)
+	markers := func(cur *Cursor, d time.Duration, match func(*Envelope) bool) (found []*Envelope) {
+		nctx, ncancel := context.WithTimeout(ctx, d)
+		defer ncancel()
+		for {
+			envs, _, err := cur.Next(nctx, 64) // a gap here is the ring turning over under the flood: read on
+			if err != nil {
+				return found
+			}
+			for _, e := range envs {
+				if match(e) {
+					found = append(found, e)
+				}
+			}
+		}
+	}
+	jumped := markers(cur, 2*time.Second, func(e *Envelope) bool {
+		return e.Ev.Kind == linkGapKind && dataOf(e)["reason"] == "jumped" && dataOf(e)["prefix"] == "ctl"
+	})
+	if len(jumped) == 0 {
+		t.Fatalf("no jumped marker for ctl on the mirrored ctl")
+	}
+	if g := gapOf(t, jumped[0]); g.To == 0 || g.SrcEpoch != b.plane.Epoch() {
+		t.Fatalf("the jump marker: %s, want a head and b's boot", jumped[0].Raw())
+	}
+	if down := markers(own, 200*time.Millisecond, func(e *Envelope) bool { return e.Ev.Kind == "peer.down" }); len(down) != 0 {
+		t.Fatalf("the link reconnected under the flood: %s", down[0].Raw())
+	}
+}
+
+// The list read again is applied before the control frames that reached the link while it was in
+// flight, held meanwhile on the session loop (Codex round 44: applied as they came, a probe.removed
+// past the list's cursor was undone by the older list that followed it): here cpu is on the peer,
+// its removal reaches the link while the list is read, and once the list is applied cpu is absent.
+func TestAReListIsAppliedBeforeTheFramesReceivedWhileItWasInFlight(t *testing.T) {
 	b := newTestInstance(t, fakeSpec(t, "b", nil), "")
 	c := dial(t, b)
+	epoch := b.plane.Epoch()
 	do(t, c, Request{Op: "probe.create", Probe: node("cpu", "heartbeat@1", 10, map[string]any{"export": true})})
 	l := newPeerLink(PeerSpec{Name: "b", Probes: []string{"cpu"}}, NewHub("a"))
-	l.boot = b.plane.Epoch()
-	cur := l.hub.Subscribe("peer/b/", nil, "")
-	q := newPipeQueue()
-	merged := make(chan peerFrame, 64)
-	fail := make(chan error, 1)
+	l.boot = epoch
+	q, merged, fail := newPipeQueue(), make(chan peerFrame, 16), make(chan error, 1)
+	refresh, relist := make(chan struct{}, 1), make(chan struct{}, 1)
+	// What reaches the link while the list is in flight: cpu's removal, past any cursor the list
+	// can stand at.
+	removed := &Envelope{Ch: "ctl", Seq: 1 << 40, Epoch: epoch, Origin: "b", Ev: event("probe.removed", map[string]any{"node": "cpu", "kind": "heartbeat@1", "reason": "removed"})}
+	merged <- peerFrame{prefix: "ctl", f: Frame{Env: removed}}
+	if err := l.resnapshot(context.Background(), c, q, merged, fail, refresh, relist, 1, "b"); err != nil {
+		t.Fatal(err)
+	}
 	l.mu.Lock()
-	l.client = c // the session's client: a new snapshot applies only while it still is
-	l.ctl["ctl"].sub, l.ctl["ctl"].live = 5, false
-	l.since["ctl"] = 3
+	p, listed, cursor := *l.pipes["cpu"], l.listed, l.cursor
 	l.mu.Unlock()
-	l.jumpControl(context.Background(), c, q, merged, fail, "ctl", 5)
-	m := nextEnvWithin(t, cur, 5*time.Second)
-	if g := gapOf(t, m); m.Ch != "peer/b/ctl" || g.Reason != "jumped" || g.Prefix != "ctl" || g.From != 3 || g.To == 0 {
-		t.Fatalf("after the jump: %s, want the jumped marker on the mirrored ctl from 3", m.Raw())
+	if p.state != pipeAbsent || p.created != (srcPoint{}) {
+		t.Fatalf("after the list and the removal held behind it: %+v, want cpu absent (the list undid a removal received while it was in flight)", p)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		l.mu.Lock()
-		p, listed, cursor := *l.pipes["cpu"], l.listed, l.cursor
-		l.mu.Unlock()
-		if p.state == pipeMirrored && listed && cursor.seq >= 1 && cursor.epoch == b.plane.Epoch() && p.created.epoch == b.plane.Epoch() && p.created.seq != 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("after the jump: pipe %+v listed %v cursor %+v, want cpu mirrored from a new snapshot", p, listed, cursor)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if !listed || cursor.epoch != epoch || cursor.seq == 0 {
+		t.Fatalf("after the list: listed %v cursor %+v", listed, cursor)
 	}
-	e := nextEnvWithin(t, cur, 5*time.Second)
-	if g := gapOf(t, e); e.Ch != "peer/b/probe/cpu" || g.Reason != "live-start" {
-		t.Fatalf("after the snapshot: %s, want cpu's live start", e.Raw())
+	if len(merged) != 0 {
+		t.Fatalf("%d frames left unapplied behind the list", len(merged))
 	}
 	select {
 	case err := <-fail:
 		t.Fatalf("the link failed: %v", err)
 	default:
+	}
+}
+
+// A jump on ctl is a lifecycle event lost right now: the state is no longer known reconciled from
+// the step that gives the catch-up up, not once the live subscription stands (Codex round 44: the
+// status said reconciled for up to five seconds between the two, a lifecycle event known missing).
+func TestAJumpOnCtlClearsReconciledAtOnce(t *testing.T) {
+	b := newTestInstance(t, fakeSpec(t, "b", nil), "")
+	c := dial(t, b)
+	l := newPeerLink(PeerSpec{Name: "b", Probes: []string{"cpu"}}, NewHub("a"))
+	l.mu.Lock()
+	l.up, l.listed = true, true
+	l.ctl["ctl"].sub, l.ctl["ctl"].live = 5, false
+	l.mu.Unlock()
+	if st := l.status(); !st.Reconciled {
+		t.Fatalf("before the jump: %+v", st)
+	}
+	l.jumpControl(context.Background(), c, nil, make(chan peerFrame, 64), make(chan error, 1), "ctl", 5)
+	if st := l.status(); st.Reconciled {
+		t.Fatalf("right after the jump on ctl the status still says reconciled: %+v", st)
+	}
+}
+
+// A list the link cannot take as a snapshot is refused, and the session with it (Codex round 44:
+// a list without a cursor left no point to skip from, a node without created_seq was taken as any
+// incarnation): one without a cursor, or with a wanted node without its created_seq.
+func TestAListWithoutACursorOrAnIdentityIsRefused(t *testing.T) {
+	b := newTestInstance(t, fakeSpec(t, "b", nil), "")
+	c := dial(t, b)
+	l := newPeerLink(PeerSpec{Name: "b", Probes: []string{"cpu"}}, NewHub("a"))
+	q, fail := newPipeQueue(), make(chan error, 1)
+	for _, bad := range []string{
+		`{"nodes":[{"name":"cpu","export":true,"created_seq":7}]}`,
+		`{"cursor":{"seq":10,"epoch":"boot"},"nodes":[{"name":"cpu","export":true}]}`,
+	} {
+		if err := l.snapshot(context.Background(), c, q, fail, json.RawMessage(bad)); err == nil {
+			t.Fatalf("the list %s was taken as a snapshot", bad)
+		}
+		l.mu.Lock()
+		p, listed := *l.pipes["cpu"], l.listed
+		l.mu.Unlock()
+		if p.state != pipeAbsent || listed {
+			t.Fatalf("after refusing %s: pipe %+v listed %v", bad, p, listed)
+		}
 	}
 }

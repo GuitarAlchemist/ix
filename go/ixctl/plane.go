@@ -234,9 +234,10 @@ type PeerProbeStatus struct {
 	Dropped uint64 `json:"dropped,omitempty"`
 	// CreatedSeq and SrcEpoch: the identity of the incarnation the link mirrors or declined under
 	// this name, the seq and boot of its probe.created on the peer (from the peer's cursor-bound
-	// list or the followed probe.created; S2 slice 4): a consumer keys the mirrored series
-	// `origin:src_epoch:node:created_seq` from here without having read that event. Absent while
-	// the name is absent.
+	// list or the followed probe.created; S2 slice 4): a consumer that reads this, then the pipe,
+	// keys what it reads from then on `origin:src_epoch:node:created_seq` without having read
+	// that event (a reading, not a point of the stream: a frame read before it is told apart by
+	// the mirrored probe.created or the list with its cursor). Absent while the name is absent.
 	CreatedSeq uint64 `json:"created_seq,omitempty"`
 	SrcEpoch   string `json:"src_epoch,omitempty"`
 }

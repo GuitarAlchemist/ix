@@ -278,31 +278,39 @@ tout de suite s'il n'y avait rien à rejouer ; aucun autre abonné ne la reçoit
 lien est haut, la liste des sondes du pair a été appliquée dans cette session et aucun tuyau
 demandé n'est encore en ouverture), ne lève `degraded` que lorsque les deux tiennent, et compte
 dans `jumps` les rattrapages abandonnés. Un saut de `ctl` perd les événements de cycle de vie de
-son intervalle : l'état n'est plus su réconcilié (`reconciled` faux, `degraded`) jusqu'à ce que le
-lien relise la liste, ce qu'il fait juste après le saut, comme l'instantané ci-dessous ; voir la
+son intervalle : l'état n'est plus su réconcilié (`reconciled` faux, `degraded`, dès l'étape qui
+abandonne le rattrapage) jusqu'à ce que le lien relise la liste, ce qu'il fait sur sa boucle de
+session juste après que l'abonnement en direct tient, comme l'instantané ci-dessous ; voir la
 résolution sur ix#402.
 
 **La liste comme instantané (S2 tranche 4, critères 3 et 4 de ix#408).** `probe.list` pris avec
 `with_cursor` (`GET /v1/probe?with_cursor=1`, IXQL `ix.ctl.probe.list(with_cursor: true)`) dit le
 point du flux du plan où il se tient, `cursor: {seq, epoch}` (la tête et le démarrage), lu sous le
-verrou de l'arbre avec les nœuds, là où chaque événement de cycle de vie est publié : la liste est
-exactement ce que `ctl` dit jusqu'à ce seq et rien de ce qui suit, si bien qu'un lecteur peut
-replier le flux à partir du curseur sans trou ni répétition. Chaque nœud porte `created_seq`, le
+verrou de l'arbre avec les nœuds, là où chaque événement de cycle de vie est publié : quels nœuds
+existent, leur kind, parent et export, lesquels tournent, sont exactement ce que `ctl` dit jusqu'à
+ce seq et rien de ce qui suit, si bien qu'un lecteur peut replier le flux à partir du curseur sans
+trou ni répétition (ce qu'aucun événement ne dit, `stopping`, `expires_in_ms`, les compteurs, est
+la lecture propre de l'arbre au curseur). Chaque nœud porte `created_seq`, le
 seq de son `probe.created` : l'identité de l'incarnation sous ce nom (une recréation du même nom
 en est une nouvelle). Une feuille dont l'arrêt est en cours dit `state: "stopping"` (son
 `probe.stopped` n'est pas encore sorti : `ctl` dit encore running, un démarrage est refusé
 jusque-là ; l'événement et la fin de l'arrêt sont une seule étape, donc la liste ne dit jamais
 `stopping` une fois que `ctl` a dit stopped). Le lien lit sa liste ainsi : un événement de cycle
-de vie au curseur ou avant est déjà reflété et n'est pas suivi ; chaque tuyau voulu porte
-l'identité qu'il reflète (`status.peers[].probes[].created_seq` / `src_epoch`, depuis la liste ou
-depuis le `probe.created` suivi), si bien qu'un consommateur cle la série miroir
-`origin:src_epoch:node:created_seq` depuis le status sans avoir lu cet événement ; après un saut
-sur `ctl` le lien prend un nouvel instantané et s'y réconcilie : un nœud voulu disparu de la liste
-est retiré, un nom dont l'identité a changé est rouvert comme la nouvelle incarnation (son
-démarrage en direct marqué comme tout autre), et `reconciled` tient de nouveau. Testé sur un arbre
-qui bouge (25 instantanés repliés depuis le flux, des feuilles s'arrêtant sous la liste), sur les
-identités et les sauts du lien, et sur un saut prenant un nouvel instantané ; porte E23 sur les
-deux plans.
+de vie au curseur ou avant est déjà reflété et n'est pas suivi ; une liste qui n'est pas un
+instantané (sans curseur, un nœud voulu sans `created_seq`) est refusée et met fin à la session ;
+chaque tuyau voulu porte l'identité qu'il reflète (`status.peers[].probes[].created_seq` /
+`src_epoch`, depuis la liste ou depuis le `probe.created` suivi), si bien qu'un consommateur qui
+lit le statut, puis le tuyau, cle ce qu'il lit dès lors `origin:src_epoch:node:created_seq` sans
+avoir lu cet événement (le statut est une lecture, pas un point du flux : une trame lue avant lui
+n'est distinguée que par le `probe.created` miroir ou la liste avec son curseur) ; après un saut
+sur `ctl` le lien relit la liste sur sa boucle de session, en retenant les trames de contrôle qui
+arrivent entre-temps (bornées comme au début de session) pour les appliquer après elle, et s'y
+réconcilie : un nœud voulu disparu de la liste est retiré, un nom dont l'identité a changé est
+rouvert comme la nouvelle incarnation (son démarrage en direct marqué comme tout autre), et
+`reconciled` tient de nouveau. Testé sur un arbre qui bouge (25 instantanés repliés depuis le
+flux, des feuilles s'arrêtant sous la liste), sur les identités et les sauts du lien, sur les
+trames retenues, sur `reconciled` qui tombe au saut, et sur un déluge de `ctl` qui fait sauter le
+lien et relire la liste ; porte E23 sur les deux plans.
 
 `ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`, `export` quand posé),
 `probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
@@ -465,7 +473,7 @@ redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Ru
 sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
 plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
 les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
-50 vérifications, E1..E22 et M3 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair ; M3 : huit tuyaux à 10 ms à travers le lien, les enregistrements reflétés, les pertes comptées et marquées, et le temps qu'un `probe.created` met à traverser sous la charge ; E22 : autour du redémarrage de b, le statut du parent distingue un flux en direct d'un état réconcilié et ne lève `degraded` que lorsque les deux tiennent), une boucle de
+51 vérifications, E1..E23 et M3 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair ; M3 : huit tuyaux à 10 ms à travers le lien, les enregistrements reflétés, les pertes comptées et marquées, et le temps qu'un `probe.created` met à traverser sous la charge ; E22 : autour du redémarrage de b, le statut du parent distingue un flux en direct d'un état réconcilié et ne lève `degraded` que lorsque les deux tiennent ; E23 : l'identité d'une sonde concorde entre la liste de b, la liste routée de a et le statut de a, et la liste de b repliée depuis son propre flux jusqu'au curseur est exactement la liste, sans trou), une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).

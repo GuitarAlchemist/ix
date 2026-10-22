@@ -344,19 +344,20 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 	// and are exportable at that point and which incarnation each is (its created_seq); the ctl
 	// mirror, subscribed above and so live before the list, says every change after it, applied
 	// in arrival order, while a lifecycle event at or before the cursor is already reflected and
-	// not followed (slice 4 of S2). One lost to a jump on ctl is not seen: the link takes a new
-	// snapshot after such a jump; the list is read again on every reconnect. Subscribing and
+	// not followed (slice 4 of S2). One lost to a jump on ctl is not seen: this loop reads the list
+	// again after such a jump (resnapshot); the list is read again on every reconnect. Subscribing and
 	// unsubscribing run on their own goroutines: this loop is the one consumer of merged, and a
 	// reply the peer sends can only reach us while the client's reader is not held back by a
 	// full subscription channel, so the loop never waits on one. Once the list is applied the
 	// state is reconciled, but for the pipes it set opening (status).
 	fail := make(chan error, 1)
 	q := newPipeQueue()
+	relist := make(chan struct{}, 1) // a jump on ctl asks this loop to read the list again (resnapshot)
 	if err := l.snapshot(ctx, c, q, fail, list); err != nil {
 		return true, err
 	}
 	for _, pf := range backlog {
-		if err := l.apply(ctx, c, q, merged, fail, refresh, sess, st.Name, pf); err != nil {
+		if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, st.Name, pf); err != nil {
 			return true, err
 		}
 	}
@@ -370,7 +371,12 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		// sustained control stream is applied before any pipe frame, by design.
 		select {
 		case pf := <-merged:
-			if err := l.apply(ctx, c, q, merged, fail, refresh, sess, st.Name, pf); err != nil {
+			if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, st.Name, pf); err != nil {
+				return true, err
+			}
+			continue
+		case <-relist:
+			if err := l.resnapshot(ctx, c, q, merged, fail, refresh, relist, sess, st.Name); err != nil {
 				return true, err
 			}
 			continue
@@ -382,12 +388,16 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		}
 		select {
 		case pf := <-merged:
-			if err := l.apply(ctx, c, q, merged, fail, refresh, sess, st.Name, pf); err != nil {
+			if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, st.Name, pf); err != nil {
+				return true, err
+			}
+		case <-relist:
+			if err := l.resnapshot(ctx, c, q, merged, fail, refresh, relist, sess, st.Name); err != nil {
 				return true, err
 			}
 		case pf := <-q.ch:
 			q.took(pf)
-			if err := l.apply(ctx, c, q, merged, fail, refresh, sess, st.Name, pf); err != nil {
+			if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, st.Name, pf); err != nil {
 				return true, err
 			}
 		case err := <-fail:
@@ -410,13 +420,13 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 // is given up (the subscription replaced by a live one, marked) when it runs out or lasts past
 // replayFor. A pipe frame that follows a run of frames its forwarder dropped is preceded by the
 // `dropped` marker, on the pipe, in order.
-func (l *peerLink) apply(ctx context.Context, c *Client, q *pipeQueue, merged chan<- peerFrame, fail chan<- error, refresh chan<- struct{}, sess uint64, origin string, pf peerFrame) error {
+func (l *peerLink) apply(ctx context.Context, c *Client, q *pipeQueue, merged chan<- peerFrame, fail chan<- error, refresh chan<- struct{}, relist chan<- struct{}, sess uint64, origin string, pf peerFrame) error {
 	if pf.f.Gap != nil && pf.f.Gap.Reason == "overflow" {
 		switch {
 		case pf.sub == 0:
 			return errors.New("mirror of " + pf.prefix + " overflowed")
 		case isControl(pf.prefix):
-			l.reopenControl(ctx, c, q, merged, fail, pf)
+			l.reopenControl(ctx, c, relist, merged, fail, pf)
 		default:
 			l.reopenPipe(ctx, c, q, fail, pf)
 		}
@@ -444,7 +454,7 @@ func (l *peerLink) apply(ctx context.Context, c *Client, q *pipeQueue, merged ch
 			time.Sleep(time.Duration(d)) // the test knob: a durably slow parent
 		}
 		if !l.grantReplay(pf.prefix, pf.sub, pf.f.Bytes) {
-			l.jumpControl(ctx, c, q, merged, fail, pf.prefix, pf.sub)
+			l.jumpControl(ctx, c, relist, merged, fail, pf.prefix, pf.sub)
 			return nil // not mirrored: the jump is marked from the last frame that was
 		}
 	} else if d := l.pipeDelay.Load(); d > 0 && pf.sub != 0 {
@@ -618,10 +628,12 @@ func (l *peerLink) nextControlGen(prefix string) uint64 {
 // subscription starts from, `src_epoch` the boot read), under l.mu, in the step that makes the
 // subscription the prefix's, unless nothing lies between the two (the head is the last seq
 // mirrored, in the same boot): a live start that misses nothing is no jump (Codex round 43). A
-// jump of ctl loses the lifecycle events of its span, so the state is no longer reconciled and a
-// new snapshot is taken (resnapshot; not at session start, whose own list follows: q is nil
-// there). A subscription that completes after the prefix moved on (gen) stands down.
-func (l *peerLink) openControl(ctx context.Context, c *Client, q *pipeQueue, merged chan<- peerFrame, fail chan<- error, prefix string, since *uint64, epoch string, gen uint64, jump bool) error {
+// jump of ctl loses the lifecycle events of its span, so the state is no longer reconciled and the
+// session loop is asked to read the list again (relist, signalled once the live subscription
+// stands, so the list's cursor is at or past the head it starts from and nothing falls between
+// the two: resnapshot; nil at session start, whose own list follows). A subscription that
+// completes after the prefix moved on (gen) stands down.
+func (l *peerLink) openControl(ctx context.Context, c *Client, relist chan<- struct{}, merged chan<- peerFrame, fail chan<- error, prefix string, since *uint64, epoch string, gen uint64, jump bool) error {
 	if since != nil && !l.canReplay() {
 		since, jump = nil, true
 	}
@@ -649,8 +661,9 @@ func (l *peerLink) openControl(ctx context.Context, c *Client, q *pipeQueue, mer
 		l.jumps++
 		if prefix == "ctl" {
 			// A lifecycle event in the jumped span is lost, so the pipes may no longer stand for
-			// the peer's tree: not reconciled until a new snapshot is applied.
-			l.listed, resnap = false, q != nil
+			// the peer's tree: not reconciled until a new snapshot is applied (jumpControl said so
+			// already when the jump is its; a reopen past the allowance says it here).
+			l.listed, resnap = false, relist != nil
 		}
 		data := map[string]any{"peer": l.spec.Name, "prefix": prefix, "reason": "jumped", "to": s.Head}
 		if from, ok := l.since[prefix]; ok {
@@ -663,7 +676,10 @@ func (l *peerLink) openControl(ctx context.Context, c *Client, q *pipeQueue, mer
 	}
 	l.mu.Unlock()
 	if resnap {
-		go l.resnapshot(ctx, c, q, fail)
+		select { // one pending signal covers every jump before the list it brings is read
+		case relist <- struct{}{}:
+		default:
+		}
 	}
 	go func() {
 		for {
@@ -695,7 +711,7 @@ func (l *peerLink) openControl(ctx context.Context, c *Client, q *pipeQueue, mer
 // forgets it (the peer already did) and the prefix is opened again from the last seq mirrored,
 // a catch-up within the allowance, or live and marked when none is left. The session goes on:
 // the pipes and the other prefix were not dropped, and nothing reconnects.
-func (l *peerLink) reopenControl(ctx context.Context, c *Client, q *pipeQueue, merged chan<- peerFrame, fail chan<- error, pf peerFrame) {
+func (l *peerLink) reopenControl(ctx context.Context, c *Client, relist chan<- struct{}, merged chan<- peerFrame, fail chan<- error, pf peerFrame) {
 	l.mu.Lock()
 	cs := l.ctl[pf.prefix]
 	if cs.sub != pf.sub {
@@ -712,7 +728,7 @@ func (l *peerLink) reopenControl(ctx context.Context, c *Client, q *pipeQueue, m
 	l.mu.Unlock()
 	c.forget(pf.sub)
 	go func() {
-		if err := l.openControl(ctx, c, q, merged, fail, pf.prefix, since, epoch, gen, false); err != nil {
+		if err := l.openControl(ctx, c, relist, merged, fail, pf.prefix, since, epoch, gen, false); err != nil {
 			l.failWith(fail, err)
 		}
 	}()
@@ -720,8 +736,11 @@ func (l *peerLink) reopenControl(ctx context.Context, c *Client, q *pipeQueue, m
 
 // jumpControl gives a catch-up up: the subscription, if still the prefix's, stands down (its
 // remaining replay is dropped as stale, and unsubscribed on a goroutine), and the prefix is
-// opened live, marked `jumped` from the last seq mirrored.
-func (l *peerLink) jumpControl(ctx context.Context, c *Client, q *pipeQueue, merged chan<- peerFrame, fail chan<- error, prefix string, sub int64) {
+// opened live, marked `jumped` from the last seq mirrored. On ctl the frame given up is a
+// lifecycle event the link may need, so the state is no longer reconciled from this step, not
+// from the one that stands the live subscription up (Codex round 44: the status said reconciled
+// for the seconds between the two).
+func (l *peerLink) jumpControl(ctx context.Context, c *Client, relist chan<- struct{}, merged chan<- peerFrame, fail chan<- error, prefix string, sub int64) {
 	l.mu.Lock()
 	cs := l.ctl[prefix]
 	if cs.sub != sub {
@@ -730,37 +749,79 @@ func (l *peerLink) jumpControl(ctx context.Context, c *Client, q *pipeQueue, mer
 	}
 	cs.gen++
 	cs.sub, cs.live = 0, false
+	if prefix == "ctl" {
+		l.listed = false
+	}
 	gen := cs.gen
 	l.mu.Unlock()
 	go func() {
 		uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		c.Unsubscribe(uctx, sub) // best effort: its Done ends the forwarder, gen drops what it queued
 		cancel()
-		if err := l.openControl(ctx, c, q, merged, fail, prefix, nil, "", gen, true); err != nil {
+		if err := l.openControl(ctx, c, relist, merged, fail, prefix, nil, "", gen, true); err != nil {
 			l.failWith(fail, err)
 		}
 	}()
 }
 
 // resnapshot reads the peer's list again, bound to a cursor, and reconciles the pipes to it:
-// after a jump on ctl, whose span may hold lifecycle events the link did not see. Only while c
-// is still the session's client: a late answer of an older session applies nothing.
-func (l *peerLink) resnapshot(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error) {
-	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	data, err := c.Do(rctx, Request{Op: "probe.list", WithCursor: true})
-	cancel()
-	if err != nil {
-		l.failWith(fail, err)
-		return
+// after a jump on ctl, whose span may hold lifecycle events the link did not see. On the session
+// loop, which asked for it (relist) once the live subscription stood, so the list's cursor is at
+// or past the head that subscription starts from: nothing falls between the two. While the reply
+// is awaited every control frame is held (bounded as at session start; past the bound the session
+// ends), a pipe frame applied as usual; then the list is applied as a snapshot and the held frames
+// in order (one at or before the cursor is skipped by followPipe). The loop owns it, so no frame is
+// applied while the list is (Codex round 44: a probe.removed applied before an older list was
+// undone by it), two jumps in a row read the list twice in order, and nothing of it outlives the
+// session: a reply that comes once the loop is gone is dropped with the goroutine awaiting it. A
+// list that cannot be read ends the session, as at start.
+func (l *peerLink) resnapshot(ctx context.Context, c *Client, q *pipeQueue, merged chan peerFrame, fail chan error, refresh chan<- struct{}, relist chan struct{}, sess uint64, origin string) error {
+	if len(l.spec.Probes) == 0 {
+		return l.snapshot(ctx, c, q, fail, nil) // nothing to reconcile but the state
 	}
-	l.mu.Lock()
-	current := l.client == c
-	l.mu.Unlock()
-	if !current {
-		return
+	type reply struct {
+		data json.RawMessage
+		err  error
 	}
-	if err := l.snapshot(ctx, c, q, fail, data); err != nil {
-		l.failWith(fail, err)
+	got := make(chan reply, 1)
+	go func() {
+		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		data, err := c.Do(rctx, Request{Op: "probe.list", WithCursor: true})
+		got <- reply{data, err}
+	}()
+	var held []peerFrame
+	var bytes int
+	for {
+		select {
+		case pf := <-merged:
+			if bytes += pf.f.Bytes; len(held) == maxLinkBacklog || bytes > maxLinkBacklogBytes {
+				return fmt.Errorf("link backlog over %d frames or %d bytes while the peer's list was read again", maxLinkBacklog, maxLinkBacklogBytes)
+			}
+			held = append(held, pf)
+		case pf := <-q.ch:
+			q.took(pf)
+			if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, origin, pf); err != nil {
+				return err
+			}
+		case r := <-got:
+			if r.err != nil {
+				return r.err
+			}
+			if err := l.snapshot(ctx, c, q, fail, r.data); err != nil {
+				return err
+			}
+			for _, pf := range held {
+				if err := l.apply(ctx, c, q, merged, fail, refresh, relist, sess, origin, pf); err != nil {
+					return err
+				}
+			}
+			return nil
+		case err := <-fail:
+			return err
+		case <-c.Done():
+			return c.Err()
+		}
 	}
 }
 
@@ -821,9 +882,12 @@ func (l *peerLink) grantReplay(prefix string, sub int64, bytes int) bool {
 // former), each node with the identity of its incarnation (created_seq, the boot). Every wanted
 // node it holds is set from it (mirrored while exported, declined otherwise; a name whose
 // identity changed is reopened as the new incarnation), every wanted node it does not hold is
-// dropped, and the state is reconciled (listed). At session start it is read before any frame of
-// the backlog is applied (so no lifecycle event already queued is undone by a list arriving
-// later, Codex round 36); after a jump on ctl it is read again (resnapshot). Every pipe still
+// dropped, and the state is reconciled (listed). A list that is no snapshot (no cursor, a wanted
+// node without its created_seq) is refused before anything moves, and ends the session (Codex
+// round 44: a zero identity stood for any). At session start it is read before any frame of the
+// backlog is applied (so no lifecycle event already queued is undone by a list arriving later,
+// Codex round 36); after a jump on ctl it is read again on the loop, the frames that arrive
+// meanwhile held behind it (resnapshot). Every pipe still
 // starts live: with the identity, a resume from the last mirrored seq would be sound, and is
 // left for later (what a live start skips is marked, slice 3).
 func (l *peerLink) snapshot(ctx context.Context, c *Client, q *pipeQueue, fail chan<- error, data json.RawMessage) error {
@@ -841,6 +905,14 @@ func (l *peerLink) snapshot(ctx context.Context, c *Client, q *pipeQueue, fail c
 	if len(l.spec.Probes) > 0 {
 		if err := json.Unmarshal(data, &list); err != nil {
 			return err
+		}
+		if list.Cursor.Epoch == "" {
+			return errors.New("the peer's probe list names no cursor: not a snapshot")
+		}
+		for _, n := range list.Nodes {
+			if l.wanted(n.Name) && n.CreatedSeq == 0 {
+				return fmt.Errorf("the peer's probe list names no created_seq for %s: not a snapshot", n.Name)
+			}
 		}
 	}
 	l.mu.Lock()
@@ -903,7 +975,8 @@ func (l *peerLink) followPipe(ctx context.Context, c *Client, q *pipeQueue, fail
 
 // setPipe makes a wanted node mirrored (opening: a subscription to its exact channel on its
 // own goroutine, live, never from a seq: see snapshot) or not-exportable, as the incarnation
-// `created` names. Idempotent for the same incarnation; another incarnation under a name already
+// `created` names (never zero: the list and the event both name one). Idempotent for the same
+// incarnation; another incarnation under a name already
 // mirrored or opening (a same-name recreation a new snapshot found, its removal lost to a jump)
 // stands the pipe down first and opens it again as the new one, its live start marked as any
 // (naming the last frame mirrored, the previous incarnation's). A live start is marked on the
@@ -922,7 +995,7 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, q *pipeQueue, fail ch
 	l.mu.Lock()
 	p := l.pipes[node]
 	if p.state == pipeMirrored || p.state == pipeOpening {
-		if created.seq == 0 || p.created == created {
+		if p.created == created {
 			l.mu.Unlock()
 			return
 		}

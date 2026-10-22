@@ -79,7 +79,9 @@ struct Plane {
     /// The probe tree, by node name, as `probe.create` declared it and the ops moved it.
     probes: BTreeMap<String, Node>,
     /// The seq the tree's last lifecycle event took: the head a `with_cursor` list stands at, and
-    /// what a node's `created_seq` is read from (S2 slice 4).
+    /// what a node's `created_seq` is read from (S2 slice 4). Moved as the plane moves it: one per
+    /// `probe.created`, `probe.started`, `probe.stopped` and `probe.removed`; a start of a running
+    /// node or a stop of a stopped one says nothing, a subtree's removal says one per node.
     head: u64,
     /// What a live read (no `since`) is sent: the envelopes after this sequence number. `None`
     /// sends nothing, as a plane whose channels stay quiet; the real plane sends what is
@@ -342,22 +344,22 @@ impl Plane {
     /// counting), `stop` leaves it stopped, `touch` renews a lease and refuses a node without
     /// one, `remove` takes the subtree and counts it. A name nobody declared is refused.
     fn probe_op(&mut self, op: &str, name: &str) -> Result<Value, String> {
-        let (ttl, state) = {
+        let (ttl, state, event) = {
             let n = self
                 .probes
                 .get_mut(name)
                 .ok_or_else(|| format!("node {name:?} does not exist"))?;
             let ttl = n.spec["ttl_ms"].as_u64();
-            match op {
-                "start" => n.state = "running",
-                "stop" => n.state = "stopped",
+            let event = match op {
+                "start" => std::mem::replace(&mut n.state, "running") != "running",
+                "stop" => std::mem::replace(&mut n.state, "stopped") != "stopped",
                 "touch" if ttl.is_none() => return Err(format!("node {name:?} has no lease")),
-                _ => {}
-            }
-            (ttl, n.state)
+                _ => false, // a touch says nothing on ctl; a removal counts its nodes below
+            };
+            (ttl, n.state, event)
         };
-        if op != "touch" {
-            self.head += 1; // the lifecycle event the op says on ctl
+        if event {
+            self.head += 1; // the lifecycle event the op says on ctl (a no-op says none)
         }
         Ok(match op {
             "start" => {
@@ -391,6 +393,7 @@ impl Plane {
                 for g in &gone {
                     self.probes.remove(g);
                 }
+                self.head += gone.len() as u64; // one probe.removed per node of the subtree
                 json!({"node": name, "removed": gone.len()})
             }
         })

@@ -116,7 +116,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	ctx := context.Background()
 
 	over := Gap{Reason: "overflow", From: 9, Epoch: b.plane.Epoch()}
-	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
 		t.Fatalf("a pipe's overflow ended the session: %v", err)
 	}
 	e := nextEnv(t, cur)
@@ -135,7 +135,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 		t.Fatalf("pipe after the overflow: %+v, want mirrored under a new subscription", p)
 	}
 	stale := &Envelope{Ch: "probe/cpu", Seq: 8, Epoch: b.plane.Epoch(), Origin: "b", Ev: Event{Kind: "sample"}}
-	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
 		t.Fatal(err)
 	}
 	wctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
@@ -144,7 +144,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 		t.Fatalf("a frame of the dropped subscription was mirrored: %s", envs[0].Raw())
 	}
 	l.ctl["svc/"].sub = 5
-	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}, sub: 5}); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}, sub: 5}); err != nil {
 		t.Fatalf("svc/ overflow ended the session: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -160,7 +160,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, nil, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
 		t.Fatalf("an overflow of no subscription of ours: %v, want the session to end", err)
 	}
 	select {

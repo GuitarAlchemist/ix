@@ -234,7 +234,7 @@ func TestAPeerFrameWithoutProvenanceEndsTheSession(t *testing.T) {
 		{Ch: "svc/x", Seq: 0, Epoch: "b0b0b0b0b0b0", Origin: "b", Ev: Event{Kind: "stats"}},
 		{Ch: "svc/x", Seq: 7, Epoch: "", Origin: "b", Ev: Event{Kind: "stats"}},
 	} {
-		err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: env}})
+		err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: env}})
 		drain()
 		if err == nil || !strings.Contains(err.Error(), "provenance") {
 			t.Fatalf("frame seq %d epoch %q: %v, want a provenance error", env.Seq, env.Epoch, err)
@@ -244,7 +244,7 @@ func TestAPeerFrameWithoutProvenanceEndsTheSession(t *testing.T) {
 		t.Fatalf("%d envelopes mirrored from malformed frames", l.hub.Head())
 	}
 	good := &Envelope{Ch: "svc/x", Seq: 7, Epoch: "b0b0b0b0b0b0", Origin: "b", Ev: Event{Kind: "stats"}}
-	err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: good}})
+	err := l.apply(context.Background(), nil, nil, nil, nil, refresh, nil, 1, "b", peerFrame{prefix: "svc/x", f: Frame{Env: good}})
 	drain()
 	if err != nil || l.hub.Head() != 1 {
 		t.Fatalf("a well-formed frame: %v, head %d", err, l.hub.Head())

@@ -1,6 +1,6 @@
 # Contract: a probe sample read from the plane, as a consumer's observation (`ixctl.v1` → gaia#245)
 
-**Version:** v0.1.8 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
+**Version:** v0.1.9 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
 **Date:** 2026-10-21 · **Owner:** ix (`go/ixctl`, the producer side; Gaia owns the adapter, projection and UI) · **Story:** [ix#413](https://github.com/GuitarAlchemist/ix/issues/413) · **Consumer:** [gaia#245](https://github.com/GuitarAlchemist/gaia/issues/245) · **Plan:** `docs/plans/2026-10-20-ixctl-probes.md`
 
 Says how a reader of the control plane's event stream (`subscribe` over `ixctl.v1`, `GET /v1/events`,
@@ -56,8 +56,9 @@ same instant, and no record of a node follows its `probe.stopped`. `probe.create
 mux's `probe.stopped` and `probe.removed` are published under that same lock, in the order of the state
 changes they report: after any interleaving of ops, the last lifecycle event of a node names its state,
 and a `probe.removed` never follows the `probe.created` of a later node of the same name. A leaf's
-`probe.stopped` alone is published after its loop's last tick, outside the lock; until it is out the node
-refuses `probe.start` and a `probe.remove` of it waits, so `ctl` says `probe.stopped` then `probe.removed`;
+`probe.stopped` alone waits for its loop's last tick, then is published under the lock in the step that
+ends the stop (v0.1.8); until it is out the node refuses `probe.start`, a `probe.remove` of it waits and
+the list says `stopping`, so `ctl` says `probe.stopped` then `probe.removed`;
 the plane's shutdown waits for such a stop too, so nothing of the tree is said after it (tests
 `go/ixctl/probe_order_test.go`; the mux-order case was first seen as a CI failure of
 `TestAMuxMultiplexesItsChildrenStampedWithTheirSource`, the start/stop case is Codex's reasoning on the
@@ -67,7 +68,7 @@ previous code, reproduced by no run: the test stands as its guard).
 
 | gaia#245 asks for | From the plane | Derived by the consumer |
 |---|---|---|
-| probe identity | `origin` + `ev.data.node` | a **series** is `origin:epoch:node:<seq of the probe.created that opened it>` (on a mirrored channel, `origin:src_epoch:node:<src_seq of that probe.created>`, v0.1.4): the same name is a new series after a recreation or a restart (fixtures 2 and 3). A consumer that did not read the `probe.created` (it joined late, or a gap swallowed it) cannot tell which series a sample belongs to until the plane stamps an instance id on samples (gap G1): it opens a provisional series at the first frame it reads and merges nothing across a gap |
+| probe identity | `origin` + `ev.data.node` | a **series** is `origin:epoch:node:<seq of the probe.created that opened it>` (on a mirrored channel, `origin:src_epoch:node:<src_seq of that probe.created>`, v0.1.4): the same name is a new series after a recreation or a restart (fixtures 2 and 3). A consumer that did not read the `probe.created` (it joined late, or a gap swallowed it) resolves the series from `probe.list` with `with_cursor` (`created_seq`, v0.1.8; on a parent, from `status.peers[].probes[].created_seq` / `src_epoch`, for what it reads after that status) and folds `ctl` from the cursor on; a sample alone still carries no instance id (gap G1): without the list it opens a provisional series at the first frame it reads and merges nothing across a gap |
 | probe version | `ev.data.kind` (`heartbeat@1`) | |
 | schema version | the protocol name, `ixctl.v1` (gap G4) | this contract's version |
 | subject identity / generation | `origin` (the plane) and `epoch` (its boot); on a mirrored channel, `origin` and **`src_epoch`**: `epoch` there is the mirror's own boot and does not change when the source restarts (v0.1.4) | |
@@ -78,7 +79,7 @@ previous code, reproduced by no run: the test stands as its guard).
 | deduplication key | | **`origin:epoch:seq`**: a frame read twice (a reconnect that resumes below the last seq kept) is the same frame; fixture 1 shows a resume from the last seq kept gives `seq + 1` first, nothing twice; on a mirrored channel the key is **`origin:src_epoch:src_seq`**, since `seq` / `epoch` there are the mirror's own (v0.1.4) |
 | units | not on the wire: `probe.kinds` → `fields` lists the names only, `doc` says the kind in words (gap G3) | a per-kind table the adapter keeps, by `kind@version` |
 | sampling interval | not in the sample: `every_ms` of the node from `probe.list` | read at `probe.created`/`probe.started`, kept with the series |
-| the tree at a point of the stream | `probe.list` with `with_cursor` (v0.1.8): `cursor: {seq, epoch}` the head and the boot the list stands at, read under the tree's lock where every lifecycle event is published; per node `created_seq`, the seq of its `probe.created`; `state: "stopping"` for a leaf whose `probe.stopped` is not out yet | a consumer that joins late opens every series from the list (`origin:epoch:node:created_seq`), then folds `ctl` from `cursor.seq + 1` on, in that epoch, without a hole or a repeat; a lifecycle event at or before the cursor is already in the list. On a parent, `status.peers[].probes[].created_seq` / `src_epoch` name the incarnation each mirrored pipe carries |
+| the tree at a point of the stream | `probe.list` with `with_cursor` (v0.1.8): `cursor: {seq, epoch}` the head and the boot the list stands at, read under the tree's lock where every lifecycle event is published: which nodes exist, their kind, parent and export, which are running, are what `ctl` says up to that seq and nothing of what follows (`stopping`, `expires_in_ms` and the counters are the tree's own reading at the cursor, said by no event); per node `created_seq`, the seq of its `probe.created`; `state: "stopping"` for a leaf whose `probe.stopped` is not out yet | a consumer that joins late opens every series from the list (`origin:epoch:node:created_seq`), then folds `ctl` from `cursor.seq + 1` on, in that epoch, without a hole or a repeat; a lifecycle event at or before the cursor is already in the list. On a parent, `status.peers[].probes[].created_seq` / `src_epoch` name the incarnation each mirrored pipe carries |
 | declared limits (cadence, maximum rate) | `probe.list` → `rate_per_s` (what the node's subtree declares to emit, the worst case) and a mux's `max_rate_per_s`; `probe.kinds` → `limits` (`max_rate_per_s`, `tree_rate_per_s`, the plane's budget, D10 ix#416); `bytes` on the list is what the node emitted, measured | read once per series; CPU and RSS are not attributed to probes by the plane |
 | freshness TTL | not the plane's: `ttl_ms` on a node is its **lease**, not a freshness bound | the consumer's own, suggested `3 × every_ms` |
 | state | | see below |
@@ -152,7 +153,8 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   `probe.created` that opened it tells the series apart (fixture 2). A consumer must read `ctl`
   beside the pipe; one that missed the `probe.created` (joined late, or lost it in a gap) resolves
   the series from `probe.list` with `with_cursor` (`created_seq`, v0.1.8; on a parent, from
-  `status.peers[].probes[].created_seq` / `src_epoch`) and folds `ctl` from the cursor on. A sample
+  `status.peers[].probes[].created_seq` / `src_epoch`, for the frames it reads after that status:
+  a reading, not a point of the stream) and folds `ctl` from the cursor on. A sample
   alone still carries no instance id (a story under ix#397, not cut): across a gap on the pipe a
   reader without the list cannot merge.
 - **G2, the interval is not on the sample.** `every_ms` comes from `probe.list`; a reader that
@@ -184,6 +186,20 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 
 ## Changes
 
+- v0.1.9 (2026-10-22): Codex round 44 on slice 4. The link reads the list again on its session loop
+  after a `jumped` on `ctl`, asked for once the live subscription stands (its cursor at or past the
+  head that subscription starts from), the control frames that arrive meanwhile held behind it
+  (bounded as at session start) and applied after it, so no lifecycle event received while the list
+  was in flight is undone by it, two jumps in a row read it twice in order, and nothing of a session's
+  re-list outlives the session; `reconciled` falls in the step that gives the catch-up of `ctl` up,
+  not once the live subscription is back. A list that is no snapshot (no `cursor`, a wanted node
+  without `created_seq`) is refused and ends the session. Wording: the exactness of the list is for
+  what `ctl` says (which nodes exist, their kind, parent and export, which are running); `stopping`,
+  `expires_in_ms` and the counters are the tree's own reading at the cursor; the parent's status is a
+  reading, not a point of the stream (a frame read before it is told apart by the mirrored
+  `probe.created` or the list); the Order section says the leaf's `probe.stopped` is published under
+  the lock in the step that ends the stop (as since v0.1.8), and the mapping row of probe identity
+  names the v0.1.8 resolution. G1 unchanged.
 - v0.1.8 (2026-10-22): S2 slice 4 (criteria 3 and 4 of ix#408): `probe.list` taken with
   `with_cursor` is a snapshot bound to a cursor of the plane's stream (`cursor: {seq, epoch}`,
   the mapping table) and every node carries `created_seq`, the seq of its `probe.created`; a leaf
