@@ -49,6 +49,7 @@ func TestAConsumerOnTheParentIsToldWhatTheMirrorSkipped(t *testing.T) {
 	// tree is gone with the old boot (not persisted), so the pipe is absent until the node is
 	// created again, and that live start is marked with the last frame mirrored of the old boot.
 	b.close()
+	waitStatus(t, a, 10*time.Second, "peer b down", func(st StatusReply) bool { return st.Peers[0].State == "down" })
 	b2 := newTestInstance(t, specB, dirB)
 	epoch2 := b2.plane.Epoch()
 	waitStatus(t, a, 15*time.Second, "peer b up again", func(st StatusReply) bool { return st.Peers[0].State == "up" })
@@ -137,6 +138,104 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 func nextEnv(t *testing.T, cur *Cursor) *Envelope {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	envs, gap, err := cur.Next(ctx, 1)
+	if err != nil || gap != nil || len(envs) != 1 {
+		t.Fatalf("cursor: envs %v gap %v err %v", envs, gap, err)
+	}
+	return envs[0]
+}
+
+// The boot boundary is noticed whichever says it first: the status, a queued frame, or the
+// first frame mirrored (the status can fail and the backlog be empty), and never twice. Codex
+// round 40: the detection read the status only, so a restart behind a failed status went
+// unmarked, and a later pipe marker named the previous boot.
+func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
+	l := &peerLink{spec: PeerSpec{Name: "b"}, hub: NewHub("a"), since: map[string]uint64{}, last: map[string]srcPoint{}}
+	l.boot, l.epoch = "aaaaaaaaaaaa", "aaaaaaaaaaaa"
+	refresh := make(chan struct{}, 1)
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	frame := func(seq uint64, epoch string) peerFrame {
+		return peerFrame{prefix: "svc/", f: Frame{Env: &Envelope{Ch: "svc/x", Seq: seq, Epoch: epoch, Origin: "b", Ev: Event{Kind: "stats"}}}}
+	}
+	if err := l.apply(context.Background(), nil, nil, nil, refresh, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
+		t.Fatal(err)
+	}
+	g := gapOf(t, nextEnv(t, cur))
+	if g.Reason != "epoch-changed" || g.SrcEpoch != "bbbbbbbbbbbb" || g.LastSrcEpoch != "aaaaaaaaaaaa" {
+		t.Fatalf("boundary: %+v", g)
+	}
+	if e := nextEnv(t, cur); e.Ch != "peer/b/svc/x" || e.SrcEpoch != "bbbbbbbbbbbb" {
+		t.Fatalf("after the boundary: %s", e.Raw())
+	}
+	if err := l.apply(context.Background(), nil, nil, nil, refresh, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
+		t.Fatal(err)
+	}
+	if e := nextEnv(t, cur); e.Ev.Kind != "stats" {
+		t.Fatalf("a second frame of the same boot marked again: %s", e.Raw())
+	}
+	l.mu.Lock()
+	boot := l.boot
+	l.mu.Unlock()
+	if boot != "bbbbbbbbbbbb" {
+		t.Fatalf("boot kept as %q", boot)
+	}
+}
+
+// The peer's history expired while the link was down: the resumed subscription is answered
+// since-too-old, and the link marks it on the peer's mirrored ctl with what the peer said
+// (criterion 5 of ix#408), against a real plane whose ring turned over.
+func TestAnExpiredHistoryOnThePeerIsMarkedOnItsMirroredCtl(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json")}, NewHub("a"))
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	go l.run(ctx1)
+	deadline := time.Now().Add(10 * time.Second)
+	for l.status().State != "up" { // the svc/ subscription is live: publish once the link reads
+		if time.Now().After(deadline) {
+			t.Fatal("the link did not come up")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	b.plane.Publish("svc/x", event("stats", map[string]any{"n": 0}))
+	var mirrored *Envelope
+	for mirrored == nil {
+		if e := nextEnvWithin(t, cur, 10*time.Second); e.Ch == "peer/b/svc/x" {
+			mirrored = e
+		}
+	}
+	cancel1()
+	deadline = time.Now().Add(5 * time.Second)
+	for l.status().State != "down" {
+		if time.Now().After(deadline) {
+			t.Fatal("the link did not go down")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for i := 1; i <= ringSize+64; i++ {
+		b.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
+	}
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go l.run(ctx2)
+	var m linkGap
+	for m.Reason == "" {
+		if e := nextEnvWithin(t, cur, 10*time.Second); e.Ev.Kind == linkGapKind {
+			m = gapOf(t, e)
+		}
+	}
+	// The link resumed svc/ from the frame it mirrored (ctl had none, so it starts live); the
+	// peer answers from the next seq, with the oldest it still keeps, past the resume point.
+	if m.Prefix != "svc/" || m.Reason != "since-too-old" || m.SrcEpoch != b.plane.Epoch() || m.From != mirrored.SrcSeq+1 || m.Oldest <= m.From {
+		t.Fatalf("expired history marked as %+v, want since-too-old on svc/ from %d with the oldest kept past it", m, mirrored.SrcSeq+1)
+	}
+}
+
+func nextEnvWithin(t *testing.T, cur *Cursor, d time.Duration) *Envelope {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	envs, gap, err := cur.Next(ctx, 1)
 	if err != nil || gap != nil || len(envs) != 1 {

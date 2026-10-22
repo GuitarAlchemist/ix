@@ -252,20 +252,11 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 			return true, c.Err()
 		}
 	}
-	// The peer restarted since the link last mirrored it: a new instance's seqs start over, so
-	// the link resumed nothing and the peer answered no gap. Say so on its mirrored ctl, where a
-	// resumed ctl's epoch-changed would have been relayed, before anything of the new boot is
-	// mirrored. The boot is the status's, or the first queued frame's when the status failed.
-	l.mu.Lock()
-	prev, boot := l.epoch, l.boot
-	l.mu.Unlock()
-	if (boot == "" || boot == prev) && len(backlog) > 0 && backlog[0].f.Env != nil {
-		boot = backlog[0].f.Env.Epoch
-	}
-	if prev != "" && boot != "" && boot != prev {
-		l.hub.Publish("peer/"+l.spec.Name+"/ctl", event(linkGapKind, map[string]any{
-			"peer": l.spec.Name, "reason": "epoch-changed", "src_epoch": boot, "last_src_epoch": prev,
-		}))
+	// The peer's boot, when the status could not say it: the first queued frame's (and failing
+	// both, the first frame mirrored says it, in mirror). A new boot is marked by noteBoot before
+	// anything of it is mirrored.
+	if len(backlog) > 0 && backlog[0].f.Env != nil {
+		l.noteBoot(backlog[0].f.Env.Epoch)
 	}
 	refresh := make(chan struct{}, 1)
 	go l.refresher(c, refresh)
@@ -363,18 +354,38 @@ func (l *peerLink) markGap(prefix string, g *Gap) {
 	l.hub.Publish("peer/"+l.spec.Name+"/ctl", event(linkGapKind, data))
 }
 
-// markLiveStart publishes the marker that opens a pipe's live start, before its first mirrored
-// frame: the boot it reads, and the last frame the link mirrored on it before, if any.
-func (l *peerLink) markLiveStart(ch string) {
-	l.mu.Lock()
-	boot := l.boot
-	if boot == "" {
-		boot = l.epoch
+// noteBoot records the peer's boot as last seen and, when it is not the boot the link knew,
+// says so on the peer's mirrored ctl: the link resumes nothing from a new instance, so the peer
+// answers no gap for a restart. Whichever names the boot first in a session marks the boundary
+// once: the status, the first queued frame, or the first frame mirrored (Codex round 40: the
+// status alone left a restart behind a failed status unmarked).
+func (l *peerLink) noteBoot(epoch string) {
+	if epoch == "" {
+		return
 	}
-	last, had := l.last[ch]
+	l.mu.Lock()
+	prev := l.boot
+	l.boot = epoch
 	l.mu.Unlock()
-	data := map[string]any{"peer": l.spec.Name, "reason": "live-start", "src_epoch": boot}
-	if had {
+	if prev != "" && prev != epoch {
+		l.hub.Publish("peer/"+l.spec.Name+"/ctl", event(linkGapKind, map[string]any{
+			"peer": l.spec.Name, "reason": "epoch-changed", "src_epoch": epoch, "last_src_epoch": prev,
+		}))
+	}
+}
+
+// markLiveStartLocked publishes the marker that opens a pipe's live start, before its first
+// mirrored frame: the boot it reads (absent while the link has not seen it), and the last frame
+// the link mirrored on it before, if any. Called with l.mu held, in the same critical section
+// that makes the pipe mirrored, so a subscription the pipe moved past never marks (Codex round
+// 40: marking outside the lock let a superseded subscription publish a late marker after the
+// current one's samples).
+func (l *peerLink) markLiveStartLocked(ch string) {
+	data := map[string]any{"peer": l.spec.Name, "reason": "live-start"}
+	if l.boot != "" {
+		data["src_epoch"] = l.boot
+	}
+	if last, had := l.last[ch]; had {
 		data["last_src_seq"], data["last_src_epoch"] = last.seq, last.epoch
 	}
 	l.hub.Publish("peer/"+l.spec.Name+"/"+ch, event(linkGapKind, data))
@@ -444,9 +455,9 @@ func (l *peerLink) followPipe(ctx context.Context, c *Client, merged chan<- peer
 
 // setPipe makes a wanted node mirrored (opening: a subscription to its exact channel on its
 // own goroutine, live, never from a seq: see reconcilePipes) or not-exportable. Idempotent.
-// A live start is marked on the mirrored channel before the pipe reads `mirrored` and before
-// its first frame crosses, so a reader that waited for the state sees no marker, and one that
-// was on the channel sees the marker first.
+// A live start is marked on the mirrored channel in the step that makes the pipe `mirrored`,
+// before its first frame crosses, so a reader that waited for the state sees no marker, one
+// that was on the channel sees the marker first, and a superseded subscription marks nothing.
 func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFrame, fail chan<- error, node string, export bool) {
 	if !l.wanted(node) {
 		return
@@ -472,21 +483,18 @@ func (l *peerLink) setPipe(ctx context.Context, c *Client, merged chan<- peerFra
 		cancel()
 		l.mu.Lock()
 		stale := p.gen != gen
-		if err != nil && !stale {
+		switch {
+		case stale:
+		case err != nil:
 			p.state = pipeAbsent
+		default:
+			l.markLiveStartLocked(ch) // under l.mu: the marker and the state change are one step
+			p.state, p.sub = pipeMirrored, s.ID
 		}
 		l.mu.Unlock()
 		if err != nil {
 			l.failWith(fail, err)
 			return
-		}
-		if !stale {
-			l.markLiveStart(ch)
-			l.mu.Lock()
-			if stale = p.gen != gen; !stale {
-				p.state, p.sub = pipeMirrored, s.ID
-			}
-			l.mu.Unlock()
 		}
 		if stale { // the pipe moved on while we subscribed: not ours any more
 			uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -546,6 +554,7 @@ func (l *peerLink) mirror(origin, prefix string, env *Envelope) error {
 	if env.Seq == 0 || env.Epoch == "" {
 		return fmt.Errorf("frame on %s without provenance (seq %d, epoch %q)", prefix, env.Seq, env.Epoch)
 	}
+	l.noteBoot(env.Epoch) // a boot the status and the backlog did not name is marked here, first
 	l.mu.Lock()
 	l.since[prefix], l.epoch = env.Seq, env.Epoch
 	if strings.HasPrefix(prefix, "probe/") {
@@ -588,9 +597,7 @@ func (l *peerLink) setServices(status json.RawMessage) {
 	if json.Unmarshal(status, &st) == nil {
 		l.mu.Lock()
 		l.services = st.Services
-		if st.Epoch != "" {
-			l.boot = st.Epoch
-		}
 		l.mu.Unlock()
+		l.noteBoot(st.Epoch)
 	}
 }

@@ -1040,6 +1040,10 @@ def run():
           and up_ms is not None and len(boots) == 2 and boots[1]["epoch"] == b1["epoch"],
           exit=exit_b, epochs=[b0["epoch"], b1["epoch"]], peer_up_ms=up_ms, boot_lines=len(boots),
           ready_ms=round(ms_b2, 1), old_generation=b0["generation"])
+    # A ctl event of the new boot, for E21 below: b's own peer.up can precede a's live
+    # resubscription (that loss is what the marker says), so one is made once the link is up.
+    call(sb, "POST", "/v1/probe/create", {"name": "mark21", "kind": "heartbeat@1", "every_ms": 50})
+    call(sb, "POST", "/v1/probe/remove", {"node": "mark21"})
     # E16 (restart): the bookmark set on B before its restart is still listed by the new boot,
     # marked as not live, and a replay from it says epoch-changed before this boot's ring.
     code_bl, bl = call(sb, "GET", "/v1/bookmark")
@@ -1082,12 +1086,13 @@ def run():
     marks = [e for e in lg if e["ev"]["kind"] == "link.gap"]
     i_mark = next((i for i, e in enumerate(lg) if e["ev"]["kind"] == "link.gap"), None)
     before_new = all(e.get("src_epoch") != b1["epoch"] for e in lg[:i_mark]) if i_mark is not None else False
+    after_new = any(e.get("src_epoch") == b1["epoch"] for e in lg[i_mark + 1:]) if i_mark is not None else False
     md = marks[0]["ev"]["data"] if marks else {}
     check("E21.restart_marked_on_the_mirrored_ctl",
           ok_ready_lg and len(marks) == 1 and marks[0]["origin"] == "a" and "src_seq" not in marks[0]
           and md.get("peer") == "b" and md.get("reason") == "epoch-changed"
-          and md.get("src_epoch") == b1["epoch"] and md.get("last_src_epoch") == b0["epoch"] and before_new,
-          markers=len(marks), marker=md, envelopes=len(lg), before_new_boot=before_new)
+          and md.get("src_epoch") == b1["epoch"] and md.get("last_src_epoch") == b0["epoch"] and before_new and after_new,
+          markers=len(marks), marker=md, envelopes=len(lg), before_new_boot=before_new, new_boot_after=after_new)
 
     # E17: the IXQL probe surface (D7, ix#405), end to end through the Rust client: probe.ixql
     # declares a mux and a CPU probe feeding it, starts both, reads ten of the mux's records live
