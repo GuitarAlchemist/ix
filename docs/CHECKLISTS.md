@@ -153,8 +153,10 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
    (Go included) but resolves the cited test among Rust functions only, so a `[T:test src:…::TestX]`
    in a Go file is a broken binding that fails the next `crates/**` PR (the gate's path filter does
    not run it on `go/**`; reproduce with `cargo run -p ix-assumption-graph --bin
-   ix-assumption-graph-drift -- --check state/assumptions/annotations.snapshot.json`, exit 2). In
-   Go, point the comment at the contract row instead.
+   ix-assumption-graph-drift -- --check state/assumptions/annotations.snapshot.json`, exit 2). A
+   marker without a test binding (`[P:assumed conf:0.7]`, `[U:uncertain]`) is safe in Go: the gate
+   verifies bindings only. For a test-backed claim in Go, point the comment at the contract row
+   instead.
 
 ## Adding a showcase or demo
 

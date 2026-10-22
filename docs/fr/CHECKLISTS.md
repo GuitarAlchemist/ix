@@ -174,8 +174,9 @@ des barrières obligatoires pour une PR ordinaire.
    si bien qu'un `[T:test src:…::TestX]` dans un fichier Go est un lien cassé qui fait échouer la
    prochaine PR touchant `crates/**` (le filtre de chemins de la barrière ne la lance pas sur
    `go/**` ; reproduire avec `cargo run -p ix-assumption-graph --bin ix-assumption-graph-drift --
-   --check state/assumptions/annotations.snapshot.json`, sortie 2). En Go, renvoyez le commentaire
-   à la ligne du contrat.
+   --check state/assumptions/annotations.snapshot.json`, sortie 2). Un marqueur sans lien de test
+   (`[P:assumed conf:0.7]`, `[U:uncertain]`) est sûr en Go : la barrière ne vérifie que les liens.
+   Pour une affirmation couverte par un test en Go, renvoyez le commentaire à la ligne du contrat.
 
 ## Ajouter une vitrine ou une démo
 

@@ -256,13 +256,12 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	// The live step ended on hb's third sample; a fourth tick published before the stop took effect
 	// (emit and stopIf take the tree's lock in turn) may still be in the ring when this step opens,
 	// and it is the live period's, not the stop's, so the stopped step keeps lifecycle frames only
-	// (it failed one run in four on Linux under -race on that tick). The plane's own promise (the
-	// probe-observation contract: no record of a node follows its probe.stopped on the stream) is
-	// still held to: a sample of the old incarnation after probe.stopped would be read into the
-	// removed step and fail its fixture, or into the recreated step and fail the node-seq check
-	// below, which wants exactly the new incarnation's 1 and 2. The claim carries no @ai: marker
-	// here: the drift gate resolves a test binding among Rust functions only, so one in a Go file
-	// is a broken binding (Codex round 51, reproduced: exit 2); the contract is its single source.
+	// (it failed one run in four on Linux under -race on that tick). The plane's own promise, the
+	// "Order" paragraph of docs/contracts/2026-10-21-ixctl-probe-observation.contract.md ("What the
+	// plane says"), is still held to: a sample of the old incarnation after probe.stopped would be read into the removed step
+	// and fail its fixture, or into the recreated step and fail the node-seq check below, which
+	// wants exactly the new incarnation's 1 and 2. No `[T:test]` marker here: the drift gate
+	// resolves a test binding among Rust functions only (docs/CHECKLISTS.md, `@ai:` item 5).
 	collectSkipping(t, frames, "stopped", &recreation, func(f fixtureFrame) bool {
 		return f.Env != nil && f.Env.Ch == "probe/hb" && f.Env.Ev.Kind == "sample"
 	}, func(f fixtureFrame) bool {
