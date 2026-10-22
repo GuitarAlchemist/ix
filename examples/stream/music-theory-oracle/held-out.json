@@ -1,0 +1,16 @@
+[
+  { "id": "f-37", "set": "fresh-test", "label": "skill.diatonicchords", "prompt": "what chords are in the key of G",
+    "ga": ["keys/G major"], "expect": { "kind": "diatonic", "req": 0 } },
+  { "id": "f-40", "set": "fresh-test", "label": "skill.commontones", "prompt": "going from D to Bm, which note can i leave ringing",
+    "ga": ["keys/D major"], "expect": { "kind": "common", "chords": ["D", "Bm"] } },
+  { "id": "f-116", "set": "fresh-test", "label": "skill.chordinfo", "prompt": "what makes a chord diminished exactly? like the dim one built on B, whats going on inside it",
+    "ga": ["keys/C major"], "expect": { "kind": "notes", "chords": ["Bdim"] } },
+  { "id": "f-93", "set": "fresh-test", "label": "skill.transpose", "prompt": "singer wants it 2 half steps lower: Bb Gm Eb F",
+    "ga": ["keys/Bb major", "keys/Ab major"], "expect": { "kind": "transpose", "src": 0, "dst": 1, "chords": ["Bb", "Gm", "Eb", "F"] } },
+  { "id": "f-96", "set": "fresh-test", "label": "skill.diatonicchords", "prompt": "list the 7 chords in e minor pls",
+    "ga": ["keys/E minor"], "expect": { "kind": "diatonic", "req": 0 } },
+  { "id": "f-48", "set": "fresh-test", "label": "skill.commontones", "prompt": "writing a drone part under two chords, what notes are in both A and D",
+    "ga": ["keys/D major"], "expect": { "kind": "common", "chords": ["A", "D"] } },
+  { "id": "f-107", "set": "fresh-test", "label": "skill.commontones", "prompt": "which notes do C and Am share",
+    "ga": ["keys/C major"], "expect": { "kind": "common", "chords": ["C", "Am"] } }
+]

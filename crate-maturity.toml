@@ -109,3 +109,5 @@ ix-ixql                   = "experimental"  # IXQL parser + evaluator (Demerzel 
 ix-origami                = "experimental"  # checks of a flat folded state from a FOLD file (Kawasaki/Maekawa, isometry, layer order); one fixture (the crane); .origami folding sequences replayed and checked; MCP tool ix_origami_check
 ix-loop                   = "experimental"  # agentic loops in sandboxed Lua 5.4 (mlua, vendored C): carved budgets, Claude Code headless node, host oracles, propose/accept store; CLI only, no MCP tool yet (ADR-0011)
 ix-voice                  = "experimental"  # client + CLI of the local voice service (piper-voice, outside the workspace): say, stop, status, voices; ADR-0013
+ix-wasm                   = "experimental"  # WASI pipeline stages in any language, sandboxed in wasmi (fuel + memory caps, seeded clock); Go stages built into a content-addressed cache
+ix-stream                 = "experimental"  # JSON streams through a graph of threads over bounded channels: back-pressure, cancellation, algedonic bus, budgeted gate, SSE feed, Petri deadlock check

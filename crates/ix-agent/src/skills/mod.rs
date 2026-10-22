@@ -21,3 +21,6 @@ pub mod knot;
 pub mod origami;
 pub mod petri;
 pub mod prime_radiant;
+/// `stream.run`, registered in ix-stream, beside the graphs it runs. Nothing in ix-agent calls
+/// it, so this re-export is what keeps its registration in every binary that links ix-agent.
+pub use ix_stream::skill as stream;

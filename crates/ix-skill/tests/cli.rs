@@ -25,28 +25,29 @@ fn list_skills_returns_all_entries() {
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     let count = value["count"].as_u64().expect("count is number");
-    // 72 = batch1 (6 + pca + dbscan + eigen + silhouette + feature_importances +
-    // svd + gmm + wavelet_denoise + fir_filter + spectrogram + autocorrelation,
-    // 2026-06-07 dogfood catalog-breadth + remaining-gap + gap-audit fixes;
-    // + kalman, ix#193 2026-09-08) +
-    // batch2 (28) + batch3 (10 + context.walk + session.flywheel_export +
-    // fuzzy.eval) + prime_radiant (2) + assumption_graph (4: assumption.query +
-    // .belief_at + .drift + .claims) + acoustic_tune (2: analyze_reference +
-    // spectral_distance, 2026-06-07) + mesh_correlate (1, #178 2026-06-23)
-    // + petri (1: petri.analyze, ix-petri Place/Transition nets)
-    // + duckdb (1: duckdb.query, DuckDB SQL over caller rows)
-    // + origami (1: origami.check, checks of a stated flat folded state)
-    // + knot (2: braid, ix-knot braid closures; knot, catalogue and drawn rope knots).
-    // If this drifts, update the assertion alongside the batch changes.
-    //
-    // NOTE (ix#193): this is a *second* hand-typed count oracle for the same registry.
-    // `parity.rs` deliberately replaced its own `assert_eq!(EXPECTED.len(), 94)` with a
-    // name-diff against `state/registry/skills.snapshot.json` (ix#185) precisely because
-    // a bare number is unreviewable and drifts. This one survived that cleanup, so adding
-    // a skill still turns `main` red here even when the snapshot and parity agree. It
-    // would be better as `assert_eq!(count, snapshot["skills"]["count"])`, or dropped in
-    // favour of the snapshot test — left alone here to keep this PR surgical.
-    assert_eq!(count, 72, "expected 72 registry skills, got {count}");
+    // The oracle is the generated snapshot, `state/registry/skills.snapshot.json` (ix#185),
+    // regenerated with `ix doctor --write` and name-diffed by ix-agent's parity tests. This
+    // used to be a hand-typed `70` with a running tally in a comment: a second count oracle
+    // for the same registry, which turned red on every added skill even when the snapshot
+    // and parity agreed (it did for stream.run). What this test still proves is that the
+    // CLI's `list skills` reaches every registered skill, not how many there are.
+    let snapshot_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../state/registry/skills.snapshot.json"
+    );
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(snapshot_path).expect("read skills.snapshot.json"),
+    )
+    .expect("skills.snapshot.json is valid json");
+    let expected = snapshot["skills"]["names"]
+        .as_array()
+        .expect("snapshot skills.names is an array")
+        .len() as u64;
+    assert_eq!(
+        count, expected,
+        "`ix list skills` returned {count} skills, the snapshot names {expected}; \
+         if a skill was added or removed, run `ix doctor --write` and commit the diff"
+    );
 }
 
 #[test]
@@ -160,7 +161,10 @@ fn check_action_unmatched_is_unknown() {
         .args(["--format", "json", "check", "action", "log the response"])
         .assert();
     let code = assert.get_output().status.code().unwrap_or(-1);
-    assert_eq!(code, 2, "an action no rule matches should be U (2), got {code}");
+    assert_eq!(
+        code, 2,
+        "an action no rule matches should be U (2), got {code}"
+    );
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     assert_eq!(value["verdict"], "U");
@@ -183,7 +187,10 @@ fn check_action_uses_constitution_rules() {
         ])
         .assert();
     let code = assert.get_output().status.code().unwrap_or(-1);
-    assert_eq!(code, 3, "a constitution rule firing should yield D (3), got {code}");
+    assert_eq!(
+        code, 3,
+        "a constitution rule firing should yield D (3), got {code}"
+    );
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     assert_eq!(value["verdict"], "D");

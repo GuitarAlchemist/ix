@@ -1,0 +1,21 @@
+train    baseline         r1  T7 F3 U0  T-F  4  claims 36 (3.6/q)  verified 33  precision 0.917
+train    notes            r1  T5 F5 U0  T-F  0  claims 40 (4.0/q)  verified 35  precision 0.875
+train    first            r1  T6 F3 U1  T-F  3  claims 36 (3.6/q)  verified 33  precision 0.917
+train    key              r1  T4 F5 U1  T-F -1  claims 37 (3.7/q)  verified 32  precision 0.865
+train    first+notes      r1  T4 F5 U1  T-F -1  claims 42 (4.2/q)  verified 30  precision 0.714
+train    first+notes+key  r1  T4 F5 U1  T-F -1  claims 49 (4.9/q)  verified 35  precision 0.714
+train    baseline         r2  T6 F3 U1  T-F  3  claims 35 (3.5/q)  verified 32  precision 0.914
+train    notes            r2  T6 F4 U0  T-F  2  claims 53 (5.3/q)  verified 46  precision 0.868
+train    first            r2  T6 F3 U1  T-F  3  claims 32 (3.2/q)  verified 28  precision 0.875
+train    key              r2  T6 F3 U1  T-F  3  claims 27 (2.7/q)  verified 24  precision 0.889
+train    first+notes      r2  T4 F5 U1  T-F -1  claims 46 (4.6/q)  verified 32  precision 0.696
+train    first+notes+key  r2  T6 F3 U1  T-F  3  claims 48 (4.8/q)  verified 35  precision 0.729
+held-out baseline         r1  T3 F4 U0  T-F -1  claims 37 (5.3/q)  verified 33  precision 0.892
+held-out baseline         r2  T2 F5 U0  T-F -3  claims 42 (6.0/q)  verified 37  precision 0.881
+score baseline           7  claims/q 3.55  U 1  precision 0.915  eligible true
+score notes              2  claims/q 4.65  U 0  precision 0.871  eligible true
+score first              6  claims/q 3.40  U 2  precision 0.897  eligible false
+score key                2  claims/q 3.20  U 2  precision 0.875  eligible false
+score first+notes       -2  claims/q 4.40  U 2  precision 0.705  eligible false
+score first+notes+key    2  claims/q 4.85  U 2  precision 0.722  eligible false
+chosen: baseline (l1.json: "baseline")

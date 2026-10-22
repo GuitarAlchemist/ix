@@ -31,6 +31,8 @@ ix-acoustic-tune = { workspace = true }
 ix-cache = { workspace = true }
 ix-pipeline = { workspace = true }
 ix-petri = { workspace = true }
+# `stream.run` (ix_stream_run) is registered by ix-stream itself; see src/skills/mod.rs.
+ix-stream = { workspace = true }
 ix-origami = { workspace = true }
 ix-knot = { workspace = true }
 ix-autograd = { workspace = true }

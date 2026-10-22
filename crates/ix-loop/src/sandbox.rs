@@ -22,7 +22,7 @@ use crate::budget::{Budget, Grant};
 use crate::node::Ask;
 use crate::oracle::{Task, FAMILIES};
 use crate::store::{Draft, MAX_BODY_BYTES, MAX_NAME_BYTES, MAX_NOTE_BYTES};
-use crate::{clip, Host};
+use crate::{clip, world, Host};
 use mlua::{
     ChunkMode, Debug, HookTriggers, Lua, LuaOptions, StdLib, Table, Thread, Value, Variadic,
     VmState,
@@ -209,6 +209,11 @@ fn task_table(lua: &Lua, task: &Task) -> mlua::Result<Table> {
         Task::Acrostic { word, letter } => {
             t.raw_set("word", word.as_str())?;
             t.raw_set("letter", letter.to_string())?;
+        }
+        Task::Origami { faces, ply } => {
+            t.raw_set("faces", *faces)?;
+            t.raw_set("ply", *ply)?;
+            t.raw_set("grammar", ix_origami::GRAMMAR)?;
         }
     }
     let oracle = task.clone();
@@ -432,6 +437,139 @@ fn sandbox(host: &Rc<Host>, budget: &Rc<Budget>, job: &Job<'_>) -> mlua::Result<
             }
         })?,
     )?;
+
+    // The voice: off unless the person turned it on.
+    let (h, b) = (host.clone(), budget.clone());
+    g.raw_set(
+        "say",
+        lua.create_function(move |lua, (text, opts): (String, Option<Table>)| {
+            let wait = match opts.as_ref() {
+                Some(t) => t.raw_get::<Option<bool>>("wait")?.unwrap_or(false),
+                None => false,
+            };
+            let v = h.say(&b, &text, wait).map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let voice = lua.create_table()?;
+    let h = host.clone();
+    voice.raw_set(
+        "stop",
+        lua.create_function(move |lua, ()| {
+            let v = h.voice_stop().map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    g.raw_set("voice", voice)?;
+
+    // GitHub, read only: off unless the person turned it on, and only for owners they allowed.
+    let gh = lua.create_table()?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "prs",
+        lua.create_function(move |lua, repo: String| {
+            let v = h
+                .gh(&b, "prs", &repo, |get, r| world::prs(get, r))
+                .map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "checks",
+        lua.create_function(move |lua, (repo, number): (String, u64)| {
+            let v = h
+                .gh(&b, "checks", &repo, |get, r| world::checks(get, r, number))
+                .map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "runs",
+        lua.create_function(move |lua, (repo, opts): (String, Option<Table>)| {
+            let branch = opt_str(opts.as_ref(), "branch")?;
+            let v = h
+                .gh(&b, "runs", &repo, |get, r| {
+                    world::runs(get, r, branch.as_deref())
+                })
+                .map_err(mlua::Error::runtime)?;
+            to_lua(lua, &v)
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    gh.raw_set(
+        "log",
+        lua.create_function(
+            move |lua, (repo, job_id, lines): (String, u64, Option<usize>)| {
+                let v = h
+                    .gh(&b, "log", &repo, |get, r| {
+                        world::log(get, r, job_id, lines.unwrap_or(40))
+                    })
+                    .map_err(mlua::Error::runtime)?;
+                to_lua(lua, &v)
+            },
+        )?,
+    )?;
+    g.raw_set("gh", gh)?;
+
+    // Stages in other languages: off unless the person turned them on. Each answers like `run`:
+    // `ok, value or why, stats`.
+    let wasm = lua.create_table()?;
+    for lang in ["go", "zig"] {
+        let (h, b) = (host.clone(), budget.clone());
+        wasm.raw_set(
+            lang,
+            lua.create_function(move |lua, source: String| {
+                match h.wasm_build(&b, lang, &source) {
+                    Ok((id, cached)) => {
+                        let info = lua.create_table()?;
+                        info.raw_set("cached", cached)?;
+                        Ok((
+                            true,
+                            Value::String(lua.create_string(&id)?),
+                            Value::Table(info),
+                        ))
+                    }
+                    Err(e) => Ok((false, Value::String(lua.create_string(&e)?), Value::Nil)),
+                }
+            })?,
+        )?;
+    }
+    let (h, b) = (host.clone(), budget.clone());
+    wasm.raw_set(
+        "wat",
+        lua.create_function(move |lua, text: String| {
+            let r = h.wasm_wat(&b, &text);
+            let (ok, s) = match r {
+                Ok(id) => (true, id),
+                Err(e) => (false, e),
+            };
+            Ok((ok, Value::String(lua.create_string(&s)?)))
+        })?,
+    )?;
+    let (h, b) = (host.clone(), budget.clone());
+    wasm.raw_set(
+        "run",
+        lua.create_function(
+            move |lua, (id, input, opts): (String, Value, Option<Table>)| {
+                let input = to_json(&input, 0)
+                    .map_err(|e| mlua::Error::runtime(format!("wasm.run: input: {e}")))?;
+                let fuel = opt_num(opts.as_ref(), "fuel")?.map(|f| f.max(0.0) as u64);
+                match h.wasm_run(&b, &id, &input, fuel) {
+                    Ok(ran) => {
+                        let stats = to_lua(lua, &crate::wasm::stats(&ran))?;
+                        match ran.value {
+                            Ok(v) => Ok((true, to_lua(lua, &v)?, stats)),
+                            Err(e) => Ok((false, Value::String(lua.create_string(&e)?), stats)),
+                        }
+                    }
+                    Err(e) => Ok((false, Value::String(lua.create_string(&e)?), Value::Nil)),
+                }
+            },
+        )?,
+    )?;
+    g.raw_set("wasm", wasm)?;
 
     // The store. A loop can propose a draft; it cannot accept one.
     let loops = lua.create_table()?;
