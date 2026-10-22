@@ -215,3 +215,38 @@ fn the_workflow_binds_the_report_before_showing_or_enforcing_it() {
         "the evidence of an unbound report stays downloadable"
     );
 }
+
+/// While a PR is a draft, a failing verdict is a warning; it fails the job once the PR is ready for review, an event
+/// the workflow listens to. The binding step stays fatal on drafts too.
+#[test]
+fn a_draft_is_warned_and_a_ready_pr_is_enforced() {
+    let wf: serde_yaml::Value = serde_yaml::from_str(WORKFLOW).expect("valid workflow YAML");
+    let types = wf["on"]["pull_request"]["types"]
+        .as_sequence()
+        .expect("pull_request types");
+    assert!(
+        types.iter().any(|t| t.as_str() == Some("ready_for_review")),
+        "marking a PR ready must run the gate again"
+    );
+    let steps = wf["jobs"]["risk-report"]["steps"]
+        .as_sequence()
+        .expect("risk-report steps");
+    let enforce = steps
+        .iter()
+        .find(|s| s["name"].as_str() == Some("Enforce verdict"))
+        .expect("the enforce step");
+    assert_eq!(
+        enforce["env"]["AGENT_BLACKBOX_DRAFT"].as_str(),
+        Some("${{ github.event.pull_request.draft }}"),
+        "the step must know whether the PR is a draft"
+    );
+    let run = enforce["run"].as_str().expect("enforce script");
+    let verdict = run.find("agent_blackbox enforce").expect("enforce runs");
+    let draft = run.find("$AGENT_BLACKBOX_DRAFT").expect("the draft is checked");
+    assert!(
+        verdict < draft,
+        "the verdict is computed first, then softened for a draft:\n{run}"
+    );
+    assert!(run.contains("::warning"), "a draft's failing verdict shows as a warning");
+    assert!(run.trim_end().ends_with("exit 1"), "a ready PR's failing verdict fails the job");
+}

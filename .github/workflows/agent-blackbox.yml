@@ -195,6 +195,7 @@ jobs:
         shell: bash
         env:
           AGENT_BLACKBOX_REVIEWED: ${{ contains(github.event.pull_request.labels.*.name, 'agent-blackbox-reviewed') }}
+          AGENT_BLACKBOX_DRAFT: ${{ github.event.pull_request.draft }}
           GH_TOKEN: ${{ github.token }}
         run: |
           # Re-check live labels in case the label race happens during a synchronize event.
@@ -203,4 +204,13 @@ jobs:
             echo "Agent Blackbox human-review override label present; skipping hard enforcement."
             exit 0
           fi
-          PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox enforce --report dist/risk-report.json
+          if PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox enforce --report dist/risk-report.json; then
+            exit 0
+          fi
+          # A draft is work in progress: its failing verdict is a warning. Marking it ready runs this job again
+          # (ready_for_review), and then the verdict fails it until the label is applied.
+          if [ "$AGENT_BLACKBOX_DRAFT" = "true" ]; then
+            echo "::warning title=Agent Blackbox::draft PR: the verdict fails and will be enforced once the PR is ready for review"
+            exit 0
+          fi
+          exit 1
