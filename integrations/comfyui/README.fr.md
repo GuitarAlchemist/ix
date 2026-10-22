@@ -35,6 +35,29 @@ binaire dont les octets ne correspondent plus à l'empreinte enregistrée.
 
 Les nœuds ont besoin de numpy et de Pillow, que ComfyUI fournit déjà.
 
+## Installation depuis une release
+
+Une release porte une étiquette `comfyui-knots-v*` et contient une archive par
+plateforme, chacune étant le paquet avec son propre `ix-mcp` déjà installé :
+`ix_comfyui-windows-x64.zip`, `ix_comfyui-linux-x64.tar.gz` et
+`ix_comfyui-macos-arm64.tar.gz`, plus `SHA256SUMS`. Le
+[workflow de release](../../.github/workflows/comfyui-release.yml) construit et
+teste chaque archive telle qu'elle sera décompressée, et crée la release en
+**brouillon** : elle ne devient publique que lorsque quelqu'un la publie à la
+main.
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify ix_comfyui-linux-x64.tar.gz --repo GuitarAlchemist/ix
+tar -xzf ix_comfyui-linux-x64.tar.gz -C /path/to/ComfyUI/custom_nodes
+```
+
+Sous Windows, décompressez le zip dans `ComfyUI\custom_nodes\` pour obtenir le
+dossier `custom_nodes\ix_comfyui`. L'attestation montre que l'archive vient du
+workflow de ce dépôt ; la vérification d'empreinte du paquet ne détecte
+toujours qu'un binaire remplacé par accident. La version macOS est pour Apple
+silicon et n'est ni signée ni notarisée.
+
 ## Ce que le paquet fait et ne fait pas
 
 - Il n'exécute que `ix_comfyui/bin/ix-mcp`, seulement tant que son empreinte

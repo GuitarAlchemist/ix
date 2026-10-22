@@ -16,8 +16,9 @@ from ix_comfyui import bridge  # noqa: E402
 from ix_comfyui.bridge import IxBridgeError, call_tool, check_signal, spectrogram, verify_binary  # noqa: E402
 
 # Python sets LC_CTYPE itself when it starts under the C locale (PEP 538), as it does with the empty
-# environment the bridge hands a child on Linux; it is not inherited from the caller.
-PYTHON_OWN_KEYS = {"LC_CTYPE"}
+# environment the bridge hands a child on Linux and macOS; on macOS, CoreFoundation also sets
+# __CF_USER_TEXT_ENCODING in every process it starts in. Neither is inherited from the caller.
+PYTHON_OWN_KEYS = {"LC_CTYPE", "__CF_USER_TEXT_ENCODING"}
 
 
 def tone(freqs_and_seconds, sample_rate):
