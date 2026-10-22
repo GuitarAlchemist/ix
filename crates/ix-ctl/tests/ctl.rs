@@ -2337,3 +2337,46 @@ fn probe_create_bound_is_exact_like_the_plane() {
         "the thirteenth is refused naming the bound: {err}"
     );
 }
+
+// S2 slice 2 (D4 ix#402): a mirrored event says which of the source's envelopes it is, so a
+// consumer here keys the series and dedups as one on the origin would; the plane's own events
+// carry no such fields, and the flattened JSON has them only when they are there.
+#[test]
+fn a_mirrored_event_carries_its_source_provenance() {
+    let (ctl, plane) = plane();
+    plane.lock().unwrap().events = vec![
+        json!({"ch": "peer/b/probe/cpu", "seq": 9, "epoch": "3f9a1c0b7d2e", "origin": "b",
+               "src_seq": 41, "src_epoch": "b0b0b0b0b0b0", "t": 1_760_000_000_009u64,
+               "ev": {"kind": "sample", "t": 1_760_000_000_008u64, "data": {"node": "cpu", "kind": "cpu@1", "seq": 3}}}),
+        json!({"ch": "ctl", "seq": 10, "epoch": "3f9a1c0b7d2e", "origin": "fake", "t": 1_760_000_000_010u64,
+               "ev": {"kind": "converged", "data": {"generation": 1}}}),
+    ];
+    let items: Vec<_> = ctl
+        .events("", Some(0), None)
+        .unwrap()
+        .map(|i| i.unwrap())
+        .collect();
+    assert_eq!(2, items.len(), "{items:?}");
+    assert_eq!(
+        (Some(41), Some("b0b0b0b0b0b0")),
+        (items[0].src_seq, items[0].src_epoch.as_deref())
+    );
+    assert_eq!(
+        (None, None),
+        (items[1].src_seq, items[1].src_epoch.as_deref())
+    );
+    let flat = Value::from(&items[0]);
+    assert_eq!(
+        (Some(41), Some("b0b0b0b0b0b0"), Some(9)),
+        (
+            flat["src_seq"].as_u64(),
+            flat["src_epoch"].as_str(),
+            flat["seq"].as_u64()
+        )
+    );
+    let own = Value::from(&items[1]);
+    assert!(
+        own.get("src_seq").is_none() && own.get("src_epoch").is_none(),
+        "{own}"
+    );
+}

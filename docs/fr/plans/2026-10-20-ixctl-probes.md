@@ -253,9 +253,12 @@ peut pas affamer la réponse, et le relais d'un tuyau retiré se termine avec so
 `mirrored` / `not-exportable` / `opening` / `absent`. Trois
 chiffres tenus séparés : échantillonnage admis (D10), enveloppes publiées (échantillons ×
 profondeur), octets et enregistrements transportés par lien et par parent ; `tree_rate_per_s`
-n'est pas une borne fédérée. Reste à livrer (tranches 2 à 4, critères d'acceptation sur ix#408) :
-la provenance `src_seq` / `src_epoch` et la série `origin:src_epoch:node:<created seq>` ; les trous
-distants relayés comme marqueur de continuité ; les files du lien bornées par classe
+n'est pas une borne fédérée. La tranche 2 a livré la provenance : chaque enveloppe miroir porte
+les `src_seq` / `src_epoch` de la source, donc la série
+`origin:src_epoch:node:<src_seq du probe.created>` et la clé de dédoublonnage
+`origin:src_epoch:src_seq` sont celles du consommateur (porte E20, contrat v0.1.4). Reste à
+livrer (tranches 3 et 4, critères d'acceptation sur ix#408) : les trous distants relayés comme
+marqueur de continuité ; les files du lien bornées par classe
 (enregistrements et octets), un rejeu borné puis saut avec trou daté, `degraded` et `reconciled`
 séparés ; l'instantané lié à un curseur avec identités de création. Grillée à la voix, la revue en
 lecture seule de Gaïa intégrée ; la résolution est sur ix#402. La porte E19 vérifie la tranche sur

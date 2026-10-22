@@ -35,6 +35,10 @@ type Envelope struct {
 	Origin string `json:"origin"`
 	T      int64  `json:"t"`
 	Ev     Event  `json:"ev"`
+	// On a mirrored envelope (a peer/ channel): the source's own seq and epoch, so a consumer
+	// here can key the series and dedup as one on the origin would (S2 slice 2, D4 ix#402).
+	SrcSeq   uint64 `json:"src_seq,omitempty"`
+	SrcEpoch string `json:"src_epoch,omitempty"`
 
 	raw []byte // JSON encoding, built once at publish
 }
@@ -144,16 +148,17 @@ func (h *Hub) Epoch() string { return h.epoch }
 
 // Publish stamps an event with this instance as origin.
 func (h *Hub) Publish(ch string, ev Event) *Envelope {
-	return h.publish(ch, h.origin, 0, ev)
+	return h.publish(ch, h.origin, 0, ev, 0, "")
 }
 
-// Mirror republishes an envelope received from a peer under a local channel,
-// keeping the peer as origin and its time.
-func (h *Hub) Mirror(ch, origin string, t int64, ev Event) *Envelope {
-	return h.publish(ch, origin, t, ev)
+// Mirror republishes an envelope received from a peer under a local channel, keeping the
+// peer as origin and its time, and saying which envelope of the source it was (srcSeq,
+// srcEpoch: the source's own seq and epoch).
+func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
+	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch)
 }
 
-func (h *Hub) publish(ch, origin string, t int64, ev Event) *Envelope {
+func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
 	evRaw, err := json.Marshal(ev)
 	if err != nil {
 		ev.Data = nil
@@ -161,14 +166,22 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event) *Envelope {
 	}
 	chRaw, _ := json.Marshal(ch)
 	orRaw, _ := json.Marshal(origin)
+	var srcRaw []byte
+	if srcSeq != 0 {
+		epRaw, _ := json.Marshal(srcEpoch) // a peer's epoch came over the wire: escaped like any string
+		srcRaw = append(srcRaw, `,"src_seq":`...)
+		srcRaw = strconv.AppendUint(srcRaw, srcSeq, 10)
+		srcRaw = append(srcRaw, `,"src_epoch":`...)
+		srcRaw = append(srcRaw, epRaw...)
+	}
 	if t == 0 {
 		t = time.Now().UnixMilli()
 	}
-	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+64)
+	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+len(srcRaw)+64)
 
 	h.mu.Lock()
 	h.head++
-	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, T: t, Ev: ev}
+	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, T: t, Ev: ev, SrcSeq: srcSeq, SrcEpoch: srcEpoch}
 	b = append(b, `{"ch":`...)
 	b = append(b, chRaw...)
 	b = append(b, `,"seq":`...)
@@ -177,6 +190,7 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event) *Envelope {
 	b = append(b, h.epoch...) // hex, needs no escaping
 	b = append(b, `","origin":`...)
 	b = append(b, orRaw...)
+	b = append(b, srcRaw...)
 	b = append(b, `,"t":`...)
 	b = strconv.AppendInt(b, t, 10)
 	b = append(b, `,"ev":`...)

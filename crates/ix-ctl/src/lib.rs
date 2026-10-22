@@ -157,16 +157,27 @@ pub struct Event {
     pub t: Option<i64>,
     /// The event's own payload.
     pub data: Value,
+    /// On a mirrored event (a `peer/<name>/...` channel): the source's own seq, so a consumer
+    /// here keys a series (`origin:src_epoch:node:<src_seq of probe.created>`) and dedups
+    /// (`origin:src_epoch:src_seq`) as one on the origin would. `None` on the plane's own events.
+    pub src_seq: Option<u64>,
+    /// On a mirrored event: the source's own boot id.
+    pub src_epoch: Option<String>,
 }
 
 impl From<&Event> for Value {
     /// The event as JSON, the envelope's fields flattened: `{channel, seq, epoch, origin,
-    /// kind, t, data}`.
+    /// kind, t, data}`, plus `src_seq` and `src_epoch` on a mirrored event only.
     fn from(e: &Event) -> Value {
-        json!({
+        let mut v = json!({
             "channel": e.channel, "seq": e.seq, "epoch": e.epoch, "origin": e.origin,
             "kind": e.kind, "t": e.t, "data": e.data,
-        })
+        });
+        if let (Some(seq), Some(epoch)) = (e.src_seq, &e.src_epoch) {
+            v["src_seq"] = json!(seq);
+            v["src_epoch"] = json!(epoch);
+        }
+        v
     }
 }
 
@@ -272,6 +283,11 @@ impl Iterator for Events {
             kind: doc["ev"]["kind"].as_str().unwrap_or("").to_string(),
             t: doc["ev"].get("t").and_then(Value::as_i64),
             data: doc["ev"].get("data").cloned().unwrap_or(Value::Null),
+            src_seq: doc.get("src_seq").and_then(Value::as_u64),
+            src_epoch: doc
+                .get("src_epoch")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         }))
     }
 }

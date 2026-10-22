@@ -466,7 +466,7 @@ func (l *peerLink) mirror(origin, prefix string, env *Envelope) {
 	if env.Origin != origin || strings.HasPrefix(env.Ch, "peer/") {
 		return
 	}
-	l.hub.Mirror("peer/"+l.spec.Name+"/"+env.Ch, env.Origin, env.T, env.Ev)
+	l.hub.Mirror("peer/"+l.spec.Name+"/"+env.Ch, env.Origin, env.T, env.Ev, env.Seq, env.Epoch)
 }
 
 // refresher keeps the peer's service list for status, at most once per

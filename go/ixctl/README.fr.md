@@ -209,7 +209,9 @@ Les événements arrivent en enveloppes :
 ```
 
 `seq` compte depuis 1 à chaque démarrage ; `epoch` nomme le démarrage ; `origin` est l'instance
-émettrice. Un abonné avec `since` rejoue depuis l'anneau (4096 enveloppes par instance) et reçoit
+émettrice ; une enveloppe miroir (canal `peer/`) porte aussi `src_seq` et `src_epoch`, la
+séquence et le démarrage propres à la source, pour qu'un lecteur ici identifie et dédoublonne
+comme un lecteur chez l'origine (S2 tranche 2). Un abonné avec `since` rejoue depuis l'anneau (4096 enveloppes par instance) et reçoit
 `{sub, gap}` quand c'est impossible : `since-too-old`, `overflow`, `epoch-changed`, `since-ahead`.
 
 ### Canaux et événements
@@ -238,9 +240,9 @@ contrat G8). L'agrégation
 vit chez le lecteur : en V1 le lecteur est le consommateur de `peer/<nom>/probe/<nœud>` (IXQL
 `ix.ctl.events`), aucun nœud local ne nomme une source distante. L'export est une règle de
 fédération, pas une barrière de confidentialité : l'abonnement direct à un tuyau est inchangé.
-Pas encore dans cette tranche : la provenance source sur l'enveloppe miroir (`src_seq`,
-`src_epoch`), les trous distants relayés comme marqueur de continuité, les files bornées par
-classe et le rattrapage borné, l'instantané lié à un curseur ; voir la résolution sur ix#402.
+La tranche 2 ajoute les `src_seq` / `src_epoch` de la source sur chaque enveloppe miroir. Pas
+encore : les trous distants relayés comme marqueur de continuité, les files bornées par classe
+et le rattrapage borné, l'instantané lié à un curseur ; voir la résolution sur ix#402.
 
 `ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`, `export` quand posé),
 `probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
@@ -403,7 +405,7 @@ redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Ru
 sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
 plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
 les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
-45 vérifications, E1..E19 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé), une boucle de
+46 vérifications, E1..E20 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement), une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).

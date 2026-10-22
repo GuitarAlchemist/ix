@@ -197,7 +197,9 @@ Events arrive as envelopes:
 ```
 
 `seq` counts from 1 at each boot; `epoch` names the boot; `origin` is the instance that emitted
-it. A subscriber with `since` replays from the ring (4096 envelopes per instance) and gets
+it; a mirrored envelope (a `peer/` channel) also carries `src_seq` and `src_epoch`, the
+source's own seq and boot, so a reader here keys and dedups as one on the origin would (S2
+slice 2). A subscriber with `since` replays from the ring (4096 envelopes per instance) and gets
 `{sub, gap}` when it cannot: `since-too-old`, `overflow`, `epoch-changed`, `since-ahead`.
 
 ### Channels and events
@@ -223,9 +225,9 @@ cursor-bound list of slice 4 is that proof; slice 2 brings the identity, slice 3
 replay and the continuity marker for what a live start skips, contract G8). Aggregation lives with the reader: in V1 the reader
 is the consumer of `peer/<name>/probe/<node>` (IXQL `ix.ctl.events`), no local node names a
 remote source. Export is a federation rule, not a confidentiality barrier: direct subscription to
-a pipe is unchanged. Not yet in this slice: source provenance on the mirrored envelope
-(`src_seq`, `src_epoch`), remote gaps relayed as a continuity marker, per-class bounded link
-queues and bounded catch-up, the cursor-bound snapshot; see the resolution on ix#402.
+a pipe is unchanged. Slice 2 adds the source's `src_seq` / `src_epoch` on every mirrored
+envelope. Not yet: remote gaps relayed as a continuity marker, per-class bounded link queues
+and bounded catch-up, the cursor-bound snapshot; see the resolution on ix#402.
 
 `ctl` also carries the probe lifecycle: `probe.created` (`node`, `kind`, `parent`, `export` when set),
 `probe.started` (`expires_in_ms` when leased), `probe.stopped` and `probe.removed` with a `reason`
@@ -377,7 +379,7 @@ pipes and the `ctl` lifecycle carried after a point the operator named; bounds, 
 peer's bookmark; survival of a restart) and the IXQL probe surface (E17: `probe.ixql` through
 the Rust client, a CPU probe under a mux, ten records, the tree removed) and probe budgets (E18:
 the plane's budget in `limits`, a leaf past its mux's `max_rate_per_s` refused naming both, a leaf
-carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is). 45 checks, E1..E19, a
+carries no budget, a mux cannot widen, rates and bytes on the list; E19: only a probe pipe the peer exports and the parent asks for crosses the link, by exact name, the status saying what each wanted name is; E20: a mirrored envelope carries the source's `src_seq` / `src_epoch`, naming the envelope on the peer that carries the same record). 46 checks, E1..E20, a
 restart loop and two measurements: M1
 (what a wait on the stream would gain over the 25 ms poll) and M2 (what one mux over sixteen
 heartbeats at 10 ms delivers, and what it costs the plane).

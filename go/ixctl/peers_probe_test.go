@@ -56,6 +56,24 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	if s.Origin != "b" || dataOf(s)["node"] != "cpu" {
 		t.Fatalf("mirrored sample %+v", s)
 	}
+	// Provenance (slice 2): the mirrored envelope says which of B's envelopes it is, so a
+	// consumer on A keys the series (origin:src_epoch:node:<src_seq of probe.created>) and
+	// dedups (origin:src_epoch:src_seq) as a consumer on B would.
+	if s.SrcSeq == 0 || s.SrcEpoch == "" {
+		t.Fatalf("mirrored sample carries no source provenance: src_seq %d, src_epoch %q", s.SrcSeq, s.SrcEpoch)
+	}
+	if e.SrcSeq == 0 || e.SrcEpoch != s.SrcEpoch {
+		t.Fatalf("mirrored probe.created carries src_seq %d, src_epoch %q (sample's %q): the series cannot be keyed", e.SrcSeq, e.SrcEpoch, s.SrcEpoch)
+	}
+	var zero uint64
+	direct := subscribe(t, dial(t, b), "probe/cpu", &zero)
+	src := waitEnv(t, direct, 5*time.Second, "the source envelope of the mirrored sample", func(x *Envelope) bool {
+		return x.Seq == s.SrcSeq
+	})
+	if src.Epoch != s.SrcEpoch || dataOf(src)["seq"] != dataOf(s)["seq"] || src.SrcSeq != 0 {
+		t.Fatalf("source %d/%s data seq %v (src_seq %d), mirrored says %d/%s data seq %v",
+			src.Seq, src.Epoch, dataOf(src)["seq"], src.SrcSeq, s.SrcSeq, s.SrcEpoch, dataOf(s)["seq"])
+	}
 	// The status says what each wanted name is: mirrored, not exportable, or absent.
 	wantProbes := func(want ...string) func(StatusReply) bool {
 		return func(st StatusReply) bool {
@@ -92,7 +110,11 @@ func TestOnlyExportedAndWantedProbePipesCrossTheLink(t *testing.T) {
 	// The unexported incarnation is a mem@1 so its samples can be told from a heartbeat's.
 	probeOn(t, c, "cpu", "mem@1", false)
 	waitStatus(t, a, 5*time.Second, "cpu not exportable", wantProbes("cpu:not-exportable", "mem:not-exportable", "late:mirrored"))
-	if f, err := pipes.next(300*time.Millisecond, func(e *Envelope) bool { return e.Ch == "peer/b/probe/cpu" }); err == nil {
+	// Matched by kind: a heartbeat of the removed incarnation may still sit in this reader's
+	// queue, mirrored before the removal; only a mem@1 would be the new incarnation crossing.
+	if f, err := pipes.next(300*time.Millisecond, func(e *Envelope) bool {
+		return e.Ch == "peer/b/probe/cpu" && dataOf(e)["kind"] == "mem@1"
+	}); err == nil {
 		t.Fatalf("a recreated, unexported cpu crossed the link: seq %d", f.Env.Seq)
 	} else if !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("waiting for nothing: %v", err)

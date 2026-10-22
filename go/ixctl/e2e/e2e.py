@@ -10,7 +10,7 @@ records, the tree removed) and probe budgets (E18: `limits` say the plane's budg
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
 widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
 only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
-what each wanted name is). 45 checks, E1..E19, a restart loop and the M1 and M2 measurements.
+what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch). 46 checks, E1..E20, a restart loop and the M1 and M2 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -1192,6 +1192,29 @@ def run():
           created=made, started=started_x, states=states_x, channels=xchans, samples=len(xenvs), export=flags,
           removed=removed_x, after_remove=states_gone, recreated=states_re, reexported=states_rx,
           ready=ok_ready, crossed=len(crossed), kinds=kinds, peer_up=peer_up, gaps=[gaps_before, gaps_after])
+
+    # E20: provenance (S2 slice 2, D4 ix#402). A mirrored envelope on a says which of b's envelopes
+    # it is: src_seq / src_epoch are b's own seq and epoch, in order and without repeats, and each
+    # names the envelope on b that carries the same record; b's own envelopes carry no such fields.
+    call(sa, "POST", "/v1/probe/create?peer=b", {"name": "xcpu", "kind": "heartbeat@1", "every_ms": 50, "export": True})
+    call(sa, "POST", "/v1/probe/start", {"node": "xcpu", "peer": "b"})
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "mirrored" else None, 5)
+    _, menvs = sse(sa, "peer/b/probe/", 0.8, query="ch=peer/b/probe/")
+    src_seqs = [e.get("src_seq") for e in menvs]
+    b_epoch = status(sb)["epoch"]
+    first = min(src_seqs) if menvs and all(src_seqs) else 0
+    _, benvs = sse(sb, "probe/xcpu", 0.5, query=f"ch=probe/xcpu&since={first - 1}&epoch={b_epoch}") if first else ("", [])
+    by_seq = {e["seq"]: e for e in benvs}
+    matched = sum(1 for e in menvs
+                  if by_seq.get(e.get("src_seq"), {}).get("ev", {}).get("data", {}).get("seq") == e["ev"]["data"].get("seq"))
+    code_rm20 = call(sa, "POST", "/v1/probe/remove", {"node": "xcpu", "peer": "b"})[0]
+    wait_until(lambda: pipe_states() if pipe_states().get("xcpu") == "absent" else None, 5)
+    check("E20.mirrored_envelopes_carry_source_provenance",
+          bool(menvs) and all(src_seqs) and src_seqs == sorted(src_seqs) and len(set(src_seqs)) == len(src_seqs)
+          and all(e.get("src_epoch") == b_epoch for e in menvs) and matched == len(menvs)
+          and bool(benvs) and all("src_seq" not in e and "src_epoch" not in e for e in benvs) and code_rm20 == 200,
+          mirrored=len(menvs), matched=matched, on_b=len(benvs),
+          src_epoch_is_b=all(e.get("src_epoch") == b_epoch for e in menvs), removed=code_rm20)
 
     # E6: the plane dies hard. Its pods die with it, the client fails fast, B sees A go.
     call(sa, "POST", "/v1/apply", doc)

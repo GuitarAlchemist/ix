@@ -31,6 +31,7 @@ Every frame a subscription delivers is either an **envelope** or a **gap** (`go/
 | `seq` | the instance's sequence, shared by every channel, from 1 at each boot | v1 protocol |
 | `epoch` | the boot's id; a new one at every start of the plane | v1 protocol |
 | `origin` | the instance (plane) name that produced the event; a peer mirror keeps the origin's | v1 protocol |
+| `src_seq`, `src_epoch` | on a mirrored envelope (`peer/<peer>/...`) only: the source's own `seq` and `epoch`, so a consumer of the mirror keys the series `origin:src_epoch:node:<src_seq of the probe.created>` and dedups on `origin:src_epoch:src_seq`, as a consumer of the source would on `seq` / `epoch` (v0.1.4) | S2 (ix#408) |
 | `t` | when the plane published it, ms since the Unix epoch, the plane's clock | v1 protocol |
 | `ev.kind` | `sample` on a node's pipe; `probe.created`, `probe.started`, `probe.stopped`, `probe.removed` on `ctl`, published in the order of the state changes they report (see "Order", below) | v1 protocol |
 | `ev.data.node`, `ev.data.kind` | the node's name and its kind with its version (`name@version`) | S1 (ix#407) |
@@ -65,7 +66,7 @@ previous code, reproduced by no run: the test stands as its guard).
 
 | gaia#245 asks for | From the plane | Derived by the consumer |
 |---|---|---|
-| probe identity | `origin` + `ev.data.node` | a **series** is `origin:epoch:node:<seq of the probe.created that opened it>`: the same name is a new series after a recreation or a restart (fixtures 2 and 3). A consumer that did not read the `probe.created` (it joined late, or a gap swallowed it) cannot tell which series a sample belongs to until the plane stamps an instance id on samples (gap G1): it opens a provisional series at the first frame it reads and merges nothing across a gap |
+| probe identity | `origin` + `ev.data.node` | a **series** is `origin:epoch:node:<seq of the probe.created that opened it>` (on a mirrored channel, `origin:src_epoch:node:<src_seq of that probe.created>`, v0.1.4): the same name is a new series after a recreation or a restart (fixtures 2 and 3). A consumer that did not read the `probe.created` (it joined late, or a gap swallowed it) cannot tell which series a sample belongs to until the plane stamps an instance id on samples (gap G1): it opens a provisional series at the first frame it reads and merges nothing across a gap |
 | probe version | `ev.data.kind` (`heartbeat@1`) | |
 | schema version | the protocol name, `ixctl.v1` (gap G4) | this contract's version |
 | subject identity / generation | `origin` (the plane) and `epoch` (its boot) | |
@@ -73,7 +74,7 @@ previous code, reproduced by no run: the test stands as its guard).
 | observed-at | `ev.t` | |
 | received-at | | the consumer's own clock at read time; its difference to `t` is the clock offset to apply when judging freshness |
 | sequence | `seq` | strictly increasing within an epoch, across every channel |
-| deduplication key | | **`origin:epoch:seq`**: a frame read twice (a reconnect that resumes below the last seq kept) is the same frame; fixture 1 shows a resume from the last seq kept gives `seq + 1` first, nothing twice |
+| deduplication key | | **`origin:epoch:seq`**: a frame read twice (a reconnect that resumes below the last seq kept) is the same frame; fixture 1 shows a resume from the last seq kept gives `seq + 1` first, nothing twice; on a mirrored channel the key is **`origin:src_epoch:src_seq`**, since `seq` / `epoch` there are the mirror's own (v0.1.4) |
 | units | not on the wire: `probe.kinds` → `fields` lists the names only, `doc` says the kind in words (gap G3) | a per-kind table the adapter keeps, by `kind@version` |
 | sampling interval | not in the sample: `every_ms` of the node from `probe.list` | read at `probe.created`/`probe.started`, kept with the series |
 | declared limits (cadence, maximum rate) | `probe.list` → `rate_per_s` (what the node's subtree declares to emit, the worst case) and a mux's `max_rate_per_s`; `probe.kinds` → `limits` (`max_rate_per_s`, `tree_rate_per_s`, the plane's budget, D10 ix#416); `bytes` on the list is what the node emitted, measured | read once per series; CPU and RSS are not attributed to probes by the plane |
@@ -176,6 +177,11 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 
 ## Changes
 
+- v0.1.4 (2026-10-21): S2 slice 2: a mirrored envelope carries `src_seq` / `src_epoch`, the
+  source's own, so the mirrored series and dedup keys are `origin:src_epoch:node:<src_seq of
+  probe.created>` and `origin:src_epoch:src_seq`; the Rust client's `Event` exposes them
+  (`src_seq`, `src_epoch`, absent on the plane's own events). G1 unchanged (no instance id on
+  samples), G8 unchanged.
 - v0.1.3 (2026-10-21): D4 (ix#402) resolved, S2 (ix#408) slice 1: `probe.created` and
   `probe.list` carry `export: true` on a node whose pipe federation may mirror; a peer that names
   the node in `peers[].probes` reads it as `peer/<peer>/probe/<node>` with `origin` kept (the

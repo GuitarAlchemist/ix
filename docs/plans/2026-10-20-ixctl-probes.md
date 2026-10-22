@@ -229,9 +229,11 @@ up to the ring cannot hold the reader back; the backlog is capped in frames and 
 reconnects), subscribing runs off the link's drain goroutine so a full queue cannot starve the
 reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
 published (samples × depth), bytes and records transported per link and per parent;
-`tree_rate_per_s` is not a federated bound. Still to ship (slices 2–4, acceptance criteria on
-ix#408): provenance `src_seq` / `src_epoch` and the series `origin:src_epoch:node:<created seq>`;
-remote gaps relayed as a continuity marker; per-class bounded link queues (records and bytes),
+`tree_rate_per_s` is not a federated bound. Slice 2 shipped the provenance: every mirrored
+envelope carries the source's `src_seq` / `src_epoch`, so the series
+`origin:src_epoch:node:<src_seq of probe.created>` and the dedup key `origin:src_epoch:src_seq`
+are the consumer's (gate E20, contract v0.1.4). Still to ship (slices 3–4, acceptance criteria
+on ix#408): remote gaps relayed as a continuity marker; per-class bounded link queues (records and bytes),
 one bounded replay then jump with a dated gap, `degraded` and `reconciled` separately; the
 cursor-bound snapshot with creation identities. Grilled by voice with Gaia's read-only review
 folded in; the resolution is on ix#402. Gate E19 checks the slice on the two federated planes.
