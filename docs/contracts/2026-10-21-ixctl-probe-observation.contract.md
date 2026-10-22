@@ -170,8 +170,9 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
   never from the last mirrored seq (the link has no proof that the name is still the incarnation
   it mirrored: the cursor-bound list of slice 4 is that proof), so the records of an outage are
   skipped without a marker on the mirrored pipe (the local ring's `gap` says nothing about
-  them). A consumer that needs continuity reads the child directly until slice 3 of S2 (ix#408)
-  relays the loss as a continuity marker (D4 Q6).
+  them). This entry makes the limit explicit for the producer side only: at run time the loss
+  stays silent for a consumer of the mirrored pipe. A consumer that needs continuity reads the
+  child directly until slice 3 of S2 (ix#408) relays the loss as a continuity marker (D4 Q6).
 
 ## Changes
 

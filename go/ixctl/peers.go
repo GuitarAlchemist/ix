@@ -14,10 +14,13 @@ const (
 	peerBackoffMin = 200 * time.Millisecond
 	peerBackoffMax = 5 * time.Second
 	peerRefresh    = 100 * time.Millisecond // at most one status refresh per interval
-	// maxLinkBacklog bounds what a session holds of ctl and svc/ while its first replies are
-	// awaited: a resumed replay is at most the ring (4096), the rest is five seconds of
-	// lifecycle and service events; past it the session gives up and reconnects.
-	maxLinkBacklog = 16384
+	// maxLinkBacklog and maxLinkBacklogBytes bound what a session holds of ctl and svc/ while
+	// its first replies are awaited, in frames and in bytes on the wire (frames vary in size,
+	// so a count alone does not bound memory): a resumed replay is at most the ring (4096),
+	// the rest is five seconds of lifecycle and service events; past either bound the session
+	// gives up and reconnects.
+	maxLinkBacklog      = 16384
+	maxLinkBacklogBytes = 16 << 20
 )
 
 // peerLink federates with one peer: it mirrors the peer's ctl and svc/
@@ -206,12 +209,13 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		}(op)
 	}
 	var backlog []peerFrame
+	var held int
 	var list json.RawMessage
 	for n := 0; n < len(ops); {
 		select {
 		case pf := <-merged:
-			if len(backlog) == maxLinkBacklog {
-				return true, fmt.Errorf("link backlog over %d frames while the peer's first replies were awaited", maxLinkBacklog)
+			if held += pf.f.Bytes; len(backlog) == maxLinkBacklog || held > maxLinkBacklogBytes {
+				return true, fmt.Errorf("link backlog over %d frames or %d bytes while the peer's first replies were awaited", maxLinkBacklog, maxLinkBacklogBytes)
 			}
 			backlog = append(backlog, pf)
 		case r := <-got:

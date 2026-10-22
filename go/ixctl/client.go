@@ -35,7 +35,8 @@ type Frame struct {
 	Env   *Envelope       `json:"env,omitempty"`
 	Gap   *Gap            `json:"gap,omitempty"`
 
-	At int64 `json:"-"` // hrnow when the frame was read
+	At    int64 `json:"-"` // hrnow when the frame was read
+	Bytes int   `json:"-"` // the frame's size on the wire, for a reader that bounds what it holds
 }
 
 // remoteError is a refusal sent back by the far side.
@@ -111,7 +112,7 @@ func (cl *Client) readLoop() {
 		if json.Unmarshal(b, &f) != nil {
 			continue
 		}
-		f.At = at
+		f.At, f.Bytes = at, len(b)
 		cl.mu.Lock()
 		var reply chan Frame
 		var s *sub

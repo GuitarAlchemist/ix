@@ -225,7 +225,7 @@ incarnation since the list's reply may overtake it: slice 4's cursor-bound list 
 what a live start skips is contract G8 until slice 3's marker), and frames of a subscription
 that is no longer the pipe's are dropped (Codex rounds 35–38); the status and the list are read
 before any mirrored frame is applied while merged is drained into a backlog (a reconnect replay
-up to the ring cannot hold the reader back; the backlog is capped, past it the session
+up to the ring cannot hold the reader back; the backlog is capped in frames and in bytes, past either the session
 reconnects), subscribing runs off the link's drain goroutine so a full queue cannot starve the
 reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`. Three figures kept apart: sampling admitted (D10), envelopes
 published (samples × depth), bytes and records transported per link and per parent;

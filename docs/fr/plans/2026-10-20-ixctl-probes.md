@@ -247,7 +247,7 @@ curseur de la tranche 4 est cette preuve ; ce qu'un démarrage en direct saute e
 contrat jusqu'au marqueur de la tranche 3), et les trames d'un abonnement qui n'est plus celui
 du tuyau sont écartées (revues Codex 35–38) ; le statut et la liste sont lus avant toute trame
 miroir appliquée pendant que la file est vidée dans un arriéré (un rejeu de reconnexion jusqu'au
-ring ne peut pas retenir le lecteur ; l'arriéré est plafonné, au-delà la session se reconnecte),
+ring ne peut pas retenir le lecteur ; l'arriéré est plafonné en trames et en octets, au-delà la session se reconnecte),
 l'abonnement s'exécute hors de la goroutine qui vide la file du lien, donc une file pleine ne
 peut pas affamer la réponse, et le relais d'un tuyau retiré se termine avec son abonnement. `status.peers[].probes` dit
 `mirrored` / `not-exportable` / `opening` / `absent`. Trois
