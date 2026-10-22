@@ -10,6 +10,7 @@ This document records how Agent Blackbox is wired up in `ix`, what the install a
 | `agent-blackbox.policy.json` | PR risk policy: blocked paths, one-way doors (`Cargo.toml`, `Cargo.lock`, governance schemas), required evidence. |
 | `agent-blackbox.loop-policy.json` | Supervised-loop edit scope. `crates/`, `src/`, and Cargo manifests are protected; docs, scripts, tests, and observability state are loop-eligible. |
 | `scripts/verify.ps1` | Local verification gate; same command that `VERIFY_COMMAND` runs in CI. |
+| `scripts/risk_report_binding.py` | Holds the risk report to the PR's changeset before `enforce` reads it (ix#316); tested by `crates/ix-harness-github-actions/tests/risk_report_binding.rs`. |
 | `scripts/dev-process-overseer.ps1` | Emits `state/governance/dev-process-overseer.json` summarising loop readiness. |
 | `scripts/supervised-loop-preflight.ps1` | Deterministic `LOOP_READY=true|false` gate before `/loop` or `/goal` runs. |
 | `state/quality/ix-harness/baseline.json` | Loop baseline: oracle command, kill switches, lock + history file paths, scope boundary. |
@@ -43,7 +44,8 @@ ix uses a producer-reviewer split for autonomous changes:
 5. `response-quality` (skipped when no `dist/agent-response.txt` is captured).
 6. Comment the merged risk + harness + response-quality body on the PR.
 7. Upload `dist/` as the `agent-blackbox-risk-report` artifact.
-8. `enforce --report dist/risk-report.json` — exits nonzero on a failing verdict unless the `agent-blackbox-reviewed` label is present.
+8. `scripts/risk_report_binding.py --dist dist` — fails closed unless `risk-report.json` names exactly the files of `dist/changed-files.txt`, records the digests of `dist/changed-files.txt` and `dist/diff.patch` as supplied evidence, and `risk-report.md` shows the same digests (ix#316: on #313 the two reports described different changesets). It runs whether or not the label is present, since the label attests a review of this PR's report.
+9. `enforce --report dist/risk-report.json` — exits nonzero on a failing verdict unless the `agent-blackbox-reviewed` label is present.
 
 ## Pinning policy
 

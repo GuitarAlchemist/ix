@@ -22,3 +22,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = { workspace = true }
