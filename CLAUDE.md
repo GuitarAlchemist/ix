@@ -20,7 +20,8 @@ cargo run -p ix-skill --bin ix -- doctor --full   # plus the CI clippy + test in
 ```
 
 It checks registry-snapshot drift (no hand-typed tool counts), orphan public
-traits, and the governance/state environment. Per-change-type checklists —
+traits, the harness's hooks (`.claude/hooks/*.sh` present, parsing, their
+`test-*.sh` fixtures green), and the governance/state environment. Per-change-type checklists —
 MCP skill, DuckDB UDF, public API, `@ai:` invariant — live in
 [docs/CHECKLISTS.md](docs/CHECKLISTS.md) ([FR](docs/fr/CHECKLISTS.md)).
 
@@ -118,6 +119,8 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
   - All developer/session learnings must go to [docs/solutions/](docs/solutions/) via `/learnings`.
   - All session-specific planning must use `/digest` (written to `state/digests/latest.md`) instead of generating loose `.md` files in the repo.
   - Run the `ix-streeling` indexer after document changes to maintain [catalog.jsonl](state/streeling/catalog.jsonl).
+
+- **2026-10-22 — Claude fires the reflexes, then teaches.** Run `/correct` (on a correction), `/learnings` (at the commit that closes a surprise) and `/mattpocock-skills:retro` (when a review loop closes, before calling a PR ready) yourself at the trigger; the user dictates by voice and forgets the slash command, and `.claude/hooks/correction-detector.sh` nudges in FR/EN. End the reply with one teaching line: what ran, why, and when the user could type it themselves.
 
 ## Agent skills
 

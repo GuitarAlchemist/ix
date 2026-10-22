@@ -1,10 +1,33 @@
 name: CI
 
+# The jobs below read code, manifests, the Go tree, state/ and the schemas under docs/contracts/.
+# They do not read prose, hooks or skills, so a change made only of those does not run the
+# matrix (four build-and-test rows, six gated-features rows and the DuckDB job came to forty
+# runner-minutes for PR #424's seven text files). Two text files stay in because a job reads
+# them: go/ixctl/README.md and README.fr.md carry the check count the gate's E24 holds to what
+# ran. Later patterns override earlier ones. The list is pinned, with the files each side must
+# and must not match, by crates/ix-harness-github-actions/tests/ci_workflow_paths.rs.
 on:
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!**.md'
+      - 'go/ixctl/README.md'
+      - 'go/ixctl/README.fr.md'
+      - '!docs/**'
+      - 'docs/contracts/**'
+      - '!.claude/**'
   pull_request:
     branches: [main]
+    paths:
+      - '**'
+      - '!**.md'
+      - 'go/ixctl/README.md'
+      - 'go/ixctl/README.fr.md'
+      - '!docs/**'
+      - 'docs/contracts/**'
+      - '!.claude/**'
 
 env:
   CARGO_TERM_COLOR: always
