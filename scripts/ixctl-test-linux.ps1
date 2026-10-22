@@ -32,13 +32,21 @@ $linux = '/mnt/' + $Matches[1].ToLower() + $pkg.Substring(2).Replace('\', '/')
 
 $race = if ($NoRace) { '' } else { '-race' }
 $cgo = if ($NoRace) { '0' } else { '1' }
-$runFlag = if ($Run) { "-run '$Run'" } else { '' }
+# Values reach bash inside single quotes: an apostrophe in a path or a pattern closes the quote,
+# so each one becomes '\'' (close, escaped apostrophe, reopen).
+$q = { param($s) "'" + $s.Replace("'", "'\''") + "'" }
+$runFlag = if ($Run) { "-run " + (& $q $Run) } else { '' }
 # Go is called by its path: the distro's PATH holds the Windows one too, with spaces and parentheses
 # bash will not take unquoted. The module cache lives in the distro, the sources on /mnt/c.
+# `./...` as CI's ixctl-go job (ci.yml), so a subpackage added later is covered here too.
 $go = '/usr/local/go/bin/go'
-$cmd = "export CGO_ENABLED=$cgo; cd '$linux' && $go version && $go vet . && $go test $race -timeout $Timeout -count=1 $runFlag ."
+$cmd = "export CGO_ENABLED=$cgo; cd " + (& $q $linux) + " && $go version && $go vet ./... && $go test $race -timeout $Timeout -count=1 $runFlag ./..."
 Write-Host "wsl -d $Distro -- bash -lc `"$cmd`""
-wsl -d $Distro -- bash -lc $cmd 2>&1 | ForEach-Object { ($_ -join '') -replace "`0", '' }
+$out = wsl -d $Distro -- bash -lc $cmd 2>&1 | ForEach-Object { ($_ -join '') -replace "`0", '' }
 $code = $LASTEXITCODE
+$out | ForEach-Object { Write-Host $_ }
 if ($code -ne 0) { throw "ixctl suite on Linux failed (exit $code)" }
+# `go test -run` with a pattern that matches nothing exits 0 and prints "[no tests to run]": a
+# misspelled -Run is not a green run.
+if ($Run -and ($out -match 'no tests to run')) { throw "no test matched -Run '$Run'" }
 Write-Host 'ixctl suite on Linux: ok'

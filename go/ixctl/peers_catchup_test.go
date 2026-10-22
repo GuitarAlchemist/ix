@@ -393,15 +393,21 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	default:
 	}
 
-	// The record the reopen must skip is published while the old subscription is live; the peer's
-	// writer holds every frame for 300 ms from here, and the stand-down (`reopenControl` zeroes the
-	// prefix's sub and forgets the old one before it opens again) is synchronous, so the record
-	// cannot reach the link before the old subscription is gone: no schedule mirrors it first
-	// (Codex round 47).
-	b.web.writeDelay.Store(int64(300 * time.Millisecond))
+	// The record the reopen must skip is published once the prefix's subscription is taken away
+	// from the link (a sentinel id no frame carries, the old one forgotten by the client), so no
+	// schedule can mirror it first: a frame of the old subscription fails `current` whenever it
+	// arrives, and the reopen finds the sentinel it is given. Codex rounds 47 and 48: a writer hold
+	// around the publish only narrowed the window, this is the happens-before edge.
+	standDown := func(prefix string, sub int64) int64 {
+		l.mu.Lock()
+		l.ctl[prefix].sub = -1
+		l.mu.Unlock()
+		c.forget(sub)
+		return -1
+	}
+	sub = standDown("svc/", sub)
 	second := b.plane.Publish("svc/x", event("stats", map[string]any{"n": 1}))
 	reopen("svc/", sub)
-	b.web.writeDelay.Store(0)
 	ms := markers(2 * time.Second)
 	if len(ms) != 1 || ms[0].Reason != "jumped" || ms[0].Prefix != "svc/" || ms[0].From != first.Seq || ms[0].To < second.Seq {
 		t.Fatalf("a reopen past a new record: markers %+v, want one jumped on svc/ from %d to at least %d", ms, first.Seq, second.Seq)
@@ -431,10 +437,9 @@ func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
 	if _, listed1, gen1 := state(); !listed1 || gen1 != gen0 {
 		t.Fatalf("a ctl reopen with nothing to skip cost the reconciled state: listed %v, generation %d (was %d)", listed1, gen1, gen0)
 	}
-	b.web.writeDelay.Store(int64(300 * time.Millisecond)) // as above: the record cannot outrun the stand-down
+	ctlSub = standDown("ctl", ctlSub) // as above: the record is published once the link has let the subscription go
 	secondCtl := b.plane.Publish("ctl", event("noise", map[string]any{"n": 1}))
 	reopen("ctl", ctlSub)
-	b.web.writeDelay.Store(0)
 	ms = markers(2 * time.Second)
 	if len(ms) != 1 || ms[0].Reason != "jumped" || ms[0].Prefix != "ctl" || ms[0].From != firstCtl.Seq || ms[0].To < secondCtl.Seq {
 		t.Fatalf("a ctl reopen past a new record: markers %+v, want one jumped on ctl from %d to at least %d", ms, firstCtl.Seq, secondCtl.Seq)
