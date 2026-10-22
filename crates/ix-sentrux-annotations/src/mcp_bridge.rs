@@ -1,4 +1,5 @@
-//! Stdio JSON-RPC bridge to `sentrux.exe mcp`.
+//! Stdio JSON-RPC bridge to `sentrux mcp` (the executable resolved by
+//! [`crate::resolve_sentrux_exe`]).
 //!
 //! The wire protocol mirrors `ga/ReactComponents/ga-react-components/vite.config.ts`
 //! (search for `callSentruxTool`). We send four frames newline-separated:
@@ -62,7 +63,7 @@ pub fn run_sentrux_test_gaps(cfg: &SentruxConfig, limit: u32) -> Result<TestGaps
     parse_test_gaps_response(&envelope).map_err(Error::BadResponse)
 }
 
-/// Shared transport helper: spawn `sentrux.exe mcp`, run the
+/// Shared transport helper: spawn `sentrux mcp`, run the
 /// initialize→scan handshake, then issue ONE `tools/call` (id=99) with the
 /// caller-supplied `params` body, and return the id=99 envelope.
 fn run_sentrux_tool_call(

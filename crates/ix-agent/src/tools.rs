@@ -2259,7 +2259,7 @@ Example 2 — "cluster crates by complexity then classify":
         });
 
         // ── ix_sentrux_annotate ────────────────────────────────────
-        // Bridge that drives `sentrux.exe mcp` and converts each
+        // Bridge that drives `sentrux mcp` and converts each
         // structural-rule violation into an ai-annotation-v1 record.
         // Closes the claim -> verify -> promote/demote loop with sentrux
         // as the machine ground-truth verifier (see PRs #54/#55/#56 and

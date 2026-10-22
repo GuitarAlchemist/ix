@@ -1738,15 +1738,18 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
             .unwrap_or(0);
-        let lookalike = Scratch(std::env::temp_dir().join(format!(
+        let scratch_path = std::env::temp_dir().join(format!(
             "ix-voicings-lookalike-{}-{nanos}",
             std::process::id()
-        )));
+        ));
+        // Checked before the guard is armed, so a collision never deletes
+        // someone else's directory.
         assert!(
-            !lookalike.0.exists(),
+            !scratch_path.exists(),
             "scratch name collided: {}",
-            lookalike.0.display()
+            scratch_path.display()
         );
+        let lookalike = Scratch(scratch_path);
         std::fs::create_dir_all(lookalike.0.join("crates/other")).unwrap();
         std::fs::write(lookalike.0.join("Cargo.toml"), "[workspace]\n").unwrap();
         let found = super::ix_workspace_root_above(&lookalike.0.join("crates/other"));

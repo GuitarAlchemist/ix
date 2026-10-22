@@ -23,17 +23,20 @@
 //!
 //! A drive letter (a single letter at the start of a token or after a `/` or
 //! `\`, not the tail of a word such as `https` or `web+x`), `:`, one or more
-//! separators (but not the `//` of a URL scheme), `users` in any case, one or
-//! more separators, then the account (`C:\Users\<name>`, `c:/users/<name>`,
-//! `C:\\Users\\<name>` as escaped in a string, `C:\\\\Users\\\\<name>` as JSON
-//! inside a string, `C:/Users\<name>` mixed, `file:///C:/Users/<name>`); a
-//! root-relative `\Users\<name>` at the start of a token; or one or more `/`,
-//! then exactly `home` or `Users`, then one or more `/`, then the account. A
-//! lower-case `/users/` with no drive letter is an HTTP route, not a home.
+//! separators (but not two or more `/`, the mark of a URL scheme), `users` in
+//! any case, one or more separators, then the account (`C:\Users\<name>`,
+//! `c:/users/<name>`, `C:\\Users\\<name>` as escaped in a string,
+//! `C:\\\\Users\\\\<name>` as JSON inside a string, `C:/Users\<name>` mixed,
+//! `file:///C:/Users/<name>`); a root-relative `\Users\<name>` at the start of a
+//! token; or one or more `/`, then exactly `home` or `Users`, then one or more
+//! `/`, then the account. A lower-case `/users/` with no drive letter is an HTTP
+//! route, not a home.
 //!
-//! The account runs to the next separator, quote or bracket, so a shared
-//! account with a space in it (`All Users`) is recognised whole; the reported
-//! name stops at the first space.
+//! The account is the token after the marker: it ends at whitespace or at a
+//! separator, quote, bracket or list punctuation (see [`ends_account`]), and
+//! trailing sentence punctuation is dropped, so `C:\Users\Public.` in prose is
+//! the shared account. The two-word shared accounts are recognised before the
+//! cut at whitespace.
 //!
 //! # Fail closed
 //!
@@ -45,7 +48,10 @@
 //! # Deliberate under-reporting
 //!
 //! Like its neighbours, every remaining ambiguity resolves toward *not*
-//! reporting.
+//! reporting. A shared account followed by a space is read as the shared
+//! account in prose (`C:\Users\Public and ...`), so a personal account that
+//! starts with `Public ` or `Default ` is not reported; such names are rare,
+//! unquoted prose paths in `.md` files are not.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -60,9 +66,10 @@ pub const SCAN_DIR: &str = "crates";
 /// Rust, SQL, the scripts that sit beside them, manifests and the crate-level docs.
 pub const SCANNED_EXTENSIONS: &[&str] = &["rs", "sql", "ps1", "sh", "py", "toml", "md"];
 
-/// Windows accounts that belong to the machine, not to a person. Compared
-/// case-insensitively against the whole account segment.
-const SHARED_WINDOWS_ACCOUNTS: &[&str] = &["all users", "default user", "public", "default"];
+/// Windows accounts that belong to the machine, not to a person: the two-word
+/// ones are recognised whole before the account is cut at whitespace.
+const SHARED_TWO_WORD_ACCOUNTS: &[&str] = &["all users", "default user"];
+const SHARED_ACCOUNTS: &[&str] = &["public", "default"];
 
 /// One line that names a home directory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -150,13 +157,18 @@ fn can_precede_drive(before: Option<u8>) -> bool {
     can_start_token(before) || before.is_some_and(is_sep)
 }
 
-/// Where an account segment ends: a separator, quote or bracket. Whitespace
-/// is allowed inside, so `All Users` is read whole.
-fn ends_account(c: char) -> bool {
+/// Where an account token ends, besides whitespace: a separator, quote,
+/// bracket, or list punctuation.
+pub fn ends_account(c: char) -> bool {
     matches!(
         c,
         '/' | '\\' | '"' | '\'' | '<' | '>' | ')' | ']' | ',' | ';' | '`' | '|'
     )
+}
+
+/// Sentence punctuation that may trail a path in prose.
+fn is_trailing_punctuation(c: char) -> bool {
+    matches!(c, '.' | '!' | '?' | ':')
 }
 
 /// The account segment named by `line`, if the line contains a home path.
@@ -185,15 +197,16 @@ pub fn home_user_in(line: &str) -> Option<String> {
             }
             let run = &bytes[s..at];
             let before_run = s.checked_sub(1).map(|i| bytes[i]);
+            let url_scheme_run = run.len() >= 2 && run.iter().all(|&b| b == b'/');
 
             // `X:` where X is a single letter at a token start: not the `s:`
             // of `https:`, not the `x:` of `web+x:`, and not followed by the
-            // `//` of a URL scheme.
+            // `//` (or `///`) of a URL scheme.
             let drive = s >= 2
                 && bytes[s - 1] == b':'
                 && bytes[s - 2].is_ascii_alphabetic()
                 && can_precede_drive(s.checked_sub(3).map(|i| bytes[i]))
-                && run != b"//";
+                && !url_scheme_run;
             // `\Users\<name>` at the start of a token.
             let root_relative = run.iter().all(|&b| b == b'\\') && can_start_token(before_run);
             // `/home/<name>`, `/Users/<name>`.
@@ -225,22 +238,35 @@ pub fn home_user_in(line: &str) -> Option<String> {
     candidates.dedup();
     candidates.into_iter().find_map(|start| {
         let rest = &line[start..];
-        let end = rest.find(ends_account).unwrap_or(rest.len());
-        let account = rest[..end].trim_end();
-        if account.is_empty() || account.starts_with(char::is_whitespace) {
+        let rest_lower = rest.to_ascii_lowercase();
+
+        // `All Users`, `Default User`: whole, before the cut at whitespace.
+        let two_word_shared = SHARED_TWO_WORD_ACCOUNTS.iter().any(|acct| {
+            rest_lower.starts_with(acct)
+                && match rest_lower[acct.len()..].chars().next() {
+                    None => true,
+                    Some(c) => c.is_whitespace() || ends_account(c) || is_trailing_punctuation(c),
+                }
+        });
+        if two_word_shared {
             return None;
         }
-        if SHARED_WINDOWS_ACCOUNTS.contains(&account.to_ascii_lowercase().as_str()) {
+
+        let end = rest
+            .find(|c: char| c.is_whitespace() || ends_account(c))
+            .unwrap_or(rest.len());
+        let account = rest[..end].trim_end_matches(is_trailing_punctuation);
+        if account.is_empty() {
+            return None;
+        }
+        if SHARED_ACCOUNTS.contains(&account.to_ascii_lowercase().as_str()) {
             return None;
         }
         let first = account.chars().next().unwrap_or(' ');
         if matches!(first, '$' | '%' | '{' | '*' | '~' | '.' | '[' | '(') {
             return None;
         }
-        // Report up to the first space: `Public Jane` is a person, reported as
-        // `Public`; the excerpt carries the whole line.
-        let reported = account.split_whitespace().next().unwrap_or(account);
-        Some(reported.to_string())
+        Some(account.to_string())
     })
 }
 

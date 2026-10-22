@@ -111,21 +111,30 @@ fn urls_two_word_shared_accounts_and_root_relative_paths() {
 
 #[test]
 fn one_letter_schemes_and_shared_account_boundaries() {
-    // Codex round 55.
+    // Codex rounds 55 and 56.
     for line in [
         r#"let u = "web+x://users/jane/profile";"#,
         r#"let u = "x://users/jane/profile";"#,
+        r#"let u = "x:///users/jane/profile";"#,
+        r#"let p = "abC:\\Users\\jane\\x";"#,
         r#"prose: see (C:\Users\Public) for shared files"#,
+        r#"The files live in C:\Users\Public and are shared."#,
+        r#"The shared profile is C:\Users\Public."#,
         r#"let p = r"C:\Users\Public\Desktop";"#,
+        // Deliberate under-reporting: a shared account followed by a space is
+        // read as prose, so a personal account starting with it is missed.
+        r#"let p = r"C:\Users\Public Jane\tool.exe";"#,
+        r#"let p = r"C:\Users\Default User2\tool.exe";"#,
     ] {
         assert_eq!(hardcoded_paths::home_user_in(line), None, "{line}");
     }
     for (line, user) in [
         // Fixture lines carry `jane` for the allowlist entry that covers this file.
-        (r#"let p = r"C:\Users\Public Jane\tool.exe";"#, "Public"), // jane
-        (r#"let p = r"C:\Users\Default User2\tool.exe";"#, "Default"), // jane
         (r#"let p = r"C:\Users\Publicity\tool.exe";"#, "Publicity"), // jane
         (r#"let p = "x:/users/jane/tool";"#, "jane"),
+        (r#"PATH=C:\Users\jane\bin"#, "jane"),
+        (r#"it lives in /home/jane and nowhere else"#, "jane"),
+        (r#"copy it to C:\Users\jane."#, "jane"),
     ] {
         assert_eq!(
             hardcoded_paths::home_user_in(line).as_deref(),
