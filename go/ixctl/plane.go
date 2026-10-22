@@ -212,6 +212,17 @@ type PeerStatus struct {
 	// (the peer holds it without export), `opening` (subscribing to its pipe), `absent` (the
 	// peer holds no such node, or the link is down).
 	Probes []PeerProbeStatus `json:"probes,omitempty"`
+	// Live: the link is up and both its control subscriptions (the peer's ctl and svc/) are past
+	// their replay, so what the peer publishes now crosses as it happens. Reconciled: the link is
+	// up, the peer's probe list was applied this session and no wanted pipe is still opening, so
+	// the mirrored lifecycle and pipes stand for the peer's state. Degraded is their conjunction
+	// denied: lifted only when the flow is live and the state reconciled (criterion 7 of ix#408).
+	// Jumps counts the catch-ups the link gave up on since it was made, each marked `jumped` on
+	// the peer's mirrored ctl; absent while zero.
+	Live       bool   `json:"live"`
+	Reconciled bool   `json:"reconciled"`
+	Degraded   bool   `json:"degraded"`
+	Jumps      uint64 `json:"jumps,omitempty"`
 }
 
 type PeerProbeStatus struct {

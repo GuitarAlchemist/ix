@@ -87,6 +87,7 @@ type linkGap struct {
 	SrcEpoch     string `json:"src_epoch,omitempty"`
 	From         uint64 `json:"from,omitempty"`
 	Oldest       uint64 `json:"oldest,omitempty"`
+	To           uint64 `json:"to,omitempty"`
 	LastSrcSeq   uint64 `json:"last_src_seq,omitempty"`
 	LastSrcEpoch string `json:"last_src_epoch,omitempty"`
 	Dropped      uint64 `json:"dropped,omitempty"`
@@ -153,8 +154,8 @@ func TestANewInstanceNamesNoBootUntilRead(t *testing.T) {
 
 // A gap the peer answers on a resumed ctl or svc/ subscription is relayed on the peer's
 // mirrored ctl as a marker, with what the peer said (history expired: since-too-old and the
-// oldest kept; a restart: epoch-changed and the new boot); an overflow still ends the session,
-// since the link itself fell behind and reconnects to resume.
+// oldest kept; a restart: epoch-changed and the new boot); an overflow that names no
+// subscription of the link's ends the session (one of its own reopens the prefix: criterion 7).
 func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 	l := &peerLink{spec: PeerSpec{Name: "b"}, hub: NewHub("a"), since: map[string]uint64{}}
 	refresh := make(chan struct{}, 1)
@@ -167,7 +168,7 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		{"svc/", Gap{Reason: "epoch-changed", From: 1, Oldest: 1, Epoch: "c1c1c1c1c1c1"}},
 	} {
 		gap := tc.gap
-		if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
+		if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", peerFrame{prefix: tc.prefix, f: Frame{Gap: &gap}}); err != nil {
 			t.Fatalf("%s %s: %v", tc.prefix, tc.gap.Reason, err)
 		}
 		e := nextEnv(t, cur)
@@ -177,8 +178,8 @@ func TestAPeersGapIsRelayedOnItsMirroredCtl(t *testing.T) {
 		}
 	}
 	over := Gap{Reason: "overflow", From: 9}
-	if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
-		t.Fatalf("overflow: %v, want the session to end", err)
+	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", peerFrame{prefix: "ctl", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+		t.Fatalf("overflow of no subscription of ours: %v, want the session to end", err)
 	}
 }
 
@@ -206,7 +207,7 @@ func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	frame := func(seq uint64, epoch string) peerFrame {
 		return peerFrame{prefix: "svc/", f: Frame{Env: &Envelope{Ch: "svc/x", Seq: seq, Epoch: epoch, Origin: "b", Ev: Event{Kind: "stats"}}}}
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
+	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", frame(1, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	g := gapOf(t, nextEnv(t, cur))
@@ -216,7 +217,7 @@ func TestTheBootBoundaryIsNoticedOnTheFirstMirroredFrame(t *testing.T) {
 	if e := nextEnv(t, cur); e.Ch != "peer/b/svc/x" || e.SrcEpoch != "bbbbbbbbbbbb" {
 		t.Fatalf("after the boundary: %s", e.Raw())
 	}
-	if err := l.apply(context.Background(), nil, nil, nil, refresh, 1, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
+	if err := l.apply(context.Background(), nil, nil, nil, nil, refresh, 1, "b", frame(2, "bbbbbbbbbbbb")); err != nil {
 		t.Fatal(err)
 	}
 	if e := nextEnv(t, cur); e.Ev.Kind != "stats" {

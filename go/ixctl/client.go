@@ -34,6 +34,7 @@ type Frame struct {
 	Sub   *int64          `json:"sub,omitempty"`
 	Env   *Envelope       `json:"env,omitempty"`
 	Gap   *Gap            `json:"gap,omitempty"`
+	Live  bool            `json:"live,omitempty"` // the subscription asked (Request.Live) and is past its replay: live from here on
 
 	At    int64 `json:"-"` // hrnow when the frame was read
 	Bytes int   `json:"-"` // the frame's size on the wire, for a reader that bounds what it holds
@@ -69,8 +70,10 @@ type sub struct {
 // Sub is an open subscription: its frames, and Done, closed when the subscription is dropped
 // (Unsubscribe) or the connection ends. Frames closes with the connection, and not at all once
 // the subscription was dropped first (the reader no longer knows it): a reader ends on Done.
+// Head is the plane's head when the subscription was made: envelopes up to it are replay.
 type Sub struct {
 	ID     int64
+	Head   uint64
 	Frames <-chan Frame
 	Done   <-chan struct{}
 }
@@ -245,6 +248,14 @@ func (cl *Client) SubscribeExact(ctx context.Context, ch string, since *uint64, 
 	return cl.open(ctx, Request{Op: "subscribe", Ch: ch, Since: since, Epoch: epoch, Exact: true}, buf)
 }
 
+// SubscribeFromLive is SubscribeFrom told when it is live: the plane sends one frame with Live
+// set once the replay is past the head the subscription started from (Sub.Head), at once when
+// there was nothing to replay. It returns the Sub, since such a subscription is one a caller may
+// drop while the connection goes on.
+func (cl *Client) SubscribeFromLive(ctx context.Context, prefix string, since *uint64, epoch string, buf int) (*Sub, error) {
+	return cl.open(ctx, Request{Op: "subscribe", Ch: prefix, Since: since, Epoch: epoch, Live: true}, buf)
+}
+
 // Unsubscribe drops a subscription on both sides and closes its Done. Frames already queued on
 // its channel stay readable; the channel itself is never closed after this (the reader has
 // forgotten it), so a reader that unsubscribes ends on Done, not on the channel's close.
@@ -277,11 +288,16 @@ func (cl *Client) open(ctx context.Context, req Request, buf int) (*Sub, error) 
 		cl.forget(id)
 		return nil, err
 	}
-	if _, err := cl.wait(ctx, id, reply); err != nil {
+	data, err := cl.wait(ctx, id, reply)
+	if err != nil {
 		cl.forget(id)
 		return nil, err
 	}
-	return &Sub{ID: id, Frames: frames, Done: s.done}, nil
+	var opened struct {
+		Head uint64 `json:"head"`
+	}
+	json.Unmarshal(data, &opened)
+	return &Sub{ID: id, Head: opened.Head, Frames: frames, Done: s.done}, nil
 }
 
 // readStateFile reads an instance's state file: where it listens and its token.

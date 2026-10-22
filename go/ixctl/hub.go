@@ -70,6 +70,7 @@ type Request struct {
 	Op      string   `json:"op"`
 	Ch      string   `json:"ch,omitempty"`
 	Exact   bool     `json:"exact,omitempty"` // subscribe: Ch is one channel's exact name, not a prefix
+	Live    bool     `json:"live,omitempty"`  // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
 	Since   *uint64  `json:"since,omitempty"`
 	Epoch   string   `json:"epoch,omitempty"`
 	Desired *Desired `json:"desired,omitempty"`

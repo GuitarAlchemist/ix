@@ -1,6 +1,6 @@
 # Contract: a probe sample read from the plane, as a consumer's observation (`ixctl.v1` → gaia#245)
 
-**Version:** v0.1.6 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
+**Version:** v0.1.7 (DRAFT — Phase 0; freeze only at the named Phase 4 milestone, after Gaia's intake)
 **Date:** 2026-10-21 · **Owner:** ix (`go/ixctl`, the producer side; Gaia owns the adapter, projection and UI) · **Story:** [ix#413](https://github.com/GuitarAlchemist/ix/issues/413) · **Consumer:** [gaia#245](https://github.com/GuitarAlchemist/gaia/issues/245) · **Plan:** `docs/plans/2026-10-20-ixctl-probes.md`
 
 Says how a reader of the control plane's event stream (`subscribe` over `ixctl.v1`, `GET /v1/events`,
@@ -31,7 +31,7 @@ Every frame a subscription delivers is either an **envelope** or a **gap** (`go/
 | `seq` | the instance's sequence, shared by every channel, from 1 at each boot | v1 protocol |
 | `epoch` | the boot's id; a new one at every start of the plane | v1 protocol |
 | `origin` | the instance (plane) name that produced the event; a peer mirror keeps the origin's | v1 protocol |
-| `ev.kind` = `link.gap` | on a mirrored channel only, the **continuity marker**: an envelope of the parent's own (`origin` the parent, no `src_seq` / `src_epoch`) saying the mirror skipped something it cannot replay. On `peer/<peer>/probe/<node>`, every live start of the pipe: `data.reason` `live-start`, `src_epoch` the source boot now read (absent while the link has not read the boot of the instance it is connected to: a new instance whose status was unreadable and of which nothing was mirrored yet), `last_src_seq` / `last_src_epoch` the last frame mirrored on that pipe before (absent when none; across a same-name recreation it is the previous incarnation's). On `peer/<peer>/ctl`: without `prefix`, `epoch-changed` when the link sees a new boot of the peer, from the status, a queued frame or the first frame mirrored, whichever first (`src_epoch` the new boot, `last_src_epoch` the one before); with `prefix` (`ctl` or `svc/`), a gap the peer answered on the link's resumed subscription (`reason` `since-too-old` or `epoch-changed`, `from`, `oldest`, `src_epoch` as the peer said). On a pipe again (v0.1.6): `dropped`, right before the record that followed a run of records the link itself discarded for want of room in its bounded pipe queue, `dropped` their number (the link's own exact count of what it discarded, never an inference from the source's seqs; the same records are counted on the parent's `status.peers[].probes[].dropped`); and `overflow` when the peer dropped the pipe's subscription toward the link (`from`, `src_epoch` as the peer said), the pipe then reopened live and marked `live-start` as at any live start. A boundary, never a count of what the source did: only the link's own discards are counted. A local gap stays a gap frame (`reason`, `from`), v0.1.5 | S2 (ix#408) |
+| `ev.kind` = `link.gap` | on a mirrored channel only, the **continuity marker**: an envelope of the parent's own (`origin` the parent, no `src_seq` / `src_epoch`) saying the mirror skipped something it cannot replay. On `peer/<peer>/probe/<node>`, every live start of the pipe: `data.reason` `live-start`, `src_epoch` the source boot now read (absent while the link has not read the boot of the instance it is connected to: a new instance whose status was unreadable and of which nothing was mirrored yet), `last_src_seq` / `last_src_epoch` the last frame mirrored on that pipe before (absent when none; across a same-name recreation it is the previous incarnation's). On `peer/<peer>/ctl`: without `prefix`, `epoch-changed` when the link sees a new boot of the peer, from the status, a queued frame or the first frame mirrored, whichever first (`src_epoch` the new boot, `last_src_epoch` the one before); with `prefix` (`ctl` or `svc/`), a gap the peer answered on the link's resumed subscription (`reason` `since-too-old` or `epoch-changed`, `from`, `oldest`, `src_epoch` as the peer said). On a pipe again (v0.1.6): `dropped`, right before the record that followed a run of records the link itself discarded for want of room in its bounded pipe queue, `dropped` their number (the link's own exact count of what it discarded, never an inference from the source's seqs; the same records are counted on the parent's `status.peers[].probes[].dropped`); and `overflow` when the peer dropped the pipe's subscription toward the link (`from`, `src_epoch` as the peer said), the pipe then reopened live and marked `live-start` as at any live start. On `peer/<peer>/ctl` again, with `prefix` (v0.1.7): `jumped`, when the link gave a catch-up of `ctl` or `svc/` up (its replay allowance per link spent: frames, bytes or time, refilled slowly, never reset by a reconnect) and subscribed live instead: `from` the last seq it mirrored on that prefix (absent when none), `to` the peer's head the live subscription starts from, `src_epoch` the boot read; the envelope's `t` dates it. What lies in (`from`, `to`] was not mirrored. A boundary, never a count of what the source did: only the link's own discards are counted. A local gap stays a gap frame (`reason`, `from`), v0.1.5 | S2 (ix#408) |
 | `src_seq`, `src_epoch` | on a mirrored envelope (`peer/<peer>/...`) only: the source's own `seq` and `epoch`, so a consumer of the mirror keys the series `origin:src_epoch:node:<src_seq of the probe.created>` and dedups on `origin:src_epoch:src_seq`, as a consumer of the source would on `seq` / `epoch` (v0.1.4) | S2 (ix#408) |
 | `t` | when the plane published it, ms since the Unix epoch, the plane's clock | v1 protocol |
 | `ev.kind` | `sample` on a node's pipe; `probe.created`, `probe.started`, `probe.stopped`, `probe.removed` on `ctl`, published in the order of the state changes they report (see "Order", below) | v1 protocol |
@@ -181,6 +181,24 @@ and values (`seq`, `t`, `epoch`) vary with timing and are not compared.
 
 ## Changes
 
+- v0.1.7 (2026-10-22): S2 slice 3, third cut (criterion 7 of ix#408): one more `link.gap` reason
+  on the peer's mirrored `ctl`, `jumped` (envelope table): the link's catch-up of `ctl` / `svc/`
+  is bounded by an allowance per link (frames, bytes, time; refilled slowly, never reset by a
+  reconnect), past which it subscribes live and marks the jump, `from` the last seq mirrored,
+  `to` the head the live subscription starts from, dated. A control subscription the peer dropped
+  (`overflow`) is reopened in the same session, so the link neither replays nor reconnects without
+  end; "never shed by the link itself" (v0.1.6) still holds: the link drops no control frame of a
+  live flow, it gives a catch-up up, marked. The parent's `status.peers[]` carries `live` (the
+  link is up and both control subscriptions are past their replay), `reconciled` (the link is up,
+  the peer's probe list applied this session, no wanted pipe still opening), `degraded` (their
+  conjunction denied: lifted only when the flow is live and the state reconciled) and `jumps`
+  (catch-ups given up, absent while zero); a jump of `ctl` loses the lifecycle events of its span,
+  so `reconciled` falls until the list is read again (the next session; slice 4 re-reads it with a
+  cursor in the session). Protocol: `subscribe` takes `live: true`, answered by
+  one `{"sub": <id>, "live": true}` frame once the replay is past the head the subscription started
+  from (at once when nothing was to be replayed); a subscriber that did not ask gets no such frame
+  (the S7 fixtures are unchanged). Read as a gap by the consumer (State, UNKNOWN) on the mirrored
+  `ctl`. G1 unchanged.
 - v0.1.6 (2026-10-22): S2 slice 3, second cut (criterion 6 of ix#408): two more `link.gap` reasons
   on a mirrored pipe, `dropped` (records the link itself discarded for want of room in its bounded
   pipe queue, with their exact number, before the record that followed) and `overflow` (the peer

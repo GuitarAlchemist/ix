@@ -132,7 +132,7 @@ func (s *session) subscribe(req Request) {
 	s.subs[req.ID] = e
 	s.mu.Unlock()
 	s.reply(req.ID, map[string]any{"sub": req.ID, "head": cur.Head(), "epoch": cur.Epoch()}, nil)
-	go s.pump(ctx, e, req.ID, cur)
+	go s.pump(ctx, e, req.ID, cur, req.Live)
 }
 
 func (s *session) unsubscribe(req Request) {
@@ -167,8 +167,12 @@ func (s *session) dropIf(id int64, mine *subEntry) {
 
 // pump moves one subscription from the ring to the connection queue. Replay
 // waits for room (the client asked for it, and it is bounded by the ring);
-// live events never wait: a full queue drops the subscription with a gap.
-func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor) {
+// live events never wait: a full queue drops the subscription with a gap. A
+// subscriber that asked (tell) is sent one live frame once the cursor is past
+// the head it started from, before the first live event: at once when nothing
+// was to be replayed, after the last replayed frame otherwise (criterion 7 of
+// ix#408: a reader that catches up knows when it is live even on a quiet channel).
+func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, tell bool) {
 	defer func() {
 		if s.pumpLeaving != nil {
 			s.pumpLeaving(id)
@@ -179,6 +183,17 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor) 
 		}
 	}()
 	replayUntil := cur.Head()
+	told := !tell
+	live := func() bool { // the live frame, once, when the cursor is past the head it started from
+		if told || cur.next <= replayUntil {
+			return true
+		}
+		told = true
+		return s.send(ctx, liveFrame(id))
+	}
+	if !live() {
+		return
+	}
 	for {
 		envs, gap, err := cur.Next(ctx, 256)
 		if err != nil {
@@ -187,6 +202,9 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor) 
 		if gap != nil {
 			s.send(ctx, gapFrame(id, gap))
 			if gap.Reason == "overflow" {
+				return
+			}
+			if !live() {
 				return
 			}
 			continue
@@ -199,6 +217,9 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor) 
 				}
 				continue
 			}
+			if !live() {
+				return
+			}
 			select {
 			case s.out <- f:
 			case <-ctx.Done():
@@ -209,7 +230,15 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor) 
 				return
 			}
 		}
+		if !live() { // a batch that ended at the head with nothing live behind it
+			return
+		}
 	}
+}
+
+func liveFrame(id int64) []byte {
+	b := append([]byte(`{"sub":`), strconv.AppendInt(nil, id, 10)...)
+	return append(b, `,"live":true}`...)
 }
 
 func eventFrame(id int64, env *Envelope) []byte {

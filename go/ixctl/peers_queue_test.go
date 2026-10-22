@@ -99,8 +99,9 @@ func TestControlStillFlowsWhenPipesOverloadTheLink(t *testing.T) {
 // The peer dropping a pipe's subscription (its queue for the link overflowed) no longer ends
 // the session, which took ctl and svc/ down with it: the pipe is marked `overflow` on its
 // mirrored channel with what the peer said and opened live again, marked at that live start as
-// any; a frame of the dropped subscription still queued is not mirrored. An overflow on ctl or
-// svc/ still ends the session: those the link must resume.
+// any; a frame of the dropped subscription still queued is not mirrored. An overflow of ctl or
+// svc/ reopens that subscription in the session too (criterion 7), under a new id; one that
+// names no subscription is not ours and ends the session.
 func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	b := newTestInstance(t, fakeSpec(t, "b", nil), "")
 	c := dial(t, b)
@@ -110,11 +111,12 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	cur := l.hub.Subscribe("peer/b/", nil, "")
 	refresh := make(chan struct{}, 1)
 	q := newPipeQueue()
+	merged := make(chan peerFrame, 16)
 	fail := make(chan error, 1)
 	ctx := context.Background()
 
 	over := Gap{Reason: "overflow", From: 9, Epoch: b.plane.Epoch()}
-	if err := l.apply(ctx, c, q, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Gap: &over}, sub: 7}); err != nil {
 		t.Fatalf("a pipe's overflow ended the session: %v", err)
 	}
 	e := nextEnv(t, cur)
@@ -133,7 +135,7 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 		t.Fatalf("pipe after the overflow: %+v, want mirrored under a new subscription", p)
 	}
 	stale := &Envelope{Ch: "probe/cpu", Seq: 8, Epoch: b.plane.Epoch(), Origin: "b", Ev: Event{Kind: "sample"}}
-	if err := l.apply(ctx, c, q, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
+	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "probe/cpu", f: Frame{Env: stale}, sub: 7}); err != nil {
 		t.Fatal(err)
 	}
 	wctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
@@ -141,8 +143,25 @@ func TestAnOverflowedPipeReopensLiveAndIsMarked(t *testing.T) {
 	if envs, _, _ := cur.Next(wctx, 1); len(envs) != 0 {
 		t.Fatalf("a frame of the dropped subscription was mirrored: %s", envs[0].Raw())
 	}
-	if err := l.apply(ctx, c, q, fail, refresh, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
-		t.Fatalf("svc/ overflow: %v, want the session to end", err)
+	l.ctl["svc/"].sub = 5
+	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}, sub: 5}); err != nil {
+		t.Fatalf("svc/ overflow ended the session: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		l.mu.Lock()
+		cs := *l.ctl["svc/"]
+		l.mu.Unlock()
+		if cs.sub != 0 && cs.sub != 5 && cs.live {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("svc/ after its overflow: %+v, want reopened live under a new subscription", cs)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := l.apply(ctx, c, q, merged, fail, refresh, 1, "b", peerFrame{prefix: "svc/", f: Frame{Gap: &over}}); err == nil || !strings.Contains(err.Error(), "overflow") {
+		t.Fatalf("an overflow of no subscription of ours: %v, want the session to end", err)
 	}
 	select {
 	case err := <-fail:

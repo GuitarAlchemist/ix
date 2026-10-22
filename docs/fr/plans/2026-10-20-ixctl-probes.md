@@ -267,9 +267,16 @@ une file bornée en enregistrements et en octets que leurs relais n'attendent ja
 comptées par tuyau sur le statut et marquées `dropped` sur le tuyau avant l'enregistrement qui a
 suivi, un abonnement de tuyau lâché par le pair rouvert en direct et marqué `overflow` sans clore
 la session (la porte M3 mesure la charge ; le test Go ralentit le parent pour prouver la borne et
-la priorité ; contrat v0.1.6). Reste à livrer (critère 7, puis tranche 4) : un rejeu borné puis
-saut avec trou daté, `degraded` et `reconciled` séparés ; l'instantané lié à un curseur avec
-identités de création. Grillée à la voix, la revue en
+la priorité ; contrat v0.1.6). La troisième coupe borne le rattrapage (critère 7) : une provision
+de rejeu par lien (trames, octets, temps, remplie lentement, jamais remise à zéro par une
+reconnexion), au-delà de laquelle le lien s'abonne en direct et marque le saut sur le `ctl`
+miroir (`jumped`, `from`, `to`, daté) ; un abonnement de contrôle lâché par le pair est rouvert
+dans la session, sans la clore ; le statut distingue `live` (le pair le dit, par une trame en direct
+qu'un abonné demande) de `reconciled` et ne lève `degraded` que lorsque les deux tiennent, `jumps`
+compté (tests Go : un rattrapage au-delà de la provision saute et est marqué, une deuxième coupure
+saute tout de suite, un flux de contrôle soutenu au-dessus du lecteur saute sans se reconnecter,
+`degraded` levé seulement en direct et réconcilié ; porte E22 ; contrat v0.1.7). Reste à livrer
+(tranche 4) : l'instantané lié à un curseur avec identités de création. Grillée à la voix, la revue en
 lecture seule de Gaïa intégrée ; la résolution est sur ix#402. La porte E19 vérifie la tranche sur
 les deux plans fédérés.
 

@@ -249,7 +249,7 @@ chaque démarrage en direct (`reason: live-start`, `src_epoch` le boot lu désor
 `last_src_epoch` le boot d'avant) ou a répondu un trou sur le `ctl` / `svc/` repris du lien
 (`prefix`, `reason`, `from`, `oldest` tels qu'il les a dits : son historique a expiré) ; un trou
 local reste une trame gap. Les files du lien sont bornées par classe (critère 6 de ix#408) :
-`ctl` et `svc/` dans leur propre file, jamais écartés par le lien et lus d'abord (une trame de contrôle attend au plus l'application d'une trame de tuyau ; le débordement par le pair de ces abonnements clôt la session, reprise à la reconnexion, et un rejeu que son anneau ne tient plus est un trou, marqué) ; les tuyaux demandés dans une
+`ctl` et `svc/` dans leur propre file, jamais écartés par le lien et lus d'abord (une trame de contrôle attend au plus l'application d'une trame de tuyau ; le débordement par le pair de ces abonnements les rouvre dans la session, repris ou en direct comme ci-dessous, et un rejeu que son anneau ne tient plus est un trou, marqué) ; les tuyaux demandés dans une
 file bornée en enregistrements (1024) et en octets (4 Mio) que leurs relais n'attendent jamais
 pour un enregistrement (la seule trame qu'un relais attend de déposer est le trou de débordement
 de son abonnement, sa dernière), si bien qu'un parent plus lent que la charge offerte perd des
@@ -257,8 +257,25 @@ enregistrements de tuyau plutôt que de grossir ou de retenir le cycle de vie ; 
 `status.peers[].probes[].dropped` et marquée sur le tuyau (`link.gap`, `reason: dropped`,
 `dropped` le compte exact du lien lui-même) avant l'enregistrement qui a suivi, et un abonnement
 de tuyau que le pair a lui-même lâché (`overflow`) est marqué et rouvert en direct sans clore la
-session. Pas encore : le rattrapage borné, `degraded` / `reconciled`, l'instantané lié à un
-curseur ; voir la résolution sur ix#402.
+session. Un rattrapage de `ctl` / `svc/` (une reprise après une coupure ou après que le pair a
+lâché l'abonnement) est borné par une provision que le lien possède (critère 7) : 8192 trames et
+32 Mio par lien, remplie à nouveau en une minute, 30 s par rattrapage, jamais remise à zéro par
+une reconnexion. Au-delà, le lien s'abonne en direct et marque le saut sur `peer/<nom>/ctl`
+(`link.gap`, `reason: jumped`, `prefix`, `from` le dernier seq reflété sur ce préfixe, `to` la tête
+du pair d'où part l'abonnement en direct, `src_epoch`, daté par `t`) : un parent qui ne suit pas
+rejoue une fois, borné, puis saute ; il ne rejoue pas sans fin, ne se reconnecte pas sans fin (un
+abonnement de contrôle lâché est rouvert dans la même session) et ne grossit pas. Le
+`status.peers[]` du parent distingue `live` (le lien est haut et ses deux abonnements de contrôle
+ont dépassé leur rejeu : le lien demande au pair de le dire, `subscribe` avec `live: true` répondu
+par une trame `{"sub", "live": true}` une fois le rejeu passé la tête d'où l'abonnement est parti,
+tout de suite s'il n'y avait rien à rejouer ; aucun autre abonné ne la reçoit) de `reconciled` (le
+lien est haut, la liste des sondes du pair a été appliquée dans cette session et aucun tuyau
+demandé n'est encore en ouverture), ne lève `degraded` que lorsque les deux tiennent, et compte
+dans `jumps` les rattrapages abandonnés. Un saut de `ctl` perd les événements de cycle de vie de
+son intervalle : l'état n'est plus su réconcilié (`reconciled` faux, `degraded`) jusqu'à ce que la
+liste soit relue, c'est-à-dire la session suivante pour l'instant. Pas encore : l'instantané lié à
+un curseur (tranche 4), qui relit la liste avec un curseur dans la session et ferme cette
+fenêtre ; voir la résolution sur ix#402.
 
 `ctl` porte aussi le cycle de vie des sondes : `probe.created` (`node`, `kind`, `parent`, `export` quand posé),
 `probe.started` (`expires_in_ms` quand il y a un bail), `probe.stopped` et `probe.removed` avec
@@ -421,7 +438,7 @@ redémarrage) et la surface IXQL des sondes (E17 : `probe.ixql` via le client Ru
 sous un mux, dix enregistrements, l'arbre retiré) et les budgets de sondes (E18 : le budget du
 plan dans `limits`, une feuille qui dépasserait le `max_rate_per_s` de son mux refusée en nommant
 les deux, une feuille sans budget, un mux qui ne peut pas élargir, débits et octets dans la liste).
-49 vérifications, E1..E21 et M3 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair ; M3 : huit tuyaux à 10 ms à travers le lien, les enregistrements reflétés, les pertes comptées et marquées, et le temps qu'un `probe.created` met à traverser sous la charge), une boucle de
+50 vérifications, E1..E22 et M3 (E19 : seul un tuyau de sonde que le pair exporte et que le parent demande traverse le lien, par nom exact, le statut disant ce qu'est chaque nom demandé ; E20 : une enveloppe miroir porte les `src_seq` / `src_epoch` de la source, qui nomment l'enveloppe du pair portant le même enregistrement ; E21 : le lien marque ce que le miroir saute, un `link.gap` sur le tuyau au démarrage en direct et sur le `ctl` miroir au redémarrage du pair ; M3 : huit tuyaux à 10 ms à travers le lien, les enregistrements reflétés, les pertes comptées et marquées, et le temps qu'un `probe.created` met à traverser sous la charge ; E22 : autour du redémarrage de b, le statut du parent distingue un flux en direct d'un état réconcilié et ne lève `degraded` que lorsque les deux tiennent), une boucle de
 redémarrage et deux mesures : M1 (ce qu'une attente sur
 le flux gagnerait sur la sonde à 25 ms) et M2 (ce qu'un mux sur seize heartbeats à 10 ms livre,
 et ce qu'il coûte au plan).

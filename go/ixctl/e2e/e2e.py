@@ -10,7 +10,7 @@ records, the tree removed) and probe budgets (E18: `limits` say the plane's budg
 past its mux's `max_rate_per_s` is refused naming both, a leaf carries no budget, a mux cannot
 widen, the list says rates and bytes); E19: a probe pipe across the link (D4, ix#402, S2 slice 1:
 only a node the peer exports AND the parent asks for crosses, by exact name, the status saying
-what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load). 49 checks, E1..E21, a restart loop and the M1, M2 and M3 measurements.
+what each wanted name is; E20: a mirrored envelope carries the source's src_seq / src_epoch; E21: the link marks what the mirror skips, a link.gap on the pipe at a live start and on the mirrored ctl at the peer's restart; M3: eight 10 ms pipes across the link, the records mirrored, the drops the link counted and marked, and the time a probe.created takes to cross under the load; E22: around b's restart the parent's status tells a live flow from a reconciled state and lifts degraded only when both hold). 50 checks, E1..E22, a restart loop and the M1, M2 and M3 measurements.
 
     python go/ixctl/e2e/e2e.py --build            # build the four binaries, then run the gate
     python go/ixctl/e2e/e2e.py --bin <dir>        # use ixctl, pod, ixql-ctl and ix already built there
@@ -1043,6 +1043,9 @@ def run():
     ok_ready_lg = ready_lg.wait(2)
     call(sb, "POST", "/v1/shutdown", {})
     exit_b = pb.wait(10)
+    # For E22 below: the link's standing while b is down.
+    _, down_ms = wait_until(lambda: (peer(status(sa), "b") or {}).get("state") == "down", 10)
+    pd = peer(status(sa), "b") or {}
     pb, _, sb, ms_b2 = up("b", spec_b)
     tokens.append(sb["token"])
     b1 = status(sb)
@@ -1106,6 +1109,22 @@ def run():
           and md.get("peer") == "b" and md.get("reason") == "epoch-changed"
           and md.get("src_epoch") == b1["epoch"] and md.get("last_src_epoch") == b0["epoch"] and before_new and after_new,
           markers=len(marks), marker=md, envelopes=len(lg), before_new_boot=before_new, new_boot_after=after_new)
+    # E22 (S2 slice 3, criterion 7 of ix#408): the parent's status tells a live flow from a
+    # reconciled state and lifts degraded only when both hold. While b was down: degraded, neither
+    # live nor reconciled. Once the new boot is up: live (both control subscriptions past their
+    # replay; a new instance starts them live, so no jump is counted) and reconciled (its probe
+    # list applied, no wanted pipe still opening), degraded lifted.
+    def settled():
+        p = peer(status(sa), "b") or {}
+        return p.get("state") == "up" and p.get("live") is True and p.get("reconciled") is True and p.get("degraded") is False
+    _, settle_ms = wait_until(settled, 10)
+    pe = peer(status(sa), "b") or {}
+    check("E22.degraded_lifted_only_when_live_and_reconciled",
+          down_ms is not None and pd.get("degraded") is True and pd.get("live") is False
+          and pd.get("reconciled") is False and settle_ms is not None and pe.get("jumps", 0) == 0,
+          while_down={k: pd.get(k) for k in ("state", "live", "reconciled", "degraded")},
+          after={k: pe.get(k) for k in ("state", "live", "reconciled", "degraded", "jumps")},
+          down_ms=down_ms, settle_ms=settle_ms)
 
     # E17: the IXQL probe surface (D7, ix#405), end to end through the Rust client: probe.ixql
     # declares a mux and a CPU probe feeding it, starts both, reads ten of the mux's records live
