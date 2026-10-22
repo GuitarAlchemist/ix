@@ -144,6 +144,7 @@ func TestACatchUpPastTheAllowanceJumpsLiveAndIsMarked(t *testing.T) {
 		return
 	}
 	replayed, m, mEnv, lastSeq := readUntilJump(mirrored.SrcSeq)
+	t0 := time.Now() // the allowance refills by wall time from here: a slow run earns a few frames back
 	if replayed == 0 || replayed > 50 {
 		t.Fatalf("%d frames replayed before the jump, want up to the allowance of 50 and more than none", replayed)
 	}
@@ -178,8 +179,8 @@ func TestACatchUpPastTheAllowanceJumpsLiveAndIsMarked(t *testing.T) {
 	cancel = run()
 	defer cancel()
 	replayed, _, _, _ = readUntilJump(after.SrcSeq)
-	if replayed > 10 {
-		t.Fatalf("%d frames replayed after the second outage: the reconnect refilled the allowance", replayed)
+	if earned := 2 + time.Since(t0).Seconds()*50/replayRefill.Seconds(); float64(replayed) > earned {
+		t.Fatalf("%d frames replayed after the second outage, more than the %.0f the time since the first jump refilled: the reconnect refilled the allowance", replayed, earned)
 	}
 	if st := l.status(); st.Jumps != 2 {
 		t.Fatalf("status after the second jump: %+v, want two jumps counted", st)
@@ -290,4 +291,114 @@ func TestASustainedControlStreamAboveTheReaderJumpsWithoutReconnecting(t *testin
 		t.Fatalf("the live event has src_seq %d, the first jump said live from %d", e.SrcSeq, g.To)
 	}
 	t.Logf("%d jumps under the load", st.Peers[0].Jumps)
+}
+
+// The live frame comes after what the plane answers first and comes even when nothing of the
+// prefix is to be replayed (Codex round 43): a resume with a stale epoch gets the `epoch-changed`
+// gap first, then the live frame; a resume on a prefix with no record while the head advanced on
+// other channels gets the live frame without waiting for a record of the prefix.
+func TestTheLiveFrameFollowsTheGapAndComesOnAQuietPrefix(t *testing.T) {
+	b := newTestInstance(t, fakeSpec(t, "b", nil), "")
+	c := dial(t, b)
+	s, err := c.SubscribeFromLive(context.Background(), "svc/", uint64p(5), "not-this-boot", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readFrames(t, s.Frames, 2)
+	if got[0].Gap == nil || got[0].Gap.Reason != "epoch-changed" || got[0].Live {
+		t.Fatalf("a resume with a stale epoch got %+v first, want the epoch-changed gap", got[0])
+	}
+	if !got[1].Live {
+		t.Fatalf("after the gap: %+v, want the live frame", got[1])
+	}
+
+	for i := 1; i <= 3; i++ {
+		b.plane.Publish("ctl", event("noise", map[string]any{"n": i}))
+	}
+	var zero uint64
+	s2, err := c.SubscribeFromLive(context.Background(), "svc/", &zero, b.plane.Epoch(), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := readFrames(t, s2.Frames, 1)[0]; !f.Live {
+		t.Fatalf("a resume on a quiet prefix got %+v, want the live frame once the replay is past the head", f)
+	}
+}
+
+// A reconnect past the allowance that has nothing to skip marks no jump (Codex round 43): the
+// peer's head is the last seq mirrored on the prefix, in the same boot, so a live subscription
+// misses nothing, and `jumped` means something was skipped. Once the peer published again, the
+// same reopen jumps and is marked from that seq.
+func TestAnEmptyReconnectPastTheAllowanceMarksNoJump(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json")}, NewHub("a"))
+	cur := l.hub.Subscribe("peer/b/", nil, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go l.run(ctx)
+	waitLink(t, l, "up")
+	first := b.plane.Publish("svc/x", event("stats", map[string]any{"n": 0}))
+	for e := nextEnvWithin(t, cur, 10*time.Second); e.Ch != "peer/b/svc/x"; e = nextEnvWithin(t, cur, 10*time.Second) {
+	}
+	l.allowFrames.Store(0) // no catch-up may begin from now on
+	l.mu.Lock()
+	c, sub := l.client, l.ctl["svc/"].sub
+	l.mu.Unlock()
+	merged := make(chan peerFrame, 64)
+	fail := make(chan error, 1)
+	reopen := func(sub int64) int64 {
+		t.Helper()
+		l.reopenControl(ctx, c, merged, fail, peerFrame{prefix: "svc/", sub: sub, f: Frame{Gap: &Gap{Reason: "overflow"}}})
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			l.mu.Lock()
+			now := l.ctl["svc/"].sub
+			l.mu.Unlock()
+			if now != 0 && now != sub {
+				return now
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("svc/ was not reopened after %d", sub)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	markers := func(d time.Duration) (ms []linkGap) {
+		nctx, ncancel := context.WithTimeout(ctx, d)
+		defer ncancel()
+		for {
+			envs, _, err := cur.Next(nctx, 16)
+			if err != nil {
+				return ms
+			}
+			for _, e := range envs {
+				if e.Ev.Kind == linkGapKind {
+					ms = append(ms, gapOf(t, e))
+				}
+			}
+		}
+	}
+	sub = reopen(sub)
+	if ms := markers(300 * time.Millisecond); len(ms) != 0 {
+		t.Fatalf("a reopen with nothing to skip was marked: %+v", ms)
+	}
+	if st := l.status(); st.Jumps != 0 {
+		t.Fatalf("a reopen with nothing to skip was counted as a jump: %+v", st)
+	}
+	select {
+	case err := <-fail:
+		t.Fatalf("reopening failed: %v", err)
+	default:
+	}
+
+	second := b.plane.Publish("svc/x", event("stats", map[string]any{"n": 1}))
+	reopen(sub)
+	ms := markers(2 * time.Second)
+	if len(ms) != 1 || ms[0].Reason != "jumped" || ms[0].Prefix != "svc/" || ms[0].From != first.Seq || ms[0].To < second.Seq {
+		t.Fatalf("a reopen past a new record: markers %+v, want one jumped on svc/ from %d to at least %d", ms, first.Seq, second.Seq)
+	}
+	if st := l.status(); st.Jumps != 1 {
+		t.Fatalf("status after the real jump: %+v, want one jump counted", st)
+	}
 }

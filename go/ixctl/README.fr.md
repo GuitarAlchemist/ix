@@ -259,12 +259,17 @@ enregistrements de tuyau plutôt que de grossir ou de retenir le cycle de vie ; 
 de tuyau que le pair a lui-même lâché (`overflow`) est marqué et rouvert en direct sans clore la
 session. Un rattrapage de `ctl` / `svc/` (une reprise après une coupure ou après que le pair a
 lâché l'abonnement) est borné par une provision que le lien possède (critère 7) : 8192 trames et
-32 Mio par lien, remplie à nouveau en une minute, 30 s par rattrapage, jamais remise à zéro par
-une reconnexion. Au-delà, le lien s'abonne en direct et marque le saut sur `peer/<nom>/ctl`
-(`link.gap`, `reason: jumped`, `prefix`, `from` le dernier seq reflété sur ce préfixe, `to` la tête
-du pair d'où part l'abonnement en direct, `src_epoch`, daté par `t`) : un parent qui ne suit pas
-rejoue une fois, borné, puis saute ; il ne rejoue pas sans fin, ne se reconnecte pas sans fin (un
-abonnement de contrôle lâché est rouvert dans la même session) et ne grossit pas. Le
+32 Mio par lien, remplie à nouveau en une minute, au plus 30 s par rattrapage, jamais remise à
+zéro par une reconnexion. Un rattrapage ne commence qu'avec une trame et un octet de provision et
+s'arrête à la première trame qu'elle ne couvre pas : le lien s'abonne alors en direct et marque le
+saut sur `peer/<nom>/ctl` (`link.gap`, `reason: jumped`, `prefix`, `from` le dernier seq reflété
+sur ce préfixe, `to` la tête du pair d'où part l'abonnement en direct, `src_epoch`, daté par `t`) :
+un parent qui ne suit pas rejoue une fois, borné, puis saute ; il rejoue au plus une provision par
+minute de remplissage, ne se reconnecte pour rien de cela (un abonnement de contrôle lâché est
+rouvert dans la même session) et ne grossit pas. Un départ en direct qui ne manque rien (la tête du
+pair est le dernier seq reflété sur le préfixe, dans le même démarrage) n'est pas un saut et ne
+marque rien ; l'intervalle qu'un marqueur nomme est celui de la tête que tous les canaux partagent,
+il peut donc ne contenir que des trames d'autres canaux (le marqueur sur-déclare, jamais l'inverse). Le
 `status.peers[]` du parent distingue `live` (le lien est haut et ses deux abonnements de contrôle
 ont dépassé leur rejeu : le lien demande au pair de le dire, `subscribe` avec `live: true` répondu
 par une trame `{"sub", "live": true}` une fois le rejeu passé la tête d'où l'abonnement est parti,

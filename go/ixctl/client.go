@@ -70,10 +70,12 @@ type sub struct {
 // Sub is an open subscription: its frames, and Done, closed when the subscription is dropped
 // (Unsubscribe) or the connection ends. Frames closes with the connection, and not at all once
 // the subscription was dropped first (the reader no longer knows it): a reader ends on Done.
-// Head is the plane's head when the subscription was made: envelopes up to it are replay.
+// Head is the plane's head when the subscription was made (envelopes up to it are replay), Epoch
+// the boot it was read in.
 type Sub struct {
 	ID     int64
 	Head   uint64
+	Epoch  string
 	Frames <-chan Frame
 	Done   <-chan struct{}
 }
@@ -294,10 +296,11 @@ func (cl *Client) open(ctx context.Context, req Request, buf int) (*Sub, error) 
 		return nil, err
 	}
 	var opened struct {
-		Head uint64 `json:"head"`
+		Head  uint64 `json:"head"`
+		Epoch string `json:"epoch"`
 	}
 	json.Unmarshal(data, &opened)
-	return &Sub{ID: id, Head: opened.Head, Frames: frames, Done: s.done}, nil
+	return &Sub{ID: id, Head: opened.Head, Epoch: opened.Epoch, Frames: frames, Done: s.done}, nil
 }
 
 // readStateFile reads an instance's state file: where it listens and its token.

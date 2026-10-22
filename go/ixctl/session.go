@@ -169,9 +169,11 @@ func (s *session) dropIf(id int64, mine *subEntry) {
 // waits for room (the client asked for it, and it is bounded by the ring);
 // live events never wait: a full queue drops the subscription with a gap. A
 // subscriber that asked (tell) is sent one live frame once the cursor is past
-// the head it started from, before the first live event: at once when nothing
-// was to be replayed, after the last replayed frame otherwise (criterion 7 of
-// ix#408: a reader that catches up knows when it is live even on a quiet channel).
+// the head it started from, before the first live event: after the gap the
+// subscription may open with, after the last replayed frame, and without
+// waiting for a record of the prefix when the ring holds none up to the head
+// (Catch; criterion 7 of ix#408: a reader that catches up knows when it is live
+// even on a quiet channel, Codex round 43).
 func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, tell bool) {
 	defer func() {
 		if s.pumpLeaving != nil {
@@ -185,17 +187,21 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, 
 	replayUntil := cur.Head()
 	told := !tell
 	live := func() bool { // the live frame, once, when the cursor is past the head it started from
-		if told || cur.next <= replayUntil {
+		if told || cur.stale != nil || cur.next <= replayUntil {
 			return true
 		}
 		told = true
 		return s.send(ctx, liveFrame(id))
 	}
-	if !live() {
-		return
-	}
 	for {
-		envs, gap, err := cur.Next(ctx, 256)
+		var envs []*Envelope
+		var gap *Gap
+		var err error
+		if told {
+			envs, gap, err = cur.Next(ctx, 256)
+		} else {
+			envs, gap, err = cur.Catch(ctx, 256) // returns empty once past the head: the replay is over
+		}
 		if err != nil {
 			return
 		}
@@ -230,7 +236,7 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, 
 				return
 			}
 		}
-		if !live() { // a batch that ended at the head with nothing live behind it
+		if !live() { // a batch that ended at the head, or an empty catch past it
 			return
 		}
 	}

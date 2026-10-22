@@ -284,6 +284,18 @@ func (c *Cursor) Epoch() string { return c.h.epoch }
 
 // Next blocks until matching envelopes (at most max) or a gap are available.
 func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
+	return c.advance(ctx, max, false)
+}
+
+// Catch is Next for a replay: once the cursor is past the head it started from with nothing
+// more to return (the ring held no matching envelope up to it, or the last batch ended there),
+// it returns empty rather than waiting for a live envelope, so a caller knows the replay is over
+// on a quiet channel too (Codex round 43). A pending gap is returned first, as by Next.
+func (c *Cursor) Catch(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
+	return c.advance(ctx, max, true)
+}
+
+func (c *Cursor) advance(ctx context.Context, max int, catch bool) ([]*Envelope, *Gap, error) {
 	h := c.h
 	for {
 		h.mu.Lock()
@@ -317,7 +329,7 @@ func (c *Cursor) Next(ctx context.Context, max int) ([]*Envelope, *Gap, error) {
 		}
 		wake := h.wake
 		h.mu.Unlock()
-		if len(out) > 0 {
+		if len(out) > 0 || (catch && c.next > c.start) {
 			return out, nil, nil
 		}
 		select {

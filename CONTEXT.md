@@ -191,6 +191,18 @@ contracts (see `docs/contracts/`), not runtime coupling.
   ring no longer holds it). Distinct from a **checkpoint** (`ix-recover`, a run's published
   state) and from a **generation** (an apply). _Avoid_: snapshot, cursor, savepoint.
 
+- **Link catch-up** (`ixctl`) — what a parent's peer link does when it resumes a peer's `ctl` /
+  `svc/` subscription from the last seq it mirrored: a bounded **replay**, paid from the link's
+  **replay allowance** (frames, bytes and time per link, refilled slowly, never reset by a
+  reconnect). Past the allowance the link **jumps**: it subscribes live instead and marks the
+  span it skipped on the mirrored `ctl` (`link.gap`, reason `jumped`, `from` / `to`, dated). A
+  live start that misses nothing is no jump. The link's status tells **live** (both control
+  subscriptions are past their replay: the peer says so with one **live frame**, asked for with
+  `live: true`) from **reconciled** (the peer's probe list was applied this session and no wanted
+  pipe is still opening); **degraded** is lifted only when both hold. Distinct from a **replay**
+  from a bookmark (a consumer's) and from the **continuity markers** of a pipe (`live-start`,
+  `dropped`, `overflow`). _Avoid_: resync, backfill, lag.
+
 ## Conventions
 
 See `CLAUDE.md` for the authoritative build/convention/discipline rules

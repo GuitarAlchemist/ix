@@ -123,7 +123,6 @@ type pipeSub struct {
 type ctlSub struct {
 	sub   int64
 	gen   uint64
-	head  uint64
 	live  bool
 	since time.Time
 }
@@ -612,12 +611,14 @@ func (l *peerLink) nextControlGen(prefix string) uint64 {
 // openControl subscribes to one of the peer's control prefixes (ctl or svc/) and forwards its
 // frames into merged, in order, on a goroutine of its own, until the peer drops the subscription
 // (overflow: its gap is the last frame forwarded) or the link does. A resume (since given) is a
-// catch-up, granted only while the allowance has a frame left; otherwise, as when jump asks for
-// it, the subscription starts live and the jump is marked on the peer's mirrored ctl (`jumped`,
-// `prefix`, `from` the last seq mirrored on the prefix, `to` the head the live subscription
-// starts from, `src_epoch` the boot read), under l.mu, in the step that makes the subscription
-// the prefix's; a jump of ctl leaves the state unreconciled until the list is read again. A
-// subscription that completes after the prefix moved on (gen) stands down.
+// catch-up, granted only while the allowance has a frame and a byte left; otherwise, as when
+// jump asks for it, the subscription starts live and the jump is marked on the peer's mirrored
+// ctl (`jumped`, `prefix`, `from` the last seq mirrored on the prefix, `to` the head the live
+// subscription starts from, `src_epoch` the boot read), under l.mu, in the step that makes the
+// subscription the prefix's, unless nothing lies between the two (the head is the last seq
+// mirrored, in the same boot): a live start that misses nothing is no jump (Codex round 43). A
+// jump of ctl leaves the state unreconciled until the list is read again. A subscription that
+// completes after the prefix moved on (gen) stands down.
 func (l *peerLink) openControl(ctx context.Context, c *Client, merged chan<- peerFrame, prefix string, since *uint64, epoch string, gen uint64, jump bool) error {
 	if since != nil && !l.canReplay() {
 		since, jump = nil, true
@@ -637,7 +638,10 @@ func (l *peerLink) openControl(ctx context.Context, c *Client, merged chan<- pee
 		cancel()
 		return nil
 	}
-	cs.sub, cs.head, cs.live, cs.since = s.ID, s.Head, since == nil, time.Now()
+	cs.sub, cs.live, cs.since = s.ID, since == nil, time.Now()
+	if from, had := l.since[prefix]; jump && had && from == s.Head && s.Epoch == l.epoch {
+		jump = false // the live subscription starts where the mirror stopped: nothing skipped
+	}
 	if jump {
 		l.jumps++
 		if prefix == "ctl" {
@@ -753,12 +757,13 @@ func (l *peerLink) refillLocked() {
 	l.replay.at = now
 }
 
-// canReplay says whether a catch-up may begin: the allowance has at least a frame left.
+// canReplay says whether a catch-up may begin: the allowance has a frame and a byte left (it ends
+// at the first frame the allowance cannot cover, grantReplay).
 func (l *peerLink) canReplay() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.refillLocked()
-	return l.replay.frames >= 1
+	return l.replay.frames >= 1 && l.replay.bytes >= 1
 }
 
 // grantReplay charges one frame of a control subscription's catch-up to the allowance and says
@@ -971,11 +976,21 @@ func (q *pipeQueue) putLast(pf peerFrame, done, conn <-chan struct{}) bool {
 	}
 }
 
+// weight is what a queued frame counts against the byte bound: its wire bytes for a record,
+// nothing for a gap (putLast counts none, so took gives none back; Codex round 43: a gap taken
+// back drove the count below zero).
+func (pf peerFrame) weight() int64 {
+	if pf.f.Gap != nil {
+		return 0
+	}
+	return int64(pf.f.Bytes)
+}
+
 // offer queues pf if it fits both bounds, at once or not at all. The bytes are taken before the
 // record is queued and given back when it is not, so the count never understates what the queue
 // holds.
 func (q *pipeQueue) offer(pf peerFrame) bool {
-	n := int64(pf.f.Bytes)
+	n := pf.weight()
 	if q.bytes.Add(n) > maxPipeQueueBytes {
 		q.bytes.Add(-n)
 		return false
@@ -990,7 +1005,7 @@ func (q *pipeQueue) offer(pf peerFrame) bool {
 }
 
 // took gives back the bytes of a frame read from the queue.
-func (q *pipeQueue) took(pf peerFrame) { q.bytes.Add(-int64(pf.f.Bytes)) }
+func (q *pipeQueue) took(pf peerFrame) { q.bytes.Add(-pf.weight()) }
 
 // mirror republishes one of the peer's own envelopes. Envelopes the peer
 // itself mirrored (another origin, or a peer/ channel) are never forwarded.

@@ -211,8 +211,14 @@ func TestThePipeQueueIsBoundedInBytesToo(t *testing.T) {
 	if ok := <-put; !ok || q.bytes.Load() != bytes-2<<20 || len(q.ch) != maxPipeQueue { // the 2 MiB record was the oldest
 		t.Fatalf("after a slot opened: put %v, bytes %d (was %d), queued %d", ok, q.bytes.Load(), bytes, len(q.ch))
 	}
-	close(done)
+	close(done) // with the queue full, only done is ready: the select is not a toss-up
 	if q.putLast(over, done, conn) {
 		t.Fatal("a gone subscription's gap was queued")
+	}
+	for len(q.ch) > 0 { // the loop drains the rest, the gap last: the count is back to nothing, not below it
+		q.took(<-q.ch)
+	}
+	if q.bytes.Load() != 0 {
+		t.Fatalf("after draining the queue, gap included: bytes %d, want 0 (Codex round 43: the gap gave back bytes it never counted)", q.bytes.Load())
 	}
 }

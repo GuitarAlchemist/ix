@@ -242,13 +242,17 @@ marked on the pipe (`link.gap`, `reason: dropped`, `dropped` the link's own exac
 the record that followed, and a pipe subscription the peer itself dropped (`overflow`) is marked
 and reopened live without ending the session. A catch-up of `ctl` / `svc/` (a resume after an
 outage or after the peer dropped the subscription) is bounded by an allowance the link owns
-(criterion 7): 8192 frames and 32 MiB per link, refilled to full over a minute, 30 s per
-catch-up, never reset by a reconnect. Past it the link subscribes live instead and marks the jump
-on `peer/<name>/ctl` (`link.gap`, `reason: jumped`, `prefix`, `from` the last seq mirrored on
+(criterion 7): 8192 frames and 32 MiB per link, refilled to full over a minute, at most 30 s per
+catch-up, never reset by a reconnect. A catch-up begins only with a frame and a byte of it left
+and ends at the first frame it cannot cover: the link then subscribes live instead and marks the
+jump on `peer/<name>/ctl` (`link.gap`, `reason: jumped`, `prefix`, `from` the last seq mirrored on
 that prefix, `to` the peer's head the live subscription starts from, `src_epoch`, dated by `t`),
-so a parent that cannot keep up replays once, bounded, then jumps: it neither replays without
-end, nor reconnects without end (a dropped control subscription is reopened in the same session),
-nor grows. The parent's `status.peers[]` tells `live` (the link is up and both control
+so a parent that cannot keep up replays once, bounded, then jumps: it replays at most one
+allowance per minute of refill, reconnects for none of it (a dropped control subscription is
+reopened in the same session) and does not grow. A live start that misses nothing (the peer's
+head is the last seq mirrored on the prefix, in the same boot) is no jump and marks nothing; the
+span a marker names is of the head every channel shares, so it may hold frames of other channels
+only (the marker over-reports, never under). The parent's `status.peers[]` tells `live` (the link is up and both control
 subscriptions are past their replay: the link asks the peer to say so, `subscribe` with
 `live: true` answered by one `{"sub", "live": true}` frame once the replay is past the head the
 subscription started from, at once when nothing was to be replayed; no other subscriber gets it)
