@@ -194,22 +194,31 @@ jobs:
       - name: Enforce verdict
         shell: bash
         env:
-          AGENT_BLACKBOX_REVIEWED: ${{ contains(github.event.pull_request.labels.*.name, 'agent-blackbox-reviewed') }}
-          AGENT_BLACKBOX_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Re-check live labels in case the label race happens during a synchronize event.
-          live_reviewed="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${{ github.event.pull_request.number }}/labels" --jq 'any(.[]; .name == "agent-blackbox-reviewed")' 2>/dev/null || echo false)"
-          if [ "$AGENT_BLACKBOX_REVIEWED" = "true" ] || [ "$live_reviewed" = "true" ]; then
+          # The labels and the draft flag are the PR's as it is now, never the event's: a re-run replays its run's
+          # event, so an old run re-run after a change would see the PR as it was. GitHub not answering reads as
+          # unlabeled and ready.
+          pr="repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
+          reviewed="$(gh api "$pr" --jq 'any(.labels[]; .name == "agent-blackbox-reviewed")' 2>/dev/null || echo false)"
+          if [ "$reviewed" = "true" ]; then
             echo "Agent Blackbox human-review override label present; skipping hard enforcement."
             exit 0
           fi
-          if PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox enforce --report dist/risk-report.json; then
+          set +e
+          said="$(PYTHONPATH=.agent-blackbox python -m cli.agent_blackbox enforce --report dist/risk-report.json)"
+          code=$?
+          set -e
+          echo "$said"
+          if [ "$code" = 0 ]; then
             exit 0
           fi
-          # A draft is work in progress: its failing verdict is a warning. Marking it ready runs this job again
-          # (ready_for_review), and then the verdict fails it until the label is applied.
-          if [ "$AGENT_BLACKBOX_DRAFT" = "true" ]; then
+          # A draft is work in progress: a failing verdict, and nothing else (a crash, no verdict), is a warning
+          # there. Marking the PR ready runs this job again (ready_for_review), and the verdict then fails it until
+          # the label is applied.
+          draft="$(gh api "$pr" --jq .draft 2>/dev/null || echo false)"
+          if [ "$code" = 1 ] && [ "$said" = "Agent Blackbox verdict: fail" ] && [ "$draft" = "true" ]; then
             echo "::warning title=Agent Blackbox::draft PR: the verdict fails and will be enforced once the PR is ready for review"
             exit 0
           fi

@@ -216,10 +216,22 @@ fn the_workflow_binds_the_report_before_showing_or_enforcing_it() {
     );
 }
 
-/// While a PR is a draft, a failing verdict is a warning; it fails the job once the PR is ready for review, an event
-/// the workflow listens to. The binding step stays fatal on drafts too.
+fn enforce_step() -> serde_yaml::Value {
+    let wf: serde_yaml::Value = serde_yaml::from_str(WORKFLOW).expect("valid workflow YAML");
+    wf["jobs"]["risk-report"]["steps"]
+        .as_sequence()
+        .expect("risk-report steps")
+        .iter()
+        .find(|s| s["name"].as_str() == Some("Enforce verdict"))
+        .expect("the enforce step")
+        .clone()
+}
+
+/// The PR's draft flag and labels are read from GitHub when the step runs, never from the triggering event: a
+/// re-run replays its run's event, so a draft's old run re-run after the PR is ready would still see a draft
+/// (Codex round 57). Marking a PR ready runs the gate again.
 #[test]
-fn a_draft_is_warned_and_a_ready_pr_is_enforced() {
+fn the_enforce_step_takes_nothing_from_the_event_but_the_pr_number() {
     let wf: serde_yaml::Value = serde_yaml::from_str(WORKFLOW).expect("valid workflow YAML");
     let types = wf["on"]["pull_request"]["types"]
         .as_sequence()
@@ -228,25 +240,146 @@ fn a_draft_is_warned_and_a_ready_pr_is_enforced() {
         types.iter().any(|t| t.as_str() == Some("ready_for_review")),
         "marking a PR ready must run the gate again"
     );
-    let steps = wf["jobs"]["risk-report"]["steps"]
-        .as_sequence()
-        .expect("risk-report steps");
-    let enforce = steps
-        .iter()
-        .find(|s| s["name"].as_str() == Some("Enforce verdict"))
-        .expect("the enforce step");
+    let step = enforce_step();
+    let env = step["env"].as_mapping().expect("the enforce step's env");
     assert_eq!(
-        enforce["env"]["AGENT_BLACKBOX_DRAFT"].as_str(),
-        Some("${{ github.event.pull_request.draft }}"),
-        "the step must know whether the PR is a draft"
+        step["env"]["PR_NUMBER"].as_str(),
+        Some("${{ github.event.pull_request.number }}")
     );
-    let run = enforce["run"].as_str().expect("enforce script");
-    let verdict = run.find("agent_blackbox enforce").expect("enforce runs");
-    let draft = run.find("$AGENT_BLACKBOX_DRAFT").expect("the draft is checked");
+    for (k, v) in env {
+        let v = v.as_str().unwrap_or_default();
+        assert!(
+            !v.contains("github.event") || k.as_str() == Some("PR_NUMBER"),
+            "{k:?} takes {v} from the event, which a re-run replays"
+        );
+    }
+    let run = step["run"].as_str().expect("enforce script");
     assert!(
-        verdict < draft,
-        "the verdict is computed first, then softened for a draft:\n{run}"
+        !run.contains("${{"),
+        "the script takes its inputs from env only:\n{run}"
     );
-    assert!(run.contains("::warning"), "a draft's failing verdict shows as a warning");
-    assert!(run.trim_end().ends_with("exit 1"), "a ready PR's failing verdict fails the job");
+}
+
+/// Git's bash on Windows (the `bash` a GitHub Windows runner uses; `System32\bash.exe` is WSL's), `bash`
+/// elsewhere; `IX_BASH` overrides. None found is a failure, not a skip.
+fn bash() -> PathBuf {
+    if let Ok(b) = std::env::var("IX_BASH") {
+        return b.into();
+    }
+    if cfg!(windows) {
+        let out = Command::new("git")
+            .arg("--exec-path")
+            .output()
+            .expect("git, to find Git's bash");
+        // <git>/mingw64/libexec/git-core → <git>/bin/bash.exe
+        let exec = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        let b = exec
+            .ancestors()
+            .nth(3)
+            .expect("Git's install dir")
+            .join("bin")
+            .join("bash.exe");
+        assert!(b.is_file(), "no bash at {}; set IX_BASH", b.display());
+        return b;
+    }
+    "bash".into()
+}
+
+/// `gh api repos/<repo>/pulls/<n> --jq ...` answers the live PR from `STUB_*`; nothing else is expected.
+const GH: &str = r#"#!/bin/bash
+[ "$1 $2" = "api repos/GuitarAlchemist/ix/pulls/429" ] || { echo "unexpected: gh $*" >&2; exit 2; }
+[ -z "$STUB_GH_DOWN" ] || exit 1
+case "$*" in
+  *labels*) echo "$STUB_LABELED" ;;
+  *.draft*) echo "$STUB_DRAFT" ;;
+  *) echo "unexpected: gh $*" >&2; exit 2 ;;
+esac
+"#;
+
+/// `enforce` says `STUB_SAYS` and exits `STUB_EXIT`.
+const PYTHON: &str = r#"#!/bin/bash
+case "$*" in
+  *"agent_blackbox enforce --report dist/risk-report.json"*) [ -z "$STUB_SAYS" ] || echo "$STUB_SAYS"; exit "$STUB_EXIT" ;;
+  *) echo "unexpected: python $*" >&2; exit 2 ;;
+esac
+"#;
+
+/// The step's script, run as GitHub runs a `shell: bash` step, with `gh` and `python` stubbed.
+fn run_enforce(env: &[(&str, &str)]) -> (i32, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let stubs = dir.path().join("stubs");
+    std::fs::create_dir(&stubs).unwrap();
+    for (name, body) in [("gh", GH), ("python", PYTHON)] {
+        let p = stubs.join(name);
+        std::fs::write(&p, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    let run = enforce_step()["run"]
+        .as_str()
+        .expect("enforce script")
+        .replace("${{ github.event.pull_request.number }}", "${PR_NUMBER}");
+    std::fs::write(
+        dir.path().join("step.sh"),
+        format!("PATH=\"$(cd \"$STUBS\" && pwd):$PATH\"\n{run}"),
+    )
+    .unwrap();
+    let out = Command::new(bash())
+        .args(["--noprofile", "--norc", "-eo", "pipefail", "step.sh"])
+        .current_dir(dir.path())
+        .env("STUBS", &stubs)
+        .env("GITHUB_REPOSITORY", "GuitarAlchemist/ix")
+        .env("PR_NUMBER", "429")
+        .envs(env.iter().copied())
+        .output()
+        .expect("run the enforce step");
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    (out.status.code().unwrap_or(-1), text)
+}
+
+/// A draft's failing verdict, and only that, is a warning; everything else follows the PR as it is now. The
+/// `AGENT_BLACKBOX_*` values are what an old event would still carry on a re-run. `enforce` at the pinned
+/// AGENT_BLACKBOX_REF prints `Agent Blackbox verdict: fail` and exits 1 on that verdict, 2 on a missing one, and a
+/// crash exits 1 with a traceback on stderr.
+#[test]
+fn the_verdict_is_enforced_on_the_pr_as_it_is_now() {
+    /// What happens, the step's env, the exit it must end with, whether it shows a warning.
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], i32, bool);
+    let fail = "Agent Blackbox verdict: fail";
+    #[rustfmt::skip]
+    let cases: &[Case] = &[
+        ("a ready PR whose verdict fails, re-run from an event that saw a labeled draft",
+         &[("STUB_DRAFT", "false"), ("STUB_LABELED", "false"), ("STUB_SAYS", fail), ("STUB_EXIT", "1"),
+           ("AGENT_BLACKBOX_DRAFT", "true"), ("AGENT_BLACKBOX_REVIEWED", "true")], 1, false),
+        ("a draft whose verdict fails, re-run from an event that saw it ready",
+         &[("STUB_DRAFT", "true"), ("STUB_LABELED", "false"), ("STUB_SAYS", fail), ("STUB_EXIT", "1"),
+           ("AGENT_BLACKBOX_DRAFT", "false")], 0, true),
+        ("a draft whose enforce crashed",
+         &[("STUB_DRAFT", "true"), ("STUB_LABELED", "false"), ("STUB_SAYS", ""), ("STUB_EXIT", "1")], 1, false),
+        ("a draft whose report has no verdict",
+         &[("STUB_DRAFT", "true"), ("STUB_LABELED", "false"),
+           ("STUB_SAYS", "Agent Blackbox verdict is invalid or missing: None"), ("STUB_EXIT", "2")], 1, false),
+        ("a labeled PR whose verdict fails",
+         &[("STUB_DRAFT", "false"), ("STUB_LABELED", "true"), ("STUB_SAYS", fail), ("STUB_EXIT", "1")], 0, false),
+        ("a verdict that passes",
+         &[("STUB_DRAFT", "false"), ("STUB_LABELED", "false"), ("STUB_SAYS", "Agent Blackbox verdict: pass"),
+           ("STUB_EXIT", "0")], 0, false),
+        ("GitHub not answering, for a failing verdict",
+         &[("STUB_GH_DOWN", "1"), ("STUB_SAYS", fail), ("STUB_EXIT", "1")], 1, false),
+    ];
+    let mut wrong = Vec::new();
+    for (what, env, want, warned) in cases {
+        let (code, out) = run_enforce(env);
+        let warning = out.contains("::warning");
+        if code != *want || warning != *warned {
+            wrong.push(format!(
+                "{what}: exit {code} (want {want}), warning {warning} (want {warned}):\n{out}"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
 }
