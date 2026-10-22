@@ -270,7 +270,9 @@ pub fn ga_cli_path() -> PathBuf {
     // runs in; the compile-time location is the last resort. The smoke test
     // overrides this via env var when running in a sandbox that doesn't have
     // ga/ next door.
-    let workspace = workspace_root_from_cwd()
+    let workspace = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| ix_workspace_root_above(&cwd))
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
     workspace.join(GA_CLI_RELATIVE_TO_WORKSPACE_PARENT)
 }
@@ -279,12 +281,15 @@ pub fn ga_cli_path() -> PathBuf {
 const GA_CLI_RELATIVE_TO_WORKSPACE_PARENT: &str =
     "../ga/Demos/Music Theory/FretboardVoicingsCLI/bin/Debug/net10.0/FretboardVoicingsCLI.exe";
 
-/// The ix workspace root above the current directory: the first ancestor
-/// holding a `Cargo.toml` and a `crates/` directory.
-fn workspace_root_from_cwd() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    cwd.ancestors()
-        .find(|d| d.join("Cargo.toml").is_file() && d.join("crates").is_dir())
+/// The ix workspace root at or above `start`: the first ancestor holding a
+/// `Cargo.toml` and this very crate at `crates/ix-voicings/Cargo.toml`, so an
+/// unrelated workspace that also has a `crates/` directory is not mistaken for ix.
+fn ix_workspace_root_above(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|d| {
+            d.join("Cargo.toml").is_file() && d.join("crates/ix-voicings/Cargo.toml").is_file()
+        })
         .map(|d| d.to_path_buf())
 }
 
@@ -1715,6 +1720,26 @@ pub fn build_pipeline(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_ix_workspace_is_found_above_this_crate_and_not_in_a_lookalike() {
+        use std::path::Path;
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = super::ix_workspace_root_above(here).expect("ix workspace above this crate");
+        assert!(root.join("crates/ix-voicings/Cargo.toml").is_file());
+
+        // A workspace that also has `Cargo.toml` + `crates/` but is not ix.
+        let lookalike = std::env::temp_dir().join(format!(
+            "ix-voicings-lookalike-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(lookalike.join("crates/other")).unwrap();
+        std::fs::write(lookalike.join("Cargo.toml"), "[workspace]\n").unwrap();
+        let found = super::ix_workspace_root_above(&lookalike.join("crates/other"));
+        let _ = std::fs::remove_dir_all(&lookalike);
+        assert_eq!(found, None, "a workspace without ix-voicings is not ix");
+    }
+
     use super::*;
 
     fn sample_row() -> VoicingRow {

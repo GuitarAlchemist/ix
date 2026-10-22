@@ -91,6 +91,20 @@ mod tests {
     }
 
     #[test]
+    fn the_native_spelling_wins_when_both_are_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sentrux"), b"").unwrap();
+        std::fs::write(dir.path().join("sentrux.exe"), b"").unwrap();
+        let got = resolve_from(None, None, Some(dir.path().as_os_str().to_owned())).unwrap();
+        let expected = if cfg!(windows) {
+            "sentrux.exe"
+        } else {
+            "sentrux"
+        };
+        assert_eq!(got, dir.path().join(expected));
+    }
+
+    #[test]
     fn nothing_resolving_names_every_option() {
         let empty = tempfile::tempdir().unwrap();
         let err = resolve_from(None, None, Some(empty.path().as_os_str().to_owned()))

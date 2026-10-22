@@ -88,6 +88,28 @@ fn mixed_repeated_and_doubly_escaped_separators_are_reported() {
 }
 
 #[test]
+fn urls_two_word_shared_accounts_and_root_relative_paths() {
+    // Codex round 54.
+    for line in [
+        r#"let u = "https://users/jane/profile";"#,
+        r#"let p = "C:\\Users\\All Users\\Desktop";"#,
+        r#"let p = r"C:\Users\Default User\ntuser.dat";"#,
+    ] {
+        assert_eq!(hardcoded_paths::home_user_in(line), None, "{line}");
+    }
+    for line in [
+        r#"let p = "\\Users\\jane\\file";"#,
+        r#"let p = r"\Users\jane\file";"#,
+    ] {
+        assert_eq!(
+            hardcoded_paths::home_user_in(line).as_deref(),
+            Some("jane"),
+            "{line}"
+        );
+    }
+}
+
+#[test]
 fn posix_home_paths_are_reported() {
     for line in [
         r#"let bad = "/home/jane/corpus.json";"#,
@@ -263,6 +285,45 @@ fn a_root_without_crates_is_a_failed_scan_not_a_clean_one() {
         "{}",
         result.summary
     );
+}
+
+#[test]
+fn two_entries_covering_one_line_are_both_live() {
+    // Codex round 54: the first match used to be the only one marked used.
+    let dir = repo(&[(SEED, "let bad = \"/home/jane/corpus.json\";\n")]);
+    let list = Allowlist {
+        note: String::new(),
+        allow: vec![
+            AllowEntry {
+                file: SEED.to_string(),
+                contains: "jane".to_string(),
+                reason: "fixture".to_string(),
+            },
+            AllowEntry {
+                file: SEED.to_string(),
+                contains: "corpus.json".to_string(),
+                reason: "negative input".to_string(),
+            },
+        ],
+    };
+    let census = hardcoded_paths::scan_with_allowlist(dir.path(), &list).expect("scan");
+    assert_eq!(census.allowed.len(), 1);
+    assert!(
+        census.stale_allowlist.is_empty(),
+        "{:?}",
+        census.stale_allowlist
+    );
+}
+
+#[test]
+fn extensions_are_matched_case_insensitively() {
+    let dir = repo(&[
+        ("crates/seed/README.MD", "see /home/jane/corpus.json\n"),
+        ("crates/seed/query.SQL", "LOAD '/home/jane/ext';\n"),
+    ]);
+    let census = hardcoded_paths::scan(dir.path()).expect("scan");
+    assert_eq!(census.files_scanned, 2, "{census:?}");
+    assert_eq!(census.findings.len(), 2);
 }
 
 #[test]

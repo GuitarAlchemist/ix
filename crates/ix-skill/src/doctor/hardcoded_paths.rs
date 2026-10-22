@@ -10,34 +10,37 @@
 //! test suite: the code is valid, the path is just not yours.
 //!
 //! This check reads every source and script file under `crates/` (see
-//! [`SCANNED_EXTENSIONS`]) and reports each line that names a user's home
-//! directory. Portable spellings are not findings: a placeholder segment
-//! (`<you>`, `$USER`, `%USERNAME%`, `{user}`), the shared Windows accounts
-//! (`Public`, `Default`), a `~/` prefix, or a repo-relative path. A test whose
-//! *input* is such a path (a sanitizer proving it rejects them) belongs in the
-//! allowlist with a reason, keyed by file and a substring of the line, so the
-//! exemption covers those lines and not the file.
+//! [`SCANNED_EXTENSIONS`], matched case-insensitively) and reports each line
+//! that names a user's home directory. Portable spellings are not findings: a
+//! placeholder segment (`<you>`, `$USER`, `%USERNAME%`, `{user}`), the shared
+//! Windows accounts (`Public`, `Default`, `All Users`), a `~/` prefix, or a
+//! repo-relative path. A line whose text must keep such a path (a sanitizer's
+//! negative input, a fixture of this check, a URL whose path happens to contain
+//! `/home/`) belongs in the allowlist with a reason, keyed by file and a
+//! substring of the line, so the exemption covers those lines and not the file.
 //!
 //! # What counts as a home path
 //!
-//! A drive letter, `:`, one or more separators, `users` in any case, one or more
-//! separators, then the account (`C:\Users\<name>`, `c:/users/<name>`,
-//! `C:\\Users\\<name>` as escaped in a string, `C:\\\\Users\\\\<name>` as JSON
-//! inside a string, `C:/Users\<name>` mixed); or one or more `/`, then exactly
-//! `home` or `Users`, then one or more `/`, then the account. A lower-case
-//! `/users/` with no drive letter is an HTTP route, not a home.
+//! A drive letter (a single letter, not the tail of a word such as `https`), `:`,
+//! one or more separators, `users` in any case, one or more separators, then the
+//! account (`C:\Users\<name>`, `c:/users/<name>`, `C:\\Users\\<name>` as escaped
+//! in a string, `C:\\\\Users\\\\<name>` as JSON inside a string, `C:/Users\<name>`
+//! mixed); a root-relative `\Users\<name>` at the start of a token; or one or
+//! more `/`, then exactly `home` or `Users`, then one or more `/`, then the
+//! account. A lower-case `/users/` with no drive letter is an HTTP route, not a
+//! home.
 //!
 //! # Fail closed
 //!
-//! A directory that cannot be read, or a `crates/` that is not there, is a
-//! failed scan, not an empty one: the check reports `FAIL` rather than counting
-//! what it did manage to read.
+//! A directory that cannot be listed, an entry whose type cannot be read, a
+//! file that cannot be read, or a `crates/` that is not there, is a failed scan,
+//! not an empty one: the check reports `FAIL` rather than counting what it did
+//! manage to read.
 //!
 //! # Deliberate under-reporting
 //!
 //! Like its neighbours, every remaining ambiguity resolves toward *not*
-//! reporting. `/home/` inside a URL path would be reported, and the allowlist
-//! is where that case goes if it ever appears.
+//! reporting.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -48,12 +51,14 @@ pub const ALLOWLIST_PATH: &str = "state/registry/hardcoded-paths.allow.json";
 /// Directory, relative to the repo root, whose files are scanned.
 pub const SCAN_DIR: &str = "crates";
 
-/// File extensions scanned under [`SCAN_DIR`]: Rust, SQL, the scripts that sit
-/// beside them, manifests and the crate-level docs.
+/// File extensions scanned under [`SCAN_DIR`] (compared case-insensitively):
+/// Rust, SQL, the scripts that sit beside them, manifests and the crate-level docs.
 pub const SCANNED_EXTENSIONS: &[&str] = &["rs", "sql", "ps1", "sh", "py", "toml", "md"];
 
-/// Windows accounts that belong to the machine, not to a person.
-const SHARED_WINDOWS_ACCOUNTS: &[&str] = &["public", "default", "default user", "all users"];
+/// Windows accounts that belong to the machine, not to a person. Compared
+/// case-insensitively against the start of what follows the home marker, so
+/// the two-word ones match before the segment is cut at the space.
+const SHARED_WINDOWS_ACCOUNTS: &[&str] = &["all users", "default user", "public", "default"];
 
 /// One line that names a home directory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -126,6 +131,15 @@ fn is_sep(b: u8) -> bool {
     b == b'/' || b == b'\\'
 }
 
+/// A character that can precede a path token: start of line, whitespace, a
+/// quote, a bracket, or the `=` of an assignment.
+fn can_start_token(before: Option<u8>) -> bool {
+    match before {
+        None => true,
+        Some(b) => b.is_ascii_whitespace() || matches!(b, b'"' | b'\'' | b'`' | b'(' | b'[' | b'='),
+    }
+}
+
 /// The account segment named by `line`, if the line contains a home path.
 ///
 /// Returns the first segment that is not a placeholder and not a shared
@@ -150,10 +164,25 @@ pub fn home_user_in(line: &str) -> Option<String> {
             if s == at {
                 continue;
             }
-            let drive = s >= 2 && bytes[s - 1] == b':' && bytes[s - 2].is_ascii_alphabetic();
-            let slashes_only = bytes[s..at].iter().all(|&b| b == b'/');
-            let posix = slashes_only && (exact || &line[at..at + needle.len()] == "Users");
-            let ok = if exact { posix } else { drive || posix };
+            let run = &bytes[s..at];
+            let before_run = s.checked_sub(1).map(|i| bytes[i]);
+
+            // `X:` where X is a single letter: not the `s:` of `https:`.
+            let drive = s >= 2
+                && bytes[s - 1] == b':'
+                && bytes[s - 2].is_ascii_alphabetic()
+                && !(s >= 3 && bytes[s - 3].is_ascii_alphanumeric());
+            // `\Users\<name>` at the start of a token.
+            let root_relative = run.iter().all(|&b| b == b'\\') && can_start_token(before_run);
+            // `/home/<name>`, `/Users/<name>`.
+            let posix = run.iter().all(|&b| b == b'/')
+                && (exact || &line[at..at + needle.len()] == "Users");
+
+            let ok = if exact {
+                posix
+            } else {
+                drive || root_relative || posix
+            };
             if !ok {
                 continue;
             }
@@ -174,6 +203,13 @@ pub fn home_user_in(line: &str) -> Option<String> {
     candidates.dedup();
     candidates.into_iter().find_map(|start| {
         let rest = &line[start..];
+        let rest_lower = rest.to_ascii_lowercase();
+        if SHARED_WINDOWS_ACCOUNTS.iter().any(|acct| {
+            rest_lower.starts_with(acct)
+                && rest_lower[acct.len()..].chars().next().ends_an_account()
+        }) {
+            return None;
+        }
         let end = rest
             .find(|c: char| {
                 c.is_whitespace()
@@ -191,11 +227,23 @@ pub fn home_user_in(line: &str) -> Option<String> {
         if matches!(first, '$' | '%' | '{' | '*' | '~' | '.' | '[' | '(') {
             return None;
         }
-        if SHARED_WINDOWS_ACCOUNTS.contains(&segment.to_ascii_lowercase().as_str()) {
-            return None;
-        }
         Some(segment.to_string())
     })
+}
+
+/// Whether an optional char ends an account name: nothing, a separator, a
+/// quote or whitespace.
+trait AccountEnd {
+    fn ends_an_account(self) -> bool;
+}
+
+impl AccountEnd for Option<char> {
+    fn ends_an_account(self) -> bool {
+        match self {
+            None => true,
+            Some(c) => c.is_whitespace() || matches!(c, '/' | '\\' | '"' | '\'' | '`'),
+        }
+    }
 }
 
 /// Findings in one source file, labelled `file_label`.
@@ -257,17 +305,21 @@ pub fn scan_with_allowlist(root: &Path, allowlist: &Allowlist) -> Result<Census,
         census.findings.extend(findings_in(&label, &src));
     }
 
+    // Every entry that covers a line counts as used, so two entries whose
+    // substrings both appear on one line are both live.
     let mut matched = vec![false; allowlist.allow.len()];
     for f in &census.findings {
-        let hit = allowlist.allow.iter().position(|e| {
-            e.file == f.file && !e.contains.is_empty() && f.text.contains(&e.contains)
-        });
-        match hit {
-            Some(i) => {
+        let mut covered = false;
+        for (i, e) in allowlist.allow.iter().enumerate() {
+            if e.file == f.file && !e.contains.is_empty() && f.text.contains(&e.contains) {
                 matched[i] = true;
-                census.allowed.push(format!("{}:{}", f.file, f.line));
+                covered = true;
             }
-            None => census.unlisted.push(f.clone()),
+        }
+        if covered {
+            census.allowed.push(format!("{}:{}", f.file, f.line));
+        } else {
+            census.unlisted.push(f.clone());
         }
     }
 
@@ -284,14 +336,16 @@ pub fn scan_with_allowlist(root: &Path, allowlist: &Allowlist) -> Result<Census,
     Ok(census)
 }
 
-/// Every scanned file under `dir`, skipping build output. Any directory or
-/// entry that cannot be read fails the scan.
+/// Every scanned file under `dir`, skipping build output. A directory that
+/// cannot be listed, or an entry whose type cannot be read, fails the scan.
 fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("reading {}: {e}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("listing {}: {e}", dir.display()))?;
         let path = entry.path();
-        if path.is_dir() {
+        let kind = std::fs::metadata(&path)
+            .map_err(|e| format!("reading the type of {}: {e}", path.display()))?;
+        if kind.is_dir() {
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
             }
@@ -299,7 +353,7 @@ fn collect_sources(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         } else if path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| SCANNED_EXTENSIONS.contains(&e))
+            .is_some_and(|e| SCANNED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
         {
             out.push(path);
         }
@@ -360,8 +414,8 @@ pub fn check(root: &Path) -> super::CheckResult {
         .with_remedy(
             "resolve the location from an environment variable, PATH, or the workspace root \
              (sibling repos live at `../<repo>`), and fail with a message naming those options \
-             when none resolves; in a doc example write `../ga/...` or `<repo>/...`; a test \
-             whose input must be such a path goes in state/registry/hardcoded-paths.allow.json \
+             when none resolves; in a doc example write `../ga/...` or `<repo>/...`; a line \
+             whose text must keep such a path goes in state/registry/hardcoded-paths.allow.json \
              with `file`, `contains` and a `reason`",
         )
         .with_details(details);
