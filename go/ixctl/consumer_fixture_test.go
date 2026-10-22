@@ -71,6 +71,14 @@ func sampleSeq(e *Envelope) uint64 {
 // deadline passes (a failure: a consumer never waits forever either).
 func collect(t *testing.T, frames <-chan Frame, step string, out *[]fixtureFrame, done func(fixtureFrame) bool) {
 	t.Helper()
+	collectSkipping(t, frames, step, out, nil, done)
+}
+
+// collectSkipping is collect with frames `skip` says yes to left out of the step (they are not
+// the step's: a sample published before a stop request and read after it, see the recreation
+// step). A nil skip keeps every frame.
+func collectSkipping(t *testing.T, frames <-chan Frame, step string, out *[]fixtureFrame, skip, done func(fixtureFrame) bool) {
+	t.Helper()
 	deadline := time.After(5 * time.Second)
 	for {
 		select {
@@ -82,6 +90,9 @@ func collect(t *testing.T, frames <-chan Frame, step string, out *[]fixtureFrame
 				continue
 			}
 			ff := fixtureFrame{Step: step, Env: f.Env, Gap: f.Gap}
+			if skip != nil && skip(ff) {
+				continue
+			}
 			*out = append(*out, ff)
 			if done(ff) {
 				return
@@ -242,7 +253,15 @@ func TestAConsumerSeesReconnectRecreationAndRestartInItsFixtures(t *testing.T) {
 	// follows, not by the name alone.
 	var recreation []fixtureFrame
 	do(t, c, Request{Op: "probe.stop", Node: "hb"})
-	collect(t, frames, "stopped", &recreation, func(f fixtureFrame) bool {
+	// The live step ended on hb's third sample; a fourth tick published before the stop request
+	// may still be in the ring when this step opens, and it is the live period's, not the stop's,
+	// so the stopped step keeps lifecycle frames only (it failed one run in four on Linux under
+	// -race on that tick). The plane's own promise, no record of a node after its probe.stopped
+	// (emit checks the state under the tree's lock), is still held to: such a sample would be read
+	// into the next step and fail there.
+	collectSkipping(t, frames, "stopped", &recreation, func(f fixtureFrame) bool {
+		return f.Env != nil && f.Env.Ch == "probe/hb" && f.Env.Ev.Kind == "sample"
+	}, func(f fixtureFrame) bool {
 		return f.Env != nil && f.Env.Ch == "ctl" && f.Env.Ev.Kind == "probe.stopped"
 	})
 	do(t, c, Request{Op: "probe.remove", Node: "hb"})
