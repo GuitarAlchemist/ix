@@ -1768,9 +1768,10 @@ fn follows_the_state_file_across_a_restart(
     let live_addr = live.addr().to_string();
     // The old boot's address and token: nothing listens there any more, and its token is a
     // 401 on the new boot, so a status the new boot logs proves the handle was re-read twice.
-    let gone = TcpListener::bind("127.0.0.1:0").unwrap();
-    let dead_addr = format!("127.0.0.1:{}", gone.local_addr().unwrap().port());
-    drop(gone);
+    // Port 1, which no system hands out as an ephemeral port: a port bound and dropped here
+    // was free for the fake plane of a test running beside this one, and on CI one took it
+    // (the address-only handle below then reached that plane and saw a restart).
+    let dead_addr = "127.0.0.1:1".to_string();
     assert_ne!(dead_addr, live_addr);
     let old_token = "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0";
     let state = tmp(&format!(
