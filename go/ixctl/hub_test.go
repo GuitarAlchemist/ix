@@ -37,6 +37,39 @@ func TestHubEnvelopeShape(t *testing.T) {
 	}
 }
 
+// A10: the adapter is the only test that fixes the fields of a run on the wire.
+func TestRunIdentityWireForm(t *testing.T) {
+	h := NewHub("a")
+	env := h.PublishNewRun("ctl", event("service.starting", map[string]any{"service": "x"}))
+
+	var wire struct {
+		Run json.RawMessage `json:"run"`
+	}
+	if err := json.Unmarshal(env.Raw(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire.Run, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 {
+		t.Fatalf("run fields %v", fields)
+	}
+	for _, name := range []string{"origin", "epoch", "seq"} {
+		if _, ok := fields[name]; !ok {
+			t.Fatalf("run has no %q: %s", name, env.Raw())
+		}
+	}
+	var got RunID
+	if err := json.Unmarshal(wire.Run, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := RunID{Origin: "a", Epoch: h.Epoch(), Seq: env.Seq}
+	if env.Run == nil || *env.Run != want || got != want {
+		t.Fatalf("run %+v, decoded %+v, want %+v", env.Run, got, want)
+	}
+}
+
 func TestHubCursorReplayThenLive(t *testing.T) {
 	h := NewHub("a")
 	publishN(h, "svc/x", 10)
