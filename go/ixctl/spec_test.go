@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,5 +83,23 @@ func TestParseEventLine(t *testing.T) {
 		if !ok || ev.T != want {
 			t.Errorf("t %s: got %d ok %v, want %d", raw, ev.T, ok, want)
 		}
+	}
+}
+
+// Only kind, t and data are kept from a service's line: any other top-level field is dropped,
+// and a null data is no data. The README's svc/<name> row says so.
+func TestParseEventLineKeepsOnlyKindTAndData(t *testing.T) {
+	ev, ok := parseEventLine([]byte(`{"kind":"tick","n":7,"t":5,"data":{"n":7},"run":"forged"}`))
+	if !ok || ev.Kind != "tick" || ev.T != 5 || string(ev.Data) != `{"n":7}` {
+		t.Fatalf("event %+v ok %v, want tick at 5 with its data", ev, ok)
+	}
+	b, _ := json.Marshal(ev)
+	var top map[string]json.RawMessage
+	json.Unmarshal(b, &top)
+	if len(top) != 3 || top["n"] != nil || top["run"] != nil {
+		t.Errorf("event %s, want only kind, t and data", b)
+	}
+	if ev, _ := parseEventLine([]byte(`{"kind":"tick","data":null}`)); ev.Data != nil {
+		t.Errorf("null data kept: %s", ev.Data)
 	}
 }
