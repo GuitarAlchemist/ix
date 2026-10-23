@@ -150,12 +150,13 @@ so a journaled document holds no address.
   `{stopped, generation, exit}`. A requested stop closes stdin, waits two seconds, then kills.
 
 Status announces `contract: "run/1"`. One generation can carry several runs when a service
-restarts automatically:
+restarts automatically. A consumer relies on the run markers below only after it has read this
+contract from status:
 
 | Status field | Meaning |
 |---|---|
 | `services[].run` | The latest run announced by `service.starting`. It is the active run in `starting` (once announced) and `running`; in restart backoff (`restarting`) it is the run whose exit caused the backoff, until the successor is announced; `stopped` and `failed` retain the last run. Before the first announcement it is absent; a queued start may already show `starting` while retaining the preceding run, or no run before the first. |
-| `services[].last_exit.run` | The exact run that produced `last_exit`; after a restart starts it may differ from `services[].run`. |
+| `services[].last_exit.run` | The exact run that produced `last_exit`; after a restart starts it may differ from `services[].run`. `late_lines` is a saturating count of lines read after that run's end marker and dropped, present while this remains the last exit. |
 
 A job's `desired` stays `running` after it ends, so applying the same document again runs it
 again; the client waits on the end of the run *a generation started*
@@ -182,7 +183,7 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
 | `POST /v1/bookmark/set` | Body `{"bookmark": NAME, "since"?: SEQ, "epoch"?: E, "note"?: TEXT, "peer"?: NAME}`. |
 | `POST /v1/bookmark/remove` | Body `{"bookmark": NAME, "peer"?: NAME}`. |
-| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). A reader that falls off the ring gets a `gap` event and the stream ends. |
+| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). `markers=run` includes run markers and is acknowledged by `Ixctl-Markers: run`. A reader that falls off the ring gets a `gap` event and the stream ends. |
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),
@@ -193,9 +194,10 @@ Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (
 Client frames are requests: `{id, op, ...}` with `op` one of `status`, `ping`, `plan`, `apply`,
 `stop`, `subscribe`, `unsubscribe`, the seven `probe.*` ops and the four `bookmark.*` ops (below),
 and the op's fields (`desired`, `service`, `peer`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`,
-`bookmark`, `note`). Every request gets one reply frame `{re: id, ok, data | error}`.
+`bookmark`, `note`, `markers`). Every request gets one reply frame `{re: id, ok, data | error}`.
 Subscriptions are set up in line (their reply precedes their first event); other ops run on their
-own so a slow stop never holds the connection.
+own so a slow stop never holds the connection. A subscribe with `"markers":"run"` is acknowledged
+by `"markers":"run"` in its reply data. Any other marker value is an error.
 
 Events arrive as envelopes:
 
@@ -216,7 +218,22 @@ slice 2). A subscriber with `since` replays from the ring (4096 envelopes per in
 within an origin and epoch. Every `svc/<name>` envelope of the attempt and every `ctl` service
 event attributable to it carries the same `run`. An automatic restart gets another run while
 keeping the generation that requested the service. A mirrored envelope (`peer/<name>/…`) does
-not carry it yet (#452).
+not carry it or run markers yet (#452).
+
+The plane puts two ordinary envelopes in the source `svc/<name>` stream. `ixctl.run.begin`
+has `generation` and precedes every worker line. `ixctl.run.end` follows every line the plane
+forwards and has:
+
+- `outcome`: the launch-attempt outcome, `started` or `launch-failed`;
+- `output`: `complete` or `truncated`, plus `drain_ms`;
+- for `started`, the terminal result: `code`, `requested`, and an optional limit `reason`;
+- for `launch-failed`, `error`. Even an attempt that creates no process gets both markers.
+
+After a truncated end, later lines are dropped and counted in
+`services[].last_exit.late_lines`; the counter saturates instead of wrapping. Markers remain in
+the ring, but SSE and WebSocket subscribers skip them, including during replay, unless they ask
+for `markers=run` or `"markers":"run"`. A worker kind beginning with the reserved `ixctl.`
+prefix is rewritten once at input to `log`, with the raw line under `data.line`.
 
 ### Channels and events
 

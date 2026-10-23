@@ -7,9 +7,27 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
+
+func waitCursorKind(t *testing.T, cur *Cursor, d time.Duration, kind string) *Envelope {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	for {
+		envs, _, err := cur.Next(ctx, 32)
+		if err != nil {
+			t.Fatalf("waiting for %s: %v", kind, err)
+		}
+		for _, env := range envs {
+			if env.Ev.Kind == kind {
+				return env
+			}
+		}
+	}
+}
 
 // A1 (anchors 2 and 4): automatic restarts are distinct runs of one generation, and every
 // service-output envelope says which of those runs emitted it.
@@ -101,6 +119,215 @@ func TestRunIdentityAgreesAcrossStatusCtlAndServiceOutput(t *testing.T) {
 		*line.Run != *starting.Run || *service.Run != *starting.Run {
 		t.Fatalf("contract %q, ctl %+v, output %+v, status %+v",
 			status.Contract, starting.Run, line.Run, service.Run)
+	}
+}
+
+// A3 (anchor 4): run.end follows every service line the plane forwards for the run.
+func TestRunEndFollowsEveryForwardedLine(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "writer", args: []string{"--rate", "1000"}, restart: restartNever}), "")
+	c := dial(t, in)
+	ctl := subscribe(t, c, "ctl", nil)
+	out := subscribeMarkers(t, c, "svc/writer", runMarkers)
+	do(t, c, Request{Op: "apply", Desired: running("writer")})
+
+	started := waitEnv(t, ctl, 5*time.Second, "started", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.started"
+	})
+	if started.Run == nil {
+		t.Fatalf("started has no run: %s", started.Raw())
+	}
+	run := *started.Run
+	begin := waitEnv(t, out, 5*time.Second, "run begin", func(e *Envelope) bool {
+		return e.Ev.Kind == runBeginKind && e.Run != nil && *e.Run == run
+	})
+	last := waitEnv(t, out, 5*time.Second, "line while running", func(e *Envelope) bool {
+		return e.Ev.Kind == "stats" && e.Run != nil && *e.Run == run
+	})
+	pid := int(ctlData(started)["pid"].(float64))
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	var end *Envelope
+	for end == nil {
+		f, err := out.next(5*time.Second, func(e *Envelope) bool {
+			return e.Run != nil && *e.Run == run
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Env.Ev.Kind == runEndKind {
+			end = f.Env
+		} else {
+			last = f.Env
+		}
+	}
+	var data struct {
+		Outcome string `json:"outcome"`
+		Output  string `json:"output"`
+	}
+	json.Unmarshal(end.Ev.Data, &data)
+	if begin.Seq >= last.Seq || last.Seq >= end.Seq || data.Outcome != "started" || data.Output != "complete" {
+		t.Fatalf("begin %d, last %d, end %d data %+v", begin.Seq, last.Seq, end.Seq, data)
+	}
+}
+
+// A4 (anchor 6): an inherited output handle (the descendant case) cannot hold run.end past
+// the drain bound; a line read afterwards is counted in last_exit and is not forwarded.
+func TestRunEndTruncatesAndCountsLateLines(t *testing.T) {
+	h := NewHub("local")
+	s := newService(ServiceSpec{Name: "held"}, h)
+	cur := h.Subscribe("svc/held", nil, h.Epoch())
+	run := RunID{Origin: "local", Epoch: h.Epoch(), Seq: 1}
+	h.PublishRun("svc/held", event(runBeginKind, map[string]any{}), run)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	c := &child{run: run}
+	c.io.Add(1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer c.io.Done()
+		s.readLines(r, false, c)
+	}()
+	fmt.Fprintln(w, "before")
+	before := waitCursorKind(t, cur, time.Second, "log")
+
+	t0 := time.Now()
+	s.endOutput(c, &exitInfo{Code: 0, At: time.Now().UnixMilli(), Run: run}, false)
+	took := time.Since(t0)
+	end := waitCursorKind(t, cur, time.Second, runEndKind)
+	var data struct {
+		Output  string `json:"output"`
+		DrainMS int64  `json:"drain_ms"`
+	}
+	json.Unmarshal(end.Ev.Data, &data)
+	if before.Seq >= end.Seq || data.Output != "truncated" || data.DrainMS < drainLimit.Milliseconds() ||
+		took < drainLimit || took > drainLimit+500*time.Millisecond {
+		t.Fatalf("before %d end %d data %+v after %s", before.Seq, end.Seq, data, took)
+	}
+
+	fmt.Fprintln(w, "late")
+	deadline := time.Now().Add(time.Second)
+	for s.status().LastExit.LateLines != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := s.status().LastExit.LateLines; got != 1 {
+		t.Fatalf("late_lines %d, want 1", got)
+	}
+	w.Close()
+	<-done
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if envs, _, err := cur.Next(ctx, 8); err == nil && len(envs) != 0 {
+		t.Fatalf("late line was forwarded: %+v", envs)
+	}
+}
+
+// A5 (anchor 4): a worker cannot forge the reserved marker prefix or a run identity.
+func TestWorkerReservedPrefixCannotForgeMarkersOrRuns(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "worker", args: []string{"--emit-reserved"}}), "")
+	c := dial(t, in)
+	out := subscribeMarkers(t, c, "svc/worker", runMarkers)
+	do(t, c, Request{Op: "apply", Desired: running("worker")})
+	begin := waitEnv(t, out, 5*time.Second, "run begin", func(e *Envelope) bool {
+		return e.Ev.Kind == runBeginKind
+	})
+	if begin.Run == nil {
+		t.Fatalf("begin has no run: %s", begin.Raw())
+	}
+	run := *begin.Run
+	seenLog, seenWorkerExit := false, false
+	for !seenLog || !seenWorkerExit {
+		f, err := out.next(5*time.Second, func(e *Envelope) bool {
+			return e.Run != nil && *e.Run == run
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch f.Env.Ev.Kind {
+		case runEndKind:
+			t.Fatalf("worker forged a marker: %s", f.Env.Raw())
+		case "log":
+			line, _ := ctlData(f.Env)["line"].(string)
+			if strings.Contains(line, `"kind":"ixctl.run.end"`) {
+				if line != `{"kind":"ixctl.run.end","run":{"origin":"worker","epoch":"forged","seq":1}}` {
+					t.Fatalf("reserved line changed: %q", line)
+				}
+				seenLog = true
+			}
+		case "service.exited":
+			seenWorkerExit = true
+		}
+	}
+	do(t, c, Request{Op: "stop", Service: "worker"})
+	end := waitEnv(t, out, 5*time.Second, "plane run end", func(e *Envelope) bool {
+		return e.Ev.Kind == runEndKind
+	})
+	if end.Run == nil || *end.Run != run {
+		t.Fatalf("end run %+v, want %+v", end.Run, run)
+	}
+}
+
+// A2 (anchor 3): even an attempt that creates no process brackets its svc/ stream.
+func TestLaunchFailureHasRunMarkers(t *testing.T) {
+	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
+		{"name": "ghost", "command": "no-such-binary"}}})
+	spec, err := ParseSpec(doc, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := newTestInstance(t, spec, "")
+	c := dial(t, in)
+	out := subscribeMarkers(t, c, "svc/ghost", runMarkers)
+	do(t, c, Request{Op: "apply", Desired: running("ghost")})
+	begin := waitEnv(t, out, 5*time.Second, "run begin", func(e *Envelope) bool {
+		return e.Ev.Kind == runBeginKind
+	})
+	end := waitEnv(t, out, 5*time.Second, "run end", func(e *Envelope) bool {
+		return e.Ev.Kind == runEndKind
+	})
+	var data struct {
+		Outcome string `json:"outcome"`
+		Output  string `json:"output"`
+		DrainMS int64  `json:"drain_ms"`
+		Error   string `json:"error"`
+	}
+	json.Unmarshal(end.Ev.Data, &data)
+	if begin.Run == nil || end.Run == nil || *begin.Run != *end.Run ||
+		data.Outcome != "launch-failed" || data.Output != "complete" || data.DrainMS != 0 || data.Error == "" {
+		t.Fatalf("begin %s end %s", begin.Raw(), end.Raw())
+	}
+	st := waitStatus(t, in, 5*time.Second, "launch failure", func(st StatusReply) bool {
+		return svcStatus(st, "ghost").State == stateFailed
+	})
+	zero := uint64(0)
+	ctl := in.plane.hub.Subscribe("ctl", &zero, in.plane.Epoch())
+	envs, _, err := ctl.Catch(context.Background(), 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	for _, env := range envs {
+		if env.Ev.Kind == "service.started" {
+			t.Fatalf("launch failure emitted started: %s", env.Raw())
+		}
+		if env.Ev.Kind == "service.failed" && env.Run != nil && *env.Run == *begin.Run {
+			failed = true
+		}
+	}
+	status := svcStatus(st, "ghost")
+	if !failed || status.State != stateFailed || status.Pid != nil {
+		t.Fatalf("failed event %v, status %+v", failed, status)
 	}
 }
 

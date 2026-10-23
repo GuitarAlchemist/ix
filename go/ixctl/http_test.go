@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -173,6 +174,63 @@ func TestSSEReplayWithLastEventID(t *testing.T) {
 	}
 	if len(got) != 6 || got[0] != base+1 || got[5] != base+7 {
 		t.Fatalf("stale epoch replays this boot: %v", got)
+	}
+}
+
+func TestSSERunMarkersAreOptInAndAcknowledged(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil), "")
+	run := RunID{Origin: "local", Epoch: in.plane.Epoch(), Seq: 1}
+	begin := in.plane.hub.PublishRun("svc/x", event(runBeginKind, map[string]any{}), run)
+	line := in.plane.hub.PublishRun("svc/x", event("log", map[string]any{"line": "kept"}), run)
+	end := in.plane.hub.PublishRun("svc/x", event(runEndKind, map[string]any{"outcome": "started"}), run)
+
+	plain, _ := sseFrames(t, in, "ch=svc/x&since=0", 1, 2*time.Second)
+	if len(plain) != 1 || plain[0].Seq != line.Seq {
+		t.Fatalf("plain SSE got %+v, want only seq %d", plain, line.Seq)
+	}
+
+	req, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?ch=svc/x&since=0&markers=run", nil)
+	req.Header.Set("Authorization", "Bearer "+in.token)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	resp, err := loopbackHTTP.Do(req.WithContext(ctx))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || resp.Header.Get("Ixctl-Markers") != runMarkers {
+		resp.Body.Close()
+		cancel()
+		t.Fatalf("marker SSE: status %d, acknowledgement %q", resp.StatusCode, resp.Header.Get("Ixctl-Markers"))
+	}
+	var got []uint64
+	sc := bufio.NewScanner(resp.Body)
+	for len(got) < 3 && sc.Scan() {
+		if line := sc.Text(); strings.HasPrefix(line, "data: ") {
+			var env Envelope
+			if err := json.Unmarshal([]byte(line[6:]), &env); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, env.Seq)
+		}
+	}
+	resp.Body.Close()
+	cancel()
+	want := []uint64{begin.Seq, line.Seq, end.Seq}
+	if !slices.Equal(got, want) {
+		t.Fatalf("marker SSE seqs %v, want %v", got, want)
+	}
+
+	bad, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?ch=svc/x&markers=other", nil)
+	bad.Header.Set("Authorization", "Bearer "+in.token)
+	badCtx, badCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer badCancel()
+	badResp, err := loopbackHTTP.Do(bad.WithContext(badCtx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer badResp.Body.Close()
+	if badResp.StatusCode != 400 {
+		t.Fatalf("unknown markers status %d, want 400", badResp.StatusCode)
 	}
 }
 

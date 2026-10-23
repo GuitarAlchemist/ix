@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,9 +33,10 @@ const (
 )
 
 type exitInfo struct {
-	Code int   `json:"code"`
-	At   int64 `json:"at"`
-	Run  RunID `json:"run"`
+	Code      int    `json:"code"`
+	At        int64  `json:"at"`
+	Run       RunID  `json:"run"`
+	LateLines uint64 `json:"late_lines,omitempty"`
 	// Generation is the apply that launched the run this exit ends (a restart keeps its
 	// run's generation), so a waiter can tell this run's exit from an earlier run's.
 	Generation uint64 `json:"generation,omitempty"`
@@ -112,12 +114,15 @@ type service struct {
 
 // child is one launched process tree.
 type child struct {
-	tree   *procTree
-	run    RunID
-	stdin  *os.File
-	pid    int
-	exited chan exitStat // how the main process ended, once
-	io     sync.WaitGroup
+	tree        *procTree
+	run         RunID
+	stdin       *os.File
+	pid         int
+	exited      chan exitStat // how the main process ended, once
+	io          sync.WaitGroup
+	outputMu    sync.Mutex
+	outputEnded bool
+	lateLines   uint64
 }
 
 // exitStat is how a process ended, with what the OS accounted for it at that moment
@@ -366,9 +371,15 @@ func (s *service) launch(restart bool) {
 	run := *env.Run
 	s.curRun, s.hasRun = run, true
 	s.mu.Unlock()
+	s.hub.PublishRun(s.ch, event(runBeginKind, map[string]any{"generation": gen}), run)
 	c, err := s.start(run)
 	if err != nil {
-		s.fail(run, map[string]any{"reason": "launch: " + err.Error()})
+		reason := "launch: " + err.Error()
+		s.hub.PublishRun(s.ch, event(runEndKind, map[string]any{
+			"outcome": "launch-failed", "error": reason,
+			"output": "complete", "drain_ms": int64(0),
+		}), run)
+		s.fail(run, map[string]any{"reason": reason})
 		return
 	}
 	s.proc = c
@@ -429,8 +440,8 @@ func (s *service) start(run RunID) (*child, error) {
 	}
 	c := &child{tree: tree, run: run, stdin: inW, pid: cmd.Process.Pid, exited: make(chan exitStat, 1)}
 	c.io.Add(2)
-	go func() { defer c.io.Done(); s.readLines(outR, false, run) }()
-	go func() { defer c.io.Done(); s.readLines(errR, true, run) }()
+	go func() { defer c.io.Done(); s.readLines(outR, false, c) }()
+	go func() { defer c.io.Done(); s.readLines(errR, true, c) }()
 	go func() {
 		code := -1
 		if err := cmd.Wait(); err == nil {
@@ -487,19 +498,42 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 		}
 	}
 	c.tree.close()
+	s.proc = nil
+	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Run: c.run, Generation: s.startGen,
+		Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
+	s.endOutput(c, e, requested)
+	return e
+}
+
+// endOutput closes the run's source stream after its readers drain, or at the drain bound.
+// A reader and this marker hold outputMu while publishing, so no forwarded line can cross it.
+func (s *service) endOutput(c *child, e *exitInfo, requested bool) {
+	t0 := time.Now()
 	drained := make(chan struct{})
 	go func() { c.io.Wait(); close(drained) }()
+	output := "complete"
 	select {
 	case <-drained:
 	case <-time.After(drainLimit):
+		output = "truncated"
 	}
-	s.proc = nil
+	drainMS := time.Since(t0).Milliseconds()
+
+	c.outputMu.Lock()
+	c.outputEnded = true
+	d := map[string]any{
+		"outcome": "started", "code": e.Code, "requested": requested,
+		"output": output, "drain_ms": drainMS,
+	}
+	if e.Reason != "" {
+		d["reason"] = e.Reason
+	}
+	s.hub.PublishRun(s.ch, event(runEndKind, d), c.run)
 	s.mu.Lock()
-	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Run: c.run, Generation: s.startGen,
-		Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
+	e.LateLines = c.lateLines
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
-	return e
+	c.outputMu.Unlock()
 }
 
 // exitData is the service.exited event for e: how the run ended, the limit it was killed for
@@ -636,27 +670,44 @@ func (s *service) ended(st exitStat, reason string) {
 }
 
 // readLines turns a service's output into events on svc/<name>.
-func (s *service) readLines(r *os.File, stderr bool, run RunID) {
+func (s *service) readLines(r *os.File, stderr bool, c *child) {
 	defer r.Close()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLine)
 	for sc.Scan() {
-		s.onLine(sc.Bytes(), stderr, run)
+		s.onLine(sc.Bytes(), stderr, c)
 	}
 	if sc.Err() != nil {
-		s.hub.PublishRun(s.ch, event("log", map[string]any{"error": sc.Err().Error()}), run)
+		c.outputMu.Lock()
+		if !c.outputEnded {
+			s.hub.PublishRun(s.ch, event("log", map[string]any{"error": sc.Err().Error()}), c.run)
+		}
+		c.outputMu.Unlock()
 		io.Copy(io.Discard, r)
 	}
 }
 
-func (s *service) onLine(line []byte, stderr bool, run RunID) {
+func (s *service) onLine(line []byte, stderr bool, c *child) {
+	c.outputMu.Lock()
+	defer c.outputMu.Unlock()
+	if c.outputEnded {
+		if c.lateLines != ^uint64(0) {
+			c.lateLines++
+		}
+		s.mu.Lock()
+		if s.lastExit != nil && s.lastExit.Run == c.run {
+			s.lastExit.LateLines = c.lateLines
+		}
+		s.mu.Unlock()
+		return
+	}
 	if stderr {
-		s.hub.PublishRun(s.ch, event("stderr", map[string]any{"line": string(line)}), run)
+		s.hub.PublishRun(s.ch, event("stderr", map[string]any{"line": string(line)}), c.run)
 		return
 	}
 	ev, ok := parseEventLine(line)
 	if !ok {
-		s.hub.PublishRun(s.ch, event("log", map[string]any{"line": string(line)}), run)
+		s.hub.PublishRun(s.ch, event("log", map[string]any{"line": string(line)}), c.run)
 		return
 	}
 	if ev.Kind == "stats" {
@@ -669,11 +720,12 @@ func (s *service) onLine(line []byte, stderr bool, run RunID) {
 			s.mu.Unlock()
 		}
 	}
-	s.hub.PublishRun(s.ch, ev, run)
+	s.hub.PublishRun(s.ch, ev, c.run)
 }
 
 // parseEventLine accepts a line that is a JSON object with a string kind.
 func parseEventLine(line []byte) (Event, bool) {
+	rawLine := string(line)
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 || line[0] != '{' {
 		return Event{}, false
@@ -689,6 +741,9 @@ func parseEventLine(line []byte) (Event, bool) {
 	var ev Event
 	if json.Unmarshal(raw.Kind, &ev.Kind) != nil {
 		return Event{}, false
+	}
+	if strings.HasPrefix(ev.Kind, "ixctl.") {
+		return event("log", map[string]any{"line": rawLine}), true
 	}
 	// t is Unix milliseconds on the service's clock: rounded, never truncated,
 	// and dropped when it is not a finite number.
