@@ -166,7 +166,7 @@ jobs:
             "- [This build](https://github.com/$repo/actions/runs/${{ github.run_id }})"
           ) -join "`n" | Out-File body.md -Encoding utf8
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: ${{ github.event.inputs.tag || github.ref_name }}

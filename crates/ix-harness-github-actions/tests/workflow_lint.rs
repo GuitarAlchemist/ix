@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 const WORKFLOW: &str = include_str!("../../../.github/workflows/workflow-lint.yml");
 const POLICY: &str = include_str!("../../../agent-blackbox.policy.json");
+const ZIZMOR: &str = include_str!("../../../.github/zizmor.yml");
 
 fn workflows_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows")
@@ -90,6 +91,20 @@ fn the_gate_follows_every_workflow_and_its_own_policy() {
             assert!(paths.contains(&p), "{event}: {paths:?} lacks {p}");
         }
     }
+}
+
+/// GitHub's own actions may follow a tag; every other action is pinned by commit.
+#[test]
+fn the_zizmor_policy_pins_every_other_action_by_commit() {
+    let cfg: Value = serde_yaml::from_str(ZIZMOR).expect("valid zizmor YAML");
+    let policies = &cfg["rules"]["unpinned-uses"]["config"]["policies"];
+    assert_eq!(policies["actions/*"].as_str(), Some("ref-pin"));
+    assert_eq!(policies["*"].as_str(), Some("hash-pin"));
+    assert_eq!(
+        policies.as_mapping().map(|m| m.len()),
+        Some(2),
+        "{policies:?}"
+    );
 }
 
 /// The zizmor policy decides what the gate lets through: changing it needs the review label.

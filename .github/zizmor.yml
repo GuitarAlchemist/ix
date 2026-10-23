@@ -5,7 +5,8 @@ rules:
   unpinned-uses:
     config:
       policies:
-        # A tag or a branch is accepted. zizmor's default asks for a commit SHA on every
-        # action; pinning the third-party ones (Swatinem/rust-cache, dtolnay/rust-toolchain,
-        # softprops/action-gh-release, anthropics/claude-code-action) by SHA is the next step.
-        "*": ref-pin
+        # GitHub's own actions may follow a tag. Every other action is pinned by commit, with
+        # the tag or branch it was taken from in a comment, so its code changes only when a
+        # commit of this repository changes the pin.
+        "actions/*": ref-pin
+        "*": hash-pin
