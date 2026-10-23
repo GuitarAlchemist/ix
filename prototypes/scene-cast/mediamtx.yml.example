@@ -1,0 +1,44 @@
+# Scene cast: OBS publishes the scene window over RTMP on loopback; viewers read HLS only.
+# Everything listens on 127.0.0.1; the public tunnel reaches the HLS side alone.
+# Copy to %LOCALAPPDATA%\scene-cast\mediamtx.yml and replace the two <...> values.
+logLevel: info
+logDestinations: [stdout, file]
+logFile: <LOCALAPPDATA>/scene-cast/mediamtx.log
+authMethod: internal
+authInternalUsers:
+  # Publishing needs the secret, and only from this machine.
+  - user: obs
+    pass: <a random secret, kept in publish.secret>
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: publish
+        path: scene
+  # Anyone with the link may read, and only the one path.
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+        path: scene
+api: false
+metrics: false
+pprof: false
+playback: false
+rtsp: false
+rtmp: true
+rtmpAddress: 127.0.0.1:1935
+hls: true
+# 8890 when a front door (the player page's Cast button) listens on 8888, where the tunnel points;
+# 8888 without one.
+hlsAddress: 127.0.0.1:8890
+hlsAlwaysRemux: true
+# Standard HLS: through a quick tunnel each request takes 0.1-0.3 s, too slow for low-latency
+# HLS's 0.2 s parts. 2 s segments give a delay of about 6-10 s.
+hlsVariant: fmp4
+hlsSegmentDuration: 2s
+hlsSegmentCount: 7
+webrtc: false
+srt: false
+moq: false
+paths:
+  scene:
