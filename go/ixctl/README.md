@@ -174,7 +174,7 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
 | `POST /v1/bookmark/set` | Body `{"bookmark": NAME, "since"?: SEQ, "epoch"?: E, "note"?: TEXT, "peer"?: NAME}`. |
 | `POST /v1/bookmark/remove` | Body `{"bookmark": NAME, "peer"?: NAME}`. |
-| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). A reader that falls off the ring gets a `gap` event and the stream ends. |
+| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). A reader that falls behind the ring while reading gets a `gap` event (`overflow`) and the stream ends. A resume point the ring no longer holds (`since-too-old`), or one from another boot (`epoch-changed`, `since-ahead`), gets a `gap` event first, then the stream goes on from the oldest envelope the ring still holds. |
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),
@@ -207,7 +207,7 @@ slice 2). A subscriber with `since` replays from the ring (4096 envelopes per in
 | Channel | Carries |
 |---|---|
 | `ctl` | The plane's own events: `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
-| `svc/<name>` | The service's output. A stdout line that is a JSON object with a string `kind` is forwarded as that event (`t` in Unix ms on the service's clock; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
+| `svc/<name>` | The service's output. A stdout line that is a JSON object with a string `kind` becomes that event, of which only `kind`, `t` and `data` are kept: any other top-level field is dropped (`t` in Unix ms on the service's clock, rounded, and dropped when it is not a finite number; a `null` `data` is no data; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
 | `probe/<node>` | A probe node's pipe: `sample` events (below). Mirrored to a peer only when this node is created with `export: true` and that peer's spec names it (D4, ix#402). |
 | `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored, plus the probe pipes `probe/<node>` this instance asked for in `peers[].probes` while the peer exports them; and the link's own `link.gap` envelopes, the continuity markers (below). `subscribe` is always local; ops carry `peer` to be forwarded. |
 
