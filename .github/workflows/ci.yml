@@ -65,11 +65,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # The merge commit and its first parent, the base: `ix doctor`'s rustfmt-touched
+          # check diffs one against the other.
+          fetch-depth: 2
 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-          components: clippy
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
 
@@ -88,11 +91,17 @@ jobs:
       # new check such as `silent-skips` had no line of its own in any run. The
       # bar is the same as that test's: exit 4 (a failing check) is red, exit 1
       # (warnings only) is reported and stays green, exit 0 is green.
+      # On a pull request HEAD is the merge commit, so HEAD^1 is the base and the
+      # rustfmt-touched check holds the PR's own Rust files; naming the base makes that
+      # check fail, not warn, when it cannot run. A push to main has nothing to scope.
       - name: ix doctor
         shell: bash
         run: |
           export IX_ROOT="$PWD"
           export IX_GOVERNANCE_DIR="$PWD/governance/demerzel"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            export IX_DOCTOR_BASE='HEAD^1'
+          fi
           set +e
           cargo run -q -p ix-skill --bin ix -- doctor
           code=$?
