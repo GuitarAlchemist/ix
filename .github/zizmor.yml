@@ -1,0 +1,11 @@
+# zizmor's policy for the workflow-lint gate (.github/workflows/workflow-lint.yml), which fails
+# on High findings. This file is a blocked path of agent-blackbox.policy.json: loosening it
+# needs the review label.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # A tag or a branch is accepted. zizmor's default asks for a commit SHA on every
+        # action; pinning the third-party ones (Swatinem/rust-cache, dtolnay/rust-toolchain,
+        # softprops/action-gh-release, anthropics/claude-code-action) by SHA is the next step.
+        "*": ref-pin

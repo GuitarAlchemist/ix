@@ -8,6 +8,11 @@
 #
 # WSL needs no entry of its own: it reports `linux_amd64`, so the Linux artifact
 # is the WSL artifact.
+#
+# Only `publish` holds a write token, the tag reaches scripts through `env:`, the
+# build restores no cache (another workflow can write one), and a `-` tag is a
+# pre-release that never becomes Latest. Pinned by
+# crates/ix-harness-github-actions/tests/release_workflows.rs.
 name: Release
 
 on:
@@ -20,7 +25,7 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -40,7 +45,7 @@ jobs:
     # runner that never starts blocks the release forever rather than loudly. The
     # v0.4.0 attempt proved it — three legs finished in minutes and macos-13 sat
     # queued for over two hours, so nothing shipped. A build that cannot finish in
-    # 45 minutes on a warm cache has a problem worth failing on.
+    # 45 minutes from a cold start has a problem worth failing on.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -51,11 +56,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/ix-duck-ext
-          key: ${{ matrix.os }}
 
       - uses: actions/setup-python@v5
         with:
@@ -161,6 +161,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -169,10 +171,12 @@ jobs:
 
       - name: Assemble the release body from what each platform reported
         shell: pwsh
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
-          $repo = "${{ github.repository }}"
+          $tag = $env:TAG
+          $repo = $env:GITHUB_REPOSITORY
           $reports = Get-ChildItem dist -Filter 'report-*.md' | Sort-Object Name
           if ($reports.Count -eq 0) { throw 'no platform reports: nothing was verified' }
           $checklist = ($reports | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
@@ -213,7 +217,7 @@ jobs:
             "- [Extension source](https://github.com/$repo/tree/$tag/crates/ix-duck-ext)",
             "- [Runnable examples](https://github.com/$repo/blob/$tag/crates/ix-duck-ext/examples.sql)",
             "- [Release workflow](https://github.com/$repo/blob/$tag/.github/workflows/release.yml)",
-            "- [This build](https://github.com/$repo/actions/runs/${{ github.run_id }})",
+            "- [This build](https://github.com/$repo/actions/runs/$env:GITHUB_RUN_ID)",
             "- [Open issues](https://github.com/$repo/issues)",
             '- [Loading DuckDB extensions](https://duckdb.org/docs/extensions/overview)',
             '',
@@ -236,3 +240,5 @@ jobs:
           files: dist/ix-*.zip
           fail_on_unmatched_files: true
           body_path: body.md
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}

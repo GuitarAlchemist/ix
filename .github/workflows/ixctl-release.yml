@@ -59,10 +59,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.sha }}
 
+      # No module cache: one written by another workflow would reach the released binary.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/ixctl/go.mod
-          cache-dependency-path: go/ixctl/go.sum
+          cache: false
 
       - name: Build with the tag as the version
         env:

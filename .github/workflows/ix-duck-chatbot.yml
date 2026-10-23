@@ -44,15 +44,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Lint chatbot workflow if actionlint is available
-        shell: bash
-        run: |
-          if command -v actionlint >/dev/null 2>&1; then
-            actionlint .github/workflows/ix-duck-chatbot.yml
-          else
-            echo "actionlint is not installed on this runner."
-          fi
-
+      # This workflow is linted by workflow-lint.yml, with every other one.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
