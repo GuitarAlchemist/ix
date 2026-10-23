@@ -37,6 +37,37 @@ jobs:
           # already sets submodules) and locally — a false risk-report verdict.
           submodules: recursive
 
+      # The label attests a review of the PR's changes to the policy's blocked and one-way paths. A push that
+      # changes them, or that cannot be compared with the head before it, takes it off until the next review.
+      # It runs first, so no failing step skips it, and once per push: a re-run replays an old push and would
+      # take off a label applied since. It catches a label outliving a push, not a hostile PR, which can edit
+      # this step away (that would need pull_request_target). A DELETE that fails fails the job: the label may
+      # still be on.
+      - name: Withdraw the review label on a push that changes protected paths
+        if: github.event.action == 'synchronize' && github.run_attempt == 1
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python scripts/review_label_guard.py --base "$BASE_SHA" --before "$BEFORE_SHA" --after "$AFTER_SHA"
+          code=$?
+          set -e
+          if [ "$code" = 0 ]; then
+            exit 0
+          fi
+          label=agent-blackbox-reviewed
+          labeled="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" --jq "any(.[]; .name == \"$label\")" 2>/dev/null || echo unknown)"
+          if [ "$labeled" = false ]; then
+            exit 0
+          fi
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/${label}" > /dev/null
+          echo "::notice title=Agent Blackbox::this push changes the protected paths that were reviewed; $label is off until the next review"
+
       - name: Checkout Agent Blackbox
         uses: actions/checkout@v4
         with:
@@ -191,6 +222,9 @@ jobs:
           name: agent-blackbox-risk-report
           path: dist/
 
+      # `enforce` is enforce() in cli/agent_blackbox.py at AGENT_BLACKBOX_REF: it prints "Agent Blackbox verdict:
+      # <verdict>" and exits 1 on fail, 0 on warn or pass, and 2 with "Agent Blackbox verdict is invalid or
+      # missing" otherwise. A crash exits 1 with a traceback and no verdict line.
       - name: Enforce verdict
         shell: bash
         env:
