@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SessionStart hook — emits state/digests/latest.md to stdout for additionalContext.
-# Skips silently if missing or >24h stale.
+# Skips silently if missing; says so in one line if >24h stale or an automatic stub.
+# The ecosystem manifest is injected on every source but compact.
+# Fixture: .claude/hooks/test-sessionstart-digest.sh
 
 set -e
 
@@ -22,20 +24,28 @@ repoRoot="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 latest="$repoRoot/state/digests/latest.md"
 bootstrap="$repoRoot/.claude/manifest-bootstrap.md"
 
-# Sync manifest dynamically via pwsh if available
-if command -v pwsh &> /dev/null; then
-  pwsh -File "$repoRoot/scripts/manifest-sync.ps1" &> /dev/null || true
-elif command -v powershell &> /dev/null; then
-  powershell -File "$repoRoot/scripts/manifest-sync.ps1" &> /dev/null || true
-fi
+# What started the session: startup, resume, clear or compact (empty when not said).
+payload="$(cat 2>/dev/null || true)"
+event="$(printf '%s' "$payload" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p')"
 
-# Inject local/live ecosystem manifest into context
-if [ -f "$bootstrap" ]; then
-  echo ""
-  echo "=== Ecosystem Manifest (Vite Dev Data) ==="
-  cat "$bootstrap"
-  echo "=== End Manifest ==="
-  echo ""
+# After a compaction the summary carries the session, and the manifest (another repo's
+# snapshot, already injected at startup) would only take room from it.
+if [ "$event" != "compact" ]; then
+  # Sync manifest dynamically via pwsh if available
+  if command -v pwsh &> /dev/null; then
+    pwsh -File "$repoRoot/scripts/manifest-sync.ps1" &> /dev/null || true
+  elif command -v powershell &> /dev/null; then
+    powershell -File "$repoRoot/scripts/manifest-sync.ps1" &> /dev/null || true
+  fi
+
+  # Inject local/live ecosystem manifest into context
+  if [ -f "$bootstrap" ]; then
+    echo ""
+    echo "=== Ecosystem Manifest (Vite Dev Data) ==="
+    cat "$bootstrap"
+    echo "=== End Manifest ==="
+    echo ""
+  fi
 fi
 
 [ ! -f "$latest" ] && exit 0
@@ -46,6 +56,18 @@ if [ -z "$(find "$latest" -mmin -1440 2>/dev/null)" ]; then
   echo ""
   exit 0
 fi
+
+# The tracker's and the pre-compaction stubs hold the branch and HEAD only; nothing in them
+# was written by a model, so they are named, not injected.
+trigger="$(sed -n 's/^trigger:[[:space:]]*//p' "$latest" | head -n 1)"
+case "$trigger" in
+  activity-tracker-mid-session|precompact-hook-fallback)
+    echo ""
+    echo "state/digests/latest.md is an automatic stub ($trigger): nothing model-written to carry forward."
+    echo ""
+    exit 0
+    ;;
+esac
 
 ageMin="$(get_age_min "$latest")"
 
