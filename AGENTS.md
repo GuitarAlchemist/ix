@@ -37,7 +37,7 @@ Agent Blackbox additionally emits a `harness-audit` and (when an agent response 
 
 ## Review independence
 
-Autonomous changes in ix follow a producer-reviewer split: the author skill (for example `.claude/skills/ce-work/SKILL.md`) generates the diff, and a fresh evaluator session (for example `.claude/skills/ce-compound/SKILL.md`, running in a different context with no shared state) signs off before merge. The fresh evaluator cannot self-certify its own author work — this is enforced at the harness layer by separating the writer skill from the reviewer skill and by routing risk reports through Agent Blackbox before the final approval.
+Autonomous changes in ix follow a producer-reviewer split: the author skill (for example the compound-engineering plugin's `ce-work`) generates the diff, and a fresh evaluator session (for example its `ce-compound`, running in a different context with no shared state) signs off before merge. The fresh evaluator cannot self-certify its own author work — this is enforced at the harness layer by separating the writer skill from the reviewer skill and by routing risk reports through Agent Blackbox before the final approval.
 
 Cross-vendor review is mandatory for any change touching governance schemas or one-way doors: at least one of Codex, Gemini, or a different vendor's model must independently confirm the diff is correct before the `agent-blackbox-reviewed` override label is applied.
 

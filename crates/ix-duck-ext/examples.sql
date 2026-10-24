@@ -13,7 +13,9 @@
 --     back with getvariable() (sections 4-5). That's the table→JSON→table bridge.
 
 -- 0) Load the extension (skip if launched via ix-duck.ps1 / build already loaded it).
-LOAD 'C:/Users/spare/source/repos/ix/crates/ix-duck-ext/ix.duckdb_extension';
+--    Relative to the working directory: run duckdb from crates/ix-duck-ext, or
+--    replace the path with your build's absolute path.
+LOAD './ix.duckdb_extension';
 
 -- 1) A toy table of labelled 4-D embedding vectors — two rough families:
 --    "bright" (major-ish) and "tense" (dominant-ish).

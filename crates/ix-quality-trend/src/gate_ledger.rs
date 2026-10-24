@@ -165,9 +165,38 @@ pub enum LedgerError {
     },
 }
 
+/// Size at which [`append_entry`] rotates the ledger to `*.1.jsonl`.
+///
+/// One generation is kept. A gate row is ~400 bytes, so 4 MiB is roughly
+/// 10k runs — long enough that rotation is a safety valve, not part of the
+/// normal read path.
+pub const LEDGER_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The rotated sibling of `path`: `gate-ledger.jsonl` → `gate-ledger.1.jsonl`.
+pub fn rotated_path(path: &Path) -> std::path::PathBuf {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("jsonl");
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("ledger");
+    path.with_file_name(format!("{stem}.1.{ext}"))
+}
+
 /// Append a v1 entry as one JSON line. Creates the parent directory and file
-/// as needed. Atomic-per-line on POSIX/NTFS append semantics; safe for
-/// concurrent producers within a single host.
+/// as needed.
+///
+/// Crash-safety: the line plus its terminating newline is handed to a single
+/// `write_all` on a handle opened `O_APPEND`, so a concurrent producer or a
+/// process death cannot interleave a half-line into the middle of ours. (The
+/// previous `writeln!` split the payload and the `\n` across two writes, which
+/// is where a torn line could come from.) Readers already skip blank lines and
+/// tolerate a trailing partial line, so the worst case is a dropped row, never
+/// a corrupted file.
+///
+/// Bounded growth: when the file is already at or past [`LEDGER_MAX_BYTES`] it
+/// is renamed to [`rotated_path`] before the append, replacing any previous
+/// rotation. Consumers read the live file only; rotation is a floor on disk
+/// use, not an archive.
 pub fn append_entry(path: &Path, entry: &GateLedgerEntry) -> Result<(), LedgerError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| LedgerError::Io {
@@ -175,6 +204,18 @@ pub fn append_entry(path: &Path, entry: &GateLedgerEntry) -> Result<(), LedgerEr
             source: e,
         })?;
     }
+
+    // Rotate before opening, so the new handle lands on the fresh file.
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.len() >= LEDGER_MAX_BYTES {
+            let dest = rotated_path(path);
+            fs::rename(path, &dest).map_err(|e| LedgerError::Io {
+                path: dest,
+                source: e,
+            })?;
+        }
+    }
+
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -184,16 +225,56 @@ pub fn append_entry(path: &Path, entry: &GateLedgerEntry) -> Result<(), LedgerEr
             source: e,
         })?;
 
-    let line = serde_json::to_string(entry).map_err(|e| LedgerError::Json {
+    let mut line = serde_json::to_string(entry).map_err(|e| LedgerError::Json {
         path: path.to_path_buf(),
         line: 0,
         source: e,
     })?;
-    writeln!(file, "{}", line).map_err(|e| LedgerError::Io {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+    line.push('\n');
+    file.write_all(line.as_bytes())
+        .map_err(|e| LedgerError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
     Ok(())
+}
+
+/// Whether a ledger exists and holds anything — the distinction a consumer
+/// needs to avoid reporting "no failures" when the truth is "nobody wrote".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LedgerStatus {
+    /// No file at that path: no producer has ever run here.
+    Absent,
+    /// File exists but holds no parseable row.
+    Empty,
+    /// File exists and holds at least one row (v1 or legacy v0).
+    Present,
+}
+
+/// Classify a ledger path. Cheap: stats the file, and only reads it far
+/// enough to know whether a non-blank line exists.
+pub fn status(path: &Path) -> Result<LedgerStatus, LedgerError> {
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LedgerStatus::Absent),
+        Err(e) => {
+            return Err(LedgerError::Io {
+                path: path.to_path_buf(),
+                source: e,
+            })
+        }
+    };
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|e| LedgerError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+        if !line.trim().is_empty() {
+            return Ok(LedgerStatus::Present);
+        }
+    }
+    Ok(LedgerStatus::Empty)
 }
 
 /// Stream-read the ledger. Lines with `schema_version == 1` parse as v1;
@@ -485,5 +566,67 @@ mod tests {
         let path = dir.path().join("gate-ledger.jsonl");
         let lines = read_ledger(&path).unwrap();
         assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn append_creates_parent_directory_and_writes_exactly_one_line() {
+        let dir = TempDir::new().unwrap();
+        // Two levels deep: the producer should not have to mkdir first.
+        let path = dir.path().join("state/quality/gate-ledger.jsonl");
+        append_entry(&path, &sample()).unwrap();
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(raw.ends_with('\n'), "row must be newline-terminated");
+        assert_eq!(
+            raw.matches('\n').count(),
+            1,
+            "one row, one newline: {raw:?}"
+        );
+        assert!(!raw.contains("\n\n"));
+    }
+
+    /// `status` is the honesty primitive: a consumer must be able to tell
+    /// "no producer has run" from "producers ran and nothing failed".
+    #[test]
+    fn status_distinguishes_absent_empty_and_present() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("gate-ledger.jsonl");
+
+        assert_eq!(status(&path).unwrap(), LedgerStatus::Absent);
+
+        fs::write(&path, "\n   \n").unwrap();
+        assert_eq!(status(&path).unwrap(), LedgerStatus::Empty);
+
+        append_entry(&path, &sample()).unwrap();
+        assert_eq!(status(&path).unwrap(), LedgerStatus::Present);
+    }
+
+    #[test]
+    fn append_rotates_once_the_cap_is_reached() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("gate-ledger.jsonl");
+        let rotated = rotated_path(&path);
+        assert_eq!(rotated.file_name().unwrap(), "gate-ledger.1.jsonl");
+
+        // Stand in for a ledger that has grown past the cap without writing
+        // 4 MiB of real rows.
+        fs::write(&path, "x".repeat(LEDGER_MAX_BYTES as usize)).unwrap();
+        append_entry(&path, &sample()).unwrap();
+
+        assert!(
+            rotated.is_file(),
+            "oversize ledger should have been rotated"
+        );
+        // The live file is the fresh one holding just our row.
+        let lines = read_ledger(&path).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(matches!(lines[0], LedgerLine::V1(_)));
+
+        // A second rotation replaces the previous generation rather than
+        // accumulating `.2`, `.3`, ... files.
+        fs::write(&path, "y".repeat(LEDGER_MAX_BYTES as usize)).unwrap();
+        append_entry(&path, &sample()).unwrap();
+        let generations = fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(generations, 2, "live + one rotated generation only");
     }
 }

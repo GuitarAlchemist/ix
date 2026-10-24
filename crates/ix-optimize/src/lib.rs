@@ -1,8 +1,10 @@
 //! # ix-optimize
 //!
 //! Optimization algorithms: gradient descent variants, simulated annealing,
-//! particle swarm optimization, and convergence utilities.
+//! particle swarm optimization, ant colony optimization for the travelling
+//! salesman problem, and convergence utilities.
 
+pub mod aco;
 pub mod annealing;
 pub mod convergence;
 pub mod gradient;

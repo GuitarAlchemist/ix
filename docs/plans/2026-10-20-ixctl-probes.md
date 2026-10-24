@@ -1,0 +1,275 @@
+---
+title: "ixctl probes: a tree of in-process samplers under the control plane (story S1)"
+type: decision
+status: tracer merged into exp/ixctl; surface provisional; decisions D1–D5 assumed, tickets open
+date: 2026-10-20
+branch: exp/ixctl (PR #394)
+reversibility: two-way today (no consumer outside go/ixctl; the surface is behind the plane's provisional protocol, door 1); becomes one-way when a program outside the plane creates nodes or reads `probe/` pipes
+revisit-trigger: a decision ticket D1–D5 is resolved against the assumption recorded here; or Gaia / the Rust client reads a probe pipe (S4, S7); or the first cross-host pipe is wanted (D4 / S2)
+---
+
+# ixctl probes: a tree of in-process samplers under the control plane
+
+French: [`docs/fr/plans/2026-10-20-ixctl-probes.md`](../fr/plans/2026-10-20-ixctl-probes.md).
+Tracking: epic [ix#397](https://github.com/GuitarAlchemist/ix/issues/397), Wayfinder map
+[ix#398](https://github.com/GuitarAlchemist/ix/issues/398), story S1
+[ix#407](https://github.com/GuitarAlchemist/ix/issues/407). User reference:
+[`go/ixctl/README.md`](../../go/ixctl/README.md#probes).
+
+## The problem
+
+The operator wants to **start probes** from the control plane: versioned samplers, written in Go
+for now, compiled quickly, that read something (the host, a service, later a file or a port) and
+put what they read on a pipe; to **list, create, start, stop** them; to **filter and aggregate**
+their output; to **multiplex** children into a parent, parent into grand-parent, as a tree; to give
+each a **time to live**; and to know **the system's limits** while doing it. The pain today: the
+plane reports what a *service* costs (`last_exit`) and nothing about the host or about a running
+service's inside, and the prototype probes (PR #390) are one OS process per probe, outside any
+plane, with their own transport.
+
+## Prior art read before designing
+
+- `prototypes/probes` (PR #390): a Go host that runs template probes (WMI) as processes and writes
+  JSONL for DuckDB. Useful as a source of future kinds; wrong shape for the plane (a process per
+  probe, no tree, no limits).
+- ix#374 (probe runtime boundary): bounded queues, **no silent drop**, versioned definitions apart
+  from observations, one host multiplexing logical probes, measurement apart from composite
+  evaluation, no actuators. This design follows every point.
+- ix#375 (languages): Go first, Rust later.
+- gaia#245: Gaia as a consumer of observations, through an envelope (S7, D7).
+- The plane itself: the hub (ring 4096, channels, cursors with explicit gaps), the one `Request`
+  entry point on HTTP and WebSocket, federation that mirrors `ctl` and `svc/` of a peer, the
+  bearer token and loopback-only face. Everything a probe needs to publish, be driven and be
+  secured already exists; the slice adds no second host, transport or token.
+
+## Design (as built)
+
+**Kinds** are compiled in, versioned, named `name@version`: `heartbeat@1` (its own tick count),
+`cpu@1` (busy share from `GetSystemTimes` / `/proc/stat`; the first interval emits nothing),
+`mem@1` (`GlobalMemoryStatusEx` / `/proc/meminfo`), `delta@1` (tails the JSONL journal of the
+voice robot Delta named by `ixctl up --delta-journal`, one line per tick, 2026-10-22), `mux@1`
+(no sampler). A kind is a `sampler` port (`sample() (fields, error)`) with one OS adapter per
+platform and a heartbeat adapter for tests: the same light hexagon the plane already uses for
+its `Broker`. The sampler receives the plane's `kindConfig` (what `ixctl up` was told), which
+every kind but `delta@1` ignores.
+
+**Nodes** are instances in one tree per plane: `{name, kind, every_ms, parent, filter, ttl_ms}`.
+A node publishes `sample` events on its own hub channel `probe/<name>`; when its parent runs, the
+sample goes up synchronously, through the parent's filter, onto `probe/<parent>` stamped with
+`src`. The lifecycle (`probe.created/started/stopped/removed`, `stopped` and `removed` with a `reason`) is on `ctl`
+like every plane event, so it is journaled and mirrored to peers for free.
+
+**Filters** run before emission: `where` (typed terms, six operators, missing field = false),
+`every` (one in N of what passed), `keep` (field projection; `node/kind/seq/src` always kept).
+They are pure functions, tested by value.
+
+**Leases**: `ttl_ms` counts from `probe.start`, `probe.touch` renews, expiry removes the subtree
+with reason `expired`. A node without `ttl_ms` has no lease; `touch` refuses it rather than
+inventing one.
+
+**Ops**: `probe.kinds / list / create / start / stop / touch / remove`, one entry point on both
+transports, HTTP routes `GET /v1/probes`, `GET /v1/probe`, `POST /v1/probe/<op>`, every op
+forwardable to a peer. `ixctl probes` prints the kinds and limits offline, so a release binary
+describes itself. `POST /v1/shutdown` stops every running node first (reason `shutdown`).
+
+**Limits are part of the surface.** Every bound is a named constant reported by `probe.kinds`
+under `limits` (`max_nodes` 256, `max_depth` 8, `min_every_ms` 10, `max_every_ms` 3 600 000,
+`max_ttl_ms`, `ring` 4096, `max_where` 16, `max_keep` 32); every refusal names the bound it hit;
+`probe.list` shows usage (`count`, `max_nodes`). The operator asked for this explicitly.
+
+## Decisions
+
+### Taken in this slice
+
+- **Synchronous child→parent propagation, no inbox.** The first draft gave each mux a bounded
+  inbox with a `dropped` counter. Replaced before the tests went green: an inbox adds a queue
+  whose only honest behaviour under pressure is to drop, which ix#374 forbids, and the hub's
+  ring already is the one bounded buffer with an explicit `gap`. A sample now either reaches the
+  parent's filter in the child's tick or the child blocks on the parent's lock for a few
+  microseconds. The cost is that a slow filter slows its children; the filters are pure and
+  bounded by `max_where` / `max_keep`, so this is accepted. Revisit if a kind ever samples from
+  something that can stall (a socket, a file): that kind gets a deadline, not the mux a queue.
+- **One tree per plane, in the plane's process.** No second host. A kind that must not share the
+  plane's process (a crash-prone reader) is a later kind that spawns, not a change to the tree.
+- **Kinds compiled in, not loaded.** A new kind is a release (D8 / S5), never a plugin.
+
+### Assumed, with their decision ticket (the slice keeps each reversible)
+
+| Ticket | Assumption built on | What would change it |
+|---|---|---|
+| D1 ix#399 | Probes have their own ops, not a place in the desired-state document (door 2). | If probes should be declared and reconciled like services, `probe.create` becomes a plan/apply action. The tree code is unchanged; the entry point moves. |
+| D2 ix#400 | TTL is a lease renewed by `touch`, not an idle timeout on samples. | An idle rule would read the last sample time instead of the touch time: one field. |
+| D3 ix#401 | Two nodes of the same kind sample independently. | Shared sampling would memoize by kind and interval; the sampler port already allows it. |
+| D4 ix#402 | Pipes are local; a peer's probe lifecycle is mirrored (`peer/<name>/ctl`), its pipes are not. | Mirroring `probe/` channels is one more prefix in `peers.go` once the volume and the gap semantics across hosts are decided (S2). |
+| D5 ix#403 | A filter is `where` + `every` + `keep`, typed terms, no expressions. | IXQL or an expression language (D7) would sit above this, lowering to it or replacing it. |
+
+## Measured (Windows, 2026-10-20, gate E15 / M2 on a loaded desktop)
+
+| Measure | Value |
+|---|---|
+| Filtered samples that reached the mux in 1.5 s of a 20 ms heartbeat (`n > 2`, `every` 2) | 36, values 4, 6, 8, … |
+| M2: samples per second on one mux fed by 16 heartbeats at 10 ms, read over SSE | 1447 of a 1600 ceiling, 16 sources, no overflow gap |
+| M2: the plane's processor time over the 2.2 s window | 297 ms (about an eighth of one core, 3 200 envelopes per second published) |
+| Lease of 1.5 s not touched | removed with reason `expired`, seen on `ctl` and gone from `probe.list` |
+
+M2 also exposed a pre-existing fragility of the gate: with 6 400 envelopes per second the ring no
+longer holds seq 1, so a later SSE read from the start gets a `since-too-old` gap first. The
+gate's `sse()` helper now keeps gaps apart from envelopes (`SSE_GAPS`); the plane's behaviour was
+already the documented one.
+
+## Review round 20 (Codex, read-only, of `2575167`)
+
+Four P1 and eight P2, no P0; all answered in the next commit. The P1s were races between an
+op that unlocks between deciding and acting and another op landing in between: `remove`
+snapshotted its subtree then unlocked, so a `create` under it left an orphan and a `start`
+restarted a node about to be deleted (its run leaked); `expire` checked its due date, unlocked,
+then removed, so a `touch` that landed first lost its node anyway; `shutdown` stopped the
+running nodes without closing admission, so a `start` after it ran past the journal's close;
+and a mux's `keep` dropped `src`, against the protocol's promise. The fixes keep the shape:
+the subtree is claimed (`removing`) under the same lock that decides, and claimed nodes refuse
+`start`, `touch` and new children; `expire` is `removeIf` with its due check inside that lock;
+`shutdown` sets `closed` before its snapshot and `create`/`start` refuse afterwards; `keep`
+always carries `src` and `error`. P2s: `emit` re-checks that the node is still the one in the
+tree and running (a child's sample in flight no longer lands after the parent's `probe.stopped`);
+a `stopping` node refuses a start until its run has returned; `max_depth` allows exactly
+`max_depth` muxes above a node; filter values are typed at creation; Linux's `/proc/stat` total
+stops at `steal` (guest time is inside user); a cpu interval whose counters did not advance
+emits nothing instead of a fabricated idle; `probe.started` carries `expires_in_ms` when leased.
+Codex also counted 38 gate checks; the file has 39 `check(` calls and the run prints 39.
+
+**Order on the wire (2026-10-21, on the operator's go after the S7 contract named the gaps G6 and
+G7).** A node's record is published under the tree lock with its `seq`, so a mux's records reach
+its pipe in order under concurrent children (seen first as a CI failure of the mux test on
+Windows) and never after the node's `probe.stopped`; `probe.created`, `probe.started`, a mux's
+`probe.stopped` and `probe.removed` are published under that lock too, in the order of the state
+changes they report; a leaf's `probe.stopped` waits for its loop outside the lock, and a remove
+that meets that stop in progress waits for it (`sync.Cond` on the tree lock) before it says
+`probe.removed`; a failed read reaches the pipe whatever the filter. Tests in
+`go/ixctl/probe_order_test.go`; the contract is at v0.1.1 with G6 and G7 closed. Codex round 28
+(of that commit) added: `shutdown` waits for a stop another op had in progress (its snapshot
+lists running nodes only, so that leaf's `probe.stopped` could follow the shutdown's return and
+the journal's close) — fixed with the same condition variable; the stop-in-progress tests now
+drive a real `probe.stop` through a test kind whose read blocks until released (`block@1`,
+registered for one test), and the start/stop test judges `ctl` after every round. **Trade-off
+kept:** the `ctl` journal append already ran under the hub lock inside `Publish`; with lifecycle
+events published under the tree lock, a stalled journal write now also holds the probe ops, not
+only the publishers. Moving the journal behind an ordered writer changes when a line is on disk,
+which is Door 3 territory: not done here. Round 29 (of the round-28 fix): `shutdown` also waits
+for a removal in flight (a remove that met a stop in progress could say `probe.removed` after the
+shutdown had returned) and `probe.remove` is refused once the plane is closed, like `create` and
+`start`; a leaf's `finishStop` is deferred so a panic on the way cannot strand `stopping`; the
+tests prove with a handshake that the waiting op reached the contested path before judging it,
+release the blocking read in cleanup, and the start/stop test requires a lifecycle event every
+round. **Design limit, recorded:** a sampler must return. The stop waits for the read in flight
+so that `probe.stopped` is the pipe's last word, and shutdown waits for the stop; a kind whose
+source can hang (an RPC, WMI in S6) bounds its own read. The alternative, abandoning a read on
+cancel, would bound the stop but leak a goroutine per hung read; not taken. Round 30: two
+removals overlapping on one node (a descendant's, then its ancestor's) both waited for the same
+stop and the second, waking with a stale pointer, said `probe.removed` a second time — fixed by
+rechecking that the node is still the tree's after the wait; the shutdown-waits-for-removals
+claim gained a direct test holding the removals counter (the integration test only sees the order
+after the fact), and the remaining receives in the tests are bounded. CI's `-race` row (ubuntu)
+also caught a pre-existing unlocked read in `probe.stop`'s noop reply, exposed by the concurrent
+start/stop test: the state is now copied under the lock. Round 31 (closing): a removal claims
+the nodes themselves, not their names — a removal paused between its stop and its lock, while an
+overlapping removal forgot the node and a create put a new node under the same name, would have
+stopped and forgotten the replacement; `removeIf` now walks the claimed pointers, stops through
+`stopIf` (noop unless the name still holds the claimed node) and rechecks the pointer before and
+after its wait. Codex's lock audit of that round found no mutable field read outside the tree
+lock. Fixed by construction: no run can hold a removal in that window deterministically.
+
+## Tests (the seams agreed for TDD)
+
+Unit, `go/ixctl/probe_test.go`, through `Plane.Request`, the pure filters and the OS kinds by
+value range: create/stop/refusals naming bounds; heartbeat samples on its pipe until stopped; a
+filter shapes what is emitted; a mux stamps `src`; a lease expires unless touched and a remove
+takes the subtree; cpu and mem within range; kinds listed with limits; HTTP routes, the WebSocket
+frame and shutdown ending every run; forwarding to a peer with its lifecycle mirrored; the CLI
+printing the kinds offline. Gate: E15 (two checks) and M2 in `go/ixctl/e2e/e2e.py`, 39 checks.
+
+## Left out on purpose
+
+**S4 shipped (2026-10-21, D7 ix#405 resolved):** one IXQL capability per probe op, named after
+the wire's (`ix.ctl.probe.kinds`, `.list`, `.create(probe:)`, `.start/.stop/.touch/.remove(node:)`,
+`peer:` beside any), arguments checked at the edge before any request, as the six existing
+`ix.ctl.*` capabilities; samples read with the existing `ix.ctl.events(channel: "probe/<node>")`;
+no wait on a sample (the count is `max:`, the condition is the node's own `filter`); the lease is
+the cleanup, IXQL having no `finally`. Program: `crates/ix-ctl/examples/probe.ixql`, run against a
+fake plane in `crates/ix-ctl/tests/ctl.rs` (ten records in `seq` order, a read error among them,
+a partial read told by its length, the tree removed) and against the real plane in the gate (E17).
+IXQL itself did not change: these are registrations against the existing `Capabilities`.
+
+**D10 resolved and shipped (2026-10-21, ix#416):** a budget bounds the declared record rate of
+every subtree (a mux and its descendants; a root leaf alone), the worst case summed at `create`:
+1000 / `every_ms` per leaf (the filter does not lower it: a failing sampler's error records
+bypass `where` and `every`, a finding of the implementation, Codex round 33; the sum is exact, in
+rationals, Codex round 34 having shown a floored integer sum admitting 32 leaves at 31 999 ms on a
+budget of 1); a stopped node keeps its share; the budget is frozen once a node
+exists. Defaults `max_rate_per_s` 1 000 and `tree_rate_per_s`
+2 500 (about a quarter of a core, extrapolating M2), set at `ixctl up --probe-rate` /
+`--probe-tree-rate`, said in `limits`; a mux's `max_rate_per_s` narrows, never widens, and is
+immutable. A create past a bound is refused in advance, a 400 naming the subtree and the bound,
+no event, no slowing, no stop for budget (that waits for a measured quantity to become bounded).
+Measured and not bounded: `bytes` per node; CPU and RSS stay the process's, never attributed.
+`probe.list` says rates and budgets; the gate's E18 checks it on the real plane. Per plane (D4
+open). Grilled by voice with the operator in three rounds; the resolution is on ix#416.
+
+**D4 resolved (2026-10-21, ix#402) and S2 slice 1 shipped (ix#408):** aggregation lives with the
+reader, and in V1 the reader is the consumer (IXQL `ix.ctl.events` on `peer/<peer>/probe/<node>`),
+no remote source on a local mux. What crosses a link is the intersection of the child's `export:
+true` at create (immutable, false by default) and the parent's exact request `peers[].probes`;
+the link subscribes by exact channel name (a prefix would carry `cpu-extra` with `cpu`), from the
+peer's `probe.list` at attach and the mirrored `probe.created` / `probe.removed` after, applied
+in arrival order (an event that landed between the subscription and the list is applied after
+it, one lost to a gap is not seen: the window the cursor-bound snapshot closes in slice 4); a
+pipe starts live on every session and after every drop, never from a seq (a name re-exported
+after an unexported incarnation would replay it, and the ctl replay cannot prove the
+incarnation since the list's reply may overtake it: slice 4's cursor-bound list is that proof;
+what a live start skips was contract G8 until slice 3's marker), and frames of a subscription
+that is no longer the pipe's are dropped (Codex rounds 35–38); the status and the list are read
+before any mirrored frame is applied while merged is drained into a backlog (a reconnect replay
+up to the ring cannot hold the reader back; the backlog is capped in frames and in bytes, past either the session
+reconnects), subscribing runs off the link's drain goroutine so a full queue cannot starve the
+reply, and a dropped pipe's forwarder ends with its subscription. `status.peers[].probes` says `mirrored` / `not-exportable` / `opening` / `absent`, and `dropped`, the records the link discarded for want of room. Three figures kept apart: sampling admitted (D10), envelopes
+published (samples × depth), bytes and records transported per link and per parent;
+`tree_rate_per_s` is not a federated bound. Slice 2 shipped the provenance: every mirrored
+envelope carries the source's `src_seq` / `src_epoch`, so the series
+`origin:src_epoch:node:<src_seq of probe.created>` and the dedup key `origin:src_epoch:src_seq`
+are the consumer's (gate E20, contract v0.1.4). Slice 3's first cut marks what the mirror skips,
+in the mirrored stream: a `link.gap` envelope of the parent's own on the pipe at every live start
+(`src_epoch`, `last_src_seq` / `last_src_epoch`) and on the mirrored `ctl` when the peer came back
+as a new instance (`epoch-changed`) or answered a gap on the resumed `ctl` / `svc/` (criteria 4 and
+5 of ix#408; gate E21; contract v0.1.5 closes G8). The second cut bounds the link's queues per
+class (criterion 6): `ctl` / `svc/` in their own lossless queue read first, the pipes in a queue
+bounded in records and bytes their forwarders never wait on; drops counted per pipe on the status
+and marked `dropped` on the pipe before the record that followed, a pipe subscription the peer
+dropped reopened live and marked `overflow` without ending the session (gate M3 measures the
+load; the Go test slows the parent to prove the bound and the priority; contract v0.1.6). The
+third cut bounds the catch-up (criterion 7): a replay allowance per link (frames, bytes, time,
+refilled slowly, never reset by a reconnect), past which the link subscribes live and marks the
+jump on the mirrored `ctl` (`jumped`, `from`, `to`, dated); a control subscription the peer
+dropped is reopened in the session, not the session torn down; the status tells `live` (the peer
+says so, with a live frame a subscriber asks for) from `reconciled` and lifts `degraded` only when
+both hold, `jumps` counted (Go tests: a catch-up past the allowance jumps and is marked, a second
+outage jumps at once, a sustained control stream above the reader jumps without reconnecting,
+`degraded` lifted only when live and reconciled; gate E22; contract v0.1.7). The fourth slice
+makes the list a snapshot (criteria 3 and 4): `probe.list` with a cursor of the plane's stream
+(`cursor: {seq, epoch}`, read under the tree's lock) and `created_seq` per node, a `stopping`
+state for a leaf whose stop is in progress (its probe.stopped and the end of the stop made one
+step: the list caught them apart); the link skips the lifecycle events the snapshot holds, keeps
+each pipe's identity on the status, and takes a new snapshot after a jump on ctl (Go tests: 25
+snapshots folded from a churning stream, the link's identities and skips, a jump re-listing; gate
+E23; contract v0.1.8). Grilled by voice with Gaia's read-only review folded in; the resolution is
+on ix#402. Gates E19..E23 check the slices on the two federated planes.
+
+Cross-host pipes (S2), shared sampling (S3), GitHub releases with
+a probes manifest beyond the workflow skeleton (S5), the prototype's WMI kinds (S6), the Gaia
+envelope's adapter (S7: the IX side is the draft contract
+[`2026-10-21-ixctl-probe-observation.contract.md`](../contracts/2026-10-21-ixctl-probe-observation.contract.md)
+with three consumer fixtures written by the real plane, reconnect, same-name recreation and
+restart, 2026-10-21 on the operator's go after Gaia's design review; the adapter is Gaia's),
+replay from a journal past the ring (the second slice of D9 / S8; the ring-backed
+bookmarks shipped on [`2026-10-20-ixctl-bookmarks.md`](2026-10-20-ixctl-bookmarks.md)),
+actuators (never: ix#374).
+
+Once D1–D5 are resolved these decisions belong in an ADR under `docs/adr/`.

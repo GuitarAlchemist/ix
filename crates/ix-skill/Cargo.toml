@@ -42,6 +42,12 @@ ix-graph = { workspace = true }
 ix-probabilistic = { workspace = true }
 ix-io = { workspace = true }
 
+# `ix doctor` appends a v1 quality-gate-ledger row per run. Already in the
+# graph via ix-agent (which hosts the `ix_quality_gate_history` consumer), so
+# the direct edge costs no extra compilation — it just makes the producer
+# explicit.
+ix-quality-trend = { workspace = true }
+
 ndarray = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
@@ -79,3 +85,10 @@ embeddings = ["dep:fastembed"]
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+# ix-stream's `world` nodes (http, sql, file), so `cargo test --workspace` compiles and tests
+# them while a plain build of `ix` and of the MCP server leaves them out. Not on ix-stream
+# itself: a self dev-dependency would turn `--features ix-stream/world` into the dev edge's.
+# Not `wasm` here: cargo unifies dev features across the workspace test build, and
+# ix-stream/wasm links ix-wasm, whose `wasm.run` skill would then register as an MCP tool in
+# ix-agent's tests and fail parity. The gated-features CI job compiles and tests it instead.
+ix-stream = { workspace = true, features = ["world"] }

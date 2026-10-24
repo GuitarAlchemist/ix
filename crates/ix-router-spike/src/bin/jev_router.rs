@@ -29,6 +29,8 @@ use std::path::{Path, PathBuf};
 
 const MODEL: &str = "jev-1.13.0";
 const NONE: &str = "__none__";
+/// Stage 4 gold label for a title no single label fits: routed and reported, never scored.
+const AMBIGUOUS: &str = "ambiguous";
 const QUESTION_ID: &str = "intent";
 /// Reviewed rate card (docs.typesafe.ai/models, 2026-09-22): USD per 1M input tokens.
 const INPUT_PRICE_PER_MILLION_USD: f64 = 0.042;
@@ -37,6 +39,13 @@ const EXPLORATORY_TAUS: [f64; 5] = [0.0, 0.3, 0.5, 0.7, 0.9];
 /// Probabilities may be rounded by the provider; 17 values rounded to 4 dp can
 /// drift ~1e-4 from 1. A format quirk must not be scored as a routing failure.
 const SUM_TOL: f64 = 1e-3;
+/// Stage 3 tolerance, registered before any Stage 3 call. Jev reports
+/// 2-decimal probabilities, and every invalid Stage 2 response summed to 0.99
+/// over 17 options; with 33 options the rounding drift can reach a few
+/// hundredths. The argmax and range checks still apply. Stage 1/2 arms keep
+/// SUM_TOL so their registered verdicts stand.
+const SUM_TOL_STAGE3: f64 = 0.03;
+const OPTIONS_V1: &str = "state/router-spike/jev/options.json";
 
 /// One pre-registered arm. `corpus_sha256` is the SHA-256 of the canonical JSON
 /// of [(id, prompt, expectedIntentId)] (line-ending independent); the verdict
@@ -44,7 +53,13 @@ const SUM_TOL: f64 = 1e-3;
 struct Arm {
     name: &'static str,
     corpus: &'static str,
+    /// Options file the requests are built from (instructions + criteria).
+    options: &'static str,
+    /// Allowed |sum(probabilities) - 1| before a response is a contract failure.
+    sum_tol: f64,
     reversed_options: bool,
+    /// Labels may cover only some options, and `ambiguous` titles are not scored (Stage 4).
+    partial_labels: bool,
     corpus_sha256: &'static str,
     inscope: usize,
     oos: usize,
@@ -56,12 +71,16 @@ struct Arm {
 
 const BASE_SHA: &str = "692b1c9d1460e72074dafaad0223d81c2aa5a50fb58b1ea5a91dbd4d4ef2b588";
 
-/// Stage 2 arms (RESULTS.md, "Jev arm — Stage 2 robustness pre-registration").
-const ARMS: [Arm; 5] = [
+/// Stage 2 arms (RESULTS.md, "Jev arm — Stage 2 robustness pre-registration"),
+/// plus the Stage 3 `full` arm ("Jev arm — Stage 3 full-universe pre-registration").
+const ARMS: [Arm; 7] = [
     Arm {
         name: "base",
         corpus: "state/router-spike/heldout-test.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
+        partial_labels: false,
         corpus_sha256: BASE_SHA,
         inscope: 110,
         oos: 16,
@@ -71,7 +90,10 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "reversed",
         corpus: "state/router-spike/heldout-test.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: true,
+        partial_labels: false,
         corpus_sha256: BASE_SHA,
         inscope: 110,
         oos: 16,
@@ -81,7 +103,10 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "fr",
         corpus: "state/router-spike/jev/corpora/heldout-fr.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
+        partial_labels: false,
         corpus_sha256: "d7e9651d97c37ce624ab1cf2fc531a9659e6b90ab501434fb4573a3eab1798e8",
         inscope: 110,
         oos: 16,
@@ -91,7 +116,10 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "es",
         corpus: "state/router-spike/jev/corpora/heldout-es.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
+        partial_labels: false,
         corpus_sha256: "c509430babf0887e62e1ec2ba6ba16db03d1f1d6f1dc36888b7ea6af0056f564",
         inscope: 110,
         oos: 16,
@@ -101,12 +129,49 @@ const ARMS: [Arm; 5] = [
     Arm {
         name: "fresh",
         corpus: "state/router-spike/jev/corpora/fresh-test.json",
+        options: OPTIONS_V1,
+        sum_tol: SUM_TOL,
         reversed_options: false,
+        partial_labels: false,
         corpus_sha256: "e9e8c0e1b51e67abb2543ba77c6992b72bf4c98d18d71d3af5ac7ab777d07385",
         inscope: 112,
         oos: 16,
         robust: (101, 13),
         degraded_floor: 92,
+    },
+    // Stage 3: all 32 routable GA skills + __none__, Sol-authored corpus,
+    // production descriptions as options. Bands use the Stage 2 proportions
+    // (ROBUST >= 0.90 in-scope and >= 13/16 OOS, DEGRADED floor 0.82), rounded up.
+    Arm {
+        name: "full",
+        corpus: "state/router-spike/jev/corpora/full-sol.json",
+        options: "state/router-spike/jev/options-full.json",
+        sum_tol: SUM_TOL_STAGE3,
+        reversed_options: false,
+        partial_labels: false,
+        corpus_sha256: "f062dcbda5a1ec94a48164aed8aa442094e1232f540fe154a3d195a550792747",
+        inscope: 190,
+        oos: 31,
+        robust: (171, 26),
+        degraded_floor: 156,
+    },
+    // Stage 4: 100 human-written Music Stack Exchange titles, labelled before any
+    // router run (1 in-scope, 86 __none__, 13 ambiguous). Stage 3 options and
+    // tolerance. ROBUST needs Stage 3's OOS proportion (26/31 = 0.84, so 73/86);
+    // the single in-scope title carries no band, so FAIL cannot occur: the band
+    // is reported, and only KILL voids the arm.
+    Arm {
+        name: "musicse",
+        corpus: "state/router-spike/jev/corpora/music-se.json",
+        options: "state/router-spike/jev/options-full.json",
+        sum_tol: SUM_TOL_STAGE3,
+        reversed_options: false,
+        partial_labels: true,
+        corpus_sha256: "d60f80155128cee9809cf20aa1d7a39f8e5f37ead93de1184c43a4adf2571460",
+        inscope: 1,
+        oos: 86,
+        robust: (0, 73),
+        degraded_floor: 0,
     },
 ];
 
@@ -226,7 +291,7 @@ fn num(v: &Value) -> Option<f64> {
 }
 
 /// Fail-closed validation of one response against the options it was asked.
-fn validate(resp: &Value, options: &BTreeSet<String>) -> Result<Answer, Invalid> {
+fn validate(resp: &Value, options: &BTreeSet<String>, sum_tol: f64) -> Result<Answer, Invalid> {
     let c = |m: &str| Invalid::Contract(m.to_string());
     let model = resp
         .get("model")
@@ -270,7 +335,7 @@ fn validate(resp: &Value, options: &BTreeSet<String>) -> Result<Answer, Invalid>
             .ok_or_else(|| c("probability outside [0,1]"))?;
         probabilities.insert(k.clone(), p);
     }
-    if (probabilities.values().sum::<f64>() - 1.0).abs() > SUM_TOL {
+    if (probabilities.values().sum::<f64>() - 1.0).abs() > sum_tol {
         return Err(c("probabilities must sum to 1"));
     }
     let max = probabilities.values().cloned().fold(f64::MIN, f64::max);
@@ -349,6 +414,7 @@ fn ratio(a: usize, b: usize) -> f64 {
 
 /// Scores routed predictions. `None` prediction = invalid response: wrong for
 /// an in-scope prompt, NOT a correct decline for an OOS prompt.
+// @ai:invariant an ambiguous gold label never enters a count or an F1, but its invalid answer still counts toward KILL [T:test conf:0.9 src:jev_router::tests::test_ambiguous_titles_are_routed_but_never_scored]
 fn score(gold: &[&str], pred: &[Option<String>], intents: &[String]) -> Metrics {
     let mut m = Metrics::default();
     let mut tp: BTreeMap<&str, usize> = BTreeMap::new();
@@ -358,6 +424,9 @@ fn score(gold: &[&str], pred: &[Option<String>], intents: &[String]) -> Metrics 
         let p = p.as_deref();
         if p.is_none() {
             m.invalid += 1;
+        }
+        if *g == AMBIGUOUS {
+            continue;
         }
         if *g == NONE {
             m.oos_total += 1;
@@ -408,6 +477,7 @@ fn brier(gold: &[&str], answers: &[Option<Answer>]) -> Option<f64> {
         .iter()
         .zip(answers)
         .filter_map(|(g, a)| a.as_ref().map(|a| (g, a)))
+        .filter(|(g, _)| **g != AMBIGUOUS)
         .map(|(g, a)| {
             a.probabilities
                 .iter()
@@ -435,14 +505,22 @@ struct Setup {
 
 fn setup(root: &Path, arm: &'static Arm) -> Setup {
     let heldout: HeldOut = read_json(&root.join(arm.corpus));
-    let options: Options = read_json(&root.join("state/router-spike/jev/options.json"));
+    let options: Options = read_json(&root.join(arm.options));
     let option_set: BTreeSet<String> = options.criteria.keys().cloned().collect();
     let gold_labels: BTreeSet<String> =
         heldout.prompts.iter().map(|p| p.expected.clone()).collect();
-    assert_eq!(
-        gold_labels, option_set,
-        "options must cover exactly the TEST label set"
-    );
+    if arm.partial_labels {
+        let scored: BTreeSet<String> = gold_labels.into_iter().filter(|l| l != AMBIGUOUS).collect();
+        assert!(
+            scored.is_subset(&option_set),
+            "every scored label must be a requested option"
+        );
+    } else {
+        assert_eq!(
+            gold_labels, option_set,
+            "options must cover exactly the TEST label set"
+        );
+    }
     assert!(
         option_set.len() <= 255,
         "Choice supports at most 255 options"
@@ -458,8 +536,17 @@ fn setup(root: &Path, arm: &'static Arm) -> Setup {
         .iter()
         .filter(|p| p.expected == NONE)
         .count();
+    let ambiguous = heldout
+        .prompts
+        .iter()
+        .filter(|p| p.expected == AMBIGUOUS)
+        .count();
     assert_eq!(
-        (heldout.prompts.len() - oos, oos, corpus_sha.as_str()),
+        (
+            heldout.prompts.len() - oos - ambiguous,
+            oos,
+            corpus_sha.as_str()
+        ),
         (arm.inscope, arm.oos, arm.corpus_sha256),
         "held-out corpus differs from the one the verdict bands were registered against"
     );
@@ -604,7 +691,7 @@ fn validate_all(
         .map(|(p, d)| match receipt.get(&p.id) {
             None => Err(Invalid::Missing),
             Some((got, _)) if got != d => Err(Invalid::DigestMismatch),
-            Some((_, resp)) => validate(resp, &s.option_set),
+            Some((_, resp)) => validate(resp, &s.option_set, s.arm.sum_tol),
         })
         .collect()
 }
@@ -641,7 +728,10 @@ fn report(
     };
     let primary = score(&gold, &routed(0.0), &s.intents);
     let argmax_inscope = {
-        let pairs = gold.iter().zip(&answers).filter(|(g, _)| **g != NONE);
+        let pairs = gold
+            .iter()
+            .zip(&answers)
+            .filter(|(g, _)| **g != NONE && **g != AMBIGUOUS);
         let (n, ok) = pairs.fold((0, 0), |(n, ok), (g, a)| {
             let best = a.as_ref().and_then(|a| {
                 a.probabilities
@@ -762,7 +852,13 @@ fn mock_receipt(s: &Setup) -> BTreeMap<String, (String, Value)> {
         .enumerate()
         .filter(|(i, _)| i % 50 != 7) // one prompt per 50 left unanswered
         .map(|(i, (p, d))| {
-            let pick = if i % 5 == 0 { opts[(i / 5) % opts.len()].clone() } else { p.expected.clone() };
+            let pick = if i % 5 == 0 {
+                opts[(i / 5) % opts.len()].clone()
+            } else if p.expected == AMBIGUOUS {
+                NONE.to_string()
+            } else {
+                p.expected.clone()
+            };
             let rest = (1.0 - 0.6) / (opts.len() - 1) as f64;
             let probs: BTreeMap<&String, f64> = opts.iter().map(|o| (*o, if **o == pick { 0.6 } else { rest })).collect();
             let mut resp = json!({
@@ -804,7 +900,7 @@ fn main() {
             fs::write(out.join("jev-eval.json"), serde_json::to_string_pretty(&r).unwrap() + "\n").expect("write jev-eval.json");
             println!("{}", serde_json::to_string_pretty(&r).unwrap());
         }
-        _ => eprintln!("usage: jev-router plan | mock | score <receipt.jsonl> [--arm base|reversed|fr|es|fresh]   (run from the ix root or set IX_ROOT)"),
+        _ => eprintln!("usage: jev-router plan | mock | score <receipt.jsonl> [--arm base|reversed|fr|es|fresh|full|musicse]   (run from the ix root or set IX_ROOT)"),
     }
 }
 
@@ -827,7 +923,7 @@ mod tests {
 
     #[test]
     fn test_validate_accepts_well_formed_choice() {
-        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts()).unwrap();
+        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts(), SUM_TOL).unwrap();
         assert_eq!(a.choice, "a");
         assert_eq!(a.input_tokens, 10);
     }
@@ -835,15 +931,15 @@ mod tests {
     #[test]
     fn test_validate_rejects_contract_breaks() {
         assert!(matches!(
-            validate(&resp("a", 0.7, 0.2, 0.2), &opts()),
+            validate(&resp("a", 0.7, 0.2, 0.2), &opts(), SUM_TOL),
             Err(Invalid::Contract(_))
         )); // sum != 1
         assert!(matches!(
-            validate(&resp("b", 0.7, 0.2, 0.1), &opts()),
+            validate(&resp("b", 0.7, 0.2, 0.1), &opts(), SUM_TOL),
             Err(Invalid::Contract(_))
         )); // not argmax
         assert!(matches!(
-            validate(&resp("z", 0.7, 0.2, 0.1), &opts()),
+            validate(&resp("z", 0.7, 0.2, 0.1), &opts(), SUM_TOL),
             Err(Invalid::Contract(_))
         )); // unknown option
         let mut r = resp("a", 0.7, 0.2, 0.1);
@@ -851,11 +947,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove(NONE);
-        assert!(matches!(validate(&r, &opts()), Err(Invalid::Contract(_)))); // missing option key
+        assert!(matches!(
+            validate(&r, &opts(), SUM_TOL),
+            Err(Invalid::Contract(_))
+        )); // missing option key
         let mut r = resp("a", 0.7, 0.2, 0.1);
         r["model"] = json!("jev-latest");
         assert_eq!(
-            validate(&r, &opts()),
+            validate(&r, &opts(), SUM_TOL),
             Err(Invalid::WrongModel("jev-latest".into()))
         );
     }
@@ -864,7 +963,10 @@ mod tests {
     fn test_missing_usage_is_invalid_not_zero_cost() {
         let mut r = resp("a", 0.7, 0.2, 0.1);
         r.as_object_mut().unwrap().remove("usage");
-        assert!(matches!(validate(&r, &opts()), Err(Invalid::Contract(_))));
+        assert!(matches!(
+            validate(&r, &opts(), SUM_TOL),
+            Err(Invalid::Contract(_))
+        ));
     }
 
     #[test]
@@ -896,7 +998,7 @@ mod tests {
 
     #[test]
     fn test_exploratory_tau_declines_low_confidence() {
-        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts()).unwrap();
+        let a = validate(&resp("a", 0.7, 0.2, 0.1), &opts(), SUM_TOL).unwrap();
         assert_eq!(route(&a, 0.0), "a");
         assert_eq!(route(&a, 0.9), NONE);
     }
@@ -956,6 +1058,91 @@ mod tests {
     }
 
     #[test]
+    fn test_full_arm_bands_and_rounding_tolerance() {
+        let a = arm("full");
+        assert_eq!(
+            (a.inscope, a.oos, a.options),
+            (190, 31, "state/router-spike/jev/options-full.json")
+        );
+        let m = |ic, od, inv| Metrics {
+            inscope_correct: ic,
+            oos_declined: od,
+            invalid: inv,
+            ..Default::default()
+        };
+        assert_eq!(robustness_verdict(a, &m(171, 26, 0), false), "ROBUST");
+        assert_eq!(robustness_verdict(a, &m(171, 25, 0), false), "DEGRADED");
+        assert_eq!(robustness_verdict(a, &m(155, 31, 0), false), "FAIL");
+        assert_eq!(robustness_verdict(a, &m(190, 31, 3), false), "KILL");
+        // A 2-decimal rounding drift (sum 0.98) is accepted for the full arm only.
+        let drift = resp("a", 0.68, 0.2, 0.1);
+        assert!(validate(&drift, &opts(), a.sum_tol).is_ok());
+        assert!(matches!(
+            validate(&drift, &opts(), arm("fresh").sum_tol),
+            Err(Invalid::Contract(_))
+        ));
+        assert!(matches!(
+            validate(&resp("a", 0.7, 0.2, 0.2), &opts(), a.sum_tol),
+            Err(Invalid::Contract(_))
+        ));
+    }
+
+    #[test]
+    fn test_ambiguous_titles_are_routed_but_never_scored() {
+        let intents = vec!["a".to_string(), "b".to_string()];
+        let pred = [Some("b"), Some("b"), None, Some(NONE)].map(|p| p.map(String::from));
+        let m = score(&["b", AMBIGUOUS, AMBIGUOUS, NONE], &pred, &intents);
+        assert_eq!(
+            (
+                m.inscope_correct,
+                m.inscope_total,
+                m.oos_declined,
+                m.oos_total
+            ),
+            (1, 1, 1, 1)
+        );
+        // An invalid answer still counts toward KILL, ambiguous or not.
+        assert_eq!(m.invalid, 1);
+        // A pick on an ambiguous title is not a false positive.
+        assert_eq!(m.per_intent_f1["b"], 1.0);
+    }
+
+    #[test]
+    fn test_musicse_arm_bands_and_partial_labels() {
+        let a = arm("musicse");
+        assert_eq!(
+            (a.inscope, a.oos, a.options, a.sum_tol),
+            (
+                1,
+                86,
+                "state/router-spike/jev/options-full.json",
+                SUM_TOL_STAGE3
+            )
+        );
+        // Only Stage 4 relaxes the label-set check.
+        assert!(ARMS
+            .iter()
+            .all(|x| x.partial_labels == (x.name == "musicse")));
+        let m = |od, inv| Metrics {
+            oos_declined: od,
+            invalid: inv,
+            ..Default::default()
+        };
+        assert_eq!(robustness_verdict(a, &m(73, 0), false), "ROBUST");
+        assert_eq!(robustness_verdict(a, &m(72, 0), false), "DEGRADED");
+        assert_eq!(robustness_verdict(a, &m(86, 3), false), "KILL");
+    }
+
+    #[test]
+    fn test_musicse_corpus_is_the_registered_one() {
+        // setup() asserts the pinned SHA-256 (labels included) and the counts.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let s = setup(&root, arm("musicse"));
+        assert_eq!(s.heldout.prompts.len(), 100);
+        assert_eq!(s.bodies.len(), 100);
+    }
+
+    #[test]
     fn test_mcnemar_exact_matches_binomial() {
         assert_eq!(mcnemar_exact(0, 0), 1.0);
         // b=0, c=6: 2 * 0.5^6 = 0.03125
@@ -984,7 +1171,7 @@ mod tests {
     fn test_rounded_probabilities_and_float_tokens_are_accepted() {
         let mut r = resp("a", 0.7004, 0.2, 0.1);
         r["usage"]["input_tokens"] = json!(10.0);
-        assert!(validate(&r, &opts()).is_ok());
+        assert!(validate(&r, &opts(), SUM_TOL).is_ok());
     }
 
     #[test]

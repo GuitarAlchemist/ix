@@ -22,10 +22,15 @@ crate-type = ["cdylib"]
 [dependencies]
 # loadable-extension => C-API (C_STRUCT) path: binds DuckDB function pointers at
 # LOAD time, no bundled engine, engine-version-tolerant (declares min_duckdb_version).
-duckdb = { version = "=1.10503.1", default-features = false, features = ["loadable-extension"] }
+duckdb = { version = "=1.10506.1", default-features = false, features = ["loadable-extension"] }
 # The UDF surface, sans bundled engine (ix-duck's `udf` feature => duckdb/vscalar).
 # `code-semantic` adds the tree-sitter code-analysis UDFs (ix_ast_query, …) — it
 # pulls C-compiled grammars, hence opt-in, but the shipped extension carries them.
 ix-duck = { path = "../ix-duck", default-features = false, features = ["udf", "code-semantic"] }
 # Tier-3 OPTIC-K table function: read the production voicing index mmap directly.
 ix-optick = { path = "../ix-optick" }
+
+# Temporary, same as the workspace root: every `zip` below 9.0.3 is yanked and
+# libduckdb-sys still requires `zip = "^6"`. Remove with the root patch.
+[patch.crates-io]
+zip = { git = "https://github.com/zip-rs/zip2", rev = "abfc23d19e5c6038cba27eb3a897bc34c6d5bf86" } # tag v6.0.0

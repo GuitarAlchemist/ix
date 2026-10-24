@@ -47,6 +47,7 @@ Cette section contient des traductions françaises des tutoriels ix. Le code Rus
 | Régression linéaire | Linear regression | Prédiction de valeurs continues |
 | Régression logistique | Logistic regression | Classification via sigmoïde |
 | Descente de gradient | Gradient descent | Optimisation itérative |
+| Colonie de fourmis | Ant colony optimization | Plus courte tournée par pistes de phéromones ([page](optimisation/colonie-de-fourmis.md)) |
 | Impureté de Gini | Gini impurity | Mesure de pureté des nœuds |
 | Perte charnière | Hinge loss | Fonction de perte du SVM |
 | Hyperplan | Hyperplane | Surface de décision linéaire |
