@@ -145,7 +145,9 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
 ```
 
 - `plan` est pur : il renvoie `{generation, actions: [{op: start|stop, service}], noop: [...]}`
-  contre l'état observé, avec la génération qu'un apply obtiendrait.
+  contre l'état observé. Sa `generation` est la génération courante (la dernière appliquée, comme
+  dans le statut), pas celle qu'un apply obtiendrait : un apply lancé maintenant obtient la
+  suivante, sauf si un autre apply passe avant.
 - `apply` incrémente la génération, journalise le document, renvoie aussitôt
   `{generation, epoch, actions}` et agit en arrière-plan. Le statut rapporte `generation`
   (dernière appliquée), `observed_generation` (dernière dont toutes les actions ont été vues
