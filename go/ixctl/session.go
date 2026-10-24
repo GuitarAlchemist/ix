@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 // sessionQueue bounds what one connection may have waiting to be written.
@@ -23,9 +24,10 @@ type session struct {
 	mu   sync.Mutex
 	subs map[int64]*subEntry
 
-	// Test seam, false in production: emulate an older plane that decoded a subscribe before
-	// Request.Markers existed, so it ignores the field and neither acknowledges nor emits markers.
-	runMarkersUnsupported bool
+	// Test seam, nil or false in production: while set, a subscribe is answered as by an older
+	// plane that decoded it before Request.Markers existed, ignoring the field, so it neither
+	// acknowledges nor emits markers. Read at each subscribe, so a test can change it mid-session.
+	runMarkersUnsupported *atomic.Bool
 
 	// Test seams, nil in production: pumpLeaving runs as a pump starts to
 	// leave (before it removes its entry), pumpLeft once it has gone.
@@ -120,7 +122,7 @@ func (s *session) subscribe(req Request) {
 		return
 	}
 	markers := false
-	if !s.runMarkersUnsupported {
+	if s.runMarkersUnsupported == nil || !s.runMarkersUnsupported.Load() {
 		var err error
 		markers, err = wantsRunMarkers(req.Markers)
 		if err != nil {

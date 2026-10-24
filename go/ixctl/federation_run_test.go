@@ -270,6 +270,56 @@ func TestFederationJumpKeepsLaterRunsAndInventsNoMarkers(t *testing.T) {
 	}
 }
 
+// run_markers is the guarantee of the two subscriptions that stand now, not of one they replaced.
+// Inside one live session, b's queue toward the link overflows and the link reopens svc/ alone
+// (a jump: the allowance is zero). While b answers that subscribe as an older plane would, the flag
+// falls though the link stays up and ctl keeps its acknowledgement; once b acknowledges again, the
+// next reopen of svc/ brings it back. Neither step reconnects.
+func TestRunMarkersFollowTheSubscriptionsThatStandNow(t *testing.T) {
+	dirB := t.TempDir()
+	b := newTestInstance(t, fakeSpec(t, "b", nil), dirB)
+	l := newPeerLink(PeerSpec{Name: "b", StateFile: filepath.Join(dirB, "b.json")}, NewHub("a"))
+	l.ctlDelay.Store(int64(500 * time.Microsecond))
+	l.allowFrames.Store(0)
+	b.web.writeDelay.Store(int64(time.Millisecond)) // the overflow is b's queue filling behind its writer, whatever the kernel buffers hold
+	locked := func(f func()) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		f()
+	}
+	var before uint64
+	cancel := startRunLink(t, l, true)
+	defer cancel()
+	locked(func() { before = l.sess })
+	reopenSvc := func(from int, acknowledged bool) PeerStatus {
+		t.Helper()
+		jumps := l.status().Jumps
+		for i := from; i < from+8000; i++ {
+			b.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
+		}
+		return waitLinkStatus(t, l, func(st PeerStatus) bool {
+			return st.State == "up" && st.Live && st.Jumps > jumps && st.RunMarkers == acknowledged
+		})
+	}
+
+	b.web.runMarkersUnsupported.Store(true) // the next subscribes b answers are an older plane's
+	reopenSvc(1, false)
+	locked(func() {
+		if !l.ctl["ctl"].runMarkers || l.ctl["svc/"].runMarkers {
+			t.Fatalf("after reopening svc/ alone: ctl acknowledged %v, svc/ %v; want ctl kept, svc/ not",
+				l.ctl["ctl"].runMarkers, l.ctl["svc/"].runMarkers)
+		}
+	})
+
+	b.web.runMarkersUnsupported.Store(false)
+	reopenSvc(8001, true)
+	locked(func() {
+		if l.sess != before {
+			t.Fatalf("the link reconnected: session %d, was %d", l.sess, before)
+		}
+	})
+}
+
 // An older peer ignores the markers field: the link remains useful for ordinary envelopes, but
 // status does not claim that absence of run markers means no run began or ended.
 func TestFederationReportsRunMarkersNotAcknowledged(t *testing.T) {
