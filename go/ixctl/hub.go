@@ -110,6 +110,10 @@ type Request struct {
 	Desired    *Desired `json:"desired,omitempty"`
 	Service    string   `json:"service,omitempty"`
 	Peer       string   `json:"peer,omitempty"`
+	Wait       string   `json:"wait,omitempty"`
+	Generation uint64   `json:"generation,omitempty"`
+	Run        *RunID   `json:"run,omitempty"`
+	TimeoutMS  int64    `json:"timeout_ms,omitempty"`
 	Sub        int64    `json:"sub,omitempty"` // unsubscribe: the subscription to drop
 	// Probe ops: the node to create, or the name of the node the op is about.
 	Probe *NodeSpec `json:"probe,omitempty"`

@@ -527,6 +527,11 @@ func TestRecentExitsEvictsOldestAndLeavesOutRunInFlight(t *testing.T) {
 			t.Fatalf("recent_exits contains evicted or in-flight run: %+v", record.Run)
 		}
 	}
+	evicted := waitPlane(t, in.plane, Request{
+		Op: "wait", Wait: waitRun, Run: &runs[0], TimeoutMS: testWaitTimeoutMS})
+	if evicted.Outcome != waitUnknown || evicted.Reason != waitEvicted {
+		t.Fatalf("wait for evicted run %+v", evicted)
+	}
 }
 
 // A crash restarts with backoff (200 ms, then doubled), restarts counts it,
