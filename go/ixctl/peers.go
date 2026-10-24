@@ -137,10 +137,11 @@ type pipeSub struct {
 // subscription that completes after the prefix moved on stands down, and a frame of one that is
 // no longer the prefix's is dropped.
 type ctlSub struct {
-	sub   int64
-	gen   uint64
-	live  bool
-	since time.Time
+	sub        int64
+	gen        uint64
+	live       bool
+	runMarkers bool
+	since      time.Time
 }
 
 // isControl says whether prefix is one of the peer's control prefixes, mirrored losslessly by
@@ -177,6 +178,7 @@ func (l *peerLink) status() PeerStatus {
 		st.Services = json.RawMessage("[]")
 	}
 	st.Live = l.up && l.ctl["ctl"].live && l.ctl["svc/"].live
+	st.RunMarkers = l.up && l.ctl["ctl"].runMarkers && l.ctl["svc/"].runMarkers
 	st.Reconciled = l.up && l.listed
 	for _, n := range l.spec.Probes {
 		if l.pipes[n].state == pipeOpening {
@@ -350,7 +352,7 @@ func (l *peerLink) session(ctx context.Context) (bool, error) {
 		}
 		for _, cs := range l.ctl {
 			cs.gen++
-			cs.sub, cs.live = 0, false
+			cs.sub, cs.live, cs.runMarkers = 0, false, false
 		}
 		l.mu.Unlock()
 	}()
@@ -630,7 +632,7 @@ func (l *peerLink) nextControlGen(prefix string) uint64 {
 	defer l.mu.Unlock()
 	cs := l.ctl[prefix]
 	cs.gen++
-	cs.sub, cs.live = 0, false
+	cs.sub, cs.live, cs.runMarkers = 0, false, false
 	return cs.gen
 }
 
@@ -653,7 +655,7 @@ func (l *peerLink) openControl(ctx context.Context, c *Client, relist chan<- str
 		since, jump = nil, true
 	}
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	s, err := c.SubscribeFromLive(sctx, prefix, since, epoch, 1024)
+	s, err := c.SubscribeFromLiveMarkers(sctx, prefix, since, epoch, runMarkers, 1024)
 	cancel()
 	if err != nil {
 		return err
@@ -667,7 +669,7 @@ func (l *peerLink) openControl(ctx context.Context, c *Client, relist chan<- str
 		cancel()
 		return nil
 	}
-	cs.sub, cs.live, cs.since = s.ID, since == nil, time.Now()
+	cs.sub, cs.live, cs.runMarkers, cs.since = s.ID, since == nil, s.Markers == runMarkers, time.Now()
 	if from, had := l.since[prefix]; jump && had && from == s.Head && s.Epoch == l.epoch {
 		jump = false // the live subscription starts where the mirror stopped: nothing skipped
 	}
@@ -735,7 +737,7 @@ func (l *peerLink) reopenControl(ctx context.Context, c *Client, relist chan<- s
 		return // not the prefix's subscription any more
 	}
 	cs.gen++
-	cs.sub, cs.live = 0, false
+	cs.sub, cs.live, cs.runMarkers = 0, false, false
 	gen, epoch := cs.gen, l.epoch
 	var since *uint64
 	if s, ok := l.since[pf.prefix]; ok {
@@ -764,7 +766,7 @@ func (l *peerLink) jumpControl(ctx context.Context, c *Client, relist chan<- str
 		return
 	}
 	cs.gen++
-	cs.sub, cs.live = 0, false
+	cs.sub, cs.live, cs.runMarkers = 0, false, false
 	if prefix == "ctl" {
 		l.listed = false
 		l.unlisted++
@@ -1195,11 +1197,17 @@ func (q *pipeQueue) took(pf peerFrame) { q.bytes.Add(-pf.weight()) }
 
 // mirror republishes one of the peer's own envelopes. Envelopes the peer
 // itself mirrored (another origin, or a peer/ channel) are never forwarded.
-// A frame without a seq or an epoch is malformed (the hub assigns seqs from 1,
-// every boot has an epoch): it has no provenance to mirror and ends the session.
+// A frame without source provenance, or with an explicit but incomplete run, is malformed and
+// ends the session. A missing run is accepted for an older peer; no run is ever invented here.
 func (l *peerLink) mirror(sess uint64, origin, prefix string, env *Envelope) error {
 	if env.Seq == 0 || env.Epoch == "" {
 		return fmt.Errorf("frame on %s without provenance (seq %d, epoch %q)", prefix, env.Seq, env.Epoch)
+	}
+	if env.Run != nil && (env.Run.Origin == "" || env.Run.Epoch == "" || env.Run.Seq == 0) {
+		return fmt.Errorf(
+			"frame on %s with malformed run (origin %q, epoch %q, seq %d)",
+			prefix, env.Run.Origin, env.Run.Epoch, env.Run.Seq,
+		)
 	}
 	l.noteBoot(sess, env.Epoch) // a boot the status and the backlog did not name is marked here, first
 	l.mu.Lock()
@@ -1211,7 +1219,7 @@ func (l *peerLink) mirror(sess uint64, origin, prefix string, env *Envelope) err
 	if env.Origin != origin || strings.HasPrefix(env.Ch, "peer/") {
 		return nil
 	}
-	l.hub.Mirror("peer/"+l.spec.Name+"/"+env.Ch, env.Origin, env.T, env.Ev, env.Seq, env.Epoch)
+	l.hub.Mirror("peer/"+l.spec.Name+"/"+env.Ch, env.Origin, env.T, env.Ev, env.Seq, env.Epoch, env.Run)
 	return nil
 }
 

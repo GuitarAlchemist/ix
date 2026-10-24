@@ -226,6 +226,31 @@ func TestMemSessionOverflowGap(t *testing.T) {
 	}
 }
 
+// A mirror copies the source run even when it is structurally malformed. The peer link is the
+// validation boundary; the hub's mirror path must never reinterpret seq 0 as "make a local run".
+func TestMirrorKeepsRunWithoutSynthesizingIt(t *testing.T) {
+	h := NewHub("a")
+	for _, source := range []RunID{
+		{Origin: "b", Epoch: "source-boot", Seq: 17},
+		{},
+	} {
+		env := h.Mirror(
+			"peer/b/svc/x", "b", 123, Event{Kind: "log", Data: json.RawMessage(`{"line":"x"}`)},
+			9, "source-boot", &source,
+		)
+		if env.Run == nil || *env.Run != source {
+			t.Fatalf("mirrored run %+v, want source %+v", env.Run, source)
+		}
+		var wire Envelope
+		if err := json.Unmarshal(env.Raw(), &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire.Run == nil || *wire.Run != source {
+			t.Fatalf("wire run %+v, want source %+v: %s", wire.Run, source, env.Raw())
+		}
+	}
+}
+
 // hubOnly is a Broker with no plane behind it.
 type hubOnly struct{ *Hub }
 

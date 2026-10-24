@@ -290,8 +290,13 @@ slice 2). A subscriber with `since` replays from the ring (4096 envelopes per in
 `service.starting` sequence on its origin plane. It is fixed before output, immutable, and unique
 within an origin and epoch. Every `svc/<name>` envelope of the attempt and every `ctl` service
 event attributable to it carries the same `run`. An automatic restart gets another run while
-keeping the generation that requested the service. A mirrored envelope (`peer/<name>/…`) does
-not carry it or run markers yet (#452).
+keeping the generation that requested the service. A mirrored envelope (`peer/<name>/…`) keeps
+the source `run` unchanged, separately from its local `seq` / `epoch` and source `src_seq` /
+`src_epoch`. The link requests run markers on both control subscriptions;
+`status.peers[].run_markers` is true only when the current peer session acknowledged both; while
+it is false (an older peer, a link down or reopening), a mirror without markers says nothing about
+whether a run began or ended. Local subscribers still receive run markers only when they ask for
+them.
 
 The plane puts two ordinary envelopes in the source `svc/<name>` stream. `ixctl.run.begin`
 has `generation` and precedes every worker line. `ixctl.run.end` follows every line the plane

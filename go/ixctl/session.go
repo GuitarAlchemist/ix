@@ -23,6 +23,10 @@ type session struct {
 	mu   sync.Mutex
 	subs map[int64]*subEntry
 
+	// Test seam, false in production: emulate an older plane that decoded a subscribe before
+	// Request.Markers existed, so it ignores the field and neither acknowledges nor emits markers.
+	runMarkersUnsupported bool
+
 	// Test seams, nil in production: pumpLeaving runs as a pump starts to
 	// leave (before it removes its entry), pumpLeft once it has gone.
 	pumpLeaving, pumpLeft func(id int64)
@@ -115,10 +119,14 @@ func (s *session) subscribe(req Request) {
 		s.reply(req.ID, nil, badRequest("subscribe is local: a peer's channels are mirrored under peer/%s/", req.Peer))
 		return
 	}
-	markers, err := wantsRunMarkers(req.Markers)
-	if err != nil {
-		s.reply(req.ID, nil, err)
-		return
+	markers := false
+	if !s.runMarkersUnsupported {
+		var err error
+		markers, err = wantsRunMarkers(req.Markers)
+		if err != nil {
+			s.reply(req.ID, nil, err)
+			return
+		}
 	}
 	if err := resolveBookmark(s.ctx, s.b, &req); err != nil {
 		s.reply(req.ID, nil, err)

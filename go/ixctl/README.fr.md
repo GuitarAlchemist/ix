@@ -309,8 +309,13 @@ comme un lecteur chez l'origine (S2 tranche 2). Un abonné avec `since` rejoue d
 `service.starting` de cette tentative sur son plan d'origine. Il est fixé avant toute sortie,
 immuable et unique dans une origine et un epoch. Chaque enveloppe `svc/<nom>` de la tentative et
 chaque événement de service `ctl` qui lui est attribuable portent le même `run`. Un redémarrage
-automatique reçoit une autre exécution tout en gardant la génération qui a demandé le service.
-Une enveloppe reflétée (`peer/<nom>/…`) ne le porte pas encore, ni les marqueurs d'exécution (#452).
+automatique reçoit une autre exécution tout en gardant la génération qui a demandé le service. Une
+enveloppe reflétée (`peer/<nom>/…`) garde le `run` source inchangé, séparément de ses `seq` /
+`epoch` locaux et des `src_seq` / `src_epoch` de la source. Le lien demande les marqueurs sur ses
+deux abonnements de contrôle ; `status.peers[].run_markers` n'est vrai que si la session courante
+du pair les a acquittés tous les deux ; tant qu'il est faux (un pair plus ancien, un lien coupé ou
+en réouverture), un reflet sans marqueurs ne dit rien de l'ouverture ni de la fin d'une exécution.
+Les abonnés locaux ne les reçoivent que s'ils les demandent.
 
 Le plan place deux enveloppes ordinaires dans le flux source `svc/<nom>`. `ixctl.run.begin`
 porte `generation` et précède toute ligne du worker. `ixctl.run.end` suit toute ligne transmise
