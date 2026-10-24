@@ -223,8 +223,12 @@ service stays malformed. `not-launched.current_run`
 proves only what was current at admission and never names a run launched by that generation.
 For exact-run waits, `evicted` means the same-epoch run is neither current nor in
 `recent_exits`; another run's exit is never substituted. A `?peer=` wait is forwarded to the
-origin plane and answered there. Rust typed wrappers, state-file following across restart, the
-number-only wait deprecation and IXQL mapping are B-2b, not this slice.
+origin plane and answered there. The Rust client wraps the operation as
+`Ctl::wait_generation_outcome`, `Ctl::wait_launch` and `Ctl::wait_run`, one closed outcome type
+per wait; a handle made with `Ctl::from_state` follows the state file, so a wait cut by a hard
+stop is asked again of the new boot and ends `unknown (other-epoch)`. `wait_generation(g)`, by
+number alone, is deprecated in favour of `wait_generation_of`. IXQL calls the operation as
+`ix.ctl.wait(wait: "generation"|"launch"|"run", ...)`.
 
 A job's `desired` stays `running` after it ends, so applying the same document again runs it
 again; the client waits on the end of the run *a generation started*
