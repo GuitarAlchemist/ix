@@ -72,6 +72,8 @@ struct Plane {
     wait_reply: Option<(u16, Value)>,
     /// Accept and log the next wait, then cut its connection before an HTTP answer.
     drop_wait: bool,
+    /// The body of every plane-side wait this plane answered, in order.
+    wait_bodies: Vec<Value>,
     /// What `GET /v1/events` streams: `pings` keep-alive comments `ping_every` apart, the
     /// envelopes after `since` (none without a `since`: the real plane starts live), then `gap`
     /// if set, then the end of the stream.
@@ -288,6 +290,7 @@ impl Plane {
             },
 
             ("POST", "/v1/wait") => {
+                self.wait_bodies.push(doc.clone());
                 let complete_run = doc.get("run").is_some_and(|run| {
                     run.get("origin")
                         .and_then(Value::as_str)
@@ -711,6 +714,7 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         stall: Duration::ZERO,
         wait_reply: None,
         drop_wait: false,
+        wait_bodies: Vec::new(),
         events: Vec::new(),
         gap: None,
         pings: 1,
@@ -2095,6 +2099,13 @@ fn typed_wait_follows_state_across_restart(name: &str, cut_connection: bool) {
         .unwrap()
         .log
         .contains(&"POST /v1/wait".to_string()));
+    // The new boot is asked about the original run, never about a run of its own.
+    let asked = new_plane.lock().unwrap().wait_bodies.clone();
+    assert_eq!(1, asked.len(), "{asked:?}");
+    assert_eq!(
+        (&json!("run"), &run_id_value(&run)),
+        (&asked[0]["wait"], &asked[0]["run"])
+    );
     let old_waits = old_plane
         .lock()
         .unwrap()
@@ -2120,6 +2131,78 @@ fn typed_wait_follows_state_after_a_cut_connection() {
 #[test]
 fn typed_wait_follows_state_after_shutdown() {
     typed_wait_follows_state_across_restart("shutdown", false);
+}
+
+// A wait that fails more than once keeps the one deadline it started with. The old boot cuts
+// the wait, the state file then names the new boot with the old token (a 401), then with its
+// own, and the new boot stalls: it is asked for what is left of the budget, not the whole
+// timeout, and the wait ends by its deadline plus one reply grace, however many times it
+// reconnected. (A second failure on an address where nothing listens would not do: Windows
+// takes about 2 s to refuse a loopback connection, the whole budget here.)
+#[test]
+fn a_plane_side_wait_keeps_one_deadline_across_successive_failures() {
+    let (old_ctl, old_plane) = plane();
+    old_plane.lock().unwrap().drop_wait = true;
+    let (new_ctl, new_plane) = plane();
+    let old_token = "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0";
+    let state = tmp(&format!(
+        "ix-ctl-plane-wait-deadline-{}.json",
+        std::process::id()
+    ));
+    let state_doc =
+        |addr: &str, token: &str| json!({"name": "fake", "addr": addr, "pid": 1, "token": token});
+    std::fs::write(&state, state_doc(old_ctl.addr(), TOKEN).to_string()).unwrap();
+    let ctl = Ctl::from_state(&state).unwrap();
+    let rewrite = std::thread::spawn({
+        let state = state.clone();
+        let old_plane = old_plane.clone();
+        let new_plane = new_plane.clone();
+        let new_addr = new_ctl.addr().to_string();
+        move || {
+            for _ in 0..200 {
+                if old_plane
+                    .lock()
+                    .unwrap()
+                    .log
+                    .iter()
+                    .any(|entry| entry == "POST /v1/wait")
+                {
+                    std::fs::write(&state, state_doc(&new_addr, old_token).to_string()).unwrap();
+                    std::thread::sleep(Duration::from_millis(300));
+                    // The fake holds back every answer, a 401 too: stall only once it is sent.
+                    new_plane.lock().unwrap().stall = Duration::from_secs(5);
+                    std::fs::write(&state, state_doc(&new_addr, TOKEN).to_string()).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("the old plane never received the wait");
+        }
+    });
+    let run = RunId {
+        origin: "fake".into(),
+        epoch: "0ld0ld0ld0ld".into(),
+        seq: 3,
+    };
+    let timeout = Duration::from_secs(1);
+    let began = Instant::now();
+    let err = ctl.wait_run(&run, timeout, None).unwrap_err();
+    let took = began.elapsed();
+    rewrite.join().unwrap();
+    let _ = std::fs::remove_file(&state);
+    assert!(matches!(err, CtlError::Io(_)), "{err}");
+    assert!(
+        took >= timeout && took < timeout + Duration::from_millis(250 + 200),
+        "{took:?}"
+    );
+    let asked = new_plane.lock().unwrap().wait_bodies.clone();
+    assert_eq!(1, asked.len(), "{asked:?}");
+    let given = asked[0]["timeout_ms"].as_u64().unwrap();
+    assert!(
+        given <= 700,
+        "the new boot was given {given} ms of a 1000 ms wait"
+    );
+    assert_eq!(&run_id_value(&run), &asked[0]["run"]);
 }
 
 // Through a peer, a 503 is the link to that peer, not this plane shutting down: the state file
