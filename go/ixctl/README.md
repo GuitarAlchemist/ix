@@ -197,7 +197,9 @@ One operation owns all three reducers. Over HTTP it is `POST /v1/wait[?peer=NAME
 A generation wait uses `epoch,generation`; a launch wait adds `service`; an exact-run wait
 uses only `run`. A launch wait is valid only when that service's apply result was
 `start-pending` or `not-launched`; asking it of `stop-pending`, of `noop` or of a service the
-generation did not name is malformed.
+generation did not name is malformed. So is a generation or launch wait on a generation this
+boot has not issued (above `status.generation`): the plane answers 400 at once instead of
+waiting for it to exist.
 `timeout_ms` is required, must be positive, and may not exceed
 `status.limits.wait_timeout_ms` (currently 60000). At most `status.limits.waiters`
 (currently 64) waits are in flight on one plane. A request above the timeout cap is 400; a
@@ -221,7 +223,9 @@ For launch waits the plane retains the newest 16 admission results per service, 
 `ixctl.run.begin`; a restart under the same generation is a later run and never replaces it.
 `evicted` means that exact generation/service result is no longer retained: it answers only a
 generation no newer than the newest record dropped, so a generation that never named the
-service stays malformed. `not-launched.current_run`
+service stays malformed. A `stop-pending` or `noop` result is malformed only while it is
+retained: once evicted, the wait is `unknown (evicted)`, as the plane no longer knows what the
+result was. `not-launched.current_run`
 proves only what was current at admission and never names a run launched by that generation.
 For exact-run waits, `evicted` means the same-epoch run is neither current nor in
 `recent_exits`; another run's exit is never substituted. A `?peer=` wait is forwarded to the
@@ -258,7 +262,7 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
 | `POST /v1/bookmark/set` | Body `{"bookmark": NAME, "since"?: SEQ, "epoch"?: E, "note"?: TEXT, "peer"?: NAME}`. |
 | `POST /v1/bookmark/remove` | Body `{"bookmark": NAME, "peer"?: NAME}`. |
-| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). `markers=run` includes run markers and is acknowledged by `Ixctl-Markers: run`. A reader that falls behind the ring while reading gets a `gap` event (`overflow`) and the stream ends. A resume point the ring no longer holds (`since-too-old`), or one from another boot (`epoch-changed`, `since-ahead`), gets a `gap` event first, then the stream goes on from the oldest envelope the ring still holds. |
+| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). `markers=run` includes run markers and is acknowledged by `Ixctl-Markers: run`. A reader that falls behind the ring while reading gets a `gap` event (`overflow`) and the stream ends. A resume point the ring no longer holds (`since-too-old`), or one from another boot (`epoch-changed`, `since-ahead`), gets a `gap` event first, then the stream goes on from the oldest envelope the ring still holds. `since-ahead` is for a `since` past the head that names no `epoch`; a `since` naming this boot's epoch is trusted even past the head: no gap, no replay, the stream goes live from the head. |
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),

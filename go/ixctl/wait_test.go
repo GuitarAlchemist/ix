@@ -181,6 +181,53 @@ func TestLaunchWaitOnAServiceTheGenerationDidNotNameIsRefused(t *testing.T) {
 	}
 }
 
+// A generation or launch wait on a generation this boot has not issued is refused at once:
+// the plane never waits for a generation to come into being. Both #454 consumers read the
+// README as if it would. Pins present behaviour.
+func TestWaitOnAGenerationNotYetIssuedIsRefused(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod", restart: restartNever}), "")
+	c := dial(t, in)
+	applied := applyWS(t, c, running("pod"))
+	next := applied.Generation + 1
+	for _, body := range []map[string]any{
+		{"wait": waitGeneration, "epoch": applied.Epoch, "generation": next, "timeout_ms": testWaitTimeoutMS},
+		{"wait": waitLaunch, "epoch": applied.Epoch, "generation": next, "service": "pod",
+			"timeout_ms": testWaitTimeoutMS},
+	} {
+		start := time.Now()
+		code, _, raw := httpDo(t, in, "POST", "/v1/wait", body, nil)
+		if took := time.Since(start); code != 400 || took > time.Second {
+			t.Fatalf("%s wait on generation %d, one past the current: %d %s after %v", body["wait"], next, code, raw, took)
+		}
+	}
+}
+
+// A launch wait on a noop result is refused while the plane keeps that admission result;
+// once newer results evict it the plane can no longer tell what it was, and the wait is
+// unknown (evicted) like any dropped result. Pins present behaviour.
+func TestLaunchWaitOnANoopIsRefusedUntilEvicted(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod", restart: restartNever}), "")
+	c := dial(t, in)
+	noop := applyWS(t, c, desiredOf(desiredStopped, "pod"))
+	if noop.Results["pod"].Result != applyNoop {
+		t.Fatalf("apply of a stopped service %+v", noop)
+	}
+	body := map[string]any{"wait": waitLaunch, "epoch": noop.Epoch, "generation": noop.Generation,
+		"service": "pod", "timeout_ms": testWaitTimeoutMS}
+	if code, _, raw := httpDo(t, in, "POST", "/v1/wait", body, nil); code != 400 {
+		t.Fatalf("launch wait on a retained noop: %d %s", code, raw)
+	}
+	for i := 0; i < keptApplyResults; i++ {
+		applyWS(t, c, desiredOf(desiredStopped, "pod"))
+	}
+	code, _, raw := httpDo(t, in, "POST", "/v1/wait", body, nil)
+	var reply WaitReply
+	if err := json.Unmarshal(raw, &reply); err != nil || code != 200 ||
+		reply.Outcome != waitUnknown || reply.Reason != waitEvicted {
+		t.Fatalf("launch wait on an evicted noop: %d %s (%v)", code, raw, err)
+	}
+}
+
 func TestWaitsFromAnotherBootAreUnknown(t *testing.T) {
 	stateDir := t.TempDir()
 	spec := fakeSpec(t, "local", nil, fakeSvc{name: "pod", restart: restartNever})

@@ -210,7 +210,9 @@ L'attente de génération utilise `epoch,generation` ; celle de lancement ajoute
 celle d'une exécution exacte utilise seulement `run`. L'attente de lancement n'est valide que
 si le résultat d'apply du service était `start-pending` ou `not-launched` ; la demander à
 `stop-pending`, à `noop` ou pour un service que la génération ne nommait pas est une requête
-mal formée. `timeout_ms` est obligatoire, strictement
+mal formée. De même pour une attente de génération ou de lancement sur une génération que ce
+démarrage n'a pas encore émise (au-delà de `status.generation`) : le plan répond 400 aussitôt
+au lieu d'attendre qu'elle existe. `timeout_ms` est obligatoire, strictement
 positif, et ne peut dépasser `status.limits.wait_timeout_ms` (60000 actuellement). Un plan
 accepte au plus `status.limits.waiters` attentes simultanées (64 actuellement). Dépasser le
 plafond de durée vaut 400 ; manquer de place vaut 429 (ou `ok:false` sur WebSocket).
@@ -235,7 +237,9 @@ qu'`ixctl.run.begin` l'annonce ; un redémarrage sous la même génération est 
 ultérieure et ne la remplace jamais. `evicted` signifie que ce résultat génération/service
 exact n'est plus gardé : il ne répond qu'à une génération pas plus récente que le plus récent
 enregistrement écarté, si bien qu'une génération qui n'a jamais nommé le service reste une
-requête mal formée.
+requête mal formée. Un résultat `stop-pending` ou `noop` n'est une requête mal formée que tant
+qu'il est gardé : une fois évincé, l'attente répond `unknown (evicted)`, puisque le plan ne
+sait plus quel était ce résultat.
 `not-launched.current_run` prouve seulement ce qui était courant à l'admission et ne nomme
 jamais une exécution lancée par cette génération. Pour l'attente d'exécution exacte, `evicted`
 signifie que l'exécution du même epoch n'est ni courante ni dans `recent_exits` ; la sortie
@@ -275,7 +279,7 @@ au plus.
 | `GET /v1/bookmark[?peer=]` | Les signets (`bookmark.list`, ci-dessous). |
 | `POST /v1/bookmark/set` | Corps `{"bookmark": NOM, "since"?: SEQ, "epoch"?: E, "note"?: TEXTE, "peer"?: NOM}`. |
 | `POST /v1/bookmark/remove` | Corps `{"bookmark": NOM, "peer"?: NOM}`. |
-| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). `markers=run` inclut les marqueurs et est acquitté par `Ixctl-Markers: run`. Un lecteur qui prend du retard sur l'anneau pendant la lecture reçoit un événement `gap` (`overflow`) et le flux se termine. Un point de reprise que l'anneau ne contient plus (`since-too-old`), ou qui vient d'un autre démarrage (`epoch-changed`, `since-ahead`), reçoit d'abord un événement `gap`, puis le flux continue depuis la plus ancienne enveloppe que l'anneau contient encore. |
+| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). `markers=run` inclut les marqueurs et est acquitté par `Ixctl-Markers: run`. Un lecteur qui prend du retard sur l'anneau pendant la lecture reçoit un événement `gap` (`overflow`) et le flux se termine. Un point de reprise que l'anneau ne contient plus (`since-too-old`), ou qui vient d'un autre démarrage (`epoch-changed`, `since-ahead`), reçoit d'abord un événement `gap`, puis le flux continue depuis la plus ancienne enveloppe que l'anneau contient encore. `since-ahead` vaut pour un `since` au-delà de la tête qui ne nomme pas d'`epoch` ; un `since` qui nomme l'epoch de ce démarrage est cru même au-delà de la tête : ni gap ni rejeu, le flux part en direct depuis la tête. |
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
 Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclaré), 401 (jeton),
