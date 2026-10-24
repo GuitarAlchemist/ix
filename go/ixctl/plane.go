@@ -232,11 +232,15 @@ type PeerStatus struct {
 	// up, the peer's probe list was applied this session and no wanted pipe is still opening, so
 	// the mirrored lifecycle and pipes stand for the peer's state. Degraded is their conjunction
 	// denied: lifted only when the flow is live and the state reconciled (criterion 7 of ix#408).
+	// RunMarkers says the current session's ctl and svc/ subscriptions both acknowledged
+	// "markers":"run". It stays false while down, during a reopen, or with an older plane that
+	// ignores the request; absence of markers from such a peer is therefore not evidence of absence.
 	// Jumps counts the catch-ups the link gave up on since it was made, each marked `jumped` on
 	// the peer's mirrored ctl; absent while zero.
 	Live       bool   `json:"live"`
 	Reconciled bool   `json:"reconciled"`
 	Degraded   bool   `json:"degraded"`
+	RunMarkers bool   `json:"run_markers"`
 	Jumps      uint64 `json:"jumps,omitempty"`
 }
 

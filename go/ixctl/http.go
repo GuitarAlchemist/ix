@@ -37,6 +37,11 @@ type server struct {
 	// the kernel.
 	writeDelay atomic.Int64
 
+	// runMarkersUnsupported is a test seam: while set, each WebSocket subscribe is answered like
+	// an older plane's, which ignores the unknown markers request, neither acknowledging nor
+	// delivering markers.
+	runMarkersUnsupported atomic.Bool
+
 	ctx    context.Context // cancelled at shutdown: ends SSE streams and WebSockets
 	cancel context.CancelFunc
 }

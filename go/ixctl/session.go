@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 // sessionQueue bounds what one connection may have waiting to be written.
@@ -22,6 +23,11 @@ type session struct {
 
 	mu   sync.Mutex
 	subs map[int64]*subEntry
+
+	// Test seam, nil or false in production: while set, a subscribe is answered as by an older
+	// plane that decoded it before Request.Markers existed, ignoring the field, so it neither
+	// acknowledges nor emits markers. Read at each subscribe, so a test can change it mid-session.
+	runMarkersUnsupported *atomic.Bool
 
 	// Test seams, nil in production: pumpLeaving runs as a pump starts to
 	// leave (before it removes its entry), pumpLeft once it has gone.
@@ -115,10 +121,14 @@ func (s *session) subscribe(req Request) {
 		s.reply(req.ID, nil, badRequest("subscribe is local: a peer's channels are mirrored under peer/%s/", req.Peer))
 		return
 	}
-	markers, err := wantsRunMarkers(req.Markers)
-	if err != nil {
-		s.reply(req.ID, nil, err)
-		return
+	markers := false
+	if s.runMarkersUnsupported == nil || !s.runMarkersUnsupported.Load() {
+		var err error
+		markers, err = wantsRunMarkers(req.Markers)
+		if err != nil {
+			s.reply(req.ID, nil, err)
+			return
+		}
 	}
 	if err := resolveBookmark(s.ctx, s.b, &req); err != nil {
 		s.reply(req.ID, nil, err)
