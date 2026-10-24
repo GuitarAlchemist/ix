@@ -147,12 +147,34 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
 - `plan` est pur : il renvoie `{generation, actions: [{op: start|stop, service}], noop: [...]}`
   contre l'état observé, avec la génération qu'un apply obtiendrait.
 - `apply` incrémente la génération, journalise le document, renvoie aussitôt
-  `{generation, epoch, actions}` et agit en arrière-plan. Le statut rapporte `generation`
+  `{generation, epoch, actions, results}` et agit en arrière-plan. `results` est un objet
+  indexé exactement par les services nommés dans le document ; chaque valeur porte `result`
+  pris dans l'ensemble fermé ci-dessous. Un service omis n'a aucun résultat et reste inchangé.
+  Le statut rapporte `generation`
   (dernière appliquée), `observed_generation` (dernière dont toutes les actions ont été vues
   jusqu'au bout) et `settled_generation` (dernière dont chaque service a atteint son état
   désiré) ; `diverged` nomme la génération que le plan a abandonnée, avec le service et la
   raison, et `failed` garde les échecs de lancement récents par génération, pour qu'un apply
   ultérieur ne cache pas un échec antérieur.
+- Chaque résultat vient d'un même instantané d'admission, après validation et pendant que le plan
+  calcule les actions et incrémente la génération, avant d'en mettre une en file :
+
+  | Le document dit | Service à l'admission | Résultat | Action |
+  |---|---|---|---|
+  | `running` | le desired courant est `running` et l'état vaut `starting`, `running` ou le délai de redémarrage (`restarting`) | `{"result":"not-launched","current_run": RUN_OU_NULL}` | aucune |
+  | `running` | `stopped` ou `failed`, ou un desired non-running est encore en cours d'exécution | `{"result":"start-pending"}` | `start` |
+  | `stopped` | `stopped` | `{"result":"noop"}` | aucune |
+  | `stopped` | `starting`, `running`, `restarting` ou `failed` | `{"result":"stop-pending"}` | `stop` |
+
+  Un démarrage en file est `starting` : `current_run` est l'exécution précédente, ou null
+  avant l'annonce de la première. Pendant le délai de redémarrage, c'est l'exécution qui vient de
+  finir. Le `{origin, epoch, seq}` opaque prouve seulement quelle exécution était courante à
+  l'admission, pas qu'elle existe encore à l'arrivée de la réponse. Ce n'est jamais une
+  exécution lancée par cet apply : `not-launched` prouve que cette génération n'annonce aucune
+  nouvelle exécution. Ces résultats sont des valeurs que le plan répond ; un apply refusé (un
+  document invalide, un service inconnu, un plan qui s'arrête, une erreur de pair) est une erreur
+  et ne porte aucun `results`. Ils n'attendent pas ; les opérations d'attente côté plan
+  appartiennent à une tranche ultérieure.
 - `epoch` nomme le démarrage auquel ces générations appartiennent. Un client qui attend une
   génération devrait nommer l'epoch aussi, pour qu'un redémarrage du plan termine l'attente au
   lieu de laisser passer la génération de même numéro du nouveau démarrage pour l'ancienne.

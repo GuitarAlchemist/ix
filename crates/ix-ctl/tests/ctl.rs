@@ -22,6 +22,10 @@ const PROBE: &str = include_str!("../examples/probe.ixql");
 const TOKEN: &str = "5f1c0de2a9b84e7d93c6f0a1b2c3d4e5f60718293a4b5c6d7e8f9011223344aa";
 /// How long the fake takes to observe an applied generation.
 const CONVERGE: Duration = Duration::from_millis(120);
+
+/// The fake plane's plan: the actions, the noop services, and the results keyed by service.
+type Planned = (Vec<Value>, Vec<String>, serde_json::Map<String, Value>);
+
 /// How long a started pod takes to report its nodes.
 const NODES: Duration = Duration::from_millis(200);
 /// How long the fake's supervisor takes to launch a service after the apply that asked.
@@ -153,7 +157,7 @@ impl Plane {
     }
 
     /// The actions a desired-state document asks for; any undeclared name refuses all of it.
-    fn plan(&self, doc: &Value) -> Result<(Vec<Value>, Vec<String>), String> {
+    fn plan(&self, doc: &Value) -> Result<Planned, String> {
         let wanted = doc
             .get("services")
             .and_then(Value::as_object)
@@ -161,18 +165,43 @@ impl Plane {
         if let Some(name) = wanted.keys().find(|n| !self.services.contains_key(*n)) {
             return Err(format!("service `{name}` is not declared"));
         }
-        let (mut actions, mut noop) = (Vec::new(), Vec::new());
+        let (mut actions, mut noop, mut results) = (Vec::new(), Vec::new(), serde_json::Map::new());
         for (name, want) in wanted {
             let svc = &self.services[name];
             let running = svc.since.is_some() || svc.launch_at.is_some();
-            match (want.get("state").and_then(Value::as_str), running) {
-                (Some("running"), false) => actions.push(json!({"op": "start", "service": name})),
-                (Some("stopped"), true) => actions.push(json!({"op": "stop", "service": name})),
-                (Some("running" | "stopped"), _) => noop.push(name.clone()),
+            let current_run = if svc.since.is_some() {
+                json!({
+                    "origin": "fake",
+                    "epoch": self.epoch.as_deref().unwrap_or(""),
+                    "seq": svc.start_gen
+                })
+            } else {
+                Value::Null
+            };
+            let (action, result) = match (want.get("state").and_then(Value::as_str), running) {
+                (Some("running"), false) => (
+                    Some(json!({"op": "start", "service": name})),
+                    json!({"result": "start-pending"}),
+                ),
+                (Some("stopped"), true) => (
+                    Some(json!({"op": "stop", "service": name})),
+                    json!({"result": "stop-pending"}),
+                ),
+                (Some("running"), true) => (
+                    None,
+                    json!({"result": "not-launched", "current_run": current_run}),
+                ),
+                (Some("stopped"), false) => (None, json!({"result": "noop"})),
                 _ => return Err(format!("`{name}`: state is `running` or `stopped`")),
+            };
+            results.insert(name.clone(), result);
+            if let Some(action) = action {
+                actions.push(action);
+            } else {
+                noop.push(name.clone());
             }
         }
-        Ok((actions, noop))
+        Ok((actions, noop, results))
     }
 
     fn stop(&mut self, name: &str) -> Value {
@@ -223,14 +252,14 @@ impl Plane {
         match (method, path) {
             ("GET", "/v1/status") => (200, self.status()),
             ("POST", "/v1/plan") => match self.plan(&doc) {
-                Ok((actions, noop)) => (
+                Ok((actions, noop, _)) => (
                     200,
                     json!({"generation": self.generation, "actions": actions, "noop": noop}),
                 ),
                 Err(e) => (400, json!({ "error": e })),
             },
             ("POST", "/v1/apply") => match self.plan(&doc) {
-                Ok((actions, _)) => {
+                Ok((actions, _, results)) => {
                     self.generation += 1;
                     for a in &actions {
                         let name = a["service"].as_str().unwrap();
@@ -244,7 +273,8 @@ impl Plane {
                         }
                     }
                     self.pending = Some((self.generation, Instant::now()));
-                    let mut reply = json!({"generation": self.generation, "actions": actions});
+                    let mut reply = json!({
+                        "generation": self.generation, "actions": actions, "results": results});
                     if let Some(e) = &self.epoch {
                         reply["epoch"] = json!(e);
                     }
@@ -889,6 +919,32 @@ fn a_missing_or_incomplete_state_file_is_refused() {
     let err = Ctl::from_state(&tokenless).unwrap_err();
     let _ = std::fs::remove_file(&tokenless);
     assert!(err.to_string().contains("no `token`"), "{err}");
+}
+
+#[test]
+fn apply_returns_the_planes_admission_results_unchanged() {
+    let (ctl, _plane) = plane();
+    let doc = json!({"services": {"pod-a": {"state": "running"}}});
+    let first = ctl.apply(&doc, None).unwrap();
+    assert_eq!(
+        json!({"pod-a": {"result": "start-pending"}}),
+        first["results"]
+    );
+    let generation = first["generation"].as_u64().unwrap();
+    ctl.wait_generation(generation, Duration::from_secs(2))
+        .expect("the fake launches the run");
+    let second = ctl.apply(&doc, None).unwrap();
+    assert_eq!(
+        json!({
+            "pod-a": {
+                "result": "not-launched",
+                "current_run": {
+                    "origin": "fake", "epoch": "3f9a1c0b7d2e", "seq": generation
+                }
+            }
+        }),
+        second["results"]
+    );
 }
 
 #[test]

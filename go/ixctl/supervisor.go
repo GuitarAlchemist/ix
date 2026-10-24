@@ -230,6 +230,14 @@ func (s *service) observed() (desired, state string) {
 	return s.desired, s.state
 }
 
+func (s *service) admissionObservationLocked() (desired, state string, currentRun *RunID) {
+	if s.hasRun {
+		run := s.curRun
+		currentRun = &run
+	}
+	return s.desired, s.state, currentRun
+}
+
 func (s *service) status() ServiceStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
