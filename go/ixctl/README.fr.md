@@ -159,9 +159,10 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
 - `stop` arrête un service hors bande et répond une fois son arbre disparu :
   `{stopped, generation, exit}`. Un arrêt demandé ferme stdin, attend deux secondes, puis tue.
 
-Le statut annonce `contract: "run/1"`. Une génération peut porter plusieurs exécutions quand un
-service redémarre automatiquement. Un consommateur ne s'appuie sur les marqueurs ci-dessous
-qu'après avoir lu ce contrat dans le statut :
+Le statut n'annonce encore aucun contrat consommateur : il portera `contract: "run/1"` une fois
+toutes les tranches de ce contrat livrées (#443), et un consommateur ne s'appuie sur rien de run/1,
+marqueurs ci-dessous compris, avant de l'y lire. Une génération peut porter plusieurs exécutions
+quand un service redémarre automatiquement :
 
 | Champ du statut | Sens |
 |---|---|
@@ -194,7 +195,7 @@ au plus.
 | `GET /v1/bookmark[?peer=]` | Les signets (`bookmark.list`, ci-dessous). |
 | `POST /v1/bookmark/set` | Corps `{"bookmark": NOM, "since"?: SEQ, "epoch"?: E, "note"?: TEXTE, "peer"?: NOM}`. |
 | `POST /v1/bookmark/remove` | Corps `{"bookmark": NOM, "peer"?: NOM}`. |
-| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). `markers=run` inclut les marqueurs et est acquitté par `Ixctl-Markers: run`. Un lecteur qui tombe de l'anneau reçoit un événement `gap` et le flux se termine. |
+| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). `markers=run` inclut les marqueurs et est acquitté par `Ixctl-Markers: run`. Un lecteur qui prend du retard sur l'anneau pendant la lecture reçoit un événement `gap` (`overflow`) et le flux se termine. Un point de reprise que l'anneau ne contient plus (`since-too-old`), ou qui vient d'un autre démarrage (`epoch-changed`, `since-ahead`), reçoit d'abord un événement `gap`, puis le flux continue depuis la plus ancienne enveloppe que l'anneau contient encore. |
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
 Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclaré), 401 (jeton),
@@ -252,7 +253,7 @@ une seule fois à l'entrée en `log`, avec la ligne brute sous `data.line`.
 | Canal | Porte |
 |---|---|
 | `ctl` | Les événements du plan lui-même : `service.starting` (`restart`, `generation`), `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. Les événements de service attribuables à une exécution la portent dans l'enveloppe. |
-| `svc/<nom>` | La sortie du service. Chaque enveloppe porte son exécution. Une ligne stdout qui est un objet JSON avec un `kind` chaîne est transmise comme cet événement (`t` en ms Unix sur l'horloge du service ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
+| `svc/<nom>` | La sortie du service. Chaque enveloppe porte son exécution. Une ligne stdout qui est un objet JSON avec un `kind` chaîne devient cet événement, dont seuls `kind`, `t` et `data` sont gardés : tout autre champ de premier niveau est abandonné (`t` en ms Unix sur l'horloge du service, arrondi, et abandonné quand ce n'est pas un nombre fini ; un `data` à `null` vaut absence de données ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
 | `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). En miroir chez un pair seulement si ce nœud est créé avec `export: true` et que la spec de ce pair le nomme (D4, ix#402). |
 | `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir, plus les tuyaux `probe/<nœud>` que cette instance a demandés dans `peers[].probes` tant que le pair les exporte ; et les enveloppes `link.gap` propres au lien, les marqueurs de continuité (ci-dessous). `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 

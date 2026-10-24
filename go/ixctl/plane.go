@@ -243,9 +243,6 @@ type PeerProbeStatus struct {
 	SrcEpoch   string `json:"src_epoch,omitempty"`
 }
 
-// runContract is the consumer contract the status announces (D13, #440).
-const runContract = "run/1"
-
 // StatusReply summarises the generations. Every generation <= SettledGeneration has
 // ended, converged or diverged, and Failed lists the diverged ones since boot, lowest
 // generation first: g has failed iff Failed names it, and is done iff g <=
@@ -254,7 +251,6 @@ const runContract = "run/1"
 // they let a later converged generation hide an earlier pending or failed one.
 type StatusReply struct {
 	Name               string          `json:"name"`
-	Contract           string          `json:"contract"`
 	Epoch              string          `json:"epoch"` // the boot these generations belong to
 	Generation         uint64          `json:"generation"`
 	ObservedGeneration uint64          `json:"observed_generation"`
@@ -267,7 +263,7 @@ type StatusReply struct {
 
 func (p *Plane) Status() StatusReply {
 	p.mu.Lock()
-	r := StatusReply{Name: p.name, Contract: runContract, Epoch: p.hub.Epoch(), Generation: p.gen,
+	r := StatusReply{Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen,
 		ObservedGeneration: p.observed, SettledGeneration: p.settled}
 	if p.diverged != nil {
 		d := *p.diverged

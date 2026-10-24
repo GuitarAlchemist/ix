@@ -234,6 +234,51 @@ func TestSSERunMarkersAreOptInAndAcknowledged(t *testing.T) {
 	}
 }
 
+// A resume point the ring no longer holds gets a since-too-old gap naming the oldest kept, and
+// the stream goes on from there: only a reader that falls behind while reading (overflow) is
+// cut off. The README's /v1/events row says both.
+func TestSSEGoesOnAfterSinceTooOld(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil), "")
+	publishN(in.plane, "svc/x", ringSize+10)
+	_, oldest := in.plane.hub.Span()
+	req, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?ch=svc/&since=1&epoch="+in.plane.Epoch(), nil)
+	req.Header.Set("Authorization", "Bearer "+in.token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := loopbackHTTP.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var gap *Gap
+	var kind string
+	var seqs []uint64
+	sc := bufio.NewScanner(resp.Body)
+	for len(seqs) < 3 && sc.Scan() {
+		line := sc.Text()
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			kind = line[7:]
+		case strings.HasPrefix(line, "data: ") && kind == "gap":
+			gap = &Gap{}
+			json.Unmarshal([]byte(line[6:]), gap)
+		case strings.HasPrefix(line, "data: "):
+			if gap == nil {
+				t.Fatalf("an envelope before the gap: %s", line)
+			}
+			var env Envelope
+			json.Unmarshal([]byte(line[6:]), &env)
+			seqs = append(seqs, env.Seq)
+		}
+	}
+	if gap == nil || gap.Reason != "since-too-old" || gap.From != 2 || gap.Oldest != oldest {
+		t.Fatalf("gap %+v, want since-too-old from 2 with the oldest kept %d", gap, oldest)
+	}
+	if len(seqs) != 3 || seqs[0] != oldest || seqs[2] != oldest+2 {
+		t.Fatalf("after the gap: %v, want the stream to go on from the oldest kept %d", seqs, oldest)
+	}
+}
+
 // /health counts the JSON ops served, whatever their outcome, and not itself: a
 // test outside the process can see a client poll the plane.
 func TestHealthCountsOps(t *testing.T) {

@@ -672,6 +672,21 @@ impl Ctl {
         })
     }
 
+    /// After `err` from a plane that may have moved: `Ok` once this handle names what the state
+    /// file names now, or after a pause when the file still names the same plane, so the wait
+    /// asks again; `Err(err)` at the deadline.
+    fn follow_state(&mut self, err: CtlError, deadline: Instant) -> Result<(), CtlError> {
+        match self.refreshed() {
+            Some(fresh) if Instant::now() < deadline => {
+                *self = fresh;
+                Ok(())
+            }
+            Some(_) => Err(err),
+            None if pause(deadline) => Err(err),
+            None => Ok(()),
+        }
+    }
+
     fn wait_gen(
         &self,
         peer: Option<&str>,
@@ -684,15 +699,10 @@ impl Ctl {
         loop {
             let status = match me.status_within(peer, Some(left(deadline))) {
                 Ok(status) => status,
-                Err(e) if epoch.is_some() && me.plane_may_have_moved(&e) => match me.refreshed() {
-                    Some(fresh) if Instant::now() < deadline => {
-                        me = fresh;
-                        continue;
-                    }
-                    Some(_) => return Err(e),
-                    None if pause(deadline) => return Err(e),
-                    None => continue,
-                },
+                Err(e) if epoch.is_some() && me.plane_may_have_moved(&e) => {
+                    me.follow_state(e, deadline)?;
+                    continue;
+                }
                 // A peer's status comes through this plane's link to it, which is down for
                 // a moment when either restarts (502/503). The peer's new boot is behind that
                 // moment, so the wait keeps asking until its deadline; a 400 (no such peer)
@@ -847,6 +857,10 @@ impl Ctl {
     /// [`CtlError::Restarted`], as [`Ctl::wait_generation_of`] does. A plane whose exits name
     /// no generation is waited on as [`Ctl::wait_exit`] does.
     ///
+    /// With `epoch`, a handle made with [`Ctl::from_state`] follows its state file across the
+    /// restart, as [`Ctl::wait_generation_of`] does, so the restart is reported rather than
+    /// `plane unreachable`.
+    ///
     /// Only a generation whose apply had a `start` action for the service launched a run: an
     /// apply that found the service already starting, running or restarting says noop and
     /// launches nothing, so a wait on that generation's run stays pending until `timeout`.
@@ -883,7 +897,8 @@ impl Ctl {
     /// Polls the status until `decide` is done with `service`'s entry, which is answered;
     /// `Failed` ends the wait at once, `Pending` says what the timeout message reports. With
     /// `scope`, a generation and the boot it belongs to, a status that reports another boot
-    /// ends the wait with [`CtlError::Restarted`].
+    /// ends the wait with [`CtlError::Restarted`], and the state file is followed across a
+    /// restart as in `wait_gen`.
     fn wait_service_on(
         &self,
         peer: Option<&str>,
@@ -893,9 +908,14 @@ impl Ctl {
         decide: impl Fn(&Value) -> Decision,
     ) -> Result<Value, CtlError> {
         let deadline = Instant::now() + timeout;
+        let mut me = self.clone();
         loop {
-            let status = match self.status_within(peer, Some(left(deadline))) {
+            let status = match me.status_within(peer, Some(left(deadline))) {
                 Ok(status) => status,
+                Err(e) if scope.is_some() && me.plane_may_have_moved(&e) => {
+                    me.follow_state(e, deadline)?;
+                    continue;
+                }
                 // The link to the peer is down for a moment (see `wait_gen`): ask again.
                 Err(
                     e @ CtlError::Http {
