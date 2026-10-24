@@ -458,8 +458,9 @@ temporaire, puis un renommage ; mode 0600), donc ils survivent à un redémarrag
 lire comme des signets est refusé au démarrage, pas vidé. La source du rejeu est l'anneau (4096
 enveloppes) : un signet plus vieux que lui répond d'abord `since-too-old`, puis ce que l'anneau
 tient encore, jamais un rejeu silencieusement partiel ; un signet d'un démarrage antérieur répond
-d'abord `epoch-changed`, puis l'anneau du nouveau démarrage. Rejouer depuis le journal est une
-décision ultérieure (D9, ix#414 ; porte 3 intacte).
+d'abord `epoch-changed`, puis l'anneau du nouveau démarrage. Le journal n'est pas rejoué ; une
+restauration durable serait un contrat distinct qui s'annoncerait lui-même (D9, ix#414 ;
+porte 3 intacte).
 
 | Op | Champs | Réponse |
 |---|---|---|
@@ -488,8 +489,13 @@ pair.
 
 `<nom>.journal.jsonl` ajoute, en lignes JSON, un en-tête `boot` par démarrage (`schema:
 "ixctl-journal/0"`, `name`, `epoch`), chaque document appliqué avec sa génération et ses actions,
-et l'enveloppe de chaque événement `ctl`. C'est un journal d'audit, pas encore un magasin qu'un
-programme devrait lire (porte 3).
+et l'enveloppe de chaque événement `ctl`. Le plan ne le rejoue jamais au démarrage : l'état désiré
+ne survit pas à un redémarrage ; le nouveau démarrage tire un nouvel `epoch`, commence à la
+génération 0 avec tous les services déclarés arrêtés, puis applique les services marqués
+`autostart` en génération 1. Les documents appliqués sont partiels, les ajouts ne sont pas
+synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash peut couper la dernière
+ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
+un contrat distinct qui s'annoncerait lui-même (porte 3).
 
 ## Barrière
 

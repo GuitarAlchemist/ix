@@ -131,6 +131,155 @@ func TestJournalBootHeaderTellsBootsApart(t *testing.T) {
 	}
 }
 
+func applyConverged(t testing.TB, p *Plane, d *Desired) ApplyReply {
+	t.Helper()
+	reply, done, err := p.Apply(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-done:
+		if !result.Converged {
+			t.Fatalf("apply %d did not converge: %+v", reply.Generation, result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("apply %d did not settle", reply.Generation)
+	}
+	return reply
+}
+
+func assertFreshStoppedBoot(t testing.TB, in *instance, oldEpoch string, names ...string) {
+	t.Helper()
+	st := in.plane.Status()
+	if st.Epoch == oldEpoch {
+		t.Fatalf("restart kept epoch %q", st.Epoch)
+	}
+	if st.Generation != 0 || st.ObservedGeneration != 0 || st.SettledGeneration != 0 ||
+		st.Diverged != nil || len(st.Failed) != 0 {
+		t.Fatalf("fresh boot generations: %+v", st)
+	}
+	if len(st.Services) != len(names) {
+		t.Fatalf("fresh boot services %+v, want %v", st.Services, names)
+	}
+	for i, name := range names {
+		s := st.Services[i]
+		if s.Name != name || s.Desired != desiredStopped || s.State != stateStopped ||
+			s.Pid != nil || s.Restarts != 0 || s.StartedAt != nil || s.Generation != 0 ||
+			s.Run != nil || s.LastExit != nil {
+			t.Fatalf("fresh boot service %q: %+v", name, s)
+		}
+	}
+}
+
+// D14-T1: applied desired state is scoped to one boot, even when successive
+// documents each name only one service.
+func TestDesiredStateDoesNotSurviveAPlaneRestart(t *testing.T) {
+	stateDir := t.TempDir()
+	spec := fakeSpec(t, "local", nil,
+		fakeSvc{name: "a", args: []string{"--nodes", "1"}},
+		fakeSvc{name: "b", args: []string{"--nodes", "1"}})
+	first := newTestInstance(t, spec, stateDir)
+	oldEpoch := first.plane.Epoch()
+	r1 := applyConverged(t, first.plane, running("a"))
+	r2 := applyConverged(t, first.plane, running("b"))
+	if r1.Generation != 1 || r2.Generation != 2 {
+		t.Fatalf("partial apply generations %d, %d, want 1, 2", r1.Generation, r2.Generation)
+	}
+	first.close()
+
+	second := newTestInstance(t, spec, stateDir)
+	assertFreshStoppedBoot(t, second, oldEpoch, "a", "b")
+}
+
+// D14-T2: autostart is a new boot's generation 1 and launches a new run.
+func TestAutostartAfterRestartBelongsToTheNewBoot(t *testing.T) {
+	stateDir := t.TempDir()
+	spec := fakeSpec(t, "local", nil, fakeSvc{name: "a", args: []string{"--nodes", "1"}})
+	spec.Services[0].Autostart = true
+	first := newTestInstance(t, spec, stateDir)
+	old := waitStatus(t, first, 10*time.Second, "first boot's autostart", func(st StatusReply) bool {
+		s := svcStatus(st, "a")
+		return st.SettledGeneration == 1 && s.State == stateRunning && s.Run != nil
+	})
+	oldRun := *svcStatus(old, "a").Run
+	first.close()
+
+	second := newTestInstance(t, spec, stateDir)
+	fresh := waitStatus(t, second, 10*time.Second, "second boot's autostart", func(st StatusReply) bool {
+		s := svcStatus(st, "a")
+		return st.SettledGeneration == 1 && s.State == stateRunning && s.Run != nil
+	})
+	run := svcStatus(fresh, "a").Run
+	if fresh.Epoch == old.Epoch || fresh.Generation != 1 || fresh.ObservedGeneration != 1 ||
+		run.Epoch != fresh.Epoch || run.Origin != "local" || *run == oldRun {
+		t.Fatalf("old boot %+v run %+v; new boot %+v run %+v", old, oldRun, fresh, *run)
+	}
+}
+
+// D14-T4: a cut audit record is neither desired state nor a place to append
+// the next boot header.
+func TestATruncatedJournalTailCannotAffectTheNextBoot(t *testing.T) {
+	stateDir := t.TempDir()
+	spec := fakeSpec(t, "local", nil,
+		fakeSvc{name: "a", args: []string{"--nodes", "1"}},
+		fakeSvc{name: "b", args: []string{"--nodes", "1"}})
+	first := newTestInstance(t, spec, stateDir)
+	oldEpoch := first.plane.Epoch()
+	applyConverged(t, first.plane, running("a"))
+	applyConverged(t, first.plane, running("b"))
+	first.close()
+
+	journalPath := filepath.Join(stateDir, "local.journal.jsonl")
+	f, err := os.OpenFile(journalPath, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const cut = `{"kind":"apply","generation":999,"desired":{"services":{"a":{"state":"running"}}}`
+	if _, err := f.WriteString(cut); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second := newTestInstance(t, spec, stateDir)
+	assertFreshStoppedBoot(t, second, oldEpoch, "a", "b")
+	b, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) < 2 || lines[len(lines)-2] != cut {
+		t.Fatalf("cut tail is not its own physical line: %q", lines)
+	}
+	var boot map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &boot); err != nil {
+		t.Fatalf("new boot header after cut tail: %v; line %q", err, lines[len(lines)-1])
+	}
+	if boot["kind"] != "boot" || boot["schema"] != journalSchema ||
+		boot["name"] != "local" || boot["epoch"] != second.plane.Epoch() {
+		t.Fatalf("new boot header after cut tail: %v", boot)
+	}
+}
+
+// D14-T5: the current spec, not names found in the audit journal, declares
+// the services of a new boot.
+func TestRestartUsesOnlyTheNewSpecServices(t *testing.T) {
+	stateDir := t.TempDir()
+	firstSpec := fakeSpec(t, "local", nil,
+		fakeSvc{name: "a", args: []string{"--nodes", "1"}},
+		fakeSvc{name: "b", args: []string{"--nodes", "1"}})
+	first := newTestInstance(t, firstSpec, stateDir)
+	oldEpoch := first.plane.Epoch()
+	applyConverged(t, first.plane, running("b"))
+	first.close()
+
+	secondSpec := fakeSpec(t, "local", nil, fakeSvc{name: "a", args: []string{"--nodes", "1"}})
+	second := newTestInstance(t, secondSpec, stateDir)
+	assertFreshStoppedBoot(t, second, oldEpoch, "a")
+}
+
 // apply bumps the generation, answers at once, and ctl says converged once
 // both services are observed started; status and the journal follow.
 func TestApplyConverges(t *testing.T) {

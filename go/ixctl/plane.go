@@ -591,9 +591,17 @@ type journal struct {
 }
 
 func openJournal(path string) (*journal, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
+	}
+	// A crash can cut the last line: the boot header starts on a line of its own, else it
+	// would be glued to the cut one. Best effort, like every other write of the journal.
+	if st, err := f.Stat(); err == nil && st.Size() > 0 {
+		var tail [1]byte
+		if _, err := f.ReadAt(tail[:], st.Size()-1); err == nil && tail[0] != '\n' {
+			f.Write([]byte{'\n'})
+		}
 	}
 	return &journal{f: f}, nil
 }
