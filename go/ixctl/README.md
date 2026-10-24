@@ -136,7 +136,9 @@ so a journaled document holds no address.
 ```
 
 - `plan` is pure: it returns `{generation, actions: [{op: start|stop, service}], noop: [...]}`
-  against the observed state, with the generation an apply would get.
+  against the observed state. Its `generation` is the current one (the last applied, as in status),
+  not the one an apply would get: an apply made now gets the next one, unless another apply comes
+  first.
 - `apply` bumps the generation, journals the document, returns
   `{generation, epoch, actions, results}` at once and acts in the background. `results` is an
   object keyed by exactly the services named in the document; each value has `result` from the
