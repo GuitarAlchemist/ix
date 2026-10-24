@@ -238,9 +238,13 @@ requête mal formée.
 jamais une exécution lancée par cette génération. Pour l'attente d'exécution exacte, `evicted`
 signifie que l'exécution du même epoch n'est ni courante ni dans `recent_exits` ; la sortie
 d'une autre exécution ne la remplace jamais. Une attente avec `?peer=` est transmise au plan
-d'origine et décidée là-bas. Les wrappers Rust typés, le suivi du fichier d'état à travers un
-redémarrage, la dépréciation de l'attente par numéro seul et le mapping IXQL appartiennent à
-B-2b, pas à cette tranche.
+d'origine et décidée là-bas. Le client Rust enveloppe l'opération dans
+`Ctl::wait_generation_outcome`, `Ctl::wait_launch` et `Ctl::wait_run`, un type de résultat fermé
+par attente ; un handle créé par `Ctl::from_state` suit le fichier d'état, si bien qu'une
+attente coupée par un arrêt brutal est reposée au nouveau démarrage et se termine en
+`unknown (other-epoch)`. `wait_generation(g)`, par numéro seul, est déprécié au profit de
+`wait_generation_of`. En IXQL, l'opération s'appelle
+`ix.ctl.wait(wait: "generation"|"launch"|"run", ...)`.
 
 Le `desired` d'un job reste `running` après sa fin : appliquer de nouveau le même document le
 relance ; le client attend la fin de l'exécution *qu'une génération a lancée*
