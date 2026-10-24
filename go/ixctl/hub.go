@@ -25,6 +25,14 @@ type Event struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// RunID names one service launch attempt. Seq is the sequence of its service.starting
+// envelope on the origin plane.
+type RunID struct {
+	Origin string `json:"origin"`
+	Epoch  string `json:"epoch"`
+	Seq    uint64 `json:"seq"`
+}
+
 // Envelope carries every event on every transport. Seq counts from 1 at each
 // boot of the instance; Epoch names the boot, so a seq kept across a restart
 // is never mistaken for one of the new boot.
@@ -33,6 +41,7 @@ type Envelope struct {
 	Seq    uint64 `json:"seq"`
 	Epoch  string `json:"epoch"`
 	Origin string `json:"origin"`
+	Run    *RunID `json:"run,omitempty"`
 	T      int64  `json:"t"`
 	Ev     Event  `json:"ev"`
 	// On a mirrored envelope (a peer/ channel): the source's own seq and epoch, so a consumer
@@ -153,7 +162,17 @@ func (h *Hub) Epoch() string { return h.epoch }
 
 // Publish stamps an event with this instance as origin.
 func (h *Hub) Publish(ch string, ev Event) *Envelope {
-	return h.publish(ch, h.origin, 0, ev, 0, "")
+	return h.publish(ch, h.origin, 0, ev, 0, "", nil)
+}
+
+// PublishRun stamps an event from an existing run.
+func (h *Hub) PublishRun(ch string, ev Event, run RunID) *Envelope {
+	return h.publish(ch, h.origin, 0, ev, 0, "", &run)
+}
+
+// PublishNewRun stamps an event as the start of a new run, whose seq is this envelope's.
+func (h *Hub) PublishNewRun(ch string, ev Event) *Envelope {
+	return h.publish(ch, h.origin, 0, ev, 0, "", &RunID{})
 }
 
 // Mirror republishes an envelope received from a peer under a local channel, keeping the
@@ -162,10 +181,10 @@ func (h *Hub) Publish(ch string, ev Event) *Envelope {
 // (a seq of 0, an empty epoch) none is written, in the struct as in the bytes; the link
 // refuses such a frame before it gets here.
 func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
-	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch)
+	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch, nil)
 }
 
-func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
+func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string, run *RunID) *Envelope {
 	evRaw, err := json.Marshal(ev)
 	if err != nil {
 		ev.Data = nil
@@ -186,11 +205,22 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEp
 	if t == 0 {
 		t = time.Now().UnixMilli()
 	}
-	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+len(srcRaw)+64)
 
 	h.mu.Lock()
 	h.head++
-	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, T: t, Ev: ev, SrcSeq: srcSeq, SrcEpoch: srcEpoch}
+	var runRaw []byte
+	if run != nil {
+		r := *run
+		if r.Seq == 0 {
+			r = RunID{Origin: origin, Epoch: h.epoch, Seq: h.head}
+		}
+		run = &r
+		encoded, _ := json.Marshal(r)
+		runRaw = append(runRaw, `,"run":`...)
+		runRaw = append(runRaw, encoded...)
+	}
+	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+len(srcRaw)+len(runRaw)+64)
+	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, Run: run, T: t, Ev: ev, SrcSeq: srcSeq, SrcEpoch: srcEpoch}
 	b = append(b, `{"ch":`...)
 	b = append(b, chRaw...)
 	b = append(b, `,"seq":`...)
@@ -199,6 +229,7 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEp
 	b = append(b, h.epoch...) // hex, needs no escaping
 	b = append(b, `","origin":`...)
 	b = append(b, orRaw...)
+	b = append(b, runRaw...)
 	b = append(b, srcRaw...)
 	b = append(b, `,"t":`...)
 	b = strconv.AppendInt(b, t, 10)

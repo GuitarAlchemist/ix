@@ -11,6 +11,111 @@ import (
 	"time"
 )
 
+// A1 (anchors 2 and 4): automatic restarts are distinct runs of one generation, and every
+// service-output envelope says which of those runs emitted it.
+func TestRestartsHaveDistinctRunIdentities(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "crashy", restart: restartOnFailure, max: 5}), "")
+	c := dial(t, in)
+	ctl := subscribe(t, c, "ctl", nil)
+	out := subscribe(t, c, "svc/crashy", nil)
+	var applied ApplyReply
+	if err := json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &applied); err != nil {
+		t.Fatal(err)
+	}
+
+	runs := map[RunID]bool{}
+	seenOutput := map[RunID]bool{}
+	for i := 0; i < 3; i++ {
+		starting := waitEnv(t, ctl, 5*time.Second, "starting", func(e *Envelope) bool {
+			return e.Ev.Kind == "service.starting"
+		})
+		if starting.Run == nil {
+			t.Fatalf("starting has no run: %s", starting.Raw())
+		}
+		run := *starting.Run
+		if runs[run] {
+			t.Fatalf("run reused on restart: %+v", run)
+		}
+		runs[run] = true
+		if got := ctlData(starting)["generation"]; got != float64(applied.Generation) {
+			t.Fatalf("starting generation %v, want %d", got, applied.Generation)
+		}
+		started := waitEnv(t, ctl, 5*time.Second, "started", func(e *Envelope) bool {
+			return e.Ev.Kind == "service.started" && e.Run != nil && *e.Run == run
+		})
+		data := ctlData(started)
+		if data["generation"] != float64(applied.Generation) {
+			t.Fatalf("started generation %v, want %d", data["generation"], applied.Generation)
+		}
+		waitEnv(t, out, 5*time.Second, "output of the run", func(e *Envelope) bool {
+			if e.Run == nil {
+				t.Fatalf("service output has no run: %s", e.Raw())
+			}
+			if !runs[*e.Run] {
+				t.Fatalf("service output has an unannounced run: %s", e.Raw())
+			}
+			seenOutput[*e.Run] = true
+			return *e.Run == run && e.Ev.Kind == "meta"
+		})
+		if i < 2 {
+			proc, err := os.FindProcess(int(data["pid"].(float64)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := proc.Kill(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for run := range runs {
+		if !seenOutput[run] {
+			t.Fatalf("run %+v emitted no identified service output", run)
+		}
+	}
+}
+
+// A6 (anchor 2): status, ctl and service output identify one launch as the same run.
+func TestRunIdentityAgreesAcrossStatusCtlAndServiceOutput(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
+	c := dial(t, in)
+	ctl := subscribe(t, c, "ctl", nil)
+	out := subscribe(t, c, "svc/pod", nil)
+	do(t, c, Request{Op: "apply", Desired: running("pod")})
+
+	starting := waitEnv(t, ctl, 5*time.Second, "starting", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.starting"
+	})
+	if starting.Run == nil || ctlData(starting)["generation"] != 1.0 {
+		t.Fatalf("starting %s", starting.Raw())
+	}
+	line := waitEnv(t, out, 5*time.Second, "service output", func(e *Envelope) bool {
+		return e.Run != nil && *e.Run == *starting.Run
+	})
+	status := waitStatus(t, in, 5*time.Second, "run in status", func(st StatusReply) bool {
+		s := svcStatus(st, "pod")
+		return s.State == stateRunning && s.Run != nil
+	})
+	service := svcStatus(status, "pod")
+	if line.Run == nil || service.Run == nil ||
+		*line.Run != *starting.Run || *service.Run != *starting.Run {
+		t.Fatalf("ctl %+v, output %+v, status %+v", starting.Run, line.Run, service.Run)
+	}
+}
+
+// N1 (#444): status announces no consumer contract until every slice of run/1 has landed,
+// so a consumer that gates on `contract: "run/1"` never waits for markers the plane lacks.
+func TestStatusWithholdsTheRunContractUntilItShips(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
+	var status map[string]json.RawMessage
+	if err := json.Unmarshal(do(t, dial(t, in), Request{Op: "status"}), &status); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := status["contract"]; ok {
+		t.Fatalf("status announces contract %s before run/1 has shipped", c)
+	}
+}
+
 // A crash restarts with backoff (200 ms, then doubled), restarts counts it,
 // and more than max_restarts restarts inside the window ends in failed.
 func TestCrashRestartsWithBackoffThenFails(t *testing.T) {
@@ -143,7 +248,7 @@ func TestAStopQueuedBeforeAPreMarkedStartStillStops(t *testing.T) {
 			got = append(got, fmt.Sprintf("%s:%v", e.Ev.Kind, ctlData(e)["generation"]))
 		}
 	}
-	want := []string{"service.stopped:2", "service.starting:<nil>", "service.failed:3", "service.stopped:4"}
+	want := []string{"service.stopped:2", "service.starting:3", "service.failed:3", "service.stopped:4"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("events %v, want %v", got, want)
 	}

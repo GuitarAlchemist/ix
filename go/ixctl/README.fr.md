@@ -159,6 +159,16 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
 - `stop` arrête un service hors bande et répond une fois son arbre disparu :
   `{stopped, generation, exit}`. Un arrêt demandé ferme stdin, attend deux secondes, puis tue.
 
+Le statut n'annonce encore aucun contrat consommateur : il portera `contract: "run/1"` une fois
+toutes les tranches de ce contrat livrées (#443), et un consommateur ne s'appuie sur rien de run/1
+avant de l'y lire. Une génération peut porter plusieurs exécutions quand un service redémarre
+automatiquement :
+
+| Champ du statut | Sens |
+|---|---|
+| `services[].run` | La dernière exécution annoncée par `service.starting`. Elle est l'exécution active en `starting` (une fois annoncée) et `running` ; pendant le délai de redémarrage (`restarting`), c'est celle dont la sortie a causé le délai, jusqu'à l'annonce de sa remplaçante ; `stopped` et `failed` gardent la dernière exécution. Avant la première annonce, le champ est absent ; un démarrage en file peut déjà afficher `starting` tout en gardant l'exécution précédente, ou aucune avant la première. |
+| `services[].last_exit.run` | L'exécution exacte qui a produit `last_exit` ; après le début d'un redémarrage, elle peut différer de `services[].run`. |
+
 Le `desired` d'un job reste `running` après sa fin : appliquer de nouveau le même document le
 relance ; le client attend la fin de l'exécution *qu'une génération a lancée*
 (`last_exit.generation`), pas la dernière sortie vue par le plan.
@@ -204,7 +214,8 @@ la connexion.
 Les événements arrivent en enveloppes :
 
 ```json
-{"ch":"svc/pod-a","seq":17,"epoch":"8c1f…","origin":"local","t":1760990000123,
+{"ch":"svc/pod-a","seq":17,"epoch":"8c1f…","origin":"local",
+ "run":{"origin":"local","epoch":"8c1f…","seq":12},"t":1760990000123,
  "ev":{"kind":"stats","t":1760990000120,"data":{"nodes":[...]}}}
 ```
 
@@ -214,12 +225,19 @@ séquence et le démarrage propres à la source, pour qu'un lecteur ici identifi
 comme un lecteur chez l'origine (S2 tranche 2). Un abonné avec `since` rejoue depuis l'anneau (4096 enveloppes par instance) et reçoit
 `{sub, gap}` quand c'est impossible : `since-too-old`, `overflow`, `epoch-changed`, `since-ahead`.
 
+`run = {origin, epoch, seq}` nomme une tentative de lancement ; son `seq` est la séquence du
+`service.starting` de cette tentative sur son plan d'origine. Il est fixé avant toute sortie,
+immuable et unique dans une origine et un epoch. Chaque enveloppe `svc/<nom>` de la tentative et
+chaque événement de service `ctl` qui lui est attribuable portent le même `run`. Un redémarrage
+automatique reçoit une autre exécution tout en gardant la génération qui a demandé le service.
+Une enveloppe reflétée (`peer/<nom>/…`) ne le porte pas encore (#452).
+
 ### Canaux et événements
 
 | Canal | Porte |
 |---|---|
-| `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
-| `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne devient cet événement, dont seuls `kind`, `t` et `data` sont gardés : tout autre champ de premier niveau est abandonné (`t` en ms Unix sur l'horloge du service, arrondi, et abandonné quand ce n'est pas un nombre fini ; un `data` à `null` vaut absence de données ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
+| `ctl` | Les événements du plan lui-même : `service.starting` (`restart`, `generation`), `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. Les événements de service attribuables à une exécution la portent dans l'enveloppe. |
+| `svc/<nom>` | La sortie du service. Chaque enveloppe porte son exécution. Une ligne stdout qui est un objet JSON avec un `kind` chaîne devient cet événement, dont seuls `kind`, `t` et `data` sont gardés : tout autre champ de premier niveau est abandonné (`t` en ms Unix sur l'horloge du service, arrondi, et abandonné quand ce n'est pas un nombre fini ; un `data` à `null` vaut absence de données ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
 | `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). En miroir chez un pair seulement si ce nœud est créé avec `export: true` et que la spec de ce pair le nomme (D4, ix#402). |
 | `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir, plus les tuyaux `probe/<nœud>` que cette instance a demandés dans `peers[].probes` tant que le pair les exporte ; et les enveloppes `link.gap` propres au lien, les marqueurs de continuité (ci-dessous). `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 

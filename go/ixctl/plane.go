@@ -199,6 +199,7 @@ type ServiceStatus struct {
 	StartedAt *int64 `json:"started_at"`
 	// Generation is the apply that launched the current or last run; absent before any.
 	Generation uint64          `json:"generation,omitempty"`
+	Run        *RunID          `json:"run,omitempty"`
 	LastExit   *exitInfo       `json:"last_exit"`
 	Nodes      json.RawMessage `json:"nodes"`
 }
@@ -262,7 +263,8 @@ type StatusReply struct {
 
 func (p *Plane) Status() StatusReply {
 	p.mu.Lock()
-	r := StatusReply{Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen, ObservedGeneration: p.observed, SettledGeneration: p.settled}
+	r := StatusReply{Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen,
+		ObservedGeneration: p.observed, SettledGeneration: p.settled}
 	if p.diverged != nil {
 		d := *p.diverged
 		r.Diverged = &d
