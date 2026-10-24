@@ -289,6 +289,33 @@ type Action struct {
 	Service string `json:"service"`
 }
 
+const (
+	applyStartPending = "start-pending"
+	applyStopPending  = "stop-pending"
+	applyNotLaunched  = "not-launched"
+	applyNoop         = "noop"
+)
+
+// ApplyServiceResult says what one document-named service will do for this generation.
+type ApplyServiceResult struct {
+	Result     string `json:"result"`
+	CurrentRun *RunID `json:"current_run,omitempty"`
+}
+
+// MarshalJSON keeps current_run specific to not-launched, where null means no run had yet
+// been announced at admission.
+func (r ApplyServiceResult) MarshalJSON() ([]byte, error) {
+	if r.Result == applyNotLaunched {
+		return json.Marshal(struct {
+			Result     string `json:"result"`
+			CurrentRun *RunID `json:"current_run"`
+		}{Result: r.Result, CurrentRun: r.CurrentRun})
+	}
+	return json.Marshal(struct {
+		Result string `json:"result"`
+	}{Result: r.Result})
+}
+
 type PlanReply struct {
 	Generation uint64   `json:"generation"`
 	Actions    []Action `json:"actions"`
@@ -298,9 +325,10 @@ type PlanReply struct {
 // ApplyReply names the new generation and the boot it belongs to: a wait
 // that carries both can tell a restart from a slow apply.
 type ApplyReply struct {
-	Generation uint64   `json:"generation"`
-	Epoch      string   `json:"epoch"`
-	Actions    []Action `json:"actions"`
+	Generation uint64                        `json:"generation"`
+	Epoch      string                        `json:"epoch"`
+	Actions    []Action                      `json:"actions"`
+	Results    map[string]ApplyServiceResult `json:"results"`
 }
 
 // Diverged names an apply that will not converge. Status lists them all in
@@ -352,29 +380,69 @@ func (p *Plane) Plan(d *Desired) (PlanReply, error) {
 	return PlanReply{Generation: g, Actions: actions, Noop: noop}, nil
 }
 
+// applyDecision maps a document's state for one service and the service's observed desired
+// state and state to its action (planned or not) and its apply result.
+func applyDecision(name, target, desired, state string, currentRun *RunID) (Action, bool, ApplyServiceResult) {
+	switch target {
+	case desiredRunning:
+		// Running, or on its way (a start the supervisor has not made yet, a restart in
+		// its backoff): nothing to start. Only a stopped or failed service, or one being
+		// stopped, takes a start.
+		if desired == desiredRunning && (state == stateRunning || state == stateStarting || state == stateRestarting) {
+			return Action{}, false, ApplyServiceResult{Result: applyNotLaunched, CurrentRun: currentRun}
+		}
+		return Action{Op: "start", Service: name}, true, ApplyServiceResult{Result: applyStartPending}
+	case desiredStopped:
+		if state == stateStopped {
+			return Action{}, false, ApplyServiceResult{Result: applyNoop}
+		}
+		return Action{Op: "stop", Service: name}, true, ApplyServiceResult{Result: applyStopPending}
+	}
+	return Action{}, false, ApplyServiceResult{}
+}
+
 func (p *Plane) plan(d *Desired) ([]Action, []string) {
 	actions, noop := []Action{}, []string{}
 	for _, n := range d.names() {
 		desired, state := p.svcs[n].observed()
-		switch d.Services[n].State {
-		case desiredRunning:
-			// Running, or on its way (a start the supervisor has not made yet, a restart in
-			// its backoff): nothing to start. Only a stopped or failed service, or one being
-			// stopped, takes a start.
-			if desired == desiredRunning && (state == stateRunning || state == stateStarting || state == stateRestarting) {
-				noop = append(noop, n)
-			} else {
-				actions = append(actions, Action{Op: "start", Service: n})
-			}
-		case desiredStopped:
-			if state == stateStopped {
-				noop = append(noop, n)
-			} else {
-				actions = append(actions, Action{Op: "stop", Service: n})
-			}
+		action, planned, _ := applyDecision(n, d.Services[n].State, desired, state, nil)
+		if planned {
+			actions = append(actions, action)
+		} else {
+			noop = append(noop, n)
 		}
 	}
 	return actions, noop
+}
+
+// admit is the admission instant: under p.mu and every named service's lock (taken in name
+// order), it reads each service once, decides actions and results from that one snapshot, and
+// bumps the generation. Lock order p.mu -> s.mu; no path takes s.mu and then p.mu.
+func (p *Plane) admit(d *Desired) ([]Action, []string, map[string]ApplyServiceResult, uint64) {
+	names := d.names()
+	p.mu.Lock()
+	for _, n := range names {
+		p.svcs[n].mu.Lock()
+	}
+	actions, noop := []Action{}, []string{}
+	results := make(map[string]ApplyServiceResult, len(names))
+	for _, n := range names {
+		desired, state, currentRun := p.svcs[n].admissionObservationLocked()
+		action, planned, result := applyDecision(n, d.Services[n].State, desired, state, currentRun)
+		results[n] = result
+		if planned {
+			actions = append(actions, action)
+		} else {
+			noop = append(noop, n)
+		}
+	}
+	p.gen++
+	g := p.gen
+	for i := len(names) - 1; i >= 0; i-- {
+		p.svcs[names[i]].mu.Unlock()
+	}
+	p.mu.Unlock()
+	return actions, noop, results, g
 }
 
 // Apply bumps the generation, records the document, hands the actions to the
@@ -395,11 +463,7 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	}
 	head := p.hub.Head()
 	cur := p.hub.Subscribe("ctl", &head, p.hub.Epoch())
-	actions, noop := p.plan(d)
-	p.mu.Lock()
-	p.gen++
-	g := p.gen
-	p.mu.Unlock()
+	actions, noop, results, g := p.admit(d)
 	p.journal.record(g, d, actions)
 	// A noop asks nothing of the supervisor: a `running` want on a service already on its
 	// way would launch it under this generation if it exited before the want was read, a run
@@ -417,7 +481,7 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	}
 	done := make(chan applyResult, 1)
 	go func() { done <- p.await(g, actions, cur) }()
-	return ApplyReply{Generation: g, Epoch: p.hub.Epoch(), Actions: actions}, done, nil
+	return ApplyReply{Generation: g, Epoch: p.hub.Epoch(), Actions: actions, Results: results}, done, nil
 }
 
 // await watches ctl until every action is observed, then publishes the

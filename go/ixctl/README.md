@@ -137,12 +137,32 @@ so a journaled document holds no address.
 
 - `plan` is pure: it returns `{generation, actions: [{op: start|stop, service}], noop: [...]}`
   against the observed state, with the generation an apply would get.
-- `apply` bumps the generation, journals the document, returns `{generation, epoch, actions}` at
-  once and acts in the background. Status reports `generation` (last applied),
+- `apply` bumps the generation, journals the document, returns
+  `{generation, epoch, actions, results}` at once and acts in the background. `results` is an
+  object keyed by exactly the services named in the document; each value has `result` from the
+  closed set below. Services omitted from the document have no result and are left unchanged.
+  Status reports `generation` (last applied),
   `observed_generation` (last whose actions were all seen through) and `settled_generation`
   (last whose services have each reached their desired state); `diverged` names the generation
   the plane gave up on, with the service and reason, and `failed` keeps the recent launch
   failures by generation so a later apply cannot hide an earlier failure.
+- Every result is read from one admission snapshot, after validation and while the plane computes
+  the actions and bumps the generation, before it queues any of them:
+
+  | Document says | Service at admission | Result | Action |
+  |---|---|---|---|
+  | `running` | current desired is `running` and state is `starting`, `running` or restart backoff (`restarting`) | `{"result":"not-launched","current_run": RUN_OR_NULL}` | none |
+  | `running` | `stopped` or `failed`, or a non-running desired state is still being carried out | `{"result":"start-pending"}` | `start` |
+  | `stopped` | `stopped` | `{"result":"noop"}` | none |
+  | `stopped` | `starting`, `running`, `restarting` or `failed` | `{"result":"stop-pending"}` | `stop` |
+
+  A queued start is `starting`: `current_run` is the preceding run, or null before the first
+  run is announced. In restart backoff it is the run that just ended. The opaque
+  `{origin, epoch, seq}` proves only which run was current at admission, not that it still exists
+  when the reply arrives. It is never a run this apply launched: `not-launched` proves that this
+  generation announces no new run. These results are values the plane answers; a refused apply
+  (an invalid document, an unknown service, a plane shutting down, a peer error) is an error and
+  carries no `results`. They do not wait; the plane-side wait operations are a later slice.
 - `epoch` names the boot these generations belong to. A client that waits on a generation
   should name the epoch too, so a plane restart ends the wait instead of letting the new boot's
   generation of the same number pass for the old one.
