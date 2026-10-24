@@ -149,8 +149,9 @@ so a journaled document holds no address.
 - `stop` stops one service out of band and answers once its tree is gone:
   `{stopped, generation, exit}`. A requested stop closes stdin, waits two seconds, then kills.
 
-Status announces `contract: "run/1"`. One generation can carry several runs when a service
-restarts automatically:
+Status announces no consumer contract yet: it will carry `contract: "run/1"` once every slice of
+that contract has landed (#443), and a consumer relies on none of run/1 before it reads that.
+One generation can carry several runs when a service restarts automatically:
 
 | Status field | Meaning |
 |---|---|

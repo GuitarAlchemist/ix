@@ -159,8 +159,10 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
 - `stop` arrête un service hors bande et répond une fois son arbre disparu :
   `{stopped, generation, exit}`. Un arrêt demandé ferme stdin, attend deux secondes, puis tue.
 
-Le statut annonce `contract: "run/1"`. Une génération peut porter plusieurs exécutions quand un
-service redémarre automatiquement :
+Le statut n'annonce encore aucun contrat consommateur : il portera `contract: "run/1"` une fois
+toutes les tranches de ce contrat livrées (#443), et un consommateur ne s'appuie sur rien de run/1
+avant de l'y lire. Une génération peut porter plusieurs exécutions quand un service redémarre
+automatiquement :
 
 | Champ du statut | Sens |
 |---|---|

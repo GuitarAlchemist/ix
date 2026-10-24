@@ -97,10 +97,22 @@ func TestRunIdentityAgreesAcrossStatusCtlAndServiceOutput(t *testing.T) {
 		return s.State == stateRunning && s.Run != nil
 	})
 	service := svcStatus(status, "pod")
-	if status.Contract != "run/1" || line.Run == nil || service.Run == nil ||
+	if line.Run == nil || service.Run == nil ||
 		*line.Run != *starting.Run || *service.Run != *starting.Run {
-		t.Fatalf("contract %q, ctl %+v, output %+v, status %+v",
-			status.Contract, starting.Run, line.Run, service.Run)
+		t.Fatalf("ctl %+v, output %+v, status %+v", starting.Run, line.Run, service.Run)
+	}
+}
+
+// N1 (#444): status announces no consumer contract until every slice of run/1 has landed,
+// so a consumer that gates on `contract: "run/1"` never waits for markers the plane lacks.
+func TestStatusWithholdsTheRunContractUntilItShips(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
+	var status map[string]json.RawMessage
+	if err := json.Unmarshal(do(t, dial(t, in), Request{Op: "status"}), &status); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := status["contract"]; ok {
+		t.Fatalf("status announces contract %s before run/1 has shipped", c)
 	}
 }
 
