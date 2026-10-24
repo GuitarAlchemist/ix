@@ -32,6 +32,8 @@ const (
 	maxLine       = 1 << 20
 )
 
+const recentExitsCapacity = 16
+
 type exitInfo struct {
 	Code      int    `json:"code"`
 	At        int64  `json:"at"`
@@ -57,6 +59,20 @@ type exitInfo struct {
 	// PeakProcesses is the most processes the tree held at once, as the watch counted them
 	// every 100 ms (only under a processor-time or process limit). Absent when not watched.
 	PeakProcesses int64 `json:"peak_processes,omitempty"`
+}
+
+// runEnd is both the data of ixctl.run.end and, with Run set, one terminal record in status.
+// Pointer terminal fields preserve false and zero for a started run while leaving them absent
+// for an attempt that never launched.
+type runEnd struct {
+	Run       *RunID `json:"run,omitempty"`
+	Outcome   string `json:"outcome"`
+	Code      *int   `json:"code,omitempty"`
+	Requested *bool  `json:"requested,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Output    string `json:"output"`
+	DrainMS   int64  `json:"drain_ms"`
 }
 
 // Exit reasons: the limit a run was killed for.
@@ -99,9 +115,10 @@ type service struct {
 	// settles on its own failure, even after a queued start has moved the service on to
 	// `starting` again. Bounded by keptFailures: a failure after its apply settled (a run out
 	// of restarts) is never read.
-	failures map[uint64]string
-	lastExit *exitInfo
-	nodes    json.RawMessage
+	failures    map[uint64]string
+	lastExit    *exitInfo
+	recentExits []runEnd
+	nodes       json.RawMessage
 
 	cmds chan command // desired states, in apply order
 
@@ -176,12 +193,16 @@ func (s *service) setDesired(state string) {
 // so no plan in between announces a start the queued one will make.
 func (s *service) settle(state string) {
 	s.mu.Lock()
+	s.settleLocked(state)
+	s.mu.Unlock()
+}
+
+func (s *service) settleLocked(state string) {
 	if s.queued > 0 {
 		s.state, s.startGen = stateStarting, s.tailGen
 	} else {
 		s.state = state
 	}
-	s.mu.Unlock()
 }
 
 // keptFailures bounds the failures a service remembers by generation.
@@ -212,7 +233,9 @@ func (s *service) observed() (desired, state string) {
 func (s *service) status() ServiceStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := ServiceStatus{Name: s.spec.Name, Desired: s.desired, State: s.state, Restarts: s.restarts, Generation: s.startGen, Nodes: s.nodes}
+	st := ServiceStatus{Name: s.spec.Name, Desired: s.desired, State: s.state,
+		Restarts: s.restarts, Generation: s.startGen, RecentExitsCapacity: recentExitsCapacity,
+		RecentExits: append([]runEnd{}, s.recentExits...), Nodes: s.nodes}
 	if s.hasRun {
 		run := s.curRun
 		st.Run = &run
@@ -233,6 +256,15 @@ func (s *service) status() ServiceStatus {
 		st.Nodes = json.RawMessage("[]")
 	}
 	return st
+}
+
+func (s *service) appendRecentExitLocked(e runEnd) {
+	if len(s.recentExits) == recentExitsCapacity {
+		copy(s.recentExits, s.recentExits[1:])
+		s.recentExits[len(s.recentExits)-1] = e
+		return
+	}
+	s.recentExits = append(s.recentExits, e)
 }
 
 func (s *service) setState(state string) {
@@ -331,10 +363,11 @@ func (s *service) command(want command) {
 	}
 }
 
-// fail moves the service to `failed` and publishes service.failed with data, stamped with
-// the generation of the run that failed, taken under mu with the transition so no apply can
-// read `failed` and then take an unstamped event for its own.
-func (s *service) fail(run RunID, data map[string]any) {
+// fail moves the service to `failed` and publishes service.failed with data, stamped with the
+// generation of the run that failed. A launch failure also publishes and records its run end
+// under the same lock as the transition, so a status after the marker cannot miss the record.
+// A nil end means the process exit was already recorded by endOutput.
+func (s *service) fail(run RunID, data map[string]any, end *runEnd) {
 	s.mu.Lock()
 	if s.failures == nil {
 		s.failures = map[uint64]string{}
@@ -350,8 +383,14 @@ func (s *service) fail(run RunID, data map[string]any) {
 		delete(s.failures, oldest)
 	}
 	data["generation"] = s.startGen
+	s.settleLocked(stateFailed)
+	if end != nil {
+		s.hub.PublishRun(s.ch, event(runEndKind, *end), run)
+		r := run
+		end.Run = &r
+		s.appendRecentExitLocked(*end)
+	}
 	s.mu.Unlock()
-	s.settle(stateFailed)
 	s.ctlRun(run, "service.failed", data)
 }
 
@@ -375,11 +414,8 @@ func (s *service) launch(restart bool) {
 	c, err := s.start(run)
 	if err != nil {
 		reason := "launch: " + err.Error()
-		s.hub.PublishRun(s.ch, event(runEndKind, map[string]any{
-			"outcome": "launch-failed", "error": reason,
-			"output": "complete", "drain_ms": int64(0),
-		}), run)
-		s.fail(run, map[string]any{"reason": reason})
+		end := &runEnd{Outcome: "launch-failed", Error: reason, Output: "complete"}
+		s.fail(run, map[string]any{"reason": reason}, end)
 		return
 	}
 	s.proc = c
@@ -521,15 +557,19 @@ func (s *service) endOutput(c *child, e *exitInfo, requested bool) {
 
 	c.outputMu.Lock()
 	c.outputEnded = true
-	d := map[string]any{
-		"outcome": "started", "code": e.Code, "requested": requested,
-		"output": output, "drain_ms": drainMS,
-	}
+	code, wasRequested := e.Code, requested
+	end := runEnd{Outcome: "started", Code: &code, Requested: &wasRequested,
+		Output: output, DrainMS: drainMS}
 	if e.Reason != "" {
-		d["reason"] = e.Reason
+		end.Reason = e.Reason
 	}
-	s.hub.PublishRun(s.ch, event(runEndKind, d), c.run)
 	s.mu.Lock()
+	// Keep the marker and its status fallback indivisible to a status reader. Lock order is
+	// outputMu -> s.mu -> hub; no path takes the hub lock and then s.mu.
+	s.hub.PublishRun(s.ch, event(runEndKind, end), c.run)
+	run := c.run
+	end.Run = &run
+	s.appendRecentExitLocked(end)
 	e.LateLines = c.lateLines
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
@@ -656,7 +696,7 @@ func (s *service) ended(st exitStat, reason string) {
 	}
 	s.recent = kept
 	if len(s.recent) >= *s.spec.MaxRestarts {
-		s.fail(e.Run, map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": e.Code})
+		s.fail(e.Run, map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": e.Code}, nil)
 		return
 	}
 	delay := backoffMin << len(s.recent)
