@@ -64,6 +64,9 @@ pub struct Output {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub fuel_used: u64,
+    /// The closed functions (files, sockets, signals) the run called on anything but stdio, and
+    /// was told no: what it tried and did not get.
+    pub refused: Vec<String>,
 }
 
 /// Why a module did not load or a run did not finish.
@@ -203,6 +206,7 @@ impl Program {
             stdout: ctx.stdout,
             stderr: ctx.stderr,
             fuel_used,
+            refused: ctx.refused.iter().map(|f| f.to_string()).collect(),
         })
     }
 }

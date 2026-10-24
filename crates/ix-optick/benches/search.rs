@@ -16,7 +16,7 @@
 //!
 //! ```bash
 //! # Windows (PowerShell)
-//! $env:OPTICK_INDEX_PATH = "C:/Users/spare/source/repos/ga/state/voicings/optick.index"
+//! $env:OPTICK_INDEX_PATH = "../ga/state/voicings/optick.index"
 //! cargo bench -p ix-optick
 //!
 //! # Unix

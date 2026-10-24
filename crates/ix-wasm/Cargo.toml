@@ -25,3 +25,7 @@ wasmi = { version = "2.0.0", default-features = false, features = ["std", "valid
 [dev-dependencies]
 ix-pipeline = { workspace = true }
 tempfile = { workspace = true }
+# ix-stream's `wasm` nodes are compiled and tested by the gated-features CI job
+# (`cargo test -p ix-stream --features wasm`), not through a dev-dependency here: ix-stream
+# depends on this crate, and a dev edge back would close a cycle in the workspace graph that
+# `ix_cargo_deps` requires to be a DAG.

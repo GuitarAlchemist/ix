@@ -8,6 +8,9 @@ on:
       - '.claude/settings.json'
       - '.claude/skills/digest/**'
       - '.claude/skills/correct/**'
+      - '.claude/skills/learnings/**'
+      - '.claude/hooks/correction-detector*'
+      - '.claude/hooks/test-correction-detector*'
       - '.claude/hooks/digest-*'
       - '.claude/hooks/precompact-digest*'
       - '.claude/hooks/sessionstart-digest*'
@@ -63,13 +66,17 @@ jobs:
         shell: bash
         run: |
           fail=0
-          for f in .claude/hooks/precompact-digest.sh .claude/hooks/sessionstart-digest.sh .claude/hooks/digest-*.sh; do
+          for f in .claude/hooks/precompact-digest.sh .claude/hooks/sessionstart-digest.sh .claude/hooks/digest-*.sh .claude/hooks/correction-detector.sh; do
             if ! bash -n "$f"; then
               echo "::error file=$f::bash syntax error"
               fail=1
             fi
           done
           exit $fail
+
+      - name: Run the correction detector fixture (FR/EN corrections nudge, requests stay silent)
+        shell: bash
+        run: bash .claude/hooks/test-correction-detector.sh
 
       - name: Verify .claude/settings.json is valid JSON
         run: python -c "import json; json.load(open('.claude/settings.json'))"
@@ -78,7 +85,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for f in ".claude/skills/digest/SKILL.md" ".claude/skills/correct/SKILL.md"; do
+          for f in ".claude/skills/digest/SKILL.md" ".claude/skills/correct/SKILL.md" ".claude/skills/learnings/SKILL.md"; do
             if [ ! -f "$f" ]; then
               echo "::error file=$f::Required skill missing: $f"
               missing=1

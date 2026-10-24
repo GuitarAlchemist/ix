@@ -5,7 +5,7 @@
 //! functions in [`GIVEN`] do anything. Those in [`CLOSED`] answer an error: no directory is
 //! preopened, so every file descriptor but stdin, stdout and stderr is `EBADF`, and sockets and
 //! signals are `ENOSYS`. A module's closed imports are listed on its [`Program`](crate::Program),
-//! for the record of a run.
+//! and those a run called, on anything but stdio, on its [`Output`](crate::Output).
 //!
 //! Every pointer and length comes from the module, so every read and write of its memory is
 //! checked: an out-of-range one answers `EINVAL`, never a panic of the host.
@@ -89,6 +89,8 @@ pub(crate) struct Ctx {
     rng: u64,
     clock_ns: u64,
     pub(crate) limits: StoreLimits,
+    /// The closed functions the run called and was told no, in the order of their first call.
+    pub(crate) refused: Vec<&'static str>,
 }
 
 impl Ctx {
@@ -103,6 +105,7 @@ impl Ctx {
             rng: limits.seed,
             clock_ns: 1,
             limits: store_limits,
+            refused: Vec::new(),
         }
     }
 
@@ -160,12 +163,21 @@ fn is_stdio(fd: i32) -> bool {
     (0..3).contains(&fd)
 }
 
+/// Answers `code` from the closed function `name`, and records that the run was told no.
+fn refuse(c: &mut Caller<'_, Ctx>, name: &'static str, code: i32) -> i32 {
+    let refused = &mut c.data_mut().refused;
+    if !refused.contains(&name) {
+        refused.push(name);
+    }
+    code
+}
+
 /// The answer of a closed function on descriptor `fd`: stdio cannot do it, nothing else is open.
-fn closed_on(fd: i32) -> i32 {
+fn closed_on(c: &mut Caller<'_, Ctx>, name: &'static str, fd: i32) -> i32 {
     if is_stdio(fd) {
         ESPIPE
     } else {
-        EBADF
+        refuse(c, name, EBADF)
     }
 }
 
@@ -173,98 +185,126 @@ fn closed_on(fd: i32) -> i32 {
 fn link_closed(linker: &mut Linker<Ctx>) -> Result<(), Error> {
     type C<'a> = Caller<'a, Ctx>;
     const W: &str = MODULE;
-    linker.func_wrap(W, "fd_advise", |_: C, fd: i32, _: i64, _: i64, _: i32| {
-        closed_on(fd)
-    })?;
-    linker.func_wrap(W, "fd_allocate", |_: C, fd: i32, _: i64, _: i64| {
-        closed_on(fd)
+    linker.func_wrap(
+        W,
+        "fd_advise",
+        |mut c: C, fd: i32, _: i64, _: i64, _: i32| closed_on(&mut c, "fd_advise", fd),
+    )?;
+    linker.func_wrap(W, "fd_allocate", |mut c: C, fd: i32, _: i64, _: i64| {
+        closed_on(&mut c, "fd_allocate", fd)
     })?;
     linker.func_wrap(
         W,
         "fd_fdstat_set_rights",
-        |_: C, fd: i32, _: i64, _: i64| closed_on(fd),
+        |mut c: C, fd: i32, _: i64, _: i64| closed_on(&mut c, "fd_fdstat_set_rights", fd),
     )?;
-    linker.func_wrap(W, "fd_filestat_set_size", |_: C, fd: i32, _: i64| {
-        closed_on(fd)
+    linker.func_wrap(W, "fd_filestat_set_size", |mut c: C, fd: i32, _: i64| {
+        closed_on(&mut c, "fd_filestat_set_size", fd)
     })?;
     linker.func_wrap(
         W,
         "fd_filestat_set_times",
-        |_: C, fd: i32, _: i64, _: i64, _: i32| closed_on(fd),
+        |mut c: C, fd: i32, _: i64, _: i64, _: i32| closed_on(&mut c, "fd_filestat_set_times", fd),
     )?;
     linker.func_wrap(
         W,
         "fd_pread",
-        |_: C, fd: i32, _: i32, _: i32, _: i64, _: i32| closed_on(fd),
+        |mut c: C, fd: i32, _: i32, _: i32, _: i64, _: i32| closed_on(&mut c, "fd_pread", fd),
     )?;
     linker.func_wrap(
         W,
         "fd_pwrite",
-        |_: C, fd: i32, _: i32, _: i32, _: i64, _: i32| closed_on(fd),
+        |mut c: C, fd: i32, _: i32, _: i32, _: i64, _: i32| closed_on(&mut c, "fd_pwrite", fd),
     )?;
     linker.func_wrap(
         W,
         "fd_readdir",
-        |_: C, fd: i32, _: i32, _: i32, _: i64, _: i32| closed_on(fd),
+        |mut c: C, fd: i32, _: i32, _: i32, _: i64, _: i32| closed_on(&mut c, "fd_readdir", fd),
     )?;
-    linker.func_wrap(W, "fd_renumber", |_: C, fd: i32, _: i32| closed_on(fd))?;
-    linker.func_wrap(W, "fd_tell", |_: C, fd: i32, _: i32| closed_on(fd))?;
+    linker.func_wrap(W, "fd_renumber", |mut c: C, fd: i32, _: i32| {
+        closed_on(&mut c, "fd_renumber", fd)
+    })?;
+    linker.func_wrap(W, "fd_tell", |mut c: C, fd: i32, _: i32| {
+        closed_on(&mut c, "fd_tell", fd)
+    })?;
     // Paths are resolved against a directory descriptor, and none is open.
     for name in [
         "path_create_directory",
         "path_remove_directory",
         "path_unlink_file",
     ] {
-        linker.func_wrap(W, name, |_: C, _: i32, _: i32, _: i32| EBADF)?;
+        linker.func_wrap(W, name, move |mut c: C, _: i32, _: i32, _: i32| {
+            refuse(&mut c, name, EBADF)
+        })?;
     }
     linker.func_wrap(
         W,
         "path_filestat_get",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32| EBADF,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32| {
+            refuse(&mut c, "path_filestat_get", EBADF)
+        },
     )?;
     linker.func_wrap(
         W,
         "path_filestat_set_times",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i64, _: i64, _: i32| EBADF,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i64, _: i64, _: i32| {
+            refuse(&mut c, "path_filestat_set_times", EBADF)
+        },
     )?;
     linker.func_wrap(
         W,
         "path_link",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| EBADF,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| {
+            refuse(&mut c, "path_link", EBADF)
+        },
     )?;
     linker.func_wrap(
         W,
         "path_open",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i64, _: i64, _: i32, _: i32| EBADF,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i64, _: i64, _: i32, _: i32| {
+            refuse(&mut c, "path_open", EBADF)
+        },
     )?;
     linker.func_wrap(
         W,
         "path_readlink",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| EBADF,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| {
+            refuse(&mut c, "path_readlink", EBADF)
+        },
     )?;
     linker.func_wrap(
         W,
         "path_rename",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| EBADF,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| {
+            refuse(&mut c, "path_rename", EBADF)
+        },
     )?;
     linker.func_wrap(
         W,
         "path_symlink",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32| EBADF,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32| refuse(&mut c, "path_symlink", EBADF),
     )?;
-    linker.func_wrap(W, "proc_raise", |_: C, _: i32| ENOSYS)?;
-    linker.func_wrap(W, "sock_accept", |_: C, _: i32, _: i32, _: i32| ENOSYS)?;
+    linker.func_wrap(W, "proc_raise", |mut c: C, _: i32| {
+        refuse(&mut c, "proc_raise", ENOSYS)
+    })?;
+    linker.func_wrap(W, "sock_accept", |mut c: C, _: i32, _: i32, _: i32| {
+        refuse(&mut c, "sock_accept", ENOSYS)
+    })?;
     linker.func_wrap(
         W,
         "sock_recv",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| ENOSYS,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| {
+            refuse(&mut c, "sock_recv", ENOSYS)
+        },
     )?;
     linker.func_wrap(
         W,
         "sock_send",
-        |_: C, _: i32, _: i32, _: i32, _: i32, _: i32| ENOSYS,
+        |mut c: C, _: i32, _: i32, _: i32, _: i32, _: i32| refuse(&mut c, "sock_send", ENOSYS),
     )?;
-    linker.func_wrap(W, "sock_shutdown", |_: C, _: i32, _: i32| ENOSYS)?;
+    linker.func_wrap(W, "sock_shutdown", |mut c: C, _: i32, _: i32| {
+        refuse(&mut c, "sock_shutdown", ENOSYS)
+    })?;
     Ok(())
 }
 

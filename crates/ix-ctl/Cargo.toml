@@ -1,0 +1,17 @@
+[package]
+name = "ix-ctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["development-tools", "network-programming"]
+keywords = ["control-plane", "supervisor", "ixql", "reconcile", "pod"]
+description = "Client of ixctl, IX's control plane: blocking HTTP/1.1 over std's TcpStream to plan, apply, stop and wait on declared services, and the `ix.ctl.*` capabilities that let an IXQL program drive the plane."
+
+[dependencies]
+ix-ixql = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+path = "src/lib.rs"

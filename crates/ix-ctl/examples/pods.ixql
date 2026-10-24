@@ -1,0 +1,38 @@
+--- ## Two pods, driven from IXQL
+--- Plans and applies a desired state on an ixctl plane, waits until the plane has observed
+--- that generation and until pod-a runs with its four nodes, reads the status, plans again
+--- (nothing is left to do), then stops both pods so the plane ends as it began.
+---
+---   ixctl up spec.json          -- a spec declaring pod-a and pod-b, each running
+---                               -- ix-stream's `pod` example with `--nodes 4`
+---   cargo run -p ix-ctl --example ixql-ctl -- crates/ix-ctl/examples/pods.ixql --state <state file>
+---
+--- The runner prints every binding below as JSON.
+
+--- `schema` is optional; a plane that speaks another schema refuses the document instead of
+--- misreading it.
+desired <- {
+    schema: "ixctl-desired/0",
+    services: {
+      "pod-a": { state: "running" },
+      "pod-b": { state: "running" }
+    }
+  }
+
+--- Pure: reads the observed state and changes nothing.
+planned <- desired → ix.ctl.plan
+
+--- Answers the new generation at once, and the boot (`epoch`) it belongs to; the starts run in
+--- the background. The wait names both, so a plane restart ends it at once instead of letting
+--- the new boot's generation of the same number pass for this one.
+applied <- desired → ix.ctl.apply
+converged <- ix.ctl.wait(generation: applied.generation, epoch: applied.epoch, timeout_ms: 10000)
+
+--- A pod's members are the nodes of its last `stats` event.
+pod_a <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)
+status <- ix.ctl.status()
+replanned <- desired → ix.ctl.plan
+
+--- Each answers once that pod's process tree is gone.
+stopped_a <- ix.ctl.stop(service: "pod-a")
+stopped_b <- ix.ctl.stop(service: "pod-b")

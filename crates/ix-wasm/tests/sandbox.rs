@@ -120,7 +120,11 @@ fn a_module_that_opens_a_file_is_told_no_and_the_record_says_so() {
     const EBADF: i32 = 8;
     let p = Program::new(wat.as_bytes()).unwrap();
     assert_eq!(p.closed(), ["path_open"]);
-    assert_eq!(p.run(b"", &limits()).unwrap().exit, EBADF);
+    let out = p.run(b"", &limits()).unwrap();
+    assert_eq!(
+        (out.exit, out.refused),
+        (EBADF, vec!["path_open".to_string()])
+    );
 }
 
 #[test]
