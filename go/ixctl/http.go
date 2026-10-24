@@ -60,6 +60,25 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 	}))
 	m.HandleFunc("POST /v1/plan", s.op(desiredOp("plan")))
 	m.HandleFunc("POST /v1/apply", s.op(desiredOp("apply")))
+	m.HandleFunc("POST /v1/wait", s.op(func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		if err != nil {
+			return Request{}, err
+		}
+		var body struct {
+			Wait       string `json:"wait"`
+			Epoch      string `json:"epoch,omitempty"`
+			Generation uint64 `json:"generation,omitempty"`
+			Service    string `json:"service,omitempty"`
+			Run        *RunID `json:"run,omitempty"`
+			TimeoutMS  int64  `json:"timeout_ms"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			return Request{}, err
+		}
+		return Request{Op: "wait", Peer: peer, Wait: body.Wait, Epoch: body.Epoch,
+			Generation: body.Generation, Service: body.Service, Run: body.Run, TimeoutMS: body.TimeoutMS}, nil
+	}))
 	m.HandleFunc("POST /v1/stop", s.op(func(r *http.Request) (Request, error) {
 		var body struct {
 			Service string          `json:"service"`
