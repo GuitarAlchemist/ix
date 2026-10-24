@@ -1744,6 +1744,25 @@ fn a_wait_ends_on_time_against_a_plane_that_stalls() {
 // alone has nothing to re-read, and the connection error stands.
 #[test]
 fn a_scoped_wait_follows_the_state_file_across_a_restart() {
+    follows_the_state_file_across_a_restart("generation", |ctl, timeout| {
+        ctl.wait_generation_of("0ld0ld0ld0ld", 3, timeout)
+    });
+}
+
+// The same for the wait on one run's exit: scoped to the boot that launched the run, it ends
+// on the restart, never on `plane unreachable` (D13, Q8 of #440).
+#[test]
+fn a_scoped_exit_wait_follows_the_state_file_across_a_restart() {
+    follows_the_state_file_across_a_restart("exit", |ctl, timeout| {
+        ctl.wait_exit_of("pod-a", 3, Some("0ld0ld0ld0ld"), timeout)
+    });
+}
+
+/// `name` keeps each test's state file its own: the tests of this file run in parallel.
+fn follows_the_state_file_across_a_restart(
+    name: &str,
+    wait: impl Fn(&Ctl, Duration) -> Result<Value, CtlError>,
+) {
     // The new boot, already listening; the state file will name it a little later.
     let (live, plane) = plane();
     let live_addr = live.addr().to_string();
@@ -1754,7 +1773,10 @@ fn a_scoped_wait_follows_the_state_file_across_a_restart() {
     drop(gone);
     assert_ne!(dead_addr, live_addr);
     let old_token = "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0";
-    let state = tmp(&format!("ix-ctl-restart-{}.json", std::process::id()));
+    let state = tmp(&format!(
+        "ix-ctl-restart-{name}-{}.json",
+        std::process::id()
+    ));
     let state_doc =
         |addr: &str, token: &str| json!({"name": "fake", "addr": addr, "pid": 1, "token": token});
     std::fs::write(&state, state_doc(&dead_addr, old_token).to_string()).unwrap();
@@ -1772,9 +1794,7 @@ fn a_scoped_wait_follows_the_state_file_across_a_restart() {
         }
     });
     let began = Instant::now();
-    let err = ctl
-        .wait_generation_of("0ld0ld0ld0ld", 3, Duration::from_secs(20))
-        .unwrap_err();
+    let err = wait(&ctl, Duration::from_secs(20)).unwrap_err();
     let took = began.elapsed();
     rewrite.join().unwrap();
     let _ = std::fs::remove_file(&state);
@@ -1789,9 +1809,7 @@ fn a_scoped_wait_follows_the_state_file_across_a_restart() {
         .log
         .contains(&"GET /v1/status".to_string()));
 
-    let err = Ctl::new(dead_addr, TOKEN)
-        .wait_generation_of("0ld0ld0ld0ld", 3, Duration::from_millis(50))
-        .unwrap_err();
+    let err = wait(&Ctl::new(dead_addr, TOKEN), Duration::from_millis(50)).unwrap_err();
     assert!(matches!(err, CtlError::Io(_)), "{err}");
 }
 
