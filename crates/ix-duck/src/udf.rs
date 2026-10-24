@@ -144,7 +144,7 @@ impl VScalar for IxCosine {
     type State = ();
 
     // @ai:invariant ix_cosine returns ix_math cosine_similarity of its two DOUBLE[] args; identical vectors -> 1.0, orthogonal -> 0.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_cosine_matches_ix_math]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -168,7 +168,7 @@ impl VScalar for IxEuclidean {
     type State = ();
 
     // @ai:invariant ix_euclidean returns ix_math euclidean L2 distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_euclidean_matches_ix_math]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -191,7 +191,7 @@ impl VScalar for IxManhattan {
     type State = ();
 
     // @ai:invariant ix_manhattan returns ix_math manhattan L1 distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_manhattan_matches_ix_math]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -214,7 +214,7 @@ impl VScalar for IxChebyshev {
     type State = ();
 
     // @ai:invariant ix_chebyshev returns ix_math chebyshev L∞ distance of its two DOUBLE[] args; equal vectors -> 0.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_chebyshev_matches_ix_math]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -238,7 +238,7 @@ impl VScalar for IxCosineDistance {
     type State = ();
 
     // @ai:invariant ix_cosine_distance returns ix_math cosine_distance (1 − cosine_similarity) of its two DOUBLE[] args; identical vectors -> 0.0, orthogonal -> 1.0, dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_cosine_distance_matches_ix_math]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -263,7 +263,7 @@ impl VScalar for IxMinkowski {
     type State = ();
 
     // @ai:invariant ix_minkowski(a,b,p) returns ix_math minkowski Lᵖ distance; p=1 equals ix_manhattan, p=2 equals ix_euclidean; a NULL list or NULL p yields SQL NULL; dimension mismatch -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::tests::ix_minkowski_matches_ix_math]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -277,12 +277,12 @@ impl VScalar for IxMinkowski {
         // The `p` exponent is a flat DOUBLE column (one value per row).
         let p_vals: Vec<f64> = {
             let pv = input.flat_vector(2);
-            let s = pv.as_slice_with_len::<f64>(n);
+            let s = unsafe { pv.as_slice_with_len::<f64>(n) };
             s[..n].to_vec()
         };
         let mut out = output.flat_vector();
         {
-            let out_slice = out.as_mut_slice_with_len::<f64>(n);
+            let out_slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
             for i in 0..n {
                 if a_null[i] || b_null[i] || p_null[i] {
                     out_slice[i] = 0.0; // placeholder; row flagged NULL below
@@ -382,7 +382,7 @@ mod tests {
     impl VScalar for PoisonedNullCosine {
         type State = ();
 
-        unsafe fn invoke(
+        fn invoke(
             _: &Self::State,
             input: &mut DataChunkHandle,
             output: &mut dyn WritableVector,
@@ -399,7 +399,7 @@ mod tests {
                     }
                 }
             }
-            unsafe { IxCosine::invoke(&(), input, output) }
+            IxCosine::invoke(&(), input, output)
         }
 
         fn signatures() -> Vec<ScalarFunctionSignature> {

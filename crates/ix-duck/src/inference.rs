@@ -122,7 +122,7 @@ macro_rules! unary_udf {
         struct $name;
         impl VScalar for $name {
             type State = ();
-            unsafe fn invoke(
+            fn invoke(
                 _: &(),
                 input: &mut DataChunkHandle,
                 output: &mut dyn WritableVector,
@@ -148,18 +148,19 @@ struct IxQuantile;
 impl VScalar for IxQuantile {
     type State = ();
     // @ai:invariant ix_quantile(x,q) wraps ix_math::inference::quantile; q=0.5 is the median, q outside [0,1] -> SQL error [T:test conf:0.85 src:ix_duck::inference::tests::quantile_scalar]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let a_null = null_mask(input, 0, n);
         let q_null = null_mask(input, 1, n);
         let a = read_list_col(input, 0, n);
         let qs: Vec<f64> = {
             let v = input.flat_vector(1);
-            v.as_slice_with_len::<f64>(n)[..n].to_vec()
+            let s = unsafe { v.as_slice_with_len::<f64>(n) };
+            s[..n].to_vec()
         };
         let mut out = output.flat_vector();
         {
-            let slice = out.as_mut_slice_with_len::<f64>(n);
+            let slice = unsafe { out.as_mut_slice_with_len::<f64>(n) };
             for i in 0..n {
                 if a_null[i] || q_null[i] {
                     slice[i] = 0.0;
@@ -188,7 +189,7 @@ struct IxKl;
 impl VScalar for IxKl {
     type State = ();
     // @ai:invariant ix_kl wraps ix_math::inference::kl_divergence; equal distributions -> 0, q zero where p positive -> SQL error [T:test conf:0.85 src:ix_duck::inference::tests::divergence_scalars]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         invoke_binary(input, output, "ix_kl", kl_divergence)
     }
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -201,7 +202,7 @@ struct IxJs;
 impl VScalar for IxJs {
     type State = ();
     // @ai:invariant ix_js wraps ix_math::inference::js_divergence; symmetric and bounded in [0, ln 2], equal distributions -> 0 [T:test conf:0.85 src:ix_duck::inference::tests::divergence_scalars]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         invoke_binary(input, output, "ix_js", js_divergence)
     }
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -215,7 +216,7 @@ struct IxPearson;
 impl VScalar for IxPearson {
     type State = ();
     // @ai:invariant ix_pearson wraps ix_math::inference::pearson; perfectly correlated -> 1, anti-correlated -> -1, a constant or length-mismatched arg -> SQL error [T:test conf:0.85 src:ix_duck::inference::tests::pearson_scalar]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         invoke_binary(input, output, "ix_pearson", pearson)
     }
     fn signatures() -> Vec<ScalarFunctionSignature> {

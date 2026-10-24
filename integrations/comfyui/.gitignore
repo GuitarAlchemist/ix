@@ -1,0 +1,4 @@
+# Put there by install.py from a local build; never committed.
+ix_comfyui/bin/
+ix_comfyui/run/
+__pycache__/

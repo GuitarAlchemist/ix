@@ -134,12 +134,12 @@ struct IxHexConsensus;
 impl VScalar for IxHexConsensus {
     type State = ();
     // @ai:invariant ix_hex_consensus folds a LIST<VARCHAR> of hexavalent tags with ix_types::Hexavalent::and (the meet; F absorbing): [T,T]->T, [T,P]->P, [P,D]->D, [T,F]->F, [T,C]->C, [C,F]->F; empty list -> SQL NULL; unrecognised tag -> SQL error (no panic) [T:test conf:0.9 src:ix_duck::hexavalent::tests::consensus_meet_fold]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        invoke_fold(input, output, "ix_hex_consensus", Hexavalent::and)
+        unsafe { invoke_fold(input, output, "ix_hex_consensus", Hexavalent::and) }
     }
     fn signatures() -> Vec<ScalarFunctionSignature> {
         list_fold_sig()
@@ -150,12 +150,12 @@ struct IxHexOr;
 impl VScalar for IxHexOr {
     type State = ();
     // @ai:invariant ix_hex_or folds a LIST<VARCHAR> with ix_types::Hexavalent::or (the join; the optimistic dual of consensus): [F,F]->F, [F,P]->P, [T,_]->T; empty list -> SQL NULL; unrecognised tag -> SQL error [T:test conf:0.9 src:ix_duck::hexavalent::tests::or_join_fold]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        invoke_fold(input, output, "ix_hex_or", Hexavalent::or)
+        unsafe { invoke_fold(input, output, "ix_hex_or", Hexavalent::or) }
     }
     fn signatures() -> Vec<ScalarFunctionSignature> {
         list_fold_sig()
@@ -166,7 +166,7 @@ struct IxHexNot;
 impl VScalar for IxHexNot {
     type State = ();
     // @ai:invariant ix_hex_not(VARCHAR) is ix_types::Hexavalent::not: T<->F, P<->D, U->U, C->C; NULL in -> NULL out; unrecognised tag -> SQL error [T:test conf:0.9 src:ix_duck::hexavalent::tests::not_unary]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -174,7 +174,7 @@ impl VScalar for IxHexNot {
         let n = input.len();
         let null = crate::udf::null_mask(input, 0, n);
         let v = input.flat_vector(0);
-        let slice = v.as_slice_with_len::<duckdb_string_t>(n);
+        let slice = unsafe { v.as_slice_with_len::<duckdb_string_t>(n) };
         let tags: Vec<String> = slice
             .iter()
             .map(|ptr| DuckString::new(&mut { *ptr }).as_str().to_string())
@@ -204,7 +204,7 @@ struct IxHexFromEvidence;
 impl VScalar for IxHexFromEvidence {
     type State = ();
     // @ai:invariant ix_hex_from_evidence(support BIGINT, refute BIGINT) -> tag: (0,0)->U, (+,0)->T, (0,+)->F, (+,+)->C; NULL in either arg -> NULL out [T:test conf:0.9 src:ix_duck::hexavalent::tests::from_evidence_map]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -212,8 +212,8 @@ impl VScalar for IxHexFromEvidence {
         let n = input.len();
         let s_null = crate::udf::null_mask(input, 0, n);
         let r_null = crate::udf::null_mask(input, 1, n);
-        let support = input.flat_vector(0).as_slice_with_len::<i64>(n)[..n].to_vec();
-        let refute = input.flat_vector(1).as_slice_with_len::<i64>(n)[..n].to_vec();
+        let support = unsafe { input.flat_vector(0).as_slice_with_len::<i64>(n) }[..n].to_vec();
+        let refute = unsafe { input.flat_vector(1).as_slice_with_len::<i64>(n) }[..n].to_vec();
         let mut out = output.flat_vector();
         for i in 0..n {
             if s_null[i] || r_null[i] {
