@@ -198,10 +198,12 @@ type ServiceStatus struct {
 	Restarts  int    `json:"restarts"`
 	StartedAt *int64 `json:"started_at"`
 	// Generation is the apply that launched the current or last run; absent before any.
-	Generation uint64          `json:"generation,omitempty"`
-	Run        *RunID          `json:"run,omitempty"`
-	LastExit   *exitInfo       `json:"last_exit"`
-	Nodes      json.RawMessage `json:"nodes"`
+	Generation          uint64          `json:"generation,omitempty"`
+	Run                 *RunID          `json:"run,omitempty"`
+	LastExit            *exitInfo       `json:"last_exit"`
+	RecentExitsCapacity int             `json:"recent_exits_capacity"`
+	RecentExits         []runEnd        `json:"recent_exits"`
+	Nodes               json.RawMessage `json:"nodes"`
 }
 
 type PeerStatus struct {
