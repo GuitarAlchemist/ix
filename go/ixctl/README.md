@@ -557,8 +557,8 @@ then a rename; mode 0600), so they survive a restart; `--bookmarks memory` keeps
 only. A file the plane cannot read as bookmarks is refused at startup, not emptied. The replay
 source is the ring (4096 envelopes): a bookmark older than it answers `since-too-old` first, then
 what the ring still holds, never a silently partial replay; a bookmark of an earlier boot answers
-`epoch-changed` first, then the new boot's ring. Replaying from the journal is a later decision
-(D9, ix#414; door 3 untouched).
+`epoch-changed` first, then the new boot's ring. The journal is not replayed; durable restoration
+would be a separate contract that announces itself (D9, ix#414; door 3 untouched).
 
 | Op | Fields | Reply |
 |---|---|---|
@@ -585,7 +585,12 @@ into; the replay stays local to that peer.
 
 `<name>.journal.jsonl` appends, as JSON lines, a `boot` header per start (`schema:
 "ixctl-journal/0"`, `name`, `epoch`), every applied document with its generation and actions, and
-every `ctl` event's envelope. It is an audit log, not a store a program should read yet (door 3).
+every `ctl` event's envelope. The plane never replays it at startup: desired state does not
+survive a restart; the new boot draws a new `epoch`, starts at generation 0 with every declared
+service stopped, then applies `autostart` services as generation 1. Applied documents are partial,
+appends are not `fsync`ed, write errors are ignored, and a crash can cut the last line (the next
+boot's header then starts a line of its own), so no record is a commit point; durable restoration would be a separate contract that announces itself
+(door 3).
 
 ## Gate
 
