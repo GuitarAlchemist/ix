@@ -7,7 +7,7 @@
 //! file:
 //!
 //! ```no_run
-//! use ix_ctl::Ctl;
+//! use ix_ctl::{Ctl, GenerationOutcome};
 //! use serde_json::json;
 //! use std::time::Duration;
 //!
@@ -15,7 +15,9 @@
 //! let desired = json!({ "services": { "pod-a": { "state": "running" } } });
 //! let applied = ctl.apply(&desired, None)?;
 //! let g = applied["generation"].as_u64().unwrap();
-//! ctl.wait_generation(g, Duration::from_secs(10))?;
+//! let epoch = applied["epoch"].as_str().unwrap();
+//! let outcome = ctl.wait_generation_outcome(epoch, g, Duration::from_secs(10), None)?;
+//! assert_eq!(GenerationOutcome::Converged, outcome);
 //! let pod = ctl.wait_nodes("pod-a", 4, Duration::from_secs(10))?;
 //! println!("{}", pod["nodes"]);
 //! ctl.stop("pod-a", None)?;
@@ -27,12 +29,22 @@
 //! a generation started; the generation's convergence only says the job was launched
 //! (`examples/job.ixql` runs the real `ix pipeline run` that way).
 //!
+//! # Plane-side waits
+//!
+//! [`Ctl::wait_generation_outcome`], [`Ctl::wait_launch`] and [`Ctl::wait_run`] ask the plane's
+//! `POST /v1/wait` and answer one value of a closed set per wait ([`GenerationOutcome`],
+//! [`LaunchOutcome`], [`RunOutcome`]): a `timeout` is a value, a refusal stays an error. A
+//! handle made with [`Ctl::from_state`] follows its state file when the plane stops answering,
+//! so a wait cut by a hard stop is asked again of the new boot, which answers
+//! `Unknown(OtherEpoch)`. In IXQL they are `ix.ctl.wait(wait: "generation" | "launch" | "run",
+//! ...)`. [`Ctl::wait_generation`] is deprecated: by number alone it cannot tell a restart.
+//!
 //! [`register`] exposes the same verbs to IXQL as `ix.ctl.status`, `ix.ctl.plan`,
 //! `ix.ctl.apply`, `ix.ctl.stop` and `ix.ctl.wait`.
 //!
 //! # What the client refuses
 //!
-//! The token is only ever sent to a loopback address, in a header. The waits poll
+//! The token is only ever sent to a loopback address, in a header. The polling waits read
 //! `/v1/status` every 25 ms; [`Ctl::events`] reads the plane's event stream. The gate's M1
 //! measures what a wait on the stream would gain: on a real start, `converged` reaches a live
 //! reader 2–3 ms after the apply reply, the poll sees it 12–28 ms after, depending on where in
@@ -52,8 +64,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// How often a wait reads the status again.
+/// How often a polling wait reads the status again.
 const POLL: Duration = Duration::from_millis(25);
+/// Time left after the plane's wait deadline for its HTTP answer to cross loopback.
+const WAIT_REPLY_GRACE: Duration = Duration::from_millis(250);
 
 /// What went wrong talking to the plane.
 #[derive(Debug)]
@@ -316,6 +330,235 @@ impl From<std::io::Error> for CtlError {
     }
 }
 
+/// One service launch attempt: the origin plane, its boot, and the sequence of the
+/// `ixctl.run.begin` marker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunId {
+    pub origin: String,
+    pub epoch: String,
+    pub seq: u64,
+}
+
+impl RunId {
+    fn decode(value: &Value, field: &str) -> Result<Self, CtlError> {
+        let record = value
+            .as_object()
+            .ok_or_else(|| CtlError::Protocol(format!("wait `{field}` is not a run record")))?;
+        let text = |name: &str| {
+            record
+                .get(name)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    CtlError::Protocol(format!("wait `{field}.{name}` is not a non-empty string"))
+                })
+        };
+        let seq = record
+            .get("seq")
+            .and_then(Value::as_u64)
+            .filter(|seq| *seq > 0)
+            .ok_or_else(|| {
+                CtlError::Protocol(format!("wait `{field}.seq` is not a positive count"))
+            })?;
+        Ok(Self {
+            origin: text("origin")?,
+            epoch: text("epoch")?,
+            seq,
+        })
+    }
+
+    fn json(&self) -> Value {
+        json!({"origin": self.origin, "epoch": self.epoch, "seq": self.seq})
+    }
+}
+
+/// Why the plane no longer has a wait's answer. This set is closed for `run/1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnknownReason {
+    Evicted,
+    OtherEpoch,
+}
+
+impl UnknownReason {
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Evicted => "evicted",
+            Self::OtherEpoch => "other-epoch",
+        }
+    }
+}
+
+/// The closed result of a generation wait.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GenerationOutcome {
+    Converged,
+    Diverged { service: String, reason: String },
+    Timeout,
+    Unknown(UnknownReason),
+}
+
+/// The closed result of waiting for one generation's launch decision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LaunchOutcome {
+    Launched(RunId),
+    NotLaunched(Option<RunId>),
+    Timeout,
+    Unknown(UnknownReason),
+}
+
+/// The closed result of waiting for one exact run.
+///
+/// `Ended.end` is kept as [`serde_json::Value`], field-for-field with the plane's `run.end`
+/// data rather than a second Rust schema that could discard a field.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RunOutcome {
+    Ended { run: RunId, end: Value },
+    Timeout,
+    Unknown(UnknownReason),
+}
+
+impl From<GenerationOutcome> for Value {
+    fn from(outcome: GenerationOutcome) -> Self {
+        match outcome {
+            GenerationOutcome::Converged => json!({"outcome": "converged"}),
+            GenerationOutcome::Diverged { service, reason } => {
+                json!({"outcome": "diverged", "service": service, "reason": reason})
+            }
+            GenerationOutcome::Timeout => json!({"outcome": "timeout"}),
+            GenerationOutcome::Unknown(reason) => {
+                json!({"outcome": "unknown", "reason": reason.wire()})
+            }
+        }
+    }
+}
+
+impl From<LaunchOutcome> for Value {
+    fn from(outcome: LaunchOutcome) -> Self {
+        match outcome {
+            LaunchOutcome::Launched(run) => json!({"outcome": "launched", "run": run.json()}),
+            LaunchOutcome::NotLaunched(current_run) => json!({
+                "outcome": "not-launched",
+                "current_run": current_run.map_or(Value::Null, |run| run.json())
+            }),
+            LaunchOutcome::Timeout => json!({"outcome": "timeout"}),
+            LaunchOutcome::Unknown(reason) => {
+                json!({"outcome": "unknown", "reason": reason.wire()})
+            }
+        }
+    }
+}
+
+impl From<RunOutcome> for Value {
+    fn from(outcome: RunOutcome) -> Self {
+        match outcome {
+            RunOutcome::Ended { run, end } => {
+                json!({"outcome": "ended", "run": run.json(), "end": end})
+            }
+            RunOutcome::Timeout => json!({"outcome": "timeout"}),
+            RunOutcome::Unknown(reason) => json!({"outcome": "unknown", "reason": reason.wire()}),
+        }
+    }
+}
+
+fn wait_outcome<'a>(reply: &'a Value, wait: &str) -> Result<&'a str, CtlError> {
+    reply
+        .get("outcome")
+        .and_then(Value::as_str)
+        .ok_or_else(|| CtlError::Protocol(format!("{wait} wait has no string `outcome`")))
+}
+
+fn wait_text(reply: &Value, wait: &str, field: &str) -> Result<String, CtlError> {
+    reply
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| CtlError::Protocol(format!("{wait} wait has no string `{field}`")))
+}
+
+fn unknown_reason(reply: &Value, wait: &str) -> Result<UnknownReason, CtlError> {
+    match reply.get("reason").and_then(Value::as_str) {
+        Some("evicted") => Ok(UnknownReason::Evicted),
+        Some("other-epoch") => Ok(UnknownReason::OtherEpoch),
+        Some(reason) => Err(CtlError::Protocol(format!(
+            "{wait} wait has unknown reason `{reason}`"
+        ))),
+        None => Err(CtlError::Protocol(format!(
+            "{wait} wait has no string `reason`"
+        ))),
+    }
+}
+
+fn decode_generation(reply: &Value) -> Result<GenerationOutcome, CtlError> {
+    match wait_outcome(reply, "generation")? {
+        "converged" => Ok(GenerationOutcome::Converged),
+        "diverged" => Ok(GenerationOutcome::Diverged {
+            service: wait_text(reply, "generation", "service")?,
+            reason: wait_text(reply, "generation", "reason")?,
+        }),
+        "timeout" => Ok(GenerationOutcome::Timeout),
+        "unknown" => match unknown_reason(reply, "generation")? {
+            UnknownReason::OtherEpoch => Ok(GenerationOutcome::Unknown(UnknownReason::OtherEpoch)),
+            UnknownReason::Evicted => Err(CtlError::Protocol(
+                "generation wait cannot be unknown because it was evicted".into(),
+            )),
+        },
+        outcome => Err(CtlError::Protocol(format!(
+            "generation wait has unknown outcome `{outcome}`"
+        ))),
+    }
+}
+
+fn decode_launch(reply: &Value) -> Result<LaunchOutcome, CtlError> {
+    match wait_outcome(reply, "launch")? {
+        "launched" => Ok(LaunchOutcome::Launched(RunId::decode(
+            reply
+                .get("run")
+                .ok_or_else(|| CtlError::Protocol("launch wait has no `run`".into()))?,
+            "run",
+        )?)),
+        "not-launched" => {
+            let current = reply
+                .get("current_run")
+                .ok_or_else(|| CtlError::Protocol("launch wait has no `current_run`".into()))?;
+            Ok(LaunchOutcome::NotLaunched(if current.is_null() {
+                None
+            } else {
+                Some(RunId::decode(current, "current_run")?)
+            }))
+        }
+        "timeout" => Ok(LaunchOutcome::Timeout),
+        "unknown" => Ok(LaunchOutcome::Unknown(unknown_reason(reply, "launch")?)),
+        outcome => Err(CtlError::Protocol(format!(
+            "launch wait has unknown outcome `{outcome}`"
+        ))),
+    }
+}
+
+fn decode_run(reply: &Value) -> Result<RunOutcome, CtlError> {
+    match wait_outcome(reply, "run")? {
+        "ended" => {
+            let run = RunId::decode(
+                reply
+                    .get("run")
+                    .ok_or_else(|| CtlError::Protocol("run wait has no `run`".into()))?,
+                "run",
+            )?;
+            let end = reply
+                .get("end")
+                .filter(|end| end.is_object())
+                .cloned()
+                .ok_or_else(|| CtlError::Protocol("run wait has no object `end`".into()))?;
+            Ok(RunOutcome::Ended { run, end })
+        }
+        "timeout" => Ok(RunOutcome::Timeout),
+        "unknown" => Ok(RunOutcome::Unknown(unknown_reason(reply, "run")?)),
+        outcome => Err(CtlError::Protocol(format!(
+            "run wait has unknown outcome `{outcome}`"
+        ))),
+    }
+}
+
 /// A handle on one plane: its address and token. Cheap to clone; every call opens its own
 /// connection.
 #[derive(Clone)]
@@ -402,7 +645,7 @@ impl Ctl {
         peer: Option<&str>,
         within: Option<Duration>,
     ) -> Result<Value, CtlError> {
-        self.call_within("GET", &routed("/v1/status", peer), None, within)
+        self.call_within("GET", &routed("/v1/status", peer), None, within, None)
     }
 
     /// `GET /v1/events`: the plane's events on channels under `channel` (a prefix: `ctl`,
@@ -593,6 +836,49 @@ impl Ctl {
         self.call("POST", &format!("/v1/probe/{op}"), Some(&body))
     }
 
+    /// `POST /v1/wait` for one generation of one boot. `timeout` is an `Ok(Timeout)` outcome;
+    /// transport and HTTP refusals remain errors. With `peer`, that origin decides the wait.
+    pub fn wait_generation_outcome(
+        &self,
+        epoch: &str,
+        generation: u64,
+        timeout: Duration,
+        peer: Option<&str>,
+    ) -> Result<GenerationOutcome, CtlError> {
+        let request = json!({"wait": "generation", "epoch": epoch, "generation": generation});
+        let reply = self.plane_wait(request, timeout, peer)?;
+        decode_generation(&reply)
+    }
+
+    /// `POST /v1/wait` for the launch decision of `service` in one generation and boot.
+    pub fn wait_launch(
+        &self,
+        epoch: &str,
+        generation: u64,
+        service: &str,
+        timeout: Duration,
+        peer: Option<&str>,
+    ) -> Result<LaunchOutcome, CtlError> {
+        let request = json!({
+            "wait": "launch", "epoch": epoch, "generation": generation, "service": service,
+        });
+        let reply = self.plane_wait(request, timeout, peer)?;
+        decode_launch(&reply)
+    }
+
+    /// `POST /v1/wait` for one exact run. [`RunOutcome::Ended`] keeps the plane's `end`
+    /// object as [`serde_json::Value`].
+    pub fn wait_run(
+        &self,
+        run: &RunId,
+        timeout: Duration,
+        peer: Option<&str>,
+    ) -> Result<RunOutcome, CtlError> {
+        let request = json!({"wait": "run", "run": run.json()});
+        let reply = self.plane_wait(request, timeout, peer)?;
+        decode_run(&reply)
+    }
+
     /// Waits until the plane has settled `generation`, and answers the status that showed it.
     ///
     /// Each poll of the status decides one of three things. With a plane that reports
@@ -612,6 +898,9 @@ impl Ctl {
     /// This wait does not know which boot `generation` belongs to: after a restart it waits
     /// for the new boot to reach that number, or times out. [`Ctl::wait_generation_of`] takes
     /// the epoch the apply reply gave and fails at once instead.
+    #[deprecated(
+        note = "number-only wait is unsafe across restart; use wait_generation_of or wait_generation_outcome"
+    )]
     pub fn wait_generation(&self, generation: u64, timeout: Duration) -> Result<Value, CtlError> {
         self.wait_gen(None, None, generation, timeout)
     }
@@ -656,6 +945,66 @@ impl Ctl {
         self.wait_gen(Some(peer), epoch, generation, timeout)
     }
 
+    /// A plane-side wait follows the remembered state file only for errors that can denote the
+    /// old boot: I/O, its new token's 401, or its shutdown 503. Through a peer a 503 is the link
+    /// to that peer, so it does not count there.
+    fn plane_wait_may_have_moved(&self, err: &CtlError, peer: Option<&str>) -> bool {
+        self.plane_may_have_moved(err)
+            || (self.state.is_some()
+                && peer.is_none()
+                && matches!(err, CtlError::Http { status: 503, .. }))
+    }
+
+    /// Calls the plane's bounded wait. The semantic deadline remains `timeout`; the socket read
+    /// gets a short grace so the plane can serialize its `timeout` value after that deadline.
+    fn plane_wait(
+        &self,
+        mut request: Value,
+        timeout: Duration,
+        peer: Option<&str>,
+    ) -> Result<Value, CtlError> {
+        let timeout_ms = duration_millis(timeout)?;
+        let now = Instant::now();
+        let deadline = now
+            .checked_add(timeout)
+            .ok_or_else(|| CtlError::Argument("wait timeout is too large".into()))?;
+        let read_deadline = deadline
+            .checked_add(WAIT_REPLY_GRACE)
+            .ok_or_else(|| CtlError::Argument("wait timeout is too large".into()))?;
+        let mut me = self.clone();
+        let mut first = true;
+        loop {
+            let request_timeout = if first {
+                timeout_ms
+            } else {
+                let remaining = left(deadline);
+                if remaining.is_zero() {
+                    return Err(CtlError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "plane-side wait deadline passed while following the state file",
+                    )));
+                }
+                duration_millis(remaining)?.max(1)
+            };
+            first = false;
+            request["timeout_ms"] = json!(request_timeout);
+            let budget = left(read_deadline);
+            match me.call_within(
+                "POST",
+                &routed("/v1/wait", peer),
+                Some(&request),
+                Some(budget),
+                Some(budget),
+            ) {
+                Ok(reply) => return Ok(reply),
+                Err(e) if me.plane_wait_may_have_moved(&e, peer) => {
+                    me.follow_state(e, deadline, true)?
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     /// Whether `err` is one a restarted plane produces: nothing listening at the old
     /// address, or the old token refused. Only then is the state file worth re-reading.
     fn plane_may_have_moved(&self, err: &CtlError) -> bool {
@@ -673,17 +1022,25 @@ impl Ctl {
     }
 
     /// After `err` from a plane that may have moved: `Ok` once this handle names what the state
-    /// file names now, or after a pause when the file still names the same plane, so the wait
-    /// asks again; `Err(err)` at the deadline.
-    fn follow_state(&mut self, err: CtlError, deadline: Instant) -> Result<(), CtlError> {
-        match self.refreshed() {
-            Some(fresh) if Instant::now() < deadline => {
-                *self = fresh;
-                Ok(())
+    /// file names now. Polling waits pause once before retrying the same plane; plane-side waits
+    /// keep following until the file moves. `Err(err)` is returned at the deadline.
+    fn follow_state(
+        &mut self,
+        err: CtlError,
+        deadline: Instant,
+        wait_for_move: bool,
+    ) -> Result<(), CtlError> {
+        loop {
+            match self.refreshed() {
+                Some(fresh) if Instant::now() < deadline => {
+                    *self = fresh;
+                    return Ok(());
+                }
+                Some(_) => return Err(err),
+                None if pause(deadline) => return Err(err),
+                None if wait_for_move => continue,
+                None => return Ok(()),
             }
-            Some(_) => Err(err),
-            None if pause(deadline) => Err(err),
-            None => Ok(()),
         }
     }
 
@@ -700,7 +1057,7 @@ impl Ctl {
             let status = match me.status_within(peer, Some(left(deadline))) {
                 Ok(status) => status,
                 Err(e) if epoch.is_some() && me.plane_may_have_moved(&e) => {
-                    me.follow_state(e, deadline)?;
+                    me.follow_state(e, deadline, false)?;
                     continue;
                 }
                 // A peer's status comes through this plane's link to it, which is down for
@@ -913,7 +1270,7 @@ impl Ctl {
             let status = match me.status_within(peer, Some(left(deadline))) {
                 Ok(status) => status,
                 Err(e) if scope.is_some() && me.plane_may_have_moved(&e) => {
-                    me.follow_state(e, deadline)?;
+                    me.follow_state(e, deadline, false)?;
                     continue;
                 }
                 // The link to the peer is down for a moment (see `wait_gen`): ask again.
@@ -964,19 +1321,29 @@ impl Ctl {
     }
 
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, CtlError> {
-        self.call_within(method, path, body, None)
+        self.call_within(method, path, body, None, None)
     }
 
+    /// One call; `within` and `read` are [`http::request`]'s.
     fn call_within(
         &self,
         method: &str,
         path: &str,
         body: Option<&Value>,
         within: Option<Duration>,
+        read: Option<Duration>,
     ) -> Result<Value, CtlError> {
         let addr = self.loopback()?;
         let body = body.map(|b| b.to_string().into_bytes());
-        let r = http::request(addr, method, path, &self.token, body.as_deref(), within)?;
+        let r = http::request(
+            addr,
+            method,
+            path,
+            &self.token,
+            body.as_deref(),
+            within,
+            read,
+        )?;
         let parsed = serde_json::from_slice::<Value>(&r.body);
         if !(200..300).contains(&r.status) {
             let message = match &parsed {
@@ -1074,6 +1441,11 @@ fn percent(s: &str) -> String {
 
 /// What is left until `deadline`; zero once it has passed. A poll's socket timeouts are
 /// capped at it, so the request in flight ends with the wait, not seconds after it.
+fn duration_millis(duration: Duration) -> Result<u64, CtlError> {
+    u64::try_from(duration.as_millis())
+        .map_err(|_| CtlError::Argument("wait timeout does not fit `timeout_ms`".into()))
+}
+
 fn left(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
 }
