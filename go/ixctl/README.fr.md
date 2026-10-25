@@ -167,7 +167,9 @@ quand un service redémarre automatiquement :
 | Champ du statut | Sens |
 |---|---|
 | `services[].run` | La dernière exécution annoncée par `service.starting`. Elle est l'exécution active en `starting` (une fois annoncée) et `running` ; pendant le délai de redémarrage (`restarting`), c'est celle dont la sortie a causé le délai, jusqu'à l'annonce de sa remplaçante ; `stopped` et `failed` gardent la dernière exécution. Avant la première annonce, le champ est absent ; un démarrage en file peut déjà afficher `starting` tout en gardant l'exécution précédente, ou aucune avant la première. |
-| `services[].last_exit.run` | L'exécution exacte qui a produit `last_exit` ; après le début d'un redémarrage, elle peut différer de `services[].run`. `late_lines` compte, avec saturation, les lignes lues après son marqueur de fin et écartées, tant qu'elle reste la dernière sortie. |
+| `services[].recent_exits_capacity` | La borne par service annoncée pour `recent_exits`, actuellement 16. Ce nombre est provisoire ; la valeur du statut fait autorité. |
+| `services[].recent_exits[]` | Les tentatives terminales gardées pendant ce démarrage, de la plus ancienne à la plus récente. Chaque enregistrement porte son `run` opaque et exactement les champs de résultat de son `ixctl.run.end`. Les échecs de lancement comptent ; l'exécution encore en cours n'y figure pas. En cas de débordement, l'enregistrement le plus ancien est évincé. |
+| `services[].last_exit.run` | Vue de compatibilité de la dernière tentative ayant démarré un processus, avec son heure, sa génération, son usage et son compte de lignes tardives. Elle n'inclut pas les échecs de lancement et n'est pas une recherche par exécution ; après le début d'un redémarrage, elle peut différer de `services[].run`. `late_lines` compte, avec saturation, les lignes lues après son marqueur de fin et écartées, tant qu'elle reste la dernière sortie. |
 
 Le `desired` d'un job reste `running` après sa fin : appliquer de nouveau le même document le
 relance ; le client attend la fin de l'exécution *qu'une génération a lancée*
@@ -241,6 +243,17 @@ par le plan et porte :
 - `output` : `complete` ou `truncated`, ainsi que `drain_ms` ;
 - pour `started`, le résultat terminal : `code`, `requested` et l'éventuel `reason` d'une limite ;
 - pour `launch-failed`, `error`. Même une tentative sans processus reçoit les deux marqueurs.
+
+Pour prouver le résultat d'un `run` opaque donné, un consommateur suit cet ordre :
+
+1. utiliser un `ixctl.run.end` reçu qui porte exactement ce `run` ;
+2. sinon lire le statut du service d'origine dans le même epoch et utiliser l'enregistrement de
+   `recent_exits` portant exactement ce `run` ;
+3. sinon rapporter `unknown (other-epoch)` si l'epoch du statut diffère. Si l'epoch concorde et
+   que l'enregistrement est absent, l'exécution n'est pas finie si elle est encore
+   `services[].run`, et elle est `unknown (evicted)` sinon.
+
+La sortie d'une autre exécution, y compris `last_exit`, ne la remplace jamais.
 
 Après une fin tronquée, les lignes tardives sont écartées et comptées dans
 `services[].last_exit.late_lines` ; le compteur sature au lieu de boucler. Les marqueurs restent

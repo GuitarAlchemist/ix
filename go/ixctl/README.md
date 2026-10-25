@@ -157,7 +157,9 @@ automatically:
 | Status field | Meaning |
 |---|---|
 | `services[].run` | The latest run announced by `service.starting`. It is the active run in `starting` (once announced) and `running`; in restart backoff (`restarting`) it is the run whose exit caused the backoff, until the successor is announced; `stopped` and `failed` retain the last run. Before the first announcement it is absent; a queued start may already show `starting` while retaining the preceding run, or no run before the first. |
-| `services[].last_exit.run` | The exact run that produced `last_exit`; after a restart starts it may differ from `services[].run`. `late_lines` is a saturating count of lines read after that run's end marker and dropped, present while this remains the last exit. |
+| `services[].recent_exits_capacity` | The announced per-service bound for `recent_exits`, currently 16. The number is provisional; the status value is authoritative. |
+| `services[].recent_exits[]` | The terminal attempts retained this boot, oldest first. Each record carries its opaque `run` and exactly the result fields of its `ixctl.run.end`. Launch failures count; the run still in flight does not. On overflow the oldest record is evicted. |
+| `services[].last_exit.run` | Compatibility view of the latest attempt that started a process, with its time, generation, usage and late-line count. It does not include launch failures and is not a per-run lookup; after a restart starts it may differ from `services[].run`. `late_lines` is a saturating count of lines read after that run's end marker and dropped, present while this remains the last exit. |
 
 A job's `desired` stays `running` after it ends, so applying the same document again runs it
 again; the client waits on the end of the run *a generation started*
@@ -229,6 +231,17 @@ forwards and has:
 - `output`: `complete` or `truncated`, plus `drain_ms`;
 - for `started`, the terminal result: `code`, `requested`, and an optional limit `reason`;
 - for `launch-failed`, `error`. Even an attempt that creates no process gets both markers.
+
+To prove the outcome of one opaque `run`, a consumer follows this order:
+
+1. use a received `ixctl.run.end` carrying that exact `run`;
+2. otherwise read the origin service's status for the same epoch and use the `recent_exits`
+   record with that exact `run`;
+3. otherwise report `unknown (other-epoch)` when the status epoch differs. When the epoch matches
+   and the record is absent, the run has not ended if it is still `services[].run`, and is
+   `unknown (evicted)` if it is not.
+
+An exit from another run, including `last_exit`, is never substituted.
 
 After a truncated end, later lines are dropped and counted in
 `services[].last_exit.late_lines`; the counter saturates instead of wrapping. Markers remain in
