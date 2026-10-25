@@ -130,6 +130,35 @@ func TestWSSessionErrors(t *testing.T) {
 	}
 }
 
+func TestHTTPAndWebSocketApplyCarryTheSameResults(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
+	c := dial(t, in)
+	do(t, c, Request{Op: "apply", Desired: running("pod")})
+	before := waitStatus(t, in, 10*time.Second, "pod running", func(st StatusReply) bool {
+		return svcStatus(st, "pod").State == stateRunning
+	})
+	current := svcStatus(before, "pod").Run
+	if current == nil {
+		t.Fatal("running pod has no run")
+	}
+
+	code, _, body := httpDo(t, in, "POST", "/v1/apply", running("pod"), nil)
+	var httpReply ApplyReply
+	if err := json.Unmarshal(body, &httpReply); err != nil || code != 200 {
+		t.Fatalf("HTTP apply: %d %s (%v)", code, body, err)
+	}
+	var wsReply ApplyReply
+	if err := json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("pod")}), &wsReply); err != nil {
+		t.Fatal(err)
+	}
+	h, w := httpReply.Results["pod"], wsReply.Results["pod"]
+	if h.Result != applyNotLaunched || w.Result != h.Result ||
+		h.CurrentRun == nil || w.CurrentRun == nil ||
+		*h.CurrentRun != *current || *w.CurrentRun != *current {
+		t.Fatalf("HTTP results %+v, WebSocket results %+v, current run %+v", httpReply.Results, wsReply.Results, current)
+	}
+}
+
 // The same desired-state document with one unknown field, or another schema,
 // gets the same refusal on POST /v1/apply and on an ixctl.v1 apply, and
 // nothing is applied.
