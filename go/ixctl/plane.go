@@ -232,11 +232,15 @@ type PeerStatus struct {
 	// up, the peer's probe list was applied this session and no wanted pipe is still opening, so
 	// the mirrored lifecycle and pipes stand for the peer's state. Degraded is their conjunction
 	// denied: lifted only when the flow is live and the state reconciled (criterion 7 of ix#408).
+	// RunMarkers says the current session's ctl and svc/ subscriptions both acknowledged
+	// "markers":"run". It stays false while down, during a reopen, or with an older plane that
+	// ignores the request; absence of markers from such a peer is therefore not evidence of absence.
 	// Jumps counts the catch-ups the link gave up on since it was made, each marked `jumped` on
 	// the peer's mirrored ctl; absent while zero.
 	Live       bool   `json:"live"`
 	Reconciled bool   `json:"reconciled"`
 	Degraded   bool   `json:"degraded"`
+	RunMarkers bool   `json:"run_markers"`
 	Jumps      uint64 `json:"jumps,omitempty"`
 }
 
@@ -269,6 +273,7 @@ type PlaneLimits struct {
 // converged) and Diverged (the highest that failed) stay for older readers; on their own
 // they let a later converged generation hide an earlier pending or failed one.
 type StatusReply struct {
+	Contract           string          `json:"contract"` // the consumer contract this plane keeps
 	Name               string          `json:"name"`
 	Epoch              string          `json:"epoch"` // the boot these generations belong to
 	Generation         uint64          `json:"generation"`
@@ -281,9 +286,13 @@ type StatusReply struct {
 	Limits             PlaneLimits     `json:"limits"`
 }
 
+// runContract names the consumer contract status announces (README, the paragraph before the
+// run fields of status). Changing what it promises takes a new name.
+const runContract = "run/1"
+
 func (p *Plane) Status() StatusReply {
 	p.mu.Lock()
-	r := StatusReply{Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen,
+	r := StatusReply{Contract: runContract, Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen,
 		ObservedGeneration: p.observed, SettledGeneration: p.settled,
 		Limits: PlaneLimits{WaitTimeoutMS: waitTimeoutMax.Milliseconds(), Waiters: maxWaiters}}
 	if p.diverged != nil {

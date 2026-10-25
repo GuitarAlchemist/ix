@@ -187,29 +187,30 @@ func (h *Hub) Epoch() string { return h.epoch }
 
 // Publish stamps an event with this instance as origin.
 func (h *Hub) Publish(ch string, ev Event) *Envelope {
-	return h.publish(ch, h.origin, 0, ev, 0, "", nil)
+	return h.publish(ch, h.origin, 0, ev, 0, "", nil, false)
 }
 
 // PublishRun stamps an event from an existing run.
 func (h *Hub) PublishRun(ch string, ev Event, run RunID) *Envelope {
-	return h.publish(ch, h.origin, 0, ev, 0, "", &run)
+	return h.publish(ch, h.origin, 0, ev, 0, "", &run, false)
 }
 
 // PublishNewRun stamps an event as the start of a new run, whose seq is this envelope's.
 func (h *Hub) PublishNewRun(ch string, ev Event) *Envelope {
-	return h.publish(ch, h.origin, 0, ev, 0, "", &RunID{})
+	return h.publish(ch, h.origin, 0, ev, 0, "", nil, true)
 }
 
 // Mirror republishes an envelope received from a peer under a local channel, keeping the
 // peer as origin and its time, and saying which envelope of the source it was (srcSeq,
 // srcEpoch: the source's own seq and epoch). Provenance is a pair: with either half missing
 // (a seq of 0, an empty epoch) none is written, in the struct as in the bytes; the link
-// refuses such a frame before it gets here.
-func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
-	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch, nil)
+// refuses such a frame before it gets here. Run, when present, is the source's unchanged;
+// only PublishNewRun may construct one from this hub's epoch and sequence.
+func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string, run *RunID) *Envelope {
+	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch, run, false)
 }
 
-func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string, run *RunID) *Envelope {
+func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string, run *RunID, newRun bool) *Envelope {
 	evRaw, err := json.Marshal(ev)
 	if err != nil {
 		ev.Data = nil
@@ -234,11 +235,12 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEp
 	h.mu.Lock()
 	h.head++
 	var runRaw []byte
+	if newRun {
+		r := RunID{Origin: origin, Epoch: h.epoch, Seq: h.head}
+		run = &r
+	}
 	if run != nil {
 		r := *run
-		if r.Seq == 0 {
-			r = RunID{Origin: origin, Epoch: h.epoch, Seq: h.head}
-		}
 		run = &r
 		encoded, _ := json.Marshal(r)
 		runRaw = append(runRaw, `,"run":`...)

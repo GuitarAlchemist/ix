@@ -33,6 +33,7 @@ func (s *server) ws(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 
 	sess := newSession(ctx, s.b, sessionQueue)
+	sess.runMarkersUnsupported = &s.runMarkersUnsupported
 	defer sess.Close()
 	go func() {
 		defer cancel()

@@ -10,11 +10,13 @@ and IXQL client is [`crates/ix-ctl`](../../crates/ix-ctl) (`ix.ctl.status`, `ix.
 `ix.ctl.apply`, `ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`, and one `ix.ctl.probe.*`
 capability per probe op).
 
-The three formats it defines (the `ixctl.v1` envelope, the desired-state document, the journal)
-are **provisional**: see the one-way-doors page,
+Of the three formats it defines, two are **frozen** since 2026-10-25
+([ADR-0014](../../docs/adr/0014-ixctl-v1-and-desired-state-frozen.md)): the `ixctl.v1` protocol,
+whose core is fixed while new ops, channels, kinds and optional fields may appear, and the
+desired-state document `ixctl-desired/0`. The journal stays **provisional**, and so do the probe
+surface and bookmarks. The one-way-doors page,
 [`docs/plans/2026-10-17-ixctl-one-way-doors.md`](../../docs/plans/2026-10-17-ixctl-one-way-doors.md),
-for their exact shape, what freezing each would lock in, and the review rounds that shaped them.
-Nothing outside `go/ixctl` and `crates/ix-ctl` should depend on them until a door is signed.
+gives the options that were weighed and the review rounds that shaped them.
 
 ## Build and run
 
@@ -136,7 +138,9 @@ so a journaled document holds no address.
 ```
 
 - `plan` is pure: it returns `{generation, actions: [{op: start|stop, service}], noop: [...]}`
-  against the observed state, with the generation an apply would get.
+  against the observed state. Its `generation` is the current one (the last applied, as in status),
+  not the one an apply would get: an apply made now gets the next one, unless another apply comes
+  first.
 - `apply` bumps the generation, journals the document, returns
   `{generation, epoch, actions, results}` at once and acts in the background. `results` is an
   object keyed by exactly the services named in the document; each value has `result` from the
@@ -170,9 +174,20 @@ so a journaled document holds no address.
 - `stop` stops one service out of band and answers once its tree is gone:
   `{stopped, generation, exit}`. A requested stop closes stdin, waits two seconds, then kills.
 
-Status announces no consumer contract yet: it will carry `contract: "run/1"` once every slice of
-that contract has landed (#443), and a consumer relies on none of run/1, the run markers below
-included, before it reads that. One generation can carry several runs when a service restarts
+Status carries `contract: "run/1"`, the consumer contract this plane keeps. It rests on the frozen
+core of `ixctl.v1` and on `ixctl-desired/0`
+([ADR-0014](../../docs/adr/0014-ixctl-v1-and-desired-state-frozen.md)), and it is:
+
+- the run identity `run = {origin, epoch, seq}` and the run fields of status below;
+- the `results` of `apply`, the closed set above;
+- the `ixctl.run.begin` and `ixctl.run.end` markers, on request and acknowledged;
+- the `wait` operation and its closed set of outcomes, whose `unknown` reasons are `evicted` and
+  `other-epoch` only, with the order in which it reads its evidence;
+- the federated provenance: `run` unchanged in a mirror, and `status.peers[].run_markers`.
+
+A consumer gates on that value: a plane whose status does not carry it keeps none of run/1.
+Additions follow ADR-0014's rule for extensions; changing what run/1 promises, an `unknown` reason
+included, takes `run/2`. One generation can carry several runs when a service restarts
 automatically:
 
 | Status field | Meaning |
@@ -195,7 +210,9 @@ One operation owns all three reducers. Over HTTP it is `POST /v1/wait[?peer=NAME
 A generation wait uses `epoch,generation`; a launch wait adds `service`; an exact-run wait
 uses only `run`. A launch wait is valid only when that service's apply result was
 `start-pending` or `not-launched`; asking it of `stop-pending`, of `noop` or of a service the
-generation did not name is malformed.
+generation did not name is malformed. So is a generation or launch wait on a generation this
+boot has not issued (above `status.generation`): the plane answers 400 at once instead of
+waiting for it to exist.
 `timeout_ms` is required, must be positive, and may not exceed
 `status.limits.wait_timeout_ms` (currently 60000). At most `status.limits.waiters`
 (currently 64) waits are in flight on one plane. A request above the timeout cap is 400; a
@@ -219,7 +236,9 @@ For launch waits the plane retains the newest 16 admission results per service, 
 `ixctl.run.begin`; a restart under the same generation is a later run and never replaces it.
 `evicted` means that exact generation/service result is no longer retained: it answers only a
 generation no newer than the newest record dropped, so a generation that never named the
-service stays malformed. `not-launched.current_run`
+service stays malformed. A `stop-pending` or `noop` result is malformed only while it is
+retained: once evicted, the wait is `unknown (evicted)`, as the plane no longer knows what the
+result was. `not-launched.current_run`
 proves only what was current at admission and never names a run launched by that generation.
 For exact-run waits, `evicted` means the same-epoch run is neither current nor in
 `recent_exits`; another run's exit is never substituted. A `?peer=` wait is forwarded to the
@@ -256,11 +275,14 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/bookmark[?peer=]` | The bookmarks (`bookmark.list`, below). |
 | `POST /v1/bookmark/set` | Body `{"bookmark": NAME, "since"?: SEQ, "epoch"?: E, "note"?: TEXT, "peer"?: NAME}`. |
 | `POST /v1/bookmark/remove` | Body `{"bookmark": NAME, "peer"?: NAME}`. |
-| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). `markers=run` includes run markers and is acknowledged by `Ixctl-Markers: run`. A reader that falls behind the ring while reading gets a `gap` event (`overflow`) and the stream ends. A resume point the ring no longer holds (`since-too-old`), or one from another boot (`epoch-changed`, `since-ahead`), gets a `gap` event first, then the stream goes on from the oldest envelope the ring still holds. |
+| `GET /v1/events?ch=PREFIX&since=SEQ&epoch=E`, or `?ch=PREFIX&bookmark=NAME` | Server-sent events: `id: epoch:seq`, `event: <kind>`, `data: <envelope>`. `Last-Event-ID` works like `since`; `bookmark` replays from a bookmark instead (not beside `since`). `markers=run` includes run markers and is acknowledged by `Ixctl-Markers: run`. A reader that falls behind the ring while reading gets a `gap` event (`overflow`) and the stream ends. A resume point the ring no longer holds (`since-too-old`), or one from another boot (`epoch-changed`, `since-ahead`), gets a `gap` event first, then the stream goes on from the oldest envelope the ring still holds. `since-ahead` is for a `since` past the head that names no `epoch`; a `since` naming this boot's epoch is trusted even past the head: no gap, no replay, the stream goes live from the head. |
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),
-403 (host or origin), 429 (wait slots full), 502 (peer down) or 503 (shutting down).
+403 (host or origin), 429 (wait slots full), 500 (internal failure, such as a stop that did not
+converge), 502 (peer down) or 503 (shutting down). The text is for a person, not part of the
+contract. A route or method the plane does not serve gets the HTTP server's own 404 or 405, which
+is not part of the contract either.
 
 ### `ixctl.v1` over the WebSocket
 
@@ -290,8 +312,13 @@ slice 2). A subscriber with `since` replays from the ring (4096 envelopes per in
 `service.starting` sequence on its origin plane. It is fixed before output, immutable, and unique
 within an origin and epoch. Every `svc/<name>` envelope of the attempt and every `ctl` service
 event attributable to it carries the same `run`. An automatic restart gets another run while
-keeping the generation that requested the service. A mirrored envelope (`peer/<name>/…`) does
-not carry it or run markers yet (#452).
+keeping the generation that requested the service. A mirrored envelope (`peer/<name>/…`) keeps
+the source `run` unchanged, separately from its local `seq` / `epoch` and source `src_seq` /
+`src_epoch`. The link requests run markers on both control subscriptions;
+`status.peers[].run_markers` is true only when the current peer session acknowledged both; while
+it is false (an older peer, a link down or reopening), a mirror without markers says nothing about
+whether a run began or ended. Local subscribers still receive run markers only when they ask for
+them.
 
 The plane puts two ordinary envelopes in the source `svc/<name>` stream. `ixctl.run.begin`
 has `generation` and precedes every worker line. `ixctl.run.end` follows every line the plane
@@ -420,7 +447,8 @@ The plane carries its probe **kinds**, versioned and compiled in (`name@version`
 own limits: `probe.kinds` lists both, every refusal names the bound it hit, and `probe.list` shows
 the usage. The design, the decisions it assumes and the ones still open are on the probes page,
 [`docs/plans/2026-10-20-ixctl-probes.md`](../../docs/plans/2026-10-20-ixctl-probes.md), and the
-work is tracked under epic ix#397. The surface is provisional, like the three doors.
+work is tracked under epic ix#397. The surface is provisional: ADR-0014 leaves it outside the
+frozen core of `ixctl.v1`.
 
 | Kind | Fields | Reads |
 |---|---|---|
