@@ -6,10 +6,533 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
+
+func waitCursorKind(t *testing.T, cur *Cursor, d time.Duration, kind string) *Envelope {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	for {
+		envs, _, err := cur.Next(ctx, 32)
+		if err != nil {
+			t.Fatalf("waiting for %s: %v", kind, err)
+		}
+		for _, env := range envs {
+			if env.Ev.Kind == kind {
+				return env
+			}
+		}
+	}
+}
+
+type runResultWire struct {
+	Outcome   string `json:"outcome"`
+	Code      *int   `json:"code,omitempty"`
+	Requested *bool  `json:"requested,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Output    string `json:"output"`
+	DrainMS   int64  `json:"drain_ms"`
+}
+
+type recentExitWire struct {
+	Run       RunID  `json:"run"`
+	Outcome   string `json:"outcome"`
+	Code      *int   `json:"code,omitempty"`
+	Requested *bool  `json:"requested,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Output    string `json:"output"`
+	DrainMS   int64  `json:"drain_ms"`
+}
+
+func (r recentExitWire) result() runResultWire {
+	return runResultWire{
+		Outcome: r.Outcome, Code: r.Code, Requested: r.Requested, Reason: r.Reason,
+		Error: r.Error, Output: r.Output, DrainMS: r.DrainMS,
+	}
+}
+
+type serviceRunsWire struct {
+	Name                string           `json:"name"`
+	Pid                 *int             `json:"pid"`
+	Run                 *RunID           `json:"run,omitempty"`
+	RecentExitsCapacity int              `json:"recent_exits_capacity"`
+	RecentExits         []recentExitWire `json:"recent_exits"`
+}
+
+// serviceRunsStatus reads the wire shape rather than ServiceStatus so each A-3 test compiles
+// and fails against the pre-A-3 production code.
+func serviceRunsStatus(t testing.TB, in *instance, name string) (string, serviceRunsWire) {
+	t.Helper()
+	b, err := json.Marshal(in.plane.Status())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Epoch    string            `json:"epoch"`
+		Services []serviceRunsWire `json:"services"`
+	}
+	if err := json.Unmarshal(b, &status); err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range status.Services {
+		if service.Name == name {
+			return status.Epoch, service
+		}
+	}
+	t.Fatalf("service %q absent from status %s", name, b)
+	return "", serviceRunsWire{}
+}
+
+// A1 (anchors 2 and 4): automatic restarts are distinct runs of one generation, and every
+// service-output envelope says which of those runs emitted it.
+func TestRestartsHaveDistinctRunIdentities(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "crashy", restart: restartOnFailure, max: 5}), "")
+	c := dial(t, in)
+	ctl := subscribe(t, c, "ctl", nil)
+	out := subscribe(t, c, "svc/crashy", nil)
+	var applied ApplyReply
+	if err := json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &applied); err != nil {
+		t.Fatal(err)
+	}
+
+	runs := map[RunID]bool{}
+	seenOutput := map[RunID]bool{}
+	for i := 0; i < 3; i++ {
+		starting := waitEnv(t, ctl, 5*time.Second, "starting", func(e *Envelope) bool {
+			return e.Ev.Kind == "service.starting"
+		})
+		if starting.Run == nil {
+			t.Fatalf("starting has no run: %s", starting.Raw())
+		}
+		run := *starting.Run
+		if runs[run] {
+			t.Fatalf("run reused on restart: %+v", run)
+		}
+		runs[run] = true
+		if got := ctlData(starting)["generation"]; got != float64(applied.Generation) {
+			t.Fatalf("starting generation %v, want %d", got, applied.Generation)
+		}
+		started := waitEnv(t, ctl, 5*time.Second, "started", func(e *Envelope) bool {
+			return e.Ev.Kind == "service.started" && e.Run != nil && *e.Run == run
+		})
+		data := ctlData(started)
+		if data["generation"] != float64(applied.Generation) {
+			t.Fatalf("started generation %v, want %d", data["generation"], applied.Generation)
+		}
+		waitEnv(t, out, 5*time.Second, "output of the run", func(e *Envelope) bool {
+			if e.Run == nil {
+				t.Fatalf("service output has no run: %s", e.Raw())
+			}
+			if !runs[*e.Run] {
+				t.Fatalf("service output has an unannounced run: %s", e.Raw())
+			}
+			seenOutput[*e.Run] = true
+			return *e.Run == run && e.Ev.Kind == "meta"
+		})
+		if i < 2 {
+			proc, err := os.FindProcess(int(data["pid"].(float64)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := proc.Kill(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for run := range runs {
+		if !seenOutput[run] {
+			t.Fatalf("run %+v emitted no identified service output", run)
+		}
+	}
+}
+
+// A6 (anchor 2): status, ctl and service output identify one launch as the same run.
+func TestRunIdentityAgreesAcrossStatusCtlAndServiceOutput(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
+	c := dial(t, in)
+	ctl := subscribe(t, c, "ctl", nil)
+	out := subscribe(t, c, "svc/pod", nil)
+	do(t, c, Request{Op: "apply", Desired: running("pod")})
+
+	starting := waitEnv(t, ctl, 5*time.Second, "starting", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.starting"
+	})
+	if starting.Run == nil || ctlData(starting)["generation"] != 1.0 {
+		t.Fatalf("starting %s", starting.Raw())
+	}
+	line := waitEnv(t, out, 5*time.Second, "service output", func(e *Envelope) bool {
+		return e.Run != nil && *e.Run == *starting.Run
+	})
+	status := waitStatus(t, in, 5*time.Second, "run in status", func(st StatusReply) bool {
+		s := svcStatus(st, "pod")
+		return s.State == stateRunning && s.Run != nil
+	})
+	service := svcStatus(status, "pod")
+	if line.Run == nil || service.Run == nil ||
+		*line.Run != *starting.Run || *service.Run != *starting.Run {
+		t.Fatalf("ctl %+v, output %+v, status %+v", starting.Run, line.Run, service.Run)
+	}
+}
+
+// N1 (#444): status announces the consumer contract once every slice of run/1 is in, so a
+// consumer that gates on `contract: "run/1"` finds run identity, markers, results and waits.
+func TestStatusAnnouncesTheRunContract(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
+	var status map[string]json.RawMessage
+	if err := json.Unmarshal(do(t, dial(t, in), Request{Op: "status"}), &status); err != nil {
+		t.Fatal(err)
+	}
+	if c := string(status["contract"]); c != `"run/1"` {
+		t.Fatalf("status announces contract %q, want \"run/1\"", c)
+	}
+}
+
+// A3 (anchor 4): run.end follows every service line the plane forwards for the run.
+func TestRunEndFollowsEveryForwardedLine(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "writer", args: []string{"--rate", "1000"}, restart: restartNever}), "")
+	c := dial(t, in)
+	ctl := subscribe(t, c, "ctl", nil)
+	out := subscribeMarkers(t, c, "svc/writer", runMarkers)
+	do(t, c, Request{Op: "apply", Desired: running("writer")})
+
+	started := waitEnv(t, ctl, 5*time.Second, "started", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.started"
+	})
+	if started.Run == nil {
+		t.Fatalf("started has no run: %s", started.Raw())
+	}
+	run := *started.Run
+	begin := waitEnv(t, out, 5*time.Second, "run begin", func(e *Envelope) bool {
+		return e.Ev.Kind == runBeginKind && e.Run != nil && *e.Run == run
+	})
+	last := waitEnv(t, out, 5*time.Second, "line while running", func(e *Envelope) bool {
+		return e.Ev.Kind == "stats" && e.Run != nil && *e.Run == run
+	})
+	pid := int(ctlData(started)["pid"].(float64))
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	var end *Envelope
+	for end == nil {
+		f, err := out.next(5*time.Second, func(e *Envelope) bool {
+			return e.Run != nil && *e.Run == run
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Env.Ev.Kind == runEndKind {
+			end = f.Env
+		} else {
+			last = f.Env
+		}
+	}
+	var data struct {
+		Outcome string `json:"outcome"`
+		Output  string `json:"output"`
+	}
+	json.Unmarshal(end.Ev.Data, &data)
+	if begin.Seq >= last.Seq || last.Seq >= end.Seq || data.Outcome != "started" || data.Output != "complete" {
+		t.Fatalf("begin %d, last %d, end %d data %+v", begin.Seq, last.Seq, end.Seq, data)
+	}
+}
+
+// A4 (anchor 6): an inherited output handle (the descendant case) cannot hold run.end past
+// the drain bound; a line read afterwards is counted in last_exit and is not forwarded.
+func TestRunEndTruncatesAndCountsLateLines(t *testing.T) {
+	h := NewHub("local")
+	s := newService(ServiceSpec{Name: "held"}, h)
+	cur := h.Subscribe("svc/held", nil, h.Epoch())
+	run := RunID{Origin: "local", Epoch: h.Epoch(), Seq: 1}
+	h.PublishRun("svc/held", event(runBeginKind, map[string]any{}), run)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	c := &child{run: run}
+	c.io.Add(1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer c.io.Done()
+		s.readLines(r, false, c)
+	}()
+	fmt.Fprintln(w, "before")
+	before := waitCursorKind(t, cur, time.Second, "log")
+
+	t0 := time.Now()
+	s.endOutput(c, &exitInfo{Code: 0, At: time.Now().UnixMilli(), Run: run}, false)
+	took := time.Since(t0)
+	end := waitCursorKind(t, cur, time.Second, runEndKind)
+	var data struct {
+		Output  string `json:"output"`
+		DrainMS int64  `json:"drain_ms"`
+	}
+	json.Unmarshal(end.Ev.Data, &data)
+	if before.Seq >= end.Seq || data.Output != "truncated" || data.DrainMS < drainLimit.Milliseconds() ||
+		took < drainLimit || took > drainLimit+500*time.Millisecond {
+		t.Fatalf("before %d end %d data %+v after %s", before.Seq, end.Seq, data, took)
+	}
+
+	fmt.Fprintln(w, "late")
+	deadline := time.Now().Add(time.Second)
+	for s.status().LastExit.LateLines != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := s.status().LastExit.LateLines; got != 1 {
+		t.Fatalf("late_lines %d, want 1", got)
+	}
+	w.Close()
+	<-done
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if envs, _, err := cur.Next(ctx, 8); err == nil && len(envs) != 0 {
+		t.Fatalf("late line was forwarded: %+v", envs)
+	}
+}
+
+// A5 (anchor 4): a worker cannot forge the reserved marker prefix or a run identity.
+func TestWorkerReservedPrefixCannotForgeMarkersOrRuns(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "worker", args: []string{"--emit-reserved"}}), "")
+	c := dial(t, in)
+	out := subscribeMarkers(t, c, "svc/worker", runMarkers)
+	do(t, c, Request{Op: "apply", Desired: running("worker")})
+	begin := waitEnv(t, out, 5*time.Second, "run begin", func(e *Envelope) bool {
+		return e.Ev.Kind == runBeginKind
+	})
+	if begin.Run == nil {
+		t.Fatalf("begin has no run: %s", begin.Raw())
+	}
+	run := *begin.Run
+	seenLog, seenWorkerExit := false, false
+	for !seenLog || !seenWorkerExit {
+		f, err := out.next(5*time.Second, func(e *Envelope) bool {
+			return e.Run != nil && *e.Run == run
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch f.Env.Ev.Kind {
+		case runEndKind:
+			t.Fatalf("worker forged a marker: %s", f.Env.Raw())
+		case "log":
+			line, _ := ctlData(f.Env)["line"].(string)
+			if strings.Contains(line, `"kind":"ixctl.run.end"`) {
+				if line != `{"kind":"ixctl.run.end","run":{"origin":"worker","epoch":"forged","seq":1}}` {
+					t.Fatalf("reserved line changed: %q", line)
+				}
+				seenLog = true
+			}
+		case "service.exited":
+			seenWorkerExit = true
+		}
+	}
+	do(t, c, Request{Op: "stop", Service: "worker"})
+	end := waitEnv(t, out, 5*time.Second, "plane run end", func(e *Envelope) bool {
+		return e.Ev.Kind == runEndKind
+	})
+	if end.Run == nil || *end.Run != run {
+		t.Fatalf("end run %+v, want %+v", end.Run, run)
+	}
+}
+
+// A2 (anchor 3): even an attempt that creates no process brackets its svc/ stream.
+func TestLaunchFailureHasRunMarkers(t *testing.T) {
+	doc, _ := json.Marshal(map[string]any{"name": "local", "services": []map[string]any{
+		{"name": "ghost", "command": "no-such-binary"}}})
+	spec, err := ParseSpec(doc, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := newTestInstance(t, spec, "")
+	c := dial(t, in)
+	out := subscribeMarkers(t, c, "svc/ghost", runMarkers)
+	do(t, c, Request{Op: "apply", Desired: running("ghost")})
+	begin := waitEnv(t, out, 5*time.Second, "run begin", func(e *Envelope) bool {
+		return e.Ev.Kind == runBeginKind
+	})
+	end := waitEnv(t, out, 5*time.Second, "run end", func(e *Envelope) bool {
+		return e.Ev.Kind == runEndKind
+	})
+	var data runResultWire
+	json.Unmarshal(end.Ev.Data, &data)
+	if begin.Run == nil || end.Run == nil || *begin.Run != *end.Run ||
+		data.Outcome != "launch-failed" || data.Output != "complete" || data.DrainMS != 0 || data.Error == "" {
+		t.Fatalf("begin %s end %s", begin.Raw(), end.Raw())
+	}
+	st := waitStatus(t, in, 5*time.Second, "launch failure", func(st StatusReply) bool {
+		return svcStatus(st, "ghost").State == stateFailed
+	})
+	zero := uint64(0)
+	ctl := in.plane.hub.Subscribe("ctl", &zero, in.plane.Epoch())
+	envs, _, err := ctl.Catch(context.Background(), 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	for _, env := range envs {
+		if env.Ev.Kind == "service.started" {
+			t.Fatalf("launch failure emitted started: %s", env.Raw())
+		}
+		if env.Ev.Kind == "service.failed" && env.Run != nil && *env.Run == *begin.Run {
+			failed = true
+		}
+	}
+	status := svcStatus(st, "ghost")
+	if !failed || status.State != stateFailed || status.Pid != nil {
+		t.Fatalf("failed event %v, status %+v", failed, status)
+	}
+	epoch, runs := serviceRunsStatus(t, in, "ghost")
+	if epoch != begin.Run.Epoch || runs.RecentExitsCapacity != 16 || len(runs.RecentExits) != 1 {
+		t.Fatalf("launch failure status epoch %q runs %+v", epoch, runs)
+	}
+	got := runs.RecentExits[0]
+	if got.Run != *begin.Run || !reflect.DeepEqual(got.result(), data) ||
+		got.Outcome == "started" || got.Code != nil || got.Requested != nil || runs.Pid != nil {
+		t.Fatalf("launch failure record %+v, marker %+v, pid %v", got, data, runs.Pid)
+	}
+}
+
+// A8: a subscriber that loses run.end to a deterministic overflow can recover the exact
+// terminal result from the same epoch's status.
+func TestRunEndLostToGapIsInSameEpochStatus(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "gapped", restart: restartNever}), "")
+	control := dial(t, in)
+	ctl := subscribe(t, control, "ctl", nil)
+	do(t, control, Request{Op: "apply", Desired: running("gapped")})
+	started := waitEnv(t, ctl, 5*time.Second, "started", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.started"
+	})
+	if started.Run == nil {
+		t.Fatalf("started has no run: %s", started.Raw())
+	}
+	run := *started.Run
+
+	markers := runMarkers
+	lossy, err := dial(t, in).open(context.Background(),
+		Request{Op: "subscribe", Ch: "svc/gapped", Markers: &markers}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fill the bounded server queue behind its writer. The knob, not socket capacity, makes
+	// the overflow deterministic on Windows and Linux.
+	in.web.writeDelay.Store(int64(time.Millisecond))
+	pad := strings.Repeat("x", 1024)
+	for i := 0; i < 20000; i++ {
+		in.plane.Publish("svc/gapped", event("noise", map[string]any{"pad": pad}))
+	}
+	var gap *Gap
+	for gap == nil {
+		select {
+		case frame := <-lossy.Frames:
+			if frame.Env != nil && frame.Env.Ev.Kind == runEndKind {
+				t.Fatalf("lossy subscriber received run.end before its gap: %s", frame.Env.Raw())
+			}
+			gap = frame.Gap
+		case <-time.After(10 * time.Second):
+			t.Fatal("lossy subscriber received no gap")
+		}
+	}
+	if gap.Reason != "overflow" {
+		t.Fatalf("gap %+v", gap)
+	}
+
+	in.web.writeDelay.Store(0)
+	head := in.plane.hub.Head()
+	witness, err := dial(t, in).open(context.Background(), Request{
+		Op: "subscribe", Ch: "svc/gapped", Since: &head, Epoch: in.plane.Epoch(), Markers: &markers,
+	}, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	do(t, control, Request{Op: "stop", Service: "gapped"})
+	end := waitEnv(t, &frameWaiter{frames: witness.Frames}, 5*time.Second, "run end", func(e *Envelope) bool {
+		return e.Ev.Kind == runEndKind && e.Run != nil && *e.Run == run
+	})
+	var want runResultWire
+	if err := json.Unmarshal(end.Ev.Data, &want); err != nil {
+		t.Fatal(err)
+	}
+
+	epoch, status := serviceRunsStatus(t, in, "gapped")
+	if epoch != run.Epoch {
+		t.Fatalf("status epoch %q, run epoch %q", epoch, run.Epoch)
+	}
+	var got *recentExitWire
+	for i := range status.RecentExits {
+		if status.RecentExits[i].Run == run {
+			got = &status.RecentExits[i]
+			break
+		}
+	}
+	if got == nil || !reflect.DeepEqual(got.result(), want) {
+		t.Fatalf("status result %+v, run.end result %+v", got, want)
+	}
+}
+
+// A9: status keeps the newest 16 terminal runs in oldest-first order. A seventeenth
+// terminal run evicts the first, and the next run is absent while it is in flight.
+func TestRecentExitsEvictsOldestAndLeavesOutRunInFlight(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil,
+		fakeSvc{name: "many", restart: restartNever}), "")
+	c := dial(t, in)
+	ctl := subscribe(t, c, "ctl", nil)
+	runs := make([]RunID, 0, 18)
+	for i := 0; i < 17; i++ {
+		do(t, c, Request{Op: "apply", Desired: running("many")})
+		started := waitEnv(t, ctl, 5*time.Second, "started", func(e *Envelope) bool {
+			return e.Ev.Kind == "service.started"
+		})
+		if started.Run == nil {
+			t.Fatalf("run %d has no identity: %s", i, started.Raw())
+		}
+		runs = append(runs, *started.Run)
+		do(t, c, Request{Op: "stop", Service: "many"})
+	}
+
+	do(t, c, Request{Op: "apply", Desired: running("many")})
+	started := waitEnv(t, ctl, 5*time.Second, "in-flight start", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.started"
+	})
+	if started.Run == nil {
+		t.Fatalf("in-flight run has no identity: %s", started.Raw())
+	}
+	inFlight := *started.Run
+	epoch, status := serviceRunsStatus(t, in, "many")
+	if epoch != inFlight.Epoch || status.RecentExitsCapacity != 16 ||
+		len(status.RecentExits) != 16 || status.Run == nil || *status.Run != inFlight || status.Pid == nil {
+		t.Fatalf("in-flight status epoch %q: %+v", epoch, status)
+	}
+	for i, record := range status.RecentExits {
+		if record.Run != runs[i+1] {
+			t.Fatalf("recent_exits[%d].run %+v, want %+v", i, record.Run, runs[i+1])
+		}
+		if record.Run == runs[0] || record.Run == inFlight {
+			t.Fatalf("recent_exits contains evicted or in-flight run: %+v", record.Run)
+		}
+	}
+	evicted := waitPlane(t, in.plane, Request{
+		Op: "wait", Wait: waitRun, Run: &runs[0], TimeoutMS: testWaitTimeoutMS})
+	if evicted.Outcome != waitUnknown || evicted.Reason != waitEvicted {
+		t.Fatalf("wait for evicted run %+v", evicted)
+	}
+}
 
 // A crash restarts with backoff (200 ms, then doubled), restarts counts it,
 // and more than max_restarts restarts inside the window ends in failed.
@@ -143,7 +666,7 @@ func TestAStopQueuedBeforeAPreMarkedStartStillStops(t *testing.T) {
 			got = append(got, fmt.Sprintf("%s:%v", e.Ev.Kind, ctlData(e)["generation"]))
 		}
 	}
-	want := []string{"service.stopped:2", "service.starting:<nil>", "service.failed:3", "service.stopped:4"}
+	want := []string{"service.stopped:2", "service.starting:3", "service.failed:3", "service.stopped:4"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("events %v, want %v", got, want)
 	}

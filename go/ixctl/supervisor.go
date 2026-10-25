@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,9 +32,13 @@ const (
 	maxLine       = 1 << 20
 )
 
+const recentExitsCapacity = 16
+
 type exitInfo struct {
-	Code int   `json:"code"`
-	At   int64 `json:"at"`
+	Code      int    `json:"code"`
+	At        int64  `json:"at"`
+	Run       RunID  `json:"run"`
+	LateLines uint64 `json:"late_lines,omitempty"`
 	// Generation is the apply that launched the run this exit ends (a restart keeps its
 	// run's generation), so a waiter can tell this run's exit from an earlier run's.
 	Generation uint64 `json:"generation,omitempty"`
@@ -54,6 +59,27 @@ type exitInfo struct {
 	// PeakProcesses is the most processes the tree held at once, as the watch counted them
 	// every 100 ms (only under a processor-time or process limit). Absent when not watched.
 	PeakProcesses int64 `json:"peak_processes,omitempty"`
+}
+
+// runEnd is both the data of ixctl.run.end and, with Run set, one terminal record in status.
+// Pointer terminal fields preserve false and zero for a started run while leaving them absent
+// for an attempt that never launched.
+type runEnd struct {
+	Run       *RunID `json:"run,omitempty"`
+	Outcome   string `json:"outcome"`
+	Code      *int   `json:"code,omitempty"`
+	Requested *bool  `json:"requested,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Output    string `json:"output"`
+	DrainMS   int64  `json:"drain_ms"`
+}
+
+type launchRecord struct {
+	Generation uint64
+	Result     string
+	CurrentRun *RunID
+	Run        *RunID
 }
 
 // Exit reasons: the limit a run was killed for.
@@ -84,6 +110,8 @@ type service struct {
 	restarts  int
 	startedAt int64
 	startGen  uint64 // the generation that launched the current or last run; 0 before any
+	curRun    RunID  // the current or last run, valid once hasRun
+	hasRun    bool
 	// `running` wants queued and not yet read, and the generation of the last of them: while
 	// one is queued the service shows `starting` whenever its process is gone, so a plan sees
 	// the start on its way and does not announce another.
@@ -94,9 +122,13 @@ type service struct {
 	// settles on its own failure, even after a queued start has moved the service on to
 	// `starting` again. Bounded by keptFailures: a failure after its apply settled (a run out
 	// of restarts) is never read.
-	failures map[uint64]string
-	lastExit *exitInfo
-	nodes    json.RawMessage
+	failures    map[uint64]string
+	lastExit    *exitInfo
+	recentExits []runEnd
+	launches    []launchRecord
+	// launchesEvicted is the newest generation dropped from launches (0 before any).
+	launchesEvicted uint64
+	nodes           json.RawMessage
 
 	cmds chan command // desired states, in apply order
 
@@ -109,11 +141,15 @@ type service struct {
 
 // child is one launched process tree.
 type child struct {
-	tree   *procTree
-	stdin  *os.File
-	pid    int
-	exited chan exitStat // how the main process ended, once
-	io     sync.WaitGroup
+	tree        *procTree
+	run         RunID
+	stdin       *os.File
+	pid         int
+	exited      chan exitStat // how the main process ended, once
+	io          sync.WaitGroup
+	outputMu    sync.Mutex
+	outputEnded bool
+	lateLines   uint64
 }
 
 // exitStat is how a process ended, with what the OS accounted for it at that moment
@@ -167,12 +203,16 @@ func (s *service) setDesired(state string) {
 // so no plan in between announces a start the queued one will make.
 func (s *service) settle(state string) {
 	s.mu.Lock()
+	s.settleLocked(state)
+	s.mu.Unlock()
+}
+
+func (s *service) settleLocked(state string) {
 	if s.queued > 0 {
 		s.state, s.startGen = stateStarting, s.tailGen
 	} else {
 		s.state = state
 	}
-	s.mu.Unlock()
 }
 
 // keptFailures bounds the failures a service remembers by generation.
@@ -200,10 +240,82 @@ func (s *service) observed() (desired, state string) {
 	return s.desired, s.state
 }
 
+func (s *service) admissionObservationLocked() (desired, state string, currentRun *RunID) {
+	if s.hasRun {
+		run := s.curRun
+		currentRun = &run
+	}
+	return s.desired, s.state, currentRun
+}
+
+// keptApplyResults bounds the per-service admission results retained for launch waits.
+const keptApplyResults = keptFailures
+
+func (s *service) rememberApplyResultLocked(g uint64, result ApplyServiceResult) {
+	record := launchRecord{Generation: g, Result: result.Result}
+	if result.CurrentRun != nil {
+		run := *result.CurrentRun
+		record.CurrentRun = &run
+	}
+	if len(s.launches) == keptApplyResults {
+		s.launchesEvicted = s.launches[0].Generation
+		copy(s.launches, s.launches[1:])
+		s.launches[len(s.launches)-1] = record
+		return
+	}
+	s.launches = append(s.launches, record)
+}
+
+// rememberLaunchedLocked records the first run generation g launched. A restart launches its
+// run under the same generation; that run is not the one the generation launched.
+func (s *service) rememberLaunchedLocked(g uint64, run RunID) {
+	for i := len(s.launches) - 1; i >= 0; i-- {
+		if s.launches[i].Generation == g {
+			if s.launches[i].Run == nil {
+				r := run
+				s.launches[i].Run = &r
+			}
+			return
+		}
+	}
+}
+
+// launchRecord finds generation g's admission record. Without one, evicted says whether the
+// record may have been dropped (g is no newer than the newest evicted generation); otherwise g
+// never named the service.
+func (s *service) launchRecord(g uint64) (record launchRecord, found, evicted bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.launches) - 1; i >= 0; i-- {
+		if s.launches[i].Generation == g {
+			return s.launches[i], true, false
+		}
+	}
+	return launchRecord{}, false, g <= s.launchesEvicted
+}
+
+func (s *service) runRecord(run RunID) (*runEnd, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.recentExits {
+		if s.recentExits[i].Run != nil && *s.recentExits[i].Run == run {
+			end := s.recentExits[i]
+			return &end, false
+		}
+	}
+	return nil, s.hasRun && s.curRun == run
+}
+
 func (s *service) status() ServiceStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := ServiceStatus{Name: s.spec.Name, Desired: s.desired, State: s.state, Restarts: s.restarts, Generation: s.startGen, Nodes: s.nodes}
+	st := ServiceStatus{Name: s.spec.Name, Desired: s.desired, State: s.state,
+		Restarts: s.restarts, Generation: s.startGen, RecentExitsCapacity: recentExitsCapacity,
+		RecentExits: append([]runEnd{}, s.recentExits...), Nodes: s.nodes}
+	if s.hasRun {
+		run := s.curRun
+		st.Run = &run
+	}
 	if s.pid != 0 {
 		pid := s.pid
 		st.Pid = &pid
@@ -220,6 +332,15 @@ func (s *service) status() ServiceStatus {
 		st.Nodes = json.RawMessage("[]")
 	}
 	return st
+}
+
+func (s *service) appendRecentExitLocked(e runEnd) {
+	if len(s.recentExits) == recentExitsCapacity {
+		copy(s.recentExits, s.recentExits[1:])
+		s.recentExits[len(s.recentExits)-1] = e
+		return
+	}
+	s.recentExits = append(s.recentExits, e)
 }
 
 func (s *service) setState(state string) {
@@ -239,6 +360,11 @@ func (s *service) cur() string {
 func (s *service) ctl(kind string, data map[string]any) {
 	data["service"] = s.spec.Name
 	s.hub.Publish("ctl", event(kind, data))
+}
+
+func (s *service) ctlRun(run RunID, kind string, data map[string]any) {
+	data["service"] = s.spec.Name
+	s.hub.PublishRun("ctl", event(kind, data), run)
 }
 
 func (s *service) run(ctx context.Context) {
@@ -313,10 +439,11 @@ func (s *service) command(want command) {
 	}
 }
 
-// fail moves the service to `failed` and publishes service.failed with data, stamped with
-// the generation of the run that failed, taken under mu with the transition so no apply can
-// read `failed` and then take an unstamped event for its own.
-func (s *service) fail(data map[string]any) {
+// fail moves the service to `failed` and publishes service.failed with data, stamped with the
+// generation of the run that failed. A launch failure also publishes and records its run end
+// under the same lock as the transition, so a status after the marker cannot miss the record.
+// A nil end means the process exit was already recorded by endOutput.
+func (s *service) fail(run RunID, data map[string]any, end *runEnd) {
 	s.mu.Lock()
 	if s.failures == nil {
 		s.failures = map[uint64]string{}
@@ -332,9 +459,15 @@ func (s *service) fail(data map[string]any) {
 		delete(s.failures, oldest)
 	}
 	data["generation"] = s.startGen
+	s.settleLocked(stateFailed)
+	if end != nil {
+		s.hub.PublishRun(s.ch, event(runEndKind, *end), run)
+		r := run
+		end.Run = &r
+		s.appendRecentExitLocked(*end)
+	}
 	s.mu.Unlock()
-	s.settle(stateFailed)
-	s.ctl("service.failed", data)
+	s.ctlRun(run, "service.failed", data)
 }
 
 func (s *service) cancelTimer() {
@@ -345,11 +478,21 @@ func (s *service) cancelTimer() {
 }
 
 func (s *service) launch(restart bool) {
-	s.setState(stateStarting)
-	s.ctl("service.starting", map[string]any{"restart": restart})
-	c, err := s.start()
+	s.mu.Lock()
+	s.state = stateStarting
+	gen := s.startGen
+	env := s.hub.PublishNewRun("ctl", event("service.starting",
+		map[string]any{"service": s.spec.Name, "restart": restart, "generation": gen}))
+	run := *env.Run
+	s.curRun, s.hasRun = run, true
+	s.hub.PublishRun(s.ch, event(runBeginKind, map[string]any{"generation": gen}), run)
+	s.rememberLaunchedLocked(gen, run)
+	s.mu.Unlock()
+	c, err := s.start(run)
 	if err != nil {
-		s.fail(map[string]any{"reason": "launch: " + err.Error()})
+		reason := "launch: " + err.Error()
+		end := &runEnd{Outcome: "launch-failed", Error: reason, Output: "complete"}
+		s.fail(run, map[string]any{"reason": reason}, end)
 		return
 	}
 	s.proc = c
@@ -364,10 +507,10 @@ func (s *service) launch(restart bool) {
 	s.state, s.pid, s.startedAt = stateRunning, c.pid, now
 	restarts, gen := s.restarts, s.startGen
 	s.mu.Unlock()
-	s.ctl("service.started", map[string]any{"pid": c.pid, "restarts": restarts, "generation": gen})
+	s.ctlRun(run, "service.started", map[string]any{"pid": c.pid, "restarts": restarts, "generation": gen})
 }
 
-func (s *service) start() (*child, error) {
+func (s *service) start(run RunID) (*child, error) {
 	cmd := exec.Command(resolveCommand(s.spec.Command), s.spec.Args...)
 	cmd.Dir = s.spec.Dir
 	cmd.Env = os.Environ()
@@ -408,10 +551,10 @@ func (s *service) start() (*child, error) {
 		errR.Close()
 		return nil, err
 	}
-	c := &child{tree: tree, stdin: inW, pid: cmd.Process.Pid, exited: make(chan exitStat, 1)}
+	c := &child{tree: tree, run: run, stdin: inW, pid: cmd.Process.Pid, exited: make(chan exitStat, 1)}
 	c.io.Add(2)
-	go func() { defer c.io.Done(); s.readLines(outR, false) }()
-	go func() { defer c.io.Done(); s.readLines(errR, true) }()
+	go func() { defer c.io.Done(); s.readLines(outR, false, c) }()
+	go func() { defer c.io.Done(); s.readLines(errR, true, c) }()
 	go func() {
 		code := -1
 		if err := cmd.Wait(); err == nil {
@@ -468,19 +611,46 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 		}
 	}
 	c.tree.close()
+	s.proc = nil
+	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Run: c.run, Generation: s.startGen,
+		Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
+	s.endOutput(c, e, requested)
+	return e
+}
+
+// endOutput closes the run's source stream after its readers drain, or at the drain bound.
+// A reader and this marker hold outputMu while publishing, so no forwarded line can cross it.
+func (s *service) endOutput(c *child, e *exitInfo, requested bool) {
+	t0 := time.Now()
 	drained := make(chan struct{})
 	go func() { c.io.Wait(); close(drained) }()
+	output := "complete"
 	select {
 	case <-drained:
 	case <-time.After(drainLimit):
+		output = "truncated"
 	}
-	s.proc = nil
+	drainMS := time.Since(t0).Milliseconds()
+
+	c.outputMu.Lock()
+	c.outputEnded = true
+	code, wasRequested := e.Code, requested
+	end := runEnd{Outcome: "started", Code: &code, Requested: &wasRequested,
+		Output: output, DrainMS: drainMS}
+	if e.Reason != "" {
+		end.Reason = e.Reason
+	}
 	s.mu.Lock()
-	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason,
-		PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
+	// Keep the marker and its status fallback indivisible to a status reader. Lock order is
+	// outputMu -> s.mu -> hub; no path takes the hub lock and then s.mu.
+	s.hub.PublishRun(s.ch, event(runEndKind, end), c.run)
+	run := c.run
+	end.Run = &run
+	s.appendRecentExitLocked(end)
+	e.LateLines = c.lateLines
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
-	return e
+	c.outputMu.Unlock()
 }
 
 // exitData is the service.exited event for e: how the run ended, the limit it was killed for
@@ -530,12 +700,12 @@ func (s *service) stopTree(generation uint64) {
 	e := s.reap(st, "", true)
 	s.settle(stateStopped)
 	ms := time.Since(t0).Milliseconds()
-	s.ctl("service.exited", s.exitData(pid, true, e))
+	s.ctlRun(e.Run, "service.exited", s.exitData(pid, true, e))
 	stopped := map[string]any{"pid": pid, "code": e.Code, "ms": ms}
 	if generation != 0 {
 		stopped["generation"] = generation
 	}
-	s.ctl("service.stopped", stopped)
+	s.ctlRun(e.Run, "service.stopped", stopped)
 }
 
 // halt stops the service for good: the plane is shutting down.
@@ -582,7 +752,7 @@ func (s *service) onLimit(reason string) {
 func (s *service) ended(st exitStat, reason string) {
 	pid := s.proc.pid
 	e := s.reap(st, reason, false)
-	s.ctl("service.exited", s.exitData(pid, false, e))
+	s.ctlRun(e.Run, "service.exited", s.exitData(pid, false, e))
 	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && e.Code == 0 && e.Reason == "") {
 		// The run's own end: stamped with the run's generation, which no stop's apply
 		// carries, so a stop queued meanwhile settles on its own event only.
@@ -591,7 +761,7 @@ func (s *service) ended(st exitStat, reason string) {
 		if e.Reason != "" {
 			stopped["reason"] = e.Reason
 		}
-		s.ctl("service.stopped", stopped)
+		s.ctlRun(e.Run, "service.stopped", stopped)
 		return
 	}
 	now := time.Now()
@@ -603,7 +773,7 @@ func (s *service) ended(st exitStat, reason string) {
 	}
 	s.recent = kept
 	if len(s.recent) >= *s.spec.MaxRestarts {
-		s.fail(map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": e.Code})
+		s.fail(e.Run, map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": e.Code}, nil)
 		return
 	}
 	delay := backoffMin << len(s.recent)
@@ -613,31 +783,48 @@ func (s *service) ended(st exitStat, reason string) {
 	s.recent = append(s.recent, now)
 	s.setState(stateRestarting)
 	s.timer = time.NewTimer(delay)
-	s.ctl("service.restarting", map[string]any{"attempt": len(s.recent), "in_ms": delay.Milliseconds()})
+	s.ctlRun(e.Run, "service.restarting", map[string]any{"attempt": len(s.recent), "in_ms": delay.Milliseconds()})
 }
 
 // readLines turns a service's output into events on svc/<name>.
-func (s *service) readLines(r *os.File, stderr bool) {
+func (s *service) readLines(r *os.File, stderr bool, c *child) {
 	defer r.Close()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLine)
 	for sc.Scan() {
-		s.onLine(sc.Bytes(), stderr)
+		s.onLine(sc.Bytes(), stderr, c)
 	}
 	if sc.Err() != nil {
-		s.hub.Publish(s.ch, event("log", map[string]any{"error": sc.Err().Error()}))
+		c.outputMu.Lock()
+		if !c.outputEnded {
+			s.hub.PublishRun(s.ch, event("log", map[string]any{"error": sc.Err().Error()}), c.run)
+		}
+		c.outputMu.Unlock()
 		io.Copy(io.Discard, r)
 	}
 }
 
-func (s *service) onLine(line []byte, stderr bool) {
+func (s *service) onLine(line []byte, stderr bool, c *child) {
+	c.outputMu.Lock()
+	defer c.outputMu.Unlock()
+	if c.outputEnded {
+		if c.lateLines != ^uint64(0) {
+			c.lateLines++
+		}
+		s.mu.Lock()
+		if s.lastExit != nil && s.lastExit.Run == c.run {
+			s.lastExit.LateLines = c.lateLines
+		}
+		s.mu.Unlock()
+		return
+	}
 	if stderr {
-		s.hub.Publish(s.ch, event("stderr", map[string]any{"line": string(line)}))
+		s.hub.PublishRun(s.ch, event("stderr", map[string]any{"line": string(line)}), c.run)
 		return
 	}
 	ev, ok := parseEventLine(line)
 	if !ok {
-		s.hub.Publish(s.ch, event("log", map[string]any{"line": string(line)}))
+		s.hub.PublishRun(s.ch, event("log", map[string]any{"line": string(line)}), c.run)
 		return
 	}
 	if ev.Kind == "stats" {
@@ -650,11 +837,12 @@ func (s *service) onLine(line []byte, stderr bool) {
 			s.mu.Unlock()
 		}
 	}
-	s.hub.Publish(s.ch, ev)
+	s.hub.PublishRun(s.ch, ev, c.run)
 }
 
 // parseEventLine accepts a line that is a JSON object with a string kind.
 func parseEventLine(line []byte) (Event, bool) {
+	rawLine := string(line)
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 || line[0] != '{' {
 		return Event{}, false
@@ -670,6 +858,9 @@ func parseEventLine(line []byte) (Event, bool) {
 	var ev Event
 	if json.Unmarshal(raw.Kind, &ev.Kind) != nil {
 		return Event{}, false
+	}
+	if strings.HasPrefix(ev.Kind, "ixctl.") {
+		return event("log", map[string]any{"line": rawLine}), true
 	}
 	// t is Unix milliseconds on the service's clock: rounded, never truncated,
 	// and dropped when it is not a finite number.

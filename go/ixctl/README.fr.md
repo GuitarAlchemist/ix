@@ -11,12 +11,14 @@ et se fédère avec des instances pairs. Le client Rust et IXQL est
 `ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`, et une capacité `ix.ctl.probe.*` par opération
 de sonde).
 
-Les trois formats qu'il définit (l'enveloppe `ixctl.v1`, le document d'état désiré, le journal)
-sont **provisoires** : voir la page des portes à sens unique,
+Des trois formats qu'il définit, deux sont **figés** depuis le 2026-10-25
+([ADR-0014](../../docs/fr/adr/0014-ixctl-v1-and-desired-state-frozen.md)) : le protocole
+`ixctl.v1`, dont le noyau est fixé tandis que de nouvelles ops, de nouveaux canaux, de nouvelles
+sortes et de nouveaux champs optionnels peuvent apparaître, et le document d'état désiré
+`ixctl-desired/0`. Le journal reste **provisoire**, comme la surface des sondes et les signets. La
+page des portes à sens unique,
 [`docs/fr/plans/2026-10-17-ixctl-one-way-doors.md`](../../docs/fr/plans/2026-10-17-ixctl-one-way-doors.md),
-pour leur forme exacte, ce que figer chacun verrouillerait, et les rondes de revue qui les ont
-façonnés. Rien hors de `go/ixctl` et `crates/ix-ctl` ne doit en dépendre tant qu'une porte n'est
-pas signée.
+donne les options pesées et les rondes de revue qui les ont façonnés.
 
 ## Construire et lancer
 
@@ -145,19 +147,124 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
 ```
 
 - `plan` est pur : il renvoie `{generation, actions: [{op: start|stop, service}], noop: [...]}`
-  contre l'état observé, avec la génération qu'un apply obtiendrait.
+  contre l'état observé. Sa `generation` est la génération courante (la dernière appliquée, comme
+  dans le statut), pas celle qu'un apply obtiendrait : un apply lancé maintenant obtient la
+  suivante, sauf si un autre apply passe avant.
 - `apply` incrémente la génération, journalise le document, renvoie aussitôt
-  `{generation, epoch, actions}` et agit en arrière-plan. Le statut rapporte `generation`
+  `{generation, epoch, actions, results}` et agit en arrière-plan. `results` est un objet
+  indexé exactement par les services nommés dans le document ; chaque valeur porte `result`
+  pris dans l'ensemble fermé ci-dessous. Un service omis n'a aucun résultat et reste inchangé.
+  Le statut rapporte `generation`
   (dernière appliquée), `observed_generation` (dernière dont toutes les actions ont été vues
   jusqu'au bout) et `settled_generation` (dernière dont chaque service a atteint son état
   désiré) ; `diverged` nomme la génération que le plan a abandonnée, avec le service et la
   raison, et `failed` garde les échecs de lancement récents par génération, pour qu'un apply
   ultérieur ne cache pas un échec antérieur.
+- Chaque résultat vient d'un même instantané d'admission, après validation et pendant que le plan
+  calcule les actions et incrémente la génération, avant d'en mettre une en file :
+
+  | Le document dit | Service à l'admission | Résultat | Action |
+  |---|---|---|---|
+  | `running` | le desired courant est `running` et l'état vaut `starting`, `running` ou le délai de redémarrage (`restarting`) | `{"result":"not-launched","current_run": RUN_OU_NULL}` | aucune |
+  | `running` | `stopped` ou `failed`, ou un desired non-running est encore en cours d'exécution | `{"result":"start-pending"}` | `start` |
+  | `stopped` | `stopped` | `{"result":"noop"}` | aucune |
+  | `stopped` | `starting`, `running`, `restarting` ou `failed` | `{"result":"stop-pending"}` | `stop` |
+
+  Un démarrage en file est `starting` : `current_run` est l'exécution précédente, ou null
+  avant l'annonce de la première. Pendant le délai de redémarrage, c'est l'exécution qui vient de
+  finir. Le `{origin, epoch, seq}` opaque prouve seulement quelle exécution était courante à
+  l'admission, pas qu'elle existe encore à l'arrivée de la réponse. Ce n'est jamais une
+  exécution lancée par cet apply : `not-launched` prouve que cette génération n'annonce aucune
+  nouvelle exécution. Ces résultats sont des valeurs que le plan répond ; un apply refusé (un
+  document invalide, un service inconnu, un plan qui s'arrête, une erreur de pair) est une erreur
+  et ne porte aucun `results`. Ils n'attendent pas ; l'opération `wait` côté plan ci-dessous
+  consomme leurs preuves d'epoch, de génération, de service et d'exécution.
 - `epoch` nomme le démarrage auquel ces générations appartiennent. Un client qui attend une
   génération devrait nommer l'epoch aussi, pour qu'un redémarrage du plan termine l'attente au
   lieu de laisser passer la génération de même numéro du nouveau démarrage pour l'ancienne.
 - `stop` arrête un service hors bande et répond une fois son arbre disparu :
   `{stopped, generation, exit}`. Un arrêt demandé ferme stdin, attend deux secondes, puis tue.
+
+Le statut porte `contract: "run/1"`, le contrat consommateur que ce plan tient. Il repose sur le
+noyau figé d'`ixctl.v1` et sur `ixctl-desired/0`
+([ADR-0014](../../docs/fr/adr/0014-ixctl-v1-and-desired-state-frozen.md)), et il comprend :
+
+- l'identité d'exécution `run = {origin, epoch, seq}` et les champs d'exécution du statut
+  ci-dessous ;
+- les `results` d'`apply`, l'ensemble fermé ci-dessus ;
+- les marqueurs `ixctl.run.begin` et `ixctl.run.end`, sur demande et accusés ;
+- l'opération `wait` et son ensemble fermé d'issues, dont les raisons d'`unknown` sont `evicted` et
+  `other-epoch` seulement, avec l'ordre dans lequel elle lit ses preuves ;
+- la provenance fédérée : `run` inchangé dans une copie, et `status.peers[].run_markers`.
+
+Un consommateur se règle sur cette valeur : un plan dont le statut ne la porte pas ne tient rien de
+run/1. Les ajouts suivent la règle d'extension de l'ADR-0014 ; changer ce que run/1 promet, une
+raison d'`unknown` comprise, exige `run/2`. Une génération peut porter plusieurs exécutions quand
+un service redémarre automatiquement :
+
+| Champ du statut | Sens |
+|---|---|
+| `services[].run` | La dernière exécution annoncée par `service.starting`. Elle est l'exécution active en `starting` (une fois annoncée) et `running` ; pendant le délai de redémarrage (`restarting`), c'est celle dont la sortie a causé le délai, jusqu'à l'annonce de sa remplaçante ; `stopped` et `failed` gardent la dernière exécution. Avant la première annonce, le champ est absent ; un démarrage en file peut déjà afficher `starting` tout en gardant l'exécution précédente, ou aucune avant la première. |
+| `services[].recent_exits_capacity` | La borne par service annoncée pour `recent_exits`, actuellement 16. Ce nombre est provisoire ; la valeur du statut fait autorité. |
+| `services[].recent_exits[]` | Les tentatives terminales gardées pendant ce démarrage, de la plus ancienne à la plus récente. Chaque enregistrement porte son `run` opaque et exactement les champs de résultat de son `ixctl.run.end`. Les échecs de lancement comptent ; l'exécution encore en cours n'y figure pas. En cas de débordement, l'enregistrement le plus ancien est évincé. |
+| `services[].last_exit.run` | Vue de compatibilité de la dernière tentative ayant démarré un processus, avec son heure, sa génération, son usage et son compte de lignes tardives. Elle n'inclut pas les échecs de lancement et n'est pas une recherche par exécution ; après le début d'un redémarrage, elle peut différer de `services[].run`. `late_lines` compte, avec saturation, les lignes lues après son marqueur de fin et écartées, tant qu'elle reste la dernière sortie. |
+
+### Attentes côté plan
+
+Une seule opération possède les trois réducteurs. En HTTP, c'est
+`POST /v1/wait[?peer=NOM]` ; sur `ixctl.v1`, c'est `{"op":"wait", ...}`. Sa requête commune
+est :
+
+```json
+{"wait":"generation|launch|run","epoch":"...","generation":7,
+ "service":"pod-a","run":{"origin":"local","epoch":"...","seq":12},"timeout_ms":30000}
+```
+
+L'attente de génération utilise `epoch,generation` ; celle de lancement ajoute `service` ;
+celle d'une exécution exacte utilise seulement `run`. L'attente de lancement n'est valide que
+si le résultat d'apply du service était `start-pending` ou `not-launched` ; la demander à
+`stop-pending`, à `noop` ou pour un service que la génération ne nommait pas est une requête
+mal formée. De même pour une attente de génération ou de lancement sur une génération que ce
+démarrage n'a pas encore émise (au-delà de `status.generation`) : le plan répond 400 aussitôt
+au lieu d'attendre qu'elle existe. `timeout_ms` est obligatoire, strictement
+positif, et ne peut dépasser `status.limits.wait_timeout_ms` (60000 actuellement). Un plan
+accepte au plus `status.limits.waiters` attentes simultanées (64 actuellement). Dépasser le
+plafond de durée vaut 400 ; manquer de place vaut 429 (ou `ok:false` sur WebSocket).
+
+Toute attente terminée répond HTTP 200 ou WebSocket `ok:true` avec une valeur de cet ensemble
+fermé :
+
+| Attente | Résultats |
+|---|---|
+| génération | `{"outcome":"converged"}` ; `{"outcome":"diverged","service":NOM,"reason":TEXTE}` ; `{"outcome":"timeout"}` ; `{"outcome":"unknown","reason":"other-epoch"}` |
+| lancement | `{"outcome":"launched","run":RUN}` ; `{"outcome":"not-launched","current_run":RUN_OU_NULL}` ; `{"outcome":"timeout"}` ; `{"outcome":"unknown","reason":"other-epoch"|"evicted"}` |
+| exécution | `{"outcome":"ended","run":RUN,"end":CHAMPS_RUN_END}` ; `{"outcome":"timeout"}` ; `{"outcome":"unknown","reason":"other-epoch"|"evicted"}` |
+
+Un timeout est l'échéance d'attente du demandeur, pas une erreur. Une requête mal formée,
+l'authentification, un service inconnu, la surcharge, une erreur de pair ou de transport et
+l'arrêt du plan restent des erreurs. `unknown` n'a que `evicted` et `other-epoch` ; l'étendre
+exige `run/2`.
+
+Pour l'attente de lancement, le plan garde les 16 derniers résultats d'admission par service,
+avec l'instantané `current_run` et la première exécution lancée par cette génération, telle
+qu'`ixctl.run.begin` l'annonce ; un redémarrage sous la même génération est une exécution
+ultérieure et ne la remplace jamais. `evicted` signifie que ce résultat génération/service
+exact n'est plus gardé : il ne répond qu'à une génération pas plus récente que le plus récent
+enregistrement écarté, si bien qu'une génération qui n'a jamais nommé le service reste une
+requête mal formée. Un résultat `stop-pending` ou `noop` n'est une requête mal formée que tant
+qu'il est gardé : une fois évincé, l'attente répond `unknown (evicted)`, puisque le plan ne
+sait plus quel était ce résultat.
+`not-launched.current_run` prouve seulement ce qui était courant à l'admission et ne nomme
+jamais une exécution lancée par cette génération. Pour l'attente d'exécution exacte, `evicted`
+signifie que l'exécution du même epoch n'est ni courante ni dans `recent_exits` ; la sortie
+d'une autre exécution ne la remplace jamais. Une attente avec `?peer=` est transmise au plan
+d'origine et décidée là-bas. Le client Rust enveloppe l'opération dans
+`Ctl::wait_generation_outcome`, `Ctl::wait_launch` et `Ctl::wait_run`, un type de résultat fermé
+par attente ; un handle créé par `Ctl::from_state` suit le fichier d'état, si bien qu'une
+attente coupée par un arrêt brutal est reposée au nouveau démarrage et se termine en
+`unknown (other-epoch)`. `wait_generation(g)`, par numéro seul, est déprécié au profit de
+`wait_generation_of`. En IXQL, l'opération s'appelle
+`ix.ctl.wait(wait: "generation"|"launch"|"run", ...)`.
 
 Le `desired` d'un job reste `running` après sa fin : appliquer de nouveau le même document le
 relance ; le client attend la fin de l'exécution *qu'une génération a lancée*
@@ -176,6 +283,7 @@ au plus.
 | `GET /health` | `{ok, name, version, epoch, uptime_ms, ops}` ; sans jeton. |
 | `GET /v1/status[?peer=NOM]` | La réponse de statut (ci-dessus), ou celle de ce pair. |
 | `POST /v1/plan[?peer=]`, `POST /v1/apply[?peer=]` | Corps : un document d'état désiré. |
+| `POST /v1/wait[?peer=]` | Corps : la requête d'attente commune ci-dessus. |
 | `POST /v1/stop` | Corps `{"service": NOM, "peer"?: NOM}`. |
 | `POST /v1/shutdown` | Arrête chaque arbre et chaque sonde, puis les transports ; le fichier d'état est retiré. |
 | `GET /v1/probes[?peer=]` | Les kinds de sonde et les limites du système (`probe.kinds`, ci-dessous). |
@@ -185,26 +293,32 @@ au plus.
 | `GET /v1/bookmark[?peer=]` | Les signets (`bookmark.list`, ci-dessous). |
 | `POST /v1/bookmark/set` | Corps `{"bookmark": NOM, "since"?: SEQ, "epoch"?: E, "note"?: TEXTE, "peer"?: NOM}`. |
 | `POST /v1/bookmark/remove` | Corps `{"bookmark": NOM, "peer"?: NOM}`. |
-| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). Un lecteur qui prend du retard sur l'anneau pendant la lecture reçoit un événement `gap` (`overflow`) et le flux se termine. Un point de reprise que l'anneau ne contient plus (`since-too-old`), ou qui vient d'un autre démarrage (`epoch-changed`, `since-ahead`), reçoit d'abord un événement `gap`, puis le flux continue depuis la plus ancienne enveloppe que l'anneau contient encore. |
+| `GET /v1/events?ch=PREFIXE&since=SEQ&epoch=E`, ou `?ch=PREFIXE&bookmark=NOM` | Server-sent events : `id: epoch:seq`, `event: <kind>`, `data: <enveloppe>`. `Last-Event-ID` vaut `since` ; `bookmark` rejoue depuis un signet à la place (pas à côté de `since`). `markers=run` inclut les marqueurs et est acquitté par `Ixctl-Markers: run`. Un lecteur qui prend du retard sur l'anneau pendant la lecture reçoit un événement `gap` (`overflow`) et le flux se termine. Un point de reprise que l'anneau ne contient plus (`since-too-old`), ou qui vient d'un autre démarrage (`epoch-changed`, `since-ahead`), reçoit d'abord un événement `gap`, puis le flux continue depuis la plus ancienne enveloppe que l'anneau contient encore. `since-ahead` vaut pour un `since` au-delà de la tête qui ne nomme pas d'`epoch` ; un `since` qui nomme l'epoch de ce démarrage est cru même au-delà de la tête : ni gap ni rejeu, le flux part en direct depuis la tête. |
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
 Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclaré), 401 (jeton),
-403 (host ou origin), 502 (pair hors ligne).
+403 (host ou origin), 429 (places d'attente pleines), 500 (panne interne, comme un arrêt qui n'a
+pas convergé), 502 (pair hors ligne) ou 503 (arrêt). Le texte est fait pour un humain et ne fait
+pas partie du contrat. Une route ou une méthode que le plan ne sert pas reçoit le 404 ou le 405 du
+serveur HTTP lui-même, qui n'en fait pas partie non plus.
 
 ### `ixctl.v1` sur le WebSocket
 
 Les trames du client sont des requêtes : `{id, op, ...}` avec `op` parmi `status`, `ping`,
-`plan`, `apply`, `stop`, `subscribe`, `unsubscribe`, les sept ops `probe.*` et les quatre ops
-`bookmark.*` (ci-dessous), et les champs de l'op (`desired`, `service`, `peer`, `ch`, `since`,
-`epoch`, `sub`, `probe`, `node`, `bookmark`, `note`). Chaque requête reçoit une trame de réponse
+`plan`, `apply`, `wait`, `stop`, `subscribe`, `unsubscribe`, les sept ops `probe.*` et les
+quatre ops `bookmark.*` (ci-dessous), et les champs de l'op (`desired`, `service`, `peer`,
+`wait`, `generation`, `run`, `timeout_ms`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`,
+`bookmark`, `note`, `markers`). Chaque requête reçoit une trame de réponse
 `{re: id, ok, data | error}`. Les abonnements sont posés en ligne (leur réponse précède leur
 premier événement) ; les autres ops courent de leur côté, pour qu'un stop lent ne retienne jamais
-la connexion.
+la connexion. Un abonnement avec `"markers":"run"` est acquitté par `"markers":"run"` dans les
+données de sa réponse. Toute autre valeur de `markers` est une erreur.
 
 Les événements arrivent en enveloppes :
 
 ```json
-{"ch":"svc/pod-a","seq":17,"epoch":"8c1f…","origin":"local","t":1760990000123,
+{"ch":"svc/pod-a","seq":17,"epoch":"8c1f…","origin":"local",
+ "run":{"origin":"local","epoch":"8c1f…","seq":12},"t":1760990000123,
  "ev":{"kind":"stats","t":1760990000120,"data":{"nodes":[...]}}}
 ```
 
@@ -214,12 +328,50 @@ séquence et le démarrage propres à la source, pour qu'un lecteur ici identifi
 comme un lecteur chez l'origine (S2 tranche 2). Un abonné avec `since` rejoue depuis l'anneau (4096 enveloppes par instance) et reçoit
 `{sub, gap}` quand c'est impossible : `since-too-old`, `overflow`, `epoch-changed`, `since-ahead`.
 
+`run = {origin, epoch, seq}` nomme une tentative de lancement ; son `seq` est la séquence du
+`service.starting` de cette tentative sur son plan d'origine. Il est fixé avant toute sortie,
+immuable et unique dans une origine et un epoch. Chaque enveloppe `svc/<nom>` de la tentative et
+chaque événement de service `ctl` qui lui est attribuable portent le même `run`. Un redémarrage
+automatique reçoit une autre exécution tout en gardant la génération qui a demandé le service. Une
+enveloppe reflétée (`peer/<nom>/…`) garde le `run` source inchangé, séparément de ses `seq` /
+`epoch` locaux et des `src_seq` / `src_epoch` de la source. Le lien demande les marqueurs sur ses
+deux abonnements de contrôle ; `status.peers[].run_markers` n'est vrai que si la session courante
+du pair les a acquittés tous les deux ; tant qu'il est faux (un pair plus ancien, un lien coupé ou
+en réouverture), un reflet sans marqueurs ne dit rien de l'ouverture ni de la fin d'une exécution.
+Les abonnés locaux ne les reçoivent que s'ils les demandent.
+
+Le plan place deux enveloppes ordinaires dans le flux source `svc/<nom>`. `ixctl.run.begin`
+porte `generation` et précède toute ligne du worker. `ixctl.run.end` suit toute ligne transmise
+par le plan et porte :
+
+- `outcome` : le résultat de la tentative, `started` ou `launch-failed` ;
+- `output` : `complete` ou `truncated`, ainsi que `drain_ms` ;
+- pour `started`, le résultat terminal : `code`, `requested` et l'éventuel `reason` d'une limite ;
+- pour `launch-failed`, `error`. Même une tentative sans processus reçoit les deux marqueurs.
+
+Pour prouver le résultat d'un `run` opaque donné, un consommateur suit cet ordre :
+
+1. utiliser un `ixctl.run.end` reçu qui porte exactement ce `run` ;
+2. sinon lire le statut du service d'origine dans le même epoch et utiliser l'enregistrement de
+   `recent_exits` portant exactement ce `run` ;
+3. sinon rapporter `unknown (other-epoch)` si l'epoch du statut diffère. Si l'epoch concorde et
+   que l'enregistrement est absent, l'exécution n'est pas finie si elle est encore
+   `services[].run`, et elle est `unknown (evicted)` sinon.
+
+La sortie d'une autre exécution, y compris `last_exit`, ne la remplace jamais.
+
+Après une fin tronquée, les lignes tardives sont écartées et comptées dans
+`services[].last_exit.late_lines` ; le compteur sature au lieu de boucler. Les marqueurs restent
+dans l'anneau, mais SSE et WebSocket les sautent, même en rejeu, sauf demande de `markers=run`
+ou `"markers":"run"`. Un kind de worker commençant par le préfixe réservé `ixctl.` est réécrit
+une seule fois à l'entrée en `log`, avec la ligne brute sous `data.line`.
+
 ### Canaux et événements
 
 | Canal | Porte |
 |---|---|
-| `ctl` | Les événements du plan lui-même : `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
-| `svc/<nom>` | La sortie du service. Une ligne stdout qui est un objet JSON avec un `kind` chaîne devient cet événement, dont seuls `kind`, `t` et `data` sont gardés : tout autre champ de premier niveau est abandonné (`t` en ms Unix sur l'horloge du service, arrondi, et abandonné quand ce n'est pas un nombre fini ; un `data` à `null` vaut absence de données ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
+| `ctl` | Les événements du plan lui-même : `service.starting` (`restart`, `generation`), `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, et quand posés `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. Les événements de service attribuables à une exécution la portent dans l'enveloppe. |
+| `svc/<nom>` | La sortie du service. Chaque enveloppe porte son exécution. Une ligne stdout qui est un objet JSON avec un `kind` chaîne devient cet événement, dont seuls `kind`, `t` et `data` sont gardés : tout autre champ de premier niveau est abandonné (`t` en ms Unix sur l'horloge du service, arrondi, et abandonné quand ce n'est pas un nombre fini ; un `data` à `null` vaut absence de données ; le tableau `nodes` d'un événement `stats` devient les `nodes` du service dans le statut). Toute autre ligne stdout est un événement `log` `{line}` ; les lignes stderr sont des événements `stderr`. |
 | `probe/<nœud>` | Le tuyau d'un nœud de sonde : des événements `sample` (ci-dessous). En miroir chez un pair seulement si ce nœud est créé avec `export: true` et que la spec de ce pair le nomme (D4, ix#402). |
 | `peer/<nom>/<canal>` | Les canaux `ctl` et `svc/` d'un pair, en miroir, plus les tuyaux `probe/<nœud>` que cette instance a demandés dans `peers[].probes` tant que le pair les exporte ; et les enveloppes `link.gap` propres au lien, les marqueurs de continuité (ci-dessous). `subscribe` est toujours local ; les ops portent `peer` pour être relayées. |
 
@@ -325,7 +477,8 @@ publie ce qu'il lit sur son propre canal ; un arbre de sondes filtre et multiple
 la borne touchée, et `probe.list` montre l'usage. La conception, les décisions qu'elle suppose et
 celles encore ouvertes sont sur la page des sondes,
 [`docs/fr/plans/2026-10-20-ixctl-probes.md`](../../docs/fr/plans/2026-10-20-ixctl-probes.md), et
-le travail est suivi sous l'epic ix#397. La surface est provisoire, comme les trois portes.
+le travail est suivi sous l'epic ix#397. La surface est provisoire : l'ADR-0014 la laisse hors du
+noyau figé d'`ixctl.v1`.
 
 | Kind | Champs | Lit |
 |---|---|---|
@@ -440,8 +593,9 @@ temporaire, puis un renommage ; mode 0600), donc ils survivent à un redémarrag
 lire comme des signets est refusé au démarrage, pas vidé. La source du rejeu est l'anneau (4096
 enveloppes) : un signet plus vieux que lui répond d'abord `since-too-old`, puis ce que l'anneau
 tient encore, jamais un rejeu silencieusement partiel ; un signet d'un démarrage antérieur répond
-d'abord `epoch-changed`, puis l'anneau du nouveau démarrage. Rejouer depuis le journal est une
-décision ultérieure (D9, ix#414 ; porte 3 intacte).
+d'abord `epoch-changed`, puis l'anneau du nouveau démarrage. Le journal n'est pas rejoué ; une
+restauration durable serait un contrat distinct qui s'annoncerait lui-même (D9, ix#414 ;
+porte 3 intacte).
 
 | Op | Champs | Réponse |
 |---|---|---|
@@ -470,8 +624,13 @@ pair.
 
 `<nom>.journal.jsonl` ajoute, en lignes JSON, un en-tête `boot` par démarrage (`schema:
 "ixctl-journal/0"`, `name`, `epoch`), chaque document appliqué avec sa génération et ses actions,
-et l'enveloppe de chaque événement `ctl`. C'est un journal d'audit, pas encore un magasin qu'un
-programme devrait lire (porte 3).
+et l'enveloppe de chaque événement `ctl`. Le plan ne le rejoue jamais au démarrage : l'état désiré
+ne survit pas à un redémarrage ; le nouveau démarrage tire un nouvel `epoch`, commence à la
+génération 0 avec tous les services déclarés arrêtés, puis applique les services marqués
+`autostart` en génération 1. Les documents appliqués sont partiels, les ajouts ne sont pas
+synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash peut couper la dernière
+ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
+un contrat distinct qui s'annoncerait lui-même (porte 3).
 
 ## Barrière
 

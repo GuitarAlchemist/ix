@@ -264,3 +264,10 @@ des quatre copies étaient périmées avant que Codex ne les lise.
    et ne compte jamais sur le remplissage des tampons socket ; lancer
    `pwsh scripts/ixctl-test-linux.ps1` avant le push (le premier run CI de #423 a perdu deux tests
    de rafale sur ubuntu-latest que Windows passait).
+7. Une annonce de contrat (une version sur laquelle un consommateur se règle, comme le
+   `contract: "run/1"` du statut) est posée par la tranche qui complète le contrat, jamais par la
+   première : un consommateur qui la lit s'appuie d'un coup sur toutes les promesses qu'elle couvre.
+   Les tranches précédentes testent son absence. La tranche A-1 de run/1 l'annonçait alors que les
+   marqueurs, les sorties récentes, la fédération et les résultats d'apply manquaient encore ; une
+   revue adverse l'a vu, et `TestStatusWithholdsTheRunContractUntilItShips` épingle l'absence
+   jusqu'à la dernière tranche (N1, #444).
