@@ -16,6 +16,12 @@ import (
 // ringSize is how many envelopes an instance keeps for replay.
 const ringSize = 4096
 
+const (
+	runMarkers   = "run"
+	runBeginKind = "ixctl.run.begin"
+	runEndKind   = "ixctl.run.end"
+)
+
 // Event is what a service (or the plane itself) says: {kind, t?, data}. T is
 // Unix milliseconds on the emitter's own clock, or absent when it gave none;
 // the envelope's T is the plane's clock at publish.
@@ -31,6 +37,20 @@ type RunID struct {
 	Origin string `json:"origin"`
 	Epoch  string `json:"epoch"`
 	Seq    uint64 `json:"seq"`
+}
+
+func isRunMarker(env *Envelope) bool {
+	return env.Ev.Kind == runBeginKind || env.Ev.Kind == runEndKind
+}
+
+func wantsRunMarkers(value *string) (bool, error) {
+	if value == nil {
+		return false, nil
+	}
+	if *value == runMarkers {
+		return true, nil
+	}
+	return false, badRequest("markers must be %q", runMarkers)
 }
 
 // Envelope carries every event on every transport. Seq counts from 1 at each
@@ -75,11 +95,12 @@ type Gap struct {
 // is also the client frame, so it carries the subscription fields. Epoch says
 // which boot Since belongs to; without it a Since below the head is trusted.
 type Request struct {
-	ID    int64  `json:"id,omitempty"`
-	Op    string `json:"op"`
-	Ch    string `json:"ch,omitempty"`
-	Exact bool   `json:"exact,omitempty"` // subscribe: Ch is one channel's exact name, not a prefix
-	Live  bool   `json:"live,omitempty"`  // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
+	ID      int64   `json:"id,omitempty"`
+	Op      string  `json:"op"`
+	Ch      string  `json:"ch,omitempty"`
+	Exact   bool    `json:"exact,omitempty"`   // subscribe: Ch is one channel's exact name, not a prefix
+	Live    bool    `json:"live,omitempty"`    // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
+	Markers *string `json:"markers,omitempty"` // subscribe: "run" includes ixctl.run.* markers
 	// WithCursor: probe.list says the point of the plane's stream it stands at (`cursor`: the head
 	// and the epoch), read under the tree lock with the nodes, so the list is exactly what ctl
 	// says up to that seq (S2 slice 4).
