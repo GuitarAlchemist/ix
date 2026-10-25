@@ -162,7 +162,8 @@ so a journaled document holds no address.
   when the reply arrives. It is never a run this apply launched: `not-launched` proves that this
   generation announces no new run. These results are values the plane answers; a refused apply
   (an invalid document, an unknown service, a plane shutting down, a peer error) is an error and
-  carries no `results`. They do not wait; the plane-side wait operations are a later slice.
+  carries no `results`. They do not wait; the plane-side `wait` operation below consumes
+  their epoch, generation, service and run evidence.
 - `epoch` names the boot these generations belong to. A client that waits on a generation
   should name the epoch too, so a plane restart ends the wait instead of letting the new boot's
   generation of the same number pass for the old one.
@@ -181,6 +182,50 @@ automatically:
 | `services[].recent_exits[]` | The terminal attempts retained this boot, oldest first. Each record carries its opaque `run` and exactly the result fields of its `ixctl.run.end`. Launch failures count; the run still in flight does not. On overflow the oldest record is evicted. |
 | `services[].last_exit.run` | Compatibility view of the latest attempt that started a process, with its time, generation, usage and late-line count. It does not include launch failures and is not a per-run lookup; after a restart starts it may differ from `services[].run`. `late_lines` is a saturating count of lines read after that run's end marker and dropped, present while this remains the last exit. |
 
+### Plane-side waits
+
+One operation owns all three reducers. Over HTTP it is `POST /v1/wait[?peer=NAME]`; over
+`ixctl.v1` it is `{"op":"wait", ...}`. Its common request is:
+
+```json
+{"wait":"generation|launch|run","epoch":"...","generation":7,
+ "service":"pod-a","run":{"origin":"local","epoch":"...","seq":12},"timeout_ms":30000}
+```
+
+A generation wait uses `epoch,generation`; a launch wait adds `service`; an exact-run wait
+uses only `run`. A launch wait is valid only when that service's apply result was
+`start-pending` or `not-launched`; asking it of `stop-pending`, of `noop` or of a service the
+generation did not name is malformed.
+`timeout_ms` is required, must be positive, and may not exceed
+`status.limits.wait_timeout_ms` (currently 60000). At most `status.limits.waiters`
+(currently 64) waits are in flight on one plane. A request above the timeout cap is 400; a
+wait refused because all slots are occupied is 429 (or `ok:false` on WebSocket).
+
+Every completed wait is HTTP 200 or WebSocket `ok:true` with one value from this closed set:
+
+| Wait | Outcomes |
+|---|---|
+| generation | `{"outcome":"converged"}`; `{"outcome":"diverged","service":NAME,"reason":TEXT}`; `{"outcome":"timeout"}`; `{"outcome":"unknown","reason":"other-epoch"}` |
+| launch | `{"outcome":"launched","run":RUN}`; `{"outcome":"not-launched","current_run":RUN_OR_NULL}`; `{"outcome":"timeout"}`; `{"outcome":"unknown","reason":"other-epoch"|"evicted"}` |
+| run | `{"outcome":"ended","run":RUN,"end":RUN_END_FIELDS}`; `{"outcome":"timeout"}`; `{"outcome":"unknown","reason":"other-epoch"|"evicted"}` |
+
+A timeout is the caller's expired wait deadline, not an error. Malformed requests,
+authentication failures, unknown services, overload, peer/transport failures and shutdown are
+errors instead. `unknown` has exactly `evicted` and `other-epoch`; extending it requires
+`run/2`.
+
+For launch waits the plane retains the newest 16 admission results per service, including the
+`current_run` snapshot and the first run that generation launched, as announced by
+`ixctl.run.begin`; a restart under the same generation is a later run and never replaces it.
+`evicted` means that exact generation/service result is no longer retained: it answers only a
+generation no newer than the newest record dropped, so a generation that never named the
+service stays malformed. `not-launched.current_run`
+proves only what was current at admission and never names a run launched by that generation.
+For exact-run waits, `evicted` means the same-epoch run is neither current nor in
+`recent_exits`; another run's exit is never substituted. A `?peer=` wait is forwarded to the
+origin plane and answered there. Rust typed wrappers, state-file following across restart, the
+number-only wait deprecation and IXQL mapping are B-2b, not this slice.
+
 A job's `desired` stays `running` after it ends, so applying the same document again runs it
 again; the client waits on the end of the run *a generation started*
 (`last_exit.generation`), not on the last exit the plane saw.
@@ -197,6 +242,7 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /health` | `{ok, name, version, epoch, uptime_ms, ops}`; no token. |
 | `GET /v1/status[?peer=NAME]` | The status reply (above), or that peer's. |
 | `POST /v1/plan[?peer=]`, `POST /v1/apply[?peer=]` | Body: a desired-state document. |
+| `POST /v1/wait[?peer=]` | Body: the common wait request above. |
 | `POST /v1/stop` | Body `{"service": NAME, "peer"?: NAME}`. |
 | `POST /v1/shutdown` | Stops every tree and every probe, then the transports; the state file is removed. |
 | `GET /v1/probes[?peer=]` | The probe kinds and the system's limits (`probe.kinds`, below). |
@@ -210,14 +256,14 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),
-403 (host or origin), 502 (peer down).
+403 (host or origin), 429 (wait slots full), 502 (peer down) or 503 (shutting down).
 
 ### `ixctl.v1` over the WebSocket
 
 Client frames are requests: `{id, op, ...}` with `op` one of `status`, `ping`, `plan`, `apply`,
-`stop`, `subscribe`, `unsubscribe`, the seven `probe.*` ops and the four `bookmark.*` ops (below),
-and the op's fields (`desired`, `service`, `peer`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`,
-`bookmark`, `note`, `markers`). Every request gets one reply frame `{re: id, ok, data | error}`.
+`wait`, `stop`, `subscribe`, `unsubscribe`, the seven `probe.*` ops and the four `bookmark.*` ops
+(below), and the op's fields (`desired`, `service`, `peer`, `wait`, `generation`, `run`,
+`timeout_ms`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`, `bookmark`, `note`, `markers`). Every request gets one reply frame `{re: id, ok, data | error}`.
 Subscriptions are set up in line (their reply precedes their first event); other ops run on their
 own so a slow stop never holds the connection. A subscribe with `"markers":"run"` is acknowledged
 by `"markers":"run"` in its reply data. Any other marker value is an error.

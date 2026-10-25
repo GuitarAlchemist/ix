@@ -173,8 +173,8 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
   exécution lancée par cet apply : `not-launched` prouve que cette génération n'annonce aucune
   nouvelle exécution. Ces résultats sont des valeurs que le plan répond ; un apply refusé (un
   document invalide, un service inconnu, un plan qui s'arrête, une erreur de pair) est une erreur
-  et ne porte aucun `results`. Ils n'attendent pas ; les opérations d'attente côté plan
-  appartiennent à une tranche ultérieure.
+  et ne porte aucun `results`. Ils n'attendent pas ; l'opération `wait` côté plan ci-dessous
+  consomme leurs preuves d'epoch, de génération, de service et d'exécution.
 - `epoch` nomme le démarrage auquel ces générations appartiennent. Un client qui attend une
   génération devrait nommer l'epoch aussi, pour qu'un redémarrage du plan termine l'attente au
   lieu de laisser passer la génération de même numéro du nouveau démarrage pour l'ancienne.
@@ -193,6 +193,55 @@ quand un service redémarre automatiquement :
 | `services[].recent_exits[]` | Les tentatives terminales gardées pendant ce démarrage, de la plus ancienne à la plus récente. Chaque enregistrement porte son `run` opaque et exactement les champs de résultat de son `ixctl.run.end`. Les échecs de lancement comptent ; l'exécution encore en cours n'y figure pas. En cas de débordement, l'enregistrement le plus ancien est évincé. |
 | `services[].last_exit.run` | Vue de compatibilité de la dernière tentative ayant démarré un processus, avec son heure, sa génération, son usage et son compte de lignes tardives. Elle n'inclut pas les échecs de lancement et n'est pas une recherche par exécution ; après le début d'un redémarrage, elle peut différer de `services[].run`. `late_lines` compte, avec saturation, les lignes lues après son marqueur de fin et écartées, tant qu'elle reste la dernière sortie. |
 
+### Attentes côté plan
+
+Une seule opération possède les trois réducteurs. En HTTP, c'est
+`POST /v1/wait[?peer=NOM]` ; sur `ixctl.v1`, c'est `{"op":"wait", ...}`. Sa requête commune
+est :
+
+```json
+{"wait":"generation|launch|run","epoch":"...","generation":7,
+ "service":"pod-a","run":{"origin":"local","epoch":"...","seq":12},"timeout_ms":30000}
+```
+
+L'attente de génération utilise `epoch,generation` ; celle de lancement ajoute `service` ;
+celle d'une exécution exacte utilise seulement `run`. L'attente de lancement n'est valide que
+si le résultat d'apply du service était `start-pending` ou `not-launched` ; la demander à
+`stop-pending`, à `noop` ou pour un service que la génération ne nommait pas est une requête
+mal formée. `timeout_ms` est obligatoire, strictement
+positif, et ne peut dépasser `status.limits.wait_timeout_ms` (60000 actuellement). Un plan
+accepte au plus `status.limits.waiters` attentes simultanées (64 actuellement). Dépasser le
+plafond de durée vaut 400 ; manquer de place vaut 429 (ou `ok:false` sur WebSocket).
+
+Toute attente terminée répond HTTP 200 ou WebSocket `ok:true` avec une valeur de cet ensemble
+fermé :
+
+| Attente | Résultats |
+|---|---|
+| génération | `{"outcome":"converged"}` ; `{"outcome":"diverged","service":NOM,"reason":TEXTE}` ; `{"outcome":"timeout"}` ; `{"outcome":"unknown","reason":"other-epoch"}` |
+| lancement | `{"outcome":"launched","run":RUN}` ; `{"outcome":"not-launched","current_run":RUN_OU_NULL}` ; `{"outcome":"timeout"}` ; `{"outcome":"unknown","reason":"other-epoch"|"evicted"}` |
+| exécution | `{"outcome":"ended","run":RUN,"end":CHAMPS_RUN_END}` ; `{"outcome":"timeout"}` ; `{"outcome":"unknown","reason":"other-epoch"|"evicted"}` |
+
+Un timeout est l'échéance d'attente du demandeur, pas une erreur. Une requête mal formée,
+l'authentification, un service inconnu, la surcharge, une erreur de pair ou de transport et
+l'arrêt du plan restent des erreurs. `unknown` n'a que `evicted` et `other-epoch` ; l'étendre
+exige `run/2`.
+
+Pour l'attente de lancement, le plan garde les 16 derniers résultats d'admission par service,
+avec l'instantané `current_run` et la première exécution lancée par cette génération, telle
+qu'`ixctl.run.begin` l'annonce ; un redémarrage sous la même génération est une exécution
+ultérieure et ne la remplace jamais. `evicted` signifie que ce résultat génération/service
+exact n'est plus gardé : il ne répond qu'à une génération pas plus récente que le plus récent
+enregistrement écarté, si bien qu'une génération qui n'a jamais nommé le service reste une
+requête mal formée.
+`not-launched.current_run` prouve seulement ce qui était courant à l'admission et ne nomme
+jamais une exécution lancée par cette génération. Pour l'attente d'exécution exacte, `evicted`
+signifie que l'exécution du même epoch n'est ni courante ni dans `recent_exits` ; la sortie
+d'une autre exécution ne la remplace jamais. Une attente avec `?peer=` est transmise au plan
+d'origine et décidée là-bas. Les wrappers Rust typés, le suivi du fichier d'état à travers un
+redémarrage, la dépréciation de l'attente par numéro seul et le mapping IXQL appartiennent à
+B-2b, pas à cette tranche.
+
 Le `desired` d'un job reste `running` après sa fin : appliquer de nouveau le même document le
 relance ; le client attend la fin de l'exécution *qu'une génération a lancée*
 (`last_exit.generation`), pas la dernière sortie vue par le plan.
@@ -210,6 +259,7 @@ au plus.
 | `GET /health` | `{ok, name, version, epoch, uptime_ms, ops}` ; sans jeton. |
 | `GET /v1/status[?peer=NOM]` | La réponse de statut (ci-dessus), ou celle de ce pair. |
 | `POST /v1/plan[?peer=]`, `POST /v1/apply[?peer=]` | Corps : un document d'état désiré. |
+| `POST /v1/wait[?peer=]` | Corps : la requête d'attente commune ci-dessus. |
 | `POST /v1/stop` | Corps `{"service": NOM, "peer"?: NOM}`. |
 | `POST /v1/shutdown` | Arrête chaque arbre et chaque sonde, puis les transports ; le fichier d'état est retiré. |
 | `GET /v1/probes[?peer=]` | Les kinds de sonde et les limites du système (`probe.kinds`, ci-dessous). |
@@ -223,14 +273,15 @@ au plus.
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
 Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclaré), 401 (jeton),
-403 (host ou origin), 502 (pair hors ligne).
+403 (host ou origin), 429 (places d'attente pleines), 502 (pair hors ligne) ou 503 (arrêt).
 
 ### `ixctl.v1` sur le WebSocket
 
 Les trames du client sont des requêtes : `{id, op, ...}` avec `op` parmi `status`, `ping`,
-`plan`, `apply`, `stop`, `subscribe`, `unsubscribe`, les sept ops `probe.*` et les quatre ops
-`bookmark.*` (ci-dessous), et les champs de l'op (`desired`, `service`, `peer`, `ch`, `since`,
-`epoch`, `sub`, `probe`, `node`, `bookmark`, `note`, `markers`). Chaque requête reçoit une trame de réponse
+`plan`, `apply`, `wait`, `stop`, `subscribe`, `unsubscribe`, les sept ops `probe.*` et les
+quatre ops `bookmark.*` (ci-dessous), et les champs de l'op (`desired`, `service`, `peer`,
+`wait`, `generation`, `run`, `timeout_ms`, `ch`, `since`, `epoch`, `sub`, `probe`, `node`,
+`bookmark`, `note`, `markers`). Chaque requête reçoit une trame de réponse
 `{re: id, ok, data | error}`. Les abonnements sont posés en ligne (leur réponse précède leur
 premier événement) ; les autres ops courent de leur côté, pour qu'un stop lent ne retienne jamais
 la connexion. Un abonnement avec `"markers":"run"` est acquitté par `"markers":"run"` dans les

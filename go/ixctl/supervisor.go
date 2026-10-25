@@ -75,6 +75,13 @@ type runEnd struct {
 	DrainMS   int64  `json:"drain_ms"`
 }
 
+type launchRecord struct {
+	Generation uint64
+	Result     string
+	CurrentRun *RunID
+	Run        *RunID
+}
+
 // Exit reasons: the limit a run was killed for.
 const (
 	reasonWall      = "wall_limit"    // lasted past limits.wall_ms
@@ -118,7 +125,10 @@ type service struct {
 	failures    map[uint64]string
 	lastExit    *exitInfo
 	recentExits []runEnd
-	nodes       json.RawMessage
+	launches    []launchRecord
+	// launchesEvicted is the newest generation dropped from launches (0 before any).
+	launchesEvicted uint64
+	nodes           json.RawMessage
 
 	cmds chan command // desired states, in apply order
 
@@ -236,6 +246,64 @@ func (s *service) admissionObservationLocked() (desired, state string, currentRu
 		currentRun = &run
 	}
 	return s.desired, s.state, currentRun
+}
+
+// keptApplyResults bounds the per-service admission results retained for launch waits.
+const keptApplyResults = keptFailures
+
+func (s *service) rememberApplyResultLocked(g uint64, result ApplyServiceResult) {
+	record := launchRecord{Generation: g, Result: result.Result}
+	if result.CurrentRun != nil {
+		run := *result.CurrentRun
+		record.CurrentRun = &run
+	}
+	if len(s.launches) == keptApplyResults {
+		s.launchesEvicted = s.launches[0].Generation
+		copy(s.launches, s.launches[1:])
+		s.launches[len(s.launches)-1] = record
+		return
+	}
+	s.launches = append(s.launches, record)
+}
+
+// rememberLaunchedLocked records the first run generation g launched. A restart launches its
+// run under the same generation; that run is not the one the generation launched.
+func (s *service) rememberLaunchedLocked(g uint64, run RunID) {
+	for i := len(s.launches) - 1; i >= 0; i-- {
+		if s.launches[i].Generation == g {
+			if s.launches[i].Run == nil {
+				r := run
+				s.launches[i].Run = &r
+			}
+			return
+		}
+	}
+}
+
+// launchRecord finds generation g's admission record. Without one, evicted says whether the
+// record may have been dropped (g is no newer than the newest evicted generation); otherwise g
+// never named the service.
+func (s *service) launchRecord(g uint64) (record launchRecord, found, evicted bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.launches) - 1; i >= 0; i-- {
+		if s.launches[i].Generation == g {
+			return s.launches[i], true, false
+		}
+	}
+	return launchRecord{}, false, g <= s.launchesEvicted
+}
+
+func (s *service) runRecord(run RunID) (*runEnd, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.recentExits {
+		if s.recentExits[i].Run != nil && *s.recentExits[i].Run == run {
+			end := s.recentExits[i]
+			return &end, false
+		}
+	}
+	return nil, s.hasRun && s.curRun == run
 }
 
 func (s *service) status() ServiceStatus {
@@ -417,8 +485,9 @@ func (s *service) launch(restart bool) {
 		map[string]any{"service": s.spec.Name, "restart": restart, "generation": gen}))
 	run := *env.Run
 	s.curRun, s.hasRun = run, true
-	s.mu.Unlock()
 	s.hub.PublishRun(s.ch, event(runBeginKind, map[string]any{"generation": gen}), run)
+	s.rememberLaunchedLocked(gen, run)
+	s.mu.Unlock()
 	c, err := s.start(run)
 	if err != nil {
 		reason := "launch: " + err.Error()
