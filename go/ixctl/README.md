@@ -279,7 +279,10 @@ Bodies are read strictly: one JSON value, no unknown field, nothing after it, on
 | `GET /v1/ws` | The `ixctl.v1` WebSocket (below). |
 
 Errors are `{"error": "..."}` with 400 (refused request, undeclared name), 401 (token),
-403 (host or origin), 429 (wait slots full), 502 (peer down) or 503 (shutting down).
+403 (host or origin), 429 (wait slots full), 500 (internal failure, such as a stop that did not
+converge), 502 (peer down) or 503 (shutting down). The text is for a person, not part of the
+contract. A route or method the plane does not serve gets the HTTP server's own 404 or 405, which
+is not part of the contract either.
 
 ### `ixctl.v1` over the WebSocket
 

@@ -297,7 +297,10 @@ au plus.
 | `GET /v1/ws` | Le WebSocket `ixctl.v1` (ci-dessous). |
 
 Les erreurs sont `{"error": "..."}` avec 400 (requête refusée, nom non déclaré), 401 (jeton),
-403 (host ou origin), 429 (places d'attente pleines), 502 (pair hors ligne) ou 503 (arrêt).
+403 (host ou origin), 429 (places d'attente pleines), 500 (panne interne, comme un arrêt qui n'a
+pas convergé), 502 (pair hors ligne) ou 503 (arrêt). Le texte est fait pour un humain et ne fait
+pas partie du contrat. Une route ou une méthode que le plan ne sert pas reçoit le 404 ou le 405 du
+serveur HTTP lui-même, qui n'en fait pas partie non plus.
 
 ### `ixctl.v1` sur le WebSocket
 
