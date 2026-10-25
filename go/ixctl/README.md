@@ -174,9 +174,20 @@ so a journaled document holds no address.
 - `stop` stops one service out of band and answers once its tree is gone:
   `{stopped, generation, exit}`. A requested stop closes stdin, waits two seconds, then kills.
 
-Status announces no consumer contract yet: it will carry `contract: "run/1"` once every slice of
-that contract has landed (#443), and a consumer relies on none of run/1, the run markers below
-included, before it reads that. One generation can carry several runs when a service restarts
+Status carries `contract: "run/1"`, the consumer contract this plane keeps. It rests on the frozen
+core of `ixctl.v1` and on `ixctl-desired/0`
+([ADR-0014](../../docs/adr/0014-ixctl-v1-and-desired-state-frozen.md)), and it is:
+
+- the run identity `run = {origin, epoch, seq}` and the run fields of status below;
+- the `results` of `apply`, the closed set above;
+- the `ixctl.run.begin` and `ixctl.run.end` markers, on request and acknowledged;
+- the `wait` operation and its closed set of outcomes, whose `unknown` reasons are `evicted` and
+  `other-epoch` only, with the order in which it reads its evidence;
+- the federated provenance: `run` unchanged in a mirror, and `status.peers[].run_markers`.
+
+A consumer gates on that value: a plane whose status does not carry it keeps none of run/1.
+Additions follow ADR-0014's rule for extensions; changing what run/1 promises, an `unknown` reason
+included, takes `run/2`. One generation can carry several runs when a service restarts
 automatically:
 
 | Status field | Meaning |

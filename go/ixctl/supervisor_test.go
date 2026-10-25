@@ -182,16 +182,16 @@ func TestRunIdentityAgreesAcrossStatusCtlAndServiceOutput(t *testing.T) {
 	}
 }
 
-// N1 (#444): status announces no consumer contract until every slice of run/1 has landed,
-// so a consumer that gates on `contract: "run/1"` never waits for markers the plane lacks.
-func TestStatusWithholdsTheRunContractUntilItShips(t *testing.T) {
+// N1 (#444): status announces the consumer contract once every slice of run/1 is in, so a
+// consumer that gates on `contract: "run/1"` finds run identity, markers, results and waits.
+func TestStatusAnnouncesTheRunContract(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil, fakeSvc{name: "pod"}), "")
 	var status map[string]json.RawMessage
 	if err := json.Unmarshal(do(t, dial(t, in), Request{Op: "status"}), &status); err != nil {
 		t.Fatal(err)
 	}
-	if c, ok := status["contract"]; ok {
-		t.Fatalf("status announces contract %s before run/1 has shipped", c)
+	if c := string(status["contract"]); c != `"run/1"` {
+		t.Fatalf("status announces contract %q, want \"run/1\"", c)
 	}
 }
 

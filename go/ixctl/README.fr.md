@@ -185,10 +185,22 @@ voyage à côté, si bien qu'un document journalisé ne contient aucune adresse.
 - `stop` arrête un service hors bande et répond une fois son arbre disparu :
   `{stopped, generation, exit}`. Un arrêt demandé ferme stdin, attend deux secondes, puis tue.
 
-Le statut n'annonce encore aucun contrat consommateur : il portera `contract: "run/1"` une fois
-toutes les tranches de ce contrat livrées (#443), et un consommateur ne s'appuie sur rien de run/1,
-marqueurs ci-dessous compris, avant de l'y lire. Une génération peut porter plusieurs exécutions
-quand un service redémarre automatiquement :
+Le statut porte `contract: "run/1"`, le contrat consommateur que ce plan tient. Il repose sur le
+noyau figé d'`ixctl.v1` et sur `ixctl-desired/0`
+([ADR-0014](../../docs/fr/adr/0014-ixctl-v1-and-desired-state-frozen.md)), et il comprend :
+
+- l'identité d'exécution `run = {origin, epoch, seq}` et les champs d'exécution du statut
+  ci-dessous ;
+- les `results` d'`apply`, l'ensemble fermé ci-dessus ;
+- les marqueurs `ixctl.run.begin` et `ixctl.run.end`, sur demande et accusés ;
+- l'opération `wait` et son ensemble fermé d'issues, dont les raisons d'`unknown` sont `evicted` et
+  `other-epoch` seulement, avec l'ordre dans lequel elle lit ses preuves ;
+- la provenance fédérée : `run` inchangé dans une copie, et `status.peers[].run_markers`.
+
+Un consommateur se règle sur cette valeur : un plan dont le statut ne la porte pas ne tient rien de
+run/1. Les ajouts suivent la règle d'extension de l'ADR-0014 ; changer ce que run/1 promet, une
+raison d'`unknown` comprise, exige `run/2`. Une génération peut porter plusieurs exécutions quand
+un service redémarre automatiquement :
 
 | Champ du statut | Sens |
 |---|---|
