@@ -149,6 +149,15 @@ so a journaled document holds no address.
 - `stop` stops one service out of band and answers once its tree is gone:
   `{stopped, generation, exit}`. A requested stop closes stdin, waits two seconds, then kills.
 
+Status announces no consumer contract yet: it will carry `contract: "run/1"` once every slice of
+that contract has landed (#443), and a consumer relies on none of run/1 before it reads that.
+One generation can carry several runs when a service restarts automatically:
+
+| Status field | Meaning |
+|---|---|
+| `services[].run` | The latest run announced by `service.starting`. It is the active run in `starting` (once announced) and `running`; in restart backoff (`restarting`) it is the run whose exit caused the backoff, until the successor is announced; `stopped` and `failed` retain the last run. Before the first announcement it is absent; a queued start may already show `starting` while retaining the preceding run, or no run before the first. |
+| `services[].last_exit.run` | The exact run that produced `last_exit`; after a restart starts it may differ from `services[].run`. |
+
 A job's `desired` stays `running` after it ends, so applying the same document again runs it
 again; the client waits on the end of the run *a generation started*
 (`last_exit.generation`), not on the last exit the plane saw.
@@ -192,7 +201,8 @@ own so a slow stop never holds the connection.
 Events arrive as envelopes:
 
 ```json
-{"ch":"svc/pod-a","seq":17,"epoch":"8c1f…","origin":"local","t":1760990000123,
+{"ch":"svc/pod-a","seq":17,"epoch":"8c1f…","origin":"local",
+ "run":{"origin":"local","epoch":"8c1f…","seq":12},"t":1760990000123,
  "ev":{"kind":"stats","t":1760990000120,"data":{"nodes":[...]}}}
 ```
 
@@ -202,12 +212,19 @@ source's own seq and boot, so a reader here keys and dedups as one on the origin
 slice 2). A subscriber with `since` replays from the ring (4096 envelopes per instance) and gets
 `{sub, gap}` when it cannot: `since-too-old`, `overflow`, `epoch-changed`, `since-ahead`.
 
+`run = {origin, epoch, seq}` names one launch attempt; its `seq` is that attempt's
+`service.starting` sequence on its origin plane. It is fixed before output, immutable, and unique
+within an origin and epoch. Every `svc/<name>` envelope of the attempt and every `ctl` service
+event attributable to it carries the same `run`. An automatic restart gets another run while
+keeping the generation that requested the service. A mirrored envelope (`peer/<name>/…`) does
+not carry it yet (#452).
+
 ### Channels and events
 
 | Channel | Carries |
 |---|---|
-| `ctl` | The plane's own events: `service.starting`, `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. |
-| `svc/<name>` | The service's output. A stdout line that is a JSON object with a string `kind` becomes that event, of which only `kind`, `t` and `data` are kept: any other top-level field is dropped (`t` in Unix ms on the service's clock, rounded, and dropped when it is not a finite number; a `null` `data` is no data; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
+| `ctl` | The plane's own events: `service.starting` (`restart`, `generation`), `service.started` (`pid`, `restarts`, `generation`), `service.exited` (`pid`, `code`, `requested`, `generation`, and when set `reason` + `wall_ms`/`memory_mb`/`cpu_limit_ms`/`processes`, `peak_memory_bytes`, `cpu_ms`, `peak_processes`), `service.restarting` (`attempt`, `in_ms`), `service.stopped`, `service.failed` (`reason`), `converged` / `diverged` (`generation`), `peer.up` / `peer.down`. Service events attributable to a run carry it in the envelope. |
+| `svc/<name>` | The service's output. Every envelope carries its run. A stdout line that is a JSON object with a string `kind` becomes that event, of which only `kind`, `t` and `data` are kept: any other top-level field is dropped (`t` in Unix ms on the service's clock, rounded, and dropped when it is not a finite number; a `null` `data` is no data; a `stats` event's `nodes` array becomes the service's `nodes` in status). Any other stdout line is a `log` event `{line}`; stderr lines are `stderr` events. |
 | `probe/<node>` | A probe node's pipe: `sample` events (below). Mirrored to a peer only when this node is created with `export: true` and that peer's spec names it (D4, ix#402). |
 | `peer/<name>/<ch>` | A peer's `ctl` and `svc/` channels, mirrored, plus the probe pipes `probe/<node>` this instance asked for in `peers[].probes` while the peer exports them; and the link's own `link.gap` envelopes, the continuity markers (below). `subscribe` is always local; ops carry `peer` to be forwarded. |
 

@@ -34,6 +34,7 @@ const (
 type exitInfo struct {
 	Code int   `json:"code"`
 	At   int64 `json:"at"`
+	Run  RunID `json:"run"`
 	// Generation is the apply that launched the run this exit ends (a restart keeps its
 	// run's generation), so a waiter can tell this run's exit from an earlier run's.
 	Generation uint64 `json:"generation,omitempty"`
@@ -84,6 +85,8 @@ type service struct {
 	restarts  int
 	startedAt int64
 	startGen  uint64 // the generation that launched the current or last run; 0 before any
+	curRun    RunID  // the current or last run, valid once hasRun
+	hasRun    bool
 	// `running` wants queued and not yet read, and the generation of the last of them: while
 	// one is queued the service shows `starting` whenever its process is gone, so a plan sees
 	// the start on its way and does not announce another.
@@ -110,6 +113,7 @@ type service struct {
 // child is one launched process tree.
 type child struct {
 	tree   *procTree
+	run    RunID
 	stdin  *os.File
 	pid    int
 	exited chan exitStat // how the main process ended, once
@@ -204,6 +208,10 @@ func (s *service) status() ServiceStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := ServiceStatus{Name: s.spec.Name, Desired: s.desired, State: s.state, Restarts: s.restarts, Generation: s.startGen, Nodes: s.nodes}
+	if s.hasRun {
+		run := s.curRun
+		st.Run = &run
+	}
 	if s.pid != 0 {
 		pid := s.pid
 		st.Pid = &pid
@@ -239,6 +247,11 @@ func (s *service) cur() string {
 func (s *service) ctl(kind string, data map[string]any) {
 	data["service"] = s.spec.Name
 	s.hub.Publish("ctl", event(kind, data))
+}
+
+func (s *service) ctlRun(run RunID, kind string, data map[string]any) {
+	data["service"] = s.spec.Name
+	s.hub.PublishRun("ctl", event(kind, data), run)
 }
 
 func (s *service) run(ctx context.Context) {
@@ -316,7 +329,7 @@ func (s *service) command(want command) {
 // fail moves the service to `failed` and publishes service.failed with data, stamped with
 // the generation of the run that failed, taken under mu with the transition so no apply can
 // read `failed` and then take an unstamped event for its own.
-func (s *service) fail(data map[string]any) {
+func (s *service) fail(run RunID, data map[string]any) {
 	s.mu.Lock()
 	if s.failures == nil {
 		s.failures = map[uint64]string{}
@@ -334,7 +347,7 @@ func (s *service) fail(data map[string]any) {
 	data["generation"] = s.startGen
 	s.mu.Unlock()
 	s.settle(stateFailed)
-	s.ctl("service.failed", data)
+	s.ctlRun(run, "service.failed", data)
 }
 
 func (s *service) cancelTimer() {
@@ -345,11 +358,17 @@ func (s *service) cancelTimer() {
 }
 
 func (s *service) launch(restart bool) {
-	s.setState(stateStarting)
-	s.ctl("service.starting", map[string]any{"restart": restart})
-	c, err := s.start()
+	s.mu.Lock()
+	s.state = stateStarting
+	gen := s.startGen
+	env := s.hub.PublishNewRun("ctl", event("service.starting",
+		map[string]any{"service": s.spec.Name, "restart": restart, "generation": gen}))
+	run := *env.Run
+	s.curRun, s.hasRun = run, true
+	s.mu.Unlock()
+	c, err := s.start(run)
 	if err != nil {
-		s.fail(map[string]any{"reason": "launch: " + err.Error()})
+		s.fail(run, map[string]any{"reason": "launch: " + err.Error()})
 		return
 	}
 	s.proc = c
@@ -364,10 +383,10 @@ func (s *service) launch(restart bool) {
 	s.state, s.pid, s.startedAt = stateRunning, c.pid, now
 	restarts, gen := s.restarts, s.startGen
 	s.mu.Unlock()
-	s.ctl("service.started", map[string]any{"pid": c.pid, "restarts": restarts, "generation": gen})
+	s.ctlRun(run, "service.started", map[string]any{"pid": c.pid, "restarts": restarts, "generation": gen})
 }
 
-func (s *service) start() (*child, error) {
+func (s *service) start(run RunID) (*child, error) {
 	cmd := exec.Command(resolveCommand(s.spec.Command), s.spec.Args...)
 	cmd.Dir = s.spec.Dir
 	cmd.Env = os.Environ()
@@ -408,10 +427,10 @@ func (s *service) start() (*child, error) {
 		errR.Close()
 		return nil, err
 	}
-	c := &child{tree: tree, stdin: inW, pid: cmd.Process.Pid, exited: make(chan exitStat, 1)}
+	c := &child{tree: tree, run: run, stdin: inW, pid: cmd.Process.Pid, exited: make(chan exitStat, 1)}
 	c.io.Add(2)
-	go func() { defer c.io.Done(); s.readLines(outR, false) }()
-	go func() { defer c.io.Done(); s.readLines(errR, true) }()
+	go func() { defer c.io.Done(); s.readLines(outR, false, run) }()
+	go func() { defer c.io.Done(); s.readLines(errR, true, run) }()
 	go func() {
 		code := -1
 		if err := cmd.Wait(); err == nil {
@@ -476,8 +495,8 @@ func (s *service) reap(st exitStat, reason string, requested bool) *exitInfo {
 	}
 	s.proc = nil
 	s.mu.Lock()
-	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Generation: s.startGen, Reason: reason,
-		PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
+	e := &exitInfo{Code: st.code, At: time.Now().UnixMilli(), Run: c.run, Generation: s.startGen,
+		Reason: reason, PeakMemoryBytes: peak, CpuMs: cpu, PeakProcesses: procs}
 	s.pid, s.lastExit = 0, e
 	s.mu.Unlock()
 	return e
@@ -530,12 +549,12 @@ func (s *service) stopTree(generation uint64) {
 	e := s.reap(st, "", true)
 	s.settle(stateStopped)
 	ms := time.Since(t0).Milliseconds()
-	s.ctl("service.exited", s.exitData(pid, true, e))
+	s.ctlRun(e.Run, "service.exited", s.exitData(pid, true, e))
 	stopped := map[string]any{"pid": pid, "code": e.Code, "ms": ms}
 	if generation != 0 {
 		stopped["generation"] = generation
 	}
-	s.ctl("service.stopped", stopped)
+	s.ctlRun(e.Run, "service.stopped", stopped)
 }
 
 // halt stops the service for good: the plane is shutting down.
@@ -582,7 +601,7 @@ func (s *service) onLimit(reason string) {
 func (s *service) ended(st exitStat, reason string) {
 	pid := s.proc.pid
 	e := s.reap(st, reason, false)
-	s.ctl("service.exited", s.exitData(pid, false, e))
+	s.ctlRun(e.Run, "service.exited", s.exitData(pid, false, e))
 	if s.spec.Restart == restartNever || (s.spec.Restart == restartOnFailure && e.Code == 0 && e.Reason == "") {
 		// The run's own end: stamped with the run's generation, which no stop's apply
 		// carries, so a stop queued meanwhile settles on its own event only.
@@ -591,7 +610,7 @@ func (s *service) ended(st exitStat, reason string) {
 		if e.Reason != "" {
 			stopped["reason"] = e.Reason
 		}
-		s.ctl("service.stopped", stopped)
+		s.ctlRun(e.Run, "service.stopped", stopped)
 		return
 	}
 	now := time.Now()
@@ -603,7 +622,7 @@ func (s *service) ended(st exitStat, reason string) {
 	}
 	s.recent = kept
 	if len(s.recent) >= *s.spec.MaxRestarts {
-		s.fail(map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": e.Code})
+		s.fail(e.Run, map[string]any{"reason": "too many restarts", "restarts_in_window": len(s.recent), "code": e.Code})
 		return
 	}
 	delay := backoffMin << len(s.recent)
@@ -613,31 +632,31 @@ func (s *service) ended(st exitStat, reason string) {
 	s.recent = append(s.recent, now)
 	s.setState(stateRestarting)
 	s.timer = time.NewTimer(delay)
-	s.ctl("service.restarting", map[string]any{"attempt": len(s.recent), "in_ms": delay.Milliseconds()})
+	s.ctlRun(e.Run, "service.restarting", map[string]any{"attempt": len(s.recent), "in_ms": delay.Milliseconds()})
 }
 
 // readLines turns a service's output into events on svc/<name>.
-func (s *service) readLines(r *os.File, stderr bool) {
+func (s *service) readLines(r *os.File, stderr bool, run RunID) {
 	defer r.Close()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLine)
 	for sc.Scan() {
-		s.onLine(sc.Bytes(), stderr)
+		s.onLine(sc.Bytes(), stderr, run)
 	}
 	if sc.Err() != nil {
-		s.hub.Publish(s.ch, event("log", map[string]any{"error": sc.Err().Error()}))
+		s.hub.PublishRun(s.ch, event("log", map[string]any{"error": sc.Err().Error()}), run)
 		io.Copy(io.Discard, r)
 	}
 }
 
-func (s *service) onLine(line []byte, stderr bool) {
+func (s *service) onLine(line []byte, stderr bool, run RunID) {
 	if stderr {
-		s.hub.Publish(s.ch, event("stderr", map[string]any{"line": string(line)}))
+		s.hub.PublishRun(s.ch, event("stderr", map[string]any{"line": string(line)}), run)
 		return
 	}
 	ev, ok := parseEventLine(line)
 	if !ok {
-		s.hub.Publish(s.ch, event("log", map[string]any{"line": string(line)}))
+		s.hub.PublishRun(s.ch, event("log", map[string]any{"line": string(line)}), run)
 		return
 	}
 	if ev.Kind == "stats" {
@@ -650,7 +669,7 @@ func (s *service) onLine(line []byte, stderr bool) {
 			s.mu.Unlock()
 		}
 	}
-	s.hub.Publish(s.ch, ev)
+	s.hub.PublishRun(s.ch, ev, run)
 }
 
 // parseEventLine accepts a line that is a JSON object with a string kind.
