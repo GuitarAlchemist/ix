@@ -1,7 +1,7 @@
 ---
 title: "ixctl slice 1: the three one-way doors"
 type: decision
-status: awaiting sign-off (none of the three doors is signed)
+status: signed 2026-10-25 (door 1 as option C, door 2 frozen as ixctl-desired/0, door 3 as option B); the decisions are ADR-0014
 date: 2026-10-17
 branch: exp/ixctl at f77b31e (pushed, no PR)
 reversibility: two-way today for all three (nothing merged, no consumer outside this branch); each becomes one-way at the trigger named in its section
@@ -265,7 +265,11 @@ name `ixctl.v1`.
 > **Door 1 sign-off:** `ixctl.v1` stays provisional (option B) until a consumer outside
 > go/ixctl subscribes or exp/ixctl goes to review; before it is frozen as option C, the
 > envelope gains an instance epoch and `ev.t` gets a defined unit.
-> Signed: ______ Date: ______
+> Signed: the operator, as option C in place of B (below). Date: 2026-10-25
+
+Signed as option C once both preconditions had landed: the instance epoch (F1.1) and the unit of
+`ev.t` (F1.2). The frozen core, the extensions it allows and the migration rule are in
+[ADR-0014](../adr/0014-ixctl-v1-and-desired-state-frozen.md).
 
 ---
 
@@ -532,7 +536,13 @@ would push a race onto every writer. Drop the rule instead: a generation's outco
 > is); before any freeze, a generation's outcome is its own `converged` or `diverged` (the
 > "later generation supersedes" rule is dropped), and generations are scoped to an instance
 > epoch.
-> Signed: ______ Date: ______
+> Signed: the operator, frozen as `ixctl-desired/0` rather than left provisional (below). Date: 2026-10-25
+
+Signed beyond option B once its preconditions had landed: each generation's own outcome (F2.1),
+the same decoding on both transports (F2.2), `peer` beside the document (F2.3) and generations
+scoped to an instance epoch (F2.4). `ixctl-desired/0` is frozen, and a change of the document
+ships as `ixctl-desired/1`, accepted beside it. The text is in
+[ADR-0014](../adr/0014-ixctl-v1-and-desired-state-frozen.md).
 
 ---
 
@@ -621,7 +631,7 @@ DuckDB query over it).
 > **Door 3 sign-off:** the journal stays provisional (option B): an audit log that is never
 > replayed, opened at each boot by a header `{"kind":"boot","schema":"ixctl-journal/0",
 > "epoch":...}`; it is frozen only after door 1, once a program first parses it.
-> Signed: ______ Date: ______
+> Signed: the operator, as written (option B). Date: 2026-10-25
 
 ### If all three are signed as recommended
 
@@ -698,4 +708,5 @@ bookmark file is a second store in the state dir, provisional, loaded by nothing
 that wrote it. Design and measurements:
 [`2026-10-20-ixctl-bookmarks.md`](2026-10-20-ixctl-bookmarks.md).
 
-Once signed, these decisions belong in an ADR under `docs/adr/`.
+The three decisions, signed on 2026-10-25, are recorded in
+[ADR-0014](../adr/0014-ixctl-v1-and-desired-state-frozen.md).

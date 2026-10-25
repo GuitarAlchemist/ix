@@ -16,6 +16,12 @@ import (
 // ringSize is how many envelopes an instance keeps for replay.
 const ringSize = 4096
 
+const (
+	runMarkers   = "run"
+	runBeginKind = "ixctl.run.begin"
+	runEndKind   = "ixctl.run.end"
+)
+
 // Event is what a service (or the plane itself) says: {kind, t?, data}. T is
 // Unix milliseconds on the emitter's own clock, or absent when it gave none;
 // the envelope's T is the plane's clock at publish.
@@ -23,6 +29,28 @@ type Event struct {
 	Kind string          `json:"kind"`
 	T    int64           `json:"t,omitempty"`
 	Data json.RawMessage `json:"data"`
+}
+
+// RunID names one service launch attempt. Seq is the sequence of its service.starting
+// envelope on the origin plane.
+type RunID struct {
+	Origin string `json:"origin"`
+	Epoch  string `json:"epoch"`
+	Seq    uint64 `json:"seq"`
+}
+
+func isRunMarker(env *Envelope) bool {
+	return env.Ev.Kind == runBeginKind || env.Ev.Kind == runEndKind
+}
+
+func wantsRunMarkers(value *string) (bool, error) {
+	if value == nil {
+		return false, nil
+	}
+	if *value == runMarkers {
+		return true, nil
+	}
+	return false, badRequest("markers must be %q", runMarkers)
 }
 
 // Envelope carries every event on every transport. Seq counts from 1 at each
@@ -33,6 +61,7 @@ type Envelope struct {
 	Seq    uint64 `json:"seq"`
 	Epoch  string `json:"epoch"`
 	Origin string `json:"origin"`
+	Run    *RunID `json:"run,omitempty"`
 	T      int64  `json:"t"`
 	Ev     Event  `json:"ev"`
 	// On a mirrored envelope (a peer/ channel): the source's own seq and epoch, so a consumer
@@ -66,11 +95,12 @@ type Gap struct {
 // is also the client frame, so it carries the subscription fields. Epoch says
 // which boot Since belongs to; without it a Since below the head is trusted.
 type Request struct {
-	ID    int64  `json:"id,omitempty"`
-	Op    string `json:"op"`
-	Ch    string `json:"ch,omitempty"`
-	Exact bool   `json:"exact,omitempty"` // subscribe: Ch is one channel's exact name, not a prefix
-	Live  bool   `json:"live,omitempty"`  // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
+	ID      int64   `json:"id,omitempty"`
+	Op      string  `json:"op"`
+	Ch      string  `json:"ch,omitempty"`
+	Exact   bool    `json:"exact,omitempty"`   // subscribe: Ch is one channel's exact name, not a prefix
+	Live    bool    `json:"live,omitempty"`    // subscribe: send one {"sub","live":true} frame once the replay is past the head the subscription started from
+	Markers *string `json:"markers,omitempty"` // subscribe: "run" includes ixctl.run.* markers
 	// WithCursor: probe.list says the point of the plane's stream it stands at (`cursor`: the head
 	// and the epoch), read under the tree lock with the nodes, so the list is exactly what ctl
 	// says up to that seq (S2 slice 4).
@@ -80,6 +110,10 @@ type Request struct {
 	Desired    *Desired `json:"desired,omitempty"`
 	Service    string   `json:"service,omitempty"`
 	Peer       string   `json:"peer,omitempty"`
+	Wait       string   `json:"wait,omitempty"`
+	Generation uint64   `json:"generation,omitempty"`
+	Run        *RunID   `json:"run,omitempty"`
+	TimeoutMS  int64    `json:"timeout_ms,omitempty"`
 	Sub        int64    `json:"sub,omitempty"` // unsubscribe: the subscription to drop
 	// Probe ops: the node to create, or the name of the node the op is about.
 	Probe *NodeSpec `json:"probe,omitempty"`
@@ -153,19 +187,30 @@ func (h *Hub) Epoch() string { return h.epoch }
 
 // Publish stamps an event with this instance as origin.
 func (h *Hub) Publish(ch string, ev Event) *Envelope {
-	return h.publish(ch, h.origin, 0, ev, 0, "")
+	return h.publish(ch, h.origin, 0, ev, 0, "", nil, false)
+}
+
+// PublishRun stamps an event from an existing run.
+func (h *Hub) PublishRun(ch string, ev Event, run RunID) *Envelope {
+	return h.publish(ch, h.origin, 0, ev, 0, "", &run, false)
+}
+
+// PublishNewRun stamps an event as the start of a new run, whose seq is this envelope's.
+func (h *Hub) PublishNewRun(ch string, ev Event) *Envelope {
+	return h.publish(ch, h.origin, 0, ev, 0, "", nil, true)
 }
 
 // Mirror republishes an envelope received from a peer under a local channel, keeping the
 // peer as origin and its time, and saying which envelope of the source it was (srcSeq,
 // srcEpoch: the source's own seq and epoch). Provenance is a pair: with either half missing
 // (a seq of 0, an empty epoch) none is written, in the struct as in the bytes; the link
-// refuses such a frame before it gets here.
-func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
-	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch)
+// refuses such a frame before it gets here. Run, when present, is the source's unchanged;
+// only PublishNewRun may construct one from this hub's epoch and sequence.
+func (h *Hub) Mirror(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string, run *RunID) *Envelope {
+	return h.publish(ch, origin, t, ev, srcSeq, srcEpoch, run, false)
 }
 
-func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string) *Envelope {
+func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEpoch string, run *RunID, newRun bool) *Envelope {
 	evRaw, err := json.Marshal(ev)
 	if err != nil {
 		ev.Data = nil
@@ -186,11 +231,23 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEp
 	if t == 0 {
 		t = time.Now().UnixMilli()
 	}
-	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+len(srcRaw)+64)
 
 	h.mu.Lock()
 	h.head++
-	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, T: t, Ev: ev, SrcSeq: srcSeq, SrcEpoch: srcEpoch}
+	var runRaw []byte
+	if newRun {
+		r := RunID{Origin: origin, Epoch: h.epoch, Seq: h.head}
+		run = &r
+	}
+	if run != nil {
+		r := *run
+		run = &r
+		encoded, _ := json.Marshal(r)
+		runRaw = append(runRaw, `,"run":`...)
+		runRaw = append(runRaw, encoded...)
+	}
+	b := make([]byte, 0, len(evRaw)+len(chRaw)+len(orRaw)+len(srcRaw)+len(runRaw)+64)
+	env := &Envelope{Ch: ch, Seq: h.head, Epoch: h.epoch, Origin: origin, Run: run, T: t, Ev: ev, SrcSeq: srcSeq, SrcEpoch: srcEpoch}
 	b = append(b, `{"ch":`...)
 	b = append(b, chRaw...)
 	b = append(b, `,"seq":`...)
@@ -199,6 +256,7 @@ func (h *Hub) publish(ch, origin string, t int64, ev Event, srcSeq uint64, srcEp
 	b = append(b, h.epoch...) // hex, needs no escaping
 	b = append(b, `","origin":`...)
 	b = append(b, orRaw...)
+	b = append(b, runRaw...)
 	b = append(b, srcRaw...)
 	b = append(b, `,"t":`...)
 	b = strconv.AppendInt(b, t, 10)

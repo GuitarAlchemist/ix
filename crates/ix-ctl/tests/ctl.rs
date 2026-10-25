@@ -6,7 +6,7 @@
 //! the waits have to poll. Its status is sent in chunks, the way Go's server streams an answer
 //! past its buffer.
 
-use ix_ctl::{Ctl, CtlError};
+use ix_ctl::{Ctl, CtlError, GenerationOutcome, LaunchOutcome, RunId, RunOutcome, UnknownReason};
 use ix_ixql::{Executor, MemoryHost};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -22,6 +22,10 @@ const PROBE: &str = include_str!("../examples/probe.ixql");
 const TOKEN: &str = "5f1c0de2a9b84e7d93c6f0a1b2c3d4e5f60718293a4b5c6d7e8f9011223344aa";
 /// How long the fake takes to observe an applied generation.
 const CONVERGE: Duration = Duration::from_millis(120);
+
+/// The fake plane's plan: the actions, the noop services, and the results keyed by service.
+type Planned = (Vec<Value>, Vec<String>, serde_json::Map<String, Value>);
+
 /// How long a started pod takes to report its nodes.
 const NODES: Duration = Duration::from_millis(200);
 /// How long the fake's supervisor takes to launch a service after the apply that asked.
@@ -64,6 +68,12 @@ struct Plane {
     /// How long every answer is held back after the request is read: a plane that accepts
     /// and stalls.
     stall: Duration,
+    /// The next plane-side wait answer; absent means a timeout outcome.
+    wait_reply: Option<(u16, Value)>,
+    /// Accept and log the next wait, then cut its connection before an HTTP answer.
+    drop_wait: bool,
+    /// The body of every plane-side wait this plane answered, in order.
+    wait_bodies: Vec<Value>,
     /// What `GET /v1/events` streams: `pings` keep-alive comments `ping_every` apart, the
     /// envelopes after `since` (none without a `since`: the real plane starts live), then `gap`
     /// if set, then the end of the stream.
@@ -153,7 +163,7 @@ impl Plane {
     }
 
     /// The actions a desired-state document asks for; any undeclared name refuses all of it.
-    fn plan(&self, doc: &Value) -> Result<(Vec<Value>, Vec<String>), String> {
+    fn plan(&self, doc: &Value) -> Result<Planned, String> {
         let wanted = doc
             .get("services")
             .and_then(Value::as_object)
@@ -161,18 +171,43 @@ impl Plane {
         if let Some(name) = wanted.keys().find(|n| !self.services.contains_key(*n)) {
             return Err(format!("service `{name}` is not declared"));
         }
-        let (mut actions, mut noop) = (Vec::new(), Vec::new());
+        let (mut actions, mut noop, mut results) = (Vec::new(), Vec::new(), serde_json::Map::new());
         for (name, want) in wanted {
             let svc = &self.services[name];
             let running = svc.since.is_some() || svc.launch_at.is_some();
-            match (want.get("state").and_then(Value::as_str), running) {
-                (Some("running"), false) => actions.push(json!({"op": "start", "service": name})),
-                (Some("stopped"), true) => actions.push(json!({"op": "stop", "service": name})),
-                (Some("running" | "stopped"), _) => noop.push(name.clone()),
+            let current_run = if svc.since.is_some() {
+                json!({
+                    "origin": "fake",
+                    "epoch": self.epoch.as_deref().unwrap_or(""),
+                    "seq": svc.start_gen
+                })
+            } else {
+                Value::Null
+            };
+            let (action, result) = match (want.get("state").and_then(Value::as_str), running) {
+                (Some("running"), false) => (
+                    Some(json!({"op": "start", "service": name})),
+                    json!({"result": "start-pending"}),
+                ),
+                (Some("stopped"), true) => (
+                    Some(json!({"op": "stop", "service": name})),
+                    json!({"result": "stop-pending"}),
+                ),
+                (Some("running"), true) => (
+                    None,
+                    json!({"result": "not-launched", "current_run": current_run}),
+                ),
+                (Some("stopped"), false) => (None, json!({"result": "noop"})),
                 _ => return Err(format!("`{name}`: state is `running` or `stopped`")),
+            };
+            results.insert(name.clone(), result);
+            if let Some(action) = action {
+                actions.push(action);
+            } else {
+                noop.push(name.clone());
             }
         }
-        Ok((actions, noop))
+        Ok((actions, noop, results))
     }
 
     fn stop(&mut self, name: &str) -> Value {
@@ -205,7 +240,7 @@ impl Plane {
         let doc: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
         // Routing rides beside the document, as `?peer=`; this plane has no peers.
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
-        if query.starts_with("peer=") {
+        if query.starts_with("peer=") && !(method == "POST" && path == "/v1/wait") {
             if let (("GET", "/v1/status", "peer=b"), Some(s)) =
                 ((method, path, query), &self.peer_status)
             {
@@ -223,14 +258,14 @@ impl Plane {
         match (method, path) {
             ("GET", "/v1/status") => (200, self.status()),
             ("POST", "/v1/plan") => match self.plan(&doc) {
-                Ok((actions, noop)) => (
+                Ok((actions, noop, _)) => (
                     200,
                     json!({"generation": self.generation, "actions": actions, "noop": noop}),
                 ),
                 Err(e) => (400, json!({ "error": e })),
             },
             ("POST", "/v1/apply") => match self.plan(&doc) {
-                Ok((actions, _)) => {
+                Ok((actions, _, results)) => {
                     self.generation += 1;
                     for a in &actions {
                         let name = a["service"].as_str().unwrap();
@@ -244,7 +279,8 @@ impl Plane {
                         }
                     }
                     self.pending = Some((self.generation, Instant::now()));
-                    let mut reply = json!({"generation": self.generation, "actions": actions});
+                    let mut reply = json!({
+                        "generation": self.generation, "actions": actions, "results": results});
                     if let Some(e) = &self.epoch {
                         reply["epoch"] = json!(e);
                     }
@@ -252,6 +288,68 @@ impl Plane {
                 }
                 Err(e) => (400, json!({ "error": e })),
             },
+
+            ("POST", "/v1/wait") => {
+                self.wait_bodies.push(doc.clone());
+                let complete_run = doc.get("run").is_some_and(|run| {
+                    run.get("origin")
+                        .and_then(Value::as_str)
+                        .is_some_and(|v| !v.is_empty())
+                        && run
+                            .get("epoch")
+                            .and_then(Value::as_str)
+                            .is_some_and(|v| !v.is_empty())
+                        && run
+                            .get("seq")
+                            .and_then(Value::as_u64)
+                            .is_some_and(|v| v > 0)
+                });
+                let valid = doc
+                    .get("timeout_ms")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|v| v > 0)
+                    && match doc.get("wait").and_then(Value::as_str) {
+                        Some("generation") => {
+                            doc.get("epoch")
+                                .and_then(Value::as_str)
+                                .is_some_and(|v| !v.is_empty())
+                                && doc
+                                    .get("generation")
+                                    .and_then(Value::as_u64)
+                                    .is_some_and(|v| v > 0)
+                                && doc.get("service").is_none()
+                                && doc.get("run").is_none()
+                        }
+                        Some("launch") => {
+                            doc.get("epoch")
+                                .and_then(Value::as_str)
+                                .is_some_and(|v| !v.is_empty())
+                                && doc
+                                    .get("generation")
+                                    .and_then(Value::as_u64)
+                                    .is_some_and(|v| v > 0)
+                                && doc
+                                    .get("service")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|v| !v.is_empty())
+                                && doc.get("run").is_none()
+                        }
+                        Some("run") => {
+                            complete_run
+                                && doc.get("epoch").is_none()
+                                && doc.get("generation").is_none()
+                                && doc.get("service").is_none()
+                        }
+                        _ => false,
+                    };
+                if !valid {
+                    (400, json!({"error": "malformed fake wait"}))
+                } else {
+                    self.wait_reply
+                        .clone()
+                        .unwrap_or_else(|| (200, json!({"outcome": "timeout"})))
+                }
+            }
             ("POST", "/v1/stop") => {
                 let name = doc["service"].as_str().unwrap_or("");
                 if !self.services.contains_key(name) {
@@ -614,6 +712,9 @@ fn plane() -> (Ctl, Arc<Mutex<Plane>>) {
         peer_status: None,
         peer_down_for: 0,
         stall: Duration::ZERO,
+        wait_reply: None,
+        drop_wait: false,
+        wait_bodies: Vec::new(),
         events: Vec::new(),
         gap: None,
         pings: 1,
@@ -701,6 +802,13 @@ fn answer(stream: TcpStream, plane: &Mutex<Plane>) -> std::io::Result<()> {
         (403, json!({"error": "foreign Origin"}))
     } else if headers.get("authorization") != Some(&format!("Bearer {TOKEN}")) {
         (401, json!({"error": "missing or wrong token"}))
+    } else if method == "POST"
+        && path.split_once('?').map_or(path.as_str(), |(path, _)| path) == "/v1/wait"
+        && plane.drop_wait
+    {
+        plane.log.push(format!("{method} {path}"));
+        plane.drop_wait = false;
+        return Ok(());
     } else if method == "GET" && path.starts_with("/v1/events") {
         // The event stream, as Go's server sends it: chunked, a comment first, one SSE event
         // per envelope under the `ch` prefix and after `since`, then the gap if any, then the end.
@@ -889,6 +997,33 @@ fn a_missing_or_incomplete_state_file_is_refused() {
     let err = Ctl::from_state(&tokenless).unwrap_err();
     let _ = std::fs::remove_file(&tokenless);
     assert!(err.to_string().contains("no `token`"), "{err}");
+}
+
+#[test]
+#[allow(deprecated)]
+fn apply_returns_the_planes_admission_results_unchanged() {
+    let (ctl, _plane) = plane();
+    let doc = json!({"services": {"pod-a": {"state": "running"}}});
+    let first = ctl.apply(&doc, None).unwrap();
+    assert_eq!(
+        json!({"pod-a": {"result": "start-pending"}}),
+        first["results"]
+    );
+    let generation = first["generation"].as_u64().unwrap();
+    ctl.wait_generation(generation, Duration::from_secs(2))
+        .expect("the fake launches the run");
+    let second = ctl.apply(&doc, None).unwrap();
+    assert_eq!(
+        json!({
+            "pod-a": {
+                "result": "not-launched",
+                "current_run": {
+                    "origin": "fake", "epoch": "3f9a1c0b7d2e", "seq": generation
+                }
+            }
+        }),
+        second["results"]
+    );
 }
 
 #[test]
@@ -1388,6 +1523,7 @@ fn probe_ixql_samples_a_cpu_probe_under_a_mux_and_removes_the_tree() {
 // ends at once when the plane reports another boot, instead of waiting for the new boot to
 // reach the same number; against a plane that reports no epoch it waits as before.
 #[test]
+#[allow(deprecated)]
 fn a_wait_scoped_to_a_boot_ends_at_once_after_a_restart() {
     let (ctl, plane) = plane();
     let doc = json!({"services": {"pod-a": {"state": "running"}}});
@@ -1702,10 +1838,443 @@ fn a_bounded_event_read_ends_mid_frame_and_mid_open_on_time() {
     );
 }
 
+fn set_wait_reply(plane: &Arc<Mutex<Plane>>, status: u16, reply: Value) {
+    plane.lock().unwrap().wait_reply = Some((status, reply));
+}
+
+fn run_id_value(run: &RunId) -> Value {
+    json!({"origin": run.origin, "epoch": run.epoch, "seq": run.seq})
+}
+
+#[test]
+fn typed_generation_wait_decodes_each_outcome() {
+    let (ctl, plane) = plane();
+    set_wait_reply(&plane, 200, json!({"outcome": "converged"}));
+    assert_eq!(
+        GenerationOutcome::Converged,
+        ctl.wait_generation_outcome("3f9a1c0b7d2e", 1, Duration::from_secs(1), None)
+            .unwrap()
+    );
+    set_wait_reply(
+        &plane,
+        200,
+        json!({"outcome": "diverged", "service": "pod-a", "reason": "exited 9"}),
+    );
+    assert_eq!(
+        GenerationOutcome::Diverged {
+            service: "pod-a".into(),
+            reason: "exited 9".into()
+        },
+        ctl.wait_generation_outcome("3f9a1c0b7d2e", 1, Duration::from_secs(1), None)
+            .unwrap()
+    );
+    for (reply, expected) in [
+        (json!({"outcome": "timeout"}), GenerationOutcome::Timeout),
+        (
+            json!({"outcome": "unknown", "reason": "other-epoch"}),
+            GenerationOutcome::Unknown(UnknownReason::OtherEpoch),
+        ),
+    ] {
+        set_wait_reply(&plane, 200, reply);
+        assert_eq!(
+            expected,
+            ctl.wait_generation_outcome("3f9a1c0b7d2e", 1, Duration::from_secs(1), None)
+                .unwrap()
+        );
+    }
+}
+
+#[test]
+fn typed_launch_wait_decodes_each_outcome() {
+    let (ctl, plane) = plane();
+    let run = RunId {
+        origin: "fake".into(),
+        epoch: "3f9a1c0b7d2e".into(),
+        seq: 17,
+    };
+    set_wait_reply(
+        &plane,
+        200,
+        json!({"outcome": "launched", "run": run_id_value(&run)}),
+    );
+    assert_eq!(
+        LaunchOutcome::Launched(run.clone()),
+        ctl.wait_launch("3f9a1c0b7d2e", 1, "pod-a", Duration::from_secs(1), None)
+            .unwrap()
+    );
+    for current in [Some(run.clone()), None] {
+        set_wait_reply(
+            &plane,
+            200,
+            json!({
+                "outcome": "not-launched",
+                "current_run": current.as_ref().map_or(Value::Null, run_id_value),
+            }),
+        );
+        assert_eq!(
+            LaunchOutcome::NotLaunched(current),
+            ctl.wait_launch("3f9a1c0b7d2e", 1, "pod-a", Duration::from_secs(1), None)
+                .unwrap()
+        );
+    }
+    set_wait_reply(&plane, 200, json!({"outcome": "timeout"}));
+    assert_eq!(
+        LaunchOutcome::Timeout,
+        ctl.wait_launch("3f9a1c0b7d2e", 1, "pod-a", Duration::from_secs(1), None)
+            .unwrap()
+    );
+}
+
+#[test]
+fn typed_run_wait_keeps_the_end_value() {
+    let (ctl, plane) = plane();
+    let run = RunId {
+        origin: "fake".into(),
+        epoch: "3f9a1c0b7d2e".into(),
+        seq: 17,
+    };
+    let end = json!({
+        "outcome": "exited", "code": 3, "requested": false, "reason": "cpu_limit",
+        "error": "", "output": "artifact://run/17", "drain_ms": 12,
+    });
+    set_wait_reply(
+        &plane,
+        200,
+        json!({"outcome": "ended", "run": run_id_value(&run), "end": end}),
+    );
+    assert_eq!(
+        RunOutcome::Ended {
+            run: run.clone(),
+            end: end.clone()
+        },
+        ctl.wait_run(&run, Duration::from_secs(1), None).unwrap()
+    );
+    set_wait_reply(&plane, 200, json!({"outcome": "timeout"}));
+    assert_eq!(
+        RunOutcome::Timeout,
+        ctl.wait_run(&run, Duration::from_secs(1), None).unwrap()
+    );
+}
+
+#[test]
+fn typed_wait_rejects_unrecognized_outcomes_and_reasons() {
+    let (ctl, plane) = plane();
+    let run = RunId {
+        origin: "fake".into(),
+        epoch: "3f9a1c0b7d2e".into(),
+        seq: 17,
+    };
+    for (reply, wait) in [
+        (json!({"outcome": "future"}), "generation"),
+        (json!({"outcome": "future"}), "launch"),
+        (json!({"outcome": "future"}), "run"),
+    ] {
+        set_wait_reply(&plane, 200, reply);
+        let err = match wait {
+            "generation" => ctl
+                .wait_generation_outcome("3f9a1c0b7d2e", 1, Duration::from_secs(1), None)
+                .unwrap_err(),
+            "launch" => ctl
+                .wait_launch("3f9a1c0b7d2e", 1, "pod-a", Duration::from_secs(1), None)
+                .unwrap_err(),
+            _ => ctl
+                .wait_run(&run, Duration::from_secs(1), None)
+                .unwrap_err(),
+        };
+        assert!(matches!(err, CtlError::Protocol(_)), "{wait}: {err}");
+    }
+    for (wait, reason) in [
+        ("generation", "evicted"),
+        ("launch", "forgotten"),
+        ("run", "forgotten"),
+    ] {
+        set_wait_reply(&plane, 200, json!({"outcome": "unknown", "reason": reason}));
+        let err = match wait {
+            "generation" => ctl
+                .wait_generation_outcome("3f9a1c0b7d2e", 1, Duration::from_secs(1), None)
+                .unwrap_err(),
+            "launch" => ctl
+                .wait_launch("3f9a1c0b7d2e", 1, "pod-a", Duration::from_secs(1), None)
+                .unwrap_err(),
+            _ => ctl
+                .wait_run(&run, Duration::from_secs(1), None)
+                .unwrap_err(),
+        };
+        assert!(matches!(err, CtlError::Protocol(_)), "{wait}: {err}");
+    }
+}
+
+#[test]
+fn typed_wait_preserves_http_errors_and_peer_routing() {
+    let (ctl, plane) = plane();
+    let run = RunId {
+        origin: "b".into(),
+        epoch: "b00b00b00b00".into(),
+        seq: 9,
+    };
+    for status in [400, 429, 503] {
+        set_wait_reply(&plane, status, json!({"error": format!("wait {status}")}));
+        let err = ctl
+            .wait_run(&run, Duration::from_secs(1), None)
+            .unwrap_err();
+        assert!(
+            matches!(err, CtlError::Http { status: got, .. } if got == status),
+            "{status}: {err}"
+        );
+    }
+    set_wait_reply(
+        &plane,
+        200,
+        json!({"outcome": "launched", "run": run_id_value(&run)}),
+    );
+    assert_eq!(
+        LaunchOutcome::Launched(run),
+        ctl.wait_launch(
+            "b00b00b00b00",
+            4,
+            "pod-a",
+            Duration::from_secs(1),
+            Some("north/one")
+        )
+        .unwrap()
+    );
+    assert!(plane
+        .lock()
+        .unwrap()
+        .log
+        .contains(&"POST /v1/wait?peer=north%2Fone".to_string()));
+}
+
+fn typed_wait_follows_state_across_restart(name: &str, cut_connection: bool) {
+    let (old_ctl, old_plane) = plane();
+    let (new_ctl, new_plane) = plane();
+    set_wait_reply(&old_plane, 503, json!({"error": "shutting down"}));
+    old_plane.lock().unwrap().drop_wait = cut_connection;
+    set_wait_reply(
+        &new_plane,
+        200,
+        json!({"outcome": "unknown", "reason": "other-epoch"}),
+    );
+    let state = tmp(&format!(
+        "ix-ctl-plane-wait-restart-{name}-{}.json",
+        std::process::id()
+    ));
+    let state_doc = |addr: &str| json!({"name": "fake", "addr": addr, "pid": 1, "token": TOKEN});
+    std::fs::write(&state, state_doc(old_ctl.addr()).to_string()).unwrap();
+    let ctl = Ctl::from_state(&state).unwrap();
+    let rewrite = std::thread::spawn({
+        let state = state.clone();
+        let old_plane = old_plane.clone();
+        let new_addr = new_ctl.addr().to_string();
+        move || {
+            for _ in 0..200 {
+                if old_plane
+                    .lock()
+                    .unwrap()
+                    .log
+                    .iter()
+                    .any(|entry| entry == "POST /v1/wait")
+                {
+                    std::fs::write(&state, state_doc(&new_addr).to_string()).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("the old plane never received the wait");
+        }
+    });
+    let run = RunId {
+        origin: "fake".into(),
+        epoch: "0ld0ld0ld0ld".into(),
+        seq: 3,
+    };
+    let began = Instant::now();
+    let outcome = ctl.wait_run(&run, Duration::from_secs(2), None).unwrap();
+    rewrite.join().unwrap();
+    let _ = std::fs::remove_file(&state);
+    assert_eq!(RunOutcome::Unknown(UnknownReason::OtherEpoch), outcome);
+    assert!(began.elapsed() < Duration::from_secs(1));
+    assert!(new_plane
+        .lock()
+        .unwrap()
+        .log
+        .contains(&"POST /v1/wait".to_string()));
+    // The new boot is asked about the original run, never about a run of its own.
+    let asked = new_plane.lock().unwrap().wait_bodies.clone();
+    assert_eq!(1, asked.len(), "{asked:?}");
+    assert_eq!(
+        (&json!("run"), &run_id_value(&run)),
+        (&asked[0]["wait"], &asked[0]["run"])
+    );
+    let old_waits = old_plane
+        .lock()
+        .unwrap()
+        .log
+        .iter()
+        .filter(|entry| entry.as_str() == "POST /v1/wait")
+        .count();
+    assert_eq!(1, old_waits, "the follower re-asked the old plane");
+    if cut_connection {
+        old_plane.lock().unwrap().drop_wait = true;
+        let err = Ctl::new(old_ctl.addr(), TOKEN)
+            .wait_run(&run, Duration::from_millis(100), None)
+            .unwrap_err();
+        assert!(matches!(err, CtlError::Io(_)), "{err}");
+    }
+}
+
+#[test]
+fn typed_wait_follows_state_after_a_cut_connection() {
+    typed_wait_follows_state_across_restart("cut", true);
+}
+
+#[test]
+fn typed_wait_follows_state_after_shutdown() {
+    typed_wait_follows_state_across_restart("shutdown", false);
+}
+
+// A wait that fails more than once keeps the one deadline it started with. The old boot cuts
+// the wait, the state file then names the new boot with the old token (a 401), then with its
+// own, and the new boot stalls: it is asked for what is left of the budget, not the whole
+// timeout, and the wait ends by its deadline plus one reply grace, however many times it
+// reconnected. (A second failure on an address where nothing listens would not do: Windows
+// takes about 2 s to refuse a loopback connection, the whole budget here.)
+#[test]
+fn a_plane_side_wait_keeps_one_deadline_across_successive_failures() {
+    let (old_ctl, old_plane) = plane();
+    old_plane.lock().unwrap().drop_wait = true;
+    let (new_ctl, new_plane) = plane();
+    let old_token = "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0";
+    let state = tmp(&format!(
+        "ix-ctl-plane-wait-deadline-{}.json",
+        std::process::id()
+    ));
+    let state_doc =
+        |addr: &str, token: &str| json!({"name": "fake", "addr": addr, "pid": 1, "token": token});
+    std::fs::write(&state, state_doc(old_ctl.addr(), TOKEN).to_string()).unwrap();
+    let ctl = Ctl::from_state(&state).unwrap();
+    let rewrite = std::thread::spawn({
+        let state = state.clone();
+        let old_plane = old_plane.clone();
+        let new_plane = new_plane.clone();
+        let new_addr = new_ctl.addr().to_string();
+        move || {
+            for _ in 0..200 {
+                if old_plane
+                    .lock()
+                    .unwrap()
+                    .log
+                    .iter()
+                    .any(|entry| entry == "POST /v1/wait")
+                {
+                    std::fs::write(&state, state_doc(&new_addr, old_token).to_string()).unwrap();
+                    std::thread::sleep(Duration::from_millis(300));
+                    // The fake holds back every answer, a 401 too: stall only once it is sent.
+                    new_plane.lock().unwrap().stall = Duration::from_secs(5);
+                    std::fs::write(&state, state_doc(&new_addr, TOKEN).to_string()).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("the old plane never received the wait");
+        }
+    });
+    let run = RunId {
+        origin: "fake".into(),
+        epoch: "0ld0ld0ld0ld".into(),
+        seq: 3,
+    };
+    let timeout = Duration::from_secs(1);
+    let began = Instant::now();
+    let err = ctl.wait_run(&run, timeout, None).unwrap_err();
+    let took = began.elapsed();
+    rewrite.join().unwrap();
+    let _ = std::fs::remove_file(&state);
+    assert!(matches!(err, CtlError::Io(_)), "{err}");
+    assert!(
+        took >= timeout && took < timeout + Duration::from_millis(250 + 200),
+        "{took:?}"
+    );
+    let asked = new_plane.lock().unwrap().wait_bodies.clone();
+    assert_eq!(1, asked.len(), "{asked:?}");
+    let given = asked[0]["timeout_ms"].as_u64().unwrap();
+    assert!(
+        given <= 700,
+        "the new boot was given {given} ms of a 1000 ms wait"
+    );
+    assert_eq!(&run_id_value(&run), &asked[0]["run"]);
+}
+
+// Through a peer, a 503 is the link to that peer, not this plane shutting down: the state file
+// is not followed, and the error comes back at once.
+#[test]
+fn a_peer_waits_503_is_not_a_restart_of_this_plane() {
+    let (ctl, plane) = plane();
+    set_wait_reply(&plane, 503, json!({"error": "peer b is down"}));
+    let state = tmp(&format!("ix-ctl-peer-503-{}.json", std::process::id()));
+    std::fs::write(
+        &state,
+        json!({"name": "fake", "addr": ctl.addr(), "pid": 1, "token": TOKEN}).to_string(),
+    )
+    .unwrap();
+    let ctl = Ctl::from_state(&state).unwrap();
+    let began = Instant::now();
+    let err = ctl
+        .wait_generation_outcome("b00b00b00b00", 1, Duration::from_secs(5), Some("b"))
+        .unwrap_err();
+    let took = began.elapsed();
+    let _ = std::fs::remove_file(&state);
+    assert!(matches!(err, CtlError::Http { status: 503, .. }), "{err}");
+    assert!(took < Duration::from_secs(1), "{took:?}");
+}
+
+#[test]
+fn ixql_maps_each_plane_side_wait_to_its_outcome_value() {
+    let (ctl, plane) = plane();
+    set_wait_reply(&plane, 200, json!({"outcome": "converged"}));
+    let out = executor(ctl.clone()).run_source(
+        r#"o <- ix.ctl.wait(wait: "generation", epoch: "3f9a1c0b7d2e", generation: 1, timeout_ms: 1000)"#
+    ).unwrap();
+    assert_eq!(&json!({"outcome": "converged"}), out.binding("o").unwrap());
+
+    let run = RunId {
+        origin: "fake".into(),
+        epoch: "3f9a1c0b7d2e".into(),
+        seq: 17,
+    };
+    set_wait_reply(
+        &plane,
+        200,
+        json!({"outcome": "launched", "run": run_id_value(&run)}),
+    );
+    let out = executor(ctl.clone()).run_source(
+        r#"o <- ix.ctl.wait(wait: "launch", epoch: "3f9a1c0b7d2e", generation: 1, service: "pod-a", timeout_ms: 1000)"#
+    ).unwrap();
+    assert_eq!(
+        &json!({"outcome": "launched", "run": run_id_value(&run)}),
+        out.binding("o").unwrap()
+    );
+
+    let end = json!({"outcome": "exited", "code": 0, "output": "", "drain_ms": 0});
+    set_wait_reply(
+        &plane,
+        200,
+        json!({"outcome": "ended", "run": run_id_value(&run), "end": end}),
+    );
+    let out = executor(ctl).run_source(
+        r#"o <- ix.ctl.wait(wait: "run", run: {origin: "fake", epoch: "3f9a1c0b7d2e", seq: 17}, timeout_ms: 1000)"#
+    ).unwrap();
+    assert_eq!(
+        &json!({"outcome": "ended", "run": run_id_value(&run), "end": end}),
+        out.binding("o").unwrap()
+    );
+}
+
 // A wait's timeout bounds the request in flight too: against a plane that accepts and then
 // stalls, a short wait ends about when it said it would, not after the client's 15 s read
 // timeout, and a zero wait still asks once.
 #[test]
+#[allow(deprecated)]
 fn a_wait_ends_on_time_against_a_plane_that_stalls() {
     let (ctl, plane) = plane();
     plane.lock().unwrap().stall = Duration::from_secs(5);
@@ -1713,12 +2282,16 @@ fn a_wait_ends_on_time_against_a_plane_that_stalls() {
         (Duration::from_millis(200), "generation"),
         (Duration::from_millis(200), "nodes"),
         (Duration::from_millis(200), "exit"),
+        (Duration::from_millis(200), "plane-side"),
         (Duration::ZERO, "generation"),
     ] {
         let began = Instant::now();
         let err = match kind {
             "generation" => ctl.wait_generation(1, timeout).unwrap_err(),
             "exit" => ctl.wait_exit("pod-a", timeout).unwrap_err(),
+            "plane-side" => ctl
+                .wait_generation_outcome("3f9a1c0b7d2e", 1, timeout, None)
+                .unwrap_err(),
             _ => ctl.wait_nodes("pod-a", 1, timeout).unwrap_err(),
         };
         let took = began.elapsed();
@@ -1736,6 +2309,19 @@ fn a_wait_ends_on_time_against_a_plane_that_stalls() {
         .unwrap()
         .log
         .contains(&"GET /v1/status".to_string()));
+}
+
+// The plane holds a wait's answer for up to its `timeout_ms` (60 s at most), past the client's
+// 15 s socket read: the plane-side wait reads for its own budget, so the plane's `timeout`
+// arrives as a value instead of a client-side read error.
+#[test]
+fn a_plane_side_wait_reads_past_the_client_io_timeout() {
+    let (ctl, plane) = plane();
+    plane.lock().unwrap().stall = Duration::from_millis(15_500);
+    let outcome = ctl
+        .wait_generation_outcome("3f9a1c0b7d2e", 1, Duration::from_secs(16), None)
+        .unwrap();
+    assert_eq!(GenerationOutcome::Timeout, outcome);
 }
 
 // A plane that restarts while a scoped wait polls it listens at a new address with a new
@@ -1819,6 +2405,35 @@ fn argument_mistakes_fail_the_run_before_any_request() {
     let exec = executor(ctl);
     for (src, why) in [
         ("a <- ix.ctl.wait(generation: 1)", "timeout_ms"),
+        (
+            r#"a <- ix.ctl.wait(wait: "generation", generation: 1, timeout_ms: 10)"#,
+            "generation",
+        ),
+        (
+            r#"a <- ix.ctl.wait(wait: "launch", epoch: "x", generation: 1, timeout_ms: 10)"#,
+            "launch",
+        ),
+        (
+            r#"a <- ix.ctl.wait(wait: "run", run: "x", timeout_ms: 10)"#,
+            "record",
+        ),
+        (
+            r#"a <- ix.ctl.wait(wait: "run", run: {origin: "a", epoch: "e"}, timeout_ms: 10)"#,
+            "seq",
+        ),
+        (
+            r#"a <- ix.ctl.wait(wait: "run", run: {origin: "a", epoch: "e", seq: 1}, generation: 1, timeout_ms: 10)"#,
+            "wait",
+        ),
+        (
+            r#"a <- ix.ctl.wait(wait: "future", timeout_ms: 10)"#,
+            "wait",
+        ),
+        // `run:` belongs to the plane-side run wait: an older form would drop it.
+        (
+            r#"a <- ix.ctl.wait(generation: 1, run: {origin: "a", epoch: "e", seq: 1}, timeout_ms: 10)"#,
+            "run",
+        ),
         (
             r#"e <- ix.ctl.events(channel: "ctl", max: 1)"#,
             "timeout_ms",
@@ -1936,6 +2551,7 @@ fn argument_mistakes_fail_the_run_before_any_request() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn a_wait_that_runs_out_says_what_it_saw() {
     let (ctl, _plane) = plane();
     let began = Instant::now();
@@ -1968,6 +2584,7 @@ fn a_wait_that_runs_out_says_what_it_saw() {
 // exit naming the limit: the exit wait passes `last_exit.reason` through, so a program can tell
 // a job that ran out of time from one that failed on its own.
 #[test]
+#[allow(deprecated)]
 fn a_run_killed_at_its_wall_limit_says_so_in_its_exit() {
     let (ctl, plane) = plane();
     let applied = ctl
@@ -1998,6 +2615,7 @@ fn a_run_killed_at_its_wall_limit_says_so_in_its_exit() {
 // stopped with `desired` still `running`. The exit wait answers that entry; a service that gave
 // up restarting (`failed`) answers too; one still running, or never run, runs the wait out.
 #[test]
+#[allow(deprecated)]
 fn a_job_is_waited_to_its_exit() {
     let (ctl, plane) = plane();
     let applied = ctl
@@ -2254,6 +2872,7 @@ fn a_peers_job_is_waited_to_its_exit() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn a_diverged_generation_fails_the_wait_at_once() {
     let (ctl, plane) = plane();
     {
@@ -2311,6 +2930,7 @@ fn a_diverged_generation_fails_the_wait_at_once() {
 /// `failed` name it failed. And a generation that converged ahead of a pending one does not
 /// settle it.
 #[test]
+#[allow(deprecated)]
 fn a_later_generation_does_not_hide_a_failed_one() {
     let (ctl, plane) = plane();
     let launch = json!({"generation": 1, "service": "pod-a", "reason": "launch: not found"});

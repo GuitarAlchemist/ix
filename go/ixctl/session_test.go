@@ -31,6 +31,56 @@ func wantReply(t *testing.T, s *session, id int64) {
 	}
 }
 
+// Run markers are ordinary ring envelopes: a subscription skips them unless it asks,
+// without losing the other replayed envelopes or changing their order.
+func TestMemSessionRunMarkersAreOptInAndAcknowledged(t *testing.T) {
+	h := NewHub("a")
+	run := RunID{Origin: "a", Epoch: h.Epoch(), Seq: 1}
+	begin := h.PublishRun("svc/x", event(runBeginKind, map[string]any{}), run)
+	line1 := h.PublishRun("svc/x", event("log", map[string]any{"line": "one"}), run)
+	end := h.PublishRun("svc/x", event(runEndKind, map[string]any{"outcome": "started"}), run)
+	line2 := h.PublishRun("svc/x", event("log", map[string]any{"line": "two"}), run)
+
+	plain := newMemSession(context.Background(), &hubOnly{h})
+	defer plain.Close()
+	plain.Handle([]byte(`{"id":1,"op":"subscribe","ch":"svc/x","since":0}`))
+	wantReply(t, plain, 1)
+	for _, want := range []*Envelope{line1, line2} {
+		f := nextFrame(t, plain)
+		if f.Env == nil || f.Env.Seq != want.Seq {
+			t.Fatalf("plain replay got %+v, want seq %d", f, want.Seq)
+		}
+	}
+
+	marked := newMemSession(context.Background(), &hubOnly{h})
+	defer marked.Close()
+	marked.Handle([]byte(`{"id":2,"op":"subscribe","ch":"svc/x","since":0,"markers":"run"}`))
+	reply := nextFrame(t, marked)
+	if reply.Re == nil || *reply.Re != 2 || !reply.OK {
+		t.Fatalf("marker reply %+v", reply)
+	}
+	var ack struct {
+		Markers string `json:"markers"`
+	}
+	if err := json.Unmarshal(reply.Raw, &ack); err != nil || ack.Markers != runMarkers {
+		t.Fatalf("marker acknowledgement %s: %v", reply.Raw, err)
+	}
+	for _, want := range []*Envelope{begin, line1, end, line2} {
+		f := nextFrame(t, marked)
+		if f.Env == nil || f.Env.Seq != want.Seq {
+			t.Fatalf("marked replay got %+v, want seq %d", f, want.Seq)
+		}
+	}
+
+	bad := newMemSession(context.Background(), &hubOnly{h})
+	defer bad.Close()
+	bad.Handle([]byte(`{"id":3,"op":"subscribe","ch":"svc/x","markers":"other"}`))
+	f := nextFrame(t, bad)
+	if f.Re == nil || *f.Re != 3 || f.OK {
+		t.Fatalf("unknown markers accepted: %+v", f)
+	}
+}
+
 // Unsubscribe then subscribe again with the same id: the first pump, which
 // leaves late, must not take the new subscription down with it. The first
 // pump is held just before it removes its entry, so the order is fixed.
