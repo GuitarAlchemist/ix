@@ -10,11 +10,13 @@ and IXQL client is [`crates/ix-ctl`](../../crates/ix-ctl) (`ix.ctl.status`, `ix.
 `ix.ctl.apply`, `ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`, and one `ix.ctl.probe.*`
 capability per probe op).
 
-The three formats it defines (the `ixctl.v1` envelope, the desired-state document, the journal)
-are **provisional**: see the one-way-doors page,
+Of the three formats it defines, two are **frozen** since 2026-10-25
+([ADR-0014](../../docs/adr/0014-ixctl-v1-and-desired-state-frozen.md)): the `ixctl.v1` protocol,
+whose core is fixed while new ops, channels, kinds and optional fields may appear, and the
+desired-state document `ixctl-desired/0`. The journal stays **provisional**, and so do the probe
+surface and bookmarks. The one-way-doors page,
 [`docs/plans/2026-10-17-ixctl-one-way-doors.md`](../../docs/plans/2026-10-17-ixctl-one-way-doors.md),
-for their exact shape, what freezing each would lock in, and the review rounds that shaped them.
-Nothing outside `go/ixctl` and `crates/ix-ctl` should depend on them until a door is signed.
+gives the options that were weighed and the review rounds that shaped them.
 
 ## Build and run
 
@@ -431,7 +433,8 @@ The plane carries its probe **kinds**, versioned and compiled in (`name@version`
 own limits: `probe.kinds` lists both, every refusal names the bound it hit, and `probe.list` shows
 the usage. The design, the decisions it assumes and the ones still open are on the probes page,
 [`docs/plans/2026-10-20-ixctl-probes.md`](../../docs/plans/2026-10-20-ixctl-probes.md), and the
-work is tracked under epic ix#397. The surface is provisional, like the three doors.
+work is tracked under epic ix#397. The surface is provisional: ADR-0014 leaves it outside the
+frozen core of `ixctl.v1`.
 
 | Kind | Fields | Reads |
 |---|---|---|

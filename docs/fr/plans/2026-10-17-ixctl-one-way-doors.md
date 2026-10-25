@@ -1,7 +1,7 @@
 ---
 title: "ixctl, tranche 1 : les trois portes à sens unique"
 type: decision
-status: en attente de signature (aucune des trois portes n'est signée)
+status: signées le 2026-10-25 (porte 1 en option C, porte 2 figée sous ixctl-desired/0, porte 3 en option B) ; les décisions sont l'ADR-0014
 date: 2026-10-17
 branch: exp/ixctl à f77b31e (poussée, sans PR)
 reversibility: réversibles aujourd'hui toutes les trois (rien n'est fusionné, aucun consommateur hors de cette branche) ; chacune devient irréversible au déclencheur nommé dans sa section
@@ -282,7 +282,11 @@ la fusion, selon ce qui arrive en premier. Garder le nom `ixctl.v1`.
 > **Signature de la porte 1 :** `ixctl.v1` reste provisoire (option B) jusqu'à ce qu'un
 > consommateur hors de go/ixctl s'abonne ou qu'exp/ixctl passe en revue ; avant d'être figée
 > selon l'option C, l'enveloppe reçoit une époque d'instance et `ev.t` une unité définie.
-> Signé : ______ Date : ______
+> Signé : l'opérateur, en option C au lieu de B (ci-dessous). Date : 2026-10-25
+
+Signée en option C une fois ses deux préalables livrés : l'époque d'instance (F1.1) et l'unité de
+`ev.t` (F1.2). Le noyau figé, les extensions qu'il permet et la règle de migration sont dans
+l'[ADR-0014](../adr/0014-ixctl-v1-and-desired-state-frozen.md).
 
 ---
 
@@ -578,7 +582,13 @@ pas un préalable.
 > est) ; avant tout gel, l'issue d'une génération est son propre `converged` ou `diverged` (la
 > règle « une génération ultérieure remplace » est abandonnée), et les générations sont
 > rattachées à une époque d'instance.
-> Signé : ______ Date : ______
+> Signé : l'opérateur, figé sous `ixctl-desired/0` plutôt que laissé provisoire (ci-dessous). Date : 2026-10-25
+
+Signée au-delà de l'option B une fois ses préalables livrés : l'issue propre à chaque génération
+(F2.1), le même décodage sur les deux transports (F2.2), `peer` à côté du document (F2.3) et des
+générations rattachées à une époque d'instance (F2.4). `ixctl-desired/0` est figé, et un
+changement du document sort sous `ixctl-desired/1`, accepté à côté. Le texte est dans
+l'[ADR-0014](../adr/0014-ixctl-v1-and-desired-state-frozen.md).
 
 ---
 
@@ -679,7 +689,7 @@ l'analyser (un importateur de preuves pour Gaia, une requête DuckDB dessus).
 > jamais rejoué, ouvert à chaque démarrage par un en-tête
 > `{"kind":"boot","schema":"ixctl-journal/0","epoch":...}` ; il n'est figé qu'après la porte 1,
 > quand un programme l'analyse pour la première fois.
-> Signé : ______ Date : ______
+> Signé : l'opérateur, tel quel (option B). Date : 2026-10-25
 
 ### Si les trois sont signées comme recommandé
 
@@ -764,4 +774,5 @@ non prise ; le fichier des signets est un second magasin dans le dossier d'état
 par rien d'autre que le plan qui l'a écrit. Conception et mesures :
 [`2026-10-20-ixctl-bookmarks.md`](2026-10-20-ixctl-bookmarks.md).
 
-Une fois signées, ces décisions ont leur place dans un ADR sous `docs/adr/`.
+Les trois décisions, signées le 2026-10-25, sont consignées dans
+l'[ADR-0014](../adr/0014-ixctl-v1-and-desired-state-frozen.md).

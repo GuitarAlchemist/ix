@@ -11,12 +11,14 @@ et se fédère avec des instances pairs. Le client Rust et IXQL est
 `ix.ctl.stop`, `ix.ctl.wait`, `ix.ctl.events`, et une capacité `ix.ctl.probe.*` par opération
 de sonde).
 
-Les trois formats qu'il définit (l'enveloppe `ixctl.v1`, le document d'état désiré, le journal)
-sont **provisoires** : voir la page des portes à sens unique,
+Des trois formats qu'il définit, deux sont **figés** depuis le 2026-10-25
+([ADR-0014](../../docs/fr/adr/0014-ixctl-v1-and-desired-state-frozen.md)) : le protocole
+`ixctl.v1`, dont le noyau est fixé tandis que de nouvelles ops, de nouveaux canaux, de nouvelles
+sortes et de nouveaux champs optionnels peuvent apparaître, et le document d'état désiré
+`ixctl-desired/0`. Le journal reste **provisoire**, comme la surface des sondes et les signets. La
+page des portes à sens unique,
 [`docs/fr/plans/2026-10-17-ixctl-one-way-doors.md`](../../docs/fr/plans/2026-10-17-ixctl-one-way-doors.md),
-pour leur forme exacte, ce que figer chacun verrouillerait, et les rondes de revue qui les ont
-façonnés. Rien hors de `go/ixctl` et `crates/ix-ctl` ne doit en dépendre tant qu'une porte n'est
-pas signée.
+donne les options pesées et les rondes de revue qui les ont façonnés.
 
 ## Construire et lancer
 
@@ -460,7 +462,8 @@ publie ce qu'il lit sur son propre canal ; un arbre de sondes filtre et multiple
 la borne touchée, et `probe.list` montre l'usage. La conception, les décisions qu'elle suppose et
 celles encore ouvertes sont sur la page des sondes,
 [`docs/fr/plans/2026-10-20-ixctl-probes.md`](../../docs/fr/plans/2026-10-20-ixctl-probes.md), et
-le travail est suivi sous l'epic ix#397. La surface est provisoire, comme les trois portes.
+le travail est suivi sous l'epic ix#397. La surface est provisoire : l'ADR-0014 la laisse hors du
+noyau figé d'`ixctl.v1`.
 
 | Kind | Champs | Lit |
 |---|---|---|
