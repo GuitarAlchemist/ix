@@ -103,21 +103,24 @@ l'ADR-0016 §5 (elle dit que `run` ne revient que par un amendement) :
   (`lib.rs:156`). Un `child` plus profond renvoie `{"ok": False, "err": {"code": "TOO_DEEP"}}`.
 - **L'allocation de l'enfant doit tenir dans ce qui reste au parent.** Chaque champ cumulé
   (`calls`, `ticks`, `active_seconds`, `activations`) doit valoir au plus le reste du parent après
-  ses réservations. `memory_mb` doit valoir au plus celui du parent, puisque c'est un plafond, pas
-  une quantité dépensée. Ce test se calcule à partir de la réduction, avant que l'intention ne soit
-  écrite. Une allocation qui ne tient pas donne une intention comme les autres, avec ses arguments
-  canoniques, allocation comprise, et la marque `"refused": "GRANT_EXCEEDED"`. Le résultat de
-  l'étape est `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. La réduction soustrait
-  l'allocation de chaque intention `child` sauf d'une intention refusée, si bien qu'une intention
-  refusée ne réserve rien. Un plantage entre cette intention et son résultat rejoue le même test à
-  partir de la même réduction, vérifie la même empreinte d'arguments, et écrit le même résultat.
-  Aucun enfant n'est créé.
+  ses réservations et après l'appel que l'`attempt` propre de l'étape `child` impute au parent. Un
+  parent à qui il reste un appel ne peut donc pas donner d'appel à un enfant. `memory_mb` doit
+  valoir au plus celui du parent, puisque c'est un plafond, pas une quantité dépensée. Ce test se
+  calcule à partir de la réduction, avant que l'intention ne soit écrite. Une allocation qui ne
+  tient pas donne une intention comme les autres, avec ses arguments canoniques, allocation
+  comprise, et la marque `"refused": "GRANT_EXCEEDED"`. Le résultat de l'étape est
+  `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. La réduction soustrait l'allocation de chaque
+  intention `child` sauf d'une intention refusée et d'une intention résolue `--not-performed`, si
+  bien qu'une intention refusée ne réserve rien. Un plantage entre cette intention et son résultat
+  rejoue le même test à partir de la même réduction, vérifie la même empreinte d'arguments, et
+  écrit le même résultat. Aucun enfant n'est créé.
 - **L'allocation est réservée dans l'intention.** L'enregistrement `intent` du parent pour une
   étape `child` contient l'allocation de l'enfant, et la réduction de l'ADR-0016 §8 soustrait
-  l'allocation de chaque intention d'enfant, sauf d'une intention refusée, de ce qui reste au
-  parent. Cet enregistrement est écrit avant que l'enfant n'existe, si bien qu'un plantage laisse
-  soit l'intention sans enfant, enfant que le rejeu crée alors sous la même réservation, soit les
-  deux. Une intention refusée ne crée jamais d'enfant, au rejeu non plus.
+  l'allocation de chaque intention d'enfant de ce qui reste au parent, sauf d'une intention refusée
+  et d'une intention résolue `--not-performed`. Cet enregistrement est écrit avant que l'enfant
+  n'existe, si bien qu'un plantage laisse soit l'intention sans enfant, enfant que le rejeu crée
+  alors sous la même réservation, soit les deux. Une intention refusée ne crée jamais
+  d'enfant, au rejeu non plus.
   - **Une réservation n'est jamais rendue au parent,** sauf par une personne. Un parent qui se
     termine (`done`, ou `failed`, `failed(budget)` compris) avant de créer l'enfant garde la
     réservation dépensée, avec le reste de son allocation. L'erreur va vers la sous-dépense, jamais
@@ -139,7 +142,9 @@ l'ADR-0016 §5 (elle dit que `run` ne revient que par un amendement) :
     termine lui aussi en `failed(child)`. Le script d'un enfant signale ses propres échecs par
     `done`, sur le rail d'échec, si bien que `failed` ne vient jamais que d'un arrêt d'urgence
     (ADR-0016 §4). Le transmettre comme une valeur laisserait un script redémarrer l'agent, et
-    l'enfant a pu accomplir un effet qu'un nouvel enfant répéterait ;
+    l'enfant a pu accomplir un effet qu'un nouvel enfant répéterait. Un `failed(journal)` qui n'est
+    jamais devenu durable laisse l'enfant dans l'état de son dernier enregistrement valide, et le
+    parent le reprend comme tout enfant présent (ADR-0016 §3) ;
   - `nondeterministic(seq)` : le parent s'arrête lui aussi, en `nondeterministic(<its seq>)`, où
     `<its seq>` est l'étape `child` du parent, et son statut nomme l'identifiant de l'enfant et le
     `seq` propre de l'enfant. C'est un arrêt d'urgence, pas une valeur, pour la même raison. Les
@@ -163,7 +168,8 @@ l'ADR-0016 §5 (elle dit que `run` ne revient que par un amendement) :
 - Un registre est un répertoire, comme dans bzlmod : `modules/<name>/<version>/MODULE.star` plus
   `source.json`, qui contient `url` et `sha256`. Ce peut être un dépôt Git ou un chemin local.
   L'URL peut pointer partout où HTTPS arrive : une pièce jointe de release GitHub, un dépôt raw
-  dans Nexus ou Artifactory, un serveur web interne. IX n'a besoin d'aucun serveur de registre.
+  dans Nexus ou Artifactory, un serveur web interne. Une URL `file://` sert un registre local. IX
+  n'a besoin d'aucun serveur de registre.
 - `ix-durable lock` vérifie chaque archive contre son `sha256` et refuse une discordance. Avec
   `--verify-attestation`, il lance aussi `gh attestation verify`, et le fichier de verrouillage
   enregistre qu'il l'a fait.
@@ -211,8 +217,13 @@ donne `CONFLICT`, jamais une réutilisation silencieuse de l'ancienne clôture.
      refusée et son résultat : un enfant ultérieur qui tient est alors créé. Un cinquième niveau
      d'imbrication donne `TOO_DEEP`.
    - Un enfant qui se termine en `failed(journal)` après un `say` journalisé termine le parent en
-     `failed(child)`, et aucun second enfant n'est créé. Un enfant qui s'arrête en `NONDETERMINISTIC` après un `say` journalisé arrête le parent en
-     `NONDETERMINISTIC`, et aucun second enfant n'est créé.
+     `failed(child)`, et aucun second enfant n'est créé. Un enfant qui s'arrête en
+     `NONDETERMINISTIC` après un `say` journalisé arrête le parent en `nondeterministic` à sa
+     propre étape `child`, son statut nomme l'identifiant de l'enfant et le `seq` de l'enfant, et
+     aucun second enfant n'est créé. Un enfant dont le `failed(journal)` n'a pas pu être écrit est
+     repris par le parent.
+   - Un parent à qui il reste un appel et qui demande un enfant avec un appel reçoit
+     `GRANT_EXCEEDED`.
    - Un `seq` de 10^15 − 1 donne un identifiant d'enfant d'au plus 128 caractères sur une racine de
      64 caractères, et le run qui atteint 10^15 se termine en `failed(limit)`.
 6. **Intégrité.**

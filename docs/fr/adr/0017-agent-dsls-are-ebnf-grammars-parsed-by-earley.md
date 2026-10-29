@@ -102,16 +102,21 @@ Tout le reste, comme `digits` ou `integer`, la grammaire le définit elle-même.
 sans analyseur lexical, sur les valeurs scalaires Unicode, si bien qu'aucun analyseur lexical
 séparé n'existe pour s'écarter de la grammaire.
 
-**3. L'analyse est Earley, déterministe et bornée.** Le résultat est l'un des suivants :
+**3. L'analyse est Earley, déterministe et bornée.** Le résultat est l'un des deux rails de
+l'ADR-0016 §4. Un échec est `{"ok": False, "err": {"code", "message", …}}`, avec les champs
+ci-dessous dans `err` :
 
 - **Une analyse :** `{"ok": True, "value": tree}`. Un nœud d'arbre est `{"rule": name, "span": [start,
   end], "children": [...]}` et un terminal est son texte. Les étendues sont des décalages en
-  caractères.
-- **Aucune analyse :** `{"code": "SYNTAX", "line", "column", "expected"}`, où `expected` est
-  l'ensemble trié des terminaux que l'analyseur pouvait prendre à cet endroit.
-- **Deux analyses :** `{"code": "AMBIGUOUS", "line", "column", "rule"}`, où les premières
+  caractères. Seules les règles nommées de la grammaire donnent des nœuds : les règles
+  synthétiques de `[ ]`, `{ }` et des groupes placent leurs enfants directement dans le nœud de la
+  règle nommée qui les entoure, si bien que tout analyseur derrière l'interface donne le même
+  arbre.
+- **Aucune analyse :** code `SYNTAX`, avec `line`, `column` et `expected`, l'ensemble trié des
+  terminaux que l'analyseur pouvait prendre à cet endroit.
+- **Deux analyses :** code `AMBIGUOUS`, avec `line`, `column` et `rule`, où les premières
   dérivations se séparent. Un texte, un sens, un rejeu.
-- **Au-delà des bornes :** `{"code": "TOO_COMPLEX"}`. Le texte fait au plus 64 Kio. La table
+- **Au-delà des bornes :** code `TOO_COMPLEX`. Le texte fait au plus 64 Kio. La table
   d'analyse et la forêt d'analyse partagée contiennent chacune au plus un nombre fixe d'éléments,
   comptés à mesure qu'ils sont créés.
 

@@ -1,6 +1,6 @@
 # Runs durables : un script Starlark, réexécuté et servi étape par étape depuis un journal à écriture anticipée
 
-Statut : proposée (2026-10-29), révision 8 après les tours Codex 1 à 7 et le prototype Starlark
+Statut : proposée (2026-10-29), révision 9 après les tours Codex 1 à 8 et le prototype Starlark
 
 Version anglaise : [`docs/adr/0016-durable-runs-in-starlark-replay-a-step-journal.md`](../../adr/0016-durable-runs-in-starlark-replay-a-step-journal.md).
 
@@ -135,7 +135,11 @@ Il se trouve dans `runs/<ID>/journal.jsonl`, un enregistrement JSON terminé par
 
 Chaque enregistrement est vidé puis synchronisé par `sync_data` avant que sa valeur n'atteigne le
 script, ou avant que son effet ne commence. Une écriture qui échoue termine le run en
-`failed(journal)`. À l'ouverture, chaque enregistrement terminé par LF doit s'analyser et
+`failed(journal)` : le worker s'arrête, et le lanceur ajoute l'enregistrement après la mort du
+worker. Si cette écriture échoue elle aussi, rien n'est enregistré, et le run reste dans l'état de
+son dernier enregistrement valide. Le `resume` suivant reprend à partir de là, et ne répète rien,
+puisque chaque enregistrement antérieur a été écrit d'avance : une étape coupée après son effet
+est `UNKNOWN` (décision 7). À l'ouverture, chaque enregistrement terminé par LF doit s'analyser et
 respecter l'ordre des `seq` et des phases : pas de trou, pas de doublon, pas de `result` sans son
 `intent`. Seul un fragment final sans LF peut être abandonné, et il est tronqué et synchronisé
 avant tout ajout. La durabilité n'est revendiquée que pour les arrêts forcés de processus. Rien
