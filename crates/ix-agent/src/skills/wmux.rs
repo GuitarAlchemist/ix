@@ -36,9 +36,9 @@ fn wmux_snapshot_output_schema() -> Value {
         "type": "object",
         "properties": {
             "workspaces": { "type": "array", "items": { "type": "object" },
-                "description": "One row per workspace: workspace_id, title, active, cwd, shell, panes, surfaces." },
+                "description": "One row per workspace: workspace_id, title, active, cwd_name (last folder of its directory), shell, panes, surfaces." },
             "surfaces": { "type": "array", "items": { "type": "object" },
-                "description": "One row per surface: workspace_id, workspace_title, pane_id, surface_id, type (terminal, browser, markdown, diff), title, cwd (terminals only), claude_session_id, agent_state (idle, working, blocked, or null), blocked_reason, blocked_since_ms, updated_at_ms." },
+                "description": "One row per surface: workspace_id, workspace_title, pane_id, surface_id, type (terminal, browser, markdown, diff), title, cwd_name (last folder of the working directory, terminals only), claude_session_id, agent_state (idle, working, blocked, or null), blocked_reason, blocked_since_ms, updated_at_ms." },
             "agents": { "type": "array", "items": { "type": "object" },
                 "description": "Agents started with `wmux agent spawn`: agent_id, surface_id, workspace_id, label, status, pid, exit_code, spawn_time_ms. The command line is left out." },
             "counts": { "type": "object",
@@ -144,7 +144,10 @@ pub(crate) fn normalize(
                 *by_state.entry(st.to_string()).or_default() += 1;
             }
             let cwd = if kind == Some("terminal") {
-                s.get("currentCwd").or_else(|| s.get("cwd")).cloned()
+                s.get("currentCwd")
+                    .or_else(|| s.get("cwd"))
+                    .and_then(Value::as_str)
+                    .map(folder_name)
             } else {
                 None
             };
@@ -156,7 +159,7 @@ pub(crate) fn normalize(
                     .map(|r| clip(&mask_secrets(r), MAX_REASON_CHARS)),
                 "blocked_since_ms": state.and_then(|st| st.get("blockedSince")),
                 "claude_session_id": s.get("claudeSessionId"),
-                "cwd": cwd,
+                "cwd_name": cwd,
                 "pane_id": pane,
                 "surface_id": id,
                 "title": s.get("customTitle").or_else(|| s.get("title")),
@@ -168,7 +171,7 @@ pub(crate) fn normalize(
         }
         workspaces.push(json!({
             "active": w.get("isActive").and_then(Value::as_bool).unwrap_or(false),
-            "cwd": w.get("cwd"),
+            "cwd_name": w.get("cwd").and_then(Value::as_str).map(folder_name),
             "panes": ws_panes.len(),
             "shell": w.get("shell").and_then(Value::as_str).map(file_name),
             "surfaces": leaves.len(),
@@ -244,6 +247,12 @@ fn collect_surfaces<'a>(node: &'a Value, out: &mut Vec<(&'a str, &'a Value)>) {
 
 fn file_name(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
+
+/// The last folder of a working directory: which project a pane is in, without the path
+/// (and the user name) above it.
+fn folder_name(path: &str) -> &str {
+    file_name(path.trim_end_matches(['\\', '/']))
 }
 
 /// Masks the value of every `key=value` or `key: value` whose key names a secret.
@@ -481,7 +490,8 @@ mod tests {
         assert_eq!(row["pane_id"], "id-12");
         assert_eq!(row["type"], "terminal");
         assert_eq!(row["title"], "text-12");
-        assert_eq!(row["cwd"], "<home>\\proj-1");
+        assert_eq!(row["cwd_name"], "proj-1");
+        assert!(row.get("cwd").is_none());
         assert_eq!(row["claude_session_id"], "id-14");
         assert_eq!(row["agent_state"], "idle");
         assert_eq!(row["updated_at_ms"], 1792900997501u64);
@@ -498,6 +508,8 @@ mod tests {
             "browserHistory",
             "\"url\"",
             "\"cmd\"",
+            // Every captured working directory is `<home>\proj-N`: only `proj-N` may leave.
+            "<home>",
         ] {
             assert!(!text.contains(leak), "{leak} leaked");
         }
@@ -554,6 +566,13 @@ mod tests {
         assert!(wmux_snapshot(json!({ "send": "rm -rf /" }))
             .unwrap_err()
             .contains("no arguments"));
+    }
+
+    #[test]
+    fn a_working_directory_leaves_as_its_folder_name_only() {
+        assert_eq!(folder_name("C:\\Users\\someone\\repos\\ix\\"), "ix");
+        assert_eq!(folder_name("/home/someone/ix"), "ix");
+        assert_eq!(folder_name("C:\\"), "C:");
     }
 
     /// On Windows the `wmux` on PATH is a `.cmd` or `.ps1` shim, which `Command` cannot
@@ -660,5 +679,11 @@ mod tests {
         assert!(surfaces
             .iter()
             .all(|s| s["workspace_title"] != Value::Null || s["workspace_id"].is_string()));
+        let rows = surfaces
+            .iter()
+            .chain(snap["workspaces"].as_array().unwrap());
+        for name in rows.filter_map(|r| r["cwd_name"].as_str()) {
+            assert!(!name.contains(['\\', '/']), "a path left: {name}");
+        }
     }
 }

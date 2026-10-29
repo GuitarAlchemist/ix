@@ -119,7 +119,7 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         // its events and steps: no file, process or network.
         "ix_stream_run",
         // Runs the local wmux CLI's read verbs (sidebar-state, tree, agent-state, agent list) and
-        // returns allowlisted metadata (titles, working directories, agent states): it sends no
+        // returns allowlisted metadata (titles, folder names, agent states): it sends no
         // keystrokes and returns no screen contents, file paths, URLs or command lines.
         "ix_wmux_snapshot",
         "ix_hyperloglog",
