@@ -1,0 +1,12 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {randomUUID} from 'node:crypto';
+import {RelayLedger} from '../ledger.mjs';
+import {launchNativeWorker} from '../agent.mjs';
+const request=()=>({schema:'gaia-native-ack-request/1',id:randomUUID(),targetName:'IX',nonce:randomUUID(),issuedAt:Date.now()-100,expiresAt:Date.now()+600000,budgetUsd:0.05,authorizationRef:'hermetic-native-capture-fixture'});
+test('real production worker adapter commits native return before fixture worker closure; restart keeps proof and UNKNOWN',{timeout:10000},async()=>{const root=mkdtempSync(join(tmpdir(),'gaia-durable-capture-'));let ledger=new RelayLedger(root);const r=request();ledger.enqueue(r);const claim=ledger.claim();let beforeClose=false;
+try{const result=await launchNativeWorker(claim,{root,workerScript:fileURLToPath(new URL('./fixtures/capturing-native-worker.mjs',import.meta.url)),shouldStop:()=>false,progress:()=>{},commitNativeReturn:proof=>{const stored=ledger.recordNativeReturn(r.id,claim.claimId,proof);const own=JSON.parse(readFileSync(join(root,'jobs',r.id,claim.claimId,'attempt.json'),'utf8'));assert.equal(own.closeObserved,false);const other=new RelayLedger(root);try{assert.equal(other.nativeReturn(r.id).proof.replyMessageId,proof.replyMessageId);assert.equal(other.claim(),null);}finally{other.close();}beforeClose=true;assert.equal(ledger.recordNativeReturn(r.id,claim.claimId,proof).duplicate,true);assert.throws(()=>ledger.recordNativeReturn(r.id,'stale',proof),/STALE_RETURN_SCOPE/);assert.throws(()=>ledger.recordNativeReturn(r.id,claim.claimId,{...proof,replyMessageId:randomUUID()}),/RETURN_ID_CONFLICT/);return stored;}});assert.equal(beforeClose,true);assert.equal(result.state,'DONE');const replyId=ledger.nativeReturn(r.id).proof.replyMessageId;ledger.close();ledger=new RelayLedger(root);ledger.recover();assert.equal(ledger.get(r.id).state,'UNKNOWN');assert.equal(ledger.nativeReturn(r.id).proof.replyMessageId,replyId);assert.equal(ledger.claim(),null);ledger.finish(r.id,claim.claimId,result);assert.equal(ledger.get(r.id).state,'DONE');}finally{ledger.close();}});

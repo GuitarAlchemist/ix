@@ -1,0 +1,46 @@
+{
+  "schema": "gaia-native-relay-package/1",
+  "version": "0.1.1-source-reference",
+  "files": [
+    {
+      "path": "agent.mjs",
+      "sha256": "881e84441dcbc91a19df489875c7585aecc710ab0ee5a170a29f5dd459173f10"
+    },
+    {
+      "path": "canary-hello-02/.keep",
+      "sha256": "917781944cadf260bcbdbb4c3d575a6cee073c6e7e9867dc096770506e3b88db"
+    },
+    {
+      "path": "durable-native-return.mjs",
+      "sha256": "02374b788f604784f9bb03a0c4c0c7a20b0895778f8d01b92bf327879ee633a7"
+    },
+    {
+      "path": "inbox-lifetime.mjs",
+      "sha256": "2b218f78f54427ddde42294fba573a5322f140840a4a436bc2da74213c7df2f2"
+    },
+    {
+      "path": "ledger.mjs",
+      "sha256": "46596133712349a636b7d5190e2c2eed5b47691d43555497f36e7ef35b235329"
+    },
+    {
+      "path": "manage.ps1",
+      "sha256": "ad605eeb78eba37ba11fd8b17c79189c00115fd7be2f10dc739798b26b3f0911"
+    },
+    {
+      "path": "native-ack-proof.mjs",
+      "sha256": "514eb1affa9d8b3d7d6f2a01c656ed8180d64869cff8225569e4229d9ddf3e81"
+    },
+    {
+      "path": "native-ix-rows.mjs",
+      "sha256": "619e1bbdd5a53a243bb5cf2006f187f31f3d45484d2745ee9c53061751057771"
+    },
+    {
+      "path": "native-worker.mjs",
+      "sha256": "05a70be1c6dde9f10fac6768c3287758f48cc10834e2e1688b1320b1d614e688"
+    },
+    {
+      "path": "print-event-collector.mjs",
+      "sha256": "7328cd4296f57e9c4fdc0f22618fcafb6379f4eeb4da45c4f8013fb5479446f1"
+    }
+  ]
+}
