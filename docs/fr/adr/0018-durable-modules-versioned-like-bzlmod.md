@@ -132,7 +132,9 @@ l'ADR-0016 §5 (elle dit que `run` ne revient que par un amendement) :
   - #416 pose la même question pour les arbres de sondes d'ixctl ; pour les runs, cet ADR y répond
     en découpant l'allocation d'avance.
 - **Un enfant présent est repris, pas attendu.** Le worker du parent exécute `ix-durable resume
-  <child>` et lit ce qu'il répond. Un enfant créé juste avant la mort du parent est donc démarré
+  <child>` et lit ce qu'il répond. Pendant cette attente, le parent n'écrit aucun bail et son
+  chien de garde est suspendu : ce temps se dépense sur l'allocation de l'enfant, que le parent a
+  réservée, pas sur ses propres `active_seconds`. Un enfant créé juste avant la mort du parent est donc démarré
   lui aussi :
   - un enfant en cours répond `BUSY`, et le parent reste en `waiting(child <id>)` ;
   - un enfant terminé affiche son issue, que le parent journalise comme résultat de l'étape.
@@ -151,6 +153,9 @@ l'ADR-0016 §5 (elle dit que `run` ne revient que par un amendement) :
     `seq` propre de l'enfant. C'est un arrêt d'urgence, pas une valeur, pour la même raison. Les
     deux runs restent arrêtés, puisque l'exécutable de l'enfant est lié dans son `start.json`
     (ADR-0016 §6), et la cause est un bogue dans IX ;
+  - `stopped` (l'activation de l'enfant s'est terminée sans enregistrement terminal, ADR-0016
+    §11) : l'activation du parent se termine aussi, sans rien écrire, si bien que le parent est
+    `stopped` lui aussi, et son `resume` suivant reprend l'enfant ;
   - `waiting` ou `unknown(seq)` : le parent reste en `waiting(child <id>)`. Son statut nomme
     l'enfant et l'état de l'enfant. Un signal à l'enfant, ou la résolution par une personne de
     l'étape de l'enfant (ADR-0016 §7), laisse l'enfant continuer, et la reprise suivante du parent
@@ -216,7 +221,8 @@ donne `CONFLICT`, jamais une réutilisation silencieuse de l'ancienne clôture.
    - Une allocation d'enfant plus grande que le reste du parent dans un champ quelconque donne
      `GRANT_EXCEEDED`, et ne réserve rien, y compris quand le parent meurt entre l'intention
      refusée et son résultat : un enfant ultérieur qui tient est alors créé. Un cinquième niveau
-     d'imbrication donne `TOO_DEEP`.
+     d'imbrication donne `TOO_DEEP`. Un parent à qui il reste deux secondes actives et
+     qui les donne toutes deux à son enfant n'est pas arrêté pendant que l'enfant les dépense.
    - Un enfant qui se termine en `failed(journal)` après un `say` journalisé termine le parent en
      `failed(child)`, et aucun second enfant n'est créé. Un enfant qui s'arrête en
      `NONDETERMINISTIC` après un `say` journalisé arrête le parent en `nondeterministic` à sa

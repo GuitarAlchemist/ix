@@ -120,7 +120,9 @@ says `run` comes back only through an amendment):
   - #416 asks the same question for ixctl's probe trees; for runs, this ADR answers it by carving
     the grant up front.
 - **A present child is resumed, not awaited.** The parent's worker runs `ix-durable resume
-  <child>` and reads what it says. A child created just before the parent died is therefore
+  <child>` and reads what it says. While it waits, the parent writes no lease and its watchdog
+  is paused: that time is spent on the child's grant, which the parent reserved, not on its own
+  `active_seconds`. A child created just before the parent died is therefore
   started too:
   - a running child answers `BUSY`, and the parent stays `waiting(child <id>)`;
   - a finished child prints its outcome, which the parent journals as the step's result.
@@ -138,6 +140,9 @@ says `run` comes back only through an amendment):
     child's own `seq`. That is an emergency stop, not a value, for the same reason. Both runs
     stay stopped, since the child's executable is bound in its `start.json` (ADR-0016 §6), and
     the cause is a bug in IX;
+  - `stopped` (the child's activation ended without a terminal record, ADR-0016 §11): the
+    parent's activation ends too, writing nothing, so the parent is `stopped` as well, and its
+    next `resume` resumes the child;
   - `waiting` or `unknown(seq)`: the parent stays `waiting(child <id>)`. Its status names the
     child and the child's state. A signal to the child, or a person's resolution of the child's
     step (ADR-0016 §7), lets the child go on, and the parent's next resume reads the result.
@@ -193,7 +198,9 @@ an existing id and another lock is `CONFLICT`, never a silent reuse of the old c
      once.
    - A child grant larger than the parent's remainder in any field is `GRANT_EXCEEDED`, and
      reserves nothing, also when the parent dies between the refused intent and its result: a
-     later child that fits is then created. A fifth level of nesting is `TOO_DEEP`.
+     later child that fits is then created. A fifth level of nesting is `TOO_DEEP`. A parent with
+     two active seconds left that grants both to its child is not stopped while the child spends
+     them.
    - A child that ends `failed(journal)` after a journaled `say` ends the parent
      `failed(child)`, and no second child is created. A child that
      stops `NONDETERMINISTIC` after a journaled `say` stops the parent `nondeterministic` at its

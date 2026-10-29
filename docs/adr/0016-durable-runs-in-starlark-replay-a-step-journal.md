@@ -117,11 +117,11 @@ It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
   in live work, the next 50,000 ticks. It holds both amounts, `ticks` and `seconds`, and a
   replay lease has `ticks: 0` (decision 9). A mutex serializes all writers of the journal;
 - `resolution`, written by a person;
-- `done` or `failed(reason)`.
+- `done`, `failed(reason)` or `nondeterministic(seq)`, the terminal records.
 
 Each record is flushed and `sync_data`ed before its value reaches the script, or before its
 effect starts. A run has one terminal record. A failed write or sync ends the run in
-`failed(journal)` (a `resolution` aside, decision 7), with one exception: a terminal record (`done` or any `failed(reason)`) whose
+`failed(journal)` (a `resolution` aside, decision 7), with one exception: a terminal record (`done`, any `failed(reason)`, or `nondeterministic(seq)`) whose
 bytes reached the file with their LF is the state, even if its sync failed. The worker stops,
 and the launcher, after the worker's death (at once when the failed write is its own), opens the
 journal as `resume` does. If the last valid record is terminal, it appends nothing; otherwise
@@ -187,7 +187,9 @@ Codex round 2 confirmed it in the source: ticks count calls and loop back edges,
   `done`, since no later step compares it.
 
 Both residuals are accepted. With the closed globals above, nothing that varies between processes
-was found to feed such a branch. A mismatch stops `NONDETERMINISTIC(seq)` and names both sides.
+was found to feed such a branch. A mismatch stops `NONDETERMINISTIC(seq)`: the worker
+appends the terminal record `nondeterministic(seq)`, which names both sides, so the run stays
+stopped and no later replay can go past it.
 With the source and the executable bound (decision 2), a mismatch means a bug in IX, not an edited
 script.
 
@@ -385,7 +387,8 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
      launcher's `failed(limit)` or `failed(journal)`) leaves that record the state, and no
      second terminal record follows it.
    - A launcher's `failed(journal)` cut before its LF leaves the run in the state of its last
-     valid record, `status` reports `stopped`, and `resume` goes on from there.
+     valid record: `status` reports what that record leaves (`stopped`, or `unknown(seq)` when
+     a step is cut after its effect), and `resume` goes on from there.
    - A valid record after a terminal one is `Corrupt`.
    - A bound that kills the worker after its synced `done` leaves `done`, with no `failed(limit)`.
    - A `resolution` cut before its LF leaves the step `UNKNOWN` and open to another `resolve`;

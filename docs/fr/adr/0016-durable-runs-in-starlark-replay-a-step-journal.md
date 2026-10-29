@@ -131,13 +131,13 @@ Il se trouve dans `runs/<ID>/journal.jsonl`, un enregistrement JSON terminé par
   `seconds`, et un bail de rejeu a `ticks: 0` (décision 9). Un mutex sérialise tous les rédacteurs
   du journal ;
 - `resolution`, écrit par une personne ;
-- `done` ou `failed(reason)`.
+- `done`, `failed(reason)` ou `nondeterministic(seq)`, les enregistrements terminaux.
 
 Chaque enregistrement est vidé puis synchronisé par `sync_data` avant que sa valeur n'atteigne le
 script, ou avant que son effet ne commence. Un run a un seul enregistrement terminal. Une
 écriture ou une synchronisation qui échoue termine le run en `failed(journal)` (hors `resolution`,
 décision 7), à une exception
-près : un enregistrement terminal (`done` ou tout `failed(reason)`) dont les octets ont atteint le
+près : un enregistrement terminal (`done`, tout `failed(reason)`, ou `nondeterministic(seq)`) dont les octets ont atteint le
 fichier avec leur LF est l'état, même si sa synchronisation a échoué. Le worker s'arrête, et le
 lanceur, après la mort du worker (aussitôt quand l'écriture qui a échoué est la sienne), ouvre le
 journal comme le fait `resume`. Si le dernier enregistrement valide est terminal, il n'ajoute
@@ -212,7 +212,9 @@ que déplacer le compteur. C'est un compteur de flot de contrôle, pas une preuv
 
 Les deux résidus sont acceptés. Avec les globales fermées ci-dessus, on n'a trouvé rien de ce qui
 varie d'un processus à l'autre qui alimente une telle branche. Une discordance provoque l'arrêt
-`NONDETERMINISTIC(seq)` et nomme les deux côtés. Comme le source et l'exécutable sont liés
+`NONDETERMINISTIC(seq)` : le worker ajoute l'enregistrement terminal `nondeterministic(seq)`,
+qui nomme les deux côtés, si bien que le run reste arrêté et qu'aucun rejeu ultérieur ne peut le
+dépasser. Comme le source et l'exécutable sont liés
 (décision 2), une discordance signifie un bogue dans IX, pas un script modifié.
 
 **7. Une personne résout `UNKNOWN` ; le script décide de la suite.** `ix-durable resolve ID seq
@@ -432,11 +434,13 @@ vérification ci-dessous tient :
      `failed(reason)` d'un worker, le `failed(limit)` ou le `failed(journal)` d'un lanceur) laisse
      cet enregistrement l'état, et aucun second enregistrement terminal ne le suit.
    - Un `failed(journal)` de lanceur coupé avant son LF laisse le run dans l'état de son dernier
-     enregistrement valide, `status` rapporte `stopped`, et `resume` reprend à partir de là.
+     enregistrement valide : `status` rapporte ce que laisse cet enregistrement (`stopped`, ou
+     `unknown(seq)` quand une étape est coupée après son effet), et `resume` reprend à partir de
+     là.
    - Un enregistrement valide après un enregistrement terminal est `Corrupt`.
    - Une borne qui tue le worker après son `done` synchronisé laisse `done`, sans `failed(limit)`.
    - Une `resolution` coupée avant son LF laisse l'étape `UNKNOWN` et ouverte à un autre `resolve` ;
-     une `resolution` complète avec son LF mais dont la synchronisation échoue compte comme
+     une résolution complète avec son LF mais dont la synchronisation échoue compte comme
      résolue.
    - Deux `resolve` concurrents d'une même étape : l'un ajoute, l'autre reçoit `BUSY` ou est
      refusé, et le journal s'ouvre proprement.
