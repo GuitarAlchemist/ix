@@ -96,10 +96,12 @@ says `run` comes back only through an amendment):
   `ticks`, `active_seconds`, `activations`) must be at most the parent's remainder after its
   reservations. `memory_mb` must be at most the parent's own, since it is a ceiling, not a
   quantity spent. The fit is computed from the fold, before the intent is written. A grant that
-  does not fit gives an intent marked `refused`, with no grant in it, and the step's result is
-  `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. The fold subtracts only intents that carry
-  a grant, so a refused one reserves nothing. A crash between that intent and its result replays
-  the same fit from the same fold, and writes the same result. No child is created.
+  does not fit gives an intent like any other, with its canonical args, the grant included, and
+  the mark `"refused": "GRANT_EXCEEDED"`. The step's result is
+  `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. The fold subtracts the grant of every
+  `child` intent except a refused one, so a refused one reserves nothing. A crash between that
+  intent and its result replays the same fit from the same fold, checks the same args digest,
+  and writes the same result. No child is created.
 - **The grant is reserved in the intent.** The parent's `intent` record for a `child` step holds
   the child's grant, and the fold of ADR-0016 §8 subtracts every child intent's grant from what
   the parent has left. That record is written before the child exists, so a crash leaves either
@@ -120,9 +122,11 @@ says `run` comes back only through an amendment):
 - A child's state maps to its parent's step:
   - `done`: the child's outcome is the step's result, on the rail it came on;
   - `failed(reason)`: the failure rail, `{"code": "CHILD_FAILED", "message": reason}`;
-  - `nondeterministic(seq)`: the failure rail, `{"code": "CHILD_NONDETERMINISTIC", "seq": seq}`.
-    That state is final: the child's executable is bound in its `start.json`, so no resume and
-    no resolution changes it (ADR-0016 §6);
+  - `nondeterministic(seq)`: the parent stops too, `NONDETERMINISTIC` on its own step, naming
+    the child. That is an emergency stop, not a value (ADR-0016 §4), so no script can catch it
+    and start the agent again: the child may have done an effect that a new child would repeat.
+    Both runs stay stopped, since the child's executable is bound in its `start.json` (ADR-0016
+    §6), and the cause is a bug in IX;
   - `waiting` or `unknown(seq)`: the parent stays `waiting(child <id>)`. Its status names the
     child and the child's state. A signal to the child, or a person's resolution of the child's
     step (ADR-0016 §7), lets the child go on, and the parent's next resume reads the result.
@@ -178,8 +182,11 @@ an existing id and another lock is `CONFLICT`, never a silent reuse of the old c
    - A child grant larger than the parent's remainder in any field is `GRANT_EXCEEDED`, and
      reserves nothing, also when the parent dies between the refused intent and its result: a
      later child that fits is then created. A fifth level of nesting is `TOO_DEEP`.
-   - A child that ends `failed` gives the parent `CHILD_FAILED` on the failure rail, and one that
-     stops `NONDETERMINISTIC` gives `CHILD_NONDETERMINISTIC`.
+   - A child that ends `failed` gives the parent `CHILD_FAILED` on the failure rail. A child that
+     stops `NONDETERMINISTIC` after a journaled `say` stops the parent `NONDETERMINISTIC`, and no
+     second child is created.
+   - A `seq` of 10^15 − 1 gives a child id of at most 128 characters on a 64-character root, and
+     the run that reaches 10^15 ends in `failed(limit)`.
 6. **Integrity.**
    - Packing a module twice gives the same bytes.
    - An archive whose bytes differ from its `sha256` is refused at lock time.
