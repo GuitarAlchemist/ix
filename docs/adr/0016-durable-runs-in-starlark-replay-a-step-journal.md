@@ -1,6 +1,6 @@
 # Durable runs: a Starlark script, re-executed and answered step by step from a write-ahead journal
 
-Status: proposed (2026-10-29), revision 3 after Codex rounds 1 and 2 and the Starlark prototype
+Status: proposed (2026-10-29), revision 4 after Codex rounds 1 to 3 and the Starlark prototype
 
 Number 0016: ADR-0015 is taken by `docs/adr/0015-local-isolated-jobs.md` on the unmerged branch
 `feat/local-isolated-execution`. Related: ADR-0017 (agent DSLs) and ADR-0018 (composition and
@@ -91,14 +91,19 @@ It holds:
 
 It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
 `runs/<ID>/start.json`. One link is atomic, so a run either exists whole or does not exist.
+`start.json` is canonical JSON with no timestamp, so the same run always has the same bytes.
 
+- A run id the operator chooses is 1 to 64 characters of `A-Z a-z 0-9 _ -`. It cannot be a
+  Windows device name, which `ix-recover`'s segment check already refuses (`lib.rs:156`). The dot
+  is reserved for child runs (ADR-0018), whose ids the host builds.
 - A `runs/<ID>/` with no `start.json` was never created. `run` completes it; `resume` answers
   `NOT_CREATED`. Leftover temporary files are ignored and removed by the next `run`.
-- `run` with an existing id and a different source, input or grant is `CONFLICT`. The same bytes
-  are not an error: the run is already created.
+- `run` with an existing id is `CONFLICT` when the new `start.json` differs from the published one
+  in any byte. Identical bytes are not an error: the run is already created.
 - `ix-durable resume ID` reads `start.json` back. A different executable or interpreter is
   refused (`CONFLICT`), since replay is proved only on the code that wrote the journal.
-- One process owns a run, through `File::try_lock` on `owner.lock`; a second one is `BUSY`.
+- One launcher owns a run, through `File::try_lock` on `owner.lock`; a second one is `BUSY`.
+  Decision 10 adds the worker's `writer.lock`.
 - The crate sets `rust-version = "1.89"` for `try_lock`, as `ix-recover` does.
 
 **3. The journal is write-ahead, and it stops the run when it cannot be written.** It lives at
@@ -108,8 +113,9 @@ It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
 - `attempt`, before every live execution of a step;
 - `result`, holding the full value, on either rail, and the cumulative tick count at that point;
 - `activation`, opening each process's work;
-- `heartbeat`, the activation's ticks and active milliseconds so far, written every 50,000 ticks
-  or every second of active time, whichever comes first;
+- `heartbeat`, the activation's ticks and active milliseconds so far. It is written every 50,000
+  ticks, and every second by a timer thread, which keeps counting time through a long native
+  operation. A mutex serializes all writers of the journal;
 - `resolution`, written by a person;
 - `done` or `failed(reason)`.
 
@@ -149,7 +155,9 @@ says how replay rebuilds the state it touches.
 same `accept` as a loop's. Two changes to `ix-loop`'s store make that possible:
 
 - **A caller-id publication.** A new `Store::publish_as(id, draft, by)` writes atomically
-  (temporary file, sync, hard link) and refuses an existing id with different content. Today
+  (temporary file, sync, hard link) and refuses an existing id with different content. "Content"
+  means the stable fields `kind`, `name`, `body`, `note` and `proposed_by`, never `ts_ms`, so a
+  replayed publication with a new timestamp still matches. Today
   `Store::propose` picks its own id and writes the final file directly (`store.rs:97`, `:120`).
 - **A second id shape.** `valid_id` (`store.rs:51`) also admits `d<12 hex>-<digits>`. The hex is
   the first 12 digits of the run id's SHA-256, so any run id gives a safe file name. `kind` keeps
@@ -194,33 +202,65 @@ The live tail then sees the run it would have seen without the kill.
 
 **9. One budget, fixed at creation and cumulative over the run.** The grant lives in
 `start.json`. A later `resume` cannot change it, whatever the environment says. Raising it
-means a new run.
+means a new run. A grant has five finite fields, each with a default:
+
+| Field | Counts | Default |
+|---|---|---|
+| `calls` | `attempt` records | 50 |
+| `ticks` | Starlark ticks, live work only | 10,000,000 |
+| `active_seconds` | time while a worker runs | 600 |
+| `activations` | `activation` records | 20 |
+| `memory_mb` | the worker's job, at any moment (decision 10) | 1024 |
+
+`ix-loop`'s `Grant` (`calls`, `fuel`, `seconds`) is not reused, since it has no activations or
+memory.
 
 - **Calls:** one per `attempt`, so a call killed repeatedly is charged every time.
-- **Activations:** each process that opens an `activation` record is charged one, before any
-  replay. Every resume is therefore charged, killed or not.
-- **Ticks and active time:** summed over activations, from each activation's last `heartbeat`. A
-  kill loses at most one heartbeat interval of accounting. The work that escapes the budget is
-  therefore at most the activation grant times one interval (50,000 ticks or one second), however
-  often the run is killed.
+- **Activations:** each worker writes and syncs its `activation` record before any replay, and
+  that record is its charge. A run with no activation left ends in `failed(budget)` without
+  starting a worker, so the number of activations is finite whatever kills them.
+- **Ticks and active time:** summed over activations, from each activation's last `heartbeat`
+  (none yet counts as zero). A kill loses at most one heartbeat interval of accounting, the
+  stretch before the first heartbeat included. The work that escapes the budget is therefore at
+  most `activations` times one interval (50,000 ticks or one second), however often the run is
+  killed.
 - **Replay margin:** replaying up to the frontier spends ticks again. The interpreter's limit is
   set once, at the frontier's tick count plus a fixed margin plus the live ticks left. Past the
   frontier, the host checks the live ticks itself, at every capability call and every heartbeat.
   Live work can therefore borrow at most the margin.
 - Time spent waiting is not counted.
 
-**10. Hard bounds and process ownership come from the operating system.** `ix-durable run` and
-`resume` start a worker process. The worker evaluates the script, holds the owner lock and writes
-the journal. The launcher puts it in a kill-on-close Windows Job Object with a process memory limit
-and a CPU-time limit. On Linux it uses a process group, a parent-death signal (as
-`go/ixctl/pdeathsig_linux.go` does) and `setrlimit` for address space and CPU. A wall-clock
-watchdog backs both up.
+**10. Hard bounds and process ownership come from the operating system, on Windows first.**
+`ix-durable run` and `resume` are a launcher, and the launcher starts a worker process. The
+worker evaluates the script and writes the journal. Two locks keep one writer at a time:
 
-- A `claude` subprocess (`node.rs:133`) starts inside the worker's job. A killed worker leaves no
-  call running beside the next attempt.
-- When a bound kills the worker, the launcher takes the owner lock and appends `failed(limit)`.
-  A single expensive native operation, such as `sorted(range(100_000_000))`, then ends the run.
-  It cannot get past the tick check.
+- The launcher holds `owner.lock` for the whole activation, the worker's death included.
+- The worker holds `writer.lock` while it lives.
+- A new launcher takes `owner.lock` (else `BUSY`), then waits for `writer.lock` before it starts
+  a worker. A worker that outlives its launcher therefore stops any new one from writing until it
+  is dead.
+- When a bound kills the worker, the launcher, which still holds `owner.lock`, waits for
+  `writer.lock` and appends `failed(limit)`. Only then does it release `owner.lock`. No `resume`
+  can start in between.
+
+The bounds hold for the whole process tree, not one process. The worker runs in a Windows Job
+Object whose children cannot break away. The job has three limits:
+
+- a job-wide memory limit (`JOB_OBJECT_LIMIT_JOB_MEMORY`, `memory_mb`);
+- a job-wide CPU-time limit;
+- kill-on-close.
+
+A wall-clock watchdog backs them up. A `claude` subprocess (`node.rs:133`) and every descendant
+start inside the job, so a killed worker leaves no call running beside the next attempt.
+
+A single expensive native operation, such as `sorted(range(100_000_000))`, hits the memory or CPU
+limit and ends the run in `failed(limit)`. It cannot get past the tick check.
+
+On Linux, a process group, a parent-death signal and `setrlimit` bound each process but not the
+tree: a descendant can leave the group, and the parent-death signal reaches only the leader
+(`go/ixctl/proc_other.go:35`). A Linux worker therefore needs a delegated cgroup v2
+(`memory.max`, `cpu.max`, `pids.max`, `cgroup.kill`). Without one, `ix-durable` refuses to start
+a run there, rather than claim a bound it does not hold. Linux support is its own slice.
 
 **11. States are readable without the owner.** `ix-durable status ID` reports one of these:
 
@@ -247,14 +287,18 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
    - `say` happens at most once;
    - every run ends with the same outcome.
 2. **Creation.** A kill before and after the `start.json` link: `resume` answers `NOT_CREATED`,
-   then `run` completes the run. A second `run` with another grant is `CONFLICT`.
+   then `run` completes the run. A second `run` with another grant is `CONFLICT`. Run ids with
+   `..`, a separator, a dot or a device name are refused.
 3. **Repeated kills of one Claude call.** Each kill adds an `attempt` and a charge; the grant runs
    out and the run stops; no descendant process survives the owner.
 4. **Repeated kills during local computation.** Kills between two steps, with unclosed
-   activations. The activation and tick charges grow with every resume, and the run stops within
-   the bound of decision 9.
-5. **A native operation past the bounds.** `sorted(range(100_000_000))` ends in `failed(limit)`,
-   and the machine keeps its memory.
+   activations, some before the first heartbeat. The activation and tick charges grow with every
+   resume, and the run ends in `failed(budget)` within the bound of decision 9.
+5. **A native operation past the bounds.**
+   - `sorted(range(100_000_000))` ends in `failed(limit)`, and the machine keeps its memory.
+   - A descendant of the worker that allocates past `memory_mb` takes down the whole job.
+   - A heartbeat records active time during the operation.
+   - A `resume` launched while the launcher appends `failed(limit)` is `BUSY`.
 6. **Both resolutions.** After an `UNKNOWN` `say`, `--performed` never speaks again, and
    `--not-performed` speaks exactly once on the script's retry.
 7. **Proposal evidence.** A kill before, during and after publication, and a proposal whose
@@ -307,6 +351,8 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
   editor could check a script in the browser without running it durably.
 - **Trusting the interpreter's limits as hard bounds:** its own documentation says they are best
   effort and miss native allocations.
+- **Per-process limits as the hard bound** (`setrlimit`, a per-process job memory limit): a tree
+  of processes, each under its limit, can exceed the run's together.
 - **Three identity files published one by one:** a kill between two links leaves a run that
   neither `run` nor `resume` can settle. One file, one link.
 - **`ix-recover` as the outcome store:** it is run-level and has its own owner lock; two

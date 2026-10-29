@@ -51,22 +51,35 @@ in the subset `ix-grammar::ebnf` reads. A durable script calls the capability
 `parse(dsl, text)`. It returns the tree on the success rail, and the script walks it and calls
 other capabilities.
 
-**2. A grammar must be executable, or it is refused.** It is loaded by `ix-grammar::ebnf::parse`,
-then checked:
+**2. A grammar must be executable, or it is refused.** The checks need a reader that keeps what
+today's loses. `ix-grammar::ebnf::parse` lowers into `EbnfGrammar`, and that lowering loses three
+things:
 
-- every name used is defined;
+- a duplicate rule overwrites the first (`HashMap::insert`, `ebnf.rs:471`);
+- a quoted literal and a rule name both become a plain `String` (`ebnf.rs:522`);
+- a terminal is whatever has no production (`constrained.rs:79`), so `start = "digit";
+  digit = "0";` reads the quoted `"digit"` as the rule.
+
+`ix-grammar` therefore gains a typed syntax tree, read before the lowering. In that tree a literal
+is a literal and a name is a name, and duplicates are kept so they can be reported. The checks
+run on that tree:
+
+- every name used is defined, by the grammar or by the prelude below;
 - no name is defined twice;
-- one start rule: the first rule, as in the file.
+- one start rule: the first rule, as in the file;
+- no rule derives itself through rules that can match nothing (a cyclic grammar, such as
+  `{ [ "x" ] }`), since such a grammar has infinitely many parses of one text.
 
 A grammar that fails is `GRAMMAR_INVALID`, with the names. The lexical terms come from a fixed,
-documented prelude, which a grammar may use without defining:
+documented prelude, which a grammar may use without defining. Each is one identifier, since the
+reader splits names on spaces:
 
 - `letter`, `digit` (ASCII);
 - `space` (space or tab), `newline` (LF or CRLF);
-- `any character` (any Unicode scalar but a newline).
+- `any_char` (any Unicode scalar but a newline).
 
-A grammar may also define its own. Parsing is scannerless, over Unicode scalar values, so no
-separate lexer exists to drift from the grammar.
+Anything else, such as `digits` or `integer`, the grammar defines itself. Parsing is
+scannerless, over Unicode scalar values, so no separate lexer exists to drift from the grammar.
 
 **3. Parsing is Earley, deterministic and bounded.** The result is one of:
 
@@ -76,8 +89,15 @@ separate lexer exists to drift from the grammar.
   set of terminals the parser could take there.
 - **Two parses:** `{"code": "AMBIGUOUS", "line", "column", "rule"}`, where the first derivations
   part. One text, one meaning, one replay.
-- **Over the bounds:** `{"code": "TOO_COMPLEX"}`. The text holds at most 64 KiB, and the chart at
-  most a fixed number of items.
+- **Over the bounds:** `{"code": "TOO_COMPLEX"}`. The text holds at most 64 KiB. The chart and the
+  shared parse forest each hold at most a fixed number of items, counted as they are created.
+
+Ambiguity is decided on the forest. The grammar is acyclic (decision 2), so the forest is a finite
+graph with no cycle. The number of trees at each node is counted bottom-up, saturating at two, and
+the root's count says one parse or `AMBIGUOUS`. That count is linear in the forest's size. The
+caps are set from the tracer's measurement: four times what an unambiguous 64 KiB origami file
+needs. An ordinary input of the maximum size therefore fits, and the ADR says which inputs do not:
+those whose chart or forest outgrows that measure.
 
 `earlgrey` is tried first, behind a module of `ix-grammar`, on the conformance test of the
 tracer slice. An Earley recognizer in `ix-grammar` itself replaces it only if `earlgrey` cannot
@@ -105,22 +125,31 @@ does not parse is refused at its first error, whoever wrote it.
 
 ## Tracer slice (test first, each test seen red)
 
+0. **The typed reader.** It keeps literals apart from names and reports a duplicate rule, a
+   missing name and a cyclic grammar. `start = "digit"; digit = "0";` accepts the text `digit`,
+   not `0`.
 1. **The origami grammar becomes executable.**
-   - Its geometric line is renamed (`crease`), and it uses the prelude.
+   - Its geometric line is renamed (`crease`).
+   - It uses the prelude, and it defines `digits` and `integer` itself.
    - Its definition test checks decision 2 on it, not keywords in its text.
 2. **`ix-grammar` parses with Earley:**
    - the four outcomes of decision 3 on small grammars: one parse, a syntax error with its
      expected set, an ambiguous grammar, an oversized input;
-   - its trees on the origami grammar.
+   - its trees on the origami grammar;
+   - the measured chart and forest sizes of a 64 KiB origami file, which set the caps.
 3. **Conformance against the handwritten parser**, on every `.origami` file in the repo plus
    mutated copies (a dropped token, a swapped keyword, a stray character):
    - every file the handwritten parser accepts, Earley accepts;
-   - every file Earley refuses, the handwritten parser refuses too;
-   - every other refusal by the handwritten parser is a rule a grammar cannot state (a statement
-     that comes first and once, two different corners), listed in the test with its reason.
+   - every file Earley accepts and the handwritten parser refuses breaks a rule a grammar cannot
+     state (a statement that comes first and once, two different corners), listed in the test
+     with its reason.
+   Item 3 catches drift only in that corpus and those mutation classes; item 4 tests beyond it.
 4. **Generation agrees with recognition.** Sentences generated from the grammar by `ix-grammar`'s
-   constrained search are all accepted by the Earley parser. TARS's Workflow-of-Thought DSL keeps
-   its parser honest the same way.
+   constrained search are all accepted by the Earley parser. They are also accepted by the
+   handwritten parser, or refused only for one of item 3's listed rules. That second check catches
+   a grammar that accepts more than the language: the generator and the parser share the
+   grammar, so they cannot catch it between them. TARS's Workflow-of-Thought DSL keeps its parser
+   honest the same way.
 5. **Only then, `parse` in `ix-durable`.** A durable script parses a fold sequence and proposes
    it. A kill after the parse replays the journaled tree.
 

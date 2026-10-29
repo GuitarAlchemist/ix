@@ -83,15 +83,26 @@ says `run` comes back only through an amendment):
 
 | Capability | Class | Replay | Cut mid-step (intent, no result) |
 |---|---|---|---|
-| `child(agent, input, grant)` | effect, with evidence | the journaled outcome | the child's id is fixed, `<parent ID>.<seq>`: its `start.json` present and equal means it exists, so wait for its outcome; absent means create it; different means `UNKNOWN` |
+| `child(agent, input, grant)` | effect, with evidence | the journaled outcome | the child's id is fixed, `<parent ID>.<seq>`: its `start.json` present and equal means it exists, so resume it; absent means create it, then resume it; different means `UNKNOWN` on the parent's step |
 
 - `agent` is a label of the closure, such as `@fold-planner//plan.star`. The child's
   `start.json` takes the bytes from the parent's closure.
-- The child's grant is charged to the parent when the child is created, so a tree of runs keeps
-  one budget. #416 asks the same question for ixctl's probe trees; for runs, this ADR answers it
-  by carving the grant up front.
+- The child's id is the only one with a dot, so it cannot collide with an id the operator chose
+  (ADR-0016 §2).
+- **The grant is reserved in the intent.** The parent's `intent` record for a `child` step holds
+  the child's grant, and the fold of ADR-0016 §8 subtracts every child intent's grant from what
+  the parent has left. That record is written before the child exists, so a crash leaves either
+  the intent with no child, which replay then creates under the same reservation, or both. The
+  carved amount is never spent twice and never charged without a child. #416 asks the same
+  question for ixctl's probe trees; for runs, this ADR answers it by carving the grant up front.
+- **A present child is resumed, not awaited.** The parent's worker runs `ix-durable resume
+  <child>` and reads what it says. A child created just before the parent died is therefore
+  started too:
+  - a running child answers `BUSY`, and the parent stays `waiting(child <id>)`;
+  - a finished child prints its outcome, which the parent journals as the step's result.
 - A child that is `waiting` or `unknown` leaves its parent `waiting(child <id>)`. The parent's
-  status names the child, and a person resolves the child, not the parent.
+  status names the child, and a person resolves the child's step on the child. A `different`
+  child is the parent's own `UNKNOWN`, resolved on the parent's step (ADR-0016 §7).
 - The child's outcome comes back on the two rails, like any capability.
 
 **6. A version is shipped as an archive with its sum, and a registry is a directory.**
@@ -109,10 +120,13 @@ says `run` comes back only through an amendment):
   `--verify-attestation`, it also runs `gh attestation verify`, and the lock records that it did.
 
 **7. External code enters through a person.** A module from outside the operator's repositories
-enters a run only through a lock that a person wrote. An agent may draft a module and propose it
-(`propose("module", name, body)`, ADR-0016 §5, the store adding the kind `module` as it adds
-`ebnf` in ADR-0017), but it can neither lock nor publish one. Tagging a
-release stays a person's act.
+enters a run only through a lock that a person wrote. An agent proposes single files through the
+store (`lua`, `pipeline`, `ebnf`), but not modules: a store proposal is one body and `accept`
+writes one file (`store.rs:172`), while a module is a directory. A person assembles, locks and
+releases a module. Tagging a release stays a person's act.
+
+The lock and the closure are part of `start.json`, so ADR-0016 §2's rule covers them: `run` with
+an existing id and another lock is `CONFLICT`, never a silent reuse of the old closure.
 
 ## Tracer slice (test first, each test seen red)
 
@@ -131,9 +145,11 @@ release stays a person's act.
 5. **Child runs.**
    - A parent with one child, under the kill matrix across the boundary: exactly one child is
      created, and the parent finishes with the child's outcome.
-   - The child's grant is charged to the parent once.
+   - The child's grant is charged to the parent once, including when the parent dies between
+     its intent and the child's creation, and between the creation and the first resume.
+   - A child created just before the parent died is started by the parent's next resume.
    - A child stopped `UNKNOWN` leaves the parent `waiting`, and resolving the child resumes the
-     parent.
+     parent. A child `start.json` that differs from the intent makes the parent's step `UNKNOWN`.
 6. **Integrity.**
    - Packing a module twice gives the same bytes.
    - An archive whose bytes differ from its `sha256` is refused at lock time.
@@ -168,5 +184,7 @@ The child capability's id rule (`<parent ID>.<seq>`) is frozen with ADR-0016's j
   type fetched by ORAS, with the same `sha256` rule.
 - **Modules from third parties:** require the attestation check, or signatures (sigstore), at
   lock time.
+- **Agents need to propose whole modules:** give the store a bundle kind that `accept` unpacks
+  into a directory by one rename.
 - **A closure outgrows 4 MiB:** store the closure as files beside `start.json`, published by one
   directory rename, and keep `start.json` as its digest.
