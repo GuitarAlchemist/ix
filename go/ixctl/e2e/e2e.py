@@ -141,7 +141,7 @@ def build():
                    cwd=str(REPO / "go" / "ixctl"), check=True)
     env = {**os.environ, "CARGO_PROFILE_DEV_DEBUG": "0", "CARGO_INCREMENTAL": "0"}
     r = subprocess.run(["cargo", "build", "-q", "-p", "ix-stream", "--example", "pod",
-                        "-p", "ix-ctl", "--example", "ixql-ctl", "-p", "ix-skill", "--bin", "ix",
+                        "-p", "ix-ctl", "--example", "ixql-ctl", "-p", "ix-cli", "--bin", "ix",
                         "--message-format=json"],
                        cwd=str(REPO), env=env, check=True, capture_output=True)
     copied = []

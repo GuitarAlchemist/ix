@@ -1,5 +1,5 @@
 {
-  "note": "Tests that can return before reaching an assertion when their environment is missing, and so report a pass having checked nothing. Checked by `ix doctor` (see crates/ix-skill/src/doctor/silent_skips.rs). Entries are keyed by file and test name, not line. Every entry needs a non-empty `reason`: the point of this file is that a human said why a test may pass without asserting. `kind` is `environment` (the skip covers something CI cannot reasonably provide: a sibling repo's build, a gitignored artifact, a local binary; expected to stay) or `tracked` (nothing environmental stops it being checked; requires an `issue` and counts as outstanding debt). Entries whose test no longer skips are reported as stale and must be removed. This list is a baseline of what was already true when the check landed; it is not a place to park new skips.",
+  "note": "Tests that can return before reaching an assertion when their environment is missing, and so report a pass having checked nothing. Checked by `ix doctor` (see crates/ix-cli/src/doctor/silent_skips.rs). Entries are keyed by file and test name, not line. Every entry needs a non-empty `reason`: the point of this file is that a human said why a test may pass without asserting. `kind` is `environment` (the skip covers something CI cannot reasonably provide: a sibling repo's build, a gitignored artifact, a local binary; expected to stay) or `tracked` (nothing environmental stops it being checked; requires an `issue` and counts as outstanding debt). Entries whose test no longer skips are reported as stale and must be removed. This list is a baseline of what was already true when the check landed; it is not a place to park new skips.",
   "allow": [
     {
       "file": "crates/ix-agent/tests/autonomous_render_audit.rs",
@@ -106,37 +106,37 @@
       "issue": null
     },
     {
-      "file": "crates/ix-skill/src/verbs/compile.rs",
+      "file": "crates/ix-cli/src/verbs/compile.rs",
       "test": "coverage_baseline_tfidf_over_probe_corpus",
       "kind": "environment",
       "reason": "Reads state/thinking-machine/coverage-probes.jsonl, which is committed, so CI runs it. It skips only when the crate is tested outside the workspace tree (Codex #79 P2)."
     },
     {
-      "file": "crates/ix-skill/src/verbs/compile.rs",
+      "file": "crates/ix-cli/src/verbs/compile.rs",
       "test": "embedding_sweep_english_models_over_probe_corpus",
       "kind": "environment",
       "reason": "Behind the `embeddings` feature, which no CI job enables, so this test is never compiled there; state/registry/dark-features.allow.json already tracks that. When enabled, the guard fires only outside the workspace tree, since the probe corpus is committed; the real dependency is the model download."
     },
     {
-      "file": "crates/ix-skill/src/verbs/compile.rs",
+      "file": "crates/ix-cli/src/verbs/compile.rs",
       "test": "ood_scoring_method_sweep_over_probe_corpus",
       "kind": "environment",
       "reason": "Behind the `embeddings` feature, which no CI job enables, so this test is never compiled there; state/registry/dark-features.allow.json already tracks that. When enabled, the guard fires only outside the workspace tree, since the probe corpus is committed; the real dependency is the model download."
     },
     {
-      "file": "crates/ix-skill/src/verbs/embed_coverage.rs",
+      "file": "crates/ix-cli/src/verbs/embed_coverage.rs",
       "test": "embedding_ranks_in_domain_above_out_of_domain",
       "kind": "environment",
       "reason": "Behind the `embeddings` feature, which no CI job enables, so this test is never compiled there; state/registry/dark-features.allow.json already tracks that. When enabled, it skips when bge-base-en cannot be loaded (offline, or no ONNX runtime), which a hosted runner without a model cache cannot provide."
     },
     {
-      "file": "crates/ix-skill/src/verbs/pipeline.rs",
+      "file": "crates/ix-cli/src/verbs/pipeline.rs",
       "test": "default_constitution_matches_committed_pin",
       "kind": "environment",
       "reason": "Reads the default constitution from the Demerzel submodule and the committed pin in state/governance/constitution-pins.json. CI checks out submodules recursively, so it runs there; it skips only outside the workspace or without the submodule."
     },
     {
-      "file": "crates/ix-skill/tests/local_embed_cli.rs",
+      "file": "crates/ix-cli/tests/local_embed_cli.rs",
       "test": "local_embed_emits_vectors_from_a_preseeded_cache",
       "kind": "environment",
       "reason": "Needs IX_TEST_FASTEMBED_CACHE pointing at a pre-downloaded fastembed model cache. CI never downloads ONNX models (see the `embeddings` entry in dark-features.allow.json). Skips 7 assertions.",

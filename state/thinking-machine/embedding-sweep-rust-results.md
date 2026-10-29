@@ -5,7 +5,7 @@ increment). Replaces the earlier Python sweep with an **in-process pure-Rust**
 path (`fastembed-rs` on the `ort`/ONNX Runtime crate), per the 2026-06-07
 deep-research decision (`reference_embedding_gate_runtime_fastembed`).
 
-Reproduce: `cargo test -p ix-skill --features embeddings embedding_sweep_english_models_over_probe_corpus -- --nocapture`
+Reproduce: `cargo test -p ix-cli --features embeddings embedding_sweep_english_models_over_probe_corpus -- --nocapture`
 (feature-gated; CI's `--workspace` default-feature path never pulls ONNX).
 First run downloads each model (~270–670 MB) + the ONNX Runtime native lib.
 

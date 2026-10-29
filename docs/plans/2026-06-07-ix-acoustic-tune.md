@@ -1,7 +1,7 @@
 # IX ↔ GA acoustic auto-tuning (`ix-acoustic-tune`)
 
 **Date:** 2026-06-07
-**Status:** Phase 1 — contract **signed off 2026-06-07**; optimizer core (CMA-ES, ask/tell, features, spectral loss) shipped in `ix-acoustic-tune`; orchestrator + MCP skills in progress.
+**Status:** Phase 1 — contract **signed off 2026-06-07**; optimizer core (CMA-ES, ask/tell, features, spectral loss) shipped in `ix-acoustic-tune`; orchestrator + MCP tools in progress.
 
 **Sign-off (2026-06-07) — the one-way doors, decided:**
 - **Transport:** JSON-on-disk sidecar (`tune-request.json` / `tune-result.json`), the established GA↔IX pattern.
@@ -31,7 +31,7 @@ that nobody is actually running.
 
 ## Key finding (corrects an earlier mischaracterization)
 
-IX's `optimize` **skill** only exposes named benchmark functions
+IX's `optimize` **tool** only exposes named benchmark functions
 (`handlers.rs:172` hardcodes `sphere`/`rosenbrock`/`rastrigin`) — but the **crate**
 underneath already optimizes arbitrary objectives:
 `ClosureObjective<F: Fn(&Array1<f64>) -> f64>` (`ix-optimize/src/traits.rs:38`) wraps any
@@ -73,7 +73,7 @@ chatbot, …).
 2. **`features.rs`** — `ix-signal/src/features.rs` (M, high). Centroid, rolloff(85%), flux, bandwidth, flatness, band-energy ratios, RMS/decay envelope, autocorrelation-f0 (peak-pick). Each a few-line reduction over `magnitude_spectrum`/`welch_psd`/`spectrogram`. Field-named to mirror GA's `compute-spectral-profile.js`.
 3. **`spectral_loss.rs`** — `ix-signal/src/spectral_loss.rs` (S, high). Multi-resolution STFT loss (log-mag L1 + spectral-convergence over 2–3 FFT sizes) + low-weight centroid term. Magnitude-only (phase discarded) — standard for param estimation.
 4. **CMA-ES** — `ix-optimize/src/cmaes.rs` (M, high). The de-facto standard for ~5-param non-convex synth matching; a step engine behind `AskTell`, box-constrained to the GA clamps. PSO/SA stay as fallbacks. *Reuses the `ObjectiveFunction` trait + ix-math eigendecomposition for the covariance update.*
-5. **MCP `#[ix_skill]` surface** — `ix-agent/src/skills/acoustic_tune.rs` (M, med). `acoustic_tune_{init,ask,tell,recommend}` + stateless `spectral_features`/`spectral_distance`. Template: `skills/assumption_graph.rs`.
+5. **MCP `#[ix_tool]` surface** — `ix-agent/src/registered/acoustic_tune.rs` (M, med). `acoustic_tune_{init,ask,tell,recommend}` + stateless `spectral_features`/`spectral_distance`. Template: `registered/assumption_graph.rs`.
 6. **`ix-acoustic-tune`** crate (lib + bin) — orchestrates ask → [host renders] → tell over the contract; thin.
 7. *(DEFERRED, demand-gated)* `ix-io/src/wav.rs` (only if IX must own extraction) and a DDSP differentiable spectral loss via `ix-autograd` `fft-autograd` (research-grade; not needed at 5 params).
 
@@ -84,7 +84,7 @@ chatbot, …).
 3. `ix-signal::spectral_loss` (start with plain L1-on-STFT — near-best + simplest for plucked-string; escalate to mel-MSS+centroid only if timbrally off).
 4. `ix-optimize::ask_tell` + `ix-acoustic-tune` (closes the loop end-to-end with PSO/SA IX already has).
 5. `ix-optimize::cmaes` (becomes the default; heuristic init from target analysis: rolloff→brightness, f0→delay, RMS-decay→damping).
-6. `ix-agent` skill surface + instrumentation (baseline `SPECTRAL_SCORE`, clip/silence guardrail).
+6. `ix-agent` tool surface + instrumentation (baseline `SPECTRAL_SCORE`, clip/silence guardrail).
 7. *(deferred)* WAV I/O, DDSP loss.
 
 ## Contract DRAFT — `urn:ix:acoustic-tune:v0.1-draft`
@@ -234,7 +234,7 @@ add to `param_names` for each; ship each only through the ABX gate.
 FFT/rfft/magnitude_spectrum (`ix-signal/fft.rs`), STFT/spectrogram/welch_psd
 (`spectral.rs`), DCT-for-MFCC (`dct.rs`), windows (`window.rs`), autocorrelation
 (`correlation.rs`), resampling (`sampling.rs`), `ObjectiveFunction`/`ClosureObjective`
-(`traits.rs` — **unchanged**), PSO/SA step engines, `#[ix_skill]` macro + `ix-registry`,
+(`traits.rs` — **unchanged**), PSO/SA step engines, `#[ix_tool]` macro + `ix-registry`,
 `ix-io::json_io` for the handoff, and `ix-autograd` ops (only if the deferred DDSP path is
 ever wanted). **The realtime f32 Karplus–Strong kernel + WAV decode stay in GA** — pass
 feature vectors / magnitude frames as JSON; IX renders nothing and needs no WAV reader on

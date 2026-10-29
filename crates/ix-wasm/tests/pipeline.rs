@@ -6,7 +6,7 @@ use ix_pipeline::spec::PipelineSpec;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-// Links ix-wasm, so its `#[ix_skill]` entry reaches the registry.
+// Links ix-wasm, so its `#[ix_tool]` entry reaches the registry.
 use ix_wasm as _;
 
 /// Echoes stdin to stdout.

@@ -4,7 +4,7 @@
 
 Add probabilistic grammar infrastructure to ix so TARS can delegate
 grammar-weighted MCTS search, replicator dynamics simulation, and Bayesian
-weight updates to fast Rust implementations via the `ix-skill` CLI and
+weight updates to fast Rust implementations via the `ix-cli` CLI and
 `ix-agent` MCP server.
 
 ## Context
@@ -67,7 +67,7 @@ src/
    - Input: `{ grammar_ebnf: "...", max_iterations, exploration, max_depth }`
    - Output: `{ best_derivation: [...], reward, iterations }`
 
-### CLI (ix-skill)
+### CLI (ix-cli)
 
 ```
 ix grammar weights --rules rules.json --observe rule1:success --temperature 1.0

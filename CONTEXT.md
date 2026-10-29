@@ -9,7 +9,7 @@
 
 A Rust workspace (77 crates) implementing foundational **ML/math algorithms** and
 **AI governance** as composable crates, exposed via an MCP server (`ix-agent`) and
-CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (**ix** + **tars** + **ga**
+CLI (`ix-cli`). Part of the GuitarAlchemist ecosystem (**ix** + **tars** + **ga**
 + **Demerzel**). Source-of-truth for cross-repo collaboration is JSON-on-disk
 contracts (see `docs/contracts/`), not runtime coupling.
 

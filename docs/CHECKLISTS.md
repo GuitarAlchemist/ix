@@ -3,7 +3,7 @@
 > **Before you open or merge a PR, run:**
 >
 > ```bash
-> cargo run -p ix-skill --bin ix -- doctor
+> cargo run -p ix-cli --bin ix -- doctor
 > ```
 >
 > Add `--full` to also run the clippy and test invocation CI uses. `ix doctor`
@@ -24,7 +24,7 @@ in `ix doctor` instead of here.
 
 | Check | What fails it | Fix |
 | --- | --- | --- |
-| `registry-snapshot` | The linked build's skills or MCP tools differ from `state/registry/skills.snapshot.json` | `ix doctor --write`, then review the **name** diff |
+| `registry-snapshot` | The linked build's registry tools or MCP tools differ from `state/registry/tools.snapshot.json` | `ix doctor --write`, then review the **name** diff |
 | `orphan-traits` | A `pub trait` has no implementor, no generic bound, and no allowlist entry | Delete it, implement it, or record it in `state/registry/orphan-traits.allow.json` with a `reason` |
 | `dark-features` | A cargo feature no workspace member enables gates 100+ lines or at least one test, with no allowlist entry | Enable it from a workspace member, delete the code, or record it in `state/registry/dark-features.allow.json` with a `reason` |
 | `silent-skips` | A `#[test]` returns early when its environment is missing and so can pass without asserting, with no allowlist entry | Make the skip impossible where the test must run (install the tool in CI, fail closed on a "required" variable), or record it in `state/registry/silent-skips.allow.json` with a `reason` |
@@ -50,13 +50,13 @@ Five sites, all in the same PR. Two PRs open at once each touched all five and
 conflicted on every one of them; this list exists so the next one sees them
 before opening the diff.
 
-1. `crates/ix-skill/src/doctor/<name>.rs` exposing
+1. `crates/ix-cli/src/doctor/<name>.rs` exposing
    `pub fn check(root: &Path) -> super::CheckResult`. Every `Warn` or `Fail`
    result carries a `remedy`: `every_non_ok_check_carries_a_remedy` enforces it.
 2. `pub mod <name>;` and the call inside `run()` in
-   `crates/ix-skill/src/doctor/mod.rs`.
+   `crates/ix-cli/src/doctor/mod.rs`.
 3. A row in the table above, in this file and in `docs/fr/CHECKLISTS.md`.
-4. The `Doctor` doc comment in `crates/ix-skill/src/main.rs`: it is the
+4. The `Doctor` doc comment in `crates/ix-cli/src/main.rs`: it is the
    `ix doctor --help` text, and it lists the checks by name.
 5. If the check has an allowlist, `state/registry/<name>.allow.json`, every
    entry with a `reason`; a stale entry warns, a reasonless one fails.
@@ -64,17 +64,17 @@ before opening the diff.
 Prove it before it lands: the check must be red on this workspace before its
 fixes and green after (the fixture tests on scratch repos pin the behaviour; one
 test scans the live workspace). In CI it runs twice: through
-`doctor_is_green_on_this_workspace` (`cargo test -p ix-skill`) and as the
+`doctor_is_green_on_this_workspace` (`cargo test -p ix-cli`) and as the
 `ix doctor` step of `.github/workflows/ci.yml`, where it has a line of its own.
 
 ---
 
-## Adding an MCP skill / tool
+## Adding an MCP tool
 
 1. Write the algorithm in its domain crate. Annotate the wrapper with
-   `#[ix_skill(...)]` so the link-time registry picks it up.
-2. If the crate is new, add it to `ix_skill::force_link` in
-   `crates/ix-skill/src/lib.rs` — otherwise LTO strips the distributed-slice
+   `#[ix_tool(...)]` so the link-time registry picks it up.
+2. If the crate is new, add it to `ix_cli::force_link` in
+   `crates/ix-cli/src/lib.rs` — otherwise LTO strips the distributed-slice
    entry and the registry silently comes up short.
 3. Add the tool name to `EXPECTED` in `crates/ix-agent/tests/parity.rs`. This
    list stays hand-maintained on purpose: it is the rate-limiter that forces
@@ -98,7 +98,7 @@ test scans the live workspace). In CI it runs twice: through
    the parity test
    `every_registry_backed_tool_has_an_explicit_approval_classification` fails
    until it is classified.
-5. Run `ix doctor --write` and commit the `skills.snapshot.json` diff. The diff
+5. Run `ix doctor --write` and commit the `tools.snapshot.json` diff. The diff
    should show exactly the names you intended, and nothing else.
 6. If the tool is behind a non-default cargo feature, add its name to
    `feature_gated_tools` in the snapshot so both build configurations stay green.
@@ -121,7 +121,7 @@ test scans the live workspace). In CI it runs twice: through
 ## Adding or changing a public crate API
 
 1. Check the crate's tier in `crate-maturity.toml`. **Stable** crates are gated.
-2. Run `cargo run -p ix-skill --bin ix -- stable-surface`. The gate hashes
+2. Run `cargo run -p ix-cli --bin ix -- stable-surface`. The gate hashes
    `pub `-prefixed lines, so adding a `pub fn` trips it while changing a
    function body does not.
 3. If a Stable crate's hash changes, the PR needs an explicit version bump or a

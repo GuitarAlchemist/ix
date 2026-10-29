@@ -30,7 +30,7 @@ The yield ceiling is the **pipeline-callable catalog**: exactly **52 arity-1 ski
 a thin slice of IX's real capability surface. Refusals fall in three categories:
 
 1. **Genuine catalog gaps — algorithm EXISTS in a library crate, but is not wrapped
-   as a callable `#[ix_skill]`:**
+   as a callable `#[ix_tool]`:**
    - **PCA / dimensionality reduction** — refused "compute the principal components",
      "PCA then k-means". `ix-unsupervised` implements it (`fit_transform`, `components`,
      `explained_variance_ratio`, `reconstruct`) + `classical_mds` + t-SNE. Only
@@ -52,7 +52,7 @@ a thin slice of IX's real capability surface. Refusals fall in three categories:
 
 ## Next increment (data-driven): widen the callable catalog
 
-Wrap the **already-implemented** library algorithms as arity-1 `#[ix_skill]`s, highest
+Wrap the **already-implemented** library algorithms as arity-1 `#[ix_tool]`s, highest
 refused-frequency first — **PCA**, **DBSCAN**, **eigendecomposition** (all exist in
 `ix-unsupervised`/`ix-math`; pure additive registration + a test each). Then re-run
 this batch to confirm yield rises via **real compilations that execute**, not
@@ -76,7 +76,7 @@ aggregate via `ix pipeline hits`. Raw batch: `.ix/dogfood-2026-06-07/results.jso
 
 ## Increment 1 (shipped same session): standalone `pca` skill
 
-Wrapped `ix-unsupervised`'s PCA as an arity-1 `#[ix_skill]` (`pca`; handler
+Wrapped `ix-unsupervised`'s PCA as an arity-1 `#[ix_tool]` (`pca`; handler
 `handlers::pca`; schema `data` + `n_components`; output `transformed` /
 `explained_variance_ratio` / `components`). Auto-exposed as MCP tool `ix_pca` via
 the registry bridge (parity 77→78, registry 52→53). Three executes-tests
@@ -114,8 +114,8 @@ the registry bridge (parity 77→78, registry 52→53). Three executes-tests
 Closed finding #2. Skills can now declare an **output schema**, the proposer is
 told the real field names, and wrong refs are caught as a repair signal:
 
-- **Macro + registry:** added optional `output_schema_fn` to `#[ix_skill]` →
-  additive `SkillDescriptor.output_schema` (default `Null` = undeclared; every
+- **Macro + registry:** added optional `output_schema_fn` to `#[ix_tool]` →
+  additive `ToolDescriptor.output_schema` (default `Null` = undeclared; every
   existing skill unaffected).
 - **Catalog:** `catalog_value` now exposes `output_schema` when declared; the
   system prompt instructs the proposer to reference upstream outputs ONLY by
@@ -143,7 +143,7 @@ the structural data-binding follow-up (finding #1) is now the dominant refusal.
 
 Remaining catalog primitives (same pattern as `pca`, next passes): **DBSCAN**
 (`ix-unsupervised/src/dbscan.rs`), **eigendecomposition** (`ix-math/src/eigen.rs`
-+ `svd.rs`). Each: arity-1 `#[ix_skill]` + handler + executes-test + parity bump
++ `svd.rs`). Each: arity-1 `#[ix_tool]` + handler + executes-test + parity bump
 + dogfood re-run.
 
 ---

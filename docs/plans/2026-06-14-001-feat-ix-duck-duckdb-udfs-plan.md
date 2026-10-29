@@ -12,7 +12,7 @@ origin: docs/DUCKDB.md
 
 Add a new **`crates/ix-duck`** (library only) that embeds DuckDB in-process via `duckdb-rs`,
 behind an **optional `duck` cargo feature** (mirroring the `fastembed`/`embeddings` pattern in
-`ix-skill`). It gives IX an in-memory OLAP bench over the JSONL/Parquet IX already emits, and
+`ix-cli`). It gives IX an in-memory OLAP bench over the JSONL/Parquet IX already emits, and
 registers IX algorithms as SQL UDFs so SQL can call into the real IX crates. **Not** a production
 engine, **not** a source of truth — the analyst's bench (see `docs/DUCKDB.md`).
 
@@ -159,7 +159,7 @@ let rows = conn.prepare(
 - **Brainstorm/hub:** [docs/DUCKDB.md](../DUCKDB.md) — decisions carried forward: ix-duck crate + `duck` feature; UDF set (cosine/kdist/pca/silhouette); IX-local yield-split MVP; optick.index stays production; GA stays source of truth; skip MotherDuck; `acp` parked.
 
 ### Internal references
-- `crates/ix-skill/Cargo.toml:61-71` — the optional-dep + feature pattern to mirror.
+- `crates/ix-cli/Cargo.toml:61-71` — the optional-dep + feature pattern to mirror.
 - `crates/ix-math/src/distance.rs:18,60` — euclidean / cosine_similarity.
 - `crates/ix-unsupervised/src/pca.rs:14,26` — `PcaState` / `PCA`.
 - `crates/ix-agent/src/eval/silhouette.rs:26`, `crates/ix-voicings/src/lib.rs:611` — silhouette_score (to centralize).

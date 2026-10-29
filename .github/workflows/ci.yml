@@ -84,7 +84,7 @@ jobs:
 
       # The repo's own pre-PR gate, run where each check is visible by name.
       # Until now its checks reached CI only through one test among many
-      # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-skill`), so a
+      # (`doctor_is_green_on_this_workspace` in `cargo test -p ix-cli`), so a
       # new check such as `silent-skips` had no line of its own in any run. The
       # bar is the same as that test's: exit 4 (a failing check) is red, exit 1
       # (warnings only) is reported and stays green, exit 0 is green.
@@ -94,7 +94,7 @@ jobs:
           export IX_ROOT="$PWD"
           export IX_GOVERNANCE_DIR="$PWD/governance/demerzel"
           set +e
-          cargo run -q -p ix-skill --bin ix -- doctor
+          cargo run -q -p ix-cli --bin ix -- doctor
           code=$?
           set -e
           if [ "$code" -eq 1 ]; then
@@ -104,7 +104,7 @@ jobs:
           exit "$code"
 
       - name: Showcase smoke tests
-        # Runs all 9 advanced pipelines via the ix binary to catch skill
+        # Runs all 9 advanced pipelines via the ix binary to catch tool
         # registry regressions end-to-end. ~1s total runtime.
         shell: bash
         run: |
@@ -249,9 +249,9 @@ jobs:
           # stayed green (ix#350 review). It is the slow row.
           - crate: ix-agent
             features: maintain-gate
-          # `wasm` links ix-wasm, whose `wasm.run` skill registers at link time. No workspace
+          # `wasm` links ix-wasm, whose `wasm.run` tool registers at link time. No workspace
           # member enables it, on purpose: a dev edge from ix-wasm back to ix-stream made the
-          # dep graph cyclic, and one from ix-skill put `ix_wasm_run` on ix-agent's test-time
+          # dep graph cyclic, and one from ix-cli put `ix_wasm_run` on ix-agent's test-time
           # MCP surface through feature unification. The Go and Zig stages are #[ignore].
           - crate: ix-stream
             features: wasm

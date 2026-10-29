@@ -758,7 +758,7 @@ Example 2 — "cluster crates by complexity then classify":
     /// }
     /// ```
     ///
-    /// `output_schema` is the registry skill's declared output schema, or
+    /// `output_schema` is the registry tool's declared output schema, or
     /// `null` when undeclared (always `null` for manual tools). `tier` is what
     /// `ix_approval::ApprovalMiddleware` computes for the tool name; `gated`
     /// says whether a call actually passes through that middleware (see
@@ -1269,7 +1269,7 @@ Example 2 — "cluster crates by complexity then classify":
         })
     }
 
-    /// Merge registry-sourced skills into the tool list, with registry
+    /// Merge registry-sourced tools into the tool list, with registry
     /// taking precedence over any manual entry of the same name. Called at
     /// the end of [`Self::register_all`].
     fn merge_registry_tools(&mut self) {
@@ -1295,7 +1295,7 @@ Example 2 — "cluster crates by complexity then classify":
         self.register_all_core();
         self.register_all_advanced();
         self.register_all_governance_and_session();
-        // Merge registry-sourced skills. Registry wins on name collision.
+        // Merge registry-sourced tools. Registry wins on name collision.
         self.merge_registry_tools();
     }
 

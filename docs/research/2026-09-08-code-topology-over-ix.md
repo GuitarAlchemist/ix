@@ -214,8 +214,8 @@ joins the rest through a single call. That turns out to be very common (§4).
 | `ix-sentrux-annotations` | 8 | 9 | 2 | 3 | 1.000 | 3.833 | 87 | 482 | 0 |
 | `ix-session` | 4 | 1 | 3 | 0 | 0.100 | 0.100 | 19 | 58 | 1 |
 | `ix-signal` | 12 | 5 | 7 | 0 | 1.000 | 2.309 | 105 | 384 | 11 |
-| `ix-skill` | 19 | 41 | 3 | 25 | 1.000 | 4.577 | 406 | 1663 | 126 |
-| `ix-skill-macros` | 1 | 0 | 1 | 0 | 0.000 | 0.000 | 1 | 85 | 0 |
+| `ix-cli` | 19 | 41 | 3 | 25 | 1.000 | 4.577 | 406 | 1663 | 126 |
+| `ix-tool-macros` | 1 | 0 | 1 | 0 | 0.000 | 0.000 | 1 | 85 | 0 |
 | `ix-streeling` | 7 | 4 | 3 | 0 | 1.000 | 2.500 | 36 | 261 | 0 |
 | `ix-supervised` | 13 | 4 | 9 | 0 | 1.000 | 2.833 | 128 | 655 | 121 |
 | `ix-topo` | 5 | 3 | 3 | 1 | 0.167 | 0.191 | 190 | 162 | 42 |
@@ -246,7 +246,7 @@ joins the rest through a single call. That turns out to be very common (§4).
 | crate | units | undEdg | β₀ | β₁ |
 | --- | ---: | ---: | ---: | ---: |
 | `ix-duck` | 28 | 80 | 1 | **53** |
-| `ix-skill` | 19 | 41 | 3 | 25 |
+| `ix-cli` | 19 | 41 | 3 | 25 |
 | `ix-assumption-graph` | 12 | 28 | 2 | 18 |
 | `ix-quality-trend` | 11 | 26 | 2 | 17 |
 | `ix-code` | 12 | 23 | 2 | 13 |

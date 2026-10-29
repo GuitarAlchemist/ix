@@ -14,7 +14,7 @@ description = "Pipeline stages in any language that targets WASI, run sandboxed 
 blake3 = { workspace = true }
 # `wasm.run`, the ix-pipeline skill (src/skill.rs), registered at link time.
 ix-registry = { workspace = true }
-ix-skill-macros = { workspace = true }
+ix-tool-macros = { workspace = true }
 ix-types = { workspace = true }
 linkme = { workspace = true }
 serde_json = { workspace = true }

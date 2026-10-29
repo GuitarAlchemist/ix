@@ -20,10 +20,10 @@ cargo build --workspace
 cargo test --workspace
 
 # Run the CLI
-cargo run -p ix-skill -- optimize --algo pso --function sphere --dim 10
+cargo run -p ix-cli -- optimize --algo pso --function sphere --dim 10
 
 # Build the optional local-only text embedding adapter
-cargo build -p ix-skill --features embeddings --bin ix-embed
+cargo build -p ix-cli --features embeddings --bin ix-embed
 
 # Start the MCP server (for Claude Code integration)
 cargo run -p ix-agent
@@ -77,7 +77,7 @@ root. The CLI subcommand `ix stable-surface` is the reference implementation
 used by CI and is runnable locally:
 
 ```bash
-cargo run -p ix-skill -- stable-surface --format=json
+cargo run -p ix-cli -- stable-surface --format=json
 ```
 
 The hash is a BLAKE3 over the sorted, deduplicated set of `pub` declarations
@@ -141,8 +141,8 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 
 | Crate | Tier | Notes |
 |-------|------|-------|
-| ix-skill | Internal | CLI binary for direct command-line access |
-| ix-skill-macros | Internal | Proc macros for skill registration |
+| ix-cli | Internal | CLI binary for direct command-line access |
+| ix-tool-macros | Internal | Proc macros for tool registration |
 | ix-demo | Internal | egui desktop app with interactive tabs |
 | ix-dashboard | Internal | Dashboard utilities |
 | ix-registry | Internal | Crate registry metadata |
@@ -303,7 +303,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 | Crate | Description |
 |-------|-------------|
 | **ix-agent** | MCP server: 93 tools via JSON-RPC over stdio (algorithms + governance + federation + pipeline orchestration) |
-| **ix-skill** | CLI binary for direct command-line access to all algorithms |
+| **ix-cli** | CLI binary for direct command-line access to all algorithms |
 | **ix-demo** | egui desktop app with 22+ interactive demo tabs including governance explorer |
 
 ## Claude Code Integration

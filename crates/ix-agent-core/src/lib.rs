@@ -31,7 +31,7 @@
 //!   [`BlockCode`]
 //! - [`error`] — [`ActionError`] + the [`ActionResult`] typedef
 //! - [`handler`] — [`AgentHandler`] trait + [`LegacyAdapter`] for the
-//!   existing `fn(Value) -> Result<Value, String>` skill surface
+//!   existing `fn(Value) -> Result<Value, String>` tool surface
 //! - [`middleware`] — [`Middleware`] trait + [`MiddlewareChain`] fold
 //!
 //! ## Scope boundaries
@@ -51,9 +51,9 @@
 //! ## Backwards compatibility
 //!
 //! The existing `fn(serde_json::Value) -> Result<serde_json::Value, String>`
-//! skill signature is preserved via [`handler::LegacyAdapter`], which
+//! tool signature is preserved via [`handler::LegacyAdapter`], which
 //! wraps such functions as an [`handler::AgentHandler`] impl. The 48
-//! `#[ix_skill]`-annotated tools in ix-agent continue to work without
+//! `#[ix_tool]`-annotated tools in ix-agent continue to work without
 //! signature changes.
 
 pub mod action;

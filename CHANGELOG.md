@@ -6,6 +6,23 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Changed — IX tools are called "tool" in code, not "skill" (2026-10-28, ix#474)
+
+Breaking for code that names these items; no compatibility alias. "Skill" now means only
+a Claude Code skill.
+
+| Before | After |
+|---|---|
+| crate `ix-skill` (lib `ix_skill`) | `ix-cli` (lib `ix_cli`); the `ix` and `ix-embed` binaries keep their names |
+| crate `ix-skill-macros`, attribute `#[ix_skill(...)]` | `ix-tool-macros`, `#[ix_tool(...)]` |
+| `ix_registry::SkillDescriptor`, `SkillError`, `SkillFn`, `IX_SKILLS` | `ToolDescriptor`, `ToolError`, `ToolFn`, `IX_TOOLS` |
+| module `ix_agent::skills` | `ix_agent::registered` |
+| `state/registry/skills.snapshot.json`, key `skills` | `state/registry/tools.snapshot.json`, key `registry_tools` |
+
+- Build and run commands become `cargo run -p ix-cli --bin ix -- …`.
+- Unchanged: the `skill:` key of `ix.yaml` stages and of `ix.lock`, and the CLI nouns
+  `ix list skills`, `ix describe skill` and `ix run <skill>`.
+
 ### Security — auto-approved MCP tools confine caller paths (2026-09-16)
 
 - Every Tier 1 / Tier 2 registry tool that takes a path now refuses one outside the

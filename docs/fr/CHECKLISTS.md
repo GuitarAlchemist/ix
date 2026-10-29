@@ -3,7 +3,7 @@
 > **Avant d'ouvrir ou de fusionner une PR, exécutez :**
 >
 > ```bash
-> cargo run -p ix-skill --bin ix -- doctor
+> cargo run -p ix-cli --bin ix -- doctor
 > ```
 >
 > Ajoutez `--full` pour lancer aussi l'invocation clippy et test utilisée par la
@@ -27,7 +27,7 @@ mécanisée, sa place est dans `ix doctor`, pas ici.
 
 | Vérification | Ce qui la fait échouer | Correction |
 | --- | --- | --- |
-| `registry-snapshot` | Les skills ou outils MCP du binaire lié diffèrent de `state/registry/skills.snapshot.json` | `ix doctor --write`, puis relire le diff de **noms** |
+| `registry-snapshot` | Les outils du registre ou outils MCP du binaire lié diffèrent de `state/registry/tools.snapshot.json` | `ix doctor --write`, puis relire le diff de **noms** |
 | `orphan-traits` | Un `pub trait` n'a ni implémenteur, ni borne générique, ni entrée d'allowlist | Le supprimer, l'implémenter, ou l'inscrire dans `state/registry/orphan-traits.allow.json` avec un `reason` |
 | `dark-features` | Une feature cargo qu'aucun membre de l'espace de travail n'active protège 100 lignes ou plus, ou au moins un test, sans entrée d'allowlist | L'activer depuis un membre de l'espace de travail, supprimer le code, ou l'inscrire dans `state/registry/dark-features.allow.json` avec un `reason` |
 | `silent-skips` | Un `#[test]` retourne tôt quand son environnement manque et peut donc passer sans rien vérifier, sans entrée d'allowlist | Rendre le saut impossible là où le test doit tourner (installer l'outil en CI, échouer fermé sur une variable « requis »), ou l'inscrire dans `state/registry/silent-skips.allow.json` avec un `reason` |
@@ -54,14 +54,14 @@ Cinq emplacements, tous dans la même PR. Deux PR ouvertes en même temps ont
 chacune touché les cinq et sont entrées en conflit sur chacun ; cette liste
 existe pour que la prochaine les voie avant d'ouvrir le diff.
 
-1. `crates/ix-skill/src/doctor/<nom>.rs` exposant
+1. `crates/ix-cli/src/doctor/<nom>.rs` exposant
    `pub fn check(root: &Path) -> super::CheckResult`. Tout résultat `Warn` ou
    `Fail` porte un `remedy` : `every_non_ok_check_carries_a_remedy` l'impose.
 2. `pub mod <nom>;` et l'appel dans `run()` de
-   `crates/ix-skill/src/doctor/mod.rs`.
+   `crates/ix-cli/src/doctor/mod.rs`.
 3. Une ligne dans le tableau ci-dessus, dans ce fichier et dans
    `docs/CHECKLISTS.md`.
-4. Le commentaire de doc de `Doctor` dans `crates/ix-skill/src/main.rs` : c'est
+4. Le commentaire de doc de `Doctor` dans `crates/ix-cli/src/main.rs` : c'est
    le texte de `ix doctor --help`, et il nomme les vérifications.
 5. Si la vérification a une allowlist, `state/registry/<nom>.allow.json`, chaque
    entrée avec un `reason` ; une entrée périmée avertit, une entrée sans raison
@@ -71,17 +71,17 @@ Prouvez-la avant de la livrer : la vérification doit être rouge sur cet espace
 de travail avant ses correctifs et verte après (les tests sur dépôts jetables
 fixent le comportement ; un seul test balaie l'espace de travail réel). En CI
 elle s'exécute deux fois : via `doctor_is_green_on_this_workspace`
-(`cargo test -p ix-skill`) et comme étape `ix doctor` de
+(`cargo test -p ix-cli`) et comme étape `ix doctor` de
 `.github/workflows/ci.yml`, où elle a sa propre ligne.
 
 ---
 
-## Ajouter un skill / outil MCP
+## Ajouter un outil MCP
 
 1. Écrivez l'algorithme dans son crate de domaine. Annotez l'enveloppe avec
-   `#[ix_skill(...)]` pour que le registre résolu à l'édition de liens le capte.
-2. Si le crate est nouveau, ajoutez-le à `ix_skill::force_link` dans
-   `crates/ix-skill/src/lib.rs` — sinon la LTO supprime l'entrée de la
+   `#[ix_tool(...)]` pour que le registre résolu à l'édition de liens le capte.
+2. Si le crate est nouveau, ajoutez-le à `ix_cli::force_link` dans
+   `crates/ix-cli/src/lib.rs` — sinon la LTO supprime l'entrée de la
    distributed-slice et le registre se retrouve silencieusement incomplet.
 3. Ajoutez le nom de l'outil à `EXPECTED` dans
    `crates/ix-agent/tests/parity.rs`. Cette liste reste maintenue à la main
@@ -109,7 +109,7 @@ elle s'exécute deux fois : via `doctor_is_green_on_this_workspace`
    le test de parité
    `every_registry_backed_tool_has_an_explicit_approval_classification` échoue
    tant qu'il n'est pas classé.
-5. Lancez `ix doctor --write` et validez le diff de `skills.snapshot.json`. Le
+5. Lancez `ix doctor --write` et validez le diff de `tools.snapshot.json`. Le
    diff doit montrer exactement les noms voulus, et rien d'autre.
 6. Si l'outil est derrière une feature cargo non par défaut, ajoutez son nom à
    `feature_gated_tools` dans l'instantané pour que les deux configurations de
@@ -139,7 +139,7 @@ elle s'exécute deux fois : via `doctor_is_green_on_this_workspace`
 
 1. Vérifiez le palier du crate dans `crate-maturity.toml`. Les crates **Stable**
    sont sous contrôle.
-2. Lancez `cargo run -p ix-skill --bin ix -- stable-surface`. La barrière hache
+2. Lancez `cargo run -p ix-cli --bin ix -- stable-surface`. La barrière hache
    les lignes préfixées par `pub `, donc ajouter un `pub fn` la déclenche alors
    que modifier un corps de fonction ne la déclenche pas.
 3. Si l'empreinte d'un crate Stable change, la PR exige une montée de version

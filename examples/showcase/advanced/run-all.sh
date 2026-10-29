@@ -7,7 +7,7 @@ IX_BIN="./target/release/ix.exe"
 [[ -f "$IX_BIN" ]] || IX_BIN="./target/release/ix"
 [[ -f "$IX_BIN" ]] || IX_BIN="./target/debug/ix.exe"
 [[ -f "$IX_BIN" ]] || IX_BIN="./target/debug/ix"
-[[ -f "$IX_BIN" ]] || { echo "error: ix binary not found — run 'cargo build -p ix-skill'" >&2; exit 1; }
+[[ -f "$IX_BIN" ]] || { echo "error: ix binary not found — run 'cargo build -p ix-cli'" >&2; exit 1; }
 IX_BIN="$(cd "$(dirname "$IX_BIN")" && pwd)/$(basename "$IX_BIN")"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

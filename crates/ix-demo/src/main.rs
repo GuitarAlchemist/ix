@@ -16,12 +16,12 @@
 
 mod demos;
 
-// Force-link ix-agent's skills module so `linkme::distributed_slice`
-// registrations (batch1 + batch2 = 34 skills) survive LTO dead-code
+// Force-link ix-agent's registered module so `linkme::distributed_slice`
+// registrations (batch1 + batch2 = 34 tools) survive LTO dead-code
 // elimination. Without this the `Run ix.yaml` + live-execution paths see
-// an empty registry. See ix-skill/src/lib.rs for the same pattern.
+// an empty registry. See ix-cli/src/lib.rs for the same pattern.
 #[allow(unused_imports)]
-use ix_agent::skills as _force_link_registry;
+use ix_agent::registered as _force_link_registry;
 
 use eframe::egui;
 
