@@ -88,15 +88,18 @@ says `run` comes back only through an amendment):
 - `agent` is a label of the closure, such as `@fold-planner//plan.star`. The child's
   `start.json` takes the bytes from the parent's closure.
 - The child's id is the only one with a dot, so it cannot collide with an id the operator chose
-  (ADR-0016 §2). Runs nest at most four deep, so an id stays within `ix-recover`'s 128-character
-  segment (`lib.rs:156`). A deeper `child` returns `{"ok": False, "err": {"code":
-  "TOO_DEEP"}}`.
+  (ADR-0016 §2). Runs nest at most four deep, and a run's `seq` stays below 10^15 (a run that
+  reaches it ends in `failed(limit)`), so each level adds at most 16 characters. Four levels on a
+  64-character root give at most 128, `ix-recover`'s segment limit (`lib.rs:156`). A deeper
+  `child` returns `{"ok": False, "err": {"code": "TOO_DEEP"}}`.
 - **The child's grant must fit what the parent has left.** Each cumulative field (`calls`,
   `ticks`, `active_seconds`, `activations`) must be at most the parent's remainder after its
   reservations. `memory_mb` must be at most the parent's own, since it is a ceiling, not a
-  quantity spent. Otherwise the step's result is
-  `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`, journaled like any other. Its intent then
-  reserves nothing, and no child is created.
+  quantity spent. The fit is computed from the fold, before the intent is written. A grant that
+  does not fit gives an intent marked `refused`, with no grant in it, and the step's result is
+  `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. The fold subtracts only intents that carry
+  a grant, so a refused one reserves nothing. A crash between that intent and its result replays
+  the same fit from the same fold, and writes the same result. No child is created.
 - **The grant is reserved in the intent.** The parent's `intent` record for a `child` step holds
   the child's grant, and the fold of ADR-0016 §8 subtracts every child intent's grant from what
   the parent has left. That record is written before the child exists, so a crash leaves either
@@ -117,9 +120,12 @@ says `run` comes back only through an amendment):
 - A child's state maps to its parent's step:
   - `done`: the child's outcome is the step's result, on the rail it came on;
   - `failed(reason)`: the failure rail, `{"code": "CHILD_FAILED", "message": reason}`;
-  - `waiting`, `unknown(seq)` or `nondeterministic(seq)`: the parent stays `waiting(child <id>)`.
-    Its status names the child and the child's state, and a person resolves the child on the
-    child.
+  - `nondeterministic(seq)`: the failure rail, `{"code": "CHILD_NONDETERMINISTIC", "seq": seq}`.
+    That state is final: the child's executable is bound in its `start.json`, so no resume and
+    no resolution changes it (ADR-0016 §6);
+  - `waiting` or `unknown(seq)`: the parent stays `waiting(child <id>)`. Its status names the
+    child and the child's state. A signal to the child, or a person's resolution of the child's
+    step (ADR-0016 §7), lets the child go on, and the parent's next resume reads the result.
 - A `different` child is the parent's own `UNKNOWN`, resolved on the parent's step (ADR-0016 §7).
 
 **6. A version is shipped as an archive with its sum, and a registry is a directory.**
@@ -170,8 +176,10 @@ an existing id and another lock is `CONFLICT`, never a silent reuse of the old c
      `--not-performed` on that step releases the reservation, and the retry reserves exactly
      once.
    - A child grant larger than the parent's remainder in any field is `GRANT_EXCEEDED`, and
-     reserves nothing. A fifth level of nesting is `TOO_DEEP`.
-   - A child that ends `failed` gives the parent `CHILD_FAILED` on the failure rail.
+     reserves nothing, also when the parent dies between the refused intent and its result: a
+     later child that fits is then created. A fifth level of nesting is `TOO_DEEP`.
+   - A child that ends `failed` gives the parent `CHILD_FAILED` on the failure rail, and one that
+     stops `NONDETERMINISTIC` gives `CHILD_NONDETERMINISTIC`.
 6. **Integrity.**
    - Packing a module twice gives the same bytes.
    - An archive whose bytes differ from its `sha256` is refused at lock time.

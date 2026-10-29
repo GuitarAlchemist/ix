@@ -68,9 +68,11 @@ run on that tree:
 - no name is defined twice;
 - one start rule: the first rule, as in the file;
 - the grammar is not cyclic: no rule derives itself without consuming a character. The check runs
-  on the lowered grammar, synthetic rules for `[ ]` and `{ }` included. It builds a graph with an
-  edge from A to B wherever A has an alternative `α B β` whose `α` and `β` can both match
-  nothing, and refuses any cycle in that graph.
+  on the typed tree's own lowering, synthetic rules for `[ ]` and `{ }` included, where a literal
+  stays a literal. Today's `EbnfGrammar` cannot carry it: there, `start = "start";` would read as
+  `start` deriving itself. The check builds a graph with an edge from A to B wherever A has an
+  alternative `α B β`, with `B` a rule name, whose `α` and `β` can both match nothing, and
+  refuses any cycle in that graph.
   - That covers unit cycles (`a = b; b = a | "x";`) and nullable repetitions (`{ [ "x" ] }`,
     which means the same as `{ "x" }`).
   - It still allows ordinary repetition such as `{ item [ sep ] }`, since every cycle there
@@ -134,8 +136,8 @@ does not parse is refused at its first error, whoever wrote it.
 
 0. **The typed reader.** It keeps literals apart from names and reports a duplicate rule, a
    missing name and a cyclic grammar, the unit cycle `a = b; b = a | "x";` included.
-   `start = "digit"; digit = "0";` accepts the text `digit`, not `0`. `{ item [ sep ] }` is
-   accepted.
+   `start = "digit"; digit = "0";` accepts the text `digit`, not `0`. `start = "start";` and
+   `{ item [ sep ] }` are accepted, not reported as cyclic.
 1. **The origami grammar becomes executable.**
    - Its geometric line is renamed (`crease`).
    - It uses the prelude, and it defines `digits` and `integer` itself.

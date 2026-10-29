@@ -1,6 +1,6 @@
 # Durable runs: a Starlark script, re-executed and answered step by step from a write-ahead journal
 
-Status: proposed (2026-10-29), revision 5 after Codex rounds 1 to 4 and the Starlark prototype
+Status: proposed (2026-10-29), revision 6 after Codex rounds 1 to 5 and the Starlark prototype
 
 Number 0016: ADR-0015 is taken by `docs/adr/0015-local-isolated-jobs.md` on the unmerged branch
 `feat/local-isolated-execution`. Related: ADR-0017 (agent DSLs) and ADR-0018 (composition and
@@ -209,32 +209,43 @@ means a new run. A grant has five finite fields, each with a default:
 | `ticks` | Starlark ticks, live work only | 10,000,000 |
 | `active_seconds` | time while a worker runs | 600 |
 | `activations` | `activation` records | 20 |
-| `memory_mb` | the worker's job, at any moment (decision 10) | 1024 |
+| `memory_mb` | the worker's job, at any moment: a hard cap (decision 10) | 1024 |
 
 `ix-loop`'s `Grant` (`calls`, `fuel`, `seconds`) is not reused, since it has no activations or
 memory.
 
 - **Calls:** one per `attempt`, so a call killed repeatedly is charged every time.
-- **Activations:** each worker writes and syncs its `activation` record before any replay, and
-  that record is its charge. A run with no activation left ends in `failed(budget)` without
-  starting a worker, so the number of activations is finite whatever kills them.
-- **Ticks and active time are paid in advance.** Before a worker runs a line, and again before
+- **Activations:** the launcher writes and syncs the `activation` record before it creates the
+  worker, while it holds both locks, and that record is the charge. It also charges a bootstrap
+  window of 5 seconds of active time. A run with no activation left ends in `failed(budget)`
+  without starting a worker, so the number of activations is finite whatever kills them.
+- **Ticks and active time are paid in advance.** Before the worker runs a line, and again before
   each lease runs out, it writes and syncs a `lease` record that charges the next 50,000 ticks and
   the next second. The charge is the record. Two guards stop work past the lease:
-  - **Ticks:** the interpreter's limit is set at the lease's end. The host refuses to go on, in
-    its periodic check, until the next lease is synced. The check runs every 1,000 ticks, so the
-    slack is at most 1,000 ticks per lease.
+  - **Ticks:** the interpreter's own limit can be set only once (`set_max_tick_count` refuses a
+    second call, `evaluator.rs:1058`), so it is set once, to the frontier's tick count plus the
+    live ticks left plus 1,000. Leases are kept by the hook Starlark calls in its check every
+    1,000 ticks (`set_check_cancelled`, called at `evaluator.rs:1115`, and also on each entry
+    into evaluation, `eval.rs:159` and `:191`). The hook counts its calls as 1,000 ticks each,
+    so an extra call makes it count early, never late. When the count reaches the lease's end,
+    the hook itself writes and syncs the next lease and sends its deadline, then lets evaluation
+    go on. If it cannot, it returns `true`, which stops evaluation, and the run ends in
+    `failed(limit)`. No tick runs more than 1,000 past a synced lease.
   - **Time:** the worker sends each synced lease's deadline to the launcher over a pipe. The
-    launcher's watchdog terminates the job when a deadline passes with no newer lease. A blocked
-    `sync_data`, a starved thread or a long native operation therefore stops the worker; it
-    cannot keep running unpaid. A killed launcher closes the job, which kills the worker.
+    launcher's watchdog starts at the bootstrap window's end, when it lets the worker run, and
+    terminates the job when a deadline passes with no newer lease. A worker that blocks before
+    its first lease, in `sync_data` or on the pipe, is therefore killed at the bootstrap
+    deadline, like a starved thread or a long native operation later. A killed launcher closes
+    the job, which kills the worker.
 
   A kill wastes at most what is already paid. Spending never exceeds the charges, plus 1,000
   ticks per lease and the watchdog's reaction time, however often the run is killed.
-- **Replay margin:** replaying up to the frontier spends ticks again. The interpreter's limit is
-  set once, at the frontier's tick count plus a fixed margin plus the live ticks left. Past the
-  frontier, the host checks the live ticks itself, at every capability call and every lease.
-  Live work can therefore borrow at most the margin.
+- **Replay is paid in time, not in ticks.** `ticks` counts live work only. Replay up to the
+  frontier re-executes exactly the frontier's tick count, which the last `result` record holds,
+  and decision 6 checks it at every step. Its leases charge the next second and no ticks. The
+  first tick past the frontier is live, and every lease from there charges ticks too. Work that
+  a killed activation did past its last `result` is therefore charged again in the next one:
+  that errs toward over-charging, never under.
 - Time spent waiting is not counted.
 
 **10. Hard bounds and process ownership come from the operating system, on Windows first.**
@@ -243,9 +254,11 @@ worker evaluates the script and writes the journal. Two locks keep one writer at
 
 - The launcher holds `owner.lock` for the whole activation, the worker's death included.
 - The worker holds `writer.lock` while it lives.
-- A new launcher takes `owner.lock` (else `BUSY`), then waits for `writer.lock` before it starts
-  a worker. A worker that outlives its launcher therefore stops any new one from writing until it
-  is dead.
+- A new launcher takes `owner.lock` (else `BUSY`), then waits for `writer.lock`. A worker that
+  outlives its launcher therefore stops any new one from writing until it is dead. Holding both,
+  the launcher appends the `activation` record (decision 9), then releases `writer.lock` and
+  starts the worker, which takes it. No other launcher can come in between, since `owner.lock`
+  stays held.
 - When a bound kills the worker, the launcher, which still holds `owner.lock`, waits for
   `writer.lock` and appends `failed(limit)`. Only then does it release `owner.lock`. No `resume`
   can start in between.
@@ -261,11 +274,12 @@ already does (`go/ixctl/proc_windows.go:104`):
 A `claude` subprocess (`node.rs:133`) and every other descendant therefore live in the job, and
 a killed worker leaves no call running beside the next attempt. The job's limits are job-wide:
 
-- **Memory.** A notification limit at `memory_mb` sends a message to a completion port; the
-  system guarantees that message. A hard cap an eighth above refuses commits meanwhile, as in
-  `proc_windows.go:108` and `:252`. The launcher listens on the port. When the notification
-  arrives, it terminates the job and appends `failed(limit)`, even if the process that hit the
-  limit handled its failed allocation and went on.
+- **Memory.** The job's hard commit cap is `memory_mb`, so the job never holds more. A
+  notification limit at seven eighths of it sends a message to a completion port; the system
+  guarantees that message. That is `ixctl`'s pair of limits (`proc_windows.go:108` and `:252`),
+  with the grant as the hard cap rather than the notification. The launcher listens on the port.
+  When the notification arrives, it terminates the job and appends `failed(limit)`, even if the
+  process that hit the limit handled its failed allocation and went on.
 - **CPU time.** A job-wide CPU-time limit backs up the lease watchdog of decision 9.
 
 A single expensive native operation, such as `sorted(range(100_000_000))`, hits the memory limit
@@ -314,7 +328,11 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
    - `sorted(range(100_000_000))` ends in `failed(limit)`, and the machine keeps its memory.
    - A descendant of the worker that allocates past `memory_mb` and handles the refusal still
      ends the run in `failed(limit)`.
-   - A worker whose lease sync is blocked is terminated at the lease's deadline.
+   - A worker whose lease sync is blocked is terminated at the lease's deadline, and one blocked
+     before its first lease, at the bootstrap deadline.
+   - A loop of 200,000 ticks writes four leases through the check hook and finishes; the same
+     loop with lease writes made to fail ends in `failed(limit)` within 1,000 ticks of the lease.
+   - The job never commits more than `memory_mb`.
    - A grandchild started by the worker at its first instruction is inside the job.
    - A `resume` launched while the launcher appends `failed(limit)` is `BUSY`.
 6. **Both resolutions.** After an `UNKNOWN` `say`, `--performed` never speaks again, and
@@ -332,7 +350,8 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
      gap, a duplicate and a `result` without its `intent`.
    - Injected write and sync failures give `failed(journal)`.
 10. **Budget across waits.** A script that spends most of its ticks before the wait still finishes
-    after it, and live work after the frontier never gets more than the margin.
+    after it: replaying to the frontier charges time and no ticks, and the live ticks after it
+    never exceed what is left of the grant, plus 1,000.
 11. **State rebuilt.** After each resume, every field of decision 8 equals what an unkilled run
     holds, proposal bytes and notional cost included.
 12. **Ownership and signals.** A second process on a running run is `BUSY`; a second, different
