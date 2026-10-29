@@ -121,11 +121,15 @@ It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
 
 Each record is flushed and `sync_data`ed before its value reaches the script, or before its
 effect starts. A failed write ends the run in `failed(journal)`: the worker stops, and the
-launcher appends the record after the worker's death. If that write fails too, nothing is
+launcher appends the record after the worker's death. Before it appends, the launcher opens the
+journal as `resume` does. If the last valid record is already `done` or `failed(reason)`, whose
+own sync failed after its bytes were written, it appends nothing, and that record is the state:
+a run has one terminal record. If the launcher's write fails too, nothing is
 recorded, and the run stays in the state of its last valid record. The next `resume` goes on
 from there, and repeats nothing, since every record before was written ahead: a step cut after
 its effect is `UNKNOWN` (decision 7). On open, every LF-terminated record must parse and keep
-the `seq` and phase order: no gap, no duplicate, no `result` without its `intent`. Only a
+the `seq` and phase order: no gap, no duplicate, no `result` without its `intent`, and no
+record after a terminal one. Only a
 final fragment without an LF may be dropped, and it is truncated and synced before anything is
 appended. Durability is claimed for process kills only. No power-loss claim is made, as in
 `ix-recover`.
@@ -363,7 +367,9 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
    - A torn final fragment is truncated, and the run resumes.
    - A malformed record that ends in an LF, interior or last, is `Corrupt`, and so are a sequence
      gap, a duplicate and a `result` without its `intent`.
-   - Injected write and sync failures give `failed(journal)`.
+   - Injected write and sync failures give `failed(journal)`, except a sync failure on `done`
+     or on a launcher's `failed(limit)`: that record stays the state, and no second terminal
+     record follows it.
 10. **Budget across waits.** A script that spends most of its ticks before the wait still finishes
     after it: replaying to the frontier charges time and no ticks, and the live ticks after it
     never exceed what is left of the grant, plus 1,000.

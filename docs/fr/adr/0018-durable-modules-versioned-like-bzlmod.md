@@ -112,8 +112,8 @@ l'ADR-0016 §5 (elle dit que `run` ne revient que par un amendement) :
   `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. La réduction soustrait l'allocation de chaque
   intention `child` sauf d'une intention refusée et d'une intention résolue `--not-performed`, si
   bien qu'une intention refusée ne réserve rien. Un plantage entre cette intention et son résultat
-  rejoue le même test à partir de la même réduction, vérifie la même empreinte d'arguments, et
-  écrit le même résultat. Aucun enfant n'est créé.
+  rejoue le refus que l'intention enregistre, sans refaire le test, puisque la réduction a avancé
+  depuis. Le rejeu vérifie la même empreinte d'arguments, et écrit le même résultat. Aucun enfant n'est créé.
 - **L'allocation est réservée dans l'intention.** L'enregistrement `intent` du parent pour une
   étape `child` contient l'allocation de l'enfant, et la réduction de l'ADR-0016 §8 soustrait
   l'allocation de chaque intention d'enfant de ce qui reste au parent, sauf d'une intention refusée

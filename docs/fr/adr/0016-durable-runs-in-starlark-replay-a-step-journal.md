@@ -136,12 +136,16 @@ Il se trouve dans `runs/<ID>/journal.jsonl`, un enregistrement JSON terminé par
 Chaque enregistrement est vidé puis synchronisé par `sync_data` avant que sa valeur n'atteigne le
 script, ou avant que son effet ne commence. Une écriture qui échoue termine le run en
 `failed(journal)` : le worker s'arrête, et le lanceur ajoute l'enregistrement après la mort du
-worker. Si cette écriture échoue elle aussi, rien n'est enregistré, et le run reste dans l'état de
+worker. Avant d'ajouter, le lanceur ouvre le journal comme le fait `resume`. Si le dernier
+enregistrement valide est déjà `done` ou `failed(reason)`, dont la synchronisation a échoué après
+l'écriture de ses octets, il n'ajoute rien, et cet enregistrement est l'état : un run a un seul
+enregistrement terminal. Si l'écriture du lanceur échoue elle aussi, rien n'est enregistré, et le
+run reste dans l'état de
 son dernier enregistrement valide. Le `resume` suivant reprend à partir de là, et ne répète rien,
 puisque chaque enregistrement antérieur a été écrit d'avance : une étape coupée après son effet
 est `UNKNOWN` (décision 7). À l'ouverture, chaque enregistrement terminé par LF doit s'analyser et
 respecter l'ordre des `seq` et des phases : pas de trou, pas de doublon, pas de `result` sans son
-`intent`. Seul un fragment final sans LF peut être abandonné, et il est tronqué et synchronisé
+`intent`, et aucun enregistrement après un enregistrement terminal. Seul un fragment final sans LF peut être abandonné, et il est tronqué et synchronisé
 avant tout ajout. La durabilité n'est revendiquée que pour les arrêts forcés de processus. Rien
 n'est revendiqué pour une coupure de courant, comme dans `ix-recover`.
 
@@ -409,7 +413,9 @@ vérification ci-dessous tient :
    - Un fragment final déchiré est tronqué, et le run reprend.
    - Un enregistrement malformé qui se termine par un LF, intérieur ou dernier, est `Corrupt`, de
      même qu'un trou de séquence, un doublon et un `result` sans son `intent`.
-   - Des échecs d'écriture et de synchronisation injectés donnent `failed(journal)`.
+   - Des échecs d'écriture et de synchronisation injectés donnent `failed(journal)`, sauf un échec
+     de synchronisation sur `done` ou sur le `failed(limit)` d'un lanceur : cet enregistrement
+     reste l'état, et aucun second enregistrement terminal ne le suit.
 10. **Budget à travers les attentes.** Un script qui dépense l'essentiel de ses ticks avant
     l'attente finit quand même après elle : le rejeu jusqu'à la frontière impute du temps et aucun
     tick, et les ticks en direct au-delà ne dépassent jamais ce qui reste de l'allocation, plus

@@ -102,8 +102,9 @@ says `run` comes back only through an amendment):
   `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. The fold subtracts the grant of every
   `child` intent except a refused one and one resolved `--not-performed`, so a refused one
   reserves nothing. A crash between that
-  intent and its result replays the same fit from the same fold, checks the same args digest,
-  and writes the same result. No child is created.
+  intent and its result replays the refusal the intent records, without computing the fit
+  again, since the fold has moved on. Replay checks the same args digest and writes the same
+  result. No child is created.
 - **The grant is reserved in the intent.** The parent's `intent` record for a `child` step holds
   the child's grant, and the fold of ADR-0016 §8 subtracts the grant of every child intent from
   what the parent has left, except a refused one and one resolved `--not-performed`. That record is written before the child exists, so
