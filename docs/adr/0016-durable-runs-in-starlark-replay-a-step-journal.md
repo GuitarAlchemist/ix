@@ -120,12 +120,13 @@ It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
 - `done` or `failed(reason)`.
 
 Each record is flushed and `sync_data`ed before its value reaches the script, or before its
-effect starts. A failed write ends the run in `failed(journal)`: the worker stops, and the
-launcher appends the record after the worker's death. Before it appends, the launcher opens the
-journal as `resume` does. If the last valid record is already `done` or `failed(reason)`, whose
-own sync failed after its bytes were written, it appends nothing, and that record is the state:
-a run has one terminal record. If the launcher's write fails too, nothing is
-recorded, and the run stays in the state of its last valid record. The next `resume` goes on
+effect starts. A run has one terminal record. A failed write or sync ends the run in
+`failed(journal)`, with one exception: a terminal record (`done` or any `failed(reason)`) whose
+bytes reached the file with their LF is the state, even if its sync failed. The worker stops,
+and the launcher, after the worker's death (at once when the failed write is its own), opens the
+journal as `resume` does. If the last valid record is terminal, it appends nothing; otherwise
+it appends `failed(journal)`. If that write fails before its LF, nothing is recorded, and the
+run stays in the state of its last valid record. The next `resume` goes on
 from there, and repeats nothing, since every record before was written ahead: a step cut after
 its effect is `UNKNOWN` (decision 7). On open, every LF-terminated record must parse and keep
 the `seq` and phase order: no gap, no duplicate, no `result` without its `intent`, and no
@@ -191,7 +192,9 @@ With the source and the executable bound (decision 2), a mismatch means a bug in
 script.
 
 **7. A person resolves `UNKNOWN`; the script decides what follows.** `ix-durable resolve ID seq
---performed <value.json> | --not-performed` appends a `resolution` record. No script can reach
+--performed <value.json> | --not-performed` appends a `resolution` record. It holds both locks
+(decision 10), opens the journal, and appends only while that step is still `UNKNOWN`: a second
+`resolve` of the same step is refused, and writes nothing. No script can reach
 that command (as with `accept`, ADR-0011 §6). After `--performed`, the step returns that value
 and the effect is never repeated. After `--not-performed`, the step returns
 `{"ok": False, "err": {"code": "NOT_PERFORMED"}}`, and the script may call the capability again
@@ -276,6 +279,8 @@ worker evaluates the script and writes the journal. Two locks keep one writer at
 - When a bound kills the worker, the launcher, which still holds `owner.lock`, waits for
   `writer.lock` and appends `failed(limit)`. Only then does it release `owner.lock`. No `resume`
   can start in between.
+- `resolve` takes both locks the same way (else `BUSY`), so it never writes beside a worker, a
+  launcher or another `resolve` (decision 7).
 
 The bounds hold for the whole process tree, not one process. The launcher does what `ixctl`
 already does (`go/ixctl/proc_windows.go:104`):
@@ -367,9 +372,15 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
    - A torn final fragment is truncated, and the run resumes.
    - A malformed record that ends in an LF, interior or last, is `Corrupt`, and so are a sequence
      gap, a duplicate and a `result` without its `intent`.
-   - Injected write and sync failures give `failed(journal)`, except a sync failure on `done`
-     or on a launcher's `failed(limit)`: that record stays the state, and no second terminal
-     record follows it.
+   - An injected write or sync failure on a record that is not terminal gives `failed(journal)`.
+   - A sync failure on a complete terminal record (`done`, a worker's `failed(reason)`, a
+     launcher's `failed(limit)` or `failed(journal)`) leaves that record the state, and no
+     second terminal record follows it.
+   - A launcher's `failed(journal)` cut before its LF leaves the run in the state of its last
+     valid record, and `resume` goes on from there.
+   - A valid record after a terminal one is `Corrupt`.
+   - Two concurrent `resolve` of one step: one appends, the other gets `BUSY` or is refused, and
+     the journal opens clean.
 10. **Budget across waits.** A script that spends most of its ticks before the wait still finishes
     after it: replaying to the frontier charges time and no ticks, and the live ticks after it
     never exceed what is left of the grant, plus 1,000.

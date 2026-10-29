@@ -134,13 +134,14 @@ Il se trouve dans `runs/<ID>/journal.jsonl`, un enregistrement JSON terminé par
 - `done` ou `failed(reason)`.
 
 Chaque enregistrement est vidé puis synchronisé par `sync_data` avant que sa valeur n'atteigne le
-script, ou avant que son effet ne commence. Une écriture qui échoue termine le run en
-`failed(journal)` : le worker s'arrête, et le lanceur ajoute l'enregistrement après la mort du
-worker. Avant d'ajouter, le lanceur ouvre le journal comme le fait `resume`. Si le dernier
-enregistrement valide est déjà `done` ou `failed(reason)`, dont la synchronisation a échoué après
-l'écriture de ses octets, il n'ajoute rien, et cet enregistrement est l'état : un run a un seul
-enregistrement terminal. Si l'écriture du lanceur échoue elle aussi, rien n'est enregistré, et le
-run reste dans l'état de
+script, ou avant que son effet ne commence. Un run a un seul enregistrement terminal. Une
+écriture ou une synchronisation qui échoue termine le run en `failed(journal)`, à une exception
+près : un enregistrement terminal (`done` ou tout `failed(reason)`) dont les octets ont atteint le
+fichier avec leur LF est l'état, même si sa synchronisation a échoué. Le worker s'arrête, et le
+lanceur, après la mort du worker (aussitôt quand l'écriture qui a échoué est la sienne), ouvre le
+journal comme le fait `resume`. Si le dernier enregistrement valide est terminal, il n'ajoute
+rien ; sinon il ajoute `failed(journal)`. Si cette écriture échoue avant son LF, rien n'est
+enregistré, et le run reste dans l'état de
 son dernier enregistrement valide. Le `resume` suivant reprend à partir de là, et ne répète rien,
 puisque chaque enregistrement antérieur a été écrit d'avance : une étape coupée après son effet
 est `UNKNOWN` (décision 7). À l'ouverture, chaque enregistrement terminé par LF doit s'analyser et
@@ -214,7 +215,9 @@ varie d'un processus à l'autre qui alimente une telle branche. Une discordance 
 (décision 2), une discordance signifie un bogue dans IX, pas un script modifié.
 
 **7. Une personne résout `UNKNOWN` ; le script décide de la suite.** `ix-durable resolve ID seq
---performed <value.json> | --not-performed` ajoute un enregistrement `resolution`. Aucun script
+--performed <value.json> | --not-performed` ajoute un enregistrement `resolution`. Il tient les
+deux verrous (décision 10), ouvre le journal, et n'ajoute l'enregistrement que tant que cette
+étape est encore `UNKNOWN` : un second `resolve` de la même étape est refusé, et n'écrit rien. Aucun script
 ne peut atteindre cette commande (comme pour `accept`, ADR-0011 §6). Après `--performed`, l'étape
 renvoie cette valeur et l'effet n'est jamais répété. Après `--not-performed`, l'étape renvoie
 `{"ok": False, "err": {"code": "NOT_PERFORMED"}}`, et le script peut appeler à nouveau la
@@ -308,6 +311,8 @@ seul rédacteur à la fois :
 - Quand une borne tue le worker, le lanceur, qui tient encore `owner.lock`, attend `writer.lock`
   et ajoute `failed(limit)`. Il ne libère `owner.lock` qu'ensuite. Aucun `resume` ne peut démarrer
   entre les deux.
+- `resolve` prend les deux verrous de la même façon (sinon `BUSY`), si bien qu'il n'écrit jamais à
+  côté d'un worker, d'un lanceur ou d'un autre `resolve` (décision 7).
 
 Les bornes valent pour tout l'arbre de processus, pas pour un seul processus. Le lanceur fait ce
 que fait déjà `ixctl` (`go/ixctl/proc_windows.go:104`) :
@@ -413,9 +418,16 @@ vérification ci-dessous tient :
    - Un fragment final déchiré est tronqué, et le run reprend.
    - Un enregistrement malformé qui se termine par un LF, intérieur ou dernier, est `Corrupt`, de
      même qu'un trou de séquence, un doublon et un `result` sans son `intent`.
-   - Des échecs d'écriture et de synchronisation injectés donnent `failed(journal)`, sauf un échec
-     de synchronisation sur `done` ou sur le `failed(limit)` d'un lanceur : cet enregistrement
-     reste l'état, et aucun second enregistrement terminal ne le suit.
+   - Un échec d'écriture ou de synchronisation injecté sur un enregistrement qui n'est pas terminal
+     donne `failed(journal)`.
+   - Un échec de synchronisation sur un enregistrement terminal complet (`done`, le
+     `failed(reason)` d'un worker, le `failed(limit)` ou le `failed(journal)` d'un lanceur) laisse
+     cet enregistrement l'état, et aucun second enregistrement terminal ne le suit.
+   - Un `failed(journal)` de lanceur coupé avant son LF laisse le run dans l'état de son dernier
+     enregistrement valide, et `resume` reprend à partir de là.
+   - Un enregistrement valide après un enregistrement terminal est `Corrupt`.
+   - Deux `resolve` concurrents d'une même étape : l'un ajoute, l'autre reçoit `BUSY` ou est
+     refusé, et le journal s'ouvre proprement.
 10. **Budget à travers les attentes.** Un script qui dépense l'essentiel de ses ticks avant
     l'attente finit quand même après elle : le rejeu jusqu'à la frontière impute du temps et aucun
     tick, et les ticks en direct au-delà ne dépassent jamais ce qui reste de l'allocation, plus

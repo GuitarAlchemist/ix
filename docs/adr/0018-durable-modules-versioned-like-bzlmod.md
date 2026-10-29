@@ -94,7 +94,8 @@ says `run` comes back only through an amendment):
   `child` returns `{"ok": False, "err": {"code": "TOO_DEEP"}}`.
 - **The child's grant must fit what the parent has left.** Each cumulative field (`calls`,
   `ticks`, `active_seconds`, `activations`) must be at most the parent's remainder after its
-  reservations and after the call that the `child` step's own `attempt` charges the parent. A
+  reservations and after the call that the `child` step's own `attempt`, written after the
+  intent, will charge the parent. A
   parent with one call left therefore cannot give a child a call. `memory_mb` must be at most the parent's own, since it is a ceiling, not a
   quantity spent. The fit is computed from the fold, before the intent is written. A grant that
   does not fit gives an intent like any other, with its canonical args, the grant included, and

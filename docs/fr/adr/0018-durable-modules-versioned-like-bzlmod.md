@@ -103,7 +103,8 @@ l'ADR-0016 §5 (elle dit que `run` ne revient que par un amendement) :
   (`lib.rs:156`). Un `child` plus profond renvoie `{"ok": False, "err": {"code": "TOO_DEEP"}}`.
 - **L'allocation de l'enfant doit tenir dans ce qui reste au parent.** Chaque champ cumulé
   (`calls`, `ticks`, `active_seconds`, `activations`) doit valoir au plus le reste du parent après
-  ses réservations et après l'appel que l'`attempt` propre de l'étape `child` impute au parent. Un
+  ses réservations et après l'appel que l'`attempt` propre de l'étape `child`, écrit après
+  l'intention, imputera au parent. Un
   parent à qui il reste un appel ne peut donc pas donner d'appel à un enfant. `memory_mb` doit
   valoir au plus celui du parent, puisque c'est un plafond, pas une quantité dépensée. Ce test se
   calcule à partir de la réduction, avant que l'intention ne soit écrite. Une allocation qui ne
