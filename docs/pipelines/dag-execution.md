@@ -355,6 +355,31 @@ returns `rows: [{"b": "it's", "total": 4.0, "label": "quote"}, {"b": "x", "total
 - **Numbers.** DuckDB prints HUGEINT, UBIGINT and DECIMAL values as strings, which keep every digit, and a DOUBLE as its shortest decimal, which reads back as the same double. Inside a LIST or STRUCT it prints HUGEINT, UBIGINT and DECIMAL values as numbers: a result holding one that would lose digits as a JSON double (beyond 64 bits, or more digits than a double holds) is refused rather than rounded. Cast it to VARCHAR in SQL.
 - **Empty results.** DuckDB prints an empty result without its column names, so the script runs a second time to read them. If a query whose result changes between runs (over `random()`, say) has rows the second time, `columns` stays empty rather than guessed.
 
+## Terminal Panes as Rows (`ix_wmux_snapshot`)
+
+`ix_wmux_snapshot` (`wmux.snapshot`) reads the wmux terminal multiplexer the pipeline runs in and answers rows: `workspaces`, `surfaces` (one per terminal, browser, markdown or diff tab, with its pane, title, working directory for terminals, Claude session id and agent state), `agents` (the background agents wmux started) and `counts`. It takes no arguments and is Tier 1: it runs only wmux's read verbs (`sidebar-state`, `tree`, `agent-state`, `agent list`) and keeps an allowlist of fields, so no screen contents, markdown bodies, file paths, URLs or command lines leave it, and a blocked reason is clipped to 300 characters with anything after `token`, `key`, `secret` or `pass` masked. Inside wmux it runs the Node client wmux injected (`WMUX_CLI`), with no shell; elsewhere set `IX_WMUX_BIN`.
+
+Its rows go straight into SQL. This pipeline lists the panes waiting on someone:
+
+```json
+{
+  "steps": [
+    { "id": "snap", "tool": "ix_wmux_snapshot", "arguments": {} },
+    {
+      "id": "blocked",
+      "tool": "ix_duckdb_query",
+      "depends_on": ["snap"],
+      "arguments": {
+        "sql": "SELECT workspace_title, title, blocked_reason FROM surfaces WHERE agent_state = 'blocked' ORDER BY workspace_title",
+        "tables": { "surfaces": "$snap.surfaces" }
+      }
+    }
+  ]
+}
+```
+
+On the snapshot captured for the tests (anonymized), `blocked` returns two rows, one of them a terminal with no title (`"title": null`). The query is pinned by `crates/ix-agent/src/skills/wmux.rs::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes`.
+
 ---
 
 ## Going Further
