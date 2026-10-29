@@ -1,7 +1,7 @@
 //! `ix_wmux_snapshot` — what the wmux terminal multiplexer is showing, as rows.
 //!
-//! It runs the wmux CLI that the operator installed (`IX_WMUX_BIN`, else `wmux` on
-//! `PATH`), read-only: `sidebar-state`, one `tree --workspace <id>` per workspace,
+//! It runs the wmux CLI (`IX_WMUX_BIN`; else, inside wmux, the Node client wmux injected;
+//! else `wmux` on `PATH`), read-only: `sidebar-state`, one `tree --workspace <id>` per workspace,
 //! `agent-state` and `agent list`. It sends no key, answers no prompt and opens
 //! nothing, so it is classified as a read (Tier 1).
 //!
@@ -16,8 +16,8 @@
 //! each is clipped. A secret typed as an ordinary word can still leave; the operator
 //! accepted that residual (2026-10-29). One budget of time and bytes bounds the whole
 //! call, finding and starting the CLI included. A descendant of the CLI that keeps its
-//! pipes open is not killed: its reader threads stay behind, one 64 KiB buffer each, until
-//! the pipes close. A CLI the system refuses to kill is left to it, not waited for.
+//! pipes open is not killed: its reader threads stay behind, at most two 64 KiB buffers
+//! each, until the pipes close or their next send finds the call gone. A CLI the system refuses to kill is left to it, not waited for.
 
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -350,21 +350,28 @@ fn looks_secret(word: &str) -> bool {
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)))
 }
 
-/// `host:port`, such as `localhost:3000`, `127.0.0.1:8080` or `[::1]:8080`; a time such as
-/// `10:30` has no letter or dot in its host.
+/// `host:port`, such as `localhost:8`, `127.0.0.1:8080`, `[::1]:8080` or `devbox:3000`. A
+/// time such as `10:30` has no letter or dot in its host, and a one-label host needs at least
+/// two port digits, so `round:4` stays a word.
 fn is_host_port(word: &str) -> bool {
     let w = word.trim_end_matches([',', '.', ')', ';']);
-    if w.starts_with('[') && w.contains("]:") {
-        return true;
+    let digits = |port: &str, fewest: usize| {
+        (fewest..=5).contains(&port.len()) && port.bytes().all(|b| b.is_ascii_digit())
+    };
+    if let Some(rest) = w.strip_prefix('[') {
+        return match rest.split_once("]:") {
+            Some((addr, port)) => addr.contains(':') && digits(port, 1),
+            None => false,
+        };
     }
     match w.rsplit_once(':') {
         Some((host, port)) => {
+            let named = host.eq_ignore_ascii_case("localhost") || host.contains('.');
             host.bytes().any(|b| b.is_ascii_alphabetic() || b == b'.')
                 && host
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
-                && (1..=5).contains(&port.len())
-                && port.bytes().all(|b| b.is_ascii_digit())
+                && digits(port, if named { 1 } else { 2 })
         }
         None => false,
     }
@@ -391,10 +398,16 @@ fn scrub(text: &str) -> String {
     mask_secrets(&words.join(" "))
 }
 
-/// `C:name`, a path relative to the current folder of drive C.
+/// `C:notes.txt`, a file relative to the current folder of drive C. Without a dot in the
+/// name (`A:ready`) it reads as a label, not a path.
 fn is_drive_relative(word: &str) -> bool {
-    let b = word.as_bytes();
-    b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] != b':'
+    let w = word.trim_end_matches([',', '.', ')', ';']);
+    let b = w.as_bytes();
+    b.len() > 2
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && b[2] != b':'
+        && w[2..].contains('.')
 }
 
 /// A key that names a secret: `token`, `secret`, `password`, `auth`… anywhere in it, or a
@@ -1121,18 +1134,26 @@ mod tests {
         }
     }
 
-    /// A secret-naming value glued to its key keeps the chain going; a drive-relative path,
+    /// A secret-naming value glued to its key keeps the chain going; a drive-relative file,
     /// a one-digit port and a bracketed IPv6 address are masked like the others.
     #[test]
     fn attached_secrets_drive_paths_and_short_or_ipv6_ports_are_masked() {
         let s = scrub(
-            "Authorization:Bearer hunter3 token=password hunter2 C:private localhost:8 \
+            "Authorization:Bearer hunter3 token=password hunter2 C:private.txt localhost:8 \
              [::1]:8080 at 10:30",
         );
         for leak in ["hunter3", "hunter2", "private", "localhost", "::1"] {
             assert!(!s.contains(leak), "{leak} in {s}");
         }
         assert!(s.ends_with("at 10:30"), "{s}");
+    }
+
+    /// Colon-joined words that are not addresses or files keep their text, or a title made of
+    /// them would leave as nothing but masks.
+    #[test]
+    fn ordinary_colon_words_are_left_alone() {
+        let text = "round:4 A:ready [status]:blocked step:x note:done";
+        assert_eq!(scrub(text), text);
     }
 
     /// A value that arrives after the deadline goes to `late`, so a CLI that started too
