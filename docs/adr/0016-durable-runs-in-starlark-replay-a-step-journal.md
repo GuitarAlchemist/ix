@@ -121,7 +121,7 @@ It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
 
 Each record is flushed and `sync_data`ed before its value reaches the script, or before its
 effect starts. A run has one terminal record. A failed write or sync ends the run in
-`failed(journal)`, with one exception: a terminal record (`done` or any `failed(reason)`) whose
+`failed(journal)` (a `resolution` aside, decision 7), with one exception: a terminal record (`done` or any `failed(reason)`) whose
 bytes reached the file with their LF is the state, even if its sync failed. The worker stops,
 and the launcher, after the worker's death (at once when the failed write is its own), opens the
 journal as `resume` does. If the last valid record is terminal, it appends nothing; otherwise
@@ -194,7 +194,10 @@ script.
 **7. A person resolves `UNKNOWN`; the script decides what follows.** `ix-durable resolve ID seq
 --performed <value.json> | --not-performed` appends a `resolution` record. It holds both locks
 (decision 10), opens the journal, and appends only while that step is still `UNKNOWN`: a second
-`resolve` of the same step is refused, and writes nothing. No script can reach
+`resolve` of the same step is refused, and writes nothing. A `resolution` whose write fails
+does not end the run: `resolve` reports the error and appends nothing more, and the next
+`resolve` finds the step still `UNKNOWN`, or resolved if the record reached the file with its
+LF. No script can reach
 that command (as with `accept`, ADR-0011 §6). After `--performed`, the step returns that value
 and the effect is never repeated. After `--not-performed`, the step returns
 `{"ok": False, "err": {"code": "NOT_PERFORMED"}}`, and the script may call the capability again
@@ -277,8 +280,9 @@ worker evaluates the script and writes the journal. Two locks keep one writer at
   starts the worker, which takes it. No other launcher can come in between, since `owner.lock`
   stays held.
 - When a bound kills the worker, the launcher, which still holds `owner.lock`, waits for
-  `writer.lock` and appends `failed(limit)`. Only then does it release `owner.lock`. No `resume`
-  can start in between.
+  `writer.lock`, opens the journal as in decision 3, and appends `failed(limit)` unless the last
+  valid record is already terminal: a worker killed after its `done` stays `done`. Only then
+  does it release `owner.lock`. No `resume` can start in between.
 - `resolve` takes both locks the same way (else `BUSY`), so it never writes beside a worker, a
   launcher or another `resolve` (decision 7).
 
@@ -379,6 +383,8 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
    - A launcher's `failed(journal)` cut before its LF leaves the run in the state of its last
      valid record, and `resume` goes on from there.
    - A valid record after a terminal one is `Corrupt`.
+   - A bound that kills the worker after its synced `done` leaves `done`, with no `failed(limit)`.
+   - A `resolution` cut before its LF leaves the step `UNKNOWN` and open to another `resolve`.
    - Two concurrent `resolve` of one step: one appends, the other gets `BUSY` or is refused, and
      the journal opens clean.
 10. **Budget across waits.** A script that spends most of its ticks before the wait still finishes

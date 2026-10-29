@@ -135,7 +135,8 @@ Il se trouve dans `runs/<ID>/journal.jsonl`, un enregistrement JSON terminé par
 
 Chaque enregistrement est vidé puis synchronisé par `sync_data` avant que sa valeur n'atteigne le
 script, ou avant que son effet ne commence. Un run a un seul enregistrement terminal. Une
-écriture ou une synchronisation qui échoue termine le run en `failed(journal)`, à une exception
+écriture ou une synchronisation qui échoue termine le run en `failed(journal)` (hors `resolution`,
+décision 7), à une exception
 près : un enregistrement terminal (`done` ou tout `failed(reason)`) dont les octets ont atteint le
 fichier avec leur LF est l'état, même si sa synchronisation a échoué. Le worker s'arrête, et le
 lanceur, après la mort du worker (aussitôt quand l'écriture qui a échoué est la sienne), ouvre le
@@ -217,7 +218,10 @@ varie d'un processus à l'autre qui alimente une telle branche. Une discordance 
 **7. Une personne résout `UNKNOWN` ; le script décide de la suite.** `ix-durable resolve ID seq
 --performed <value.json> | --not-performed` ajoute un enregistrement `resolution`. Il tient les
 deux verrous (décision 10), ouvre le journal, et n'ajoute l'enregistrement que tant que cette
-étape est encore `UNKNOWN` : un second `resolve` de la même étape est refusé, et n'écrit rien. Aucun script
+étape est encore `UNKNOWN` : un second `resolve` de la même étape est refusé, et n'écrit rien. Une `resolution` dont l'écriture
+échoue ne termine pas le run : `resolve` signale l'erreur et n'ajoute rien de plus, et le
+`resolve` suivant trouve l'étape encore `UNKNOWN`, ou résolue si l'enregistrement a atteint le
+fichier avec son LF. Aucun script
 ne peut atteindre cette commande (comme pour `accept`, ADR-0011 §6). Après `--performed`, l'étape
 renvoie cette valeur et l'effet n'est jamais répété. Après `--not-performed`, l'étape renvoie
 `{"ok": False, "err": {"code": "NOT_PERFORMED"}}`, et le script peut appeler à nouveau la
@@ -308,9 +312,10 @@ seul rédacteur à la fois :
   le lanceur ajoute l'enregistrement `activation` (décision 9), puis libère `writer.lock` et
   démarre le worker, qui le prend. Aucun autre lanceur ne peut s'intercaler, puisque `owner.lock`
   reste tenu.
-- Quand une borne tue le worker, le lanceur, qui tient encore `owner.lock`, attend `writer.lock`
-  et ajoute `failed(limit)`. Il ne libère `owner.lock` qu'ensuite. Aucun `resume` ne peut démarrer
-  entre les deux.
+- Quand une borne tue le worker, le lanceur, qui tient encore `owner.lock`, attend `writer.lock`,
+  ouvre le journal comme dans la décision 3, et ajoute `failed(limit)` sauf si le dernier
+  enregistrement valide est déjà terminal : un worker tué après son `done` reste `done`. Il ne
+  libère `owner.lock` qu'ensuite. Aucun `resume` ne peut démarrer entre les deux.
 - `resolve` prend les deux verrous de la même façon (sinon `BUSY`), si bien qu'il n'écrit jamais à
   côté d'un worker, d'un lanceur ou d'un autre `resolve` (décision 7).
 
@@ -426,6 +431,8 @@ vérification ci-dessous tient :
    - Un `failed(journal)` de lanceur coupé avant son LF laisse le run dans l'état de son dernier
      enregistrement valide, et `resume` reprend à partir de là.
    - Un enregistrement valide après un enregistrement terminal est `Corrupt`.
+   - Une borne qui tue le worker après son `done` synchronisé laisse `done`, sans `failed(limit)`.
+   - Une `resolution` coupée avant son LF laisse l'étape `UNKNOWN` et ouverte à un autre `resolve`.
    - Deux `resolve` concurrents d'une même étape : l'un ajoute, l'autre reçoit `BUSY` ou est
      refusé, et le journal s'ouvre proprement.
 10. **Budget à travers les attentes.** Un script qui dépense l'essentiel de ses ticks avant
