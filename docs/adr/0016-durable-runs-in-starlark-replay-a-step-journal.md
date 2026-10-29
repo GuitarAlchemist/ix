@@ -1,6 +1,6 @@
 # Durable runs: a Starlark script, re-executed and answered step by step from a write-ahead journal
 
-Status: proposed (2026-10-29), revision 7 after Codex rounds 1 to 6 and the Starlark prototype
+Status: proposed (2026-10-29), revision 8 after Codex rounds 1 to 7 and the Starlark prototype
 
 Number 0016: ADR-0015 is taken by `docs/adr/0015-local-isolated-jobs.md` on the unmerged branch
 `feat/local-isolated-execution`. Related: ADR-0017 (agent DSLs) and ADR-0018 (composition and
