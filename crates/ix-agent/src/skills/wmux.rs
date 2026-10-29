@@ -5,11 +5,15 @@
 //! `agent-state` and `agent list`. It sends no key, answers no prompt and opens
 //! nothing, so it is classified as a read (Tier 1).
 //!
-//! Only metadata leaves it, chosen field by field: workspaces, panes and surfaces
-//! with their titles and working directories, and each agent's state. Screen
-//! contents, prompts, markdown bodies, file paths, URLs and command lines stay out,
-//! because any of them can carry a secret. A blocked agent's reason is clipped, and
-//! `key=value` secrets in it are masked.
+//! Only metadata leaves it, chosen field by field and checked value by value:
+//! workspaces, panes and surfaces with their titles and the folder name of their
+//! working directory, and each agent's state. Ids and states leave only as plain
+//! identifiers, titles, labels and folder names only as plain names (no URL, path,
+//! shell character or credential-shaped word), else as `null`. Screen contents,
+//! prompts, markdown bodies, file paths, URLs and command lines stay out, because any
+//! of them can carry a secret. A blocked agent's reason is free text the operator
+//! reads: its URLs and paths become `<url>` and `<path>`, its secrets are masked and it
+//! is clipped. One budget of time and bytes bounds the whole call.
 
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -59,16 +63,23 @@ pub fn wmux_snapshot(params: Value) -> Result<Value, String> {
     if params.as_object().is_some_and(|o| !o.is_empty()) {
         return Err("wmux.snapshot takes no arguments".into());
     }
-    let sidebar = run_json(&["sidebar-state"])?;
+    let launch = launcher(&|k: &str| std::env::var(k).ok().filter(|v| !v.is_empty()));
+    let mut budget = Budget::new(TIMEOUT, MAX_OUTPUT_BYTES);
+    let mut run = |args: &[&str]| run_json(&launch, args, &mut budget);
+    let sidebar = run(&["sidebar-state"])?;
     let mut trees = Vec::new();
     for ws in workspaces_of(&sidebar).iter().take(MAX_WORKSPACES) {
-        let Some(id) = ws.get("id").and_then(Value::as_str) else {
+        let Some(id) = ws
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| is_ident(id))
+        else {
             continue;
         };
-        trees.push((id.to_string(), run_json(&["tree", "--workspace", id])?));
+        trees.push((id.to_string(), run(&["tree", "--workspace", id])?));
     }
-    let states = run_json(&["agent-state"])?;
-    let agents = run_json(&["agent", "list"])?;
+    let states = run(&["agent-state"])?;
+    let agents = run(&["agent", "list"])?;
     Ok(normalize(&sidebar, &trees, &states, &agents))
 }
 
@@ -100,13 +111,8 @@ pub(crate) fn normalize(
         }
     }
 
-    let titles: BTreeMap<&str, &Value> = workspaces_of_ref(sidebar)
-        .filter_map(|w| {
-            Some((
-                w.get("id")?.as_str()?,
-                w.get("title").unwrap_or(&Value::Null),
-            ))
-        })
+    let titles: BTreeMap<&str, Value> = workspaces_of_ref(sidebar)
+        .filter_map(|w| Some((w.get("id")?.as_str()?, plain(w.get("title")))))
         .collect();
     let mut leaves_of: BTreeMap<&str, Vec<(&str, &Value)>> = BTreeMap::new();
     for (ws, tree) in trees {
@@ -131,52 +137,70 @@ pub(crate) fn normalize(
         let ws_panes: BTreeSet<&str> = leaves.iter().map(|(pane, _)| *pane).collect();
         panes += ws_panes.len();
         for (pane, s) in leaves {
-            let id = s.get("id").and_then(Value::as_str);
-            let kind = s.get("type").and_then(Value::as_str);
-            *by_type
-                .entry(kind.unwrap_or("unknown").to_string())
-                .or_default() += 1;
+            let id = s
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| is_ident(id));
+            let kind = match s.get("type").and_then(Value::as_str) {
+                Some(k) if KINDS.contains(&k) => k,
+                Some(_) => "other",
+                None => "unknown",
+            };
+            *by_type.entry(kind.to_string()).or_default() += 1;
             let state = id.and_then(|id| by_surface.get(id)).copied();
             if let Some(id) = id {
                 seen.insert(id);
             }
-            if let Some(st) = state.and_then(|st| st.get("state")).and_then(Value::as_str) {
+            let agent_state = state
+                .and_then(|st| st.get("state"))
+                .and_then(Value::as_str)
+                .filter(|st| STATES.contains(st));
+            if let Some(st) = agent_state {
                 *by_state.entry(st.to_string()).or_default() += 1;
             }
-            let cwd = if kind == Some("terminal") {
+            let cwd = if kind == "terminal" {
                 s.get("currentCwd")
                     .or_else(|| s.get("cwd"))
                     .and_then(Value::as_str)
                     .map(folder_name)
+                    .filter(|name| is_plain(name))
             } else {
                 None
             };
             surfaces.push(json!({
-                "agent_state": state.and_then(|st| st.get("state")),
+                "agent_state": agent_state,
                 "blocked_reason": state
                     .and_then(|st| st.get("blockedReason"))
                     .and_then(Value::as_str)
-                    .map(|r| clip(&mask_secrets(r), MAX_REASON_CHARS)),
-                "blocked_since_ms": state.and_then(|st| st.get("blockedSince")),
-                "claude_session_id": s.get("claudeSessionId"),
+                    .map(|r| clip(&scrub(r), MAX_REASON_CHARS)),
+                "blocked_since_ms": number(state.and_then(|st| st.get("blockedSince"))),
+                "claude_session_id": ident(s.get("claudeSessionId")),
                 "cwd_name": cwd,
-                "pane_id": pane,
+                "pane_id": Some(*pane).filter(|p| is_ident(p)),
                 "surface_id": id,
-                "title": s.get("customTitle").or_else(|| s.get("title")),
+                "title": plain(s.get("customTitle").or_else(|| s.get("title"))),
                 "type": kind,
-                "updated_at_ms": state.and_then(|st| st.get("updatedAt")),
-                "workspace_id": ws,
-                "workspace_title": titles.get(ws),
+                "updated_at_ms": number(state.and_then(|st| st.get("updatedAt"))),
+                "workspace_id": Some(ws).filter(|w| is_ident(w)),
+                "workspace_title": titles.get(ws).cloned().unwrap_or(Value::Null),
             }));
         }
         workspaces.push(json!({
             "active": w.get("isActive").and_then(Value::as_bool).unwrap_or(false),
-            "cwd_name": w.get("cwd").and_then(Value::as_str).map(folder_name),
+            "cwd_name": w
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(folder_name)
+                .filter(|name| is_plain(name)),
             "panes": ws_panes.len(),
-            "shell": w.get("shell").and_then(Value::as_str).map(file_name),
+            "shell": w
+                .get("shell")
+                .and_then(Value::as_str)
+                .map(file_name)
+                .filter(|name| is_ident(name)),
             "surfaces": leaves.len(),
-            "title": w.get("title"),
-            "workspace_id": ws,
+            "title": plain(w.get("title")),
+            "workspace_id": Some(ws).filter(|w| is_ident(w)),
         }));
     }
 
@@ -187,14 +211,14 @@ pub(crate) fn normalize(
         .flatten()
         .map(|a| {
             json!({
-                "agent_id": a.get("agentId"),
-                "exit_code": a.get("exitCode"),
-                "label": a.get("label"),
-                "pid": a.get("pid"),
-                "spawn_time_ms": a.get("spawnTime"),
-                "status": a.get("status"),
-                "surface_id": a.get("surfaceId"),
-                "workspace_id": a.get("workspaceId"),
+                "agent_id": ident(a.get("agentId")),
+                "exit_code": number(a.get("exitCode")),
+                "label": plain(a.get("label")),
+                "pid": number(a.get("pid")),
+                "spawn_time_ms": number(a.get("spawnTime")),
+                "status": ident(a.get("status")),
+                "surface_id": ident(a.get("surfaceId")),
+                "workspace_id": ident(a.get("workspaceId")),
             })
         })
         .collect();
@@ -255,9 +279,94 @@ fn folder_name(path: &str) -> &str {
     file_name(path.trim_end_matches(['\\', '/']))
 }
 
-/// Masks the value of every `key=value` or `key: value` whose key names a secret.
+const KINDS: [&str; 4] = ["terminal", "browser", "markdown", "diff"];
+const STATES: [&str; 3] = ["idle", "working", "blocked"];
+
+/// An id or a short status: letters, digits and `_.:-` only, so nothing a shell, a path or
+/// a URL needs.
+fn is_ident(s: &str) -> bool {
+    (1..=80).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+}
+
+fn ident(v: Option<&Value>) -> Value {
+    match v.and_then(Value::as_str) {
+        Some(s) if is_ident(s) => Value::from(s),
+        _ => Value::Null,
+    }
+}
+
+fn number(v: Option<&Value>) -> Value {
+    v.filter(|v| v.is_number()).cloned().unwrap_or(Value::Null)
+}
+
+/// A title, a label or a folder name leaves only when it reads as a plain name: no URL,
+/// path, shell or query character, nothing that looks like a secret, at most 80 characters.
+/// wmux titles are free text, so an allowlisted field name alone proves nothing.
+fn is_plain(s: &str) -> bool {
+    (1..=80).contains(&s.chars().count())
+        && !s
+            .chars()
+            .any(|c| c.is_control() || "/\\?=&@%$<>|;`\"'".contains(c))
+        && s.split_whitespace().all(|w| !looks_secret(w))
+        && mask_secrets(s) == s
+}
+
+fn plain(v: Option<&Value>) -> Value {
+    match v.and_then(Value::as_str) {
+        Some(s) if is_plain(s) => Value::from(s),
+        _ => Value::Null,
+    }
+}
+
+/// A word shaped like a credential: a known token prefix, or a long run of letters and
+/// digits.
+fn looks_secret(word: &str) -> bool {
+    const PREFIXES: [&str; 9] = [
+        "sk-",
+        "ghp_",
+        "gho_",
+        "ghs_",
+        "ghu_",
+        "github_pat_",
+        "xox",
+        "AKIA",
+        "eyJ",
+    ];
+    let w = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
+    PREFIXES.iter().any(|p| w.starts_with(p))
+        || (w.len() >= 24
+            && w.bytes().any(|b| b.is_ascii_digit())
+            && w.bytes().any(|b| b.is_ascii_alphabetic())
+            && w.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)))
+}
+
+/// A blocked reason is free text that the operator reads: URLs and paths become `<url>` and
+/// `<path>`, credential-shaped words `***`, then [`mask_secrets`] masks named secrets.
+fn scrub(text: &str) -> String {
+    let words: Vec<&str> = text
+        .split(' ')
+        .map(|w| {
+            if w.contains("://") {
+                "<url>"
+            } else if w.contains(['\\', '/']) {
+                "<path>"
+            } else if looks_secret(w) {
+                "***"
+            } else {
+                w
+            }
+        })
+        .collect();
+    mask_secrets(&words.join(" "))
+}
+
+/// Masks the value of every `key=value`, `key: value` or `key value` whose key names a
+/// secret, and the word after `Bearer`.
 fn mask_secrets(text: &str) -> String {
-    const MARKERS: [&str; 4] = ["token", "key", "secret", "pass"];
+    const MARKERS: [&str; 5] = ["token", "key", "secret", "pass", "auth"];
     let is_secret = |k: &str| {
         let k = k.to_ascii_lowercase();
         MARKERS.iter().any(|m| k.contains(m))
@@ -282,7 +391,13 @@ fn mask_secrets(text: &str) -> String {
                     mask_next = true;
                 }
             }
-            _ => out.push_str(word),
+            _ => {
+                out.push_str(word);
+                let bare = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+                if !bare.is_empty() && (is_secret(bare) || bare.eq_ignore_ascii_case("bearer")) {
+                    mask_next = true;
+                }
+            }
         }
     }
     out
@@ -298,15 +413,12 @@ struct Launcher {
 }
 
 /// `IX_WMUX_BIN` when the operator set it; else, inside wmux, the Node client its shims
-/// run (`WMUX_NODE`, else `node`, on `WMUX_CLI`), so no `.cmd` or `.ps1` shim and no shell
-/// stands between the tool and wmux; else `wmux` on PATH.
+/// run (`WMUX_NODE`, else `node`, on `WMUX_CLI`), so no shim and no shell stands between the
+/// tool and wmux; else the `wmux` found on `PATH`, which on Windows is a `.cmd` or `.ps1`
+/// shim.
 fn launcher(var: &dyn Fn(&str) -> Option<String>) -> Launcher {
     if let Some(bin) = var("IX_WMUX_BIN") {
-        return Launcher {
-            program: bin,
-            lead: vec![],
-            electron: false,
-        };
+        return for_program(bin);
     }
     match var("WMUX_CLI") {
         Some(cli) => Launcher {
@@ -314,19 +426,78 @@ fn launcher(var: &dyn Fn(&str) -> Option<String>) -> Launcher {
             lead: vec![cli],
             electron: var("WMUX_NODE_ELECTRON").is_some(),
         },
-        None => Launcher {
-            program: "wmux".to_string(),
-            lead: vec![],
-            electron: false,
-        },
+        None => var("PATH")
+            .and_then(|path| find_on_path(&path))
+            .map(for_program)
+            .unwrap_or_else(|| for_program("wmux".to_string())),
     }
 }
 
-/// Runs one wmux command and parses its JSON output.
-fn run_json(args: &[&str]) -> Result<Value, String> {
-    let launch = launcher(&|k: &str| std::env::var(k).ok().filter(|v| !v.is_empty()));
-    let bin = &launch.program;
-    let mut command = Command::new(bin);
+/// The first `wmux` program on `path`. Only Windows needs the search: there `Command` looks
+/// for `wmux.exe` alone, while an install gives `wmux.cmd` or `wmux.ps1`.
+fn find_on_path(path: &str) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    std::env::split_paths(path).find_map(|dir| {
+        ["wmux.exe", "wmux.cmd", "wmux.bat", "wmux.ps1"]
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|p| p.is_file())
+            .map(|p| p.display().to_string())
+    })
+}
+
+/// A `.ps1` runs through `pwsh -File`. `Command` starts a `.cmd` or `.bat` through `cmd.exe`
+/// and quotes its arguments, which are fixed verbs and ids that [`is_ident`] accepted.
+fn for_program(program: String) -> Launcher {
+    if program.to_ascii_lowercase().ends_with(".ps1") {
+        Launcher {
+            program: "pwsh".to_string(),
+            lead: vec![
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-File".into(),
+                program,
+            ],
+            electron: false,
+        }
+    } else {
+        Launcher {
+            program,
+            lead: vec![],
+            electron: false,
+        }
+    }
+}
+
+/// What one snapshot may spend on wmux, across all its commands.
+struct Budget {
+    deadline: Instant,
+    bytes_left: u64,
+}
+
+impl Budget {
+    fn new(time: Duration, bytes: u64) -> Self {
+        Budget {
+            deadline: Instant::now() + time,
+            bytes_left: bytes,
+        }
+    }
+}
+
+/// Runs one wmux command and parses its JSON output, within what is left of `budget`. An
+/// error names the program, never its path, and its stderr is scrubbed like a blocked
+/// reason.
+fn run_json(launch: &Launcher, args: &[&str], budget: &mut Budget) -> Result<Value, String> {
+    let verb = args[0];
+    if Instant::now() >= budget.deadline {
+        return Err(format!(
+            "wmux {verb}: the snapshot's time budget ran out before it started"
+        ));
+    }
+    let name = file_name(&launch.program).to_string();
+    let mut command = Command::new(&launch.program);
     if launch.electron {
         command.env("ELECTRON_RUN_AS_NODE", "1");
     }
@@ -339,59 +510,68 @@ fn run_json(args: &[&str]) -> Result<Value, String> {
         .spawn()
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => {
-                format!("wmux CLI not found ({bin}); run inside wmux or set IX_WMUX_BIN")
+                format!("wmux CLI not found ({name}); run inside wmux or set IX_WMUX_BIN")
             }
-            _ => format!("could not start wmux ({bin}): {e}"),
+            _ => format!("could not start wmux ({name}): {}", e.kind()),
         })?;
     let mut out_pipe = child.stdout.take().ok_or("no stdout for wmux")?;
     let mut err_pipe = child.stderr.take().ok_or("no stderr for wmux")?;
-    let stdout = std::thread::spawn(move || {
+    // Each reader sends what it read as soon as it reaches EOF or its cap, then drains. A
+    // process the CLI started can hold a pipe open after the CLI exits; the call does not
+    // wait for it past the deadline, and the reader is left to finish on its own.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let cap = budget.bytes_left;
+    let out_tx = tx.clone();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
-        let _ = (&mut out_pipe)
-            .take(MAX_OUTPUT_BYTES + 1)
-            .read_to_end(&mut buf);
+        let _ = (&mut out_pipe).take(cap + 1).read_to_end(&mut buf);
+        let _ = out_tx.send((true, buf));
         let _ = std::io::copy(&mut out_pipe, &mut std::io::sink());
-        buf
     });
-    let stderr = std::thread::spawn(move || {
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = (&mut err_pipe).take(64 * 1024).read_to_end(&mut buf);
+        let _ = tx.send((false, buf));
         let _ = std::io::copy(&mut err_pipe, &mut std::io::sink());
-        buf
     });
-    let deadline = Instant::now() + TIMEOUT;
+    let stopped = |what: &str| {
+        format!(
+            "wmux {verb}: {what} within the snapshot's {} s budget, and was stopped",
+            TIMEOUT.as_secs()
+        )
+    };
     let status = loop {
-        match child.try_wait().map_err(|e| e.to_string())? {
+        match child.try_wait().map_err(|e| e.kind().to_string())? {
             Some(status) => break status,
-            None if Instant::now() >= deadline => {
+            None if Instant::now() >= budget.deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "wmux {} took more than {} s and was stopped",
-                    args[0],
-                    TIMEOUT.as_secs()
-                ));
+                return Err(stopped("did not finish"));
             }
             None => std::thread::sleep(Duration::from_millis(10)),
         }
     };
-    let out = stdout.join().map_err(|_| "wmux stdout reader panicked")?;
-    let err = stderr.join().map_err(|_| "wmux stderr reader panicked")?;
+    let (mut out, mut err) = (None, None);
+    while out.is_none() || err.is_none() {
+        let left = budget.deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok((true, buf)) => out = Some(buf),
+            Ok((false, buf)) => err = Some(buf),
+            Err(_) => return Err(stopped("exited, but its output stayed open")),
+        }
+    }
+    let (out, err) = (out.unwrap_or_default(), err.unwrap_or_default());
     if !status.success() {
         let msg = String::from_utf8_lossy(&err);
+        return Err(format!("wmux {verb}: {}", clip(&scrub(msg.trim()), 500)));
+    }
+    if out.len() as u64 > budget.bytes_left {
         return Err(format!(
-            "wmux {}: {}",
-            args[0],
-            clip(&mask_secrets(msg.trim()), 500)
+            "wmux {verb}: the snapshot printed more than {MAX_OUTPUT_BYTES} bytes in all"
         ));
     }
-    if out.len() as u64 > MAX_OUTPUT_BYTES {
-        return Err(format!(
-            "wmux {} printed more than {MAX_OUTPUT_BYTES} bytes",
-            args[0]
-        ));
-    }
-    serde_json::from_slice(&out).map_err(|e| format!("wmux {}: not JSON: {e}", args[0]))
+    budget.bytes_left -= out.len() as u64;
+    serde_json::from_slice(&out).map_err(|e| format!("wmux {verb}: not JSON: {e}"))
 }
 
 fn clip(s: &str, n: usize) -> String {
@@ -561,6 +741,207 @@ mod tests {
         );
     }
 
+    /// A field name on the allowlist is not enough: wmux titles, labels, folder and shell
+    /// names are free text, so each value leaves only if it reads as a plain name.
+    #[test]
+    fn free_text_with_a_url_a_path_a_command_or_a_secret_leaves_as_null() {
+        let sidebar = json!({ "workspaces": [{
+            "id": "w1", "title": "curl https://internal/?auth=ghp_x", "isActive": true,
+            "cwd": "C:\\work\\ghp_0123456789abcdefABCDEF0123", "shell": "pwsh.exe -Command x"
+        }]});
+        let tree = json!({ "tree": { "type": "leaf", "paneId": "p 1", "surfaces": [
+            { "id": "s1", "type": "terminal", "customTitle": "C:\\Users\\alice\\notes",
+              "cwd": "C:\\work\\proj", "claudeSessionId": "id; rm -rf /" },
+            { "id": "s2", "type": "<script>", "title": "Claude Code" }
+        ]}});
+        let states = json!({ "states": [
+            { "surfaceId": "s1", "state": "rm -rf", "updatedAt": "soon" }
+        ]});
+        let agents = json!({ "agents": [{
+            "agentId": "a1", "label": "sk-live-0123456789abcdef", "status": "running now",
+            "pid": "12", "surfaceId": "s1", "workspaceId": "w1"
+        }]});
+        let snap = normalize(&sidebar, &[("w1".into(), tree)], &states, &agents);
+        let ws = &snap["workspaces"][0];
+        assert_eq!(ws["title"], Value::Null);
+        assert_eq!(ws["cwd_name"], Value::Null);
+        assert_eq!(ws["shell"], Value::Null);
+        let s1 = &snap["surfaces"][0];
+        assert_eq!(s1["title"], Value::Null);
+        assert_eq!(s1["pane_id"], Value::Null);
+        assert_eq!(s1["claude_session_id"], Value::Null);
+        assert_eq!(s1["agent_state"], Value::Null);
+        assert_eq!(s1["updated_at_ms"], Value::Null);
+        assert_eq!(s1["workspace_title"], Value::Null);
+        assert_eq!(s1["cwd_name"], "proj");
+        let s2 = &snap["surfaces"][1];
+        assert_eq!(s2["type"], "other");
+        assert_eq!(s2["title"], "Claude Code");
+        assert_eq!(
+            snap["counts"]["by_type"],
+            json!({ "other": 1, "terminal": 1 })
+        );
+        assert_eq!(snap["counts"]["by_state"], json!({}));
+        let a = &snap["agents"][0];
+        assert_eq!(a["label"], Value::Null);
+        assert_eq!(a["status"], Value::Null);
+        assert_eq!(a["pid"], Value::Null);
+        assert_eq!(a["agent_id"], "a1");
+    }
+
+    #[test]
+    fn a_blocked_reason_loses_its_urls_paths_and_bearer_secrets() {
+        let reason = "Fetch https://host/x?token=abc with Authorization: Bearer sk-live-1 \
+                      from C:\\Users\\alice\\.ssh\\id_rsa using password hunter2 and \
+                      ghp_0123456789abcdefABCDEF0123";
+        let states = json!({ "states": [{
+            "surfaceId": "s1", "state": "blocked", "blockedReason": reason
+        }]});
+        let tree = json!({ "tree": { "type": "leaf", "paneId": "p1",
+            "surfaces": [{ "id": "s1", "type": "terminal" }] } });
+        let sidebar = json!({ "workspaces": [{ "id": "w1", "title": "t" }] });
+        let snap = normalize(
+            &sidebar,
+            &[("w1".into(), tree)],
+            &states,
+            &json!({ "agents": [] }),
+        );
+        let out = snap["surfaces"][0]["blocked_reason"].as_str().unwrap();
+        for leak in [
+            "abc",
+            "host",
+            "sk-live-1",
+            "alice",
+            "id_rsa",
+            "hunter2",
+            "ghp_",
+        ] {
+            assert!(!out.contains(leak), "{leak} in {out}");
+        }
+        assert!(out.starts_with("Fetch <url> with"), "{out}");
+        assert!(out.contains("from <path> using"), "{out}");
+    }
+
+    /// A launcher that runs a short script: PowerShell on Windows, `sh` elsewhere. The wmux
+    /// arguments land after a `#` or in `$0`, so the script ignores them.
+    fn script(windows: &str, unix: &str) -> Launcher {
+        if cfg!(windows) {
+            Launcher {
+                program: "pwsh".into(),
+                lead: vec![
+                    "-NoProfile".into(),
+                    "-NonInteractive".into(),
+                    "-Command".into(),
+                    format!("{windows} #"),
+                ],
+                electron: false,
+            }
+        } else {
+            Launcher {
+                program: "sh".into(),
+                lead: vec!["-c".into(), unix.into()],
+                electron: false,
+            }
+        }
+    }
+
+    fn fresh() -> Budget {
+        Budget::new(TIMEOUT, MAX_OUTPUT_BYTES)
+    }
+
+    #[test]
+    fn an_error_names_the_program_and_never_its_path_or_a_secret() {
+        let missing = Launcher {
+            program: if cfg!(windows) {
+                r"C:\Users\alice\private\wmux.exe"
+            } else {
+                "/home/alice/private/wmux"
+            }
+            .into(),
+            lead: vec![],
+            electron: false,
+        };
+        let err = run_json(&missing, &["sidebar-state"], &mut fresh()).unwrap_err();
+        assert!(!err.contains("alice"), "{err}");
+        assert!(err.contains("wmux"), "{err}");
+        let failing = script(
+            r"[Console]::Error.WriteLine('failed at C:\Users\alice\x token=abc'); exit 1",
+            "echo 'failed at /home/alice/x token=abc' >&2; exit 1",
+        );
+        let err = run_json(&failing, &["sidebar-state"], &mut fresh()).unwrap_err();
+        for leak in ["alice", "abc"] {
+            assert!(!err.contains(leak), "{leak} in {err}");
+        }
+        assert!(err.contains("failed at <path>"), "{err}");
+    }
+
+    #[test]
+    fn one_deadline_bounds_the_whole_call() {
+        let mut budget = Budget::new(Duration::from_secs(1), MAX_OUTPUT_BYTES);
+        let started = Instant::now();
+        let slow = script("Start-Sleep 30", "sleep 30");
+        assert!(run_json(&slow, &["sidebar-state"], &mut budget).is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "{:?}",
+            started.elapsed()
+        );
+        let fast = script("'{}'", "echo '{}'");
+        let err = run_json(&fast, &["agent-state"], &mut budget).unwrap_err();
+        assert!(err.contains("ran out"), "{err}");
+    }
+
+    /// A wrapper that exits after starting a process that keeps its output open: the call
+    /// still ends at the deadline instead of waiting for that process.
+    #[test]
+    fn a_descendant_that_keeps_the_output_open_does_not_hang_the_call() {
+        let mut budget = Budget::new(Duration::from_secs(3), MAX_OUTPUT_BYTES);
+        let started = Instant::now();
+        let wrapper = script(
+            "Start-Process -NoNewWindow pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 20'; '{}'",
+            "sleep 20 & echo '{}'",
+        );
+        let _ = run_json(&wrapper, &["sidebar-state"], &mut budget);
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_output_budget_is_shared_by_the_whole_call() {
+        let mut budget = Budget::new(TIMEOUT, 10);
+        let chatty = script("'x' * 100", "printf '%0100d' 0");
+        let err = run_json(&chatty, &["sidebar-state"], &mut budget).unwrap_err();
+        assert!(err.contains("more than"), "{err}");
+    }
+
+    /// Outside wmux the `wmux` on PATH is a `.cmd` or `.ps1` shim; both are found and run.
+    #[cfg(windows)]
+    #[test]
+    fn a_cmd_or_ps1_shim_on_path_is_found_and_run() {
+        let root = std::env::temp_dir().join(format!("ix-wmux-shim-{}", std::process::id()));
+        let cmd_dir = root.join("cmd");
+        let ps1_dir = root.join("ps1");
+        std::fs::create_dir_all(&cmd_dir).unwrap();
+        std::fs::create_dir_all(&ps1_dir).unwrap();
+        std::fs::write(cmd_dir.join("wmux.cmd"), "@echo {\"from\":\"cmd\"}\r\n").unwrap();
+        std::fs::write(ps1_dir.join("wmux.ps1"), "'{\"from\":\"ps1\"}'\r\n").unwrap();
+        for (dir, from) in [(&cmd_dir, "cmd"), (&ps1_dir, "ps1")] {
+            let path = format!("{};{}", root.join("empty").display(), dir.display());
+            let launch = launcher(&|k: &str| (k == "PATH").then(|| path.clone()));
+            let out = run_json(&launch, &["sidebar-state"], &mut fresh())
+                .unwrap_or_else(|e| panic!("{from}: {e} ({launch:?})"));
+            assert_eq!(out["from"], from);
+        }
+        let bin = ps1_dir.join("wmux.ps1").display().to_string();
+        let launch = launcher(&|k: &str| (k == "IX_WMUX_BIN").then(|| bin.clone()));
+        let out = run_json(&launch, &["sidebar-state"], &mut fresh()).unwrap();
+        assert_eq!(out["from"], "ps1");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn arguments_are_refused_before_wmux_is_started() {
         assert!(wmux_snapshot(json!({ "send": "rm -rf /" }))
@@ -575,8 +956,7 @@ mod tests {
         assert_eq!(folder_name("C:\\"), "C:");
     }
 
-    /// On Windows the `wmux` on PATH is a `.cmd` or `.ps1` shim, which `Command` cannot
-    /// start; inside wmux the tool runs the Node client the shims run, with no shell.
+    /// Inside wmux the tool runs the Node client the shims run, with no shell.
     #[test]
     fn inside_wmux_the_node_client_it_injected_runs_without_a_shell() {
         fn launch(vars: &[(&str, &str)]) -> Launcher {
