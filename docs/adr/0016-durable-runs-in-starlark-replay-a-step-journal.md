@@ -1,6 +1,6 @@
 # Durable runs: a Starlark script, re-executed and answered step by step from a write-ahead journal
 
-Status: proposed (2026-10-29), revision 4 after Codex rounds 1 to 3 and the Starlark prototype
+Status: proposed (2026-10-29), revision 5 after Codex rounds 1 to 4 and the Starlark prototype
 
 Number 0016: ADR-0015 is taken by `docs/adr/0015-local-isolated-jobs.md` on the unmerged branch
 `feat/local-isolated-execution`. Related: ADR-0017 (agent DSLs) and ADR-0018 (composition and
@@ -113,9 +113,8 @@ It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
 - `attempt`, before every live execution of a step;
 - `result`, holding the full value, on either rail, and the cumulative tick count at that point;
 - `activation`, opening each process's work;
-- `heartbeat`, the activation's ticks and active milliseconds so far. It is written every 50,000
-  ticks, and every second by a timer thread, which keeps counting time through a long native
-  operation. A mutex serializes all writers of the journal;
+- `lease`, which charges the next 50,000 ticks and the next second of active time before the
+  worker spends them (decision 9). A mutex serializes all writers of the journal;
 - `resolution`, written by a person;
 - `done` or `failed(reason)`.
 
@@ -219,14 +218,22 @@ memory.
 - **Activations:** each worker writes and syncs its `activation` record before any replay, and
   that record is its charge. A run with no activation left ends in `failed(budget)` without
   starting a worker, so the number of activations is finite whatever kills them.
-- **Ticks and active time:** summed over activations, from each activation's last `heartbeat`
-  (none yet counts as zero). A kill loses at most one heartbeat interval of accounting, the
-  stretch before the first heartbeat included. The work that escapes the budget is therefore at
-  most `activations` times one interval (50,000 ticks or one second), however often the run is
-  killed.
+- **Ticks and active time are paid in advance.** Before a worker runs a line, and again before
+  each lease runs out, it writes and syncs a `lease` record that charges the next 50,000 ticks and
+  the next second. The charge is the record. Two guards stop work past the lease:
+  - **Ticks:** the interpreter's limit is set at the lease's end. The host refuses to go on, in
+    its periodic check, until the next lease is synced. The check runs every 1,000 ticks, so the
+    slack is at most 1,000 ticks per lease.
+  - **Time:** the worker sends each synced lease's deadline to the launcher over a pipe. The
+    launcher's watchdog terminates the job when a deadline passes with no newer lease. A blocked
+    `sync_data`, a starved thread or a long native operation therefore stops the worker; it
+    cannot keep running unpaid. A killed launcher closes the job, which kills the worker.
+
+  A kill wastes at most what is already paid. Spending never exceeds the charges, plus 1,000
+  ticks per lease and the watchdog's reaction time, however often the run is killed.
 - **Replay margin:** replaying up to the frontier spends ticks again. The interpreter's limit is
   set once, at the frontier's tick count plus a fixed margin plus the live ticks left. Past the
-  frontier, the host checks the live ticks itself, at every capability call and every heartbeat.
+  frontier, the host checks the live ticks itself, at every capability call and every lease.
   Live work can therefore borrow at most the margin.
 - Time spent waiting is not counted.
 
@@ -243,18 +250,26 @@ worker evaluates the script and writes the journal. Two locks keep one writer at
   `writer.lock` and appends `failed(limit)`. Only then does it release `owner.lock`. No `resume`
   can start in between.
 
-The bounds hold for the whole process tree, not one process. The worker runs in a Windows Job
-Object whose children cannot break away. The job has three limits:
+The bounds hold for the whole process tree, not one process. The launcher does what `ixctl`
+already does (`go/ixctl/proc_windows.go:104`):
 
-- a job-wide memory limit (`JOB_OBJECT_LIMIT_JOB_MEMORY`, `memory_mb`);
-- a job-wide CPU-time limit;
-- kill-on-close.
+- it starts the worker suspended (`CREATE_SUSPENDED`);
+- it puts the worker in a fresh Job Object that its children cannot break away from, with
+  kill-on-close;
+- only then does it let the worker run, so no descendant is ever born outside the job.
 
-A wall-clock watchdog backs them up. A `claude` subprocess (`node.rs:133`) and every descendant
-start inside the job, so a killed worker leaves no call running beside the next attempt.
+A `claude` subprocess (`node.rs:133`) and every other descendant therefore live in the job, and
+a killed worker leaves no call running beside the next attempt. The job's limits are job-wide:
 
-A single expensive native operation, such as `sorted(range(100_000_000))`, hits the memory or CPU
-limit and ends the run in `failed(limit)`. It cannot get past the tick check.
+- **Memory.** A notification limit at `memory_mb` sends a message to a completion port; the
+  system guarantees that message. A hard cap an eighth above refuses commits meanwhile, as in
+  `proc_windows.go:108` and `:252`. The launcher listens on the port. When the notification
+  arrives, it terminates the job and appends `failed(limit)`, even if the process that hit the
+  limit handled its failed allocation and went on.
+- **CPU time.** A job-wide CPU-time limit backs up the lease watchdog of decision 9.
+
+A single expensive native operation, such as `sorted(range(100_000_000))`, hits the memory limit
+or outlives its lease, and ends the run in `failed(limit)`. It cannot get past the tick check.
 
 On Linux, a process group, a parent-death signal and `setrlimit` bound each process but not the
 tree: a descendant can leave the group, and the parent-death signal reaches only the leader
@@ -291,13 +306,16 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
    `..`, a separator, a dot or a device name are refused.
 3. **Repeated kills of one Claude call.** Each kill adds an `attempt` and a charge; the grant runs
    out and the run stops; no descendant process survives the owner.
-4. **Repeated kills during local computation.** Kills between two steps, with unclosed
-   activations, some before the first heartbeat. The activation and tick charges grow with every
-   resume, and the run ends in `failed(budget)` within the bound of decision 9.
+4. **Repeated kills during local computation.** Kills between two steps, some before the first
+   lease. The activation and lease charges grow with every resume, the run ends in
+   `failed(budget)`, and the ticks spent never exceed the charges by more than the slack of
+   decision 9.
 5. **A native operation past the bounds.**
    - `sorted(range(100_000_000))` ends in `failed(limit)`, and the machine keeps its memory.
-   - A descendant of the worker that allocates past `memory_mb` takes down the whole job.
-   - A heartbeat records active time during the operation.
+   - A descendant of the worker that allocates past `memory_mb` and handles the refusal still
+     ends the run in `failed(limit)`.
+   - A worker whose lease sync is blocked is terminated at the lease's deadline.
+   - A grandchild started by the worker at its first instruction is inside the job.
    - A `resume` launched while the launcher appends `failed(limit)` is `BUSY`.
 6. **Both resolutions.** After an `UNKNOWN` `say`, `--performed` never speaks again, and
    `--not-performed` speaks exactly once on the script's retry.

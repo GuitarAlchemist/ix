@@ -55,7 +55,7 @@ other capabilities.
 today's loses. `ix-grammar::ebnf::parse` lowers into `EbnfGrammar`, and that lowering loses three
 things:
 
-- a duplicate rule overwrites the first (`HashMap::insert`, `ebnf.rs:471`);
+- a duplicate rule overwrites the first (`HashMap::insert`, `ebnf.rs:474`);
 - a quoted literal and a rule name both become a plain `String` (`ebnf.rs:522`);
 - a terminal is whatever has no production (`constrained.rs:79`), so `start = "digit";
   digit = "0";` reads the quoted `"digit"` as the rule.
@@ -67,8 +67,15 @@ run on that tree:
 - every name used is defined, by the grammar or by the prelude below;
 - no name is defined twice;
 - one start rule: the first rule, as in the file;
-- no rule derives itself through rules that can match nothing (a cyclic grammar, such as
-  `{ [ "x" ] }`), since such a grammar has infinitely many parses of one text.
+- the grammar is not cyclic: no rule derives itself without consuming a character. The check runs
+  on the lowered grammar, synthetic rules for `[ ]` and `{ }` included. It builds a graph with an
+  edge from A to B wherever A has an alternative `α B β` whose `α` and `β` can both match
+  nothing, and refuses any cycle in that graph.
+  - That covers unit cycles (`a = b; b = a | "x";`) and nullable repetitions (`{ [ "x" ] }`,
+    which means the same as `{ "x" }`).
+  - It still allows ordinary repetition such as `{ item [ sep ] }`, since every cycle there
+    consumes an `item`.
+  - A cyclic grammar has infinitely many parses of one text, so no count over them would end.
 
 A grammar that fails is `GRAMMAR_INVALID`, with the names. The lexical terms come from a fixed,
 documented prelude, which a grammar may use without defining. Each is one identifier, since the
@@ -94,10 +101,10 @@ scannerless, over Unicode scalar values, so no separate lexer exists to drift fr
 
 Ambiguity is decided on the forest. The grammar is acyclic (decision 2), so the forest is a finite
 graph with no cycle. The number of trees at each node is counted bottom-up, saturating at two, and
-the root's count says one parse or `AMBIGUOUS`. That count is linear in the forest's size. The
-caps are set from the tracer's measurement: four times what an unambiguous 64 KiB origami file
-needs. An ordinary input of the maximum size therefore fits, and the ADR says which inputs do not:
-those whose chart or forest outgrows that measure.
+the root's count says one parse or `AMBIGUOUS`. That count is linear in the forest's nodes and
+edges. The caps are set from the tracer's measurement: four times what an unambiguous 64 KiB
+origami file needs. That proves a maximum-size origami file fits. Another grammar may need more
+for the same size, so each DSL's own tracer measures its largest expected input against the caps.
 
 `earlgrey` is tried first, behind a module of `ix-grammar`, on the conformance test of the
 tracer slice. An Earley recognizer in `ix-grammar` itself replaces it only if `earlgrey` cannot
@@ -126,8 +133,9 @@ does not parse is refused at its first error, whoever wrote it.
 ## Tracer slice (test first, each test seen red)
 
 0. **The typed reader.** It keeps literals apart from names and reports a duplicate rule, a
-   missing name and a cyclic grammar. `start = "digit"; digit = "0";` accepts the text `digit`,
-   not `0`.
+   missing name and a cyclic grammar, the unit cycle `a = b; b = a | "x";` included.
+   `start = "digit"; digit = "0";` accepts the text `digit`, not `0`. `{ item [ sep ] }` is
+   accepted.
 1. **The origami grammar becomes executable.**
    - Its geometric line is renamed (`crease`).
    - It uses the prelude, and it defines `digits` and `integer` itself.

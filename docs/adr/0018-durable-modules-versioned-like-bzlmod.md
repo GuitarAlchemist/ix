@@ -88,22 +88,39 @@ says `run` comes back only through an amendment):
 - `agent` is a label of the closure, such as `@fold-planner//plan.star`. The child's
   `start.json` takes the bytes from the parent's closure.
 - The child's id is the only one with a dot, so it cannot collide with an id the operator chose
-  (ADR-0016 §2).
+  (ADR-0016 §2). Runs nest at most four deep, so an id stays within `ix-recover`'s 128-character
+  segment (`lib.rs:156`). A deeper `child` returns `{"ok": False, "err": {"code":
+  "TOO_DEEP"}}`.
+- **The child's grant must fit what the parent has left.** Each cumulative field (`calls`,
+  `ticks`, `active_seconds`, `activations`) must be at most the parent's remainder after its
+  reservations. `memory_mb` must be at most the parent's own, since it is a ceiling, not a
+  quantity spent. Otherwise the step's result is
+  `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`, journaled like any other. Its intent then
+  reserves nothing, and no child is created.
 - **The grant is reserved in the intent.** The parent's `intent` record for a `child` step holds
   the child's grant, and the fold of ADR-0016 §8 subtracts every child intent's grant from what
   the parent has left. That record is written before the child exists, so a crash leaves either
-  the intent with no child, which replay then creates under the same reservation, or both. The
-  carved amount is never spent twice and never charged without a child. #416 asks the same
-  question for ixctl's probe trees; for runs, this ADR answers it by carving the grant up front.
+  the intent with no child, which replay then creates under the same reservation, or both.
+  - **A reservation is never returned to the parent,** except through a person. A parent that ends
+    (`done`, or `failed`, `failed(budget)` included) before it creates the child keeps the
+    reservation spent, with the rest of its grant. That errs toward under-spending, never over.
+  - **`--not-performed` on a `child` step releases its reservation.** By that resolution, a person
+    says the intended child does not exist. A retry under a new `seq` then reserves once again,
+    and no grant is deducted twice.
+  - #416 asks the same question for ixctl's probe trees; for runs, this ADR answers it by carving
+    the grant up front.
 - **A present child is resumed, not awaited.** The parent's worker runs `ix-durable resume
   <child>` and reads what it says. A child created just before the parent died is therefore
   started too:
   - a running child answers `BUSY`, and the parent stays `waiting(child <id>)`;
   - a finished child prints its outcome, which the parent journals as the step's result.
-- A child that is `waiting` or `unknown` leaves its parent `waiting(child <id>)`. The parent's
-  status names the child, and a person resolves the child's step on the child. A `different`
-  child is the parent's own `UNKNOWN`, resolved on the parent's step (ADR-0016 §7).
-- The child's outcome comes back on the two rails, like any capability.
+- A child's state maps to its parent's step:
+  - `done`: the child's outcome is the step's result, on the rail it came on;
+  - `failed(reason)`: the failure rail, `{"code": "CHILD_FAILED", "message": reason}`;
+  - `waiting`, `unknown(seq)` or `nondeterministic(seq)`: the parent stays `waiting(child <id>)`.
+    Its status names the child and the child's state, and a person resolves the child on the
+    child.
+- A `different` child is the parent's own `UNKNOWN`, resolved on the parent's step (ADR-0016 §7).
 
 **6. A version is shipped as an archive with its sum, and a registry is a directory.**
 
@@ -150,6 +167,11 @@ an existing id and another lock is `CONFLICT`, never a silent reuse of the old c
    - A child created just before the parent died is started by the parent's next resume.
    - A child stopped `UNKNOWN` leaves the parent `waiting`, and resolving the child resumes the
      parent. A child `start.json` that differs from the intent makes the parent's step `UNKNOWN`.
+     `--not-performed` on that step releases the reservation, and the retry reserves exactly
+     once.
+   - A child grant larger than the parent's remainder in any field is `GRANT_EXCEEDED`, and
+     reserves nothing. A fifth level of nesting is `TOO_DEEP`.
+   - A child that ends `failed` gives the parent `CHILD_FAILED` on the failure rail.
 6. **Integrity.**
    - Packing a module twice gives the same bytes.
    - An archive whose bytes differ from its `sha256` is refused at lock time.
