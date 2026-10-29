@@ -15,8 +15,9 @@
 //! `<path>`, credential-shaped words and the word after a secret-naming one `***`, and
 //! each is clipped. A secret typed as an ordinary word can still leave; the operator
 //! accepted that residual (2026-10-29). One budget of time and bytes bounds the whole
-//! call. A descendant of the CLI that keeps its pipes open is not killed: its reader
-//! threads stay behind, one 64 KiB buffer each, until the pipes close.
+//! call, finding and starting the CLI included. A descendant of the CLI that keeps its
+//! pipes open is not killed: its reader threads stay behind, one 64 KiB buffer each, until
+//! the pipes close. A CLI the system refuses to kill is left to it, not waited for.
 
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -349,17 +350,20 @@ fn looks_secret(word: &str) -> bool {
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)))
 }
 
-/// `host:port`, such as `localhost:3000` or `127.0.0.1:8080`; a time such as `10:30` has no
-/// letter or dot in its host.
+/// `host:port`, such as `localhost:3000`, `127.0.0.1:8080` or `[::1]:8080`; a time such as
+/// `10:30` has no letter or dot in its host.
 fn is_host_port(word: &str) -> bool {
     let w = word.trim_end_matches([',', '.', ')', ';']);
+    if w.starts_with('[') && w.contains("]:") {
+        return true;
+    }
     match w.rsplit_once(':') {
         Some((host, port)) => {
             host.bytes().any(|b| b.is_ascii_alphabetic() || b == b'.')
                 && host
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
-                && (2..=5).contains(&port.len())
+                && (1..=5).contains(&port.len())
                 && port.bytes().all(|b| b.is_ascii_digit())
         }
         None => false,
@@ -375,7 +379,7 @@ fn scrub(text: &str) -> String {
         .map(|w| {
             if w.contains("://") || is_host_port(w) {
                 "<url>"
-            } else if w.contains(['\\', '/']) {
+            } else if w.contains(['\\', '/']) || is_drive_relative(w) {
                 "<path>"
             } else if looks_secret(w) {
                 "***"
@@ -385,6 +389,12 @@ fn scrub(text: &str) -> String {
         })
         .collect();
     mask_secrets(&words.join(" "))
+}
+
+/// `C:name`, a path relative to the current folder of drive C.
+fn is_drive_relative(word: &str) -> bool {
+    let b = word.as_bytes();
+    b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] != b':'
 }
 
 /// A key that names a secret: `token`, `secret`, `password`, `auth`… anywhere in it, or a
@@ -407,23 +417,25 @@ fn is_secret_key(key: &str) -> bool {
 
 /// Masks the value of every `key=value`, `key: value` or `key value` whose key names a
 /// secret, and the word after `Bearer`. A masked word that names a secret itself masks the
-/// next one too, so `Authorization: Bearer x` loses both.
+/// next one too, so `Authorization: Bearer x` and `Authorization:Bearer x` lose both.
 fn mask_secrets(text: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut mask_next = false;
+    let names_secret = |w: &str| {
+        let bare = w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
+        !bare.is_empty() && (is_secret_key(bare) || bare.eq_ignore_ascii_case("bearer"))
+    };
     for word in text.split_whitespace() {
-        let bare = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
-        let names_secret =
-            !bare.is_empty() && (is_secret_key(bare) || bare.eq_ignore_ascii_case("bearer"));
         if mask_next {
             out.push("***".into());
-            mask_next = names_secret;
+            mask_next = names_secret(word);
             continue;
         }
         match word.find(['=', ':']) {
             Some(at) if at > 0 && is_secret_key(&word[..at]) => {
                 if at + 1 < word.len() {
                     out.push(format!("{}***", &word[..=at]));
+                    mask_next = names_secret(&word[at + 1..]);
                 } else {
                     out.push(word.into());
                     mask_next = true;
@@ -431,7 +443,7 @@ fn mask_secrets(text: &str) -> String {
             }
             _ => {
                 out.push(word.into());
-                mask_next = names_secret;
+                mask_next = names_secret(word);
             }
         }
     }
@@ -512,12 +524,60 @@ fn within<T: Send + 'static>(
     budget: &Budget,
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, String> {
+    within_or(budget, "finding the wmux CLI", f, drop)
+}
+
+/// [`within`], and a value that comes after the deadline goes to `late`, so a CLI that
+/// started too late is stopped. The slot's lock decides which side has it: the waiter
+/// empties the slot before it gives up, and the thread sends only while it is full.
+fn within_or<T: Send + 'static>(
+    budget: &Budget,
+    what: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+    late: impl FnOnce(T) + Send + 'static,
+) -> Result<T, String> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let theirs = slot.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(f());
+        let value = f();
+        let guard = theirs.lock().unwrap_or_else(|e| e.into_inner());
+        let unsent = match guard.as_ref() {
+            Some(tx) => tx.send(value).err().map(|e| e.0),
+            None => Some(value),
+        };
+        drop(guard);
+        if let Some(value) = unsent {
+            late(value);
+        }
     });
-    rx.recv_timeout(budget.deadline.saturating_duration_since(Instant::now()))
-        .map_err(|_| "finding the wmux CLI: the snapshot's time budget ran out".to_string())
+    match rx.recv_timeout(budget.deadline.saturating_duration_since(Instant::now())) {
+        Ok(value) => Ok(value),
+        Err(_) => {
+            let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+            guard.take();
+            rx.try_recv()
+                .map_err(|_| format!("{what}: the snapshot's time budget ran out"))
+        }
+    }
+}
+
+type Chunk = (bool, Option<Vec<u8>>);
+
+/// A channel that holds a few chunks: a reader that gets ahead of the call waits for it.
+fn chunk_channel() -> (
+    std::sync::mpsc::SyncSender<Chunk>,
+    std::sync::mpsc::Receiver<Chunk>,
+) {
+    std::sync::mpsc::sync_channel(4)
+}
+
+/// Kills the CLI and reaps it. A kill that fails leaves the process to the system rather
+/// than wait for it past the deadline.
+fn stop(child: &mut std::process::Child) {
+    if child.kill().is_ok() {
+        let _ = child.wait();
+    }
 }
 
 /// What one snapshot may spend on wmux, across all its commands.
@@ -556,26 +616,35 @@ fn run_json(launch: &Launcher, args: &[&str], budget: &mut Budget) -> Result<Val
     if launch.electron {
         command.env("ELECTRON_RUN_AS_NODE", "1");
     }
-    let mut child = command
+    command
         .args(&launch.lead)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                format!("wmux CLI not found ({name}); run inside wmux or set IX_WMUX_BIN")
+        .stderr(Stdio::piped());
+    let mut child = within_or(
+        budget,
+        &format!("starting wmux {verb}"),
+        move || command.spawn(),
+        |started| {
+            if let Ok(mut child) = started {
+                stop(&mut child);
             }
-            _ => format!("could not start wmux ({name}): {}", e.kind()),
-        })?;
+        },
+    )?
+    .map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            format!("wmux CLI not found ({name}); run inside wmux or set IX_WMUX_BIN")
+        }
+        _ => format!("could not start wmux ({name}): {}", e.kind()),
+    })?;
     let out_pipe = child.stdout.take().ok_or("no stdout for wmux")?;
     let err_pipe = child.stderr.take().ok_or("no stderr for wmux")?;
     // The readers send chunks as they read, and the caps are enforced here as the chunks
     // arrive. When the call returns, the receiver is gone and each reader stops at its next
     // chunk. A process the CLI started can still hold a pipe open: its reader then waits for
     // it with one 64 KiB buffer, and the call does not.
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = chunk_channel();
     pump(out_pipe, true, tx.clone());
     pump(err_pipe, false, tx);
     let stopped = |what: &str| {
@@ -597,8 +666,7 @@ fn run_json(launch: &Launcher, args: &[&str], budget: &mut Budget) -> Result<Val
         let now = Instant::now();
         if now >= budget.deadline {
             if status.is_none() {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop(&mut child);
                 return Err(stopped("did not finish"));
             }
             return Err(stopped("exited, but its output stayed open"));
@@ -608,8 +676,7 @@ fn run_json(launch: &Launcher, args: &[&str], budget: &mut Budget) -> Result<Val
             Ok((true, Some(chunk))) => {
                 out.extend_from_slice(&chunk);
                 if out.len() as u64 > budget.bytes_left {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    stop(&mut child);
                     return Err(format!(
                         "wmux {verb}: the snapshot printed more than {MAX_OUTPUT_BYTES} bytes in all"
                     ));
@@ -643,7 +710,7 @@ const MAX_STDERR_BYTES: usize = 64 * 1024;
 fn pump(
     mut pipe: impl Read + Send + 'static,
     is_stdout: bool,
-    tx: std::sync::mpsc::Sender<(bool, Option<Vec<u8>>)>,
+    tx: std::sync::mpsc::SyncSender<Chunk>,
 ) {
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 64 * 1024];
@@ -1046,10 +1113,70 @@ mod tests {
     /// refused before anything starts.
     #[test]
     fn a_batch_script_path_with_a_percent_is_refused() {
-        let launch = for_program(r"C:\tools\%X%\wmux.cmd".to_string());
-        let err = run_json(&launch, &["sidebar-state"], &mut fresh()).unwrap_err();
-        assert!(err.contains("%"), "{err}");
-        assert!(!err.contains("tools"), "{err}");
+        for path in [r"C:\tools\%X%\wmux.cmd", r"C:\tools\%X%\wmux.BAT"] {
+            let launch = for_program(path.to_string());
+            let err = run_json(&launch, &["sidebar-state"], &mut fresh()).unwrap_err();
+            assert!(err.contains("%"), "{err}");
+            assert!(!err.contains("tools"), "{err}");
+        }
+    }
+
+    /// A secret-naming value glued to its key keeps the chain going; a drive-relative path,
+    /// a one-digit port and a bracketed IPv6 address are masked like the others.
+    #[test]
+    fn attached_secrets_drive_paths_and_short_or_ipv6_ports_are_masked() {
+        let s = scrub(
+            "Authorization:Bearer hunter3 token=password hunter2 C:private localhost:8 \
+             [::1]:8080 at 10:30",
+        );
+        for leak in ["hunter3", "hunter2", "private", "localhost", "::1"] {
+            assert!(!s.contains(leak), "{leak} in {s}");
+        }
+        assert!(s.ends_with("at 10:30"), "{s}");
+    }
+
+    /// A value that arrives after the deadline goes to `late`, so a CLI that started too
+    /// late is stopped rather than left running.
+    #[test]
+    fn a_late_start_is_cleaned_up() {
+        let budget = Budget::new(Duration::from_millis(200), MAX_OUTPUT_BYTES);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let err = within_or(
+            &budget,
+            "starting wmux",
+            || {
+                std::thread::sleep(Duration::from_millis(600));
+                7
+            },
+            move |v| {
+                let _ = tx.send(v);
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("starting wmux"), "{err}");
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(7));
+    }
+
+    /// The readers hold at most a few chunks nobody received, so a CLI that prints faster
+    /// than the call reads cannot fill memory past the caps.
+    #[test]
+    fn a_reader_nobody_drains_stops_after_a_few_chunks() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Arc;
+        struct Endless(Arc<AtomicU64>);
+        impl Read for Endless {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let before = self.0.fetch_add(buf.len() as u64, Ordering::SeqCst);
+                Ok(if before > 64 << 20 { 0 } else { buf.len() })
+            }
+        }
+        let read = Arc::new(AtomicU64::new(0));
+        let (tx, rx) = chunk_channel();
+        pump(Endless(read.clone()), true, tx);
+        std::thread::sleep(Duration::from_millis(300));
+        let n = read.load(Ordering::SeqCst);
+        drop(rx);
+        assert!(n <= 1 << 20, "{n} bytes read ahead");
     }
 
     /// Looking wmux up on PATH can block on an unreachable share; it runs inside the budget.
