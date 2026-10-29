@@ -318,6 +318,9 @@ a run there, rather than claim a bound it does not hold. Linux support is its ow
 
 - `not_created`;
 - `running`, when the owner lock is held;
+- `stopped`, when no lock is held and the last valid record is not terminal, the run not
+  waiting nor `UNKNOWN`: a kill, or a `failed(journal)` cut before its LF, left it there, and
+  `resume` goes on from it;
 - `waiting(name)`, `unknown(seq)`, `nondeterministic(seq)`;
 - `done`, where the `done` record holds the outcome; a later `resume` prints it and runs
   nothing;
@@ -376,15 +379,17 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
    - A torn final fragment is truncated, and the run resumes.
    - A malformed record that ends in an LF, interior or last, is `Corrupt`, and so are a sequence
      gap, a duplicate and a `result` without its `intent`.
-   - An injected write or sync failure on a record that is not terminal gives `failed(journal)`.
+   - An injected write or sync failure on a record that is not terminal, a `resolution` aside,
+     gives `failed(journal)`.
    - A sync failure on a complete terminal record (`done`, a worker's `failed(reason)`, a
      launcher's `failed(limit)` or `failed(journal)`) leaves that record the state, and no
      second terminal record follows it.
    - A launcher's `failed(journal)` cut before its LF leaves the run in the state of its last
-     valid record, and `resume` goes on from there.
+     valid record, `status` reports `stopped`, and `resume` goes on from there.
    - A valid record after a terminal one is `Corrupt`.
    - A bound that kills the worker after its synced `done` leaves `done`, with no `failed(limit)`.
-   - A `resolution` cut before its LF leaves the step `UNKNOWN` and open to another `resolve`.
+   - A `resolution` cut before its LF leaves the step `UNKNOWN` and open to another `resolve`;
+     one complete with its LF but whose sync fails counts as resolved.
    - Two concurrent `resolve` of one step: one appends, the other gets `BUSY` or is refused, and
      the journal opens clean.
 10. **Budget across waits.** A script that spends most of its ticks before the wait still finishes

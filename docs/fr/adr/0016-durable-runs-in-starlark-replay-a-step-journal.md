@@ -358,6 +358,9 @@ ceux-ci :
 
 - `not_created` ;
 - `running`, quand le verrou de propriétaire est tenu ;
+- `stopped`, quand aucun verrou n'est tenu et que le dernier enregistrement valide n'est pas
+  terminal, le run n'attendant pas et n'étant pas `UNKNOWN` : un arrêt forcé, ou un
+  `failed(journal)` coupé avant son LF, l'a laissé là, et `resume` reprend à partir de lui ;
 - `waiting(name)`, `unknown(seq)`, `nondeterministic(seq)` ;
 - `done`, où l'enregistrement `done` contient l'issue ; un `resume` ultérieur l'affiche et
   n'exécute rien ;
@@ -423,16 +426,18 @@ vérification ci-dessous tient :
    - Un fragment final déchiré est tronqué, et le run reprend.
    - Un enregistrement malformé qui se termine par un LF, intérieur ou dernier, est `Corrupt`, de
      même qu'un trou de séquence, un doublon et un `result` sans son `intent`.
-   - Un échec d'écriture ou de synchronisation injecté sur un enregistrement qui n'est pas terminal
-     donne `failed(journal)`.
+   - Un échec d'écriture ou de synchronisation injecté sur un enregistrement qui n'est pas terminal,
+     hors `resolution`, donne `failed(journal)`.
    - Un échec de synchronisation sur un enregistrement terminal complet (`done`, le
      `failed(reason)` d'un worker, le `failed(limit)` ou le `failed(journal)` d'un lanceur) laisse
      cet enregistrement l'état, et aucun second enregistrement terminal ne le suit.
    - Un `failed(journal)` de lanceur coupé avant son LF laisse le run dans l'état de son dernier
-     enregistrement valide, et `resume` reprend à partir de là.
+     enregistrement valide, `status` rapporte `stopped`, et `resume` reprend à partir de là.
    - Un enregistrement valide après un enregistrement terminal est `Corrupt`.
    - Une borne qui tue le worker après son `done` synchronisé laisse `done`, sans `failed(limit)`.
-   - Une `resolution` coupée avant son LF laisse l'étape `UNKNOWN` et ouverte à un autre `resolve`.
+   - Une `resolution` coupée avant son LF laisse l'étape `UNKNOWN` et ouverte à un autre `resolve` ;
+     une `resolution` complète avec son LF mais dont la synchronisation échoue compte comme
+     résolue.
    - Deux `resolve` concurrents d'une même étape : l'un ajoute, l'autre reçoit `BUSY` ou est
      refusé, et le journal s'ouvre proprement.
 10. **Budget à travers les attentes.** Un script qui dépense l'essentiel de ses ticks avant
