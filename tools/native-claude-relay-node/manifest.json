@@ -36,7 +36,7 @@
     },
     {
       "path": "native-worker.mjs",
-      "sha256": "05a70be1c6dde9f10fac6768c3287758f48cc10834e2e1688b1320b1d614e688"
+      "sha256": "8cdaaf8b9afc52c567c53326d1c7a42f5987f8836aae45cf9b52322c22901593"
     },
     {
       "path": "print-event-collector.mjs",

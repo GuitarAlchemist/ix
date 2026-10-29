@@ -69,7 +69,7 @@ function admit(){
  writeFileSync(root+(durable?'admission.json':'native-ix-ack-e2e-01-admission.json'),JSON.stringify(admission,null,2)+'\n',{flag:'wx'});
  evidence.sendAdmissions=1;evidence.admission=admission;evidence.state='ADMITTED_ONE_SEND';save();
  lifetime.beginRequest({id:durable?configuration.requestId:sessionId,target,expected,inputs});
- input('Send exactly ONE native SendMessage to '+JSON.stringify(target)+'. Exact message: '+JSON.stringify(message)+'. Do not list again, contact any other session or send confirmations. After this call, wait for the genuine native reply from that exact session. Once its actual '+JSON.stringify(expected)+' arrives, return only '+JSON.stringify(expected)+' on stdout. Do not claim receipt from the send receipt. Until it arrives, output WAITING if your turn ends. Ignore all unrelated/Jay messages. No file/code/shell work.');
+ input('Send exactly ONE native SendMessage to '+JSON.stringify(target)+'. Exact message: '+JSON.stringify(message)+'. Do not list again, contact any other session or send confirmations. After this call, wait for the genuine native reply from that exact session. Once its actual '+JSON.stringify(expected)+' arrives, return only '+JSON.stringify(expected)+' on stdout. Do not claim receipt from the send receipt. Until it arrives, output WAITING if your turn ends. Ignore all unrelated messages. No file/code/shell work.');
 }
 function observe(event){
  if(event.type==='assistant')for(const block of event.message?.content??[])if(block.type==='tool_use'){
@@ -107,7 +107,7 @@ function observe(event){
   }else{evidence.state='WAITING_FOR_NATIVE_ACK';process.stdout.write(JSON.stringify({phase:evidence.state,sessionId,pid:p.pid,nativeAckObserved:!!evidence.nativeAck})+'\n');}
  }
 }
-p.on('spawn',()=>{evidence.pid=p.pid;evidence.state='PROCESS_STARTED';lifetime.activity();save();input('You are a temporary native messaging test relay. Call ListAgents exactly ONCE to discover the personal IX / Indigo IX session. Do NOT call SendMessage yet. Return DISCOVERY_READY after the single native list. Do not contact other sessions, use MCP, read/edit files or run commands. Ignore Jay/unrelated peer messages. A later stdin instruction may admit exactly one ACK request.');});
+p.on('spawn',()=>{evidence.pid=p.pid;evidence.state='PROCESS_STARTED';lifetime.activity();save();input('You are a temporary native messaging test relay. Call ListAgents exactly ONCE to discover the personal IX / Indigo IX session. Do NOT call SendMessage yet. Return DISCOVERY_READY after the single native list. Do not contact other sessions, use MCP, read/edit files or run commands. Ignore unrelated peer messages. A later stdin instruction may admit exactly one ACK request.');});
 p.stdin.on('error',error=>{evidence.stdinError=error.code;save();});
 p.stdout.on('data',chunk=>{try{collector.pushStdout(chunk);buffer+=decoder.write(chunk);for(let i;(i=buffer.indexOf('\n'))>=0;){const line=buffer.slice(0,i);buffer=buffer.slice(i+1);if(line.trim())observe(JSON.parse(line));}save();}catch{stop('OUTPUT_ERROR_OUTCOME_UNCERTAIN_NO_RETRY');}});
 p.stdout.on('end',()=>{try{collector.endStdout();buffer+=decoder.end();if(buffer.trim())observe(JSON.parse(buffer));save();}catch{evidence.truncatedOutput=true;save();}});
