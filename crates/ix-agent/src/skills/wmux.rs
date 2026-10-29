@@ -7,13 +7,16 @@
 //!
 //! Only metadata leaves it, chosen field by field and checked value by value:
 //! workspaces, panes and surfaces with their titles and the folder name of their
-//! working directory, and each agent's state. Ids and states leave only as plain
-//! identifiers, titles, labels and folder names only as plain names (no URL, path,
-//! shell character or credential-shaped word), else as `null`. Screen contents,
-//! prompts, markdown bodies, file paths, URLs and command lines stay out, because any
-//! of them can carry a secret. A blocked agent's reason is free text the operator
-//! reads: its URLs and paths become `<url>` and `<path>`, its secrets are masked and it
-//! is clipped. One budget of time and bytes bounds the whole call.
+//! working directory, and each agent's state. Ids, states and numbers leave only in
+//! their own shape, else as `null`. Screen contents, prompts, markdown bodies, file
+//! paths and command lines stay out. Titles, labels, folder names and a blocked
+//! agent's reason are free text the operator wrote or reads, so they keep their words,
+//! masked as well as a filter can: URLs and host:port pairs become `<url>`, paths
+//! `<path>`, credential-shaped words and the word after a secret-naming one `***`, and
+//! each is clipped. A secret typed as an ordinary word can still leave; the operator
+//! accepted that residual (2026-10-29). One budget of time and bytes bounds the whole
+//! call. A descendant of the CLI that keeps its pipes open is not killed: its reader
+//! threads stay behind, one 64 KiB buffer each, until the pipes close.
 
 use ix_skill_macros::ix_skill;
 use serde_json::{json, Value};
@@ -63,8 +66,10 @@ pub fn wmux_snapshot(params: Value) -> Result<Value, String> {
     if params.as_object().is_some_and(|o| !o.is_empty()) {
         return Err("wmux.snapshot takes no arguments".into());
     }
-    let launch = launcher(&|k: &str| std::env::var(k).ok().filter(|v| !v.is_empty()));
     let mut budget = Budget::new(TIMEOUT, MAX_OUTPUT_BYTES);
+    let launch = within(&budget, || {
+        launcher(&|k: &str| std::env::var(k).ok().filter(|v| !v.is_empty()))
+    })?;
     let mut run = |args: &[&str]| run_json(&launch, args, &mut budget);
     let sidebar = run(&["sidebar-state"])?;
     let mut trees = Vec::new();
@@ -112,7 +117,12 @@ pub(crate) fn normalize(
     }
 
     let titles: BTreeMap<&str, Value> = workspaces_of_ref(sidebar)
-        .filter_map(|w| Some((w.get("id")?.as_str()?, plain(w.get("title")))))
+        .filter_map(|w| {
+            Some((
+                w.get("id")?.as_str()?,
+                text(w.get("title").and_then(Value::as_str)),
+            ))
+        })
         .collect();
     let mut leaves_of: BTreeMap<&str, Vec<(&str, &Value)>> = BTreeMap::new();
     for (ws, tree) in trees {
@@ -163,7 +173,6 @@ pub(crate) fn normalize(
                     .or_else(|| s.get("cwd"))
                     .and_then(Value::as_str)
                     .map(folder_name)
-                    .filter(|name| is_plain(name))
             } else {
                 None
             };
@@ -175,10 +184,14 @@ pub(crate) fn normalize(
                     .map(|r| clip(&scrub(r), MAX_REASON_CHARS)),
                 "blocked_since_ms": number(state.and_then(|st| st.get("blockedSince"))),
                 "claude_session_id": ident(s.get("claudeSessionId")),
-                "cwd_name": cwd,
+                "cwd_name": text(cwd),
                 "pane_id": Some(*pane).filter(|p| is_ident(p)),
                 "surface_id": id,
-                "title": plain(s.get("customTitle").or_else(|| s.get("title"))),
+                "title": text(
+                    s.get("customTitle")
+                        .or_else(|| s.get("title"))
+                        .and_then(Value::as_str)
+                ),
                 "type": kind,
                 "updated_at_ms": number(state.and_then(|st| st.get("updatedAt"))),
                 "workspace_id": Some(ws).filter(|w| is_ident(w)),
@@ -187,11 +200,7 @@ pub(crate) fn normalize(
         }
         workspaces.push(json!({
             "active": w.get("isActive").and_then(Value::as_bool).unwrap_or(false),
-            "cwd_name": w
-                .get("cwd")
-                .and_then(Value::as_str)
-                .map(folder_name)
-                .filter(|name| is_plain(name)),
+            "cwd_name": text(w.get("cwd").and_then(Value::as_str).map(folder_name)),
             "panes": ws_panes.len(),
             "shell": w
                 .get("shell")
@@ -199,7 +208,7 @@ pub(crate) fn normalize(
                 .map(file_name)
                 .filter(|name| is_ident(name)),
             "surfaces": leaves.len(),
-            "title": plain(w.get("title")),
+            "title": text(w.get("title").and_then(Value::as_str)),
             "workspace_id": Some(ws).filter(|w| is_ident(w)),
         }));
     }
@@ -213,7 +222,7 @@ pub(crate) fn normalize(
             json!({
                 "agent_id": ident(a.get("agentId")),
                 "exit_code": number(a.get("exitCode")),
-                "label": plain(a.get("label")),
+                "label": text(a.get("label").and_then(Value::as_str)),
                 "pid": number(a.get("pid")),
                 "spawn_time_ms": number(a.get("spawnTime")),
                 "status": ident(a.get("status")),
@@ -274,13 +283,18 @@ fn file_name(path: &str) -> &str {
 }
 
 /// The last folder of a working directory: which project a pane is in, without the path
-/// (and the user name) above it.
+/// (and the user name) above it. A drive-relative `C:name` gives `name`.
 fn folder_name(path: &str) -> &str {
-    file_name(path.trim_end_matches(['\\', '/']))
+    let name = file_name(path.trim_end_matches(['\\', '/']));
+    match name.split_once(':') {
+        Some((_, rest)) if !rest.is_empty() => rest,
+        _ => name,
+    }
 }
 
 const KINDS: [&str; 4] = ["terminal", "browser", "markdown", "diff"];
 const STATES: [&str; 3] = ["idle", "working", "blocked"];
+const MAX_TEXT_CHARS: usize = 80;
 
 /// An id or a short status: letters, digits and `_.:-` only, so nothing a shell, a path or
 /// a URL needs.
@@ -301,27 +315,18 @@ fn number(v: Option<&Value>) -> Value {
     v.filter(|v| v.is_number()).cloned().unwrap_or(Value::Null)
 }
 
-/// A title, a label or a folder name leaves only when it reads as a plain name: no URL,
-/// path, shell or query character, nothing that looks like a secret, at most 80 characters.
-/// wmux titles are free text, so an allowlisted field name alone proves nothing.
-fn is_plain(s: &str) -> bool {
-    (1..=80).contains(&s.chars().count())
-        && !s
-            .chars()
-            .any(|c| c.is_control() || "/\\?=&@%$<>|;`\"'".contains(c))
-        && s.split_whitespace().all(|w| !looks_secret(w))
-        && mask_secrets(s) == s
-}
-
-fn plain(v: Option<&Value>) -> Value {
-    match v.and_then(Value::as_str) {
-        Some(s) if is_plain(s) => Value::from(s),
+/// A title, a label or a folder name is text the operator wrote. It leaves scrubbed like a
+/// blocked reason and clipped: a filter masks what it can recognize, and cannot promise
+/// that no short secret is left.
+fn text(v: Option<&str>) -> Value {
+    match v.map(|s| clip(&scrub(s), MAX_TEXT_CHARS)) {
+        Some(s) if !s.is_empty() => Value::from(s),
         _ => Value::Null,
     }
 }
 
 /// A word shaped like a credential: a known token prefix, or a long run of letters and
-/// digits.
+/// digits in both cases.
 fn looks_secret(word: &str) -> bool {
     const PREFIXES: [&str; 9] = [
         "sk-",
@@ -338,18 +343,37 @@ fn looks_secret(word: &str) -> bool {
     PREFIXES.iter().any(|p| w.starts_with(p))
         || (w.len() >= 24
             && w.bytes().any(|b| b.is_ascii_digit())
-            && w.bytes().any(|b| b.is_ascii_alphabetic())
+            && w.bytes().any(|b| b.is_ascii_uppercase())
+            && w.bytes().any(|b| b.is_ascii_lowercase())
             && w.bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)))
 }
 
-/// A blocked reason is free text that the operator reads: URLs and paths become `<url>` and
-/// `<path>`, credential-shaped words `***`, then [`mask_secrets`] masks named secrets.
+/// `host:port`, such as `localhost:3000` or `127.0.0.1:8080`; a time such as `10:30` has no
+/// letter or dot in its host.
+fn is_host_port(word: &str) -> bool {
+    let w = word.trim_end_matches([',', '.', ')', ';']);
+    match w.rsplit_once(':') {
+        Some((host, port)) => {
+            host.bytes().any(|b| b.is_ascii_alphabetic() || b == b'.')
+                && host
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
+                && (2..=5).contains(&port.len())
+                && port.bytes().all(|b| b.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
+/// Free text the operator reads: URLs, addresses and paths become `<url>` and `<path>`,
+/// credential-shaped words `***`, then [`mask_secrets`] masks named secrets. Words are split
+/// on any whitespace and joined by one space.
 fn scrub(text: &str) -> String {
     let words: Vec<&str> = text
-        .split(' ')
+        .split_whitespace()
         .map(|w| {
-            if w.contains("://") {
+            if w.contains("://") || is_host_port(w) {
                 "<url>"
             } else if w.contains(['\\', '/']) {
                 "<path>"
@@ -363,44 +387,55 @@ fn scrub(text: &str) -> String {
     mask_secrets(&words.join(" "))
 }
 
+/// A key that names a secret: `token`, `secret`, `password`, `auth`… anywhere in it, or a
+/// part `key`, `pass` or `pwd` (so `api_key` does, `keyboard` does not).
+fn is_secret_key(key: &str) -> bool {
+    const ANYWHERE: [&str; 7] = [
+        "token",
+        "secret",
+        "passw",
+        "passphrase",
+        "apikey",
+        "auth",
+        "credential",
+    ];
+    let k = key.to_ascii_lowercase();
+    ANYWHERE.iter().any(|m| k.contains(m))
+        || k.split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|part| matches!(part, "key" | "pass" | "pwd"))
+}
+
 /// Masks the value of every `key=value`, `key: value` or `key value` whose key names a
-/// secret, and the word after `Bearer`.
+/// secret, and the word after `Bearer`. A masked word that names a secret itself masks the
+/// next one too, so `Authorization: Bearer x` loses both.
 fn mask_secrets(text: &str) -> String {
-    const MARKERS: [&str; 5] = ["token", "key", "secret", "pass", "auth"];
-    let is_secret = |k: &str| {
-        let k = k.to_ascii_lowercase();
-        MARKERS.iter().any(|m| k.contains(m))
-    };
-    let mut out = String::with_capacity(text.len());
+    let mut out: Vec<String> = Vec::new();
     let mut mask_next = false;
-    for (i, word) in text.split(' ').enumerate() {
-        if i > 0 {
-            out.push(' ');
-        }
-        if mask_next && !word.is_empty() {
-            out.push_str("***");
-            mask_next = false;
+    for word in text.split_whitespace() {
+        let bare = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
+        let names_secret =
+            !bare.is_empty() && (is_secret_key(bare) || bare.eq_ignore_ascii_case("bearer"));
+        if mask_next {
+            out.push("***".into());
+            mask_next = names_secret;
             continue;
         }
         match word.find(['=', ':']) {
-            Some(at) if is_secret(&word[..at]) => {
-                out.push_str(&word[..=at]);
+            Some(at) if at > 0 && is_secret_key(&word[..at]) => {
                 if at + 1 < word.len() {
-                    out.push_str("***");
+                    out.push(format!("{}***", &word[..=at]));
                 } else {
+                    out.push(word.into());
                     mask_next = true;
                 }
             }
             _ => {
-                out.push_str(word);
-                let bare = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
-                if !bare.is_empty() && (is_secret(bare) || bare.eq_ignore_ascii_case("bearer")) {
-                    mask_next = true;
-                }
+                out.push(word.into());
+                mask_next = names_secret;
             }
         }
     }
-    out
+    out.join(" ")
 }
 
 /// How to start the wmux CLI: the program, the arguments before wmux's own, and whether
@@ -471,6 +506,20 @@ fn for_program(program: String) -> Launcher {
     }
 }
 
+/// Runs `f` on its own thread and waits for it until the budget's deadline: looking wmux up
+/// on PATH can block on an unreachable share.
+fn within<T: Send + 'static>(
+    budget: &Budget,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(budget.deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| "finding the wmux CLI: the snapshot's time budget ran out".to_string())
+}
+
 /// What one snapshot may spend on wmux, across all its commands.
 struct Budget {
     deadline: Instant,
@@ -497,6 +546,12 @@ fn run_json(launch: &Launcher, args: &[&str], budget: &mut Budget) -> Result<Val
         ));
     }
     let name = file_name(&launch.program).to_string();
+    let lower = launch.program.to_ascii_lowercase();
+    if (lower.ends_with(".cmd") || lower.ends_with(".bat")) && launch.program.contains('%') {
+        return Err(format!(
+            "wmux {verb}: the path of the {name} script holds a %, which cmd.exe would expand; set IX_WMUX_BIN to a path without one"
+        ));
+    }
     let mut command = Command::new(&launch.program);
     if launch.electron {
         command.env("ELECTRON_RUN_AS_NODE", "1");
@@ -514,64 +569,98 @@ fn run_json(launch: &Launcher, args: &[&str], budget: &mut Budget) -> Result<Val
             }
             _ => format!("could not start wmux ({name}): {}", e.kind()),
         })?;
-    let mut out_pipe = child.stdout.take().ok_or("no stdout for wmux")?;
-    let mut err_pipe = child.stderr.take().ok_or("no stderr for wmux")?;
-    // Each reader sends what it read as soon as it reaches EOF or its cap, then drains. A
-    // process the CLI started can hold a pipe open after the CLI exits; the call does not
-    // wait for it past the deadline, and the reader is left to finish on its own.
+    let out_pipe = child.stdout.take().ok_or("no stdout for wmux")?;
+    let err_pipe = child.stderr.take().ok_or("no stderr for wmux")?;
+    // The readers send chunks as they read, and the caps are enforced here as the chunks
+    // arrive. When the call returns, the receiver is gone and each reader stops at its next
+    // chunk. A process the CLI started can still hold a pipe open: its reader then waits for
+    // it with one 64 KiB buffer, and the call does not.
     let (tx, rx) = std::sync::mpsc::channel();
-    let cap = budget.bytes_left;
-    let out_tx = tx.clone();
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = (&mut out_pipe).take(cap + 1).read_to_end(&mut buf);
-        let _ = out_tx.send((true, buf));
-        let _ = std::io::copy(&mut out_pipe, &mut std::io::sink());
-    });
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = (&mut err_pipe).take(64 * 1024).read_to_end(&mut buf);
-        let _ = tx.send((false, buf));
-        let _ = std::io::copy(&mut err_pipe, &mut std::io::sink());
-    });
+    pump(out_pipe, true, tx.clone());
+    pump(err_pipe, false, tx);
     let stopped = |what: &str| {
         format!(
             "wmux {verb}: {what} within the snapshot's {} s budget, and was stopped",
             TIMEOUT.as_secs()
         )
     };
-    let status = loop {
-        match child.try_wait().map_err(|e| e.kind().to_string())? {
-            Some(status) => break status,
-            None if Instant::now() >= budget.deadline => {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let (mut out_done, mut err_done) = (false, false);
+    let mut status = None;
+    loop {
+        if status.is_none() {
+            status = child.try_wait().map_err(|e| e.kind().to_string())?;
+        }
+        if status.is_some() && out_done && err_done {
+            break;
+        }
+        let now = Instant::now();
+        if now >= budget.deadline {
+            if status.is_none() {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(stopped("did not finish"));
             }
-            None => std::thread::sleep(Duration::from_millis(10)),
+            return Err(stopped("exited, but its output stayed open"));
         }
-    };
-    let (mut out, mut err) = (None, None);
-    while out.is_none() || err.is_none() {
-        let left = budget.deadline.saturating_duration_since(Instant::now());
-        match rx.recv_timeout(left) {
-            Ok((true, buf)) => out = Some(buf),
-            Ok((false, buf)) => err = Some(buf),
-            Err(_) => return Err(stopped("exited, but its output stayed open")),
+        let wait = (budget.deadline - now).min(Duration::from_millis(10));
+        match rx.recv_timeout(wait) {
+            Ok((true, Some(chunk))) => {
+                out.extend_from_slice(&chunk);
+                if out.len() as u64 > budget.bytes_left {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "wmux {verb}: the snapshot printed more than {MAX_OUTPUT_BYTES} bytes in all"
+                    ));
+                }
+            }
+            Ok((false, Some(chunk))) => {
+                let room = MAX_STDERR_BYTES.saturating_sub(err.len());
+                err.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            }
+            Ok((true, None)) => out_done = true,
+            Ok((false, None)) => err_done = true,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                (out_done, err_done) = (true, true);
+            }
         }
     }
-    let (out, err) = (out.unwrap_or_default(), err.unwrap_or_default());
+    let status = status.expect("the loop ends only after the CLI exited");
     if !status.success() {
         let msg = String::from_utf8_lossy(&err);
         return Err(format!("wmux {verb}: {}", clip(&scrub(msg.trim()), 500)));
     }
-    if out.len() as u64 > budget.bytes_left {
-        return Err(format!(
-            "wmux {verb}: the snapshot printed more than {MAX_OUTPUT_BYTES} bytes in all"
-        ));
-    }
     budget.bytes_left -= out.len() as u64;
     serde_json::from_slice(&out).map_err(|e| format!("wmux {verb}: not JSON: {e}"))
+}
+
+const MAX_STDERR_BYTES: usize = 64 * 1024;
+
+/// Reads `pipe` on its own thread and sends `(is_stdout, Some(chunk))` for each chunk, then
+/// `(is_stdout, None)` at the end. It stops as soon as nobody receives.
+fn pump(
+    mut pipe: impl Read + Send + 'static,
+    is_stdout: bool,
+    tx: std::sync::mpsc::Sender<(bool, Option<Vec<u8>>)>,
+) {
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match pipe.read(&mut buf) {
+                Ok(0) | Err(_) => {
+                    let _ = tx.send((is_stdout, None));
+                    return;
+                }
+                Ok(n) => {
+                    if tx.send((is_stdout, Some(buf[..n].to_vec()))).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
 }
 
 fn clip(s: &str, n: usize) -> String {
@@ -741,10 +830,11 @@ mod tests {
         );
     }
 
-    /// A field name on the allowlist is not enough: wmux titles, labels, folder and shell
-    /// names are free text, so each value leaves only if it reads as a plain name.
+    /// A field name on the allowlist is not enough. Ids, states and numbers leave only in
+    /// their own shape; titles, labels and folder names are text the operator wrote, which
+    /// leaves with its URLs, paths and secrets masked, as well as a filter can tell.
     #[test]
-    fn free_text_with_a_url_a_path_a_command_or_a_secret_leaves_as_null() {
+    fn free_text_leaves_with_its_urls_paths_and_secrets_masked() {
         let sidebar = json!({ "workspaces": [{
             "id": "w1", "title": "curl https://internal/?auth=ghp_x", "isActive": true,
             "cwd": "C:\\work\\ghp_0123456789abcdefABCDEF0123", "shell": "pwsh.exe -Command x"
@@ -752,7 +842,11 @@ mod tests {
         let tree = json!({ "tree": { "type": "leaf", "paneId": "p 1", "surfaces": [
             { "id": "s1", "type": "terminal", "customTitle": "C:\\Users\\alice\\notes",
               "cwd": "C:\\work\\proj", "claudeSessionId": "id; rm -rf /" },
-            { "id": "s2", "type": "<script>", "title": "Claude Code" }
+            { "id": "s2", "type": "<script>", "title": "Claude Code" },
+            { "id": "s3", "type": "browser", "title": "[Gray] Travail | SONDES" },
+            { "id": "s4", "type": "markdown", "title": "localhost:3000 keyboard layout at 10:30" },
+            { "id": "s5", "type": "terminal", "cwd": "C:private",
+              "title": "gaia-site-publish-tts-kernel-20261010" }
         ]}});
         let states = json!({ "states": [
             { "surfaceId": "s1", "state": "rm -rf", "updatedAt": "soon" }
@@ -762,28 +856,42 @@ mod tests {
             "pid": "12", "surfaceId": "s1", "workspaceId": "w1"
         }]});
         let snap = normalize(&sidebar, &[("w1".into(), tree)], &states, &agents);
+        let text = snap.to_string();
+        for leak in [
+            "alice",
+            "ghp_",
+            "sk-live",
+            "internal",
+            "localhost",
+            "-Command",
+        ] {
+            assert!(!text.contains(leak), "{leak} leaked");
+        }
         let ws = &snap["workspaces"][0];
-        assert_eq!(ws["title"], Value::Null);
-        assert_eq!(ws["cwd_name"], Value::Null);
+        assert_eq!(ws["title"], "curl <url>");
+        assert_eq!(ws["cwd_name"], "***");
         assert_eq!(ws["shell"], Value::Null);
-        let s1 = &snap["surfaces"][0];
-        assert_eq!(s1["title"], Value::Null);
-        assert_eq!(s1["pane_id"], Value::Null);
-        assert_eq!(s1["claude_session_id"], Value::Null);
-        assert_eq!(s1["agent_state"], Value::Null);
-        assert_eq!(s1["updated_at_ms"], Value::Null);
-        assert_eq!(s1["workspace_title"], Value::Null);
-        assert_eq!(s1["cwd_name"], "proj");
-        let s2 = &snap["surfaces"][1];
-        assert_eq!(s2["type"], "other");
-        assert_eq!(s2["title"], "Claude Code");
+        let s = |i: usize| &snap["surfaces"][i];
+        assert_eq!(s(0)["title"], "<path>");
+        assert_eq!(s(0)["workspace_title"], "curl <url>");
+        assert_eq!(s(0)["pane_id"], Value::Null);
+        assert_eq!(s(0)["claude_session_id"], Value::Null);
+        assert_eq!(s(0)["agent_state"], Value::Null);
+        assert_eq!(s(0)["updated_at_ms"], Value::Null);
+        assert_eq!(s(0)["cwd_name"], "proj");
+        assert_eq!(s(1)["type"], "other");
+        assert_eq!(s(1)["title"], "Claude Code");
+        assert_eq!(s(2)["title"], "[Gray] Travail | SONDES");
+        assert_eq!(s(3)["title"], "<url> keyboard layout at 10:30");
+        assert_eq!(s(4)["title"], "gaia-site-publish-tts-kernel-20261010");
+        assert_eq!(s(4)["cwd_name"], "private");
         assert_eq!(
             snap["counts"]["by_type"],
-            json!({ "other": 1, "terminal": 1 })
+            json!({ "browser": 1, "markdown": 1, "other": 1, "terminal": 2 })
         );
         assert_eq!(snap["counts"]["by_state"], json!({}));
         let a = &snap["agents"][0];
-        assert_eq!(a["label"], Value::Null);
+        assert_eq!(a["label"], "***");
         assert_eq!(a["status"], Value::Null);
         assert_eq!(a["pid"], Value::Null);
         assert_eq!(a["agent_id"], "a1");
@@ -793,7 +901,8 @@ mod tests {
     fn a_blocked_reason_loses_its_urls_paths_and_bearer_secrets() {
         let reason = "Fetch https://host/x?token=abc with Authorization: Bearer sk-live-1 \
                       from C:\\Users\\alice\\.ssh\\id_rsa using password hunter2 and \
-                      ghp_0123456789abcdefABCDEF0123";
+                      ghp_0123456789abcdefABCDEF0123 then Authorization: Bearer hunter3 \
+                      token\tabc4 password\nhunter5 on 127.0.0.1:8080";
         let states = json!({ "states": [{
             "surfaceId": "s1", "state": "blocked", "blockedReason": reason
         }]});
@@ -815,6 +924,10 @@ mod tests {
             "id_rsa",
             "hunter2",
             "ghp_",
+            "hunter3",
+            "abc4",
+            "hunter5",
+            "127.0.0.1",
         ] {
             assert!(!out.contains(leak), "{leak} in {out}");
         }
@@ -901,7 +1014,8 @@ mod tests {
             "Start-Process -NoNewWindow pwsh -ArgumentList '-NoProfile','-Command','Start-Sleep 20'; '{}'",
             "sleep 20 & echo '{}'",
         );
-        let _ = run_json(&wrapper, &["sidebar-state"], &mut budget);
+        let err = run_json(&wrapper, &["sidebar-state"], &mut budget).unwrap_err();
+        assert!(err.contains("stayed open"), "{err}");
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "{:?}",
@@ -912,9 +1026,44 @@ mod tests {
     #[test]
     fn the_output_budget_is_shared_by_the_whole_call() {
         let mut budget = Budget::new(TIMEOUT, 10);
-        let chatty = script("'x' * 100", "printf '%0100d' 0");
-        let err = run_json(&chatty, &["sidebar-state"], &mut budget).unwrap_err();
+        let small = script("'[1,2]'", "echo '[1,2]'");
+        assert_eq!(
+            run_json(&small, &["sidebar-state"], &mut budget).unwrap(),
+            json!([1, 2])
+        );
+        let err = run_json(&small, &["agent-state"], &mut budget).unwrap_err();
         assert!(err.contains("more than"), "{err}");
+        let chatty = script("'x' * 100000", "printf '%0100000d' 0");
+        let err = run_json(&chatty, &["sidebar-state"], &mut fresh_with(1000)).unwrap_err();
+        assert!(err.contains("more than"), "{err}");
+    }
+
+    fn fresh_with(bytes: u64) -> Budget {
+        Budget::new(TIMEOUT, bytes)
+    }
+
+    /// `cmd.exe` expands `%NAME%` in the path of the script it runs, so such a path is
+    /// refused before anything starts.
+    #[test]
+    fn a_batch_script_path_with_a_percent_is_refused() {
+        let launch = for_program(r"C:\tools\%X%\wmux.cmd".to_string());
+        let err = run_json(&launch, &["sidebar-state"], &mut fresh()).unwrap_err();
+        assert!(err.contains("%"), "{err}");
+        assert!(!err.contains("tools"), "{err}");
+    }
+
+    /// Looking wmux up on PATH can block on an unreachable share; it runs inside the budget.
+    #[test]
+    fn a_slow_lookup_is_bounded_by_the_budget() {
+        let budget = Budget::new(Duration::from_secs(1), MAX_OUTPUT_BYTES);
+        let started = Instant::now();
+        let err = within(&budget, || std::thread::sleep(Duration::from_secs(5))).unwrap_err();
+        assert!(err.contains("ran out"), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     /// Outside wmux the `wmux` on PATH is a `.cmd` or `.ps1` shim; both are found and run.
