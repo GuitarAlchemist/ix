@@ -94,17 +94,19 @@ says `run` comes back only through an amendment):
   `child` returns `{"ok": False, "err": {"code": "TOO_DEEP"}}`.
 - **The child's grant must fit what the parent has left.** Each cumulative field (`calls`,
   `ticks`, `active_seconds`, `activations`) must be at most the parent's remainder after its
-  reservations. `memory_mb` must be at most the parent's own, since it is a ceiling, not a
+  reservations and after the call that the `child` step's own `attempt` charges the parent. A
+  parent with one call left therefore cannot give a child a call. `memory_mb` must be at most the parent's own, since it is a ceiling, not a
   quantity spent. The fit is computed from the fold, before the intent is written. A grant that
   does not fit gives an intent like any other, with its canonical args, the grant included, and
   the mark `"refused": "GRANT_EXCEEDED"`. The step's result is
   `{"ok": False, "err": {"code": "GRANT_EXCEEDED"}}`. The fold subtracts the grant of every
-  `child` intent except a refused one, so a refused one reserves nothing. A crash between that
+  `child` intent except a refused one and one resolved `--not-performed`, so a refused one
+  reserves nothing. A crash between that
   intent and its result replays the same fit from the same fold, checks the same args digest,
   and writes the same result. No child is created.
 - **The grant is reserved in the intent.** The parent's `intent` record for a `child` step holds
-  the child's grant, and the fold of ADR-0016 §8 subtracts the grant of every child intent but a
-  refused one from what the parent has left. That record is written before the child exists, so
+  the child's grant, and the fold of ADR-0016 §8 subtracts the grant of every child intent from
+  what the parent has left, except a refused one and one resolved `--not-performed`. That record is written before the child exists, so
   a crash leaves either the intent with no child, which replay then creates under the same
   reservation, or both. A refused intent never creates a child, on replay either.
   - **A reservation is never returned to the parent,** except through a person. A parent that ends
@@ -126,7 +128,9 @@ says `run` comes back only through an amendment):
     `failed(child)` too. A child's script reports its own failures through `done`, on the
     failure rail, so `failed` only ever comes from an emergency stop (ADR-0016 §4). Passing it on
     as a value would let a script start the agent again, and the child may have done an effect
-    that a new child would repeat;
+    that a new child would repeat. A `failed(journal)` that never became durable leaves the
+    child in the state of its last valid record, and the parent resumes it like any present
+    child (ADR-0016 §3);
   - `nondeterministic(seq)`: the parent stops too, as `nondeterministic(<its seq>)`, where
     `<its seq>` is the parent's `child` step, and its status names the child's id and the
     child's own `seq`. That is an emergency stop, not a value, for the same reason. Both runs
@@ -147,7 +151,8 @@ says `run` comes back only through an amendment):
 - A registry is a directory, as in bzlmod: `modules/<name>/<version>/MODULE.star` plus
   `source.json`, which holds `url` and `sha256`. It can be a Git repository or a local path. The
   URL can point anywhere HTTPS reaches: a GitHub release asset, a raw repository in Nexus or
-  Artifactory, an internal web server. IX needs no registry server.
+  Artifactory, an internal web server. A `file://` URL serves a local registry. IX needs no
+  registry server.
 - `ix-durable lock` checks every archive against its `sha256` and refuses a mismatch. With
   `--verify-attestation`, it also runs `gh attestation verify`, and the lock records that it did.
 
@@ -189,8 +194,10 @@ an existing id and another lock is `CONFLICT`, never a silent reuse of the old c
      later child that fits is then created. A fifth level of nesting is `TOO_DEEP`.
    - A child that ends `failed(journal)` after a journaled `say` ends the parent
      `failed(child)`, and no second child is created. A child that
-     stops `NONDETERMINISTIC` after a journaled `say` stops the parent `NONDETERMINISTIC`, and no
-     second child is created.
+     stops `NONDETERMINISTIC` after a journaled `say` stops the parent `nondeterministic` at its
+     own `child` step, its status names the child's id and the child's `seq`, and no second child
+     is created. A child whose `failed(journal)` could not be written is resumed by the parent.
+   - A parent with one call left asking for a child with one call gets `GRANT_EXCEEDED`.
    - A `seq` of 10^15 − 1 gives a child id of at most 128 characters on a 64-character root, and
      the run that reaches 10^15 ends in `failed(limit)`.
 6. **Integrity.**

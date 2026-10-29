@@ -90,15 +90,20 @@ reader splits names on spaces:
 Anything else, such as `digits` or `integer`, the grammar defines itself. Parsing is
 scannerless, over Unicode scalar values, so no separate lexer exists to drift from the grammar.
 
-**3. Parsing is Earley, deterministic and bounded.** The result is one of:
+**3. Parsing is Earley, deterministic and bounded.** The result is one of the two rails of
+ADR-0016 §4. A failure is `{"ok": False, "err": {"code", "message", …}}`, with the fields below
+inside `err`:
 
 - **One parse:** `{"ok": True, "value": tree}`. A tree node is `{"rule": name, "span": [start,
-  end], "children": [...]}` and a terminal is its text. Spans are character offsets.
-- **No parse:** `{"code": "SYNTAX", "line", "column", "expected"}`, where `expected` is the sorted
-  set of terminals the parser could take there.
-- **Two parses:** `{"code": "AMBIGUOUS", "line", "column", "rule"}`, where the first derivations
+  end], "children": [...]}` and a terminal is its text. Spans are character offsets. Only the
+  grammar's named rules give nodes: the synthetic rules of `[ ]`, `{ }` and groups put their
+  children straight into the node of the named rule around them, so any parser behind the
+  interface gives the same tree.
+- **No parse:** code `SYNTAX`, with `line`, `column` and `expected`, the sorted set of terminals
+  the parser could take there.
+- **Two parses:** code `AMBIGUOUS`, with `line`, `column` and `rule`, where the first derivations
   part. One text, one meaning, one replay.
-- **Over the bounds:** `{"code": "TOO_COMPLEX"}`. The text holds at most 64 KiB. The chart and the
+- **Over the bounds:** code `TOO_COMPLEX`. The text holds at most 64 KiB. The chart and the
   shared parse forest each hold at most a fixed number of items, counted as they are created.
 
 Ambiguity is decided on the forest. The grammar is acyclic (decision 2), so the forest is a finite

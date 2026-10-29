@@ -1,6 +1,6 @@
 # Durable runs: a Starlark script, re-executed and answered step by step from a write-ahead journal
 
-Status: proposed (2026-10-29), revision 8 after Codex rounds 1 to 7 and the Starlark prototype
+Status: proposed (2026-10-29), revision 9 after Codex rounds 1 to 8 and the Starlark prototype
 
 Number 0016: ADR-0015 is taken by `docs/adr/0015-local-isolated-jobs.md` on the unmerged branch
 `feat/local-isolated-execution`. Related: ADR-0017 (agent DSLs) and ADR-0018 (composition and
@@ -120,11 +120,15 @@ It is written to a temporary file in `runs/<ID>/`, synced, then hard-linked to
 - `done` or `failed(reason)`.
 
 Each record is flushed and `sync_data`ed before its value reaches the script, or before its
-effect starts. A failed write ends the run in `failed(journal)`. On open, every LF-terminated
-record must parse and keep the `seq` and phase order: no gap, no duplicate, no `result` without
-its `intent`. Only a final fragment without an LF may be dropped, and it is truncated and synced
-before anything is appended. Durability is claimed for process kills only. No power-loss claim
-is made, as in `ix-recover`.
+effect starts. A failed write ends the run in `failed(journal)`: the worker stops, and the
+launcher appends the record after the worker's death. If that write fails too, nothing is
+recorded, and the run stays in the state of its last valid record. The next `resume` goes on
+from there, and repeats nothing, since every record before was written ahead: a step cut after
+its effect is `UNKNOWN` (decision 7). On open, every LF-terminated record must parse and keep
+the `seq` and phase order: no gap, no duplicate, no `result` without its `intent`. Only a
+final fragment without an LF may be dropped, and it is truncated and synced before anything is
+appended. Durability is claimed for process kills only. No power-loss claim is made, as in
+`ix-recover`.
 
 **4. Capabilities answer on two rails; emergency stops are not values.** Every capability returns
 `{"ok": True, "value": …}` or `{"ok": False, "err": {"code": …, "message": …}}`. Scripts branch on
