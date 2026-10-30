@@ -118,6 +118,10 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         // Runs a caller-supplied ix-stream graph of built-in nodes on threads, under bounds on
         // its events and steps: no file, process or network.
         "ix_stream_run",
+        // Runs the local wmux CLI's read verbs (sidebar-state, tree, agent-state, agent list) and
+        // returns allowlisted metadata (titles, folder names, agent states): it sends no
+        // keystrokes and returns no screen contents, file paths, URLs or command lines.
+        "ix_wmux_snapshot",
         "ix_hyperloglog",
         "ix_bloom_filter",
         "ix_chaos_lyapunov",
@@ -293,6 +297,7 @@ mod tests {
             "ix_knot",
             "ix_duckdb_query",
             "ix_stream_run",
+            "ix_wmux_snapshot",
             "ix_assumption_query",
             "ix_assumption_belief_at",
             "ix_assumption_drift",

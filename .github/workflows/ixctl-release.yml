@@ -147,9 +147,10 @@ jobs:
           @(
             "ixctl, IX's control plane: supervises declared services, reconciles desired state",
             "(plan/apply), bounds each run (wall, memory, processor time, processes), federates with",
-            "peers, and runs a tree of in-process probes (``probe.*`` ops). The protocol, the",
-            "desired-state document, the journal and the probe surface are provisional: see",
-            "docs/plans/2026-10-17-ixctl-one-way-doors.md and docs/plans/2026-10-20-ixctl-probes.md.",
+            "peers, and runs a tree of in-process probes (``probe.*`` ops). The ``ixctl.v1`` protocol",
+            "and the desired-state document ``ixctl-desired/0`` are frozen: see",
+            "docs/adr/0014-ixctl-v1-and-desired-state-frozen.md. The journal, the probe surface and",
+            "bookmarks are provisional: see docs/plans/2026-10-20-ixctl-probes.md.",
             "",
             "## Assets",
             "",

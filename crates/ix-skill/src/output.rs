@@ -31,8 +31,14 @@ impl Format {
 
 /// Emit a single JSON value using the resolved format.
 pub fn emit(value: &Value, fmt: Format) -> io::Result<()> {
+    let bytes = render(value, fmt)?;
+    io::stdout().lock().write_all(&bytes)
+}
+
+/// The bytes [`emit`] prints for `value`.
+pub fn render(value: &Value, fmt: Format) -> io::Result<Vec<u8>> {
     let resolved = fmt.resolve();
-    let mut out = io::stdout().lock();
+    let mut out = Vec::new();
     match resolved {
         Format::Json => {
             serde_json::to_writer_pretty(&mut out, value)?;
@@ -49,7 +55,7 @@ pub fn emit(value: &Value, fmt: Format) -> io::Result<()> {
         Format::Table => emit_table(value, &mut out)?,
         Format::Auto => unreachable!("resolved above"),
     }
-    Ok(())
+    Ok(out)
 }
 
 /// Best-effort table rendering. Objects become 2-column key/value tables;

@@ -6,6 +6,7 @@
 //! applied <- ix.ctl.apply(desired)
 //! on_b    <- ix.ctl.apply(desired, peer: "b")
 //! done    <- ix.ctl.wait(generation: applied.generation, epoch: applied.epoch, timeout_ms: 10000)
+//! result  <- ix.ctl.wait(wait: "generation", generation: applied.generation, epoch: applied.epoch, timeout_ms: 10000)
 //! pod     <- ix.ctl.wait(service: "pod-a", nodes: 4, timeout_ms: 10000)
 //! exited  <- ix.ctl.wait(service: "job", exit: true, generation: applied.generation, epoch: applied.epoch, timeout_ms: 60000)
 //! status  <- ix.ctl.status()
@@ -31,11 +32,17 @@
 //! the stream, or after `timeout_ms:` without a next event (the plane's keep-alive pings do
 //! not count as one): `{events[], gap, ended}`. `max: 0` opens nothing; `epoch:` needs `since:`.
 //!
+//! `ix.ctl.wait(wait: "generation" | "launch" | "run", ...)` maps the plane-side wait and
+//! answers its closed `{"outcome": ...}` value. Generation needs `epoch:` and `generation:`;
+//! launch also needs `service:`; run needs `run: {origin, epoch, seq}`. The older forms below
+//! keep their results and polling behavior.
+//!
 //! `ix.ctl.wait(service:, exit: true)` answers the service's status entry once it has exited
 //! (state `stopped` or `failed`, with `last_exit`): how a job, a service with `restart: never`,
 //! is waited to its end. With `generation:` (and `epoch:`), the apply that started the job,
 //! only that run's exit answers; without it, the last exit the plane saw does, an earlier
-//! run's included.
+//! run's included. The number-only `ix.ctl.wait(generation:)` remains available for compatibility
+//! even though its Rust [`crate::Ctl::wait_generation`] method is deprecated across restarts.
 //!
 //! Arguments are checked before any request: a misspelt name, a missing timeout or a value
 //! piped into a call that would ignore it fails the run instead of being dropped.
@@ -164,24 +171,47 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
     caps.register("ix.ctl.wait", move |a: CallArgs| {
         expect(
             &a,
-            &["generation", "epoch", "service", "nodes", "exit", "peer", "timeout_ms"],
+            &[
+                "wait", "generation", "epoch", "service", "run",
+                "nodes", "exit", "peer", "timeout_ms",
+            ],
         )?;
         let timeout = Duration::from_millis(count(&a, "timeout_ms")?.ok_or("needs `timeout_ms:`")?);
         let peer = string(&a, "peer")?;
-        if flag(&a, "exit")? == Some(false) {
+        let generation = count(&a, "generation")?;
+        let epoch = string(&a, "epoch")?;
+        let service = string(&a, "service")?;
+        let nodes = count(&a, "nodes")?;
+        let exit = flag(&a, "exit")?;
+        let run = run_id(&a)?;
+        if exit == Some(false) {
             return Err("`exit:` is `true`, or left out".into());
         }
-        match (
-            count(&a, "generation")?,
-            string(&a, "epoch")?,
-            string(&a, "service")?,
-            count(&a, "nodes")?,
-            flag(&a, "exit")?,
-        ) {
+        if let Some(wait) = string(&a, "wait")? {
+            return match (
+                wait.as_str(), generation, epoch.as_deref(), service.as_deref(),
+                run.as_ref(), nodes, exit,
+            ) {
+                ("generation", Some(g), Some(e), None, None, None, None) => {
+                    answer_typed(ctl.wait_generation_outcome(e, g, timeout, peer.as_deref()))
+                }
+                ("launch", Some(g), Some(e), Some(s), None, None, None) => {
+                    answer_typed(ctl.wait_launch(e, g, s, timeout, peer.as_deref()))
+                }
+                ("run", None, None, None, Some(run), None, None) => {
+                    answer_typed(ctl.wait_run(run, timeout, peer.as_deref()))
+                }
+                _ => Err("`wait:` is `generation` with `epoch:` and `generation:`, `launch` with `epoch:`, `generation:` and `service:`, or `run` with `run: {origin, epoch, seq}`; all take `timeout_ms:` and optional `peer:`".into()),
+            };
+        }
+        if run.is_some() {
+            return Err("`run:` is for `wait: \"run\"`".into());
+        }
+        match (generation, epoch, service, nodes, exit) {
             (Some(g), epoch, None, None, None) => answer(match (peer.as_deref(), epoch.as_deref()) {
                 (Some(p), epoch) => ctl.wait_generation_at(p, epoch, g, timeout),
                 (None, Some(e)) => ctl.wait_generation_of(e, g, timeout),
-                (None, None) => ctl.wait_generation(g, timeout),
+                (None, None) => wait_generation_number_only(&ctl, g, timeout),
             }),
             (None, None, Some(s), Some(n), None) => answer(match peer.as_deref() {
                 Some(p) => ctl.wait_nodes_at(p, &s, n as usize, timeout),
@@ -203,6 +233,20 @@ pub fn register(caps: &mut Capabilities, ctl: Ctl) -> Result<(), RegistrationErr
 
 fn answer(r: Result<Value, crate::CtlError>) -> Result<Produced, String> {
     r.map(Produced::plain).map_err(|e| e.to_string())
+}
+
+fn answer_typed<T: Into<Value>>(r: Result<T, CtlError>) -> Result<Produced, String> {
+    r.map(|outcome| Produced::plain(outcome.into()))
+        .map_err(|e| e.to_string())
+}
+
+#[allow(deprecated)]
+fn wait_generation_number_only(
+    ctl: &Ctl,
+    generation: u64,
+    timeout: Duration,
+) -> Result<Value, CtlError> {
+    ctl.wait_generation(generation, timeout)
 }
 
 /// No piped value, no positional one, and no named argument outside `named`.
@@ -247,6 +291,39 @@ fn string(a: &CallArgs, name: &str) -> Result<Option<String>, String> {
         Some(Value::String(s)) => Ok(Some(s.clone())),
         Some(_) => Err(format!("`{name}:` must be a string")),
     }
+}
+
+fn run_id(a: &CallArgs) -> Result<Option<crate::RunId>, String> {
+    let Some(value) = a.named.get("run") else {
+        return Ok(None);
+    };
+    let record = value
+        .as_object()
+        .ok_or_else(|| "`run:` must be a record with `origin`, `epoch` and `seq`".to_string())?;
+    if let Some(name) = record
+        .keys()
+        .find(|name| !["origin", "epoch", "seq"].contains(&name.as_str()))
+    {
+        return Err(format!("`run:` has no field `{name}`"));
+    }
+    let text = |name: &str| {
+        record
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| format!("`run.{name}:` must be a non-empty string"))
+    };
+    let seq = record
+        .get("seq")
+        .and_then(Value::as_u64)
+        .filter(|seq| *seq > 0)
+        .ok_or_else(|| "`run.seq:` must be a positive whole number".to_string())?;
+    Ok(Some(crate::RunId {
+        origin: text("origin")?,
+        epoch: text("epoch")?,
+        seq,
+    }))
 }
 
 fn flag(a: &CallArgs, name: &str) -> Result<Option<bool>, String> {
