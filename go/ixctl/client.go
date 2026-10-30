@@ -71,13 +71,15 @@ type sub struct {
 // (Unsubscribe) or the connection ends. Frames closes with the connection, and not at all once
 // the subscription was dropped first (the reader no longer knows it): a reader ends on Done.
 // Head is the plane's head when the subscription was made (envelopes up to it are replay), Epoch
-// the boot it was read in.
+// the boot it was read in. Markers is the marker contract the plane acknowledged, empty when it
+// acknowledged none (including an older plane that ignored the request).
 type Sub struct {
-	ID     int64
-	Head   uint64
-	Epoch  string
-	Frames <-chan Frame
-	Done   <-chan struct{}
+	ID      int64
+	Head    uint64
+	Epoch   string
+	Markers string
+	Frames  <-chan Frame
+	Done    <-chan struct{}
 }
 
 // DialWS sends the token only to a loopback IP literal and port.
@@ -258,6 +260,15 @@ func (cl *Client) SubscribeFromLive(ctx context.Context, prefix string, since *u
 	return cl.open(ctx, Request{Op: "subscribe", Ch: prefix, Since: since, Epoch: epoch, Live: true}, buf)
 }
 
+// SubscribeFromLiveMarkers is SubscribeFromLive with an opt-in marker contract. Sub.Markers is
+// set only from the plane's acknowledgement, so an older plane that ignores Markers remains
+// distinguishable while the subscription itself continues to work.
+func (cl *Client) SubscribeFromLiveMarkers(ctx context.Context, prefix string, since *uint64, epoch, markers string, buf int) (*Sub, error) {
+	return cl.open(ctx, Request{
+		Op: "subscribe", Ch: prefix, Since: since, Epoch: epoch, Live: true, Markers: &markers,
+	}, buf)
+}
+
 // Unsubscribe drops a subscription on both sides and closes its Done. Frames already queued on
 // its channel stay readable; the channel itself is never closed after this (the reader has
 // forgotten it), so a reader that unsubscribes ends on Done, not on the channel's close.
@@ -296,11 +307,12 @@ func (cl *Client) open(ctx context.Context, req Request, buf int) (*Sub, error) 
 		return nil, err
 	}
 	var opened struct {
-		Head  uint64 `json:"head"`
-		Epoch string `json:"epoch"`
+		Head    uint64 `json:"head"`
+		Epoch   string `json:"epoch"`
+		Markers string `json:"markers"`
 	}
 	json.Unmarshal(data, &opened)
-	return &Sub{ID: id, Head: opened.Head, Epoch: opened.Epoch, Frames: frames, Done: s.done}, nil
+	return &Sub{ID: id, Head: opened.Head, Epoch: opened.Epoch, Markers: opened.Markers, Frames: frames, Done: s.done}, nil
 }
 
 // readStateFile reads an instance's state file: where it listens and its token.

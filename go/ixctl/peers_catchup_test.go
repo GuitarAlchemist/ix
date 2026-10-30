@@ -27,9 +27,12 @@ func TestAResumedSubscriptionIsToldWhenItIsLive(t *testing.T) {
 		b.plane.Publish("svc/x", event("stats", map[string]any{"n": i}))
 	}
 	var zero uint64
-	s, err := c.SubscribeFromLive(context.Background(), "svc/", &zero, b.plane.Epoch(), 64)
+	s, err := c.SubscribeFromLiveMarkers(context.Background(), "svc/", &zero, b.plane.Epoch(), runMarkers, 64)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if s.Markers != runMarkers {
+		t.Fatalf("the reply acknowledged markers %q, want %q", s.Markers, runMarkers)
 	}
 	if s.Head != b.plane.hub.Head() {
 		t.Fatalf("the reply says head %d, the plane's is %d", s.Head, b.plane.hub.Head())

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 // sessionQueue bounds what one connection may have waiting to be written.
@@ -22,6 +23,11 @@ type session struct {
 
 	mu   sync.Mutex
 	subs map[int64]*subEntry
+
+	// Test seam, nil or false in production: while set, a subscribe is answered as by an older
+	// plane that decoded it before Request.Markers existed, ignoring the field, so it neither
+	// acknowledges nor emits markers. Read at each subscribe, so a test can change it mid-session.
+	runMarkersUnsupported *atomic.Bool
 
 	// Test seams, nil in production: pumpLeaving runs as a pump starts to
 	// leave (before it removes its entry), pumpLeft once it has gone.
@@ -115,6 +121,15 @@ func (s *session) subscribe(req Request) {
 		s.reply(req.ID, nil, badRequest("subscribe is local: a peer's channels are mirrored under peer/%s/", req.Peer))
 		return
 	}
+	markers := false
+	if s.runMarkersUnsupported == nil || !s.runMarkersUnsupported.Load() {
+		var err error
+		markers, err = wantsRunMarkers(req.Markers)
+		if err != nil {
+			s.reply(req.ID, nil, err)
+			return
+		}
+	}
 	if err := resolveBookmark(s.ctx, s.b, &req); err != nil {
 		s.reply(req.ID, nil, err)
 		return
@@ -131,8 +146,12 @@ func (s *session) subscribe(req Request) {
 	e := &subEntry{prefix: req.Ch, cancel: cancel}
 	s.subs[req.ID] = e
 	s.mu.Unlock()
-	s.reply(req.ID, map[string]any{"sub": req.ID, "head": cur.Head(), "epoch": cur.Epoch()}, nil)
-	go s.pump(ctx, e, req.ID, cur, req.Live)
+	reply := map[string]any{"sub": req.ID, "head": cur.Head(), "epoch": cur.Epoch()}
+	if markers {
+		reply["markers"] = runMarkers
+	}
+	s.reply(req.ID, reply, nil)
+	go s.pump(ctx, e, req.ID, cur, req.Live, markers)
 }
 
 func (s *session) unsubscribe(req Request) {
@@ -174,7 +193,7 @@ func (s *session) dropIf(id int64, mine *subEntry) {
 // waiting for a record of the prefix when the ring holds none up to the head
 // (Catch; criterion 7 of ix#408: a reader that catches up knows when it is live
 // even on a quiet channel, Codex round 43).
-func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, tell bool) {
+func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, tell, markers bool) {
 	defer func() {
 		if s.pumpLeaving != nil {
 			s.pumpLeaving(id)
@@ -216,6 +235,9 @@ func (s *session) pump(ctx context.Context, e *subEntry, id int64, cur *Cursor, 
 			continue
 		}
 		for _, env := range envs {
+			if !markers && isRunMarker(env) {
+				continue
+			}
 			f := eventFrame(id, env)
 			if env.Seq <= replayUntil {
 				if !s.send(ctx, f) {

@@ -52,10 +52,10 @@ never downloads a model or calls a paid provider implicitly.
 | Crate | Tier | Notes |
 |-------|------|-------|
 | ix-math | Beta | Core linear algebra, statistics, activations — everything depends on this. Demoted from Stable 2026-06-21 while the new `inference` surface (two-sample tests, divergences, moments) settles |
-| ix-optimize | Stable | SGD, Adam, PSO, simulated annealing |
+| ix-optimize | Beta | SGD, Adam, PSO, simulated annealing. Demoted from Stable 2026-07-02 while `ConvergenceCriteria`, now a re-export of `ix_math::Convergence` (#155), settles |
 | ix-supervised | Stable | Regression, trees, KNN, SVM, metrics |
 | ix-ensemble | Stable | Random forest, gradient boosted trees |
-| ix-unsupervised | Stable | KMeans, DBSCAN, PCA, t-SNE, GMM |
+| ix-unsupervised | Beta | KMeans, DBSCAN, PCA, t-SNE, GMM. Demoted from Stable 2026-07-02 while k-means, GMM and NMF settle on the shared `Convergence` and NMF's renamed `max_iter`/`tol` (#155) |
 | ix-search | Stable | A*, MCTS, minimax, BFS/DFS |
 | ix-graph | Beta | Markov chains, HMM/Viterbi, agent routing, components + centrality. Demoted from Stable 2026-06-21 while the new components/centrality surface settles |
 | ix-signal | Beta | FFT, wavelets, Kalman, state-space + observability/controllability, spectral analysis |
@@ -98,7 +98,7 @@ SAME PR that introduces the change:
    yet auto-detect it. Use the demotion path for the CI to go green, then
    restore the tier in a follow-up release PR.)
 
-The current 10 Stable crates (see table above) cover the safe-to-consume
+The crates marked `stable` in `crate-maturity.toml` (the Stable rows of the table above) cover the safe-to-consume
 subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 
 ### Beta Crates
@@ -134,6 +134,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | ix-acoustic-tune | Experimental | Acoustic auto-tuning: CMA-ES / ask-tell optimizers + spectral features and losses for synth sound-matching |
 | ix-origami | Experimental | Checks of a flat folded state read from a FOLD file: Kawasaki/Maekawa, face isometry, and the stated layer order (adjacency, cell cycles, taco-tortilla, taco-taco); replays `.origami` folding sequences into a checked folded state |
 | ix-loop | Experimental | Agentic loops written in sandboxed Lua 5.4 that run, judge and write other loops: budgets carved from parent to child, Claude Code headless as the semantic node, host-owned oracles, a store where loops propose and a person accepts (CLI `ix-loop`; ADR-0011) |
+| ix-recover | Experimental | Provisional: publishes a run's result once under a caller-chosen run id and reconciles from durable evidence after a process kill (`ix pipeline run --run-id`) |
 | ix-voice | Experimental | Client and CLI of the local voice service (`piper-voice`, outside the workspace): speak text aloud sentence by sentence, stop, list the voices (ADR-0013) |
 
 ### Internal Crates

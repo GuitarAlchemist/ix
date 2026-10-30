@@ -37,6 +37,11 @@ type server struct {
 	// the kernel.
 	writeDelay atomic.Int64
 
+	// runMarkersUnsupported is a test seam: while set, each WebSocket subscribe is answered like
+	// an older plane's, which ignores the unknown markers request, neither acknowledging nor
+	// delivering markers.
+	runMarkersUnsupported atomic.Bool
+
 	ctx    context.Context // cancelled at shutdown: ends SSE streams and WebSockets
 	cancel context.CancelFunc
 }
@@ -60,6 +65,25 @@ func newServer(b Broker, name, token string, addr *net.TCPAddr) *server {
 	}))
 	m.HandleFunc("POST /v1/plan", s.op(desiredOp("plan")))
 	m.HandleFunc("POST /v1/apply", s.op(desiredOp("apply")))
+	m.HandleFunc("POST /v1/wait", s.op(func(r *http.Request) (Request, error) {
+		peer, err := peerQuery(r)
+		if err != nil {
+			return Request{}, err
+		}
+		var body struct {
+			Wait       string `json:"wait"`
+			Epoch      string `json:"epoch,omitempty"`
+			Generation uint64 `json:"generation,omitempty"`
+			Service    string `json:"service,omitempty"`
+			Run        *RunID `json:"run,omitempty"`
+			TimeoutMS  int64  `json:"timeout_ms"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			return Request{}, err
+		}
+		return Request{Op: "wait", Peer: peer, Wait: body.Wait, Epoch: body.Epoch,
+			Generation: body.Generation, Service: body.Service, Run: body.Run, TimeoutMS: body.TimeoutMS}, nil
+	}))
 	m.HandleFunc("POST /v1/stop", s.op(func(r *http.Request) (Request, error) {
 		var body struct {
 			Service string          `json:"service"`
@@ -282,6 +306,14 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	prefix := q.Get("ch")
 	epoch := q.Get("epoch")
+	markers := false
+	if values, ok := q["markers"]; ok {
+		if len(values) != 1 || values[0] != runMarkers {
+			httpError(w, 400, `markers must be "run"`)
+			return
+		}
+		markers = true
+	}
 	bookmark := q.Get("bookmark")
 	var since *uint64
 	for _, v := range []string{r.Header.Get("Last-Event-ID"), q.Get("since")} {
@@ -328,6 +360,9 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	cur := s.b.Subscribe(prefix, since, epoch)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
+	if markers {
+		w.Header().Set("Ixctl-Markers", runMarkers)
+	}
 	w.WriteHeader(200)
 	fl.Flush()
 
@@ -358,6 +393,9 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		var sb strings.Builder
 		for _, env := range envs {
+			if !markers && isRunMarker(env) {
+				continue
+			}
 			sb.WriteString("id: ")
 			sb.WriteString(env.Epoch)
 			sb.WriteByte(':')

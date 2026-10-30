@@ -23,7 +23,8 @@ pub(crate) struct Response {
 
 /// One request. `within` caps every socket timeout (connect, each read, each write) at what is
 /// left of a wait's deadline, down to a millisecond, so a wait never blocks past its timeout on
-/// a plane that accepts and stalls; `None` leaves the defaults.
+/// a plane that accepts and stalls; `None` leaves the defaults. `read`, when set, replaces the
+/// read timeout: a plane-side wait holds its answer for its own `timeout_ms`, past `IO`.
 pub(crate) fn request(
     addr: SocketAddr,
     method: &str,
@@ -31,10 +32,12 @@ pub(crate) fn request(
     token: &str,
     body: Option<&[u8]>,
     within: Option<Duration>,
+    read: Option<Duration>,
 ) -> io::Result<Response> {
     let cap = |d: Duration| within.map_or(d, |w| d.min(w).max(Duration::from_millis(1)));
+    let read = read.map_or_else(|| cap(IO), |r| r.max(Duration::from_millis(1)));
     let mut stream = TcpStream::connect_timeout(&addr, cap(CONNECT))?;
-    stream.set_read_timeout(Some(cap(IO)))?;
+    stream.set_read_timeout(Some(read))?;
     stream.set_write_timeout(Some(cap(IO)))?;
     stream.set_nodelay(true)?;
 

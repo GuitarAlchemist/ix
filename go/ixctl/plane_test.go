@@ -131,6 +131,155 @@ func TestJournalBootHeaderTellsBootsApart(t *testing.T) {
 	}
 }
 
+func applyConverged(t testing.TB, p *Plane, d *Desired) ApplyReply {
+	t.Helper()
+	reply, done, err := p.Apply(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-done:
+		if !result.Converged {
+			t.Fatalf("apply %d did not converge: %+v", reply.Generation, result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("apply %d did not settle", reply.Generation)
+	}
+	return reply
+}
+
+func assertFreshStoppedBoot(t testing.TB, in *instance, oldEpoch string, names ...string) {
+	t.Helper()
+	st := in.plane.Status()
+	if st.Epoch == oldEpoch {
+		t.Fatalf("restart kept epoch %q", st.Epoch)
+	}
+	if st.Generation != 0 || st.ObservedGeneration != 0 || st.SettledGeneration != 0 ||
+		st.Diverged != nil || len(st.Failed) != 0 {
+		t.Fatalf("fresh boot generations: %+v", st)
+	}
+	if len(st.Services) != len(names) {
+		t.Fatalf("fresh boot services %+v, want %v", st.Services, names)
+	}
+	for i, name := range names {
+		s := st.Services[i]
+		if s.Name != name || s.Desired != desiredStopped || s.State != stateStopped ||
+			s.Pid != nil || s.Restarts != 0 || s.StartedAt != nil || s.Generation != 0 ||
+			s.Run != nil || s.LastExit != nil {
+			t.Fatalf("fresh boot service %q: %+v", name, s)
+		}
+	}
+}
+
+// D14-T1: applied desired state is scoped to one boot, even when successive
+// documents each name only one service.
+func TestDesiredStateDoesNotSurviveAPlaneRestart(t *testing.T) {
+	stateDir := t.TempDir()
+	spec := fakeSpec(t, "local", nil,
+		fakeSvc{name: "a", args: []string{"--nodes", "1"}},
+		fakeSvc{name: "b", args: []string{"--nodes", "1"}})
+	first := newTestInstance(t, spec, stateDir)
+	oldEpoch := first.plane.Epoch()
+	r1 := applyConverged(t, first.plane, running("a"))
+	r2 := applyConverged(t, first.plane, running("b"))
+	if r1.Generation != 1 || r2.Generation != 2 {
+		t.Fatalf("partial apply generations %d, %d, want 1, 2", r1.Generation, r2.Generation)
+	}
+	first.close()
+
+	second := newTestInstance(t, spec, stateDir)
+	assertFreshStoppedBoot(t, second, oldEpoch, "a", "b")
+}
+
+// D14-T2: autostart is a new boot's generation 1 and launches a new run.
+func TestAutostartAfterRestartBelongsToTheNewBoot(t *testing.T) {
+	stateDir := t.TempDir()
+	spec := fakeSpec(t, "local", nil, fakeSvc{name: "a", args: []string{"--nodes", "1"}})
+	spec.Services[0].Autostart = true
+	first := newTestInstance(t, spec, stateDir)
+	old := waitStatus(t, first, 10*time.Second, "first boot's autostart", func(st StatusReply) bool {
+		s := svcStatus(st, "a")
+		return st.SettledGeneration == 1 && s.State == stateRunning && s.Run != nil
+	})
+	oldRun := *svcStatus(old, "a").Run
+	first.close()
+
+	second := newTestInstance(t, spec, stateDir)
+	fresh := waitStatus(t, second, 10*time.Second, "second boot's autostart", func(st StatusReply) bool {
+		s := svcStatus(st, "a")
+		return st.SettledGeneration == 1 && s.State == stateRunning && s.Run != nil
+	})
+	run := svcStatus(fresh, "a").Run
+	if fresh.Epoch == old.Epoch || fresh.Generation != 1 || fresh.ObservedGeneration != 1 ||
+		run.Epoch != fresh.Epoch || run.Origin != "local" || *run == oldRun {
+		t.Fatalf("old boot %+v run %+v; new boot %+v run %+v", old, oldRun, fresh, *run)
+	}
+}
+
+// D14-T4: a cut audit record is neither desired state nor a place to append
+// the next boot header.
+func TestATruncatedJournalTailCannotAffectTheNextBoot(t *testing.T) {
+	stateDir := t.TempDir()
+	spec := fakeSpec(t, "local", nil,
+		fakeSvc{name: "a", args: []string{"--nodes", "1"}},
+		fakeSvc{name: "b", args: []string{"--nodes", "1"}})
+	first := newTestInstance(t, spec, stateDir)
+	oldEpoch := first.plane.Epoch()
+	applyConverged(t, first.plane, running("a"))
+	applyConverged(t, first.plane, running("b"))
+	first.close()
+
+	journalPath := filepath.Join(stateDir, "local.journal.jsonl")
+	f, err := os.OpenFile(journalPath, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const cut = `{"kind":"apply","generation":999,"desired":{"services":{"a":{"state":"running"}}}`
+	if _, err := f.WriteString(cut); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second := newTestInstance(t, spec, stateDir)
+	assertFreshStoppedBoot(t, second, oldEpoch, "a", "b")
+	b, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) < 2 || lines[len(lines)-2] != cut {
+		t.Fatalf("cut tail is not its own physical line: %q", lines)
+	}
+	var boot map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &boot); err != nil {
+		t.Fatalf("new boot header after cut tail: %v; line %q", err, lines[len(lines)-1])
+	}
+	if boot["kind"] != "boot" || boot["schema"] != journalSchema ||
+		boot["name"] != "local" || boot["epoch"] != second.plane.Epoch() {
+		t.Fatalf("new boot header after cut tail: %v", boot)
+	}
+}
+
+// D14-T5: the current spec, not names found in the audit journal, declares
+// the services of a new boot.
+func TestRestartUsesOnlyTheNewSpecServices(t *testing.T) {
+	stateDir := t.TempDir()
+	firstSpec := fakeSpec(t, "local", nil,
+		fakeSvc{name: "a", args: []string{"--nodes", "1"}},
+		fakeSvc{name: "b", args: []string{"--nodes", "1"}})
+	first := newTestInstance(t, firstSpec, stateDir)
+	oldEpoch := first.plane.Epoch()
+	applyConverged(t, first.plane, running("b"))
+	first.close()
+
+	secondSpec := fakeSpec(t, "local", nil, fakeSvc{name: "a", args: []string{"--nodes", "1"}})
+	second := newTestInstance(t, secondSpec, stateDir)
+	assertFreshStoppedBoot(t, second, oldEpoch, "a")
+}
+
 // apply bumps the generation, answers at once, and ctl says converged once
 // both services are observed started; status and the journal follow.
 func TestApplyConverges(t *testing.T) {
@@ -179,6 +328,62 @@ func TestApplyConverges(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("journal lacks %s", want)
 		}
+	}
+}
+
+func TestApplyReplyDescribesTheAdmissionSnapshot(t *testing.T) {
+	in := twoPods(t)
+	c := dial(t, in)
+
+	var started ApplyReply
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("pod-a")}), &started)
+	startResult, ok := started.Results["pod-a"]
+	if len(started.Results) != 1 || !ok {
+		t.Fatalf("results %+v, want only document-named pod-a", started.Results)
+	}
+	if len(started.Actions) != 1 || started.Actions[0] != (Action{Op: "start", Service: "pod-a"}) ||
+		startResult.Result != applyStartPending || startResult.CurrentRun != nil {
+		t.Fatalf("start reply %+v", started)
+	}
+	before := waitStatus(t, in, 10*time.Second, "pod-a running", func(st StatusReply) bool {
+		return svcStatus(st, "pod-a").State == stateRunning
+	})
+	current := svcStatus(before, "pod-a")
+	if current.Run == nil {
+		t.Fatalf("running pod-a has no run: %+v", current)
+	}
+
+	var notLaunched ApplyReply
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("pod-a")}), &notLaunched)
+	result := notLaunched.Results["pod-a"]
+	if len(notLaunched.Actions) != 0 || result.Result != applyNotLaunched ||
+		result.CurrentRun == nil || *result.CurrentRun != *current.Run {
+		t.Fatalf("apply on running pod-a %+v, status before it %+v", notLaunched, current)
+	}
+	after := waitStatus(t, in, 5*time.Second, "not-launched apply settled", func(st StatusReply) bool {
+		return st.SettledGeneration >= notLaunched.Generation
+	})
+	still := svcStatus(after, "pod-a")
+	if still.Run == nil || *still.Run != *current.Run || still.Generation == notLaunched.Generation {
+		t.Fatalf("generation %d announced a run: before %+v, after %+v", notLaunched.Generation, current, still)
+	}
+
+	var stopped ApplyReply
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: desiredOf(desiredStopped, "pod-a")}), &stopped)
+	stopResult := stopped.Results["pod-a"]
+	if len(stopped.Actions) != 1 || stopped.Actions[0] != (Action{Op: "stop", Service: "pod-a"}) ||
+		stopResult.Result != applyStopPending || stopResult.CurrentRun != nil {
+		t.Fatalf("stop reply %+v", stopped)
+	}
+	waitStatus(t, in, 10*time.Second, "pod-a stopped", func(st StatusReply) bool {
+		return svcStatus(st, "pod-a").State == stateStopped
+	})
+
+	var noop ApplyReply
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: desiredOf(desiredStopped, "pod-b")}), &noop)
+	noopResult := noop.Results["pod-b"]
+	if len(noop.Actions) != 0 || noopResult.Result != applyNoop || noopResult.CurrentRun != nil {
+		t.Fatalf("noop reply %+v", noop)
 	}
 }
 
@@ -287,10 +492,10 @@ func TestLaunchFailureDiverges(t *testing.T) {
 // F2.1 of the one-way-doors doc: generation 1 fails on one service, generation 2 starts
 // another and converges. observed_generation alone then reads 1 as done; settled_generation
 // and failed say what happened to each generation.
-// An apply that finds a service on its way (a start the supervisor has not made yet, a restart
-// in its backoff) says noop and launches nothing; the run keeps the generation that launched
+// An apply that finds a service on its way (a queued start, or a restart in its backoff)
+// says not-launched and launches nothing; the run keeps the generation that launched
 // it, and only that generation's service.started settles a start.
-func TestAnApplyDuringAStartOrABackoffIsANoop(t *testing.T) {
+func TestAnApplyDuringAStartOrABackoffLaunchesNothing(t *testing.T) {
 	in := newTestInstance(t, fakeSpec(t, "local", nil,
 		fakeSvc{name: "crashy", args: []string{"--crash-after-ms", "300"}, max: 3}), "")
 	c := dial(t, in)
@@ -299,7 +504,8 @@ func TestAnApplyDuringAStartOrABackoffIsANoop(t *testing.T) {
 	// Two applies in a row: the second finds the first's start under way.
 	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &r1)
 	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &r2)
-	if len(r1.Actions) != 1 || len(r2.Actions) != 0 {
+	if len(r1.Actions) != 1 || len(r2.Actions) != 0 ||
+		r2.Results["crashy"].Result != applyNotLaunched {
 		t.Fatalf("actions %v then %v", r1.Actions, r2.Actions)
 	}
 	// The noop apply converges at once, maybe before the first's service.started: take the
@@ -326,11 +532,17 @@ func TestAnApplyDuringAStartOrABackoffIsANoop(t *testing.T) {
 	if s := svcStatus(in.plane.Status(), "crashy"); s.Generation != r1.Generation {
 		t.Fatalf("status %+v", s)
 	}
-	// In the backoff after the crash: an apply is a noop too, and the restart stays the run's.
+	// In the backoff after the crash: an apply launches nothing, and the restart stays the run's.
 	waitEnv(t, w, 5*time.Second, "restarting", func(e *Envelope) bool { return e.Ev.Kind == "service.restarting" })
+	backoffRun := svcStatus(in.plane.Status(), "crashy").Run
+	if backoffRun == nil {
+		t.Fatal("restart backoff retained no run")
+	}
 	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("crashy")}), &r3)
-	if len(r3.Actions) != 0 {
-		t.Fatalf("apply in the backoff: %v", r3.Actions)
+	backoffResult := r3.Results["crashy"]
+	if len(r3.Actions) != 0 || backoffResult.Result != applyNotLaunched ||
+		backoffResult.CurrentRun == nil || *backoffResult.CurrentRun != *backoffRun {
+		t.Fatalf("apply in the backoff: %+v, run before it %+v", r3, backoffRun)
 	}
 	waitEnv(t, w, 5*time.Second, "converged", func(e *Envelope) bool { return e.Ev.Kind == "converged" && genOf(e) == r3.Generation })
 	restarted := waitEnv(t, w, 5*time.Second, "restarted", func(e *Envelope) bool { return e.Ev.Kind == "service.started" })
@@ -357,7 +569,7 @@ func TestANoopApplyLaunchesNothingWhenTheJobEnds(t *testing.T) {
 		fakeSvc{name: "once", args: []string{"--crash-after-ms", "400"}, restart: restartNever}), "")
 	c := dial(t, in)
 	w := subscribe(t, c, "ctl", nil)
-	var r1, r2 ApplyReply
+	var r1, r2, r3 ApplyReply
 	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("once")}), &r1)
 	waitEnv(t, w, 5*time.Second, "started", func(e *Envelope) bool { return e.Ev.Kind == "service.started" })
 	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("once")}), &r2)
@@ -379,9 +591,14 @@ func TestANoopApplyLaunchesNothingWhenTheJobEnds(t *testing.T) {
 		t.Fatalf("%d starts in the journal, want 1 (the noop generation relaunched the job)", n)
 	}
 	// The ended job takes a start again, from an apply that plans one.
-	if p, _ := in.plane.Plan(running("once")); len(p.Actions) != 1 {
-		t.Fatalf("plan on the ended job: %+v", p)
+	json.Unmarshal(do(t, c, Request{Op: "apply", Desired: running("once")}), &r3)
+	if len(r3.Actions) != 1 || r3.Actions[0] != (Action{Op: "start", Service: "once"}) ||
+		r3.Results["once"].Result != applyStartPending {
+		t.Fatalf("apply on the ended job: %+v", r3)
 	}
+	waitEnv(t, w, 5*time.Second, "second run started", func(e *Envelope) bool {
+		return e.Ev.Kind == "service.started" && genOf(e) == r3.Generation
+	})
 }
 
 func TestALaterGenerationDoesNotHideAFailedOne(t *testing.T) {
