@@ -670,9 +670,12 @@ ixctl n'en exécute aucune. Le plan utilise le compte virtuel `NT SERVICE\ixctl`
 enregistré), un démarrage manuel, aucun redémarrage automatique (un plan redémarré part de sa spec,
 pas de ce qu'il faisait tourner), la boucle locale seulement, et un répertoire d'état sous
 `C:\ProgramData\ixctl` dont l'ACL donne la lecture au seul utilisateur client nommé, qui y lit le
-jeton. Chaque arrêt du plan attend que le service soit arrêté (`sc.exe stop` ne fait que demander)
-avant la suite. Le plan lit la spec pour le nom de l'instance ; un test en vérifie le contenu, mais
-rien n'en a encore été exécuté sur un Windows installé. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
+jeton. Un arrêt est `Stop-Service`, qui rend la main une fois le service arrêté (`sc.exe stop` ne
+fait que demander) ; les sections d'installation et de désinstallation s'ouvrent sur
+`$ErrorActionPreference = 'Stop'` et `$PSNativeCommandUseErrorActionPreference = $true`, et
+s'arrêtent donc au premier échec, celui d'une commande native compris. Le plan lit la spec pour le
+nom de l'instance, et désigne la spec et le binaire qui l'a affiché par des chemins absolus. Un test
+en vérifie le contenu, mais rien n'en a encore été exécuté sur un Windows installé. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
 `ixctl up` de la session de l'utilisateur, pair du service.
 
 ## Barrière

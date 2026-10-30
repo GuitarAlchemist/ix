@@ -78,7 +78,9 @@ type hostOptions struct {
 	close func(*instance)
 }
 
-// hostLog writes one JSON object per line, with its time. It never carries the token.
+// hostLog writes one JSON object per line, with its time. It never carries the token: no
+// caller passes it, and TestAStopDuringARunningTaskKillsItsTreeAndTellsEachPhase reads the log for it.
+// @ai:invariant the service log never holds the plane's bearer token [P:assumed conf:0.7]
 type hostLog struct {
 	mu sync.Mutex
 	w  io.Writer
@@ -150,6 +152,9 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 
 	t0 := time.Now()
 	deadline := t0.Add(o.stopTimeout)
+	// Armed at the request: the reports, events and log lines that follow count in the bound.
+	bound := time.NewTimer(o.stopTimeout)
+	defer bound.Stop()
 	checkpoint := uint32(1)
 	set(hostStatus{State: hostStopPending, Checkpoint: checkpoint, WaitHint: o.stopTimeout})
 	in.plane.Publish("ctl", event("host.stop", map[string]any{"phase": "requested", "source": source}))
@@ -162,8 +167,6 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 	go func() { closeIn(in); close(closed) }()
 	tick := time.NewTicker(hostTick)
 	defer tick.Stop()
-	bound := time.NewTimer(o.stopTimeout)
-	defer bound.Stop()
 	unobserved := func(fields map[string]any) uint32 {
 		fields["phase"], fields["source"], fields["ms"] = "unobserved", source, time.Since(t0).Milliseconds()
 		log.event("host.stop", fields)
@@ -353,6 +356,8 @@ type planOptions struct {
 	service, exe, dir, spec, clientUser string
 	// name is the instance name (the spec's), which names the state and log files.
 	name string
+	// from is the binary to install: the one printing the plan.
+	from string
 }
 
 func cmdServicePlan(args []string, stdout io.Writer) error {
@@ -374,6 +379,13 @@ func cmdServicePlan(args []string, stdout io.Writer) error {
 		return err
 	}
 	o.name = spec.Name
+	// The plan runs later, from another shell: name the spec and the binary by absolute paths.
+	if o.spec, err = filepath.Abs(o.spec); err != nil {
+		return err
+	}
+	if o.from, err = os.Executable(); err != nil {
+		return err
+	}
 	fmt.Fprint(stdout, installPlan(o))
 	return nil
 }
@@ -397,10 +409,17 @@ func installPlan(o planOptions) string {
 	w("# of binPath need its native argument passing), in order. ixctl runs none of them.")
 	w("# account: %s (virtual: no password stored, its own SID; on the network it is the computer)", acct)
 	w("# listens on loopback only; state, journal and log in %s; log bounded to 2 x %d MiB", o.dir, serviceLogMax>>20)
+	// A section that chains steps stops at its first failure, a native command's included.
+	prefs := "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true"
 	w("")
 	w("# install")
+	w("%s", prefs)
 	w(`New-Item -ItemType Directory -Force "%s"`, o.exe[:max(strings.LastIndex(o.exe, `\`), 0)])
-	w(`Copy-Item ixctl.exe "%s"`, o.exe)
+	from := o.from
+	if from == "" {
+		from = "ixctl.exe"
+	}
+	w(`Copy-Item "%s" "%s"`, from, o.exe)
 	w(`New-Item -ItemType Directory -Force "%s"`, o.dir)
 	w(`Copy-Item "%s" "%s"`, spec, svcSpec)
 	w(`sc.exe create %s binPath= '%s' obj= "%s" start= demand DisplayName= "IX control plane"`, o.service, bin, acct)
@@ -415,16 +434,16 @@ func installPlan(o planOptions) string {
 	w(`sc.exe query %s`, o.service)
 	w(`Get-Content "%s\%s.json"   # addr and token: the service, SYSTEM, Administrators and %s read it`, o.dir, o.name, o.clientUser)
 	w(`Get-Content -Tail 20 "%s\%s.service.log"`, o.dir, o.name)
-	// sc.exe stop only asks; the stop itself takes up to the host's --stop-timeout (30 s).
-	waitStopped := fmt.Sprintf(`(Get-Service %s).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))`, o.service)
+	// sc.exe stop only asks; Stop-Service returns once the service is stopped (the host bounds
+	// its own stop by --stop-timeout, 30 s) and fails when it cannot stop it.
 	w("")
 	w("# stop")
-	w(`sc.exe stop %s`, o.service)
-	w("%s", waitStopped)
+	w(`Stop-Service %s`, o.service)
 	w("")
-	w("# uninstall (the way back: stop first, and wait for it)")
-	w(`sc.exe stop %s`, o.service)
-	w("%s", waitStopped)
+	w("# uninstall")
+	w("%s", prefs)
+	w("# the way back: stop first, and wait for it")
+	w(`Stop-Service %s`, o.service)
 	w(`sc.exe delete %s`, o.service)
 	w(`Remove-Item -Recurse "%s"   # after reading what it holds: journal and log`, o.dir)
 	w(`Remove-Item "%s"`, o.exe)

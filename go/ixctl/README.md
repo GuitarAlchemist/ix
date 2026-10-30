@@ -626,9 +626,12 @@ and uninstall commands for an elevated PowerShell; ixctl runs none of them. The 
 virtual account `NT SERVICE\ixctl` (no password stored), a manual start, no automatic restart (a
 restarted plane starts from its spec, not from what it was running), loopback only, and a state
 directory under `C:\ProgramData\ixctl` whose ACL gives read to the one client user named, who reads
-the token there. Every stop in the plan waits for the service to be stopped (`sc.exe stop` only
-asks) before what follows. The plan reads the spec for the instance name; a test checks its
-contents, but nothing of it has been run on an installed Windows yet. The service account has no Claude credentials, so work that needs them stays in an
+the token there. A stop is `Stop-Service`, which returns once the service is stopped (`sc.exe stop`
+only asks); the install and uninstall sections open with `$ErrorActionPreference = 'Stop'` and
+`$PSNativeCommandUseErrorActionPreference = $true`, so they end at their first failure, a native
+command's included. The plan reads the spec for the instance name, and names the spec and the
+binary that printed it by absolute paths. A test checks its contents, but nothing of it has been
+run on an installed Windows yet. The service account has no Claude credentials, so work that needs them stays in an
 `ixctl up` of the user's session, a peer of the service.
 
 ## Gate

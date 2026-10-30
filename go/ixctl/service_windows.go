@@ -21,15 +21,11 @@ func hostService(name string, setup func() (hostOptions, func(), error)) (uint32
 		defer done()
 		return consoleHost(o), nil
 	}
-	var code uint32
-	h := &scmHandler{setup: setup, run: func(o hostOptions, c <-chan hostControl, r func(hostStatus)) uint32 {
-		code = runHost(o, c, r)
-		return code
-	}}
+	h := &scmHandler{setup: setup, run: runHost}
 	if err := svc.Run(name, h); err != nil {
 		return 0, err
 	}
-	return code, nil
+	return h.code, nil
 }
 
 // scmHandler carries the SCM's requests to a host and its reports back. The final stopped
@@ -37,13 +33,16 @@ func hostService(name string, setup func() (hostOptions, func(), error)) (uint32
 type scmHandler struct {
 	setup func() (hostOptions, func(), error)
 	run   func(hostOptions, <-chan hostControl, func(hostStatus)) uint32
+	// code is what Execute returned: the process exits with it too.
+	code uint32
 }
 
 func (h *scmHandler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.Status) (bool, uint32) {
 	s <- scmStatus(hostStatus{State: hostStartPending, Checkpoint: 1, WaitHint: hostStartHint})
 	o, done, err := h.setup()
 	if err != nil {
-		return true, exitStartFailed
+		h.code = exitStartFailed
+		return true, h.code
 	}
 	defer done()
 	controls := make(chan hostControl)
@@ -84,6 +83,7 @@ func (h *scmHandler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- sv
 		}
 	})
 	close(stop)
+	h.code = code
 	return code != exitOK, code
 }
 

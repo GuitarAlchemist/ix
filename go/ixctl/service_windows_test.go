@@ -115,11 +115,11 @@ func TestAKilledHostTakesItsTreesAndTheNextOneReplaysNothing(t *testing.T) {
 	w := subscribe(t, c, "svc/task", nil)
 	do(t, c, Request{Op: "apply", Desired: running("task")})
 	gc := childPid(t, w)
-	t.Cleanup(func() {
-		if p, err := os.FindProcess(gc); err == nil {
-			p.Kill()
-		}
-	})
+	// Opened now, while it lives: the handle pins the process, so the cleanup cannot reach
+	// another one that reused the pid.
+	if p, err := os.FindProcess(gc); err == nil {
+		t.Cleanup(func() { p.Kill(); p.Release() })
+	}
 	var st StatusReply
 	json.Unmarshal(do(t, c, Request{Op: "status"}), &st)
 	pid := *svcStatus(st, "task").Pid
@@ -188,8 +188,8 @@ func TestASetupFailureUnderTheSCMIsAStartFailure(t *testing.T) {
 	}
 	s := make(chan svc.Status, 4)
 	specific, code := h.Execute(nil, make(chan svc.ChangeRequest), s)
-	if !specific || code != exitStartFailed {
-		t.Fatalf("Execute returned %v %d", specific, code)
+	if !specific || code != exitStartFailed || h.code != exitStartFailed {
+		t.Fatalf("Execute returned %v %d, kept %d for the process", specific, code, h.code)
 	}
 	close(s)
 	first, ok := <-s
