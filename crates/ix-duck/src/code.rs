@@ -106,7 +106,7 @@ struct IxCodeComplexity;
 impl VScalar for IxCodeComplexity {
     type State = ();
     // @ai:invariant ix_code_complexity returns the file-scope cyclomatic complexity from ix_code::analyze_source for the source+language; unrecognised language -> SQL error [T:test conf:0.85 src:ix_duck::code::tests::complexity_counts_branches]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let src = read_varchar_col(input, 0, n);
         let lang = read_varchar_col(input, 1, n);
@@ -127,7 +127,7 @@ struct IxCodeMetrics;
 impl VScalar for IxCodeMetrics {
     type State = ();
     // @ai:invariant ix_code_metrics returns the full ix_code::FileMetrics (file_scope + per-function complexity/Halstead/SLOC) as JSON; unrecognised language -> SQL error [T:test conf:0.85 src:ix_duck::code::tests::metrics_json_has_fields]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let src = read_varchar_col(input, 0, n);
         let lang = read_varchar_col(input, 1, n);
@@ -148,7 +148,7 @@ struct IxCodeSmells;
 impl VScalar for IxCodeSmells {
     type State = ();
     // @ai:invariant ix_code_smells returns ix_code::detect_smells (lexical; AST-based too under code-semantic) as a JSON array of {name,line,severity,message}; unrecognised language -> SQL error [T:test conf:0.85 src:ix_duck::code::tests::smells_flags_todo]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let src = read_varchar_col(input, 0, n);
         let lang = read_varchar_col(input, 1, n);
@@ -172,7 +172,7 @@ struct IxSemanticMetrics;
 impl VScalar for IxSemanticMetrics {
     type State = ();
     // @ai:invariant ix_semantic_metrics returns ix_code::extract_semantic_metrics_for (tree-sitter) as JSON — parse_quality, ast_node_count, nesting, error-handling density, unsafe_blocks, call graph; languages without a bundled grammar yield parse_quality 0 [T:test conf:0.8 src:ix_duck::code::tests::semantic_metrics_parses_rust]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let src = read_varchar_col(input, 0, n);
         let lang = read_varchar_col(input, 1, n);
@@ -195,7 +195,7 @@ struct IxAstQuery;
 impl VScalar for IxAstQuery {
     type State = ();
     // @ai:invariant ix_ast_query runs a tree-sitter S-expression query (arg 3) against the source for the language, returning matches as a JSON array of {capture,text,start_line,end_line,start_col}; invalid query or grammar-less language -> SQL error [T:test conf:0.8 src:ix_duck::code::tests::ast_query_finds_functions]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let src = read_varchar_col(input, 0, n);
         let lang = read_varchar_col(input, 1, n);

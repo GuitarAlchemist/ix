@@ -134,7 +134,7 @@ Numbers from the live run after this test landed:
   - `ukulele`: offset `679,739`, count `8,612` → cursor `688,351`
 - Final cursor `688,351` matches `meta.total`. No gaps, no overlap.
 
-Both `payload_handler_matches_voicings_payload_v1_schema` and `binary_buffer_layout_matches_meta_when_present` pass. The `corpus_lazy_lookup_resolves_when_present` companion test (Phase 5) also passes against the locally materialised `state/voicings/bass-corpus.json`. The data-layer half of the smoke is now a regression gate; the Three.js render half is documented as manual verification in `docs/plans/2026-05-02-voicings-in-prime-radiant.md` until a Vite-friendly headless approach (Playwright with real wall-clock waits, or hitting the production `vite build` output instead of the dev server) is wired up.
+Both `payload_handler_matches_voicings_payload_v1_schema` and `binary_buffer_layout_matches_meta_when_present` pass. The `corpus_lazy_lookup_resolves_the_committed_corpus` companion test (Phase 5, named `corpus_lazy_lookup_resolves_when_present` until ix#329 made the corpus mandatory) also passes against the locally materialised `state/voicings/bass-corpus.json`. The data-layer half of the smoke is now a regression gate; the Three.js render half is documented as manual verification in `docs/plans/2026-05-02-voicings-in-prime-radiant.md` until a Vite-friendly headless approach (Playwright with real wall-clock waits, or hitting the production `vite build` output instead of the dev server) is wired up.
 
 ## Prevention
 

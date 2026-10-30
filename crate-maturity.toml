@@ -56,7 +56,9 @@ ix-gpu            = "experimental"
 memristive-markov = "experimental"
 ix-acoustic-tune  = "experimental"
 ix-duck           = "experimental"  # in-process DuckDB analyst bench, IX algos as SQL UDFs — research-grade, no stability guarantees (#243)
+ix-knot           = "experimental"  # braid words, Jones polynomials of their closures (Temperley-Lieb bracket), strand layouts for drawing. Research-grade; first consumer is the IX-ComfyUI plait control image.
 ix-petri          = "experimental"  # P/T Petri nets + reachability analyses. Deliberately NOT stable: the plan doc (docs/plans/2026-09-08-feat-ix-petri-place-transition-nets.md) declares a two-way door with a 2027-03-08 delete-by trigger, and a semver commitment would contradict both. Verdict/Analysis shapes and the PNML subset are expected to move as a second consumer appears.
+ix-recover        = "experimental"  # Provisional publish-once / reconcile-after-kill store behind `ix pipeline run --run-id` (exp/ix-recover). Two-way door: the layout and record schemas are spike choices awaiting review, and whether recovery is owned by an IX crate or by Gaia's continuity store is undecided.
 
 # --- Internal tier ------------------------------------------------------
 ix-skill                  = "internal"
@@ -106,4 +108,8 @@ ix-value                  = "internal"  # federates per-repo value manifests →
 ix-baml                   = "experimental"  # BAML boundary seam for IXQL LLM steps; generated client not yet vendored
 ix-ixql                   = "experimental"  # IXQL parser + evaluator (Demerzel pipelines); tracer-bullet stage
 ix-origami                = "experimental"  # checks of a flat folded state from a FOLD file (Kawasaki/Maekawa, isometry, layer order); one fixture (the crane); .origami folding sequences replayed and checked; MCP tool ix_origami_check
+ix-loop                   = "experimental"  # agentic loops in sandboxed Lua 5.4 (mlua, vendored C): carved budgets, Claude Code headless node, host oracles, propose/accept store; CLI only, no MCP tool yet (ADR-0011)
 ix-voice                  = "experimental"  # client + CLI of the local voice service (piper-voice, outside the workspace): say, stop, status, voices; ADR-0013
+ix-wasm                   = "experimental"  # WASI pipeline stages in any language, sandboxed in wasmi (fuel + memory caps, seeded clock); Go stages built into a content-addressed cache
+ix-stream                 = "experimental"  # JSON streams through a graph of threads over bounded channels: back-pressure, cancellation, algedonic bus, budgeted gate, SSE feed, Petri deadlock check
+ix-ctl                    = "experimental"  # Rust client of the Go control plane go/ixctl: ix.ctl.* IXQL capabilities (plan, apply, status, wait, stop) over loopback with a token; slice 1, one-way doors unsigned

@@ -108,9 +108,20 @@ pub fn classify_action_kind(tool_name: &str) -> ActionKind {
         // Checks of a caller-supplied FOLD object or .origami text (passed inline, never read
         // from disk).
         "ix_origami_check",
+        // Knot invariants and strand layout of a caller-supplied braid word.
+        "ix_braid",
+        // The same for a built-in catalogue knot or a caller-drawn rope diagram.
+        "ix_knot",
         // DuckDB SQL over caller-supplied rows, run by the CLI in -safe mode: no
         // file, extension, ATTACH or network access, configuration locked.
         "ix_duckdb_query",
+        // Runs a caller-supplied ix-stream graph of built-in nodes on threads, under bounds on
+        // its events and steps: no file, process or network.
+        "ix_stream_run",
+        // Runs the local wmux CLI's read verbs (sidebar-state, tree, agent-state, agent list) and
+        // returns allowlisted metadata (titles, folder names, agent states): it sends no
+        // keystrokes and returns no screen contents, file paths, URLs or command lines.
+        "ix_wmux_snapshot",
         "ix_hyperloglog",
         "ix_bloom_filter",
         "ix_chaos_lyapunov",
@@ -282,7 +293,11 @@ mod tests {
             "ix_mesh_correlate",
             "ix_petri_analyze",
             "ix_origami_check",
+            "ix_braid",
+            "ix_knot",
             "ix_duckdb_query",
+            "ix_stream_run",
+            "ix_wmux_snapshot",
             "ix_assumption_query",
             "ix_assumption_belief_at",
             "ix_assumption_drift",

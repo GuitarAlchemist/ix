@@ -76,7 +76,7 @@ struct IxRowRetrograde;
 impl VScalar for IxRowRetrograde {
     type State = ();
     // @ai:invariant ix_row_retrograde reverses a valid 12-tone row via ix_bracelet serial retrograde; [0,1,..,11] -> "[11,10,..,0]", non-row -> SQL NULL [T:test conf:0.9 src:ix_duck::serial::tests::retrograde_chromatic]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -92,7 +92,7 @@ struct IxRowInvert;
 impl VScalar for IxRowInvert {
     type State = ();
     // @ai:invariant ix_row_invert applies ix_bracelet serial invert (I0) to a valid 12-tone row; [0,1,..,11] -> "[0,11,10,..,1]", non-row -> SQL NULL [T:test conf:0.9 src:ix_duck::serial::tests::invert_chromatic]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -108,7 +108,7 @@ struct IxRowMatrix;
 impl VScalar for IxRowMatrix {
     type State = ();
     // @ai:invariant ix_row_matrix renders ix_bracelet serial 12x12 matrix of a valid row as 12 bracketed rows joined by ';'; the first row equals the input row [T:test conf:0.9 src:ix_duck::serial::tests::matrix_first_row_is_input]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -134,7 +134,7 @@ struct IxRowCombinatoriality;
 impl VScalar for IxRowCombinatoriality {
     type State = ();
     // @ai:invariant ix_row_combinatoriality renders ix_bracelet serial prime+inversion combinatorial levels as "P:[..] I:[..]"; the chromatic row [0..11] is T6-combinatorial so P contains 6 [T:test conf:0.9 src:ix_duck::serial::tests::combinatoriality_chromatic_has_p6]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,

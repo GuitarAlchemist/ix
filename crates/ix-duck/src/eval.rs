@@ -88,7 +88,7 @@ struct IxNdcg;
 impl VScalar for IxNdcg {
     type State = ();
     // @ai:invariant ix_ndcg(rels,k) = ix_supervised::ranking ndcg_at_k; a relevance list already in ideal order scores 1.0 [T:test conf:0.9 src:ix_duck::eval::tests::ndcg_scalar]
-    unsafe fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
+    fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
         let n = input.len();
         let rels = read_list_col(input, 0, n);
         let ks = read_i64_col(input, 1, n);
@@ -104,7 +104,7 @@ struct IxReciprocalRank;
 impl VScalar for IxReciprocalRank {
     type State = ();
     // @ai:invariant ix_reciprocal_rank(rels) = ix_supervised::ranking reciprocal_rank (1/rank of first relevant); avg over rows is MRR [T:test conf:0.9 src:ix_duck::eval::tests::reciprocal_rank_scalar]
-    unsafe fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
+    fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
         let n = input.len();
         let rels = read_list_col(input, 0, n);
         write_f64(output, n, |i| reciprocal_rank(&rels[i]));
@@ -119,7 +119,7 @@ struct IxPrecisionAtK;
 impl VScalar for IxPrecisionAtK {
     type State = ();
     // @ai:invariant ix_precision_at_k(rels,k) = relevant in top-k / k [T:test conf:0.9 src:ix_duck::eval::tests::precision_recall_scalars]
-    unsafe fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
+    fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
         let n = input.len();
         let rels = read_list_col(input, 0, n);
         let ks = read_i64_col(input, 1, n);
@@ -135,7 +135,7 @@ struct IxRecallAtK;
 impl VScalar for IxRecallAtK {
     type State = ();
     // @ai:invariant ix_recall_at_k(rels,k,total) = relevant in top-k / total_relevant [T:test conf:0.9 src:ix_duck::eval::tests::precision_recall_scalars]
-    unsafe fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
+    fn invoke(_: &Self::State, input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Result<(), Box<dyn std::error::Error>> {
         let n = input.len();
         let rels = read_list_col(input, 0, n);
         let ks = read_i64_col(input, 1, n);
