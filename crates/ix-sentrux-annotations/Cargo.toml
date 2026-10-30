@@ -7,7 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 categories = ["command-line-utilities", "development-tools"]
 keywords = ["annotations", "sentrux", "governance", "verifier", "static-analysis"]
-description = "Bridge that converts sentrux structural-rule violations into AI-annotation contract (ai-annotation-v1) records. Spawns `sentrux.exe mcp`, runs the JSON-RPC handshake (initialize → scan → check_rules), and emits one F-truth-value annotation per violation. Closes the claim → verify → promote-or-demote loop with sentrux as the machine ground-truth verifier."
+description = "Bridge that converts sentrux structural-rule violations into AI-annotation contract (ai-annotation-v1) records. Spawns `sentrux mcp` (resolved from $SENTRUX_EXE or PATH), runs the JSON-RPC handshake (initialize → scan → check_rules), and emits one F-truth-value annotation per violation. Closes the claim → verify → promote-or-demote loop with sentrux as the machine ground-truth verifier."
 
 [dependencies]
 ix-ai-annotations = { workspace = true }
