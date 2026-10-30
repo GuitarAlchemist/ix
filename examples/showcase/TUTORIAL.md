@@ -183,7 +183,9 @@ deployment in a CI pipeline.
 ix check action 'send a welcome email to new signups'
 ```
 
-Exit code **0** = verdict **T** (True) — benign action, auto-approved.
+Exit code **2** = verdict **U** (Unknown) — no rule matched. The check only
+recognizes English keywords, so a match-free action is not approved: a human
+or a more specific policy has to decide.
 
 ---
 

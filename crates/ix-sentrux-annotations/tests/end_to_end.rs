@@ -1,6 +1,6 @@
-//! End-to-end test: drives the real `sentrux.exe mcp` binary if it's
-//! installed at the canonical workstation path. Skips gracefully when
-//! sentrux isn't available so CI without sentrux still passes.
+//! End-to-end test: drives the real `sentrux mcp` binary when `SENTRUX_EXE`
+//! or `PATH` resolves one. Skips gracefully when sentrux isn't available so
+//! CI without sentrux still passes.
 //!
 //! Also covers the fixture-mode round-trip, which does NOT require
 //! sentrux on disk — this is the path CI uses today.
@@ -9,8 +9,8 @@ use ix_sentrux_annotations::{
     convert::violation_to_annotation,
     emit_sidecar,
     mcp_bridge::{run_sentrux_check, SentruxConfig},
+    resolve_sentrux_exe,
     rules_response::{parse_check_rules_response, RuleViolation, RulesReport},
-    DEFAULT_SENTRUX_EXE,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -92,11 +92,13 @@ fn plaintext_diagnostic_becomes_empty_report() {
 
 #[test]
 fn live_sentrux_check_against_ix_worktree() {
-    let exe = PathBuf::from(DEFAULT_SENTRUX_EXE);
-    if !exe.exists() {
-        eprintln!("skipping: sentrux.exe not installed at {}", exe.display());
-        return;
-    }
+    let exe = match resolve_sentrux_exe(None) {
+        Ok(exe) => exe,
+        Err(e) => {
+            eprintln!("skipping: {e}");
+            return;
+        }
+    };
     // Find the ix workspace root by walking up from CARGO_MANIFEST_DIR.
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

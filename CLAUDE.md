@@ -1,8 +1,8 @@
 # ix — ML Algorithms + Governance for Claude Code Skills
 
-Rust workspace (78 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
+Rust workspace (81 crates) implementing foundational ML/math algorithms and AI governance as composable crates, exposed via MCP server (`ix-agent`) and CLI (`ix-skill`). Part of the GuitarAlchemist ecosystem (ix + tars + ga + Demerzel).
 
-**Crate map**: see `README.md` for the full list of 78 crates grouped by domain.
+**Crate map**: see `README.md` for the full list of 81 crates grouped by domain.
 
 ## Build
 
@@ -20,7 +20,8 @@ cargo run -p ix-skill --bin ix -- doctor --full   # plus the CI clippy + test in
 ```
 
 It checks registry-snapshot drift (no hand-typed tool counts), orphan public
-traits, and the governance/state environment. Per-change-type checklists —
+traits, the harness's hooks (`.claude/hooks/*.sh` present, parsing, their
+`test-*.sh` fixtures green), and the governance/state environment. Per-change-type checklists —
 MCP skill, DuckDB UDF, public API, `@ai:` invariant — live in
 [docs/CHECKLISTS.md](docs/CHECKLISTS.md) ([FR](docs/fr/CHECKLISTS.md)).
 
@@ -30,7 +31,7 @@ Repo harness verification:
 pwsh scripts/verify.ps1
 ```
 
-MSRV: Rust 1.80+ (due to wgpu 28).
+MSRV: Rust 1.80+ (due to wgpu 28). CI's `clippy -D warnings` enforces it through `incompatible_msrv` (a std API newer than 1.80 is a red build), so no separate 1.80 toolchain job is needed.
 
 ## Conventions
 
@@ -41,6 +42,7 @@ MSRV: Rust 1.80+ (due to wgpu 28).
 - Governance: all agent actions subject to Demerzel constitution (see `governance/demerzel`).
 - Before adding a new graph primitive, check `docs/guides/graph-theory-in-ix.md` — IX already has 10 graph-theory modules.
 - Do NOT add `petgraph`/`daggy`/`graph-rs` as new dependencies. Use `ix-graph`, `ix-pipeline::dag::Dag<N>`, `ix-search`, or `ix-topo`.
+- Cycles + concurrency + contention (locks, worker pools, "can these two lanes wedge?") are `ix-petri`, not a DAG — `Dag::add_edge` rejects the cycle. Read `docs/guides/petri-nets-in-ix.md` before modelling one.
 
 ## MCP Federation
 
@@ -91,7 +93,7 @@ Adopted from aihero.dev as the genuine *delta* over the rules above (complements
 - **Tracer-bullet first.** For any non-trivial feature, build the smallest **end-to-end** slice that touches *every* layer, test it, get feedback, then expand — never build layers in isolation. aihero: "Context-window constraints make the discipline non-negotiable." (This session's spike was exactly this: held-out→train→head→eval→cross-validate as one thin slice before scaling.)
 - **Vertical, not horizontal, decomposition.** Each task/PR is a thin slice cutting through all integration layers (surfacing unknowns early), not a horizontal layer.
 
-**2026-06-14 (reversal — operator decision):** the actual aihero skills are now INSTALLED (project-scoped, `.claude/skills/`, via `npx skills@latest add mattpocock/skills --copy`, MIT, Socket/Snyk-clean): `grill-with-docs`, `grill-me`, `to-prd`, `to-issues`, `tdd`, `improve-codebase-architecture` (+ `setup-matt-pocock-skills`). The earlier "do NOT add duplicate skills — already covered by internal machinery" stance is **superseded**: the operator wants the named, documented aihero workflow (a methodology a human can read and follow), not an opaque mapping onto internal tools. Use the aihero skills directly; the internal equivalents (`brainstorming`, `ce-plan`, `ce-work`, `simplify`/`code-review`, sentrux) still stand as the IX-native path. Run `/setup-matt-pocock-skills` once to wire the issue tracker (GitHub) + `CONTEXT.md` + docs location that `grill-with-docs`/`to-prd`/`to-issues` depend on.
+Use the aihero skills by name (`/grill-with-docs`, `/to-spec`, `/to-tickets`, `/tdd`, `/retro`); they come from the `mattpocock-skills` plugin ([ADR-0008](docs/adr/0008-skills-from-versioned-plugins.md)). History, renames and wiring: [docs/agents/aihero-skills.md](docs/agents/aihero-skills.md).
 
 Self-improvement reflex: when the user corrects you, invoke `/correct` so the rule lands in this file's **Session-learned rules** section — Cherny's "most important loop" from the 2026 Sequoia talk.
 
@@ -112,31 +114,19 @@ _Appended by `/correct` when the user corrects an approach. Persists across sess
 - **2026-06-01 — `certainty := strength of live binding`.** Don't write `[T]` without a binding (test/compiler/sentrux); cap human-only claims at `P:assumed`; surface unenforced assumptions as `@ai:assumption [U:uncertain]`; drift-gated by `.github/workflows/assumption-drift.yml`. Annotate one module at a time, each pass driving ≥1 real fix; **never** mass-generate or use an LLM panel as the drift oracle.
 
 - **2026-06-20 — Documentation Hygiene (Single-Context Rule).** Prevent loose, unindexed markdown files and enforce single-context directory conventions:
-  - All domain terminology changes must go to the central glossary at [CONTEXT.md](file:///c:/Users/spare/source/repos/ix/CONTEXT.md).
-  - All high-impact architectural decisions must go to [docs/adr/](file:///c:/Users/spare/source/repos/ix/docs/adr/) following [domain.md](file:///c:/Users/spare/source/repos/ix/docs/agents/domain.md).
-  - All developer/session learnings must go to [docs/solutions/](file:///c:/Users/spare/source/repos/ix/docs/solutions/) via `/learnings`.
+  - All domain terminology changes must go to the central glossary at [CONTEXT.md](CONTEXT.md).
+  - All high-impact architectural decisions must go to [docs/adr/](docs/adr/) following [domain.md](docs/agents/domain.md).
+  - All developer/session learnings must go to [docs/solutions/](docs/solutions/) via `/learnings`.
   - All session-specific planning must use `/digest` (written to `state/digests/latest.md`) instead of generating loose `.md` files in the repo.
-  - Run the `ix-streeling` indexer after document changes to maintain [catalog.jsonl](file:///c:/Users/spare/source/repos/ix/state/streeling/catalog.jsonl).
+  - Run the `ix-streeling` indexer after document changes to maintain [catalog.jsonl](state/streeling/catalog.jsonl).
+
+- **2026-10-22 — Claude fires the reflexes, then teaches.** Run `/correct` (on a correction), `/learnings` (at the commit that closes a surprise) and `/mattpocock-skills:retro` (when a review loop closes, before calling a PR ready) yourself at the trigger; the user dictates by voice and forgets the slash command, and `.claude/hooks/correction-detector.sh` nudges in FR/EN. End the reply with one teaching line: what ran, why, and when the user could type it themselves.
 
 ## Agent skills
 
-Per-repo config for the installed aihero/mattpocock engineering skills (see the aihero-delta note above). Configured 2026-06-14 via `/setup-matt-pocock-skills`.
+Per-repo config for the `mattpocock-skills` plugin, written by `/setup-matt-pocock-skills` (2026-06-14):
 
-### Issue tracker
-
-GitHub Issues on `GuitarAlchemist/ix`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Canonical defaults (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (`/grill-with-docs` grows them lazily). See `docs/agents/domain.md`.
-
-## AI-coding vocabulary (shared ecosystem reference)
-
-<https://github.com/mattpocock/dictionary-of-ai-coding> — the plain-English
-glossary behind the aihero methodology adopted across the GuitarAlchemist
-ecosystem (smart-zone, tracer-bullets, context windows, handoffs, failure
-modes). Referenced, not vendored, so it tracks upstream.
+- **Issue tracker**: GitHub Issues on `GuitarAlchemist/ix` via `gh`. See `docs/agents/issue-tracker.md`.
+- **Triage labels**: canonical defaults (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
+- **Domain docs**: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+- **Vocabulary**: <https://github.com/mattpocock/dictionary-of-ai-coding> (referenced, not vendored).

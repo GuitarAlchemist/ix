@@ -1,0 +1,893 @@
+{
+ "version": "fresh-claude-1",
+ "authoredBy": "claude-subagent-blind",
+ "prompts": [
+  {
+   "id": "f-1",
+   "prompt": "song is E A B but i cant sing that high, need it in D",
+   "expectedIntentId": "skill.transpose",
+   "tags": []
+  },
+  {
+   "id": "f-2",
+   "prompt": "i have Em C G, need a 4th chord",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": []
+  },
+  {
+   "id": "f-3",
+   "prompt": "capo on 3 playing G shapes, what are the actual chords im sounding",
+   "expectedIntentId": "skill.transpose",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-4",
+   "prompt": "good chord to lead back into the start of my G C D loop",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-5",
+   "prompt": "tritone = devils interval yeah? where is it on the neck",
+   "expectedIntentId": "skill.interval",
+   "tags": []
+  },
+  {
+   "id": "f-6",
+   "prompt": "what chords do i need for punk, is it seriously just power chords",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-7",
+   "prompt": "want to learn all 7 modes this month, can you lay out a day by day schedule",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-8",
+   "prompt": "open chords every newbie should know?",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": []
+  },
+  {
+   "id": "f-9",
+   "prompt": "is going counterclockwise around the circle the same as going up a fourth each step",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-10",
+   "prompt": "tube screamer vs klon clone which one",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-11",
+   "prompt": "want my verse Dm Bb F C to go darker, like horror movie ominous",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": []
+  },
+  {
+   "id": "f-12",
+   "prompt": "do E and C have any notes in common at all",
+   "expectedIntentId": "skill.commontones",
+   "tags": []
+  },
+  {
+   "id": "f-13",
+   "prompt": "aeolian vs natural minor, is it literally the same thing or am i missing something",
+   "expectedIntentId": "skill.modes",
+   "tags": []
+  },
+  {
+   "id": "f-14",
+   "prompt": "whats a good weekly plan to get my chord changes faster",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": []
+  },
+  {
+   "id": "f-15",
+   "prompt": "is Dm G C in C major or D dorian",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-16",
+   "prompt": "warmup stuff before a gig? 10 minutes max",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": []
+  },
+  {
+   "id": "f-17",
+   "prompt": "just got my first guitar, what chords should i learn first",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "f-18",
+   "prompt": "how many frets is a perfect fifth",
+   "expectedIntentId": "skill.interval",
+   "tags": []
+  },
+  {
+   "id": "f-19",
+   "prompt": "i get like 30 min a day after work, how should i split it up",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": []
+  },
+  {
+   "id": "f-20",
+   "prompt": "from G up to E what do you call that distance",
+   "expectedIntentId": "skill.interval",
+   "tags": []
+  },
+  {
+   "id": "f-21",
+   "prompt": "stuck after Dm7 G7, where do i go",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": []
+  },
+  {
+   "id": "f-22",
+   "prompt": "tritone sub explained pls, so Db7 instead of G7??",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": []
+  },
+  {
+   "id": "f-23",
+   "prompt": "can i drop a Fm into my C major progression to make it more bittersweet? where would it go",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-24",
+   "prompt": "melodic minor going up vs coming down, is that still a thing on guitar or just classical piano people",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": []
+  },
+  {
+   "id": "f-25",
+   "prompt": "been playing 2 years mostly strumming chords, want to start soloing over stuff in G. what notes am i even allowed to hit",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": [
+    "boundary",
+    "long"
+   ]
+  },
+  {
+   "id": "f-26",
+   "prompt": "Am G F... then E or something? what sounds natural there",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-27",
+   "prompt": "can someone explain modes like im 5. every youtube vid loses me right after ionian",
+   "expectedIntentId": "skill.modes",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "f-28",
+   "prompt": "chords that work in D major?",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": []
+  },
+  {
+   "id": "f-29",
+   "prompt": "what can you help me with",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": []
+  },
+  {
+   "id": "f-30",
+   "prompt": "how do i play the blues scale in A, the one evryone uses for solos",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": [
+    "typo"
+   ]
+  },
+  {
+   "id": "f-31",
+   "prompt": "my kid is 8 and just started, which chords are small-hand friendly",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "long"
+   ]
+  },
+  {
+   "id": "f-32",
+   "prompt": "Am F C G feels too emo, how do i brighten it up without wrecking the vibe",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": []
+  },
+  {
+   "id": "f-33",
+   "prompt": "how long should a beginner practice per day, my fingers hurt after 15 min",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "f-34",
+   "prompt": "sus2 vs sus4 whats the diff, soundwise and notes wise",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": []
+  },
+  {
+   "id": "f-35",
+   "prompt": "how many flats in Ab and which ones",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": []
+  },
+  {
+   "id": "f-36",
+   "prompt": "saw someone on a jazz forum call a chord C6/9, spell it out for me pls",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": []
+  },
+  {
+   "id": "f-37",
+   "prompt": "what chords are in the key of G",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": []
+  },
+  {
+   "id": "f-38",
+   "prompt": "best string gauge for drop c",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-39",
+   "prompt": "slid from 5th fret to 8th fret same string, what interval did i just play",
+   "expectedIntentId": "skill.interval",
+   "tags": []
+  },
+  {
+   "id": "f-40",
+   "prompt": "going from D to Bm, which note can i leave ringing",
+   "expectedIntentId": "skill.commontones",
+   "tags": []
+  },
+  {
+   "id": "f-41",
+   "prompt": "how often should i change strings",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-42",
+   "prompt": "C G Am ... what comes next",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": []
+  },
+  {
+   "id": "f-43",
+   "prompt": "lol my cat just knocked my guitar off the stand",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-44",
+   "prompt": "teach me like 4 easy chords so i can strum along to pop songs",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-45",
+   "prompt": "which 7th chords belong to Bb major",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": []
+  },
+  {
+   "id": "f-46",
+   "prompt": "how do i copyright my song before putting it on spotify",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos",
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-47",
+   "prompt": "what key has 4 sharps",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": []
+  },
+  {
+   "id": "f-48",
+   "prompt": "writing a drone part under two chords, what notes are in both A and D",
+   "expectedIntentId": "skill.commontones",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-49",
+   "prompt": "band plays in standard but i'm tuned down a half step, what do my chords become so i match them",
+   "expectedIntentId": "skill.transpose",
+   "tags": []
+  },
+  {
+   "id": "f-50",
+   "prompt": "so like... what am i supposed to ask you",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": []
+  },
+  {
+   "id": "f-51",
+   "prompt": "F barre is impossible for me, is there an easier way to play F for now",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-52",
+   "prompt": "how do i finger an F#m7b5 without my hand dying lol",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": []
+  },
+  {
+   "id": "f-53",
+   "prompt": "write me a python script that tunes my guitar from the mic",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-54",
+   "prompt": "mixolydian over a one chord dominant vamp, which notes do i lean on",
+   "expectedIntentId": "skill.modes",
+   "tags": []
+  },
+  {
+   "id": "f-55",
+   "prompt": "trying to jam over Bb F Gm Eb, what key do i solo in",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-56",
+   "prompt": "whats the 1 4 5 in A",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": []
+  },
+  {
+   "id": "f-57",
+   "prompt": "what key is G Em C D",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": []
+  },
+  {
+   "id": "f-58",
+   "prompt": "whats in common between G and Em7",
+   "expectedIntentId": "skill.commontones",
+   "tags": []
+  },
+  {
+   "id": "f-59",
+   "prompt": "neo soul chords are so pretty, whats the vocab i need to sound like that",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-60",
+   "prompt": "can you give me the chords to wonderwall",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos",
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-61",
+   "prompt": "my chords Em C G D sound too gloomy, can i keep the same roots and flip it to feel warmer",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-62",
+   "prompt": "lydian = major with a #4 right? why does it sound so dreamy",
+   "expectedIntentId": "skill.modes",
+   "tags": []
+  },
+  {
+   "id": "f-63",
+   "prompt": "need the notes in a Bb chord, the song im learning is in F",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-64",
+   "prompt": "which mode is the darkest one? want that evil sound for riffs",
+   "expectedIntentId": "skill.modes",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-65",
+   "prompt": "why does the order of sharps go F C G D A E B, is there a trick",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": []
+  },
+  {
+   "id": "f-66",
+   "prompt": "my progression is C Am F G and the F is boring, can i replace it with something jazzier that still does the same job",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-67",
+   "prompt": "can i play Em instead of C somewhere in a song? i heard they basically overlap",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-68",
+   "prompt": "should i buy a strat or a tele",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-69",
+   "prompt": "why is the 7th chord diminished in every major key, like which one is it in C",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-70",
+   "prompt": "which keys are next door to D on the wheel",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": []
+  },
+  {
+   "id": "f-71",
+   "prompt": "harmonic minor... what is it? sounds all egyptian lol",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": []
+  },
+  {
+   "id": "f-72",
+   "prompt": "can u do anything besides chords",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": []
+  },
+  {
+   "id": "f-73",
+   "prompt": "put Am F C G up a whole step pls",
+   "expectedIntentId": "skill.transpose",
+   "tags": []
+  },
+  {
+   "id": "f-74",
+   "prompt": "been playing 2 years and im stuck, i just noodle the same pentatonic licks every night. need some kind of structure to actually get better",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": [
+    "long"
+   ]
+  },
+  {
+   "id": "f-75",
+   "prompt": "C up to Ab, is that a minor 6th or an aug 5th, how do u tell",
+   "expectedIntentId": "skill.interval",
+   "tags": []
+  },
+  {
+   "id": "f-76",
+   "prompt": "if im in D dorian am i just playing C major notes?? then whats even the point",
+   "expectedIntentId": "skill.modes",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-77",
+   "prompt": "relative minor sub, when does it work and when does it sound wrong",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": []
+  },
+  {
+   "id": "f-78",
+   "prompt": "song uses B E F# and C#m, whats the key",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": []
+  },
+  {
+   "id": "f-79",
+   "prompt": "playing in F, should i use a Bb or a B chord, which one fits",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-80",
+   "prompt": "whats the core toolkit for country guitar, chicken pickin and all that",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": []
+  },
+  {
+   "id": "f-81",
+   "prompt": "getting into bossa nova, what chords and rhythms are must knows",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": []
+  },
+  {
+   "id": "f-82",
+   "prompt": "3 weeks in, my fingers cant reach for G, any simpler shape",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "f-83",
+   "prompt": "whats the minor pentatonic box that fits over a C major song, which fret do i start",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-84",
+   "prompt": "anything i can use in place of B7 that fills the same role? not about difficulty, just want more color",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": []
+  },
+  {
+   "id": "f-85",
+   "prompt": "phrygian dominant vs regular phrygian, whats the one note difference",
+   "expectedIntentId": "skill.modes",
+   "tags": []
+  },
+  {
+   "id": "f-86",
+   "prompt": "do you handle bass or uke too or only guitar",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-87",
+   "prompt": "whats 17 times 23",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-88",
+   "prompt": "are you able to write tabs or just theory stuff",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-89",
+   "prompt": "whats a good amp under 500 for bedroom playing",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-90",
+   "prompt": "funk guitar, what makes it sound funky? my stuff sounds like strumming",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": []
+  },
+  {
+   "id": "f-91",
+   "prompt": "how do i actually use that circle poster thing, i have it on my wall and no clue",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "f-92",
+   "prompt": "i know this tune in C but the recording is in Eb, whats the chart there",
+   "expectedIntentId": "skill.transpose",
+   "tags": []
+  },
+  {
+   "id": "f-93",
+   "prompt": "singer wants it 2 half steps lower: Bb Gm Eb F",
+   "expectedIntentId": "skill.transpose",
+   "tags": []
+  },
+  {
+   "id": "f-94",
+   "prompt": "song goes Am Dm E Am, what key is that",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": []
+  },
+  {
+   "id": "f-95",
+   "prompt": "ear training q: how do i hear the diff between a major 3rd and a minor 3rd",
+   "expectedIntentId": "skill.interval",
+   "tags": []
+  },
+  {
+   "id": "f-96",
+   "prompt": "list the 7 chords in e minor pls",
+   "expectedIntentId": "skill.diatonicchords",
+   "tags": []
+  },
+  {
+   "id": "f-97",
+   "prompt": "whats actually in a cmaj7 like which notes",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": []
+  },
+  {
+   "id": "f-98",
+   "prompt": "make this less happy: C F G C",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": []
+  },
+  {
+   "id": "f-99",
+   "prompt": "how much should i charge for a wedding gig",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos",
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-100",
+   "prompt": "hi new here, what kind of stuff do you know",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "f-101",
+   "prompt": "who invented the electric guitar",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-102",
+   "prompt": "whats a cooler chord to swap in instead of plain G7 going to C",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": []
+  },
+  {
+   "id": "f-103",
+   "prompt": "i have G D Em C and want it to sound sadder, what do i change",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": []
+  },
+  {
+   "id": "f-104",
+   "prompt": "writing a song: A E F#m and then? want it to resolve",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": []
+  },
+  {
+   "id": "f-105",
+   "prompt": "whats the whole/half step pattern for the major scale i always forget it",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": []
+  },
+  {
+   "id": "f-106",
+   "prompt": "F to Dm7 shared notes?",
+   "expectedIntentId": "skill.commontones",
+   "tags": []
+  },
+  {
+   "id": "f-107",
+   "prompt": "which notes do C and Am share",
+   "expectedIntentId": "skill.commontones",
+   "tags": []
+  },
+  {
+   "id": "f-108",
+   "prompt": "want to get into jazz, how do i organize my practice time over the next 3 months",
+   "expectedIntentId": "skill.practiceroutine",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-109",
+   "prompt": "notes in e minor pentatonic?",
+   "expectedIntentId": "skill.scaleinfo",
+   "tags": []
+  },
+  {
+   "id": "f-110",
+   "prompt": "list your features",
+   "expectedIntentId": "skill.whatcanyoudo",
+   "tags": []
+  },
+  {
+   "id": "f-111",
+   "prompt": "tab for the hotel california solo?",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos",
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-112",
+   "prompt": "whats the weather in nashville tomorrow",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-113",
+   "prompt": "help me write lyrics about my ex",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-114",
+   "prompt": "what chord should end this: F G Em Am ...",
+   "expectedIntentId": "skill.progressioncompletion",
+   "tags": []
+  },
+  {
+   "id": "f-115",
+   "prompt": "metal rhythm guitar basics? what scales and shapes do metal guys actually use",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": []
+  },
+  {
+   "id": "f-116",
+   "prompt": "what makes a chord diminished exactly? like the dim one built on B, whats going on inside it",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-117",
+   "prompt": "how do i shift a progression to a different key without doing math every time",
+   "expectedIntentId": "skill.transpose",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-118",
+   "prompt": "C D Em G what key am i in lol",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": []
+  },
+  {
+   "id": "f-119",
+   "prompt": "teacher wrote E7#9 on my sheet wtf is that chord",
+   "expectedIntentId": "skill.chordinfo",
+   "tags": []
+  },
+  {
+   "id": "f-120",
+   "prompt": "why do power chords only use root and fifth, whats a fifth exactly in terms of notes apart",
+   "expectedIntentId": "skill.interval",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-121",
+   "prompt": "what should i learn first if i wanna play blues",
+   "expectedIntentId": "skill.genreessentials",
+   "tags": []
+  },
+  {
+   "id": "f-122",
+   "prompt": "relative minor of Eb major?",
+   "expectedIntentId": "skill.circleoffifths",
+   "tags": [
+    "boundary"
+   ]
+  },
+  {
+   "id": "f-123",
+   "prompt": "when did the beatles put out abbey road",
+   "expectedIntentId": "__none__",
+   "tags": [
+    "oos"
+   ]
+  },
+  {
+   "id": "f-124",
+   "prompt": "chords are F#m D A E, is that A major or F# minor",
+   "expectedIntentId": "skill.keyidentification",
+   "tags": []
+  },
+  {
+   "id": "f-125",
+   "prompt": "how can i make E A B feel more hopeful for the chorus, it's kinda flat rn",
+   "expectedIntentId": "skill.progressionmood",
+   "tags": []
+  },
+  {
+   "id": "f-126",
+   "prompt": "whats the easiest chords to start with so i can play some campfire songs",
+   "expectedIntentId": "skill.beginnerchords",
+   "tags": [
+    "beginner"
+   ]
+  },
+  {
+   "id": "f-127",
+   "prompt": "reharm ideas for a 2-5-1, i always just play dm7 g7 cmaj7 straight",
+   "expectedIntentId": "skill.chordsubstitution",
+   "tags": []
+  },
+  {
+   "id": "f-128",
+   "prompt": "want smooth voice leading from Cmaj7 to Fmaj7, which tones can stay put",
+   "expectedIntentId": "skill.commontones",
+   "tags": [
+    "boundary"
+   ]
+  }
+ ]
+}

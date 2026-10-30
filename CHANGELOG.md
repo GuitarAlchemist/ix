@@ -6,6 +6,66 @@ this project uses workspace-unified semver (all crates share one version).
 
 ## [Unreleased]
 
+### Security — auto-approved MCP tools confine caller paths (2026-09-16)
+
+- Every Tier 1 / Tier 2 registry tool that takes a path now refuses one outside the
+  workspace root: `..`, absolute paths elsewhere, and symlinks or junctions leading out.
+  Missing and outside paths get the same message, and nothing is read before the check.
+  The root is `IX_ROOT`, else the ix checkout holding the server executable, else the ix
+  checkout holding the current directory; never the bare current directory or an inherited
+  `CARGO_MANIFEST_DIR`. When no root is found, or it is a volume root or the home
+  directory, every confined argument is refused. Tools receive the canonical path.
+- On Windows, UNC, device (`\\.\`), verbatim (`\\?\`), drive-relative (`C:x`) and
+  driveless rooted paths are refused by their shape before any filesystem call, so the
+  check never opens a network share or a pipe. NUL is refused everywhere. Newly confined:
+  `ix_code_analyze` `path`, `ix_context_walk` `workspace_root`, `ix_governance_graph` /
+  `ix_governance_graph_rescan` `root`, `ix_ml_pipeline` `source.path`, `ix_trace_ingest`
+  `dir`, `ix_tars_bridge` `trace_dir`, `ix_session_flywheel_export` `session_log` and
+  `trace_dir`. Relative paths resolve against the workspace root, not the process cwd.
+- `IX_EXTRA_ROOTS` (OS path list; relative entries resolve against the workspace root)
+  admits further directories, e.g. a sibling checkout. The trace directories read by
+  `ix_trace_ingest` / `ix_tars_bridge` also admit `~/.ga/traces` and the `traces/`
+  directory beside the installed session log, so `ix_triage_session`'s export-then-ingest
+  loop keeps working. The `ix_session_flywheel_export` destination `trace_dir` admits only
+  those two trace locations (relative paths resolve against `~/.ga/traces`), and a
+  destination through a dangling link is refused.
+- `ix_context_walk` without `workspace_root` indexes the workspace root instead of the
+  process cwd.
+- `ix_governance_persona` refuses a `persona` containing a path separator, `:`, `..` or a
+  control character.
+- `.mcp.json` sets `IX_ROOT` for the `ix` server.
+- `confine` moved from `skills/assumption_graph.rs` to `crates/ix-agent/src/path_confine.rs`.
+
+### Fixed — `ix_session_flywheel_export` confines its destination (2026-09-16)
+
+- `trace_id` must be a plain file name: an absolute path, `..`, a separator, `:`, a leading
+  dot, a trailing dot or space, a control character or a reserved device name (`CON`,
+  `COM1`, ...) is refused before anything is created. Previously the id was joined onto
+  `trace_dir` verbatim, so a path-shaped id wrote `<id>.json` outside `trace_dir`.
+- **Breaking:** `trace_dir` must lie inside `~/.ga/traces` or the `traces/` directory beside
+  the installed session log (`IX_SESSION_LOG`); relative paths resolve against `~/.ga/traces`.
+  `..`, NUL and, on Windows, UNC, device, verbatim and drive-relative paths are refused
+  before anything is resolved. Without `HOME`/`USERPROFILE` there is no `~/.ga/traces` root.
+- `session_log` must be an existing file; a missing log is no longer created.
+- The export writes a temporary file beside the destination and renames it over
+  `<trace_dir>/<trace_id>.json`, so a failed export keeps the previous trace and a symlink or
+  hard link there is replaced, not written through. A directory, symlink, junction or
+  read-only file at the destination is refused.
+- With no `trace_id`, a log stem that is not a valid id (for example `.run.jsonl`) exports as
+  `session-<sanitized stem>` instead of failing.
+
+### Changed — governance checks no longer read "no match" as approval (2026-09-14)
+
+- **Breaking for scripts:** `ix check action` exits `2` (verdict `U`) instead of `0` (`T`)
+  when no rule matches, and adds a `note` saying no match is not evidence of compliance.
+  It now also applies `Constitution::check_action` rules (verdict `D` when one fires) and
+  reports `basis` and `warnings`.
+- `ix_governance_check` (MCP) adds `verdict` (`D`/`P`/`U`), `basis` and `note`; `compliant`
+  is unchanged. New constitution rules for force-push / history rewrite (Article 3),
+  acting without human approval (6), removing audit records (7), `--no-verify` (9).
+- `ix_cargo_deps` keeps only root `[workspace]` members (reports skipped directories in
+  `non_members`) and parses `[dependencies.<name>]` and target-specific dependency tables.
+
 ### Added — `dark-features` doctor check (2026-09-08)
 
 - `ix doctor` gains a `dark-features` check (`crates/ix-skill/src/doctor/dark_features.rs`,
@@ -33,6 +93,44 @@ this project uses workspace-unified semver (all crates share one version).
   passes), which is exactly why nobody noticed.
 - Checklists: "Adding a feature-gated module" in `docs/CHECKLISTS.md`
   ([FR](docs/fr/CHECKLISTS.md)).
+
+### Added — Code topology + H0 persistence over DuckDB (2026-09-08)
+
+Gap-matrix rows **F1** and **B1b** of
+`docs/research/tars-v1-advanced-math-ix-gap-matrix.md` (ix#202). No new
+topology: both rows were exposure gaps over mathematics that already shipped.
+
+- **F1 — the seam.** `ix_code::semantic::extract_definitions` and
+  `ix_code::topology::{Unit, module_call_graph, call_graph_from_semantic,
+  undirected_edge_count}` join the tree-sitter call-graph extractor to the
+  persistent-homology layer. Before this, `topology::CallGraph` and
+  `semantic::CallGraph` were unrelated types and `compute_code_topology` had no
+  callers outside its own tests.
+- **F1 — the exposure.** MCP tool `ix_code_topology` (module- or
+  function-granularity). Enabling `ix-code/topology` in `ix-agent` puts
+  `crates/ix-code/src/topology.rs` on the `cargo build --workspace` path for the
+  first time — no crate had ever enabled that feature, so CI never compiled or
+  tested it.
+- **F1 — the measurement.** `cargo run -p ix-agent --example
+  code_topology_corpus` over all 82 IX crates; results and caveats in
+  `docs/research/2026-09-08-code-topology-over-ix.md`, raw data in
+  `docs/research/data/2026-09-08-code-topology-ix.csv`.
+- **B1b — the DuckDB surface.** `crates/ix-duck/sql/persistence_h0.sql` exposes
+  `ix_persistence_h0()`, `ix_betti_0_at(radius)` and a fail-closed
+  `ix_topo_violations()`. A SQL macro rather than a UDF, because ix-duck's
+  `duck`/`udf` features are never CI-compiled — the constraint
+  `sql/pareto_frontier.sql` records. H0 only: one column is a point cloud in R^1.
+  Cross-checked against `ix_topo`'s general engine on a frozen golden
+  (`crates/ix-duck/tests/persistence_h0_golden.rs`), the two-surface shape of
+  ix#294.
+
+### Fixed
+
+- `ix_code::semantic::classify_call_target` panicked (`byte index N is not a
+  char boundary`) when truncating a method-call receiver longer than 64 bytes
+  whose cut point landed inside a multi-byte character. Any source containing a
+  `→` or an accented identifier in a long receiver could trigger it, including
+  IX's own. Found by running the new module topology over this workspace.
 
 ### Added — Stable Surface guard (2026-05-17)
 

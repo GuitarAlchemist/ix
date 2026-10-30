@@ -87,7 +87,7 @@ fn classify(message: &str) -> String {
         return format!("unsupported character {rest}");
     }
     if tail.starts_with("a `→` step must be a call") {
-        return "non-call pipe step (`→ {…}`, `→ when …`, `→ name`)".to_string();
+        return "non-call pipe step (`→ {…}`, boolean `→ when …`, record arm)".to_string();
     }
     tail.split(", found").next().unwrap_or(tail).to_string()
 }

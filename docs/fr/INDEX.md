@@ -47,6 +47,7 @@ Cette section contient des traductions françaises des tutoriels ix. Le code Rus
 | Régression linéaire | Linear regression | Prédiction de valeurs continues |
 | Régression logistique | Logistic regression | Classification via sigmoïde |
 | Descente de gradient | Gradient descent | Optimisation itérative |
+| Colonie de fourmis | Ant colony optimization | Plus courte tournée par pistes de phéromones ([page](optimisation/colonie-de-fourmis.md)) |
 | Impureté de Gini | Gini impurity | Mesure de pureté des nœuds |
 | Perte charnière | Hinge loss | Fonction de perte du SVM |
 | Hyperplan | Hyperplane | Surface de décision linéaire |
@@ -80,6 +81,16 @@ Projets de bout en bout combinant plusieurs algorithmes.
 | 2 | [Prédiction d'attrition client](cas-pratiques/prediction-attrition.md) | Régression logistique + Validation croisée + ROC/AUC |
 | 3 | [Classifieur de spam (TF-IDF)](cas-pratiques/classifieur-spam.md) | TF-IDF + Bayes naïf + Validation croisée + Matrice de confusion |
 | 4 | [SIG & Analyse spatiale](cas-pratiques/sig-analyse-spatiale.md) | Kalman + DBSCAN + A* + FFT + HMM/Viterbi + PSAP/premiers intervenants |
+
+---
+
+## Guides d'architecture
+
+Pages de référence sur le choix des crates, plutôt que des tutoriels pas à pas.
+
+| Sujet | Ce que la page décide |
+|-------|----------------------|
+| [Réseaux de Petri dans IX](guides/reseaux-de-petri-dans-ix.md) | Quand utiliser `ix-petri` (cycles + concurrence + contention) plutôt que `ix-pipeline`, `ix-graph` ou `ix-fuzzy` ; ce que l'analyse affirme et où elle s'arrête ; le choix PNML en lecture seule |
 
 ---
 

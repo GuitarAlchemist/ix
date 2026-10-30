@@ -42,7 +42,11 @@ fn conformance_open_real_index() {
     );
 
     assert_eq!(index.header().version, 4);
-    assert_eq!(index.dimension(), 112, "v4 dimension must be 112");
+    assert_eq!(
+        index.dimension(),
+        124,
+        "v4-pp-r (v1.8) dimension must be 124"
+    );
     assert!(index.count() > 0, "index must contain at least one voicing");
     assert_eq!(index.header().instruments, 3);
 }

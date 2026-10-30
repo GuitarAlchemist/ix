@@ -18,6 +18,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod common;
+
 fn repo_root() -> PathBuf {
     // crates/ix-duck -> crates -> repo root
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -104,11 +106,13 @@ fn the_plan_fixture_exposes_real_parallelism() {
 /// Runs the one documented DuckDB CLI command and compares its stdout to the
 /// same frozen golden.
 ///
-/// This binding is **opportunistic**: it exercises the SQL surface only where a
-/// `duckdb` binary is on PATH. On a machine without one it returns without
-/// asserting, so it is NOT evidence that the SQL half is covered by CI — the
-/// Rust half above is what CI actually checks. Where duckdb *is* present, a
-/// mismatch is a hard failure, never a skip.
+/// The binding is **conditional, not optional**: it runs the SQL surface
+/// wherever a `duckdb` binary is reachable, and the `duckdb-sql` job in
+/// `.github/workflows/ci.yml` installs a pinned one and sets
+/// `IX_REQUIRE_DUCKDB=1`, under which failing to reach the CLI is a failure
+/// rather than a skip (ix#294). On a machine without duckdb it still names what
+/// went unchecked and returns, so `cargo test --workspace` stays runnable for
+/// contributors who have not installed it.
 #[test]
 fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
     let script = "crates/ix-duck/sql/ixql_plan_golden.sql";
@@ -119,9 +123,10 @@ fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
     {
         Ok(output) => output,
         Err(error) => {
-            eprintln!(
-                "duckdb CLI not runnable ({error}); the SQL half was NOT checked by this run. \
-                 Reproduce manually from the repo root:\n  duckdb -csv -c \".read {script}\""
+            common::sql_surface_unchecked(
+                &error,
+                "the SQL half of the IXQL plan schedule",
+                &format!("duckdb -csv -c \".read {script}\""),
             );
             return;
         }
@@ -172,13 +177,13 @@ fn duckdb_refuses_a_corrupted_plan_when_duckdb_is_installed() {
         ),
     ];
 
-    let Some(temp) = tempfile::Builder::new()
+    // `expect`, not a silent `return`: an unavailable temp dir means none of
+    // the seeds below ran, and this test reporting success on that basis is
+    // the same skip-shaped hole ix#294 closed for the duckdb binding.
+    let temp = tempfile::Builder::new()
         .prefix("ixql-plan-seed")
         .tempdir()
-        .ok()
-    else {
-        return;
-    };
+        .expect("a temp dir for the corrupted-plan seeds");
 
     for (rule, corruption, expected_code) in seeds {
         let script = temp.path().join("seed.sql");
@@ -212,7 +217,11 @@ fn duckdb_refuses_a_corrupted_plan_when_duckdb_is_installed() {
         {
             Ok(output) => output,
             Err(error) => {
-                eprintln!("duckdb CLI not runnable ({error}); fail-closed seeds NOT checked.");
+                common::sql_surface_unchecked(
+                    &error,
+                    "the IXQL plan fail-closed seeds",
+                    "cargo test -p ix-duck --test ixql_plan_golden",
+                );
                 return;
             }
         };

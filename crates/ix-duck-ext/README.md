@@ -117,6 +117,33 @@ unrecognised value is a SQL error. Tier A is keyword-based and always present.
 cargo feature (enabled in this extension's build) — it pulls C-compiled
 tree-sitter grammars (Rust/C#/TS/JS/F#); other languages return `parse_quality 0`.
 
+### Petri nets
+
+`ix_petri_analyze(net VARCHAR, max_states BIGINT) -> VARCHAR` — deadlock (with the
+shortest witness firing sequence), boundedness, dead transitions, liveness and
+reversibility of a Place/Transition net given as JSON, returned as the JSON
+`ix_petri::Analysis`. Wraps `ix-petri`; the net shape and the honesty boundary
+(`unknown` past `max_states`) are in `docs/guides/petri-nets-in-ix.md`. A refused
+net, net JSON over 1 MiB, a budget outside 1..=1 000 000, or a budget whose
+worst-case heap for that net is over 512 MiB (the error names the largest
+admissible budget) is a SQL error (one refused row fails the whole statement);
+NULL in is NULL out. The heap bound is per row, not per statement: one admitted
+row can return up to about 171 MiB of JSON (a 2 kB net with deep witnesses over a
+long control-character id returns 129–149 MB at its largest budget), DuckDB holds
+those strings outside `memory_limit`, and only one chunk's results (up to 2048
+rows) are refused together past 512 MiB, so threads and materialized results
+multiply it. For large budgets, analyse one net per query. Read dead markings from
+`detail[i].tokens`, not by parsing the `marking` prose.
+
+```sql
+SELECT json_extract_string(a, '$.deadlock_free.verdict')           AS deadlock_free,
+       json_extract_string(a, '$.deadlock_free.detail[0].marking') AS wedged_at
+FROM (SELECT ix_petri_analyze('{"places":[{"id":"lock","tokens":1},{"id":"working"}],
+        "transitions":[{"id":"acquire"}],
+        "arcs":[{"from":"lock","to":"acquire"},{"from":"acquire","to":"working"}]}', 1000) AS a);
+-- fails | working=1
+```
+
 ## Build
 
 ```powershell

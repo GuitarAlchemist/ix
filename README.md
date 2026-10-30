@@ -8,7 +8,7 @@ A Rust workspace of composable ML/math algorithms and AI governance, designed to
 
 For industrial engineering and robotics, IX is an **offline/advisory co-processor**. It can analyze telemetry, run reproducible optimization experiments, rank planner parameters, and orchestrate external engineering tools. It is not a CAD kernel, FEA/CFD solver, collision engine, complete digital twin, hard-real-time controller, safety PLC, consensus service, or authoritative distributed lock. See [ADR-0005](docs/adr/0005-engineering-coprocessor-boundary.md).
 
-78 crates. 93 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
+82 crates. 96 MCP tools. 80+ Claude Code skills. Pure Rust. No external ML frameworks.
 
 ## Quick Start
 
@@ -52,10 +52,10 @@ never downloads a model or calls a paid provider implicitly.
 | Crate | Tier | Notes |
 |-------|------|-------|
 | ix-math | Beta | Core linear algebra, statistics, activations — everything depends on this. Demoted from Stable 2026-06-21 while the new `inference` surface (two-sample tests, divergences, moments) settles |
-| ix-optimize | Stable | SGD, Adam, PSO, simulated annealing |
+| ix-optimize | Beta | SGD, Adam, PSO, simulated annealing. Demoted from Stable 2026-07-02 while `ConvergenceCriteria`, now a re-export of `ix_math::Convergence` (#155), settles |
 | ix-supervised | Stable | Regression, trees, KNN, SVM, metrics |
 | ix-ensemble | Stable | Random forest, gradient boosted trees |
-| ix-unsupervised | Stable | KMeans, DBSCAN, PCA, t-SNE, GMM |
+| ix-unsupervised | Beta | KMeans, DBSCAN, PCA, t-SNE, GMM. Demoted from Stable 2026-07-02 while k-means, GMM and NMF settle on the shared `Convergence` and NMF's renamed `max_iter`/`tol` (#155) |
 | ix-search | Stable | A*, MCTS, minimax, BFS/DFS |
 | ix-graph | Beta | Markov chains, HMM/Viterbi, agent routing, components + centrality. Demoted from Stable 2026-06-21 while the new components/centrality surface settles |
 | ix-signal | Beta | FFT, wavelets, Kalman, state-space + observability/controllability, spectral analysis |
@@ -98,7 +98,7 @@ SAME PR that introduces the change:
    yet auto-detect it. Use the demotion path for the CI to go green, then
    restore the tier in a follow-up release PR.)
 
-The current 10 Stable crates (see table above) cover the safe-to-consume
+The crates marked `stable` in `crate-maturity.toml` (the Stable rows of the table above) cover the safe-to-consume
 subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 
 ### Beta Crates
@@ -107,7 +107,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 |-------|------|-------|
 | ix-nn | Beta | Transformers, backprop — complex but actively developed |
 | ix-pipeline | Beta | DAG executor — critical infrastructure, API stabilizing |
-| ix-agent | Beta | MCP server (93 tools) — production-facing integration point |
+| ix-agent | Beta | MCP server (94 tools) — production-facing integration point |
 | ix-governance | Beta | Demerzel governance bridge — consumed by ga/tars |
 | ix-io | Beta | I/O utilities (CSV, JSON, TCP, WebSocket) |
 | ix-grammar | Beta | Earley, CYK parsers, EBNF/ABNF parsers, ~30-entry grammar catalog |
@@ -132,6 +132,10 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | ix-gpu | Experimental | WGPU compute shaders (Vulkan/DX12/Metal) |
 | memristive-markov | Experimental | Research prototype |
 | ix-acoustic-tune | Experimental | Acoustic auto-tuning: CMA-ES / ask-tell optimizers + spectral features and losses for synth sound-matching |
+| ix-origami | Experimental | Checks of a flat folded state read from a FOLD file: Kawasaki/Maekawa, face isometry, and the stated layer order (adjacency, cell cycles, taco-tortilla, taco-taco); replays `.origami` folding sequences into a checked folded state |
+| ix-loop | Experimental | Agentic loops written in sandboxed Lua 5.4 that run, judge and write other loops: budgets carved from parent to child, Claude Code headless as the semantic node, host-owned oracles, a store where loops propose and a person accepts (CLI `ix-loop`; ADR-0011) |
+| ix-recover | Experimental | Provisional: publishes a run's result once under a caller-chosen run id and reconciles from durable evidence after a process kill (`ix pipeline run --run-id`) |
+| ix-voice | Experimental | Client and CLI of the local voice service (`piper-voice`, outside the workspace): speak text aloud sentence by sentence, stop, list the voices (ADR-0013) |
 
 ### Internal Crates
 
@@ -276,6 +280,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 | **ix-sedenion** | Hypercomplex algebra: sedenions, octonions, Cayley-Dickson construction, BSP trees |
 | **ix-fractal** | Takagi curves, IFS (Sierpinski, fern), L-systems, Hilbert/Peano/Morton space-filling curves |
 | **ix-number-theory** | Prime sieving, Miller-Rabin, modular arithmetic, CRT, elliptic curves |
+| **ix-knot** | Braid words, the Jones polynomial of their closures (Kauffman bracket over the Temperley–Lieb algebra), 3D strand layouts whose crossings read back as the word |
 
 ### Infrastructure
 | Crate | Description |
@@ -283,6 +288,7 @@ See [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category) for t
 | **ix-gpu** | WGPU compute shaders for cosine similarity, matrix multiply, batch vector search (Vulkan/DX12/Metal) |
 | **ix-cache** | Embedded Redis-like cache with sharded concurrency, TTL, LRU eviction, pub/sub, RESP protocol server |
 | **ix-pipeline** | DAG executor with topological sort, parallel branch execution, memoization, critical path analysis |
+| **ix-petri** | Place/Transition Petri nets — deterministic firing, reachability enumeration, deadlock / boundedness / liveness / reversibility with witnesses, PNML (ISO/IEC 15909-2) reader |
 | **ix-probabilistic** | Bloom filter, Count-Min sketch, HyperLogLog, Cuckoo filter |
 | **ix-io** | CSV, JSON, file watcher, named pipes, TCP, HTTP, WebSocket, trace bridge |
 | **ix-catalog-core** | Shared `Catalog` trait + helpers — substrate for ix-code / ix-grammar / ix-net catalogs, exposed via `ix_catalog_list` meta-tool |
@@ -412,7 +418,7 @@ cargo run -p ix-duck --features duck --example ix_chatbot_lens -- check ../ga/st
 
 ## Architecture
 
-ix is a Rust workspace of **78 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
+ix is a Rust workspace of **82 crates** organised into six rough layers, plus a governance submodule. The top-level shape:
 
 ```
 ix/
@@ -428,7 +434,7 @@ ix/
 │   └── canonical-showcase/# 5 reproducible demo pipelines + roadmap + findings
 ├── governance/
 │   └── demerzel/          # Git submodule: constitution + personas + policies
-└── crates/                # 78 crates — see maturity tables above
+└── crates/                # 82 crates — see maturity tables above
 ```
 
 For the per-crate inventory grouped by concern, see [`docs/MANUAL.md §4`](docs/MANUAL.md#4-the-64-mcp-tools--by-category). The source of truth for crate dependencies is each crate's `Cargo.toml`; for a live workspace dep graph, run the `ix_cargo_deps` MCP tool against this repo.

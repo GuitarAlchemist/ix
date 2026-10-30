@@ -161,7 +161,6 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
 
     // 4. Preprocess
     let mut nan_rows_dropped: usize = 0;
-    let mut scaler: Option<StandardScaler> = None;
     let mut y_opt = y_opt;
 
     if config.preprocess.drop_nan {
@@ -187,23 +186,11 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
         nan_rows_dropped = pre_rows - x.nrows();
     }
 
-    if config.preprocess.normalize {
-        let (sc, transformed) =
-            StandardScaler::fit_transform(&x).map_err(|e| format!("Scaler error: {e}"))?;
-        x = transformed;
-        scaler = Some(sc);
-    }
-
-    if let Some(n_comp) = config.preprocess.pca_components {
-        if n_comp > 0 && n_comp < x.ncols() {
-            use ix_unsupervised::pca::PCA;
-            use ix_unsupervised::traits::DimensionReducer;
-            let mut pca = PCA::new(n_comp);
-            x = pca.fit_transform(&x);
-        }
-    }
-
-    let data_shape = json!({ "rows": x.nrows(), "features": x.ncols() });
+    // Scaling and PCA are fitted later, on the training split only (supervised
+    // tasks) or on every row (clustering, which has no test set), so that the
+    // test rows never shape the preprocessing.
+    let n_features = Preprocessor::output_features(&config.preprocess, x.ncols());
+    let data_shape = json!({ "rows": x.nrows(), "features": n_features });
 
     // 5. Detect task
     let task = if config.task == "auto" {
@@ -222,7 +209,7 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
 
     // 6. Select model
     let model_name = if config.model == "auto" {
-        auto_select_model(&task, x.nrows(), x.ncols())
+        auto_select_model(&task, x.nrows(), n_features)
     } else {
         config.model.clone()
     };
@@ -230,13 +217,13 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
     eprintln!(
         "[ix-ml] pipeline: rows={}, cols={}, task={}, model={}",
         x.nrows(),
-        x.ncols(),
+        n_features,
         task,
         model_name
     );
 
     // 7. Train & evaluate
-    let result = match task.as_str() {
+    let (result, prep) = match task.as_str() {
         "classify" => run_classification(
             &x,
             y_opt
@@ -244,6 +231,7 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
                 .ok_or("Classification requires a target column")?,
             &model_name,
             &config.model_params,
+            &config.preprocess,
             &config.split,
             config.return_predictions,
         )?,
@@ -253,15 +241,21 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
                 .as_ref()
                 .ok_or("Regression requires a target column")?,
             &model_name,
+            &config.preprocess,
             &config.split,
             config.return_predictions,
         )?,
-        "cluster" => run_clustering(
-            &x,
-            &model_name,
-            &config.model_params,
-            config.return_predictions,
-        )?,
+        "cluster" => {
+            let prep = Preprocessor::fit(&x, &config.preprocess)?;
+            let x = prep.transform(&x);
+            let result = run_clustering(
+                &x,
+                &model_name,
+                &config.model_params,
+                config.return_predictions,
+            )?;
+            (result, prep)
+        }
         _ => {
             return Err(format!(
                 "Unknown task: '{}'. Use classify, regress, cluster, or auto",
@@ -278,7 +272,7 @@ pub fn run_pipeline(config: PipelineConfig) -> Result<Value, String> {
             .unwrap_or_else(|| format!("pipeline_{}", chrono_now_stub()));
         let cache_key = format!("ix_ml:model:{}", key);
 
-        let preprocessing_state = scaler.as_ref().map(|sc| {
+        let preprocessing_state = prep.scaler.as_ref().map(|sc| {
             json!({
                 "type": "standard_scaler",
                 "means": sc.means.to_vec(),
@@ -445,10 +439,17 @@ fn load_data(source: &SourceConfig) -> Result<(Array2<f64>, Option<Vec<String>>)
                 .ok_or("source.type='csv' requires source.path")?;
 
             validate_file_path(path_str)?;
+            // Auto-approved tool: the file must lie inside the workspace root
+            // (or an IX_EXTRA_ROOTS directory) before anything is read from it.
+            let path = crate::path_confine::confine(
+                &crate::path_confine::workspace_root()?,
+                "source.path",
+                path_str,
+            )?;
+            check_file_size(&path)?;
 
-            let path = Path::new(path_str);
             let has_header = source.has_header.unwrap_or(true);
-            let (matrix, names) = ix_io::csv_io::load_csv_matrix(path, has_header)
+            let (matrix, names) = ix_io::csv_io::load_csv_matrix(&path, has_header)
                 .map_err(|e| format!("CSV load error: {e}"))?;
             Ok((matrix, names))
         }
@@ -468,6 +469,10 @@ fn validate_file_path(path: &str) -> Result<(), String> {
     if !(lower.ends_with(".csv") || lower.ends_with(".json")) {
         return Err("Only .csv and .json file extensions are allowed".into());
     }
+    Ok(())
+}
+
+fn check_file_size(path: &Path) -> Result<(), String> {
     // Check file size (50 MB limit)
     let metadata = std::fs::metadata(path).map_err(|e| format!("Cannot access file: {e}"))?;
     if metadata.len() > 50 * 1024 * 1024 {
@@ -521,21 +526,86 @@ fn auto_select_model(task: &str, nrows: usize, ncols: usize) -> String {
     }
 }
 
+/// Feature preprocessing (standard scaling, then PCA) fitted on one set of
+/// rows and applied to others.
+struct Preprocessor {
+    scaler: Option<StandardScaler>,
+    pca: Option<ix_unsupervised::pca::PCA>,
+}
+
+impl Preprocessor {
+    /// PCA runs only when `0 < pca_components < ncols`.
+    fn pca_components(config: &PreprocessConfig, ncols: usize) -> Option<usize> {
+        config.pca_components.filter(|&n| n > 0 && n < ncols)
+    }
+
+    /// Number of features after preprocessing `ncols` input columns.
+    fn output_features(config: &PreprocessConfig, ncols: usize) -> usize {
+        Self::pca_components(config, ncols).unwrap_or(ncols)
+    }
+
+    /// Fit the configured steps on `x` (the training rows).
+    fn fit(x: &Array2<f64>, config: &PreprocessConfig) -> Result<Self, String> {
+        use ix_unsupervised::traits::DimensionReducer;
+
+        let scaler = if config.normalize {
+            Some(StandardScaler::fit(x).map_err(|e| format!("Scaler error: {e}"))?)
+        } else {
+            None
+        };
+        let pca = Self::pca_components(config, x.ncols()).map(|n| {
+            let mut pca = ix_unsupervised::pca::PCA::new(n);
+            match &scaler {
+                Some(sc) => pca.fit(&sc.transform(x)),
+                None => pca.fit(x),
+            }
+            pca
+        });
+        Ok(Self { scaler, pca })
+    }
+
+    /// Apply the fitted steps to `x`.
+    fn transform(&self, x: &Array2<f64>) -> Array2<f64> {
+        use ix_unsupervised::traits::DimensionReducer;
+
+        let scaled = match &self.scaler {
+            Some(sc) => sc.transform(x),
+            None => x.clone(),
+        };
+        match &self.pca {
+            Some(pca) => pca.transform(&scaled),
+            None => scaled,
+        }
+    }
+}
+
+/// Split `(x, y)`, then fit the preprocessing on the training rows only and
+/// apply it to both sides.
+fn split_and_preprocess(
+    x: &Array2<f64>,
+    y: &Array1<f64>,
+    preprocess: &PreprocessConfig,
+    split: &SplitConfig,
+) -> Result<(preprocessing::SplitResult, Preprocessor), String> {
+    let mut split_result = preprocessing::train_test_split(x, y, split.test_ratio, split.seed)
+        .map_err(|e| format!("Split error: {e}"))?;
+    let prep = Preprocessor::fit(&split_result.x_train, preprocess)?;
+    split_result.x_train = prep.transform(&split_result.x_train);
+    split_result.x_test = prep.transform(&split_result.x_test);
+    Ok((split_result, prep))
+}
+
 fn run_classification(
     x: &Array2<f64>,
     y: &Array1<f64>,
     model_name: &str,
     model_params: &Option<Value>,
+    preprocess: &PreprocessConfig,
     split: &SplitConfig,
     return_predictions: bool,
-) -> Result<Value, String> {
-    // Convert y from f64 to usize labels
-    let y_usize: Array1<usize> = y.mapv(|v| v.round() as usize);
-    let n_classes = *y_usize.iter().max().unwrap_or(&0) + 1;
-
-    // Split
-    let split_result = preprocessing::train_test_split(x, y, split.test_ratio, split.seed)
-        .map_err(|e| format!("Split error: {e}"))?;
+) -> Result<(Value, Preprocessor), String> {
+    // Split, then fit the preprocessing on the training rows
+    let (split_result, prep) = split_and_preprocess(x, y, preprocess, split)?;
 
     let y_train_usize: Array1<usize> = split_result.y_train.mapv(|v| v.round() as usize);
     let y_test_usize: Array1<usize> = split_result.y_test.mapv(|v| v.round() as usize);
@@ -652,18 +722,26 @@ fn run_classification(
         other => return Err(format!("Unknown classification model: '{}'", other)),
     };
 
-    // Metrics: macro-average across classes
+    // Metrics: macro-average over the labels present in the test targets or
+    // the predictions (as scikit-learn does). Labels are class indices, so
+    // `0..=max` would also count indices no row uses, e.g. every integer
+    // below 60 for whole-second targets, and drag the averages down.
     let acc = ix_supervised::metrics::accuracy(&y_test_usize, &predictions);
-    let (avg_p, avg_r, avg_f1) = if n_classes > 0 {
+    let labels: std::collections::BTreeSet<usize> = y_test_usize
+        .iter()
+        .chain(predictions.iter())
+        .copied()
+        .collect();
+    let (avg_p, avg_r, avg_f1) = if !labels.is_empty() {
         let mut sum_p = 0.0;
         let mut sum_r = 0.0;
         let mut sum_f1 = 0.0;
-        for c in 0..n_classes {
+        for &c in &labels {
             sum_p += ix_supervised::metrics::precision(&y_test_usize, &predictions, c);
             sum_r += ix_supervised::metrics::recall(&y_test_usize, &predictions, c);
             sum_f1 += ix_supervised::metrics::f1_score(&y_test_usize, &predictions, c);
         }
-        let nc = n_classes as f64;
+        let nc = labels.len() as f64;
         (sum_p / nc, sum_r / nc, sum_f1 / nc)
     } else {
         (0.0, 0.0, 0.0)
@@ -691,18 +769,19 @@ fn run_classification(
             .insert("predictions".into(), json!(predictions.to_vec()));
     }
 
-    Ok(result)
+    Ok((result, prep))
 }
 
 fn run_regression(
     x: &Array2<f64>,
     y: &Array1<f64>,
     model_name: &str,
+    preprocess: &PreprocessConfig,
     split: &SplitConfig,
     return_predictions: bool,
-) -> Result<Value, String> {
-    let split_result = preprocessing::train_test_split(x, y, split.test_ratio, split.seed)
-        .map_err(|e| format!("Split error: {e}"))?;
+) -> Result<(Value, Preprocessor), String> {
+    // Split, then fit the preprocessing on the training rows
+    let (split_result, prep) = split_and_preprocess(x, y, preprocess, split)?;
 
     let (predictions, model_state) = match model_name {
         "linear_regression" => {
@@ -761,7 +840,7 @@ fn run_regression(
             .insert("predictions".into(), json!(predictions.to_vec()));
     }
 
-    Ok(result)
+    Ok((result, prep))
 }
 
 fn run_clustering(
@@ -1008,6 +1087,117 @@ mod tests {
         let pred_result = run_predict("test_persist_model", &new_data).unwrap();
         assert_eq!(pred_result["algorithm"], "decision_tree");
         assert!(pred_result["predictions"].is_array());
+    }
+
+    #[test]
+    fn test_normalize_fits_scaler_on_train_rows_only() {
+        // The test rows must not shape the scaling: the persisted scaler has
+        // to be the one fitted on the training split, not on every row.
+        let data: Vec<Vec<f64>> = (0..20)
+            .map(|i| {
+                let v = (i * i) as f64; // skewed, so subsets have distinct means
+                vec![v, 2.0 * v + 1.0]
+            })
+            .collect();
+        let split = SplitConfig {
+            test_ratio: 0.25,
+            seed: 7,
+        };
+        let matrix = vecs_to_array2(&data).unwrap();
+        let x = matrix.select(Axis(1), &[0]);
+        let y = matrix.column(1).to_owned();
+        let expected = preprocessing::train_test_split(&x, &y, split.test_ratio, split.seed)
+            .unwrap()
+            .x_train
+            .mean_axis(Axis(0))
+            .unwrap();
+        let all_rows = x.mean_axis(Axis(0)).unwrap();
+        assert!((expected[0] - all_rows[0]).abs() > 1.0, "weak fixture");
+
+        let config = PipelineConfig {
+            source: SourceConfig {
+                source_type: "inline".into(),
+                path: None,
+                data: Some(data),
+                has_header: None,
+                target_column: Some(json!(1)),
+            },
+            task: "regress".into(),
+            model: "linear_regression".into(),
+            model_params: None,
+            preprocess: PreprocessConfig {
+                normalize: true,
+                drop_nan: true,
+                pca_components: None,
+            },
+            split,
+            persist: true,
+            persist_key: Some("test_scaler_train_only".into()),
+            return_predictions: false,
+            max_rows: 50_000,
+            max_features: 500,
+        };
+        let result = run_pipeline(config).unwrap();
+        assert!(result["metrics"]["r_squared"].as_f64().unwrap() > 0.99);
+
+        let envelope: ModelEnvelope = serde_json::from_str(
+            &global_cache()
+                .get_str("ix_ml:model:test_scaler_train_only")
+                .unwrap(),
+        )
+        .unwrap();
+        let means = envelope.preprocessing.unwrap()["means"][0]
+            .as_f64()
+            .unwrap();
+        assert!(
+            (means - expected[0]).abs() < 1e-9,
+            "scaler mean {means} should be the train mean {}, not the all-rows mean {}",
+            expected[0],
+            all_rows[0]
+        );
+    }
+
+    #[test]
+    fn test_macro_metrics_ignore_absent_labels() {
+        // Labels 0 and 5 on separable data: the macro average must run over
+        // the two classes present, not over the six indices 0..=5.
+        let mut config = iris_inline_config("classify", "decision_tree");
+        for row in config.source.data.as_mut().unwrap() {
+            if row[2] == 1.0 {
+                row[2] = 5.0;
+            }
+        }
+        let result = run_pipeline(config).unwrap();
+        assert_eq!(result["metrics"]["accuracy"], 1.0);
+        assert_eq!(result["metrics"]["precision"], 1.0);
+        assert_eq!(result["metrics"]["recall"], 1.0);
+        assert_eq!(result["metrics"]["f1"], 1.0);
+    }
+
+    #[test]
+    fn test_normalize_and_pca_after_split() {
+        // Three features, PCA to two: the split sides are projected with the
+        // components fitted on the training rows.
+        let data: Vec<Vec<f64>> = (0..30)
+            .map(|i| {
+                let a = i as f64;
+                let b = ((i * 7) % 11) as f64;
+                vec![a, b, a + 0.5 * b, 3.0 * a - b + 2.0]
+            })
+            .collect();
+        let mut config = iris_inline_config("regress", "linear_regression");
+        config.source.data = Some(data);
+        config.source.target_column = Some(json!(3));
+        config.preprocess = PreprocessConfig {
+            normalize: true,
+            drop_nan: true,
+            pca_components: Some(2),
+        };
+        let result = run_pipeline(config).unwrap();
+        assert_eq!(result["data_shape"]["features"], 2);
+        assert_eq!(result["split"]["train"], 21);
+        assert_eq!(result["split"]["test"], 9);
+        assert!(result["metrics"]["r_squared"].as_f64().unwrap() > 0.99);
     }
 
     #[test]

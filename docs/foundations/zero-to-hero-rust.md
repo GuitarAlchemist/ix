@@ -290,7 +290,7 @@ let objective = |x: &Array1<f64>| -> f64 {
 **In ix**: `ClosureObjective` wraps a closure into an `ObjectiveFunction`:
 
 ```rust
-use ix_optimize::ClosureObjective;
+use ix_optimize::traits::ClosureObjective;
 
 let objective = ClosureObjective {
     f: |x: &Array1<f64>| (x[0] - 3.0).powi(2) + (x[1] - 7.0).powi(2),
@@ -323,7 +323,8 @@ You'll read generics more than write them. When you see `<S: Trait>`, just read 
 ```rust
 // Import specific items
 use ndarray::{Array1, Array2, array};
-use ix_supervised::{LinearRegression, Regressor};
+use ix_supervised::linear_regression::LinearRegression;
+use ix_supervised::traits::Regressor;
 use ix_math::distance;
 
 // Import everything from a module (use sparingly)

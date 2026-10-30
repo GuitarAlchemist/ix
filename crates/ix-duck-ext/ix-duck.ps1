@@ -10,7 +10,7 @@
 #   pwsh ix-duck.ps1 -Sql "SELECT ix_cosine([1,0]::DOUBLE[],[1,0]::DOUBLE[])"
 #
 # Tip: add this folder to PATH (or make an alias) so it's a one-word command:
-#   Set-Alias ixduck 'C:\Users\spare\source\repos\ix\crates\ix-duck-ext\ix-duck.ps1'
+#   Set-Alias ixduck '<path-to-ix>\crates\ix-duck-ext\ix-duck.ps1'
 [CmdletBinding()]
 param(
     [switch]$Ui,                       # also start the browser UI

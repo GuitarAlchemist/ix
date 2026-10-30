@@ -192,12 +192,22 @@ impl Constitution {
             }
         }
 
-        // Article 3: Reversibility — delete, destroy, remove permanently, drop
+        // Article 3: Reversibility — delete, destroy, remove permanently, drop,
+        // and history-destroying git operations
         if lower.contains("delete")
             || lower.contains("destroy")
             || lower.contains("remove permanently")
             || lower.contains("drop database")
             || lower.contains("rm -rf")
+            || lower.contains("force push")
+            || lower.contains("force-push")
+            || lower.contains("push --force")
+            || lower.contains("push -f")
+            || lower.contains("rewrite history")
+            || lower.contains("rewrite the history")
+            || lower.contains("rewriting history")
+            || lower.contains("history rewrite")
+            || lower.contains("reset --hard")
         {
             if let Some(a) = self.find_article(3) {
                 warnings.push(format!(
@@ -249,6 +259,56 @@ impl Constitution {
             }
         }
 
+        // Article 6: Escalation — acting without the human the stakes call for
+        if lower.contains("without asking")
+            || lower.contains("without a human")
+            || lower.contains("without human")
+            || lower.contains("without approval")
+            || lower.contains("without review")
+            || lower.contains("without confirmation")
+            || lower.contains("no human")
+            || lower.contains("bypass review")
+            || lower.contains("skip review")
+            || lower.contains("bypass approval")
+            || lower.contains("unilaterally")
+        {
+            if let Some(a) = self.find_article(6) {
+                warnings.push(format!(
+                    "Action may violate Article 6 ({}): skips human escalation",
+                    a.name
+                ));
+                relevant_articles.push(ArticleRef {
+                    number: 6,
+                    name: a.name.clone(),
+                    relevance: "Action proceeds without the human review its stakes require"
+                        .to_string(),
+                });
+            }
+        }
+
+        // Article 7: Auditability — removing or altering the audit trail
+        let audit_record =
+            lower.contains("audit") || lower.contains("provenance") || lower.contains("ledger");
+        let removes = [
+            "delete", "remove", "erase", "purge", "rewrite", "tamper", "truncate", "wipe", "scrub",
+            "suppress",
+        ]
+        .iter()
+        .any(|verb| lower.contains(verb));
+        if audit_record && removes {
+            if let Some(a) = self.find_article(7) {
+                warnings.push(format!(
+                    "Action may violate Article 7 ({}): removes or alters audit records",
+                    a.name
+                ));
+                relevant_articles.push(ArticleRef {
+                    number: 7,
+                    name: a.name.clone(),
+                    relevance: "Action removes or alters the record of what agents did".to_string(),
+                });
+            }
+        }
+
         // Article 8: Observability — disable logging, suppress metrics
         if lower.contains("disable logging")
             || lower.contains("suppress metrics")
@@ -273,6 +333,9 @@ impl Constitution {
             || lower.contains("escalate privilege")
             || lower.contains("bypass limit")
             || lower.contains("remove restriction")
+            || lower.contains("--no-verify")
+            || lower.contains("self-approve")
+            || lower.contains("grant itself")
         {
             if let Some(a) = self.find_article(9) {
                 warnings.push(format!(
@@ -560,5 +623,34 @@ mod tests {
         let result = c.check_action("mislead the user about the severity");
         assert!(!result.compliant);
         assert!(result.relevant_articles.iter().any(|a| a.number == 5));
+    }
+
+    #[test]
+    fn force_push_erasing_audit_logs_without_a_human_is_not_compliant() {
+        let c = Constitution::load(&constitution_path()).unwrap();
+        let result = c.check_action(
+            "force-push to main to rewrite history and remove a commit containing audit logs, without asking a human",
+        );
+        assert!(!result.compliant);
+        let numbers: Vec<u8> = result.relevant_articles.iter().map(|a| a.number).collect();
+        assert!(numbers.contains(&3), "reversibility: {numbers:?}");
+        assert!(numbers.contains(&6), "escalation: {numbers:?}");
+        assert!(numbers.contains(&7), "auditability: {numbers:?}");
+    }
+
+    #[test]
+    fn bypassing_hooks_triggers_article_9() {
+        let c = Constitution::load(&constitution_path()).unwrap();
+        let result = c.check_action("commit with --no-verify to skip the pre-commit gate");
+        assert!(!result.compliant);
+        assert!(result.relevant_articles.iter().any(|a| a.number == 9));
+    }
+
+    #[test]
+    fn removing_ordinary_logs_is_not_an_audit_violation() {
+        let c = Constitution::load(&constitution_path()).unwrap();
+        let result = c.check_action("remove noisy debug prints from the parser");
+        assert!(result.compliant, "warnings: {:?}", result.warnings);
+        assert!(!result.relevant_articles.iter().any(|a| a.number == 7));
     }
 }
