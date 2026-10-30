@@ -1169,10 +1169,14 @@ def run():
     code_leaf, leaf = call(sa, "POST", "/v1/probe/create", {"name": "solo", "kind": "heartbeat@1", "every_ms": 10, "max_rate_per_s": 10})
     code_wide, wide = call(sa, "POST", "/v1/probe/create", {"name": "wide", "kind": "mux@1", "max_rate_per_s": 100000})
     started_b = [call(sa, "POST", "/v1/probe/start", {"node": n})[0] for n in ("bud", "bud-0")]
+    # bud-0's record is counted under the tree's lock, released before bud republishes it: a
+    # list can fall between the two (ubuntu CI). The bytes are compared on a list where bud has
+    # republished every record of bud-0 (equal seqs; TestBytesAreComparedOnAListWhereTheMux...).
     def listed():
         _, tb = call(sa, "GET", "/v1/probe")
         nb = {n["name"]: n for n in (tb or {}).get("nodes", [])}
-        return (tb, nb) if (nb.get("bud-0") or {}).get("bytes") else None
+        lf, mx = nb.get("bud-0") or {}, nb.get("bud") or {}
+        return (tb, nb) if lf.get("bytes") and mx.get("seq") == lf.get("seq") else None
     found, _ = wait_until(listed, 5)
     tree_b, nodes_b = found if found else (call(sa, "GET", "/v1/probe")[1], {})
     mux_b, leaf_b = nodes_b.get("bud", {}), nodes_b.get("bud-0", {})
