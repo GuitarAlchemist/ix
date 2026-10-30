@@ -136,6 +136,7 @@ subset for `ga`, `tars`, `Demerzel`, and `agent-blackbox`.
 | ix-loop | Experimental | Agentic loops written in sandboxed Lua 5.4 that run, judge and write other loops: budgets carved from parent to child, Claude Code headless as the semantic node, host-owned oracles, a store where loops propose and a person accepts (CLI `ix-loop`; ADR-0011) |
 | ix-recover | Experimental | Provisional: publishes a run's result once under a caller-chosen run id and reconciles from durable evidence after a process kill (`ix pipeline run --run-id`) |
 | ix-voice | Experimental | Client and CLI of the local voice service (`piper-voice`, outside the workspace): speak text aloud sentence by sentence, stop, list the voices (ADR-0013) |
+| ix-wasm | Experimental | Pipeline stages in any language that targets WASI, run in `wasmi`: JSON on stdin and stdout, no files, no network, a seeded clock and random source, fuel and memory caps; builds Go and Zig stages into a content-addressed cache; the `wasm.run` skill (not yet on the MCP surface) |
 
 ### Internal Crates
 
