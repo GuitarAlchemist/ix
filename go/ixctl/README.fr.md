@@ -632,6 +632,42 @@ synchronisés par `fsync`, les erreurs d'écriture sont ignorées et un crash pe
 ligne (l'en-tête du démarrage suivant commence alors sa propre ligne) ; aucun enregistrement n'est donc un point de validation, et une restauration durable serait
 un contrat distinct qui s'annoncerait lui-même (porte 3).
 
+## Service Windows
+
+`ixctl service run <spec.json> --state DIR` héberge une instance pour un gestionnaire de services :
+le SCM de Windows quand c'est lui qui a lancé le processus, sinon la console (une interruption vaut
+un arrêt). C'est la même instance qu'`ixctl up`, avec son verrou, son jeton, son écoute en boucle
+locale et ses Job Objects. Ce que l'hôte ajoute :
+
+- **États.** Il rapporte `start-pending`, puis `running` dès que l'instance sert (arrêt et extinction
+  acceptés), puis `stop-pending` avec un point de contrôle qui croît et le temps restant comme délai
+  annoncé, puis `stopped`. Codes de sortie, propres au service : 0 un arrêt observé ; 1 l'instance
+  n'a pas démarré ; 2 le nom est tenu par une instance en marche (rien n'est rapporté `running`) ;
+  3 les arbres n'ont pas été vus disparus dans `--stop-timeout` (30 s par défaut) — le processus
+  sort quand même et les jobs se ferment avec lui, ce qui tue ce qui reste, mais l'hôte ne prétend
+  pas l'avoir vu.
+- **Un arrêt en trois moments.** `host.stop` sur `ctl` avec `phase: requested` (la commande a atteint
+  l'hôte ; `source` vaut `scm`, `signal` ou `api` pour `/v1/shutdown`), puis `phase: received` (le
+  plan n'admet plus rien : un apply répond 503), tous deux avant l'arrêt de tout service ; puis
+  `observed` (tous les arbres disparus, avec `ms`) ou `unobserved`, dans le journal du service
+  seulement, puisque le journal du plan est fermé à ce moment.
+- **Journal du service.** `<nom>.service.log` dans le répertoire d'état, un objet JSON par ligne
+  (`host.ready`, `host.refused`, `host.failed`, `host.stop`), jamais le jeton ; borné à deux fichiers
+  de 4 Mio (`.service.log` et `.service.log.1`).
+- **Après un crash.** Les jobs meurent avec l'hôte. Le démarrage suivant tire un nouvel epoch, en
+  génération 0, comme tout redémarrage (voir Journal) : ce que l'hôte mort devait faire tourner n'est
+  pas relancé, et une exécution coupée par le crash reste l'effet que run/1 appelle `unknown`, à
+  réconcilier par une personne ou un client.
+
+`ixctl service plan --spec FICHIER --client-user DOMAINE\UTILISATEUR` affiche les commandes
+d'installation, de démarrage, de statut, d'arrêt et de désinstallation, pour un PowerShell élevé ;
+ixctl n'en exécute aucune. Le plan utilise le compte virtuel `NT SERVICE\ixctl` (aucun mot de passe
+enregistré), un démarrage manuel, aucun redémarrage automatique (un plan redémarré part de sa spec,
+pas de ce qu'il faisait tourner), la boucle locale seulement, et un répertoire d'état sous
+`C:\ProgramData\ixctl` dont l'ACL donne la lecture au seul utilisateur client nommé, qui y lit le
+jeton. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
+`ixctl up` de la session de l'utilisateur, pair du service.
+
 ## Barrière
 
 `e2e/e2e.py` est la barrière de bout en bout que la CI fait tourner sous Windows et Linux : le
