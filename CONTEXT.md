@@ -55,7 +55,7 @@ contracts (see `docs/contracts/`), not runtime coupling.
   graph gradients or Laplacian energy, and cycle exposure. It is not a continuum
   stress tensor, routing decision, authority grant, safety verdict, or control
   command. Current execution belongs to DuckDB and IX modules; IXQL may describe or
-  verify the plan but remains spec-only and non-executable.
+  verify the plan but does not execute it.
 - **Lens** — a read-only analyst module on the bench (`ix_duck::{chatbot, routing,
   loops, ood, maintain}`) that turns a GA artifact set into a queryable signal. A lens
   owns *analytics*, not ingest.
@@ -75,8 +75,9 @@ contracts (see `docs/contracts/`), not runtime coupling.
   SQL view/macro over a stream, built from IX UDFs) and correlating their outputs N×N
   to find which streams move together (clusters) and which one leads (centrality). The
   canonical shape is `condition → ix_pearson → ix_connected_components → ix_centrality`.
-  DuckDB SQL is the composition language, **not** IXQL (which is spec-only and stays
-  complementary — see `docs/adr/0004-duckdb-sql-pipeline-mesh.md` + ADR-0001). Advisory
+  DuckDB SQL is the composition language, **not** IXQL (whose executor runs governance
+  pipelines, not analytics, and stays complementary — see
+  `docs/adr/0004-duckdb-sql-pipeline-mesh.md` + ADR-0001). Advisory
   analysis only; betweenness/degree (not eigenvector) is the hub lens on bipartite meshes.
 - **Artifact source** (`ix_duck::source`) — the deep module a **lens** reads through:
   given a file selector + a flat **column spec**, it materializes a GA-emitted JSON
@@ -111,15 +112,109 @@ contracts (see `docs/contracts/`), not runtime coupling.
   JSON value, never inside it. Semantics are provisional until Demerzel's spec states
   them: no verdict is an error, no matching arm stops the pipeline and is recorded in
   `RunOutcome::gates`, an unhandled `C` fails the run.
+- **Loop** (`ix-loop`) — a Lua chunk run in a fresh sandbox, reaching the world only through
+  the capabilities the host gives it (`claude`, `run`, `tasks`, `loops`), each charged to its
+  budget. Only JSON data enters or leaves it. _Avoid_: agent, script (for a running loop).
+  Distinct from what `ix-loop-detect` detects: an agent repeating itself.
+- **Second-order loop** — a loop that runs, judges or writes other loops: it starts children
+  with `run`, asks the host to judge a draft with `tasks.judge`, and can propose a draft to the
+  store. It never accepts one.
+- **Budget** (`ix_loop::Budget`) — what a loop may still spend: fuel (Lua instructions), calls
+  to the semantic node, a deadline, and its depth (at most 3). A child's budget is **carved**
+  out of its parent's, the lesser of what it asks for and what is left, and what it does not
+  spend is refunded, so the root's budget bounds the whole tree. Calls are counted, not
+  dollars: on a plan, nothing is billed per call.
+- **Semantic node** (`ix_loop::SemanticNode`) — where a loop asks a model. `ClaudeCode` runs
+  Claude Code headless on the person's plan (`claude -p`, no tools, no saved session; never
+  `--bare`, which needs an API key); `Scripted` answers in tests.
+- **Oracle** (`ix_loop::Task`) — a task family the host owns and checks (`lipogram`,
+  `acrostic`), with instances the host can draw. A loop is judged on **hidden instances**:
+  instances the host draws and has handed to no loop in the run, checked by the oracle, never
+  by the loop's own claim. _Avoid_: test, grader (for something a model wrote).
+- **Proposal** — a loop draft written to the store's `proposals/` by `loops.propose`. Only a
+  person promotes it into the library, with `ix-loop accept`; nothing a loop can reach accepts
+  (ADR-0011). _Avoid_: submission, PR.
+- **Rope diagram** (`ix_knot::RopeDiagram`) — a knot as a person ties it: up to 8
+  ropes, each a list of 2D control points (open with two ends, or closed), plus which
+  rope passes over at each crossing (`O`/`U` letters per passage, `alternating`, or by
+  height). IX smooths the points, finds the crossings, and lifts the rope where it
+  passes in front. Distinct from a **braid word** (`ix_braid`), which is strands
+  between two bars — the drawing of a plait, not of a tied knot.
+- **Closure** (of a rope diagram) — the mathematical knot a tied knot becomes once each
+  open rope's two ends are joined by an arc drawn outside and above everything else.
+  A practical knot is not a mathematical knot until closed; the overhand closes into
+  the trefoil `3_1`, the figure-eight into `4_1`. The **catalogue** (`ix_knot::catalog`)
+  records each entry's closure, and a test checks the drawing's Jones polynomial against
+  that of the closure's KnotInfo braid (writhe depends on the drawing, so it is not
+  compared).
 
 - **Stated folded state** (`ix-origami`) — a FOLD crease pattern with one folded frame whose
-  `faceOrders` state the layer order. `ix-origami` checks it and never computes one. The checks
+  `faceOrders` state the layer order. `ix-origami` checks it and never searches for one; the only
+  one it derives is the **replay** of a folding sequence, which is checked like any other. The checks
   treat the sheet as having no thickness. A **thickness `t`** is the sheet's full thickness, in
   crease-pattern units. **Ply** is the most faces stacked at one point, so any stack is at least
   `ply · t` thick. A **panel** is a set of faces joined by flat joints. A **rigid stack** gives
   each panel one height, parallel to the sheet, and exists only if the stated order over
   overlapping panels has no cycle. A rigid-stack refusal means "no stack of parallel panels", not
   "cannot be made" (ADR-0007).
+- **Folding sequence** — a sheet and the steps that fold it, in the order a diagram gives them
+  (Yoshizawa–Randlett). It is the high level of the origami grammar: replaying it gives a stated
+  folded state, the low level, which is what gets checked. A **step** is one operation of the
+  sequence, named in the folder's vocabulary. _Avoid_: instructions, recipe, crease pattern (which
+  is the result, not the sequence).
+- **Landmark** — a named point of the paper (a corner, an edge's midpoint, the centre), used where
+  it lies at the moment a step names it, not where it started. A step's **fold line** is built from
+  landmarks by a Huzita–Justin axiom (through two points, one point onto another, one line onto
+  another); coordinates are only a fallback. _Avoid_: reference point, vertex (a FOLD index).
+- **Simple fold** — a fold that carries every layer on one side of its fold line onto the other
+  side: in front for a valley, behind for a mountain. It is the only fold whose result needs no
+  choice of layers.
+- **Moving side** — the side of the fold line that a step carries over; the other side stays where
+  it is. It is the side of the landmark or line the step names first (`A to C`: A's side;
+  `AB to DC`: AB's side). A fold line through two landmarks names nothing that moves, so that step must name a
+  landmark on the moving side, or it is refused. There is no default side.
+- **Line** (of a step) — named by two points taken where they lie at that step: two corners (`AC`),
+  or any two points joined by `-` (`mAB-mCD`). Its letter order is its direction: a fold that carries
+  one line onto another lands the first direction on the second (`AB to AC` is the bisector at A).
+  _Avoid_: edge, for a line that is not a side of the paper (an edge is a FOLD index).
+- **`.origami` file** — a folding sequence written one statement per line, with `expect` lines.
+  IX reads it, replays it and checks the result: a file that does not parse is refused with its
+  line, and a file whose expectations fail is answered, not refused (ADR-0010).
+
+- **Voice service** (`ix-voice`) — the local program that speaks text aloud (`piper-voice`, built
+  on Piper, outside this workspace), reached over HTTP on 127.0.0.1. `ix-voice` is its client:
+  `say`, `stop`, `status`, `voices`. Speech is streamed **by sentence**: the service plays one
+  sentence while it synthesizes the next. Distinct from **voicings** (`ix-voicings`, chord shapes
+  on a fretboard) (ADR-0013).
+
+- **Probe** (`ixctl`) — a sampler that runs inside the control plane's process on a timer and
+  publishes what it reads on its own channel `probe/<node>`. Its **kind** (`heartbeat@1`, `cpu@1`,
+  `mem@1`, `mux@1`) is versioned and compiled into the binary; a **node** is one instance of a
+  kind in the plane's tree, with an interval, an optional filter and an optional lease. A
+  **mux** is a node with no sampler that carries its children's filtered samples, stamped with
+  their source. A **lease** (`ttl_ms`) is counted from start, renewed by `probe.touch`, and takes
+  the node's subtree out when it runs out. Distinct from the **prototype probes** (process per
+  probe, PR #390) and from a **pipeline stage**. _Avoid_: sensor, monitor, agent.
+
+- **Bookmark** (`ixctl`) — a named point in one instance's event sequence (`{name, epoch, seq, t,
+  note}`), owned by the plane and kept in its state dir (`<name>.bookmarks.json`, or in memory
+  with `--bookmarks memory`). Because the hub's `seq` is shared by every channel, one bookmark
+  covers every pipe and the `ctl` lifecycle at one instant; a **replay** from it is a
+  subscription that starts after that point, served from the ring only (a `gap` says when the
+  ring no longer holds it). Distinct from a **checkpoint** (`ix-recover`, a run's published
+  state) and from a **generation** (an apply). _Avoid_: snapshot, cursor, savepoint.
+
+- **Link catch-up** (`ixctl`) — what a parent's peer link does when it resumes a peer's `ctl` /
+  `svc/` subscription from the last seq it mirrored: a bounded **replay**, paid from the link's
+  **replay allowance** (frames, bytes and time per link, refilled slowly, never reset by a
+  reconnect). Past the allowance the link **jumps**: it subscribes live instead and marks the
+  span it skipped on the mirrored `ctl` (`link.gap`, reason `jumped`, `from` / `to`, dated). A
+  live start that misses nothing is no jump. The link's status tells **live** (both control
+  subscriptions are past their replay: the peer says so with one **live frame**, asked for with
+  `live: true`) from **reconciled** (the peer's probe list was applied this session and no wanted
+  pipe is still opening); **degraded** is lifted only when both hold. Distinct from a **replay**
+  from a bookmark (a consumer's) and from the **continuity markers** of a pipe (`live-start`,
+  `dropped`, `overflow`). _Avoid_: resync, backfill, lag.
 
 ## Conventions
 

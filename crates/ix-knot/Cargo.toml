@@ -1,0 +1,13 @@
+[package]
+name = "ix-knot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics"]
+keywords = ["knot", "braid", "jones-polynomial", "temperley-lieb", "topology"]
+description = "Braid words, their closures' Jones polynomials (Kauffman bracket over the Temperley-Lieb algebra) and 3D strand layouts for drawing them"
+
+[dependencies]
+thiserror = { workspace = true }

@@ -128,3 +128,6 @@ state/quality/analytics/chatbot-trace-regressions.json.tmp
 # Session handoff scratch — briefs + raw multi-provider CLI dumps (_codex-*.out,
 # _gemini-*.out). Ephemeral, can be hundreds of KB; not tracked.
 state/handoffs/
+# Recoverable pipeline runs (`ix pipeline run --run-id`, ix-recover): local
+# run records, not source.
+state/pipeline-runs/

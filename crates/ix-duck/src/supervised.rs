@@ -90,7 +90,7 @@ struct IxLinregFit;
 impl VScalar for IxLinregFit {
     type State = ();
     // @ai:invariant ix_linreg_fit fits ix_supervised LinearRegression over the JSON (x 2-D, y 1-D) and returns its LinearRegressionState as a JSON blob; mismatched row counts -> SQL error (no panic) [T:test conf:0.85 src:ix_duck::supervised::tests::linreg_fit_predict_recovers_slope]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let xs = read_varchar(input, 0, n);
         let ys = read_varchar(input, 1, n);
@@ -141,7 +141,7 @@ struct IxLinregPredict;
 impl VScalar for IxLinregPredict {
     type State = ();
     // @ai:invariant ix_linreg_predict reloads a LinearRegressionState blob and returns the model's prediction for the JSON feature vector; a model fit on y=2x predicts ~2*x [T:test conf:0.85 src:ix_duck::supervised::tests::linreg_fit_predict_recovers_slope]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let models = read_varchar(input, 0, n);
         let xs = read_varchar(input, 1, n);
@@ -170,7 +170,7 @@ struct IxLogisticFit;
 impl VScalar for IxLogisticFit {
     type State = ();
     // @ai:invariant ix_logistic_fit fits ix_supervised LogisticRegression over the JSON (x 2-D, y 1-D class ids) and returns its (weights, bias) as a JSON blob; mismatched row counts -> SQL error (no panic) [T:test conf:0.85 src:ix_duck::supervised::tests::logistic_fit_predict_separates_classes]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let xs = read_varchar(input, 0, n);
         let ys = read_varchar(input, 1, n);
@@ -212,7 +212,7 @@ struct IxLogisticPredict;
 impl VScalar for IxLogisticPredict {
     type State = ();
     // @ai:invariant ix_logistic_predict reloads a (weights, bias) blob and returns the predicted class id for the JSON feature vector; points on opposite sides of a fitted boundary get different classes [T:test conf:0.85 src:ix_duck::supervised::tests::logistic_fit_predict_separates_classes]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let models = read_varchar(input, 0, n);
         let xs = read_varchar(input, 1, n);

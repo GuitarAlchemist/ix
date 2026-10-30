@@ -1,0 +1,23 @@
+frozen nodes ["extract", "ga", "judge", "report"]: 94670f84737db86776ff476c453a6109182f4a11924eb1c5c31302039426aec6
+train    baseline         r1  T7 F3 U0  claims 36 (3.6/q)  calls 10
+train    notes            r1  T5 F5 U0  claims 40 (4.0/q)  calls 20
+train    first            r1  T6 F3 U1  claims 36 (3.6/q)  calls 30
+train    key              r1  T4 F5 U1  claims 37 (3.7/q)  calls 40
+train    first+notes      r1  T4 F5 U1  claims 42 (4.2/q)  calls 50
+train    first+notes+key  r1  T4 F5 U1  claims 49 (4.9/q)  calls 60
+train    baseline         r2  T6 F3 U1  claims 35 (3.5/q)  calls 70
+train    notes            r2  T6 F4 U0  claims 53 (5.3/q)  calls 80
+train    first            r2  T6 F3 U1  claims 32 (3.2/q)  calls 90
+train    key              r2  T6 F3 U1  claims 27 (2.7/q)  calls 100
+train    first+notes      r2  T4 F5 U1  claims 46 (4.6/q)  calls 110
+train    first+notes+key  r2  T6 F3 U1  claims 48 (4.8/q)  calls 120
+score baseline           7  claims/q 3.55  U 1  eligible true
+score notes              2  claims/q 4.65  U 0  eligible true
+score first              6  claims/q 3.40  U 2  eligible false
+score key                2  claims/q 3.20  U 2  eligible false
+score first+notes       -2  claims/q 4.40  U 2  eligible false
+score first+notes+key    2  claims/q 4.85  U 2  eligible false
+chosen: baseline
+held-out baseline         r1  T3 F4 U0  claims 37 (5.3/q)  calls 127
+held-out baseline         r2  T2 F5 U0  claims 42 (6.0/q)  calls 134
+calls used: 134 of 150

@@ -2,17 +2,17 @@
   "note": "Tests that can return before reaching an assertion when their environment is missing, and so report a pass having checked nothing. Checked by `ix doctor` (see crates/ix-skill/src/doctor/silent_skips.rs). Entries are keyed by file and test name, not line. Every entry needs a non-empty `reason`: the point of this file is that a human said why a test may pass without asserting. `kind` is `environment` (the skip covers something CI cannot reasonably provide: a sibling repo's build, a gitignored artifact, a local binary; expected to stay) or `tracked` (nothing environmental stops it being checked; requires an `issue` and counts as outstanding debt). Entries whose test no longer skips are reported as stale and must be removed. This list is a baseline of what was already true when the check landed; it is not a place to park new skips.",
   "allow": [
     {
-      "file": "crates/ix-agent/tests/autonomous_render_audit.rs",
-      "test": "harness_discovers_moon_dark_face_issue_and_fixes_it",
+      "file": "crates/ix-agent/src/skills/wmux.rs",
+      "test": "the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes",
       "kind": "environment",
-      "reason": "Cross-repo test over two GA frontend sources, located by absolute paths under C:/Users/spare/source/repos/ga. It cannot run on CI, and it cannot run for any other contributor even with ga cloned beside ix, because the paths name one developer's home directory. Skips 9 assertions. The hardcoded path is a defect in its own right; resolving ga as a sibling of the workspace root would at least let it run locally for everyone.",
+      "reason": "Needs the `duckdb` CLI. Hosted CI runs this test for real in the `duckdb-sql` job of .github/workflows/ci.yml, which installs the pinned DuckDB CLI and sets IX_REQUIRE_DUCKDB=1, so an unreachable CLI fails there instead of skipping. The bare `return;` remains for local machines without duckdb, where the test prints that the wmux pipeline example was NOT checked.",
       "issue": null
     },
     {
-      "file": "crates/ix-agent/tests/voicings_payload_contract.rs",
-      "test": "corpus_lazy_lookup_resolves_when_present",
+      "file": "crates/ix-agent/tests/autonomous_render_audit.rs",
+      "test": "harness_discovers_moon_dark_face_issue_and_fixes_it",
       "kind": "environment",
-      "reason": "Guards on state/voicings/bass-corpus.json, which is committed to git, so in any clean checkout the guard never fires and the test does assert. Baselined because the scanner cannot tell a dead guard from a live one; the honest fix is an `expect` on the read, after which this entry goes stale.",
+      "reason": "Cross-repo test over two GA frontend sources, resolved from IX_GA_REPO or the sibling ../ga of the workspace root (ix#328). It runs for anyone with ga cloned beside ix; hosted CI has no ga checkout, so it skips there. Skips 9 assertions.",
       "issue": null
     },
     {
@@ -109,7 +109,7 @@
       "file": "crates/ix-sentrux-annotations/tests/end_to_end.rs",
       "test": "live_sentrux_check_against_ix_worktree",
       "kind": "environment",
-      "reason": "Needs a local sentrux binary at DEFAULT_SENTRUX_EXE, which is the absolute path C:/Users/spare/bin/sentrux.exe (crates/ix-sentrux-annotations/src/lib.rs). Also skips on a live transport error; the fixture tests in the same file cover parsing. The hardcoded home-directory default is used by production code (src/bin/bridge.rs, src/mcp_bridge.rs), not only this test, and deserves its own issue.",
+      "reason": "Needs a local sentrux binary, resolved from SENTRUX_EXE or PATH by resolve_sentrux_exe (ix#327); hosted CI installs neither. Also skips on a live transport error; the fixture tests in the same file cover parsing.",
       "issue": null
     },
     {
