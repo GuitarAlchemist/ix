@@ -1,0 +1,47 @@
+[package]
+name = "ix-stream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# ix-wasm (a dev-dependency, for the stages of the examples) needs 1.88.
+rust-version = "1.88"
+categories = ["concurrency", "development-tools"]
+keywords = ["stream", "backpressure", "sse", "petri", "bandit"]
+description = "JSON streams through a graph of threads joined by bounded channels: back-pressure up to a DuckDB source, cancellation upstream, a lossy algedonic bus, a gate that routes to experts under budgets, an SSE feed, and a Petri net of the graph to check for deadlocks before it runs."
+
+[dependencies]
+ix-petri = { workspace = true }
+# Its DAG says whether the waiting links are acyclic (src/petri.rs).
+ix-pipeline = { workspace = true }
+# `stream.run`, the ix-pipeline skill (src/skill.rs), registered at link time.
+ix-registry = { workspace = true }
+ix-rl = { workspace = true }
+ix-skill-macros = { workspace = true }
+ix-types = { workspace = true }
+# `wasm` nodes of `stream.run` (src/skill/wasm.rs). Optional, so ix-agent, which links
+# ix-stream, does not pull wasmi.
+ix-wasm = { workspace = true, optional = true }
+linkme = { workspace = true }
+serde_json = { workspace = true }
+# The `http` node of `stream.run` (src/world.rs): plain HTTP to loopback, so no TLS.
+reqwest = { version = "0.12", features = ["blocking"], default-features = false, optional = true }
+
+[features]
+# Nodes of `stream.run` that reach outside the process: `http` (allowed loopback origins only),
+# `sql` (a DuckDB process) and `file` (JSON lines under out_dir). Off by default, so the skill
+# stays offline and deterministic on the MCP surface.
+world = ["dep:reqwest"]
+# `stream.run` nodes that run each value through a sandboxed WASI program.
+wasm = ["dep:ix-wasm"]
+
+[dev-dependencies]
+# The hash that freezes tracer A's judge in the L1 example (examples/l1).
+blake3 = { workspace = true }
+ix-loop = { workspace = true }
+ix-wasm = { workspace = true }
+
+# L1 over tracer A: it calls the chatbot and GaApi through `http` nodes.
+[[example]]
+name = "l1"
+required-features = ["world"]

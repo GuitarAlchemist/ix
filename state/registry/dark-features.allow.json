@@ -63,6 +63,13 @@
       "kind": "tracked",
       "reason": "Reservoir-computing layer over ndarray-rand and rand_distr, both pure Rust and already in the workspace lockfile. 118 lines and four tests. The gated-features CI job now runs them, but it stays dark by this check's definition until a workspace member enables it.",
       "issue": "ix#315"
+    },
+    {
+      "crate": "ix-stream",
+      "feature": "wasm",
+      "kind": "tracked",
+      "reason": "The `wasm` nodes of stream.run (crates/ix-stream/src/skill/wasm.rs, 110 lines; seven integration tests in tests/wasm.rs, three of them #[ignore] for Go). It links ix-wasm, whose `wasm.run` skill registers at link time, so enabling it from any workspace member puts `ix_wasm_run` on ix-agent's MCP surface: from ix-wasm's dev-dependencies that edge also made the workspace graph cyclic, and from ix-skill's it failed parity through feature unification. Whether wasm.run belongs on the MCP surface is a separate decision; until it is taken, the gated-features CI job compiles, lints and tests the feature, and it stays dark by this check's definition.",
+      "issue": "ix#393"
     }
   ]
 }

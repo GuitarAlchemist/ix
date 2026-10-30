@@ -19,6 +19,8 @@
 //! `0` all green, `1` warnings only, `4` at least one failure.
 
 pub mod dark_features;
+pub mod hardcoded_paths;
+pub mod hooks;
 pub mod orphan_traits;
 pub mod registry_snapshot;
 pub mod silent_skips;
@@ -252,6 +254,10 @@ pub fn run(root: &Path, opts: Options) -> Report {
         check_orphan_traits(root),
         check_dark_features(root),
         check_silent_skips(root),
+        hardcoded_paths::check(root),
+        // The harness's hooks: present, parsing, fixtures green. Runs the
+        // fixtures under the bash the hooks run under; warns when there is none.
+        hooks::check(root, hooks::find_bash().as_deref()),
     ];
     checks.extend(check_environment(root));
     Report {

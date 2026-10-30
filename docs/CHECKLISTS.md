@@ -27,6 +27,9 @@ in `ix doctor` instead of here.
 | `registry-snapshot` | The linked build's skills or MCP tools differ from `state/registry/skills.snapshot.json` | `ix doctor --write`, then review the **name** diff |
 | `orphan-traits` | A `pub trait` has no implementor, no generic bound, and no allowlist entry | Delete it, implement it, or record it in `state/registry/orphan-traits.allow.json` with a `reason` |
 | `dark-features` | A cargo feature no workspace member enables gates 100+ lines or at least one test, with no allowlist entry | Enable it from a workspace member, delete the code, or record it in `state/registry/dark-features.allow.json` with a `reason` |
+| `silent-skips` | A `#[test]` returns early when its environment is missing and so can pass without asserting, with no allowlist entry | Make the skip impossible where the test must run (install the tool in CI, fail closed on a "required" variable), or record it in `state/registry/silent-skips.allow.json` with a `reason` |
+| `hardcoded-paths` | A line of a source or script file under `crates/` (`.rs`, `.sql`, `.ps1`, `.sh`, `.py`, `.toml`, `.md`, any case) names one developer's home directory (`C:\Users\<name>`, `\Users\<name>`, `/home/<name>`, `/Users/<name>`) with no allowlist entry | Resolve from an env var, `PATH` or the workspace root (`../<repo>` for siblings) and fail naming those options; doc examples use `../ga/...`; a line whose text must keep such a path (a test's input, a URL containing `/home/`) goes in `state/registry/hardcoded-paths.allow.json` with `file`, `contains`, `reason` |
+| `hooks` | A hook wired in `.claude/settings.json` is missing, a `.claude/hooks/*.sh` does not parse (`bash -n`), or a fixture `.claude/hooks/test-*.sh` exits non-zero; warns when no bash is found (Git bash on Windows) | Restore or drop the hook entry; `bash -n` the script; run the fixture by hand, its last lines are in `details.fixtures[].tail` |
 | `demerzel-governance` | `governance/demerzel` is absent | `git submodule update --init` |
 | `default-constitution` | The submodule is present but incomplete | Re-sync the submodule |
 | `state-directory` | `state/` is missing from the repo root | You are not at the workspace root |
@@ -38,6 +41,31 @@ in `ix doctor` instead of here.
 `ix doctor` is a convenience wrapper, not a new authority layer. It does not run
 pipeline-mesh demos, Epistemic SQL, or the assumption-graph — per ix#185 those
 stay opt-in and must never become mandatory gates for an ordinary PR.
+
+---
+
+## Adding an `ix doctor` check
+
+Five sites, all in the same PR. Two PRs open at once each touched all five and
+conflicted on every one of them; this list exists so the next one sees them
+before opening the diff.
+
+1. `crates/ix-skill/src/doctor/<name>.rs` exposing
+   `pub fn check(root: &Path) -> super::CheckResult`. Every `Warn` or `Fail`
+   result carries a `remedy`: `every_non_ok_check_carries_a_remedy` enforces it.
+2. `pub mod <name>;` and the call inside `run()` in
+   `crates/ix-skill/src/doctor/mod.rs`.
+3. A row in the table above, in this file and in `docs/fr/CHECKLISTS.md`.
+4. The `Doctor` doc comment in `crates/ix-skill/src/main.rs`: it is the
+   `ix doctor --help` text, and it lists the checks by name.
+5. If the check has an allowlist, `state/registry/<name>.allow.json`, every
+   entry with a `reason`; a stale entry warns, a reasonless one fails.
+
+Prove it before it lands: the check must be red on this workspace before its
+fixes and green after (the fixture tests on scratch repos pin the behaviour; one
+test scans the live workspace). In CI it runs twice: through
+`doctor_is_green_on_this_workspace` (`cargo test -p ix-skill`) and as the
+`ix doctor` step of `.github/workflows/ci.yml`, where it has a line of its own.
 
 ---
 
@@ -149,6 +177,14 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
    `src:` is `::`-pathed or `test_`-prefixed.
 4. Annotate one module at a time, and make each pass drive at least one real
    fix. Never mass-generate annotations.
+5. Rust only for a `[T:test]` binding: the drift gate reads `@ai:` markers in every source file
+   (Go included) but resolves the cited test among Rust functions only, so a `[T:test src:…::TestX]`
+   in a Go file is a broken binding that fails the next `crates/**` PR (the gate's path filter does
+   not run it on `go/**`; reproduce with `cargo run -p ix-assumption-graph --bin
+   ix-assumption-graph-drift -- --check state/assumptions/annotations.snapshot.json`, exit 2). A
+   marker without a test binding (`[P:assumed conf:0.7]`, `[U:uncertain]`) is safe in Go: the gate
+   verifies bindings only. For a test-backed claim in Go, point the comment at the contract row
+   instead.
 
 ## Adding a showcase or demo
 
@@ -167,3 +203,39 @@ stay opt-in and must never become mandatory gates for an ordinary PR.
 2. Re-run the `ix-streeling` indexer so `state/streeling/catalog.jsonl` stays
    current.
 3. Maintain the French translation alongside the English one, under `docs/fr/`.
+
+
+## Changing a behavioural claim about a plane or a contract
+
+A sentence that says what the plane does ("the list is exactly what `ctl` says up to the cursor",
+"a consumer keys the series from the status") is a contract term, and it drifts when it is written
+in several places: on the S2 slice-4 session two such claims lived in README EN, README FR, the
+contract and a code comment, and two of the four copies went stale before Codex read them.
+
+1. The contract under `docs/contracts/` is the single source of the claim; README paragraphs and
+   code comments **point at it** (the row or the section) instead of restating it. A restatement
+   that must stay (the one-line summary in a status field's doc comment) names the contract version.
+2. Before the commit, grep every word of the claim (`exact`, `without having read`, `outside the
+   lock`) across `docs/`, `go/ixctl/*.md` and the code comments, and update or remove every hit:
+   the Order section of the contract still said a leaf's `probe.stopped` was published outside the
+   lock one slice after that stopped being true.
+3. A count or a total that a gate knows (the number of checks, the highest check index) is asserted
+   by the gate, not typed into prose: `go/ixctl/e2e/e2e.py` E24 compares the totals in both READMEs,
+   its own docstring and the gate comment of `.github/workflows/ci.yml` (every statement of each
+   text) with what ran, so a check added without the texts following it fails.
+4. The FR mirror changes in the same commit as the EN text, paragraph for paragraph.
+5. A test added for the claim is one of two kinds, and the commit message says which: a **fix** has a
+   red run against the previous tree (the failure text quoted); a **pin** protects a behaviour that
+   already held and cannot go red by itself (a race the schedule decides, an order the loop owns).
+   A pin declares its red "by the seam" and names what it protects, so a reader does not look for a
+   failure that never existed (S2 slice 4: three of five tests in one commit were pins).
+6. A test that depends on the kernel passes on one OS and fails on another: a test that waits for an
+   overflow or a jump sets the server's `writeDelay` (or the link's `pipeDelay` / `ctlDelay`) and
+   never counts on socket buffers filling; run `pwsh scripts/ixctl-test-linux.ps1` before the push
+   (the first CI run of #423 lost two flood tests on ubuntu-latest that Windows passed).
+7. A contract announcement (a version a consumer gates on, such as status `contract: "run/1"`) is
+   set by the slice that completes the contract, never by the first one: a consumer that reads it
+   relies on every promise behind it at once. Earlier slices test that it is absent. Slice A-1 of
+   run/1 announced it while markers, recent exits, federation and apply results were still missing;
+   an adversarial review caught it, and `TestStatusWithholdsTheRunContractUntilItShips` pins the
+   absence until the last slice (N1, #444).
