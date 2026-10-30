@@ -1,6 +1,6 @@
-# ADR-0009 — proposition de périmètre borné via IXQL
+# ADR-0019 — proposition de périmètre borné via IXQL
 
-Statut : proposé, draft uniquement. [Contrat détaillé anglais](../../adr/0009-mission-scope-refinement.md).
+Statut : proposé, draft uniquement. [Contrat détaillé anglais](../../adr/0019-mission-scope-refinement.md).
 
 La tranche réutilise parser, évaluateur, registre de capacités et horloge IXQL.
 Après un refus racine lié par l'hôte, `mission.refine_scope` peut proposer
