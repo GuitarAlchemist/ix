@@ -576,3 +576,28 @@ fn context_routed_tools_const_matches_call_with_ctx() {
         "CONTEXT_ROUTED_TOOLS must list exactly the tools call_with_ctx intercepts"
     );
 }
+
+/// The wmux → SQL example of `docs/pipelines/dag-execution.md`, read from the page itself
+/// (its SQL is run on captured wmux rows by `registered::wmux` tests): a valid spec, run
+/// snapshot first, with no prompt.
+#[test]
+fn the_documented_wmux_pipeline_is_valid_and_auto_approved() {
+    let page = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/pipelines/dag-execution.md"
+    ))
+    .unwrap();
+    let section = page
+        .split("## Terminal Panes as Rows")
+        .nth(1)
+        .expect("the wmux section");
+    let block = section
+        .split("```json")
+        .nth(1)
+        .and_then(|b| b.split("```").next())
+        .expect("its json block");
+    let report = validate(serde_json::from_str(block).expect("the block is JSON"));
+    assert_eq!(report["valid"], true, "{report:#}");
+    assert_eq!(report["execution_order"], json!(["snap", "blocked"]));
+    assert_eq!(report["approval"]["verdict"], "auto_approved");
+}

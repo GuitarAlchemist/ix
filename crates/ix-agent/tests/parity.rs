@@ -143,6 +143,7 @@ const EXPECTED: &[&str] = &[
     "ix_triage_session",
     "ix_viterbi",
     "ix_voicings_payload",
+    "ix_wmux_snapshot",
 ];
 
 /// `EXPECTED` plus any feature-gated tools present in this build. The `maintain-gate`

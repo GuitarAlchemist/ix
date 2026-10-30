@@ -348,6 +348,11 @@ jobs:
           IX_REQUIRE_DUCKDB: '1'
         shell: bash
         run: cargo test -p ix-agent --test duckdb_query
+      - name: wmux.snapshot rows through ix_duckdb_query against the pinned CLI
+        env:
+          IX_REQUIRE_DUCKDB: '1'
+        shell: bash
+        run: cargo test -p ix-agent --lib registered::wmux::tests::the_surfaces_load_as_a_duckdb_table_that_finds_the_blocked_panes
 
   # The ComfyUI pack (ADR-0009) calls ix-mcp over stdio, so its tests need a real
   # build installed into the pack. A missing or mismatched binary fails them
