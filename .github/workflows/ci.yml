@@ -138,6 +138,11 @@ jobs:
           go-version-file: go/ixctl/go.mod
           cache-dependency-path: go/ixctl/go.sum
 
+      # The gate's own helpers, without planes or binaries (E18's wait predicate).
+      - name: ixctl end-to-end gate helpers
+        if: matrix.rust == 'stable'
+        run: python -I -m unittest discover -s go/ixctl/e2e -p "test_*.py" -v
+
       - name: ixctl end-to-end gate
         if: matrix.rust == 'stable'
         run: python go/ixctl/e2e/e2e.py --build --work "${{ runner.temp }}/ixctl-e2e"
