@@ -645,12 +645,17 @@ locale et ses Job Objects. Ce que l'hôte ajoute :
   n'a pas démarré ; 2 le nom est tenu par une instance en marche (rien n'est rapporté `running`) ;
   3 les arbres n'ont pas été vus disparus dans `--stop-timeout` (30 s par défaut) — le processus
   sort quand même et les jobs se ferment avec lui, ce qui tue ce qui reste, mais l'hôte ne prétend
-  pas l'avoir vu.
+  pas l'avoir vu ; de même si un arbre tenait encore un processus quand le superviseur a cessé de
+  l'attendre. En console, le processus sort avec le même code. Sous le SCM, la spec, le répertoire
+  d'état et le journal du service sont ouverts après la connexion au SCM : un échec à cette étape
+  est le code 1, que le SCM voit.
 - **Un arrêt en trois moments.** `host.stop` sur `ctl` avec `phase: requested` (la commande a atteint
   l'hôte ; `source` vaut `scm`, `signal` ou `api` pour `/v1/shutdown`), puis `phase: received` (le
   plan n'admet plus rien : un apply répond 503), tous deux avant l'arrêt de tout service ; puis
-  `observed` (tous les arbres disparus, avec `ms`) ou `unobserved`, dans le journal du service
-  seulement, puisque le journal du plan est fermé à ce moment.
+  `observed` (tous les arbres vus disparus dans la borne, avec `ms`) ou `unobserved` (avec
+  `bound_ms` ou `trees_not_seen_gone`), dans le journal du service seulement, puisque le journal du
+  plan est fermé à ce moment. Pour `api`, le plan a fermé ses admissions en prenant la requête, avant
+  que l'hôte la voie : un apply peut alors recevoir 503 avant l'un ou l'autre événement.
 - **Journal du service.** `<nom>.service.log` dans le répertoire d'état, un objet JSON par ligne
   (`host.ready`, `host.refused`, `host.failed`, `host.stop`), jamais le jeton ; borné à deux fichiers
   de 4 Mio (`.service.log` et `.service.log.1`).
@@ -665,7 +670,9 @@ ixctl n'en exécute aucune. Le plan utilise le compte virtuel `NT SERVICE\ixctl`
 enregistré), un démarrage manuel, aucun redémarrage automatique (un plan redémarré part de sa spec,
 pas de ce qu'il faisait tourner), la boucle locale seulement, et un répertoire d'état sous
 `C:\ProgramData\ixctl` dont l'ACL donne la lecture au seul utilisateur client nommé, qui y lit le
-jeton. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
+jeton. Chaque arrêt du plan attend que le service soit arrêté (`sc.exe stop` ne fait que demander)
+avant la suite. Le plan lit la spec pour le nom de l'instance ; un test en vérifie le contenu, mais
+rien n'en a encore été exécuté sur un Windows installé. Le compte du service n'a aucun identifiant Claude : le travail qui en a besoin reste dans un
 `ixctl up` de la session de l'utilisateur, pair du service.
 
 ## Barrière

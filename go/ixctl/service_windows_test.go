@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +21,7 @@ import (
 // host's code as service-specific.
 func TestTheSCMAdapterCarriesControlsAndStates(t *testing.T) {
 	got := make(chan hostControl, 4)
-	h := &scmHandler{run: func(_ hostOptions, c <-chan hostControl, report func(hostStatus)) uint32 {
+	h := &scmHandler{setup: okSetup, run: func(_ hostOptions, c <-chan hostControl, report func(hostStatus)) uint32 {
 		report(hostStatus{State: hostStartPending, Checkpoint: 1, WaitHint: 10 * time.Second})
 		report(hostStatus{State: hostRunning, Accepts: true})
 		for i := 0; i < 3; i++ {
@@ -46,6 +47,7 @@ func TestTheSCMAdapterCarriesControlsAndStates(t *testing.T) {
 		states = append(states, fmt.Sprintf("%d/%d/%d/%d", st.State, st.Accepts, st.CheckPoint, st.WaitHint))
 	}
 	want := []string{
+		fmt.Sprintf("%d/0/1/10000", svc.StartPending), // the adapter's own, before setup
 		fmt.Sprintf("%d/0/1/10000", svc.StartPending),
 		fmt.Sprintf("%d/%d/0/0", svc.Running, svc.AcceptStop|svc.AcceptShutdown),
 		fmt.Sprintf("%d/0/2/1500", svc.StopPending),
@@ -62,7 +64,7 @@ func TestTheSCMAdapterCarriesControlsAndStates(t *testing.T) {
 	if fmt.Sprint(controls) != fmt.Sprint(wantC) {
 		t.Fatalf("controls %v, want %v", controls, wantC)
 	}
-	ok := &scmHandler{run: func(hostOptions, <-chan hostControl, func(hostStatus)) uint32 { return exitOK }}
+	ok := &scmHandler{setup: okSetup, run: func(hostOptions, <-chan hostControl, func(hostStatus)) uint32 { return exitOK }}
 	if specific, code := ok.Execute(nil, r, make(chan svc.Status, 1)); specific || code != 0 {
 		t.Fatalf("a clean stop returned %v %d", specific, code)
 	}
@@ -113,6 +115,11 @@ func TestAKilledHostTakesItsTreesAndTheNextOneReplaysNothing(t *testing.T) {
 	w := subscribe(t, c, "svc/task", nil)
 	do(t, c, Request{Op: "apply", Desired: running("task")})
 	gc := childPid(t, w)
+	t.Cleanup(func() {
+		if p, err := os.FindProcess(gc); err == nil {
+			p.Kill()
+		}
+	})
 	var st StatusReply
 	json.Unmarshal(do(t, c, Request{Op: "status"}), &st)
 	pid := *svcStatus(st, "task").Pid
@@ -164,5 +171,29 @@ func TestAKilledHostTakesItsTreesAndTheNextOneReplaysNothing(t *testing.T) {
 	}
 	if ready != 2 || observed != 1 {
 		t.Fatalf("log %s: %d ready, %d observed api stops", logPath, ready, observed)
+	}
+}
+
+func okSetup() (hostOptions, func(), error) { return hostOptions{}, func() {}, nil }
+
+// Under the SCM the setup (spec, state dir, log) runs after the dispatcher connected and
+// start-pending was reported: a failed setup is a service-specific start failure the SCM sees.
+func TestASetupFailureUnderTheSCMIsAStartFailure(t *testing.T) {
+	h := &scmHandler{
+		setup: func() (hostOptions, func(), error) { return hostOptions{}, nil, errors.New("no spec") },
+		run: func(hostOptions, <-chan hostControl, func(hostStatus)) uint32 {
+			t.Error("the host ran without its setup")
+			return exitOK
+		},
+	}
+	s := make(chan svc.Status, 4)
+	specific, code := h.Execute(nil, make(chan svc.ChangeRequest), s)
+	if !specific || code != exitStartFailed {
+		t.Fatalf("Execute returned %v %d", specific, code)
+	}
+	close(s)
+	first, ok := <-s
+	if !ok || first.State != svc.StartPending {
+		t.Fatalf("first status %+v %v", first, ok)
 	}
 }

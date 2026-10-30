@@ -59,6 +59,10 @@ func cli(args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "ixctl:", err)
+		var ec exitCodeError
+		if errors.As(err, &ec) {
+			return int(ec.code)
+		}
 		return 1
 	}
 	return 0

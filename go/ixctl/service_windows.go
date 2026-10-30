@@ -7,17 +7,22 @@ import (
 )
 
 // hostService runs the host under the SCM when the SCM started this process, else on the
-// console.
-func hostService(name string, o hostOptions) (uint32, error) {
+// console. setup (spec, state directory, log) runs after the SCM is connected.
+func hostService(name string, setup func() (hostOptions, func(), error)) (uint32, error) {
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		return 0, err
 	}
 	if !isService {
+		o, done, err := setup()
+		if err != nil {
+			return 0, err
+		}
+		defer done()
 		return consoleHost(o), nil
 	}
 	var code uint32
-	h := &scmHandler{o: o, run: func(o hostOptions, c <-chan hostControl, r func(hostStatus)) uint32 {
+	h := &scmHandler{setup: setup, run: func(o hostOptions, c <-chan hostControl, r func(hostStatus)) uint32 {
 		code = runHost(o, c, r)
 		return code
 	}}
@@ -30,13 +35,19 @@ func hostService(name string, o hostOptions) (uint32, error) {
 // scmHandler carries the SCM's requests to a host and its reports back. The final stopped
 // report is not sent: the svc package reports it from Execute's return.
 type scmHandler struct {
-	o   hostOptions
-	run func(hostOptions, <-chan hostControl, func(hostStatus)) uint32
+	setup func() (hostOptions, func(), error)
+	run   func(hostOptions, <-chan hostControl, func(hostStatus)) uint32
 }
 
 func (h *scmHandler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.Status) (bool, uint32) {
+	s <- scmStatus(hostStatus{State: hostStartPending, Checkpoint: 1, WaitHint: hostStartHint})
+	o, done, err := h.setup()
+	if err != nil {
+		return true, exitStartFailed
+	}
+	defer done()
 	controls := make(chan hostControl)
-	done := make(chan struct{})
+	stop := make(chan struct{})
 	go func() {
 		for {
 			var c svc.ChangeRequest
@@ -46,7 +57,7 @@ func (h *scmHandler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- sv
 				if !ok {
 					return
 				}
-			case <-done:
+			case <-stop:
 				return
 			}
 			hc := hostControl{Source: "scm"}
@@ -62,17 +73,17 @@ func (h *scmHandler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- sv
 			}
 			select {
 			case controls <- hc:
-			case <-done:
+			case <-stop:
 				return
 			}
 		}
 	}()
-	code := h.run(h.o, controls, func(st hostStatus) {
+	code := h.run(o, controls, func(st hostStatus) {
 		if st.State != hostStopped {
 			s <- scmStatus(st)
 		}
 	})
-	close(done)
+	close(stop)
 	return code != exitOK, code
 }
 

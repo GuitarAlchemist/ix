@@ -602,12 +602,18 @@ instance as `ixctl up`, with its lock, token, loopback listener and job objects.
   accepted), then `stop-pending` with a growing checkpoint and the time left as wait hint, then
   `stopped`. Exit codes, service-specific: 0 a stop observed; 1 the instance did not start; 2 the
   name is held by a running instance (nothing is reported running); 3 the trees were not seen gone
-  within `--stop-timeout` (default 30 s) — the process exits all the same and the jobs close with
-  it, which kills what is left, but the host does not claim it saw it.
+  within `--stop-timeout` (default 30 s), or a tree still held a process when the supervisor
+  stopped waiting for it — the process exits all the same and the jobs close with it, which kills
+  what is left, but the host does not claim it saw it. On the console the process exits with the
+  same code. Under the SCM, the spec, the state directory and the log are opened after the SCM is
+  connected, so a failure there is code 1 the SCM sees.
 - **A stop in three moments.** `host.stop` on `ctl` with `phase: requested` (the control reached
   the host; `source` is `scm`, `signal` or `api` for `/v1/shutdown`), then `phase: received` (the
   plane admits nothing more: an apply answers 503), both before any service stops; then `observed`
-  (every tree gone, with `ms`) or `unobserved` in the log only, since the journal is closed by then.
+  (every tree seen gone within the bound, with `ms`) or `unobserved` (with `bound_ms` or
+  `trees_not_seen_gone`), in the log only, since the journal is closed by then. For `api` the plane
+  closed its admissions when it took the request, before the host saw it: there an apply may get
+  503 before either event.
 - **Log.** `<name>.service.log` in the state directory, one JSON object per line (`host.ready`,
   `host.refused`, `host.failed`, `host.stop`), never the token; bounded to two files of 4 MiB
   (`.service.log` and `.service.log.1`).
@@ -620,7 +626,9 @@ and uninstall commands for an elevated PowerShell; ixctl runs none of them. The 
 virtual account `NT SERVICE\ixctl` (no password stored), a manual start, no automatic restart (a
 restarted plane starts from its spec, not from what it was running), loopback only, and a state
 directory under `C:\ProgramData\ixctl` whose ACL gives read to the one client user named, who reads
-the token there. The service account has no Claude credentials, so work that needs them stays in an
+the token there. Every stop in the plan waits for the service to be stopped (`sc.exe stop` only
+asks) before what follows. The plan reads the spec for the instance name; a test checks its
+contents, but nothing of it has been run on an installed Windows yet. The service account has no Claude credentials, so work that needs them stays in an
 `ixctl up` of the user's session, a peer of the service.
 
 ## Gate

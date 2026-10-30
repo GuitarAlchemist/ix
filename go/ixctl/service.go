@@ -162,18 +162,30 @@ func runHost(o hostOptions, controls <-chan hostControl, report func(hostStatus)
 	go func() { closeIn(in); close(closed) }()
 	tick := time.NewTicker(hostTick)
 	defer tick.Stop()
+	bound := time.NewTimer(o.stopTimeout)
+	defer bound.Stop()
+	unobserved := func(fields map[string]any) uint32 {
+		fields["phase"], fields["source"], fields["ms"] = "unobserved", source, time.Since(t0).Milliseconds()
+		log.event("host.stop", fields)
+		return stopped(exitStopUnobserved)
+	}
 	for {
 		select {
 		case <-closed:
+			// A returned close is not proof enough: a tree whose job still held a process at
+			// the supervisor's bound was killed, not seen gone.
+			if n := in.plane.TreesNotSeenGone(); n > 0 {
+				return unobserved(map[string]any{"trees_not_seen_gone": n})
+			}
+			if time.Now().After(deadline) {
+				return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})
+			}
 			log.event("host.stop", map[string]any{"phase": "observed", "source": source, "ms": time.Since(t0).Milliseconds()})
 			return stopped(exitOK)
+		case <-bound.C:
+			return unobserved(map[string]any{"bound_ms": o.stopTimeout.Milliseconds()})
 		case <-tick.C:
 			left := time.Until(deadline)
-			if left <= 0 {
-				log.event("host.stop", map[string]any{"phase": "unobserved", "source": source,
-					"ms": time.Since(t0).Milliseconds(), "bound_ms": o.stopTimeout.Milliseconds()})
-				return stopped(exitStopUnobserved)
-			}
 			checkpoint++
 			set(hostStatus{State: hostStopPending, Checkpoint: checkpoint, WaitHint: left})
 		case c := <-controls:
@@ -290,37 +302,57 @@ func cmdServiceRun(args []string) error {
 	if len(pos) != 1 || o.stateDir == "" {
 		return errors.New(serviceUsage)
 	}
-	if o.spec, err = LoadSpec(pos[0]); err != nil {
-		return err
+	logPath := ""
+	// setup runs once the manager is connected: under the SCM, a spec or a log that fails
+	// here is a start failure the SCM sees, not a process gone before it was told anything.
+	setup := func() (hostOptions, func(), error) {
+		spec, err := LoadSpec(pos[0])
+		if err != nil {
+			return o, nil, err
+		}
+		o.spec = spec
+		name := o.name
+		if name == "" {
+			name = spec.Name
+		}
+		if !nameRE.MatchString(name) {
+			return o, nil, fmt.Errorf("instance name %q must match %s", name, nameRE)
+		}
+		if err := os.MkdirAll(o.stateDir, 0o700); err != nil {
+			return o, nil, err
+		}
+		logPath = filepath.Join(o.stateDir, name+".service.log")
+		l, err := openRotatingLog(logPath, serviceLogMax)
+		if err != nil {
+			return o, nil, err
+		}
+		o.log = l
+		return o, func() { l.Close() }, nil
 	}
-	name := o.name
-	if name == "" {
-		name = o.spec.Name
-	}
-	if !nameRE.MatchString(name) {
-		return fmt.Errorf("instance name %q must match %s", name, nameRE)
-	}
-	if err := os.MkdirAll(o.stateDir, 0o700); err != nil {
-		return err
-	}
-	l, err := openRotatingLog(filepath.Join(o.stateDir, name+".service.log"), serviceLogMax)
-	if err != nil {
-		return err
-	}
-	defer l.Close()
-	o.log = l
-	code, err := hostService(serviceName, o)
+	code, err := hostService(serviceName, setup)
 	if err != nil {
 		return err
 	}
 	if code != exitOK {
-		return fmt.Errorf("service host exit code %d (see %s)", code, l.path)
+		return exitCodeError{code: code, log: logPath}
 	}
 	return nil
 }
 
+// exitCodeError carries a host's exit code to the process.
+type exitCodeError struct {
+	code uint32
+	log  string
+}
+
+func (e exitCodeError) Error() string {
+	return fmt.Sprintf("service host exit code %d (see %s)", e.code, e.log)
+}
+
 type planOptions struct {
 	service, exe, dir, spec, clientUser string
+	// name is the instance name (the spec's), which names the state and log files.
+	name string
 }
 
 func cmdServicePlan(args []string, stdout io.Writer) error {
@@ -337,6 +369,11 @@ func cmdServicePlan(args []string, stdout io.Writer) error {
 	if o.spec == "" || o.clientUser == "" {
 		return errors.New(serviceUsage)
 	}
+	spec, err := LoadSpec(o.spec)
+	if err != nil {
+		return err
+	}
+	o.name = spec.Name
 	fmt.Fprint(stdout, installPlan(o))
 	return nil
 }
@@ -376,14 +413,18 @@ func installPlan(o planOptions) string {
 	w("")
 	w("# status")
 	w(`sc.exe query %s`, o.service)
-	w(`Get-Content "%s\<name>.json"   # addr and token: the service, SYSTEM, Administrators and %s read it`, o.dir, o.clientUser)
-	w(`Get-Content -Tail 20 "%s\<name>.service.log"`, o.dir)
+	w(`Get-Content "%s\%s.json"   # addr and token: the service, SYSTEM, Administrators and %s read it`, o.dir, o.name, o.clientUser)
+	w(`Get-Content -Tail 20 "%s\%s.service.log"`, o.dir, o.name)
+	// sc.exe stop only asks; the stop itself takes up to the host's --stop-timeout (30 s).
+	waitStopped := fmt.Sprintf(`(Get-Service %s).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))`, o.service)
 	w("")
 	w("# stop")
 	w(`sc.exe stop %s`, o.service)
+	w("%s", waitStopped)
 	w("")
-	w("# uninstall (the way back: stop first)")
+	w("# uninstall (the way back: stop first, and wait for it)")
 	w(`sc.exe stop %s`, o.service)
+	w("%s", waitStopped)
 	w(`sc.exe delete %s`, o.service)
 	w(`Remove-Item -Recurse "%s"   # after reading what it holds: journal and log`, o.dir)
 	w(`Remove-Item "%s"`, o.exe)

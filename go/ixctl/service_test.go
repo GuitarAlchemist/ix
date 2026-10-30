@@ -291,15 +291,19 @@ func TestAStopPastItsBoundSaysItWasNotObserved(t *testing.T) {
 	o.stopTimeout = 200 * time.Millisecond
 	closed := make(chan struct{})
 	o.close = func(in *instance) {
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 		in.close()
 		close(closed)
 	}
 	scm, done := startHost(o)
 	scm.waitState(t, hostRunning, 10*time.Second)
+	t0 := time.Now()
 	scm.controls <- hostControl{Cmd: controlStop, Source: "scm"}
 	if code := waitExit(t, done, 5*time.Second); code != exitStopUnobserved {
 		t.Fatalf("exit %d, want %d", code, exitStopUnobserved)
+	}
+	if d := time.Since(t0); d > 450*time.Millisecond {
+		t.Fatalf("a 200 ms bound answered after %s", d)
 	}
 	if last := scm.all()[len(scm.all())-1]; last.State != hostStopped || last.ExitCode != exitStopUnobserved {
 		t.Fatalf("last report %+v", last)
@@ -364,18 +368,18 @@ func TestTheServiceLogRotatesWithinItsBound(t *testing.T) {
 // automatic restart, loopback only, and a way back.
 func TestTheInstallPlanIsExplicitAndStoresNoSecret(t *testing.T) {
 	p := installPlan(planOptions{service: "ixctl", exe: `C:\Program Files\ixctl\ixctl.exe`,
-		dir: `C:\ProgramData\ixctl`, clientUser: `HOST\stef`})
+		dir: `C:\ProgramData\ixctl`, clientUser: `HOST\stef`, name: "solo"})
 	for _, want := range []string{
 		`obj= "NT SERVICE\ixctl"`, `start= demand`, `--addr 127.0.0.1:0`,
 		`--state "C:\ProgramData\ixctl"`, `icacls "C:\ProgramData\ixctl"`, `"NT SERVICE\ixctl:(OI)(CI)M"`,
 		`"HOST\stef:(OI)(CI)RX"`, `sc.exe start ixctl`, `sc.exe query ixctl`, `sc.exe stop ixctl`,
-		`sc.exe delete ixctl`,
+		`sc.exe delete ixctl`, `C:\ProgramData\ixctl\solo.json`, `C:\ProgramData\ixctl\solo.service.log`,
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("plan lacks %q", want)
 		}
 	}
-	for _, bad := range []string{"password=", "0.0.0.0", "failure", "LocalSystem", "start= auto"} {
+	for _, bad := range []string{"password=", "0.0.0.0", "failure", "LocalSystem", "start= auto", "<name>"} {
 		if strings.Contains(p, bad) {
 			t.Errorf("plan holds %q", bad)
 		}
@@ -384,6 +388,13 @@ func TestTheInstallPlanIsExplicitAndStoresNoSecret(t *testing.T) {
 		if !strings.Contains(p, section) {
 			t.Errorf("plan lacks section %q", section)
 		}
+	}
+	// sc.exe stop only asks: every stop waits for the service to be stopped before what follows.
+	wait := `(Get-Service ixctl).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))`
+	un := p[strings.Index(p, "# uninstall"):]
+	if strings.Count(p, "sc.exe stop ixctl\n"+wait+"\n") != 2 ||
+		strings.Index(un, wait) > strings.Index(un, "sc.exe delete ixctl") {
+		t.Errorf("a stop is not waited for:\n%s", p)
 	}
 }
 
@@ -416,5 +427,53 @@ func TestNoApplyIsAdmittedOnceTheStopIsReceived(t *testing.T) {
 		t.Fatalf("apply after the stop was received: %d", resp.StatusCode)
 	}
 	close(release)
+	waitExit(t, done, 10*time.Second)
+}
+
+// A tree the plane did not see gone (its job still held a process at the bound) makes the
+// stop unobserved, even though the close returned.
+func TestATreeNotSeenGoneMakesTheStopUnobserved(t *testing.T) {
+	old := treeGone
+	treeGone = func(*procTree, time.Duration) bool { return false }
+	t.Cleanup(func() { treeGone = old })
+	dir := t.TempDir()
+	log := &syncBuffer{}
+	scm, done := startHost(hostOpts(fakeSpec(t, "local", nil, fakeSvc{name: "task"}), dir, log))
+	scm.waitState(t, hostRunning, 10*time.Second)
+	c := dial(t, hostClient(t, dir, "local"))
+	w := subscribe(t, c, "svc/task", nil)
+	do(t, c, Request{Op: "apply", Desired: running("task")})
+	waitEnv(t, w, 10*time.Second, "a task line", func(*Envelope) bool { return true })
+	scm.controls <- hostControl{Cmd: controlStop, Source: "scm"}
+	if code := waitExit(t, done, 15*time.Second); code != exitStopUnobserved {
+		t.Fatalf("exit %d, want %d\n%s", code, exitStopUnobserved, log.String())
+	}
+	var e map[string]any
+	for _, x := range logEvents(t, log.String()) {
+		if x["event"] == "host.stop" && x["phase"] != "requested" && x["phase"] != "received" {
+			e = x
+		}
+	}
+	if e == nil || e["phase"] != "unobserved" || e["trees_not_seen_gone"] != float64(1) {
+		t.Fatalf("last stop phase %v\n%s", e, log.String())
+	}
+}
+
+// On the console, the process exits with the host's own code, not a generic failure.
+func TestTheConsoleHostExitsWithTheHostCode(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.json")
+	os.WriteFile(specPath, []byte(`{"name":"solo","services":[]}`), 0o600)
+	spec, err := LoadSpec(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, done := startHost(hostOpts(spec, dir, &syncBuffer{}))
+	first.waitState(t, hostRunning, 10*time.Second)
+	var stderr bytes.Buffer
+	if code := cli([]string{"service", "run", specPath, "--state", dir}, &bytes.Buffer{}, &stderr); code != int(exitAlreadyRunning) {
+		t.Fatalf("console exit %d, want %d: %s", code, exitAlreadyRunning, stderr.String())
+	}
+	first.controls <- hostControl{Cmd: controlStop, Source: "scm"}
 	waitExit(t, done, 10*time.Second)
 }
