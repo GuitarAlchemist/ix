@@ -120,7 +120,7 @@ ci-dessous dans `err` :
   d'analyse et la forêt d'analyse partagée contiennent chacune au plus un nombre fixe d'éléments,
   comptés à mesure qu'ils sont créés.
 
-L'ambiguïté se décide sur la forêt. La grammaire est acyclique (décision 2), si bien que la forêt
+L'ambiguïté se décide sur la forêt. La grammaire n'a aucun cycle qui ne consomme rien (décision 2), si bien que la forêt
 est un graphe fini sans cycle. Le nombre d'arbres à chaque nœud est compté de bas en haut, en
 saturant à deux, et le compte de la racine dit s'il y a une analyse ou `AMBIGUOUS`. Ce compte est
 linéaire en le nombre de nœuds et d'arcs de la forêt. Les plafonds sont fixés à partir de la

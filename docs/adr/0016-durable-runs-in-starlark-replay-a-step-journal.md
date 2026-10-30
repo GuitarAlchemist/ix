@@ -128,7 +128,8 @@ journal as `resume` does. If the last valid record is terminal, it appends nothi
 it appends `failed(journal)`. If that write fails before its LF, nothing is recorded, and the
 run stays in the state of its last valid record. The next `resume` goes on
 from there, and repeats nothing, since every record before was written ahead: a step cut after
-its effect is `UNKNOWN` (decision 7). On open, every LF-terminated record must parse and keep
+its `attempt` follows its capability's rule for a cut step (decision 5), `UNKNOWN` (decision 7)
+where that rule says so. On open, every LF-terminated record must parse and keep
 the `seq` and phase order: no gap, no duplicate, no `result` without its `intent`, and no
 record after a terminal one. Only a
 final fragment without an LF may be dropped, and it is truncated and synced before anything is
@@ -143,7 +144,8 @@ and replayed like a success. The emergency stops are Rust errors, and Starlark h
 script can catch one:
 
 - `UNKNOWN(seq)`, `NONDETERMINISTIC(seq)`, `CONFLICT`;
-- budget exhausted, the tick or heap limit, an operating-system bound, `failed(journal)`.
+- budget exhausted, the tick or heap limit, an operating-system bound, `failed(journal)`, a
+  load error (`failed(load)`, ADR-0018 §4).
 
 **5. The capability table is closed; what it does not list does not exist in a durable run.**
 First slice:
@@ -383,8 +385,8 @@ One script: `claude`, `propose`, `say`, then `wait("approve")`. Done when every 
      gap, a duplicate and a `result` without its `intent`.
    - An injected write or sync failure on a record that is not terminal, a `resolution` aside,
      gives `failed(journal)`.
-   - A sync failure on a complete terminal record (`done`, a worker's `failed(reason)`, a
-     launcher's `failed(limit)` or `failed(journal)`) leaves that record the state, and no
+   - A sync failure on a complete terminal record (`done`, a worker's `failed(reason)` or
+     `nondeterministic(seq)`, a launcher's `failed(limit)` or `failed(journal)`) leaves that record the state, and no
      second terminal record follows it.
    - A launcher's `failed(journal)` cut before its LF leaves the run in the state of its last
      valid record: `status` reports what that record leaves (`stopped`, or `unknown(seq)` when

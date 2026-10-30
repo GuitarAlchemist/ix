@@ -82,8 +82,10 @@ d'étiquette :
 Tout le reste est une erreur de chargement : un chemin, une URL, ou un fichier absent de la
 clôture. Un fichier chargé s'exécute avec les mêmes globales que le script. Son code de premier
 niveau peut définir des valeurs mais pas appeler une capacité. Un appel au moment du chargement
-arrête le run avec `LOAD_EFFECT`, si bien que le chargement n'a aucun effet que le rejeu aurait à
-réconcilier. Les grammaires que prend le `parse` de l'ADR-0017 sont les fichiers `*.ebnf` de la
+en est une aussi, `LOAD_EFFECT`, si bien que le chargement n'a aucun effet que le rejeu aurait à
+réconcilier. Une erreur de chargement termine le run par l'enregistrement terminal
+`failed(load)`, avec son code, avant toute étape : la clôture et le source sont liés (ADR-0016
+§2), si bien qu'un `resume` échouerait de la même façon. Les grammaires que prend le `parse` de l'ADR-0017 sont les fichiers `*.ebnf` de la
 clôture, nommés de la même façon.
 
 **5. Un composite est un run parent avec des runs enfants.** Ceci amende la table fermée de
@@ -221,8 +223,8 @@ donne `CONFLICT`, jamais une réutilisation silencieuse de l'ancienne clôture.
    - Une allocation d'enfant plus grande que le reste du parent dans un champ quelconque donne
      `GRANT_EXCEEDED`, et ne réserve rien, y compris quand le parent meurt entre l'intention
      refusée et son résultat : un enfant ultérieur qui tient est alors créé. Un cinquième niveau
-     d'imbrication donne `TOO_DEEP`. Un parent à qui il reste deux secondes actives et
-     qui les donne toutes deux à son enfant n'est pas arrêté pendant que l'enfant les dépense.
+     d'imbrication donne `TOO_DEEP`. Un parent à qui il reste 20 secondes actives et
+     qui les donne toutes les 20 à son enfant n'est pas arrêté pendant que l'enfant les dépense.
    - Un enfant qui se termine en `failed(journal)` après un `say` journalisé termine le parent en
      `failed(child)`, et aucun second enfant n'est créé. Un enfant qui s'arrête en
      `NONDETERMINISTIC` après un `say` journalisé arrête le parent en `nondeterministic` à sa

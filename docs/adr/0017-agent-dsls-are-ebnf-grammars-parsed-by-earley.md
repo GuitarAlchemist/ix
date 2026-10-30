@@ -106,7 +106,7 @@ inside `err`:
 - **Over the bounds:** code `TOO_COMPLEX`. The text holds at most 64 KiB. The chart and the
   shared parse forest each hold at most a fixed number of items, counted as they are created.
 
-Ambiguity is decided on the forest. The grammar is acyclic (decision 2), so the forest is a finite
+Ambiguity is decided on the forest. The grammar has no cycle that consumes nothing (decision 2), so the forest is a finite
 graph with no cycle. The number of trees at each node is counted bottom-up, saturating at two, and
 the root's count says one parse or `AMBIGUOUS`. That count is linear in the forest's nodes and
 edges. The caps are set from the tracer's measurement: four times what an unambiguous 64 KiB

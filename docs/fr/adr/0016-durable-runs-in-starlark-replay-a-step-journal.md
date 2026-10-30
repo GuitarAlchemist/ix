@@ -144,8 +144,9 @@ journal comme le fait `resume`. Si le dernier enregistrement valide est terminal
 rien ; sinon il ajoute `failed(journal)`. Si cette écriture échoue avant son LF, rien n'est
 enregistré, et le run reste dans l'état de
 son dernier enregistrement valide. Le `resume` suivant reprend à partir de là, et ne répète rien,
-puisque chaque enregistrement antérieur a été écrit d'avance : une étape coupée après son effet
-est `UNKNOWN` (décision 7). À l'ouverture, chaque enregistrement terminé par LF doit s'analyser et
+puisque chaque enregistrement antérieur a été écrit d'avance : une étape coupée après son
+`attempt` suit la règle de sa capacité pour une étape coupée (décision 5), `UNKNOWN` (décision 7)
+là où cette règle le dit. À l'ouverture, chaque enregistrement terminé par LF doit s'analyser et
 respecter l'ordre des `seq` et des phases : pas de trou, pas de doublon, pas de `result` sans son
 `intent`, et aucun enregistrement après un enregistrement terminal. Seul un fragment final sans LF peut être abandonné, et il est tronqué et synchronisé
 avant tout ajout. La durabilité n'est revendiquée que pour les arrêts forcés de processus. Rien
@@ -160,7 +161,8 @@ contrat. Un échec est journalisé et rejoué comme un succès. Les arrêts d'ur
 Rust, et Starlark n'a pas de `try`, si bien qu'aucun script ne peut en attraper un :
 
 - `UNKNOWN(seq)`, `NONDETERMINISTIC(seq)`, `CONFLICT` ;
-- le budget épuisé, la limite de ticks ou de tas, une borne du système d'exploitation,
+- le budget épuisé, la limite de ticks ou de tas, une borne du système d'exploitation, une
+  erreur de chargement (`failed(load)`, ADR-0018 §4),
   `failed(journal)`.
 
 **5. La table des capacités est fermée ; ce qu'elle ne liste pas n'existe pas dans un run
@@ -431,7 +433,8 @@ vérification ci-dessous tient :
    - Un échec d'écriture ou de synchronisation injecté sur un enregistrement qui n'est pas terminal,
      hors `resolution`, donne `failed(journal)`.
    - Un échec de synchronisation sur un enregistrement terminal complet (`done`, le
-     `failed(reason)` d'un worker, le `failed(limit)` ou le `failed(journal)` d'un lanceur) laisse
+     `failed(reason)` ou le `nondeterministic(seq)` d'un worker, le `failed(limit)` ou le
+     `failed(journal)` d'un lanceur) laisse
      cet enregistrement l'état, et aucun second enregistrement terminal ne le suit.
    - Un `failed(journal)` de lanceur coupé avant son LF laisse le run dans l'état de son dernier
      enregistrement valide : `status` rapporte ce que laisse cet enregistrement (`stopped`, ou

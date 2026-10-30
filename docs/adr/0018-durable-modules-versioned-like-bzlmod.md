@@ -74,8 +74,10 @@ lock moves to 1.3.0, and replay stays proved.
 
 Anything else is a load error: a path, a URL, or a file missing from the closure. A loaded file
 runs with the same globals as the script. Its top-level code may define values but not call a
-capability. A call at load time stops the run with `LOAD_EFFECT`, so loading has no effect for
-replay to reconcile. The grammars ADR-0017's `parse` takes are the closure's `*.ebnf` files,
+capability. A call at load time is one too, `LOAD_EFFECT`, so loading has no effect for
+replay to reconcile. A load error ends the run in the terminal record `failed(load)`, with its
+code, before any step: the closure and the source are bound (ADR-0016 §2), so a `resume` would
+fail the same way. The grammars ADR-0017's `parse` takes are the closure's `*.ebnf` files,
 named the same way.
 
 **5. A composite is a parent run with child runs.** This amends ADR-0016 §5's closed table (it
@@ -199,7 +201,7 @@ an existing id and another lock is `CONFLICT`, never a silent reuse of the old c
    - A child grant larger than the parent's remainder in any field is `GRANT_EXCEEDED`, and
      reserves nothing, also when the parent dies between the refused intent and its result: a
      later child that fits is then created. A fifth level of nesting is `TOO_DEEP`. A parent with
-     two active seconds left that grants both to its child is not stopped while the child spends
+     20 active seconds left that grants all 20 to its child is not stopped while the child spends
      them.
    - A child that ends `failed(journal)` after a journaled `say` ends the parent
      `failed(child)`, and no second child is created. A child that
