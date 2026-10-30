@@ -269,9 +269,10 @@ func TestBytesEmittedAreCountedPerNode(t *testing.T) {
 
 // E18 (ubuntu CI, run 40987881936): a child's record is counted under the tree's lock, which is
 // released before its mux republishes the record, so a list can fall between the two and see the
-// child a record ahead. A reader comparing their bytes compares them on a list where the mux has
-// republished every record of its only child (equal seqs); there the mux's bytes are at least
-// the child's, since each republished record carries `src` beside the same fields.
+// child a record ahead. This test makes the window happen on the plane and checks the condition
+// E18 waits for (e2e.caught_up, tested itself in e2e/test_e2e.py): on a list where the mux has
+// republished every record of its only child (equal seqs), the mux's bytes are at least the
+// child's, since each republished record carries `src` beside the same fields.
 func TestBytesAreComparedOnAListWhereTheMuxHasCaughtUpWithItsChild(t *testing.T) {
 	p := probePlane(t)
 	held, release := make(chan struct{}), make(chan struct{})

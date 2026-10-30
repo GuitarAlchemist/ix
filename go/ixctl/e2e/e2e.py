@@ -131,6 +131,16 @@ def wait_until(pred, timeout, step=0.01):
         time.sleep(step)
 
 
+def caught_up(nodes, mux, child):
+    """E18: whether a probe list (`nodes` by name) is one to compare a mux's bytes with its only
+    child's on. A child's record is counted under the tree's lock, released before the mux
+    republishes it, so a list can fall between the two (ubuntu CI, run 40987881936). On a list
+    where the mux's seq equals the child's, the mux has republished every record of it; the
+    window itself is reproduced on the plane by TestBytesAreComparedOnAListWhereTheMux...."""
+    c, m = nodes.get(child) or {}, nodes.get(mux) or {}
+    return bool(c.get("bytes")) and m.get("seq") == c.get("seq")
+
+
 # --- building ---------------------------------------------------------------------------------
 
 
@@ -1169,14 +1179,10 @@ def run():
     code_leaf, leaf = call(sa, "POST", "/v1/probe/create", {"name": "solo", "kind": "heartbeat@1", "every_ms": 10, "max_rate_per_s": 10})
     code_wide, wide = call(sa, "POST", "/v1/probe/create", {"name": "wide", "kind": "mux@1", "max_rate_per_s": 100000})
     started_b = [call(sa, "POST", "/v1/probe/start", {"node": n})[0] for n in ("bud", "bud-0")]
-    # bud-0's record is counted under the tree's lock, released before bud republishes it: a
-    # list can fall between the two (ubuntu CI). The bytes are compared on a list where bud has
-    # republished every record of bud-0 (equal seqs; TestBytesAreComparedOnAListWhereTheMux...).
     def listed():
         _, tb = call(sa, "GET", "/v1/probe")
         nb = {n["name"]: n for n in (tb or {}).get("nodes", [])}
-        lf, mx = nb.get("bud-0") or {}, nb.get("bud") or {}
-        return (tb, nb) if lf.get("bytes") and mx.get("seq") == lf.get("seq") else None
+        return (tb, nb) if caught_up(nb, "bud", "bud-0") else None
     found, _ = wait_until(listed, 5)
     tree_b, nodes_b = found if found else (call(sa, "GET", "/v1/probe")[1], {})
     mux_b, leaf_b = nodes_b.get("bud", {}), nodes_b.get("bud-0", {})
