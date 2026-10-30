@@ -24,6 +24,10 @@ contracts (see `docs/contracts/`), not runtime coupling.
   Distinct from a **crate** (Rust library) and a **tool** (MCP-callable function).
 - **Tool** — an MCP-callable function (registered in `ix-agent`; the count is
   asserted by `crates/ix-agent/tests/parity.rs` — every tool-adding PR bumps it).
+  The code still calls it a skill: `#[ix_skill]`, the `ix-skill` crates and the
+  `skills` list of `state/registry/skills.snapshot.json` are legacy names for
+  tools. In prose, docs and conversation say **tool** (FR: *outil IX*), never
+  *skill*, which is the Claude Code term above. Renaming the code: ix#474.
 - **Governance / Demerzel constitution** — all agent actions are subject to the
   Demerzel constitution (`governance/demerzel`). The **Galactic Protocol** is the
   cross-repo contract layer; **Prime Radiant** is the 3D governance-graph viz.
