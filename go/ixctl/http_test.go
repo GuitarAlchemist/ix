@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -173,6 +174,108 @@ func TestSSEReplayWithLastEventID(t *testing.T) {
 	}
 	if len(got) != 6 || got[0] != base+1 || got[5] != base+7 {
 		t.Fatalf("stale epoch replays this boot: %v", got)
+	}
+}
+
+func TestSSERunMarkersAreOptInAndAcknowledged(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil), "")
+	run := RunID{Origin: "local", Epoch: in.plane.Epoch(), Seq: 1}
+	begin := in.plane.hub.PublishRun("svc/x", event(runBeginKind, map[string]any{}), run)
+	line := in.plane.hub.PublishRun("svc/x", event("log", map[string]any{"line": "kept"}), run)
+	end := in.plane.hub.PublishRun("svc/x", event(runEndKind, map[string]any{"outcome": "started"}), run)
+
+	plain, _ := sseFrames(t, in, "ch=svc/x&since=0", 1, 2*time.Second)
+	if len(plain) != 1 || plain[0].Seq != line.Seq {
+		t.Fatalf("plain SSE got %+v, want only seq %d", plain, line.Seq)
+	}
+
+	req, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?ch=svc/x&since=0&markers=run", nil)
+	req.Header.Set("Authorization", "Bearer "+in.token)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	resp, err := loopbackHTTP.Do(req.WithContext(ctx))
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || resp.Header.Get("Ixctl-Markers") != runMarkers {
+		resp.Body.Close()
+		cancel()
+		t.Fatalf("marker SSE: status %d, acknowledgement %q", resp.StatusCode, resp.Header.Get("Ixctl-Markers"))
+	}
+	var got []uint64
+	sc := bufio.NewScanner(resp.Body)
+	for len(got) < 3 && sc.Scan() {
+		if line := sc.Text(); strings.HasPrefix(line, "data: ") {
+			var env Envelope
+			if err := json.Unmarshal([]byte(line[6:]), &env); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, env.Seq)
+		}
+	}
+	resp.Body.Close()
+	cancel()
+	want := []uint64{begin.Seq, line.Seq, end.Seq}
+	if !slices.Equal(got, want) {
+		t.Fatalf("marker SSE seqs %v, want %v", got, want)
+	}
+
+	bad, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?ch=svc/x&markers=other", nil)
+	bad.Header.Set("Authorization", "Bearer "+in.token)
+	badCtx, badCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer badCancel()
+	badResp, err := loopbackHTTP.Do(bad.WithContext(badCtx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer badResp.Body.Close()
+	if badResp.StatusCode != 400 {
+		t.Fatalf("unknown markers status %d, want 400", badResp.StatusCode)
+	}
+}
+
+// A resume point the ring no longer holds gets a since-too-old gap naming the oldest kept, and
+// the stream goes on from there: only a reader that falls behind while reading (overflow) is
+// cut off. The README's /v1/events row says both.
+func TestSSEGoesOnAfterSinceTooOld(t *testing.T) {
+	in := newTestInstance(t, fakeSpec(t, "local", nil), "")
+	publishN(in.plane, "svc/x", ringSize+10)
+	_, oldest := in.plane.hub.Span()
+	req, _ := http.NewRequest("GET", "http://"+in.addr+"/v1/events?ch=svc/&since=1&epoch="+in.plane.Epoch(), nil)
+	req.Header.Set("Authorization", "Bearer "+in.token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := loopbackHTTP.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var gap *Gap
+	var kind string
+	var seqs []uint64
+	sc := bufio.NewScanner(resp.Body)
+	for len(seqs) < 3 && sc.Scan() {
+		line := sc.Text()
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			kind = line[7:]
+		case strings.HasPrefix(line, "data: ") && kind == "gap":
+			gap = &Gap{}
+			json.Unmarshal([]byte(line[6:]), gap)
+		case strings.HasPrefix(line, "data: "):
+			if gap == nil {
+				t.Fatalf("an envelope before the gap: %s", line)
+			}
+			var env Envelope
+			json.Unmarshal([]byte(line[6:]), &env)
+			seqs = append(seqs, env.Seq)
+		}
+	}
+	if gap == nil || gap.Reason != "since-too-old" || gap.From != 2 || gap.Oldest != oldest {
+		t.Fatalf("gap %+v, want since-too-old from 2 with the oldest kept %d", gap, oldest)
+	}
+	if len(seqs) != 3 || seqs[0] != oldest || seqs[2] != oldest+2 {
+		t.Fatalf("after the gap: %v, want the stream to go on from the oldest kept %d", seqs, oldest)
 	}
 }
 
