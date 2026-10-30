@@ -22,9 +22,12 @@ type Plane struct {
 	journal   *journal
 	started   time.Time
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	stopping  context.Context
+	stopWaits context.CancelFunc
+	wg        sync.WaitGroup
+	waiters   chan struct{}
 
 	applyMu  sync.Mutex // one apply at a time: generations are a total order
 	mu       sync.Mutex
@@ -41,16 +44,22 @@ type Plane struct {
 }
 
 // awaitTimeout bounds how long an apply waits for its actions to be observed.
-const awaitTimeout = 60 * time.Second
+const (
+	awaitTimeout   = 60 * time.Second
+	waitTimeoutMax = 60 * time.Second
+	maxWaiters     = 64
+)
 
 // NewPlane builds a plane: journalPath is its audit journal (none when empty) and
 // bookmarksPath its bookmark file (an in-memory store when empty).
 func NewPlane(spec *Spec, name, journalPath, bookmarksPath string) (*Plane, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	stopping, stopWaits := context.WithCancel(ctx)
 	p := &Plane{
 		name: name, spec: spec, hub: NewHub(name),
 		svcs: map[string]*service{}, peers: map[string]*peerLink{}, ended: map[uint64]bool{},
-		started: time.Now(), ctx: ctx, cancel: cancel, quit: make(chan struct{}),
+		started: time.Now(), ctx: ctx, cancel: cancel, stopping: stopping, stopWaits: stopWaits,
+		waiters: make(chan struct{}, maxWaiters), quit: make(chan struct{}),
 	}
 	p.probes = newProbeTree(p.hub)
 	bms, err := newBookmarkStore(p.hub, bookmarksPath)
@@ -117,7 +126,7 @@ func (p *Plane) Epoch() string { return p.hub.Epoch() }
 
 // Request is the one entry point every transport uses.
 func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
-	if req.Peer != "" {
+	if req.Peer != "" && req.Op != "wait" {
 		return p.forward(ctx, req.Peer, req)
 	}
 	switch req.Op {
@@ -136,6 +145,8 @@ func (p *Plane) Request(ctx context.Context, req Request) (any, error) {
 		}
 		r, _, err := p.Apply(req.Desired)
 		return r, err
+	case "wait":
+		return p.Wait(ctx, req)
 	case "stop":
 		return p.Stop(ctx, req.Service)
 	case "shutdown":
@@ -180,14 +191,15 @@ func (p *Plane) forward(ctx context.Context, peer string, req Request) (any, err
 		return nil, badRequest("unknown peer %q", peer)
 	}
 	switch req.Op {
-	case "status", "ping", "plan", "apply", "stop",
+	case "status", "ping", "plan", "apply", "wait", "stop",
 		"probe.kinds", "probe.list", "probe.create", "probe.start", "probe.stop", "probe.touch", "probe.remove",
 		"bookmark.set", "bookmark.get", "bookmark.list", "bookmark.remove":
 	default:
 		return nil, badRequest("op %q cannot be forwarded", req.Op)
 	}
 	return l.forward(ctx, Request{Op: req.Op, Service: req.Service, Desired: req.Desired, Probe: req.Probe, Node: req.Node,
-		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note, WithCursor: req.WithCursor})
+		Bookmark: req.Bookmark, Since: req.Since, Epoch: req.Epoch, Note: req.Note, WithCursor: req.WithCursor,
+		Wait: req.Wait, Generation: req.Generation, Run: req.Run, TimeoutMS: req.TimeoutMS})
 }
 
 type ServiceStatus struct {
@@ -198,9 +210,12 @@ type ServiceStatus struct {
 	Restarts  int    `json:"restarts"`
 	StartedAt *int64 `json:"started_at"`
 	// Generation is the apply that launched the current or last run; absent before any.
-	Generation uint64          `json:"generation,omitempty"`
-	LastExit   *exitInfo       `json:"last_exit"`
-	Nodes      json.RawMessage `json:"nodes"`
+	Generation          uint64          `json:"generation,omitempty"`
+	Run                 *RunID          `json:"run,omitempty"`
+	LastExit            *exitInfo       `json:"last_exit"`
+	RecentExitsCapacity int             `json:"recent_exits_capacity"`
+	RecentExits         []runEnd        `json:"recent_exits"`
+	Nodes               json.RawMessage `json:"nodes"`
 }
 
 type PeerStatus struct {
@@ -217,11 +232,15 @@ type PeerStatus struct {
 	// up, the peer's probe list was applied this session and no wanted pipe is still opening, so
 	// the mirrored lifecycle and pipes stand for the peer's state. Degraded is their conjunction
 	// denied: lifted only when the flow is live and the state reconciled (criterion 7 of ix#408).
+	// RunMarkers says the current session's ctl and svc/ subscriptions both acknowledged
+	// "markers":"run". It stays false while down, during a reopen, or with an older plane that
+	// ignores the request; absence of markers from such a peer is therefore not evidence of absence.
 	// Jumps counts the catch-ups the link gave up on since it was made, each marked `jumped` on
 	// the peer's mirrored ctl; absent while zero.
 	Live       bool   `json:"live"`
 	Reconciled bool   `json:"reconciled"`
 	Degraded   bool   `json:"degraded"`
+	RunMarkers bool   `json:"run_markers"`
 	Jumps      uint64 `json:"jumps,omitempty"`
 }
 
@@ -242,6 +261,11 @@ type PeerProbeStatus struct {
 	SrcEpoch   string `json:"src_epoch,omitempty"`
 }
 
+type PlaneLimits struct {
+	WaitTimeoutMS int64 `json:"wait_timeout_ms"`
+	Waiters       int   `json:"waiters"`
+}
+
 // StatusReply summarises the generations. Every generation <= SettledGeneration has
 // ended, converged or diverged, and Failed lists the diverged ones since boot, lowest
 // generation first: g has failed iff Failed names it, and is done iff g <=
@@ -249,6 +273,7 @@ type PeerProbeStatus struct {
 // converged) and Diverged (the highest that failed) stay for older readers; on their own
 // they let a later converged generation hide an earlier pending or failed one.
 type StatusReply struct {
+	Contract           string          `json:"contract"` // the consumer contract this plane keeps
 	Name               string          `json:"name"`
 	Epoch              string          `json:"epoch"` // the boot these generations belong to
 	Generation         uint64          `json:"generation"`
@@ -258,11 +283,18 @@ type StatusReply struct {
 	Failed             []Diverged      `json:"failed"`
 	Services           []ServiceStatus `json:"services"`
 	Peers              []PeerStatus    `json:"peers"`
+	Limits             PlaneLimits     `json:"limits"`
 }
+
+// runContract names the consumer contract status announces (README, the paragraph before the
+// run fields of status). Changing what it promises takes a new name.
+const runContract = "run/1"
 
 func (p *Plane) Status() StatusReply {
 	p.mu.Lock()
-	r := StatusReply{Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen, ObservedGeneration: p.observed, SettledGeneration: p.settled}
+	r := StatusReply{Contract: runContract, Name: p.name, Epoch: p.hub.Epoch(), Generation: p.gen,
+		ObservedGeneration: p.observed, SettledGeneration: p.settled,
+		Limits: PlaneLimits{WaitTimeoutMS: waitTimeoutMax.Milliseconds(), Waiters: maxWaiters}}
 	if p.diverged != nil {
 		d := *p.diverged
 		r.Diverged = &d
@@ -285,6 +317,33 @@ type Action struct {
 	Service string `json:"service"`
 }
 
+const (
+	applyStartPending = "start-pending"
+	applyStopPending  = "stop-pending"
+	applyNotLaunched  = "not-launched"
+	applyNoop         = "noop"
+)
+
+// ApplyServiceResult says what one document-named service will do for this generation.
+type ApplyServiceResult struct {
+	Result     string `json:"result"`
+	CurrentRun *RunID `json:"current_run,omitempty"`
+}
+
+// MarshalJSON keeps current_run specific to not-launched, where null means no run had yet
+// been announced at admission.
+func (r ApplyServiceResult) MarshalJSON() ([]byte, error) {
+	if r.Result == applyNotLaunched {
+		return json.Marshal(struct {
+			Result     string `json:"result"`
+			CurrentRun *RunID `json:"current_run"`
+		}{Result: r.Result, CurrentRun: r.CurrentRun})
+	}
+	return json.Marshal(struct {
+		Result string `json:"result"`
+	}{Result: r.Result})
+}
+
 type PlanReply struct {
 	Generation uint64   `json:"generation"`
 	Actions    []Action `json:"actions"`
@@ -294,9 +353,10 @@ type PlanReply struct {
 // ApplyReply names the new generation and the boot it belongs to: a wait
 // that carries both can tell a restart from a slow apply.
 type ApplyReply struct {
-	Generation uint64   `json:"generation"`
-	Epoch      string   `json:"epoch"`
-	Actions    []Action `json:"actions"`
+	Generation uint64                        `json:"generation"`
+	Epoch      string                        `json:"epoch"`
+	Actions    []Action                      `json:"actions"`
+	Results    map[string]ApplyServiceResult `json:"results"`
 }
 
 // Diverged names an apply that will not converge. Status lists them all in
@@ -348,29 +408,72 @@ func (p *Plane) Plan(d *Desired) (PlanReply, error) {
 	return PlanReply{Generation: g, Actions: actions, Noop: noop}, nil
 }
 
+// applyDecision maps a document's state for one service and the service's observed desired
+// state and state to its action (planned or not) and its apply result.
+func applyDecision(name, target, desired, state string, currentRun *RunID) (Action, bool, ApplyServiceResult) {
+	switch target {
+	case desiredRunning:
+		// Running, or on its way (a start the supervisor has not made yet, a restart in
+		// its backoff): nothing to start. Only a stopped or failed service, or one being
+		// stopped, takes a start.
+		if desired == desiredRunning && (state == stateRunning || state == stateStarting || state == stateRestarting) {
+			return Action{}, false, ApplyServiceResult{Result: applyNotLaunched, CurrentRun: currentRun}
+		}
+		return Action{Op: "start", Service: name}, true, ApplyServiceResult{Result: applyStartPending}
+	case desiredStopped:
+		if state == stateStopped {
+			return Action{}, false, ApplyServiceResult{Result: applyNoop}
+		}
+		return Action{Op: "stop", Service: name}, true, ApplyServiceResult{Result: applyStopPending}
+	}
+	return Action{}, false, ApplyServiceResult{}
+}
+
 func (p *Plane) plan(d *Desired) ([]Action, []string) {
 	actions, noop := []Action{}, []string{}
 	for _, n := range d.names() {
 		desired, state := p.svcs[n].observed()
-		switch d.Services[n].State {
-		case desiredRunning:
-			// Running, or on its way (a start the supervisor has not made yet, a restart in
-			// its backoff): nothing to start. Only a stopped or failed service, or one being
-			// stopped, takes a start.
-			if desired == desiredRunning && (state == stateRunning || state == stateStarting || state == stateRestarting) {
-				noop = append(noop, n)
-			} else {
-				actions = append(actions, Action{Op: "start", Service: n})
-			}
-		case desiredStopped:
-			if state == stateStopped {
-				noop = append(noop, n)
-			} else {
-				actions = append(actions, Action{Op: "stop", Service: n})
-			}
+		action, planned, _ := applyDecision(n, d.Services[n].State, desired, state, nil)
+		if planned {
+			actions = append(actions, action)
+		} else {
+			noop = append(noop, n)
 		}
 	}
 	return actions, noop
+}
+
+// admit is the admission instant: under p.mu and every named service's lock (taken in name
+// order), it reads each service once, decides actions and results from that one snapshot, and
+// bumps the generation. Lock order p.mu -> s.mu; no path takes s.mu and then p.mu.
+func (p *Plane) admit(d *Desired) ([]Action, []string, map[string]ApplyServiceResult, uint64) {
+	names := d.names()
+	p.mu.Lock()
+	for _, n := range names {
+		p.svcs[n].mu.Lock()
+	}
+	actions, noop := []Action{}, []string{}
+	results := make(map[string]ApplyServiceResult, len(names))
+	for _, n := range names {
+		desired, state, currentRun := p.svcs[n].admissionObservationLocked()
+		action, planned, result := applyDecision(n, d.Services[n].State, desired, state, currentRun)
+		results[n] = result
+		if planned {
+			actions = append(actions, action)
+		} else {
+			noop = append(noop, n)
+		}
+	}
+	p.gen++
+	g := p.gen
+	for _, n := range names {
+		p.svcs[n].rememberApplyResultLocked(g, results[n])
+	}
+	for i := len(names) - 1; i >= 0; i-- {
+		p.svcs[names[i]].mu.Unlock()
+	}
+	p.mu.Unlock()
+	return actions, noop, results, g
 }
 
 // Apply bumps the generation, records the document, hands the actions to the
@@ -391,11 +494,7 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	}
 	head := p.hub.Head()
 	cur := p.hub.Subscribe("ctl", &head, p.hub.Epoch())
-	actions, noop := p.plan(d)
-	p.mu.Lock()
-	p.gen++
-	g := p.gen
-	p.mu.Unlock()
+	actions, noop, results, g := p.admit(d)
 	p.journal.record(g, d, actions)
 	// A noop asks nothing of the supervisor: a `running` want on a service already on its
 	// way would launch it under this generation if it exited before the want was read, a run
@@ -413,7 +512,122 @@ func (p *Plane) Apply(d *Desired) (ApplyReply, <-chan applyResult, error) {
 	}
 	done := make(chan applyResult, 1)
 	go func() { done <- p.await(g, actions, cur) }()
-	return ApplyReply{Generation: g, Epoch: p.hub.Epoch(), Actions: actions}, done, nil
+	return ApplyReply{Generation: g, Epoch: p.hub.Epoch(), Actions: actions, Results: results}, done, nil
+}
+
+const (
+	waitGeneration = "generation"
+	waitLaunch     = "launch"
+	waitRun        = "run"
+
+	waitConverged   = "converged"
+	waitDiverged    = "diverged"
+	waitLaunched    = "launched"
+	waitNotLaunched = "not-launched"
+	waitEnded       = "ended"
+	waitTimedOut    = "timeout"
+	waitUnknown     = "unknown"
+
+	waitEvicted    = "evicted"
+	waitOtherEpoch = "other-epoch"
+)
+
+// WaitReply is one value from the wait operation's closed outcome set.
+type WaitReply struct {
+	Outcome    string  `json:"outcome"`
+	Service    string  `json:"service,omitempty"`
+	Reason     string  `json:"reason,omitempty"`
+	Run        *RunID  `json:"run,omitempty"`
+	CurrentRun *RunID  `json:"current_run,omitempty"`
+	End        *runEnd `json:"end,omitempty"`
+}
+
+// MarshalJSON keeps current_run present for not-launched even when no run had
+// yet been announced at admission.
+func (r WaitReply) MarshalJSON() ([]byte, error) {
+	if r.Outcome == waitNotLaunched {
+		return json.Marshal(struct {
+			Outcome    string `json:"outcome"`
+			CurrentRun *RunID `json:"current_run"`
+		}{Outcome: r.Outcome, CurrentRun: r.CurrentRun})
+	}
+	type plain WaitReply
+	return json.Marshal(plain(r))
+}
+
+// Wait answers one bounded wait locally, or routes it to the named origin plane.
+// The slot is held at every plane whose HTTP request or WebSocket session waits.
+func (p *Plane) Wait(ctx context.Context, req Request) (any, error) {
+	if req.TimeoutMS <= 0 {
+		return nil, badRequest("wait needs timeout_ms > 0")
+	}
+	if req.TimeoutMS > waitTimeoutMax.Milliseconds() {
+		return nil, badRequest("timeout_ms exceeds the plane limit of %d", waitTimeoutMax.Milliseconds())
+	}
+	switch req.Wait {
+	case waitGeneration:
+		if req.Epoch == "" || req.Generation == 0 || req.Service != "" || req.Run != nil {
+			return nil, badRequest("generation wait needs epoch and generation")
+		}
+	case waitLaunch:
+		if req.Epoch == "" || req.Generation == 0 || req.Service == "" || req.Run != nil {
+			return nil, badRequest("launch wait needs epoch, generation and service")
+		}
+	case waitRun:
+		if req.Run == nil || req.Run.Origin == "" || req.Run.Epoch == "" || req.Run.Seq == 0 ||
+			req.Epoch != "" || req.Generation != 0 || req.Service != "" {
+			return nil, badRequest("run wait needs one complete run")
+		}
+	default:
+		return nil, badRequest("wait must be generation|launch|run")
+	}
+	select {
+	case <-p.quit:
+		return nil, &opError{status: 503, msg: "shutting down"}
+	default:
+	}
+	select {
+	case p.waiters <- struct{}{}:
+		defer func() { <-p.waiters }()
+	default:
+		return nil, &opError{status: 429, msg: "too many waiters"}
+	}
+	if req.Peer != "" {
+		return p.forward(ctx, req.Peer, req)
+	}
+	return p.waitLocal(ctx, req)
+}
+
+func (p *Plane) waitLocal(ctx context.Context, req Request) (WaitReply, error) {
+	wctx, cancel := context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
+	stop := context.AfterFunc(p.stopping, cancel)
+	defer func() {
+		stop()
+		cancel()
+	}()
+
+	var reply WaitReply
+	var err error
+	switch req.Wait {
+	case waitGeneration:
+		reply, err = p.waitForGeneration(wctx, req.Epoch, req.Generation)
+	case waitLaunch:
+		reply, err = p.waitForLaunch(wctx, req.Epoch, req.Generation, req.Service)
+	case waitRun:
+		reply, err = p.waitForRun(wctx, *req.Run)
+	}
+	switch {
+	case err == nil:
+		return reply, nil
+	case p.stopping.Err() != nil:
+		return WaitReply{}, &opError{status: 503, msg: "shutting down"}
+	case ctx.Err() != nil:
+		return WaitReply{}, ctx.Err()
+	case wctx.Err() == context.DeadlineExceeded:
+		return WaitReply{Outcome: waitTimedOut}, nil
+	default:
+		return WaitReply{}, err
+	}
 }
 
 // await watches ctl until every action is observed, then publishes the
@@ -521,6 +735,104 @@ func (p *Plane) await(g uint64, actions []Action, cur *Cursor) applyResult {
 	return res
 }
 
+func (p *Plane) generationResult(g uint64) (WaitReply, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if g > p.gen {
+		return WaitReply{}, false, badRequest("unknown generation %d", g)
+	}
+	for _, d := range p.failed {
+		if d.Generation == g {
+			return WaitReply{Outcome: waitDiverged, Service: d.Service, Reason: d.Reason}, true, nil
+		}
+	}
+	if g <= p.settled || p.ended[g] {
+		return WaitReply{Outcome: waitConverged}, true, nil
+	}
+	return WaitReply{}, false, nil
+}
+
+func (p *Plane) waitForGeneration(ctx context.Context, epoch string, g uint64) (WaitReply, error) {
+	if epoch != p.hub.Epoch() {
+		return WaitReply{Outcome: waitUnknown, Reason: waitOtherEpoch}, nil
+	}
+	head := p.hub.Head()
+	cur := p.hub.Subscribe("ctl", &head, epoch)
+	if reply, done, err := p.generationResult(g); done || err != nil {
+		return reply, err
+	}
+	for {
+		if _, _, err := cur.Next(ctx, 256); err != nil {
+			return WaitReply{}, err
+		}
+		if reply, done, err := p.generationResult(g); done || err != nil {
+			return reply, err
+		}
+	}
+}
+
+func (p *Plane) launchResult(s *service, g uint64) (WaitReply, bool, error) {
+	record, ok, evicted := s.launchRecord(g)
+	if !ok {
+		if evicted {
+			return WaitReply{Outcome: waitUnknown, Reason: waitEvicted}, true, nil
+		}
+		return WaitReply{}, false, badRequest("generation %d did not name service %q", g, s.spec.Name)
+	}
+	switch record.Result {
+	case applyNotLaunched:
+		return WaitReply{Outcome: waitNotLaunched, CurrentRun: record.CurrentRun}, true, nil
+	case applyStartPending:
+		if record.Run != nil {
+			return WaitReply{Outcome: waitLaunched, Run: record.Run}, true, nil
+		}
+		return WaitReply{}, false, nil
+	default:
+		return WaitReply{}, false, badRequest("generation %d did not request a launch for service %q", g, s.spec.Name)
+	}
+}
+
+func (p *Plane) waitForLaunch(ctx context.Context, epoch string, g uint64, name string) (WaitReply, error) {
+	s := p.svcs[name]
+	if s == nil {
+		return WaitReply{}, badRequest("unknown service %q", name)
+	}
+	if epoch != p.hub.Epoch() {
+		return WaitReply{Outcome: waitUnknown, Reason: waitOtherEpoch}, nil
+	}
+	p.mu.Lock()
+	future := g > p.gen
+	p.mu.Unlock()
+	if future {
+		return WaitReply{}, badRequest("unknown generation %d", g)
+	}
+	head := p.hub.Head()
+	cur := p.hub.Subscribe(s.ch, &head, epoch)
+	cur.exact = true
+	if reply, done, err := p.launchResult(s, g); done || err != nil {
+		return reply, err
+	}
+	for {
+		envs, _, err := cur.Next(ctx, 256)
+		if err != nil {
+			return WaitReply{}, err
+		}
+		for _, env := range envs {
+			var data struct {
+				Generation uint64 `json:"generation"`
+			}
+			if env.Ev.Kind == runBeginKind && env.Run != nil &&
+				json.Unmarshal(env.Ev.Data, &data) == nil && data.Generation == g {
+				run := *env.Run
+				return WaitReply{Outcome: waitLaunched, Run: &run}, nil
+			}
+		}
+		if reply, done, err := p.launchResult(s, g); done || err != nil {
+			return reply, err
+		}
+	}
+}
+
 type StopReply struct {
 	Stopped    string    `json:"stopped"`
 	Generation uint64    `json:"generation"`
@@ -547,8 +859,70 @@ func (p *Plane) Stop(ctx context.Context, name string) (StopReply, error) {
 	return StopReply{Stopped: name, Generation: r.Generation, Exit: p.svcs[name].status().LastExit}, nil
 }
 
+func endedWaitReply(run RunID, end runEnd) WaitReply {
+	end.Run = nil
+	r := run
+	return WaitReply{Outcome: waitEnded, Run: &r, End: &end}
+}
+
+func (p *Plane) runResult(run RunID) (WaitReply, bool) {
+	current := false
+	for _, name := range p.order {
+		end, isCurrent := p.svcs[name].runRecord(run)
+		if end != nil {
+			return endedWaitReply(run, *end), true
+		}
+		current = current || isCurrent
+	}
+	if current {
+		return WaitReply{}, false
+	}
+	return WaitReply{Outcome: waitUnknown, Reason: waitEvicted}, true
+}
+
+func (p *Plane) waitRunEvents(ctx context.Context, run RunID, cur *Cursor) (WaitReply, error) {
+	for {
+		envs, _, err := cur.Next(ctx, 256)
+		if err != nil {
+			return WaitReply{}, err
+		}
+		for _, env := range envs {
+			if env.Ev.Kind != runEndKind || env.Run == nil || *env.Run != run {
+				continue
+			}
+			var end runEnd
+			if json.Unmarshal(env.Ev.Data, &end) == nil {
+				return endedWaitReply(run, end), nil
+			}
+		}
+		if reply, done := p.runResult(run); done {
+			return reply, nil
+		}
+	}
+}
+
+func (p *Plane) waitForRun(ctx context.Context, run RunID) (WaitReply, error) {
+	if run.Origin != p.name {
+		return WaitReply{}, badRequest("run belongs to origin %q, not %q", run.Origin, p.name)
+	}
+	if run.Epoch != p.hub.Epoch() {
+		return WaitReply{Outcome: waitUnknown, Reason: waitOtherEpoch}, nil
+	}
+	head := p.hub.Head()
+	cur := p.hub.Subscribe("svc/", &head, run.Epoch)
+	if reply, done := p.runResult(run); done {
+		return reply, nil
+	}
+	return p.waitRunEvents(ctx, run, cur)
+}
+
 // RequestShutdown asks the process hosting the plane to shut it down.
-func (p *Plane) RequestShutdown() { p.quitOnce.Do(func() { close(p.quit) }) }
+func (p *Plane) RequestShutdown() {
+	p.quitOnce.Do(func() {
+		close(p.quit)
+		p.stopWaits()
+	})
+}
 
 // Quit is closed once a shutdown has been requested.
 func (p *Plane) Quit() <-chan struct{} { return p.quit }
@@ -589,9 +963,17 @@ type journal struct {
 }
 
 func openJournal(path string) (*journal, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
+	}
+	// A crash can cut the last line: the boot header starts on a line of its own, else it
+	// would be glued to the cut one. Best effort, like every other write of the journal.
+	if st, err := f.Stat(); err == nil && st.Size() > 0 {
+		var tail [1]byte
+		if _, err := f.ReadAt(tail[:], st.Size()-1); err == nil && tail[0] != '\n' {
+			f.Write([]byte{'\n'})
+		}
 	}
 	return &journal{f: f}, nil
 }

@@ -51,6 +51,22 @@ func TestFederationForwardsAndMirrors(t *testing.T) {
 	if s.SrcSeq == 0 || s.SrcEpoch != b.plane.Epoch() {
 		t.Fatalf("mirrored svc envelope carries src_seq %d, src_epoch %q (b's %s)", s.SrcSeq, s.SrcEpoch, b.plane.Epoch())
 	}
+	originRun := svcStatus(b.plane.Status(), "pod-x").Run
+	if originRun == nil {
+		t.Fatal("b's running service has no run")
+	}
+	{
+		code, _, body := httpDo(t, a, "POST", "/v1/apply?peer=b", running("pod-x"), nil)
+		var same ApplyReply
+		json.Unmarshal(body, &same)
+		result := same.Results["pod-x"]
+		if code != 200 || same.Generation != 2 || same.Epoch != b.plane.Epoch() ||
+			len(same.Actions) != 0 || result.Result != applyNotLaunched ||
+			result.CurrentRun == nil || *result.CurrentRun != *originRun ||
+			result.CurrentRun.Origin != "b" {
+			t.Fatalf("HTTP apply?peer=b: %d %s (b's run %+v)", code, body, originRun)
+		}
+	}
 	waitStatus(t, a, 5*time.Second, "peer services", func(st StatusReply) bool {
 		return strings.Contains(string(st.Peers[0].Services), `"state":"running"`)
 	})

@@ -43,6 +43,7 @@ func fakeService(args []string) int {
 	ignoreStdin := fs.Bool("ignore-stdin", false, "keep running after stdin closes")
 	hogMB := fs.Int("hog-mb", 0, "hold this much memory, touched, for the whole run")
 	burnMS := fs.Int("burn-ms", 0, "spin on one core for this long at start")
+	emitReserved := fs.Bool("emit-reserved", false, "emit worker events used by the reserved-prefix test")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -66,6 +67,10 @@ func fakeService(args []string) int {
 	fmt.Println("fake service up")
 	fmt.Fprintln(os.Stderr, "fake stderr line")
 	emit("meta", map[string]any{"nodes": *nodes})
+	if *emitReserved {
+		fmt.Println(`{"kind":"ixctl.run.end","run":{"origin":"worker","epoch":"forged","seq":1}}`)
+		fmt.Println(`{"kind":"service.exited","run":{"origin":"worker","epoch":"forged","seq":2}}`)
+	}
 	if *spawn {
 		cmd := exec.Command(os.Args[0])
 		cmd.Env = append(os.Environ(), "IXCTL_TEST_ROLE=grandchild")
@@ -198,6 +203,15 @@ func subscribe(t testing.TB, c *Client, prefix string, since *uint64) *frameWait
 		t.Fatal(err)
 	}
 	return &frameWaiter{frames: frames}
+}
+
+func subscribeMarkers(t testing.TB, c *Client, prefix, markers string) *frameWaiter {
+	t.Helper()
+	sub, err := c.open(context.Background(), Request{Op: "subscribe", Ch: prefix, Markers: &markers}, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &frameWaiter{frames: sub.Frames}
 }
 
 func waitEnv(t testing.TB, w *frameWaiter, d time.Duration, what string, match func(*Envelope) bool) *Envelope {

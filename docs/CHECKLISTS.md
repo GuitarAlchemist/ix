@@ -233,3 +233,9 @@ contract and a code comment, and two of the four copies went stale before Codex 
    overflow or a jump sets the server's `writeDelay` (or the link's `pipeDelay` / `ctlDelay`) and
    never counts on socket buffers filling; run `pwsh scripts/ixctl-test-linux.ps1` before the push
    (the first CI run of #423 lost two flood tests on ubuntu-latest that Windows passed).
+7. A contract announcement (a version a consumer gates on, such as status `contract: "run/1"`) is
+   set by the slice that completes the contract, never by the first one: a consumer that reads it
+   relies on every promise behind it at once. Earlier slices test that it is absent. Slice A-1 of
+   run/1 announced it while markers, recent exits, federation and apply results were still missing;
+   an adversarial review caught it, and `TestStatusWithholdsTheRunContractUntilItShips` pins the
+   absence until the last slice (N1, #444).

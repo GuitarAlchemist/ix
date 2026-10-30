@@ -26,6 +26,8 @@ ix-registry = { workspace = true }
 ix-types = { workspace = true }
 ix-governance = { workspace = true }
 ix-pipeline = { workspace = true }
+# `ix pipeline run --run-id`: publish once, replay after a kill (provisional).
+ix-recover = { workspace = true }
 
 # Kept for the deprecated `train`/`cluster`/`optimize`/`grammar` aliases
 # while migration completes.
