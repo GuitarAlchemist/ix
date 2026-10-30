@@ -37,6 +37,39 @@ func TestHubEnvelopeShape(t *testing.T) {
 	}
 }
 
+// A10: the adapter is the only test that fixes the fields of a run on the wire.
+func TestRunIdentityWireForm(t *testing.T) {
+	h := NewHub("a")
+	env := h.PublishNewRun("ctl", event("service.starting", map[string]any{"service": "x"}))
+
+	var wire struct {
+		Run json.RawMessage `json:"run"`
+	}
+	if err := json.Unmarshal(env.Raw(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire.Run, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 {
+		t.Fatalf("run fields %v", fields)
+	}
+	for _, name := range []string{"origin", "epoch", "seq"} {
+		if _, ok := fields[name]; !ok {
+			t.Fatalf("run has no %q: %s", name, env.Raw())
+		}
+	}
+	var got RunID
+	if err := json.Unmarshal(wire.Run, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := RunID{Origin: "a", Epoch: h.Epoch(), Seq: env.Seq}
+	if env.Run == nil || *env.Run != want || got != want {
+		t.Fatalf("run %+v, decoded %+v, want %+v", env.Run, got, want)
+	}
+}
+
 func TestHubCursorReplayThenLive(t *testing.T) {
 	h := NewHub("a")
 	publishN(h, "svc/x", 10)
@@ -135,6 +168,25 @@ func TestHubSinceFromAnotherBoot(t *testing.T) {
 	}
 }
 
+// A since that names this boot's epoch is trusted even past the head: no since-ahead gap
+// (that one is for a bare since, which may come from another boot), no replay, the stream
+// goes live from the head. A #454 consumer expected the gap. Pins present behaviour.
+func TestHubSinceAheadInItsOwnEpochGoesLive(t *testing.T) {
+	h := NewHub("a")
+	publishN(h, "svc/x", 5)
+	sub := h.Subscribe("svc/", ptr(uint64(30)), h.Epoch())
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if envs, gap, err := sub.Next(ctx, 10); len(envs) != 0 || gap != nil || err == nil {
+		t.Fatalf("before any live envelope: %d envelopes, gap %+v, err %v", len(envs), gap, err)
+	}
+	publishN(h, "svc/x", 1)
+	envs, gap, err := sub.Next(context.Background(), 10)
+	if err != nil || gap != nil || len(envs) != 1 || envs[0].Seq != 6 {
+		t.Fatalf("live: %d envelopes, gap %+v, err %v", len(envs), gap, err)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
 
 type frameKind struct {
@@ -190,6 +242,31 @@ func TestMemSessionOverflowGap(t *testing.T) {
 	case raw := <-s.Out():
 		t.Fatalf("dropped subscription still delivers: %s", raw)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A mirror copies the source run even when it is structurally malformed. The peer link is the
+// validation boundary; the hub's mirror path must never reinterpret seq 0 as "make a local run".
+func TestMirrorKeepsRunWithoutSynthesizingIt(t *testing.T) {
+	h := NewHub("a")
+	for _, source := range []RunID{
+		{Origin: "b", Epoch: "source-boot", Seq: 17},
+		{},
+	} {
+		env := h.Mirror(
+			"peer/b/svc/x", "b", 123, Event{Kind: "log", Data: json.RawMessage(`{"line":"x"}`)},
+			9, "source-boot", &source,
+		)
+		if env.Run == nil || *env.Run != source {
+			t.Fatalf("mirrored run %+v, want source %+v", env.Run, source)
+		}
+		var wire Envelope
+		if err := json.Unmarshal(env.Raw(), &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire.Run == nil || *wire.Run != source {
+			t.Fatalf("wire run %+v, want source %+v: %s", wire.Run, source, env.Raw())
+		}
 	}
 }
 
