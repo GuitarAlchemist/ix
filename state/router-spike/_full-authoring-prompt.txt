@@ -1,0 +1,51 @@
+Do not read, list or search any file. Answer from this message only.
+
+You are writing an independent test set for a guitar and music-theory chatbot. The chatbot first decides which of 32 tools should answer a message, or that none should. Your messages will test that decision on wording it has never seen.
+
+Write messages the way real guitarists type them: short fragments, lowercase, missing punctuation, chatty, beginner-naive, jargon-heavy, the occasional typo. Do not sound like a template, and do not reuse the words of the tool summaries below; describe the need the way a user would.
+
+The 32 tools (label, then what the user wants):
+- skill.alternatetunings: what an alternate tuning is (drop D, DADGAD, open G...) or how to tune to it
+- skill.beginnerchords: easy first chords for a beginner
+- skill.capo: where to put a capo, or what a shape sounds like with a capo
+- skill.chordinfo: the notes or make-up of one named chord
+- skill.chordsubstitution: a chord to use in place of a given chord
+- skill.chordvoicings: how to finger or voice a chord on the neck, specific shapes or voicing types
+- skill.circleoffifths: the circle of fifths, key signatures, sharps and flats in a key
+- skill.commontones: notes two chords share
+- skill.diatonicchords: the chords that belong to a key
+- skill.fretspan: how far a chord shape stretches the hand, whether a shape is playable
+- skill.genreessentials: the chords or scales a genre relies on
+- skill.grothendieckdelta: a numeric distance between two chords' interval content (the app's "Grothendieck delta")
+- skill.grothendieckparse: evaluating an expression in the app's category-theory notation (tensor, direct sum, functors...)
+- skill.icvneighbors: chords or pitch sets that sound harmonically close to a given one
+- skill.icvshortestpath: the chain of in-between chords linking two chords through harmonic space
+- skill.improvisation: what scale or arpeggio to solo with over a chord or progression
+- skill.interval: the distance between two notes, or what an interval is
+- skill.intervalclassvector: the interval-class vector of a chord or pitch set
+- skill.keyidentification: which key a progression is in
+- skill.modes: a mode (Dorian, Lydian, altered...), its notes or its character
+- skill.outsidenotes: whether a particular note sounds inside or outside over a chord
+- skill.practiceroutine: a practice plan or routine
+- skill.progressioncompletion: which chord should come next in a progression
+- skill.progressionmood: make an existing progression sound darker, brighter or different
+- skill.relativekey: relative or parallel keys
+- skill.rememberthis: asking the assistant to remember a fact or preference for later
+- skill.scaleinfo: the notes of one named scale or key
+- skill.settheoryequivalence: whether two pitch-class sets are the same set class
+- skill.theorycomparison: the difference between two theory concepts
+- skill.transpose: move a chord or progression to another key or by an interval
+- skill.voiceleading: how to move smoothly from one chord to another, voice by voice
+- skill.whatcanyoudo: what the assistant itself can do
+
+Label "__none__" for messages none of these tools should answer: everyday topics (weather, cooking, coding, travel, sport, general knowledge) and music-adjacent requests outside the list (buying gear, strings or amps, band history, lyrics, famous guitarists, recording and mixing).
+
+Requirements:
+- 6 messages per tool (192) plus 32 "__none__" messages = 224.
+- Include hard cases that sit between two tools (chord vs scale, mode vs scale vs improvisation, transpose vs capo vs next chord, key identification vs chords in a key vs relative key, chord info vs voicings vs fret span, substitution vs voice leading vs common tones, ICV vs set-class equivalence vs ICV neighbors). Label each with the single best tool.
+- About a quarter of the "__none__" messages should look music-adjacent but still belong to none of the tools.
+- English only.
+
+Output a single JSON object and nothing else (no prose, no code fences):
+{"version": "full-sol-1", "authoredBy": "gpt-5.6-sol", "prompts": [{"id": "s-1", "prompt": "...", "expectedIntentId": "skill.chordinfo", "tags": ["boundary"]}]}
+Use ids s-1, s-2, ... in order. Tags are optional hints such as "boundary", "beginner", "jargon", "typo", "oos", "short".

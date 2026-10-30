@@ -1,4 +1,5 @@
-//! Stdio JSON-RPC bridge to `sentrux.exe mcp`.
+//! Stdio JSON-RPC bridge to `sentrux mcp` (the executable resolved by
+//! [`crate::resolve_sentrux_exe`]).
 //!
 //! The wire protocol mirrors `ga/ReactComponents/ga-react-components/vite.config.ts`
 //! (search for `callSentruxTool`). We send four frames newline-separated:
@@ -25,23 +26,13 @@ use std::time::{Duration, Instant};
 /// Configuration knobs for the sentrux MCP bridge call.
 #[derive(Debug, Clone)]
 pub struct SentruxConfig {
-    /// Path to the sentrux executable. Defaults to
-    /// [`crate::DEFAULT_SENTRUX_EXE`].
+    /// Path to the sentrux executable. Callers resolve it with
+    /// [`crate::resolve_sentrux_exe`]; there is no machine-specific default.
     pub sentrux_exe: PathBuf,
     /// Workspace to scan. Passed to sentrux's `scan` tool.
     pub workspace: PathBuf,
     /// Overall timeout for the whole initialize → check_rules dance.
     pub timeout: Duration,
-}
-
-impl Default for SentruxConfig {
-    fn default() -> Self {
-        Self {
-            sentrux_exe: PathBuf::from(crate::DEFAULT_SENTRUX_EXE),
-            workspace: PathBuf::from("."),
-            timeout: Duration::from_secs(60),
-        }
-    }
 }
 
 /// Run the full handshake and return the parsed `check_rules` report.
@@ -72,7 +63,7 @@ pub fn run_sentrux_test_gaps(cfg: &SentruxConfig, limit: u32) -> Result<TestGaps
     parse_test_gaps_response(&envelope).map_err(Error::BadResponse)
 }
 
-/// Shared transport helper: spawn `sentrux.exe mcp`, run the
+/// Shared transport helper: spawn `sentrux mcp`, run the
 /// initialize→scan handshake, then issue ONE `tools/call` (id=99) with the
 /// caller-supplied `params` body, and return the id=99 envelope.
 fn run_sentrux_tool_call(

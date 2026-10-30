@@ -120,6 +120,101 @@ pub enum PipeStep {
     },
     /// `→ compound:` followed by an indented op list.
     Compound(Vec<CompoundOp>),
+    /// One or more consecutive `→ when <truth-value> [op N]: <call>` steps.
+    ///
+    /// Consecutive arms are grouped because the corpus uses them as a case
+    /// analysis over *one* incoming verdict, not as filters applied in turn:
+    ///
+    /// ```text
+    /// tars.assess(regret, question: "Has this regret been addressed?")
+    ///   → when T >= 0.8: …archive…
+    ///   → when F: …escalate…
+    ///   → when U: …keep active…
+    /// ```
+    ///
+    /// Read one at a time, a verdict of `F` would fail the first arm and stop
+    /// the chain before the second was ever consulted.
+    VerdictMatch(Vec<VerdictArm>),
+}
+
+/// One arm of a [`PipeStep::VerdictMatch`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerdictArm {
+    pub guard: VerdictGuard,
+    /// The step this arm runs: always a call (see [`PipeStep::CallStep`]).
+    pub target: Box<Expr>,
+    pub positional: Vec<Expr>,
+    pub named: BTreeMap<String, Expr>,
+}
+
+/// `T`, `U`, `T >= 0.7` — the tree-sitter grammar's `membership_test`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VerdictGuard {
+    pub truth: ix_types::Hexavalent,
+    /// A bound on the verdict's confidence, when the guard states one.
+    pub confidence: Option<(ConfidenceOp, f64)>,
+}
+
+/// The comparisons `membership_test` allows — deliberately no `==`, which the
+/// grammar does not offer for a float confidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfidenceOp {
+    Gte,
+    Gt,
+    Lte,
+    Lt,
+}
+
+impl ConfidenceOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConfidenceOp::Gte => ">=",
+            ConfidenceOp::Gt => ">",
+            ConfidenceOp::Lte => "<=",
+            ConfidenceOp::Lt => "<",
+        }
+    }
+
+    pub fn holds(self, confidence: f64, bound: f64) -> bool {
+        match self {
+            ConfidenceOp::Gte => confidence >= bound,
+            ConfidenceOp::Gt => confidence > bound,
+            ConfidenceOp::Lte => confidence <= bound,
+            ConfidenceOp::Lt => confidence < bound,
+        }
+    }
+}
+
+impl VerdictGuard {
+    /// Whether a verdict satisfies this guard.
+    pub fn matches(&self, verdict: &Verdict) -> bool {
+        verdict.truth == self.truth
+            && match self.confidence {
+                Some((op, bound)) => op.holds(verdict.confidence, bound),
+                None => true,
+            }
+    }
+
+    /// Source spelling, e.g. `T>=0.7` — used as a compiled stage's op.
+    pub fn render(&self) -> String {
+        match self.confidence {
+            Some((op, bound)) => format!("{}{}{bound}", self.truth.symbol(), op.as_str()),
+            None => self.truth.symbol().to_string(),
+        }
+    }
+}
+
+/// What a peer attached to a value: a hexavalent truth and a confidence in
+/// `[0, 1]`.
+///
+/// It is carried *beside* a value, never inside it. Values stay exactly JSON
+/// because everything IXQL produces is written to disk as JSON; a verdict is
+/// the context a value flows through a pipeline in — the `M` of `M<Value>` —
+/// which is how a computation expression keeps its effects out of its data.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Verdict {
+    pub truth: ix_types::Hexavalent,
+    pub confidence: f64,
 }
 
 /// Compound-phase operations — the "what did this run teach us" tail of a

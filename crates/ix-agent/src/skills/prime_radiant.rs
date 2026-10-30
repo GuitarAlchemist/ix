@@ -68,7 +68,7 @@ fn governance_graph_schema() -> Value {
         "properties": {
             "root": {
                 "type": "string",
-                "description": "Override governance directory (default: auto-detect)"
+                "description": "Override governance directory; must be an existing directory inside the workspace root or an IX_EXTRA_ROOTS directory, relative paths resolving against the workspace root (default: governance/demerzel)"
             }
         }
     })
@@ -85,12 +85,23 @@ fn governance_graph_schema() -> Value {
     schema_fn = "crate::skills::prime_radiant::governance_graph_schema"
 )]
 pub fn governance_graph(params: Value) -> Result<Value, String> {
-    let root = params
-        .get("root")
-        .and_then(|v| v.as_str())
-        .map(|s| Path::new(s).to_path_buf())
-        .unwrap_or_else(governance_root);
+    let root = root_param(&params)?;
+    scan_graph(&root)
+}
 
+/// The caller's `root`, confined (the tool runs auto-approved and lists every
+/// file name it finds), or the governance submodule.
+fn root_param(params: &Value) -> Result<std::path::PathBuf, String> {
+    match params.get("root").and_then(|v| v.as_str()) {
+        Some(raw) => {
+            crate::path_confine::confine(&crate::path_confine::workspace_root()?, "root", raw)
+        }
+        None => Ok(governance_root()),
+    }
+}
+
+/// Full graph scan of an already-resolved governance directory.
+fn scan_graph(root: &Path) -> Result<Value, String> {
     if !root.is_dir() {
         return Err(format!(
             "governance directory not found: {}",
@@ -206,7 +217,7 @@ pub fn governance_graph(params: Value) -> Result<Value, String> {
         // Freshness metadata — used by governance.graph.rescan to detect
         // whether a re-render is needed without re-fetching the full graph.
         "scanned_at": now_epoch(),
-        "newest_artifact_epoch": newest_mtime(&root),
+        "newest_artifact_epoch": newest_mtime(root),
     }))
 }
 
@@ -273,7 +284,7 @@ fn governance_rescan_schema() -> Value {
         "properties": {
             "root": {
                 "type": "string",
-                "description": "Override governance directory (default: auto-detect)"
+                "description": "Override governance directory; must be an existing directory inside the workspace root or an IX_EXTRA_ROOTS directory, relative paths resolving against the workspace root (default: governance/demerzel)"
             },
             "last_scan_epoch": {
                 "type": "integer",
@@ -308,11 +319,7 @@ fn governance_rescan_schema() -> Value {
     schema_fn = "crate::skills::prime_radiant::governance_rescan_schema"
 )]
 pub fn governance_graph_rescan(params: Value) -> Result<Value, String> {
-    let root = params
-        .get("root")
-        .and_then(|v| v.as_str())
-        .map(|s| Path::new(s).to_path_buf())
-        .unwrap_or_else(governance_root);
+    let root = root_param(&params)?;
 
     if !root.is_dir() {
         return Err(format!(
@@ -339,7 +346,7 @@ pub fn governance_graph_rescan(params: Value) -> Result<Value, String> {
     }
 
     // Changes detected (or initial call) — run full scan and return graph.
-    let graph = governance_graph(json!({ "root": root.display().to_string() }))?;
+    let graph = scan_graph(&root)?;
 
     Ok(json!({
         "changed": true,

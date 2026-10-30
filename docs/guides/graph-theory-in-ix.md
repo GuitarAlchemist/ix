@@ -346,4 +346,9 @@ primitive that isn't here, the process is:
 5. **Update this guide** in the same PR that ships the new primitive, so
    the next reader of this page knows it exists.
 
+**Cycles, concurrency and contention?** None of the crates above answers "can
+these two lanes wedge each other", and `Dag` cannot even express the model — it
+rejects the cycle. That question belongs to `ix-petri`; see
+[`docs/guides/petri-nets-in-ix.md`](petri-nets-in-ix.md).
+
 French translation stub: [`docs/fr/recherche-et-graphes/theorie-des-graphes-dans-ix.md`](../fr/recherche-et-graphes/theorie-des-graphes-dans-ix.md)

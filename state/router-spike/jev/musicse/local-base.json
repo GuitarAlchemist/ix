@@ -1,0 +1,602 @@
+{
+ "m-1": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-2": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-3": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.75427604,
+  "margin": 0.03336191,
+  "correct": false
+ },
+ "m-4": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-5": {
+  "chosen": "skill.commontones",
+  "confidence": 0.74193335,
+  "margin": 0.0030882955,
+  "correct": false
+ },
+ "m-6": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-7": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-8": {
+  "chosen": "skill.diatonicchords",
+  "confidence": 0.79009694,
+  "margin": 0.008206785,
+  "correct": null
+ },
+ "m-9": {
+  "chosen": "skill.progressionmood",
+  "confidence": 0.6452772,
+  "margin": 0.012601197,
+  "correct": false
+ },
+ "m-10": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-11": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.695342,
+  "margin": 0.013306975,
+  "correct": false
+ },
+ "m-12": {
+  "chosen": "skill.chordvoicings",
+  "confidence": 0.7379147,
+  "margin": 0.037348926,
+  "correct": null
+ },
+ "m-13": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-14": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-15": {
+  "chosen": "skill.interval",
+  "confidence": 0.73956776,
+  "margin": 0.023668945,
+  "correct": false
+ },
+ "m-16": {
+  "chosen": "skill.voiceleading",
+  "confidence": 0.6817879,
+  "margin": 0.029350042,
+  "correct": false
+ },
+ "m-17": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.71578413,
+  "margin": 0.026607454,
+  "correct": false
+ },
+ "m-18": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-19": {
+  "chosen": "skill.alternatetunings",
+  "confidence": 0.73846453,
+  "margin": 0.0028019547,
+  "correct": false
+ },
+ "m-20": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.6602062,
+  "margin": 0.028682172,
+  "correct": false
+ },
+ "m-21": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-22": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.69634366,
+  "margin": 0.0026454926,
+  "correct": null
+ },
+ "m-23": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-24": {
+  "chosen": "skill.capo",
+  "confidence": 0.708435,
+  "margin": 0.007902682,
+  "correct": null
+ },
+ "m-25": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-26": {
+  "chosen": "skill.genreessentials",
+  "confidence": 0.75049025,
+  "margin": 0.03064096,
+  "correct": null
+ },
+ "m-27": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-28": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.663749,
+  "margin": 0.05881262,
+  "correct": false
+ },
+ "m-29": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-30": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.71297395,
+  "margin": 0.013133585,
+  "correct": false
+ },
+ "m-31": {
+  "chosen": "skill.chordvoicings",
+  "confidence": 0.6935451,
+  "margin": 0.030679166,
+  "correct": false
+ },
+ "m-32": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.6983494,
+  "margin": 0.021994054,
+  "correct": false
+ },
+ "m-33": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.6838491,
+  "margin": 0.00059241056,
+  "correct": null
+ },
+ "m-34": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-35": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-36": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-37": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.75622433,
+  "margin": 0.008721828,
+  "correct": null
+ },
+ "m-38": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.64645505,
+  "margin": 0.025727808,
+  "correct": false
+ },
+ "m-39": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.67941916,
+  "margin": 0.018617034,
+  "correct": false
+ },
+ "m-40": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-41": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.7441864,
+  "margin": 0.017328322,
+  "correct": false
+ },
+ "m-42": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-43": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.6746837,
+  "margin": 0.016505241,
+  "correct": false
+ },
+ "m-44": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.679774,
+  "margin": 0.010650873,
+  "correct": false
+ },
+ "m-45": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.7357641,
+  "margin": 0.019826114,
+  "correct": false
+ },
+ "m-46": {
+  "chosen": "skill.transpose",
+  "confidence": 0.6454172,
+  "margin": 0.008339822,
+  "correct": false
+ },
+ "m-47": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-48": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.7537962,
+  "margin": 0.020626962,
+  "correct": false
+ },
+ "m-49": {
+  "chosen": "skill.interval",
+  "confidence": 0.7087019,
+  "margin": 0.03166455,
+  "correct": false
+ },
+ "m-50": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-51": {
+  "chosen": "skill.intervalclassvector",
+  "confidence": 0.7003936,
+  "margin": 0.0033435822,
+  "correct": null
+ },
+ "m-52": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-53": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-54": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.70502645,
+  "margin": 0.0055291653,
+  "correct": false
+ },
+ "m-55": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.689201,
+  "margin": 0.0012434125,
+  "correct": false
+ },
+ "m-56": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-57": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-58": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-59": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-60": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.66765875,
+  "margin": 0.017933667,
+  "correct": false
+ },
+ "m-61": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.6715114,
+  "margin": 0.062274396,
+  "correct": false
+ },
+ "m-62": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-63": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-64": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-65": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-66": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.74181175,
+  "margin": 0.061314583,
+  "correct": false
+ },
+ "m-67": {
+  "chosen": "skill.capo",
+  "confidence": 0.674339,
+  "margin": 0.028876662,
+  "correct": false
+ },
+ "m-68": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-69": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.77115095,
+  "margin": 0.014807522,
+  "correct": false
+ },
+ "m-70": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-71": {
+  "chosen": "skill.modes",
+  "confidence": 0.7661127,
+  "margin": 0.05559653,
+  "correct": false
+ },
+ "m-72": {
+  "chosen": "skill.keyidentification",
+  "confidence": 0.7444367,
+  "margin": 0.012583077,
+  "correct": false
+ },
+ "m-73": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.6689668,
+  "margin": 0.00494653,
+  "correct": false
+ },
+ "m-74": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-75": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.6428936,
+  "margin": 0.017497122,
+  "correct": false
+ },
+ "m-76": {
+  "chosen": "skill.circleoffifths",
+  "confidence": 0.67943776,
+  "margin": 0.0064870715,
+  "correct": false
+ },
+ "m-77": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-78": {
+  "chosen": "skill.chordsubstitution",
+  "confidence": 0.7428689,
+  "margin": 0.027118742,
+  "correct": null
+ },
+ "m-79": {
+  "chosen": "skill.outsidenotes",
+  "confidence": 0.7420543,
+  "margin": 0.018293142,
+  "correct": null
+ },
+ "m-80": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-81": {
+  "chosen": "skill.relativekey",
+  "confidence": 0.82197934,
+  "margin": 0.026305139,
+  "correct": null
+ },
+ "m-82": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-83": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-84": {
+  "chosen": "skill.settheoryequivalence",
+  "confidence": 0.71903133,
+  "margin": 0.0013839602,
+  "correct": false
+ },
+ "m-85": {
+  "chosen": "skill.outsidenotes",
+  "confidence": 0.67314607,
+  "margin": 0.021657467,
+  "correct": false
+ },
+ "m-86": {
+  "chosen": "skill.intervalclassvector",
+  "confidence": 0.6739035,
+  "margin": 0.004406929,
+  "correct": false
+ },
+ "m-87": {
+  "chosen": "skill.transpose",
+  "confidence": 0.69165033,
+  "margin": 0.004511595,
+  "correct": false
+ },
+ "m-88": {
+  "chosen": "skill.outsidenotes",
+  "confidence": 0.75817984,
+  "margin": 0.029041827,
+  "correct": null
+ },
+ "m-89": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-90": {
+  "chosen": "skill.improvisation",
+  "confidence": 0.7015718,
+  "margin": 0.0028800964,
+  "correct": false
+ },
+ "m-91": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-92": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.7427319,
+  "margin": 0.028159857,
+  "correct": false
+ },
+ "m-93": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.7171402,
+  "margin": 0.0040645003,
+  "correct": false
+ },
+ "m-94": {
+  "chosen": "skill.chordvoicings",
+  "confidence": 0.77200437,
+  "margin": 0.008044839,
+  "correct": true
+ },
+ "m-95": {
+  "chosen": "skill.fretspan",
+  "confidence": 0.72694045,
+  "margin": 0.07017434,
+  "correct": false
+ },
+ "m-96": {
+  "chosen": "skill.chordinfo",
+  "confidence": 0.6511265,
+  "margin": 0.025521994,
+  "correct": false
+ },
+ "m-97": {
+  "chosen": null,
+  "confidence": 0,
+  "margin": null,
+  "correct": true
+ },
+ "m-98": {
+  "chosen": "skill.scaleinfo",
+  "confidence": 0.6992004,
+  "margin": 0.029674768,
+  "correct": false
+ },
+ "m-99": {
+  "chosen": "skill.practiceroutine",
+  "confidence": 0.70019686,
+  "margin": 0.082398176,
+  "correct": null
+ },
+ "m-100": {
+  "chosen": "skill.icvshortestpath",
+  "confidence": 0.6783368,
+  "margin": 0.008824229,
+  "correct": false
+ }
+}

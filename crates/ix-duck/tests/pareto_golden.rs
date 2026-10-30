@@ -17,6 +17,8 @@ use std::process::Command;
 
 use ix_evolution::frontier::{frontier, to_csv, ObjectiveRow};
 
+mod common;
+
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pareto")
 }
@@ -115,11 +117,13 @@ fn the_golden_is_reproduced_after_reversing_the_fixture() {
 /// Runs the one documented DuckDB CLI command and compares its stdout to the
 /// same frozen golden.
 ///
-/// This binding is **opportunistic**: it exercises the SQL surface only where a
-/// `duckdb` binary is on PATH. On a machine without one it returns without
-/// asserting, so it is NOT evidence that the SQL half is covered by CI — the
-/// Rust half above is what CI actually checks. Where duckdb *is* present, a
-/// mismatch is a hard failure, never a skip.
+/// The binding is **conditional, not optional**: it runs the SQL surface
+/// wherever a `duckdb` binary is reachable, and the `duckdb-sql` job in
+/// `.github/workflows/ci.yml` installs a pinned one and sets
+/// `IX_REQUIRE_DUCKDB=1`, under which failing to reach the CLI is a failure
+/// rather than a skip (ix#294). On a machine without duckdb it still names what
+/// went unchecked and returns, so `cargo test --workspace` stays runnable for
+/// contributors who have not installed it.
 #[test]
 fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
     let script = "crates/ix-duck/sql/pareto_frontier_golden.sql";
@@ -130,10 +134,10 @@ fn duckdb_cli_reproduces_the_frozen_golden_when_duckdb_is_installed() {
     {
         Ok(output) => output,
         Err(error) => {
-            eprintln!(
-                "duckdb CLI not runnable ({error}); the SQL half of #294 was NOT checked by this \
-                 run. Reproduce manually from the repo root:\n  \
-                 duckdb -csv -c \".read {script}\""
+            common::sql_surface_unchecked(
+                &error,
+                "the SQL half of #294",
+                &format!("duckdb -csv -c \".read {script}\""),
             );
             return;
         }

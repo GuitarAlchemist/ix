@@ -15,6 +15,9 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 ix-baml = { workspace = true }
+# `Verdict` uses the canonical hexavalent type rather than a fifth copy of it.
+# Already in this crate's graph through ix-pipeline.
+ix-types = { workspace = true }
 # `compile`: IXQL programs become an ix-pipeline stage DAG, so cycle rejection,
 # topological_sort and parallel_levels come from `ix_pipeline::dag::Dag` rather
 # than a second scheduler. The edge points language -> runtime and not the other
@@ -37,6 +40,8 @@ ix-baml = { workspace = true }
 serde_json = { workspace = true }
 # `compile_tests` round-trips the rendered spec through the canonical IR.
 ix-pipeline = { workspace = true }
+# `verdict_gate_tests` builds verdicts from the canonical hexavalent type.
+ix-types = { workspace = true }
 
 [lib]
 path = "src/lib.rs"

@@ -1,0 +1,15 @@
+[package]
+name = "ix-petri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+categories = ["algorithms", "mathematics", "simulation"]
+keywords = ["petri-net", "pnml", "deadlock", "concurrency", "model-checking"]
+description = "Place/Transition Petri nets with deterministic firing, reachability analysis (deadlock, boundedness, liveness) and a PNML reader"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

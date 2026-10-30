@@ -30,6 +30,11 @@ ix-signal = { workspace = true }
 ix-acoustic-tune = { workspace = true }
 ix-cache = { workspace = true }
 ix-pipeline = { workspace = true }
+ix-petri = { workspace = true }
+# `stream.run` (ix_stream_run) is registered by ix-stream itself; see src/skills/mod.rs.
+ix-stream = { workspace = true }
+ix-origami = { workspace = true }
+ix-knot = { workspace = true }
 ix-autograd = { workspace = true }
 ix-nn = { workspace = true }
 ix-rl = { workspace = true }
@@ -43,7 +48,10 @@ ix-topo = { workspace = true }
 ix-category = { workspace = true }
 ix-governance = { workspace = true }
 ix-io = { workspace = true }
-ix-code = { workspace = true, features = ["semantic"] }
+# `topology` (Layer 4) is enabled here for the ix_code_topology tool. Before
+# this, no crate in the workspace turned it on, so `crates/ix-code/src/topology.rs`
+# was never compiled by `cargo build --workspace` or by CI (gap-matrix row F1).
+ix-code = { workspace = true, features = ["semantic", "topology"] }
 ix-ai-annotations = { workspace = true }
 ignore = "0.4"
 ix-catalog-core = { workspace = true }
@@ -65,7 +73,10 @@ ix-registry = { workspace = true }
 ix-skill-macros = { workspace = true }
 linkme = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# float_roundtrip: parse a JSON double to the nearest f64. The default parse
+# is off by one ULP for about a tenth of the doubles DuckDB prints
+# (ix_duckdb_query rows).
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 ndarray = { workspace = true }
@@ -86,3 +97,4 @@ maintain-gate = ["dep:ix-duck"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
+rmp-serde = "1"

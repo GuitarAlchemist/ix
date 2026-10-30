@@ -122,7 +122,7 @@ Takes current parameters and a gradient, returns updated parameters.
 Many algorithms have hyperparameters (settings you choose before training). ix uses the builder pattern to configure them fluently:
 
 ```rust
-use ix_optimize::ParticleSwarm;
+use ix_optimize::pso::ParticleSwarm;
 
 let optimizer = ParticleSwarm::new()
     .with_particles(50)
@@ -138,7 +138,7 @@ This pattern chains `.with_*()` calls to set options. Each method returns `Self`
 ML algorithms often use randomness (random initialization, random sampling). ix takes a `seed` parameter so you get the same results every time:
 
 ```rust
-use ix_unsupervised::KMeans;
+use ix_unsupervised::kmeans::KMeans;
 
 let mut kmeans = KMeans::new(3).with_seed(42);
 // Running this twice with seed 42 gives identical clusters
@@ -199,7 +199,8 @@ Here's a complete example that uses all these patterns — training a linear reg
 
 ```rust
 use ndarray::array;
-use ix_supervised::{LinearRegression, Regressor};
+use ix_supervised::linear_regression::LinearRegression;
+use ix_supervised::traits::Regressor;
 
 fn main() {
     // Training data: 2 features per sample

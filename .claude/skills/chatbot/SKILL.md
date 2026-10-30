@@ -78,7 +78,7 @@ Suggest related questions the user might ask, like:
 ### GA tools (ga__ prefix)
 | Tool | What it does |
 |------|-------------|
-| `ga__GaGenerateVoicingEmbedding` | 228-dim OPTIC-K embedding for a voicing diagram |
+| `ga__GaGenerateVoicingEmbedding` | Full (uncompacted) OPTIC-K embedding for a voicing diagram; its `dimension` field is the schema total, not the index's compact dimension, so it is not directly a valid `ix_optick_search` query |
 | `ga__GaGetEmbeddingSchema` | Schema info: partitions, dimensions, weights |
 | `ga__GaParseChord` | Parse chord name → intervals, pitch classes |
 | `ga__GaChordIntervals` | Interval analysis for a chord |
@@ -89,7 +89,7 @@ Suggest related questions the user might ask, like:
 ### IX tools (ix__ prefix)
 | Tool | What it does |
 |------|-------------|
-| `ix__ix_optick_search` | OPTIC-K cosine similarity search over voicing index |
+| `ix__ix_optick_search` | OPTIC-K cosine similarity search over voicing index; query length must equal the index header dimension (returned as `index_dimension`, stated in the mismatch error) |
 | `ix__ix_kmeans` | Cluster voicings into families |
 | `ix__ix_topo` | Persistent homology on voicing point clouds |
 | `ix__ix_search` | A* voice leading (minimal finger movement) |

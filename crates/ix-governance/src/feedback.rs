@@ -577,10 +577,18 @@ mod tests {
 
     #[test]
     fn test_read_beliefs_from_demerzel_state() {
-        let state_dir = PathBuf::from(r"C:\Users\spare\source\repos\Demerzel\state");
+        // The Demerzel submodule, which CI checks out (`submodules: recursive`).
+        // This used to be an absolute path under one developer's home
+        // directory, so on every CI runner the test returned before reaching
+        // any of its assertions.
+        let state_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../governance/demerzel/state");
         if !state_dir.exists() {
-            // Skip gracefully if Demerzel state directory is not available.
-            eprintln!("Demerzel state/ not found, using fixture test");
+            eprintln!(
+                "SKIP test_read_beliefs_from_demerzel_state: {} not found \
+                 (governance/demerzel submodule not initialised)",
+                state_dir.display()
+            );
             return;
         }
         let reader = StateReader::new(&state_dir);

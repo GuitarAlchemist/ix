@@ -19,11 +19,15 @@
 //! `0` all green, `1` warnings only, `4` at least one failure.
 
 pub mod dark_features;
+pub mod hardcoded_paths;
+pub mod hooks;
 pub mod orphan_traits;
 pub mod registry_snapshot;
+pub mod silent_skips;
 
 use crate::exit;
 use crate::output::{self, Format};
+use ix_quality_trend::{GateDecision, GateLedgerEntry, GateMetric};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -137,6 +141,85 @@ impl Report {
             _ => exit::OK_TRUE,
         }
     }
+
+    /// How many checks landed on each severity.
+    fn tally(&self, want: Status) -> usize {
+        self.checks.iter().filter(|c| c.status == want).count()
+    }
+}
+
+/// Where this repo's quality-gate ledger lives, relative to `root`.
+///
+/// One path per repo, per `docs/contracts/2026-05-24-quality-gate-ledger.contract.md`.
+pub const LEDGER_RELPATH: &str = "state/quality/gate-ledger.jsonl";
+
+/// Project a doctor report into a v1 quality-gate-ledger entry.
+///
+/// One row per run, not one per check: the gate's verdict is the aggregate
+/// (that is what the exit code reports), and the per-check breakdown rides in
+/// `extra` where consumers that want it can find it without the ledger's
+/// top-level shape having to grow a doctor-specific field.
+///
+/// The metric is the failing-check count against a threshold of zero, so a
+/// consumer reading only `metric` still sees the thing the gate is about.
+pub fn ledger_entry(report: &Report, opts: Options) -> GateLedgerEntry {
+    let fails = report.tally(Status::Fail);
+    let decision = match report.worst() {
+        Status::Fail => GateDecision::Fail,
+        Status::Warn => GateDecision::Warn,
+        _ => GateDecision::Pass,
+    };
+
+    let mut entry = GateLedgerEntry::new(
+        "ix-doctor",
+        "harness",
+        decision,
+        GateMetric {
+            name: "doctor_checks_failing".to_string(),
+            value: fails as f64,
+            threshold: Some(0.0),
+            // No trend: `ix doctor` has no history binding of its own. The
+            // ledger it writes here is what will eventually provide one, so
+            // claiming a direction now would be an unbacked assertion.
+            trend: None,
+        },
+    );
+
+    let per_check: serde_json::Map<String, Value> = report
+        .checks
+        .iter()
+        .map(|c| (c.name.clone(), json!(c.status.label())))
+        .collect();
+
+    entry.extra = Some(json!({
+        "verdict": report.verdict(),
+        "exit_code": report.exit_code(),
+        "check_count": report.checks.len(),
+        "warn_count": report.tally(Status::Warn),
+        "skip_count": report.tally(Status::Skip),
+        // `--full` runs the CI clippy + test invocation; without it several
+        // checks are skipped, so a consumer comparing two rows needs to know
+        // which mode produced each.
+        "mode": { "write": opts.write, "full": opts.full },
+        "checks": per_check,
+    }));
+    entry
+}
+
+/// Append this run's row to the repo ledger. Returns the path written.
+///
+/// Best-effort by contract: `ix doctor`'s job is to gate, and a ledger the
+/// filesystem refused must not turn a green repo red. The caller surfaces the
+/// failure on stderr instead — a silently-skipped append is exactly the
+/// green-but-dead shape this wiring exists to remove.
+pub fn append_to_ledger(
+    root: &Path,
+    report: &Report,
+    opts: Options,
+) -> Result<PathBuf, ix_quality_trend::LedgerError> {
+    let path = root.join(LEDGER_RELPATH);
+    ix_quality_trend::append_entry(&path, &ledger_entry(report, opts))?;
+    Ok(path)
 }
 
 /// What to run.
@@ -166,10 +249,16 @@ pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
 /// `--full` shell-outs are handled by [`run_full_checks`] so this stays fast
 /// and side-effect-free enough to call from tests.
 pub fn run(root: &Path, opts: Options) -> Report {
-    let mut checks = Vec::new();
-    checks.push(check_registry_snapshot(root, opts.write));
-    checks.push(check_orphan_traits(root));
-    checks.push(check_dark_features(root));
+    let mut checks = vec![
+        check_registry_snapshot(root, opts.write),
+        check_orphan_traits(root),
+        check_dark_features(root),
+        check_silent_skips(root),
+        hardcoded_paths::check(root),
+        // The harness's hooks: present, parsing, fixtures green. Runs the
+        // fixtures under the bash the hooks run under; warns when there is none.
+        hooks::check(root, hooks::find_bash().as_deref()),
+    ];
     checks.extend(check_environment(root));
     Report {
         root: root.display().to_string(),
@@ -201,14 +290,13 @@ fn check_registry_snapshot(root: &Path, write: bool) -> CheckResult {
         };
     }
 
-    let snapshot = match registry_snapshot::Snapshot::load(root) {
-        Ok(s) => s,
-        Err(e) => {
-            return CheckResult::new(NAME, Status::Fail, e).with_remedy(
+    let snapshot =
+        match registry_snapshot::Snapshot::load(root) {
+            Ok(s) => s,
+            Err(e) => return CheckResult::new(NAME, Status::Fail, e).with_remedy(
                 "run `cargo run -p ix-skill --bin ix -- doctor --write` and commit the snapshot",
-            )
-        }
-    };
+            ),
+        };
 
     let drift = registry_snapshot::diff(&snapshot, &live);
     if drift.is_clean() {
@@ -348,6 +436,118 @@ fn check_orphan_traits(root: &Path) -> CheckResult {
 /// authority on feature resolution, and re-deriving it here would create a
 /// second one. When cargo is unavailable the check warns rather than fails: an
 /// environment without cargo cannot have introduced a dark feature either.
+fn check_silent_skips(root: &Path) -> CheckResult {
+    const NAME: &str = "silent-skips";
+    let census = match silent_skips::scan(root) {
+        Ok(c) => c,
+        Err(e) => {
+            return CheckResult::new(NAME, Status::Fail, format!("could not scan tests: {e}"))
+                .with_remedy(
+                    "this check reads crates/*/tests/** and crates/*/src/** directly — a read failure means the                      scan did not happen, so it is a failure rather than a pass",
+                )
+        }
+    };
+
+    let details = json!({
+        "files_scanned": census.files_scanned,
+        "tests_scanned": census.tests_scanned,
+        "findings": census.findings,
+        "stale_allowlist": census.stale_allowlist,
+        "unjustified_allowlist": census.unjustified_allowlist,
+    });
+
+    if !census.unjustified_allowlist.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Fail,
+            format!(
+                "allowlist entries that justify nothing: {}",
+                census.unjustified_allowlist.join(", ")
+            ),
+        )
+        .with_remedy(
+            "every entry in state/registry/silent-skips.allow.json needs a non-empty `reason`,              and a `tracked` entry needs an `issue` naming who is wiring the test up — an              exemption nobody justified is a silencer, not a decision",
+        )
+        .with_details(details);
+    }
+
+    let blocking = census.blocking();
+    if !blocking.is_empty() {
+        let listed = blocking
+            .iter()
+            .map(|f| {
+                format!(
+                    "{}::{} (line {}, skips {} assertion(s) on {})",
+                    f.file,
+                    f.test,
+                    f.line,
+                    f.assertions_skipped,
+                    f.probe.label()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return CheckResult::new(
+            NAME,
+            Status::Fail,
+            format!(
+                "{} guarded return(s) across {} test(s) can pass without asserting: {listed}",
+                blocking.len(),
+                blocking
+                    .iter()
+                    .map(|f| (&f.file, &f.test))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+            ),
+        )
+        .with_remedy(
+            "make the skip impossible in the environment that must run it -- install the tool              in CI and fail closed when a variable says it is required (see the duckdb-sql job              in .github/workflows/ci.yml) -- or, if it genuinely cannot run here, add it to              state/registry/silent-skips.allow.json with a reason",
+        )
+        .with_details(details);
+    }
+
+    let advisory = census.advisory();
+    if !census.stale_allowlist.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Warn,
+            format!(
+                "allowlist entries that no longer skip: {}",
+                census.stale_allowlist.join(", ")
+            ),
+        )
+        .with_remedy(
+            "the test no longer returns early, or no longer exists — drop its entry from              state/registry/silent-skips.allow.json so the list stays honest",
+        )
+        .with_details(details);
+    }
+
+    if !advisory.is_empty() {
+        return CheckResult::new(
+            NAME,
+            Status::Warn,
+            format!(
+                "{} guarded return(s) that bypass no assertion",
+                advisory.len()
+            ),
+        )
+        .with_remedy(
+            "not blocking: these skip nothing today, but a later assertion added after the              guard would become invisible",
+        )
+        .with_details(details);
+    }
+
+    CheckResult::new(
+        NAME,
+        Status::Ok,
+        format!(
+            "{} test(s) across {} file(s); no unjustified silent skips",
+            census.tests_scanned, census.files_scanned
+        ),
+    )
+    .with_details(details)
+}
+
 fn check_dark_features(root: &Path) -> CheckResult {
     const NAME: &str = "dark-features";
     let census = match dark_features::scan(root) {
@@ -487,7 +687,11 @@ fn check_environment(root: &Path) -> Vec<CheckResult> {
     let gov_ok = gov_path.is_dir();
 
     let mut out = vec![if gov_ok {
-        CheckResult::new("demerzel-governance", Status::Ok, format!("{gov_dir} present"))
+        CheckResult::new(
+            "demerzel-governance",
+            Status::Ok,
+            format!("{gov_dir} present"),
+        )
     } else {
         CheckResult::new(
             "demerzel-governance",
@@ -535,7 +739,14 @@ pub fn run_full_checks() -> Vec<CheckResult> {
     vec![
         shell_check(
             "clippy",
-            &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+            &[
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
             "fix the lints, or justify an `#[allow]` in the diff — CI runs this same \
              invocation on stable and on the pinned nightly-2026-08-23",
         ),
@@ -550,9 +761,11 @@ pub fn run_full_checks() -> Vec<CheckResult> {
 /// Run `cargo <args>` and turn its exit status into a [`CheckResult`].
 fn shell_check(name: &str, args: &[&str], remedy: &str) -> CheckResult {
     match std::process::Command::new("cargo").args(args).status() {
-        Ok(st) if st.success() => {
-            CheckResult::new(name, Status::Ok, format!("`cargo {}` passed", args.join(" ")))
-        }
+        Ok(st) if st.success() => CheckResult::new(
+            name,
+            Status::Ok,
+            format!("`cargo {}` passed", args.join(" ")),
+        ),
         Ok(st) => CheckResult::new(
             name,
             Status::Fail,
@@ -579,15 +792,28 @@ pub fn main(format: Format, opts: Options) -> Result<i32, String> {
         report.checks.extend(run_full_checks());
     }
 
+    // Record the run. `ix_quality_gate_history` reads this file; until
+    // something wrote it, that tool answered every query from an absent
+    // ledger. A gate whose history nobody keeps cannot be asked "when did
+    // this last pass?".
+    let ledger = match append_to_ledger(&root, &report, opts) {
+        Ok(p) => Some(p.display().to_string()),
+        Err(e) => {
+            eprintln!("ix doctor: quality-gate ledger not written: {e}");
+            None
+        }
+    };
+
     let payload = json!({
         "verdict": report.verdict(),
         "exit_code": report.exit_code(),
         "root": report.root,
+        "ledger": ledger,
         "checks": report.checks,
     });
 
     match format.resolve() {
-        Format::Table => render_human(&report),
+        Format::Table => render_human(&report, ledger.as_deref()),
         other => output::emit(&payload, other).map_err(|e| format!("writing output: {e}"))?,
     }
     Ok(report.exit_code())
@@ -597,7 +823,7 @@ pub fn main(format: Format, opts: Options) -> Result<i32, String> {
 ///
 /// The default table renderer flattens nested detail into noise, so the
 /// terminal path is hand-rolled to keep the remedy readable.
-fn render_human(report: &Report) {
+fn render_human(report: &Report, ledger: Option<&str>) {
     println!("ix doctor — {}", report.root);
     println!();
     for c in &report.checks {
@@ -625,6 +851,10 @@ fn render_human(report: &Report) {
         report.checks.len(),
         report.exit_code()
     );
+    match ledger {
+        Some(p) => println!("ledger  {p}"),
+        None => println!("ledger  (not written — see stderr)"),
+    }
 }
 
 /// Greedy word wrap, so a long remedy stays readable in a terminal.

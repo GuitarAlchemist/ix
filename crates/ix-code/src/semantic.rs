@@ -209,6 +209,45 @@ pub fn extract_call_graph(source: &str) -> Option<CallGraph> {
     extract_call_graph_impl(source, &tree)
 }
 
+/// Extract the names of the functions *defined* in a Rust source snippet.
+///
+/// [`CallGraph::nodes`] deliberately mixes definitions with call targets, so it
+/// cannot answer "which unit owns this name?". Cross-file resolution needs the
+/// definition set on its own — see [`crate::topology::module_call_graph`],
+/// which is the only reason this exists.
+///
+/// Names are deduplicated and returned in order of first appearance. Returns an
+/// empty vector if the source cannot be parsed at all; a caller that needs to
+/// tell "no functions" from "no parse" should use [`extract_semantic_metrics`]
+/// and read `parse_quality`.
+#[cfg(feature = "semantic")]
+pub fn extract_definitions(source: &str) -> Vec<String> {
+    let Some((tree, _)) = parse_rust(source) else {
+        return Vec::new();
+    };
+    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+    let Ok(query) = Query::new(&language, "(function_item name: (identifier) @func.def)") else {
+        return Vec::new();
+    };
+
+    let bytes = source.as_bytes();
+    let mut cursor = QueryCursor::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+
+    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    while let Some(m) = matches.next() {
+        for cap in m.captures {
+            if let Ok(text) = cap.node.utf8_text(bytes) {
+                if seen.insert(text.to_string()) {
+                    out.push(text.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(feature = "semantic")]
 fn parse_rust(source: &str) -> Option<(Tree, ())> {
     let mut parser = Parser::new();
@@ -546,7 +585,14 @@ fn classify_call_target(func_node: Node, bytes: &[u8]) -> Option<CalleeHint> {
                     if s.len() <= 64 {
                         s.to_string()
                     } else {
-                        format!("{}…", &s[..60])
+                        // Truncate on chars, not bytes. `&s[..60]` panics when
+                        // byte 60 lands inside a multi-byte character, which
+                        // real sources hit routinely — a doc-comment arrow or an
+                        // accented identifier in a long receiver expression is
+                        // enough. Found by running the module-level topology
+                        // over this workspace's own crates.
+                        let head: String = s.chars().take(60).collect();
+                        format!("{head}…")
                     }
                 });
             Some(CalleeHint::MethodCall {
@@ -1011,6 +1057,31 @@ fn caller() {
             other => panic!("expected Scoped hint, got {:?}", other),
         }
         assert_eq!(edge.callee_name(), "baz");
+    }
+
+    #[test]
+    fn long_multibyte_receivers_are_truncated_without_panicking() {
+        // Copied verbatim from `crates/ix-grammar` (a doc example), which is
+        // where running the module-level topology over this workspace first hit
+        // it: the receiver is 91 bytes and its byte 60 lands inside the '→' at
+        // bytes 58..61, so `&s[..60]` panicked with "byte index 60 is not a
+        // char boundary".
+        let src = r#"fn main() { parse_program("x <- read(\"p\")\n  → default({a: 1})\n  → tars.validate(check: \"x\")").run(); }"#;
+        let g = extract_call_graph(src).expect("parse ok");
+        let edge = g
+            .edges
+            .iter()
+            .find(|e| e.callee_name() == "run")
+            .expect("the .run() method call survives truncation");
+        let CalleeHint::MethodCall { receiver_hint, .. } = &edge.callee_hint else {
+            panic!("expected a MethodCall hint, got {:?}", edge.callee_hint);
+        };
+        let hint = receiver_hint.as_ref().expect("receiver captured");
+        assert!(hint.ends_with('…'), "long receivers are elided: {hint}");
+        assert!(
+            hint.chars().count() <= 61,
+            "at most 60 chars plus the ellipsis"
+        );
     }
 
     #[test]

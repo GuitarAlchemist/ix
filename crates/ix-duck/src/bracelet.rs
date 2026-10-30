@@ -73,7 +73,7 @@ struct IxForteNumber;
 impl VScalar for IxForteNumber {
     type State = ();
     // @ai:invariant ix_forte_number renders ix_bracelet forte_number of the PC-set (notes mod 12); {0,4,7} -> "3-11", non-classifiable -> SQL NULL [T:test conf:0.9 src:ix_duck::bracelet::tests::forte_number_major_triad]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -89,7 +89,7 @@ struct IxIcv;
 impl VScalar for IxIcv {
     type State = ();
     // @ai:invariant ix_icv renders ix_bracelet icv (6 interval-class counts) as "<a,b,c,d,e,f>"; major triad {0,4,7} -> "<0,0,1,1,1,0>" [T:test conf:0.9 src:ix_duck::bracelet::tests::icv_major_triad]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -108,7 +108,7 @@ struct IxPrimeForm;
 impl VScalar for IxPrimeForm {
     type State = ();
     // @ai:invariant ix_prime_form renders ix_bracelet bracelet_prime_form pitch classes as "[p,...]"; major triad {0,4,7} -> "[0,3,7]" [T:test conf:0.9 src:ix_duck::bracelet::tests::prime_form_major_triad]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -127,7 +127,7 @@ struct IxClassifyTriad;
 impl VScalar for IxClassifyTriad {
     type State = ();
     // @ai:invariant ix_classify_triad renders ix_bracelet classify_triad as "<root> major|minor"; {0,4,7} -> "0 major", non-triad -> SQL NULL [T:test conf:0.9 src:ix_duck::bracelet::tests::classify_triad_major_and_nontriad]
-    unsafe fn invoke(
+    fn invoke(
         _: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
