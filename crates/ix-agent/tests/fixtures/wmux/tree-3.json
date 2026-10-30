@@ -1,0 +1,29 @@
+{
+  "tree": {
+    "type": "leaf",
+    "paneId": "id-26",
+    "surfaces": [
+      {
+        "id": "id-27",
+        "type": "terminal",
+        "resolvedShell": "pwsh.exe",
+        "currentCwd": "<home>\\proj-3",
+        "cwd": "<home>\\proj-3",
+        "claudeSessionId": "id-28"
+      },
+      {
+        "id": "id-29",
+        "type": "terminal",
+        "claudeSessionId": "id-30",
+        "resolvedShell": "pwsh.exe",
+        "currentCwd": "<home>\\proj-3",
+        "cwd": "<home>\\proj-3"
+      },
+      {
+        "id": "id-31",
+        "type": "diff"
+      }
+    ],
+    "activeSurfaceIndex": 0
+  }
+}

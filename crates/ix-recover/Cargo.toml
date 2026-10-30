@@ -1,0 +1,20 @@
+[package]
+name = "ix-recover"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# `File::try_lock` (the per-run owner lock) is stable since 1.89; the workspace
+# floor is 1.80, so this crate states its own.
+rust-version = "1.89"
+categories = ["filesystem"]
+keywords = ["recovery", "idempotency", "receipt", "crash-safety"]
+description = "Provisional: publish a run's result once under a caller-chosen run id, and reconcile from durable evidence after a process kill"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = { workspace = true }

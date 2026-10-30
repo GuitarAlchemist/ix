@@ -251,6 +251,34 @@ func TestAPeerFrameWithoutProvenanceEndsTheSession(t *testing.T) {
 	}
 }
 
+// An explicit source run is all-or-nothing. Refusing it here prevents the hub from either
+// publishing a partial identity or constructing one from the mirroring plane.
+func TestAPeerFrameWithMalformedRunEndsTheSession(t *testing.T) {
+	l := &peerLink{spec: PeerSpec{Name: "b"}, hub: NewHub("a"), since: map[string]uint64{}}
+	for _, run := range []RunID{
+		{Epoch: "run-boot", Seq: 3},
+		{Origin: "b", Seq: 3},
+		{Origin: "b", Epoch: "run-boot"},
+	} {
+		env := &Envelope{
+			Ch: "svc/x", Seq: 7, Epoch: "source-boot", Origin: "b",
+			Run: &run, Ev: Event{Kind: "stats"},
+		}
+		err := l.mirror(1, "b", "svc/", env)
+		if err == nil || !strings.Contains(err.Error(), "malformed run") {
+			t.Fatalf("run %+v: %v, want malformed run error", run, err)
+		}
+	}
+	if l.hub.Head() != 0 {
+		t.Fatalf("%d envelopes mirrored from malformed runs", l.hub.Head())
+	}
+	if err := l.mirror(1, "b", "svc/", &Envelope{
+		Ch: "svc/x", Seq: 8, Epoch: "source-boot", Origin: "b", Ev: Event{Kind: "stats"},
+	}); err != nil || l.hub.Head() != 1 {
+		t.Fatalf("an older frame without run: %v, head %d", err, l.hub.Head())
+	}
+}
+
 // The hub writes provenance as a pair or not at all, in the struct as in the bytes.
 func TestMirrorProvenanceIsAPairInStructAndBytes(t *testing.T) {
 	h := NewHub("a")
@@ -259,7 +287,7 @@ func TestMirrorProvenanceIsAPairInStructAndBytes(t *testing.T) {
 		epoch string
 		want  bool
 	}{{0, "b0b0b0b0b0b0", false}, {7, "", false}, {7, "b0b0b0b0b0b0", true}} {
-		env := h.Mirror("peer/b/svc/x", "b", 0, Event{Kind: "stats"}, tc.seq, tc.epoch)
+		env := h.Mirror("peer/b/svc/x", "b", 0, Event{Kind: "stats"}, tc.seq, tc.epoch, nil)
 		raw := string(env.Raw())
 		inRaw := strings.Contains(raw, `"src_seq":`) && strings.Contains(raw, `"src_epoch":`)
 		halfRaw := strings.Contains(raw, `"src_seq":`) != strings.Contains(raw, `"src_epoch":`)
