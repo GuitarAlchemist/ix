@@ -32,8 +32,8 @@
 //!
 //! ```bash
 //! cargo run -p ix-embedding-diagnostics --release -- \
-//!     --index "C:/Users/spare/source/repos/ga/state/voicings/optick.index" \
-//!     --out-dir "C:/Users/spare/source/repos/ga/state/baseline"
+//!     --index "../ga/state/voicings/optick.index" \
+//!     --out-dir "../ga/state/baseline"
 //! ```
 
 use std::collections::{BTreeMap, HashSet};

@@ -33,7 +33,10 @@ static LOOP_DETECTOR: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// ix_grothendieck_* PC-set algebra tools backed by ix-bracelet, plus
 /// ix_petri_analyze (Petri-net deadlock/boundedness/liveness, ix-petri), plus
 /// ix_duckdb_query (DuckDB SQL over caller rows, the CLI in -safe mode), plus
-/// ix_origami_check (checks of a stated flat folded state, ix-origami).
+/// ix_origami_check (checks of a stated flat folded state, ix-origami), plus
+/// ix_braid (braid closures' Jones polynomials and strand layouts, ix-knot), plus
+/// ix_knot (catalogue and caller-drawn rope knots, the same invariants, ix-knot).
+/// ix_stream_run (a bounded run of an ix-stream graph, registered in ix-stream).
 const EXPECTED: &[&str] = &[
     "ix_adversarial_fgsm",
     "ix_annotations_scan",
@@ -45,6 +48,7 @@ const EXPECTED: &[&str] = &[
     "ix_autograd_run",
     "ix_bandit",
     "ix_bloom_filter",
+    "ix_braid",
     "ix_cache",
     "ix_cargo_deps",
     "ix_catalog_list",
@@ -99,6 +103,7 @@ const EXPECTED: &[&str] = &[
     "ix_analyze_reference",
     "ix_spectral_distance",
     "ix_kmeans",
+    "ix_knot",
     "ix_linear_regression",
     "ix_pca",
     "ix_silhouette",
@@ -128,6 +133,7 @@ const EXPECTED: &[&str] = &[
     "ix_sentrux_annotate",
     "ix_session_flywheel_export",
     "ix_stats",
+    "ix_stream_run",
     "ix_supervised",
     "ix_tars_bridge",
     "ix_thinker_hits",
@@ -137,6 +143,7 @@ const EXPECTED: &[&str] = &[
     "ix_triage_session",
     "ix_viterbi",
     "ix_voicings_payload",
+    "ix_wmux_snapshot",
 ];
 
 /// `EXPECTED` plus any feature-gated tools present in this build. The `maintain-gate`
@@ -748,6 +755,30 @@ fn origami_check_is_reachable_through_mcp_dispatch() {
         .expect("ix_origami_check must not be refused by the approval gate");
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(out["census"]["rejected"], 1);
+}
+
+/// `ix_stream_run` through the exact entry point `main.rs` uses for `tools/call`: linked from
+/// ix-stream, classified, and answering.
+#[test]
+fn stream_run_is_reachable_through_mcp_dispatch() {
+    use ix_agent::server_context::ServerContext;
+
+    let (ctx, _rx) = ServerContext::new();
+    let out = ToolRegistry::new()
+        .call_with_ctx(
+            "ix_stream_run",
+            serde_json::json!({
+                "graph": {
+                    "nodes": [{ "name": "src", "source": true }, { "name": "sink" }],
+                    "edges": [{ "from": 0, "to": 1 }]
+                },
+                "max_events": 3
+            }),
+            &ctx,
+        )
+        .expect("ix_stream_run must not be refused by the approval gate");
+    assert_eq!(out["events"], 3, "{out}");
+    assert_eq!(out["receipts"]["nodes"][1]["received"], 3);
 }
 
 /// `ix_pipeline_run` is a manual tool, gated itself (ix#350), and each step goes back
