@@ -81,13 +81,16 @@ fn payload_handler_matches_voicings_payload_v1_schema() {
 /// half — does the corpus file exist and yield a parseable entry at
 /// the requested index? — without speaking HTTP.
 #[test]
-fn corpus_lazy_lookup_resolves_when_present() {
+fn corpus_lazy_lookup_resolves_the_committed_corpus() {
+    // The corpus is committed (.gitignore re-includes it), so a missing file
+    // is a broken checkout, not an environment to skip (ix#329).
     let bass_corpus = project_root().join("state/voicings/bass-corpus.json");
-    if !bass_corpus.exists() {
-        eprintln!("skipping: bass-corpus.json not present");
-        return;
-    }
-    let bytes = std::fs::read(&bass_corpus).expect("read bass corpus");
+    let bytes = std::fs::read(&bass_corpus).unwrap_or_else(|e| {
+        panic!(
+            "state/voicings/bass-corpus.json is committed and must be readable: {e} ({})",
+            bass_corpus.display()
+        )
+    });
     let entries: Vec<Value> = serde_json::from_slice(&bytes).expect("parse bass corpus");
     assert!(
         !entries.is_empty(),

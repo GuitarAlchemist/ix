@@ -127,7 +127,7 @@ struct IxBloomBuild;
 impl VScalar for IxBloomBuild {
     type State = ();
     // @ai:invariant ix_bloom_build wraps ix_probabilistic BloomFilter::new(capacity, fp_rate) + insert each BIGINT item, returns a JSON blob; capacity<1 or fp_rate∉(0,1) -> SQL error (no panic on size 0) [T:test conf:0.85 src:ix_duck::sketch::tests::bloom_roundtrip_no_false_negative]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let lists = read_bigint_list(input, 0, n);
         let caps = read_i64_col(input, 1, n);
@@ -160,7 +160,7 @@ struct IxBloomContains;
 impl VScalar for IxBloomContains {
     type State = ();
     // @ai:invariant ix_bloom_contains deserializes the blob and returns BloomFilter::contains(item); every inserted item -> true (no false negatives); non-JSON blob -> SQL error; structurally-degenerate filter -> false (never panics) [T:test conf:0.9 src:ix_duck::sketch::tests::bloom_degenerate_blob_no_panic]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let sketches = read_varchar_col(input, 0, n);
         let items = read_i64_col(input, 1, n);
@@ -182,7 +182,7 @@ struct IxBloomUnion;
 impl VScalar for IxBloomUnion {
     type State = ();
     // @ai:invariant ix_bloom_union returns BloomFilter::union of two blobs; mismatched parameters (capacity/fp_rate) -> SQL error; result contains every item from both [T:test conf:0.85 src:ix_duck::sketch::tests::bloom_union]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let a = read_varchar_col(input, 0, n);
         let b = read_varchar_col(input, 1, n);
@@ -210,7 +210,7 @@ struct IxHllBuild;
 impl VScalar for IxHllBuild {
     type State = ();
     // @ai:invariant ix_hll_build wraps HyperLogLog::new(precision) + add each BIGINT item; precision is clamped to [4,18] by the lib; precision<1 -> SQL error [T:test conf:0.8 src:ix_duck::sketch::tests::hll_count_estimate]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let lists = read_bigint_list(input, 0, n);
         let precisions = read_i64_col(input, 1, n);
@@ -239,7 +239,7 @@ struct IxHllCount;
 impl VScalar for IxHllCount {
     type State = ();
     // @ai:invariant ix_hll_count returns the rounded HyperLogLog::count cardinality estimate of the blob; ~within the lib's error bound of the true distinct count [T:test conf:0.8 src:ix_duck::sketch::tests::hll_count_estimate]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let sketches = read_varchar_col(input, 0, n);
         let mut out = Vec::with_capacity(n);
@@ -263,7 +263,7 @@ struct IxHllMerge;
 impl VScalar for IxHllMerge {
     type State = ();
     // @ai:invariant ix_hll_merge returns HyperLogLog::merge of two blobs (bucket-wise max); differing precision -> SQL error; merged count estimates the union cardinality [T:test conf:0.8 src:ix_duck::sketch::tests::hll_merge]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let a = read_varchar_col(input, 0, n);
         let b = read_varchar_col(input, 1, n);
@@ -289,7 +289,7 @@ struct IxCmsBuild;
 impl VScalar for IxCmsBuild {
     type State = ();
     // @ai:invariant ix_cms_build wraps CountMinSketch::with_error(epsilon, delta) + add each BIGINT item; epsilon<=0 or delta∉(0,1) -> SQL error [T:test conf:0.85 src:ix_duck::sketch::tests::cms_estimate]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let lists = read_bigint_list(input, 0, n);
         let eps = read_f64_col(input, 1, n);
@@ -322,7 +322,7 @@ struct IxCmsEstimate;
 impl VScalar for IxCmsEstimate {
     type State = ();
     // @ai:invariant ix_cms_estimate returns CountMinSketch::estimate(item) frequency from the blob; always >= the true count (Count-Min never undercounts) [T:test conf:0.85 src:ix_duck::sketch::tests::cms_estimate]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let sketches = read_varchar_col(input, 0, n);
         let items = read_i64_col(input, 1, n);
@@ -344,7 +344,7 @@ struct IxCmsMerge;
 impl VScalar for IxCmsMerge {
     type State = ();
     // @ai:invariant ix_cms_merge returns CountMinSketch::merge of two blobs (cell-wise add); differing dimensions -> SQL error; estimates of the combined stream [T:test conf:0.85 src:ix_duck::sketch::tests::cms_merge]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let a = read_varchar_col(input, 0, n);
         let b = read_varchar_col(input, 1, n);
@@ -370,7 +370,7 @@ struct IxCuckooBuild;
 impl VScalar for IxCuckooBuild {
     type State = ();
     // @ai:invariant ix_cuckoo_build wraps CuckooFilter::new(capacity) + insert each BIGINT item; capacity<1 -> SQL error; a full filter (insert returns false) -> SQL error asking for more capacity (never silently drops -> no false negatives) [T:test conf:0.85 src:ix_duck::sketch::tests::cuckoo_build_contains_remove]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let lists = read_bigint_list(input, 0, n);
         let caps = read_i64_col(input, 1, n);
@@ -405,7 +405,7 @@ struct IxCuckooContains;
 impl VScalar for IxCuckooContains {
     type State = ();
     // @ai:invariant ix_cuckoo_contains deserializes the blob and returns CuckooFilter::contains(item); inserted-and-not-removed items -> true [T:test conf:0.9 src:ix_duck::sketch::tests::cuckoo_build_contains_remove]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let sketches = read_varchar_col(input, 0, n);
         let items = read_i64_col(input, 1, n);
@@ -427,7 +427,7 @@ struct IxCuckooRemove;
 impl VScalar for IxCuckooRemove {
     type State = ();
     // @ai:invariant ix_cuckoo_remove returns a new blob with item deleted (CuckooFilter::remove — the deletion the Bloom filter can't do); SAFE ONLY for previously-inserted keys: a never-inserted key colliding on bucket+fingerprint with a real entry can evict it (inherent Cuckoo behavior) [T:test conf:0.85 src:ix_duck::sketch::tests::cuckoo_build_contains_remove]
-    unsafe fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
+    fn invoke(_: &(), input: &mut DataChunkHandle, output: &mut dyn WritableVector) -> Res {
         let n = input.len();
         let sketches = read_varchar_col(input, 0, n);
         let items = read_i64_col(input, 1, n);
